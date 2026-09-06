@@ -634,9 +634,28 @@ first 4 bytes of the acknowledged frame's MIC and the 4-byte `ack tag` is
 computed as specified in
 [Ack Tag Construction](security.md#ack-tag-construction), using the
 provisioned pairwise keys (combined with the channel keys for `BUAR`). The
-ack carries no destination hint. If the original frame carried a flood hop
-count, the ack's `FHOPS_REM` is initialized from the original frame's
-`FHOPS_ACC`.
+ack carries no destination hint. It is routed from what the acknowledged
+frame itself teaches, the way a host MAC routes an ack from the route that
+frame just taught it (see [Route Learning](beacons.md#route-learning)); the
+device holds no other routing state for the host's peers:
+
+- A frame carrying a trace-route option is acknowledged down that trace as
+  the ack's source route; the trace is accumulated most-recent first, so it
+  already reads in return order. An empty trace is a direct neighbor and
+  gets a direct ack.
+- A frame carrying no trace but a flood hop count gets `FHOPS_REM`
+  initialized from its `FHOPS_ACC`, with any region-code options replayed.
+- A frame carrying a source-route option and no trace — including an
+  emptied option, which the last repeater keeps for provenance — spent flood
+  hops only past the route's end, so its `FHOPS_ACC` is not a distance. The
+  ack floods at a default budget of 5 flood hops, or at `FHOPS_ACC` if that
+  is larger.
+- A frame with neither option and no flood hop count was heard off the
+  sender's own transmitter and is acknowledged directly.
+
+An ack a repeater may carry mirrors the frame's trace-route request, so the
+sender learns the return path from the only frame an ack-only exchange gives
+it.
 
 Delegated ack transmissions use the device's normal transmit path and are
 subject to the configured duty-cycle limit; the device **MUST NOT** exceed the

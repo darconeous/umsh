@@ -5,8 +5,8 @@ use core::str::FromStr;
 use heapless::{Deque, Vec as HeaplessVec};
 use umsh_core::options::{OptionDecoder, OptionEncoder};
 use umsh_core::{
-    ChannelKey, EncodeError, NodeHint, PacketBuilder, PacketHeader, PacketType, RegionCode,
-    SourceAddrRef,
+    ChannelKey, EncodeError, NodeHint, OptionNumber, PacketBuilder, PacketHeader, PacketType,
+    ParsedOptions, RegionCode, SourceAddrRef,
 };
 use umsh_crypto::replay::{ReplayVerdict, ReplayWindow};
 use umsh_crypto::{AesProvider, CryptoEngine, PairwiseKeys, Sha256Provider};
@@ -449,11 +449,122 @@ struct AckPlan {
     /// The 8-byte ack trailer (`ack_mic || ack_tag`). The ack carries no
     /// destination hint — it is correlated by this trailer.
     trailer: [u8; 8],
-    /// Flood-return radius when the acknowledged frame arrived by
-    /// flood: its accumulated hop count seeds the ack's remaining hops
-    /// (mirroring the MAC's cached flood-route behavior). `None` for
-    /// direct traffic — the ack is then direct too.
-    flood_hops: Option<u8>,
+    /// The way back to the sender.
+    route: AckReturn,
+    /// Whether the acknowledged frame asked for a trace route. Mirrored
+    /// onto an ack a repeater may carry, so the sender learns the path
+    /// from the only frame an ack-only exchange gives it.
+    trace: bool,
+    /// Region codes the acknowledged frame flooded under, replayed on a
+    /// flooded ack so it stays in the same domain.
+    regions: HeaplessVec<[u8; 2], MAX_ACK_REGIONS>,
+}
+
+/// Router hints an ack's source route can name: one per repeater, the
+/// same ceiling as a trace route.
+const MAX_ACK_ROUTE_HINTS: usize = 15;
+/// Region codes a flooded ack replays.
+const MAX_ACK_REGIONS: usize = 8;
+/// Flood budget for an ack whose frame arrived by source route without a
+/// trace: the frame's `FHOPS_ACC` counts only the flood tail past the
+/// route's end, so nothing on it says how far the sender is. The MAC's
+/// first-contact default.
+const UNROUTED_ACK_FLOOD_HOPS: u8 = 5;
+
+/// How a delegated ack finds its way back, read off the acknowledged
+/// frame exactly as the host MAC reads a route off any frame it learns
+/// from (beacons.md § Route Learning). The device has no route cache
+/// for the host's peers, so the frame is the whole of the evidence.
+enum AckReturn {
+    /// Heard off the sender's own transmitter: the ack is direct too.
+    Direct,
+    /// Flood back at this `FHOPS_REM`.
+    Flood(u8),
+    /// Steer back down the trace the frame accumulated, which repeaters
+    /// prepend to and so already reads in return order.
+    Source(HeaplessVec<umsh_core::RouterHint, MAX_ACK_ROUTE_HINTS>),
+}
+
+impl AckReturn {
+    /// Whether a repeater may carry an ack routed this way; a direct ack
+    /// constrains no hop and gets no trace.
+    fn repeatable(&self) -> bool {
+        !matches!(self, Self::Direct)
+    }
+}
+
+impl AckPlan {
+    /// Read the way back off `frame`.
+    ///
+    /// The precedence is the MAC's: a trace names the path and wins; an
+    /// empty trace is a direct neighbor. Without one, a source-route
+    /// option — even emptied, since the last repeater keeps it for
+    /// provenance — says the frame followed a path the flood accumulator
+    /// never saw, so `FHOPS_ACC` is not a distance and the ack floods at
+    /// a default instead. A flood hop count alone is a distance. Nothing
+    /// at all means no repeater could have carried the frame here.
+    fn new(trailer: [u8; 8], frame: &[u8], header: &PacketHeader) -> Self {
+        let accumulated = header.flood_hops.map(|hops| hops.accumulated());
+        let Ok(options) = ParsedOptions::extract(frame, header.options_range.clone()) else {
+            return Self {
+                trailer,
+                route: accumulated.map_or(AckReturn::Direct, AckReturn::Flood),
+                trace: false,
+                regions: HeaplessVec::new(),
+            };
+        };
+        let trace = options.trace_route.is_some();
+        let traced = options
+            .trace_route
+            .clone()
+            .and_then(|range| frame.get(range))
+            .and_then(Self::route_from_trace);
+        let route = match (traced, options.source_route.is_some(), accumulated) {
+            (Some(route), _, _) if route.is_empty() => AckReturn::Direct,
+            (Some(route), _, _) => AckReturn::Source(route),
+            (None, true, tail) => AckReturn::Flood(tail.unwrap_or(0).max(UNROUTED_ACK_FLOOD_HOPS)),
+            (None, false, Some(flood_hops)) => AckReturn::Flood(flood_hops),
+            (None, false, None) => AckReturn::Direct,
+        };
+        let mut regions = HeaplessVec::new();
+        if matches!(route, AckReturn::Flood(_)) && !header.options_range.is_empty() {
+            for entry in umsh_core::iter_options(frame, header.options_range.clone()) {
+                let Ok((number, value)) = entry else {
+                    continue;
+                };
+                if OptionNumber::from(number) != OptionNumber::RegionCode || value.len() != 2 {
+                    continue;
+                }
+                if regions.push([value[0], value[1]]).is_err() {
+                    break;
+                }
+            }
+        }
+        Self {
+            trailer,
+            route,
+            trace,
+            regions,
+        }
+    }
+
+    /// The trace's hints as a source route, or `None` for a trace no
+    /// packet could have carried: an odd length, or more repeaters than
+    /// a route can name.
+    fn route_from_trace(
+        trace: &[u8],
+    ) -> Option<HeaplessVec<umsh_core::RouterHint, MAX_ACK_ROUTE_HINTS>> {
+        if trace.len() % 2 != 0 {
+            return None;
+        }
+        let mut route = HeaplessVec::new();
+        for chunk in trace.chunks_exact(2) {
+            route
+                .push(umsh_core::RouterHint([chunk[0], chunk[1]]))
+                .ok()?;
+        }
+        Some(route)
+    }
 }
 
 /// Outcome of evaluating a detached received frame against the
@@ -3404,15 +3515,16 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                 |cmac| umsh_core::feed_aad(&header, scratch, |chunk| cmac.update(chunk)),
                 &scratch[body_range.clone()],
             );
-            AckPlan {
-                trailer: self.engine.compute_ack_trailer(&full_mac, &keys.k_enc),
-                // Flooded traffic gets a flood-return ack seeded from
-                // the received frame's accumulated hop count, exactly
-                // as the MAC routes acks from its learned flood routes.
-                // A duplicate's plan uses the retransmission's own
-                // routing state.
-                flood_hops: header.flood_hops.map(|hops| hops.accumulated()),
-            }
+            // Routed from what this frame teaches, exactly as the MAC
+            // routes an ack from the route the frame just taught it. A
+            // duplicate's plan uses the retransmission's own routing
+            // state, which may be the fresh trace a route-recovery
+            // retry attached.
+            AckPlan::new(
+                self.engine.compute_ack_trailer(&full_mac, &keys.k_enc),
+                data,
+                &header,
+            )
         });
         let identity = RxIdentity::new(counter, mic);
         let muted = self.host.muted_peers.contains(
@@ -3474,13 +3586,26 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         if !self.host.auto_ack || !self.session.pending.is_empty() {
             return None;
         }
-        let mut buf = [0u8; 24];
+        // Room for the trailer, a full source route, and a trace request.
+        let mut buf = [0u8; 64];
         let mut builder = PacketBuilder::new(&mut buf).mac_ack(plan.trailer);
-        if let Some(hops) = plan.flood_hops {
-            // Mirror the MAC's flood-return acks: seed the remaining
-            // hops from the acknowledged frame's accumulated count,
-            // clamped to a valid non-zero radius.
-            builder = builder.flood_hops(hops.clamp(1, 15));
+        // Ahead of the route options: the builder rejects options encoded
+        // out of ascending number order. A direct ack carries no trace, as
+        // nothing could fill it in.
+        if plan.trace && plan.route.repeatable() {
+            builder = builder.trace_route();
+        }
+        match &plan.route {
+            AckReturn::Direct => {}
+            AckReturn::Flood(flood_hops) => {
+                // Clamped to a valid non-zero radius: an ack that may be
+                // repeated must let at least one repeater carry it.
+                builder = builder.flood_hops((*flood_hops).clamp(1, 15));
+                for region in &plan.regions {
+                    builder = builder.region_code(*region);
+                }
+            }
+            AckReturn::Source(hints) => builder = builder.source_route(hints),
         }
         let frame_len = builder.build().ok()?.len();
         let airtime_ms = lora_airtime_ms(
@@ -11884,6 +12009,123 @@ mod tests {
             header.flood_hops.expect("flood-return re-ack").remaining(),
             7
         );
+    }
+
+    /// A sealed UNAR as it arrives at the end of a source route: the route
+    /// option emptied by the last repeater and kept for provenance, the
+    /// trace the routed hops recorded when the sender asked for one, and
+    /// the flood tail (if any) the frame spent past the route's end.
+    fn sealed_routed_unar(
+        counter: u32,
+        keys: &PairwiseKeys,
+        trace: Option<&[u8]>,
+        tail: Option<u8>,
+    ) -> Vec<u8> {
+        let mut buf = [0u8; 96];
+        let mut builder = PacketBuilder::new(&mut buf)
+            .unicast(NodeHint([0xC4, 0xC4, 0xC4]))
+            .source_hint(NodeHint([0x0A, 0x0A, 0x0A]))
+            .frame_counter(counter)
+            .ack_requested()
+            .mic_size(MicSize::Mic8);
+        if tail.is_some() {
+            builder = builder.flood_hops(15);
+        }
+        if let Some(trace) = trace {
+            builder = builder.option(OptionNumber::TraceRoute, trace);
+        }
+        let mut packet = builder
+            .option(OptionNumber::SourceRoute, &[])
+            .payload(&[3, 1, 2])
+            .build()
+            .unwrap();
+        test_engine().seal_packet(&mut packet, keys).unwrap();
+        let mut frame = packet.as_bytes().to_vec();
+        if let Some(tail) = tail {
+            frame[1] = umsh_core::FloodHops::new(15 - tail, tail).unwrap().0;
+        }
+        frame
+    }
+
+    /// The route options a staged ack carries: its source route and
+    /// whether it asks for a trace.
+    fn ack_route_options(ack: &[u8]) -> (Option<Vec<u8>>, bool) {
+        let header = PacketHeader::parse(ack).unwrap();
+        assert_eq!(header.fcf.packet_type(), PacketType::MacAck);
+        let options = ParsedOptions::extract(ack, header.options_range.clone()).unwrap();
+        (
+            options
+                .source_route
+                .and_then(|range| ack.get(range))
+                .map(<[u8]>::to_vec),
+            options.trace_route.is_some(),
+        )
+    }
+
+    /// A source-routed frame arrives with its route consumed and no
+    /// flood budget, so the frame's own shape says "direct" — and a
+    /// direct ack dies at the first hop. The trace the routed hops
+    /// recorded is the way back, and it is what the MAC would ack along.
+    #[test]
+    fn routed_traffic_gets_source_routed_acks() {
+        let mut session = auto_ack_session();
+        let keys = test_pairwise();
+
+        // A trace with hints: the ack steers back down it and mirrors the
+        // trace request, so the sender learns the path from the ack.
+        let trace = [0xA1, 0xB2, 0xC3, 0xD4];
+        let frame = sealed_routed_unar(1, &keys, Some(&trace), None);
+        let effect = rx_effect(&mut session, &frame, 0);
+        assert_eq!(effect, Some(Effect::StartTransmit));
+        let ack = session.tx_data().to_vec();
+        assert_eq!(PacketHeader::parse(&ack).unwrap().flood_hops, None);
+        assert_eq!(ack_route_options(&ack), (Some(trace.to_vec()), true));
+        session.on_tx_result(TxOutcome::Sent, 0, &mut |_: &[u8]| {});
+
+        // The trace wins over a flood tail: a hybrid path is still a
+        // known path.
+        let frame = sealed_routed_unar(2, &keys, Some(&trace[..2]), Some(3));
+        let effect = rx_effect(&mut session, &frame, 0);
+        assert_eq!(effect, Some(Effect::StartTransmit));
+        let ack = session.tx_data().to_vec();
+        assert_eq!(PacketHeader::parse(&ack).unwrap().flood_hops, None);
+        assert_eq!(ack_route_options(&ack), (Some(trace[..2].to_vec()), true));
+        session.on_tx_result(TxOutcome::Sent, 0, &mut |_: &[u8]| {});
+
+        // An empty trace is a direct neighbor: a direct ack, with no
+        // trace request since no repeater could fill one in.
+        let frame = sealed_routed_unar(3, &keys, Some(&[]), None);
+        let effect = rx_effect(&mut session, &frame, 0);
+        assert_eq!(effect, Some(Effect::StartTransmit));
+        let ack = session.tx_data().to_vec();
+        assert_eq!(PacketHeader::parse(&ack).unwrap().flood_hops, None);
+        assert_eq!(ack_route_options(&ack), (None, false));
+        session.on_tx_result(TxOutcome::Sent, 0, &mut |_: &[u8]| {});
+
+        // No trace at all: nothing on the frame says how far the sender
+        // is, and its flood tail is known short, so the ack floods at
+        // the default rather than at the tail or not at all.
+        for (tail, expected) in [
+            (None, UNROUTED_ACK_FLOOD_HOPS),
+            (Some(2), UNROUTED_ACK_FLOOD_HOPS),
+            (Some(9), 9),
+        ] {
+            let counter = 10 + tail.unwrap_or(0) as u32;
+            let frame = sealed_routed_unar(counter, &keys, None, tail);
+            let effect = rx_effect(&mut session, &frame, 0);
+            assert_eq!(effect, Some(Effect::StartTransmit), "tail={tail:?}");
+            let ack = session.tx_data().to_vec();
+            assert_eq!(
+                PacketHeader::parse(&ack)
+                    .unwrap()
+                    .flood_hops
+                    .map(|hops| hops.remaining()),
+                Some(expected),
+                "tail={tail:?}"
+            );
+            assert_eq!(ack_route_options(&ack), (None, false));
+            session.on_tx_result(TxOutcome::Sent, 0, &mut |_: &[u8]| {});
+        }
     }
 
     /// A sealed multicast frame on `channel_key` (channel keys act as
