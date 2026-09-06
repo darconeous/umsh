@@ -130,6 +130,18 @@ protocol RadioConnection: AnyObject, Sendable {
     func addDeviceAdmin(_ publicKey: Data) async throws
     /// Take a node's authority to manage the radio away again. Idempotent.
     func removeDeviceAdmin(_ publicKey: Data) async throws
+    /// Store a Wi-Fi network on the radio (`PROP_WIFI_NETWORKS`), given the
+    /// encoded entry a credential has already been folded into.
+    ///
+    /// Named rather than left to a general insert for the reason the
+    /// administrator list is: the item carries a passphrase, and a caller
+    /// that could name the property could send one somewhere it would be
+    /// echoed back. An entry whose SSID the radio already holds replaces
+    /// that one, which is how a mistyped passphrase is corrected.
+    func addDeviceWifiNetwork(_ item: Data) async throws
+    /// Forget a Wi-Fi network by name. Idempotent: an SSID the radio does
+    /// not hold resolves as success.
+    func removeDeviceWifiNetwork(ssid: Data) async throws
     /// Store a channel key on the radio's device identity
     /// (`PROP_DEV_CHANNEL_KEYS`), persisting it with a chained save. This is
     /// the device's own membership, separate from the phone's. Idempotent.
@@ -216,6 +228,15 @@ protocol RadioConnection: AnyObject, Sendable {
     func setRemoteDevicePeer(
         peerAddress: String,
         publicKey: Data,
+        present: Bool
+    ) async throws
+    /// Store a Wi-Fi network on a device across the mesh, or forget one by
+    /// name. The mesh counterparts of `addDeviceWifiNetwork` and
+    /// `removeDeviceWifiNetwork`, live until a save like every other
+    /// remote write.
+    func setRemoteWifiNetwork(
+        peerAddress: String,
+        item: Data,
         present: Bool
     ) async throws
     /// Tell a device across the mesh to make itself conspicuous, or to

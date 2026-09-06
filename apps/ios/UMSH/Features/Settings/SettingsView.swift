@@ -70,6 +70,7 @@ struct SettingsView: View {
     /// `UMSHApp` reads the same key to decide which store and radio to build,
     /// so a closure round trip would only add a way for the two to disagree.
     @AppStorage("staging.enabled") private var stagingEnabled = false
+    @AppStorage("staging.wifiScanOnly") private var stagedWifiScanOnly = false
     @State private var stagingResetFailed = false
     /// Staging only: whether the fake radio is currently dropping everything.
     @State private var dropsTransmissions = false
@@ -259,6 +260,10 @@ struct SettingsView: View {
                         stagedPeerReacts()
                     }
                 }
+                // Read once when the staged radio is built, so switching
+                // it needs a trip out of staging and back. Said in the
+                // footer rather than left for someone to discover.
+                Toggle("Staged device only scans Wi-Fi", isOn: $stagedWifiScanOnly)
                 if stagingEnabled, let stagedDropTransmissions {
                     Toggle("Drop everything sent", isOn: $dropsTransmissions)
                         .onChange(of: dropsTransmissions) { _, dropping in
@@ -288,7 +293,7 @@ struct SettingsView: View {
             } header: {
                 Text("Staging")
             } footer: {
-                Text("Replaces this phone's data with a fabricated trail-crew mesh—peers, conversations, reactions and map nodes—and reports a companion radio that is attached, charged and holding a fix. For marketing screenshots. Staged content lives in its own database and never touches your real one. Debug builds only.")
+                Text("Replaces this phone's data with a fabricated trail-crew mesh—peers, conversations, reactions and map nodes—and reports a companion radio that is attached, charged and holding a fix. For marketing screenshots. Staged content lives in its own database and never touches your real one. The scan-only switch gives the staged device a Wi-Fi receiver and no station, which is the other shape the Wi-Fi screen has to render; it is read when the staged radio is built, so switch staging off and on again to change it. Debug builds only.")
             }
 
             Section {

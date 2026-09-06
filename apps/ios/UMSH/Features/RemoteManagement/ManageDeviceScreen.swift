@@ -78,10 +78,10 @@ struct ManageDeviceScreen: View {
             }
         }
         .task { await model.loadCard() }
-        // Held by this screen for the whole visit: category screens push
-        // on top of it, so their readings follow the device's own
-        // announcements for as long as any of them is up.
-        .task { await model.observePushes() }
+        // Started here, held by the model: a category screen pushed on
+        // top makes this one disappear, and a subscription owned by this
+        // view would be cancelled with it.
+        .onAppear { model.observePushes() }
     }
 
     @ViewBuilder
@@ -237,6 +237,19 @@ struct ManageDeviceCategory: Identifiable {
             title: "Bluetooth",
             symbol: "dot.radiowaves.left.and.right"
         ) { model, _ in AnyView(RemoteBluetoothScreen(model: model)) },
+        // Named "Wi-Fi" whether or not the device can join one: a device
+        // that can only listen still has a Wi-Fi screen, and the screen
+        // says what it can do rather than the row hedging about it.
+        ManageDeviceCategory(
+            category: .wifi,
+            title: "Wi-Fi",
+            symbol: "wifi"
+        ) { model, _ in AnyView(RemoteWifiScreen(model: model)) },
+        ManageDeviceCategory(
+            category: .network,
+            title: "Network",
+            symbol: "network"
+        ) { model, _ in AnyView(RemoteNetworkScreen(model: model)) },
         ManageDeviceCategory(
             category: .repeater,
             title: "Repeater",

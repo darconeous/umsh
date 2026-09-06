@@ -588,6 +588,50 @@ final class AdministrativeDeviceSession: NSObject, @unchecked Sendable {
         return event.answers
     }
 
+    /// Add or replace one Wi-Fi network on the attached device, or forget
+    /// one by name.
+    ///
+    /// The one table on these screens that cannot be written whole: the
+    /// credential has a single home on the device and never comes back, so
+    /// a host holding the reported table holds no credentials to rewrite
+    /// it with. Inserting an SSID the device already knows replaces that
+    /// entry, which is how a mistyped passphrase is corrected.
+    func setWifiNetwork(_ item: Data, present: Bool) async throws {
+        Self.logger.notice(
+            "action: user \(present ? "stored" : "forgot", privacy: .public) a Wi-Fi network"
+        )
+        let event = try await performManagement { session in
+            try session.beginPropertyItems(
+                propertyId: ulcpManagedPropertyIds().wifiNetworks,
+                mutations: [
+                    UlcpItemMutationRecord(
+                        mutation: present ? .insert : .remove,
+                        value: item
+                    )
+                ]
+            )
+        }
+        // The device answers with the item it changed, or with a status
+        // where that item belonged. `ALREADY` and `ITEM_NOT_FOUND` are the
+        // request already satisfied, as on every other table edit.
+        guard let answer = event.answers.first else {
+            try Self.requireTableEdit(event.statusCode)
+            return
+        }
+        try Self.requireTableEdit(answer.statusCode)
+    }
+
+    /// Accept the outcome of a one-item table edit, or say why not.
+    ///
+    /// The device already holding the entry, or already lacking it, is the
+    /// request satisfied rather than refused, so both read as success.
+    private static func requireTableEdit(_ status: UInt32?) throws {
+        guard let status, status != 0 else { return }
+        let name = ulcpStatusName(status: status)
+        guard !name.hasSuffix("ALREADY"), !name.hasSuffix("ITEM_NOT_FOUND") else { return }
+        throw RemoteManagementError.refused(status: status)
+    }
+
     /// Persist the attached device's live configuration.
     func saveDevice() async throws {
         let event = try await performManagement { session in

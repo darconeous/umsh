@@ -37,6 +37,17 @@ struct DeviceManagementBackend {
     var save: (String) async throws -> Void
     var setAdministrator: (String, Data, Bool) async throws -> Void
     var setPeer: (String, Data, Bool) async throws -> Void
+    /// Store a Wi-Fi network on the device, given an already-encoded entry
+    /// with its credential folded in. An SSID the device already holds is
+    /// replaced.
+    ///
+    /// The one table here that is edited an item at a time rather than
+    /// written whole: the credential lives only on the device and never
+    /// comes back, so a host holding the reported table has nothing to
+    /// rewrite it with.
+    var insertNetwork: (String, Data) async throws -> Void
+    /// Forget a Wi-Fi network by name. The SSID octets are the selector.
+    var removeNetwork: (String, Data) async throws -> Void
     /// Make the device conspicuous, or stop it, answering with what it
     /// reports it is doing.
     var setAlert: (String, RadioAlertState) async throws -> RadioAlertState
@@ -209,6 +220,19 @@ final class ManageDeviceModel {
     /// Whether this device says it can restart on command (`CAP_REBOOT`).
     /// Read off the cached card, so offering the control costs no airtime.
     var supportsRestart: Bool { card?.supportsReboot ?? false }
+
+    /// Whether this device can join a network, as opposed to only seeing
+    /// which ones are there.
+    ///
+    /// A capability would be the wrong test: `CAP_WIFI` is on the card, but
+    /// the screen has to render before the card's promise is worth
+    /// anything, and a device that advertises a station it does not hold
+    /// refuses the property. The device answering for whether its station
+    /// is enabled is the claim, by the pattern ``supportsBluetoothPairing``
+    /// set.
+    var supportsWifiStation: Bool {
+        readings[.wifi]?.answered(ulcpProperties.wifiEnabled) ?? false
+    }
 
     /// Whether this device manages its own Bluetooth bonds on command.
     ///
@@ -400,7 +424,7 @@ final class ManageDeviceModel {
         await run { [self] in
             let answers = try await fetch(properties, multiHint: card.supportsMulti)
             let reported = Self.values(in: answers)
-            await management.saveValues(address, reported)
+            await cache(reported)
             // Replaced rather than merged: a refusal means the device does
             // not hold that property at all, and carrying an older value for
             // it forward would show a setting that is not there.
@@ -441,7 +465,7 @@ final class ManageDeviceModel {
             let answers = try await management.write(address, writes)
             answered = true
             let echoed = Self.values(in: answers)
-            await management.saveValues(address, echoed)
+            await cache(echoed)
             readings[category]?.absorb(echoed, at: Date(), fromAir: true)
 
             // A status where a value belonged is a setting the device would
@@ -518,7 +542,7 @@ final class ManageDeviceModel {
             try await management.save(address)
             let table = desired.sorted { $0.lexicographicallyPrecedes($1) }
                 .reduce(into: Data()) { $0 += $1 }
-            await management.saveValues(address, [property: table])
+            await cache([property: table])
             var updated = readings[.peerNodes] ?? RemoteCategoryReading()
             updated.absorb([property: table], at: Date(), fromAir: true)
             readings[.peerNodes] = updated
@@ -536,14 +560,43 @@ final class ManageDeviceModel {
     /// field the operator is editing keeps the edit. It deliberately does
     /// not care whether an operation is in flight; the device's latest
     /// word wins whichever order the two land in.
-    func observePushes() async {
-        guard let pushes = management.propertyPushes else { return }
-        for await push in pushes() {
-            await absorb(push)
+    /// Held by the model rather than by the view that starts it.
+    ///
+    /// A `task` modifier is cancelled when its view disappears, and in a
+    /// navigation stack pushing a category screen makes the device screen
+    /// disappear — so a subscription held there would be dropped by the
+    /// very act of opening the screen that most wants it. This one lives
+    /// as long as the device is being managed, which is what a device's
+    /// running commentary is scoped to.
+    /// Not isolated, so the deinitializer can cancel it: everything that
+    /// touches it otherwise is on the main actor.
+    private nonisolated(unsafe) var pushObserver: Task<Void, Never>?
+
+    func observePushes() {
+        guard pushObserver == nil, let pushes = management.propertyPushes else { return }
+        pushObserver = Task { [weak self] in
+            for await push in pushes() {
+                guard let self else { return }
+                await absorb(push)
+            }
         }
     }
 
+    deinit { pushObserver?.cancel() }
+
     private func absorb(_ push: UlcpPropertyPushRecord) async {
+        // A scan arrives an access point at a time, so the whole value the
+        // rest of this method merges never exists on the air. It has its
+        // own accumulator, and nothing about it reaches a reading.
+        if push.propertyId == ulcpProperties.wifiScanResults {
+            absorbScanResult(push)
+            return
+        }
+        // Nothing else here is streamed, so an item notification for one
+        // says the device changed a table without saying what the table now
+        // holds. Reading it back is the only honest answer, and every such
+        // notification here follows an edit this phone asked for.
+        guard push.kind == .is else { return }
         if push.propertyId == ulcpProperties.alert,
            let reported = try? inspectUlcpAlert(value: push.value)
         {
@@ -560,7 +613,164 @@ final class ManageDeviceModel {
         // opened will read itself fresh on first sight, and pushes exist
         // only on the links where that read is cheap.
         if affected {
-            await management.saveValues(address, [push.propertyId: push.value])
+            await cache([push.propertyId: push.value])
+        }
+    }
+
+    // MARK: - Wi-Fi
+
+    /// What a scan has heard, by access point.
+    ///
+    /// Kept apart from the readings because a scan is an event rather than
+    /// a setting: it arrives an item at a time, it is never cached, and it
+    /// describes where the device is standing. Keyed by BSSID, which is
+    /// what a device re-reports an access point under when its signal
+    /// moves, and the only thing that tells two nameless ones apart.
+    private(set) var scanResults: [Data: UlcpWifiScanResultRecord] = [:]
+
+    /// What a scan heard, strongest first.
+    var heardNetworks: [UlcpWifiScanResultRecord] {
+        scanResults.values.sorted { $0.rssiDbm > $1.rssiDbm }
+    }
+
+    /// Fold one announcement about the scan into the accumulator.
+    ///
+    /// The device says `Inserted` per access point while a scan runs and
+    /// `Is` with an empty value to clear the table before one starts, so
+    /// the two commands mean different things and the kind is what tells
+    /// them apart.
+    private func absorbScanResult(_ push: UlcpPropertyPushRecord) {
+        switch push.kind {
+        case .is:
+            // The whole table, which at the start of a scan is empty.
+            scanResults = Self.scanTable(inValue: push.value)
+        case .inserted:
+            guard let result = try? inspectUlcpWifiScanResult(item: push.value) else { return }
+            scanResults[result.bssid] = result
+        case .removed:
+            guard let result = try? inspectUlcpWifiScanResult(item: push.value) else { return }
+            scanResults[result.bssid] = nil
+        }
+    }
+
+    /// The accumulator a whole-value read of the scan table amounts to.
+    private static func scanTable(
+        inValue value: Data
+    ) -> [Data: UlcpWifiScanResultRecord] {
+        let decoded = inspectUlcpProperties(
+            responses: [
+                ulcpPropertyRecord(
+                    propertyId: ulcpProperties.wifiScanResults,
+                    value: value
+                )
+            ]
+        )
+        return (decoded.wifiScanResults ?? []).reduce(into: [:]) { table, result in
+            table[result.bssid] = result
+        }
+    }
+
+    /// Ask the device to look for networks, and follow the scan to its end.
+    ///
+    /// Written on its own rather than through Apply because a scan is not
+    /// an edit: nothing about the device changes, and an operator who taps
+    /// Scan has not left a form half-filled.
+    ///
+    /// On a local link the results arrive as the device hears them. Across
+    /// the mesh nothing is pushed, so the flag is watched instead and the
+    /// table read once the device says it has stopped — which is the whole
+    /// reason the flag is a property rather than a command.
+    func scanForNetworks() async {
+        scanResults.removeAll()
+        await write([
+            MobileMeshPropertyWriteRecord(
+                propertyId: ulcpProperties.wifiScanning,
+                value: Data([1])
+            )
+        ])
+        guard problem == nil, management.propertyPushes == nil else { return }
+        await followScanOverMesh()
+    }
+
+    /// Watch a scan the mesh will not announce the end of.
+    ///
+    /// Bounded rather than open-ended: a device that stops answering, or
+    /// one that never clears the flag, must not leave a screen watching it
+    /// forever. Twenty asks at two seconds is longer than any scan the
+    /// chapter contemplates and short enough to give up on.
+    private func followScanOverMesh() async {
+        for _ in 0..<20 {
+            try? await Task.sleep(for: .seconds(2))
+            await refreshCategory(.wifi)
+            guard problem == nil else { return }
+            if readings[.wifi]?.properties.wifiScanning != true {
+                if let value = readings[.wifi]?.values[ulcpProperties.wifiScanResults] {
+                    scanResults = Self.scanTable(inValue: value)
+                }
+                return
+            }
+        }
+    }
+
+    /// Store a network on the device, with the credential the operator
+    /// typed, and answer with what the device made of it.
+    ///
+    /// Returns the refusal status where there was one, so the join sheet
+    /// can offer a weaker security mode against `STATUS_UNIMPLEMENTED`
+    /// rather than making the operator start again.
+    func joinNetwork(item: Data) async -> UInt32? {
+        var refusal: UInt32?
+        await run { [self] in
+            do {
+                try await management.insertNetwork(address, item)
+            } catch let error as RemoteManagementError {
+                guard case let .refused(status) = error else { throw error }
+                refusal = status
+                return
+            }
+            try await management.save(address)
+        }
+        if refusal == nil, problem == nil {
+            await refreshCategory(.wifi)
+        }
+        return refusal
+    }
+
+    /// Tell the device which stored network to use, or none.
+    ///
+    /// Written on its own rather than through Apply because the one caller
+    /// is the join sheet, where selecting the network just stored is the
+    /// second half of one act the operator already confirmed.
+    func selectNetwork(ssid: Data) async {
+        await write([
+            MobileMeshPropertyWriteRecord(
+                propertyId: ulcpProperties.wifiNetwork,
+                value: ssid
+            )
+        ])
+    }
+
+    /// Forget one network by name, and save.
+    func forgetNetwork(ssid: Data) async {
+        await run { [self] in
+            try await management.removeNetwork(address, ssid)
+            try await management.save(address)
+        }
+        guard problem == nil else { return }
+        await refreshCategory(.wifi)
+    }
+
+    /// Write properties outside the Apply batch, reporting refusals as
+    /// problems rather than per-row: the callers here are buttons, not
+    /// fields, and there is no row to put a rejection on.
+    private func write(_ writes: [MobileMeshPropertyWriteRecord]) async {
+        await run { [self] in
+            let answers = try await management.write(address, writes)
+            let echoed = Self.values(in: answers)
+            readings[.wifi]?.absorb(echoed, at: Date(), fromAir: true)
+            if let refused = answers.first(where: { $0.value == nil }) {
+                throw RemoteManagementError.refused(status: refused.statusCode ?? 0)
+            }
         }
     }
 
@@ -670,6 +880,26 @@ final class ManageDeviceModel {
         try await management.fetch(address, properties, multiHint) { [weak self] remaining in
             Task { @MainActor in self?.propertiesRemaining = remaining }
         }
+    }
+
+    /// Remember what the device said, minus what has no business
+    /// outliving the moment it was said in.
+    ///
+    /// A scan is a list of the access points around the device right now,
+    /// which is a fingerprint of where it is standing; a signal strength is
+    /// a number about one instant. Neither is a setting, neither would be
+    /// true an hour later, and a screen showing either as "last read
+    /// yesterday" would be showing a place the device may have left. They
+    /// are read fresh or not shown. The known-network table caches
+    /// normally: its reported form carries no credential.
+    private func cache(_ values: [UInt32: Data]) async {
+        let ephemeral: Set<UInt32> = [
+            ulcpProperties.wifiScanResults,
+            ulcpProperties.wifiRssi,
+        ]
+        let keepable = values.filter { !ephemeral.contains($0.key) }
+        guard !keepable.isEmpty else { return }
+        await management.saveValues(address, keepable)
     }
 
     /// The answers that carried a value, which are the ones worth keeping.

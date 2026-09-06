@@ -1036,6 +1036,28 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
         try Self.requireTableEdit(event)
     }
 
+    func setRemoteWifiNetwork(
+        peerAddress: String,
+        item: Data,
+        present: Bool
+    ) async throws {
+        let property = ulcpManagedPropertyIds().wifiNetworks
+        let event = try await performManagement { session in
+            present
+                ? try session.beginManagementInsert(
+                    peerAddress: peerAddress,
+                    propertyId: property,
+                    item: item
+                )
+                : try session.beginManagementRemove(
+                    peerAddress: peerAddress,
+                    propertyId: property,
+                    selector: item
+                )
+        }
+        try Self.requireTableEdit(event)
+    }
+
     /// Read the answer to a one-entry table edit.
     ///
     /// The device answers with the list as it now stands, or with a status
@@ -1118,6 +1140,39 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
             try session.beginPropertyWrites(writes: writes)
         }
         return event.answers
+    }
+
+    func addDeviceWifiNetwork(_ item: Data) async throws {
+        try await mutateWifiNetworks(.insert, value: item)
+    }
+
+    func removeDeviceWifiNetwork(ssid: Data) async throws {
+        try await mutateWifiNetworks(.remove, value: ssid)
+    }
+
+    /// Run one edit of the radio's own network table and read its answer.
+    ///
+    /// The device answers an insert or a remove with the item it changed,
+    /// or with a status where that item belonged. `ALREADY` and
+    /// `ITEM_NOT_FOUND` are the request already satisfied, as everywhere
+    /// else a table is edited an item at a time.
+    private func mutateWifiNetworks(
+        _ mutation: UlcpItemMutation,
+        value: Data
+    ) async throws {
+        let event = try await performLocalManagement { session in
+            try session.beginPropertyItems(
+                propertyId: ulcpManagedPropertyIds().wifiNetworks,
+                mutations: [UlcpItemMutationRecord(mutation: mutation, value: value)]
+            )
+        }
+        guard let answer = event.answers.first else {
+            try Self.requireSuccess(event.statusCode)
+            return
+        }
+        if let status = answer.statusCode {
+            try Self.requireSuccess(status)
+        }
     }
 
     /// Persist the companion radio's live configuration.

@@ -43,12 +43,25 @@ actor FakeRadioConnection: RadioConnection {
     /// so a preview can change a setting and see the change stick.
     private var managedDevice = FakeManagedDevice()
     private var remoteDeviceReachable = true
+    /// Screens listening for what this device announces on its own. Only
+    /// the local link has any: a device pushes to the host it is attached
+    /// to and to nobody else.
+    private var pushContinuations:
+        [UUID: AsyncStream<UlcpPropertyPushRecord>.Continuation] = [:]
+    /// The scan or the link change now playing out, so a second one
+    /// replaces it rather than interleaving with it.
+    private var wifiTheater: Task<Void, Never>?
     /// Staging only: swallow every outbound frame, as a dead link would.
     private var transmissionsFail = false
 
-    init(snapshot: RadioSnapshot = .previewReady, air: (any FakeRadioAir)? = nil) {
+    init(
+        snapshot: RadioSnapshot = .previewReady,
+        air: (any FakeRadioAir)? = nil,
+        wifiScanOnly: Bool = false
+    ) {
         self.snapshot = snapshot
         self.air = air
+        managedDevice = FakeManagedDevice(scanOnly: wifiScanOnly)
     }
 
     /// Ask the staging air to have a staged peer message the phone. A no-op
@@ -447,19 +460,7 @@ actor FakeRadioConnection: RadioConnection {
         writes: [MobileMeshPropertyWriteRecord]
     ) async throws -> [MobileMeshManagementAnswerRecord] {
         try await answerAsIfOverTheAir()
-        // Echoed back verbatim, as a device that accepted them would. The
-        // one thing a real device does that this cannot is clamp a value
-        // it holds differently—previews of that path want a real radio.
-        for write in writes {
-            managedDevice.values[write.propertyId] = write.value
-        }
-        return writes.map {
-            MobileMeshManagementAnswerRecord(
-                propertyId: $0.propertyId,
-                value: $0.value,
-                statusCode: nil
-            )
-        }
+        return applyWrites(writes)
     }
 
     func saveRemoteDevice(peerAddress: String) async throws {
@@ -524,24 +525,296 @@ actor FakeRadioConnection: RadioConnection {
     func writeCompanionProperties(
         _ writes: [MobileMeshPropertyWriteRecord]
     ) async throws -> [MobileMeshManagementAnswerRecord] {
-        for write in writes {
-            managedDevice.values[write.propertyId] = write.value
-        }
-        return writes.map {
-            MobileMeshManagementAnswerRecord(
-                propertyId: $0.propertyId,
-                value: $0.value,
-                statusCode: nil
-            )
-        }
+        applyWrites(writes)
     }
 
     func saveCompanionDevice() async throws {}
 
-    /// The staging companion never volunteers anything; the stream exists
-    /// so screens that subscribe have something to hold open.
+    /// What the staged device announces on its own.
+    ///
+    /// Nothing volunteers anything here except the Wi-Fi scan, which has
+    /// no other way to arrive: a device reports each access point as it
+    /// hears it, and a screen that waited for the whole table would show
+    /// nothing until the scan ended.
     func companionPropertyPushes() async -> AsyncStream<UlcpPropertyPushRecord> {
-        AsyncStream { _ in }
+        // Registered here rather than inside the stream's build closure:
+        // that closure is not actor-isolated, so what it writes to an
+        // actor's storage does not necessarily land there, and a listener
+        // that silently fails to register is a scan that never arrives.
+        let id = UUID()
+        let (stream, continuation) = AsyncStream<UlcpPropertyPushRecord>.makeStream()
+        pushContinuations[id] = continuation
+        continuation.onTermination = { [weak self] _ in
+            Task { await self?.dropPushListener(id) }
+        }
+        return stream
+    }
+
+    private func dropPushListener(_ id: UUID) {
+        pushContinuations[id] = nil
+    }
+
+    private func push(
+        _ property: UInt32,
+        _ value: Data,
+        kind: UlcpPropertyPushKind = .is
+    ) {
+        let record = UlcpPropertyPushRecord(
+            propertyId: property,
+            value: value,
+            kind: kind
+        )
+        for continuation in pushContinuations.values { continuation.yield(record) }
+    }
+
+    // MARK: - Writing to the staged device
+
+    /// Take a batch of writes as a device would.
+    ///
+    /// Most of them are echoed back verbatim, which is what a device that
+    /// accepted them does; the one thing a real device does that this
+    /// cannot is clamp a value it holds differently. The Wi-Fi ones are
+    /// not settings that simply land: starting a scan, switching the
+    /// station off, and choosing a network all set something in motion,
+    /// and what the screens are worth testing against is that motion.
+    private func applyWrites(
+        _ writes: [MobileMeshPropertyWriteRecord]
+    ) -> [MobileMeshManagementAnswerRecord] {
+        writes.map { write in
+            switch beginWifiEffect(of: write) {
+            case .refused(let status):
+                MobileMeshManagementAnswerRecord(
+                    propertyId: write.propertyId,
+                    value: nil,
+                    statusCode: status
+                )
+            case .handled:
+                MobileMeshManagementAnswerRecord(
+                    propertyId: write.propertyId,
+                    value: write.value,
+                    statusCode: nil
+                )
+            case .store:
+                store(write)
+            }
+        }
+    }
+
+    private func store(_ write: MobileMeshPropertyWriteRecord) -> MobileMeshManagementAnswerRecord {
+        managedDevice.values[write.propertyId] = write.value
+        return MobileMeshManagementAnswerRecord(
+            propertyId: write.propertyId,
+            value: write.value,
+            statusCode: nil
+        )
+    }
+
+    /// What a write does to the staged device beyond landing on it.
+    private enum WriteOutcome {
+        /// An ordinary setting: hold the value and echo it.
+        case store
+        /// Something the device now owns, and will report as it happens.
+        case handled
+        /// The device will not take it, and says why.
+        case refused(UInt32)
+    }
+
+    /// Start whatever one write sets in motion, or say why the device
+    /// will not take it.
+    private func beginWifiEffect(of write: MobileMeshPropertyWriteRecord) -> WriteOutcome {
+        let id = ulcpProperties
+        switch write.propertyId {
+        case id.wifiScanning:
+            guard write.value.first == 1 else { return .store }
+            // Nothing to scan with while the radio is off, which is what
+            // `STATUS_INVALID_STATE` says. A device that only ever scans
+            // has no station to have switched off.
+            guard !managedDevice.joinsNetworks
+                || managedDevice.values[id.wifiEnabled]?.first == 1
+            else { return .refused(4) }
+            // The scan raises the flag itself, on its own announcement,
+            // so this write is answered rather than stored.
+            play { await $0.runScan() }
+            return .handled
+        case id.wifiEnabled:
+            let enabling = write.value.first == 1
+            play { await $0.settleLink(up: enabling) }
+            return .store
+        case id.wifiNetwork:
+            guard managedDevice.knowsNetwork(ssid: write.value) else { return .refused(20) }
+            play { [selected = write.value] in await $0.settleLink(up: !selected.isEmpty) }
+            return .store
+        default:
+            return .store
+        }
+    }
+
+    /// Run one Wi-Fi sequence, replacing whatever was playing.
+    private func play(_ act: @escaping @Sendable (FakeRadioConnection) async -> Void) {
+        wifiTheater?.cancel()
+        wifiTheater = Task { [weak self] in
+            guard let self else { return }
+            await act(self)
+        }
+    }
+
+    /// A scan, in the order the chapter puts it on the air: the table
+    /// cleared, the flag raised, one access point at a time as the device
+    /// hears them, and the flag dropped.
+    ///
+    /// One BSSID is reported twice at different strengths, because a host
+    /// that appended rather than replacing by key would show it twice and
+    /// nothing else here would catch that.
+    private func runScan() async {
+        let id = ulcpProperties
+        managedDevice.values[id.wifiScanResults] = Data()
+        push(id.wifiScanResults, Data())
+        managedDevice.values[id.wifiScanning] = Data([1])
+        push(id.wifiScanning, Data([1]))
+        var heard = Data()
+        for result in Self.stagedAccessPoints {
+            try? await Task.sleep(for: .milliseconds(320))
+            guard !Task.isCancelled else { return }
+            heard += FakeManagedDevice.item(result)
+            managedDevice.values[id.wifiScanResults] = heard
+            push(id.wifiScanResults, result, kind: .inserted)
+        }
+        try? await Task.sleep(for: .milliseconds(320))
+        guard !Task.isCancelled else { return }
+        managedDevice.values[id.wifiScanning] = Data([0])
+        push(id.wifiScanning, Data([0]))
+    }
+
+    /// Bring the link and the IP stack to where a write just sent them.
+    ///
+    /// Down is immediate, because dropping an association is. Coming back
+    /// is not: the device associates, then the network hands it an
+    /// address, and both stages are visible because a screen that skipped
+    /// them would never render either.
+    private func settleLink(up: Bool) async {
+        let id = ulcpProperties
+        guard managedDevice.joinsNetworks else { return }
+        guard up else {
+            setLink(Data([0, 0]))
+            setFamilies(state: 1)
+            return
+        }
+        setLink(Data([1, 0]))
+        setFamilies(state: 1)
+        try? await Task.sleep(for: .seconds(1))
+        guard !Task.isCancelled else { return }
+        setLink(
+            Data([2, 0]) + Data(FakeManagedDevice.baseStation)
+                + UInt16(2_437).littleEndianData
+        )
+        setFamilies(state: 2)
+        try? await Task.sleep(for: .seconds(1))
+        guard !Task.isCancelled else { return }
+        setFamilies(state: 3)
+        push(id.wifiRssi, managedDevice.values[id.wifiRssi] ?? Data())
+    }
+
+    private func setLink(_ value: Data) {
+        managedDevice.values[ulcpProperties.wifiLink] = value
+        push(ulcpProperties.wifiLink, value)
+    }
+
+    /// Move both families to one readiness at once: they are on the same
+    /// link, and it is the link that just moved.
+    private func setFamilies(state: UInt8) {
+        for property in [ulcpProperties.ipv4State, ulcpProperties.ipv6State] {
+            managedDevice.values[property] = Data([state])
+            push(property, Data([state]))
+        }
+    }
+
+    /// Six access points around the staged device, with the base station
+    /// heard twice: once from the far side of the ridge and once close
+    /// in, which is one network and not two.
+    private static let stagedAccessPoints: [Data] = [
+        FakeManagedDevice.scanResult(
+            modes: FakeManagedDevice.modes([2]),
+            frequencyMHz: 2_437,
+            rssiDBm: -74,
+            bssid: FakeManagedDevice.baseStation,
+            ssid: "Ridgeline Base"
+        ),
+        FakeManagedDevice.scanResult(
+            modes: FakeManagedDevice.modes([2, 3]),
+            frequencyMHz: 5_180,
+            rssiDBm: -61,
+            bssid: [0xA4, 0x2B, 0xB0, 0x5C, 0x11, 0x02],
+            ssid: "Ridgeline Base"
+        ),
+        FakeManagedDevice.scanResult(
+            modes: FakeManagedDevice.modes([3]),
+            frequencyMHz: 5_955,
+            rssiDBm: -68,
+            bssid: [0x08, 0x9E, 0x01, 0x77, 0x43, 0x0A],
+            ssid: "Tallac Field"
+        ),
+        FakeManagedDevice.scanResult(
+            modes: FakeManagedDevice.modes([0, 1]),
+            frequencyMHz: 2_462,
+            rssiDBm: -80,
+            bssid: [0x3C, 0x22, 0xFB, 0x10, 0x9C, 0x55],
+            ssid: "Trailhead Guest"
+        ),
+        FakeManagedDevice.scanResult(
+            modes: FakeManagedDevice.modes([6]),
+            frequencyMHz: 5_240,
+            rssiDBm: -77,
+            bssid: [0xF0, 0x9F, 0xC2, 0x04, 0x18, 0x21],
+            ssid: "TahoeNet-Staff"
+        ),
+        // Nameless, and the strongest thing in the room: an access point
+        // that is not advertising what it is called.
+        FakeManagedDevice.scanResult(
+            modes: FakeManagedDevice.modes([2]),
+            frequencyMHz: 2_412,
+            rssiDBm: -52,
+            bssid: [0x9C, 0x3D, 0xCF, 0x88, 0x00, 0x7E,],
+            ssid: ""
+        ),
+        // The base station again, heard closer this time, so a host that
+        // appends instead of replacing by BSSID shows it twice.
+        FakeManagedDevice.scanResult(
+            modes: FakeManagedDevice.modes([2]),
+            frequencyMHz: 2_437,
+            rssiDBm: -55,
+            bssid: FakeManagedDevice.baseStation,
+            ssid: "Ridgeline Base"
+        ),
+    ]
+
+    // MARK: - The staged device's network table
+
+    func addDeviceWifiNetwork(_ item: Data) async throws {
+        try refuse(managedDevice.insertNetwork(item))
+    }
+
+    func removeDeviceWifiNetwork(ssid: Data) async throws {
+        try refuse(managedDevice.removeNetwork(ssid: ssid))
+    }
+
+    func setRemoteWifiNetwork(
+        peerAddress: String,
+        item: Data,
+        present: Bool
+    ) async throws {
+        try await answerAsIfOverTheAir()
+        try refuse(
+            present
+                ? managedDevice.insertNetwork(item)
+                : managedDevice.removeNetwork(ssid: item)
+        )
+    }
+
+    /// Turn a device's refusal into the error a screen reports, treating
+    /// `ITEM_NOT_FOUND` as the request already satisfied.
+    private func refuse(_ status: UInt32?) throws {
+        guard let status, status != 20 else { return }
+        throw RemoteManagementError.refused(status: status)
     }
 
     /// `STATUS_PROP_NOT_FOUND`: how a device says it does not hold a
@@ -907,10 +1180,20 @@ struct FakeManagedDevice: Sendable {
     /// Everything the device would answer, keyed by property.
     var values: [UInt32: Data]
 
-    init() {
+    /// Whether this device has a station to join networks with, or only
+    /// the receiver to hear them.
+    ///
+    /// The second kind is a real device: a tracker that scans for access
+    /// points to fix its position by has every reason to report what it
+    /// heard and no way to associate with any of it. The Wi-Fi screen has
+    /// to render for both, so both are stageable.
+    let joinsNetworks: Bool
+
+    init(scanOnly: Bool = false) {
+        joinsNetworks = !scanOnly
         let id = ulcpProperties
         values = [
-            id.caps: Self.capabilities,
+            id.caps: scanOnly ? Self.scanOnlyCapabilities : Self.capabilities,
             id.deviceVersion: Data("fw-2026.08.11".utf8),
             id.deviceModel: Data("T1000-E".utf8),
             id.deviceName: Data("Ridgeline".utf8),
@@ -983,7 +1266,185 @@ struct FakeManagedDevice: Sendable {
             id.repeaterMinSnr: Data(),
             id.devPeers: Self.peerKey,
             id.devAdmins: Self.phoneKey + Self.otherAdminKey,
+            // A scan every device can run, whether or not it can join
+            // what it hears.
+            id.wifiScanning: Data([0]),
+            id.wifiScanResults: Data(),
         ]
+        guard joinsNetworks else { return }
+        for (property, value) in Self.stationValues { values[property] = value }
+    }
+
+    /// What a device with a station holds beyond the scan: the known
+    /// networks, which one it is on, and the IP stack that follows.
+    private static var stationValues: [UInt32: Data] {
+        let id = ulcpProperties
+        return [
+            id.wifiEnabled: Data([1]),
+            id.wifiNetworks: item(networkEntry("Ridgeline Base", security: 2))
+                + item(networkEntry("Tallac Field", security: 3, hidden: true)),
+            id.wifiNetwork: Data("Ridgeline Base".utf8),
+            // Up on the base station, on channel 6.
+            id.wifiLink: Data([2, 0]) + Data(baseStation) + UInt16(2_437).littleEndianData,
+            id.wifiRssi: Int8(-58).littleEndianData,
+            id.wifiMac: Data([0x2C, 0xF4, 0x32, 0x11, 0x22, 0x33]),
+            id.ipv4State: Data([3]),
+            id.ipv4Config: Data([1]),
+            id.ipv4Address: Data([192, 168, 1, 42]) + Data([24]) + Data([192, 168, 1, 1]),
+            id.ipv6State: Data([3]),
+            id.ipv6Config: Data([1]),
+            // A global address the router advertised, and the router
+            // itself at its link-local address, which is where a router
+            // normally is.
+            id.ipv6Addresses: item(
+                Data([0]) + globalV6 + Data([64])
+            ) + item(Data([1]) + linkLocalV6),
+            // Nothing configured, and the router doing the resolving.
+            id.ipDns: Data(),
+            id.ipResolvers: item(Data([192, 168, 1, 1])),
+        ]
+    }
+
+    /// The access point the staged device is associated with.
+    static let baseStation: [UInt8] = [0xA4, 0x2B, 0xB0, 0x5C, 0x11, 0x01]
+    private static let globalV6 = Data([
+        0x20, 0x01, 0x0D, 0xB8, 0x00, 0x00, 0x1F, 0x42,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x2A,
+    ])
+    private static let linkLocalV6 = Data([
+        0xFE, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
+    ])
+
+    // MARK: - Wi-Fi octets
+
+    /// One item of a multiple-value property.
+    ///
+    /// The length prefix is a packed unsigned integer, which is one octet
+    /// for anything shorter than 128 — and every item this device reports
+    /// is far shorter than that.
+    static func item(_ payload: Data) -> Data {
+        Data([UInt8(payload.count)]) + payload
+    }
+
+    /// One known network as a device reports it: flags, mode, the SSID's
+    /// length, and the SSID. Never a credential — the reported form does
+    /// not carry one, which is the whole reason the table is edited an
+    /// item at a time.
+    static func networkEntry(
+        _ ssid: String,
+        security: UInt8,
+        hidden: Bool = false
+    ) -> Data {
+        let name = Data(ssid.utf8)
+        return Data([hidden ? 1 : 0, security, UInt8(name.count)]) + name
+    }
+
+    /// One access point a scan heard.
+    static func scanResult(
+        modes: UInt16,
+        frequencyMHz: UInt16,
+        rssiDBm: Int8,
+        bssid: [UInt8],
+        ssid: String
+    ) -> Data {
+        let name = Data(ssid.utf8)
+        return modes.littleEndianData
+            + frequencyMHz.littleEndianData
+            + Int8(rssiDBm).littleEndianData
+            + Data(bssid)
+            + name
+    }
+
+    /// The bit for one `WIFI_SEC_*` mode, as a scan result reports the
+    /// set it heard.
+    static func modes(_ codes: [UInt8]) -> UInt16 {
+        codes.reduce(into: UInt16(0)) { set, code in set |= 1 << UInt16(code) }
+    }
+
+    /// The known networks, split back into items.
+    var networkEntries: [Data] {
+        Self.splitItems(values[ulcpProperties.wifiNetworks] ?? Data())
+    }
+
+    /// Take one network the host offered, by the rules the chapter gives
+    /// a device, answering with the status a refusal would carry.
+    ///
+    /// The refusals are the interesting half: this device has no WPA3, so
+    /// it answers `UNIMPLEMENTED` and the join sheet offers the next mode
+    /// down; it holds four networks, so a fifth is `NOMEM`; and a
+    /// passphrase the mode cannot use is `INVALID_ARGUMENT` even though
+    /// the phone checked it first, because the phone checking is a
+    /// courtesy and the device deciding is the contract.
+    mutating func insertNetwork(_ item: Data) -> UInt32? {
+        guard item.count >= 3 else { return 3 }
+        let security = item[item.startIndex + 1]
+        let nameLength = Int(item[item.startIndex + 2])
+        guard item.count >= 3 + nameLength else { return 3 }
+        let ssid = item.subdata(in: item.startIndex + 3 ..< item.startIndex + 3 + nameLength)
+        let credential = item.subdata(in: item.startIndex + 3 + nameLength ..< item.endIndex)
+        guard security != 3 else { return 2 }
+        if security == 2 || security == 4 {
+            guard (8...63).contains(credential.count) else { return 3 }
+        }
+        var entries = networkEntries
+        let replacing = entries.firstIndex { Self.ssid(ofEntry: $0) == ssid }
+        if replacing == nil, entries.count >= 4 { return 11 }
+        // Never the credential: a device stores it, and the table it
+        // reports has never carried one.
+        let reported = Data([item[item.startIndex], security, UInt8(nameLength)]) + ssid
+        if let replacing {
+            entries[replacing] = reported
+        } else {
+            entries.append(reported)
+        }
+        values[ulcpProperties.wifiNetworks] = entries.reduce(into: Data()) { $0 += Self.item($1) }
+        return nil
+    }
+
+    /// Forget one network by name, answering `ITEM_NOT_FOUND` for one this
+    /// device does not hold.
+    mutating func removeNetwork(ssid: Data) -> UInt32? {
+        var entries = networkEntries
+        guard let position = entries.firstIndex(where: { Self.ssid(ofEntry: $0) == ssid })
+        else { return 20 }
+        entries.remove(at: position)
+        values[ulcpProperties.wifiNetworks] = entries.reduce(into: Data()) { $0 += Self.item($1) }
+        // Forgetting the network in use drops the link with it.
+        if values[ulcpProperties.wifiNetwork] == ssid {
+            values[ulcpProperties.wifiNetwork] = Data()
+        }
+        return nil
+    }
+
+    /// Whether this device knows a network by that name. An empty name is
+    /// the deselection every device accepts.
+    func knowsNetwork(ssid: Data) -> Bool {
+        ssid.isEmpty || networkEntries.contains { Self.ssid(ofEntry: $0) == ssid }
+    }
+
+    /// The SSID out of one reported entry.
+    private static func ssid(ofEntry entry: Data) -> Data {
+        guard entry.count >= 3 else { return Data() }
+        let length = Int(entry[entry.startIndex + 2])
+        guard entry.count >= 3 + length else { return Data() }
+        return entry.subdata(in: entry.startIndex + 3 ..< entry.startIndex + 3 + length)
+    }
+
+    /// A multiple-value property's octets, back into the items that built
+    /// it. Single-octet length prefixes, as ``item(_:)`` writes.
+    private static func splitItems(_ value: Data) -> [Data] {
+        var items: [Data] = []
+        var cursor = value.startIndex
+        while cursor < value.endIndex {
+            let length = Int(value[cursor])
+            let start = value.index(after: cursor)
+            guard let end = value.index(start, offsetBy: length, limitedBy: value.endIndex)
+            else { break }
+            items.append(value.subdata(in: start ..< end))
+            cursor = end
+        }
+        return items
     }
 
     /// Add or drop one key in a fixed-width key table.
@@ -1000,14 +1461,23 @@ struct FakeManagedDevice: Sendable {
     /// (36), device identity (37), device name (38), battery (39),
     /// repeater (40), identity (41), alert (42), administrators (43),
     /// clock (44), receiver (45), advertisement (46), batched commands
-    /// (49), Bluetooth (50), restart (51), statistics (52), and the LoRa
+    /// (49), Bluetooth (50), restart (51), statistics (52), Wi-Fi scanning
+    /// (53), the Wi-Fi station (54), IPv4 (55), IPv6 (56), and the LoRa
     /// modem (515, which needs two PUI octets).
     ///
     /// Bond management has no capability of its own: this fake claims it
     /// by answering `PROP_BLE_BOND_COUNT` rather than by listing a code.
     private static let capabilities = Data([
         0x10, 0x24, 0x25, 0x26, 0x27, 0x28, 0x29, 0x2A, 0x2B, 0x2C, 0x2D, 0x2E, 0x31, 0x32,
-        0x33, 0x34, 0x83, 0x04,
+        0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x83, 0x04,
+    ])
+
+    /// The same tracker with a receiver and no station: it lists Wi-Fi
+    /// scanning (53) and neither the station nor either IP family, which
+    /// is the shape a device that scans to place itself really has.
+    private static let scanOnlyCapabilities = Data([
+        0x10, 0x24, 0x25, 0x26, 0x27, 0x28, 0x29, 0x2A, 0x2B, 0x2C, 0x2D, 0x2E, 0x31, 0x32,
+        0x33, 0x34, 0x35, 0x83, 0x04,
     ])
 }
 

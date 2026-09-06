@@ -384,6 +384,12 @@ final class AdminFlowController {
             setPeer: { _, key, present in
                 try await session.setPeer(key, present: present)
             },
+            insertNetwork: { _, item in
+                try await session.setWifiNetwork(item, present: true)
+            },
+            removeNetwork: { _, ssid in
+                try await session.setWifiNetwork(ssid, present: false)
+            },
             setAlert: { _, state in
                 // The device answers on the session snapshot; what was
                 // asked for stands until its own announcement corrects it.

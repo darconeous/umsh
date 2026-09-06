@@ -61,7 +61,8 @@ final class AppDelegate: NSObject, UIApplicationDelegate, ObservableObject {
         case .staging:
             let connection = FakeRadioConnection(
                 snapshot: StagingScenario.radioSnapshot,
-                air: StagingMeshAir()
+                air: StagingMeshAir(),
+                wifiScanOnly: UserDefaults.standard.bool(forKey: "staging.wifiScanOnly")
             )
             stagingConnection = connection
             // A staged mesh gets a store of its own; nothing fabricated
@@ -160,7 +161,8 @@ final class AppDelegate: NSObject, UIApplicationDelegate, ObservableObject {
         if let stagingConnection { return stagingConnection }
         let connection = FakeRadioConnection(
             snapshot: StagingScenario.radioSnapshot,
-            air: StagingMeshAir()
+            air: StagingMeshAir(),
+            wifiScanOnly: UserDefaults.standard.bool(forKey: "staging.wifiScanOnly")
         )
         stagingConnection = connection
         return connection

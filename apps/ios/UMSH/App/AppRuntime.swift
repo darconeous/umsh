@@ -449,6 +449,20 @@ final class AppRuntime {
                     present: present
                 )
             },
+            insertNetwork: { address, item in
+                try await self.radioConnection.setRemoteWifiNetwork(
+                    peerAddress: address,
+                    item: item,
+                    present: true
+                )
+            },
+            removeNetwork: { address, ssid in
+                try await self.radioConnection.setRemoteWifiNetwork(
+                    peerAddress: address,
+                    item: ssid,
+                    present: false
+                )
+            },
             setAlert: { address, state in
                 try await self.radioConnection.setRemoteAlert(
                     peerAddress: address,
@@ -551,6 +565,12 @@ final class AppRuntime {
             present
                 ? try await self.radioConnection.addDevicePeer(key)
                 : try await self.radioConnection.removeDevicePeer(key)
+        }
+        management.insertNetwork = { _, item in
+            try await self.radioConnection.addDeviceWifiNetwork(item)
+        }
+        management.removeNetwork = { _, ssid in
+            try await self.radioConnection.removeDeviceWifiNetwork(ssid: ssid)
         }
         management.setAlert = { _, state in
             // The local write answers on the session snapshot rather than
