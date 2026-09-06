@@ -15,9 +15,10 @@ use umsh_ulcp::{
         INTERFACE_TYPE, MAX_AUTO_ANNOUNCE_INTERVAL_S, MIN_AUTO_ANNOUNCE_INTERVAL_S,
         PROTOCOL_MAJOR_VERSION, PROTOCOL_MINOR_VERSION, cap, prop, saved,
     },
+    ip,
     items::{self, Filter},
     meta::{BufferedRxMeta, RX_FLAG_ACKED, RX_FLAG_BUFFERED},
-    pui,
+    pui, wifi,
 };
 
 use crate::{
@@ -593,13 +594,37 @@ pub struct UlcpOperationErrorRecord {
     pub status_name: String,
 }
 
-/// One property value the device announced on its own—`CMD_PROP_IS`
-/// with the unsolicited transaction—as opposed to the answer to
-/// anything this session asked.
+/// Which notification carried an unsolicited value.
+///
+/// A single-value property only ever announces itself with
+/// `CMD_PROP_IS`. A multi-value one can also announce one item at a
+/// time: a Wi-Fi scan streams every access point it hears as
+/// `CMD_PROP_INSERTED`, and an access point reports a client leaving as
+/// `CMD_PROP_REMOVED`. The three mean different things to a cache, so
+/// the carrier travels with the value rather than being guessed at from
+/// the property number.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
+pub enum UlcpPropertyPushKind {
+    /// `CMD_PROP_IS`: the whole value, replacing whatever was held.
+    Is,
+    /// `CMD_PROP_INSERTED`: one item, added to the value or replacing
+    /// the item with the same key.
+    Inserted,
+    /// `CMD_PROP_REMOVED`: one item, or its selector, dropped from the
+    /// value.
+    Removed,
+}
+
+/// One property value the device announced on its own, with the
+/// unsolicited transaction, as opposed to the answer to anything this
+/// session asked.
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
 pub struct UlcpPropertyPushRecord {
     pub property_id: u32,
+    /// The whole value for [`UlcpPropertyPushKind::Is`], and one item
+    /// for the other two.
     pub value: Vec<u8>,
+    pub kind: UlcpPropertyPushKind,
 }
 
 /// The completion of one local management operation started with
@@ -770,6 +795,10 @@ enum ExpectedResponse {
     /// A `CMD_PROP_SET` issued by a local management write, answered by
     /// the device's echo or a per-property refusal.
     ManagementSet(u32),
+    /// A `CMD_PROP_INSERT` or `CMD_PROP_REMOVE` issued by a local
+    /// management item mutation. Answered by the device's notification
+    /// of the item it changed, or a per-property refusal.
+    ManagementItem(u32),
     /// The `CMD_SAVE` issued by a local management save.
     ManagementSave,
 }
@@ -780,9 +809,32 @@ impl ExpectedResponse {
     fn is_management(&self) -> bool {
         matches!(
             self,
-            Self::ManagementGet(_) | Self::ManagementSet(_) | Self::ManagementSave
+            Self::ManagementGet(_)
+                | Self::ManagementSet(_)
+                | Self::ManagementItem(_)
+                | Self::ManagementSave
         )
     }
+}
+
+/// One item to add to or drop from a multi-value property.
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct UlcpItemMutationRecord {
+    pub mutation: UlcpItemMutation,
+    /// A whole item to insert, or the remove selector to drop one.
+    pub value: Vec<u8>,
+}
+
+/// Whether a queued item mutation adds an item or drops one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
+pub enum UlcpItemMutation {
+    /// `CMD_PROP_INSERT`. An item whose key matches one already held
+    /// replaces it, which is how a corrected Wi-Fi passphrase is
+    /// written.
+    Insert,
+    /// `CMD_PROP_REMOVE`. The value is the property's remove selector,
+    /// not a whole item.
+    Remove,
 }
 
 /// One local management operation in flight: what is still to ask, what
@@ -796,6 +848,11 @@ impl ExpectedResponse {
 struct LocalManagement {
     fetch_queue: VecDeque<u32>,
     write_queue: VecDeque<(u32, Vec<u8>)>,
+    /// Item mutations, drained after the writes. A table edit and a
+    /// scalar write are different commands, so they cannot share a
+    /// queue, and running the writes first keeps the ordering a caller
+    /// gets when it does both in one operation.
+    item_queue: VecDeque<(u32, UlcpItemMutation, Vec<u8>)>,
     answers: Vec<MobileMeshManagementAnswerRecord>,
     save_status: Option<u32>,
 }
@@ -1341,6 +1398,38 @@ impl MobileUlcpSession {
             write_queue: writes
                 .into_iter()
                 .map(|write| (write.property_id, write.value))
+                .collect(),
+            ..LocalManagement::default()
+        });
+        let mut outbound = Vec::new();
+        state.continue_local_management(&mut outbound)?;
+        Ok(state.update(outbound))
+    }
+
+    /// Add or drop items of a multi-value property, on the local link.
+    ///
+    /// The mesh binding has had this since it was written; the local one
+    /// only ever needed whole-value writes, because every table it
+    /// touched was written whole. A Wi-Fi network cannot be: the
+    /// credential has one home and cannot be read back, so a host can
+    /// only write a whole table it holds every credential for. Inserting
+    /// is the ordinary path, and replace-by-key is what makes correcting
+    /// a passphrase one exchange.
+    ///
+    /// Each mutation is answered by the device's own notification of the
+    /// item it changed, or by a per-property refusal recorded the way a
+    /// refused write is.
+    pub fn begin_property_items(
+        &self,
+        property_id: u32,
+        mutations: Vec<UlcpItemMutationRecord>,
+    ) -> Result<UlcpSessionUpdateRecord, MobileError> {
+        let mut state = self.inner.lock().expect("ULCP session mutex poisoned");
+        state.begin_local_management()?;
+        state.management = Some(LocalManagement {
+            item_queue: mutations
+                .into_iter()
+                .map(|mutation| (property_id, mutation.mutation, mutation.value))
                 .collect(),
             ..LocalManagement::default()
         });
@@ -1895,16 +1984,30 @@ impl MobileUlcpSession {
         let mut operation_error = None;
 
         if response.transaction_id == frame::TID_UNSOLICITED {
-            if response.command == Cmd::PropIs as u8 {
+            let kind = if response.command == Cmd::PropIs as u8 {
+                // Only a whole value replaces the cached one. An item
+                // notification describes a change to a value this
+                // session never held, so folding it in here would
+                // invent a table out of its own increments.
                 state
                     .responses
                     .insert(response.property_id, response.clone());
+                Some(UlcpPropertyPushKind::Is)
+            } else if response.command == Cmd::PropInserted as u8 {
+                Some(UlcpPropertyPushKind::Inserted)
+            } else if response.command == Cmd::PropRemoved as u8 {
+                Some(UlcpPropertyPushKind::Removed)
+            } else {
+                None
+            };
+            if let Some(kind) = kind {
                 // Carried out verbatim as well as folded into the
                 // snapshot, so a consumer caching values by property
                 // number hears about it without knowing the property.
                 state.pushed_properties.push(UlcpPropertyPushRecord {
                     property_id: response.property_id,
                     value: response.value.clone(),
+                    kind,
                 });
             }
             state.apply_property(&response)?;
@@ -2433,6 +2536,40 @@ impl MobileUlcpSession {
                 }
                 state.continue_local_management(&mut outbound)?;
             }
+            ExpectedResponse::ManagementItem(property) => {
+                if response.property_id == prop::LAST_STATUS && property != prop::LAST_STATUS {
+                    // A refused insert or remove leaves the table as it
+                    // was. Recorded as that property's answer, like a
+                    // refused write, so a caller learns which of NOMEM,
+                    // INVALID_ARGUMENT, and UNIMPLEMENTED it got: the
+                    // last of those is the cue to try a weaker security
+                    // mode.
+                    let status_code = inspect_ulcp_status(response.value.clone())?;
+                    state.record_management_answer(MobileMeshManagementAnswerRecord {
+                        property_id: property,
+                        value: None,
+                        status_code: Some(status_code),
+                    });
+                } else if response.property_id != property
+                    || !matches!(
+                        Cmd::from_u8(response.command),
+                        Some(Cmd::PropInserted) | Some(Cmd::PropRemoved)
+                    )
+                {
+                    return Err(MobileError::UlcpMismatchedResponse);
+                } else {
+                    // The item the device reports, which for an insert
+                    // is the reported form: a credential never comes
+                    // back. Deliberately not folded into `responses`,
+                    // which caches whole values.
+                    state.record_management_answer(MobileMeshManagementAnswerRecord {
+                        property_id: property,
+                        value: Some(response.value.clone()),
+                        status_code: None,
+                    });
+                }
+                state.continue_local_management(&mut outbound)?;
+            }
             ExpectedResponse::ManagementSave => {
                 if response.property_id != prop::LAST_STATUS
                     || response.command != Cmd::PropIs as u8
@@ -2812,6 +2949,15 @@ impl UlcpSessionState {
             self.expected
                 .insert(tid, ExpectedResponse::ManagementSet(property));
             outbound.push(ulcp_prop_set(tid, property, value)?);
+            self.management = Some(op);
+        } else if let Some((property, mutation, value)) = op.item_queue.pop_front() {
+            let tid = self.allocate_management_tid()?;
+            self.expected
+                .insert(tid, ExpectedResponse::ManagementItem(property));
+            outbound.push(match mutation {
+                UlcpItemMutation::Insert => ulcp_prop_insert(tid, property, &value)?,
+                UlcpItemMutation::Remove => ulcp_prop_remove(tid, property, &value)?,
+            });
             self.management = Some(op);
         } else if !op.fetch_queue.is_empty() {
             let budget = usize::from(frame::TID_MAX).saturating_sub(self.expected.len());
@@ -3647,6 +3793,12 @@ pub enum UlcpManageCategory {
     /// Bluetooth: whether the device can be reached over it, how many
     /// hosts are paired, and the two bond commands.
     Bluetooth,
+    /// Wi-Fi: the station, the networks it knows, and what a scan
+    /// found. A device that can only scan gets the same category with
+    /// fewer properties in it.
+    Wifi,
+    /// Addressing on whichever link the device has, per family.
+    Network,
     /// The forwarding policy.
     Repeater,
     /// Who this device talks to, and who may manage it.
@@ -3701,6 +3853,22 @@ pub struct UlcpManagedPropertyIds {
     pub ble_bond_count: u32,
     pub ble_link: u32,
     pub ble_pairing: u32,
+    pub wifi_enabled: u32,
+    pub wifi_networks: u32,
+    pub wifi_network: u32,
+    pub wifi_scanning: u32,
+    pub wifi_scan_results: u32,
+    pub wifi_link: u32,
+    pub wifi_rssi: u32,
+    pub wifi_mac: u32,
+    pub ipv4_state: u32,
+    pub ipv4_config: u32,
+    pub ipv4_address: u32,
+    pub ipv6_state: u32,
+    pub ipv6_config: u32,
+    pub ipv6_addresses: u32,
+    pub ip_dns: u32,
+    pub ip_resolvers: u32,
     pub time: u32,
     pub tz_offset: u32,
     pub alert: u32,
@@ -3756,6 +3924,22 @@ pub fn ulcp_managed_property_ids() -> UlcpManagedPropertyIds {
         ble_bond_count: prop::BLE_BOND_COUNT,
         ble_link: prop::BLE_LINK,
         ble_pairing: prop::BLE_PAIRING,
+        wifi_enabled: prop::WIFI_ENABLED,
+        wifi_networks: prop::WIFI_NETWORKS,
+        wifi_network: prop::WIFI_NETWORK,
+        wifi_scanning: prop::WIFI_SCANNING,
+        wifi_scan_results: prop::WIFI_SCAN_RESULTS,
+        wifi_link: prop::WIFI_LINK,
+        wifi_rssi: prop::WIFI_RSSI,
+        wifi_mac: prop::WIFI_MAC,
+        ipv4_state: prop::IPV4_STATE,
+        ipv4_config: prop::IPV4_CONFIG,
+        ipv4_address: prop::IPV4_ADDRESS,
+        ipv6_state: prop::IPV6_STATE,
+        ipv6_config: prop::IPV6_CONFIG,
+        ipv6_addresses: prop::IPV6_ADDRESSES,
+        ip_dns: prop::IP_DNS,
+        ip_resolvers: prop::IP_RESOLVERS,
         time: prop::TIME,
         tz_offset: prop::TZ_OFFSET,
         alert: prop::ALERT,
@@ -3907,6 +4091,47 @@ pub fn ulcp_category_properties(
                 ],
             );
         }
+        UlcpManageCategory::Wifi => {
+            // The scan is the base capability, so a device that can only
+            // sniff beacons for its own position gets exactly these two
+            // and the screen has nothing to offer but a scan.
+            when(
+                has(cap::WIFI_SCAN),
+                &[prop::WIFI_SCANNING, prop::WIFI_SCAN_RESULTS],
+            );
+            // The signal and the MAC are asked for unconditionally under
+            // CAP_WIFI, on the argument the bond count is: a stack that
+            // will not report them refuses, and the refusal is what
+            // tells the screen to leave the rows out.
+            when(
+                has(cap::WIFI),
+                &[
+                    prop::WIFI_ENABLED,
+                    prop::WIFI_NETWORKS,
+                    prop::WIFI_NETWORK,
+                    prop::WIFI_LINK,
+                    prop::WIFI_RSSI,
+                    prop::WIFI_MAC,
+                ],
+            );
+        }
+        UlcpManageCategory::Network => {
+            // A family the device does not have is not asked for, so its
+            // absence is never mistaken for a refusal. The resolvers are
+            // shared, and either family brings them.
+            when(
+                has(cap::IPV4),
+                &[prop::IPV4_STATE, prop::IPV4_CONFIG, prop::IPV4_ADDRESS],
+            );
+            when(
+                has(cap::IPV6),
+                &[prop::IPV6_STATE, prop::IPV6_CONFIG, prop::IPV6_ADDRESSES],
+            );
+            when(
+                has(cap::IPV4) || has(cap::IPV6),
+                &[prop::IP_DNS, prop::IP_RESOLVERS],
+            );
+        }
         UlcpManageCategory::Repeater => when(
             has(cap::REPEATER),
             &[
@@ -3957,6 +4182,13 @@ pub struct UlcpDeviceCardRecord {
     /// Whether the device has a Bluetooth transport it can be made
     /// unreachable over (`CAP_BLE`).
     pub supports_ble: bool,
+    /// Whether the device can scan for Wi-Fi networks, which a device
+    /// that cannot join one may still be able to do.
+    pub supports_wifi_scan: bool,
+    /// Whether it has a station to join them with.
+    pub supports_wifi: bool,
+    pub supports_ipv4: bool,
+    pub supports_ipv6: bool,
     /// Whether a Restart control is worth offering (`CAP_REBOOT`).
     pub supports_reboot: bool,
     pub supports_save: bool,
@@ -4004,10 +4236,96 @@ pub fn inspect_ulcp_device_card(
         supports_admin: has(cap::ADMIN),
         supports_alert: has(cap::ALERT),
         supports_ble: has(cap::BLE),
+        supports_wifi_scan: has(cap::WIFI_SCAN),
+        supports_wifi: has(cap::WIFI),
+        supports_ipv4: has(cap::IPV4),
+        supports_ipv6: has(cap::IPV6),
         supports_reboot: has(cap::REBOOT),
         supports_save: has(cap::SAVE),
         supports_multi: has(cap::CMD_MULTI),
     })
+}
+
+/// One entry of `PROP_WIFI_NETWORKS`, in the form a device reports.
+///
+/// No credential: the reported form stops at the SSID, and a host that
+/// wants to change one replaces the entry rather than reading it back.
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct UlcpWifiNetworkRecord {
+    pub hidden: bool,
+    /// A `WIFI_SEC_*` code.
+    pub security: u8,
+    /// Arbitrary octets, not text: a display renders them as UTF-8 when
+    /// they decode and as hex when they do not.
+    pub ssid: Vec<u8>,
+}
+
+/// One access point a scan heard.
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct UlcpWifiScanResultRecord {
+    /// The security modes on offer, bit *n* for `WIFI_SEC_*` code *n*.
+    /// **Zero means undetermined**, not "offers nothing".
+    pub modes: u16,
+    /// Center frequency of the primary 20 MHz channel.
+    pub frequency_mhz: u16,
+    pub rssi_dbm: i8,
+    /// The key: one entry per access point, and the only thing that
+    /// distinguishes two nameless ones.
+    pub bssid: Vec<u8>,
+    /// Empty when no name was reported, hidden or unread.
+    pub ssid: Vec<u8>,
+}
+
+/// `PROP_WIFI_LINK`: what the station is doing.
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct UlcpWifiLinkRecord {
+    /// A `WIFI_LINK_*` code.
+    pub state: u8,
+    /// A `WIFI_REASON_*` code, zero unless connecting.
+    pub reason: u8,
+    /// Present only while associated.
+    pub bssid: Option<Vec<u8>>,
+    /// Present only while associated.
+    pub frequency_mhz: Option<u16>,
+}
+
+/// `PROP_IPV4_CONFIG` or `PROP_IPV6_CONFIG`.
+///
+/// One record for both families: the structures differ only in address
+/// width, and a screen that rendered them from two records would be the
+/// same screen twice.
+#[derive(Clone, Debug, Default, PartialEq, Eq, uniffi::Record)]
+pub struct UlcpIpConfigRecord {
+    /// An `IP_METHOD_*` code.
+    pub method: u8,
+    /// Four or sixteen octets under the static method, empty otherwise.
+    pub address: Vec<u8>,
+    pub prefix: u8,
+    /// All-zero for no default route, empty when the method carries no
+    /// address at all.
+    pub gateway: Vec<u8>,
+}
+
+/// `PROP_IPV4_ADDRESS`: what the interface holds.
+#[derive(Clone, Debug, Default, PartialEq, Eq, uniffi::Record)]
+pub struct UlcpIpv4AddressRecord {
+    pub address: Vec<u8>,
+    pub prefix: u8,
+    /// All-zero when the network offered no way out, which is still
+    /// ready.
+    pub gateway: Vec<u8>,
+}
+
+/// One item of `PROP_IPV6_ADDRESSES`: an address the device holds, or a
+/// router it has selected.
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct UlcpIpv6ItemRecord {
+    /// An `IPV6_*` item kind: 0 an address, 1 a router.
+    pub kind: u8,
+    pub address: Vec<u8>,
+    /// The prefix the assignment carried. 128 on a router item, and on
+    /// an address from DHCPv6, which assigns no prefix.
+    pub prefix: u8,
 }
 
 /// Everything the management screens show, all of it optional.
@@ -4081,6 +4399,41 @@ pub struct UlcpDevicePropertiesRecord {
     /// Whether a pairing window is open. Read-write, and absent on a
     /// device that does not manage its own bonds.
     pub ble_pairing: Option<bool>,
+    /// Whether the Wi-Fi station is up.
+    pub wifi_enabled: Option<bool>,
+    /// The networks the device knows, without their credentials.
+    pub wifi_networks: Option<Vec<UlcpWifiNetworkRecord>>,
+    /// The selected network's SSID. **Present and empty** means the
+    /// device is deselected, which is a state; absent means the property
+    /// was not read.
+    pub wifi_network: Option<Vec<u8>>,
+    /// Whether a scan is running.
+    pub wifi_scanning: Option<bool>,
+    /// What the current or last scan found, strongest first.
+    pub wifi_scan_results: Option<Vec<UlcpWifiScanResultRecord>>,
+    /// What the station is doing.
+    pub wifi_link: Option<UlcpWifiLinkRecord>,
+    /// Signal of the current association. Absent when the link is down
+    /// and on a device whose stack will not report it.
+    pub wifi_rssi_dbm: Option<i8>,
+    /// The station's MAC address. Absent on a device that will not
+    /// report one.
+    pub wifi_mac: Option<Vec<u8>>,
+    /// IPv4 readiness, an `IP_*` code.
+    pub ipv4_state: Option<u8>,
+    pub ipv4_config: Option<UlcpIpConfigRecord>,
+    /// The IPv4 address in effect. Absent when the family is not ready.
+    pub ipv4_address: Option<UlcpIpv4AddressRecord>,
+    /// IPv6 readiness, from the same enumeration as `ipv4_state`.
+    pub ipv6_state: Option<u8>,
+    pub ipv6_config: Option<UlcpIpConfigRecord>,
+    /// The IPv6 addresses and routers in effect.
+    pub ipv6_addresses: Option<Vec<UlcpIpv6ItemRecord>>,
+    /// Configured resolvers. Present and empty means "use what the
+    /// network provides", which is the default.
+    pub ip_dns: Option<Vec<Vec<u8>>>,
+    /// The resolvers actually in use, whatever their source.
+    pub ip_resolvers: Option<Vec<Vec<u8>>>,
     /// What the device's clock read when it answered. Present when the
     /// clock was asked about; the inner epoch is absent on a device that
     /// has not found the time.
@@ -4216,6 +4569,41 @@ pub fn inspect_ulcp_properties(
         ble_bond_count: optional_value(at, prop::BLE_BOND_COUNT, decode_u8),
         ble_link: optional_value(at, prop::BLE_LINK, decode_u8),
         ble_pairing: optional_value(at, prop::BLE_PAIRING, decode_bool),
+        wifi_enabled: optional_value(at, prop::WIFI_ENABLED, decode_bool),
+        wifi_networks: optional_value(at, prop::WIFI_NETWORKS, decode_wifi_networks),
+        // Kept as octets rather than a string: an SSID is arbitrary
+        // bytes, and the empty value is the deselected state rather than
+        // an absent answer.
+        wifi_network: optional_value(at, prop::WIFI_NETWORK, |value| {
+            Ok::<Vec<u8>, MobileError>(value.to_vec())
+        }),
+        wifi_scanning: optional_value(at, prop::WIFI_SCANNING, decode_bool),
+        wifi_scan_results: optional_value(at, prop::WIFI_SCAN_RESULTS, decode_wifi_scan_results),
+        wifi_link: optional_value(at, prop::WIFI_LINK, decode_wifi_link),
+        // Empty while the link is down, which is an absent reading
+        // rather than a signal of zero.
+        wifi_rssi_dbm: optional_value(at, prop::WIFI_RSSI, |value| {
+            decode_optional(value, decode_i8)
+        })
+        .flatten(),
+        wifi_mac: optional_value(at, prop::WIFI_MAC, |value| {
+            if value.len() == wifi::MAC_LEN {
+                Ok(value.to_vec())
+            } else {
+                Err(MobileError::InvalidUlcpFrame)
+            }
+        }),
+        ipv4_state: optional_value(at, prop::IPV4_STATE, decode_u8),
+        ipv4_config: optional_value(at, prop::IPV4_CONFIG, decode_ipv4_config),
+        ipv4_address: optional_value(at, prop::IPV4_ADDRESS, |value| {
+            decode_optional(value, decode_ipv4_address)
+        })
+        .flatten(),
+        ipv6_state: optional_value(at, prop::IPV6_STATE, decode_u8),
+        ipv6_config: optional_value(at, prop::IPV6_CONFIG, decode_ipv6_config),
+        ipv6_addresses: optional_value(at, prop::IPV6_ADDRESSES, decode_ipv6_addresses),
+        ip_dns: optional_value(at, prop::IP_DNS, decode_resolver_list),
+        ip_resolvers: optional_value(at, prop::IP_RESOLVERS, decode_resolver_list),
         time: optional_value(at, prop::TIME, |value| {
             Ok::<UlcpTimeRecord, MobileError>(UlcpTimeRecord {
                 epoch_seconds: decode_optional(value, decode_u32)?,
@@ -4382,6 +4770,24 @@ pub fn ulcp_dirty_writes(
             // what a phone can write.
             prop::BLE_ENABLED => vec![desired.ble_enabled.ok_or_else(missing)? as u8],
             prop::BLE_PAIRING => vec![desired.ble_pairing.ok_or_else(missing)? as u8],
+            prop::WIFI_ENABLED => vec![desired.wifi_enabled.ok_or_else(missing)? as u8],
+            prop::WIFI_SCANNING => vec![desired.wifi_scanning.ok_or_else(missing)? as u8],
+            // The empty value deselects, which is a state a host writes
+            // deliberately, so an empty SSID here is a value and not a
+            // missing one.
+            prop::WIFI_NETWORK => desired.wifi_network.clone().ok_or_else(missing)?,
+            prop::IPV4_CONFIG => encode_ip_config(
+                desired.ipv4_config.as_ref().ok_or_else(missing)?,
+                IpFamily::V4,
+            )?,
+            prop::IPV6_CONFIG => encode_ip_config(
+                desired.ipv6_config.as_ref().ok_or_else(missing)?,
+                IpFamily::V6,
+            )?,
+            // The whole set travels: a resolver list is two or three
+            // items that are edited together, and the device replaces
+            // what it holds with what arrives.
+            prop::IP_DNS => encode_resolver_list(desired.ip_dns.as_ref().ok_or_else(missing)?)?,
             // Empty clears the clock back to unknown, which is what a
             // device reports before its first fix.
             prop::TIME => desired
@@ -4596,6 +5002,10 @@ fn validate_capability_dependencies(capabilities: &[u32]) -> Result<(), MobileEr
         // A receiver that cannot set a clock is still a receiver, but the
         // device also dates its fixes, so CAP_GNSS implies CAP_TIME.
         || has(cap::GNSS) && !has(cap::TIME)
+        // A station that can join can always scan, and so can a radio
+        // that can beacon: the requirement is a fact about hardware.
+        || has(cap::WIFI) && !has(cap::WIFI_SCAN)
+        || has(cap::WIFI_AP) && !has(cap::WIFI_SCAN)
     {
         return Err(MobileError::InvalidUlcpFrame);
     }
@@ -5096,6 +5506,259 @@ fn decode_u32(value: &[u8]) -> Result<u32, MobileError> {
 /// Split a concatenation of fixed-width items into the items themselves.
 /// The lossless counterpart of [`decode_fixed_count`], for properties whose
 /// GET form reads back full values rather than digests.
+/// Which family a configuration record is being encoded for. The record
+/// is one type for both, so the width has to come from the caller.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum IpFamily {
+    V4,
+    V6,
+}
+
+/// Encode a family configuration, refusing anything the device would.
+///
+/// Validation happens here rather than on the air because one rejected
+/// write abandons everything after it in the same batch, and an address
+/// the operator typed is exactly the kind of value that is wrong.
+fn encode_ip_config(record: &UlcpIpConfigRecord, family: IpFamily) -> Result<Vec<u8>, MobileError> {
+    let method = ip::Method::from_code(record.method).ok_or(MobileError::InvalidUlcpFrame)?;
+    let is_static = matches!(method, ip::Method::Static);
+    match family {
+        IpFamily::V4 => {
+            let mut config = ip::V4Config {
+                method,
+                prefix: record.prefix,
+                ..ip::V4Config::default()
+            };
+            if is_static {
+                config.address = as_array::<4>(&record.address)?;
+                config.gateway = as_array::<4>(&record.gateway)?;
+            }
+            config
+                .validate()
+                .map_err(|_| MobileError::InvalidUlcpFrame)?;
+            let mut out = [0u8; ip::V4_CONFIG_STATIC_LEN];
+            let len = config
+                .encode(&mut out)
+                .map_err(|_| MobileError::InvalidUlcpFrame)?;
+            Ok(out[..len].to_vec())
+        }
+        IpFamily::V6 => {
+            let mut config = ip::V6Config {
+                method,
+                prefix: record.prefix,
+                ..ip::V6Config::default()
+            };
+            if is_static {
+                config.address = as_array::<16>(&record.address)?;
+                config.gateway = as_array::<16>(&record.gateway)?;
+            }
+            config
+                .validate()
+                .map_err(|_| MobileError::InvalidUlcpFrame)?;
+            let mut out = [0u8; ip::V6_CONFIG_STATIC_LEN];
+            let len = config
+                .encode(&mut out)
+                .map_err(|_| MobileError::InvalidUlcpFrame)?;
+            Ok(out[..len].to_vec())
+        }
+    }
+}
+
+fn as_array<const N: usize>(bytes: &[u8]) -> Result<[u8; N], MobileError> {
+    bytes.try_into().map_err(|_| MobileError::InvalidUlcpFrame)
+}
+
+/// Pack a resolver list back into a `PROP_IP_DNS` value.
+///
+/// An item that is not a usable resolver is refused here for the reason
+/// an over-long region name is: the device rejects it outright, and one
+/// rejected write abandons the rest.
+fn encode_resolver_list(resolvers: &[Vec<u8>]) -> Result<Vec<u8>, MobileError> {
+    let mut value = Vec::new();
+    for resolver in resolvers {
+        if !ip::resolver_is_valid(resolver) {
+            return Err(MobileError::InvalidUlcpFrame);
+        }
+        let mut item = vec![0u8; resolver.len() + 4];
+        let len = items::encode_prefixed_item(resolver, &mut item)
+            .map_err(|_| MobileError::InvalidUlcpFrame)?;
+        value.extend_from_slice(&item[..len]);
+    }
+    Ok(value)
+}
+
+/// Build one `PROP_WIFI_NETWORKS` item to insert.
+///
+/// The only path a Wi-Fi credential takes across this boundary. It is
+/// validated against its mode before it is encoded, so a passphrase the
+/// device would refuse never reaches the air, and the octets are not
+/// retained anywhere afterward.
+#[uniffi::export]
+pub fn ulcp_wifi_network_item(
+    ssid: Vec<u8>,
+    security: u8,
+    hidden: bool,
+    credential: Vec<u8>,
+) -> Result<Vec<u8>, MobileError> {
+    let security = wifi::SecurityMode::from_code(security).ok_or(MobileError::InvalidUlcpFrame)?;
+    let entry = wifi::NetworkEntry {
+        hidden,
+        // A host that holds a raw key is not a case the phone has: it
+        // has the passphrase the operator typed.
+        raw_key: false,
+        security,
+        ssid: &ssid,
+        credential: &credential,
+    };
+    entry
+        .validate()
+        .map_err(|_| MobileError::InvalidUlcpFrame)?;
+    let mut out = vec![0u8; wifi::NETWORK_ENTRY_MAX_LEN];
+    let len = entry
+        .encode(&mut out)
+        .map_err(|_| MobileError::InvalidUlcpFrame)?;
+    out.truncate(len);
+    Ok(out)
+}
+
+/// Decode one `CMD_PROP_INSERTED` item of `PROP_WIFI_SCAN_RESULTS`.
+///
+/// The other half of the scan stream: a host that followed the inserts
+/// needs the same reduction a whole-table read gets.
+#[uniffi::export]
+pub fn inspect_ulcp_wifi_scan_result(
+    item: Vec<u8>,
+) -> Result<UlcpWifiScanResultRecord, MobileError> {
+    decode_wifi_scan_result(&item)
+}
+
+/// `PROP_WIFI_NETWORKS`, in the reported form.
+///
+/// A credential never comes back, so anything after the SSID is
+/// discarded rather than carried: a record that could hold one would be
+/// a place for one to be logged.
+fn decode_wifi_networks(value: &[u8]) -> Result<Vec<UlcpWifiNetworkRecord>, MobileError> {
+    let mut networks = Vec::new();
+    for item in items::prefixed_items(value) {
+        let item = item.map_err(|_| MobileError::InvalidUlcpFrame)?;
+        let entry = wifi::NetworkEntry::decode(item).map_err(|_| MobileError::InvalidUlcpFrame)?;
+        networks.push(UlcpWifiNetworkRecord {
+            hidden: entry.hidden,
+            security: entry.security.code(),
+            ssid: entry.ssid.to_vec(),
+        });
+    }
+    Ok(networks)
+}
+
+fn decode_wifi_scan_results(value: &[u8]) -> Result<Vec<UlcpWifiScanResultRecord>, MobileError> {
+    let mut results = Vec::new();
+    for item in items::prefixed_items(value) {
+        let item = item.map_err(|_| MobileError::InvalidUlcpFrame)?;
+        results.push(decode_wifi_scan_result(item)?);
+    }
+    Ok(results)
+}
+
+/// One scan result, which is also the shape of a `CMD_PROP_INSERTED`
+/// while a scan runs.
+fn decode_wifi_scan_result(item: &[u8]) -> Result<UlcpWifiScanResultRecord, MobileError> {
+    let result = wifi::ScanResult::decode(item).map_err(|_| MobileError::InvalidUlcpFrame)?;
+    Ok(UlcpWifiScanResultRecord {
+        modes: result.modes,
+        frequency_mhz: result.frequency_mhz,
+        rssi_dbm: result.rssi_dbm,
+        bssid: result.bssid.to_vec(),
+        ssid: result.ssid.to_vec(),
+    })
+}
+
+fn decode_wifi_link(value: &[u8]) -> Result<UlcpWifiLinkRecord, MobileError> {
+    let link = wifi::Link::decode(value).map_err(|_| MobileError::InvalidUlcpFrame)?;
+    Ok(UlcpWifiLinkRecord {
+        state: link.state.code(),
+        reason: link.reason.code(),
+        bssid: link.association.map(|a| a.bssid.to_vec()),
+        frequency_mhz: link.association.map(|a| a.frequency_mhz),
+    })
+}
+
+fn decode_ipv4_config(value: &[u8]) -> Result<UlcpIpConfigRecord, MobileError> {
+    let config = ip::V4Config::decode(value).map_err(|_| MobileError::InvalidUlcpFrame)?;
+    let carries_address = matches!(config.method, ip::Method::Static);
+    Ok(UlcpIpConfigRecord {
+        method: config.method.code(),
+        address: carries_address
+            .then(|| config.address.to_vec())
+            .unwrap_or_default(),
+        prefix: config.prefix,
+        gateway: carries_address
+            .then(|| config.gateway.to_vec())
+            .unwrap_or_default(),
+    })
+}
+
+fn decode_ipv6_config(value: &[u8]) -> Result<UlcpIpConfigRecord, MobileError> {
+    let config = ip::V6Config::decode(value).map_err(|_| MobileError::InvalidUlcpFrame)?;
+    let carries_address = matches!(config.method, ip::Method::Static);
+    Ok(UlcpIpConfigRecord {
+        method: config.method.code(),
+        address: carries_address
+            .then(|| config.address.to_vec())
+            .unwrap_or_default(),
+        prefix: config.prefix,
+        gateway: carries_address
+            .then(|| config.gateway.to_vec())
+            .unwrap_or_default(),
+    })
+}
+
+fn decode_ipv4_address(value: &[u8]) -> Result<UlcpIpv4AddressRecord, MobileError> {
+    let held = ip::V4Address::decode(value).map_err(|_| MobileError::InvalidUlcpFrame)?;
+    Ok(UlcpIpv4AddressRecord {
+        address: held.address.to_vec(),
+        prefix: held.prefix,
+        gateway: held.gateway.to_vec(),
+    })
+}
+
+fn decode_ipv6_addresses(value: &[u8]) -> Result<Vec<UlcpIpv6ItemRecord>, MobileError> {
+    let mut items_out = Vec::new();
+    for item in items::prefixed_items(value) {
+        let item = item.map_err(|_| MobileError::InvalidUlcpFrame)?;
+        let decoded = ip::V6Item::decode(item).map_err(|_| MobileError::InvalidUlcpFrame)?;
+        items_out.push(match decoded {
+            ip::V6Item::Address { address, prefix } => UlcpIpv6ItemRecord {
+                kind: ip::V6ItemKind::Address.code(),
+                address: address.to_vec(),
+                prefix,
+            },
+            ip::V6Item::Router { address } => UlcpIpv6ItemRecord {
+                kind: ip::V6ItemKind::Router.code(),
+                address: address.to_vec(),
+                prefix: 128,
+            },
+        });
+    }
+    Ok(items_out)
+}
+
+/// A resolver list, either the configured one or the one in use.
+///
+/// The items are variable-width by design, four octets or sixteen, so
+/// this cannot use the fixed-list decoder.
+fn decode_resolver_list(value: &[u8]) -> Result<Vec<Vec<u8>>, MobileError> {
+    let mut resolvers = Vec::new();
+    for item in items::prefixed_items(value) {
+        let item = item.map_err(|_| MobileError::InvalidUlcpFrame)?;
+        if !matches!(item.len(), 4 | 16) {
+            return Err(MobileError::InvalidUlcpFrame);
+        }
+        resolvers.push(item.to_vec());
+    }
+    Ok(resolvers)
+}
+
 fn decode_fixed_list<const N: usize>(value: &[u8]) -> Result<Vec<Vec<u8>>, MobileError> {
     items::fixed_items::<N>(value)
         .map_err(|_| MobileError::InvalidUlcpFrame)?
@@ -5612,6 +6275,24 @@ mod tests {
     fn property_response(tid: u8, property: u32, value: &[u8]) -> Vec<u8> {
         let mut bytes = vec![0; MAX_FRAME];
         let length = frame::prop_is(&mut bytes, tid, property, value).unwrap();
+        bytes.truncate(length);
+        bytes
+    }
+
+    /// An unsolicited item notification: one item of a multi-value
+    /// property, as a scan or an access point sends it.
+    fn notification_frame(command: Cmd, property: u32, item: &[u8]) -> Vec<u8> {
+        let mut bytes = vec![0; MAX_FRAME];
+        let length = match command {
+            Cmd::PropInserted => {
+                frame::prop_inserted(&mut bytes, frame::TID_UNSOLICITED, property, item)
+            }
+            Cmd::PropRemoved => {
+                frame::prop_removed(&mut bytes, frame::TID_UNSOLICITED, property, item)
+            }
+            other => panic!("{other:?} is not an item notification"),
+        }
+        .unwrap();
         bytes.truncate(length);
         bytes
     }
@@ -9284,7 +9965,479 @@ mod tests {
             cap::STATS,
             cap::SAVE,
             cap::CMD_MULTI,
+            cap::WIFI_SCAN,
+            cap::WIFI,
+            cap::IPV4,
+            cap::IPV6,
         ])
+    }
+
+    /// The scan is the base capability, so a tracker that can hear
+    /// access points and join none gets a screen with a scan on it and
+    /// nothing else.
+    #[test]
+    fn a_scan_only_device_gets_the_scan_and_nothing_else() {
+        assert_eq!(
+            ulcp_category_properties(
+                UlcpManageCategory::Wifi,
+                encoded_capabilities(&[cap::WIFI_SCAN])
+            )
+            .unwrap(),
+            vec![prop::WIFI_SCANNING, prop::WIFI_SCAN_RESULTS],
+        );
+        assert_eq!(
+            ulcp_category_properties(UlcpManageCategory::Wifi, managed_capabilities()).unwrap(),
+            vec![
+                prop::WIFI_SCANNING,
+                prop::WIFI_SCAN_RESULTS,
+                prop::WIFI_ENABLED,
+                prop::WIFI_NETWORKS,
+                prop::WIFI_NETWORK,
+                prop::WIFI_LINK,
+                // Asked for unconditionally, and refused by a stack that
+                // will not report them.
+                prop::WIFI_RSSI,
+                prop::WIFI_MAC,
+            ],
+        );
+        assert!(
+            ulcp_category_properties(UlcpManageCategory::Wifi, encoded_capabilities(&[]))
+                .unwrap()
+                .is_empty(),
+            "a device with no Wi-Fi has no Wi-Fi screen"
+        );
+    }
+
+    /// A family the device lacks is never asked for, so its absence is
+    /// not mistaken for a refusal.
+    #[test]
+    fn each_ip_family_is_asked_for_only_when_the_device_has_it() {
+        assert_eq!(
+            ulcp_category_properties(
+                UlcpManageCategory::Network,
+                encoded_capabilities(&[cap::IPV4])
+            )
+            .unwrap(),
+            vec![
+                prop::IPV4_STATE,
+                prop::IPV4_CONFIG,
+                prop::IPV4_ADDRESS,
+                prop::IP_DNS,
+                prop::IP_RESOLVERS,
+            ],
+        );
+        assert_eq!(
+            ulcp_category_properties(
+                UlcpManageCategory::Network,
+                encoded_capabilities(&[cap::IPV6])
+            )
+            .unwrap(),
+            vec![
+                prop::IPV6_STATE,
+                prop::IPV6_CONFIG,
+                prop::IPV6_ADDRESSES,
+                prop::IP_DNS,
+                prop::IP_RESOLVERS,
+            ],
+            "an IPv6-only device is ordinary, not a degraded IPv4 one"
+        );
+        assert_eq!(
+            ulcp_category_properties(UlcpManageCategory::Network, managed_capabilities())
+                .unwrap()
+                .len(),
+            8,
+        );
+        assert!(
+            ulcp_category_properties(UlcpManageCategory::Network, encoded_capabilities(&[]))
+                .unwrap()
+                .is_empty(),
+        );
+    }
+
+    #[test]
+    fn a_station_that_can_join_must_also_be_able_to_scan() {
+        assert!(validate_capability_dependencies(&[cap::WIFI_SCAN, cap::WIFI]).is_ok());
+        assert!(validate_capability_dependencies(&[cap::WIFI_SCAN]).is_ok());
+        assert!(validate_capability_dependencies(&[cap::WIFI]).is_err());
+        assert!(validate_capability_dependencies(&[cap::WIFI_AP]).is_err());
+        // The two families are peers: either alone is a legal device.
+        assert!(validate_capability_dependencies(&[cap::IPV4]).is_ok());
+        assert!(validate_capability_dependencies(&[cap::IPV6]).is_ok());
+    }
+
+    #[test]
+    fn a_wifi_reading_round_trips_every_field() {
+        let mut entry = [0u8; wifi::NETWORK_ENTRY_MAX_LEN];
+        let entry_len = wifi::NetworkEntry {
+            hidden: true,
+            raw_key: false,
+            security: wifi::SecurityMode::Wpa3,
+            ssid: b"home",
+            credential: b"",
+        }
+        .encode_reported(&mut entry)
+        .unwrap();
+        let mut table = vec![0u8; entry_len + 4];
+        let table_len = items::encode_prefixed_item(&entry[..entry_len], &mut table).unwrap();
+        table.truncate(table_len);
+
+        let mut link = [0u8; wifi::LINK_MAX_LEN];
+        let link_len = wifi::Link {
+            state: wifi::LinkState::Up,
+            reason: wifi::LinkReason::None,
+            association: Some(wifi::Association {
+                bssid: [1, 2, 3, 4, 5, 6],
+                frequency_mhz: 2437,
+            }),
+        }
+        .encode(&mut link)
+        .unwrap();
+
+        let properties = inspect_ulcp_properties(vec![
+            response(prop::WIFI_ENABLED, &[1]),
+            response(prop::WIFI_NETWORKS, &table),
+            response(prop::WIFI_NETWORK, b"home"),
+            response(prop::WIFI_SCANNING, &[0]),
+            response(prop::WIFI_LINK, &link[..link_len]),
+            response(prop::WIFI_RSSI, &[0xC0]),
+            response(prop::WIFI_MAC, &[0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF]),
+        ]);
+
+        assert_eq!(properties.wifi_enabled, Some(true));
+        assert_eq!(
+            properties.wifi_networks,
+            Some(vec![UlcpWifiNetworkRecord {
+                hidden: true,
+                security: wifi::SecurityMode::Wpa3.code(),
+                ssid: b"home".to_vec(),
+            }]),
+        );
+        assert_eq!(properties.wifi_network, Some(b"home".to_vec()));
+        assert_eq!(properties.wifi_scanning, Some(false));
+        assert_eq!(
+            properties.wifi_link,
+            Some(UlcpWifiLinkRecord {
+                state: wifi::LinkState::Up.code(),
+                reason: 0,
+                bssid: Some(vec![1, 2, 3, 4, 5, 6]),
+                frequency_mhz: Some(2437),
+            }),
+        );
+        assert_eq!(properties.wifi_rssi_dbm, Some(-64));
+        assert_eq!(
+            properties.wifi_mac,
+            Some(vec![0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF])
+        );
+        // Nothing else was asked for, so nothing else is present.
+        assert_eq!(properties.ipv4_state, None);
+        assert_eq!(properties.wifi_scan_results, None);
+    }
+
+    #[test]
+    fn a_deselected_station_is_a_value_not_an_absence() {
+        let properties = inspect_ulcp_properties(vec![response(prop::WIFI_NETWORK, b"")]);
+        assert_eq!(
+            properties.wifi_network,
+            Some(Vec::new()),
+            "empty means deselected, which a screen shows differently from unread"
+        );
+        assert_eq!(
+            inspect_ulcp_properties(Vec::new()).wifi_network,
+            None,
+            "and absent means the property was never read"
+        );
+    }
+
+    #[test]
+    fn an_empty_rssi_reads_as_no_measurement() {
+        // The station reports empty while the link is down, which is not
+        // a signal of zero.
+        assert_eq!(
+            inspect_ulcp_properties(vec![response(prop::WIFI_RSSI, &[])]).wifi_rssi_dbm,
+            None
+        );
+    }
+
+    #[test]
+    fn an_ip_reading_round_trips_both_families() {
+        let mut v4 = [0u8; ip::V4_CONFIG_STATIC_LEN];
+        let v4_len = ip::V4Config {
+            method: ip::Method::Static,
+            address: [192, 168, 1, 40],
+            prefix: 24,
+            gateway: [192, 168, 1, 1],
+        }
+        .encode(&mut v4)
+        .unwrap();
+
+        let mut held = [0u8; ip::V4_ADDRESS_LEN];
+        ip::V4Address {
+            address: [192, 168, 1, 40],
+            prefix: 24,
+            gateway: [192, 168, 1, 1],
+        }
+        .encode(&mut held)
+        .unwrap();
+
+        let mut item = [0u8; ip::V6_ADDRESS_ITEM_LEN];
+        let item_len = ip::V6Item::Address {
+            address: [0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
+            prefix: 64,
+        }
+        .encode(&mut item)
+        .unwrap();
+        let mut addresses = vec![0u8; item_len + 4];
+        let addresses_len = items::encode_prefixed_item(&item[..item_len], &mut addresses).unwrap();
+        addresses.truncate(addresses_len);
+
+        let mut resolvers = vec![0u8; 8];
+        let resolvers_len = items::encode_prefixed_item(&[8, 8, 8, 8], &mut resolvers).unwrap();
+        resolvers.truncate(resolvers_len);
+
+        let properties = inspect_ulcp_properties(vec![
+            response(prop::IPV4_STATE, &[ip::FamilyState::Ready.code()]),
+            response(prop::IPV4_CONFIG, &v4[..v4_len]),
+            response(prop::IPV4_ADDRESS, &held),
+            response(prop::IPV6_STATE, &[ip::FamilyState::Waiting.code()]),
+            response(prop::IPV6_ADDRESSES, &addresses),
+            response(prop::IP_DNS, &[]),
+            response(prop::IP_RESOLVERS, &resolvers),
+        ]);
+
+        assert_eq!(properties.ipv4_state, Some(ip::FamilyState::Ready.code()));
+        assert_eq!(
+            properties.ipv4_config,
+            Some(UlcpIpConfigRecord {
+                method: ip::Method::Static.code(),
+                address: vec![192, 168, 1, 40],
+                prefix: 24,
+                gateway: vec![192, 168, 1, 1],
+            }),
+        );
+        assert_eq!(
+            properties.ipv4_address,
+            Some(UlcpIpv4AddressRecord {
+                address: vec![192, 168, 1, 40],
+                prefix: 24,
+                gateway: vec![192, 168, 1, 1],
+            }),
+        );
+        assert_eq!(properties.ipv6_state, Some(ip::FamilyState::Waiting.code()));
+        assert_eq!(
+            properties.ipv6_addresses.as_deref().map(<[_]>::len),
+            Some(1)
+        );
+        assert_eq!(
+            properties.ip_dns,
+            Some(Vec::new()),
+            "empty means the network's resolvers, which is the default"
+        );
+        assert_eq!(properties.ip_resolvers, Some(vec![vec![8, 8, 8, 8]]));
+    }
+
+    #[test]
+    fn an_empty_ipv4_address_reads_as_not_ready() {
+        assert_eq!(
+            inspect_ulcp_properties(vec![response(prop::IPV4_ADDRESS, &[])]).ipv4_address,
+            None
+        );
+    }
+
+    #[test]
+    fn only_the_writable_wifi_and_ip_properties_are_written() {
+        let desired = UlcpDevicePropertiesRecord {
+            wifi_enabled: Some(true),
+            wifi_scanning: Some(true),
+            wifi_network: Some(b"home".to_vec()),
+            ipv4_config: Some(UlcpIpConfigRecord {
+                method: ip::Method::Auto.code(),
+                ..UlcpIpConfigRecord::default()
+            }),
+            ip_dns: Some(vec![vec![8, 8, 8, 8]]),
+            ..UlcpDevicePropertiesRecord::default()
+        };
+        let writes = ulcp_dirty_writes(
+            desired.clone(),
+            vec![
+                prop::WIFI_ENABLED,
+                prop::WIFI_SCANNING,
+                prop::WIFI_NETWORK,
+                prop::IPV4_CONFIG,
+                prop::IP_DNS,
+            ],
+        )
+        .unwrap();
+        // Looked up by property rather than position: the plan decides
+        // the order writes go out in, and it is not the caller's.
+        let value_of = |key: u32| {
+            writes
+                .iter()
+                .find(|write| write.property_id == key)
+                .map(|write| write.value.clone())
+        };
+        assert_eq!(writes.len(), 5);
+        assert_eq!(value_of(prop::WIFI_ENABLED), Some(vec![1]));
+        assert_eq!(value_of(prop::WIFI_SCANNING), Some(vec![1]));
+        assert_eq!(value_of(prop::WIFI_NETWORK), Some(b"home".to_vec()));
+        assert_eq!(
+            value_of(prop::IPV4_CONFIG),
+            Some(vec![ip::Method::Auto.code()])
+        );
+
+        // Read-only properties have no arm and are refused rather than
+        // silently dropped.
+        for read_only in [
+            prop::WIFI_SCAN_RESULTS,
+            prop::WIFI_LINK,
+            prop::WIFI_RSSI,
+            prop::WIFI_MAC,
+            prop::IPV4_STATE,
+            prop::IPV6_STATE,
+            prop::IPV4_ADDRESS,
+            prop::IPV6_ADDRESSES,
+            prop::IP_RESOLVERS,
+            // The table is edited by insert and remove, never written
+            // whole: a host cannot read a credential back to restate it.
+            prop::WIFI_NETWORKS,
+        ] {
+            assert!(
+                ulcp_dirty_writes(desired.clone(), vec![read_only]).is_err(),
+                "property {read_only} must not be writable through the dirty set"
+            );
+        }
+    }
+
+    #[test]
+    fn a_static_address_the_device_would_refuse_never_leaves_the_phone() {
+        let with_config = |config| UlcpDevicePropertiesRecord {
+            ipv4_config: Some(config),
+            ..UlcpDevicePropertiesRecord::default()
+        };
+        let good = UlcpIpConfigRecord {
+            method: ip::Method::Static.code(),
+            address: vec![192, 168, 1, 40],
+            prefix: 24,
+            gateway: vec![192, 168, 1, 1],
+        };
+        assert!(ulcp_dirty_writes(with_config(good.clone()), vec![prop::IPV4_CONFIG]).is_ok());
+        // One rejected write abandons everything after it in the batch,
+        // so an address the operator mistyped is caught here.
+        let link_local = UlcpIpConfigRecord {
+            address: vec![169, 254, 1, 1],
+            ..good.clone()
+        };
+        assert!(ulcp_dirty_writes(with_config(link_local), vec![prop::IPV4_CONFIG]).is_err());
+        let bad_prefix = UlcpIpConfigRecord {
+            prefix: 33,
+            ..good.clone()
+        };
+        assert!(ulcp_dirty_writes(with_config(bad_prefix), vec![prop::IPV4_CONFIG]).is_err());
+        let short = UlcpIpConfigRecord {
+            address: vec![192, 168, 1],
+            ..good
+        };
+        assert!(ulcp_dirty_writes(with_config(short), vec![prop::IPV4_CONFIG]).is_err());
+        // A resolver that is not a unicast host is refused the same way.
+        assert!(
+            ulcp_dirty_writes(
+                UlcpDevicePropertiesRecord {
+                    ip_dns: Some(vec![vec![127, 0, 0, 1]]),
+                    ..UlcpDevicePropertiesRecord::default()
+                },
+                vec![prop::IP_DNS]
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn a_network_item_is_validated_before_it_is_built() {
+        // The one path a Wi-Fi credential takes across the boundary.
+        let item = ulcp_wifi_network_item(
+            b"home".to_vec(),
+            wifi::SecurityMode::Wpa2.code(),
+            false,
+            b"correct horse".to_vec(),
+        )
+        .unwrap();
+        let decoded = wifi::NetworkEntry::decode(&item).unwrap();
+        assert_eq!(decoded.ssid, b"home");
+        assert_eq!(decoded.credential, b"correct horse");
+
+        // Too short for WPA2, which the device would refuse.
+        assert!(
+            ulcp_wifi_network_item(
+                b"home".to_vec(),
+                wifi::SecurityMode::Wpa2.code(),
+                false,
+                b"short".to_vec()
+            )
+            .is_err()
+        );
+        // Open takes no credential.
+        assert!(
+            ulcp_wifi_network_item(
+                b"home".to_vec(),
+                wifi::SecurityMode::Open.code(),
+                false,
+                b"unexpected".to_vec()
+            )
+            .is_err()
+        );
+        assert!(
+            ulcp_wifi_network_item(
+                b"home".to_vec(),
+                wifi::SecurityMode::Open.code(),
+                false,
+                Vec::new()
+            )
+            .is_ok()
+        );
+        // An enterprise mode has no credential form here at all.
+        assert!(
+            ulcp_wifi_network_item(
+                b"home".to_vec(),
+                wifi::SecurityMode::Wpa2Ent.code(),
+                false,
+                Vec::new()
+            )
+            .is_err()
+        );
+        // An empty SSID could be stored and never selected.
+        assert!(
+            ulcp_wifi_network_item(
+                Vec::new(),
+                wifi::SecurityMode::Open.code(),
+                false,
+                Vec::new()
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn a_scan_insert_reduces_the_way_a_whole_table_does() {
+        let mut item = [0u8; wifi::SCAN_RESULT_MAX_LEN];
+        let len = wifi::ScanResult {
+            modes: wifi::SecurityMode::Wpa2.bit(),
+            frequency_mhz: 2462,
+            rssi_dbm: -40,
+            bssid: [6, 5, 4, 3, 2, 1],
+            ssid: b"cafe",
+        }
+        .encode(&mut item)
+        .unwrap();
+
+        let from_insert = inspect_ulcp_wifi_scan_result(item[..len].to_vec()).unwrap();
+
+        let mut table = vec![0u8; len + 4];
+        let table_len = items::encode_prefixed_item(&item[..len], &mut table).unwrap();
+        table.truncate(table_len);
+        let from_table = inspect_ulcp_properties(vec![response(prop::WIFI_SCAN_RESULTS, &table)])
+            .wifi_scan_results
+            .unwrap();
+
+        assert_eq!(vec![from_insert], from_table, "one item, two carriers");
     }
 
     /// Bluetooth has one capability, so the screen asks for everything it
@@ -10123,8 +11276,121 @@ mod tests {
             vec![UlcpPropertyPushRecord {
                 property_id: prop::IDENT_MOBILE,
                 value: vec![1],
+                kind: UlcpPropertyPushKind::Is,
             }],
             "a push reaches whoever caches values by number, not just the snapshot"
+        );
+    }
+
+    #[test]
+    fn a_scan_streams_its_results_as_inserts() {
+        let session = MobileUlcpSession::new();
+        attach_commissionable(&session, Some(vec![0xAA; 32]), vec![0xAA; 32]);
+
+        // The order a scan goes out in: the empty value clears the
+        // table, the switch says a scan is running, one insert per
+        // access point, and the switch says it finished.
+        let cleared = session
+            .consume(property_response(
+                frame::TID_UNSOLICITED,
+                prop::WIFI_SCAN_RESULTS,
+                &[],
+            ))
+            .unwrap();
+        assert_eq!(cleared.pushed_properties[0].kind, UlcpPropertyPushKind::Is);
+        assert!(cleared.pushed_properties[0].value.is_empty());
+
+        let started = session
+            .consume(property_response(
+                frame::TID_UNSOLICITED,
+                prop::WIFI_SCANNING,
+                &[1],
+            ))
+            .unwrap();
+        assert_eq!(started.pushed_properties[0].value, vec![1]);
+
+        let mut item = [0u8; wifi::SCAN_RESULT_MAX_LEN];
+        let len = wifi::ScanResult {
+            modes: wifi::SecurityMode::Wpa2.bit(),
+            frequency_mhz: 2437,
+            rssi_dbm: -55,
+            bssid: [1, 2, 3, 4, 5, 6],
+            ssid: b"home",
+        }
+        .encode(&mut item)
+        .unwrap();
+        let inserted = session
+            .consume(notification_frame(
+                Cmd::PropInserted,
+                prop::WIFI_SCAN_RESULTS,
+                &item[..len],
+            ))
+            .unwrap();
+        assert_eq!(
+            inserted.pushed_properties,
+            vec![UlcpPropertyPushRecord {
+                property_id: prop::WIFI_SCAN_RESULTS,
+                value: item[..len].to_vec(),
+                kind: UlcpPropertyPushKind::Inserted,
+            }],
+            "an access point heard mid-scan reaches the host as one item"
+        );
+
+        let finished = session
+            .consume(property_response(
+                frame::TID_UNSOLICITED,
+                prop::WIFI_SCANNING,
+                &[0],
+            ))
+            .unwrap();
+        assert_eq!(finished.pushed_properties[0].value, vec![0]);
+    }
+
+    #[test]
+    fn an_item_notification_does_not_become_the_whole_value() {
+        let session = MobileUlcpSession::new();
+        attach_commissionable(&session, Some(vec![0xAA; 32]), vec![0xAA; 32]);
+
+        let mut item = [0u8; wifi::SCAN_RESULT_MAX_LEN];
+        let len = wifi::ScanResult {
+            modes: 0,
+            frequency_mhz: 5180,
+            rssi_dbm: -70,
+            bssid: [9, 9, 9, 9, 9, 9],
+            ssid: b"",
+        }
+        .encode(&mut item)
+        .unwrap();
+        session
+            .consume(notification_frame(
+                Cmd::PropInserted,
+                prop::WIFI_SCAN_RESULTS,
+                &item[..len],
+            ))
+            .unwrap();
+
+        // A later read must not see a table this session assembled out
+        // of its own increments: the device reports the whole value.
+        let update = session.begin_property_fetch(vec![prop::WIFI_SCAN_RESULTS]);
+        assert!(update.is_ok());
+    }
+
+    #[test]
+    fn a_removed_notification_carries_its_kind() {
+        let session = MobileUlcpSession::new();
+        attach_commissionable(&session, Some(vec![0xAA; 32]), vec![0xAA; 32]);
+
+        let update = session
+            .consume(notification_frame(
+                Cmd::PropRemoved,
+                prop::WIFI_AP_CLIENTS,
+                &[1, 2, 3, 4, 5, 6],
+            ))
+            .unwrap();
+        assert_eq!(
+            update.pushed_properties[0].kind,
+            UlcpPropertyPushKind::Removed,
+            "a client leaving is a fact the host wants"
         );
     }
 

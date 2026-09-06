@@ -335,6 +335,10 @@ final class ManageDeviceModel {
             supportsAdmin: decoded.supportsAdmin,
             supportsAlert: decoded.supportsAlert,
             supportsBle: decoded.supportsBle,
+            supportsWifiScan: decoded.supportsWifiScan,
+            supportsWifi: decoded.supportsWifi,
+            supportsIpv4: decoded.supportsIpv4,
+            supportsIpv6: decoded.supportsIpv6,
             supportsReboot: decoded.supportsReboot,
             supportsSave: decoded.supportsSave,
             supportsMulti: decoded.supportsMulti
@@ -600,12 +604,20 @@ final class ManageDeviceModel {
         }
         guard problem == nil else { return }
         await absorb(
-            UlcpPropertyPushRecord(propertyId: ulcpProperties.bleBondCount, value: Data([0]))
+            UlcpPropertyPushRecord(
+                propertyId: ulcpProperties.bleBondCount,
+                value: Data([0]),
+                kind: .is
+            )
         )
         // Clearing opens a pairing window, and the window is a property
         // this screen shows as a toggle—reflect what the write means.
         await absorb(
-            UlcpPropertyPushRecord(propertyId: ulcpProperties.blePairing, value: Data([1]))
+            UlcpPropertyPushRecord(
+                propertyId: ulcpProperties.blePairing,
+                value: Data([1]),
+                kind: .is
+            )
         )
     }
 

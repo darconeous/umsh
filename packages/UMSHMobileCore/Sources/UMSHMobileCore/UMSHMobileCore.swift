@@ -3315,6 +3315,23 @@ public protocol MobileUlcpSessionProtocol: AnyObject, Sendable {
     func beginPropertyFetch(propertyIds: [UInt32]) throws  -> UlcpSessionUpdateRecord
 
     /**
+     * Add or drop items of a multi-value property, on the local link.
+     *
+     * The mesh binding has had this since it was written; the local one
+     * only ever needed whole-value writes, because every table it
+     * touched was written whole. A Wi-Fi network cannot be: the
+     * credential has one home and cannot be read back, so a host can
+     * only write a whole table it holds every credential for. Inserting
+     * is the ordinary path, and replace-by-key is what makes correcting
+     * a passphrase one exchange.
+     *
+     * Each mutation is answered by the device's own notification of the
+     * item it changed, or by a per-property refusal recorded the way a
+     * refused write is.
+     */
+    func beginPropertyItems(propertyId: UInt32, mutations: [UlcpItemMutationRecord]) throws  -> UlcpSessionUpdateRecord
+
+    /**
      * Write the given properties, in the given order, and answer with
      * what the device says each is now worth.
      *
@@ -3829,6 +3846,32 @@ open func beginPropertyFetch(propertyIds: [UInt32])throws  -> UlcpSessionUpdateR
     uniffi_umsh_mobile_core_fn_method_mobileulcpsession_begin_property_fetch(
             self.uniffiCloneHandle(),
         FfiConverterSequenceUInt32.lower(propertyIds),uniffiCallStatus
+    )
+})
+}
+
+    /**
+     * Add or drop items of a multi-value property, on the local link.
+     *
+     * The mesh binding has had this since it was written; the local one
+     * only ever needed whole-value writes, because every table it
+     * touched was written whole. A Wi-Fi network cannot be: the
+     * credential has one home and cannot be read back, so a host can
+     * only write a whole table it holds every credential for. Inserting
+     * is the ordinary path, and replace-by-key is what makes correcting
+     * a passphrase one exchange.
+     *
+     * Each mutation is answered by the device's own notification of the
+     * item it changed, or by a per-property refusal recorded the way a
+     * refused write is.
+     */
+open func beginPropertyItems(propertyId: UInt32, mutations: [UlcpItemMutationRecord])throws  -> UlcpSessionUpdateRecord  {
+    return try  FfiConverterTypeUlcpSessionUpdateRecord_lift(try rustCallWithError(FfiConverterTypeMobileError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileulcpsession_begin_property_items(
+            self.uniffiCloneHandle(),
+        FfiConverterUInt32.lower(propertyId),
+        FfiConverterSequenceTypeUlcpItemMutationRecord.lower(mutations),uniffiCallStatus
     )
 })
 }
@@ -8290,6 +8333,17 @@ public struct UlcpDeviceCardRecord: Equatable, Hashable {
      */
     public var supportsBle: Bool
     /**
+     * Whether the device can scan for Wi-Fi networks, which a device
+     * that cannot join one may still be able to do.
+     */
+    public var supportsWifiScan: Bool
+    /**
+     * Whether it has a station to join them with.
+     */
+    public var supportsWifi: Bool
+    public var supportsIpv4: Bool
+    public var supportsIpv6: Bool
+    /**
      * Whether a Restart control is worth offering (`CAP_REBOOT`).
      */
     public var supportsReboot: Bool
@@ -8321,6 +8375,13 @@ public struct UlcpDeviceCardRecord: Equatable, Hashable {
          * unreachable over (`CAP_BLE`).
          */supportsBle: Bool,
         /**
+         * Whether the device can scan for Wi-Fi networks, which a device
+         * that cannot join one may still be able to do.
+         */supportsWifiScan: Bool,
+        /**
+         * Whether it has a station to join them with.
+         */supportsWifi: Bool, supportsIpv4: Bool, supportsIpv6: Bool,
+        /**
          * Whether a Restart control is worth offering (`CAP_REBOOT`).
          */supportsReboot: Bool, supportsSave: Bool,
         /**
@@ -8344,6 +8405,10 @@ public struct UlcpDeviceCardRecord: Equatable, Hashable {
         self.supportsAdmin = supportsAdmin
         self.supportsAlert = supportsAlert
         self.supportsBle = supportsBle
+        self.supportsWifiScan = supportsWifiScan
+        self.supportsWifi = supportsWifi
+        self.supportsIpv4 = supportsIpv4
+        self.supportsIpv6 = supportsIpv6
         self.supportsReboot = supportsReboot
         self.supportsSave = supportsSave
         self.supportsMulti = supportsMulti
@@ -8381,6 +8446,10 @@ public struct FfiConverterTypeUlcpDeviceCardRecord: FfiConverterRustBuffer {
                 supportsAdmin: FfiConverterBool.read(from: &buf),
                 supportsAlert: FfiConverterBool.read(from: &buf),
                 supportsBle: FfiConverterBool.read(from: &buf),
+                supportsWifiScan: FfiConverterBool.read(from: &buf),
+                supportsWifi: FfiConverterBool.read(from: &buf),
+                supportsIpv4: FfiConverterBool.read(from: &buf),
+                supportsIpv6: FfiConverterBool.read(from: &buf),
                 supportsReboot: FfiConverterBool.read(from: &buf),
                 supportsSave: FfiConverterBool.read(from: &buf),
                 supportsMulti: FfiConverterBool.read(from: &buf)
@@ -8404,6 +8473,10 @@ public struct FfiConverterTypeUlcpDeviceCardRecord: FfiConverterRustBuffer {
         FfiConverterBool.write(value.supportsAdmin, into: &buf)
         FfiConverterBool.write(value.supportsAlert, into: &buf)
         FfiConverterBool.write(value.supportsBle, into: &buf)
+        FfiConverterBool.write(value.supportsWifiScan, into: &buf)
+        FfiConverterBool.write(value.supportsWifi, into: &buf)
+        FfiConverterBool.write(value.supportsIpv4, into: &buf)
+        FfiConverterBool.write(value.supportsIpv6, into: &buf)
         FfiConverterBool.write(value.supportsReboot, into: &buf)
         FfiConverterBool.write(value.supportsSave, into: &buf)
         FfiConverterBool.write(value.supportsMulti, into: &buf)
@@ -8683,6 +8756,69 @@ public struct UlcpDevicePropertiesRecord: Equatable, Hashable {
      */
     public var blePairing: Bool?
     /**
+     * Whether the Wi-Fi station is up.
+     */
+    public var wifiEnabled: Bool?
+    /**
+     * The networks the device knows, without their credentials.
+     */
+    public var wifiNetworks: [UlcpWifiNetworkRecord]?
+    /**
+     * The selected network's SSID. **Present and empty** means the
+     * device is deselected, which is a state; absent means the property
+     * was not read.
+     */
+    public var wifiNetwork: Data?
+    /**
+     * Whether a scan is running.
+     */
+    public var wifiScanning: Bool?
+    /**
+     * What the current or last scan found, strongest first.
+     */
+    public var wifiScanResults: [UlcpWifiScanResultRecord]?
+    /**
+     * What the station is doing.
+     */
+    public var wifiLink: UlcpWifiLinkRecord?
+    /**
+     * Signal of the current association. Absent when the link is down
+     * and on a device whose stack will not report it.
+     */
+    public var wifiRssiDbm: Int8?
+    /**
+     * The station's MAC address. Absent on a device that will not
+     * report one.
+     */
+    public var wifiMac: Data?
+    /**
+     * IPv4 readiness, an `IP_*` code.
+     */
+    public var ipv4State: UInt8?
+    public var ipv4Config: UlcpIpConfigRecord?
+    /**
+     * The IPv4 address in effect. Absent when the family is not ready.
+     */
+    public var ipv4Address: UlcpIpv4AddressRecord?
+    /**
+     * IPv6 readiness, from the same enumeration as `ipv4_state`.
+     */
+    public var ipv6State: UInt8?
+    public var ipv6Config: UlcpIpConfigRecord?
+    /**
+     * The IPv6 addresses and routers in effect.
+     */
+    public var ipv6Addresses: [UlcpIpv6ItemRecord]?
+    /**
+     * Configured resolvers. Present and empty means "use what the
+     * network provides", which is the default.
+     */
+    public var ipDns: [Data]?
+    /**
+     * The resolvers actually in use, whatever their source.
+     */
+    public var ipResolvers: [Data]?
+    /**
      * What the device's clock read when it answered. Present when the
      * clock was asked about; the inner epoch is absent on a device that
      * has not found the time.
@@ -8743,6 +8879,53 @@ public struct UlcpDevicePropertiesRecord: Equatable, Hashable {
          * device that does not manage its own bonds.
          */blePairing: Bool?,
         /**
+         * Whether the Wi-Fi station is up.
+         */wifiEnabled: Bool?,
+        /**
+         * The networks the device knows, without their credentials.
+         */wifiNetworks: [UlcpWifiNetworkRecord]?,
+        /**
+         * The selected network's SSID. **Present and empty** means the
+         * device is deselected, which is a state; absent means the property
+         * was not read.
+         */wifiNetwork: Data?,
+        /**
+         * Whether a scan is running.
+         */wifiScanning: Bool?,
+        /**
+         * What the current or last scan found, strongest first.
+         */wifiScanResults: [UlcpWifiScanResultRecord]?,
+        /**
+         * What the station is doing.
+         */wifiLink: UlcpWifiLinkRecord?,
+        /**
+         * Signal of the current association. Absent when the link is down
+         * and on a device whose stack will not report it.
+         */wifiRssiDbm: Int8?,
+        /**
+         * The station's MAC address. Absent on a device that will not
+         * report one.
+         */wifiMac: Data?,
+        /**
+         * IPv4 readiness, an `IP_*` code.
+         */ipv4State: UInt8?, ipv4Config: UlcpIpConfigRecord?,
+        /**
+         * The IPv4 address in effect. Absent when the family is not ready.
+         */ipv4Address: UlcpIpv4AddressRecord?,
+        /**
+         * IPv6 readiness, from the same enumeration as `ipv4_state`.
+         */ipv6State: UInt8?, ipv6Config: UlcpIpConfigRecord?,
+        /**
+         * The IPv6 addresses and routers in effect.
+         */ipv6Addresses: [UlcpIpv6ItemRecord]?,
+        /**
+         * Configured resolvers. Present and empty means "use what the
+         * network provides", which is the default.
+         */ipDns: [Data]?,
+        /**
+         * The resolvers actually in use, whatever their source.
+         */ipResolvers: [Data]?,
+        /**
          * What the device's clock read when it answered. Present when the
          * clock was asked about; the inner epoch is absent on a device that
          * has not found the time.
@@ -8787,6 +8970,22 @@ public struct UlcpDevicePropertiesRecord: Equatable, Hashable {
         self.bleBondCount = bleBondCount
         self.bleLink = bleLink
         self.blePairing = blePairing
+        self.wifiEnabled = wifiEnabled
+        self.wifiNetworks = wifiNetworks
+        self.wifiNetwork = wifiNetwork
+        self.wifiScanning = wifiScanning
+        self.wifiScanResults = wifiScanResults
+        self.wifiLink = wifiLink
+        self.wifiRssiDbm = wifiRssiDbm
+        self.wifiMac = wifiMac
+        self.ipv4State = ipv4State
+        self.ipv4Config = ipv4Config
+        self.ipv4Address = ipv4Address
+        self.ipv6State = ipv6State
+        self.ipv6Config = ipv6Config
+        self.ipv6Addresses = ipv6Addresses
+        self.ipDns = ipDns
+        self.ipResolvers = ipResolvers
         self.time = time
         self.tzOffsetMin = tzOffsetMin
         self.repeaterEnabled = repeaterEnabled
@@ -8854,6 +9053,22 @@ public struct FfiConverterTypeUlcpDevicePropertiesRecord: FfiConverterRustBuffer
                 bleBondCount: FfiConverterOptionUInt8.read(from: &buf),
                 bleLink: FfiConverterOptionUInt8.read(from: &buf),
                 blePairing: FfiConverterOptionBool.read(from: &buf),
+                wifiEnabled: FfiConverterOptionBool.read(from: &buf),
+                wifiNetworks: FfiConverterOptionSequenceTypeUlcpWifiNetworkRecord.read(from: &buf),
+                wifiNetwork: FfiConverterOptionData.read(from: &buf),
+                wifiScanning: FfiConverterOptionBool.read(from: &buf),
+                wifiScanResults: FfiConverterOptionSequenceTypeUlcpWifiScanResultRecord.read(from: &buf),
+                wifiLink: FfiConverterOptionTypeUlcpWifiLinkRecord.read(from: &buf),
+                wifiRssiDbm: FfiConverterOptionInt8.read(from: &buf),
+                wifiMac: FfiConverterOptionData.read(from: &buf),
+                ipv4State: FfiConverterOptionUInt8.read(from: &buf),
+                ipv4Config: FfiConverterOptionTypeUlcpIpConfigRecord.read(from: &buf),
+                ipv4Address: FfiConverterOptionTypeUlcpIpv4AddressRecord.read(from: &buf),
+                ipv6State: FfiConverterOptionUInt8.read(from: &buf),
+                ipv6Config: FfiConverterOptionTypeUlcpIpConfigRecord.read(from: &buf),
+                ipv6Addresses: FfiConverterOptionSequenceTypeUlcpIpv6ItemRecord.read(from: &buf),
+                ipDns: FfiConverterOptionSequenceData.read(from: &buf),
+                ipResolvers: FfiConverterOptionSequenceData.read(from: &buf),
                 time: FfiConverterOptionTypeUlcpTimeRecord.read(from: &buf),
                 tzOffsetMin: FfiConverterOptionInt16.read(from: &buf),
                 repeaterEnabled: FfiConverterOptionBool.read(from: &buf),
@@ -8907,6 +9122,22 @@ public struct FfiConverterTypeUlcpDevicePropertiesRecord: FfiConverterRustBuffer
         FfiConverterOptionUInt8.write(value.bleBondCount, into: &buf)
         FfiConverterOptionUInt8.write(value.bleLink, into: &buf)
         FfiConverterOptionBool.write(value.blePairing, into: &buf)
+        FfiConverterOptionBool.write(value.wifiEnabled, into: &buf)
+        FfiConverterOptionSequenceTypeUlcpWifiNetworkRecord.write(value.wifiNetworks, into: &buf)
+        FfiConverterOptionData.write(value.wifiNetwork, into: &buf)
+        FfiConverterOptionBool.write(value.wifiScanning, into: &buf)
+        FfiConverterOptionSequenceTypeUlcpWifiScanResultRecord.write(value.wifiScanResults, into: &buf)
+        FfiConverterOptionTypeUlcpWifiLinkRecord.write(value.wifiLink, into: &buf)
+        FfiConverterOptionInt8.write(value.wifiRssiDbm, into: &buf)
+        FfiConverterOptionData.write(value.wifiMac, into: &buf)
+        FfiConverterOptionUInt8.write(value.ipv4State, into: &buf)
+        FfiConverterOptionTypeUlcpIpConfigRecord.write(value.ipv4Config, into: &buf)
+        FfiConverterOptionTypeUlcpIpv4AddressRecord.write(value.ipv4Address, into: &buf)
+        FfiConverterOptionUInt8.write(value.ipv6State, into: &buf)
+        FfiConverterOptionTypeUlcpIpConfigRecord.write(value.ipv6Config, into: &buf)
+        FfiConverterOptionSequenceTypeUlcpIpv6ItemRecord.write(value.ipv6Addresses, into: &buf)
+        FfiConverterOptionSequenceData.write(value.ipDns, into: &buf)
+        FfiConverterOptionSequenceData.write(value.ipResolvers, into: &buf)
         FfiConverterOptionTypeUlcpTimeRecord.write(value.time, into: &buf)
         FfiConverterOptionInt16.write(value.tzOffsetMin, into: &buf)
         FfiConverterOptionBool.write(value.repeaterEnabled, into: &buf)
@@ -9309,6 +9540,303 @@ public func FfiConverterTypeUlcpIdentPositionRecord_lower(_ value: UlcpIdentPosi
 
 
 /**
+ * `PROP_IPV4_CONFIG` or `PROP_IPV6_CONFIG`.
+ *
+ * One record for both families: the structures differ only in address
+ * width, and a screen that rendered them from two records would be the
+ * same screen twice.
+ */
+public struct UlcpIpConfigRecord: Equatable, Hashable {
+    /**
+     * An `IP_METHOD_*` code.
+     */
+    public var method: UInt8
+    /**
+     * Four or sixteen octets under the static method, empty otherwise.
+     */
+    public var address: Data
+    public var prefix: UInt8
+    /**
+     * All-zero for no default route, empty when the method carries no
+     * address at all.
+     */
+    public var gateway: Data
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * An `IP_METHOD_*` code.
+         */method: UInt8,
+        /**
+         * Four or sixteen octets under the static method, empty otherwise.
+         */address: Data, prefix: UInt8,
+        /**
+         * All-zero for no default route, empty when the method carries no
+         * address at all.
+         */gateway: Data) {
+        self.method = method
+        self.address = address
+        self.prefix = prefix
+        self.gateway = gateway
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension UlcpIpConfigRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeUlcpIpConfigRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> UlcpIpConfigRecord {
+        return
+            try UlcpIpConfigRecord(
+                method: FfiConverterUInt8.read(from: &buf),
+                address: FfiConverterData.read(from: &buf),
+                prefix: FfiConverterUInt8.read(from: &buf),
+                gateway: FfiConverterData.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: UlcpIpConfigRecord, into buf: inout [UInt8]) {
+        FfiConverterUInt8.write(value.method, into: &buf)
+        FfiConverterData.write(value.address, into: &buf)
+        FfiConverterUInt8.write(value.prefix, into: &buf)
+        FfiConverterData.write(value.gateway, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeUlcpIpConfigRecord_lift(_ buf: RustBuffer) throws -> UlcpIpConfigRecord {
+    return try FfiConverterTypeUlcpIpConfigRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeUlcpIpConfigRecord_lower(_ value: UlcpIpConfigRecord) -> RustBuffer {
+    return FfiConverterTypeUlcpIpConfigRecord.lower(value)
+}
+
+
+/**
+ * `PROP_IPV4_ADDRESS`: what the interface holds.
+ */
+public struct UlcpIpv4AddressRecord: Equatable, Hashable {
+    public var address: Data
+    public var prefix: UInt8
+    /**
+     * All-zero when the network offered no way out, which is still
+     * ready.
+     */
+    public var gateway: Data
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(address: Data, prefix: UInt8,
+        /**
+         * All-zero when the network offered no way out, which is still
+         * ready.
+         */gateway: Data) {
+        self.address = address
+        self.prefix = prefix
+        self.gateway = gateway
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension UlcpIpv4AddressRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeUlcpIpv4AddressRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> UlcpIpv4AddressRecord {
+        return
+            try UlcpIpv4AddressRecord(
+                address: FfiConverterData.read(from: &buf),
+                prefix: FfiConverterUInt8.read(from: &buf),
+                gateway: FfiConverterData.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: UlcpIpv4AddressRecord, into buf: inout [UInt8]) {
+        FfiConverterData.write(value.address, into: &buf)
+        FfiConverterUInt8.write(value.prefix, into: &buf)
+        FfiConverterData.write(value.gateway, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeUlcpIpv4AddressRecord_lift(_ buf: RustBuffer) throws -> UlcpIpv4AddressRecord {
+    return try FfiConverterTypeUlcpIpv4AddressRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeUlcpIpv4AddressRecord_lower(_ value: UlcpIpv4AddressRecord) -> RustBuffer {
+    return FfiConverterTypeUlcpIpv4AddressRecord.lower(value)
+}
+
+
+/**
+ * One item of `PROP_IPV6_ADDRESSES`: an address the device holds, or a
+ * router it has selected.
+ */
+public struct UlcpIpv6ItemRecord: Equatable, Hashable {
+    /**
+     * An `IPV6_*` item kind: 0 an address, 1 a router.
+     */
+    public var kind: UInt8
+    public var address: Data
+    /**
+     * The prefix the assignment carried. 128 on a router item, and on
+     * an address from DHCPv6, which assigns no prefix.
+     */
+    public var prefix: UInt8
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * An `IPV6_*` item kind: 0 an address, 1 a router.
+         */kind: UInt8, address: Data,
+        /**
+         * The prefix the assignment carried. 128 on a router item, and on
+         * an address from DHCPv6, which assigns no prefix.
+         */prefix: UInt8) {
+        self.kind = kind
+        self.address = address
+        self.prefix = prefix
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension UlcpIpv6ItemRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeUlcpIpv6ItemRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> UlcpIpv6ItemRecord {
+        return
+            try UlcpIpv6ItemRecord(
+                kind: FfiConverterUInt8.read(from: &buf),
+                address: FfiConverterData.read(from: &buf),
+                prefix: FfiConverterUInt8.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: UlcpIpv6ItemRecord, into buf: inout [UInt8]) {
+        FfiConverterUInt8.write(value.kind, into: &buf)
+        FfiConverterData.write(value.address, into: &buf)
+        FfiConverterUInt8.write(value.prefix, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeUlcpIpv6ItemRecord_lift(_ buf: RustBuffer) throws -> UlcpIpv6ItemRecord {
+    return try FfiConverterTypeUlcpIpv6ItemRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeUlcpIpv6ItemRecord_lower(_ value: UlcpIpv6ItemRecord) -> RustBuffer {
+    return FfiConverterTypeUlcpIpv6ItemRecord.lower(value)
+}
+
+
+/**
+ * One item to add to or drop from a multi-value property.
+ */
+public struct UlcpItemMutationRecord: Equatable, Hashable {
+    public var mutation: UlcpItemMutation
+    /**
+     * A whole item to insert, or the remove selector to drop one.
+     */
+    public var value: Data
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(mutation: UlcpItemMutation,
+        /**
+         * A whole item to insert, or the remove selector to drop one.
+         */value: Data) {
+        self.mutation = mutation
+        self.value = value
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension UlcpItemMutationRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeUlcpItemMutationRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> UlcpItemMutationRecord {
+        return
+            try UlcpItemMutationRecord(
+                mutation: FfiConverterTypeUlcpItemMutation.read(from: &buf),
+                value: FfiConverterData.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: UlcpItemMutationRecord, into buf: inout [UInt8]) {
+        FfiConverterTypeUlcpItemMutation.write(value.mutation, into: &buf)
+        FfiConverterData.write(value.value, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeUlcpItemMutationRecord_lift(_ buf: RustBuffer) throws -> UlcpItemMutationRecord {
+    return try FfiConverterTypeUlcpItemMutationRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeUlcpItemMutationRecord_lower(_ value: UlcpItemMutationRecord) -> RustBuffer {
+    return FfiConverterTypeUlcpItemMutationRecord.lower(value)
+}
+
+
+/**
  * The completion of one local management operation started with
  * [`MobileUlcpSession::begin_property_fetch`],
  * [`begin_property_writes`](MobileUlcpSession::begin_property_writes), or
@@ -9430,6 +9958,22 @@ public struct UlcpManagedPropertyIds: Equatable, Hashable {
     public var bleBondCount: UInt32
     public var bleLink: UInt32
     public var blePairing: UInt32
+    public var wifiEnabled: UInt32
+    public var wifiNetworks: UInt32
+    public var wifiNetwork: UInt32
+    public var wifiScanning: UInt32
+    public var wifiScanResults: UInt32
+    public var wifiLink: UInt32
+    public var wifiRssi: UInt32
+    public var wifiMac: UInt32
+    public var ipv4State: UInt32
+    public var ipv4Config: UInt32
+    public var ipv4Address: UInt32
+    public var ipv6State: UInt32
+    public var ipv6Config: UInt32
+    public var ipv6Addresses: UInt32
+    public var ipDns: UInt32
+    public var ipResolvers: UInt32
     public var time: UInt32
     public var tzOffset: UInt32
     public var alert: UInt32
@@ -9443,7 +9987,7 @@ public struct UlcpManagedPropertyIds: Equatable, Hashable {
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(caps: UInt32, deviceVersion: UInt32, deviceModel: UInt32, deviceName: UInt32, battery: UInt32, phyEnabled: UInt32, frequency: UInt32, transmitPower: UInt32, loraBandwidth: UInt32, loraSpreadingFactor: UInt32, loraCodingRate: UInt32, dutyCycleNow: UInt32, dutyCycleLimit: UInt32, statTxPackets: UInt32, statTxChannelBusy: UInt32, statRxPackets: UInt32, statRxBadCrc: UInt32, statRxNonUmsh: UInt32, statRxAccepted: UInt32, statForwarded: UInt32, statForwardDropped: UInt32, statForwardCancelled: UInt32, identRole: UInt32, identMobile: UInt32, identLocation: UInt32, identAltitude: UInt32, devDiscoverable: UInt32, gnssIdentUpdate: UInt32, gnssIdentPrecision: UInt32, uptime: UInt32, advertInterval: UInt32, beaconInterval: UInt32, startupBeacon: UInt32, gnssEnabled: UInt32, gnssTimeTrust: UInt32, bleEnabled: UInt32, bleBondCount: UInt32, bleLink: UInt32, blePairing: UInt32, time: UInt32, tzOffset: UInt32, alert: UInt32, repeaterEnabled: UInt32, repeaterRegions: UInt32, repeaterDefaultRegion: UInt32, repeaterMinRssi: UInt32, repeaterMinSnr: UInt32, devPeers: UInt32, devAdmins: UInt32) {
+    public init(caps: UInt32, deviceVersion: UInt32, deviceModel: UInt32, deviceName: UInt32, battery: UInt32, phyEnabled: UInt32, frequency: UInt32, transmitPower: UInt32, loraBandwidth: UInt32, loraSpreadingFactor: UInt32, loraCodingRate: UInt32, dutyCycleNow: UInt32, dutyCycleLimit: UInt32, statTxPackets: UInt32, statTxChannelBusy: UInt32, statRxPackets: UInt32, statRxBadCrc: UInt32, statRxNonUmsh: UInt32, statRxAccepted: UInt32, statForwarded: UInt32, statForwardDropped: UInt32, statForwardCancelled: UInt32, identRole: UInt32, identMobile: UInt32, identLocation: UInt32, identAltitude: UInt32, devDiscoverable: UInt32, gnssIdentUpdate: UInt32, gnssIdentPrecision: UInt32, uptime: UInt32, advertInterval: UInt32, beaconInterval: UInt32, startupBeacon: UInt32, gnssEnabled: UInt32, gnssTimeTrust: UInt32, bleEnabled: UInt32, bleBondCount: UInt32, bleLink: UInt32, blePairing: UInt32, wifiEnabled: UInt32, wifiNetworks: UInt32, wifiNetwork: UInt32, wifiScanning: UInt32, wifiScanResults: UInt32, wifiLink: UInt32, wifiRssi: UInt32, wifiMac: UInt32, ipv4State: UInt32, ipv4Config: UInt32, ipv4Address: UInt32, ipv6State: UInt32, ipv6Config: UInt32, ipv6Addresses: UInt32, ipDns: UInt32, ipResolvers: UInt32, time: UInt32, tzOffset: UInt32, alert: UInt32, repeaterEnabled: UInt32, repeaterRegions: UInt32, repeaterDefaultRegion: UInt32, repeaterMinRssi: UInt32, repeaterMinSnr: UInt32, devPeers: UInt32, devAdmins: UInt32) {
         self.caps = caps
         self.deviceVersion = deviceVersion
         self.deviceModel = deviceModel
@@ -9483,6 +10027,22 @@ public struct UlcpManagedPropertyIds: Equatable, Hashable {
         self.bleBondCount = bleBondCount
         self.bleLink = bleLink
         self.blePairing = blePairing
+        self.wifiEnabled = wifiEnabled
+        self.wifiNetworks = wifiNetworks
+        self.wifiNetwork = wifiNetwork
+        self.wifiScanning = wifiScanning
+        self.wifiScanResults = wifiScanResults
+        self.wifiLink = wifiLink
+        self.wifiRssi = wifiRssi
+        self.wifiMac = wifiMac
+        self.ipv4State = ipv4State
+        self.ipv4Config = ipv4Config
+        self.ipv4Address = ipv4Address
+        self.ipv6State = ipv6State
+        self.ipv6Config = ipv6Config
+        self.ipv6Addresses = ipv6Addresses
+        self.ipDns = ipDns
+        self.ipResolvers = ipResolvers
         self.time = time
         self.tzOffset = tzOffset
         self.alert = alert
@@ -9550,6 +10110,22 @@ public struct FfiConverterTypeUlcpManagedPropertyIds: FfiConverterRustBuffer {
                 bleBondCount: FfiConverterUInt32.read(from: &buf),
                 bleLink: FfiConverterUInt32.read(from: &buf),
                 blePairing: FfiConverterUInt32.read(from: &buf),
+                wifiEnabled: FfiConverterUInt32.read(from: &buf),
+                wifiNetworks: FfiConverterUInt32.read(from: &buf),
+                wifiNetwork: FfiConverterUInt32.read(from: &buf),
+                wifiScanning: FfiConverterUInt32.read(from: &buf),
+                wifiScanResults: FfiConverterUInt32.read(from: &buf),
+                wifiLink: FfiConverterUInt32.read(from: &buf),
+                wifiRssi: FfiConverterUInt32.read(from: &buf),
+                wifiMac: FfiConverterUInt32.read(from: &buf),
+                ipv4State: FfiConverterUInt32.read(from: &buf),
+                ipv4Config: FfiConverterUInt32.read(from: &buf),
+                ipv4Address: FfiConverterUInt32.read(from: &buf),
+                ipv6State: FfiConverterUInt32.read(from: &buf),
+                ipv6Config: FfiConverterUInt32.read(from: &buf),
+                ipv6Addresses: FfiConverterUInt32.read(from: &buf),
+                ipDns: FfiConverterUInt32.read(from: &buf),
+                ipResolvers: FfiConverterUInt32.read(from: &buf),
                 time: FfiConverterUInt32.read(from: &buf),
                 tzOffset: FfiConverterUInt32.read(from: &buf),
                 alert: FfiConverterUInt32.read(from: &buf),
@@ -9603,6 +10179,22 @@ public struct FfiConverterTypeUlcpManagedPropertyIds: FfiConverterRustBuffer {
         FfiConverterUInt32.write(value.bleBondCount, into: &buf)
         FfiConverterUInt32.write(value.bleLink, into: &buf)
         FfiConverterUInt32.write(value.blePairing, into: &buf)
+        FfiConverterUInt32.write(value.wifiEnabled, into: &buf)
+        FfiConverterUInt32.write(value.wifiNetworks, into: &buf)
+        FfiConverterUInt32.write(value.wifiNetwork, into: &buf)
+        FfiConverterUInt32.write(value.wifiScanning, into: &buf)
+        FfiConverterUInt32.write(value.wifiScanResults, into: &buf)
+        FfiConverterUInt32.write(value.wifiLink, into: &buf)
+        FfiConverterUInt32.write(value.wifiRssi, into: &buf)
+        FfiConverterUInt32.write(value.wifiMac, into: &buf)
+        FfiConverterUInt32.write(value.ipv4State, into: &buf)
+        FfiConverterUInt32.write(value.ipv4Config, into: &buf)
+        FfiConverterUInt32.write(value.ipv4Address, into: &buf)
+        FfiConverterUInt32.write(value.ipv6State, into: &buf)
+        FfiConverterUInt32.write(value.ipv6Config, into: &buf)
+        FfiConverterUInt32.write(value.ipv6Addresses, into: &buf)
+        FfiConverterUInt32.write(value.ipDns, into: &buf)
+        FfiConverterUInt32.write(value.ipResolvers, into: &buf)
         FfiConverterUInt32.write(value.time, into: &buf)
         FfiConverterUInt32.write(value.tzOffset, into: &buf)
         FfiConverterUInt32.write(value.alert, into: &buf)
@@ -9761,19 +10353,29 @@ public func FfiConverterTypeUlcpPropertyFrameRecord_lower(_ value: UlcpPropertyF
 
 
 /**
- * One property value the device announced on its own—`CMD_PROP_IS`
- * with the unsolicited transaction—as opposed to the answer to
- * anything this session asked.
+ * One property value the device announced on its own, with the
+ * unsolicited transaction, as opposed to the answer to anything this
+ * session asked.
  */
 public struct UlcpPropertyPushRecord: Equatable, Hashable {
     public var propertyId: UInt32
+    /**
+     * The whole value for [`UlcpPropertyPushKind::Is`], and one item
+     * for the other two.
+     */
     public var value: Data
+    public var kind: UlcpPropertyPushKind
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(propertyId: UInt32, value: Data) {
+    public init(propertyId: UInt32,
+        /**
+         * The whole value for [`UlcpPropertyPushKind::Is`], and one item
+         * for the other two.
+         */value: Data, kind: UlcpPropertyPushKind) {
         self.propertyId = propertyId
         self.value = value
+        self.kind = kind
     }
 
 
@@ -9793,13 +10395,15 @@ public struct FfiConverterTypeUlcpPropertyPushRecord: FfiConverterRustBuffer {
         return
             try UlcpPropertyPushRecord(
                 propertyId: FfiConverterUInt32.read(from: &buf),
-                value: FfiConverterData.read(from: &buf)
+                value: FfiConverterData.read(from: &buf),
+                kind: FfiConverterTypeUlcpPropertyPushKind.read(from: &buf)
         )
     }
 
     public static func write(_ value: UlcpPropertyPushRecord, into buf: inout [UInt8]) {
         FfiConverterUInt32.write(value.propertyId, into: &buf)
         FfiConverterData.write(value.value, into: &buf)
+        FfiConverterTypeUlcpPropertyPushKind.write(value.kind, into: &buf)
     }
 }
 
@@ -10978,6 +11582,270 @@ public func FfiConverterTypeUlcpTimeRecord_lift(_ buf: RustBuffer) throws -> Ulc
 #endif
 public func FfiConverterTypeUlcpTimeRecord_lower(_ value: UlcpTimeRecord) -> RustBuffer {
     return FfiConverterTypeUlcpTimeRecord.lower(value)
+}
+
+
+/**
+ * `PROP_WIFI_LINK`: what the station is doing.
+ */
+public struct UlcpWifiLinkRecord: Equatable, Hashable {
+    /**
+     * A `WIFI_LINK_*` code.
+     */
+    public var state: UInt8
+    /**
+     * A `WIFI_REASON_*` code, zero unless connecting.
+     */
+    public var reason: UInt8
+    /**
+     * Present only while associated.
+     */
+    public var bssid: Data?
+    /**
+     * Present only while associated.
+     */
+    public var frequencyMhz: UInt16?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * A `WIFI_LINK_*` code.
+         */state: UInt8,
+        /**
+         * A `WIFI_REASON_*` code, zero unless connecting.
+         */reason: UInt8,
+        /**
+         * Present only while associated.
+         */bssid: Data?,
+        /**
+         * Present only while associated.
+         */frequencyMhz: UInt16?) {
+        self.state = state
+        self.reason = reason
+        self.bssid = bssid
+        self.frequencyMhz = frequencyMhz
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension UlcpWifiLinkRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeUlcpWifiLinkRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> UlcpWifiLinkRecord {
+        return
+            try UlcpWifiLinkRecord(
+                state: FfiConverterUInt8.read(from: &buf),
+                reason: FfiConverterUInt8.read(from: &buf),
+                bssid: FfiConverterOptionData.read(from: &buf),
+                frequencyMhz: FfiConverterOptionUInt16.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: UlcpWifiLinkRecord, into buf: inout [UInt8]) {
+        FfiConverterUInt8.write(value.state, into: &buf)
+        FfiConverterUInt8.write(value.reason, into: &buf)
+        FfiConverterOptionData.write(value.bssid, into: &buf)
+        FfiConverterOptionUInt16.write(value.frequencyMhz, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeUlcpWifiLinkRecord_lift(_ buf: RustBuffer) throws -> UlcpWifiLinkRecord {
+    return try FfiConverterTypeUlcpWifiLinkRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeUlcpWifiLinkRecord_lower(_ value: UlcpWifiLinkRecord) -> RustBuffer {
+    return FfiConverterTypeUlcpWifiLinkRecord.lower(value)
+}
+
+
+/**
+ * One entry of `PROP_WIFI_NETWORKS`, in the form a device reports.
+ *
+ * No credential: the reported form stops at the SSID, and a host that
+ * wants to change one replaces the entry rather than reading it back.
+ */
+public struct UlcpWifiNetworkRecord: Equatable, Hashable {
+    public var hidden: Bool
+    /**
+     * A `WIFI_SEC_*` code.
+     */
+    public var security: UInt8
+    /**
+     * Arbitrary octets, not text: a display renders them as UTF-8 when
+     * they decode and as hex when they do not.
+     */
+    public var ssid: Data
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(hidden: Bool,
+        /**
+         * A `WIFI_SEC_*` code.
+         */security: UInt8,
+        /**
+         * Arbitrary octets, not text: a display renders them as UTF-8 when
+         * they decode and as hex when they do not.
+         */ssid: Data) {
+        self.hidden = hidden
+        self.security = security
+        self.ssid = ssid
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension UlcpWifiNetworkRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeUlcpWifiNetworkRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> UlcpWifiNetworkRecord {
+        return
+            try UlcpWifiNetworkRecord(
+                hidden: FfiConverterBool.read(from: &buf),
+                security: FfiConverterUInt8.read(from: &buf),
+                ssid: FfiConverterData.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: UlcpWifiNetworkRecord, into buf: inout [UInt8]) {
+        FfiConverterBool.write(value.hidden, into: &buf)
+        FfiConverterUInt8.write(value.security, into: &buf)
+        FfiConverterData.write(value.ssid, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeUlcpWifiNetworkRecord_lift(_ buf: RustBuffer) throws -> UlcpWifiNetworkRecord {
+    return try FfiConverterTypeUlcpWifiNetworkRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeUlcpWifiNetworkRecord_lower(_ value: UlcpWifiNetworkRecord) -> RustBuffer {
+    return FfiConverterTypeUlcpWifiNetworkRecord.lower(value)
+}
+
+
+/**
+ * One access point a scan heard.
+ */
+public struct UlcpWifiScanResultRecord: Equatable, Hashable {
+    /**
+     * The security modes on offer, bit *n* for `WIFI_SEC_*` code *n*.
+     * **Zero means undetermined**, not "offers nothing".
+     */
+    public var modes: UInt16
+    /**
+     * Center frequency of the primary 20 MHz channel.
+     */
+    public var frequencyMhz: UInt16
+    public var rssiDbm: Int8
+    /**
+     * The key: one entry per access point, and the only thing that
+     * distinguishes two nameless ones.
+     */
+    public var bssid: Data
+    /**
+     * Empty when no name was reported, hidden or unread.
+     */
+    public var ssid: Data
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The security modes on offer, bit *n* for `WIFI_SEC_*` code *n*.
+         * **Zero means undetermined**, not "offers nothing".
+         */modes: UInt16,
+        /**
+         * Center frequency of the primary 20 MHz channel.
+         */frequencyMhz: UInt16, rssiDbm: Int8,
+        /**
+         * The key: one entry per access point, and the only thing that
+         * distinguishes two nameless ones.
+         */bssid: Data,
+        /**
+         * Empty when no name was reported, hidden or unread.
+         */ssid: Data) {
+        self.modes = modes
+        self.frequencyMhz = frequencyMhz
+        self.rssiDbm = rssiDbm
+        self.bssid = bssid
+        self.ssid = ssid
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension UlcpWifiScanResultRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeUlcpWifiScanResultRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> UlcpWifiScanResultRecord {
+        return
+            try UlcpWifiScanResultRecord(
+                modes: FfiConverterUInt16.read(from: &buf),
+                frequencyMhz: FfiConverterUInt16.read(from: &buf),
+                rssiDbm: FfiConverterInt8.read(from: &buf),
+                bssid: FfiConverterData.read(from: &buf),
+                ssid: FfiConverterData.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: UlcpWifiScanResultRecord, into buf: inout [UInt8]) {
+        FfiConverterUInt16.write(value.modes, into: &buf)
+        FfiConverterUInt16.write(value.frequencyMhz, into: &buf)
+        FfiConverterInt8.write(value.rssiDbm, into: &buf)
+        FfiConverterData.write(value.bssid, into: &buf)
+        FfiConverterData.write(value.ssid, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeUlcpWifiScanResultRecord_lift(_ buf: RustBuffer) throws -> UlcpWifiScanResultRecord {
+    return try FfiConverterTypeUlcpWifiScanResultRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeUlcpWifiScanResultRecord_lower(_ value: UlcpWifiScanResultRecord) -> RustBuffer {
+    return FfiConverterTypeUlcpWifiScanResultRecord.lower(value)
 }
 
 
@@ -13173,6 +14041,84 @@ public func FfiConverterTypeUlcpHostOwnership_lower(_ value: UlcpHostOwnership) 
 
 
 /**
+ * Whether a queued item mutation adds an item or drops one.
+ */
+
+public enum UlcpItemMutation: Equatable, Hashable {
+
+    /**
+     * `CMD_PROP_INSERT`. An item whose key matches one already held
+     * replaces it, which is how a corrected Wi-Fi passphrase is
+     * written.
+     */
+    case insert
+    /**
+     * `CMD_PROP_REMOVE`. The value is the property's remove selector,
+     * not a whole item.
+     */
+    case remove
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension UlcpItemMutation: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeUlcpItemMutation: FfiConverterRustBuffer {
+    typealias SwiftType = UlcpItemMutation
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> UlcpItemMutation {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .insert
+
+        case 2: return .remove
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: UlcpItemMutation, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .insert:
+            writeInt(&buf, Int32(1))
+
+
+        case .remove:
+            writeInt(&buf, Int32(2))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeUlcpItemMutation_lift(_ buf: RustBuffer) throws -> UlcpItemMutation {
+    return try FfiConverterTypeUlcpItemMutation.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeUlcpItemMutation_lower(_ value: UlcpItemMutation) -> RustBuffer {
+    return FfiConverterTypeUlcpItemMutation.lower(value)
+}
+
+
+
+/**
  * One screenful of a device's settings.
  *
  * Reading a device whole costs tens of properties and several round
@@ -13213,6 +14159,16 @@ public enum UlcpManageCategory: Equatable, Hashable {
      * hosts are paired, and the two bond commands.
      */
     case bluetooth
+    /**
+     * Wi-Fi: the station, the networks it knows, and what a scan
+     * found. A device that can only scan gets the same category with
+     * fewer properties in it.
+     */
+    case wifi
+    /**
+     * Addressing on whichever link the device has, per family.
+     */
+    case network
     /**
      * The forwarding policy.
      */
@@ -13256,9 +14212,13 @@ public struct FfiConverterTypeUlcpManageCategory: FfiConverterRustBuffer {
 
         case 7: return .bluetooth
 
-        case 8: return .repeater
+        case 8: return .wifi
 
-        case 9: return .peerNodes
+        case 9: return .network
+
+        case 10: return .repeater
+
+        case 11: return .peerNodes
 
         default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -13296,12 +14256,20 @@ public struct FfiConverterTypeUlcpManageCategory: FfiConverterRustBuffer {
             writeInt(&buf, Int32(7))
 
 
-        case .repeater:
+        case .wifi:
             writeInt(&buf, Int32(8))
 
 
-        case .peerNodes:
+        case .network:
             writeInt(&buf, Int32(9))
+
+
+        case .repeater:
+            writeInt(&buf, Int32(10))
+
+
+        case .peerNodes:
+            writeInt(&buf, Int32(11))
 
         }
     }
@@ -13320,6 +14288,101 @@ public func FfiConverterTypeUlcpManageCategory_lift(_ buf: RustBuffer) throws ->
 #endif
 public func FfiConverterTypeUlcpManageCategory_lower(_ value: UlcpManageCategory) -> RustBuffer {
     return FfiConverterTypeUlcpManageCategory.lower(value)
+}
+
+
+
+/**
+ * Which notification carried an unsolicited value.
+ *
+ * A single-value property only ever announces itself with
+ * `CMD_PROP_IS`. A multi-value one can also announce one item at a
+ * time: a Wi-Fi scan streams every access point it hears as
+ * `CMD_PROP_INSERTED`, and an access point reports a client leaving as
+ * `CMD_PROP_REMOVED`. The three mean different things to a cache, so
+ * the carrier travels with the value rather than being guessed at from
+ * the property number.
+ */
+
+public enum UlcpPropertyPushKind: Equatable, Hashable {
+
+    /**
+     * `CMD_PROP_IS`: the whole value, replacing whatever was held.
+     */
+    case `is`
+    /**
+     * `CMD_PROP_INSERTED`: one item, added to the value or replacing
+     * the item with the same key.
+     */
+    case inserted
+    /**
+     * `CMD_PROP_REMOVED`: one item, or its selector, dropped from the
+     * value.
+     */
+    case removed
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension UlcpPropertyPushKind: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeUlcpPropertyPushKind: FfiConverterRustBuffer {
+    typealias SwiftType = UlcpPropertyPushKind
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> UlcpPropertyPushKind {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .`is`
+
+        case 2: return .inserted
+
+        case 3: return .removed
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: UlcpPropertyPushKind, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .`is`:
+            writeInt(&buf, Int32(1))
+
+
+        case .inserted:
+            writeInt(&buf, Int32(2))
+
+
+        case .removed:
+            writeInt(&buf, Int32(3))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeUlcpPropertyPushKind_lift(_ buf: RustBuffer) throws -> UlcpPropertyPushKind {
+    return try FfiConverterTypeUlcpPropertyPushKind.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeUlcpPropertyPushKind_lower(_ value: UlcpPropertyPushKind) -> RustBuffer {
+    return FfiConverterTypeUlcpPropertyPushKind.lower(value)
 }
 
 
@@ -13980,6 +15043,54 @@ fileprivate struct FfiConverterOptionTypeUlcpIdentPositionRecord: FfiConverterRu
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeUlcpIpConfigRecord: FfiConverterRustBuffer {
+    typealias SwiftType = UlcpIpConfigRecord?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeUlcpIpConfigRecord.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeUlcpIpConfigRecord.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeUlcpIpv4AddressRecord: FfiConverterRustBuffer {
+    typealias SwiftType = UlcpIpv4AddressRecord?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeUlcpIpv4AddressRecord.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeUlcpIpv4AddressRecord.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionTypeUlcpLocalManagementEventRecord: FfiConverterRustBuffer {
     typealias SwiftType = UlcpLocalManagementEventRecord?
 
@@ -14124,6 +15235,30 @@ fileprivate struct FfiConverterOptionTypeUlcpTimeRecord: FfiConverterRustBuffer 
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeUlcpWifiLinkRecord: FfiConverterRustBuffer {
+    typealias SwiftType = UlcpWifiLinkRecord?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeUlcpWifiLinkRecord.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeUlcpWifiLinkRecord.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionTypeMobileChatDirection: FfiConverterRustBuffer {
     typealias SwiftType = MobileChatDirection?
 
@@ -14260,6 +15395,78 @@ fileprivate struct FfiConverterOptionSequenceData: FfiConverterRustBuffer {
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterSequenceData.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionSequenceTypeUlcpIpv6ItemRecord: FfiConverterRustBuffer {
+    typealias SwiftType = [UlcpIpv6ItemRecord]?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterSequenceTypeUlcpIpv6ItemRecord.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterSequenceTypeUlcpIpv6ItemRecord.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionSequenceTypeUlcpWifiNetworkRecord: FfiConverterRustBuffer {
+    typealias SwiftType = [UlcpWifiNetworkRecord]?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterSequenceTypeUlcpWifiNetworkRecord.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterSequenceTypeUlcpWifiNetworkRecord.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionSequenceTypeUlcpWifiScanResultRecord: FfiConverterRustBuffer {
+    typealias SwiftType = [UlcpWifiScanResultRecord]?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterSequenceTypeUlcpWifiScanResultRecord.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterSequenceTypeUlcpWifiScanResultRecord.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }
@@ -14843,6 +16050,56 @@ fileprivate struct FfiConverterSequenceTypeRadioPresetRecord: FfiConverterRustBu
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeUlcpIpv6ItemRecord: FfiConverterRustBuffer {
+    typealias SwiftType = [UlcpIpv6ItemRecord]
+
+    public static func write(_ value: [UlcpIpv6ItemRecord], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeUlcpIpv6ItemRecord.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [UlcpIpv6ItemRecord] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [UlcpIpv6ItemRecord]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeUlcpIpv6ItemRecord.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeUlcpItemMutationRecord: FfiConverterRustBuffer {
+    typealias SwiftType = [UlcpItemMutationRecord]
+
+    public static func write(_ value: [UlcpItemMutationRecord], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeUlcpItemMutationRecord.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [UlcpItemMutationRecord] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [UlcpItemMutationRecord]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeUlcpItemMutationRecord.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeUlcpPropertyFrameRecord: FfiConverterRustBuffer {
     typealias SwiftType = [UlcpPropertyFrameRecord]
 
@@ -14910,6 +16167,56 @@ fileprivate struct FfiConverterSequenceTypeUlcpReceivedFrameRecord: FfiConverter
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypeUlcpReceivedFrameRecord.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeUlcpWifiNetworkRecord: FfiConverterRustBuffer {
+    typealias SwiftType = [UlcpWifiNetworkRecord]
+
+    public static func write(_ value: [UlcpWifiNetworkRecord], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeUlcpWifiNetworkRecord.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [UlcpWifiNetworkRecord] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [UlcpWifiNetworkRecord]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeUlcpWifiNetworkRecord.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeUlcpWifiScanResultRecord: FfiConverterRustBuffer {
+    typealias SwiftType = [UlcpWifiScanResultRecord]
+
+    public static func write(_ value: [UlcpWifiScanResultRecord], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeUlcpWifiScanResultRecord.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [UlcpWifiScanResultRecord] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [UlcpWifiScanResultRecord]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeUlcpWifiScanResultRecord.read(from: &buf))
         }
         return seq
     }
@@ -15402,6 +16709,20 @@ public func inspectUlcpSync(responses: [UlcpPropertyFrameRecord])throws  -> Ulcp
 })
 }
 /**
+ * Decode one `CMD_PROP_INSERTED` item of `PROP_WIFI_SCAN_RESULTS`.
+ *
+ * The other half of the scan stream: a host that followed the inserts
+ * needs the same reduction a whole-table read gets.
+ */
+public func inspectUlcpWifiScanResult(item: Data)throws  -> UlcpWifiScanResultRecord  {
+    return try  FfiConverterTypeUlcpWifiScanResultRecord_lift(try rustCallWithError(FfiConverterTypeMobileError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_func_inspect_ulcp_wifi_scan_result(
+        FfiConverterData.lower(item),uniffiCallStatus
+    )
+})
+}
+/**
  * Render a region code for display. Codes derived from an all-letter
  * short code come back as those letters; everything else as `0xXXXX`,
  * which [`region_code_from_string`] reads back.
@@ -15760,6 +17081,25 @@ public func ulcpSupportedBandwidthsHz() -> [UInt32]  {
     )
 })
 }
+/**
+ * Build one `PROP_WIFI_NETWORKS` item to insert.
+ *
+ * The only path a Wi-Fi credential takes across this boundary. It is
+ * validated against its mode before it is encoded, so a passphrase the
+ * device would refuse never reaches the air, and the octets are not
+ * retained anywhere afterward.
+ */
+public func ulcpWifiNetworkItem(ssid: Data, security: UInt8, hidden: Bool, credential: Data)throws  -> Data  {
+    return try  FfiConverterData.lift(try rustCallWithError(FfiConverterTypeMobileError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_func_ulcp_wifi_network_item(
+        FfiConverterData.lower(ssid),
+        FfiConverterUInt8.lower(security),
+        FfiConverterBool.lower(hidden),
+        FfiConverterData.lower(credential),uniffiCallStatus
+    )
+})
+}
 
 private enum InitializationResult {
     case ok
@@ -15866,6 +17206,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_func_inspect_ulcp_sync() != 54563) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_umsh_mobile_core_checksum_func_inspect_ulcp_wifi_scan_result() != 14372) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_umsh_mobile_core_checksum_func_region_code_description() != 11282) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -15942,6 +17285,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_func_ulcp_supported_bandwidths_hz() != 65256) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_func_ulcp_wifi_network_item() != 36496) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobileidentity_public_identity() != 38823) {
@@ -16143,6 +17489,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_begin_property_fetch() != 22103) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_begin_property_items() != 50342) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_begin_property_writes() != 56120) {
