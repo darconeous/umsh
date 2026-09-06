@@ -22,7 +22,7 @@ surprise.
 ## Reading the result
 
 A region is **core** when the position is inside it, and **expanded** when
-only its margin reaches — every generated region carries a small outward
+only its margin reaches—every generated region carries a small outward
 margin so a repeater near a border learns about both sides. The map draws
 each layer in its own color; a position commonly sits in several at once,
 because an airport region, a metro area, a state, and a country are
@@ -35,7 +35,7 @@ given one entry.
 ## Where the data comes from
 
 Airport and location data is OurAirports; country regions are jurisdiction
-areas — land plus exclusive economic zone — from Marine Regions; US states
+areas—land plus exclusive economic zone—from Marine Regions; US states
 are Census TIGER/Line; the coastlines and borders drawn underneath are
 Natural Earth. Every source, with its license, is listed in the panel beside
 the map. The full pipeline and its policy choices live in `regions/` in the

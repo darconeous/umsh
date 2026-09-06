@@ -7,7 +7,7 @@
 #
 # Two invocations because firmware-esp32/ is a separate cargo workspace. It
 # pins the `esp` toolchain channel, so `cargo fmt` there would demand a
-# toolchain most clones don't have — `+stable` sidesteps that and produces
+# toolchain most clones don't have—`+stable` sidesteps that and produces
 # identical output.
 set -e
 

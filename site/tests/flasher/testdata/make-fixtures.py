@@ -7,8 +7,8 @@
 puts on the wire for a known image, so `nrf-dfu.test.mjs` can compare the
 browser implementation against something that did not come from it. The framing
 below is transcribed from `dfu/dfu_transport_serial.py` in adafruit-nrfutil
-(BSD-3-Clause, Copyright (c) 2015 Nordic Semiconductor) — the tool `make
-flash-<board>-serial` shells out to — deliberately kept in a different language
+(BSD-3-Clause, Copyright (c) 2015 Nordic Semiconductor)—the tool `make
+flash-<board>-serial` shells out to—deliberately kept in a different language
 from the code under test.
 
 `sample-dfu.zip` is a miniature of what `make dfu-zip-<board>` writes: the same
@@ -77,7 +77,7 @@ def hci_packet(payload, seq):
 
 
 def firmware_pattern():
-    """1 KiB — two data packets — containing both SLIP escape bytes."""
+    """1 KiB—two data packets—containing both SLIP escape bytes."""
     data = bytearray((i * 7 + (0xC0 if i % 97 == 0 else 0)) & 0xFF for i in range(1024))
     data[10] = 0xC0
     data[11] = 0xDB

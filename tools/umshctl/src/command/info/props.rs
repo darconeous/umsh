@@ -120,7 +120,7 @@ impl PropSet {
 ///
 /// One `CMD_PROP_MULTI_GET`, continued where a reply ran out of room.
 /// A device without `CAP_CMD_MULTI` never learned the command, so it
-/// gets the same questions one at a time — the report is identical
+/// gets the same questions one at a time—the report is identical
 /// either way, and only the cost differs.
 ///
 /// A key the device refuses lands in the set as a refusal rather than

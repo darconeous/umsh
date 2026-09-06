@@ -7,7 +7,7 @@ struct MapNodeListCard: View {
     let nodes: [MapNode]
     @Binding var selectedNodeID: Int64?
     let selfPosition: MapSelfPosition?
-    /// Whether any node at all reported a location, regardless of filters —
+    /// Whether any node at all reported a location, regardless of filters—
     /// the difference between an empty mesh and an empty filter.
     let hasAnyLocations: Bool
     let isFiltered: Bool
@@ -23,7 +23,7 @@ struct MapNodeListCard: View {
     let sendMessage: ((DirectConversationSummary, String) async -> MessageSendResult)?
     var messageActions: ChatMessageActions = .unavailable
 
-    /// The row's own tap belongs to the map — it selects and focuses, which
+    /// The row's own tap belongs to the map—it selects and focuses, which
     /// is what a list beside a map is for. Details are a press or a swipe
     /// away rather than a control in the row, so nothing competes with the
     /// distance for the trailing edge.
@@ -73,7 +73,7 @@ struct MapNodeListCard: View {
         }
     }
 
-    /// Nearest first, since the distance is what the row leads with — and by
+    /// Nearest first, since the distance is what the row leads with—and by
     /// name when there is nothing to measure from, which at least does not
     /// reorder itself as nodes are heard.
     private var orderedNodes: [MapNode] {
@@ -126,7 +126,7 @@ struct MapNodeListCard: View {
         }
         .contentShape(.rect)
         .onTapGesture { selectedNodeID = node.id }
-        // The tap belongs to the map — select and focus — so the deeper
+        // The tap belongs to the map—select and focus—so the deeper
         // commitment gets the longer gesture, as a menu rather than a bare
         // `onLongPressGesture`. The recognizer navigates on its own but draws
         // nothing: no lift, no blur, no haptic, so a press that has not yet
@@ -162,7 +162,7 @@ struct MapNodeListCard: View {
 
     /// How far off the node claims to be, from wherever we are.
     ///
-    /// `nil` when there is nothing to measure from — no companion radio, or
+    /// `nil` when there is nothing to measure from—no companion radio, or
     /// one that has yet to get a fix. A dash would imply zero.
     private func distanceText(_ node: MapNode) -> String? {
         guard let selfPosition else { return nil }
@@ -179,7 +179,7 @@ struct MapNodeListCard: View {
         )
     }
 
-    /// One age — when the node was last on the air — and a second only when
+    /// One age—when the node was last on the air—and a second only when
     /// it earns its place: a location claim that predates the last contact
     /// by more than four hours means a node that is reachable but may no
     /// longer be where it said. Two agreeing ages would say the same thing
@@ -187,7 +187,7 @@ struct MapNodeListCard: View {
     /// all: the bundle's own timestamp is not when it was added, and nothing
     /// records that.
     ///
-    /// `now` is the enclosing timeline's tick — and the reason this is a
+    /// `now` is the enclosing timeline's tick—and the reason this is a
     /// `RelativeDateTimeFormatter` rather than the `.relative` format style
     /// used elsewhere in the app: only the formatter takes a reference date.
     private func subtitle(_ node: MapNode, now: Date) -> String? {

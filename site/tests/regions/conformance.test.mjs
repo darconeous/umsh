@@ -4,7 +4,7 @@
  *     node --test "site/tests/regions/*.test.mjs"
  *
  * The map viewer answers a click with the same code the phone runs, so the
- * two must agree exactly — a viewer that could disagree with the runtime
+ * two must agree exactly—a viewer that could disagree with the runtime
  * would be worse than no viewer, because it would be believed. These are the
  * same fixtures `cargo test -p umsh-regiondb` and the Python suite replay:
  * `regions/tests/conformance.json` for lookups and

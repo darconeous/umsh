@@ -3,8 +3,8 @@
 //!
 //! The report is a list of topics ([`topics::TOPICS`]), each a set of
 //! properties and two renderings of them. Everything a run needs is
-//! fetched in one `CMD_PROP_MULTI_GET` — plus the two that cannot share
-//! one — so a whole report costs about what a single property used to.
+//! fetched in one `CMD_PROP_MULTI_GET`—plus the two that cannot share
+//! one—so a whole report costs about what a single property used to.
 //!
 //! Naming a topic asks for that topic alone, which over the mesh is the
 //! difference between a question and an errand.
@@ -43,7 +43,7 @@ pub struct InfoArgs {
     pub topic: Option<String>,
 }
 
-/// The topic names, as a value parser — so clap rejects a misspelling,
+/// The topic names, as a value parser—so clap rejects a misspelling,
 /// `--help` lists what there is, and the shell completes them, all from
 /// the one table that defines them.
 fn topic_parser() -> clap::builder::PossibleValuesParser {
@@ -87,7 +87,7 @@ pub async fn run<L: FrameLink>(device: &mut UlcpDevice<L>, args: InfoArgs) -> Re
             let topic = topics::topic(name).expect("clap accepted an unknown topic");
             if !(topic.gate)(&ctx) {
                 bail!(
-                    "this device has nothing to report under {name:?} — see `info` for what it \
+                    "this device has nothing to report under {name:?}—see `info` for what it \
                      does report"
                 );
             }

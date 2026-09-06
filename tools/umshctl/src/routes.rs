@@ -1,7 +1,7 @@
 //! Routes remembered between invocations.
 //!
 //! The MAC learns a route from inbound traffic and keeps it in the peer
-//! registry, which lives exactly as long as the `Mac` does — and this
+//! registry, which lives exactly as long as the `Mac` does—and this
 //! tool builds a new one for every command. Without somewhere to put
 //! them, two `manage` calls a second apart each flood the mesh to
 //! discover the same path.
@@ -426,7 +426,7 @@ mod tests {
     }
 
     /// Learning a route again after forgetting it is not a contradiction
-    /// — the forget is spent.
+    ///—the forget is spent.
     #[test]
     fn relearning_a_forgotten_route_un_forgets_it() {
         let mut cache = cache_of(&[(key(23), record(CachedRoute::Direct, Duration::ZERO))]);

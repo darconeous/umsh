@@ -2,15 +2,15 @@
 //!
 //! A `.regiondb` answers one question: given a position, which UMSH regions
 //! should a repeater there normally be configured to accept? All of the hard
-//! geography — nearest-airport partitions, commercial-service classification,
-//! metropolitan boundaries, jurisdiction boundaries, manual corrections —
+//! geography—nearest-airport partitions, commercial-service classification,
+//! metropolitan boundaries, jurisdiction boundaries, manual corrections—
 //! happens in the build, in `tools/regiondb-build/`. Nothing in this crate
 //! knows how any of it was derived, and the radio knows even less: it is
 //! handed ordinary region strings through the existing repeater configuration
 //! path.
 //!
-//! Only core geometry is stored. A region's expansion margin — the overlap
-//! that lets a repeater near a border serve both sides — is a distance
+//! Only core geometry is stored. A region's expansion margin—the overlap
+//! that lets a repeater near a border serve both sides—is a distance
 //! resolved at lookup time by the sampled-dilation rule in [`sampling`]: the
 //! position itself and a fixed pattern of points around it are tested against
 //! the core polygons, and a hit on any of them is membership. A hit on the
@@ -30,8 +30,8 @@
 //! ```
 //!
 //! The file itself is an ordinary SQLite database, and every implementation
-//! that reads one — this crate, the Python builder, and eventually the
-//! browser — must return identical results for identical positions. That is
+//! that reads one—this crate, the Python builder, and eventually the
+//! browser—must return identical results for identical positions. That is
 //! not left to good intentions: `regions/tests/conformance.json` is replayed
 //! by all of them, and the geometry codec, grid arithmetic, and sample
 //! pattern here are written to match their Python counterparts operation for
@@ -124,7 +124,7 @@ impl From<MortonError> for RegionDbError {
 pub enum Membership {
     /// The position itself is inside the region.
     Core,
-    /// Only the sampled margin reaches the region — the position is near it,
+    /// Only the sampled margin reaches the region—the position is near it,
     /// within the region's expansion distance.
     Expanded,
 }
@@ -283,7 +283,7 @@ impl RegionDb {
         // SQLite built without that module fails only then, as an opaque
         // "no such module: rtree" from deep inside a query. Probing here
         // turns that into a named error at the one moment a caller is
-        // prepared to handle one. An empty table is fine — it is the
+        // prepared to handle one. An empty table is fine—it is the
         // module that is being tested, not the data.
         if !has_lookup_ranges {
             match connection.query_row("SELECT 1 FROM effective_rtree LIMIT 1", [], |_| Ok(())) {
@@ -623,7 +623,7 @@ fn decode_region_ids(data: &[u8]) -> Vec<u32> {
 /// Collapse semantic matches onto the list a radio would be given.
 ///
 /// Two matches that encode identically are one region as far as the radio is
-/// concerned — the airport and metro senses of `SFO`, say — so the first in
+/// concerned—the airport and metro senses of `SFO`, say—so the first in
 /// policy order takes the slot.
 fn radio_regions(matches: &[RegionMatch]) -> Vec<RadioRegion> {
     let mut seen = HashSet::new();
@@ -676,7 +676,7 @@ fn suggested_default(
 ///
 /// A sphere is enough here: this only ever orders two candidates that are both
 /// within a hundred kilometers, and the ellipsoidal correction is far too small
-/// to change which is nearer — and, unlike a geodesic, every implementation
+/// to change which is nearer—and, unlike a geodesic, every implementation
 /// reproduces it with plain arithmetic.
 fn site_distance(entry: &RegionMatch, latitude: f64, longitude: f64) -> f64 {
     let Some((site_longitude, site_latitude)) = entry.site else {

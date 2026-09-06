@@ -3,8 +3,8 @@
 //!
 //! Every other interface fronts a real radio, and the node behind that
 //! radio is what makes a crossing safe. A host interface has neither. It
-//! exists so that a host with no radio at all — an iOS simulator build,
-//! `umshctl --tcp`, a test — can join the bridged medium as an ordinary
+//! exists so that a host with no radio at all—an iOS simulator build,
+//! `umshctl --tcp`, a test—can join the bridged medium as an ordinary
 //! node, running its own MAC over a device that is real code and a
 //! fictional PHY.
 //!
@@ -12,7 +12,7 @@
 //! [`SimulatedDevice`]. Two seams connect it to the bridge: what the
 //! session transmits is drained into the hub, and what the hub delivers
 //! is fed through the session's real receive path. Neither direction
-//! carries measurements, because nothing here measured anything — see
+//! carries measurements, because nothing here measured anything—see
 //! the spec's [Host Interfaces].
 //!
 //! The session outlives any one connection, exactly as a radio outlives
@@ -46,7 +46,7 @@ const READ_CHUNK: usize = 4096;
 ///
 /// Deliberately spare. A board's capabilities describe hardware, and
 /// this has none: no battery to sample, no light sensor, no receiver, no
-/// Bluetooth to switch off, and above all no node — see
+/// Bluetooth to switch off, and above all no node—see
 /// [`SessionConfig::mac_node`], which is what keeps a participant from
 /// mistaking this for something it can backhaul through.
 ///
@@ -209,7 +209,7 @@ impl HostRelay {
                         &RadioRxInfo::default(),
                         self.now_ms(),
                     );
-                    // Delivering a frame can make the session transmit —
+                    // Delivering a frame can make the session transmit—
                     // an acknowledgement it was asked to send on the
                     // host's behalf, say.
                     self.drain_transmissions(&mut device);

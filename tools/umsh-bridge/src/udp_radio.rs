@@ -3,7 +3,7 @@
 //! [`umsh::tokio_support::UdpMulticastRadio`] is the simulated PHY the
 //! desktop examples share: raw UMSH frames on an IPv4 multicast group,
 //! no framing, no measurements. Bridging it needs two things a real
-//! device gives for free — receive metadata, which is synthesized from
+//! device gives for free—receive metadata, which is synthesized from
 //! configured values, and the `poll`-shaped receive the relay loop
 //! polls alongside its transmit queue.
 //!

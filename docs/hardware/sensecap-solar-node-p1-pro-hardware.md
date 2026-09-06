@@ -119,14 +119,14 @@ should not be treated as general-purpose application pins.
 | SPI MOSI | 10 | P1.15 | `PIN_SPI_MOSI` | `PIN_SPI_MOSI` | Shared with SX1262. |
 | Firmware-controlled LED A | 11 | P0.15 | `PIN_LED2`, `LED_BLUE` | `LED_WHITE` | **CONFIRMED white, active-high (2026-07-23).** "User LED". |
 | Firmware-controlled LED B / TX LED | 12 | P0.19 | `PIN_LED1`, `LED_GREEN` | `LED_BLUE`, `PIN_LED`, `P_LORA_TX_LED` | **CONFIRMED blue, active-high (2026-07-23).** "Breathing"/mesh-heartbeat/TX LED; `variant.h`'s P1.15 comment is wrong; no green LED exists. |
-| Program/user button → **power button ("PWR")** | 13 | P1.01 | `BUTTON_PIN`, `D13` | `PIN_BUTTON1`, `PIN_USER_BTN` | **CONFIRMED active-low (2026-07-23)** on internal pull-up. **This is the power button**: hold → System OFF. Matches MeshCore's `PIN_USER_BTN` power choice. **Any press from System OFF reaches the bootloader, not the application** — it cannot wake the node usefully. |
+| Program/user button → **power button ("PWR")** | 13 | P1.01 | `BUTTON_PIN`, `D13` | `PIN_BUTTON1`, `PIN_USER_BTN` | **CONFIRMED active-low (2026-07-23)** on internal pull-up. **This is the power button**: hold → System OFF. Matches MeshCore's `PIN_USER_BTN` power choice. **Any press from System OFF reaches the bootloader, not the application**—it cannot wake the node usefully. |
 | Grove SDA | 14 | P0.09 | `PIN_WIRE_SDA`, `D14` | `PIN_WIRE_SDA` | High agreement. Pin is also an NFC-capable nRF pin. |
 | Grove SCL | 15 | P0.10 | `PIN_WIRE_SCL`, `D15` | `PIN_WIRE_SCL` | High agreement. Pin is also an NFC-capable nRF pin. |
 | Battery ADC | 16 | P0.31 / AIN7 | `PIN_VBAT`, `BATTERY_PIN`, `D16` | `BATTERY_PIN` | High agreement on signal and ADC channel. Scaling differs. |
 | GNSS reset | 17 | P1.03 | `D17`, comment only | not defined | Meshtastic identifies the signal but does not actively define a GNSS reset macro. MeshCore omits it. |
 | GNSS power enable | 18 | P1.05 | `GPS_EN`, `D18` | `GPS_EN` | High agreement. |
 | Battery-divider enable | 19 | P0.14 | `BAT_READ`, `D19` | `VBAT_ENABLE` | Active-low in MeshCore. Meshtastic's generic power code must be checked before assuming identical drive behavior. |
-| Second user button ("USR") | 20 | P1.07 | `BUTTON_PIN_TOUCH` | `PIN_BUTTON2` | **CONFIRMED active-low, soft momentary (2026-07-23).** Not capacitive despite Meshtastic's `TOUCH` naming. Carries the primary action while running, and is **the only button that powers the node on** — its wake press reaches the application. |
+| Second user button ("USR") | 20 | P1.07 | `BUTTON_PIN_TOUCH` | `PIN_BUTTON2` | **CONFIRMED active-low, soft momentary (2026-07-23).** Not capacitive despite Meshtastic's `TOUCH` naming. Carries the primary action while running, and is **the only button that powers the node on**—its wake press reaches the application. |
 | QSPI SCK | 21 | P0.21 | `PIN_QSPI_SCK` | `PIN_QSPI_SCK` | Dedicated external flash signal. Physical pin from `variant.cpp`. |
 | QSPI CS | 22 | P0.25 | `PIN_QSPI_CS` | `PIN_QSPI_CS` | Dedicated external flash signal. Physical pin from `variant.cpp`. |
 | QSPI IO0 | 23 | P0.20 | `PIN_QSPI_IO0` | `PIN_QSPI_IO0` | Dedicated external flash signal. Physical pin from `variant.cpp`. |
@@ -251,7 +251,7 @@ using the consistently agreed serial mapping:
 - MCU UART RX: logical pin 7
 
 That is also the reading that turned out to be right on the other three
-boards in this family — the T-Echo, the T1000-E, and the Wio Tracker L1 —
+boards in this family—the T-Echo, the T1000-E, and the Wio Tracker L1—
 on each of which `GPS_RX_PIN` is the MCU's RX. **Confirmed here too,
 2026-08-05:** UARTE0 with RXD=P1.12 / TXD=P1.11 at 9600 gets sentences
 immediately and a 3D fix from cold. Treat it as the family rule.
@@ -294,7 +294,7 @@ Logical pin 17 is left untouched as an input: a rail that can be cut is a
 stronger reset than a line whose connection has never been confirmed.
 
 Unlike every other board in this family, this one really can take the
-module's power away — and does, because GNSS is its largest discretionary
+module's power away—and does, because GNSS is its largest discretionary
 load. The cost is that nothing here keeps time across an off state: the
 backup domain goes with the rail, so the clock comes from the next fix or
 a manual set. On a node that will see the sky daily, that is the right
@@ -307,7 +307,7 @@ true (`GnssConfig::ALWAYS_ON`). It is a fixed outdoor node with a panel
 rather than a pocket tracker on a cell: the load it worries about is the
 one it can see coming, and a node that has to be told to find itself after
 every reset is the worse failure. Saved state still overrides it in both
-directions, and `CMD_RST` returns to it — verified on hardware.
+directions, and `CMD_RST` returns to it—verified on hardware.
 
 ## Battery pack and charging system
 
@@ -509,7 +509,7 @@ bringup firmware).** P1.07 reads **active-low** on the internal pull-up
 (LOW while pressed, HIGH when released), same as the primary button, and
 is a **soft momentary button**: the MCU kept running normally through a
 press, so it does **not** hard-cut the MCU rail. (An additional hardware
-slide switch on the enclosure, if any, is uncharacterized — see below.)
+slide switch on the enclosure, if any, is uncharacterized—see below.)
 
 ### Button labels and the wake asymmetry
 
@@ -522,7 +522,7 @@ control.
   acknowledgement → System OFF (verified 2026-07-23: USB drops and stays
   down). Power-off is **PWR-only**; holding USR does nothing.
 - **Any press of PWR while the device is in System OFF enters the stock
-  bootloader's DFU mode — always** (confirmed 2026-07-27 on an enclosed
+  bootloader's DFU mode—always** (confirmed 2026-07-27 on an enclosed
   unit). Duration is irrelevant; a bare tap does it. The wake press never
   reaches the application, and escaping the mode requires replacing the
   bootloader.
@@ -531,7 +531,7 @@ control.
   only the USR path reaches the application.
 
 Two consequences: **P1.01 cannot carry a hold-at-boot gesture**, because
-the wake press never arrives; and the operational UX is asymmetric —
+the wake press never arrives; and the operational UX is asymmetric—
 **hold PWR to turn off, press USR to turn on.**
 
 **USR is clean through reset (confirmed 2026-07-27).** A held USR press
@@ -748,7 +748,7 @@ Read from `INFO_UF2.TXT` and by parsing the bootloader's own
 - **Model:** `Seeed Solar Node P1`; **Board-ID:**
   `nRF52840-SeeedSenseCAPSolarP1-v1`.
 - **SoftDevice:** S140 7.3.0 → application starts at **`0x27000`**.
-- **UF2 family ID:** **`0x28860044`** — read directly from the
+- **UF2 family ID:** **`0x28860044`**—read directly from the
   family-ID field of `CURRENT.UF2`. This is **not** `VID<<16 | PID`
   (`0x28860059`); a UF2 packed with the wrong family ID is silently
   ignored by the bootloader. `scripts/firmware_image.py`'s `sensecap-solar`
@@ -776,7 +776,7 @@ MeshCore's explicit shutdown path is the best available reference:
 5. enter nRF52840 System OFF.
 
 UMSH makes exactly this distinction, on the `ShutdownReason` carried by the
-BSP's `SHUTDOWN_SIGNAL` — see `crates/umsh-bsp-sensecap-solar/src/shutdown.rs`.
+BSP's `SHUTDOWN_SIGNAL`—see `crates/umsh-bsp-sensecap-solar/src/shutdown.rs`.
 Both paths arm both buttons; what differs is the divider gate and LPCOMP.
 
 ### User-requested off
@@ -803,7 +803,7 @@ Both paths arm both buttons; what differs is the divider gate and LPCOMP.
 
 With the divider and LPCOMP configured correctly, increasing battery voltage can
 wake the nRF52840. UMSH arms AIN7 against 3/8 VDD with upward detection and
-50 mV of hysteresis — a crossing at ≈3.65 V of cell, given the 1 MΩ/512 kΩ
+50 mV of hysteresis—a crossing at ≈3.65 V of cell, given the 1 MΩ/512 kΩ
 bridge's ×2.953 and a rail REG0 holds at 3.3 V.
 
 There is deliberately **no** boot-side re-measure gate. The reasoning is that
@@ -814,7 +814,7 @@ to fire again, and a cell that merely rebounded after shutdown rests below the
 wake point rather than above it. A comparator crossing under intermittent
 sunlight therefore already implies a cell with real charge in it, and if the
 sun goes back behind a cloud the ordinary cutoff catches it a few minutes
-later. The alternative — the boot policy sketched below — buys nothing those
+later. The alternative—the boot policy sketched below—buys nothing those
 two thresholds do not already provide, at the cost of a second, separately
 tuned recovery margin.
 
@@ -826,7 +826,7 @@ wake from low-battery System OFF
     -> begin normal boot
 ```
 
-Worth revisiting only if bench or field data shows the board cycling — which
+Worth revisiting only if bench or field data shows the board cycling—which
 would mean one of the assumptions above is wrong, not that the policy was
 missing.
 
@@ -941,7 +941,7 @@ rather than embedding Arduino IDs in low-level drivers.
   firmware arms it on the low-battery path and assumes it does; this is the
   measurement that confirms it.
 - Validate a conservative low-battery shutdown and the ≈3.65 V recovery
-  threshold the firmware arms — ramp a bench supply up through it and confirm
+  threshold the firmware arms—ramp a bench supply up through it and confirm
   the reset lands where the math says, with `rr=0x20000` in the boot log.
 - Record the System OFF floor on the low-battery path, where the divider stays
   connected, against the user-off path, where it does not.
@@ -955,14 +955,14 @@ rather than embedding Arduino IDs in low-level drivers.
 - Measure current and radiated/connector power before using 22 dBm.
 - Confirm LED_B/pin 12 does not interfere with any shared function.
 
-### Phase 4: GNSS — **done 2026-08-05**
+### Phase 4: GNSS—**done 2026-08-05**
 
 `umsh_bsp_sensecap_solar::gnss`, reached over ULCP as
 `PROP_GNSS_ENABLED`. One `umshctl gnss status` settled all three
 inferences at once: sentences arrived immediately, GSV reported 8
 satellites in view indoors, and a 3D fix followed within a couple of
 minutes. UART direction, `GPS_EN` polarity, and standby polarity are all
-as assumed — see the GNSS section above.
+as assumed—see the GNSS section above.
 
 Also verified: switching the receiver off blanks the property surface,
 and `CMD_RST` returns it to this board's on-by-default post-reset value.
@@ -1027,7 +1027,7 @@ Left for a bench with a meter:
 13. ~~What are the exact active levels and timing requirements of GNSS enable
     and standby/wakeup?~~ **Resolved** 2026-08-05: both active-high, enable
     then 50 ms then standby, sentences within a second. Timing *margins* are
-    still unprobed — the delays are generous rather than measured.
+    still unprobed—the delays are generous rather than measured.
 14. Is Grove power switched or permanently tied to the main regulated rail?
 15. Are any QSPI regions reserved by the factory bootloader or firmware?
 16. Are P1 and P1-Pro controller boards electrically identical aside from the
@@ -1080,7 +1080,7 @@ The radio pinout is strongly corroborated between MeshCore and Meshtastic. GNSS
 UART and enable pins are also well corroborated once the signal-naming
 convention is normalized.
 
-The bring-up program has since closed most of the early uncertainties —
+The bring-up program has since closed most of the early uncertainties—
 LED colors, button polarities, GNSS sequencing. What remains for UMSH is:
 
 - battery ADC calibration (the divider constant is nominal, not fitted);

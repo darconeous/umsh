@@ -8,8 +8,8 @@
 //! here, and `flush` serializes the *whole* map into a single
 //! [`proto`](crate::proto) record in the firmware's counter journal.
 //! Whole-map records keep the journal machinery identical to the other
-//! journals — newest generation wins, one committed record is the
-//! entire persisted state — at a size (≤ ~600 bytes) far under the
+//! journals—newest generation wins, one committed record is the
+//! entire persisted state—at a size (≤ ~600 bytes) far under the
 //! record payload bound.
 //!
 //! Contexts are the MAC's own key formats: the raw 32-byte identity
@@ -113,8 +113,8 @@ impl CounterMap {
         Some(at)
     }
 
-    /// Parse a persisted payload. Anything malformed — truncated
-    /// entries, oversized keys, more entries than capacity — yields
+    /// Parse a persisted payload. Anything malformed—truncated
+    /// entries, oversized keys, more entries than capacity—yields
     /// `None`, and the mount treats the journal as empty (counters
     /// reseed, which is the safe direction for TX boundaries).
     pub fn decode(payload: &[u8]) -> Option<Self> {

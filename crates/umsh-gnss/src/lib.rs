@@ -4,7 +4,7 @@
 //!
 //! The receivers differ in how they are powered and reset, and in almost
 //! nothing else: they all emit NMEA 0183 over a UART, and what UMSH wants
-//! out of them — a position, a fix quality, and the time — is the same
+//! out of them—a position, a fix quality, and the time—is the same
 //! everywhere. So the board-specific part stays in each BSP and
 //! everything above it lives here, shared by both cargo workspaces.
 //!

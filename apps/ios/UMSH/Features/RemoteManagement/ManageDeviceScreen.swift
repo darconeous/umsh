@@ -5,14 +5,14 @@ import UMSHMobileCore
 /// of its settings.
 ///
 /// Deliberately offered for any node, whether or not it has ever said it
-/// accepts administrators — a device tells only the nodes it lists that it
+/// accepts administrators—a device tells only the nodes it lists that it
 /// can be managed at all, so hiding this would hide it exactly where it
 /// works. What a device out of reach produces is a sentence rather than a
 /// dead end.
 ///
 /// The screen itself is nearly free: what a device is gets asked once and
 /// remembered, so every opening after the first puts nothing on the air.
-/// Nothing here refreshes on its own — a device several flood hops away
+/// Nothing here refreshes on its own—a device several flood hops away
 /// answers at the cost of everyone's airtime, and spending that is the
 /// operator's call.
 struct ManageDeviceScreen: View {
@@ -57,7 +57,7 @@ struct ManageDeviceScreen: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("Every setting, key, and pairing is erased, including the device's own identity — it comes back as a node nobody has met, at a different address, and has to be set up from scratch.")
+            Text("Every setting, key, and pairing is erased, including the device's own identity—it comes back as a node nobody has met, at a different address, and has to be set up from scratch.")
         }
         // Not the device's name: it is on the row below, and a title that
         // repeats it spends the one line that could say where you are.
@@ -114,7 +114,7 @@ struct ManageDeviceScreen: View {
     }
 
     /// The one control here that acts on the device rather than on its
-    /// settings — and the one worth a round trip, because a node whose last
+    /// settings—and the one worth a round trip, because a node whose last
     /// known position is a week-old fix is found by making it beep.
     private var findButton: some View {
         Button {
@@ -142,8 +142,8 @@ struct ManageDeviceScreen: View {
     /// The controls that act on the device rather than on any one group of
     /// its settings.
     ///
-    /// Restart is offered wherever the device answers at all — the node
-    /// most worth restarting is the one nobody can walk to — and only when
+    /// Restart is offered wherever the device answers at all—the node
+    /// most worth restarting is the one nobody can walk to—and only when
     /// the device says it can (`CAP_REBOOT`), the way the locate button
     /// waits on `CAP_ALERT`. A factory reset is offered only where the
     /// device is in hand: it destroys the identity this screen is addressed
@@ -185,7 +185,7 @@ struct RemotePeerBrowsing {
 
 /// One category row: what it is called, and what it opens.
 ///
-/// A device is only offered the categories it has anything to say about —
+/// A device is only offered the categories it has anything to say about—
 /// a repeater with no receiver has no GNSS screen to fill, and a screen
 /// that could only be empty is worse than no screen.
 struct ManageDeviceCategory: Identifiable {
@@ -272,7 +272,7 @@ struct RemoteCategoryChrome: ViewModifier {
     /// put the device out of reach.
     ///
     /// Held here rather than in the screen so that every route to Apply
-    /// passes it — a warning the toolbar button shows and the leaving-with-
+    /// passes it—a warning the toolbar button shows and the leaving-with-
     /// edits dialog skips is a warning that is not there when it matters.
     var applyWarning: (title: String, message: String)?
 

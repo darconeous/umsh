@@ -9,7 +9,7 @@ repository.workspace = true
 # Board-level BSP for the LilyGO T-Echo. Composes umsh-bsp-nrf52840
 # with T-Echo pinout and on-board peripherals.
 #
-# Initial scope is intentionally minimal — only what is needed for the
+# Initial scope is intentionally minimal—only what is needed for the
 # bringup firmware. Future expansion
 # is welcome but not on the immediate path.
 #

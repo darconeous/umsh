@@ -80,9 +80,9 @@ still has to be switchable off. The sequence is ordered:
 Counter persistence needs no shutdown step: it is flushed as the MAC runs, so
 nothing is buffered at power-off.
 
-Implemented in [`firmware-esp32/firmware/esp32-tracker/src/main.rs`][v3-src] —
+Implemented in [`firmware-esp32/firmware/esp32-tracker/src/main.rs`][v3-src]—
 the sources every ESP32 board shares, with this board selected by its
-`board-heltec-v3` feature — over the shared
+`board-heltec-v3` feature—over the shared
 [`umsh-ux-display-tracker`][ux-crate] menu, attention, and gate modules.
 
 ## Notes and limitations

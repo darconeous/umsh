@@ -16,5 +16,5 @@ these are: so that the geographic policy in a release is reviewable.
 `regiondb-build update --check` re-derives everything and fails if what is
 committed differs.
 
-The global country boundary layer is deliberately absent — it is written to
+The global country boundary layer is deliberately absent—it is written to
 `../build/boundaries/country/` instead. See the note in `../README.md`.

@@ -64,7 +64,7 @@ impl FromStr for HintPrefixArg {
 }
 
 /// A property value written as hex, of whatever length the property
-/// takes. Empty is a value too — it is how a string property is cleared.
+/// takes. Empty is a value too—it is how a string property is cleared.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct BytesArg(pub Vec<u8>);
 
@@ -205,7 +205,7 @@ impl FromStr for DutyLimitArg {
     }
 }
 
-/// Parse one region string — a short code, a name, or a `0x` literal.
+/// Parse one region string—a short code, a name, or a `0x` literal.
 /// The string is what the device stores; deriving it here only proves it
 /// is within the bounds a device will accept, which rejects the empty
 /// element a stray comma leaves behind and anything past 24 octets.
@@ -215,7 +215,7 @@ fn parse_region(text: &str) -> Result<String, String> {
     Ok(text.to_owned())
 }
 
-/// A comma-separated region list, or `none` for the empty list — which
+/// A comma-separated region list, or `none` for the empty list—which
 /// means "no regional restriction", not a region named "none".
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RegionListArg(pub Vec<String>);
@@ -474,7 +474,7 @@ mod tests {
             vec!["SJC", "0x7853", "Rogue Valley"]
         );
         // `none` is the empty list, which means "no regional
-        // restriction" — not a region literally named "none".
+        // restriction"—not a region literally named "none".
         assert_eq!(
             "none".parse::<RegionListArg>().unwrap().0,
             Vec::<String>::new()

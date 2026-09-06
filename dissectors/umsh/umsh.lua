@@ -1,4 +1,4 @@
--- UMSH Mesh Network — Wireshark Lua dissector (entry point)
+-- UMSH Mesh Network—Wireshark Lua dissector (entry point)
 -- Requires Wireshark 4.x / Lua 5.3+
 -- Sibling files: options.lua, keystore.lua, crypto.lua, app.lua (optional)
 
@@ -241,7 +241,7 @@ local _registered_port = 0
 -- ack needs: a retransmission publishes the same MIC prefix and takes the
 -- entry over, so an ack resolved against it once cannot resolve against it
 -- again. Wireshark re-dissects a frame whenever it is selected, and the
--- packet list keeps the first pass's Info column — which is why the
+-- packet list keeps the first pass's Info column—which is why the
 -- symptom is a detail pane disagreeing with the summary line above it,
 -- and a response time that runs backwards. _ack_origin records what each
 -- ack actually resolved to, on the one pass where the answer is right.
@@ -291,7 +291,7 @@ end
 --
 -- Tree items carry the byte form alongside the hint, since that is what the
 -- bytes they cover actually say. The address columns take the canonical
--- form alone — a keystore name displaces it whenever one is known, and the
+-- form alone—a keystore name displaces it whenever one is known, and the
 -- detail pane is where the bytes belong.
 local function hint_label(s)
   return base58.node_hint_full(s)
@@ -335,7 +335,7 @@ end
 -- as hex. The two spaces cannot collide: the spec transforms any hash prefix
 -- that would have decoded to nothing but letters out of the letter range,
 -- which is what makes the all-letter test sufficient on its own. A short code
--- bearing a digit is deliberately not read back — it is not vacated, so the
+-- bearing a digit is deliberately not read back—it is not vacated, so the
 -- code may equally have come from a hashed name.
 local function region_label(val)
   if #val == 0 then return "(no value)" end
@@ -397,7 +397,7 @@ local function check_channel_rules(tree, tvbr, ch_entry, opts)
 
   if ch_entry.builtin == "emergency" and opts.is_enc then
     flag_violation(tree, tvbr,
-      "Emergency channel traffic must not be encrypted — it must be " ..
+      "Emergency channel traffic must not be encrypted—it must be " ..
       "readable by every node in range" .. caveat)
 
   elseif ch_entry.builtin == "public" and opts.blind then
@@ -424,7 +424,7 @@ local BROADCAST_LABEL = "*"
 -- those rows keep showing the loopback pair the encapsulation invents.
 --
 -- A hint is three bytes and can collide, so what lands here is what the
--- packet claims rather than a proven identity — the same caveat the
+-- packet claims rather than a proven identity—the same caveat the
 -- names resolved from the keystore carry.
 local function set_endpoints(pinfo, src, dst)
   if src then pinfo.cols.src = src end
@@ -622,7 +622,7 @@ local function parse_options(buf, start_off, bound, tree, static_opts_out, pinfo
 
       elseif num == options.OPT_ACK_MIC then
         -- A piggy-backed MAC ack. The value is the first 4 bytes of the
-        -- acknowledged packet's on-wire MIC — the same public correlation
+        -- acknowledged packet's on-wire MIC—the same public correlation
         -- handle a standalone ack echoes, so it resolves with no keys.
         local item = opts_tree:add(f.opt_ack_mic, buf(opt_off, consumed))
         if val_len == 4 then
@@ -752,7 +752,7 @@ local function dissect_uack(buf, pinfo, tree, off)
 
   pinfo.cols.info = "UMSH UACK"
 
-  -- ACK correlation: look up the public ack_mic. This needs no keys —
+  -- ACK correlation: look up the public ack_mic. This needs no keys—
   -- the acknowledged packet's MIC prefix is visible on the wire.
   --
   -- The lookup is only meaningful while the capture is being read in
@@ -1114,7 +1114,7 @@ local function dissect_blind_unicast(buf, pinfo, tree, off, full_src, fcf_byte, 
     tree:add(f.mic, buf(off, mic_len))
 
     -- ACK correlation (keyless): record the public ack_mic even though the
-    -- endpoints are concealed — the ack echoes this MIC prefix regardless.
+    -- endpoints are concealed—the ack echoes this MIC prefix regardless.
     if ack_req and mic_len >= 4 and not pinfo.visited then
       local mic_hex = bytes_to_hex(mic_bytes:sub(1, 4))
       local prior = _ack_by_mic[mic_hex]
@@ -1203,7 +1203,7 @@ local function dissect_blind_unicast(buf, pinfo, tree, off, full_src, fcf_byte, 
     end
 
   else
-    -- E=0: DST(3) | SRC(3/32) | PAYLOAD | MIC — all in cleartext
+    -- E=0: DST(3) | SRC(3/32) | PAYLOAD | MIC—all in cleartext
     if off + 3 > buf_len then tree:add_proto_expert_info(ef.truncated); return end
     local dst_bytes = tvb_bytes(buf, off, 3)
     local dst_name  = add_dst_hint(tree, buf, off, dst_bytes)

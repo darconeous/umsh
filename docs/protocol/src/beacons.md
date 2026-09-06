@@ -24,7 +24,7 @@ distinguishes a path that merely works from one worth using.
 ## Advertisements
 
 An **advertisement** is a broadcast or multicast packet whose payload is a
-[node identity](node-identity.md) payload — a beacon that additionally
+[node identity](node-identity.md) payload—a beacon that additionally
 identifies and describes its sender. Advertisements are sent unsolicited,
 announcing presence, name, role, and capabilities. To obtain a specific
 node's identity, use the [Identity Request](mac-commands.md#identity-request-1)
@@ -47,8 +47,8 @@ distant listener learns; a node that wants to be findable further away
 publishes a path with a beacon instead.
 
 A configured period is a minimum rather than an exact cadence. A node
-SHOULD scatter each period by a random fraction of it — a quarter is a
-reasonable choice — and that scatter MUST only delay an announcement,
+SHOULD scatter each period by a random fraction of it—a quarter is a
+reasonable choice—and that scatter MUST only delay an announcement,
 never bring it forward, so the configured value remains a floor on how
 often the node transmits unasked. Nodes commissioned alike and powered on
 together otherwise stay in step for as long as they run, colliding every
@@ -75,9 +75,9 @@ UMSH does not define a dedicated path-discovery packet type. Instead, path disco
 
 3. **Return path**: Node B can now send unicast packets to Node A using the learned source route. If the packet was ack-requested, Node B's MAC ack also traverses the mesh, allowing Node A to confirm reachability.
 
-4. **Bidirectional establishment**: The trace Node A sent taught Node B a path back, and nothing else. A node responding to a packet that carried a trace-route option SHOULD carry one on its response, whatever form that response takes — MAC ack, beacon, or application payload. Where the response is a MAC ack, that ack is the whole of what Node A receives, so an ack without a trace leaves Node A holding no route to Node B at all.
+4. **Bidirectional establishment**: The trace Node A sent taught Node B a path back, and nothing else. A node responding to a packet that carried a trace-route option SHOULD carry one on its response, whatever form that response takes—MAC ack, beacon, or application payload. Where the response is a MAC ack, that ack is the whole of what Node A receives, so an ack without a trace leaves Node A holding no route to Node B at all.
 
-A sender decides whether to originate the option from what it already knows about the destination. One that holds no path — no source route, and no evidence the destination is a direct neighbor — SHOULD include a trace route: the packet is going to flood regardless, and the trace is what turns that flood into a path. A sender following a source route SHOULD NOT, since that path is already known and re-recording it on every packet is the [proactive refresh](#potential-improvement-proactive-route-refresh) this specification does not define. That applies to a path the sender holds, which is what makes the re-recording redundant. A response steered down the trace its own request accumulated — the [Identity Request](mac-commands.md#identity-request-1) answered from a source route built out of the trace, for one — is following the requester's path rather than one either side had, and the response rule above governs: the requester holds nothing until the response records something.
+A sender decides whether to originate the option from what it already knows about the destination. One that holds no path—no source route, and no evidence the destination is a direct neighbor—SHOULD include a trace route: the packet is going to flood regardless, and the trace is what turns that flood into a path. A sender following a source route SHOULD NOT, since that path is already known and re-recording it on every packet is the [proactive refresh](#potential-improvement-proactive-route-refresh) this specification does not define. That applies to a path the sender holds, which is what makes the re-recording redundant. A response steered down the trace its own request accumulated—the [Identity Request](mac-commands.md#identity-request-1) answered from a source route built out of the trace, for one—is following the requester's path rather than one either side had, and the response rule above governs: the requester holds nothing until the response records something.
 
 A packet carrying neither flood hops nor a source route SHOULD NOT carry a trace route at all, whatever the sender knows. No repeater may forward such a packet, so the option can only arrive as empty as it left, and its arrival already proves what an empty trace would have said.
 
@@ -88,15 +88,15 @@ Because router hints are only two bytes, different repeaters may share the same 
 When a node successfully processes an incoming packet, it SHOULD update its routing state for the sender:
 
 - **Trace route**: if the packet contains a trace-route option, the node caches that trace route as a source route for future packets back to the sender. Because the trace route is accumulated most-recent first, it already describes the return path from the receiver back toward the original sender. This is the primary mechanism for learning precise multi-hop paths.
-- **Flood hop count**: if the packet contains a flood hop count, the node caches the sender's `FHOPS_ACC` value together with any region-code options that arrived on the packet. When no source route is available, these cached flood parameters can be reused for flood responses — scoping the flood to approximately the right radius and regional domain rather than flooding the entire network.
+- **Flood hop count**: if the packet contains a flood hop count, the node caches the sender's `FHOPS_ACC` value together with any region-code options that arrived on the packet. When no source route is available, these cached flood parameters can be reused for flood responses—scoping the flood to approximately the right radius and regional domain rather than flooding the entire network.
 
 - **Neither**: a packet that arrives carrying no flood hop count and no source route was one that no repeater had permission to forward, so it reached the receiver off the sender's own transmitter. The node SHOULD cache the sender as a direct neighbor. This is the same conclusion an empty trace route supports, drawn from the packet's structure rather than from an option, which is what lets an unforwardable packet leave the trace route off.
 
 A MAC ack is such a packet. It names no source, but its [ack trailer](security.md#ack-tag-construction) correlates it to an outstanding request and so to the peer that sent it, and whatever routing evidence it carries updates that peer's routing state like any other packet's would.
 
-A packet that arrives carrying a source-route option — including one whose hints are all consumed — spends flood hops only after the route runs out, so its `FHOPS_ACC` counts the tail of the path rather than its length. Such a packet SHOULD NOT be used to derive a flood-distance estimate.
+A packet that arrives carrying a source-route option—including one whose hints are all consumed—spends flood hops only after the route runs out, so its `FHOPS_ACC` counts the tail of the path rather than its length. Such a packet SHOULD NOT be used to derive a flood-distance estimate.
 
-This routing state applies to all subsequent communication with the sender — replies, acknowledgments, and new messages alike. A node MAY replace a cached route when a newer packet provides a fresher trace route, and SHOULD discard cached routes that have proven unreachable.
+This routing state applies to all subsequent communication with the sender—replies, acknowledgments, and new messages alike. A node MAY replace a cached route when a newer packet provides a fresher trace route, and SHOULD discard cached routes that have proven unreachable.
 
 In practice, "proven unreachable" usually means that an ack-requested packet sent using the cached source route exhausted its retry budget without end-to-end success. In that case, the sender should stop trusting the stale route and return to route-discovery behavior:
 
@@ -117,7 +117,7 @@ A wide flood hop count is a first-contact cost. Once routing state exists for a 
 - **Flood distance**: the cached `FHOPS_ACC` is the radius at which the destination was last heard.
 - **Direct link**: no forwarding hop is needed at all.
 
-The margin — one hop is a reasonable default — keeps delivery self-healing when the path has grown by a hop since it was learned, without paying for a mesh-wide flood on every packet. A route that has failed outright is repaired through the route-retry behavior above, which floods at the sender's full budget rather than the narrowed one.
+The margin—one hop is a reasonable default—keeps delivery self-healing when the path has grown by a hop since it was learned, without paying for a mesh-wide flood on every packet. A route that has failed outright is repaired through the route-retry behavior above, which floods at the sender's full budget rather than the narrowed one.
 
 ## Potential Improvement: Proactive Route Refresh
 

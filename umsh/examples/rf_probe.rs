@@ -38,7 +38,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     use tokio_serial::SerialPortBuilderExt;
     let args: Vec<String> = std::env::args().collect();
 
-    // tx-only beacon mode: `rf_probe tx <port>` — beacon a recognizable
+    // tx-only beacon mode: `rf_probe tx <port>`—beacon a recognizable
     // broadcast (source hint AB:CD:EF) for an external sniffer to watch.
     if args.get(1).map(String::as_str) == Some("tx") {
         let stream = tokio_serial::new(args[2].as_str(), 115_200).open_native_async()?;

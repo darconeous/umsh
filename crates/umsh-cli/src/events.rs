@@ -2,7 +2,7 @@
 //! `CliSession::service_events`.
 //!
 //! All variants store bounded data; `OwnedMacCommand` (which contains an
-//! unbounded `Vec<u8>`) is never used as a blanket carrier — only the MAC
+//! unbounded `Vec<u8>`) is never used as a blanket carrier—only the MAC
 //! commands the CLI actually cares about get dedicated variants.
 
 use heapless::{String, Vec};
@@ -36,7 +36,7 @@ pub enum CliEvent {
         name: Option<String<32>>,
     },
     Beacon {
-        /// 3-byte source hint from the packet header — always present.
+        /// 3-byte source hint from the packet header—always present.
         hint: NodeHint,
         /// Full source pubkey, when the beacon carried it (some senders only
         /// include the hint to save airtime).

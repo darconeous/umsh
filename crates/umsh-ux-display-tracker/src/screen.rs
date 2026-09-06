@@ -2,15 +2,15 @@
 //!
 //! One renderer draws every board in the class. A board contributes its
 //! panel driver, its frame buffer, and a [`Layout`] describing the
-//! geometry it can offer; what actually appears on the glass — which
-//! rows exist, what they say, where the battery sits — is decided here,
+//! geometry it can offer; what actually appears on the glass—which
+//! rows exist, what they say, where the battery sits—is decided here,
 //! so a T-Echo and a Heltec V3 disagree about pixels and about nothing
 //! else.
 //!
 //! Every frame carries a header: the device name on the left and a
 //! battery indicator on the right. That includes the message frames
 //! ([`render_message`]) shown while pairing starts or the board shuts
-//! down — a panel that blanks its status to say "Clearing bonds..." is a
+//! down—a panel that blanks its status to say "Clearing bonds..." is a
 //! panel the user has to wait on to learn anything.
 //!
 //! # Coordinates and color
@@ -28,7 +28,7 @@
 //! header, row 1 is the menu cursor or the confirmation question, and the
 //! rows after that belong to the page. Gesture hints sit at the bottom of
 //! the panel and are dropped, last one first, when the page needs the
-//! room — which is how a five-row OLED and a seven-row e-paper run the
+//! room—which is how a five-row OLED and a seven-row e-paper run the
 //! same code without either one wasting a line.
 //!
 //! Errors are swallowed throughout: a panel that fails mid-frame leaves a
@@ -50,8 +50,8 @@ use crate::menu::{EntryKind, MenuItem, Page, ToggleId, UiEffect, UiModel, UiNoti
 use umsh_ux_tracker::battery::ChargeClass;
 
 /// Scratch buffer for a composed line. No panel in the class shows more
-/// than 21 characters — the 200 px e-paper manages only 19, since its
-/// font is proportionally much larger than the OLEDs' — so this is slack
+/// than 21 characters—the 200 px e-paper manages only 19, since its
+/// font is proportionally much larger than the OLEDs'—so this is slack
 /// rather than a constraint. Rows are clipped to the panel on the way
 /// out regardless.
 const LINE: usize = 32;
@@ -71,7 +71,7 @@ pub const BATTERY_SEGMENTS: u8 = 4;
 ///
 /// The bands center each bar count on the level it depicts: two of four
 /// bars covers 37–63 %, so a half-full pack draws half a body. The two
-/// end bands are deliberately narrower than the middle ones — full and
+/// end bands are deliberately narrower than the middle ones—full and
 /// empty are absolute claims, and a body should not look full at 80 %
 /// nor empty at 20 %.
 pub const fn battery_segments(level_percent: u8) -> u8 {
@@ -158,7 +158,7 @@ pub enum Controls {
     OneButton,
     /// A four-way pad with a center press, beside a button the case
     /// labels Back. Up and down move, the center selects, and Back
-    /// leaves the screen — no gesture means two things.
+    /// leaves the screen—no gesture means two things.
     Dpad,
 }
 
@@ -166,8 +166,8 @@ pub enum Controls {
 ///
 /// Everything the renderer needs to place a row of text and the battery
 /// indicator, plus which gestures to name in the hints. A board picks one
-/// of the constants — or writes its own if its panel is neither of the
-/// two shapes in the class today — and overrides the fields its hardware
+/// of the constants—or writes its own if its panel is neither of the
+/// two shapes in the class today—and overrides the fields its hardware
 /// disagrees about:
 ///
 /// ```
@@ -310,7 +310,7 @@ pub enum PairingState {
 /// Charge level and charging state, as far as the board can tell.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct BatteryIndicator {
-    /// `None` when there is no level to show — before the estimator has
+    /// `None` when there is no level to show—before the estimator has
     /// had a resting sample, or while charging on a board whose charger
     /// reports no completion. Nothing is drawn in its place.
     pub level_percent: Option<u8>,
@@ -330,9 +330,9 @@ impl BatteryIndicator {
     ///
     /// `Charged` draws one too, which is a deliberate degradation. The
     /// full vocabulary is a bolt for "charging" and a plug for "charging
-    /// complete"; no board in this class can tell the two apart — only
+    /// complete"; no board in this class can tell the two apart—only
     /// the T-1000E reads a real charge-status line, and it has no panel
-    /// — so a board that sees external power flies the bolt for as long
+    ///—so a board that sees external power flies the bolt for as long
     /// as it is plugged in rather than asserting a completion it never
     /// learns. Add the plug when a display board can substantiate it.
     const fn shows_bolt(&self) -> bool {
@@ -353,7 +353,7 @@ pub struct StatsModel {
     pub tx_frames: u32,
     /// Every frame the radio handed up, whoever it was for.
     pub rx_frames: u32,
-    /// Receptions that produced an event — addressed to this node, or
+    /// Receptions that produced an event—addressed to this node, or
     /// forwarded. The shortfall against [`Self::rx_frames`] is other
     /// people's traffic and undecodable noise, shown as "drop".
     pub rx_accepted: u32,
@@ -374,7 +374,7 @@ impl StatsModel {
 
 /// Everything drawn that is not menu state.
 ///
-/// The firmware assembles this immediately before rendering — the device
+/// The firmware assembles this immediately before rendering—the device
 /// name in particular comes from an async read, which is why it arrives
 /// as a borrowed string rather than being fetched here.
 #[derive(Clone, Copy, Debug)]
@@ -401,7 +401,7 @@ pub struct StatusModel<'a> {
     /// The local time to show in the header, or `None` when the device
     /// does not know what time it is.
     ///
-    /// `None` draws nothing at all — not a placeholder, not dashes, not a
+    /// `None` draws nothing at all—not a placeholder, not dashes, not a
     /// zeroed clock. A device that does not know the time **must not**
     /// indicate one, and enforcing that here rather than in each panel is
     /// what keeps it true: there is no way to render a clock without a
@@ -430,7 +430,7 @@ pub struct SettingsModel {
 /// This device's own address, rendered by the firmware.
 ///
 /// Both forms arrive pre-formatted because base58 lives in `umsh-core`,
-/// which this crate does not depend on — and because the hint's
+/// which this crate does not depend on—and because the hint's
 /// star-truncated rendering is canonical elsewhere and must not be
 /// reinvented here.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -438,7 +438,7 @@ pub struct IdentityModel<'a> {
     /// The four-character node hint, `*` and all. What a person compares
     /// by eye.
     pub hint: &'a str,
-    /// The complete 44-character Base58 address. What a machine reads —
+    /// The complete 44-character Base58 address. What a machine reads—
     /// and what Identity falls back to on a panel with no room for a
     /// scannable symbol, which today is every panel in the class.
     pub address: &'a str,
@@ -459,7 +459,7 @@ pub struct ClockModel {
 
 impl ClockModel {
     /// Render the status-page row, labeled to match the battery row
-    /// beside it — a bare `14:30` on a line of its own reads as a
+    /// beside it—a bare `14:30` on a line of its own reads as a
     /// measurement without a name.
     fn write(&self, out: &mut String<LINE>) {
         let _ = write!(out, "time {:02}:{:02}", self.hour, self.minute);
@@ -484,7 +484,7 @@ where
         // only meaningful beside its neighbors, so the list it belongs to
         // is the screen and a Select is what opens one of its entries.
         //
-        // Every page names itself the same way — see `draw_title`. None
+        // Every page names itself the same way—see `draw_title`. None
         // of them inverts, because on a page there is no cursor for a bar
         // to be on.
         Page::Menu(MenuItem::Status) => {
@@ -518,7 +518,7 @@ where
             confirm_selected, ..
         } => {
             // The question names the object and its size, which is the
-            // only place the bond count changes a decision — and is why
+            // only place the bond count changes a decision—and is why
             // the status page no longer spends a row carrying it around.
             write_clear_question(&mut line, status.bonds);
             draw_row(target, layout, 1, &line);
@@ -541,7 +541,7 @@ where
             }
             None => &menu_hints[..1],
         },
-        // A reading page has one question left, so it gets one hint —
+        // A reading page has one question left, so it gets one hint—
         // and it names the gesture that is quickest rather than the only
         // one that works, since every press dismisses it.
         Page::Detail(_) => match layout.controls {
@@ -556,7 +556,7 @@ where
     draw_hints(target, layout, content_end, hints);
 }
 
-/// Draw a short centered message — a pairing window opening, a wipe
+/// Draw a short centered message—a pairing window opening, a wipe
 /// running, an alert, a farewell.
 ///
 /// The header stays, so the battery is readable even while the board is
@@ -676,7 +676,7 @@ pub fn draw_battery_icon<D>(
 /// Only state that departs from nominal earns a row. A closed pairing
 /// window and plain advertising are what every tracker does when nothing
 /// is happening, and a line that appears on almost every frame trains the
-/// user to stop reading it — so neither is drawn, and what is left on a
+/// user to stop reading it—so neither is drawn, and what is left on a
 /// resting device is a single battery line. That is also what gives the
 /// five-row panels enough room to show their gesture hints on the page
 /// users actually sit on.
@@ -729,7 +729,7 @@ where
     // Last, so that on a panel whose rows have run out the clock is what
     // falls off rather than the battery: how much charge is left is a
     // fact somebody is deciding something with, and what time it is is
-    // not. Absent entirely when the device does not know the time —
+    // not. Absent entirely when the device does not know the time—
     // there is no placeholder row, because a row that says the time is
     // unknown is still an indication about the time.
     if let Some(clock) = status.clock {
@@ -745,7 +745,7 @@ where
 /// Radio activity: what the node has actually done on the air.
 ///
 /// Enough to tell a working node from a deaf one without reaching for a
-/// capture — a node whose `rx` never moves is not hearing anybody, and one
+/// capture—a node whose `rx` never moves is not hearing anybody, and one
 /// whose `tx` never moves is not being heard.
 fn draw_stats_page<D>(
     target: &mut D,
@@ -784,8 +784,8 @@ where
 
 /// Draw this device's address.
 ///
-/// The QR code the spec wants here needs a symbol a camera can resolve —
-/// about 110 px square for a `umsh:n:` URI — which neither panel in the
+/// The QR code the spec wants here needs a symbol a camera can resolve—
+/// about 110 px square for a `umsh:n:` URI—which neither panel in the
 /// class can offer below the header. So both fall back to the address as
 /// text, wrapped across the rows below, with the four-character hint
 /// above it as the part a person can compare by eye where there is room
@@ -810,7 +810,7 @@ where
 
     // The address goes on whole or not at all. An address cut off at the
     // bottom of the panel is worse than none, because it looks like a
-    // complete one — and this screen exists to be transcribed from.
+    // complete one—and this screen exists to be transcribed from.
     let mut row = 2;
     let available = layout.rows.saturating_sub(row);
     if needed > available {
@@ -927,7 +927,7 @@ where
 /// row to its end.
 ///
 /// The label is what gives way when a row cannot hold both. The affix is
-/// the affordance — which way Select goes, or what the switch is set to —
+/// the affordance—which way Select goes, or what the switch is set to—
 /// and a truncated name is still recognizable where a missing arrow is
 /// simply absent.
 fn write_entry(line: &mut String<LINE>, item: MenuItem, settings: &SettingsModel, columns: usize) {
@@ -955,13 +955,13 @@ fn write_entry(line: &mut String<LINE>, item: MenuItem, settings: &SettingsModel
 ///
 /// **`>` means Select opens another screen before anything happens.** A
 /// submenu opens its list, Statistics opens its page, and Clear bonds
-/// opens its confirmation — three different screens, but one promise, and
+/// opens its confirmation—three different screens, but one promise, and
 /// it is the promise the user needs before pressing: nothing has changed
 /// yet, and there is another step in which to think better of it.
 ///
 /// Its absence is the other half of that promise. Start pairing carries
 /// no mark because Select performs it there and then, and a toggle
-/// carries its state for the same reason — it goes nowhere, and what it
+/// carries its state for the same reason—it goes nowhere, and what it
 /// is set to is what the column is worth spending on. The distinction the
 /// user actually needs from this list is between the rows that act on the
 /// press and the rows that ask again, which is exactly the line the mark
@@ -1072,7 +1072,7 @@ where
     // The clock is deliberately *not* here. It fits, but only by taking
     // the room from the device name, and on the 200 px e-paper's
     // twenty-pixel font that cut the name from fourteen characters to
-    // seven — which across a fleet of `umsh-`-prefixed radios is the
+    // seven—which across a fleet of `umsh-`-prefixed radios is the
     // difference between identifying one and guessing. The clock lives on
     // the status page instead, where a row costs nothing that was being
     // read.
@@ -1138,13 +1138,13 @@ where
 ///
 /// Centering is the signal. Nothing else on any screen is centered except
 /// the message frames, so a centered word at the top of a page is already
-/// unambiguous — which is why a title needs no inversion, and is better
+/// unambiguous—which is why a title needs no inversion, and is better
 /// without one. A solid bar means the cursor, and a page is not a list
 /// with its first row picked out.
 ///
 /// The weight is synthetic. Neither font in this class has a bold sibling
-/// in `embedded-graphics` — the OLED's 6x10 and the e-paper's 10x20 both
-/// stand alone — so the glyphs are stamped twice, a pixel apart, and every
+/// in `embedded-graphics`—the OLED's 6x10 and the e-paper's 10x20 both
+/// stand alone—so the glyphs are stamped twice, a pixel apart, and every
 /// vertical stroke comes out a pixel thicker. The style carries no
 /// background color, so the second pass only ever adds ink; nothing it
 /// draws over is erased. It costs one extra pass over a short string and
@@ -1189,7 +1189,7 @@ const BOLD_SMEAR: u32 = 1;
 /// [`draw_row_selectable`], which is what makes a solid bar mean one
 /// thing: the cursor is here. Page titles used to invert as well, and a
 /// title bar with nothing under it read as a list whose first row was
-/// picked out — see [`draw_title`], which centers instead.
+/// picked out—see [`draw_title`], which centers instead.
 fn draw_row_inverted<D>(target: &mut D, layout: &Layout, row: usize, text: &str)
 where
     D: DrawTarget<Color = BinaryColor>,
@@ -1275,7 +1275,7 @@ where
 
 // ─── Strings ─────────────────────────────────────────────────────────────────
 
-/// The entry's name, with no cursor decoration — the highlight is the
+/// The entry's name, with no cursor decoration—the highlight is the
 /// inversion, not a prefix.
 ///
 /// Back reads as the way out of the level it sits in rather than naming
@@ -1376,7 +1376,7 @@ const fn notice_label(notice: UiNotice) -> &'static str {
 /// Advertising is what a tracker does whenever nobody is talking to it, so
 /// announcing it says only that the device is behaving normally. What
 /// earns a row is a host actually being on the other end, or advertising
-/// being suppressed — the case where a user looking for the device on a
+/// being suppressed—the case where a user looking for the device on a
 /// phone would otherwise be left wondering.
 const fn link_label(link: LinkState) -> Option<&'static str> {
     match link {
@@ -1654,7 +1654,7 @@ mod tests {
     /// Whether the panel renders `text` as one of its rows.
     ///
     /// Draws the row alone on a reference panel and checks every lit
-    /// pixel of it is also lit on `panel` — the closest a bitmap target
+    /// pixel of it is also lit on `panel`—the closest a bitmap target
     /// gets to reading text back off the glass.
     fn shows_row(panel: &TestPanel, layout: &Layout, text: &str) -> bool {
         (1..layout.rows).any(|row| {
@@ -1679,7 +1679,7 @@ mod tests {
 
     /// The requirement this whole feature is conditioned on: a device
     /// that does not know what time it is shows **nothing** about the
-    /// time — not a placeholder, not zeros, not dashes, and not a row
+    /// time—not a placeholder, not zeros, not dashes, and not a row
     /// saying it does not know.
     #[test]
     fn an_unknown_time_draws_no_clock_at_all() {
@@ -1763,7 +1763,7 @@ mod tests {
         }
     }
 
-    /// The clock lives in the body, so it takes nothing from the header —
+    /// The clock lives in the body, so it takes nothing from the header—
     /// a long device name reads exactly as far as it did before there was
     /// a clock at all.
     #[test]
@@ -1880,7 +1880,7 @@ mod tests {
     }
 
     /// The bolt has its own reserved column, so a charger going in must
-    /// not shift the body — on the e-paper that is the difference between
+    /// not shift the body—on the e-paper that is the difference between
     /// re-inking a bolt and re-inking the whole header.
     #[test]
     fn charging_adds_a_bolt_without_moving_the_body() {
@@ -1931,7 +1931,7 @@ mod tests {
     }
 
     /// The indicator must stay inside the rectangle the layout reserved
-    /// for it — that rectangle is what the header blanks before drawing,
+    /// for it—that rectangle is what the header blanks before drawing,
     /// and anything spilling out of it lands on top of the device name.
     #[test]
     fn the_indicator_stays_inside_its_zone() {
@@ -2014,7 +2014,7 @@ mod tests {
         }
     }
 
-    /// A resting device says one thing — its battery — and the rows that
+    /// A resting device says one thing—its battery—and the rows that
     /// frees are exactly what the five-row panel needed for its gesture
     /// hints. This is the payoff for dropping the nominal-state rows.
     #[test]
@@ -2142,7 +2142,7 @@ mod tests {
         assert_ne!(counts[1], counts[2]);
     }
 
-    /// The stats page renders three populated rows on every layout — a
+    /// The stats page renders three populated rows on every layout—a
     /// deaf node has to be distinguishable from a busy one at a glance.
     #[test]
     fn the_stats_page_shows_its_counters() {
@@ -2166,7 +2166,7 @@ mod tests {
     }
 
     /// Walking onto Statistics shows the Radio list with Statistics
-    /// highlighted — not the statistics. Reading in place is the top
+    /// highlighted—not the statistics. Reading in place is the top
     /// level's exception, and this is the entry that used to break it.
     #[test]
     fn a_reading_entry_below_the_top_is_drawn_as_a_row() {
@@ -2239,7 +2239,7 @@ mod tests {
         )
     }
 
-    /// Every page on every layout stays inside the panel — `TestPanel`
+    /// Every page on every layout stays inside the panel—`TestPanel`
     /// asserts on any pixel that does not.
     #[test]
     fn no_page_draws_outside_the_panel() {
@@ -2329,7 +2329,7 @@ mod tests {
 
     /// A solid bar means the cursor, and it means nothing else.
     ///
-    /// Inversion across the whole row — not emphasized text — is what
+    /// Inversion across the whole row—not emphasized text—is what
     /// makes it legible on a bistable panel with no backlight, and it is
     /// the contract Select is drawn against. So a frame showing a list
     /// inverts exactly the row the cursor is on, and a frame showing a
@@ -2364,7 +2364,7 @@ mod tests {
                 assert_ne!(rows[0], 0, "{item:?} inverted the header");
 
                 // ...and the page it opens, if it opens one, has no bar
-                // either — the list it was on is gone.
+                // either—the list it was on is gone.
                 if matches!(item.kind(), EntryKind::Reading(_)) {
                     model.apply(UiInput::Select);
                     assert!(matches!(model.page(), Page::Detail(_)));
@@ -2499,8 +2499,8 @@ mod tests {
 
     /// The mark says whether Select acts on the press or asks again.
     ///
-    /// Three different screens sit behind `>` — a list, a page, and a
-    /// confirmation — but one promise: nothing has changed yet.
+    /// Three different screens sit behind `>`—a list, a page, and a
+    /// confirmation—but one promise: nothing has changed yet.
     #[test]
     fn a_row_says_whether_select_acts_or_asks_again() {
         let settings = SettingsModel {
@@ -2555,7 +2555,7 @@ mod tests {
         let items = MenuItems::all();
         // Neither shipping panel overflows a level today, so the window
         // arithmetic is exercised against panels short enough that they
-        // must — three content rows against a four-entry level.
+        // must—three content rows against a four-entry level.
         for style in [Overflow::ClipRow, Overflow::ScrollBar] {
             for base in layouts() {
                 let layout = Layout {
@@ -2654,7 +2654,7 @@ mod tests {
     }
 
     /// Charging with no level draws a bolt and nothing else: there is no
-    /// level, so there is no body — the two are drawn independently.
+    /// level, so there is no body—the two are drawn independently.
     #[test]
     fn charging_without_a_level_replaces_the_body_with_a_bolt() {
         for layout in layouts() {
@@ -2695,7 +2695,7 @@ mod tests {
 
             // The bolt keeps the zone's right edge, so the indicator does
             // not shift sideways when a charger goes in. Its rightmost
-            // column must be lit and everything left of the bolt clear —
+            // column must be lit and everything left of the bolt clear—
             // which also proves no body outline survived.
             let solo = layout.battery.solo_bolt;
             let right_edge = Rectangle::new(

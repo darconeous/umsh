@@ -33,7 +33,7 @@ static RAIL: Mutex<CriticalSectionRawMutex, RefCell<Option<Output<'static>>>> =
     Mutex::new(RefCell::new(None));
 
 /// Shared handle to the `Vext` power domain. `Copy`, because the rail it
-/// names is a singleton — cloning a handle does not clone the rail.
+/// names is a singleton—cloning a handle does not clone the rail.
 #[derive(Clone, Copy)]
 pub struct VextHandle(());
 

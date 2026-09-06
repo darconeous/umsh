@@ -11,15 +11,15 @@ struct ReactionBadgeView: View {
     /// How much room a reacted message must reserve above its bubble. The
     /// chips live mostly in that space, dipping only a little way onto the
     /// bubble's corner, so they never spill into the row above and be drawn
-    /// under it — and so their page-color halos are never sliced at the
+    /// under it—and so their page-color halos are never sliced at the
     /// reserved space's edge.
     static let overhang: CGFloat = 30
     /// How much room is reserved on the bubble's *outer* side. The corner
     /// chip overhangs the bubble's edge by about half its width, and the
     /// thought-dot trail falls entirely outside the bubble, in this strip.
     static let outset: CGFloat = 32
-    /// Insets keeping every part of the cluster — halos, count circles, the
-    /// dot trail — inside the reserved space, where nothing can clip them.
+    /// Insets keeping every part of the cluster—halos, count circles, the
+    /// dot trail—inside the reserved space, where nothing can clip them.
     static let topInset: CGFloat = 6
     static let cornerInset: CGFloat = 15
 
@@ -31,7 +31,7 @@ struct ReactionBadgeView: View {
     /// the bubbles we send here.
     let security: ConversationSecurity
 
-    /// Identical reactions share a chip and carry a count — except one of ours
+    /// Identical reactions share a chip and carry a count—except one of ours
     /// that failed to send, which stays on its own so its faded state never
     /// gets averaged away by someone else's copy of the same glyph.
     fileprivate struct Chip: Identifiable {
@@ -63,8 +63,8 @@ struct ReactionBadgeView: View {
 
     var body: some View {
         // Chips overlap like a hand of cards, the way Messages draws a
-        // cluster of tapbacks: the chip nearest the bubble's corner — ours,
-        // when we have one — sits in front, and it alone carries the
+        // cluster of tapbacks: the chip nearest the bubble's corner—ours,
+        // when we have one—sits in front, and it alone carries the
         // thought-dot trail down to the bubble. One trail per cluster; a
         // trail per chip reads as several thoughts instead of one.
         let ordered = orderedChips
@@ -122,7 +122,7 @@ private struct ThoughtChip: View {
     let security: ConversationSecurity
     /// Dots on the trailing side rather than the leading one.
     let mirrored: Bool
-    /// Whether this chip carries the cluster's thought-dot trail — true only
+    /// Whether this chip carries the cluster's thought-dot trail—true only
     /// for the chip nearest the bubble's corner.
     let showsDots: Bool
 
@@ -133,7 +133,7 @@ private struct ThoughtChip: View {
         }
     }
 
-    /// A reaction that could not be sent is the same chip, faded — enough to
+    /// A reaction that could not be sent is the same chip, faded—enough to
     /// read as unfinished without dressing an ordinary tap up as an error.
     private var opacity: Double {
         style == .failed ? 0.5 : 1
@@ -152,7 +152,7 @@ private struct ThoughtChip: View {
             .frame(width: Self.diameter, height: Self.diameter)
             .background(fill, in: Circle())
             // A ring of the page color, so a grey chip on a grey bubble is
-            // still a separate object — the chips sit on the bubble, and
+            // still a separate object—the chips sit on the bubble, and
             // without this the inbound pair merges into one shape.
             .background(halo)
             .overlay(alignment: mirrored ? .topTrailing : .topLeading) {

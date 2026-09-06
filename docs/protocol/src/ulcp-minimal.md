@@ -5,8 +5,8 @@
 > content now lives in [Framing and Common
 > Semantics](ulcp-core.md), [Radio Control](ulcp-radio.md), and
 > [Frame Transport](ulcp-transport.md). What a device is required to
-> implement — the question this chapter's minimal/full split used to
-> answer — is stated in [Minimum
+> implement—the question this chapter's minimal/full split used to
+> answer—is stated in [Minimum
 > Requirements](ulcp-conformance.md), and every numeric identifier is
 > listed in the [Command and Property Index](ulcp-index.md).
 
@@ -773,8 +773,8 @@ the reset code **MUST** be returned.
 > holds a saved snapshot, the post-reset value of every saved property is
 > its saved value rather than the documented default. A host **MUST NOT**
 > assume that a reset implies documented factory defaults; it should fetch
-> or explicitly set the properties it depends on. Without a snapshot — in
-> particular on any minimal-only device — the documented post-reset values
+> or explicitly set the properties it depends on. Without a snapshot—in
+> particular on any minimal-only device—the documented post-reset values
 > apply unconditionally.
 
 Id  | Name

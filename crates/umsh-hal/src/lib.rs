@@ -60,7 +60,7 @@ impl Snr {
     }
 
     /// Return the stored value in quarter-dB steps, rounding to the nearest
-    /// step — the form a peer-repeater entry reports.
+    /// step—the form a peer-repeater entry reports.
     ///
     /// The rounding inverse of [`from_quarter_db_steps`](Self::from_quarter_db_steps):
     /// every value that came from a quarter-dB step returns that step.
@@ -238,7 +238,7 @@ pub trait Clock {
 /// Stores and retrieves peer records keyed by the raw 32-byte Ed25519 public
 /// key. `alias` is an optional UTF-8 label (the implementation may silently
 /// truncate values longer than 16 bytes). Implementors MUST treat `store_peer`
-/// as an upsert — calling it twice for the same key overwrites the record.
+/// as an upsert—calling it twice for the same key overwrites the record.
 pub trait PeerStore {
     type Error;
 
@@ -260,7 +260,7 @@ pub trait PeerStore {
     ) -> Result<(), Self::Error>;
 }
 
-/// No-op peer store — use when peer persistence is not needed.
+/// No-op peer store—use when peer persistence is not needed.
 pub struct NoPeerStore;
 
 impl PeerStore for NoPeerStore {
@@ -304,7 +304,7 @@ pub trait ChannelStore {
     ) -> Result<(), Self::Error>;
 }
 
-/// No-op channel store — use when channel persistence is not needed.
+/// No-op channel store—use when channel persistence is not needed.
 pub struct NoChannelStore;
 
 impl ChannelStore for NoChannelStore {
@@ -338,7 +338,7 @@ pub trait CounterStore {
     async fn flush(&self) -> Result<(), Self::Error>;
 }
 
-/// No-op counter store — counters restart from zero every boot.
+/// No-op counter store—counters restart from zero every boot.
 ///
 /// Use only where counter persistence is not (yet) load-bearing: a node
 /// that sends nothing but unsecured broadcasts, or a bring-up stage whose
@@ -364,7 +364,7 @@ impl CounterStore for NoCounterStore {
 
 /// Optional power-control hook for higher layers (e.g. the CLI).
 ///
-/// Implementations request a controlled shutdown — the actual sequencing
+/// Implementations request a controlled shutdown—the actual sequencing
 /// (display, storage flush, GPIO sense, entering System OFF, etc.) lives
 /// in the firmware that owns those peripherals. This call MUST return
 /// promptly; it's typically a `Signal::signal(())` to a shutdown task.
@@ -374,12 +374,12 @@ pub trait PowerControl {
     /// Request a soft reboot. The default implementation is a no-op; targets
     /// without a wired reboot path can leave it as such. Like
     /// [`request_power_off`](Self::request_power_off), this MUST return
-    /// promptly — typically a `Signal::signal(())` to a reboot task that
+    /// promptly—typically a `Signal::signal(())` to a reboot task that
     /// performs any final flushes before triggering a system reset.
     fn request_reboot(&self) {}
 }
 
-/// No-op power control — use when shutdown is not implemented for the target.
+/// No-op power control—use when shutdown is not implemented for the target.
 pub struct NoPowerControl;
 
 impl PowerControl for NoPowerControl {
@@ -398,7 +398,7 @@ pub trait KeyValueStore {
     async fn delete(&self, key: &[u8]) -> Result<(), Self::Error>;
 }
 
-/// No-op key-value store — loads find nothing, stores succeed silently.
+/// No-op key-value store—loads find nothing, stores succeed silently.
 /// Use when a platform bundle needs the associated type but nothing in
 /// the deployment reads cached state back.
 pub struct NoKeyValueStore;
@@ -425,7 +425,7 @@ mod tests {
 
     /// The wire form of an SNR in a peer-repeater entry is quarter-dB
     /// steps, so a value that arrived as one has to leave as the same one
-    /// — otherwise relaying an observation would drift it a step at a
+    ///—otherwise relaying an observation would drift it a step at a
     /// time.
     #[test]
     fn quarter_db_steps_round_trip_through_centibels() {

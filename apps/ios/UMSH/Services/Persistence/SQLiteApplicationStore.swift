@@ -11,7 +11,7 @@ enum ApplicationStoreError: Error, Equatable, Sendable {
     case sqliteFailure(Int32, message: String)
     case unsupportedSchema(Int32)
     /// Migrations ran but left the database at a version other than
-    /// ``SQLiteApplicationStore/currentSchemaVersion`` — a migration block
+    /// ``SQLiteApplicationStore/currentSchemaVersion``—a migration block
     /// stamped a `user_version` the constant was never raised to match. Fails
     /// on the first run of the offending build rather than on the second,
     /// where the store would open once and then be rejected forever after.
@@ -84,7 +84,7 @@ struct StoredNode: Equatable, Sendable {
 /// The four things worth learning once: a device's capabilities and firmware
 /// version change only when it is reflashed, its hardware never, and its name
 /// rarely. Holding them means the second and every later open of a device's
-/// settings puts nothing on the air at all — which over five flood hops is
+/// settings puts nothing on the air at all—which over five flood hops is
 /// the difference between instant and half a minute of everyone's airtime.
 struct StoredManagementCard: Equatable, Sendable {
     /// `PROP_CAPS` verbatim, planned against without asking the device
@@ -135,7 +135,7 @@ struct StoredDirectConversation: Equatable, Sendable {
     /// unread; a conversation the user has never opened reads as all-unread
     /// from its first message.
     let lastReadAtMilliseconds: Int64
-    /// When the conversation row was created — the activity time of a
+    /// When the conversation row was created—the activity time of a
     /// conversation that has no messages yet.
     let createdAtMilliseconds: Int64
     /// Whether this conversation may raise a notification. Defaults on,
@@ -154,7 +154,7 @@ struct StoredChannelConversation: Equatable, Sendable {
     let conversationAddress: String
     let draftText: String
     let lastReadAtMilliseconds: Int64
-    /// When the conversation row was created — the activity time of a
+    /// When the conversation row was created—the activity time of a
     /// conversation that has no messages yet.
     let createdAtMilliseconds: Int64
     let lastMessage: StoredConversationPreview?
@@ -179,7 +179,7 @@ struct ChatNotificationTarget: Equatable, Sendable {
 /// message of theirs.
 struct ChatReactionNotificationTarget: Equatable, Sendable {
     let conversationAddress: String
-    /// The reaction body as it arrived — a wire token like `<3`, rendered to
+    /// The reaction body as it arrived—a wire token like `<3`, rendered to
     /// a glyph for display.
     let body: String
     /// What the reaction is on, so the notice can quote it the way a chat app
@@ -199,7 +199,7 @@ struct ChatDeliveryFailure: Equatable, Sendable {
 /// How a channel's key was established, which decides what may be shared.
 enum StoredChannelKind: String, Equatable, Sendable {
     /// `public` or `EMERGENCY`: named channels the protocol fixes rules for.
-    /// These rows are never deleted — leaving clears the joined flags so the
+    /// These rows are never deleted—leaving clears the joined flags so the
     /// channel can be offered again.
     case builtin
     /// Key derived from a name anyone may know, so the name is shareable.
@@ -225,7 +225,7 @@ struct StoredChannel: Equatable, Sendable {
     /// Two-octet derived identifier, hex. A hint, not an identity: distinct
     /// keys may collide here.
     let channelIDHex: String
-    /// Three presentation octets — the identifier extended by one byte — kept
+    /// Three presentation octets—the identifier extended by one byte—kept
     /// here so a list can color its rows without unlocking every key.
     let tint: Data
     let regionCode: Data?
@@ -274,11 +274,11 @@ struct StoredChatMessage: Equatable, Sendable, Identifiable {
     /// for outbound messages and for anything that predates the metadata.
     let reception: StoredMessageReception?
     /// The row's SQLite rowid, which with `createdAtMilliseconds` forms this
-    /// message's keyset cursor. Ordering key only — `(sessionID, handle)`
+    /// message's keyset cursor. Ordering key only—`(sessionID, handle)`
     /// remains the durable identity.
     let rowID: Int64
     /// Reactions about this message, at most one per sender, oldest first.
-    /// Folded at read time from the emote rows that name it — they are
+    /// Folded at read time from the emote rows that name it—they are
     /// messages in their own right, but never transcript rows.
     var reactions: [StoredMessageReaction] = []
 
@@ -295,7 +295,7 @@ struct StoredChatMessage: Equatable, Sendable, Identifiable {
 /// `(created_at_ms, rowid)` is exactly the transcript's ORDER BY, so a cursor
 /// names a row rather than an offset: a page boundary stays put when older
 /// messages are repaired in behind it. The rowid half is load-bearing rather
-/// than defensive — a mutation batch is stamped from one clock read, so several
+/// than defensive—a mutation batch is stamped from one clock read, so several
 /// messages sharing a millisecond is the normal case, not an edge one.
 ///
 /// Rowids are reused after a transcript is cleared, so two messages in the same
@@ -314,7 +314,7 @@ struct ChatMessageCursor: Hashable, Sendable, Comparable {
     }
 }
 
-/// One loaded slice of a transcript, oldest first — the order it renders in.
+/// One loaded slice of a transcript, oldest first—the order it renders in.
 /// The flags describe what storage holds beyond the slice, so a reader knows
 /// whether there is more to page toward in either direction.
 struct StoredChatMessagePage: Equatable, Sendable {
@@ -332,7 +332,7 @@ struct StoredChatMessagePage: Equatable, Sendable {
 /// anything else, which is what lets the transcript show a reaction that has
 /// not reached anyone yet.
 struct StoredMessageReaction: Hashable, Sendable {
-    /// The emote body as it arrived — a short token, not necessarily an
+    /// The emote body as it arrived—a short token, not necessarily an
     /// emoji. Presentation normalizes it.
     let body: String
     let outbound: Bool
@@ -999,7 +999,7 @@ actor SQLiteApplicationStore {
         }
     }
 
-    /// Delete a peer row outright. Refused — returning `false` — when a
+    /// Delete a peer row outright. Refused—returning `false`—when a
     /// conversation references it (demote instead, or use
     /// ``deletePeerAndConversation``) or when the row is the system-managed
     /// companion radio. Stream checkpoints and counter state survive by
@@ -1088,7 +1088,7 @@ actor SQLiteApplicationStore {
     /// Keep the transient tier bounded: beyond `cap` rows, the oldest-heard
     /// evictable transients are dropped. Rows with a conversation, on the
     /// device identity, with a system role, or carrying a pending watch are
-    /// never evicted — a watch that the cap quietly deleted would be a
+    /// never evicted—a watch that the cap quietly deleted would be a
     /// promise the app stopped keeping without saying so.
     func enforceTransientRetention(ownerIdentityID: String, cap: Int = 256) throws {
         let statement = try prepare(
@@ -1194,7 +1194,7 @@ actor SQLiteApplicationStore {
     }
 
     /// Record that we just heard from a peer by any means. No-ops when the
-    /// peer is not yet saved locally — an unknown peer has no row to touch and
+    /// peer is not yet saved locally—an unknown peer has no row to touch and
     /// needs no last-heard until it is added.
     ///
     /// Returns whether this call is the one that disarmed a pending watch,
@@ -1234,8 +1234,8 @@ actor SQLiteApplicationStore {
     }
 
     /// Resolve the peer a locally-stored message belongs to, keyed by its
-    /// durable `(sessionID, handle)`. Used to attribute delivery acks — which
-    /// carry no address of their own — back to a conversation for last-heard
+    /// durable `(sessionID, handle)`. Used to attribute delivery acks—which
+    /// carry no address of their own—back to a conversation for last-heard
     /// bookkeeping.
     func conversationAddressForMessage(
         ownerIdentityID: String,
@@ -1261,7 +1261,7 @@ actor SQLiteApplicationStore {
     /// The persisted conversation address, sender, and body of an inbound,
     /// displayable message, for raising a notification. Returns `nil` for
     /// outbound rows, tombstones, gap placeholders, unavailable markers, or
-    /// empty bodies — nothing worth alerting the user about. Resolves every
+    /// empty bodies—nothing worth alerting the user about. Resolves every
     /// field from storage so a notify carried on an `UpdateBody` (which omits
     /// them) still works.
     func chatNotificationTarget(
@@ -1506,7 +1506,7 @@ actor SQLiteApplicationStore {
         return cached
     }
 
-    /// Record values a device reported — from a read, or from the echo a
+    /// Record values a device reported—from a read, or from the echo a
     /// write comes back with, which is the freshest statement of what the
     /// device is actually holding.
     func saveCachedProperties(
@@ -1616,7 +1616,7 @@ actor SQLiteApplicationStore {
     /// Both are per-conversation index seeks rather than scans: the last message
     /// resolves a rowid at the end of one index range and then fetches that one
     /// row, and the unread count starts at the read cursor instead of the
-    /// beginning of history. Deliberately absent is a total message count — it
+    /// beginning of history. Deliberately absent is a total message count—it
     /// is the one aggregate that must walk the whole range, and nothing in a
     /// list row asks for it.
     ///
@@ -1845,7 +1845,7 @@ actor SQLiteApplicationStore {
     /// conversation keeps them: sequence continuity with the far end has to
     /// outlive the transcript, or the next message would announce a Sequence
     /// Reset. Archived outbound payloads do go, so a later resend request for
-    /// a cleared message is answered Unavailable — the protocol handles that,
+    /// a cleared message is answered Unavailable—the protocol handles that,
     /// and keeping erased content on disk would not be acceptable.
     func clearConversationMessages(
         ownerIdentityID: String,
@@ -1909,7 +1909,7 @@ actor SQLiteApplicationStore {
 
     /// Fill in the sender of group messages stored before that member's hint
     /// resolved to a real address. Rows that already name a sender are left
-    /// alone — the first attribution seen for a hint is the one kept.
+    /// alone—the first attribution seen for a hint is the one kept.
     func applySenderResolution(
         ownerIdentityID: String,
         conversationAddress: String,
@@ -1935,7 +1935,7 @@ actor SQLiteApplicationStore {
     /// checkpoints are deliberately retained: sequence continuity with the
     /// peer must survive the transcript, or the next message would announce
     /// a Sequence Reset. Archived outbound payloads go with the history, so
-    /// a late resend request for them is answered Unavailable — the protocol
+    /// a late resend request for them is answered Unavailable—the protocol
     /// handles that; keeping deleted content on disk would not be acceptable.
     func deleteDirectConversation(ownerIdentityID: String, conversationID: Int64) throws {
         try transaction {
@@ -2045,7 +2045,7 @@ actor SQLiteApplicationStore {
         }
     }
 
-    /// Returns the mutations that materialized a new message row — an edit
+    /// Returns the mutations that materialized a new message row—an edit
     /// whose original this phone never stored arrives as content, not a
     /// revision (see ``materializeOrphanEdit``). The engine could not flag
     /// those `notify`, since only the platform knows the original was
@@ -2146,7 +2146,7 @@ actor SQLiteApplicationStore {
     }
 
     /// Resolve one message's delivery state from the fragment evidence
-    /// currently recorded against the transmission it reports —
+    /// currently recorded against the transmission it reports—
     /// `delivery_session_id`/`delivery_handle`, the row's own compose until an
     /// edit re-aims it at the edit's frames. The keys given here are always
     /// transmission keys, never assumed to be a row's primary key.
@@ -2211,7 +2211,7 @@ actor SQLiteApplicationStore {
     }
 
     /// The delivery state of whichever row is currently reporting this
-    /// transmission — matched through the delivery pointer, since evidence
+    /// transmission—matched through the delivery pointer, since evidence
     /// always arrives keyed by the transmission that earned it.
     private func deliveryState(
         ownerIdentityID: String,
@@ -2270,7 +2270,7 @@ actor SQLiteApplicationStore {
             for mutation in batch.mutations {
                 // A new outbound message is keyed by its own compose; an edit
                 // never inserted a row, but the row it revised now points its
-                // delivery tracking at the edit's transmissions — the ones
+                // delivery tracking at the edit's transmissions—the ones
                 // that just failed to launch. Either way the row the failure
                 // belongs to is the one whose pointer names this mutation.
                 switch mutation.kind {
@@ -2299,7 +2299,7 @@ actor SQLiteApplicationStore {
     /// back on the air as a genuinely new message: keeping the dead row would
     /// show the same words twice, once red and once delivered.
     ///
-    /// Local only, and deliberately narrow — the guards make this a no-op on
+    /// Local only, and deliberately narrow—the guards make this a no-op on
     /// anything but a failed outbound row, so a stale caller can never take
     /// down a message the mesh knows about. Reactions pointing at the row go
     /// with it (nobody ever received the message they decorate), as does the
@@ -2457,7 +2457,7 @@ actor SQLiteApplicationStore {
         )
     }
 
-    /// The `limit` messages immediately newer than `cursor` — or starting at
+    /// The `limit` messages immediately newer than `cursor`—or starting at
     /// it, when `including` is set, which is how a window re-reads the extent
     /// it already holds.
     func chatMessagePage(
@@ -2641,7 +2641,7 @@ actor SQLiteApplicationStore {
     /// every seeded row would share a timestamp and the transcript would have no
     /// spread to page through. Timestamps here run backward from now in
     /// one-minute steps, in occasional same-millisecond clusters, which is what
-    /// a real batch produces — with a lull of several hours every so often, so
+    /// a real batch produces—with a lull of several hours every so often, so
     /// the seeded transcript spans days and carries the date separators a real
     /// one does.
     func seedGeneratedMessages(
@@ -2737,7 +2737,7 @@ actor SQLiteApplicationStore {
     }
 
     /// The transcript around one message, for opening a search result in
-    /// context. `nil` when that message is not in this conversation — a stale
+    /// context. `nil` when that message is not in this conversation—a stale
     /// hit against a cleared transcript, which is not an error.
     func chatMessageWindow(
         ownerIdentityID: String,
@@ -3151,7 +3151,7 @@ actor SQLiteApplicationStore {
     }
 
     /// Returns whether the mutation materialized a new message row instead of
-    /// revising one — see ``materializeOrphanEdit``.
+    /// revising one—see ``materializeOrphanEdit``.
     @discardableResult
     private func applyChatMutation(
         ownerIdentityID: String,
@@ -3181,7 +3181,7 @@ actor SQLiteApplicationStore {
                   let direction = mutation.direction,
                   let body = mutation.body
             else { return false }
-            // An emote — status text about another message — is a reaction
+            // An emote—status text about another message—is a reaction
             // rather than a transcript row of its own. Resolve what it is
             // about now, while the reference is in hand: the target may be
             // named by a live handle or, far more often, by the wire
@@ -3291,7 +3291,7 @@ actor SQLiteApplicationStore {
             try bind(sessionID, to: statement, at: 37)
             try check(sqlite3_bind_int64(statement, 38, Int64(mutation.handle)))
             try stepDone(statement)
-            // A reaction can outrun the message it is about — repaired gaps
+            // A reaction can outrun the message it is about—repaired gaps
             // and channel-group reordering both do it. Whenever a real message
             // lands, adopt whatever was already waiting on it.
             if !isReaction, let wireID = mutation.wireId {
@@ -3357,7 +3357,7 @@ actor SQLiteApplicationStore {
                 // The edit names a message this phone never stored. That is
                 // not stray metadata: it is how a resend arrives when both
                 // the original AND the engine's chance to open a gap for it
-                // are gone (a new conversation, or any app relaunch — inbound
+                // are gone (a new conversation, or any app relaunch—inbound
                 // stream state is engine RAM). The edit carries the message's
                 // whole current content, so materialize it as the message
                 // rather than throwing the words away. An unresolved delete
@@ -3414,14 +3414,14 @@ actor SQLiteApplicationStore {
     /// message itself.
     ///
     /// A resend goes on the air as an edit of the failed message carrying its
-    /// same text, and the receiver may hold nothing for it to revise — the
+    /// same text, and the receiver may hold nothing for it to revise—the
     /// original never arrived, and no gap placeholder was reserved when the
     /// edit's own sequence advance established a fresh baseline. The row is
     /// keyed by the edit mutation's session and handle (its only durable
     /// identity here) but carries the *original's* wire ID, so later edits,
     /// deletes, and reactions referencing that ID resolve to it; reactions
     /// already waiting on it are adopted the way any late-arriving message
-    /// adopts them. Marked received-late — it is one, in the plainest sense.
+    /// adopts them. Marked received-late—it is one, in the plainest sense.
     ///
     /// Inbound originals only: an unresolved edit of one of our own outbound
     /// messages describes a message this identity never sent, and stays
@@ -3476,7 +3476,7 @@ actor SQLiteApplicationStore {
     ///
     /// A live handle names a row this facade session wrote. Otherwise the
     /// engine exported the original's wire reference, and the row it names is
-    /// the newest with that ID on that stream — wire IDs recycle serially
+    /// the newest with that ID on that stream—wire IDs recycle serially
     /// within a stream, so the newest epoch/row is the one still
     /// referenceable.
     private func editTargetRowid(
@@ -3521,12 +3521,12 @@ actor SQLiteApplicationStore {
     }
 
     /// Aim an edited outbound message's delivery pointer at the edit's own
-    /// transmission — the frames now carrying the row's content.
+    /// transmission—the frames now carrying the row's content.
     ///
     /// An edit inserts no row: its mutation revises the original's stored
     /// body. Its frames, though, are tracked under the edit's own engine
     /// handle, so without this the row would keep waiting on evidence for a
-    /// transmission nobody is making any more — an edit that failed could
+    /// transmission nobody is making any more—an edit that failed could
     /// never say so, and a resent message (a resend airs as an edit of
     /// itself) would stay "Not Delivered" however well the resend went. Only
     /// the pointer moves: the row's primary key is its compose identity,
@@ -3537,7 +3537,7 @@ actor SQLiteApplicationStore {
     /// edit only ever revises its own sender's inbound rows, which carry no
     /// delivery state, and this keeps that invariant local to one statement.
     ///
-    /// `fragmentCount` is how many frames the edit put in flight — its
+    /// `fragmentCount` is how many frames the edit put in flight—its
     /// content fragments under its own encoding overhead, so the count the
     /// original compose stamped no longer describes what is on the air.
     private func adoptEditDelivery(
@@ -3582,7 +3582,7 @@ actor SQLiteApplicationStore {
     ///
     /// A live handle names a row this session wrote. Otherwise the reference
     /// arrives as wire coordinates, and the row it names is the newest
-    /// non-reaction message holding that ID on that stream — wire IDs recycle
+    /// non-reaction message holding that ID on that stream—wire IDs recycle
     /// serially, so the newest is the only one still referenceable. `nil`
     /// when the target has not been stored yet; ``bindPendingReactions``
     /// adopts those once it is.
@@ -3598,8 +3598,8 @@ actor SQLiteApplicationStore {
         guard let wireID = mutation.regardingWireId,
               let direction = mutation.regardingDirection
         else { return nil }
-        // `IS` rather than `=` so a conversation without hints — every direct
-        // one, and our own side of a group — matches null against null.
+        // `IS` rather than `=` so a conversation without hints—every direct
+        // one, and our own side of a group—matches null against null.
         let statement = try prepare(
             """
             SELECT session_id, handle FROM chat_message
@@ -3745,7 +3745,7 @@ actor SQLiteApplicationStore {
     }
 
     /// Pair a result code with SQLite's own description of it, taken while the
-    /// connection still holds it — `sqlite3_errmsg` reports the most recent
+    /// connection still holds it—`sqlite3_errmsg` reports the most recent
     /// failure, so it has to be read at the throw and not later.
     private static func sqliteFailure(
         _ database: OpaquePointer?,
@@ -4094,13 +4094,13 @@ actor SQLiteApplicationStore {
             try execute(database, sql: "BEGIN IMMEDIATE")
             do {
                 // The peer tier model: `is_saved` marks a node stored on the
-                // local (phone) identity; rows with 0 are the transient tier —
+                // local (phone) identity; rows with 0 are the transient tier—
                 // heard on the air, kept for search/discovery, hidden from the
                 // main list, and evicted by retention. `on_dev_identity` caches
                 // whether the node's key is on the companion radio's device
                 // identity (PROP_DEV_PEERS); the device is the authority.
                 // Every pre-existing row was visible in Peers, so all of
-                // them upgrade as saved — nothing may vanish from the list.
+                // them upgrade as saved—nothing may vanish from the list.
                 try execute(
                     database,
                     sql: """
@@ -4151,8 +4151,8 @@ actor SQLiteApplicationStore {
                 // key it describes lives in Keychain under `id`.
                 //
                 // `channel_id_hex` is the two-octet derived identifier, which
-                // is a routing hint and NOT unique — distinct keys may collide
-                // and receivers resolve that by trial decryption — so it
+                // is a routing hint and NOT unique—distinct keys may collide
+                // and receivers resolve that by trial decryption—so it
                 // cannot key the table. `key_digest` can: it is a one-way
                 // commitment to the key that makes "already joined" and "same
                 // name, different key" answerable in SQL, without which an
@@ -4204,7 +4204,7 @@ actor SQLiteApplicationStore {
                 // one vocabulary from the engine to the table.
                 //
                 // Channel messages also carry what a multicast frame carries
-                // and a unicast does not — a claimed sender hint — plus the
+                // and a unicast does not—a claimed sender hint—plus the
                 // radio metadata of the frame each message arrived on, which
                 // the transcript can now show per message.
                 try execute(
@@ -4271,7 +4271,7 @@ actor SQLiteApplicationStore {
             do {
                 // Reactions are emotes: ordinary messages carrying a Regarding
                 // reference, which is why they live in `chat_message` rather
-                // than a table of their own — they are sent, delivered,
+                // than a table of their own—they are sent, delivered,
                 // acknowledged, and repaired like anything else. What they need
                 // is somewhere to record who they are about, resolved once on
                 // arrival: the wire columns say what the frame claimed, and the
@@ -4316,8 +4316,8 @@ actor SQLiteApplicationStore {
                 //
                 // `node_mgmt_card` is what a device *is*: capabilities, the
                 // firmware they belong to, the hardware, the name. Firmware
-                // version is the key the rest hangs from — capabilities
-                // cannot change without it changing too — so a card arriving
+                // version is the key the rest hangs from—capabilities
+                // cannot change without it changing too—so a card arriving
                 // with a different version invalidates every cached value
                 // alongside it.
                 //
@@ -4362,7 +4362,7 @@ actor SQLiteApplicationStore {
                 // A one-shot watch: tell me the next time this node is heard
                 // from. Armed by hand, disarmed by the hearing itself, so it
                 // is state rather than a preference and belongs on the row it
-                // is about — a watch that did not survive relaunch would be
+                // is about—a watch that did not survive relaunch would be
                 // useless for the thing it is for, which is a node that has
                 // gone quiet and may come back at any hour.
                 try execute(
@@ -4383,8 +4383,8 @@ actor SQLiteApplicationStore {
             try execute(database, sql: "BEGIN IMMEDIATE")
             do {
                 // Which transmission a message row reports delivery for. A
-                // row's primary key is its compose identity and never moves —
-                // edits and reactions reference it — but the transmission
+                // row's primary key is its compose identity and never moves—
+                // edits and reactions reference it—but the transmission
                 // carrying its content changes whenever an edit (or a resend,
                 // which airs as one) supersedes the original frames under the
                 // edit's own engine handle. These columns are the pointer the
@@ -4424,7 +4424,7 @@ actor SQLiteApplicationStore {
                 // Whether a direct conversation may notify. Defaults on,
                 // which is what direct messages did before there was a
                 // switch. Channels have carried the same setting since they
-                // arrived, defaulting off — the asymmetry is deliberate: a
+                // arrived, defaulting off—the asymmetry is deliberate: a
                 // message addressed to you is worth interrupting for, and a
                 // channel's traffic is not until its owner says so.
                 try execute(

@@ -6,7 +6,7 @@ import UMSHMobileCore
 ///
 /// The one management screen whose controls can act on the link carrying
 /// them. Switching Bluetooth off drops the attached host, and forgetting
-/// every pairing drops it and locks it out until someone pairs again — so
+/// every pairing drops it and locks it out until someone pairs again—so
 /// what a control *means* here depends on how this device was reached, and
 /// the copy says so rather than leaving the operator to find out.
 struct RemoteBluetoothScreen: View {
@@ -107,7 +107,7 @@ struct RemoteBluetoothScreen: View {
 
     /// Whether anyone is on the device's Bluetooth right now.
     ///
-    /// Over the mesh this is the interesting row on the screen — it is the
+    /// Over the mesh this is the interesting row on the screen—it is the
     /// only way to ask whether someone else is on the device. Over
     /// Bluetooth it can only ever say yes, because the phone reading it is
     /// the connection.
@@ -183,7 +183,7 @@ struct RemoteBluetoothScreen: View {
     }
 
     private func apply() async {
-        // Rebuilt from what the device answered — but only if it answered.
+        // Rebuilt from what the device answered—but only if it answered.
         // A write that never left the phone leaves these fields as the only
         // copy of what the operator asked for.
         if await model.apply(.bluetooth, desired: edits.desired, dirty: edits.dirty) {
@@ -192,8 +192,8 @@ struct RemoteBluetoothScreen: View {
     }
 
     /// The two settings on this screen. The link is a reading, and the
-    /// bond count is written only by Clear Pairings — a destructive act
-    /// with its own confirmation — so neither is part of Apply.
+    /// bond count is written only by Clear Pairings—a destructive act
+    /// with its own confirmation—so neither is part of Apply.
     private struct Edits {
         var enabled = RemoteField<Bool>(0, nil)
         var pairing = RemoteField<Bool>(0, nil)
@@ -212,7 +212,7 @@ struct RemoteBluetoothScreen: View {
         }
 
         /// The new reading as the baseline, with the operator's standing
-        /// edits carried over — see ``RemoteField/preserving(_:)``.
+        /// edits carried over—see ``RemoteField/preserving(_:)``.
         init(_ reading: RemoteCategoryReading?, preserving old: Edits) {
             self.init(reading)
             guard !old.isEmpty else { return }

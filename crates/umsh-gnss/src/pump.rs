@@ -3,8 +3,8 @@
 //! This is the part that would otherwise be copied into every firmware:
 //! power the receiver when it is wanted, read its UART, hand each
 //! completed fix upward, and put it back to sleep when it is not. It is
-//! generic over the three things that actually differ between boards —
-//! the byte stream, the power sequencing, and what is done with a fix —
+//! generic over the three things that actually differ between boards—
+//! the byte stream, the power sequencing, and what is done with a fix—
 //! so a new board contributes those and nothing else.
 //!
 //! `#[embassy_executor::task]` functions cannot be generic, so a firmware
@@ -34,8 +34,8 @@ use crate::driver::{Driver, Fix};
 
 /// The exact `embedded-io-async` [`run`] is generic over.
 ///
-/// Re-exported because a consumer that wraps its UART — to count bytes
-/// during bringup, to inject a fault — has to implement *this* crate's
+/// Re-exported because a consumer that wraps its UART—to count bytes
+/// during bringup, to inject a fault—has to implement *this* crate's
 /// `Read`, and a workspace can easily hold two versions of it. Without
 /// this the wrapper compiles and then fails the bound with an error that
 /// points at the impl and says it does not exist.
@@ -49,7 +49,7 @@ pub use embedded_hal_async;
 /// up, in milliseconds.
 ///
 /// A receiver whose backup domain stayed powered emits a dated `RMC`
-/// within a second or two of its main domain coming up — it is reading
+/// within a second or two of its main domain coming up—it is reading
 /// its own clock, not searching for satellites. Ten seconds is generous
 /// enough to cover a slow start and short enough that a receiver which
 /// has lost its clock does not hold up a boot.
@@ -81,7 +81,7 @@ pub trait Power {
     /// Put the receiver in the lowest power state this board can reach.
     ///
     /// On a board whose receiver holds the only surviving real-time
-    /// clock, that state keeps the backup domain alive — which is not an
+    /// clock, that state keeps the backup domain alive—which is not an
     /// exception to "off means off" so much as a statement that the
     /// domain in question is a clock rather than a receiver.
     async fn power_off(&mut self);
@@ -98,7 +98,7 @@ pub trait Sink {
     /// One completed fix cycle.
     ///
     /// Called for every cycle, including the empty ones a searching
-    /// receiver produces — "still nothing" is a fact worth having, and a
+    /// receiver produces—"still nothing" is a fact worth having, and a
     /// sink that only heard about successes could not tell a receiver
     /// that is searching from one that is not running.
     async fn fix(&mut self, fix: &Fix);
@@ -154,7 +154,7 @@ where
 
     // Park the receiver before anything else. The pump owns its power
     // state from here on, and whatever state it was left in belongs to
-    // whoever ran before — a bootloader, a previous image, or a reset
+    // whoever ran before—a bootloader, a previous image, or a reset
     // that did not reach the pin.
     power.power_off().await;
 
@@ -208,11 +208,11 @@ where
 /// For boards where the receiver's own real-time-clock domain is the only
 /// clock that survives a power cycle. The domain cannot speak a UART on
 /// its own, so reading it mechanically requires bringing the main domain
-/// up — but what is being read is a clock, and everything positional seen
+/// up—but what is being read is a clock, and everything positional seen
 /// along the way is discarded.
 ///
 /// Returns the first instant the receiver reports, or `None` if it
-/// reports none within [`RTC_READ_TIMEOUT_MS`] — which is what a receiver
+/// reports none within [`RTC_READ_TIMEOUT_MS`]—which is what a receiver
 /// that lost its backup power looks like.
 ///
 /// The caller decides whether to believe the answer: this is governed by

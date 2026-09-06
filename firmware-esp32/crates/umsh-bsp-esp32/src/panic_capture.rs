@@ -1,4 +1,4 @@
-//! Panic capture into RTC fast RAM — the ESP32 analog of the nRF BSP's
+//! Panic capture into RTC fast RAM—the ESP32 analog of the nRF BSP's
 //! `panic_persist`: the panic message survives the ensuing software reset
 //! and is reported on the next boot over UART0.
 //!

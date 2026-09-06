@@ -38,7 +38,7 @@ without both.
 The interface's gear icon opens the capture options: which radio to attach to
 (**Reload** scans for BLE radios), a serial port to use instead, and live-only
 RF overrides. The RF override fields are empty by default and left empty mean
-"capture on whatever the radio is already tuned to" — filling one in changes
+"capture on whatever the radio is already tuned to"—filling one in changes
 the live PHY for the duration of the capture, and is never saved to the device.
 
 Frames arrive as [LoRaTap](https://github.com/eriknl/LoRaTap) (`LINKTYPE` 270),
@@ -80,7 +80,7 @@ Replace `4242` with whatever port you passed to `--udp`.
 The dissector registers a **UDP heuristic** that automatically identifies UMSH
 packets by inspecting the first byte (FCF version field = `0b11`, valid packet
 type, and minimum length check). No manual configuration is needed for basic
-dissection — UMSH packets in any UDP stream will be detected and decoded
+dissection—UMSH packets in any UDP stream will be detected and decoded
 automatically.
 
 If the heuristic isn't triggering (e.g. another dissector claims the port first),
@@ -94,7 +94,7 @@ you can force it by setting the UDP port in the UMSH preferences:
 In two terminals, start a chat pair over UDP multicast:
 
 ```sh
-# Terminal 1 — print public key, then run
+# Terminal 1—print public key, then run
 cargo run --example desktop_chat --features tokio-support -- --print-public-key
 cargo run --example desktop_chat --features tokio-support -- \
     --udp 239.255.42.42:4242 --peer <TERMINAL_2_PUBLIC_KEY>
@@ -135,11 +135,11 @@ The key table has three columns:
 | **label** | Human-readable display name |
 
 Key types:
-- **pubkey** — maps a 32-byte Ed25519 public key to a display name (annotates
+- **pubkey**—maps a 32-byte Ed25519 public key to a display name (annotates
   source/destination hints, no decryption)
-- **privkey** — a 32-byte Ed25519 seed used for unicast and blind unicast
+- **privkey**—a 32-byte Ed25519 seed used for unicast and blind unicast
   decryption
-- **channel** — a 32-byte symmetric channel key used for multicast and blind
+- **channel**—a 32-byte symmetric channel key used for multicast and blind
   unicast decryption
 
 #### Key formats
@@ -232,7 +232,7 @@ A channel ID is a 2-byte hint of a key and the spec permits collisions, so a
 finding that rests on one says "channel identified by ID only" until the MIC
 verifies under that channel's key and settles which channel it really is.
 
-To color those frames — red background, white text — install the coloring
+To color those frames—red background, white text—install the coloring
 rule:
 
 ```sh
@@ -348,7 +348,7 @@ callsign options are ARNCE-decoded.
 
 An Ack MIC option (8) is a MAC ack piggy-backed onto a reply instead of sent
 as its own packet, so it is resolved to the frame it acknowledges the same
-way a standalone ack is — by the public four-byte MIC prefix, which needs no
+way a standalone ack is—by the public four-byte MIC prefix, which needs no
 keys. The acknowledged frame is linked in the tree and named on the summary
 line.
 
@@ -356,7 +356,7 @@ line.
 
 Addresses render in the canonical forms from the addressing chapter: a full
 32-byte key as its 44 base58 digits, and a hint in the star-truncated form,
-with the bytes it was read from alongside — `GySV (ED:54:A5)` for a node hint,
+with the bytes it was read from alongside—`GySV (ED:54:A5)` for a node hint,
 `Gy* (ED:54)` for a router hint. Characters before the star are ones every key
 matching that hint would produce; the star marks where the hint stops proving
 anything. `umsh.src_addr` and `umsh.dst_addr` carry the canonical text for

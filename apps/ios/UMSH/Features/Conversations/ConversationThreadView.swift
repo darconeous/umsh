@@ -4,8 +4,8 @@ import UIKit
 /// One open transcript, whichever kind of conversation it belongs to.
 ///
 /// Direct chats and channel group chats differ in who is on the other end,
-/// not in how a transcript behaves — scrolling, composing, editing, and
-/// delivery all work the same — so they share this view and the channel case
+/// not in how a transcript behaves—scrolling, composing, editing, and
+/// delivery all work the same—so they share this view and the channel case
 /// adds only what a group needs: a sender over each inbound bubble, and a way
 /// to ask an unidentified member who they are.
 struct ConversationThreadView: View {
@@ -15,7 +15,7 @@ struct ConversationThreadView: View {
     private static let stopFollowingDistance: CGFloat = 360
     private static let resumeFollowingDistance: CGFloat = 240
     /// How far past the top the reader has to pull before the next page of
-    /// history loads — far enough that it reads as asking for more, rather than
+    /// history loads—far enough that it reads as asking for more, rather than
     /// as the bounce at the end of an ordinary flick.
     private static let edgePagingOverscroll: CGFloat = 48
     /// Approaching the bottom of a window that is not at the live edge loads
@@ -28,8 +28,8 @@ struct ConversationThreadView: View {
     private static let newerEdgeID = "chat-transcript-newer-edge"
 
     /// Which member's sheet is open, named by the one thing about them that
-    /// cannot change. Everything else — their address, their name, whether
-    /// they are a peer at all — is answered from the transcript at render, so
+    /// cannot change. Everything else—their address, their name, whether
+    /// they are a peer at all—is answered from the transcript at render, so
     /// the sheet is never older than what the transcript knows.
     private struct InspectedMember: Identifiable, Equatable {
         let hint: Data
@@ -58,7 +58,7 @@ struct ConversationThreadView: View {
     /// this phone knows without a direct chat ever having been opened.
     let peers: [PeerSummary]
     /// What is waiting in the conversations this one is covering, counted by
-    /// whoever opened it — the pill on the back button, as in Messages.
+    /// whoever opened it—the pill on the back button, as in Messages.
     let unreadElsewhere: Int
 
     @State private var draft: String
@@ -77,7 +77,7 @@ struct ConversationThreadView: View {
     /// Where the reader is, held by reference so that following a scroll costs
     /// nothing to draw. Every one of these changes many times per drag, and as
     /// view state each write would invalidate the transcript and re-diff every
-    /// row in the window on every frame — none of them is something the
+    /// row in the window on every frame—none of them is something the
     /// transcript renders.
     @State private var scroll = TranscriptScrollState()
     /// Bumped by every change that should carry the reader to the live edge,
@@ -377,7 +377,7 @@ struct ConversationThreadView: View {
         }
         // The composer floats over the transcript rather than sitting below
         // it, so the newest messages run to the bottom of the screen and pass
-        // under the bar as they scroll — as in Messages. An inset rather than
+        // under the bar as they scroll—as in Messages. An inset rather than
         // an overlay, so the scroll view keeps its content clear of the bar on
         // its own, and the empty and loading states get the same treatment.
         .safeAreaInset(edge: .bottom) {
@@ -405,9 +405,9 @@ struct ConversationThreadView: View {
         .toolbarVisibility(.hidden, for: .tabBar)
         .navigationTitle(conversation.title)
         .navigationBarTitleDisplayMode(.inline)
-        // Keyed on the revision, so a reload that changed no messages here —
+        // Keyed on the revision, so a reload that changed no messages here—
         // a peer heard, another conversation's traffic, this one being marked
-        // read — costs nothing.
+        // read—costs nothing.
         .task(id: conversation.messageRevision) { await refreshTranscript() }
         .onAppear {
             visibleConversationReporter.appeared(conversation.conversationAddress)
@@ -421,7 +421,7 @@ struct ConversationThreadView: View {
         }
         // The header is this view's own rather than the navigation bar's. An
         // inline bar squeezes its principal item into the height it would
-        // rather give — around 67pt of content — which is not enough for an
+        // rather give—around 67pt of content—which is not enough for an
         // avatar and a name at the sizes Messages uses. This is the same
         // arrangement as the composer at the other edge, and being a safe-area
         // inset it starts below the status bar, clear of the Dynamic Island.
@@ -536,7 +536,7 @@ struct ConversationThreadView: View {
         }
         // Confirmed rather than fired on the tap: the badge sits right where
         // a finger rests while scrolling, and a resend puts frames on the
-        // air — never something a stray touch should do. What the tap means
+        // air—never something a stray touch should do. What the tap means
         // depends on the failure's age. A recent one goes out as an edit of
         // itself, invisible to anyone who already has it; an old one can
         // only go out as a genuinely new message.
@@ -573,7 +573,7 @@ struct ConversationThreadView: View {
         ZStack {
             // Boxed in from both sides so a long name truncates inside its
             // pill rather than running under the back button and off the
-            // screen. The minimum clears the back control at its widest —
+            // screen. The minimum clears the back control at its widest—
             // chevron plus a "99+" pill.
             HStack(spacing: 0) {
                 Spacer(minLength: 72)
@@ -634,7 +634,7 @@ struct ConversationThreadView: View {
     }
 
     /// Fire-and-forget like a reaction: the message is already in the
-    /// transcript, so nothing new appears and the reader stays put — the
+    /// transcript, so nothing new appears and the reader stays put—the
     /// row's own delivery caption is the progress report.
     private func resend(_ message: ChatMessageSummary) {
         Task {
@@ -686,7 +686,7 @@ struct ConversationThreadView: View {
     /// Bring the window up to date with storage.
     ///
     /// What "up to date" means depends on where the reader is. Following the
-    /// live edge, the window *slides* there — a re-read of the extent it
+    /// live edge, the window *slides* there—a re-read of the extent it
     /// already holds would strand a follower behind a batch that landed more
     /// messages than the window has slack for. Reading history, the extent is
     /// re-read in place instead, so edits, deletions and delivery changes
@@ -732,7 +732,7 @@ struct ConversationThreadView: View {
     /// Page backward until the content is at least tall enough to scroll.
     ///
     /// A window shorter than the viewport cannot be pulled, so the gesture that
-    /// would load more history can never happen — the reader would be stuck
+    /// would load more history can never happen—the reader would be stuck
     /// with whatever the first page held and no way to ask for the rest.
     private func fillViewportIfShort() async {
         guard transcript.hasOlder, !transcript.isLoadingOlder else { return }
@@ -751,7 +751,7 @@ struct ConversationThreadView: View {
     /// The anchor only compensates when nothing else is steering the offset,
     /// though. A finger down, momentum, or the rubber-band settle all move the
     /// viewport toward a point in the *old* content, and a prepend applied
-    /// under any of them dumps the reader a page up the history — so a page
+    /// under any of them dumps the reader a page up the history—so a page
     /// that arrives while the transcript is moving is parked and applied by
     /// the phase handler once it comes to rest.
     private func loadOlder() async {
@@ -817,8 +817,8 @@ struct ConversationThreadView: View {
     /// edited around it.
     ///
     /// SwiftUI's scroll anchors do not compensate for content growing above a
-    /// transcript resting at its top — the new rows land above offset zero and
-    /// the viewport ends up a page back in the history — so the offset is
+    /// transcript resting at its top—the new rows land above offset zero and
+    /// the viewport ends up a page back in the history—so the offset is
     /// restored arithmetically instead, from the one fact layout has to settle
     /// first: the content's new height. The hop waits for that layout;
     /// `target` then computes the offset that leaves the same rows on screen.
@@ -832,7 +832,7 @@ struct ConversationThreadView: View {
         let heightBefore = scroll.contentHeight
         DispatchQueue.main.async {
             // The geometry observer reports the post-edit height once layout
-            // runs. If it has not yet, give it another turn — but never stall
+            // runs. If it has not yet, give it another turn—but never stall
             // forever on an edit that happened not to change the height.
             if scroll.contentHeight == heightBefore, attempt < 3 {
                 restoreViewport(attempt: attempt + 1, to: target, then: completion)
@@ -854,7 +854,7 @@ struct ConversationThreadView: View {
     ///
     /// Deferred to a resting transcript on purpose: this shrinks the content
     /// below the reader, which the bottom scroll anchor answers by pulling
-    /// everything up, so it needs a correction — and a correction is only
+    /// everything up, so it needs a correction—and a correction is only
     /// invisible when nothing is moving.
     private func trimTranscriptIfNeeded() {
         guard transcript.exceedsCapacity, !transcript.isLoadingOlder else { return }
@@ -894,8 +894,8 @@ struct ConversationThreadView: View {
 
     /// Return to the live edge from a window that does not hold it.
     ///
-    /// The window is replaced rather than paged forward — the reader may be
-    /// thousands of messages back — but it is not cut to the bottom either.
+    /// The window is replaced rather than paged forward—the reader may be
+    /// thousands of messages back—but it is not cut to the bottom either.
     /// Pre-positioning just above the newest messages and then animating home
     /// reads as arriving somewhere, which is what the reader asked for.
     private func landAtLiveEdge() async {
@@ -1062,7 +1062,7 @@ struct ConversationThreadView: View {
     /// authority: a peer we know, then the name they attached to the message,
     /// then their address, then the bare hint.
     ///
-    /// The message-borne name is the sender's own unverified claim — the
+    /// The message-borne name is the sender's own unverified claim—the
     /// channel MIC proves membership, not identity, so anyone with the key
     /// can write any name there. It is useful precisely when we know nothing
     /// else, and must never displace a name this phone established itself.
@@ -1091,7 +1091,7 @@ struct ConversationThreadView: View {
     /// for. That response backfills the sender of every stored message from
     /// the same hint and bumps the conversation's revision, so re-reading the
     /// window is what lets an answer turn into a peer while the sheet is still
-    /// open — a value captured at the tap never could.
+    /// open—a value captured at the tap never could.
     private func member(hint: Data) -> ChannelMember {
         // Any of their messages will do once resolution has landed, since it
         // fills them all in; preferring one that names an address keeps a
@@ -1131,8 +1131,8 @@ struct ConversationThreadView: View {
 
     /// Link states with no radio in hand: nothing attached, and nothing in the
     /// middle of attaching. Only these unseat the composer field. The states
-    /// along the attachment pipeline — connecting, reconnecting, synchronizing
-    /// and the rest — keep it, so a momentary BLE drop cannot yank the
+    /// along the attachment pipeline—connecting, reconnecting, synchronizing
+    /// and the rest—keep it, so a momentary BLE drop cannot yank the
     /// keyboard out from under a half-typed message.
     private var radioIsAbsent: Bool {
         switch radioSnapshot.linkState {
@@ -1156,8 +1156,8 @@ struct ConversationThreadView: View {
     }
 
     /// Why the composer cannot take a message, if it cannot. Both cases end at
-    /// the same sheet — one to attach a radio, one to set the attached one up
-    /// for this identity — so both offer a way into it.
+    /// the same sheet—one to attach a radio, one to set the attached one up
+    /// for this identity—so both offer a way into it.
     private var composerBlock: ComposerBlock? {
         if radioIsAbsent {
             return ComposerBlock(
@@ -1313,8 +1313,8 @@ struct UnreadBackButton: View {
 
 /// Puts the swipe-from-the-edge pop gesture back.
 ///
-/// Hiding the system back button — which the unread pill requires, since the
-/// system one cannot carry it — takes the gesture with it. This re-delegates
+/// Hiding the system back button—which the unread pill requires, since the
+/// system one cannot carry it—takes the gesture with it. This re-delegates
 /// the navigation controller's own recognizer, and hands the delegate back on
 /// the way out so nothing outside this transcript inherits ours.
 ///
@@ -1340,7 +1340,7 @@ struct InteractivePopGestureRestorer: UIViewControllerRepresentable {
     }
 
     /// A zero-sized controller, present only to reach the navigation
-    /// controller — which exists no earlier than the moment this one is added
+    /// controller—which exists no earlier than the moment this one is added
     /// to the hierarchy.
     private final class Controller: UIViewController {
         private let coordinator: Coordinator

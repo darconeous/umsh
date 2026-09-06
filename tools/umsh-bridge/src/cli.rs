@@ -30,8 +30,8 @@ mesh.
 
 Every participant holds an Ed25519 identity, issued once by `keygen
 identity`, which is what the tunnel authenticates with. Each side is
-configured with the other's public key — the UMSH address that `address`
-prints — which makes revoking a client an edit to the server's
+configured with the other's public key—the UMSH address that `address`
+prints—which makes revoking a client an edit to the server's
 configuration. The TLS certificates the handshake requires are minted in
 memory from the identity at startup; none are stored or exchanged."
 )]
@@ -82,7 +82,7 @@ pub enum Command {
     /// names, without opening a socket or touching a radio.
     Check(RunArgs),
 
-    /// Print the address of an identity key — the public name the
+    /// Print the address of an identity key—the public name the
     /// other end of the tunnel pins. Safe to share anywhere.
     Address {
         /// The identity key to read.

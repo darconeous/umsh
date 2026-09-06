@@ -1,7 +1,7 @@
 //! This board's binding of the shared device node.
 //!
-//! The node itself — the MAC/`Host` pump, the device-domain sync, the
-//! beacon, advertisement, and identity paths — lives in
+//! The node itself—the MAC/`Host` pump, the device-domain sync, the
+//! beacon, advertisement, and identity paths—lives in
 //! [`umsh_ulcp_runtime::device_node`], shared with every other UMSH
 //! device firmware. What stays here is what cannot be shared: the
 //! counter-store type (backed by this board's flash), the board's UX

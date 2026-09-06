@@ -6,7 +6,7 @@
 This appendix defines a portable, passphrase-protected artifact for backing
 up and restoring a node identity, together with the secret material and local
 knowledge that make a restored identity immediately useful. It is produced
-and consumed by host implementations — phones, tablets, and desktops. A
+and consumed by host implementations—phones, tablets, and desktops. A
 ULCP device never generates, stores, or parses an export artifact, and a
 device's own identity is never exported through this format.
 
@@ -144,7 +144,7 @@ is the restored identity's address.
 The advertisement, when present, is the node's most recent
 [advertisement](beacons.md#advertisements) in canonical wire form. The
 importer **SHOULD** verify its signature against the derived public key and
-discard it — without failing the restore — if verification fails.
+discard it—without failing the restore—if verification fails.
 
 ### Counter Section
 
@@ -213,7 +213,7 @@ A map with text-string keys and arbitrary CBOR values, namespaced by the
 producing application (for example `ios.notifications.previews`). Contents
 are application-defined and restored best-effort; importers **MUST** ignore
 entries they do not understand. This section **MUST NOT** contain key
-material or any other secret — secrets belong only in the sections defined
+material or any other secret—secrets belong only in the sections defined
 above.
 
 ## Restore Procedure
@@ -240,7 +240,7 @@ above.
 The advance rule skips at least one full block of 2²⁴ counter values beyond
 the recorded floor. This dominates any plausible transmission volume between
 export and restore on a LoRa-class link, and bounds the identity to roughly
-250 restores across its lifetime — a deliberate trade of counter space for
+250 restores across its lifetime—a deliberate trade of counter space for
 safety against a stale floor.
 
 Restoring an identity does not revoke the source: the exporting device, and

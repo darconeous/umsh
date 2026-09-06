@@ -6,25 +6,25 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 
-# The board-agnostic slice of the ULCP device — pure protocol/session/channel
+# The board-agnostic slice of the ULCP device—pure protocol/session/channel
 # plumbing with no board HAL. Consumed by both the nRF52840 and ESP32-S3
 # ULCP firmwares so there is exactly one copy of this logic.
 #
 # Hard rule: NO board HAL here (no embassy-nrf, no esp-hal, no BSP). Only
-# HAL-agnostic primitives — embassy-sync/futures (generic over RawMutex),
+# HAL-agnostic primitives—embassy-sync/futures (generic over RawMutex),
 # heapless, and the pure protocol crates.
 
 [features]
 # `ble_security`, `transport_policy` and `log` are always compiled; they
 # need nothing beyond `embassy-sync`, which every consumer pulls anyway.
-# The heavier modules are gated so lightweight consumers — e.g. a BLE-only
-# spike, or host tooling — pull only what they use instead of dragging in
+# The heavier modules are gated so lightweight consumers—e.g. a BLE-only
+# spike, or host tooling—pull only what they use instead of dragging in
 # the radio stack or the journal store.
 default = ["radio", "counters", "driver"]
 # The radio multiplexer, over `umsh-radio-loraphy`'s `Channels`. It is
 # also where a device tallies what its antenna did, so it needs the stats
 # ledger (`umsh-ulcp`) and enough of the wire format (`umsh-core`) to tell
-# an UMSH frame from somebody else's. Both are pure protocol crates — no
+# an UMSH frame from somebody else's. Both are pure protocol crates—no
 # board HAL crosses this line.
 radio = [
     "dep:umsh-radio-loraphy",
@@ -35,7 +35,7 @@ radio = [
     "dep:umsh-core",
 ]
 # The persisted frame-counter map, the two-page journal handles, and the
-# device node's counter store — over `umsh-journal-store`.
+# device node's counter store—over `umsh-journal-store`.
 counters = ["dep:umsh-journal-store", "dep:umsh-hal", "dep:heapless"]
 # The board-agnostic session driver: the device run loop, effect dispatch,
 # and frame staging, parameterized over the `DeviceEnv` board couplings.

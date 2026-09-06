@@ -3,13 +3,13 @@
 //! Two low-level mechanisms for getting the device into DFU mode
 //! independent of the CLI session:
 //!
-//! - [`TouchlessResetWatcher`] — watches CDC control requests for the
+//! - [`TouchlessResetWatcher`]—watches CDC control requests for the
 //!   1200-baud touchless reset (host opens port at 1200 baud and then
 //!   drops DTR). This is how `flasher.meshcore.co.uk` and
 //!   `adafruit-nrfutil --touch 1200` trigger DFU. The Adafruit nRF52
 //!   bootloader does **not** implement this; firmware is responsible.
 //!
-//! - [`EscapeWatcher`] — observes the inbound byte stream and fires
+//! - [`EscapeWatcher`]—observes the inbound byte stream and fires
 //!   when the magic sequence `Ctrl-C Ctrl-C Ctrl-C dfu\r` appears.
 //!   Used when the CLI parser is wedged (panicked task, deadlocked
 //!   channel, mis-parsed mode) so a human at a terminal can still
@@ -18,7 +18,7 @@
 //! Both mechanisms run *below* the CLI parser so a hung or
 //! mis-configured CLI can't block them. The escape watcher
 //! deliberately observes without consuming, so the CLI parser still
-//! sees all bytes — Ctrl-C continues to mean "abort" to the CLI even
+//! sees all bytes—Ctrl-C continues to mean "abort" to the CLI even
 //! while the rescue prefix accumulates.
 
 /// What a watcher decided to do as a result of an input event.
@@ -27,7 +27,7 @@ pub enum RescueAction {
     /// No action this event.
     None,
     /// Caller should immediately enter DFU mode. The watcher does not
-    /// pick a mode — the caller decides between
+    /// pick a mode—the caller decides between
     /// [`bsp::enter_dfu_uf2()`] (GPREGRET=0x57, exposes CDC + UF2 mass
     /// storage; what the MeshCore / Adafruit web flashers expect and
     /// what `adafruit-nrfutil --touch 1200` triggers in the Adafruit
@@ -45,7 +45,7 @@ pub enum RescueAction {
 /// [`RescueAction::TriggerDfu`] so the caller can put the
 /// device into serial DFU mode.
 ///
-/// The watcher self-suppresses after firing — once
+/// The watcher self-suppresses after firing—once
 /// [`TouchlessResetWatcher::fired`] is true, subsequent events return
 /// `None` until [`TouchlessResetWatcher::reset`] is called. In normal
 /// operation the BSP's `enter_dfu_serial()` diverges so the
@@ -165,7 +165,7 @@ impl EscapeWatcher {
             (EscapeState::GotD, b'f') => EscapeState::GotDf,
             (EscapeState::GotDf, b'u') => EscapeState::GotDfu,
 
-            // Terminator after "dfu" — fire.
+            // Terminator after "dfu"—fire.
             (EscapeState::GotDfu, b'\r') | (EscapeState::GotDfu, b'\n') => {
                 self.fired = true;
                 self.state = EscapeState::Idle;
@@ -258,7 +258,7 @@ mod tests {
     fn dtr_drop_without_prior_assertion_does_not_fire() {
         // Adversarial sequence: SET_LINE_CODING(1200) then immediate
         // DTR=false without a prior DTR=true. There was no falling
-        // edge from "open" to "close" — host never opened the port.
+        // edge from "open" to "close"—host never opened the port.
         let mut w = TouchlessResetWatcher::new();
         w.on_line_coding(1_200);
         assert_eq!(close(&mut w), RescueAction::None);

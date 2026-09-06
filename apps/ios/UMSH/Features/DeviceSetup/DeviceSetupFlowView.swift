@@ -6,7 +6,7 @@ import UMSHMobileCore
 /// This is a deliberate, contained exception to the app's no-view-model
 /// rule. The flow owns a live BLE session whose lifetime spans several
 /// pushed screens and must be torn down exactly once, no matter which
-/// screen the user leaves from — that is object lifetime, not view state,
+/// screen the user leaves from—that is object lifetime, not view state,
 /// and modelling it as the latter is what makes leaked connections.
 ///
 /// It is scoped to the sheet: nothing outside `Features/DeviceSetup`
@@ -32,7 +32,7 @@ final class AdminFlowController {
     /// The configuration being edited, for as long as a device is attached.
     ///
     /// Owned here rather than by a screen because its lifetime is the
-    /// session's, not any one view's — and because a navigation destination
+    /// session's, not any one view's—and because a navigation destination
     /// holding it as `@State` would fork it the moment a second screen
     /// pushed over the same device.
     private(set) var draft: DeviceConfigDraft?
@@ -45,7 +45,7 @@ final class AdminFlowController {
     var problem: String?
 
     /// The phone's current companion radio, so the flow can mark it in the
-    /// scan list. It is never selectable here — the companion connection
+    /// scan list. It is never selectable here—the companion connection
     /// already holds that peripheral.
     let companionIdentifier: UUID?
     let companionName: String?
@@ -54,7 +54,7 @@ final class AdminFlowController {
     ///
     /// Captured when the sheet opens rather than sampled live. A mesh profile
     /// that changed halfway through a commissioning session would be worse
-    /// than a slightly stale one — the operator would have no way to know
+    /// than a slightly stale one—the operator would have no way to know
     /// which of the two any given device ended up on.
     let companionProfile: CompanionRadioProfile?
 
@@ -128,7 +128,7 @@ final class AdminFlowController {
     }
 
     /// Build the draft from what the device reported as it attached. Only a
-    /// commissioning goal has one — changing a device's settings edits the
+    /// commissioning goal has one—changing a device's settings edits the
     /// device itself, a screen at a time, rather than a draft of it.
     private func makeDraft(_ sync: UlcpSyncRecord) -> DeviceConfigDraft {
         DeviceConfigDraft(
@@ -159,7 +159,7 @@ final class AdminFlowController {
     }
 
     /// Open the management screens over the device that was just set up, on
-    /// the same session — so a commissioned device is inspected and adjusted
+    /// the same session—so a commissioned device is inspected and adjusted
     /// through the screens every device gets, not a second form.
     func reviewAllSettings() {
         guard path.last != .editor else { return }
@@ -206,8 +206,8 @@ final class AdminFlowController {
         // the first one's unsaved edits.
         draft = nil
         // Pushed before the connect rather than after it. Connecting takes
-        // seconds — longer against an unbonded device, which puts a system
-        // pairing prompt in the way — and `connect` stops the scan, so leaving
+        // seconds—longer against an unbonded device, which puts a system
+        // pairing prompt in the way—and `connect` stops the scan, so leaving
         // the operator on the list means watching every device vanish under a
         // screen that claims to be searching for them.
         let step: Step = plan.isAbbreviated ? .commission : .editor
@@ -293,7 +293,7 @@ final class AdminFlowController {
     ///
     /// The disconnect is not optional: restarting the scan alone would leave
     /// the peripheral connected and its `AdminSessionRegistry` claim standing,
-    /// so the device would keep refusing every later session — including the
+    /// so the device would keep refusing every later session—including the
     /// next attempt at this one.
     private func disconnectAndResumeDiscovery() async {
         await session.disconnect()
@@ -323,7 +323,7 @@ final class AdminFlowController {
     /// Release a device the operator walked back from.
     ///
     /// Every forward transition manages the session itself, but the system
-    /// Back button only moves `path` — and a device left attached holds the
+    /// Back button only moves `path`—and a device left attached holds the
     /// BLE link, stops advertising, and can never be offered by the scan
     /// list again, which is exactly where the operator lands next. A
     /// mid-connect back-out is not this: `select` observes the pop itself
@@ -365,7 +365,7 @@ final class AdminFlowController {
     /// The unified sheet's backend over this flow's own BLE session.
     ///
     /// Deliberately storeless: an administrative link refreshes every
-    /// screen on sight, so a cache would only ever be one screen behind —
+    /// screen on sight, so a cache would only ever be one screen behind—
     /// and a bench flow that remembers nothing leaves nothing to go stale.
     var deviceManagement: DeviceManagementBackend {
         let session = session
@@ -427,7 +427,7 @@ final class AdminFlowController {
     /// device's own post-save state, or nil if the write did not land.
     ///
     /// The readback is what `refresh` answers with, not what has reached
-    /// `snapshot` — the snapshot stream is drained by another task and could
+    /// `snapshot`—the snapshot stream is drained by another task and could
     /// still be carrying the pre-write state when this returns.
     func configure(_ configuration: UlcpDeviceConfigRecord) async -> UlcpSyncRecord? {
         problem = nil
@@ -443,7 +443,7 @@ final class AdminFlowController {
     /// Bring the device's administrator list to `keys`.
     ///
     /// The device edits this list an item at a time, so the difference is
-    /// applied item by item — and in this order, because a list at capacity
+    /// applied item by item—and in this order, because a list at capacity
     /// takes a removal but not an addition, and an operator swapping one
     /// administrator for another should not have to know that.
     func setAdministrators(_ keys: [Data]) async throws {
@@ -469,7 +469,7 @@ final class AdminFlowController {
         case .operationTimedOut:
             """
             The device stopped answering while saving. It may or may not have \
-            kept these settings — connect to it again and check.
+            kept these settings—connect to it again and check.
             """
         case .operationInProgress:
             """
@@ -552,7 +552,7 @@ struct DeviceSetupFlowView: View {
         }
     }
 
-    /// The unified management sheet over this flow's own session — the
+    /// The unified management sheet over this flow's own session—the
     /// same screens a device gets over the mesh or on the companion link,
     /// reading the device a screenful at a time.
     @ViewBuilder
@@ -583,8 +583,8 @@ struct DeviceSetupFlowView: View {
     }
 
     /// The one thing the setup flow offers around the sheet: recording the
-    /// device in Peers, so the operator can find it again — and manage it
-    /// over the mesh — after this session ends.
+    /// device in Peers, so the operator can find it again—and manage it
+    /// over the mesh—after this session ends.
     @ViewBuilder
     private func savePeerBar(_ peer: PeerSummary) -> some View {
         if controller.canSavePeer, !isPeerSaved(peer.identity.canonicalAddress) {

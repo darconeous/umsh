@@ -78,7 +78,7 @@ const MAX_CMDS: usize = 17;
 ///
 /// The order is not arbitrary. On a T-Beam Supreme carrying a QMC6310N
 /// magnetometer, the magnetometer occupies 0x3C and the panel moves to
-/// 0x3D — so an ACK at 0x3C proves nothing on its own, while an ACK at
+/// 0x3D—so an ACK at 0x3C proves nothing on its own, while an ACK at
 /// 0x3D is unambiguous on every population UMSH supports. Trying 0x3D
 /// first therefore resolves the overlap without needing a magnetometer
 /// driver to disambiguate.
@@ -104,7 +104,7 @@ pub struct Sh1106<I> {
 }
 
 impl<I: I2c> Sh1106<I> {
-    /// Bind the panel at `addr` — normally the value [`probe`] returned.
+    /// Bind the panel at `addr`—normally the value [`probe`] returned.
     pub fn new(i2c: I, addr: u8) -> Self {
         Self { i2c, addr }
     }
@@ -124,7 +124,7 @@ impl<I: I2c> Sh1106<I> {
     /// The payload is copied into a stack buffer so the control byte and
     /// the commands reach the wire as one contiguous slice; nRF EasyDMA
     /// additionally requires the source to live in SRAM. Runs longer
-    /// than [`MAX_CMDS`] are truncated — split the sequence instead.
+    /// than [`MAX_CMDS`] are truncated—split the sequence instead.
     async fn cmds(&mut self, bytes: &[u8]) -> Result<(), I::Error> {
         let mut buf = [0u8; 1 + MAX_CMDS];
         buf[0] = CTRL_CMD;

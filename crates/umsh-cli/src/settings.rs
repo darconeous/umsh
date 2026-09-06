@@ -1,4 +1,4 @@
-//! CLI-local preferences mutated via `/set`. Reset on binary exit — no
+//! CLI-local preferences mutated via `/set`. Reset on binary exit—no
 //! durable storage.
 
 #[derive(Debug, Clone)]

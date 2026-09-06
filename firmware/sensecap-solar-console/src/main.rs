@@ -1,4 +1,4 @@
-// SenseCAP Solar Node P1 / P1-Pro bringup firmware — Phase 1.
+// SenseCAP Solar Node P1 / P1-Pro bringup firmware—Phase 1.
 //
 // This is the *stripped* first-boot binary. Its job is
 // to prove the board comes up safely and to identify the LEDs / buttons
@@ -13,7 +13,7 @@
 //        - RADIO_RXEN (P0.05) LOW  — safety contract: RXEN low before any
 //          radio work and until lora-phy owns it (no radio here yet).
 //        - GNSS_ENABLE (P1.05) LOW — hold the L76K powered down.
-//        - GNSS_RESET candidate (P1.03) is NEVER driven — left untouched.
+//        - GNSS_RESET candidate (P1.03) is NEVER driven—left untouched.
 //        - Battery-divider gate (P0.14) is NOT touched in Phase 1; the
 //          gate polarity is verified in Phase 2 before we drive it.
 //   4. Bring up USB-CDC with the CdcAcmRescue escape hatch + panic replay.
@@ -24,10 +24,10 @@
 //   - LED_A (P0.15) = white, active-high; LED_B (P0.19) = blue, active-high.
 //   - USER_BUTTON (P1.01) and the "PWR" button (P1.07) are both active-low
 //     on internal pull-ups (LOW pressed, HIGH released). PWR is a soft
-//     momentary button — pressing it does not cut the MCU rail.
+//     momentary button—pressing it does not cut the MCU rail.
 //
 // Identification session (single-char commands, echoed back as reports):
-//   '1'  toggle LED_A (P0.15) — the white user LED
+//   '1'  toggle LED_A (P0.15)—the white user LED
 //   '?'  help + current LED_A / button states
 //   USER_BUTTON (P1.01) and PWR (P1.07) edges auto-report.
 //
@@ -93,7 +93,7 @@ mod firmware {
     // ─── CDC output helper ───────────────────────────────────────────────────
 
     /// Write a line (with trailing CRLF) to the CDC sender in <=64-byte
-    /// USB packets. Best-effort — drops on a closed endpoint.
+    /// USB packets. Best-effort—drops on a closed endpoint.
     async fn write_line(tx: &mut SolarSender, s: &str) {
         for chunk in s.as_bytes().chunks(64) {
             let _ = tx.write_packet(chunk).await;
@@ -102,7 +102,7 @@ mod firmware {
     }
 
     const HELP: &str = "\
-SenseCAP Solar Node bringup (Phase 1) — GPIO identification\r
+SenseCAP Solar Node bringup (Phase 1)—GPIO identification\r
   1  toggle LED_A (P0.15, white user LED)\r
   ?  this help + current pin states\r
 LED_B (P0.19, blue) blinks as the heartbeat.\r
@@ -121,7 +121,7 @@ USER_BUTTON (P1.01) and PWR (P1.07) edges auto-report.";
         prev_panic_buf: &'static [u8; 256],
         prev_panic_len: usize,
     ) {
-        // Wait for the host to open the CDC port before writing the banner —
+        // Wait for the host to open the CDC port before writing the banner—
         // otherwise the writes silently vanish into a closed IN endpoint.
         rx.wait_connection().await;
 

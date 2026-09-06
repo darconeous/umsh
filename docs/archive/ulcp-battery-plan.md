@@ -1,16 +1,16 @@
-# Companion Radio Battery Capability — Implementation Plan
+# Companion Radio Battery Capability—Implementation Plan
 
 Add implementation support for `CAP_BATTERY` (39) and `PROP_BATTERY` (69)
 from `docs/protocol/src/ulcp-full.md`: a single read-only
-property whose value is a battery status snapshot — a field-flags octet
+property whose value is a battery status snapshot—a field-flags octet
 followed by the fields the platform supports (voltage `UINT16_LE` mV,
-level `UINT8` percent, charge state PUI) — or an empty value when the
+level `UINT8` percent, charge state PUI)—or an empty value when the
 platform reports nothing.
 
 Status: **Drafted and revised 2026-07-18 (single snapshot property,
 sample-on-request, platform-abstracted readings). Increments 1–4
 implemented same day; all host-side gates green. Increment-5 hardware
-acceptance passed same day on both boards over USB and BLE — T-1000E
+acceptance passed same day on both boards over USB and BLE—T-1000E
 flags `0b101` with live sampling proven (consecutive reads return
 different millivolt values), rapid post-boot reads sample on demand,
 restore leaves telemetry live; T-Echo empty value displayed as
@@ -19,8 +19,8 @@ observation (unplug/replug the T-1000E charger and watch
 Discharging/Charging/Charged follow), which needs an operator.**
 
 Same-day follow-up: the T-1000E now reports the **level** field (flags
-`0b111`), superseding this plan's "no level" decision. The estimator —
-`umsh_ux_tracker::battery::LevelEstimator` — is the deferred-follow-up
+`0b111`), superseding this plan's "no level" decision. The estimator—
+`umsh_ux_tracker::battery::LevelEstimator`—is the deferred-follow-up
 minimal design: a generic Li-ion OCV table consulted only after three
 minutes of rest (no charger, no reported load), a median-of-five filter
 over the monitor's samples, a discharge-direction clamp (levels never
@@ -43,7 +43,7 @@ construction. The stub `ProtoStore` and the fail-closed persistence
 carve-outs are gone. Hardware-verified on the T-1000E: the `no-ble`
 image restored the saved snapshot, identity, and provisioning, and
 committed a new snapshot write; the production image then read that
-snapshot back — journal compatibility in both directions.
+snapshot back—journal compatibility in both directions.
 
 ## Goals
 
@@ -62,7 +62,7 @@ snapshot back — journal compatibility in both directions.
 - Abstract the readings per platform. The session and the shared firmware
   see one "sample the battery" operation returning optional fields; which
   fields exist, and how each is produced, is platform policy. In
-  particular, level is not assumed to derive from voltage — a fuel-gauge
+  particular, level is not assumed to derive from voltage—a fuel-gauge
   platform may report level without reporting voltage at all.
 - Keep battery state live and read-only. It must not enter the saved-state
   snapshot, host domain, device provisioning, or reset/restore machinery.
@@ -160,7 +160,7 @@ property accessors, and a raw `PropEvent` queue for unsolicited updates.
 `sync` hard-fails on any property error, which is why battery must **not**
 join `DeviceSync`: a transient `STATUS_FAILURE` from a measurement would
 otherwise abort attach/provision workflows. Battery is live telemetry, not
-configuration the host reconciles — it belongs in a dedicated accessor.
+configuration the host reconciles—it belongs in a dedicated accessor.
 `umsh-ulcpctl info`, the hardware validator, and the browser debugger
 (`tools/ulcp-web-debugger/engine`, catalog + typed decoder + shared
 real-session simulator) all need to understand the new code and encoding or

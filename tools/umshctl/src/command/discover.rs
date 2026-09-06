@@ -8,7 +8,7 @@
 //!
 //! The ask is a zero-hop broadcast with no flood budget: repeaters never
 //! carry it, so it reaches exactly the nodes that can hear this radio.
-//! Reaching further is what `--via` is for — it steers the question
+//! Reaching further is what `--via` is for—it steers the question
 //! through the routers on the way to a node this tool already knows how
 //! to reach, and the answers come home along the trace the question
 //! accumulated.
@@ -78,7 +78,7 @@ pub struct DiscoverArgs {
     ///
     /// The question is source-routed through the routers on the way to
     /// it, so what answers is what can hear *that* node. Needs a
-    /// remembered source route — `routes` lists what there is.
+    /// remembered source route—`routes` lists what there is.
     #[arg(long, value_name = "KEY")]
     pub via: Option<KeyArg>,
 }
@@ -189,7 +189,7 @@ where
         Some(nonce)
     };
 
-    // An advertisement is addressed to everybody, so this only reads it —
+    // An advertisement is addressed to everybody, so this only reads it—
     // returning false leaves it for anyone else who is listening.
     let sink = seen.clone();
     let _subscription = stack.node.on_receive(move |packet| {
@@ -326,7 +326,7 @@ fn request_frame(args: &DiscoverArgs, nonce: u32) -> Result<Vec<u8>> {
 /// around it.
 fn steer_through(routes: &RouteCache, peer: &PublicKey) -> Result<Vec<RouterHint>> {
     let Some(record) = routes.get(peer) else {
-        bail!("no remembered route to {peer}; reach it once — `ping {peer}` — and try again");
+        bail!("no remembered route to {peer}; reach it once—`ping {peer}`—and try again");
     };
     match &record.route {
         CachedRoute::Source(hints) => Ok(hints.to_vec()),
@@ -516,7 +516,7 @@ mod tests {
 
         // A broadcast request with no filter option at all is dropped by
         // the far end, so an ask that names nobody asks for no
-        // capabilities in particular — which every node has.
+        // capabilities in particular—which every node has.
         let filters = IdentityRequestFilters::new(&options);
         assert!(!filters.hint_filtered());
         for role in [NodeRole::Repeater, NodeRole::Chat, NodeRole::Sensor] {

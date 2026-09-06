@@ -63,7 +63,7 @@ In order to manage the potential flood of responses, the following rules MUST be
   path it travels, and a plain broadcast carries no frame counter for a lower
   layer to recognize the repeat by; the [NONCE](#identity-request-options) is
   what names the solicitation. A responder suppresses a request matching one it
-  has already answered — same sender, same NONCE — for at least as long as it
+  has already answered—same sender, same NONCE—for at least as long as it
   may hold the reply. A request carrying no NONCE cannot be distinguished from a
   repeat of itself; a requester that wants a further answer inside that window
   asks with a fresh NONCE.
@@ -77,7 +77,7 @@ answer; such a request is therefore confined to the requester's own
 neighborhood:
 
 - The FHOPS byte must either be absent or set to 0x00. A request that is flood
-  routed — FHOPS present with either nibble nonzero — MUST NOT be answered.
+  routed—FHOPS present with either nibble nonzero—MUST NOT be answered.
 - The response MUST NOT carry a FHOPS field (the FCF flood hop count flag is
   clear). The invariant is that the reply travels exactly as far as the question
   did and no further: a request that crossed one hop is answered across that one

@@ -43,7 +43,7 @@ pub enum BleOp {
 }
 
 /// Whether the pairing window should be open. The window is a state,
-/// not an act — `PROP_BLE_PAIRING` — so it can be set in either
+/// not an act—`PROP_BLE_PAIRING`—so it can be set in either
 /// direction and read back.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
 pub enum PairState {
@@ -105,8 +105,8 @@ pub async fn reboot(app: &mut App) -> Result<()> {
     Ok(())
 }
 
-const FACTORY_RESET_WARNING: &str = "factory-reset erases ALL mutable state — persisted provisioning, the device identity, \
-     BLE bonds, and the pairing PIN — then reboots";
+const FACTORY_RESET_WARNING: &str = "factory-reset erases ALL mutable state—persisted provisioning, the device identity, \
+     BLE bonds, and the pairing PIN—then reboots";
 
 pub async fn factory_reset(app: &mut App, yes: bool) -> Result<()> {
     if !yes {
@@ -146,8 +146,8 @@ const CLEAR_BONDS_WARNING: &str = "ble clear forgets every paired host, the pair
 
 /// Read or manage the device's Bluetooth bonds.
 ///
-/// Over Bluetooth, clearing severs this very link — the bond that
-/// carried the write is one of the bonds deleted — so the handle is
+/// Over Bluetooth, clearing severs this very link—the bond that
+/// carried the write is one of the bonds deleted—so the handle is
 /// detached afterward for the same reason `reboot` detaches. Over a
 /// cable or the mesh nothing is disturbed, but detaching costs only a
 /// reattach and keeps one rule instead of two.
@@ -262,7 +262,7 @@ pub async fn alert<L: FrameLink>(device: &mut UlcpDevice<L>, op: Option<AlertOp>
     match device.set_alert(desired).await? {
         AlertState::Locate => println!(
             "locate alert started. It stops when you send `alert none`, when someone \
-             cancels it at the radio, or when the radio's own deadline expires — \
+             cancels it at the radio, or when the radio's own deadline expires—\
              re-send `alert locate` to keep it going."
         ),
         AlertState::None => println!("locate alert stopped"),

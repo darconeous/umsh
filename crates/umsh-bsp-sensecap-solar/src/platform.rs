@@ -1,4 +1,4 @@
-//! [`SensecapSolarPlatform`] — the concrete `umsh_mac::Platform` bundle
+//! [`SensecapSolarPlatform`]—the concrete `umsh_mac::Platform` bundle
 //! for the SenseCAP Solar Node P1 / P1-Pro.
 //!
 //! Composes the chip-level nRF52840 plumbing from [`umsh_bsp_nrf52840`]

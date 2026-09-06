@@ -5,7 +5,7 @@ Some of these break protocol prohibitions on purpose and some are perfectly
 valid; what they have in common is exercising dissector behavior the spec
 vectors cannot, since those are all either beacons or encrypted with keys a
 capture does not carry. They live apart from `make_test_pcap.py` for that
-reason — every frame in that file is valid and matches the spec byte for
+reason—every frame in that file is valid and matches the spec byte for
 byte. Nothing here is a reference for how to build a packet.
 
 Covered: violation reporting, the application-layer summary lines, and the

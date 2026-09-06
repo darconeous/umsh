@@ -1,8 +1,8 @@
 //! Battery voltage sampling (GPIO1 / ADC1 channel 0 behind a
 //! 390 kΩ : 100 kΩ divider gated by GPIO37).
 //!
-//! Unlike the V2, the divider gate is its own pin — not the `Vext`
-//! domain — so battery sampling has no coupling to the OLED supply and
+//! Unlike the V2, the divider gate is its own pin—not the `Vext`
+//! domain—so battery sampling has no coupling to the OLED supply and
 //! needs no shared handle. The gate polarity is revision-dependent;
 //! this BSP targets **V3.2** (high = divider on, hardware doc §11.3).
 //! ADC1 also has no radio entanglement (the classic-ESP32 ADC2/RF
@@ -13,7 +13,7 @@
 //! one conversion → median a burst → convert → gate low to kill the
 //! ~85 µA divider current. Conversion uses esp-hal's curve-fitting
 //! calibration scheme (`AdcCalCurve`), which corrects against the
-//! chip's eFuse reference and returns millivolts directly — a real
+//! chip's eFuse reference and returns millivolts directly—a real
 //! accuracy improvement over the V2's nominal transfer function, though
 //! the divider tolerance still caps end-to-end accuracy at bucket
 //! precision (§11.5).

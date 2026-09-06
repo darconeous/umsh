@@ -1,7 +1,7 @@
 """Building the map viewer's basemap.
 
 The viewer draws regions against real coastlines and borders so that a
-boundary can be judged by eye — a metro circle in roughly the right place, a
+boundary can be judged by eye—a metro circle in roughly the right place, a
 Voronoi cell that does not cross an ocean. Without that context the regions
 float in space and the viewer cannot do the one job it exists for.
 

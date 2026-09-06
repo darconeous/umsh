@@ -1,7 +1,7 @@
 //! Battery status snapshot codec (`PROP_BATTERY`).
 //!
-//! The property value is either **empty** — the implementation reports no
-//! battery measurements at all — or one field-flags octet followed by the
+//! The property value is either **empty**—the implementation reports no
+//! battery measurements at all—or one field-flags octet followed by the
 //! present fields in fixed order: voltage (`UINT16_LE`, millivolts), level
 //! (`UINT8`, percent), charge state (PUI). Reserved flag bits must be
 //! zero, and the value length must match the flags exactly.

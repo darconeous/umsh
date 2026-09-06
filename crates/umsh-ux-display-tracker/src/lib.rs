@@ -3,7 +3,7 @@
 //! UX mechanism for display-tracker-class UMSH boards.
 //!
 //! This crate is the user-experience layer for boards whose physical UX
-//! is a small display plus a button — optionally with a D-pad — and no
+//! is a small display plus a button—optionally with a D-pad—and no
 //! keyboard: T-Echo, Heltec LoRa32 V3, Wio Tracker L1, T-Beam Supreme.
 //! They differ in panel technology and input richness, but a user who
 //! learns one should already know the others, so the interaction model
@@ -11,22 +11,22 @@
 //!
 //! Like [`umsh_ux_tracker`], this crate provides only **mechanism**:
 //!
-//! - [`menu`] — the on-screen menu: a wrapping item list narrowed
+//! - [`menu`]—the on-screen menu: a wrapping item list narrowed
 //!   per-board, with confirmation in front of the destructive entries.
-//! - [`attention`] — when to stop assuming the user is looking, and what
+//! - [`attention`]—when to stop assuming the user is looking, and what
 //!   that means for an emissive panel (power it off) versus a persistent
 //!   one (send the menu home).
-//! - [`gate`] — what a gesture means when the screen is dark, an alert
+//! - [`gate`]—what a gesture means when the screen is dark, an alert
 //!   is running, or the panel is mid-refresh.
-//! - [`screen`] — what a frame looks like: the rows, what they say, and
+//! - [`screen`]—what a frame looks like: the rows, what they say, and
 //!   the battery indicator every frame carries. Behind the `screen`
 //!   feature, since two boards in this family have no panel.
 //!
 //! Button gestures themselves come from
 //! [`umsh_ux_tracker::button::ButtonFsm`]; this crate adds only the
 //! shared timing policy, [`button_timings`]. Policy that depends on the
-//! board — which effects the menu items map to, what shutting down
-//! entails — belongs in the firmware.
+//! board—which effects the menu items map to, what shutting down
+//! entails—belongs in the firmware.
 //!
 //! Rendering used to belong there too, on the theory that a 128×64 OLED
 //! and a 200×200 e-paper have too little in common to share a layout.

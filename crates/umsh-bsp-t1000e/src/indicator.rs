@@ -36,7 +36,7 @@ pub fn clear_attention() {
 /// reaches it directly, so an illuminance reading taken while the LED is
 /// lit measures the LED. Worse, the indicator is usually *blinking*, so
 /// each reading catches a different part of the blink and the answer
-/// swings wildly between polls — noise that no amount of oversampling or
+/// swings wildly between polls—noise that no amount of oversampling or
 /// flicker rejection can touch, because it is real light.
 ///
 /// The light sampler in [`crate::power`] raises this for the duration of

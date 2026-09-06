@@ -1,8 +1,8 @@
 //! `duty`: report or bound the combined duty-cycle budget.
 //!
-//! The limit spans every radio client on the device — host transmits,
+//! The limit spans every radio client on the device—host transmits,
 //! delegated acks, and the on-board node's own traffic all draw from one
-//! ledger — and `PROP_PHY_DUTY_NOW` reports that combined figure.
+//! ledger—and `PROP_PHY_DUTY_NOW` reports that combined figure.
 
 use anyhow::{Result, anyhow};
 

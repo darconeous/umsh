@@ -1,5 +1,5 @@
 // Supplies the string `PROP_DEV_VERSION` reports.
-// (No memory.x handling — the ESP32 linker script comes from esp-hal.)
+// (No memory.x handling—the ESP32 linker script comes from esp-hal.)
 
 fn main() {
     // `UMSH_FW_VERSION` wins when set: the release build passes the tag

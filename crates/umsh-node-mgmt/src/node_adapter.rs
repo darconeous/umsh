@@ -111,7 +111,7 @@ impl<M: MacBackend> NodeManager<M> {
                 }
                 // The binding rests on what secure unicast guarantees, so
                 // an unauthenticated packet claiming to be a response is
-                // not one — and it is still this handler's to consume,
+                // not one—and it is still this handler's to consume,
                 // since nothing else wants it either.
                 let room = inbox.borrow().len() < INBOX;
                 if !packet.source_authenticated() || !room {
@@ -271,7 +271,7 @@ impl<M: MacBackend> NodeManager<M> {
     fn settle(&mut self, outcome: Outcome) -> Progress {
         // A continued read rotated tokens the manager's own counter never
         // saw. Taking the exchange's final count back is what keeps the
-        // next `begin` from reissuing one of them — which the device
+        // next `begin` from reissuing one of them—which the device
         // would answer with the old exchange's retained response.
         if let Some(exchange) = &self.exchange {
             self.counter = exchange.counter();

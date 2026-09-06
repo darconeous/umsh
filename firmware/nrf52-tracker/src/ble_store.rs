@@ -2,7 +2,7 @@
 //! `umsh-journal-store`, plus this firmware's flash placement.
 //!
 //! The record engine, snapshot codec, and their power-cut tests live in
-//! the crate; only the page addresses — a `memory.x` fact — are decided
+//! the crate; only the page addresses—a `memory.x` fact—are decided
 //! here.
 
 pub use umsh_journal_store::ble::*;

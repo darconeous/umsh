@@ -1,7 +1,7 @@
 //! NVMC-backed instantiation of the chip-agnostic [`umsh_flash_store`]
 //! engine.
 //!
-//! All of the map logic — identity, peers, channels, counters, key-value —
+//! All of the map logic—identity, peers, channels, counters, key-value—
 //! lives in [`umsh_flash_store`], generic over the async flash driver and
 //! the sharing mutex. This module supplies the nRF52840 backing
 //! (`BlockingAsync<Nvmc>` + `ThreadModeRawMutex`) and the fixed storage
@@ -9,7 +9,7 @@
 //! historical `Nvmc*` names.
 //!
 //! See [`umsh_flash_store`] for the key layout and the CPU-stall warning
-//! (every NVMC page erase blocks the entire executor for ~85 ms — callers
+//! (every NVMC page erase blocks the entire executor for ~85 ms—callers
 //! MUST batch writes).
 
 use core::ops::Range;
@@ -26,7 +26,7 @@ pub use umsh_flash_store::{
 /// Storage range reserved on internal NVMC.
 ///
 /// MUST match what every dependent firmware's `memory.x` excludes from
-/// the `FLASH` region — the linker must not place code or rodata here.
+/// the `FLASH` region—the linker must not place code or rodata here.
 /// 16 pages × 4 KB = 64 KB.
 pub const NV_STORE_RANGE: Range<u32> = 0x000E_4000..0x000F_4000;
 
@@ -48,7 +48,7 @@ pub type NvmcStorage = umsh_flash_store::FlashStore<FlashDriver, ThreadModeRawMu
 ///
 /// Wraps the blocking NVMC peripheral for the async storage traits and
 /// pins the storage region here so firmware never has to name it. Does
-/// NOT erase or format the flash — the map mounts lazily on first
+/// NOT erase or format the flash—the map mounts lazily on first
 /// access.
 pub fn new_storage(nvmc: Nvmc<'static>) -> NvmcStorage {
     NvmcStorage::new(BlockingAsync::new(nvmc), NV_STORE_RANGE)

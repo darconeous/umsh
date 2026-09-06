@@ -2,7 +2,7 @@ import Foundation
 
 /// A companion radio seen during an explicit discovery scan, before the user
 /// has chosen one to attach. Unlike the auto-connect path, discovery never
-/// picks a radio on its own — every advertising radio in range is surfaced so
+/// picks a radio on its own—every advertising radio in range is surfaced so
 /// the user can select the intended one (essential when several radios are on
 /// the bench at once).
 struct DiscoveredRadio: Identifiable, Equatable, Sendable {

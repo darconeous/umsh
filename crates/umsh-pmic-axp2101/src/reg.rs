@@ -1,4 +1,4 @@
-//! AXP2101 register map — only the registers UMSH touches.
+//! AXP2101 register map—only the registers UMSH touches.
 //!
 //! Values are transcribed from the AXP2101 datasheet and cross-checked
 //! against X-Powers' own `XPowersLib` (`src/REG/AXP2101Constants.h` and

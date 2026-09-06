@@ -3,7 +3,7 @@
 //!
 //! The digest form differs by table (a 2-byte channel id versus the
 //! 32-byte peer key itself), so listings and mutation reports print
-//! whatever digest the device quotes — a channel id as hex, a key as
+//! whatever digest the device quotes—a channel id as hex, a key as
 //! the base58 address it is everywhere else.
 
 use anyhow::{Result, bail};

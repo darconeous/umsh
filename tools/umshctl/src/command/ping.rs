@@ -181,7 +181,7 @@ where
     let target = ctl.target;
     let options = args.send_options()?;
 
-    // A blind unicast still needs the destination registered as a peer —
+    // A blind unicast still needs the destination registered as a peer—
     // the channel conceals the pair, it does not stand in for knowing who
     // they are—and a channel-bound peer handle does not register one.
     // This is also what keeps a target whose firmware still answers off
@@ -357,7 +357,7 @@ where
 {
     while !done() && Instant::now() < deadline {
         // A quiet radio produces no MAC wake, so the deadlines that retire
-        // an unanswered ping need their own nudge — which the pump does.
+        // an unanswered ping need their own nudge—which the pump does.
         ctl.stack.pump_until(deadline).await?;
     }
     Ok(())

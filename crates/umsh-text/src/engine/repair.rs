@@ -77,8 +77,8 @@ impl CoalesceRing {
 
 /// SplitMix64: deterministic scheduling jitter.
 ///
-/// This is scheduling randomness only — it desynchronizes group repair
-/// requests — and is never used as security material. Supplying the seed at
+/// This is scheduling randomness only—it desynchronizes group repair
+/// requests—and is never used as security material. Supplying the seed at
 /// construction keeps the reducer deterministic under test.
 #[derive(Clone, Debug)]
 pub struct JitterSource {

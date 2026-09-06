@@ -10,14 +10,14 @@ import UMSHMobileCore
 /// bundles, so the map, the peer sheets and the address rendering all run the
 /// same decode-and-verify path they run against a real radio. What makes the
 /// screenshots possible is that the mesh is written to disk rather than heard
-/// over the air — see ``StagingSeeder``.
+/// over the air—see ``StagingSeeder``.
 ///
 /// The keys are derived from fixed seeds, so reseeding reproduces the same
 /// mesh: a screenshot retaken next week has the same nodes at the same
 /// addresses with the same avatar colors as the one taken today.
 enum StagingScenario {
     /// Where the staged crew is working. Coordinates sit around Desolation
-    /// Wilderness, west of Lake Tahoe — real terrain, so the map has contours
+    /// Wilderness, west of Lake Tahoe—real terrain, so the map has contours
     /// and trails under the markers instead of empty tiles.
     static let centerLatitude = 38.8985
     static let centerLongitude = -120.1020
@@ -31,7 +31,7 @@ enum StagingScenario {
     static let channelName = "Trail Crew"
 
     /// A private channel alongside it, so the staged mesh shows both kinds of
-    /// group chat — this one's key was handed out rather than derived from
+    /// group chat—this one's key was handed out rather than derived from
     /// anything guessable, which is what its name being a secret means.
     static let privateChannelName = "Crew Leads"
 
@@ -39,7 +39,7 @@ enum StagingScenario {
     ///
     /// A literal rather than ``generateChannelKey``: a private channel *is* its
     /// key, so generating a fresh one each reseed would produce a different
-    /// channel every time — new identifier, new tint, new conversation address,
+    /// channel every time—new identifier, new tint, new conversation address,
     /// and a screenshot that cannot be retaken. Safe to have in the open
     /// precisely because it is fabricated; nothing real is ever encrypted
     /// under it.
@@ -114,7 +114,7 @@ enum StagingScenario {
             lastHeardMinutesAgo: 8
         ),
         // The last two were heard over the air and never saved, which is the
-        // ordinary state of most of a mesh — the map should show that tier.
+        // ordinary state of most of a mesh—the map should show that tier.
         StagingNode(
             seed: 0x66,
             name: "Sam Ihara",
@@ -172,8 +172,8 @@ enum StagingScenario {
 /// One node in the staged mesh.
 struct StagingNode {
     /// Fills all 32 secret-key bytes. A fixed value rather than a random key,
-    /// so a node keeps its address — and therefore its avatar color and its
-    /// place in every sorted list — across reseeds.
+    /// so a node keeps its address—and therefore its avatar color and its
+    /// place in every sorted list—across reseeds.
     let seed: UInt8
     let name: String
     let role: PeerRole
@@ -187,7 +187,7 @@ struct StagingNode {
 
     var secretKey: Data { Data(repeating: seed, count: 32) }
 
-    /// The cell size staged nodes disclose. Five bytes is roughly a 38 m cell —
+    /// The cell size staged nodes disclose. Five bytes is roughly a 38 m cell—
     /// what a tracker sharing a useful position actually reports, and fine
     /// enough that markers separate on the map at trail scale.
     var locationPrecision: UInt8 { 5 }
@@ -200,7 +200,7 @@ struct StagingNode {
 /// same queries, the same decoding and the same layout as real data, so a
 /// staged screenshot cannot flatter a screen that is broken for real users.
 ///
-/// The store it writes to is expected to be the staging one — a separate file,
+/// The store it writes to is expected to be the staging one—a separate file,
 /// so nothing here can reach a real account's history.
 struct StagingSeeder {
     let store: SQLiteApplicationStore
@@ -479,10 +479,10 @@ struct StagingSeeder {
             lines: [
                 Line(speaker: "Maya Ortiz", body: "Heading up the north spur now. Should have eyes on the washout in about forty minutes.", minutesAgo: 96),
                 Line(speaker: nil, body: "Copy. Dev's already at the lower crossing with the saw.", minutesAgo: 94),
-                Line(speaker: "Maya Ortiz", body: "Perfect. Tell him the culvert at mile 3 is completely packed with gravel — we'll need the mattock.", minutesAgo: 91, reactions: [(token: "+1", from: nil, minutesAgo: 90)]),
+                Line(speaker: "Maya Ortiz", body: "Perfect. Tell him the culvert at mile 3 is completely packed with gravel—we'll need the mattock.", minutesAgo: 91, reactions: [(token: "+1", from: nil, minutesAgo: 90)]),
                 Line(speaker: nil, body: "Passing it along. Radio check in an hour?", minutesAgo: 88),
                 Line(speaker: "Maya Ortiz", body: "Works. Signal's holding fine off the ridge repeater up here.", minutesAgo: 86),
-                Line(speaker: "Maya Ortiz", body: "At the washout. It's worse than the photos — about twelve feet of tread gone and the uphill bank is still moving.", minutesAgo: 12),
+                Line(speaker: "Maya Ortiz", body: "At the washout. It's worse than the photos—about twelve feet of tread gone and the uphill bank is still moving.", minutesAgo: 12),
                 Line(speaker: "Maya Ortiz", body: "Going to flag it and back off. Not something we fix today.", minutesAgo: 11),
                 Line(speaker: nil, body: "Agreed, don't push it. Flag both approaches and we'll scope it properly Thursday.", minutesAgo: 9, reactions: [(token: "+1", from: "Maya Ortiz", minutesAgo: 8)]),
                 Line(speaker: "Maya Ortiz", body: "On it. Heading back down to meet Dev.", minutesAgo: 4, reactions: [(token: "<3", from: nil, minutesAgo: 3)]),
@@ -494,7 +494,7 @@ struct StagingSeeder {
             lines: [
                 Line(speaker: nil, body: "How's the lower crossing looking?", minutesAgo: 140),
                 Line(speaker: "Dev Raman", body: "Two deadfalls across, both about 18 inches. Working the second one now.", minutesAgo: 137),
-                Line(speaker: nil, body: "Nice. Maya says bring the mattock when you head up — culvert at mile 3 is packed solid.", minutesAgo: 133),
+                Line(speaker: nil, body: "Nice. Maya says bring the mattock when you head up—culvert at mile 3 is packed solid.", minutesAgo: 133),
                 Line(speaker: "Dev Raman", body: "Got it in the pack already. Give me an hour here.", minutesAgo: 131, reactions: [(token: "+1", from: nil, minutesAgo: 130)]),
                 Line(speaker: "Dev Raman", body: "Second one's clear. Tread's in better shape than last season through here.", minutesAgo: 18),
                 Line(speaker: nil, body: "Good news for once.", minutesAgo: 16, reactions: [(token: "ha", from: "Dev Raman", minutesAgo: 15)]),
@@ -512,9 +512,9 @@ struct StagingSeeder {
         ),
     ]
 
-    /// The crew channel. Several voices, so the group-chat presentation —
+    /// The crew channel. Several voices, so the group-chat presentation—
     /// sender names, per-sender avatar colors, reactions from more than one
-    /// person — has something to render.
+    /// person—has something to render.
     private static let channelLines: [Line] = [
         Line(speaker: "Echo Basecamp", body: "Morning all. Weather's holding through about four, then a chance of thunder over the crest.", minutesAgo: 210, reactions: [(token: "+1", from: "Maya Ortiz", minutesAgo: 208), (token: "+1", from: "Dev Raman", minutesAgo: 206)]),
         Line(speaker: "Maya Ortiz", body: "Taking the north spur. Dev's on the lower crossing.", minutesAgo: 205),
@@ -530,10 +530,10 @@ struct StagingSeeder {
     /// The private channel: fewer people, and the reason it is private is
     /// legible in what gets said on it rather than only in its badge.
     private static let privateChannelLines: [Line] = [
-        Line(speaker: "Echo Basecamp", body: "Leads only — budget came back and it's about 30% short of what we asked for.", minutesAgo: 1_450),
+        Line(speaker: "Echo Basecamp", body: "Leads only—budget came back and it's about 30% short of what we asked for.", minutesAgo: 1_450),
         Line(speaker: nil, body: "That's the bridge decking gone then. Can we phase it?", minutesAgo: 1_446),
         Line(speaker: "Echo Basecamp", body: "Phasing is what I'd propose. Decking next season, abutment repair this one.", minutesAgo: 1_441, reactions: [(token: "+1", from: "Maya Ortiz", minutesAgo: 1_439)]),
-        Line(speaker: "Maya Ortiz", body: "Works for me. The abutment is the safety item anyway — the decking is just uncomfortable.", minutesAgo: 1_436),
+        Line(speaker: "Maya Ortiz", body: "Works for me. The abutment is the safety item anyway—the decking is just uncomfortable.", minutesAgo: 1_436),
         Line(speaker: nil, body: "Let's not put the numbers on the open channel until the district signs off.", minutesAgo: 1_430, reactions: [(token: "+1", from: "Echo Basecamp", minutesAgo: 1_428), (token: "+1", from: "Maya Ortiz", minutesAgo: 1_427)]),
         Line(speaker: "Echo Basecamp", body: "Agreed. I'll have a written version for you both by Thursday.", minutesAgo: 1_425),
         Line(speaker: "Maya Ortiz", body: "Given what I saw at the north spur today we should get the washout into the same request.", minutesAgo: 7),
@@ -545,7 +545,7 @@ struct StagingSeeder {
     /// Turn a script into store rows.
     ///
     /// `resolve` is how a speaker's name becomes an address and a hint, which
-    /// only a channel message carries — a direct conversation's sender is
+    /// only a channel message carries—a direct conversation's sender is
     /// already settled by which conversation it is in.
     private static func stagedMessages(
         from lines: [Line],

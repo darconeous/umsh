@@ -102,14 +102,14 @@ enum MeshChannelKind: Hashable, Sendable {
 struct MeshChannelPreview: Equatable, Sendable {
     let kind: MeshChannelKind
     /// Canonical lowercase name a named channel's key is derived from. Show it
-    /// when it differs from what the user typed — it, not the input, decides
+    /// when it differs from what the user typed—it, not the input, decides
     /// which channel is joined.
     let canonicalName: String?
     let key: Data
     /// Two-octet derived identifier. A hint, not an identity: distinct keys
     /// may collide, and receivers resolve that by trial decryption.
     let channelID: Data
-    /// Three presentation octets — the identifier extended by one byte.
+    /// Three presentation octets—the identifier extended by one byte.
     let tint: Data
     /// Local name suggested by an invitation.
     let displayName: String?
@@ -154,7 +154,7 @@ protocol MeshEngine: Actor {
     /// Derived rather than stored, so it can never disagree with the records
     /// it is matched against.
     func channelConversationAddress(key: Data) throws -> String
-    /// Three presentation octets for a key — the identifier extended by one
+    /// Three presentation octets for a key—the identifier extended by one
     /// byte, so a channel's color is stable wherever it is shown.
     func deriveChannelTint(key: Data) throws -> Data
     func formatChannelInvitation(

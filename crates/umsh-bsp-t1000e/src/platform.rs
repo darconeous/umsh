@@ -1,4 +1,4 @@
-//! [`T1000EPlatform`] — the concrete `umsh_mac::Platform` bundle for the
+//! [`T1000EPlatform`]—the concrete `umsh_mac::Platform` bundle for the
 //! Seeed Studio SenseCAP T1000-E.
 //!
 //! Composes the chip-level nRF52840 plumbing from [`umsh_bsp_nrf52840`]
@@ -6,7 +6,7 @@
 //! software AES / SHA / Ed25519 from [`umsh_crypto`] and the
 //! channel-based radio handle from [`umsh_radio_loraphy`]. The T1000-E
 //! carries an LR1110 LoRa chip; the `LoraphyRadio` wrapper is
-//! chip-agnostic — the actual chip driver is owned by the firmware's
+//! chip-agnostic—the actual chip driver is owned by the firmware's
 //! radio runner task.
 
 use embassy_sync::blocking_mutex::raw::ThreadModeRawMutex;

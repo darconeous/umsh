@@ -15,7 +15,7 @@ struct RadioSnapshot: Equatable, Sendable {
     var hostState: RadioHostState
     var provisioning: RadioProvisioningSummary?
     /// `PROP_ALERT`, or `nil` on a radio that cannot make itself
-    /// conspicuous (no `CAP_ALERT`) — the Find control is hidden then
+    /// conspicuous (no `CAP_ALERT`)—the Find control is hidden then
     /// rather than shown disabled. Defaulted so the many
     /// no-radio-attached snapshots stay unchanged.
     var alert: RadioAlertState? = nil
@@ -23,7 +23,7 @@ struct RadioSnapshot: Equatable, Sendable {
     /// on a radio without `CAP_TIME` and until the first reading arrives.
     var clock: RadioClock? = nil
     /// What the receiver reports, on a radio with `CAP_GNSS`. Carried on
-    /// every update rather than taken once — a position is state to
+    /// every update rather than taken once—a position is state to
     /// mirror, not an event.
     var position: RadioPosition? = nil
     var problemDescription: String?
@@ -164,7 +164,7 @@ struct RadioSnapshot: Equatable, Sendable {
     }
 }
 
-/// Millivolts as the volts a person reads off a meter — 3820 → "3.82 V".
+/// Millivolts as the volts a person reads off a meter—3820 → "3.82 V".
 /// Devices report terminal voltage in millivolts; nothing displays it that way.
 func formattedVolts(_ millivolts: Int) -> String {
     let volts = Double(millivolts) / 1_000
@@ -221,7 +221,7 @@ enum RadioLinkState: String, Equatable, Sendable {
     case reconnecting
     /// A saved radio is out of reach, but a standing system connection
     /// request remains armed: the moment the radio powers on and
-    /// advertises, iOS completes the connection — waking or relaunching
+    /// advertises, iOS completes the connection—waking or relaunching
     /// the app in the background if needed.
     case waitingForRadio
     case pairing
@@ -277,7 +277,7 @@ enum RadioLinkState: String, Equatable, Sendable {
 /// screen say how far off the device is *now*.
 struct RadioClock: Equatable, Sendable {
     /// What the device said the time was, or `nil` when it does not know
-    /// — a device that has had no fix, no manual set, and no retained
+    ///—a device that has had no fix, no manual set, and no retained
     /// clock says so rather than reporting an epoch of zero.
     let date: Date?
     let readAt: Date
@@ -302,7 +302,7 @@ struct RadioClock: Equatable, Sendable {
 struct RadioPosition: Equatable, Sendable {
     let fix: UlcpFixKind
     /// Center of the reported cell. A location names a cell rather than a
-    /// point, and `cellMeters` is how large that cell is — a pin drawn
+    /// point, and `cellMeters` is how large that cell is—a pin drawn
     /// without it claims a precision the device did not report.
     let latitude: Double?
     let longitude: Double?
@@ -496,8 +496,8 @@ struct RadioProvisioningSummary: Equatable, Sendable {
 /// A short list of round periods rather than a free number field: the
 /// choice is how much of the mesh's airtime this radio claims, and an
 /// operator picks that from sensible options rather than typing seconds.
-/// Every entry sits inside the protocol's accepted range — 20 minutes to
-/// 24 hours — so the picker cannot compose a policy the radio refuses.
+/// Every entry sits inside the protocol's accepted range—20 minutes to
+/// 24 hours—so the picker cannot compose a policy the radio refuses.
 let advertisementIntervalChoices: [UInt32] = [0, 3600, 4 * 3600, 12 * 3600, 24 * 3600]
 let beaconIntervalChoices: [UInt32] = [0, 1200, 1800, 3600, 4 * 3600]
 
@@ -550,7 +550,7 @@ func formattedUTCOffset(_ minutes: Int16) -> String {
     return String(format: "UTC%@%02d:%02d", sign, magnitude / 60, magnitude % 60)
 }
 
-/// This iPhone's current offset from UTC, in minutes east — the offset in
+/// This iPhone's current offset from UTC, in minutes east—the offset in
 /// effect right now, daylight saving included.
 var phoneUTCOffsetMinutes: Int16 {
     Int16(TimeZone.current.secondsFromGMT() / 60)
@@ -565,7 +565,7 @@ extension UlcpFixKind {
     }
 }
 
-/// Capacity of a radio's device-identity peer list, for labels only —
+/// Capacity of a radio's device-identity peer list, for labels only—
 /// the device's own `NOMEM` stays authoritative.
 let devicePeerCapacity = Int(ulcpMaxDevPeers())
 
@@ -573,7 +573,7 @@ let devicePeerCapacity = Int(ulcpMaxDevPeers())
 let deviceChannelCapacity = Int(ulcpMaxDevChannels())
 
 /// How many nodes a device will let manage it over the mesh, for labels
-/// only — the device's own `NOMEM` stays authoritative.
+/// only—the device's own `NOMEM` stays authoritative.
 let deviceAdminCapacity = Int(ulcpMaxDevAdmins())
 
 extension SavedSnapshotRecord {
@@ -583,7 +583,7 @@ extension SavedSnapshotRecord {
         case .none: "No"
         case .current: "Yes"
         case .fallback: "Yes, out of date"
-        case .unreadable: "No — save failed to load"
+        case .unreadable: "No—save failed to load"
         }
     }
 

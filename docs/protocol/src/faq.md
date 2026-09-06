@@ -6,11 +6,11 @@ Not without the pairwise key. A MAC Ack carries two fields: a public [ack MIC](s
 
 ### Doesn't blind unicast have a circular dependency between the MIC and address decryption?
 
-No. The `MIC` field is located at the end of the packet and can be read directly from the wire. It is computed using the [blind unicast payload keys](security.md#blind-unicast-payload-keys), which combine the pairwise shared secret with the channel key. The receiver reads the MIC, uses it (together with the channel's `K_enc_channel`) as the IV to decrypt `ENC_DST_SRC`, and then derives the pairwise keys from the recovered source address. The pairwise keys are XORed with the channel keys to produce the blind unicast payload keys, which are used to authenticate and decrypt `ENC_PAYLOAD`. If either address has been tampered with, the derived pairwise keys will be wrong and payload authentication will fail. There is no circular dependency — only a specific processing order (see [Blind Unicast](packet-types.md#blind-unicast-packet)).
+No. The `MIC` field is located at the end of the packet and can be read directly from the wire. It is computed using the [blind unicast payload keys](security.md#blind-unicast-payload-keys), which combine the pairwise shared secret with the channel key. The receiver reads the MIC, uses it (together with the channel's `K_enc_channel`) as the IV to decrypt `ENC_DST_SRC`, and then derives the pairwise keys from the recovered source address. The pairwise keys are XORed with the channel keys to produce the blind unicast payload keys, which are used to authenticate and decrypt `ENC_PAYLOAD`. If either address has been tampered with, the derived pairwise keys will be wrong and payload authentication will fail. There is no circular dependency—only a specific processing order (see [Blind Unicast](packet-types.md#blind-unicast-packet)).
 
 ### Can source-routed packets loop if router hints collide?
 
-No, for two reasons. First, the forwarding path is bounded by the number of router hints in the source route plus the flood hop count — a packet cannot be forwarded more times than the sum of these values. Second, duplicate suppression (see [Duplicate Suppression](repeater-operation.md#duplicate-suppression)) ensures that each repeater forwards a given packet at most once (identified by MIC). Even if a router hint collision causes an unintended repeater to forward the packet, the probability of subsequent hints also colliding with nearby repeaters drops dramatically at each hop, making extended misrouting extremely unlikely.
+No, for two reasons. First, the forwarding path is bounded by the number of router hints in the source route plus the flood hop count—a packet cannot be forwarded more times than the sum of these values. Second, duplicate suppression (see [Duplicate Suppression](repeater-operation.md#duplicate-suppression)) ensures that each repeater forwards a given packet at most once (identified by MIC). Even if a router hint collision causes an unintended repeater to forward the packet, the probability of subsequent hints also colliding with nearby repeaters drops dramatically at each hop, making extended misrouting extremely unlikely.
 
 ### What happens when a cached source route goes stale?
 
@@ -31,7 +31,7 @@ The existing primitives are sufficient. A node can discover a path by sending a 
 
 ### How does UMSH handle frame counter overflow?
 
-The 4-byte frame counter wraps naturally at `2^32`. Replay detection uses modular arithmetic: `delta = (received - last_accepted) mod 2^32`. A positive delta within a reasonable forward window is accepted; zero or excessively large deltas are rejected. This means overflow is not a special case — it is handled identically to any other counter increment. See [Replay Detection](security.md#replay-detection).
+The 4-byte frame counter wraps naturally at `2^32`. Replay detection uses modular arithmetic: `delta = (received - last_accepted) mod 2^32`. A positive delta within a reasonable forward window is accepted; zero or excessively large deltas are rejected. This means overflow is not a special case—it is handled identically to any other counter increment. See [Replay Detection](security.md#replay-detection).
 
 ### Can a multicast channel member impersonate another member?
 
@@ -47,21 +47,21 @@ The `S` flag controls whether the full 32-byte source public key or a compact so
 - The sender wants to allow any receiver to perform ECDH and authenticate the packet without prior state.
 - The sender is using an ephemeral keypair (anonymous request pattern).
 
-Leave `S` clear when the receiver is known to have the sender's full public key cached — for example, after a prior advertisement, identity exchange, or any earlier `S=1` packet. Using the compact hint saves 29 bytes per packet in unicast (3-byte hint vs 32-byte key), which is significant on LoRa.
+Leave `S` clear when the receiver is known to have the sender's full public key cached—for example, after a prior advertisement, identity exchange, or any earlier `S=1` packet. Using the compact hint saves 29 bytes per packet in unicast (3-byte hint vs 32-byte key), which is significant on LoRa.
 
 Receivers that see an unknown source hint on an authenticated packet should treat it as an authentication failure (the cached key lookup fails, so decryption or MIC verification will fail). The sender can retransmit with `S=1` to provide the full key.
 
 ### How does a MAC Ack get routed back to the original sender?
 
-MAC acks are end-to-end: the **final destination** generates the ack, not any intermediate repeater. The ack is routed back to the original sender using whatever routing state the destination has learned — typically a source route derived from the inbound packet's trace route, or a flood scoped by the inbound packet's `FHOPS_ACC` together with any learned region-code options. This is the same [route learning](beacons.md#route-learning) mechanism used for all communication, not an ack-specific feature.
+MAC acks are end-to-end: the **final destination** generates the ack, not any intermediate repeater. The ack is routed back to the original sender using whatever routing state the destination has learned—typically a source route derived from the inbound packet's trace route, or a flood scoped by the inbound packet's `FHOPS_ACC` together with any learned region-code options. This is the same [route learning](beacons.md#route-learning) mechanism used for all communication, not an ack-specific feature.
 
 Repeaters do not generate acks themselves. Instead, a repeater can confirm successful forwarding by overhearing the next hop's retransmission of the same packet (see [Forwarding Confirmation](repeater-operation.md#forwarding-confirmation)).
 
 ### Why does UMSH use stable pairwise keys instead of a ratcheting scheme like the Signal Protocol?
 
-LoRa mesh networks have high latency, low bandwidth, and unreliable delivery — properties that are hostile to ratcheting protocols. Ratcheting requires reliable in-order message delivery to keep both sides synchronized; a single lost message can desynchronize the ratchet and require an expensive recovery handshake. In a mesh where packets may be lost, duplicated, or arrive out of order, this would lead to frequent resynchronization storms. Stable pairwise keys derived from a single ECDH are simple, stateless, and robust to packet loss. The frame counter and optional salt still provide per-packet uniqueness, while the AES-SIV construction provides an additional safety margin against nonce misuse.
+LoRa mesh networks have high latency, low bandwidth, and unreliable delivery—properties that are hostile to ratcheting protocols. Ratcheting requires reliable in-order message delivery to keep both sides synchronized; a single lost message can desynchronize the ratchet and require an expensive recovery handshake. In a mesh where packets may be lost, duplicated, or arrive out of order, this would lead to frequent resynchronization storms. Stable pairwise keys derived from a single ECDH are simple, stateless, and robust to packet loss. The frame counter and optional salt still provide per-packet uniqueness, while the AES-SIV construction provides an additional safety margin against nonce misuse.
 
-When forward secrecy is needed, UMSH provides [PFS sessions](security.md#perfect-forward-secrecy-sessions) — a two-message handshake where both nodes exchange ephemeral node addresses and communicate using session-specific keys for an agreed duration. PFS sessions add no per-packet overhead once established, and the private keys for the ephemeral addresses are erased when the session ends. This provides perfect forward secrecy without the fragility of continuous ratcheting.
+When forward secrecy is needed, UMSH provides [PFS sessions](security.md#perfect-forward-secrecy-sessions)—a two-message handshake where both nodes exchange ephemeral node addresses and communicate using session-specific keys for an agreed duration. PFS sessions add no per-packet overhead once established, and the private keys for the ephemeral addresses are erased when the session ends. This provides perfect forward secrecy without the fragility of continuous ratcheting.
 
 ### What happens if a 2-byte channel identifier collides across different channel keys?
 
@@ -69,11 +69,11 @@ The 2-byte channel identifier is a hint, not a unique identifier. If two differe
 
 ### Why use AES-SIV instead of AES-GCM?
 
-AES-GCM is catastrophically vulnerable to nonce reuse — repeating a nonce with the same key completely breaks both confidentiality and authenticity. In a mesh network, nonce management is difficult: nodes may reboot and lose counter state, clocks may not be synchronized, and packets may be retransmitted. AES-SIV (RFC 5297) computes its CTR IV from the key, associated data, and plaintext, so there is no independent caller-supplied nonce to misuse: repeating all inputs produces an identical packet and reveals only the repetition itself. That is exactly the failure mode UMSH wants under counter loss — graceful, not catastrophic. See [Encrypted Packets](security.md#encrypted-packets).
+AES-GCM is catastrophically vulnerable to nonce reuse—repeating a nonce with the same key completely breaks both confidentiality and authenticity. In a mesh network, nonce management is difficult: nodes may reboot and lose counter state, clocks may not be synchronized, and packets may be retransmitted. AES-SIV (RFC 5297) computes its CTR IV from the key, associated data, and plaintext, so there is no independent caller-supplied nonce to misuse: repeating all inputs produces an identical packet and reveals only the repetition itself. That is exactly the failure mode UMSH wants under counter loss—graceful, not catastrophic. See [Encrypted Packets](security.md#encrypted-packets).
 
 ### How does "deliver to a region, then flood" work?
 
-A sender can include both a source-route option and a flood hop count in the same packet. The source-route directs the packet through specific repeaters, and as each repeater forwards, it removes its own hint. Once all source-route hints are consumed, the packet transitions to flood-based forwarding bounded by `FHOPS_REM`. This allows targeted delivery to a specific area of the mesh followed by a local flood — useful when searching for a node in a known geographic region without flooding the entire network. See [Routing Implications](repeater-operation.md#routing-implications).
+A sender can include both a source-route option and a flood hop count in the same packet. The source-route directs the packet through specific repeaters, and as each repeater forwards, it removes its own hint. Once all source-route hints are consumed, the packet transitions to flood-based forwarding bounded by `FHOPS_REM`. This allows targeted delivery to a specific area of the mesh followed by a local flood—useful when searching for a node in a known geographic region without flooding the entire network. See [Routing Implications](repeater-operation.md#routing-implications).
 
 ### Can UMSH support anonymous requests, similar to MeshCore's ANON_REQ mechanism?
 

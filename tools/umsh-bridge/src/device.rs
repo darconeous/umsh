@@ -4,7 +4,7 @@
 //! Both roles use this: a client's whole job is this relay, and the
 //! server runs one for its own radio alongside the hub.
 //!
-//! Attachment follows the spec's [Radio Attachment] rules — a tethered,
+//! Attachment follows the spec's [Radio Attachment] rules—a tethered,
 //! non-resetting attach with `PROP_MAC_BACKHAUL` set, re-asserted after
 //! every reconnection because the property is session-scoped. Backhaul
 //! mode is what makes the device's own node the far end of a
@@ -48,7 +48,7 @@ const MAX_HANDOFF_ATTEMPTS: u8 = 5;
 
 /// How long to wait between those attempts. A backhauled send crosses a
 /// wire, so what is being waited out is the node draining its receive
-/// queue — a matter of one frame's processing, not one frame's airtime.
+/// queue—a matter of one frame's processing, not one frame's airtime.
 const HANDOFF_RETRY: Duration = Duration::from_millis(20);
 const HANDOFF_RETRY_JITTER_MS: u64 = 80;
 
@@ -70,8 +70,8 @@ fn attach_config() -> UlcpDeviceConfig {
 
 /// What a `PROP_MAC_PROMISCUOUS` set means for the bridge.
 ///
-/// Backhaul mode already decides *which* frames reach this host — the
-/// node's transmissions, and nothing off the air — but they still pass
+/// Backhaul mode already decides *which* frames reach this host—the
+/// node's transmissions, and nothing off the air—but they still pass
 /// the device's receive filtering on the way. A device with no host
 /// domain provisioned filters nothing, which is the ordinary case for a
 /// bridge; asking for promiscuous delivery anyway is what keeps a device
@@ -100,7 +100,7 @@ fn promiscuous_outcome(result: Result<Vec<u8>, UlcpError>) -> Result<()> {
 ///
 /// The two ULCP transports are separate types rather than a trait
 /// object because `UlcpDevice` is generic over its link and its receive
-/// path is a `poll` function, not an `async fn` — which is exactly what
+/// path is a `poll` function, not an `async fn`—which is exactly what
 /// lets the relay poll a receive and a transmit from the same `&mut`
 /// without holding a borrow across an await.
 enum Device {
@@ -258,7 +258,7 @@ impl Device {
     /// it.
     ///
     /// Whether a device repeats is persisted, device-domain
-    /// configuration — its owner's decision, not a bridge's, and one
+    /// configuration—its owner's decision, not a bridge's, and one
     /// that outlives the session. A device with its repeater off is a
     /// leaf: it is reachable from everywhere the bridge reaches and its
     /// own traffic crosses, but nothing is carried onward from its
@@ -280,7 +280,7 @@ impl Device {
         };
         match value.as_deref() {
             Ok([0]) => tracing::info!(
-                "device repeater is disabled; this interface is a leaf — its node is reachable \
+                "device repeater is disabled; this interface is a leaf—its node is reachable \
                  across the bridge, but carries nothing onward from its own segment"
             ),
             Ok(_) => tracing::debug!("device repeater is enabled"),
@@ -299,7 +299,7 @@ impl Device {
     /// reads on the way; a transmit needs metadata of its own. Building
     /// it here, at the last possible moment, is what lets the tunnel stay
     /// byte-faithful. The default asks for the device's configured power
-    /// and leaves `TX_FLAG_NODUTY` clear — a bridge does not get to spend
+    /// and leaves `TX_FLAG_NODUTY` clear—a bridge does not get to spend
     /// airtime the device's duty ledger has not granted.
     async fn transmit(&mut self, frame: &TunnelFrame) -> Result<(), TxError<UlcpError>> {
         let mut meta = [0u8; TxMeta::WIRE_LEN];
@@ -364,9 +364,9 @@ impl DeviceRelay {
     /// Keep a device attached and relaying for as long as the process
     /// runs, re-opening it after a failure.
     ///
-    /// A device outage leaves no backlog to drain — backhaul mode ends
+    /// A device outage leaves no backlog to drain—backhaul mode ends
     /// with the session, and a detached device queues nothing on this
-    /// host's behalf — so a fresh attachment starts clean by
+    /// host's behalf—so a fresh attachment starts clean by
     /// construction and this loop needs no reconciliation of its own. It
     /// is also what recovers a device whose firmware cannot bridge:
     /// attachment fails, the loop waits, and an updated device joins on
@@ -443,7 +443,7 @@ impl DeviceRelay {
     /// Hand one frame to the device's node, retrying a few times if the
     /// node has nowhere to put it.
     ///
-    /// A backhauled send never contends for the channel — it crosses a
+    /// A backhauled send never contends for the channel—it crosses a
     /// wire, spends no airtime, and waits for no one. What it can meet is
     /// a node whose receive queue is full, which ULCP reports the only
     /// way it can, as `STATUS_CCA_FAILURE`. The answer is to wait briefly
@@ -452,7 +452,7 @@ impl DeviceRelay {
     ///
     /// Whether the frame then goes on the air is the node's decision. A
     /// duplicate it has already seen, or one whose flood budget is spent,
-    /// ends there — that is the bridging policy doing its job, not a
+    /// ends there—that is the bridging policy doing its job, not a
     /// failure of this hand-off.
     async fn transmit(&self, device: &mut Device, frame: &TunnelFrame) -> Result<()> {
         for attempt in 1..=MAX_HANDOFF_ATTEMPTS {
@@ -467,7 +467,7 @@ impl DeviceRelay {
                     }
                 }
                 // A refusal with a status is the device declining for a
-                // reason of its own — detached, or handed something it
+                // reason of its own—detached, or handed something it
                 // will not send. Re-offering would not change its mind.
                 Err(TxError::Io(UlcpError::Status(status))) => {
                     tracing::debug!(?status, "device refused a transmit");

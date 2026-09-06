@@ -3,8 +3,8 @@
 //! Shared code needs to emit the same diagnostic lines the firmwares
 //! already print, but each board owns its own sink: the nRF images
 //! multiplex a USB-serial debug channel, the ESP32 image writes to its
-//! UART. Rather than thread a logger through every signature — most of
-//! which are `static`-backed tasks with no place to put one — a board
+//! UART. Rather than thread a logger through every signature—most of
+//! which are `static`-backed tasks with no place to put one—a board
 //! installs its sink once at boot and the shared modules call
 //! [`debug_log`] freely.
 //!
@@ -22,7 +22,7 @@ type Sink = fn(Arguments);
 /// Deliberately not a critical-section mutex. [`debug_log`] is called from
 /// the device node's per-packet receive tap, on the same boards whose BLE
 /// controller is the entire reason for the `node-thread-mode-mutex`
-/// feature — taking a critical section once per received packet is exactly
+/// feature—taking a critical section once per received packet is exactly
 /// the cost that feature exists to keep out of the radio path, and it
 /// would be paid even when the board's sink discards the line.
 ///

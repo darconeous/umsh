@@ -1,7 +1,7 @@
 //! Reading what a device answered.
 //!
 //! A device answers a property request with the property, or with
-//! `PROP_LAST_STATUS` standing in its place — refused, absent, out of
+//! `PROP_LAST_STATUS` standing in its place—refused, absent, out of
 //! reach. Every reader of a reply has to tell those two apart before it can
 //! do anything with the bytes, and a multi-property answer has to do it per
 //! position, against the keys that were asked for. That reasoning lives
@@ -98,8 +98,8 @@ impl From<ParseError> for EntriesError {
 /// Split a `CMD_PROP_ARE` into per-position answers, paired with the keys
 /// they were asked for.
 ///
-/// A device may answer fewer positions than were asked for — it stops
-/// before a reply overflows rather than truncating one — so the iterator
+/// A device may answer fewer positions than were asked for—it stops
+/// before a reply overflows rather than truncating one—so the iterator
 /// simply ends, and the caller reissues whatever is left over.
 pub fn entries<'a>(
     requested: &'a [u32],

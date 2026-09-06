@@ -15,7 +15,7 @@
 //! - **Rng** is a ChaCha20 CSPRNG seeded from the board's hardware TRNG
 //!   at boot ([`NodeRng`]): project policy forbids non-crypto RNGs, and
 //!   under BLE builds the RNG peripheral is not ours to read at runtime.
-//! - **The counter store** is the board's — the `CS` parameter — so TX
+//! - **The counter store** is the board's—the `CS` parameter—so TX
 //!   reservation boundaries for the device identity and per-peer RX
 //!   replay boundaries survive power cycles, flushed from inside the MAC
 //!   pump one whole-map record per persist block.
@@ -23,7 +23,7 @@
 //! The node **always exists**: a device identity is generated and
 //! persisted at first boot, so bring-up is unconditional and the only
 //! question is whether the node is *transmitting*. That is configuration
-//! — the PHY enable state and the forwarding switch — plus the
+//!—the PHY enable state and the forwarding switch—plus the
 //! `NODE_ACTIVE` gate, which closes while a factory reset is in flight
 //! (the identity has been erased from storage but the running MAC still
 //! holds it until the reboot that completes the wipe).
@@ -38,8 +38,8 @@
 //! Embassy task functions cannot be generic, so the spawnable tasks stay
 //! in each firmware as thin shims around the `*_loop` functions here, and
 //! the board owns the two statics whose types depend on `CS`: the MAC
-//! cell and its counter store. Everything else — every static whose type
-//! is fixed, and every line of logic — is here once.
+//! cell and its counter store. Everything else—every static whose type
+//! is fixed, and every line of logic—is here once.
 
 extern crate alloc;
 
@@ -75,15 +75,15 @@ use crate::log::debug_log;
 /// The mutex kind guarding the node's statics.
 ///
 /// The nRF images run a single thread-mode executor, where
-/// `ThreadModeRawMutex` is a no-op lock — worth keeping, because these
+/// `ThreadModeRawMutex` is a no-op lock—worth keeping, because these
 /// statics sit in the radio RX/TX path on boards whose BLE controller
 /// (MPSL/SDC) has hard real-time deadlines that a critical section would
 /// intrude on. Boards without that constraint take the portable default.
 ///
 /// `embassy_sync` only defines `ThreadModeRawMutex` for bare-metal targets,
 /// so the host build takes the portable default regardless of the feature.
-/// Nothing on the host runs the device node — it builds there for tests and
-/// rustdoc — and the portable lock is the correct choice under a hosted OS
+/// Nothing on the host runs the device node—it builds there for tests and
+/// rustdoc—and the portable lock is the correct choice under a hosted OS
 /// anyway.
 #[cfg(all(feature = "node-thread-mode-mutex", target_os = "none"))]
 pub type NodeMutex = embassy_sync::blocking_mutex::raw::ThreadModeRawMutex;
@@ -126,7 +126,7 @@ impl rand::TryRng for NodeRng {
 impl rand::TryCryptoRng for NodeRng {}
 
 /// `umsh_mac::Platform` bundle for the device node, generic only over the
-/// board's counter store — the one piece of the platform that is
+/// board's counter store—the one piece of the platform that is
 /// genuinely per-board, because it is backed by that board's flash.
 pub struct DeviceNodePlatform<CS>(core::marker::PhantomData<CS>);
 
@@ -157,7 +157,7 @@ pub const MAX_NODE_PEERS: usize = MAX_DEV_PEERS + MAX_DEV_ADMINS;
 /// no PFS ephemerals on the device node), `MAX_NODE_PEERS` peers,
 /// `MAX_CHANNEL_KEYS` channels (a smaller MAC table would refuse channels
 /// the property surface accepted), 4 pending ACKs, 4 TX slots (beacons
-/// and future acks — no application traffic), 255-byte frames, 32-entry
+/// and future acks—no application traffic), 255-byte frames, 32-entry
 /// dup cache. The per-channel replay maps are the RAM hot spot (~330
 /// bytes per tracked sender): 4 full-key + 2 hint-only senders per
 /// channel keeps the whole table ~2 KiB/channel; extra concurrent senders
@@ -211,7 +211,7 @@ pub static DEV_SYNC: Signal<NodeMutex, DevDomainSnapshot> = Signal::new();
 /// by the time this returns. The sync loop runs in its own task and does
 /// not, so a mirror updated where the snapshot is *consumed* is a value
 /// that lags the publish by however long that task takes to be scheduled
-/// — and a panel redrawing on the publish would draw the old one.
+///—and a panel redrawing on the publish would draw the old one.
 pub fn publish_snapshot(snapshot: DevDomainSnapshot) {
     if NODE_IS_REPEATER.swap(snapshot.repeater_enabled, Ordering::Relaxed)
         != snapshot.repeater_enabled
@@ -246,7 +246,7 @@ static NODE_IS_REPEATER: AtomicBool = AtomicBool::new(false);
 /// someone comparing an address against a phone screen needs.
 ///
 /// `None` until bring-up runs, and on a board that never brings a node
-/// up at all — which is the honest answer for a screen that would
+/// up at all—which is the honest answer for a screen that would
 /// otherwise print a placeholder address.
 static NODE_KEY: BlockingMutex<CriticalSectionRawMutex, RefCell<Option<[u8; 32]>>> =
     BlockingMutex::new(RefCell::new(None));
@@ -255,7 +255,7 @@ static NODE_KEY: BlockingMutex<CriticalSectionRawMutex, RefCell<Option<[u8; 32]>
 ///
 /// Reads the same state the session's `PROP_MAC_REPEATER_ENABLED` names,
 /// published here so a display can glance at it without borrowing the
-/// coordinator or racing `dev_sync_loop` for the mirror — which is a
+/// coordinator or racing `dev_sync_loop` for the mirror—which is a
 /// single-consumer `Signal` and already has one.
 pub fn repeater_enabled() -> bool {
     NODE_IS_REPEATER.load(Ordering::Relaxed)
@@ -279,7 +279,7 @@ static NODE_UP: AtomicBool = AtomicBool::new(false);
 /// Plain atomics rather than a mutex: the readers are display code
 /// that wants a glance, not a consistent transaction, and a torn read
 /// across two of these counters is invisible at the resolution anyone
-/// looks at them. Publishing from inside the pump costs no extra wakeups —
+/// looks at them. Publishing from inside the pump costs no extra wakeups—
 /// it happens on a loop that was going to run anyway.
 static MAC_TX_FRAMES: AtomicU32 = AtomicU32::new(0);
 static MAC_TX_ABANDONED: AtomicU32 = AtomicU32::new(0);
@@ -292,7 +292,7 @@ static MAC_FORWARD_DROPPED_POLICY: AtomicU32 = AtomicU32::new(0);
 /// The most recently published MAC tallies.
 ///
 /// All zero before the node's first wake cycle, which is
-/// indistinguishable from a node that has done nothing — and is the same
+/// indistinguishable from a node that has done nothing—and is the same
 /// thing as far as a reader is concerned.
 pub fn mac_counters() -> MacCounters {
     MacCounters {
@@ -392,7 +392,7 @@ fn truncate_utf8(text: &str, max: usize) -> &str {
 /// meet without being conflated. Capabilities are **facts**: `REP` is set
 /// exactly when the node is actually forwarding, `MOB` exactly when the
 /// operator has said the device moves. The role is what the device
-/// *presents itself as*, which is configuration — an explicit
+/// *presents itself as*, which is configuration—an explicit
 /// `PROP_IDENT_ROLE` is advertised verbatim, so a mobile repeater and a
 /// fixed tracker are both expressible.
 ///
@@ -457,7 +457,7 @@ fn stamp_position(profile: &mut NodeIdentityProfile, snapshot: &DevDomainSnapsho
 /// Reconciles the node's MAC against each [`DevDomainSnapshot`]: joins
 /// newly provisioned channels, removes de-provisioned ones (dropping
 /// their replay state), and registers peers. Peer *removal* is not
-/// propagated — MAC registry entries carry no key material, so a stale
+/// propagated—MAC registry entries carry no key material, so a stale
 /// entry is inert, and the registry is rebuilt from the live table at the
 /// next boot.
 pub async fn dev_sync_loop<CS: CounterStore + 'static>(
@@ -477,8 +477,8 @@ pub async fn dev_sync_loop<CS: CounterStore + 'static>(
         crate::admin_responder::publish_dev_domain(&snapshot);
         // The gate is key equality, not mere presence. The session's live
         // identity and the one this MAC was built around can legitimately
-        // differ — an installed `PROP_DEV_PRIVATE_KEY` takes effect at the
-        // next boot, and `CMD_CLEAR` + `CMD_RST` erases the stored key —
+        // differ—an installed `PROP_DEV_PRIVATE_KEY` takes effect at the
+        // next boot, and `CMD_CLEAR` + `CMD_RST` erases the stored key—
         // and in every such case originating traffic would be signing as
         // an identity the device no longer claims.
         let matches_live = snapshot.dev_key == Some(node_key);
@@ -512,7 +512,7 @@ pub async fn dev_sync_loop<CS: CounterStore + 'static>(
         );
         let supported_regions = advertised_regions(&snapshot);
         // The profile is rebuilt from scratch on every snapshot rather than
-        // patched, so the position has to be put back with everything else —
+        // patched, so the position has to be put back with everything else—
         // otherwise any device-domain write would quietly drop the advertised
         // location until the node next moved far enough to earn a new one.
         let mut profile = NodeIdentityProfile::new(PublicKey(node_key), role, capabilities);
@@ -625,8 +625,8 @@ pub enum BeaconTrigger {
     /// The board's primary-action button slot. Boards without one carry
     /// the variant unused.
     Button,
-    /// Emit a solicited advertisement — a broadcast carrying the signed
-    /// node identity payload — echoing `nonce` when set. Currently
+    /// Emit a solicited advertisement—a broadcast carrying the signed
+    /// node identity payload—echoing `nonce` when set. Currently
     /// unconstructed: the Identity Request responder that will drive it
     /// (with a targeted unicast reply) is a follow-up; the generator is
     /// kept for that pass.
@@ -640,7 +640,7 @@ pub enum BeaconTrigger {
     /// hear the device and stops, and repeating it across the mesh every
     /// interval would cost far more airtime than it is worth.
     AutoAdvertise,
-    /// Emit a beacon — a broadcast with no payload at all — which
+    /// Emit a beacon—a broadcast with no payload at all—which
     /// announces a path back to the device rather than who it is.
     Beacon,
 }
@@ -653,7 +653,7 @@ pub static BEACON_TRIGGER: Channel<NodeMutex, BeaconTrigger, 2> = Channel::new()
 
 /// Fire-and-forget beacon request. A full queue means a beacon (or
 /// advertisement) is already pending, so dropping the extra request loses
-/// nothing — bursts of Advertisement Requests coalesce here.
+/// nothing—bursts of Advertisement Requests coalesce here.
 pub fn request_beacon(trigger: BeaconTrigger) {
     let _ = BEACON_TRIGGER.try_send(trigger);
 }
@@ -697,7 +697,7 @@ pub struct NodeHooks {
     /// resting OCV. Boards with no estimator pass a no-op.
     pub note_external_load: fn(),
     /// Confirmation feedback for a button-triggered beacon, fired when
-    /// the MAC *accepts* the send — a refusal (queue full, duty limiting)
+    /// the MAC *accepts* the send—a refusal (queue full, duty limiting)
     /// leaves the slot silent. Boards with no indicator pass a no-op.
     pub beacon_confirm: fn(),
 }
@@ -782,7 +782,7 @@ impl MacMirrors {
 }
 
 /// Turns beacon triggers into node sends on the device identity: a signed
-/// advertisement either way — unsolicited for the button slot, echoing a
+/// advertisement either way—unsolicited for the button slot, echoing a
 /// nonce for an Advertisement Request.
 pub async fn beacon_loop<CS: CounterStore + 'static>(
     node: DeviceNode<CS>,
@@ -831,7 +831,7 @@ pub async fn beacon_loop<CS: CounterStore + 'static>(
 enum AdvertReach {
     /// Flood across the mesh under the default budget.
     Mesh,
-    /// Direct neighbours only — no flood hops, no source route.
+    /// Direct neighbours only—no flood hops, no source route.
     Neighbours,
 }
 
@@ -841,7 +841,7 @@ enum AdvertReach {
 async fn send_beacon<CS: CounterStore + 'static>(node: &DeviceNode<CS>) -> bool {
     use umsh_node::Transport as _;
     // Trace route to learn the path, trace signal to learn what that path
-    // costs — the pair is what makes a beacon worth more than the fact
+    // costs—the pair is what makes a beacon worth more than the fact
     // that the sender is alive.
     let options = SendOptions::default()
         .with_flood_hops(BEACON_FLOOD_HOPS)
@@ -863,7 +863,7 @@ async fn send_advertisement<CS: CounterStore + 'static>(
     use umsh_crypto::NodeIdentity as _;
     use umsh_node::Transport as _;
     // The node's own profile is the canonical statement of what this node
-    // is — kept current by `dev_sync_loop` and `identity_profile_loop` —
+    // is—kept current by `dev_sync_loop` and `identity_profile_loop`—
     // so build the payload from it rather than assembling a second,
     // drifting copy here.
     let Some(payload) = node.with_identity_profile(|profile| profile.to_payload(nonce)) else {
@@ -882,7 +882,7 @@ async fn send_advertisement<CS: CounterStore + 'static>(
         return false;
     };
     let mut len = 1 + body_len;
-    // The signature covers ROLE through the 0xFF terminator — the
+    // The signature covers ROLE through the 0xFF terminator—the
     // payload-type byte stays outside the signed range.
     let Ok(signature) = identity.sign(&buf[1..len]).await else {
         return false;
@@ -914,15 +914,15 @@ async fn send_advertisement<CS: CounterStore + 'static>(
 /// `PROP_BEACON_INTERVAL` ask for.
 ///
 /// The two intervals run independently rather than sharing a period. They
-/// announce different things at very different costs — a beacon is a
-/// path, an advertisement is a signed identity — so a mesh normally wants
+/// announce different things at very different costs—a beacon is a
+/// path, an advertisement is a signed identity—so a mesh normally wants
 /// the cheap one far more often than the expensive one, and one knob
 /// could not express that.
 ///
 /// Every period is scattered by up to [`ANNOUNCE_JITTER_SHIFT`] of the
 /// interval. Two nodes configured alike and switched on together would
 /// otherwise stay in step indefinitely, colliding on the air every period
-/// and — worse — colliding again on each retry, since a shared schedule
+/// and—worse—colliding again on each retry, since a shared schedule
 /// makes them contend from the same starting instant every time. CAD and
 /// backoff settle the individual collision; the scatter is what keeps the
 /// mesh from having to.
@@ -1007,7 +1007,7 @@ const ANNOUNCE_JITTER_SHIFT: u32 = 2;
 ///
 /// The randomness is the MAC's ChaCha20 generator, seeded at boot from the
 /// board's hardware TRNG. The node has one generator and this borrows it
-/// rather than growing a second — a scheduling scatter does not need
+/// rather than growing a second—a scheduling scatter does not need
 /// unpredictability, but a node that keeps a weak generator around for the
 /// undemanding cases eventually uses it for a demanding one.
 async fn schedule<CS: CounterStore + 'static>(
@@ -1071,15 +1071,15 @@ const QUIESCE_TX_DEADLINE: Duration = Duration::from_secs(3);
 ///
 /// A reboot commanded over the mesh has two obligations the reset itself
 /// would otherwise destroy. The MAC acknowledgment of the frame that
-/// carried the command is sitting in the TX queue — a reset-class command
+/// carried the command is sitting in the TX queue—a reset-class command
 /// is answered by that acknowledgment and nothing else, so resetting
 /// first leaves the administrator retrying into silence. And the RX
 /// replay boundary that admitted the command is normally persisted only
-/// every persist-block of frames — resetting inside the block re-opens
+/// every persist-block of frames—resetting inside the block re-opens
 /// the window, and the administrator's retries of the very same command
 /// are then accepted again after boot, one reboot per retry.
 ///
-/// The TX drain is bounded and best-effort — an unlucky channel loses the
+/// The TX drain is bounded and best-effort—an unlucky channel loses the
 /// acknowledgment, which the sender's retry ladder is built for. The
 /// counter flush is not optional and happens last, so any frame accepted
 /// while the drain waited is inside the persisted boundary too.
@@ -1128,7 +1128,7 @@ type IdentityBlob = heapless::Vec<u8, 320>;
 /// length.
 ///
 /// This is the standalone framing of the same statement the Identity
-/// Request responder makes — same profile, same builder — differing only
+/// Request responder makes—same profile, same builder—differing only
 /// in that it carries no request nonce and is authenticated by the
 /// signature rather than by an enclosing unicast.
 pub async fn sign_identity_blob(out: &mut [u8]) -> Option<usize> {
@@ -1188,8 +1188,8 @@ pub struct DeviceNodeParts<CS: CounterStore + 'static> {
 }
 
 /// Construct the MAC around the device identity and wire up the node.
-/// Call at most once. The identity is never absent — boot generates and
-/// persists one when the journal is empty — so there is no
+/// Call at most once. The identity is never absent—boot generates and
+/// persists one when the journal is empty—so there is no
 /// "unprovisioned" path here.
 ///
 /// `t_frame_ms` is the worst-case airtime hint for the MAC scheduler.
@@ -1209,7 +1209,7 @@ pub async fn bring_up<CS: CounterStore + 'static>(
     // construct it in place inside the arena, the same elision
     // `StaticCell::init_with` leaned on before the arena became
     // placeable; building it as a stack local transits the stack once
-    // per move in the chain — hardware-diagnosed on the nRF images as
+    // per move in the chain—hardware-diagnosed on the nRF images as
     // boot HardFaults (INVSTATE jumps to 0) and a smashed allocator when
     // the temporaries blew through the stack budget. Keep the
     // construction a single in-place expression.
@@ -1300,7 +1300,7 @@ pub async fn bring_up<CS: CounterStore + 'static>(
     // `identity_profile_loop`. The default policy answers every request
     // whose filters select us, including our full source key when the
     // request wasn't authenticated to us. Replies are authenticated
-    // unicast — never signed, never a broadcast fallback: a request whose
+    // unicast—never signed, never a broadcast fallback: a request whose
     // source can't be resolved to a key is dropped by the MAC before the
     // responder runs.
     {

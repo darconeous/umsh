@@ -11,13 +11,13 @@
 /// `PROP_BLE_LINK` states.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum BleLinkState {
-    /// `BLE_LINK_NONE` — nothing is connected over Bluetooth.
+    /// `BLE_LINK_NONE`—nothing is connected over Bluetooth.
     #[default]
     None = 0,
-    /// `BLE_LINK_CONNECTED` — a central holds a connection but has not
+    /// `BLE_LINK_CONNECTED`—a central holds a connection but has not
     /// opened a ULCP session on it.
     Connected = 1,
-    /// `BLE_LINK_ATTACHED` — a host is attached and running ULCP over
+    /// `BLE_LINK_ATTACHED`—a host is attached and running ULCP over
     /// Bluetooth.
     Attached = 2,
 }

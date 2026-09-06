@@ -1,7 +1,7 @@
 //! Adapter-free full-protocol integration tests: the host-side
 //! [`UlcpDevice`] workflow driven end-to-end against the **real**
-//! ULCP session engine (`umsh_ulcp_device::Session`) — the same state
-//! machine both firmware targets run — with persistence, the radio,
+//! ULCP session engine (`umsh_ulcp_device::Session`)—the same state
+//! machine both firmware targets run—with persistence, the radio,
 //! and time simulated in RAM. No fake device re-implementation sits in
 //! between, so a behavior proven here can only diverge on hardware at
 //! the framing, storage, or radio boundary, and the per-command trace
@@ -91,7 +91,7 @@ fn session_config() -> SessionConfig {
 }
 
 /// The simulated device: the real session engine plus RAM stand-ins for
-/// everything the firmware supplies — the snapshot and identity
+/// everything the firmware supplies—the snapshot and identity
 /// journals, the radio, the entropy source, and the clock.
 struct SimDevice {
     session: Session,
@@ -138,7 +138,7 @@ impl SimDevice {
     /// host command is served.
     fn boot(&mut self) {
         // Bonds live in a journal of their own, so a reboot finds exactly
-        // the ones it left — including none, after a wipe.
+        // the ones it left—including none, after a wipe.
         let bonds = self.session.ble_bond_count();
         self.session = Session::new(session_config(), Status::RESET_POWER_ON, engine());
         self.session.set_ble_bond_count(bonds, &mut |_| {});
@@ -182,7 +182,7 @@ impl SimDevice {
             // A power cycle and nothing else: the journals survive, the
             // session comes back announcing its power-on reset, and the
             // saved snapshot is replayed the way a board replays it on
-            // the way up. Nothing is emitted — on hardware the reboot
+            // the way up. Nothing is emitted—on hardware the reboot
             // drops the link before anything could be.
             Some(Effect::Reboot) => self.boot(),
             Some(Effect::StartTransmit) => {
@@ -341,7 +341,7 @@ fn detach(sim: &Arc<Mutex<SimDevice>>) {
 }
 
 /// Simulate a power cycle: a fresh session boots from the durable
-/// journals exactly as the firmware does — identity installed and the
+/// journals exactly as the firmware does—identity installed and the
 /// snapshot restored before any host command.
 fn power_cycle(sim: &Arc<Mutex<SimDevice>>) {
     let mut sim = sim.lock().unwrap();
@@ -450,7 +450,7 @@ async fn configure_and_enable_phy(radio: &mut UlcpDevice<SessionLink>) {
 /// The full increment-9 hardware script, in-process: provision the
 /// host domain and device identity, save, power-cycle with no host,
 /// operate autonomously (queue + delegated ack), reattach, verify
-/// ownership, reconcile (a no-op — no secret crosses the link again),
+/// ownership, reconcile (a no-op—no secret crosses the link again),
 /// and drain the acknowledged frame.
 #[tokio::test]
 async fn full_lifecycle_provision_save_power_cycle_autonomy_reattach_drain() {
@@ -524,7 +524,7 @@ async fn full_lifecycle_provision_save_power_cycle_autonomy_reattach_drain() {
     }
 
     // A power cycle is where it ends. The device domain comes back from
-    // the snapshot — PHY configured and enabled, identity intact — and
+    // the snapshot—PHY configured and enabled, identity intact—and
     // the host domain does not, taking the queue with it.
     power_cycle(&sim);
     let mut radio = attached_host(&sim).await;
@@ -686,7 +686,7 @@ async fn channel_reconciliation_inserts_or_replaces() {
 
 /// A full 16-frame device queue drains losslessly through the drain
 /// callback even though it is larger than the host driver's bounded
-/// receive buffer — the exact failure the T-1000E hardware pass
+/// receive buffer—the exact failure the T-1000E hardware pass
 /// caught: the callback used to miss every frame the bounded buffer
 /// evicted mid-drain.
 #[tokio::test]
@@ -1036,7 +1036,7 @@ async fn bonds_are_cleared_and_the_count_follows() {
 /// its saved snapshot exactly where it left it.
 ///
 /// The command answers nothing at all, so what proves it ran is the state
-/// on the far side of it — which is also why a device that *cannot*
+/// on the far side of it—which is also why a device that *cannot*
 /// restart has to say so out loud rather than stay quiet.
 #[tokio::test]
 async fn a_reboot_restarts_the_device_and_keeps_what_was_saved() {

@@ -7,9 +7,9 @@ covers the **tethered** case only: one host device driving its own
 companion radio over a BLE connection, exactly as it would over UART or
 USB-CDC.
 
-Using BLE as a shared local bearer — nearby devices exchanging UMSH
+Using BLE as a shared local bearer—nearby devices exchanging UMSH
 frames over BLE as peers, or reaching the UMSH network through a
-BLE-LoRa bridge — is a separate bearer design and is out of scope here.
+BLE-LoRa bridge—is a separate bearer design and is out of scope here.
 See [BLE As A Local Bearer](ulcp.md#ble-as-a-local-bearer)
 for the design space. This chapter reserves identifier space for that
 future work (see [UUID Allocation](ulcp-ble.md#uuid-allocation)) but does not specify it.
@@ -132,7 +132,7 @@ send.
 The scheme is correct at any ATT_MTU, including the 23-octet minimum.
 Clients **SHOULD** negotiate the largest ATT_MTU they support before
 attaching; servers **SHOULD** support an ATT_MTU of at least 247.
-Larger MTUs only reduce segment count — they never change frame
+Larger MTUs only reduce segment count—they never change frame
 semantics.
 
 ## ULCP GATT Service {#ulcp-gatt-service}
@@ -170,8 +170,8 @@ connection meeting the security requirements in [Security](ulcp-ble.md#ble-secur
 Connection alone does not attach.
 
 On attach, the device **MUST** silently reset its protocol **session
-state** — transaction correlation, reassembly, and session-scoped
-properties — and **MUST NOT** modify any other state: device and host
+state**—transaction correlation, reassembly, and session-scoped
+properties—and **MUST NOT** modify any other state: device and host
 provisioning, the RF configuration, and the PHY enable state are
 unaffected, and the radio keeps operating through the attach (see
 [Attach, Detach, and
@@ -183,8 +183,8 @@ A host **detaches** by disabling notifications or by disconnecting.
 Partially reassembled frames are discarded on detach.
 
 The device supports one attached host at a time, across all transports it
-exposes. If a new host attaches — over BLE or over another transport
-such as USB — the device **MUST** detach any previously attached host and
+exposes. If a new host attaches—over BLE or over another transport
+such as USB—the device **MUST** detach any previously attached host and
 reset the session for the new one. A device **MAY** instead reject new
 connections while a host is attached.
 
@@ -241,7 +241,7 @@ the device itself answers `STATUS_PROP_NOT_FOUND` to both.
 This is deliberate. A capability is worth a code when a host would
 otherwise have to guess, and here it would not: the refusal is a
 complete answer, arrives in the same exchange the host was already
-making, and is a case the host must handle regardless — any property may
+making, and is a case the host must handle regardless—any property may
 be refused by firmware older than the host that asks. Splitting the
 transport into finer capabilities would buy a host nothing it cannot
 learn in the reply it is already waiting for, at the cost of a second
@@ -267,15 +267,15 @@ It says nothing about the radio itself. A device **MAY** power the
 controller down behind this and **MAY** leave the whole stack running;
 what the property promises is reachability, which is what an operator
 turning it off is asking about. Claiming the radio is off would be a
-claim most platforms cannot honor — a vendor stack that cannot be torn
-down at runtime is common — and a property that lies in the direction
+claim most platforms cannot honor—a vendor stack that cannot be torn
+down at runtime is common—and a property that lies in the direction
 of "more private than it is" is the wrong one to guess at.
 
 Asynchronous for the same reason `PROP_GNSS_ENABLED` is: a device
 **MAY** offer this as a control the operator can reach, and a switch
 someone can flip is a value that moves without the host asking. A
 device that flips it locally **MUST** publish the new value like any
-other transition the host did not command — which, when it is being
+other transition the host did not command—which, when it is being
 cleared, is the last thing the attached host hears.
 
 The post-reset value is true. A device unreachable by default is a
@@ -304,9 +304,9 @@ watching administrator would otherwise have to poll for.
 
 Connected and attached are separate values because they are separate
 facts. A central can hold the device's connection without ever
-subscribing to the ULCP notification characteristic — a stalled pairing,
+subscribing to the ULCP notification characteristic—a stalled pairing,
 an operating system reconnecting a bond in the background, or a host
-that simply occupies the slot — and a device with one peripheral
+that simply occupies the slot—and a device with one peripheral
 connection is unreachable by anyone else while that lasts. Reporting
 that as "nobody is here" would describe a device that is in fact
 unavailable.
@@ -338,7 +338,7 @@ connected host would leak the same association the
 
 How many hosts are currently bonded. A device **MUST** report the count
 its durable bond store holds, and **MUST** publish the new value when it
-changes — enrollment and eviction both happen without the host asking,
+changes—enrollment and eviction both happen without the host asking,
 so a host that was not told would have to poll.
 
 A device that does not manage its own bonds answers
@@ -368,7 +368,7 @@ describing anything the device could do.
 
 The device **MUST NOT** answer before the deletion is durable, and
 **MUST** drop the deleted bonds from any live in-memory bond table as
-well as from durable storage — a bond forgotten on flash but still held
+well as from durable storage—a bond forgotten on flash but still held
 in RAM would keep working until the next boot. It **MUST** then enter
 pairing mode: a device that has forgotten every host it trusts and is
 not accepting new ones is reachable by nothing.
@@ -411,8 +411,8 @@ is asking the same question the answer already contains.
 Whether [pairing mode](#pairing-mode) is active. Writing `1` opens a
 window, so an unbonded host may pair without a physical gesture at the
 device; writing `0` closes one. The window is a property rather than a
-command because it is a state with more ways out than in — the write, a
-timeout, a completed bond — and only a property can be closed again,
+command because it is a state with more ways out than in—the write, a
+timeout, a completed bond—and only a property can be closed again,
 read back, and reported moving on its own.
 
 The device **MUST** publish the new value on any transition the writer
@@ -421,7 +421,7 @@ no host asking, and a physical gesture at the device opens one.
 
 A write of `1` answers `STATUS_INVALID_STATE` when no window can open:
 the device is locked out after repeated pairing failures, or Bluetooth
-is off ([`PROP_BLE_ENABLED`](#prop-ble-enabled) is `0`) — nothing can
+is off ([`PROP_BLE_ENABLED`](#prop-ble-enabled) is `0`)—nothing can
 pair through a transport that is down, and a device **MUST NOT** report
 a window nothing can walk through. A full bond store is **NOT** a
 refusal: enrollment at capacity evicts rather than refuses (see
@@ -479,9 +479,9 @@ Entering pairing mode:
   **RECOMMENDED**).
 * Once the device holds one or more bonds, it **MUST NOT** enter pairing
   mode automatically. Entering pairing mode then requires either a
-  deliberate physical gesture distinct from normal power-on — for
+  deliberate physical gesture distinct from normal power-on—for
   example, holding the user button through power-on until the device
-  signals that pairing mode is active — or a write of `1` to
+  signals that pairing mode is active—or a write of `1` to
   [`PROP_BLE_PAIRING`](#prop-ble-pairing) from an authorized session.
 
 Pairing mode **MUST** end when any of the following occurs:
@@ -494,7 +494,7 @@ The device **SHOULD** give a perceptible indication (LED pattern, tone,
 or display) while pairing mode is active.
 
 A physical-presence-gated ceremony reduces the pairing trust decision
-to possession of the device — the same property that protects the
+to possession of the device—the same property that protects the
 serial transports. A command from an already-authorized session is the
 same decision made by someone who has already passed that ceremony: an
 attached host holds a bond, and a mesh administrator is listed in
@@ -516,8 +516,8 @@ walking over.
 * Devices with a pairing PIN configured (see [Pairing PIN Configuration](ulcp-ble.md#pairing-pin)) use LESC
   Passkey Entry with the configured PIN as a static passkey. New bonds
   still **MUST** be accepted only while in pairing mode. The device
-  **MUST** count consecutive passkey authentication failures — pairing
-  attempts that fail the LESC confirm-value or DHKey check — since
+  **MUST** count consecutive passkey authentication failures—pairing
+  attempts that fail the LESC confirm-value or DHKey check—since
   power-on; the counter resets on a successful pairing or a power
   cycle. Rejections that never reach passkey authentication
   (legacy-pairing attempts, pairing refused outside pairing mode,
@@ -624,7 +624,7 @@ Equivalently, **possession of a serial transport confers the same
 authority**. The serial transports have no cryptographic admission step
 at all, so a host that can open the port is attached; this is the
 `MUST` in [Pairing Requirements](ulcp-ble.md#pairing-requirements) read the other
-way — BLE is required to reach the barrier that physical possession
+way—BLE is required to reach the barrier that physical possession
 already provides, not to exceed it.
 
 The consequences worth stating plainly:

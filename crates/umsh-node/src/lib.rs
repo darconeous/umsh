@@ -45,22 +45,22 @@
 //!
 //! # Key types
 //!
-//! - [`Host`] — preferred multi-identity driver. Owns the shared MAC event loop and routes
+//! - [`Host`]—preferred multi-identity driver. Owns the shared MAC event loop and routes
 //!   inbound traffic to the right [`LocalNode`].
-//! - [`LocalNode`] — per-identity application handle. Implements [`Transport`] (unicast /
+//! - [`LocalNode`]—per-identity application handle. Implements [`Transport`] (unicast /
 //!   broadcast), owns PFS state, and exposes raw packet plus control-side subscriptions.
-//! - [`BoundChannel`] — a channel bound to a `LocalNode`. Implements [`Transport`]
+//! - [`BoundChannel`]—a channel bound to a `LocalNode`. Implements [`Transport`]
 //!   (blind unicast / multicast). Available with the `software-crypto` feature.
-//! - [`PeerConnection`] — relationship with one remote peer, generic over transport context,
+//! - [`PeerConnection`]—relationship with one remote peer, generic over transport context,
 //!   with peer-scoped callback subscriptions.
-//! - [`Transport`] — shared send interface (`send` / `send_all`).
-//! - [`SendProgressTicket`] — lightweight polling handle for observing in-flight send
+//! - [`Transport`]—shared send interface (`send` / `send_all`).
+//! - [`SendProgressTicket`]—lightweight polling handle for observing in-flight send
 //!   progress (`was_transmitted`, `was_acked`, `is_finished`).
-//! - [`Subscription`] — owned callback registration that auto-unsubscribes on drop.
-//! - [`ReceivedPacketRef`] — borrowed receive view passed into low-level `on_receive(...)`
+//! - [`Subscription`]—owned callback registration that auto-unsubscribes on drop.
+//! - [`ReceivedPacketRef`]—borrowed receive view passed into low-level `on_receive(...)`
 //!   handlers and wrappers, including local RX observations such as RSSI, SNR, LQI, and
 //!   receive timestamp.
-//! - [`MacBackend`] — pluggable MAC backend trait for testability.
+//! - [`MacBackend`]—pluggable MAC backend trait for testability.
 //!
 //! # Control payload types
 //!
@@ -798,7 +798,7 @@ mod tests {
         test_broadcast_packet_with_trace(from, flood_hops, route, None)
     }
 
-    /// As above, plus an accumulated trace route — what a steered
+    /// As above, plus an accumulated trace route—what a steered
     /// solicitation looks like once repeaters have prepended themselves to it.
     #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
     fn test_broadcast_packet_with_trace(
@@ -1377,7 +1377,7 @@ mod tests {
         let requester = PublicKey([0x41; 32]);
         node.enable_identity_responder_default(test_profile(our_key));
 
-        // Two bytes of our own hint — everything a route reveals about us.
+        // Two bytes of our own hint—everything a route reveals about us.
         let router_hint = &our_key.hint().0[..2];
         let options = crate::mac_command::IdentityRequestBuilder::new()
             .filter_hint_prefix(router_hint)
@@ -1502,7 +1502,7 @@ mod tests {
             .unwrap()
             .build();
 
-        // Same nonce, different askers — a nonce is only unique to its sender.
+        // Same nonce, different askers—a nonce is only unique to its sender.
         for requester in [PublicKey([0x41; 32]), PublicKey([0x42; 32])] {
             let packet = test_broadcast_packet(requester, None, None);
             let plan = node
@@ -1560,8 +1560,8 @@ mod tests {
 
     /// A steered solicitation arrives with its Route option emptied by the
     /// repeaters that spent it and a trace route they filled in on the way.
-    /// That trace is the requester's only path home — the reply carries no
-    /// flood budget, and receiving a broadcast teaches the MAC no route — so
+    /// That trace is the requester's only path home—the reply carries no
+    /// flood budget, and receiving a broadcast teaches the MAC no route—so
     /// the reply must go back down it, copied verbatim rather than reversed.
     #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
     #[test]
@@ -2080,7 +2080,7 @@ mod tests {
         );
     }
 
-    /// The listing is the answer even when it is empty — a repeater that
+    /// The listing is the answer even when it is empty—a repeater that
     /// knows of nobody says so rather than staying silent.
     #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
     #[test]

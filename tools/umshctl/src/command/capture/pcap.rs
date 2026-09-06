@@ -174,7 +174,7 @@ impl PcapWriter {
         packet.push(loratap_bandwidth(rf.bw_hz));
         packet.push(rf.sf);
         // A frame the device transmitted itself was never received, and
-        // LoRaTap v0 has no way to say so — its signal bytes are always
+        // LoRaTap v0 has no way to say so—its signal bytes are always
         // readings. The rails (-139 dBm, -32 dB) are at least values no
         // real link here produces, where the collapsed 0 dBm would chart
         // as the strongest signal in the capture.
@@ -292,7 +292,7 @@ impl PcapWriter {
 /// The field is an enumeration of the three classic LoRa bandwidths
 /// rather than a scale factor, so it cannot express the 62.5 kHz UMSH
 /// normally runs at. Anything it cannot name is reported as zero, which
-/// Wireshark renders as "Unknown" — a narrower bandwidth silently
+/// Wireshark renders as "Unknown"—a narrower bandwidth silently
 /// labeled as one of the three would misdescribe the radio.
 fn loratap_bandwidth(bw_hz: u32) -> u8 {
     match bw_hz {

@@ -1,4 +1,4 @@
-//! [`HeltecV2Platform`] — the concrete `umsh_mac::Platform` bundle for the
+//! [`HeltecV2Platform`]—the concrete `umsh_mac::Platform` bundle for the
 //! Heltec WiFi LoRa 32 V2.
 //!
 //! Composes the chip-level Espressif plumbing from [`umsh_bsp_esp32`]
@@ -7,7 +7,7 @@
 //! [`umsh_crypto`] and the channel-based radio handle from
 //! [`umsh_radio_loraphy`] (driving the on-board SX1276 LoRa modem).
 //!
-//! Identical in shape to `umsh_bsp_heltec_lora32_v3::platform` — the
+//! Identical in shape to `umsh_bsp_heltec_lora32_v3::platform`—the
 //! radio handle is generic over the `lora_phy` `RadioKind`, so the
 //! SX1276/SX1262 difference does not reach this bundle. What does differ
 //! is the capacity alias below.

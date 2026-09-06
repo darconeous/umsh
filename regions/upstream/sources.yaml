@@ -33,7 +33,7 @@ sources:
     notes: >
       Seed list of metropolitan IATA codes only. The coordinates in this file
       are city center points, not metro boundaries, and are not used as
-      geometry. See LICENSES.md — this source is share-alike.
+      geometry. See LICENSES.md—this source is share-alike.
     pin: commit
 
   - id: marineregions-eez-land
@@ -44,7 +44,7 @@ sources:
     notes: >
       The union of each country's land and exclusive economic zone. A country
       region is the area where the country asserts jurisdiction, not its
-      coastline — which also makes it far cheaper to store, since the fractal
+      coastline—which also makes it far cheaper to store, since the fractal
       coastline is interior to the region and disappears. Features marked as
       overlapping claims or joint regimes are omitted by the update pass so
       the database takes no position on any dispute. The srsName pins CRS84
@@ -86,7 +86,7 @@ sources:
     notes: Coastlines and land polygons at 1:50m.
     pin: url
 
-  # Small islands the 50m land layer omits — remote atolls, the
+  # Small islands the 50m land layer omits—remote atolls, the
   # Northwestern Hawaiian chain, minor outlying territories. Without them
   # the country layer's water reach has nothing to grow from where a state
   # or territory plainly has land, and an islet ends up in Hawaii but not

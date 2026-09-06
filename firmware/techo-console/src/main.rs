@@ -3,7 +3,7 @@
 // Boot sequence:
 //   1. Bring up the peripheral rail (P0.12 HIGH).
 //   2. Arm the watchdog (8 s timeout, petted by the heartbeat task).
-//   3. Spawn the display task — initial boot screen ("UMSH bringup" + git
+//   3. Spawn the display task—initial boot screen ("UMSH bringup" + git
 //      short SHA + "MAC: 0") plus subsequent count-update refreshes.
 //   4. Initialize the SX1262 LoRa radio (MeshCore US settings) and spawn
 //      the radio runner task.
@@ -135,7 +135,7 @@ mod firmware {
     /// updates would be both ugly and bad for the panel.
     const DISPLAY_THROTTLE: Duration = Duration::from_secs(5);
 
-    /// FONT_10X20 character width in pixels — used for centering text.
+    /// FONT_10X20 character width in pixels—used for centering text.
     const FONT_W: i32 = 10;
 
     /// Vertical positions of the three boot-screen text lines, in pixels.
@@ -161,7 +161,7 @@ mod firmware {
     // firmware owns them). The const params match `TechoMac`'s capacities.
     /// Host bound to the `'static` mac_cell. Owned by `mac_task`.
     type TechoHost = Host<MacHandle<'static, TechoPlatform, 2, 8, 4, 4, 8, 255, 32>>;
-    /// LocalNode handle. Cheap to clone — passed to `cli_task`.
+    /// LocalNode handle. Cheap to clone—passed to `cli_task`.
     type TechoNode = LocalNode<MacHandle<'static, TechoPlatform, 2, 8, 4, 4, 8, 255, 32>>;
 
     // ─── Static shared state ─────────────────────────────────────────────────
@@ -282,7 +282,7 @@ mod firmware {
             let mut buf = [0u8; 256];
             buf[..len].copy_from_slice(&raw[..len]);
             IDENTITY_SIGNAL.signal((from.0, buf, len));
-            false // don't consume — let other handlers see it too
+            false // don't consume—let other handlers see it too
         });
 
         let _ = host.run().await;
@@ -290,7 +290,7 @@ mod firmware {
     }
 
     /// Runs the `CliSession` over USB-CDC. The only task that blocks on a host
-    /// terminal connection — the radio, MAC pump, and identity relay all run
+    /// terminal connection—the radio, MAC pump, and identity relay all run
     /// without it.
     #[embassy_executor::task]
     async fn cli_task(
@@ -443,7 +443,7 @@ mod firmware {
 
     /// Long-press watcher for the user button on P1.10 (active-low, pull-up).
     /// Two-second hold fires [`SHUTDOWN_SIGNAL`]. Releases before 2 s are
-    /// ignored — there's no short-press action defined yet.
+    /// ignored—there's no short-press action defined yet.
     #[embassy_executor::task]
     async fn button_task(mut button: Input<'static>) {
         const HOLD: Duration = Duration::from_secs(2);
@@ -451,7 +451,7 @@ mod firmware {
             button.wait_for_low().await;
             match select(button.wait_for_high(), Timer::after(HOLD)).await {
                 Either::First(()) => {
-                    // Released before HOLD — no-op.
+                    // Released before HOLD—no-op.
                 }
                 Either::Second(()) => {
                     SHUTDOWN_SIGNAL.signal(());
@@ -500,7 +500,7 @@ mod firmware {
         //      and immediately wake the chip from System OFF.
         //
         // tristate_pin() writes PIN_CNF = 0x02 (DIR=input, INPUT=disconnect,
-        // PULL=none, DRIVE=0, SENSE=disabled) — clearing any SENSE bits.
+        // PULL=none, DRIVE=0, SENSE=disabled)—clearing any SENSE bits.
         //
         // The status LED is active-low and still owned by the blink task;
         // a driven level is retained through System OFF, and the RGB LED
@@ -671,11 +671,11 @@ mod firmware {
 
         // ── MAC coordinator ───────────────────────────────────────────────────
         // The hardware-TRNG RNG built here is the single RNG path for this
-        // firmware — used for first-boot identity generation AND passed
+        // firmware—used for first-boot identity generation AND passed
         // ownership-by-value into `Mac::new` below as `Platform::Rng`.
         //
         // Load identity from flash on subsequent boots; TRNG-generate on
-        // first boot. We do NOT fall back to any PRNG on failure — a
+        // first boot. We do NOT fall back to any PRNG on failure—a
         // predictable long-term key is worse than refusing to start.
         let mut rng = Nrf52840Rng::new(p.RNG);
         let sk_bytes: [u8; 32] = match storage.load_sk().await {
@@ -716,7 +716,7 @@ mod firmware {
 
         // ── Host + node + boot-time peer/channel registration ─────────────────
         // Build the Host/node here so the MAC pump (`mac_task`) is independent
-        // of USB, and register persisted peer/channel keys into the MAC now —
+        // of USB, and register persisted peer/channel keys into the MAC now—
         // not from the CLI task, which only runs after a host opens the CDC
         // port. Without this the coordinator had no keys until a serial client
         // attached, so it couldn't authenticate inbound secure frames and

@@ -71,7 +71,7 @@ pub const PATIENCE: Duration = Duration::from_secs(30);
 // ─── The device half ─────────────────────────────────────────────────────
 
 /// The device as the mesh sees it: an authorization list, the binding's
-/// device engine, and a real ULCP session behind them — the same three, in
+/// device engine, and a real ULCP session behind them—the same three, in
 /// the same order, as the firmware's responder.
 pub struct DeviceSide {
     session: Session<SoftwareAes, SoftwareSha256>,
@@ -463,7 +463,7 @@ pub async fn stand_up<'a, R: Radio>(
     }
 }
 
-/// `mesh!(name, binding)` — two nodes on a link, bound to `binding`.
+/// `mesh!(name, binding)`—two nodes on a link, bound to `binding`.
 macro_rules! mesh {
     ($name:literal, $mesh:ident) => {
         let scratch = crate::fixture::Scratch::new($name);

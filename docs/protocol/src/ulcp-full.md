@@ -5,15 +5,15 @@
 > content now lives in [Framing and Common
 > Semantics](ulcp-core.md), [Device Domain](ulcp-device.md),
 > [Saved State](ulcp-saved-state.md), and [Tethered Host
-> Services](ulcp-host.md). What a device is required to implement — the
-> question this chapter's minimal/full split used to answer — is stated
+> Services](ulcp-host.md). What a device is required to implement—the
+> question this chapter's minimal/full split used to answer—is stated
 > in [Minimum Requirements](ulcp-conformance.md), and every numeric
 > identifier is listed in the [Command and Property
 > Index](ulcp-index.md).
 
 This chapter defines the **full** ULCP protocol: a strict superset
 of the [minimal protocol](ulcp-minimal.md). A device
-implementing this chapter implements everything in the minimal protocol —
+implementing this chapter implements everything in the minimal protocol—
 the frame format, packed unsigned integers, commands, properties, status
 codes, reset codes, and capabilities defined there apply here unchanged and
 are not repeated. The protocol version remains **6.0**; a host discovers
@@ -22,21 +22,21 @@ which full-protocol features a device implements through `PROP_CAPS`
 
 The minimal protocol treats the device as a raw radio pipe: the host runs the
 entire UMSH MAC and the device moves frames. The full protocol keeps that
-division of labor — the host still owns the MAC and its own private keys —
+division of labor—the host still owns the MAC and its own private keys—
 and adds narrowly scoped **assistance** so the device can be useful while the
 host is asleep or disconnected:
 
-* **Receive filtering** — the device learns which frames are relevant so it does
+* **Receive filtering**—the device learns which frames are relevant so it does
   not deliver (or wake the host for) unrelated traffic.
-* **Inbound queueing** — frames received while no host is attached are
+* **Inbound queueing**—frames received while no host is attached are
   retained and delivered when the host asks for them.
-* **Key provisioning** — the host installs channel keys and pairwise peer
+* **Key provisioning**—the host installs channel keys and pairwise peer
   keys so the device can recognize traffic for the host's identity, including
   blind unicast, and authenticate it.
-* **Acknowledgement delegation** — for peers whose pairwise keys are
+* **Acknowledgement delegation**—for peers whose pairwise keys are
   provisioned, the device can send MAC acks on the host's behalf while the host
   is away.
-* **Saved state** — the device can snapshot its configuration to non-volatile
+* **Saved state**—the device can snapshot its configuration to non-volatile
   storage and resume autonomous operation after a power cycle with no host
   present.
 
@@ -47,7 +47,7 @@ host is attached to observe the result.
 
 The full protocol supports exactly two node identities:
 
-* **The device identity** — a node belonging to the device itself,
+* **The device identity**—a node belonging to the device itself,
   used for in-band management, diagnostics, repeater forwarding (see
   (#prop-mac-repeater-enabled)), and (in future revisions) periodic
   advertisement behavior. Its Ed25519 private key is held by
@@ -60,22 +60,22 @@ The full protocol supports exactly two node identities:
   empty value on a running device. Provisioning an identity is not a
   commissioning step: a factory-fresh radio is already a node, and
   `PROP_DEV_PRIVATE_KEY` (see (#prop-dev-private-key)) exists to install
-  a *particular* identity — restoring a known repeater onto replacement
-  hardware — not to bring one into being.
+  a *particular* identity—restoring a known repeater onto replacement
+  hardware—not to bring one into being.
 
   The corollary is that a radio holds a throwaway identity from first
   power-on until a specific one is installed. This is safe because it
   never reaches the air: `PROP_PHY_ENABLED` is false post-reset, and a
   radio with nothing saved boots with the PHY disabled. It is not safe
-  automatically on the restore path — see (#cmd-restore).
+  automatically on the restore path—see (#cmd-restore).
 
-* **The tethered host identity** — the single UMSH identity owned by the
+* **The tethered host identity**—the single UMSH identity owned by the
   attached host. Of the identity keypair itself, the device holds only the
   32-byte public key; the host's private key **MUST NOT** be transferred
   to the device, and this protocol provides no mechanism for doing so (see
   [Security Boundary](ulcp.md#security-boundary)). The device may
-  additionally hold host-domain state derived or delegated by the host —
-  channel keys, per-peer symmetric keys, filters, and queued traffic — as
+  additionally hold host-domain state derived or delegated by the host—
+  channel keys, per-peer symmetric keys, filters, and queued traffic—as
   defined in this chapter.
 
 Because the device never holds the host's private key, it cannot perform ECDH
@@ -105,7 +105,7 @@ State that belongs to the device itself, independent of which
 host is attached:
 
 * the device identity keypair (independently persisted; never part of
-  the saved snapshot — see (#saved-state))
+  the saved snapshot—see (#saved-state))
 * the device identity's channel keys ((#prop-dev-channel-keys)) and peer
   list ((#prop-dev-peers))
 * the RF configuration (`PROP_PHY_*`), including `PROP_PHY_ENABLED`, and
@@ -138,14 +138,14 @@ default.
 
 It emphatically does survive a *disconnect*. A detached radio keeps
 filtering, queueing and acknowledging on behalf of its host for as long as
-it stays powered — that is the entire value of the host domain, and
+it stays powered—that is the entire value of the host domain, and
 nothing about the host going out of range changes what the host wants
 done.
 
 The two together give the host a simple rule with no detection in it: a
 host **MUST** establish its complete host domain on every tethered
 attach, writing every part of it rather than reasoning about what the
-device already holds. Key material cannot be compared anyway — the key
+device already holds. Key material cannot be compared anyway—the key
 tables never read it back (see (#provisioning-security)), so a
 peer's pairwise keys can be replaced without changing anything the host
 can observe. Where the device is already provisioned as asked, the rewrite
@@ -158,8 +158,8 @@ it is needed.
 ### Host Replacement {#host-replacement}
 
 The host domain is keyed by `PROP_HOST_KEY`. Setting `PROP_HOST_KEY` to a
-value **different** from its current value — including setting it to empty
-— **MUST** atomically reset the entire host domain to defaults: the key
+value **different** from its current value—including setting it to empty
+—**MUST** atomically reset the entire host domain to defaults: the key
 tables and filter table are cleared, `PROP_HOST_AUTO_ACK` reverts to
 false, and the inbound queue is discarded. Because the host domain is
 never persisted, this is a live-state operation with no durable component:
@@ -170,7 +170,7 @@ effects.
 
 This rule is what makes re-pairing safe: when a companion radio is paired
 with a different phone, the new host configures its own identity and the
-previous host's keys, filters, and queued traffic cease to exist — while
+previous host's keys, filters, and queued traffic cease to exist—while
 the device domain (the radio's own identity, channels, and settings) is
 untouched.
 
@@ -178,11 +178,11 @@ untouched.
 
 How attach and detach are detected is defined by the transport binding:
 
-* **BLE** — enabling/disabling notifications on Frame Out, as specified in
+* **BLE**—enabling/disabling notifications on Frame Out, as specified in
   [ULCP over BLE](ulcp-ble.md#attach-semantics).
-* **USB-CDC** — assertion and deassertion of DTR on the ULCP
+* **USB-CDC**—assertion and deassertion of DTR on the ULCP
   interface.
-* **Bare UART** — implementation-defined. A device with no way to detect
+* **Bare UART**—implementation-defined. A device with no way to detect
   host presence MAY treat the host as permanently attached, in which case
   it never enters detached operation and offline assistance
   ((#inbound-queueing), (#ack-delegation)) is unavailable on that
@@ -203,7 +203,7 @@ procedure is **RECOMMENDED**:
    reset since the last host command, so any state that is not restored
    from saved state (notably queue contents) has been lost.
 2. `CMD_PROP_GET` for `PROP_HOST_KEY`. An empty value is the ordinary
-   case after a power cycle — the host domain does not survive one — and
+   case after a power cycle—the host domain does not survive one—and
    the host simply provisions. A value matching the host's own identity
    means its provisioning is still live from before the disconnect. Any
    *other* value means another host has taken the radio over since this
@@ -238,13 +238,13 @@ delegation (if enabled) becomes active.
 
 A device advertising `CAP_SAVE` can snapshot its provisioning to
 non-volatile storage so that it can operate autonomously across power
-cycles — the radio can be powered on in the morning with no phone present,
+cycles—the radio can be powered on in the morning with no phone present,
 restore its configuration, enable the PHY, and resume queueing and
 acknowledging on the host's behalf.
 
 * `CMD_SAVE` (see (#cmd-save)) atomically writes the current **device
-  domain** configuration — including the RF configuration and the current
-  value of `PROP_PHY_ENABLED` — to non-volatile storage, replacing any
+  domain** configuration—including the RF configuration and the current
+  value of `PROP_PHY_ENABLED`—to non-volatile storage, replacing any
   previous snapshot.
 
   The host domain is **never** part of a snapshot (see (#host-domain)): a
@@ -254,20 +254,20 @@ acknowledging on the host's behalf.
   `PROP_BATTERY`, is likewise never saved. The device identity keypair is
   excluded for a different reason: it is independently persisted the
   moment it is installed or generated (see (#prop-dev-private-key)) and is
-  changed only by explicit provisioning or `CMD_CLEAR` — neither
+  changed only by explicit provisioning or `CMD_CLEAR`—neither
   `CMD_RESTORE` nor a reboot can revert the device identity to an earlier
   key.
 * At boot, if a snapshot exists, the device **MUST** restore it and resume
   operation accordingly *before* processing any host command: the RF
   configuration is applied and the PHY is re-enabled if it was enabled
   when saved, so a repeater is forwarding before anything else happens.
-  Host-domain behavior — filtering, queueing, acknowledgement delegation —
+  Host-domain behavior—filtering, queueing, acknowledgement delegation—
   does *not* resume, because there is no host domain until a host provides
   one. If no snapshot exists, all properties take their documented
   post-reset values.
 * `CMD_RESTORE` (see (#cmd-restore)) reverts the device domain to the
   snapshot on demand, letting the host abort uncommitted configuration
-  changes — without rebooting the hardware or dropping the ULCP link.
+  changes—without rebooting the hardware or dropping the ULCP link.
   It is observable either as a protocol reset (`STATUS_RESET_RESTORED`) or
   as a series of property-update publications; hosts handle both.
 * `CMD_CLEAR` (see (#cmd-clear)) erases the snapshot and all other
@@ -275,7 +275,7 @@ acknowledging on the host's behalf.
   does not modify live (in-RAM) state; a subsequent `CMD_RST` completes a
   factory reset. Transport-level state such as BLE bonds is not affected.
 * `PROP_SAVED` (see (#prop-saved)) reports the state of the stored
-  snapshot, which is not simply whether one exists — see
+  snapshot, which is not simply whether one exists—see
   (#snapshot-integrity).
 
 Saving is explicit rather than automatic: nothing is written to
@@ -288,7 +288,7 @@ keep.
 Two consequences deserve emphasis:
 
 * **Post-reset values come from the snapshot.** `CMD_RST` reverts
-  properties to their post-reset values, as always — but on a device with a
+  properties to their post-reset values, as always—but on a device with a
   snapshot, the post-reset value of every saved property is its saved
   value, not its documented default. This applies to the device domain
   only; the host domain has no saved value and always returns to its
@@ -300,7 +300,7 @@ Two consequences deserve emphasis:
   properties it cares about.
 * **Queue contents and replay baselines are not saved.** Frames queued
   before a power loss are gone afterward, even if they were acknowledged
-  on the host's behalf — the sender believes them delivered. Likewise the
+  on the host's behalf—the sender believes them delivered. Likewise the
   per-peer frame-counter baselines used by acknowledgement delegation
   restart (see [Counter Resynchronization](security.md#counter-resynchronization)).
   These share the host domain's lifetime, which is why re-provisioning
@@ -437,7 +437,7 @@ of zero when the device adds an item to a multi-value property for its own
 reasons.
 
 The payload is the property identifier followed by the inserted item as
-the device reports it (see (#multi-value-properties)) — never in a
+the device reports it (see (#multi-value-properties))—never in a
 form containing key material.
 
 ### CMD 8: (Device -> Host) `CMD_PROP_REMOVED` {#cmd-prop-removed}
@@ -546,12 +546,12 @@ state such as BLE bonds and `PROP_BLE_PAIRING_PIN` is also unaffected. A
 
 Because a device identity always exists (see (#identity-model)), the
 `CMD_RST` that completes the sequence **MUST** generate and persist a new
-one rather than leave the device with none — the same thing a factory-fresh
+one rather than leave the device with none—the same thing a factory-fresh
 power-on does, and for the same reason. `PROP_DEV_KEY` therefore reports a
 *different* key after the sequence, never an empty one.
 
 The previous identity is gone from the moment `CMD_RST` completes, but
-anything the device built around it — a running device node, in particular —
+anything the device built around it—a running device node, in particular—
 **MUST NOT** continue to originate traffic under it, even where that state
 survives until the next boot.
 
@@ -585,8 +585,8 @@ the same:
   restore has nothing to revert it to. The inbound queue contents,
   per-peer replay baselines, filters and delegation policy all survive
   unconditionally;
-* independently persisted state outside the snapshot — the device
-  identity keypair and `PROP_BLE_PAIRING_PIN` — is not affected; and
+* independently persisted state outside the snapshot—the device
+  identity keypair and `PROP_BLE_PAIRING_PIN`—is not affected; and
 * the saved snapshot itself is not modified.
 
 **A restore never enables the PHY under an identity the snapshot was not
@@ -614,7 +614,7 @@ reports a successful restore in one of two forms, both valid; the two
 forms differ only in reporting and in session-state handling, never in
 the resulting configuration or retained data:
 
-* **Reset form** — the device additionally resets its protocol session
+* **Reset form**—the device additionally resets its protocol session
   state (transaction bookkeeping and session-scoped properties), as on
   attach. As with `CMD_RST`, the TID is ignored; completion is signaled
   by an unsolicited `CMD_PROP_IS` for `PROP_LAST_STATUS` carrying the
@@ -624,7 +624,7 @@ the resulting configuration or retained data:
   properties (such as `PROP_HOST_RX_QUEUE_COUNT`) reflect live state and
   are re-fetched.
 
-* **Update form** — the device applies the revert in place, emitting an
+* **Update form**—the device applies the revert in place, emitting an
   unsolicited `CMD_PROP_IS` (with key material omitted, where applicable) for
   **every property whose value changed**, and then reports completion
   with `CMD_PROP_IS` for `PROP_LAST_STATUS` carrying `STATUS_OK` and the
@@ -633,14 +633,14 @@ the resulting configuration or retained data:
 A host **MUST** handle both forms: it treats `STATUS_RESET_RESTORED` as
 full reversion to saved values, applies any unsolicited property updates,
 and recognizes completion by either the reset notification or the
-matching-TID `STATUS_OK`. This is not an extra burden in practice — hosts
+matching-TID `STATUS_OK`. This is not an extra burden in practice—hosts
 must already tolerate unsolicited `CMD_PROP_IS` value changes at any time
 (see (#attach-sync)). A host that does not know the snapshot's contents
 (for example, because a previous session saved it) re-fetches the
 properties it depends on, exactly as in the post-attach procedure.
 
-If an error occurs — in particular `STATUS_INVALID_STATE` when no snapshot
-exists (see `PROP_SAVED`) — the value of the emitted `PROP_LAST_STATUS`
+If an error occurs—in particular `STATUS_INVALID_STATE` when no snapshot
+exists (see `PROP_SAVED`)—the value of the emitted `PROP_LAST_STATUS`
 will be set accordingly, no state is modified, and no reset code is
 emitted.
 
@@ -656,11 +656,11 @@ emitted.
 Figure: Structure of `CMD_FACTORY_RESET`
 
 Return the radio to a blank factory state. Commands the device to erase
-**every** piece of mutable state it holds — both the persisted state
+**every** piece of mutable state it holds—both the persisted state
 `CMD_CLEAR` erases (the saved snapshot, all persisted provisioning, and
 the device identity private key) **and** the transport-level state
 `CMD_CLEAR` deliberately preserves: all BLE bonds and the configured
-`PROP_BLE_PAIRING_PIN` — and then reboot. After the reboot the radio is
+`PROP_BLE_PAIRING_PIN`—and then reboot. After the reboot the radio is
 indistinguishable from one that has never been provisioned or paired.
 
 This differs from `CMD_CLEAR` + `CMD_RST` in two ways: it also clears
@@ -689,7 +689,7 @@ is constant); the full protocol adds mutable ones.
 The host writes items (`CMD_PROP_SET`, `CMD_PROP_INSERT`) in the
 property's **item form**. When the device reports items (`CMD_PROP_IS`,
 `CMD_PROP_INSERTED`, `CMD_PROP_REMOVED`), it reports them exactly as
-written — except where the item form contains symmetric key material. Such
+written—except where the item form contains symmetric key material. Such
 a property documents what is reported instead: the entry with its key
 material omitted, or a short derived **digest form** (a channel key is
 reported as its derived channel identifier), so that secrets can never be
@@ -697,16 +697,16 @@ read back (see (#provisioning-security)).
 
 The commands valid on a mutable multi-value property are:
 
-* `CMD_PROP_GET` — the device replies with `CMD_PROP_IS` whose value is the
+* `CMD_PROP_GET`—the device replies with `CMD_PROP_IS` whose value is the
   concatenation of all items as reported. If the property is documented
   as having an item length prefix, each item is preceded by its length in
   octets encoded as a packed unsigned integer; properties whose reported
   items are fixed-size omit the prefix.
-* `CMD_PROP_SET` — replaces the entire contents with the items encoded in
+* `CMD_PROP_SET`—replaces the entire contents with the items encoded in
   the value, each in item form (with the same length-prefix rule). Setting
   an empty value clears the property. Success is reported with a
   `CMD_PROP_IS` carrying the new complete value as reported.
-* `CMD_PROP_INSERT` / `CMD_PROP_REMOVE` — add or remove one item, as
+* `CMD_PROP_INSERT` / `CMD_PROP_REMOVE`—add or remove one item, as
   defined above.
 
 Hosts manipulating large tables **SHOULD** prefer `Insert`/`Remove` over
@@ -724,9 +724,9 @@ closed:
 * Whole-table replacement is atomic: no observer of device behavior (frame
   filtering, acknowledgement decisions) sees a mixture of the old and new
   contents.
-* Operations that include durable writes — `CMD_SAVE`, `CMD_CLEAR`,
+* Operations that include durable writes—`CMD_SAVE`, `CMD_CLEAR`,
   installing or generating the device identity, and setting
-  `PROP_BLE_PAIRING_PIN` — **MUST NOT** report success before the durable
+  `PROP_BLE_PAIRING_PIN`—**MUST NOT** report success before the durable
   write has completed.
 * On any failure, the prior live and durable state remains unchanged, and
   the device **MUST NOT** emit `CMD_PROP_IS`, `CMD_PROP_INSERTED`, or
@@ -737,7 +737,7 @@ closed:
 
 Atomicity is per operation, not per sequence. Establishing a host domain
 is several property writes, and an interruption between them leaves a
-mixture of old and new — bounded by the fact that a host-key change resets
+mixture of old and new—bounded by the fact that a host-key change resets
 the domain first and a reboot empties it. A host repairs this the same way
 it provisions in the first place: by writing everything again.
 
@@ -800,8 +800,8 @@ Session-scoped: it reverts to false on every attach.
 * Required: `CAP_SAVE`
 * Value Type: UINT8
 
-Whether a saved snapshot is in effect (see (#saved-state)) — that is,
-whether the device is armed for autonomous operation across a power cycle —
+Whether a saved snapshot is in effect (see (#saved-state))—that is,
+whether the device is armed for autonomous operation across a power cycle—
 and, when the answer is qualified, how:
 
 Value | Meaning
@@ -872,8 +872,8 @@ response when the private key is installed or generated (see
 (#prop-dev-private-key)).
 
 An empty value means the device has no device identity. A conforming device does
-not report one in normal operation — an identity is generated at first
-boot if none is stored — so hosts **SHOULD** treat an empty value as a
+not report one in normal operation—an identity is generated at first
+boot if none is stored—so hosts **SHOULD** treat an empty value as a
 fault to surface rather than as an invitation to provision one.
 
 Frames addressed to the device identity are processed by the device itself.
@@ -892,15 +892,15 @@ Installs or generates the device identity private key. An identity always
 exists already (see (#identity-model)), so both forms **replace** one:
 
 * Setting a 32-octet value installs it as the device identity's Ed25519
-  private key. This is the recovery path — moving a known repeater's
-  identity onto replacement hardware — not a commissioning step.
+  private key. This is the recovery path—moving a known repeater's
+  identity onto replacement hardware—not a commissioning step.
 * Setting an **empty** value commands the device to generate a fresh private
   key entirely on-device from its cryptographically secure random number
   generator. On-device generation is **RECOMMENDED** over installation,
   since a generated key never exists anywhere but the radio.
 
 In both cases, success is reported by emitting `CMD_PROP_IS` for
-**`PROP_DEV_KEY`** — carrying the resulting *public* key — with the
+**`PROP_DEV_KEY`**—carrying the resulting *public* key—with the
 command's TID. The private key itself is never emitted. Success **MUST NOT**
 be reported before the new identity is in effect and durably stored.
 Replacing an existing device identity is permitted; implementations
@@ -914,7 +914,7 @@ identity is configured (use `PROP_DEV_KEY` for that).
 The device identity is **not** part of the saved snapshot (see
 (#saved-state)): it is durably persisted as soon as it is installed or
 generated, and it is changed only by another set of this property or by
-`CMD_CLEAR`. `CMD_RESTORE` never reverts it — though it does read the
+`CMD_CLEAR`. `CMD_RESTORE` never reverts it—though it does read the
 identity a snapshot was taken under, and refuses to enable the PHY when
 it does not match (see (#cmd-restore)).
 
@@ -939,7 +939,7 @@ requirements as all key provisioning (see (#provisioning-security)).
 * Post-Reset Value: Empty, or restored from saved state
 
 The set of [channel keys](multicast-channels.md#channel-keys) belonging to
-the **device identity** — channels the radio's own node participates in
+the **device identity**—channels the radio's own node participates in
 (for example, a site-infrastructure management channel). These are
 independent of the host domain: they survive host replacement and are
 distinct from `PROP_HOST_CHANNEL_KEYS`.
@@ -969,7 +969,7 @@ The **device identity's** peer list: the set of peer public keys the
 device node recognizes and may communicate with securely. Because the device
 holds the device identity's private key, it performs its own key agreement
 ([Unicast Key Agreement](security.md#unicast-key-agreement)) for these
-peers — no symmetric keys are provisioned, and the entries contain no
+peers—no symmetric keys are provisioned, and the entries contain no
 secret material.
 
 How the device node uses this list (management access control, secure
@@ -1033,7 +1033,7 @@ Which fields a platform can report is fixed for a given hardware and firmware
 configuration; an individual snapshot carries those it can currently
 substantiate. A field is absent either because the implementation never
 reports that measurement, or because the value is not derivable in the
-device's present state — a level estimated from resting terminal voltage is
+device's present state—a level estimated from resting terminal voltage is
 not obtainable while the pack is charging, and a charger that reports no
 completion signal offers no moment at which to recalibrate one. An
 implementation **MUST NOT** report a value it knows to be unreliable in place
@@ -1049,7 +1049,7 @@ NOT** carry a value forward from an earlier snapshot in its place.
 The value returned by `CMD_PROP_GET` reflects a measurement performed when
 the request is serviced, not a previously cached reading; concurrent
 requests **MAY** share one measurement. How each field is produced is
-platform-defined — in particular, the level estimate is not necessarily
+platform-defined—in particular, the level estimate is not necessarily
 derived from the voltage measurement, and a platform with a fuel gauge may
 report a level without reporting a voltage at all.
 
@@ -1126,8 +1126,8 @@ The flag is device-domain state: it is part of the saved snapshot, so a
 `CMD_SAVE` arms an unattended repeater across power cycles, and it
 survives a change of host.
 
-Forwarding parameters other than the on/off switch — region codes,
-minimum RSSI/SNR, and flood-contention tuning — are not exposed by this
+Forwarding parameters other than the on/off switch—region codes,
+minimum RSSI/SNR, and flood-contention tuning—are not exposed by this
 property in the current protocol revision; a repeater applies its local
 defaults. Later revisions **MAY** define additional device-behavior
 properties (identifiers 70–95) to configure them.
@@ -1140,8 +1140,8 @@ properties (identifiers 70–95) to configure them.
 * Value Type: Signed node-identity payload
 
 The device identity's complete signed [node
-identity](node-identity.md): the canonical payload encoding — role,
-capabilities, and the descriptive options the device advertises —
+identity](node-identity.md): the canonical payload encoding—role,
+capabilities, and the descriptive options the device advertises—
 followed by its 64-octet detached EdDSA signature over that encoding.
 
 This is the same statement the device makes over the air, in its
@@ -1168,7 +1168,7 @@ event.
 The `ROLE` byte the device identity advertises (see [Node
 Primary Role](node-identity.md#node-primary-role)).
 
-An **empty** value — the factory default — means the device derives the
+An **empty** value—the factory default—means the device derives the
 role from what it is actually doing: `Repeater` while
 `PROP_MAC_REPEATER_ENABLED` is set, `Tracker` otherwise. Any other value
 is advertised verbatim.
@@ -1177,7 +1177,7 @@ Role and forwarding are deliberately separate. Forwarding is a fact,
 reported through the repeater capability bit; the role is how the device
 presents itself, which is the operator's choice. Deriving it by default
 keeps the common cases right without a configuration step, and setting
-it explicitly expresses the ones derivation cannot reach — a repeater
+it explicitly expresses the ones derivation cannot reach—a repeater
 that is also mobile, a fixed node that is not a repeater.
 
 **Tethering does not appear here, or anywhere in a node identity.**
@@ -1284,7 +1284,7 @@ Where `PEER_PUBLIC_KEY` is the peer's Ed25519 public key and `K_ENC` and
 `K_MIC` are the stable pairwise keys for the (host, peer) pair, derived by
 the **host** as described in
 [HKDF Inputs for Unicast](security.md#hkdf-inputs-for-unicast). The device
-never derives these itself — it cannot, because it does not hold the host's
+never derives these itself—it cannot, because it does not hold the host's
 private key.
 
 As an exception to the usual `CMD_PROP_INSERT` duplicate rule, inserting an
@@ -1380,16 +1380,16 @@ adjustment fail values they cannot honor with `STATUS_INVALID_ARGUMENT`.
 * Units: frames
 * Post-Reset Value: 0
 
-The cumulative number of frames discarded from the inbound queue — evicted
+The cumulative number of frames discarded from the inbound queue—evicted
 by the circular queue-full policy or otherwise not retained (see
-(#inbound-queueing)) — since the device last reset. A non-zero increase
+(#inbound-queueing))—since the device last reset. A non-zero increase
 across a detached interval tells the host that its view of that interval
 is incomplete. The counter wraps modulo 2^32.
 
 ## Receive Filtering {#receive-filtering}
 
 Receive filtering determines which successfully received frames are
-**accepted** for the host — delivered live when the host is attached, or
+**accepted** for the host—delivered live when the host is attached, or
 queued when it is not.
 
 The device evaluates each received frame against the union of:
@@ -1419,15 +1419,15 @@ MIC, and a repeater's onward copy of a host frame keeps the host's MIC while
 its destination hint names the remote peer. The device therefore records the
 leading 4 MIC bytes of each frame it transmits on the host's behalf and
 implicitly accepts any received frame whose trailer opens with a recorded
-value — for a MAC Ack this matches the returning acknowledgement, and for
+value—for a MAC Ack this matches the returning acknowledgement, and for
 other packet types it matches the host's own send being carried onward, which
 the host's forwarding-confirmation machinery must overhear to stop
-retransmitting. These records evict lazily, so multiple echoes of one send —
+retransmitting. These records evict lazily, so multiple echoes of one send—
 acks arriving over different return routes, repeats from different
-repeaters — are all delivered. A MAC Ack whose `ack_mic` matches no recorded
+repeaters—are all delivered. A MAC Ack whose `ack_mic` matches no recorded
 frame is still accepted if an explicit `FILTER_PKT_TYPE` entry selects it.
 
-Broadcast packets — payload-carrying broadcasts and beacons alike — are
+Broadcast packets—payload-carrying broadcasts and beacons alike—are
 implicitly accepted **for live delivery**: a broadcast is addressed to
 every node, the host included. The rule is live-only. While the host is
 detached, a broadcast is queued only when an explicit filter selects it
@@ -1467,7 +1467,7 @@ a drain (`RX_FLAG_BUFFERED` distinguishes them). A host that wants to
 process the backlog first drains promptly after attaching and MAY defer
 its processing of interleaved live deliveries; `RX_AGE` in the
 buffered-frame metadata gives coarse (one-second) relative timing but is
-not sufficient to reconstruct a strict total order — and UMSH itself does
+not sufficient to reconstruct a strict total order—and UMSH itself does
 not guarantee in-order delivery in any case.
 
 The queue is **circular**: when a new frame is accepted and the queue is
@@ -1477,7 +1477,7 @@ frame discarded by this eviction increments
 `PROP_HOST_RX_QUEUE_DROPPED`.
 
 Eviction can discard a frame that was already acknowledged on the host's
-behalf — the sender believes it delivered, but the host will never
+behalf—the sender believes it delivered, but the host will never
 receive it. This is the same best-effort custody semantic that applies to
 power loss (see (#ack-delegation) and (#saved-state)): a delegated ack
 asserts volatile custody, not guaranteed delivery.
@@ -1491,7 +1491,7 @@ additional queue slot; it is coalesced with the existing entry. A
 [Route Retry](packet-options.md#route-retry-option-6) form of a queued
 frame is the same logical packet (same MIC and frame counter) and
 coalesces with it. Coalescing a duplicate is separate from acknowledging
-it — a coalesced duplicate may still have its ack retransmitted under the
+it—a coalesced duplicate may still have its ack retransmitted under the
 duplicate-acknowledgement window (see (#ack-delegation)). For frames the
 device cannot authenticate (no provisioned keys), no protocol-defined
 duplicate detection applies and each received frame occupies its own
@@ -1533,7 +1533,7 @@ if all of the following hold:
    where the device also holds the frame's channel key.
 3. The frame is addressed to the host identity: its (possibly decrypted)
    destination hint matches `PROP_HOST_KEY`, and its source resolves to
-   an entry in `PROP_HOST_PEER_KEYS` — by full public key when the `S`
+   an entry in `PROP_HOST_PEER_KEYS`—by full public key when the `S`
    flag is set, or by unique 3-byte prefix match otherwise.
 4. The frame authenticates: its MIC verifies under the pairwise `K_MIC`
    for `UNAR`, or under the combined
@@ -1552,8 +1552,8 @@ if all of the following hold:
    the sender keeps retrying until the host returns.
 
 **Duplicates.** An authenticated frame that replay detection identifies as
-a previously accepted frame — typically a retransmission whose original
-ack was lost — is not queued again, but the device **MAY** retransmit its
+a previously accepted frame—typically a retransmission whose original
+ack was lost—is not queued again, but the device **MAY** retransmit its
 acknowledgement under the core
 [duplicate-acknowledgement window](security.md#duplicate-acknowledgement-window):
 only when the frame authenticates and its counter is no more than 8 behind
@@ -1599,8 +1599,8 @@ subject to the configured duty-cycle limit; the device **MUST NOT** exceed the
 limit to send an ack. An ack that cannot be sent leaves the queued frame
 marked unacknowledged.
 
-Frames that are accepted but fail any of conditions 2–5 — no peer key, no
-channel key, authentication impossible to evaluate — are still queued
+Frames that are accepted but fail any of conditions 2–5—no peer key, no
+channel key, authentication impossible to evaluate—are still queued
 (subject to filtering); they are simply not acknowledged. The host
 performs its own verification after draining and may ack late if the
 application finds that useful.
@@ -1614,7 +1614,7 @@ not governed by this section.
 
 Provisioning moves real key material onto the device, within the limits of the
 [security boundary](ulcp.md#security-boundary): channel keys and
-per-peer symmetric keys — and the device identity's own private key —
+per-peer symmetric keys—and the device identity's own private key—
 but never the host's private key. The rules:
 
 * **All symmetric key material, and the device identity private key, is
@@ -1625,13 +1625,13 @@ but never the host's private key. The rules:
   and never the device private key. This holds for **both** identities'
   key tables. These read-backs let the host verify *what* is provisioned
   after a reconnect without any secret ever crossing the link a second
-  time —
+  time—
   which matters because more than one host may be able to attach over the
   radio's lifetime (transport bonds are possession credentials, not
   identity credentials), and a later host must not be able to extract an
   earlier host's keys.
-* Commands that carry key material — `CMD_PROP_SET` and `CMD_PROP_INSERT`
-  for the key tables, and any set of `PROP_DEV_PRIVATE_KEY` — **MUST NOT**
+* Commands that carry key material—`CMD_PROP_SET` and `CMD_PROP_INSERT`
+  for the key tables, and any set of `PROP_DEV_PRIVATE_KEY`—**MUST NOT**
   be carried over a transport that does not meet the requirements of the
   transport's security binding: physical possession for serial transports,
   or an encrypted bonded LESC link as specified in
@@ -1698,7 +1698,7 @@ Code | Name                | Requires          | Grants
 38   | `CAP_DEV_NAME`      | —                 | `PROP_DEV_NAME`
 39   | `CAP_BATTERY`       | —                 | Battery-powered operation and `PROP_BATTERY`
 40   | `CAP_REPEATER`      | `CAP_DEV_IDENTITY` | `PROP_MAC_REPEATER_ENABLED` and autonomous repeater forwarding by the device identity
-41   | `CAP_IDENT`         | `CAP_DEV_IDENTITY` | `PROP_IDENT`, `PROP_IDENT_ROLE`, `PROP_IDENT_MOBILE` — serving and configuring the device identity's advertised node identity
+41   | `CAP_IDENT`         | `CAP_DEV_IDENTITY` | `PROP_IDENT`, `PROP_IDENT_ROLE`, `PROP_IDENT_MOBILE`—serving and configuring the device identity's advertised node identity
 
 A device **MUST NOT** advertise a capability without also advertising the
 capabilities it requires. `CMD_PROP_INSERT`/`CMD_PROP_REMOVE`, `CMD_CLEAR`,

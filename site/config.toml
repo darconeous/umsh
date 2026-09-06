@@ -1,4 +1,4 @@
-# UMSH website — https://umsh.dev
+# UMSH website—https://umsh.dev
 #
 # The published site is assembled by `make gh-pages`, which copies this
 # site's output to the root of the gh-pages branch and layers the mdBook

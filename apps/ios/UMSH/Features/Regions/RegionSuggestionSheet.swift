@@ -5,8 +5,8 @@ import UMSHMobileCore
 /// A place a region proposal can be made from, and how well it is known.
 ///
 /// Positions reaching this sheet come from sources of very different
-/// quality — a node's advertised cell, a live fix, a typed coordinate pair
-/// — and the proposal widens itself to match. That widening is Rust's
+/// quality—a node's advertised cell, a live fix, a typed coordinate pair
+///—and the proposal widens itself to match. That widening is Rust's
 /// judgment, which is why the uncertainty travels with the position rather
 /// than being flattened into a coordinate pair here.
 struct RegionPositionSource: Identifiable, Equatable {
@@ -109,7 +109,7 @@ struct RegionPositionSource: Identifiable, Equatable {
 /// Whether a point falls inside the cell a node advertises.
 ///
 /// An n-byte cell spans 180°/16ⁿ of latitude and 360°/16ⁿ of longitude, and
-/// the reported degrees are its center — that is the encoding's own
+/// the reported degrees are its center—that is the encoding's own
 /// definition, so the byte count is all this needs. Comparing in meters
 /// would need a projection and would answer differently near the poles.
 enum AdvertisedCell {
@@ -131,7 +131,7 @@ enum AdvertisedCell {
 /// it.
 ///
 /// This sheet never touches a device. It answers with a complete resulting
-/// configuration — the forwarding list and the default tag — and the
+/// configuration—the forwarding list and the default tag—and the
 /// editor that opened it keeps its own Apply as the only path to the air.
 struct RegionSuggestionSheet: View {
     /// What the device forwards for today, which is the diff's base.
@@ -142,9 +142,9 @@ struct RegionSuggestionSheet: View {
     /// Whether where this phone is stands for where the node is.
     ///
     /// True at a bench, over Bluetooth, where the two are within a few
-    /// meters of each other — and there it is the source this sheet opens
+    /// meters of each other—and there it is the source this sheet opens
     /// on. False for a node managed across the mesh, which is by definition
-    /// somewhere this phone is not — offering the phone there would propose
+    /// somewhere this phone is not—offering the phone there would propose
     /// regions for the operator's desk.
     var offersPhone = false
     /// Refresh whatever the caller would need to offer a node's advertised
@@ -214,14 +214,14 @@ struct RegionSuggestionSheet: View {
 
     // MARK: - Choosing a place
 
-    /// Every source with something behind it, best first — the head of this
+    /// Every source with something behind it, best first—the head of this
     /// list is what the sheet opens on. Typing coordinates is always one of
     /// them, and always last: it is the only correct answer when configuring
     /// a node for a site you are not standing at.
     ///
     /// This phone leads wherever it is offered at all, because it is offered
     /// only when it is at the node, and then it is the freshest position
-    /// either of them has — a node's advertised cell can be hours old and
+    /// either of them has—a node's advertised cell can be hours old and
     /// kilometers wide, and a node that has never advertised has none.
     private var offeredSources: [RegionPositionSource] {
         var offered: [RegionPositionSource] = []
@@ -468,7 +468,7 @@ struct RegionSuggestionSheet: View {
         let layer = match.layer.replacingOccurrences(of: "_", with: " ")
         return switch match.membership {
         case .core: layer
-        case .expanded: "\(layer) — nearby, not inside"
+        case .expanded: "\(layer)—nearby, not inside"
         }
     }
 
@@ -547,7 +547,7 @@ struct RegionSuggestionSheet: View {
             .disabled(!proposal.addMissing.changesAnything)
         } footer: {
             if !proposal.replace.changesAnything, !proposal.addMissing.changesAnything {
-                Text("Nothing to do — this node's regions already match this place.")
+                Text("Nothing to do—this node's regions already match this place.")
             } else {
                 Text(
                     """

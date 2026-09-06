@@ -97,7 +97,7 @@ resolver = "2"
 # 760 KB on the T-Echo. At stock release settings the shipping images sat at
 # ~87% of that budget; these settings put them near 61%.
 #
-# `opt-level = "z"` does most of the work — measured on `firmware-t1000e` it is
+# `opt-level = "z"` does most of the work—measured on `firmware-t1000e` it is
 # worth ~119 KB on its own, and `lto = "fat"` adds a further ~78 KB on top of
 # it. The ordering matters: fat LTO at `opt-level = 3` inlines hard enough to
 # make the image ~61 KB *larger* than no LTO at all, which is the trap this

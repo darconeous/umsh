@@ -71,20 +71,20 @@ If present, `FHOPS` is a single byte containing two 4-bit fields:
 
 Where:
 
-- `FHOPS_REM` (high nibble) = hops remaining — the number of additional flood hops remaining. Decremented by each flood-forwarding repeater. When zero, no further flood forwarding is allowed.
-- `FHOPS_ACC` (low nibble) = hops accumulated — the number of flood hops already traversed. Incremented by each flood-forwarding repeater.
+- `FHOPS_REM` (high nibble) = hops remaining—the number of additional flood hops remaining. Decremented by each flood-forwarding repeater. When zero, no further flood forwarding is allowed.
+- `FHOPS_ACC` (low nibble) = hops accumulated—the number of flood hops already traversed. Incremented by each flood-forwarding repeater.
 
 > [!IMPORTANT]
 > `FHOPS` counts **flood** hops only. A repeater that forwards a packet because
 > it matched a [source-route](packet-options.md#source-route-option-3) hint
-> MUST leave the byte untouched — including the repeater that removes the last
+> MUST leave the byte untouched—including the repeater that removes the last
 > remaining hint. Emptying the route makes the packet floodable, but the first
 > flood hop is performed by the *next* repeater, which sees an empty route and
 > pays for it there.
 
 The sum `FHOPS_REM + FHOPS_ACC` is constant across forwarding hops and usually equals the original flood hop limit set by the sender. An exception to this rule is [bridging](routing-overview.md#bridging), which can decrease `FHOPS_REM` unilaterally. The maximum flood radius is 15 flood hops, which is a path of sixteen hops when no source route is involved; longer paths can be achieved by combining source routing with flooding (see [Routing Implications](repeater-operation.md#routing-implications)).
 
-`FHOPS_ACC` enables the destination to determine how many flood hops the packet traversed — one less than the hops it took, unless a source route carried it part of the way — which is used for [MAC ack routing](packet-types.md#mac-ack-packet) when no trace route is available.
+`FHOPS_ACC` enables the destination to determine how many flood hops the packet traversed—one less than the hops it took, unless a source route carried it part of the way—which is used for [MAC ack routing](packet-types.md#mac-ack-packet) when no trace route is available.
 
 ### Options Field
 
@@ -123,9 +123,9 @@ Followed by optional extended delta bytes, optional extended length bytes, and t
 | 0–12 | Literal value |
 | 13 | One extended byte follows; value = byte + 13 |
 | 14 | Two extended bytes follow; value = uint16 (big-endian) + 269 |
-| 15 | Reserved — used only in the delta field to indicate the `0xFF` end-of-options marker |
+| 15 | Reserved—used only in the delta field to indicate the `0xFF` end-of-options marker |
 
-The value 15 is legal only as part of the `0xFF` end-of-options marker, where *both* nibbles are 15. Any other appearance of nibble value 15 — a delta nibble of 15 whose length nibble is not 15, or a length nibble of 15 in an ordinary option record — is malformed, and the packet MUST be dropped.
+The value 15 is legal only as part of the `0xFF` end-of-options marker, where *both* nibbles are 15. Any other appearance of nibble value 15—a delta nibble of 15 whose length nibble is not 15, or a length nibble of 15 in an ordinary option record—is malformed, and the packet MUST be dropped.
 
 The option delta is the difference between this option's number and the previous option's number (or zero for the first option). Options must appear in order of increasing option number. Multiple options with the same number are permitted (delta = 0).
 
@@ -144,7 +144,7 @@ Senders SHOULD omit `0xFF` when there is no payload. Receivers MUST accept a `0x
 
 #### Example
 
-Two options — option 3 (1-byte value) followed by option 9 (2-byte value):
+Two options—option 3 (1-byte value) followed by option 9 (2-byte value):
 
 ```text
 +------+-------+  +------+-------+-------+  +------+

@@ -265,7 +265,7 @@ pub enum HostOwnership {
 ///
 /// The two failure values are the point of the property. An unattended
 /// repeater that comes back on stale configuration, or on none at all,
-/// looks identical to a healthy one from the outside — this is how a
+/// looks identical to a healthy one from the outside—this is how a
 /// host that does eventually attach finds out.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SavedSnapshot {
@@ -318,7 +318,7 @@ pub struct DeviceSync {
     pub ownership: HostOwnership,
     /// The configured host identity, when one exists.
     pub host_key: Option<[u8; 32]>,
-    /// `PROP_PHY_ENABLED` — with a restored snapshot the PHY may
+    /// `PROP_PHY_ENABLED`—with a restored snapshot the PHY may
     /// already be up.
     pub phy_enabled: bool,
     /// `PROP_PHY_FREQ` in kHz.
@@ -364,7 +364,7 @@ pub struct RepeaterPolicy {
     /// all. The remaining fields are inert while this is false.
     pub enabled: bool,
     /// `PROP_MAC_REPEATER_REGIONS`: which region-tagged floods to forward,
-    /// as the strings an operator wrote — a short code, a name, or a
+    /// as the strings an operator wrote—a short code, a name, or a
     /// literal `0x1234`. Empty imposes no regional restriction. The
     /// device derives the 2-octet codes the filter actually compares;
     /// pass a name through [`RegionCode::from_str`] to see them.
@@ -385,7 +385,7 @@ pub struct DeviceTime {
     /// `PROP_TIME`: Unix seconds, or `None` when the device does not know
     /// what time it is. Unsigned, so the encoding is wrap-free into 2106.
     pub epoch: Option<u32>,
-    /// `PROP_TZ_OFFSET`: minutes east of UTC. Always present — where the
+    /// `PROP_TZ_OFFSET`: minutes east of UTC. Always present—where the
     /// device is meant to be is known even when the time is not.
     pub tz_offset_min: i16,
 }
@@ -1027,7 +1027,7 @@ pub struct UlcpDevice<L> {
 ///
 /// They are different things, and conflating them is how one phone
 /// administering ten repeaters ends up claiming all of them. Tethering is
-/// a transient local relationship — at most one at a time, re-established
+/// a transient local relationship—at most one at a time, re-established
 /// on every attach, invisible to the mesh. Administration is
 /// configuration of the device's own identity and behavior, which
 /// outlives any particular host.
@@ -1128,7 +1128,7 @@ where
     /// This is the full-protocol attach (spec §Attach, Detach, and
     /// Synchronization): attach implies no known state, so the host
     /// synchronizes by fetching. Only the identity handshake runs here
-    /// — retained `PROP_LAST_STATUS` (the reset cause, preserved for
+    ///—retained `PROP_LAST_STATUS` (the reset cause, preserved for
     /// [`Self::boot_status`] and [`Self::sync`]), the protocol version
     /// check, `PROP_DEV_VERSION`, and `PROP_PHY_MTU`. The PHY keeps
     /// whatever configuration and enable state it had; queued frames
@@ -1136,7 +1136,7 @@ where
     /// [`Self::provision`], and drain the queue when ready.
     ///
     /// Use [`Self::attach_administrative`] to configure a device you do
-    /// not intend to tether to — one phone administering ten repeaters
+    /// not intend to tether to—one phone administering ten repeaters
     /// must not write `PROP_HOST_KEY` on any of them.
     pub async fn attach_existing(link: L, config: UlcpDeviceConfig) -> Result<Self, UlcpError> {
         Self::attach_with_mode(link, config, AttachMode::Tethered).await
@@ -1148,8 +1148,8 @@ where
     ///
     /// Commissioning and tethering are different relationships and this
     /// is the difference made mechanical. The handle refuses every
-    /// host-domain write — `PROP_HOST_KEY`, the host key tables, the
-    /// filter table, the delegation policy, and [`Self::provision`] —
+    /// host-domain write—`PROP_HOST_KEY`, the host key tables, the
+    /// filter table, the delegation policy, and [`Self::provision`]—
     /// with [`UlcpError::AdministrativeAttach`]. Everything
     /// else, including the device identity and the saved snapshot, works
     /// normally.
@@ -1179,9 +1179,9 @@ where
     ///
     /// So [`Self::dev_version`], [`Self::dev_model`], and
     /// [`Self::boot_status`] are empty on this handle, and the frame
-    /// ceiling comes from the binding — [`umsh_node_mgmt::REQUEST_MAX`],
+    /// ceiling comes from the binding—[`umsh_node_mgmt::REQUEST_MAX`],
     /// which bounds a request here more tightly than the device's own
-    /// PHY MTU does — rather than from asking. Give `config` the
+    /// PHY MTU does—rather than from asking. Give `config` the
     /// device's PHY and a response timeout that outlasts the binding's
     /// own retry budget, or a slow answer becomes a transport error here
     /// before the exchange engine has finished trying.
@@ -1248,8 +1248,8 @@ where
         radio.dev_version = String::from_utf8_lossy(&required(dev_version)?)
             .trim_end_matches('\0')
             .to_owned();
-        // `PROP_DEV_MODEL` is OPTIONAL, so a refusal is an answer — it
-        // means "this device does not name its hardware" — and must not
+        // `PROP_DEV_MODEL` is OPTIONAL, so a refusal is an answer—it
+        // means "this device does not name its hardware"—and must not
         // fail the attach the way a missing DEV_VERSION would.
         radio.dev_model = dev_model.as_ref().ok().map(|value| {
             String::from_utf8_lossy(value)
@@ -1281,8 +1281,8 @@ where
     /// session-scoped state: this releases the *host's* bookkeeping, not
     /// the connection. Re-attaching the returned link produces a fresh
     /// handle, which is how a long-lived interactive host changes
-    /// [`AttachMode`] — administrative for inspection, tethered for the
-    /// one command that establishes a host domain — without making the
+    /// [`AttachMode`]—administrative for inspection, tethered for the
+    /// one command that establishes a host domain—without making the
     /// user wait through a BLE reconnect.
     pub fn into_link(self) -> L {
         self.link
@@ -1310,7 +1310,7 @@ where
     }
 
     /// The device's hardware model (`PROP_DEV_MODEL`), or `None` on a
-    /// device that does not implement the optional property — a
+    /// device that does not implement the optional property—a
     /// simulator, or firmware predating it.
     pub fn dev_model(&self) -> Option<&str> {
         self.dev_model.as_deref()
@@ -1344,7 +1344,7 @@ where
     /// `Ok(None)` means the device is not battery powered.
     /// `Ok(Some(status))` with every field `None` means battery powered
     /// with unsupported reporting. A measurement the device cannot
-    /// currently obtain surfaces as a command failure, never as `None` —
+    /// currently obtain surfaces as a command failure, never as `None`—
     /// battery is live telemetry, so this is deliberately not part of
     /// [`UlcpDevice::sync`].
     ///
@@ -1367,7 +1367,7 @@ where
     /// (`PROP_ILLUMINANCE`).
     ///
     /// `Ok(None)` means either that the device does not advertise
-    /// `CAP_ILLUMINANCE` — no light sensor is fitted — or that a device
+    /// `CAP_ILLUMINANCE`—no light sensor is fitted—or that a device
     /// which does could not read the sensor just now. Both are "there is
     /// no reading", which is what a caller acts on; neither is an error.
     /// Live telemetry, so deliberately not part of [`UlcpDevice::sync`].
@@ -1385,7 +1385,7 @@ where
 
     /// Read the device's locate-alert state (`PROP_ALERT`).
     ///
-    /// `Ok(None)` means the device does not advertise `CAP_ALERT` — it has
+    /// `Ok(None)` means the device does not advertise `CAP_ALERT`—it has
     /// no way to make itself conspicuous.
     pub async fn alert(&mut self) -> Result<Option<AlertState>, UlcpError> {
         if !self.capabilities().await?.contains(&cap::ALERT) {
@@ -1555,7 +1555,7 @@ where
     ///
     /// `Ok(None)` means the device does not advertise `CAP_TIME`.
     /// `Ok(Some(time))` with `time.epoch == None` means it has one and
-    /// does not know what time it is — the state in which a device with a
+    /// does not know what time it is—the state in which a device with a
     /// screen must show no clock at all.
     pub async fn time(&mut self) -> Result<Option<DeviceTime>, UlcpError> {
         if !self.capabilities().await?.contains(&cap::TIME) {
@@ -1802,7 +1802,7 @@ where
     ///
     /// A device that does not implement the property answers with an
     /// error status rather than a value, which is a legitimate answer and
-    /// not a transport failure — so this collapses both to `None`. Only
+    /// not a transport failure—so this collapses both to `None`. Only
     /// for properties the spec marks OPTIONAL; a REQUIRED one that
     /// refuses is a real fault and should stay an `Err`.
     async fn get_prop_string_opt(&mut self, key: u32) -> Option<String> {
@@ -2021,7 +2021,7 @@ where
     }
 
     /// As [`Self::queue_drain`], invoking `on_frame` with each frame
-    /// (data, trailing metadata bytes) delivered before completion —
+    /// (data, trailing metadata bytes) delivered before completion—
     /// buffered and interleaved live frames alike. The callback sees
     /// **every** such frame: an device queue larger than this driver's
     /// bounded receive buffer drains losslessly through it. Frames are
@@ -2083,7 +2083,7 @@ where
 
     /// Reset the device (`CMD_RST`) and wait for the reset notification,
     /// returning the announced reset status. The device comes up as from
-    /// a power cycle — restoring its saved snapshot when one exists,
+    /// a power cycle—restoring its saved snapshot when one exists,
     /// factory configuration otherwise. All session-scoped state and
     /// cached views are gone; follow with [`Self::sync`].
     pub async fn reset(&mut self) -> Result<Status, UlcpError> {
@@ -2092,8 +2092,8 @@ where
     }
 
     /// Factory-reset the device (`CMD_FACTORY_RESET`): erase ALL mutable
-    /// state — saved provisioning, the device identity, BLE bonds, and the
-    /// pairing PIN — and reboot to a blank factory state. Unlike
+    /// state—saved provisioning, the device identity, BLE bonds, and the
+    /// pairing PIN—and reboot to a blank factory state. Unlike
     /// [`Self::reset`] this sends no expectation of a reply and does not
     /// wait: the device wipes storage and reboots without responding, which
     /// drops the transport link. Treat the ensuing disconnect as
@@ -2112,7 +2112,7 @@ where
     /// as itself with its saved configuration.
     ///
     /// `Ok(false)` means the device does not advertise `CAP_REBOOT` and
-    /// nothing was sent — asked rather than sent-and-timed-out, because a
+    /// nothing was sent—asked rather than sent-and-timed-out, because a
     /// device that *will* reboot answers nothing at all and waiting for
     /// silence cannot tell the two apart. When it does reboot, the link
     /// drops; treat the ensuing disconnect as completion.
@@ -2128,18 +2128,18 @@ where
     }
 
     /// Forget every Bluetooth bond, the pairing PIN, and the pairing
-    /// lockout, then leave the device in a pairing window — the bond
+    /// lockout, then leave the device in a pairing window—the bond
     /// count written to zero (`PROP_BLE_BOND_COUNT`; requires `CAP_BLE`).
     ///
     /// `Ok(None)` means the device has no Bluetooth transport at all and
     /// nothing was sent; `Ok(Some(count))` quotes the count the device
     /// now holds. One that has a transport but does not manage its own
-    /// bonds answers `STATUS_PROP_NOT_FOUND`, which surfaces as an error —
+    /// bonds answers `STATUS_PROP_NOT_FOUND`, which surfaces as an error—
     /// the caps list stops at "has Bluetooth", so the refusal is where the
     /// rest of the answer lives.
     ///
-    /// Over Bluetooth this severs the caller's own link — the bond that
-    /// carried it is one of the bonds deleted — but the answer arrives
+    /// Over Bluetooth this severs the caller's own link—the bond that
+    /// carried it is one of the bonds deleted—but the answer arrives
     /// first; over a cable and over the mesh nothing is disturbed.
     pub async fn clear_ble_bonds(&mut self) -> Result<Option<u8>, UlcpError> {
         if !self.capabilities().await?.contains(&cap::BLE) {
@@ -2159,7 +2159,7 @@ where
     /// `Ok(Some(state))` quotes the state the device settled on. A
     /// device that does not manage its own bonds answers
     /// `STATUS_PROP_NOT_FOUND`, and one that could not open a window
-    /// right now — locked out, or with Bluetooth disabled — answers
+    /// right now—locked out, or with Bluetooth disabled—answers
     /// `STATUS_INVALID_STATE`; both surface as errors rather than a
     /// quiet success.
     pub async fn set_ble_pairing(&mut self, open: bool) -> Result<Option<bool>, UlcpError> {
@@ -2243,8 +2243,8 @@ where
 
     /// Run the spec's post-attach synchronization procedure: fetch the
     /// retained `PROP_LAST_STATUS` (detecting a reset since the last
-    /// contact), the capability list, the configured host identity —
-    /// yielding an ownership verdict against `expected_host_key` — and
+    /// contact), the capability list, the configured host identity—
+    /// yielding an ownership verdict against `expected_host_key`—and
     /// the state each advertised capability grants, all in digest form.
     ///
     /// The host must decide ownership before treating queued data as
@@ -2371,7 +2371,7 @@ where
     /// identifiers and peer public keys, never key material. An
     /// administrator can replace a peer's `K_enc`/`K_mic` without
     /// changing anything observable, so no comparison over the readable
-    /// surface can detect it — and a digest over the secret state would
+    /// surface can detect it—and a digest over the secret state would
     /// mean deriving a readable value from key material, which is worse
     /// than the problem. The host asserts what it wants; it does not
     /// reason about what the device already holds.
@@ -2384,7 +2384,7 @@ where
     ///
     /// The host domain is volatile across power cycles, so the usual
     /// case is a device that has just rebooted and holds nothing. When
-    /// it has *not* rebooted the rewrite is redundant — that is the
+    /// it has *not* rebooted the rewrite is redundant—that is the
     /// point. Correctness must not depend on detecting which case this
     /// is, because reboot detection would also have to cover partial
     /// provisioning, another administrator having intervened, and future
@@ -2456,8 +2456,8 @@ where
             // A channel key *is* its own item, so a duplicate insert
             // asserts a state that already holds: `STATUS_ALREADY` says
             // "the entry is present", which is what was asked for, and
-            // is treated as success. (Peers differ — a matching public
-            // key replaces the entry's key material — so their inserts
+            // is treated as success. (Peers differ—a matching public
+            // key replaces the entry's key material—so their inserts
             // never report it.)
             for key in &desired.channel_keys {
                 match self.insert_prop_item(prop::HOST_CHANNEL_KEYS, key).await {
@@ -2659,7 +2659,7 @@ where
                 }
             }
             // The device discarded session state. One we asked for is
-            // absorbed — the caller who asked is already rebuilding the
+            // absorbed—the caller who asked is already rebuilding the
             // session; anything else is surfaced as an error.
             Some(Cmd::SessionReset) => {
                 let Ok(reason) = parse_session_reset(frame.payload) else {
@@ -2735,7 +2735,7 @@ where
     /// error the caller should see.
     ///
     /// A device reset is reported ahead of a session reset when both are
-    /// pending: it is the broader loss — the host domain went with it —
+    /// pending: it is the broader loss—the host domain went with it—
     /// and a reboot implies the session reset that follows the reattach.
     fn take_reset_notice(&mut self) -> Option<UlcpError> {
         if let Some(status) = self.seen_reset.take() {
@@ -2799,7 +2799,7 @@ where
     /// Send `CMD_RST` and wait for the device to announce it.
     ///
     /// The session reset that follows is ours, and lands after the
-    /// announcement — commonly during the next exchange — so the
+    /// announcement—commonly during the next exchange—so the
     /// expectation is recorded here rather than waited on.
     async fn send_reset(&mut self, deadline: Instant) -> Result<Status, UlcpError> {
         let mut buf = [0u8; 2];
@@ -2830,7 +2830,7 @@ where
         let len = packet.data.len().min(buf.len());
         buf[..len].copy_from_slice(&packet.data[..len]);
         // `RX_FLAG_SELF_TX` says the *device* transmitted the frame. To
-        // the host that is not a self-transmission at all — the device is
+        // the host that is not a self-transmission at all—the device is
         // a separate node, and its frames are as real as any peer's. What
         // carries across is that nothing measured the frame on its way
         // here, which is exactly what `Backhaul` means on this side of
@@ -2910,7 +2910,7 @@ where
     /// [`Radio::transmit`] composes the metadata from [`TxOptions`],
     /// which is what a MAC wants. A bridge does not: it relays frames
     /// whose transmit parameters were decided elsewhere, and must be
-    /// able to put exactly those bytes on the wire — including fields
+    /// able to put exactly those bytes on the wire—including fields
     /// [`TxOptions`] has no vocabulary for, such as a power override.
     ///
     /// The channel-access retry budget comes from the metadata itself:
@@ -3031,7 +3031,7 @@ where
     /// `response_timeout + 2 × t_frame_ms` while the frame goes out on air. This
     /// is inherent to the half-duplex [`Radio::transmit`] contract and a real
     /// radio behaves the same way. Frames the device receives during this window
-    /// are not lost — they are queued (see [`wait_response`](Self::wait_response)
+    /// are not lost—they are queued (see [`wait_response`](Self::wait_response)
     /// → [`ingest`](Self::ingest)) and surface on the next
     /// [`poll_receive`](Radio::poll_receive). MAC-layer timers (ACK timeouts,
     /// retransmit deadlines) cannot advance while this future is pending, but
@@ -3108,7 +3108,7 @@ where
 // Public because fetching and decoding are separable and a batched read
 // separates them. A caller that asks for a dozen properties in one
 // `CMD_PROP_MULTI_GET` holds a bag of octets afterwards, and needs the
-// same readings the per-property methods here apply — otherwise the only
+// same readings the per-property methods here apply—otherwise the only
 // way to understand a value is to spend a round trip fetching it alone,
 // which is the cost batching exists to avoid.
 
@@ -3261,7 +3261,7 @@ fn decode_fixed_list<const N: usize>(
 /// Render one ULCP frame as a one-line human-readable summary:
 /// command, TID, property mnemonic, and the decoded status where the
 /// payload is a `PROP_LAST_STATUS` value. Values are summarized by
-/// length — never dumped — so traces cannot leak key material.
+/// length—never dumped—so traces cannot leak key material.
 pub fn describe_frame(bytes: &[u8]) -> String {
     umsh_ulcp::FrameDescription(bytes).to_string()
 }
@@ -3280,7 +3280,7 @@ mod tests {
     /// announce a spurious watchdog reset.
     const RESET_AFTER: &[u8] = b"reset-after";
     /// Payload that makes the fake device report success and then
-    /// announce a session reset nobody asked for — a second host
+    /// announce a session reset nobody asked for—a second host
     /// displacing this one, as far as this host can tell.
     const SESSION_RESET_AFTER: &[u8] = b"session-reset-after";
     /// Property that switches the fake device's `CMD_RESTORE` completion
@@ -3292,7 +3292,7 @@ mod tests {
     /// transmitted frames back as received frames.
     ///
     /// Generic over the stream so the same device can be reached down a
-    /// pipe or across a socket — which is the whole claim TCP support
+    /// pipe or across a socket—which is the whole claim TCP support
     /// rests on.
     async fn fake_device<IO: AsyncRead + AsyncWrite + Unpin>(mut io: IO) {
         let mut decoder = hdlc::Decoder::<WIRE_BUF>::new();
@@ -3606,8 +3606,8 @@ mod tests {
 
     /// A socket is a serial link with a different name on it, which is
     /// what lets a bridged port serve a radio over TCP. The payload
-    /// carries every byte the framing gives meaning to — flag, escape,
-    /// and both flow-control bytes — so any encoder that treated the
+    /// carries every byte the framing gives meaning to—flag, escape,
+    /// and both flow-control bytes—so any encoder that treated the
     /// socket as transparent would fail here.
     #[tokio::test]
     async fn serial_link_frames_the_same_bytes_over_a_socket() {
@@ -3882,7 +3882,7 @@ mod tests {
             .insert_prop_item(prop::HOST_PEER_KEYS, &item)
             .await
             .unwrap();
-        // The digest form is the public key alone — no key material.
+        // The digest form is the public key alone—no key material.
         assert_eq!(digest, vec![0x11; 32]);
 
         // Same public key, new pairwise keys: replacement, not ALREADY.
@@ -3975,7 +3975,7 @@ mod tests {
     ///
     /// The fake device implements no multi-property command, so a read
     /// that reaches the wire comes back UNIMPLEMENTED. That is the whole
-    /// assertion — the refusal is the device's to make, not the handle's.
+    /// assertion—the refusal is the device's to make, not the handle's.
     #[tokio::test]
     async fn an_administrative_handle_reads_the_host_domain_but_will_not_write_it() {
         let (client, server) = tokio::io::duplex(4096);

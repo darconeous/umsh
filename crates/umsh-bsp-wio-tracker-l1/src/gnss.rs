@@ -5,7 +5,7 @@
 //! | Signal | Pin | Notes |
 //! |---|---|---|
 //! | Standby / wake | P1.09 (D0) | High wakes the receiver; low lets it sleep |
-//! | Module TX → MCU RX | P0.26 (D7) | 9600 baud — note the direction |
+//! | Module TX → MCU RX | P0.26 (D7) | 9600 baud—note the direction |
 //! | Module RX ← MCU TX | P0.27 (D6) | Unused today; the receiver needs no commands |
 //!
 //! The board brings out no reset line and no enable for the module's
@@ -13,7 +13,7 @@
 //! the control surface. That has one consequence worth naming.
 //!
 //! A receiver that keeps its supply keeps its clock, so this is the
-//! board's real-time clock — the only one it has. Standby leaves the
+//! board's real-time clock—the only one it has. Standby leaves the
 //! L76K's backup domain running, so the time survives an nRF52840 System
 //! OFF that a firmware-held clock would not, and the boot path reads it
 //! back out (the firmware's `gnss-holds-the-clock`). Confirmed on
@@ -45,8 +45,8 @@ pub const BAUD: u32 = 9600;
 
 /// How long the receiver takes to start emitting sentences after waking.
 ///
-/// Not waited on for correctness — the parser resynchronizes at the next
-/// `$` whatever arrives first — but waking and immediately reading
+/// Not waited on for correctness—the parser resynchronizes at the next
+/// `$` whatever arrives first—but waking and immediately reading
 /// otherwise spends a wake-up on a UART with nothing behind it yet.
 const STARTUP: Duration = Duration::from_millis(100);
 
@@ -81,7 +81,7 @@ impl umsh_gnss::pump::Power for Gnss<'_> {
     async fn power_off(&mut self) {
         // Standby only, and deliberately so: the module has no rail this
         // board can cut, and its backup domain is where the board's clock
-        // lives. Cutting power — if it were possible — would trade the
+        // lives. Cutting power—if it were possible—would trade the
         // time for the last few microamps.
         self.standby.set_low();
     }

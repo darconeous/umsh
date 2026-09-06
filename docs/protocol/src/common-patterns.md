@@ -6,7 +6,7 @@ UMSH reuses a small set of encoding patterns across both the MAC layer and appli
 
 Multi-byte numeric fields are transmitted in **big-endian** (most-significant byte first), also known as **network byte order**. This is the standard convention for protocol specifications and is straightforward to interpret in packet diagrams. Modern hardware can convert between byte orders at effectively zero cost, so this choice imposes no practical performance penalty.
 
-Non-numeric multi-byte data — such as SHA-256 hashes, Ed25519 public keys, and EdDSA signatures — is transmitted in its most common byte-wise representation, independent of any underlying endianness of the represented value.
+Non-numeric multi-byte data—such as SHA-256 hashes, Ed25519 public keys, and EdDSA signatures—is transmitted in its most common byte-wise representation, independent of any underlying endianness of the represented value.
 
 ## CoAP-Style Option Encoding
 
@@ -16,12 +16,12 @@ Each option is encoded as a delta from the previous option's number, a length, a
 
 This encoding appears in:
 
-- **MAC-layer packet options** — routing, signal-quality thresholds, callsigns (see [Packet Options](packet-options.md))
-- **Text message options** — message type, sender handle, fragmentation, colors (see [Text Messages](app-text-messages.md))
-- **Chat room payloads** — room info responses, login parameters (see [Chat Rooms](app-chat-rooms.md))
-- **Node identity metadata** — name, location, altitude, timestamp, supported regions (see [Node Identity](node-identity.md))
+- **MAC-layer packet options**—routing, signal-quality thresholds, callsigns (see [Packet Options](packet-options.md))
+- **Text message options**—message type, sender handle, fragmentation, colors (see [Text Messages](app-text-messages.md))
+- **Chat room payloads**—room info responses, login parameters (see [Chat Rooms](app-chat-rooms.md))
+- **Node identity metadata**—name, location, altitude, timestamp, supported regions (see [Node Identity](node-identity.md))
 
-The full encoding rules — nibble interpretation, extended bytes, and the end marker — are defined in [Packet Structure](packet-structure.md#option-encoding). Application-layer uses follow the same wire format.
+The full encoding rules—nibble interpretation, extended bytes, and the end marker—are defined in [Packet Structure](packet-structure.md#option-encoding). Application-layer uses follow the same wire format.
 
 ## ARNCE/HAM-64 Text Encoding
 
@@ -29,13 +29,13 @@ The full encoding rules — nibble interpretation, extended bytes, and the end m
 
 UMSH uses ARNCE/HAM-64 for:
 
-- **Operator callsign** (packet option 4) — identifies the originating operator under amateur radio rules
-- **Station callsign** (packet option 7) — identifies the transmitting station, updated by repeaters during forwarding
-- **Region codes** (packet option 11) — short codes of one to three letters or digits encoded as 2-byte ARNCE values (e.g. SJC → `0x7853`)
+- **Operator callsign** (packet option 4)—identifies the originating operator under amateur radio rules
+- **Station callsign** (packet option 7)—identifies the transmitting station, updated by repeaters during forwarding
+- **Region codes** (packet option 11)—short codes of one to three letters or digits encoded as 2-byte ARNCE values (e.g. SJC → `0x7853`)
 
 ## UTF-8 Strings
 
-All human-readable text in UMSH — message bodies, node names, sender handles, room descriptions — is encoded as UTF-8. String length is determined by context:
+All human-readable text in UMSH—message bodies, node names, sender handles, room descriptions—is encoded as UTF-8. String length is determined by context:
 
 - Inside a CoAP-style option, the option's length field defines the string boundary.
 - As trailing data after a `0xFF` marker, the string extends to the end of the payload (or to the start of a trailing signature).

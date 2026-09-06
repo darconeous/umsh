@@ -49,8 +49,8 @@
 // CMD_RST is a protocol-level reset: all protocol state returns to
 // post-reset values and the radio is re-applied (disabled), but the MCU
 // and the USB link stay up. Host attach resets only session state
-// (full-protocol semantics): the device domain — PHY configuration and
-// enable state, device name, duty accounting — is untouched, and
+// (full-protocol semantics): the device domain—PHY configuration and
+// enable state, device name, duty accounting—is untouched, and
 // nothing is emitted; the reset notice is only sent for CMD_RST, so the
 // host never sees an unsolicited reset it didn't ask for mid-handshake.
 //
@@ -81,7 +81,7 @@ extern crate alloc;
 // Global heap allocator. The device node (umsh-sync's AsyncRefCell plus
 // umsh-node's Rc-based plumbing) allocates a small bounded amount at
 // bring-up; the ULCP session remains allocation-free. Initialized
-// with an 8 KiB region at the top of main() — the same budget the CLI
+// with an 8 KiB region at the top of main()—the same budget the CLI
 // firmware's full stack runs in on identical hardware.
 #[cfg(target_os = "none")]
 #[global_allocator]
@@ -227,7 +227,7 @@ mod firmware {
     use umsh_bsp_xiao_nrf52::power as board_power;
     // Board-selected GNSS power control. One board feature is active per
     // image, so this alias resolves to exactly one type and the pump's
-    // task shim stays concrete — which is what `#[embassy_executor::task]`
+    // task shim stays concrete—which is what `#[embassy_executor::task]`
     // requires, since a task function cannot be generic.
     #[cfg(all(feature = "cap-gnss", feature = "board-techo"))]
     type BoardGnss = umsh_bsp_techo::gnss::Gnss<'static>;
@@ -284,7 +284,7 @@ mod firmware {
     use umsh_ux_display_tracker::screen;
     // `ButtonEvent` is the vocabulary [`Gate`] judges, so every board with
     // a control needs it. The recognizer behind it is only for a button
-    // carrying more than one meaning — which the Wio's Back button, beside
+    // carrying more than one meaning—which the Wio's Back button, beside
     // a pad, does not.
     #[cfg(any(feature = "button-nav", feature = "t1000e"))]
     use umsh_ux_tracker::button::ButtonEvent;
@@ -318,8 +318,8 @@ mod firmware {
         RTC0        => nrf_sdc::mpsl::HighPrioInterruptHandler;
         // TWIM0/SPIM0 is the one peripheral this family uses two ways:
         // SPIM0 → LR1110 on the T-1000E, TWIM0 → SH1106 OLED on the Wio
-        // Tracker L1. Both handlers cannot be bound at once — they claim
-        // the same peripheral — so the board picks.
+        // Tracker L1. Both handlers cannot be bound at once—they claim
+        // the same peripheral—so the board picks.
         TWISPI0     =>
             #[cfg(not(feature = "display-oled"))]
             embassy_nrf::spim::InterruptHandler<peripherals::TWISPI0>,
@@ -371,9 +371,9 @@ mod firmware {
     #[cfg(feature = "board-xiao-nrf52")]
     const DEFAULT_DEVICE_NAME: &str = "UMSH XIAO";
 
-    /// The board default name plus a stable per-die suffix — the low 16
+    /// The board default name plus a stable per-die suffix—the low 16
     /// bits of FICR DEVICEADDR, the same die-unique value the BLE
-    /// identity address is built from — so factory-fresh radios are
+    /// identity address is built from—so factory-fresh radios are
     /// tellable apart in scan lists and on multi-board benches.
     fn default_device_name() -> &'static str {
         use core::fmt::Write as _;
@@ -412,7 +412,7 @@ mod firmware {
 
     /// `PROP_DEV_VERSION`: the stack name and the release version from the
     /// build script, in the `STACK-NAME/STACK-VERSION` form the spec
-    /// recommends. It names the firmware and nothing else — which board it
+    /// recommends. It names the firmware and nothing else—which board it
     /// is running on is `PROP_DEV_MODEL`'s job, and boot diagnostics stay
     /// on the debug console.
     const DEV_VERSION: &str = concat!("umsh/", env!("GIT_DESCRIBE"));
@@ -923,7 +923,7 @@ mod firmware {
     /// The one traffic ledger for the whole device.
     ///
     /// The mux is where every real transmit and every off-air reception
-    /// passes exactly once, so that is where the air counters are kept —
+    /// passes exactly once, so that is where the air counters are kept—
     /// counting at the MAC would miss everything the session sends, which
     /// on a phone-attached tracker is most of it. The runner adds the CRC
     /// failures it alone can see, and the node's pump mirrors the four
@@ -986,7 +986,7 @@ mod firmware {
     /// that board's `SessionConfig::battery` advertises.
     ///
     /// T-1000E: a request/reply round trip into the BSP battery monitor
-    /// — the sole SAADC and sensor-rail owner — which runs its normal
+    ///—the sole SAADC and sensor-rail owner—which runs its normal
     /// gated sample/classify/publish iteration early and replies with
     /// the millivolt reading and UX classification. The timeout covers
     /// the monitor having exited for critical-battery shutdown.
@@ -1019,7 +1019,7 @@ mod firmware {
             ChargeClass::Discharging => BatteryChargeState::Discharging,
         };
         // The level is reported by its absence when the estimator has
-        // none to give — before its first quiet sample, and for as long as
+        // none to give—before its first quiet sample, and for as long as
         // the pack is charging on a board whose charger reports no
         // completion. Voltage and charge state still mean something in
         // both cases, so the snapshot goes out carrying what it can.
@@ -1042,7 +1042,7 @@ mod firmware {
     /// request/reply round trip into the same BSP monitor that owns the
     /// SAADC, which raises both sensor enables, settles, averages, and
     /// replies in millilux. The timeout covers the monitor having exited
-    /// for critical-battery shutdown — a device on its way down reports
+    /// for critical-battery shutdown—a device on its way down reports
     /// no reading rather than hanging the transaction.
     #[cfg(feature = "cap-illuminance")]
     async fn sample_illuminance_millilux() -> Option<u32> {
@@ -1122,7 +1122,7 @@ mod firmware {
     static BLE_LINK_CHANGED: Signal<ThreadModeRawMutex, BleLinkState> = Signal::new();
     /// The pairing window moved, carrying the new state to
     /// `publish_event` so `PROP_BLE_PAIRING` follows the window without
-    /// polling — including the transitions nobody commanded (a timeout,
+    /// polling—including the transitions nobody commanded (a timeout,
     /// the boot-time window) and the boot seeding of the session's
     /// mirror.
     static BLE_PAIRING_CHANGED: Signal<ThreadModeRawMutex, bool> = Signal::new();
@@ -1200,7 +1200,7 @@ mod firmware {
 
     /// Apply a `PROP_ALERT` transition to the board's indicators.
     ///
-    /// Idempotent — the session emits the effect on every transition,
+    /// Idempotent—the session emits the effect on every transition,
     /// including ones that change nothing.
     fn set_alert_indication(active: bool) {
         if ALERT_ACTIVE.swap(active, Ordering::AcqRel) == active {
@@ -1392,7 +1392,7 @@ mod firmware {
     /// Apply `PROP_BLE_ENABLED`.
     ///
     /// Reuses the advertising-policy path, which already stops the
-    /// advertiser and drops a live connection — which is exactly what
+    /// advertiser and drops a live connection—which is exactly what
     /// the property requires and nothing more: bonds are untouched, so
     /// the host reconnects without pairing again when it comes back on.
     fn set_ble_enabled(enabled: bool) {
@@ -1424,8 +1424,8 @@ mod firmware {
     }
 
     /// Move the pairing window, waking anything that reports it. What is
-    /// published is `pairing_window_open()` — the window as the property
-    /// defines it, gated on `PROP_BLE_ENABLED` — so the session's mirror
+    /// published is `pairing_window_open()`—the window as the property
+    /// defines it, gated on `PROP_BLE_ENABLED`—so the session's mirror
     /// and the panel read the same fact.
     fn set_pairing_mode(open: bool) {
         let was = pairing_window_open();
@@ -1439,7 +1439,7 @@ mod firmware {
 
     /// Record how far the BLE link has got, waking anything that reports
     /// it. Every write to the state goes through here for the same reason
-    /// the bond count does — the panel and `PROP_BLE_LINK` are two
+    /// the bond count does—the panel and `PROP_BLE_LINK` are two
     /// readings of one fact and must not disagree.
     fn set_ble_link(state: BleLinkState) {
         if BLE_LINK.swap(state.code(), Ordering::AcqRel) != state.code() {
@@ -1546,7 +1546,7 @@ mod firmware {
             // fail as unsupported, the resolving list stays empty, and a
             // bonded central that reconnects with a rotated resolvable private
             // address (iOS rotates its RPA ~every 15 min) never resolves to
-            // its bond — so the link never re-encrypts and wedges the single
+            // its bond—so the link never re-encrypts and wedges the single
             // peripheral slot as an unusable NoEncryption connection.
             .support_le_privacy()
             .peripheral_count(1)?
@@ -1576,8 +1576,8 @@ mod firmware {
         #[cfg(feature = "cap-battery-saadc")]
         battery: embassy_sync::watch::DynReceiver<'static, board_power::BatterySample>,
         /// Positioning changes worth publishing unasked. The runtime's
-        /// GNSS sink owns the policy — a stationary receiver produces a
-        /// fix a second and almost none of them are news — so this only
+        /// GNSS sink owns the policy—a stationary receiver produces a
+        /// fix a second and almost none of them are news—so this only
         /// forwards what it decided to raise.
         #[cfg(feature = "cap-gnss")]
         gnss_announce: umsh_ulcp_runtime::gnss::Announcer,
@@ -1586,7 +1586,7 @@ mod firmware {
     impl BoardDeviceEnv {
         /// The publishable sources that depend on what is fitted, as one
         /// future. `None` is a reading this board could not reduce to its
-        /// advertised field set — skipped rather than published, the same
+        /// advertised field set—skipped rather than published, the same
         /// fail-closed rule the on-demand read applies.
         ///
         /// Split out of [`DeviceEnv::publish_event`] so the feature
@@ -1695,7 +1695,7 @@ mod firmware {
 
         /// Forward the monitor's announce-worthy samples. A sample that
         /// cannot be reduced to this board's advertised field set is
-        /// skipped rather than published — the same fail-closed rule the
+        /// skipped rather than published—the same fail-closed rule the
         /// on-demand read applies.
         ///
         /// `Watch::changed` is cancellation-safe (the receiver remembers
@@ -1716,7 +1716,7 @@ mod firmware {
         }
 
         /// A host wrote `PROP_TIME`. An operator outranks every other
-        /// source, including a receiver whose time is being distrusted —
+        /// source, including a receiver whose time is being distrusted—
         /// distrusting the sky is precisely why somebody would set the
         /// clock by hand.
         ///
@@ -1749,8 +1749,8 @@ mod firmware {
         ///
         /// The driver has exactly one, because a hook per property would
         /// need one `&mut self` borrow apiece. The bond count and the
-        /// link state are the two sources that need no board hardware —
-        /// both come off statics — so they ride here on every board, GNSS
+        /// link state are the two sources that need no board hardware—
+        /// both come off statics—so they ride here on every board, GNSS
         /// or not, while [`sensor_event`](Self::sensor_event) keeps the
         /// sources that do vary by board behind their own features.
         async fn publish_event(&mut self) -> driver::PublishEvent {
@@ -1797,7 +1797,7 @@ mod firmware {
         async fn set_ble_pairing(&mut self, open: bool) -> bool {
             if !BLE_ENABLED.load(Ordering::Acquire) {
                 // Nothing can pair through a transport that is off, so a
-                // window cannot open — and closing one is trivially done
+                // window cannot open—and closing one is trivially done
                 // without the stack's help, which matters because the
                 // task that would answer may be parked with the radio.
                 if !open {
@@ -1816,7 +1816,7 @@ mod firmware {
             // (see `ble_store` / memory.x): BLE bonds + pairing PIN + local
             // IRK, the saved provisioning snapshot, the device identity,
             // UX state, and the frame-counter boundaries. Wiping the flash
-            // and rebooting is a complete factory reset — every subsystem
+            // and rebooting is a complete factory reset—every subsystem
             // remounts from erased flash on boot, so no live in-RAM table
             // (BLE bonds included) has to be touched here.
             //
@@ -1828,7 +1828,7 @@ mod firmware {
             // Commanded over the mesh, the MAC acknowledgment of the
             // request is still in the TX queue; let it out so the
             // administrator hears the command landed. The counter flush
-            // that rides along is erased two lines down, which is fine —
+            // that rides along is erased two lines down, which is fine—
             // a factory-fresh device has no admins left to replay at.
             super::device_node::quiesce_for_reboot().await;
             {
@@ -1852,11 +1852,11 @@ mod firmware {
             // counters to flash. Without the flush, the boundary that
             // admitted the reboot command dies with the RAM it lives in,
             // and the administrator's retries are accepted again after
-            // boot — one reboot per retry.
+            // boot—one reboot per retry.
             super::device_node::quiesce_for_reboot().await;
             // Nothing is erased: every journal stays where it is and the
             // board remounts from it. Through `reset_to_app` rather than
-            // a bare `sys_reset` so GPREGRET is cleared first — a stale
+            // a bare `sys_reset` so GPREGRET is cleared first—a stale
             // DFU value there would land the reboot in the bootloader
             // instead of the application.
             debug_log(format_args!("REBOOT: restarting"));
@@ -1893,7 +1893,7 @@ mod firmware {
         fn publish_dev_domain(&mut self, snapshot: driver::DevDomainSnapshot) {
             // The zone and the positioning policy ride the device-domain
             // mirror, so a host write, a boot restore, and a `CMD_RST`
-            // all reach the clock and the receiver by the same path —
+            // all reach the clock and the receiver by the same path—
             // and neither needs anything to remember to push it.
             umsh_hal::wall_clock::set_tz(snapshot.tz_offset_min);
             #[cfg(feature = "cap-gnss")]
@@ -1912,7 +1912,7 @@ mod firmware {
             // boot restore, a `CMD_RST` and a press on the panel all
             // arrive here, which is why none of them has to remember to
             // raise it for itself. `UI_REFRESH` never lights a dark panel
-            // — the press that caused this already did.
+            //—the press that caused this already did.
             #[cfg(feature = "has-display")]
             UI_REFRESH.signal(());
         }
@@ -1982,8 +1982,8 @@ mod firmware {
 
     /// How long a pairing window stays open before it closes itself.
     ///
-    /// Boards that can *ask* for a window — a menu entry, or a
-    /// hold-through-power-on gesture — get 30 s, because reopening one is
+    /// Boards that can *ask* for a window—a menu entry, or a
+    /// hold-through-power-on gesture—get 30 s, because reopening one is
     /// cheap. A `boot-pairing-window` board has neither, so its only
     /// window is the automatic one at boot and it is deliberately shorter:
     /// it is open on every single boot rather than on request, so the
@@ -2091,9 +2091,9 @@ mod firmware {
                     // A window that cannot be walked through is not a
                     // window: while locked out nothing is opened and the
                     // caller is told so rather than left waiting out a
-                    // timeout — and `PROP_BLE_PAIRING` never reports a
+                    // timeout—and `PROP_BLE_PAIRING` never reports a
                     // window nothing can use. A full store is not that
-                    // case — enrollment at capacity evicts rather than
+                    // case—enrollment at capacity evicts rather than
                     // refuses, so it warns the operator without failing
                     // the request.
                     if !locked_out {
@@ -2318,8 +2318,8 @@ mod firmware {
     /// Tell a connected client that its cached attributes are stale.
     ///
     /// A bonded iOS client caches the GAP device name against the bond and
-    /// will keep showing the old one — in Settings › Bluetooth and to every
-    /// app on the phone — until a Service Changed indication makes it
+    /// will keep showing the old one—in Settings › Bluetooth and to every
+    /// app on the phone—until a Service Changed indication makes it
     /// re-read. The indicated range covers the whole table, because the
     /// point is to invalidate a cache rather than to describe a structural
     /// change. Clients that never subscribed are skipped inside trouble.
@@ -2381,8 +2381,8 @@ mod firmware {
         let mut reassembler: gatt::Reassembler<{ gatt::MAX_FRAME }> = gatt::Reassembler::new();
 
         // Reap a connection that never reaches encryption, so an unbonded or
-        // unresolvable central — e.g. an iOS OS-level background reconnect that
-        // presents an RPA we can't resolve — cannot squat the single peripheral
+        // unresolvable central—e.g. an iOS OS-level background reconnect that
+        // presents an RPA we can't resolve—cannot squat the single peripheral
         // slot at NoEncryption and lock out the real client. A bonded reconnect
         // encrypts in ~0.3 s (see connect→Encrypted in the trace); 5 s leaves
         // ~2x headroom for a slow negotiated connection interval. A deliberate
@@ -2538,8 +2538,8 @@ mod firmware {
                     }
                     // A bonded client caches attributes across connections,
                     // so a rename it missed has to be announced now. Only a
-                    // client that has subscribed to Service Changed — which
-                    // it does after encrypting — can be told.
+                    // client that has subscribed to Service Changed—which
+                    // it does after encrypting—can be told.
                     if GATT_NAME_STALE.load(Ordering::Acquire) {
                         announce_gatt_change(server, conn).await;
                     }
@@ -2876,7 +2876,7 @@ mod firmware {
     }
 
     /// Startup-failure containment: a misconfigured or failed BLE bring-up
-    /// must degrade to a USB-only device, never a panic/reboot loop — a
+    /// must degrade to a USB-only device, never a panic/reboot loop—a
     /// display-less field node that boot-loops is unrecoverable in place.
     /// Parks the BLE app forever; USB keeps running via the outer join.
     async fn ble_disabled_park(reason: &'static str) -> ! {
@@ -2920,7 +2920,7 @@ mod firmware {
         set_bond_count(initial.bonds.len() as u8);
         // `boot-pairing-window` boards open a window on *every* boot,
         // bonded or not. They have no button and no menu, so this is the
-        // only way to ever pair a second host — without it the first
+        // only way to ever pair a second host—without it the first
         // bond would lock everyone else out permanently. Pressing RESET
         // is the physical-presence ceremony on those boards, standing in
         // for the button hold the others use; a configured PIN still
@@ -3070,7 +3070,7 @@ mod firmware {
         // Emit the previous boot's diagnostics (watchdog capture and/or
         // panic message) as ASCII to the first USB reader. HDLC hosts
         // resynchronize past it; humans read it with a serial terminal.
-        // Wait for DTR — the OS CDC driver drains the IN endpoint even
+        // Wait for DTR—the OS CDC driver drains the IN endpoint even
         // with no process attached, so writing before a real opener
         // exists would discard the report into the void.
         if wdt_report.is_some() || panic_report.is_some() {
@@ -3149,9 +3149,9 @@ mod firmware {
     }
 
     /// Owns the framing-free protocol session: hosts the shared ULCP
-    /// driver (`umsh_ulcp_runtime::driver::run`) — host frames,
+    /// driver (`umsh_ulcp_runtime::driver::run`)—host frames,
     /// radio receptions, transmit completions, and every session effect
-    /// — over this board's channel wiring and [`BoardDeviceEnv`] couplings.
+    ///—over this board's channel wiring and [`BoardDeviceEnv`] couplings.
     #[embassy_executor::task]
     async fn device_task(
         boot_reason: Status,
@@ -3251,7 +3251,7 @@ mod firmware {
     /// The four switches the settings menu offers, as they stand now.
     ///
     /// Each is `None` on a build that cannot answer, which the renderer
-    /// draws as no state at all rather than as "off" — a switch labeled
+    /// draws as no state at all rather than as "off"—a switch labeled
     /// with a guess is worse than one labeled with nothing.
     #[cfg(feature = "has-display")]
     fn ui_settings() -> screen::SettingsModel {
@@ -3299,8 +3299,8 @@ mod firmware {
             stats: ui_stats(),
             queued: Some(QUEUED_FRAMES.load(Ordering::Acquire)),
             bonds: BLE_BOND_COUNT.load(Ordering::Acquire),
-            // Bluetooth off outranks everything — a lockout on a
-            // transport that is off is not a state anyone can act on —
+            // Bluetooth off outranks everything—a lockout on a
+            // transport that is off is not a state anyone can act on—
             // then lockout outranks the window: while locked out there
             // is no window to describe.
             pairing: if !BLE_ENABLED.load(Ordering::Acquire) {
@@ -3388,7 +3388,7 @@ mod firmware {
     /// The whole of the per-board GNSS code: construct the UART and the
     /// board's power control, then hand both to the shared pump. An
     /// `#[embassy_executor::task]` cannot be generic, which is the only
-    /// reason this shim exists at all — the loop it delegates to lives in
+    /// reason this shim exists at all—the loop it delegates to lives in
     /// `umsh_gnss::pump` and is common to both cargo workspaces.
     ///
     /// The receiver stays powered down until `PROP_GNSS_ENABLED` says
@@ -3405,7 +3405,7 @@ mod firmware {
         };
 
         // On a board whose only surviving real-time clock lives inside the
-        // receiver, read it back before the pump takes over — otherwise a
+        // receiver, read it back before the pump takes over—otherwise a
         // device that was switched off knowing the time boots not knowing
         // it, and the clock the backup domain was kept powered to preserve
         // is never actually consulted.
@@ -3453,7 +3453,7 @@ mod firmware {
     /// The display layer's standing rule is that panels redraw on events
     /// and never on a timer, because a timer on a bistable panel is a
     /// battery drain that reports nothing. A clock is the one thing that
-    /// has to move on its own, so this is the sanctioned exception — and
+    /// has to move on its own, so this is the sanctioned exception—and
     /// it is bounded to exactly the case that needs it. It never
     /// completes unless the panel is already awake (`awake`) *and* the
     /// device knows what time it is, so a sleeping panel is never woken
@@ -3529,7 +3529,7 @@ mod firmware {
     /// Everything this board's menu can do.
     ///
     /// A board enables the subset it can perform and navigation skips the
-    /// rest — a submenu whose entries are all disabled is not shown at
+    /// rest—a submenu whose entries are all disabled is not shown at
     /// all, rather than opening onto a list containing only Back. Every
     /// display tracker in this family has Bluetooth and a radio; what
     /// varies is the receiver.
@@ -3551,7 +3551,7 @@ mod firmware {
     /// through the full-refresh cycle so Select can never activate an item the
     /// user has not yet seen on the panel.
     ///
-    /// The panel is bistable, so attention lapsing never turns it off —
+    /// The panel is bistable, so attention lapsing never turns it off—
     /// it drops whatever the user was in the middle of and returns to
     /// the status page, so a press after walking away starts somewhere
     /// whose meaning is on screen.
@@ -3718,7 +3718,7 @@ mod firmware {
                         }
                         // A battery sample and a minute boundary are the
                         // two things here nobody asked for, so they
-                        // redraw without counting as attention — waking
+                        // redraw without counting as attention—waking
                         // on either would reset the lapse timer forever.
                         // The panel is bistable and already showing the
                         // old reading, so the redraw is a partial refresh
@@ -3761,7 +3761,7 @@ mod firmware {
     /// A board whose only control is this button has to carry the whole
     /// vocabulary on it: click advances, double-click selects, and a
     /// 1–4 second hold released by the user goes back one entry. That is
-    /// the only situation worth a chord recognizer — beside a pad the
+    /// the only situation worth a chord recognizer—beside a pad the
     /// button is only what the case labels it, and
     /// [`back_button_task`] resolves it without one.
     #[cfg(all(feature = "button-nav", not(feature = "dpad-nav")))]
@@ -3775,8 +3775,8 @@ mod firmware {
     }
 
     /// Resolves the board's nav button (active-low, pull-up) into the
-    /// display-tracker vocabulary — see [`nav_input`] for which gestures
-    /// mean what on this board — and powers off on a continuing
+    /// display-tracker vocabulary—see [`nav_input`] for which gestures
+    /// mean what on this board—and powers off on a continuing
     /// four-second hold whatever else the button does.
     ///
     /// What a gesture means is decided by [`Gate`] at the press that
@@ -3865,7 +3865,7 @@ mod firmware {
     /// whose only control is one button can carry a whole vocabulary on
     /// it, and it pays for that in latency: a click is not a click until
     /// the chord gap has passed without a second press, so every Back
-    /// costs 400 ms — and pressing Back three times quickly to climb out
+    /// costs 400 ms—and pressing Back three times quickly to climb out
     /// of the tree resolves as one triple-click, which on this board
     /// means nothing at all. Beside a pad the button is only what the
     /// case labels it, so it acts on the release edge and the only other
@@ -3924,7 +3924,7 @@ mod firmware {
             gate.settle(true);
 
             // Whatever the press became, the button is done until it is
-            // let go — otherwise a four-second hold would also deliver
+            // let go—otherwise a four-second hold would also deliver
             // the Back its release looks like.
             button.wait_for_high().await;
             Timer::after(DEBOUNCE).await;
@@ -3937,7 +3937,7 @@ mod firmware {
     /// Nothing here is a chord: a pad key means one thing, so there is
     /// no recognizer and no timing to get wrong. [`Gate`] still decides
     /// what a press means, by the same alert-cancel and wake-the-panel
-    /// rules the button obeys — a press against a dark panel lights it
+    /// rules the button obeys—a press against a dark panel lights it
     /// and goes no further, whichever control it arrived on.
     ///
     /// One key at a time: the task waits out the release of whichever
@@ -4030,7 +4030,7 @@ mod firmware {
     /// A locate alert outranks the touch button: the backlight is by far
     /// the most conspicuous thing on a T-Echo, and being conspicuous is
     /// the entire point of an alert. The indicator LED keeps its own
-    /// alert blink — this adds a channel rather than moving one — and
+    /// alert blink—this adds a channel rather than moving one—and
     /// the touch button behaves exactly as before whenever no alert is
     /// running.
     ///
@@ -4133,7 +4133,7 @@ mod firmware {
             // this pass rather than dropped. Dropping it leaves the policy
             // believing the panel is lit while the glass stays dark, and
             // every later wake is then a no-op against an already-active
-            // state — the panel cannot be brought back at all until a lapse
+            // state—the panel cannot be brought back at all until a lapse
             // puts the two back in agreement.
             let now = Instant::now().as_millis();
             let pairing_hold = attention.set_hold(HoldReason::Pairing, pairing_window_open(), now);
@@ -4145,14 +4145,14 @@ mod firmware {
             // first, whether or not an arm below asks for one.
             let mut redraw = transition.is_some();
             // If the alert hold was what woke the panel, the frame that
-            // lights it is the alert's own — not the status page the
+            // lights it is the alert's own—not the status page the
             // tracker happened to be showing when it went dark.
             let mut alert_frame = alert_hold.is_some();
 
             let lapse = async {
                 match attention.next_deadline() {
                     // A hold pins the panel awake, so there is no deadline
-                    // to wait for — but a wake it just produced still has
+                    // to wait for—but a wake it just produced still has
                     // to be applied. Falling through to the arm below is
                     // what gets this pass to the power-on; blocking here
                     // would hold it until some unrelated event arrived.
@@ -4234,7 +4234,7 @@ mod firmware {
                         transition = attention.wake(Instant::now().as_millis()).or(transition);
                         redraw = true;
                     }
-                    // A wake on its own changes no content — a lit panel
+                    // A wake on its own changes no content—a lit panel
                     // is already showing the truth, and the events that do
                     // change something raise `UI_REFRESH` alongside this.
                     Either4::Third(()) => {
@@ -4280,7 +4280,7 @@ mod firmware {
                 }
                 // One step of the fall, not the whole of it: the policy
                 // sends one of these per ramp step and says where between
-                // the panel's two contrasts to sit. Nothing is redrawn —
+                // the panel's two contrasts to sit. Nothing is redrawn—
                 // a contrast write costs three bytes and leaves the
                 // framebuffer alone, which is what makes a fade affordable
                 // on a panel that redraws only on events.
@@ -4371,7 +4371,7 @@ mod firmware {
                     Either::First(edge) => {
                         pressed = matches!(edge, ButtonEdge::Press);
                         // A press means eyes on the LED and, likely, an
-                        // environment that just changed — a device pulled
+                        // environment that just changed—a device pulled
                         // from a pocket should not confirm at last
                         // minute's brightness. Re-evaluate ambient light
                         // now: the ~80 ms measurement completes well
@@ -4392,7 +4392,7 @@ mod firmware {
 
             // Whoever found the beeping radio gets to silence it with
             // whatever they press first, and that press does nothing
-            // else — fumbling for an alarm must not fire off a beacon or
+            // else—fumbling for an alarm must not fire off a beacon or
             // flip the silence preference. The long press is the
             // exception the spec allows: powering the radio off is
             // deliberate enough to mean it, and it ends the alert anyway.
@@ -4422,7 +4422,7 @@ mod firmware {
                     // this slot for. Routed through the ULCP session rather
                     // than straight at the pins, so the property, an
                     // attached host and the saved snapshot all see the same
-                    // flip — poking the driver here would be undone by the
+                    // flip—poking the driver here would be undone by the
                     // next device-domain sync. A build with no receiver
                     // leaves the slot inert, confirmation included.
                     //
@@ -4461,9 +4461,9 @@ mod firmware {
         external_power: Input<'static>,
         charge_active: Input<'static>,
     ) {
-        // The BSP builds a single-channel converter per measurement — the
+        // The BSP builds a single-channel converter per measurement—the
         // battery's and the light sensor's configurations have nothing in
-        // common — so it takes the peripheral and `Irqs` rather than a
+        // common—so it takes the peripheral and `Irqs` rather than a
         // built `Saadc`. This shim is where `Irqs` is named concretely.
         umsh_bsp_t1000e::power::run_battery_monitor(
             saadc,
@@ -4487,7 +4487,7 @@ mod firmware {
     }
 
     /// XIAO nRF52840 kit battery monitor task: SAADC plus three held
-    /// pins. The divider is **ungated** — P0.14 is its low side and is
+    /// pins. The divider is **ungated**—P0.14 is its low side and is
     /// driven LOW for the life of the program, because both alternatives
     /// exceed P0.31's absolute maximum (see the BSP `power` module). The
     /// BQ25100 does report its own state, so unlike the other boards here
@@ -4512,7 +4512,7 @@ mod firmware {
     /// Headless System OFF for the XIAO nRF52840 kit. The sole producer
     /// is the BSP's protective low-battery cutoff: this board has no
     /// button to hold, and there is no remote power-off command in this
-    /// firmware. Nothing is armed as a wake source either — there is
+    /// firmware. Nothing is armed as a wake source either—there is
     /// nothing on the board to arm. See the BSP `shutdown` module.
     #[cfg(feature = "board-xiao-nrf52")]
     #[embassy_executor::task]
@@ -4544,15 +4544,15 @@ mod firmware {
     /// enter System OFF with the nav button armed as the wake source.
     ///
     /// This board has a mechanical power switch, so System OFF is a
-    /// convenience rather than the only way to stop the drain — but it is
+    /// convenience rather than the only way to stop the drain—but it is
     /// still what keeps the protective low-battery cutoff from letting an
     /// unattended pack deep-discharge with the switch left on.
     ///
     /// Unlike the T-Echo there is no board-wide peripheral rail to drop;
     /// the hardware reconstruction found no equivalent of that board's
     /// P0.12. So, like the SenseCAP Solar (the other rail-less SX1262
-    /// board), the radio is parked by holding RST low — driven outputs
-    /// keep their level through System OFF — and everything else is
+    /// board), the radio is parked by holding RST low—driven outputs
+    /// keep their level through System OFF—and everything else is
     /// tri-stated.
     ///
     /// The low-battery path diverges in one place: it leaves the divider
@@ -4564,7 +4564,7 @@ mod firmware {
         // Two producers: the nav button's four-second hold (the local
         // signal) and the battery monitor's protective low-voltage cutoff
         // (the BSP's). The teardown is the same either way except for the
-        // battery-recovery wake, which only the cutoff asks for — a node
+        // battery-recovery wake, which only the cutoff asks for—a node
         // somebody switched off should stay off.
         let reason = match select(
             SHUTDOWN_SIGNAL.wait(),
@@ -4585,7 +4585,7 @@ mod firmware {
         .await;
 
         // The usual trigger is the nav button's four-second hold, which
-        // means the button is often still down right now — and it is also
+        // means the button is often still down right now—and it is also
         // the wake pin. Arming DETECT-low while it is held would wake the
         // chip the instant it powers off, so wait for the release first
         // (plus a debounce margin), the same dance the SenseCAP Solar
@@ -4597,12 +4597,12 @@ mod firmware {
         Timer::after(Duration::from_millis(50)).await;
 
         // No switchable rail, so the SX1262 would otherwise keep whatever
-        // mode it was in — typically continuous RX at milliamps — under a
+        // mode it was in—typically continuous RX at milliamps—under a
         // System OFF that draws microamps. Holding RST (active-low) low
         // collapses it to its reset-state minimum.
         drive_pin_low(Port::P1, 7);
         // Battery divider gate, active-high, driven either way rather than
-        // tri-stated — a floating FET gate is not a gate that is provably
+        // tri-stated—a floating FET gate is not a gate that is provably
         // anything, and driven levels are retained through System OFF.
         //
         // LOW disconnects the divider and its quiescent draw is provably
@@ -4622,7 +4622,7 @@ mod firmware {
         // that decides whether the board's floor is microamps or the tens
         // of milliamps an acquiring receiver draws. The BSP has driven it
         // since boot and the pump leaves it wherever `PROP_GNSS_ENABLED`
-        // last put it, so this is only the belt to that suspenders — but
+        // last put it, so this is only the belt to that suspenders—but
         // it has to happen here, while the module can still act on it.
         //
         // Deliberately *not* a full teardown: the module keeps its power
@@ -4665,7 +4665,7 @@ mod firmware {
             // Wake when the cell recovers. AIN7 is P0.31, the divider tap,
             // and 9/16 VDD is the right step for a *half* divider: on a
             // regulated 3.3 V rail the tap threshold is 1.856 V, so the
-            // crossing is at ≈3.71 V of cell — above the firmware's Low
+            // crossing is at ≈3.71 V of cell—above the firmware's Low
             // threshold, far above Critical (≈3.1 V), and nowhere near
             // re-triggering a cutoff that needs five minutes of sustained
             // critical anyway. (1/2 would land at 3.30 V, under Low with no
@@ -4673,11 +4673,11 @@ mod firmware {
             //
             // This board has no published schematic, so unlike the XIAO and
             // the Solar P1 we cannot say for certain that its rail is
-            // regulated at 3.3 V — and the reference is VDD-relative. The
+            // regulated at 3.3 V—and the reference is VDD-relative. The
             // choice of fraction makes that safe rather than merely
             // hopeful: a half divider puts the tap at exactly 1/2 of VDD
             // whenever VDD tracks the cell, which is *below* 9/16, so an
-            // unregulated rail means the comparator simply never trips —
+            // unregulated rail means the comparator simply never trips—
             // the no-autonomous-wake status quo, never a wake loop. Bench
             // measurement settles which of the two this board is.
             arm_lpcomp_wake_up(LpcompInput::AnalogInput7, LpcompReference::Ref916vdd);
@@ -4694,13 +4694,13 @@ mod firmware {
     }
 
     /// Dedicated power-button (P1.01, active-low) state machine for the
-    /// Solar P1. This board has a button reserved for power, so — unlike the
-    /// single-button boards that overload one button into a gesture FSM — it
+    /// Solar P1. This board has a button reserved for power, so—unlike the
+    /// single-button boards that overload one button into a gesture FSM—it
     /// drives *nothing but power*: a hold past `HOLD_OFF` acknowledges on
     /// LED_A and requests System OFF, and a short press does nothing at all.
     /// Everything a user might otherwise want from a press is on USR; see
     /// [`sensecap_usr_button_task`]. Powering back on happens by pressing USR
-    /// while in System OFF — a PWR press there reaches the bootloader instead.
+    /// while in System OFF—a PWR press there reaches the bootloader instead.
     #[cfg(feature = "power-button")]
     #[embassy_executor::task]
     async fn sensecap_pwr_button_task(mut button: Input<'static>) {
@@ -4750,8 +4750,8 @@ mod firmware {
 
     /// The user button (USR / P1.07, active-low) on the Solar P1.
     ///
-    /// This is the board's whole interactive surface while running — PWR
-    /// does power and nothing else — so it carries the primary-action slot
+    /// This is the board's whole interactive surface while running—PWR
+    /// does power and nothing else—so it carries the primary-action slot
     /// the UX profile describes: a press asks the device node to beacon,
     /// putting a signed identity (with its position, when the identity
     /// auto-update is on) on the air.
@@ -4762,8 +4762,8 @@ mod firmware {
     /// also fire off a beacon.
     ///
     /// No confirmation is emitted here. The node answers an accepted send
-    /// through `NodeHooks::beacon_confirm`, so a board with no identity —
-    /// where the node is dormant and the slot is genuinely inert — stays
+    /// through `NodeHooks::beacon_confirm`, so a board with no identity—
+    /// where the node is dormant and the slot is genuinely inert—stays
     /// silent rather than acknowledging something that did not happen.
     #[cfg(feature = "power-button")]
     #[embassy_executor::task]
@@ -4814,7 +4814,7 @@ mod firmware {
     /// Drives LED_A (P0.15, white, active-high) on the Solar P1.
     ///
     /// The board has two LEDs and gives them separate jobs. LED_B (blue) is
-    /// the status light: heartbeat, BLE pairing blink — the "this thing is
+    /// the status light: heartbeat, BLE pairing blink—the "this thing is
     /// alive, here is its link state" story, which is worth glancing at and
     /// not worth looking up for. LED_A is the one meant to catch an eye
     /// across a field: the locate alert, and the short confirmations that
@@ -4893,7 +4893,7 @@ mod firmware {
         .await;
 
         // The usual trigger is the side button's four-second hold, which
-        // means the button is often still down right now — and it is also
+        // means the button is often still down right now—and it is also
         // the wake pin. Arming DETECT-low while it is held would wake the
         // chip the instant it powers off, so wait for the release first
         // (plus a debounce margin), the same dance the SenseCAP Solar
@@ -4912,7 +4912,7 @@ mod firmware {
         // pinned to their off state rather than tri-stated: their loads hang
         // off the always-on rail, where a floating pin is not provably dark.
         // The remaining RGB channel (P0.15) is never configured by this
-        // firmware, so it sits at reset — a disconnected input that cannot
+        // firmware, so it sits at reset—a disconnected input that cannot
         // sink the LED. (P0.13, which the Meshtastic/MeshCore variant files
         // call the red channel, is PWR_EN per the schematic and is handled
         // with the rail below.)
@@ -4925,12 +4925,12 @@ mod firmware {
         // for a module that stays powered indefinitely, not just for one
         // about to lose its rail.
         //
-        // Standby/WAKEUP (P1.02) is internally pulled up — floating means
-        // awake — so it is driven low: a valid logic low into a powered
+        // Standby/WAKEUP (P1.02) is internally pulled up—floating means
+        // awake—so it is driven low: a valid logic low into a powered
         // module (Standby, its proper low-power state) and no current into
         // an unpowered one. Reset (P1.05) is tri-stated, NOT driven: the
         // L76K hardware design has RESET_N internally pulled up ("leave
-        // N/C if unused"), so released it idles high on a powered module —
+        // N/C if unused"), so released it idles high on a powered module—
         // holding it low instead pinned the powered module in reset, its
         // *worst* state, with the PPS pull-up faintly lighting the internal
         // blue LED as the tell. The UART line into the module (P1.08) is
@@ -4971,7 +4971,7 @@ mod firmware {
 
         // The rail is switched by two pins, not one: per the schematic,
         // SX1262 = PWR_EN (P0.13), VDD_POWR = PWR_EN ∧ (PWR_ON (P0.12)
-        // ∨ VBUS). PWR_EN is the master gate — and because VBUS stands in
+        // ∨ VBUS). PWR_EN is the master gate—and because VBUS stands in
         // for PWR_ON, it is the only input that keeps "off" off while the
         // board is on USB. (The Meshtastic/MeshCore variant files call
         // P0.13 the red LED channel; the schematic disagrees, and it was
@@ -4981,7 +4981,7 @@ mod firmware {
         // blue LED.)
         //
         // Dropping the `Output`s only hands the pins back to embassy,
-        // which writes PIN_CNF = INPUT:Disconnect with no pull — floating,
+        // which writes PIN_CNF = INPUT:Disconnect with no pull—floating,
         // the same trap. Pin both low so the LoRa module, GNSS, sensors,
         // and e-paper bias generator are provably unpowered rather than
         // left to a floating gate.
@@ -5027,8 +5027,8 @@ mod firmware {
         // again. On this board that pin gates the only real-time clock
         // there is, so every millisecond between the reset and this write
         // is a millisecond the clock is running on whatever charge is left
-        // on the rail. Asserting it in the normal peripheral-init block —
-        // after the bootloader, embassy, the radio and the journal — is
+        // on the rail. Asserting it in the normal peripheral-init block—
+        // after the bootloader, embassy, the radio and the journal—is
         // far too late to expect it to survive.
         //
         // Whether it survives even from here is a question about the
@@ -5104,7 +5104,7 @@ mod firmware {
         // RESETREAS.OFF alone proves a button wake: P0.06 is the only GPIO
         // DETECT source armed at System OFF entry (USB insertion wakes via
         // the native VBUS detector and sets its own reason bit). The pin
-        // itself cannot be sampled this early — PIN_CNF resets to
+        // itself cannot be sampled this early—PIN_CNF resets to
         // input-disconnected, so the IN register reads 0 regardless of the
         // physical level.
         #[cfg(feature = "t1000e")]
@@ -5143,7 +5143,7 @@ mod firmware {
         // activation reset. MPSL later owns the shared CLOCK_POWER
         // vector but services only CLOCK events, so with VBUS present a
         // pending USB power event re-enters the handler forever,
-        // starving thread mode until the watchdog fires — the post-DFU
+        // starving thread mode until the watchdog fires—the post-DFU
         // first-boot freeze. This firmware never uses these interrupts
         // (USB runs on SoftwareVbusDetect precisely because MPSL owns
         // POWER), so clear the enables and any pending events before
@@ -5217,9 +5217,9 @@ mod firmware {
 
         // Board power (schematic): SX1262 = PWR_EN (P0.13); VDD_POWR =
         // PWR_EN ∧ (PWR_ON (P0.12) ∨ VBUS). Both must be high before the
-        // LoRa module is addressed. PWR_EN floating happens to work — its
+        // LoRa module is addressed. PWR_EN floating happens to work—its
         // reset state leaks enough to run the board, which is exactly how
-        // the half-collapsed off-state rail went unnoticed — but the
+        // the half-collapsed off-state rail went unnoticed—but the
         // radio's supply gate deserves a driven level, not a lucky float.
         // Ownership of both transfers to shutdown_task.
         #[cfg(feature = "system-off-techo")]
@@ -5253,18 +5253,18 @@ mod firmware {
         FORCE_PAIRING_AT_BOOT.store(force_pairing_at_boot, Ordering::Release);
 
         // SenseCAP Solar: the same physical-presence ceremony, carried by the
-        // secondary user button — enclosure "USR", P1.07, active-low.
+        // secondary user button—enclosure "USR", P1.07, active-low.
         //
         // It cannot live on the power button (enclosure "PWR", P1.01): any
         // press of PWR while the node is in System OFF enters the stock
-        // bootloader's DFU mode unconditionally — duration is irrelevant, a
-        // bare tap does it — so that press never reaches this code. Escaping
+        // bootloader's DFU mode unconditionally—duration is irrelevant, a
+        // bare tap does it—so that press never reaches this code. Escaping
         // that needs a different bootloader. The same fact makes USR the only
         // button that actually powers the node back on, which is what makes it
         // the natural carrier for a hold-through-power-on gesture.
         //
         // A wake press is how a powered-off node is started, so the level at
-        // t=0 cannot distinguish the ceremony from an ordinary power-on — only
+        // t=0 cannot distinguish the ceremony from an ordinary power-on—only
         // a press still held after one second is deliberate. The button is
         // claimed here rather than later because FORCE_PAIRING_AT_BOOT must be
         // set before the BLE store seeds PAIRING_MODE.
@@ -5288,7 +5288,7 @@ mod firmware {
             // Acknowledge the accepted ceremony on LED_A (white, active-high)
             // the instant the threshold is crossed, while the user is still
             // holding. Without this the only feedback is the LED_B pairing
-            // blink, which is indistinguishable from an unbonded node's — so a
+            // blink, which is indistinguishable from an unbonded node's—so a
             // gesture that silently missed looked identical to one that
             // worked. Two blinks, deliberately distinct from the three that
             // acknowledge hold-to-power-off. Runs before the WDT is armed.
@@ -5321,7 +5321,7 @@ mod firmware {
             cortex_m::peripheral::NVIC::unmask(embassy_nrf::pac::Interrupt::WDT);
         }
         // Freeze diagnostics: 1 kHz PC sampler on TIMER2 (free on both
-        // boards; MPSL owns TIMER0 only). Priority 1 — above the
+        // boards; MPSL owns TIMER0 only). Priority 1—above the
         // thread-mode executor and MPSL's low-priority signal
         // processing, below MPSL's radio-critical priority 0.
         {
@@ -5354,7 +5354,7 @@ mod firmware {
         #[cfg(feature = "board-wio-tracker-l1")]
         let led = Output::new(p.P1_01, Level::Low, OutputDrive::Standard);
         // XIAO nRF52840: blue segment of the common-anode RGB LED (P0.06),
-        // **active-low** — Level::High is off. Blue is the status color
+        // **active-low**—Level::High is off. Blue is the status color
         // here (MeshCore's choice on this board); red stays free as a TX
         // indicator and green is the 10 kΩ leg, noticeably dimmer.
         #[cfg(feature = "board-xiao-nrf52")]
@@ -5505,7 +5505,7 @@ mod firmware {
         //
         // Two carrier details worth knowing here, both from that schematic:
         // RESET has a 10 kΩ pull-up, so a floating pin does *not* hold the
-        // radio down — the explicit reset below is what does. RXEN has no
+        // radio down—the explicit reset below is what does. RXEN has no
         // pull at all, which is why it is clamped at construction rather
         // than left to lora-phy's first transition.
         #[cfg(any(feature = "board-sensecap-solar", feature = "board-xiao-nrf52"))]
@@ -5633,8 +5633,8 @@ mod firmware {
         // below; it is then a USB-only device with identical persistence
         // and clock configuration.
         let mut rng = rng::Rng::new(p.RNG, Irqs);
-        // Everything this RNG feeds is key material — the device identity
-        // secret, the CSPRNG seeds, the BLE local IRK — so take the
+        // Everything this RNG feeds is key material—the device identity
+        // secret, the CSPRNG seeds, the BLE local IRK—so take the
         // bias-corrected output. The nRF52840 TRNG is measurably biased
         // towards one bit value without it; correction costs roughly
         // 120 µs a byte instead of 40, which at a few 32-byte draws per
@@ -5706,9 +5706,9 @@ mod firmware {
         // the session's PROP_DEV_KEY surface, the secret brings up
         // the device node's MAC identity.
         //
-        // A device identity always exists. When the journal is empty —
+        // A device identity always exists. When the journal is empty—
         // a factory-fresh board, or the boot that completes a factory
-        // reset — one is generated here and persisted before anything
+        // reset—one is generated here and persisted before anything
         // can observe its absence, so identity is never a commissioning
         // step the operator has to perform. Installing a *specific*
         // identity later (`PROP_DEV_PRIVATE_KEY`) stays available and is
@@ -5737,7 +5737,7 @@ mod firmware {
                     umsh_core::PublicKey(public)
                 )),
                 Err(()) => debug_log(format_args!(
-                    "device identity generated but persist=FAILED — volatile this boot"
+                    "device identity generated but persist=FAILED—volatile this boot"
                 )),
             }
             identity_keys = Some((secret, public));
@@ -5750,7 +5750,7 @@ mod firmware {
         }
         // Seed the identity-generation and device-node CSPRNGs from the
         // TRNG; in the BLE image this must happen while the peripheral
-        // is still ours — build_sdc below hands the RNG to the
+        // is still ours—build_sdc below hands the RNG to the
         // SoftDevice Controller for its lifetime.
         let mut identity_seed = [0u8; 32];
         rng.fill_bytes(&mut identity_seed).await;
@@ -5913,7 +5913,7 @@ mod firmware {
         // transmits is a matter of configuration (the PHY enable state
         // and the forwarding switch), not of whether a key was ever
         // provisioned. The airtime hint is the worst case at the
-        // MeshCore-US default profile — the MAC scheduler only uses it as
+        // MeshCore-US default profile—the MAC scheduler only uses it as
         // a conservative bound.
         //
         // The one exception is a crash reboot: skip one boot of the
@@ -5979,7 +5979,7 @@ mod firmware {
             // a plain read would block until its buffer filled, holding a
             // complete sentence hostage to the start of the next one.
             //
-            // TIMER1 and PPI 0/1 with group 0 are free — MPSL holds
+            // TIMER1 and PPI 0/1 with group 0 are free—MPSL holds
             // TIMER0 and PPI 19/30/31, the softdevice controller holds
             // 17/18 and 20–29, and the freeze diagnostics hold TIMER2.
             let mut gnss_config = UarteConfig::default();
@@ -5993,7 +5993,7 @@ mod firmware {
                 p.PPI_CH1,
                 p.PPI_GROUP0,
                 // rxd, then txd. Measured, not taken from the variant
-                // files: the module's TX — the line carrying NMEA — is
+                // files: the module's TX—the line carrying NMEA—is
                 // P1.09, the opposite of what the upstream pin names
                 // suggest. See docs/hardware/lilygo-techo-hardware.md.
                 p.P1_09,
@@ -6060,7 +6060,7 @@ mod firmware {
             // would block until its buffer filled, holding a complete
             // sentence hostage to the start of the next one.
             //
-            // TIMER1 and PPI 0/1 with group 0 are free — MPSL holds TIMER0
+            // TIMER1 and PPI 0/1 with group 0 are free—MPSL holds TIMER0
             // and PPI 19/30/31, the softdevice controller holds 17/18 and
             // 20–29, and the freeze diagnostics hold TIMER2.
             let mut gnss_config = UarteConfig::default();
@@ -6114,13 +6114,13 @@ mod firmware {
             spawner.spawn(sensecap_power_task(saadc, divider_gate).unwrap());
 
             // Quectel L76K on UARTE0, behind the one enable in this family
-            // that really cuts the module's power — which on a solar node
+            // that really cuts the module's power—which on a solar node
             // is the whole point. `BufferedUarte` rather than a plain one
             // because NMEA arrives as lines of unpredictable length: a
             // plain read would block until its buffer filled, holding a
             // complete sentence hostage to the start of the next one.
             //
-            // TIMER1 and PPI 0/1 with group 0 are free — MPSL holds
+            // TIMER1 and PPI 0/1 with group 0 are free—MPSL holds
             // TIMER0 and PPI 19/30/31, the softdevice controller holds
             // 17/18 and 20–29, and the freeze diagnostics hold TIMER2.
             #[cfg(feature = "cap-gnss")]
@@ -6137,7 +6137,7 @@ mod firmware {
                     p.PPI_GROUP0,
                     // rxd, then txd. The `GPS_TX_PIN` / `GPS_RX_PIN` names
                     // on this board are the same trap as everywhere else in
-                    // the family; measured, the module's output is P1.12 —
+                    // the family; measured, the module's output is P1.12—
                     // the family rule that `GPS_RX_PIN` is the MCU's RX.
                     // See docs/hardware/sensecap-solar-node-p1-pro-hardware.md.
                     p.P1_12,
@@ -6184,7 +6184,7 @@ mod firmware {
             let divider_low = Output::new(p.P0_14, Level::Low, OutputDrive::Standard);
             let charge_status_n = Input::new(p.P0_17, Pull::None);
             // 100 mA. Sensible for anything above ~500 mAh, but it is a
-            // 1C-plus rate for a small cell — the kit ships without one,
+            // 1C-plus rate for a small cell—the kit ships without one,
             // so the pack is whatever the user attached.
             let charge_current_hi = Output::new(p.P0_13, Level::Low, OutputDrive::Standard);
             spawner.spawn(
@@ -6195,7 +6195,7 @@ mod firmware {
 
         // T-Echo battery monitor: SAADC on AIN2/P0.04. Same SAADC
         // configuration as the other two boards (12-bit, GAIN1_6, 0.6 V
-        // ref), so only the BSP divider constant differs — this board's
+        // ref), so only the BSP divider constant differs—this board's
         // 150k/150k bridge is hard-wired, with no gate pin to own.
         #[cfg(feature = "board-techo")]
         {
@@ -6266,7 +6266,7 @@ mod firmware {
             // a plain read would block until its buffer filled, holding a
             // complete sentence hostage to the start of the next one.
             //
-            // TIMER1 and PPI 0/1 with group 0 are free — MPSL holds
+            // TIMER1 and PPI 0/1 with group 0 are free—MPSL holds
             // TIMER0 and PPI 19/30/31, the softdevice controller holds
             // 17/18 and 20–29, and the freeze diagnostics hold TIMER2.
             #[cfg(feature = "cap-gnss")]
@@ -6283,7 +6283,7 @@ mod firmware {
                     p.PPI_GROUP0,
                     // rxd, then txd. The board notes contradict themselves
                     // about which of D6/D7 carries NMEA; measured, it is
-                    // P0.26 — the family rule that `GPS_RX_PIN` is the
+                    // P0.26—the family rule that `GPS_RX_PIN` is the
                     // MCU's RX, which now holds on all four boards. See
                     // docs/hardware/seeed-wio-tracker-l1-pro-hardware.md.
                     p.P0_26,
@@ -6351,7 +6351,7 @@ mod firmware {
             // Not on the Solar P1, which has a second LED. There the alert
             // belongs on LED_A (white) alongside the other things meant to
             // be seen from a distance, and this one stays the status light
-            // — see `sensecap_attention_led_task`.
+            //—see `sensecap_attention_led_task`.
             #[cfg(not(feature = "power-button"))]
             if alert_active() {
                 engine.start_alert(Instant::now().as_millis());
@@ -6413,7 +6413,7 @@ mod firmware {
             // heartbeat's multi-second deadline. A `Signal` has one useful
             // consumer, so on the Solar P1 this arm is gone entirely and
             // `ALERT_CHANGED` belongs to the attention LED that shows the
-            // alert — two waiters would leave whichever registered first
+            // alert—two waiters would leave whichever registered first
             // asleep through the edge.
             #[cfg(not(feature = "power-button"))]
             let _ = select(
@@ -6452,7 +6452,7 @@ mod firmware {
     /// animation phase: a request made at a dark phase lets the
     /// sampler's blanking handshake confirm against an LED that is
     /// already off, so the measurement never visibly interrupts what the
-    /// indicator is showing — the charging breathe in particular. Every
+    /// indicator is showing—the charging breathe in particular. Every
     /// state has dark phases (heartbeat gap, breathing trough, blink
     /// gaps), so sampling is never starved for a window.
     ///
@@ -6501,8 +6501,8 @@ mod firmware {
         led.set_period(1_000);
         led.enable();
         let mut engine = T1000eLedEngine::new(Instant::now().as_millis());
-        // `None` at boot, so the first dark phase — within the first
-        // heartbeat interval — takes the first reading.
+        // `None` at boot, so the first dark phase—within the first
+        // heartbeat interval—takes the first reading.
         let mut last_ambient_sample: Option<Instant> = None;
         loop {
             wdt.pet();
@@ -6539,7 +6539,7 @@ mod firmware {
                     phase < 100 || (200..300).contains(&phase) || (400..500).contains(&phase)
                 };
                 // This branch bypasses the engine, so it applies the
-                // ambient dim itself — the connection blink dims with
+                // ambient dim itself—the connection blink dims with
                 // the room like everything else.
                 let brightness = if on {
                     umsh_ux_tracker::led::ambient_dim_permille(
@@ -6578,7 +6578,7 @@ mod firmware {
                     umsh_bsp_t1000e::indicator::LED_SEQUENCE_SIGNAL.wait(),
                 ),
                 // An ambient light measurement wants the LED dark, and
-                // wants it now — it waits on the confirmation below.
+                // wants it now—it waits on the confirmation below.
                 umsh_bsp_t1000e::indicator::LED_BLANK_CHANGED.wait(),
             )
             .await

@@ -85,15 +85,15 @@ bitflags! {
 pub struct NodeIdentityPayload {
     pub role: NodeRole,
     pub capabilities: NodeCapabilities,
-    /// Option 0 — display name (UTF-8).
+    /// Option 0—display name (UTF-8).
     pub name: Option<String>,
-    /// Option 1 — geographic position.
+    /// Option 1—geographic position.
     pub location: Option<NodeLocation>,
-    /// Option 2 — altitude above mean sea level, in meters.
+    /// Option 2—altitude above mean sea level, in meters.
     pub altitude_m: Option<i32>,
-    /// Option 3 — seconds since the Unix epoch (freshness marker).
+    /// Option 3—seconds since the Unix epoch (freshness marker).
     pub timestamp: Option<u32>,
-    /// Option 4 — the regions this repeater floods for, in their string form,
+    /// Option 4—the regions this repeater floods for, in their string form,
     /// one repetition of the option per region.
     ///
     /// The string travels rather than the derived code because the code is
@@ -104,7 +104,7 @@ pub struct NodeIdentityPayload {
     /// without promising to name them all
     /// (node-identity.md § Supported Regions).
     pub supported_regions: Option<Vec<String>>,
-    /// Option 5 — nonce echoed from a soliciting Advertisement Request.
+    /// Option 5—nonce echoed from a soliciting Advertisement Request.
     /// Present only in solicited advertisements whose request carried one.
     pub nonce: Option<u32>,
     /// EdDSA signature over ROLE..=0xFF, present when the identity stands alone.
@@ -163,7 +163,7 @@ impl NodeIdentityPayload {
                     }
                 }
                 opt::NONCE => {
-                    // A verbatim copy of the request's 4-byte field —
+                    // A verbatim copy of the request's 4-byte field—
                     // fixed-width, unlike the minimally encoded integers.
                     let bytes: [u8; 4] = value
                         .try_into()
@@ -292,8 +292,8 @@ impl NodeIdentityPayload {
         Err(AppEncodeError::BufferTooSmall)
     }
 
-    /// Encode the signed byte range — `ROLE` through the `0xFF`
-    /// options terminator, inclusive — for a detached signing step.
+    /// Encode the signed byte range—`ROLE` through the `0xFF`
+    /// options terminator, inclusive—for a detached signing step.
     /// `self.signature` is ignored; the caller signs exactly the
     /// returned bytes and appends the 64-byte signature to produce the
     /// standalone (signed) wire form:

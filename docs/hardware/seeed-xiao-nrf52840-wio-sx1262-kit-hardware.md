@@ -26,8 +26,8 @@ Sources, in decreasing authority:
 where a dated hardware note says otherwise, every "confirmed" below means
 confirmed *against the schematic*, not confirmed on a bench.
 
-A UMSH BSP and a shipping firmware image now exist — `crates/umsh-bsp-xiao-nrf52`
-and `firmware/xiao-nrf52`, built from this document on 2026-08-03 — but **none of
+A UMSH BSP and a shipping firmware image now exist—`crates/umsh-bsp-xiao-nrf52`
+and `firmware/xiao-nrf52`, built from this document on 2026-08-03—but **none of
 it has been run on the board**. It compiles and packs to a UF2 whose family and
 address extent are verified against the probe results below; everything past that
 is the bring-up checklist at the end of this document, which is entirely open.
@@ -39,7 +39,7 @@ inspection of a retail kit (2026-08-03), and they run in opposite directions:
 
 - **K1, the user button on the radio carrier, is not populated, and neither is
   its R2 pull-up.** Both footprints are there and bare, so a user can add a
-  button by hand — but `P0.02` has no external pull, and the internal one is
+  button by hand—but `P0.02` has no external pull, and the internal one is
   mandatory for anyone who does.
 - **U7, the 2 MB QSPI flash, *is* populated**, despite the schematic marking it
   `DNP`.
@@ -48,7 +48,7 @@ The lesson is that this drawing's `DNP` annotations carry no information in
 either direction. Do not use them to predict what is on the board.
 
 The **bootloader and flash layout were also read off a retail unit** the same
-day, and they contradict what the upstream metadata implies — see
+day, and they contradict what the upstream metadata implies—see
 [Bootloader, SoftDevice, and flash layout](#bootloader-softdevice-and-flash-layout).
 In short: the kit ships the *Sense* bootloader config (`XIAO-SENSE`, UF2 family
 `0x28860045`), the app base is `0x27000`, and the UF2-writable window **ends at
@@ -59,7 +59,7 @@ In short: the kit ships the *Sense* bootloader config (`XIAO-SENSE`, UF2 family
 | Item | Detail |
 |---|---|
 | Kit SKU | 102010710 |
-| Controller | Seeed **XIAO nRF52840** (the plain board, SKU 5201 — *not* the Sense, and *not* the Plus) |
+| Controller | Seeed **XIAO nRF52840** (the plain board, SKU 5201—*not* the Sense, and *not* the Plus) |
 | Radio carrier | **Wio-SX1262 for XIAO** (standalone SKU 113010003) |
 | GNSS | **Not included.** Seeed's L76K GNSS Module for XIAO (SKU 5864) is a separate purchase that stacks on the same header |
 | Battery | Not included; connects to the XIAO's `BAT+`/`BAT-` pads |
@@ -84,7 +84,7 @@ Seeed's specification table for the kit:
 The two boards mate through the XIAO's standard 2×7 2.54 mm through-hole
 header; the kit ships as two boards plus pin headers and is soldered by the
 user. There is no board-to-board connector on this variant (that is the XIAO
-ESP32S3 kit — see [Pinout variants](#pinout-variants-do-not-mix-them)).
+ESP32S3 kit—see [Pinout variants](#pinout-variants-do-not-mix-them)).
 
 ## Relationship to the SenseCAP Solar Node P1-Pro
 
@@ -113,7 +113,7 @@ designs share the same controller family and the same radio module.
 | User LEDs | one common-anode RGB, **active-low**, `P0.26`/`P0.06`/`P0.30` | two discrete LEDs, **active-high**, `P0.15` (white) / `P0.19` (blue) |
 | Buttons | one, on the radio carrier, `D0`/`P0.02` | two, `P1.01` (PWR) and `P1.07` (USR) |
 | Charger | TI **BQ25100**, 50/100 mA, firmware-visible status and current select | **CN3165** solar charger, ~0.99 A, fully autonomous, no firmware interface |
-| GNSS power | none — the L76K is permanently powered; only standby (`D0`) is controllable | `P1.05` GPS_EN, `P1.03` reset candidate |
+| GNSS power | none—the L76K is permanently powered; only standby (`D0`) is controllable | `P1.05` GPS_EN, `P1.03` reset candidate |
 | Grove / I²C | no Grove; I²C must be borrowed from `D6`/`D7` or the NFC pins | dedicated Grove on `P0.09`/`P0.10` |
 | External flash | 2 MB P25Q16H QSPI, on the XIAO itself | 2 MB P25Q16H QSPI, on the XIAO itself (same) |
 | UF2 family / DFU volume | **`0x28860045`** / `XIAO-SENSE` (Sense bootloader config on plain hardware) | `0x28860044` / `SENSECAP` |
@@ -128,7 +128,7 @@ resistor is **510 kΩ 1 %**, not 512 kΩ, and Meshtastic's variant agrees
 VBAT_mV = raw * (3600 * 1510 / 510) / 4096 = raw * 10659 / 4096
 ```
 
-That is +0.26 % against the current value — well inside 1 % resistor tolerance,
+That is +0.26 % against the current value—well inside 1 % resistor tolerance,
 so it is not a bug, but the XIAO kit BSP should use 10 659 and the Solar Node
 constant is worth revisiting if that board is ever bench-calibrated.
 
@@ -163,12 +163,12 @@ constant is worth revisiting if that board is ever bench-calibrated.
             +----------------------+
 ```
 
-`D0` is the one contended net on this board — but only for someone who solders
+`D0` is the one contended net on this board—but only for someone who solders
 the missing switch. As shipped there is no user button anywhere in the kit, and
 `D0` belongs to the GNSS module alone. See
 [D0 and the missing button](#d0-and-the-missing-button).
 
-## Pinout variants — do not mix them
+## Pinout variants—do not mix them
 
 Meshtastic's `variant.h` supports four different pinouts behind preprocessor
 flags. Only the first applies to this kit; the others exist for adjacent
@@ -201,12 +201,12 @@ out to a header. This table is therefore high-confidence throughout.
 | SPI SCK | 8 | `P1.13` | schematic J2.6; 22 Ω series |
 | SPI MISO | 9 | `P1.14` | schematic J2.5; 22 Ω series |
 | SPI MOSI | 10 | `P1.15` | schematic J2.4; 22 Ω series |
-| GNSS standby / optional user button | 0 | `P0.02` | schematic: K1 to GND + R2 10 kΩ pull-up. **Neither is fitted on retail boards** — no external pull, internal pull-up required if used as an input |
+| GNSS standby / optional user button | 0 | `P0.02` | schematic: K1 to GND + R2 10 kΩ pull-up. **Neither is fitted on retail boards**—no external pull, internal pull-up required if used as an input |
 | UART TX (to GNSS RX) | 6 | `P1.11` | not connected on the carrier; free |
 | UART RX (from GNSS TX) | 7 | `P1.12` | not connected on the carrier; free |
-| RGB LED — red | 11 | `P0.26` | schematic: common anode, 2.2 kΩ, **active-low** |
-| RGB LED — blue | 12 | `P0.06` | schematic: common anode, 2.2 kΩ, **active-low** |
-| RGB LED — green | 13 | `P0.30` | schematic: common anode, 10 kΩ, **active-low** |
+| RGB LED—red | 11 | `P0.26` | schematic: common anode, 2.2 kΩ, **active-low** |
+| RGB LED—blue | 12 | `P0.06` | schematic: common anode, 2.2 kΩ, **active-low** |
+| RGB LED—green | 13 | `P0.30` | schematic: common anode, 10 kΩ, **active-low** |
 | Battery divider low side (`READ_BAT`) | 14 | `P0.14` | **drive LOW or leave input; never drive HIGH** |
 | IMU power (`6D_PWR`) | 15 | `P1.08` | Sense-only; absent on this kit |
 | IMU I²C SCL | 16 | `P0.27` | Sense-only; absent on this kit |
@@ -263,7 +263,7 @@ carrier). From the carrier schematic:
 | 6 | `NSS` | `LORA_SPI_NSS` via R3 22 Ω 1 % | J1.5 | D4 / `P0.04` |
 | 7 | `GND1` | GND | — | — |
 | 8 | `VCC` | +3V3 (from the XIAO's 3V3 pin), 100 nF bulk | J2.3 | — |
-| 9 | `ANT` | marked no-connect on the carrier — RF is handled inside the module | — | — |
+| 9 | `ANT` | marked no-connect on the carrier—RF is handled inside the module | — | — |
 | 10 | `GND2` | GND | — | — |
 | 11 | `BUSY` | `LORA_BUSY` | J1.4 | D3 / `P0.29` |
 | 12 | `DIO1` | `LORA_DIO1` | J1.2 | D1 / `P0.03` |
@@ -271,7 +271,7 @@ carrier). From the carrier schematic:
 Header mapping, for anyone tracing the physical board: J1 is the XIAO's left
 column (`D0, D1, D2, D3, D4, D5, D6`, with J1.7/`D6` unpopulated) and J2 is the
 right column (`5V, GND, 3V3, D10, D9, D8, D7`, with J2.7/`D7` unpopulated).
-**`D6` and `D7` carry no signal on the radio carrier** — they are the pins the
+**`D6` and `D7` carry no signal on the radio carrier**—they are the pins the
 GNSS module or an I²C peripheral uses.
 
 Two consequences worth designing around:
@@ -320,7 +320,7 @@ Meshtastic sets none of these explicitly for this variant.
 5. Configure DIO2 as the RF-switch control. Leave TXEN unconnected.
 6. Drive RXEN according to the module's expected receive state.
 7. Start at a conservative current limit and verify 22 dBm against regional
-   limits and the supply before trusting it — the kit is powered from a single
+   limits and the supply before trusting it—the kit is powered from a single
    cell through the XIAO's 3V3 regulator, and 22 dBm TX current is significant
    relative to that path.
 
@@ -343,8 +343,8 @@ by hand; the pull-up is absent as well.
 That combination has two consequences that shape everything below:
 
 1. **`P0.02` has no external pull of any kind.** It idles floating, not high.
-   Any UMSH build that treats it as an input — with or without a button
-   fitted — must enable the **internal** pull-up. A floating input with the
+   Any UMSH build that treats it as an input—with or without a button
+   fitted—must enable the **internal** pull-up. A floating input with the
    nRF52840's input buffer connected sits near mid-rail and burns current
    through the buffer, which on a board chasing a < 5 µA standby figure is not
    a rounding error. On a stock kit with no button and no GNSS, `P0.02` should
@@ -352,15 +352,15 @@ That combination has two consequences that shape everything below:
 2. **`D0` is the designated user-button pin, optionally.** The footprint is
    there for exactly this purpose, so UMSH should treat "user button on
    `P0.02`, active-low, internal pull-up" as a supported board profile that
-   users opt into with a soldering iron — not as something the firmware
+   users opt into with a soldering iron—not as something the firmware
    pretends exists.
 
-So the contention Meshtastic warns about —
+So the contention Meshtastic warns about—
 
 > the user button is activated on `D0`. The button conflicts with the official
 > GNSS module, so caution is advised
 
-— **does not exist on a stock kit**. `D0` is free, and it belongs to the L76K's
+—**does not exist on a stock kit**. `D0` is free, and it belongs to the L76K's
 standby pin. The warning applies only to someone who solders the missing
 switch, which the Meshtastic DIY variant's README actively encourages
 ("it's nice to be able to gracefully shutdown a node by holding it down for
@@ -368,7 +368,7 @@ switch, which the Meshtastic DIY variant's README actively encourages
 
 If K1 *is* fitted, the hazard is concrete: firmware driving `D0` high to bring
 the GNSS out of standby, while the user presses the switch, shorts an MCU output
-straight to ground. nRF52840 pins survive it — drive strength is limited — but
+straight to ground. nRF52840 pins survive it—drive strength is limited—but
 it is out of spec and it draws real current. In that configuration GNSS and the
 button are mutually exclusive, and the choice must be build-time.
 
@@ -384,7 +384,7 @@ neither is right for stock hardware:
   MeshCore's hold-to-power-off gesture is unreachable and its System OFF has no
   armed wake source (see [Buttons](#buttons-and-wake-behavior)). Its runtime
   `INPUT_PULLUP` is right for a retrofitted switch; its System OFF arming is
-  not — see below.
+  not—see below.
 
 ### What this costs UMSH
 
@@ -401,8 +401,8 @@ control come over USB-CDC (ULCP) or BLE, and any "power off" is either a reboot
 or a one-way System OFF escapable only by reset or by attaching USB.
 
 If a button is wanted, K1's footprint is the intended place for it, and `D0`
-is clean through reset — the bootloader's own DFU inputs are `P0.18` (RESET)
-and `P0.03`, not `P0.02` — so a hold-at-boot gesture would work on a modified
+is clean through reset—the bootloader's own DFU inputs are `P0.18` (RESET)
+and `P0.03`, not `P0.02`—so a hold-at-boot gesture would work on a modified
 board. That should be an explicitly separate board profile, not the default.
 
 ## GNSS
@@ -413,7 +413,7 @@ The L76K GNSS Module for XIAO is a separate purchase. When fitted:
 |---|---|---|
 | MCU UART TX → GNSS RX | D6 | `P1.11` |
 | MCU UART RX ← GNSS TX | D7 | `P1.12` |
-| Standby / wake | D0 | `P0.02` (free on a stock kit — the button is unpopulated) |
+| Standby / wake | D0 | `P0.02` (free on a stock kit—the button is unpopulated) |
 
 Baud rate 9600; both firmwares use a 50 ms GNSS worker interval.
 
@@ -427,7 +427,7 @@ latency.
 ### Serial direction naming
 
 The SenseCAP Solar Node document warns at length about `GPS_TX` / `GPS_RX` alias
-confusion. That ambiguity **does not exist here** — both trees agree and
+confusion. That ambiguity **does not exist here**—both trees agree and
 Meshtastic comments the direction explicitly:
 
 ```c
@@ -458,8 +458,8 @@ which is where UMSH's Solar Node constant came from.
 
 ### The P0.14 rule
 
-The schematic carries an explicit instruction — *"Set P0.14 to output Sink only
-to enable BAT voltage read"* — and Seeed's wiki FAQ (Q3) states the consequence:
+The schematic carries an explicit instruction—*"Set P0.14 to output Sink only
+to enable BAT voltage read"*—and Seeed's wiki FAQ (Q3) states the consequence:
 
 > When P0.14 is set HIGH, the battery voltage reading path is disabled and P0.31
 > may reach the input voltage limit of 3.6 V, posing a risk of damaging the
@@ -480,21 +480,21 @@ user-requested (non-low-voltage) System OFF, when the cell is by definition not
 being charged.
 
 **Meshtastic does not.** `battery_adcDisable()` executes
-`digitalWrite(ADC_CTRL, !ADC_CTRL_ENABLED)` — i.e. it drives `P0.14` **HIGH**
+`digitalWrite(ADC_CTRL, !ADC_CTRL_ENABLED)`—i.e. it drives `P0.14` **HIGH**
 after every battery read, which is precisely the state Seeed says to avoid. This
 is a genuine defect in the shipping Meshtastic build for this board, and UMSH
 should not copy the gating pattern.
 
 The cost of complying is small: with the divider permanently enabled the
 quiescent draw is 4.2 V / 1.51 MΩ ≈ **2.8 µA**. That is not nothing against the
-board's "< 5 µA standby" figure, so it is tempting to look for an "off" state —
+board's "< 5 µA standby" figure, so it is tempting to look for an "off" state—
 but there isn't one. The three possibilities, for a 4.2 V cell at VDD = 3.3 V:
 
 | `P0.14` state | Voltage at `P0.31` | Current | Verdict |
 |---|---:|---:|---|
 | driven LOW | 1.42 V | 2.8 µA | safe; the intended state |
 | driven HIGH | 3.60 V | 0.6 µA | exactly at the `VDD + 0.3` absolute maximum; Seeed says don't |
-| disconnected input | 4.2 V (clamps into the ESD diode) | ~0.3 µA | **worst** — well past absolute maximum |
+| disconnected input | 4.2 V (clamps into the ESD diode) | ~0.3 µA | **worst**—well past absolute maximum |
 
 High-Z is the intuitive "disconnect" and it is the wrong answer: with no path
 through R18, the tap floats to the full cell voltage and is held down only by
@@ -507,20 +507,20 @@ That is off by a factor of 1000 (the network is 1.5 MΩ, not 1.5 kΩ) and its
 inline voltage arithmetic does not evaluate to the number it states. The
 conclusion is right; the numbers are not.
 
-### ADC configuration — the two firmwares are consistent, not contradictory
+### ADC configuration—the two firmwares are consistent, not contradictory
 
 The SenseCAP document flags a ~21 % scaling disagreement between the two
-implementations. On *this* board there is no such conflict — each firmware pairs
+implementations. On *this* board there is no such conflict—each firmware pairs
 its own reference constant with its own `analogReference()` call:
 
 | | MeshCore | Meshtastic |
 |---|---:|---:|
 | Resolution | 12 bit | 10 bit (`BATTERY_SENSE_RESOLUTION_BITS`) |
-| SAADC reference | `AR_INTERNAL_3_0` — 0.6 V ref, gain 1/5 → **3.0 V** full scale | never calls `analogReference()`; framework default `AR_INTERNAL` — 0.6 V ref, gain 1/6 → **3.6 V** full scale, matching `architecture.h`'s `AREF_VOLTAGE 3.6` |
+| SAADC reference | `AR_INTERNAL_3_0`—0.6 V ref, gain 1/5 → **3.0 V** full scale | never calls `analogReference()`; framework default `AR_INTERNAL`—0.6 V ref, gain 1/6 → **3.6 V** full scale, matching `architecture.h`'s `AREF_VOLTAGE 3.6` |
 | Multiplier | 3.0 | 3 |
 | Result | `raw × 3.0 × 3.0 / 4.096` mV | `raw × 3 × (1000 × 3.6 / 1024)` mV |
 
-Both read about **1.3 % high** — the error is the shared 3.0-vs-2.9608 divider
+Both read about **1.3 % high**—the error is the shared 3.0-vs-2.9608 divider
 rounding, not any disagreement between the two implementations. A 4.20 V cell
 reads 4.26 V under either. There is nothing to arbitrate.
 
@@ -546,26 +546,26 @@ the constant is trusted for a protective cutoff.
 
 MeshCore's `NRF52_POWER_MANAGEMENT` support for this board defines:
 
-- boot lockout at **3300 mV** (`PWRMGT_VOLTAGE_BOOTLOCK`) — refuses to boot
+- boot lockout at **3300 mV** (`PWRMGT_VOLTAGE_BOOTLOCK`)—refuses to boot
   below it
 - LPCOMP input AIN7 / `P0.31` (`PWRMGT_LPCOMP_AIN 7`)
 - LPCOMP reference selection `2` = 3/8 VDD (`PWRMGT_LPCOMP_REFSEL`)
 
 With the true 2.9608 ratio, the 3/8-VDD threshold corresponds to a cell voltage
-of VDD × 0.375 × 2.9608 — about **3.67 V at VDD = 3.3 V**, or 3.33 V at
+of VDD × 0.375 × 2.9608—about **3.67 V at VDD = 3.3 V**, or 3.33 V at
 VDD = 3.0 V. MeshCore's own comment estimates 3.38–3.71 V using the rounded
 multiplier. Note the strong VDD dependence: this is a relative comparator, so
 the recovery threshold moves with the rail.
 
 The shutdown path is the standard one:
 
-- **low-voltage / boot-protect off** — leave `P0.14` LOW (divider live), arm
+- **low-voltage / boot-protect off**—leave `P0.14` LOW (divider live), arm
   LPCOMP on AIN7, enter System OFF, wake when the cell recovers.
-- **user-requested off** — `P0.14` HIGH, no LPCOMP, wake on the `D0` button.
+- **user-requested off**—`P0.14` HIGH, no LPCOMP, wake on the `D0` button.
 
 That second case is the one place MeshCore does drive `P0.14` high. It is the
 least-bad of the two non-LOW options (0.6 µA and exactly at the absolute
-maximum, versus high-Z's 4.2 V on the pin), and no charge current is flowing —
+maximum, versus high-Z's 4.2 V on the pin), and no charge current is flowing—
 but it is still outside Seeed's stated rule. A UMSH implementation that wants
 the 2.8 µA back on a user-requested System OFF should treat it as a deliberate,
 documented deviation, not as the default.
@@ -576,8 +576,8 @@ LPCOMP on AIN7 against 3/8 VDD with upward detection and 50 mV of hysteresis
 `umsh-bsp-xiao-nrf52`'s shutdown teardown), and `P0.14` stays LOW on every
 path, so the deviation above never arises. The VDD dependence turns out to be
 benign here: the cell feeds VDDH and REG0 holds VDD at 3.3 V, and while the
-regulator is in dropout the tap sits at 0.338 × VDD — below the 0.375 × VDD it
-would have to cross — so the comparator cannot trip until the rail is back in
+regulator is in dropout the tap sits at 0.338 × VDD—below the 0.375 × VDD it
+would have to cross—so the comparator cannot trip until the rail is back in
 regulation. One effective wake point at ≈3.66 V of cell, not a sliding one.
 
 ## Charging
@@ -585,11 +585,11 @@ regulation. One effective wake point at ≈3.66 V of cell, not a sliding one.
 The charger is a TI **BQ25100** (schematic reference U2). Seeed's specification
 table names it "BQ25101" while linking the BQ25100 datasheet; Meshtastic's
 variant comments say "BQ25101" and its pin-map comment says "BQ25100". Treat
-BQ25100 as authoritative — that is what the schematic shows.
+BQ25100 as authoritative—that is what the schematic shows.
 
 Firmware-visible interface:
 
-**Charge current select — `P0.13` (D22, `HICHG`).** The ISET pin has a fixed
+**Charge current select—`P0.13` (D22, `HICHG`).** The ISET pin has a fixed
 2.7 kΩ to ground plus a second 2.7 kΩ that `P0.13` can pull to ground. Driving
 `P0.13` LOW puts the two in parallel (1.35 kΩ) and doubles the charge current.
 
@@ -600,10 +600,10 @@ Firmware-visible interface:
 
 Both firmwares drive it LOW at init for 100 mA, and Seeed's wiki documents the
 same convention. UMSH should make this a build/config choice keyed to the actual
-cell — 100 mA is a sensible default for anything above ~500 mAh but is a 1C-plus
+cell—100 mA is a sensible default for anything above ~500 mAh but is a 1C-plus
 rate for a small cell.
 
-**Charge status — `P0.17` (D23, `~CHG`).** The BQ25100's open-drain status
+**Charge status—`P0.17` (D23, `~CHG`).** The BQ25100's open-drain status
 output. It shares a node with the red charge LED (3V3 → 2.2 kΩ → LED →
 `P0.17`), so the LED and the MCU see the same signal.
 
@@ -614,7 +614,7 @@ Meshtastic models this as `EXT_CHRG_DETECT (23)` with
 `EXT_CHRG_DETECT_VALUE LOW`; MeshCore names the same pin `BAT_NOT_CHARGING (23)`
 with the comment "LOW when charging". They agree.
 
-`P0.17` must be configured as an **input only** — driving it fights the
+`P0.17` must be configured as an **input only**—driving it fights the
 charger's open-drain output and the LED. Note also that it cannot distinguish
 "battery full" from "no input power"; combine it with the nRF52840's own VBUS
 detection (`POWER->USBREGSTATUS`) to tell those apart, exactly as the Solar Node
@@ -623,8 +623,8 @@ BSP does.
 **Temperature qualification: none.** The schematic ties the `TS` pin to VSS
 through a fixed 10 kΩ with the note "NTC: Disable Temp sense function". There is
 no battery thermistor, and firmware cannot inhibit charging on temperature.
-Since the kit ships without a cell, the pack's own protection circuitry — if any
-— is entirely the user's responsibility.
+Since the kit ships without a cell, the pack's own protection circuitry—if any
+—is entirely the user's responsibility.
 
 ## LEDs
 
@@ -646,7 +646,7 @@ This is the **opposite polarity** to the SenseCAP Solar Node's discrete
 active-high LEDs, and it is an easy way to ship a board that appears
 inverted-but-working.
 
-There is no color-naming dispute on this board — both firmwares assign the same
+There is no color-naming dispute on this board—both firmwares assign the same
 three pins to the same three colors, and the schematic net names
 (`P0.26_USER_RED`, `P0.06_USER_BLUE`, `P0.30_USER_GREEN`) confirm them. The one
 wrinkle: Seeed's own pin table hedges blue as "13/12" and green as "12/13",
@@ -669,7 +669,7 @@ Firmware role assignments differ and are pure policy:
 
 **A stock kit has exactly one button: RESET** on the XIAO (`P0.18`, 10 kΩ
 pull-up and a 100 nF cap, beside the USB-C connector). It is not readable as a
-GPIO in the application — `P0.18` is configured as `nRESET` via UICR
+GPIO in the application—`P0.18` is configured as `nRESET` via UICR
 `PSELRESET`. The radio carrier's K1 footprint ships bare.
 
 ### System OFF has no button wake
@@ -710,18 +710,18 @@ In that profile:
 
 - **The internal pull-up is mandatory**, not belt-and-braces. R2 is not fitted,
   so nothing else holds `P0.02` high. Configure `INPUT_PULLUP` (nRF52840
-  internal pull is nominally 13 kΩ, giving ~250 µA while the button is held —
+  internal pull is nominally 13 kΩ, giving ~250 µA while the button is held—
   acceptable for a momentary press).
 - Treat the button as active-low; debounce in firmware, since a bare mechanical
   switch with no hardware RC will bounce freely.
 - Wait for release before entering System OFF, then arm `P0.02` as a
-  `SENSE_LOW` GPIO-`DETECT` wake source — **with the pull-up retained**.
+  `SENSE_LOW` GPIO-`DETECT` wake source—**with the pull-up retained**.
 - Expect wake from System OFF to be a cold boot, not a resume.
 
 > **Do not copy MeshCore's System OFF arming verbatim on this board.**
 > `XiaoNrf52Board::powerOff()` calls
 > `nrf_gpio_cfg_sense_input(..., NRF_GPIO_PIN_NOPULL, NRF_GPIO_PIN_SENSE_LOW)`.
-> Dropping the pull is correct only where an external pull-up exists — and on
+> Dropping the pull is correct only where an external pull-up exists—and on
 > this carrier R2 is absent. With `NOPULL` and no external pull, `P0.02` floats
 > into a `SENSE_LOW` detector: the board will wake spuriously, or immediately,
 > and will draw current doing it. Use `NRF_GPIO_PIN_PULLUP` here.
@@ -763,7 +763,7 @@ published `v1.1` schematic labelling U7's value field `DNP`. Everything except
 that annotation agrees: Seeed's specification lists "2 MB onboard Flash", the
 wiki text repeats it, both firmware trees define
 `EXTERNAL_FLASH_DEVICES P25Q16H`, and MeshCore ships `QSPIFLASH=1` companion
-builds for this exact board. The `DNP` is a stale value field — the same
+builds for this exact board. The `DNP` is a stale value field—the same
 drawing marks the (genuinely unpopulated) header footprints the same way, and
 conversely leaves the carrier's unpopulated K1 unmarked. Treat that field as
 noise on this drawing.
@@ -771,13 +771,13 @@ noise on this drawing.
 MeshCore actively uses the flash for its companion-radio filesystem builds;
 Meshtastic's kit variant has the entire QSPI block **commented out** and uses
 internal flash only. If UMSH follows its existing pattern (sequential-storage on
-internal NVMC), the QSPI flash is simply unused — but it should still be left
+internal NVMC), the QSPI flash is simply unused—but it should still be left
 in deep power-down rather than floating, since an unconfigured QSPI flash
 drawing standby current will dominate the board's < 5 µA figure.
 
 ## Clock, power, and USB
 
-**32.768 kHz crystal — confirmed present.** The schematic shows X1 across
+**32.768 kHz crystal—confirmed present.** The schematic shows X1 across
 `P0.00/XL1` and `P0.01/XL2` with 10 pF loading capacitors, and both firmware
 trees define `USE_LFXO`. UMSH can use `lfclk-xtal` with confidence; there is no
 need for the `lfclk-rc` fallback that the Wio Tracker L1 required.
@@ -792,7 +792,7 @@ only input-power indication the board has beyond the charger's `~CHG` line.
 
 **NFC pins.** `P0.09` and `P0.10` are the NFC antenna pads. Using them as GPIO
 (which Meshtastic's default kit build does, for I²C) requires
-`CONFIG_NFCT_PINS_AS_GPIOS` — on bare metal that means clearing `UICR.NFCPINS`,
+`CONFIG_NFCT_PINS_AS_GPIOS`—on bare metal that means clearing `UICR.NFCPINS`,
 a persistent write that requires a UICR erase and a reset to take effect. A UMSH
 port that does not need I²C should leave them alone.
 
@@ -816,7 +816,7 @@ should expect third-party accessories built for either firmware to need a swap.
 
 MeshCore also declares `PIN_LSM6DS3TR_C_POWER (15)` and the PDM microphone pins,
 inherited from the Sense variant. **The kit's XIAO nRF52840 has neither the IMU
-nor the microphone** — those pins (`P1.08`, `P0.27`, `P0.07`, `P0.11`, `P1.10`,
+nor the microphone**—those pins (`P1.08`, `P0.27`, `P0.07`, `P0.11`, `P1.10`,
 `P1.00`, `P0.16`) are simply unrouted. They are not available as expansion GPIO
 either, since the plain XIAO does not break them out.
 
@@ -834,17 +834,17 @@ bootloader's own `CURRENT.UF2`:
 | **Board-ID** | **`Seeed_XIAO_nRF52840_Sense`** |
 | **Volume label** | **`XIAO-SENSE`** (macOS mounts `/Volumes/XIAO-SENSE`) |
 | SoftDevice | `S140 version 7.3.0` |
-| **UF2 family ID** | **`0x28860045`** — read from the family-ID field of `CURRENT.UF2` |
+| **UF2 family ID** | **`0x28860045`**—read from the family-ID field of `CURRENT.UF2` |
 | UF2-writable window | **`0x01000` – `0xEA000`** (3728 blocks × 256 B payload) |
-| Application base | **`0x27000`** — the pre-flashed Meshtastic image's vector table is there (SP `0x20040000`, reset `0x00072149`); `0x26000` holds SoftDevice tail data, not a vector table |
+| Application base | **`0x27000`**—the pre-flashed Meshtastic image's vector table is there (SP `0x20040000`, reset `0x00072149`); `0x26000` holds SoftDevice tail data, not a vector table |
 
 **The retail kit ships the *Sense* bootloader configuration on plain XIAO
-nRF52840 hardware.** The earlier caution in this document — that this had been
-"reported in the wild" — is confirmed. The board-specific family is therefore
+nRF52840 hardware.** The earlier caution in this document—that this had been
+"reported in the wild"—is confirmed. The board-specific family is therefore
 `0x28860045`, **not** the `0x28860044` that UMSH uses for the SenseCAP Solar
 Node, and the volume is `XIAO-SENSE`, not `XIAO-BOOT`.
 
-Note also that this is a **2021-vintage 0.6.1 bootloader** — it predates the
+Note also that this is a **2021-vintage 0.6.1 bootloader**—it predates the
 `OTAFIX`/`BP` builds seen on the Solar Node and the T-Echo, and it is old enough
 that its behavior should not be assumed to match those boards'.
 
@@ -852,7 +852,7 @@ that its behavior should not be assumed to match those boards'.
 
 Three single-block UF2 files were copied to the DFU volume on the unit above
 (2026-08-03). Each was self-contained (`numBlocks = 1`), because
-`flash_nrf5x_flush()` only runs once `numWritten >= numBlocks` — a rejected
+`flash_nrf5x_flush()` only runs once `numWritten >= numBlocks`—a rejected
 block never advances that counter, so a mixed file would never commit. The
 target was `0xC0000`, inside the 176 KB of blank flash above the pre-flashed
 Meshtastic image (which ends at `0x0BDE00`), so nothing in use was disturbed.
@@ -864,8 +864,8 @@ afterwards identifies the family the bootloader honored.
 | Probe | Family | Address | `cp` result | DFU volume after | Outcome |
 |---|---|---|---|---|---|
 | 1 | `0x28860044` (our SenseCAP preset) | `0xC0000` | **exit 0, no error** | still mounted | **ignored** |
-| 2 | `0xADA52840` | **`0xEA000`** | **exit 0, no error** | still mounted | **ignored** — above `USER_FLASH_END` |
-| 3 | `0xADA52840` | `0xC0000` | failed *only* on extended attributes: `Device not configured` | **gone** | **accepted** — flushed and reset mid-copy |
+| 2 | `0xADA52840` | **`0xEA000`** | **exit 0, no error** | still mounted | **ignored**—above `USER_FLASH_END` |
+| 3 | `0xADA52840` | `0xC0000` | failed *only* on extended attributes: `Device not configured` | **gone** | **accepted**—flushed and reset mid-copy |
 
 Read back from `CURRENT.UF2` after re-entering DFU:
 
@@ -880,21 +880,21 @@ Reading the results together:
 - **The generic `0xADA52840` family is accepted, and its bytes reach flash.**
   Probe 3's tag is present byte-exact, with `FF` padding after it and the
   adjacent block untouched. It was also the only probe to reach the completion
-  path — `numWritten >= numBlocks` → `flash_nrf5x_flush()` → reset — which tore
+  path—`numWritten >= numBlocks` → `flash_nrf5x_flush()` → reset—which tore
   the USB mass-storage device down before macOS could write the file's extended
   attributes. That `cp` error *is* the success signature. The board then
   re-enumerated running Meshtastic, so the write did not disturb the existing
   application.
 - **`0x28860044` is silently ignored on this unit.** Probe 1 copied with **exit
   status 0 and no error of any kind**, and `0xC0000` holds probe 3's tag, not
-  probe 1's — at the same address, so this is not an inference. Nothing in the
+  probe 1's—at the same address, so this is not an inference. Nothing in the
   copy path distinguishes a rejected family from a real flash; a script that
   checks only the copy's exit status will report a flash that never happened.
 - **`USER_FLASH_END` is `0xEA000`, empirically.** Probe 2 used the *accepted*
   family and still did nothing, because `in_app_space()` excludes it. The 40 KB
   reserve is real, not just a source-code inference. (`0xEA000` is also past the
   end of `CURRENT.UF2`, so the region cannot even be read back through the
-  bootloader — consistent with it being outside the app window.)
+  bootloader—consistent with it being outside the app window.)
 
 One artifact remains on the unit: 256 bytes of tag text at `0xC0000`, in flash
 that no firmware uses. Any future UF2 flash that covers that page erases it.
@@ -920,8 +920,8 @@ DFU_APP_DATA_RESERVED`, and `linker/nrf52840.ld` puts the bootloader at
 Two consequences for UMSH:
 
 - **The application must end at `0xEA000`, not `0xED000`.** `write_block` gates
-  every write on `in_app_space(addr)` — `USER_FLASH_START <= addr <
-  USER_FLASH_END` — and blocks above `0xEA000` are simply not applied. An image
+  every write on `in_app_space(addr)`—`USER_FLASH_START <= addr <
+  USER_FLASH_END`—and blocks above `0xEA000` are simply not applied. An image
   linked past that boundary is **silently truncated**, with the UF2 copy
   reporting success. Meshtastic's linker script (`LENGTH = 0xEA000 - 0x27000`)
   is exactly right; **MeshCore's (`LENGTH = 0xED000 - 0x27000`) overruns the
@@ -932,7 +932,7 @@ Two consequences for UMSH:
   Meshtastic exploits for its warm-node-store ring at `0xEA000`–`0xED000`. If
   UMSH follows its usual convention of a 64 KB store at the top of the app
   window, that store must sit **below** `0xEA000` (i.e. `0xDA000`–`0xEA000`)
-  and will be erased by every UF2 flash — or be moved deliberately into the
+  and will be erased by every UF2 flash—or be moved deliberately into the
   reserve, accepting that the region is nominally the Adafruit core's.
 
 ### Other parameters
@@ -940,7 +940,7 @@ Two consequences for UMSH:
 | Parameter | Value | Source |
 |---|---|---|
 | Bootloader settings | `0xFF000` | both board JSONs; confirmed by the linker script |
-| Max application size | 811 008 B (MeshCore) / 815 104 B (Meshtastic) | board JSONs — **both exceed the 798 720 B writable window** |
+| Max application size | 811 008 B (MeshCore) / 815 104 B (Meshtastic) | board JSONs—**both exceed the 798 720 B writable window** |
 | USB VID / PID (app) | `0x2886` / `0x0044` | MeshCore board JSON, bootloader `board.h` |
 | USB product string | `XIAO nRF52840` | MeshCore board JSON |
 | 1200-baud touch | supported | both board JSONs |
@@ -966,7 +966,7 @@ For the two Seeed XIAO bootloader configurations:
 | `xiao_nrf52840_ble` (plain) | `0x0044` | **`0x28860044`** | `XIAO-BOOT` | `nRF52840-SeeedXiao-v1` |
 | `xiao_nrf52840_ble_sense` | `0x0045` | **`0x28860045`** | `XIAO-SENSE` | `nRF52840-SeeedXiaoSense-v1` |
 
-**The observed retail kit is the second row** — `XIAO-SENSE` / `0x28860045`.
+**The observed retail kit is the second row**—`XIAO-SENSE` / `0x28860045`.
 `0x28860044` is what UMSH uses for the SenseCAP Solar Node, whose rebuilt
 bootloader carries the *plain* XIAO's USB IDs; that remains good corroboration
 that the Solar Node is XIAO-derived, but it does **not** transfer to this kit.
@@ -976,26 +976,26 @@ runs, and both branches were exercised on hardware (see
 [the probe results](#family-id-acceptance-and-the-flash-ceiling-verified-by-experiment)).
 So:
 
-- **Pack UMSH images for this board with the generic `0xADA52840`** —
+- **Pack UMSH images for this board with the generic `0xADA52840`**—
   **verified accepted** on this unit. It works on every Adafruit-derived
   nRF52840 bootloader regardless of which Seeed board config was flashed, which
   matters here precisely because Seeed ships the Sense config on plain
   hardware. The board-specific `0x28860045` would also work on this unit but
   buys nothing and breaks on any unit that shipped `XIAO-BOOT`.
-- **A UF2 with the wrong family is silently ignored** — **verified**: the copy
+- **A UF2 with the wrong family is silently ignored**—**verified**: the copy
   returns success with no error, the volume stays mounted, and nothing is
   written. Nothing in the copy path distinguishes it from a real flash. If a
   flash appears to succeed but the board comes back running the old image,
   check the family before anything else.
 
 `scripts/firmware_image.py`'s existing `sensecap-solar` preset (base `0x27000`, family
-`0x28860044`) **was tested against this kit and failed silently** — probe 1
+`0x28860044`) **was tested against this kit and failed silently**—probe 1
 above. The `xiao-nrf52` preset added on 2026-08-03 carries the working values:
 
 ```python
 "xiao-nrf52": {
     "base": 0x27000,
-    "family": 0xADA52840,          # generic nRF52840 — tolerates XIAO-BOOT and XIAO-SENSE
+    "family": 0xADA52840,          # generic nRF52840—tolerates XIAO-BOOT and XIAO-SENSE
     "mount": "/Volumes/XIAO-SENSE",  # retail units; XIAO-BOOT if re-bootloadered
     "description": "Seeed XIAO nRF52840 + Wio-SX1262 Kit",
 },
@@ -1012,7 +1012,7 @@ Meshtastic's `boards/` directory contains two relevant and mutually inconsistent
 JSON files, neither of which describes real hardware:
 
 - `boards/seeed_xiao_nrf52840_kit.json` declares hwids `0x2886` / **`0x0166`**
-  and `usb_product: "XIAO-BOOT"` — but no PlatformIO env selects it.
+  and `usb_product: "XIAO-BOOT"`—but no PlatformIO env selects it.
 - `boards/xiao_ble_sense.json`, which the kit's env *does* select
   (`board = xiao_ble_sense`), declares Adafruit hwids `0x239A` / `0x810B` and
   `extra_flags: -DARDUINO_MDBT50Q_RX`. Those are a Raytac module's identifiers,
@@ -1030,7 +1030,7 @@ The kit's wiki page carries an explicit caution:
 > Please `don't use NRF-OTA` to update the firmware, it may cause the device to
 > be completely dead.
 
-UMSH has no OTA path on nRF52 today, so this is informational — but it argues
+UMSH has no OTA path on nRF52 today, so this is informational—but it argues
 against ever adding one for this board without recovering-by-SWD as a fallback.
 The SWD pads (TP1 GND, TP2 RESET, TP3 SWDCLK, TP5 SWDIO) are on the underside of
 the XIAO and are the only guaranteed recovery route.
@@ -1045,7 +1045,7 @@ the XIAO and are the only guaranteed recovery route.
 | Radio RESET idle | not addressed | not addressed | 10 kΩ pull-up on the carrier; radio is *not* held in reset by a floating pin. |
 | GNSS | enabled; UART D6/D7, standby D0 | **removed** (`-UENV_INCLUDE_GPS`) | Optional module. On a stock kit D0 is uncontended, so GNSS is free to use it. |
 | User button | **none** in the default build; D0 only in `_i2c` | D0, `INPUT_PULLUP`, active-low, System OFF wake source | Neither K1 nor R2 is fitted. Meshtastic matches the shipping board; MeshCore's button does not exist on retail hardware. Offer it as an opt-in retrofit profile. |
-| System OFF wake arming | n/a | `nrf_gpio_cfg_sense_input(..., **NOPULL**, SENSE_LOW)` | **Wrong for this carrier** — R2 is absent, so `NOPULL` leaves the pin floating into a low detector. Use `PULLUP`. |
+| System OFF wake arming | n/a | `nrf_gpio_cfg_sense_input(..., **NOPULL**, SENSE_LOW)` | **Wrong for this carrier**—R2 is absent, so `NOPULL` leaves the pin floating into a low detector. Use `PULLUP`. |
 | External flash | QSPI block commented out; unused | `EXTERNAL_FLASH_USE_QSPI`, `QSPIFLASH=1` | Part is fitted (confirmed). Reserve the pins; deep power-down if unused. |
 | I²C | NFC pins `P0.09`/`P0.10` (default) or D6=SDA/D7=SCL | D6=**SCL**/D7=**SDA** | Arbitrary; pick one and document it. NFC pins need a UICR write. |
 | Battery divider gate | drives `P0.14` **HIGH** between reads | keeps `P0.14` **LOW** | Follow MeshCore/Seeed: hold `P0.14` LOW at all times. High-Z is worse than HIGH, not better. |
@@ -1058,7 +1058,7 @@ the XIAO and are the only guaranteed recovery route.
 | SPI1 | not defined | `PIN_SPI1_*` = 25/26/29, **collides with QSPI** | Do not expose a second SPI on those pins. |
 | App flash window | `LENGTH = 0xEA000 - 0x27000` | `LENGTH = 0xED000 - 0x27000` | Meshtastic is right. The bootloader's `USER_FLASH_END` is `0xEA000` (confirmed); anything above is silently not written. |
 | Low-voltage protection | none in the variant | bootlock 3300 mV + LPCOMP AIN7 refsel 2 | LPCOMP AIN7 refsel 2 adopted; no bootlock, since the wake point already sits above Low. |
-| `PIN_A2` | redefined to 32 (VBAT) | left at 2 (D2) | Irrelevant on this kit — D2 is the radio reset. |
+| `PIN_A2` | redefined to 32 (VBAT) | left at 2 (D2) | Irrelevant on this kit—D2 is the radio reset. |
 | `D32` comment | says "P0.10" (wrong; value is 31) | says "P0.31" (right) | Value is `P0.31`/AIN7. |
 
 ## Recommended initial UMSH board definition
@@ -1067,7 +1067,7 @@ A bare-metal UMSH BSP should name physical pins, not Arduino logical numbers.
 The logical column is retained only for cross-referencing the upstream trees.
 
 ```rust
-// Radio — Wio-SX1262 carrier (schematic Wio-SX1262 for XIAO V1.0)
+// Radio—Wio-SX1262 carrier (schematic Wio-SX1262 for XIAO V1.0)
 // logical D1/D2/D3/D4/D5, D8/D9/D10
 pub const RADIO_DIO1:  Pin = P0_03;
 pub const RADIO_RESET: Pin = P0_28; // 10 kΩ pull-up on the carrier
@@ -1079,17 +1079,17 @@ pub const SPI_MISO:    Pin = P1_14;
 pub const SPI_MOSI:    Pin = P1_15;
 // DIO2 = RF switch, DIO3 = TCXO @ 1.8 V, no TXEN
 
-// GNSS (optional L76K module) — no power-enable, no reset on this board
+// GNSS (optional L76K module)—no power-enable, no reset on this board
 pub const GNSS_UART_TX: Pin = P1_11; // MCU TX
 pub const GNSS_UART_RX: Pin = P1_12; // MCU RX
 pub const GNSS_STANDBY: Pin = P0_02;
 
-// User button: absent on a stock kit — the Wio-SX1262 carrier's K1 footprint
+// User button: absent on a stock kit—the Wio-SX1262 carrier's K1 footprint
 // is bare, and so is its R2 pull-up. Same pin as GNSS_STANDBY above, so the
 // two profiles are mutually exclusive.
 //
 //   feature "user-button": K1 soldered in by the user.
-//     P0.02 is an active-low input and MUST use the INTERNAL pull-up —
+//     P0.02 is an active-low input and MUST use the INTERNAL pull-up—
 //     there is no external one. Arm System OFF wake as SENSE_LOW *with*
 //     the pull-up retained.
 //   otherwise: leave P0.02 as a DISCONNECTED input. A floating input with
@@ -1097,10 +1097,10 @@ pub const GNSS_STANDBY: Pin = P0_02;
 #[cfg(feature = "user-button")]
 pub const USER_BUTTON: Pin = P0_02; // active-low, internal pull-up required
 
-// RGB LED — common anode, ACTIVE LOW
+// RGB LED—common anode, ACTIVE LOW
 pub const LED_RED:   Pin = P0_26; // 2.2 kΩ
 pub const LED_BLUE:  Pin = P0_06; // 2.2 kΩ
-pub const LED_GREEN: Pin = P0_30; // 10 kΩ — noticeably dimmer
+pub const LED_GREEN: Pin = P0_30; // 10 kΩ—noticeably dimmer
 
 // Battery: BAT -[1M]- P0.31 -[510k]- P0.14
 pub const BATTERY_ADC:        Pin = P0_31; // AIN7
@@ -1111,7 +1111,7 @@ pub const DIVIDER_MICRO: u32 = 10_659;     // raw * 10659 / 4096 = mV, Gain1_6 1
 pub const CHARGE_CURRENT_HI: Pin = P0_13; // LOW = 100 mA, HIGH/input = 50 mA
 pub const CHARGE_STATUS_N:   Pin = P0_17; // input only; LOW = charging
 
-// External QSPI flash (P25Q16H, 2 MB) — reserved
+// External QSPI flash (P25Q16H, 2 MB)—reserved
 pub const QSPI_SCK: Pin = P0_21;
 pub const QSPI_CSN: Pin = P0_25;
 pub const QSPI_IO0: Pin = P0_20;
@@ -1119,7 +1119,7 @@ pub const QSPI_IO1: Pin = P0_24;
 pub const QSPI_IO2: Pin = P0_22;
 pub const QSPI_IO3: Pin = P0_23;
 
-// NFC pads — GPIO use requires UICR NFCPINS cleared
+// NFC pads—GPIO use requires UICR NFCPINS cleared
 pub const NFC1: Pin = P0_09;
 pub const NFC2: Pin = P0_10;
 
@@ -1131,7 +1131,7 @@ enabled, native USB.
 
 ## Hardware bring-up checklist for UMSH
 
-### Phase 0: identify the unit — **done 2026-08-03**
+### Phase 0: identify the unit—**done 2026-08-03**
 
 Completed for one retail kit; repeat on any unit whose provenance differs, since
 the volume name and family ID depend on which bootloader Seeed loaded.
@@ -1148,7 +1148,7 @@ the volume name and family ID depend on which bootloader Seeed loaded.
   [the probe results](#family-id-acceptance-and-the-flash-ceiling-verified-by-experiment).
 - Still open: the 1200-baud touch path against the *stock* Meshtastic app. A
   bare `stty -f /dev/cu.usbmodem… 1200` did **not** enter DFU, but that is not
-  a fair test — it may not drive DTR the way the touch convention expects.
+  a fair test—it may not drive DTR the way the touch convention expects.
   Retest with a proper open/close before concluding anything. Double-tap RESET
   is known to work.
 - Still open: confirm UMSH's `CdcAcmRescue` restores both the touch and the
@@ -1177,7 +1177,7 @@ the volume name and family ID depend on which bootloader Seeed loaded.
   against the board's < 5 µA standby claim.
 - **Do not** drive `P0.14` high, or leave it high-Z, as part of this experiment.
 - Validate a conservative low-battery cutoff and the LPCOMP recovery threshold
-  the firmware arms — 3/8 VDD, expected to fire at ≈3.66 V of cell. Ramp a bench
+  the firmware arms—3/8 VDD, expected to fire at ≈3.66 V of cell. Ramp a bench
   supply up through it and confirm the reset lands where the math says.
 
 ### Phase 3: radio
@@ -1211,8 +1211,8 @@ the volume name and family ID depend on which bootloader Seeed loaded.
 ### Phase 6: power
 
 - Confirm System OFF entry, and confirm which wake sources actually work with
-  no button available: reset, USB attach (VBUS), LPCOMP on AIN7, and — if it is
-  ever worth the NFC pads — an NFC field. The LPCOMP wake should show
+  no button available: reset, USB attach (VBUS), LPCOMP on AIN7, and—if it is
+  ever worth the NFC pads—an NFC field. The LPCOMP wake should show
   `RESETREAS = 0x2_0000` in the boot log's `rr=` field.
 - Confirm the charge-current select actually changes charge current.
 - Measure standby against Seeed's < 5 µA claim with the divider, QSPI flash, and
@@ -1222,11 +1222,11 @@ the volume name and family ID depend on which bootloader Seeed loaded.
 
 1. Does the stock Meshtastic app honor the 1200-baud touch? An `stty`-only
    attempt did not enter DFU, but the method is suspect. (Everything else about
-   this unit — identity, family-ID acceptance, app base, and the writable
-   window — is resolved on hardware.)
+   this unit—identity, family-ID acceptance, app base, and the writable
+   window—is resolved on hardware.)
 2. Does the Wio-SX1262 carrier present an IPEX/u.FL connector or an on-board
    antenna? The `ANT` pin is a schematic no-connect.
-3. What is the fitted resistor tolerance's real contribution to battery error —
+3. What is the fitted resistor tolerance's real contribution to battery error—
    is the nominal `10659` good enough for a protective cutoff without a fit?
 4. What is the L76K's exact standby polarity and wake timing on `D0`, and its
    current draw with no power-enable available?
@@ -1321,7 +1321,7 @@ firmware trees agree on every pin, the LED colors are unambiguous, the LF
 crystal is real, and the battery divider values are printed on the drawing.
 
 Almost all of the UMSH work is already done in
-`crates/umsh-bsp-sensecap-solar` — the radio wiring and the battery sense path
+`crates/umsh-bsp-sensecap-solar`—the radio wiring and the battery sense path
 are identical, and only the LED polarity, the button arrangement, and the
 charger interface differ.
 
@@ -1332,19 +1332,19 @@ The genuine risks are:
   no hold-to-power-off, no press-to-wake, no hold-at-boot force-pairing, and no
   GPIO wake from System OFF. The **default** UMSH profile for this board is a
   headless node driven over ULCP or BLE. K1 is easy to retrofit and should be a
-  supported opt-in profile — but it lands on `D0`, so it is mutually exclusive
+  supported opt-in profile—but it lands on `D0`, so it is mutually exclusive
   with GNSS, and with R2 also absent it depends entirely on the internal
   pull-up (which MeshCore's System OFF path drops).
-- **The `P0.14` rule.** Hold the divider's low side LOW at all times — driving
+- **The `P0.14` rule.** Hold the divider's low side LOW at all times—driving
   it high puts `P0.31` at its absolute maximum and leaving it floating puts
   `P0.31` past it. The shipping Meshtastic build drives it high after every
   read, so it is not a reference implementation for the battery path.
-- **Bootloader identity and the flash ceiling** — both settled by direct probe.
+- **Bootloader identity and the flash ceiling**—both settled by direct probe.
   Retail kits ship the *Sense* bootloader on plain hardware (`XIAO-SENSE`,
   family `0x28860045`), and UMSH's existing `0x28860044` preset **was tested and
   silently did nothing**: the copy reported success and no bytes were written.
   Pack with the generic `0xADA52840`, which was verified accepted. The
-  UF2-writable window ends at **`0xEA000`**, not `0xED000` — also verified —
+  UF2-writable window ends at **`0xEA000`**, not `0xED000`—also verified—
   so an over-long image is truncated with no error, and any NV store placed "at
   the top of the app window" must sit below that line.
 - **Power budget.** There is no power switch, no load switch, and no way to cut

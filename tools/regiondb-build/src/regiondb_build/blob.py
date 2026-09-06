@@ -4,7 +4,7 @@ Polygons are stored as a project-defined blob rather than WKB or SpatiaLite
 geometry, for two reasons: the runtime must not need a SQLite extension on
 iOS, and coordinates quantized to a fixed integer grid make boundary tests
 exact instead of epsilon-dependent. One blob holds one connected polygon
-component — an exterior ring plus its holes — so a country's remote islands
+component—an exterior ring plus its holes—so a country's remote islands
 each get their own bounding box and the R-tree stays useful.
 
 Coordinates are 1e-6 degrees (about 11 cm at the equator), delta-encoded from
@@ -148,7 +148,7 @@ def decode(blob: bytes) -> list[Ring]:
 def point_in_rings(rings: list[Ring], lon_e6: int, lat_e6: int) -> bool:
     """Exact integer point-in-polygon, boundary inclusive.
 
-    A point exactly on a boundary counts as inside — everywhere, in every
+    A point exactly on a boundary counts as inside—everywhere, in every
     implementation. Two abutting regions therefore both claim their shared
     edge, which is the harmless failure; a gap between them would leave a
     position with no region at all.

@@ -1,6 +1,6 @@
 # Per-firmware cargo config. Only applied when cargo is invoked from within
 # this directory (or a subdirectory). Workspace-root `cargo check` does not
-# inherit this — that's intentional and is why the firmware crate is
+# inherit this—that's intentional and is why the firmware crate is
 # excluded from `default-members`.
 
 [build]

@@ -5,7 +5,7 @@
 Increments 0–3 are implemented in `crates/umsh-text`.
 
 - Increment 0: the open wire questions are settled in
-  `docs/protocol/src/app-text-messages.md` — serial-number ordering with the
+  `docs/protocol/src/app-text-messages.md`—serial-number ordering with the
   1–127 forward half, an automatic repair bound of 8 messages per gap with
   re-baselining beyond it, conversation-determined `Regarding` width (1-byte
   for all one-to-one conversations including blind-unicast), and 160-byte /
@@ -25,7 +25,7 @@ Increments 0–3 are implemented in `crates/umsh-text`.
 
 Review fixes (2026-07-17), from an independent review of increments 0–3:
 
-- **Oversized fragment bodies** no longer panic the engine — previously a
+- **Oversized fragment bodies** no longer panic the engine—previously a
   >160-byte body truncated its stored `u8` length in release builds and
   could panic the fixed-size read paths (remotely triggerable DoS). The
   spec now states both limits are sender obligations whose excess remains
@@ -33,14 +33,14 @@ Review fixes (2026-07-17), from an independent review of increments 0–3:
   that will not reassemble such a message drops the assembly…"). The
   engine *salvages* instead of dropping: the oversized fragment alone is
   marked unavailable in its slot (`Diagnostic::OversizedFragment`; a
-  resend would return the same bytes, so no repair is attempted for it —
+  resend would return the same bytes, so no repair is attempted for it—
   an already-queued repair is cancelled by the normal arrival path), an
   oversized fragment zero still contributes its valid options, every
   storable fragment reassembles normally, and a slot settled by the mark
   finalizes immediately. Over-*count* frames are simply ignored at the
   guard (diagnostic, ID accounted): no slot ever opens for a count above
   10, and the count-mismatch guard protects a coherent valid assembly
-  from stray frames with a different count — a later valid-count frame
+  from stray frames with a different count—a later valid-count frame
   for the same ID may legitimately open a fresh assembly. A defensive
   `InsertOutcome::TooLarge` guard remains in the page pool.
 - **Sequence Reset on a continuation fragment is ignored** (and reported
@@ -50,11 +50,11 @@ Review fixes (2026-07-17), from an independent review of increments 0–3:
 - **Fragment-zero presentation metadata survives reassembly at full
   fidelity**: the announcing Insert mutation always runs during the
   receive call that delivered fragment zero, so the sender handle and
-  colors are borrowed from that fragment's validated content — nothing is
+  colors are borrowed from that fragment's validated content—nothing is
   retained (or truncated) in the slot, and `FirstMeta` keeps only what
   later calls consult (type, Regarding, Editing). Extension options are
-  *not* yet carried through reassembly — nor by `MutationKind::Insert`
-  for unfragmented messages — that plumbing is increment 4/6 scope (room
+  *not* yet carried through reassembly—nor by `MutationKind::Insert`
+  for unfragmented messages—that plumbing is increment 4/6 scope (room
   Timestamp/Sender Sequence).
 - **Absent runs split by repair state**: an unavailable portion renders
   `[UNAVAILABLE]` immediately even when adjacent to still-repairable
@@ -68,7 +68,7 @@ Review fixes (2026-07-17), from an independent review of increments 0–3:
   in-memory continuity bound is therefore 8 active + 24 cold
   conversations, and `restore()` takes checkpoints oldest-first (the
   earliest entries are displaced when over the bound). Beyond the bound
-  the stream resets — safe by design; exact continuity for unbounded
+  the stream resets—safe by design; exact continuity for unbounded
   conversation counts is the increment-4 compose-hint below.
 - **Persist-before-transmit failure contract documented** on
   `Output::StoreCheckpoint`: on a failed checkpoint write the platform
@@ -226,7 +226,7 @@ Syntactically valid options are not necessarily valid in context. Validation
 receives a MAC-validated envelope containing:
 
 - local identity;
-- source scope — an individually authenticated peer key for unicast and
+- source scope—an individually authenticated peer key for unicast and
   blind-unicast, or the claimed full key/source hint authenticated only by
   channel membership for multicast (group members may never learn the claimed
   sender's full key, and repair addressability depends on which form is held);
@@ -257,9 +257,9 @@ than silently reducing them into a superficially valid struct.
 Every recognized text option is a singleton unless a future specification
 explicitly declares otherwise, but duplication is fatal only where it creates
 unresolvable ambiguity in how the message is processed. A frame that repeats
-an option carrying identity, sequencing, or reference semantics —
+an option carrying identity, sequencing, or reference semantics—
 `Message Type`, `Message Sequence`, `Regarding`, `Editing`, and profile
-extensions in the same role such as `Sender Sequence` — is invalid and is
+extensions in the same role such as `Sender Sequence`—is invalid and is
 rejected, even if the repeated values are identical. Repeating a presentation
 option such as `Sender Handle` or the colors keeps the first occurrence,
 ignores the rest, and emits a diagnostic rather than discarding an
@@ -604,8 +604,8 @@ Per `(conversation, sender)` stream, retain enough recent state to distinguish:
 A forward numeric gap within one `(conversation, sender)` stream means that a
 message is missing. After a short reordering grace period, the engine requests
 the missing message with the 1-byte form, subject to bounded gap size and
-repair rate limits. Repair is per-frame: that request elicits a single frame —
-the unfragmented message, or fragment zero of a fragmented one — and any
+repair rate limits. Repair is per-frame: that request elicits a single frame—
+the unfragmented message, or fragment zero of a fragmented one—and any
 remaining fragments are then requested individually under the same budgets.
 A gap observed in one sender's stream says nothing about another sender in the
 same conversation. Missing-fragment repair remains more specific because the
@@ -619,14 +619,14 @@ amplifier.
 ### Hint collisions
 
 In group conversations the sender scope of a wire key is the source identity
-as carried on the wire — often only the 3-byte hint. Two members colliding on
+as carried on the wire—often only the 3-byte hint. Two members colliding on
 a hint therefore merge into one apparent stream, and inbound group packets
 cannot be re-attributed even when the receiver holds both full keys. The
 probability is low and no protocol-level fix is attempted. The engine's
 obligations are containment:
 
 - When two known peer keys in one conversation share a hint, emit a
-  diagnostic so the platform can warn the user — for example, when the second
+  diagnostic so the platform can warn the user—for example, when the second
   colliding peer is added to a room or channel.
 - While the collision persists, suppress automatic repair in the merged
   stream. Requesting an ID from either candidate key may legitimately return
@@ -663,7 +663,7 @@ numeric ID exists in another conversation.
 A repair response returns on the original conversation's delivery mode, not
 the request's arrival path: a `Direct` resend is unicast to the peer, a
 `ChannelDirect` resend is blind-unicast to the peer, and a `ChannelGroup`
-resend — and its `Message Unavailable` response — is re-multicast to the
+resend—and its `Message Unavailable` response—is re-multicast to the
 channel rather than blind-unicast to the requester. This keeps arrival-path
 attribution unambiguous at every receiver, repairs other members missing the
 same message as a side effect, and lets ordinary duplicate suppression absorb
@@ -902,9 +902,9 @@ into a member sender's stream in that conversation.
   channel, room-live, and room-history delivery.
 - Room echo tests proving a sender sequence and canonical sequence attach to one
   application record and retire independently.
-- Repair vectors covering all four request paths — direct unicast,
+- Repair vectors covering all four request paths—direct unicast,
   channel-group with the `Channel Group Resend` option, channel-direct without
-  it, and room — plus wrong-stream requests that must answer
+  it, and room—plus wrong-stream requests that must answer
   `Message Unavailable`, and response vectors proving channel-group repair
   returns via multicast and is coalesced across multiple requesters.
 - Round-trip and malformed-input tests for every option form.

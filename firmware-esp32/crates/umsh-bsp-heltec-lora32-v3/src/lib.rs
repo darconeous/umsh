@@ -5,12 +5,12 @@
 //! reference. Pin numbers here are GPIO numbers.
 //!
 //! Shared-resource constraints encoded in types (hardware doc §16):
-//! - `Vext` (GPIO36, **ACTIVE LOW** — the opposite of the Heltec V2)
+//! - `Vext` (GPIO36, **ACTIVE LOW**—the opposite of the Heltec V2)
 //!   powers the OLED; the board pull-up defaults the rail OFF until
 //!   firmware drives the pin low. [`vext::Vext`] hides the polarity.
-//! - GPIO37 gates the battery divider (its own pin — NOT the `Vext`
+//! - GPIO37 gates the battery divider (its own pin—NOT the `Vext`
 //!   domain, unlike the V2) and its polarity is revision-dependent.
-//!   This BSP targets **V3.2** (high = divider on) — earlier revisions are
+//!   This BSP targets **V3.2** (high = divider on)—earlier revisions are
 //!   unsupported until one shows up. [`battery::BatterySampler`] owns it.
 //! - GPIO0 is a strapping pin shared with the PRG button; GPIO3/45/46 are
 //!   strapping pins this BSP never touches.
@@ -28,9 +28,9 @@ pub mod vext;
 pub const BOARD_NAME: &str = "Heltec WiFi LoRa 32 V3";
 
 // SX1262 radio (SPI + control). DIO2 drives the on-board RF switch and
-// DIO3 drives the 1.8 V TCXO supply — both are mandatory driver
+// DIO3 drives the 1.8 V TCXO supply—both are mandatory driver
 // configuration, not tuning (hardware doc §4.6–4.7). Unlike MeshCore
-// (which declares reset unconnected — driver policy, not hardware truth,
+// (which declares reset unconnected—driver policy, not hardware truth,
 // §4.3) NRESET is wired and we drive it.
 pub const LORA_SCK: u8 = 9;
 pub const LORA_MOSI: u8 = 10;

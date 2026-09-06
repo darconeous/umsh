@@ -23,7 +23,7 @@ final class CoreBluetoothRadioConnection: UlcpRadioSession, RadioConnection, Ulc
         var rssiDBm: Int
         var lastSeen: DispatchTime
         /// When this radio was first heard, as a sequence number. Assigned
-        /// once and never revised — see `currentDiscoveryList()`.
+        /// once and never revised—see `currentDiscoveryList()`.
         let discoveryOrder: UInt64
     }
 
@@ -48,14 +48,14 @@ final class CoreBluetoothRadioConnection: UlcpRadioSession, RadioConnection, Ulc
         /// The name the bound radio last reported over ULCP.
         ///
         /// `CBPeripheral.name` is iOS's cached GAP name, and iOS does not
-        /// refresh it when a device is renamed — it keeps serving the name
+        /// refresh it when a device is renamed—it keeps serving the name
         /// the radio had when it was first discovered, sometimes until the
         /// pairing is removed. Without this, every screen outside an
         /// attached session shows the old name.
         static let deviceName = "radio.deviceName"
     }
 
-    /// The ULCP service is not this type's private business — administrative
+    /// The ULCP service is not this type's private business—administrative
     /// sessions discover the same one. `RadioGatt` owns the identifiers; this
     /// alias keeps the call sites here reading as they always have.
     private typealias UUIDs = RadioGatt
@@ -73,7 +73,7 @@ final class CoreBluetoothRadioConnection: UlcpRadioSession, RadioConnection, Ulc
     /// states are frequently transient at launch / after sleep (especially on
     /// macOS: unknown → resetting → poweredOff → poweredOn), so the banner is
     /// held for a short grace window and cancelled if the stack settles to
-    /// poweredOn — otherwise a radio that is actually on flashes a false
+    /// poweredOn—otherwise a radio that is actually on flashes a false
     /// "Bluetooth off" to the user.
     private var bluetoothUnavailableGrace: DispatchWorkItem?
     private static let bluetoothUnavailableGraceSeconds: TimeInterval = 1.5
@@ -254,7 +254,7 @@ final class CoreBluetoothRadioConnection: UlcpRadioSession, RadioConnection, Ulc
         discoveryMode = true
         // Cancel a normal "connect to first match" scan; discovery now owns
         // the central. A standing wait-for-radio connection request is left
-        // armed — it does not interfere with scanning.
+        // armed—it does not interfere with scanning.
         scanRequested = false
         // Duplicates are allowed so RSSI updates keep the list live and a radio
         // that momentarily drops out reappears rather than going stale.
@@ -368,8 +368,8 @@ final class CoreBluetoothRadioConnection: UlcpRadioSession, RadioConnection, Ulc
 
     private func currentDiscoveryList() -> [DiscoveredRadio] {
         let remembered = rememberedPeripheralIdentifier
-        // The saved radio stays pinned to the top — it is what most people
-        // opening this list are looking for — and everything else sits in the
+        // The saved radio stays pinned to the top—it is what most people
+        // opening this list are looking for—and everything else sits in the
         // order it was first heard.
         //
         // Arrival order rather than name: RSSI churns with every
@@ -546,7 +546,7 @@ final class CoreBluetoothRadioConnection: UlcpRadioSession, RadioConnection, Ulc
         autoConnectAttempt = UUID()
         automaticConnectionInProgress = false
         // Durably clear auto-reconnect intent and revoke every standing/live
-        // connection for the ULCP service — including a request for the
+        // connection for the ULCP service—including a request for the
         // bound radio resurrected by state restoration, or one with no live
         // peripheral object. A live, connected link is spared here so its
         // `.disconnecting` UI flow runs below. connectedUUID is kept so
@@ -667,7 +667,7 @@ final class CoreBluetoothRadioConnection: UlcpRadioSession, RadioConnection, Ulc
             // The bounded window is UI honesty only. Leave the system
             // connection request armed: it never expires, costs nothing
             // while the radio is away, and completes the moment the radio
-            // powers on — waking or relaunching the app in the background.
+            // powers on—waking or relaunching the app in the background.
             // Disconnect (or a fresh scan) is what cancels it.
             self.automaticConnectionInProgress = false
             self.publish(
@@ -773,8 +773,8 @@ final class CoreBluetoothRadioConnection: UlcpRadioSession, RadioConnection, Ulc
     ///
     /// The device's own ULCP-reported name is authoritative and
     /// `CBPeripheral.name` is a cache that does not track renames, so the
-    /// remembered name wins for the bound radio. Any other peripheral —
-    /// one being discovered, one never attached — has only the cache.
+    /// remembered name wins for the bound radio. Any other peripheral—
+    /// one being discovered, one never attached—has only the cache.
     private func displayName(for peripheral: CBPeripheral?) -> String? {
         guard let peripheral else { return rememberedDeviceName }
         guard peripheral.identifier == rememberedPeripheralIdentifier else {
@@ -813,7 +813,7 @@ final class CoreBluetoothRadioConnection: UlcpRadioSession, RadioConnection, Ulc
     ///
     /// Peripherals held by an administrative session are always spared.
     /// `retrieveConnectedPeripherals(withServices:)` returns every device on
-    /// the phone advertising the ULCP service — including one a concurrent
+    /// the phone advertising the ULCP service—including one a concurrent
     /// commissioning session is in the middle of configuring, which this
     /// sweep has no business touching.
     private func cancelAllServiceConnections(except keep: UUID? = nil) {
@@ -896,7 +896,7 @@ final class CoreBluetoothRadioConnection: UlcpRadioSession, RadioConnection, Ulc
         )
         if shouldAutoConnect {
             // Keep only the bound radio's connect; revoke every other
-            // standing/live connection this app holds for the service — a
+            // standing/live connection this app holds for the service—a
             // restored request, or a stray connect to some other companion
             // radio left over from an earlier session. Note this can only
             // cancel connections THIS app owns; a connection held by another
@@ -1239,7 +1239,7 @@ extension CoreBluetoothRadioConnection: CBPeripheralDelegate {
     /// iOS delivers this after a Service Changed indication and has already
     /// invalidated the affected `CBService`, which takes every
     /// `CBCharacteristic` we hold with it. Continuing against those stale
-    /// references addresses attributes by handles that have moved — writes
+    /// references addresses attributes by handles that have moved—writes
     /// land on whatever now occupies them. The only correct response is to
     /// drop everything cached about the link and discover it again, which
     /// re-enters the ordinary attach path.
@@ -1252,7 +1252,7 @@ extension CoreBluetoothRadioConnection: CBPeripheralDelegate {
     ) {
         guard invalidatedServices.contains(where: { $0.uuid == UUIDs.service }) else { return }
         Self.logger.notice(
-            "event: didModifyServices — rediscovering \(peripheral.identifier, privacy: .public)"
+            "event: didModifyServices—rediscovering \(peripheral.identifier, privacy: .public)"
         )
         frameIn = nil
         frameOut = nil

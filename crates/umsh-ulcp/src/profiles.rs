@@ -50,7 +50,7 @@ impl PhyProfile {
     ///
     /// Transmit power and the duty-cycle limit are excluded. Neither
     /// changes what a receiver can decode, and a radio reports power
-    /// clamped to what it can actually reach — comparing power would
+    /// clamped to what it can actually reach—comparing power would
     /// call two radios on the same profile different merely because one
     /// of them cannot transmit as hard as the other.
     pub const fn interoperates_with(
@@ -459,7 +459,7 @@ mod tests {
         // Which entry is the default is a shipping decision, free to
         // move; that it is in the table and answers to its own
         // identifier is not. `DEFAULT_TX_POWER_DBM` needs no assertion
-        // here — its `match` fails the build if the default carries no
+        // here—its `match` fails the build if the default carries no
         // vetted power.
         assert!(VETTED.contains(DEFAULT));
         assert_eq!(by_id(DEFAULT.id), Some(DEFAULT));
@@ -510,9 +510,9 @@ mod tests {
             )
             .unwrap_or_else(|| panic!("{} finds no vetted profile", profile.id));
             // Not necessarily the entry asked about. Countries sharing a
-            // band share a radio configuration — `meshcore-hu`,
+            // band share a radio configuration—`meshcore-hu`,
             // `meshcore-nl` and `meshcore-sk` are one PHY under three
-            // names — so a lookup answers with the first interoperable
+            // names—so a lookup answers with the first interoperable
             // entry, and the four parameters cannot name a country.
             assert!(
                 found.interoperates_with(

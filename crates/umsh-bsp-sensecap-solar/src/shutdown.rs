@@ -2,35 +2,35 @@
 //!
 //! Unlike the single-button boards (which overload one button into a full
 //! gesture FSM), this board has a **dedicated power button** (P1.01,
-//! active-low — MeshCore's `PIN_USER_BTN`). The power *policy* — hold-to-off
-//! with a blink acknowledgement — lives in the firmware's power-button task;
+//! active-low—MeshCore's `PIN_USER_BTN`). The power *policy*—hold-to-off
+//! with a blink acknowledgement—lives in the firmware's power-button task;
 //! this module only performs the System OFF teardown once
 //! [`SHUTDOWN_SIGNAL`](crate::power::SHUTDOWN_SIGNAL) fires:
 //!
 //! - hold the SX1262 in reset (P0.28 low) to collapse its draw,
 //! - settle the battery divider's active-low gate (P0.14) one way or the
-//!   other — see below,
+//!   other—see below,
 //! - keep GNSS powered down (enable P1.05 low, standby P0.02 low),
 //! - tri-state every remaining peripheral signal pin so embassy's leftover
 //!   SENSE bits can't fire DETECT and reverse current can't leak into the
 //!   unpowered radio,
-//! - arm **both** buttons — the power button (P1.01) and the secondary user
-//!   button (P1.07), both pull-up — as GPIO-DETECT wake sources (SENSE low).
+//! - arm **both** buttons—the power button (P1.01) and the secondary user
+//!   button (P1.07), both pull-up—as GPIO-DETECT wake sources (SENSE low).
 //!
 //! Powering *off* is P1.01-only (the firmware policy), but *either* button
-//! wakes the node: a press resets the chip — observed as a normal cold boot
-//! (`RESETREAS.OFF`) — which powers it back on.
+//! wakes the node: a press resets the chip—observed as a normal cold boot
+//! (`RESETREAS.OFF`)—which powers it back on.
 //!
 //! ## Two ways down, and the divider decides
 //!
 //! The [`ShutdownReason`] on the signal splits the teardown, exactly as
 //! MeshCore splits its own (see the hardware doc's shutdown section):
 //!
-//! - **[`ShutdownReason::Requested`]** — somebody turned the node off.
+//! - **[`ShutdownReason::Requested`]**—somebody turned the node off.
 //!   Drive P0.14 HIGH to disconnect the 1 MΩ/512 kΩ bridge, since a driven
 //!   output retains its level through System OFF and there is no reason to
 //!   keep paying its quiescent draw. Off means off until a button press.
-//! - **[`ShutdownReason::BatteryCritical`]** — the cell ran down. Drive
+//! - **[`ShutdownReason::BatteryCritical`]**—the cell ran down. Drive
 //!   P0.14 LOW instead, keeping the bridge connected, and arm LPCOMP on
 //!   AIN7 (`P0.31`, the tap) against 3/8 VDD with upward detection. The
 //!   divider's draw is the price of the wake; without it the comparator
@@ -38,7 +38,7 @@
 //!
 //! On this board that second path is the whole point. A solar node that
 //! shuts down in a week of overcast is not a node someone walks out to
-//! press a button on — it has to come back when the panel refills the
+//! press a button on—it has to come back when the panel refills the
 //! cell, and this is how it does.
 //!
 //! Where the threshold lands: the bridge gives cell = tap × 1512/512 =
@@ -46,7 +46,7 @@
 //! 1.2375 V, so the crossing is at **≈3.65 V of cell** with 50 mV of
 //! hysteresis at the tap (≈148 mV at the cell). That is at or above the
 //! firmware's Low threshold and well clear of Critical (≈3.1 V), so a
-//! freshly woken node is nowhere near re-triggering the cutoff — which
+//! freshly woken node is nowhere near re-triggering the cutoff—which
 //! needs ten consecutive critical samples, about five minutes, anyway. The
 //! reference is relative to VDD, but the cell feeds VDDH and REG0 holds
 //! VDD at 3.3 V: while the regulator is in dropout the tap sits below the
@@ -54,7 +54,7 @@
 //! point rather than a moving one.
 //!
 //! Both buttons stay armed on either path, so the LPCOMP wake is strictly
-//! an addition — a critical-cutoff node is revived by sunlight *or* by a
+//! an addition—a critical-cutoff node is revived by sunlight *or* by a
 //! press, whichever comes first.
 
 use embassy_time::{Duration, Timer};
@@ -78,7 +78,7 @@ async fn enter_off(reason: ShutdownReason) -> ! {
     // Both buttons (P1.01 power, P1.07 user) are active-low with a pull-up
     // and both are wake sources. If either is still held (LOW) when we arm
     // WakeSense::Low, DETECT fires immediately and the chip wakes right back
-    // up — the power-off hold leaves P1.01 down. Connect both input buffers
+    // up—the power-off hold leaves P1.01 down. Connect both input buffers
     // (they may still be at their reset configuration, where IN reads 0
     // regardless of the pad), then wait for both to be released (HIGH).
     connect_input(Port::P1, 1, WakePull::Up);
@@ -93,7 +93,7 @@ async fn enter_off(reason: ShutdownReason) -> ! {
     drive_pin_low(Port::P0, 28);
     cortex_m::asm::delay(640); // ~10 µs @ 64 MHz
 
-    // The battery divider's active-low gate P0.14, driven either way — a
+    // The battery divider's active-low gate P0.14, driven either way—a
     // driven output retains its level through System OFF. On a requested
     // power-off, HIGH disconnects the bridge and removes its quiescent
     // draw. On the low-battery cutoff, LOW keeps it connected so LPCOMP
@@ -109,7 +109,7 @@ async fn enter_off(reason: ShutdownReason) -> ! {
     // Keep GNSS powered down (enable P1.05 low), and pin its standby line
     // (P0.02) low with it. Standby sits on the module's side of the load
     // switch, so a pin left driving into an unpowered module is current
-    // through its protection diodes — the same argument as the divider
+    // through its protection diodes—the same argument as the divider
     // gate above, and the reason both are driven rather than released.
     drive_pin_low(Port::P1, 5);
     drive_pin_low(Port::P0, 2);
@@ -144,7 +144,7 @@ async fn enter_off(reason: ShutdownReason) -> ! {
     }
 
     if battery_recovery {
-        // Let the tap settle. The gate was HIGH — bridge disconnected —
+        // Let the tap settle. The gate was HIGH—bridge disconnected—
         // until a moment ago, so P0.31 has been floating; give it time to
         // reach the divided cell voltage before the comparator starts.
         Timer::after(Duration::from_millis(10)).await;

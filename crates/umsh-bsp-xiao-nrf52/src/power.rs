@@ -3,15 +3,15 @@
 //!
 //! Two pieces:
 //!
-//! - [`PowerSignaler`] — the `umsh_hal::PowerControl` bridge, raising
+//! - [`PowerSignaler`]—the `umsh_hal::PowerControl` bridge, raising
 //!   [`SHUTDOWN_SIGNAL`] for the headless System OFF teardown in
 //!   [`crate::shutdown`].
 //! - The battery monitor ([`run_battery_monitor`], [`sample_battery`],
-//!   [`BatterySample`], [`battery_state`]) — the same shape as the other
+//!   [`BatterySample`], [`battery_state`])—the same shape as the other
 //!   nRF52840 boards' monitors with this board's wiring, so the device's
 //!   `CAP_BATTERY` snapshot path stays board-agnostic.
 //!
-//! ## Voltage reading (schematic-derived, nominal — uncalibrated)
+//! ## Voltage reading (schematic-derived, nominal—uncalibrated)
 //!
 //! Reads AIN7/`P0.31` through the XIAO's 1 MΩ / 510 kΩ bridge. Our SAADC
 //! is `embassy-nrf`'s default single-ended config: 12-bit, `Gain1_6`,
@@ -26,15 +26,15 @@
 //! The resistor values are printed on the Seeed schematic and Meshtastic's
 //! variant agrees (`R17=1M, R18=510k`). Both upstream firmwares round the
 //! ratio to 3.0 and so read about 1.3 % high; we do not. This is still the
-//! *nominal* network value rather than a fitted calibration — 1 % resistor
-//! tolerance dominates the residual — so a bench calibration can replace
+//! *nominal* network value rather than a fitted calibration—1 % resistor
+//! tolerance dominates the residual—so a bench calibration can replace
 //! [`DIVIDER_MICRO`] with a fitted slope before it is trusted for a
 //! protective cutoff.
 //!
 //! Note the SenseCAP Solar BSP uses `10_631` for what is physically the
 //! same network, having inherited MeshCore's "1M, 512k" comment. The
 //! difference is +0.26 %, well inside tolerance, so that board is not
-//! wrong — just worth revisiting if it is ever bench-calibrated.
+//! wrong—just worth revisiting if it is ever bench-calibrated.
 //!
 //! ## The `P0.14` rule
 //!
@@ -46,7 +46,7 @@
 //! |---------------------|-------------:|--------:|---------|
 //! | driven LOW          |       1.42 V |  2.8 µA | safe; the intended state |
 //! | driven HIGH         |       3.60 V |  0.6 µA | exactly at the `VDD + 0.3` absolute maximum |
-//! | disconnected input  |       4.2 V  |  0.3 µA | **worst** — well past absolute maximum |
+//! | disconnected input  |       4.2 V  |  0.3 µA | **worst**—well past absolute maximum |
 //!
 //! High-Z is the intuitive "disconnect" and it is the wrong answer: with
 //! no path through the 510 kΩ leg the tap floats to the full cell voltage
@@ -72,7 +72,7 @@ use umsh_bsp_nrf52840::system_off::ShutdownReason;
 /// boards in this family also raise it from a button hold, and this one
 /// has no button; there is no ULCP or BLE power-off command in that
 /// firmware either. So an unattended flat pack is the only thing that
-/// powers this board down on its own — which is fine, because that is
+/// powers this board down on its own—which is fine, because that is
 /// also the only case where powering down is worth the trip (see
 /// [`crate::shutdown`] for how hard it is to come back).
 ///
@@ -85,7 +85,7 @@ pub static SHUTDOWN_SIGNAL: Signal<ThreadModeRawMutex, ShutdownReason> = Signal:
 ///
 /// Provided for the CLI firmware's `PowerControl` bridge, which is what
 /// consumes this trait; the ULCP device image does not use it. Wiring a
-/// remote power-off command to it would work, but think first — see
+/// remote power-off command to it would work, but think first—see
 /// [`crate::shutdown`] on why System OFF is close to one-way here.
 ///
 /// - `request_power_off` raises [`SHUTDOWN_SIGNAL`].
@@ -144,7 +144,7 @@ mod monitor {
     /// Whether the nRF USB regulator currently detects VBUS.
     ///
     /// Together with the BQ25100's `~CHG` line this board can tell
-    /// "charging" from "charge complete" — VBUS present with `~CHG`
+    /// "charging" from "charge complete"—VBUS present with `~CHG`
     /// released means the charger terminated. `~CHG` alone cannot: it is
     /// high both when the pack is full and when there is no input power.
     pub fn usb_power_present() -> bool {
@@ -170,7 +170,7 @@ mod monitor {
     /// Battery measurements worth announcing to a remote observer, for
     /// `PROP_BATTERY` asynchronous updates. Multi-receiver, and filtered
     /// on charge class plus level rather than the five-way presentation
-    /// classification — see the T1000-E BSP's equivalent for the
+    /// classification—see the T1000-E BSP's equivalent for the
     /// reasoning, which is identical.
     pub static BATTERY_ANNOUNCE: Watch<
         ThreadModeRawMutex,
@@ -198,7 +198,7 @@ mod monitor {
     static BATTERY_SAMPLE_REQUEST: Signal<ThreadModeRawMutex, ()> = Signal::new();
     static BATTERY_SAMPLE_REPLY: Signal<ThreadModeRawMutex, BatterySample> = Signal::new();
 
-    /// Ask [`run_battery_monitor`] — the sole SAADC owner — for a fresh
+    /// Ask [`run_battery_monitor`]—the sole SAADC owner—for a fresh
     /// measurement and wait for it. Single-consumer. Never completes once
     /// the monitor has exited; callers should apply a timeout.
     pub async fn sample_battery() -> BatterySample {
@@ -211,14 +211,14 @@ mod monitor {
     ///
     /// Takes ownership of three pins for the life of the program:
     ///
-    /// - `divider_low` — `P0.14`, the divider's low side. Driven LOW here
+    /// - `divider_low`—`P0.14`, the divider's low side. Driven LOW here
     ///   and **never raised or released**; see the module docs for why
     ///   both alternatives are worse. There is no settle step because
     ///   there is nothing to switch.
-    /// - `charge_status_n` — `P0.17`, the BQ25100's open-drain `~CHG`,
+    /// - `charge_status_n`—`P0.17`, the BQ25100's open-drain `~CHG`,
     ///   LOW while charging. Input only: it shares a node with the red
     ///   charge LED and driving it fights both.
-    /// - `charge_current_hi` — `P0.13` (`HICHG`), held at the level the
+    /// - `charge_current_hi`—`P0.13` (`HICHG`), held at the level the
     ///   caller chose (LOW = 100 mA, HIGH = 50 mA). The monitor only
     ///   keeps it alive; dropping the `Output` would return the pin to a
     ///   disconnected input, which the BQ25100 reads as 50 mA.
@@ -246,7 +246,7 @@ mod monitor {
         const CONSECUTIVE_NEEDED: u8 = 10;
         /// Normal cadence. Nothing is learned by reading faster: the pack
         /// discharges over days and the level estimator quantizes to 5 %.
-        /// Charge-state changes do not wait for it —
+        /// Charge-state changes do not wait for it—
         /// [`CHARGE_POLL_INTERVAL`] catches those.
         const SAMPLE_INTERVAL: Duration = Duration::from_secs(300);
         /// Cadence while the pack reads Low or Critical, so the protective
@@ -289,7 +289,7 @@ mod monitor {
             // its own state: BQ25100 `~CHG` is LOW while charging and
             // released once charging terminates. With VBUS as the
             // external-power flag, BatteryCharged is genuinely reachable
-            // here — a remote observer sees charge completion, not just
+            // here—a remote observer sees charge completion, not just
             // charge start and stop.
             let charging = charge_status_n.is_low();
             let state = classify(battery_mv, usb, charging, BatteryThresholds::default());
@@ -332,7 +332,7 @@ mod monitor {
 
             // Protective cell cutoff: sustained critical voltage while on
             // battery drives a System OFF so the pack is not deep-discharged
-            // when nobody is present. `!usb` is belt-and-suspenders — a
+            // when nobody is present. `!usb` is belt-and-suspenders—a
             // Critical classification already implies no external power.
             if state == BatteryState::BatteryCritical && !usb {
                 low_count = low_count.saturating_add(1);

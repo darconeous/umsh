@@ -121,7 +121,7 @@ pub struct MobileMeshPingEventRecord {
     pub round_trip_milliseconds: Option<u64>,
     /// Radio links the response crossed, counting the final one into this
     /// device: a direct response is one hop. Absent on a reply that was
-    /// source-routed without a trace route — it crossed hops nobody recorded,
+    /// source-routed without a trace route—it crossed hops nobody recorded,
     /// so no count is claimed.
     pub hop_count: Option<u8>,
     /// Authenticated intermediate-router hints, in source-to-destination order.
@@ -181,7 +181,7 @@ pub struct MobileMeshManagementEventRecord {
     pub outcome: MobileMeshManagementOutcome,
     /// The answers, in the order they were asked for.
     pub answers: Vec<MobileMeshManagementAnswerRecord>,
-    /// The status when the device answered the whole exchange with one —
+    /// The status when the device answered the whole exchange with one—
     /// what a save or a whole-table write reports.
     pub status_code: Option<u32>,
     /// Octets the device has yet to return of the answer it is part-way
@@ -221,8 +221,8 @@ pub struct MobileMeshPropertyWriteRecord {
 /// device being configured across the mesh.
 ///
 /// A phone holding a device open writes a configuration through
-/// `MobileUlcpSession::configure_device`, which owns the ordering — the
-/// PHY goes down first and comes back up last — and closes with a save.
+/// `MobileUlcpSession::configure_device`, which owns the ordering—the
+/// PHY goes down first and comes back up last—and closes with a save.
 /// An administrator has no session to hand a record to, only the record
 /// its read produced, so it asks for the same writes here and sends them
 /// with [`MobileMeshSession::begin_management_set_many`]. The reduction is
@@ -231,7 +231,7 @@ pub struct MobileMeshPropertyWriteRecord {
 ///
 /// `reported` is the device as a completed read found it. Its
 /// capabilities decide which fields must be present, and the properties
-/// it would not report are left out — writing one of those fails, and a
+/// it would not report are left out—writing one of those fails, and a
 /// device fails the write it is on rather than the ones after it.
 #[uniffi::export]
 pub fn ulcp_device_config_writes(
@@ -338,7 +338,7 @@ pub struct MobileMeshAdvertisementRecord {
     /// this bundle.
     ///
     /// A unicast Identity Request reply is authenticated by its MIC, so it
-    /// carries no detached signature and decodes as `Unsigned` — it is
+    /// carries no detached signature and decodes as `Unsigned`—it is
     /// nonetheless trustworthy, and the platform must accept it. A broadcast
     /// advertisement has no MIC, so it is `false` and the platform must
     /// require a `Valid` embedded signature before trusting any claim.
@@ -393,14 +393,14 @@ pub struct MobileMeshSharedLocationRecord {
 /// A beacon is the case this exists for: it has no payload, so it produces no
 /// advertisement, no message, and no ping reply, yet it is the cheapest
 /// possible proof that a node is still reachable. Presence is not a claim
-/// about content, so nothing here needs to be authenticated to be useful —
+/// about content, so nothing here needs to be authenticated to be useful—
 /// it says only that a frame naming this sender was accepted.
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
 pub struct MobileMeshPeerHeardRecord {
     /// Canonical Base58 address of the sender, when the frame named a full
     /// public key or the MAC could resolve one. `None` for a hint-only
     /// source, which the platform may still resolve against its own peer
-    /// list — see `node_hint`.
+    /// list—see `node_hint`.
     pub peer_address: Option<String>,
     /// The 3-byte source node hint, when the frame carried one. Hints are
     /// ambiguous by design: a platform matching one against saved peers must
@@ -1169,8 +1169,8 @@ impl MobileMeshSession {
     /// This phone's own node public key, which is what a device lists in
     /// `PROP_DEV_ADMINS` to let this phone manage it over the mesh.
     ///
-    /// Handing this to a radio the phone is attached to —
-    /// `MobileUlcpSession::insert_device_admin` — is the whole of making
+    /// Handing this to a radio the phone is attached to—
+    /// `MobileUlcpSession::insert_device_admin`—is the whole of making
     /// this phone an administrator of that radio. Nothing else is
     /// exchanged: the session both ends derive comes from their two
     /// identities.
@@ -1181,7 +1181,7 @@ impl MobileMeshSession {
     /// Read one property from a device across the mesh.
     ///
     /// Every `begin_management_*` call returns immediately with an
-    /// operation identifier, and reports through `poll_update` — the same
+    /// operation identifier, and reports through `poll_update`—the same
     /// shape as `ping`, because it is the same kind of thing: a
     /// round-trip over a network that promises nothing. One operation runs
     /// at a time; starting another while one is outstanding fails it.
@@ -1222,7 +1222,7 @@ impl MobileMeshSession {
     }
 
     /// Add one item to a multiple-value property on a device across the
-    /// mesh — a peer key, an administrator key, a channel key.
+    /// mesh—a peer key, an administrator key, a channel key.
     pub fn begin_management_insert(
         &self,
         peer_address: String,
@@ -1263,7 +1263,7 @@ impl MobileMeshSession {
     /// Named rather than left to [`Self::begin_management_insert`] for the
     /// same reason `MobileUlcpSession::insert_device_admin` is: this is a
     /// decision about who may configure a node, and a caller should not
-    /// have to name the property — or be able to reach a different one by
+    /// have to name the property—or be able to reach a different one by
     /// naming it wrong. The device holds it live until a save.
     pub fn begin_management_insert_admin(
         &self,
@@ -1279,7 +1279,7 @@ impl MobileMeshSession {
     /// Take a node's authority to manage this device away again.
     ///
     /// A device that removes the administrator it is answering keeps
-    /// answering this exchange — the reply is already authorized — and
+    /// answering this exchange—the reply is already authorized—and
     /// refuses the next one.
     pub fn begin_management_remove_admin(
         &self,
@@ -1328,7 +1328,7 @@ impl MobileMeshSession {
     /// Live state, never saved: an alert is a thing happening now, and one
     /// restored at boot would be a device that woke up beeping. The device
     /// ends it on its own deadline as well, so a search that outlasts that
-    /// is kept alive by asking again — the same contract as the local link,
+    /// is kept alive by asking again—the same contract as the local link,
     /// with the round trip of the mesh in front of it.
     pub fn begin_management_set_alert(
         &self,
@@ -1347,7 +1347,7 @@ impl MobileMeshSession {
     ///
     /// A device answers as many as fit and stops; the answers that arrive
     /// are the ones it sent, and the rest are simply absent. Requires
-    /// `CAP_CMD_MULTI` on the device — one that lacks it refuses the whole
+    /// `CAP_CMD_MULTI` on the device—one that lacks it refuses the whole
     /// request rather than answering part of it.
     pub fn begin_management_get_many(
         &self,
@@ -1409,8 +1409,8 @@ impl MobileMeshSession {
 
     /// Reset a device across the mesh.
     ///
-    /// A device answers a reset with nothing — it is busy doing what was
-    /// asked — so the operation ends `Acknowledged` on the MAC
+    /// A device answers a reset with nothing—it is busy doing what was
+    /// asked—so the operation ends `Acknowledged` on the MAC
     /// acknowledgment. `Restore` on a device holding no snapshot resets
     /// nothing and answers like any other command, which arrives as an
     /// ordinary `Replied` status.
@@ -1437,7 +1437,7 @@ impl MobileMeshSession {
     /// Read a named set of properties across the mesh.
     ///
     /// The caller names what it wants, in as many exchanges as the
-    /// answers need — a screenful of settings is normally one. Every
+    /// answers need—a screenful of settings is normally one. Every
     /// property comes back answered, refusals included, so a caller can
     /// tell "the device would not say" from "nobody asked".
     ///
@@ -1542,13 +1542,13 @@ impl MobileMeshSession {
     /// from this node's own neighbors or from a remote vantage point.
     ///
     /// With an empty `source_route` the request goes out as a direct
-    /// broadcast with no flood budget, so repeaters never carry it — the
+    /// broadcast with no flood budget, so repeaters never carry it—the
     /// blast radius is exactly the nodes in radio range. Given a route, the
     /// request is steered along it instead: each repeater consumes its hint,
     /// so the request arrives with an empty Route option in the neighborhood
     /// the route ends at, and the nodes *there* are the ones that answer. A
     /// steered request also carries a trace route, which is what gives the
-    /// answering strangers a path back — without it their replies would have
+    /// answering strangers a path back—without it their replies would have
     /// no route and no flood budget, and would die on their own transmitter.
     ///
     /// Either way it carries this phone's full source address, so a matching
@@ -1592,7 +1592,7 @@ impl MobileMeshSession {
     ///
     /// A group message carries a 3-byte hint and nothing else, so there is no
     /// address to unicast a request to. This goes out over the channel itself,
-    /// filtered to that hint, and only the member it names answers — with a
+    /// filtered to that hint, and only the member it names answers—with a
     /// targeted unicast, since the request carries this phone's full address.
     ///
     /// The request is routed by what that member's own frames have shown:
@@ -1645,7 +1645,7 @@ impl MobileMeshSession {
     }
 
     /// Set whether this phone answers Identity Requests with its own
-    /// identity — the passive counterpart of [`discover_identities`]:
+    /// identity—the passive counterpart of [`discover_identities`]:
     /// discoverable phones show up in other people's Discover sessions.
     ///
     /// `name` is the display name carried in replies (truncated to the
@@ -1689,8 +1689,8 @@ impl MobileMeshSession {
     /// Set the position this phone's identity carries, or `None` to stop
     /// sharing one.
     ///
-    /// Reaches every *live* identity payload — advertisements, manual and
-    /// scheduled, and Identity Request replies while discoverable — but
+    /// Reaches every *live* identity payload—advertisements, manual and
+    /// scheduled, and Identity Request replies while discoverable—but
     /// never the shareable QR/URI bundle: that bundle is durable, and a
     /// position frozen into it would go stale and then travel wherever
     /// the QR is pasted. The coordinate is reduced to the cell named by
@@ -1802,7 +1802,7 @@ impl MobileMeshSession {
     /// Remove peers from the live MAC. Idempotent: a peer that was never
     /// registered is already in the requested state, so it is not an error.
     /// A removed peer that transmits again may be auto-re-registered
-    /// (unpinned) by the MAC — removal here tracks the app's stored peer
+    /// (unpinned) by the MAC—removal here tracks the app's stored peer
     /// list, it is not a block list.
     pub async fn remove_peers(&self, peer_addresses: Vec<String>) -> Result<(), MobileMeshError> {
         let peers = peer_addresses
@@ -2189,8 +2189,8 @@ impl MobileMeshSession {
 
     /// Construct a session whose worker runtime starts with tokio's clock
     /// paused (test builds only). Timers auto-advance whenever the worker is
-    /// otherwise idle, so multi-second protocol deadlines — MAC ACK
-    /// timeouts, ping timeouts, repair timers — resolve in wall-clock
+    /// otherwise idle, so multi-second protocol deadlines—MAC ACK
+    /// timeouts, ping timeouts, repair timers—resolve in wall-clock
     /// milliseconds without changing any production code path.
     #[cfg(test)]
     async fn new_with_virtual_time(
@@ -2267,8 +2267,8 @@ impl MobileMeshSession {
                     }
                 };
                 let local = tokio::task::LocalSet::new();
-                // Boxed so the future's state — which embeds the MAC and its
-                // peer tables by value — lives on the heap rather than in
+                // Boxed so the future's state—which embeds the MAC and its
+                // peer tables by value—lives on the heap rather than in
                 // this thread's stack frame.
                 local.block_on(
                     &runtime,
@@ -2424,8 +2424,8 @@ const MANAGEMENT_FLOOD_HOPS: u8 = 5;
 const SYNC_BATCH: usize = 8;
 
 /// Encode a management request, which must fit one Node Management
-/// payload. The frame's TID is ignored over this binding — the envelope
-/// token is what correlates a response — so every request carries zero.
+/// payload. The frame's TID is ignored over this binding—the envelope
+/// token is what correlates a response—so every request carries zero.
 fn encode_management(
     build: impl FnOnce(&mut [u8]) -> Result<usize, umsh_ulcp::frame::WriteError>,
 ) -> Result<Vec<u8>, MobileMeshError> {
@@ -2641,8 +2641,8 @@ impl<M: MacBackend> ManagementJob<M> {
                 // about any one property.
                 Err(_) => event.status_code = umsh_ulcp::reply::status_of(reply).map(|s| s.0),
             },
-            // A reset the device answered anyway — `CMD_RESTORE` with no
-            // snapshot to restore — reports like any other status.
+            // A reset the device answered anyway—`CMD_RESTORE` with no
+            // snapshot to restore—reports like any other status.
             ReplyShape::Status | ReplyShape::Acknowledgment => {
                 match umsh_ulcp::reply::status_of(reply) {
                     Some(status) => event.status_code = Some(status.0),
@@ -2672,8 +2672,8 @@ impl<M: MacBackend> ManagementJob<M> {
 /// Present the answers to a management read as the property frames the
 /// ULCP inspectors read.
 ///
-/// A mesh answer and a GATT property frame carry the same thing — a
-/// property and what the device said it is worth — so the decoders are
+/// A mesh answer and a GATT property frame carry the same thing—a
+/// property and what the device said it is worth—so the decoders are
 /// the same decoders. Refusals drop out here: they are answers *about* a
 /// property rather than values of one, and the event still carries them
 /// for a caller that needs to know which.
@@ -2774,7 +2774,7 @@ async fn service_management<M: MacBackend>(
     loop {
         let progress = active.manager.service(now_ms).await;
         // The service call may have advanced the token ledger, and the
-        // next operation's manager is seeded from here — a token issued
+        // next operation's manager is seeded from here—a token issued
         // twice is answered with the earlier exchange's retained
         // response instead of running.
         *token = active.manager.counter();
@@ -2854,8 +2854,8 @@ async fn run_worker(
         let _ = ready.send(Err(MobileMeshError::CounterPersistenceFailed));
         return;
     }
-    // A stranger's authenticated unicast — an Identity Request reply, a
-    // first contact — names its sender with a full 32-byte source key.
+    // A stranger's authenticated unicast—an Identity Request reply, a
+    // first contact—names its sender with a full 32-byte source key.
     // Auto-registration (unpinned, LRU-evictable) is what lets the MAC
     // verify such a frame at all; without it the reply to our own
     // Discover solicitation is dropped unheard. Device firmware runs
@@ -2903,7 +2903,7 @@ async fn run_worker(
             return false;
         }
         // Our own multicast, relayed back to us. Every group send carries our
-        // full source address, so a repeater's copy arrives naming us — but
+        // full source address, so a repeater's copy arrives naming us—but
         // it is the message we already have, not a second one, and the
         // transcript must not show it twice.
         //
@@ -2931,7 +2931,7 @@ async fn run_worker(
         }
         // A channel frame names its channel by the key that authenticated it,
         // so the tag is derived from that key rather than looked up by the
-        // two-byte identifier the frame carried — distinct keys may share an
+        // two-byte identifier the frame carried—distinct keys may share an
         // identifier, and only the key that decrypted the frame is the truth.
         let channel_tag = packet.channel().map(|channel| {
             (
@@ -2944,7 +2944,7 @@ async fn run_worker(
         // The same rule read from the receiving end: emergency traffic that is
         // not readable by every node in range, or that does not name its
         // sender outright, is not accepted at all. A frame that fails either
-        // test is dropped rather than shown unmarked — a message the reader
+        // test is dropped rather than shown unmarked—a message the reader
         // would act on in an emergency must not arrive with its origin or its
         // reach in question.
         //
@@ -3030,7 +3030,7 @@ async fn run_worker(
     // One advancing token counter for every management exchange this
     // worker will ever run. An operation consumes as many tokens as it
     // has batches and continuations, and a device holds every answered
-    // token against retransmission — a request reusing one is answered
+    // token against retransmission—a request reusing one is answered
     // with the old exchange's response and never runs. Seeded randomly
     // so a fresh session cannot land on tokens a device still retains
     // from the previous one.
@@ -3093,7 +3093,7 @@ async fn run_worker(
     //
     // `Radio::transmit` awaits the device's physical TX completion while
     // `MacHandle` holds the coordinator borrow, so the pump must keep being
-    // polled while a command arm waits on that borrow — a single select
+    // polled while a command arm waits on that borrow—a single select
     // whose arm bodies suspend the task would deadlock: the arm waits on
     // the borrow, and the pump future that owns it is never re-polled to
     // release it. As sibling futures of the outer select, the pump makes
@@ -3275,7 +3275,7 @@ async fn run_worker(
                                         // Trace route so a listener learns a
                                         // path back to this phone from the
                                         // same frame, and trace signal so it
-                                        // learns what that path costs — the
+                                        // learns what that path costs—the
                                         // two pair entry for entry.
                                         options.with_trace_route().with_trace_signal()
                                     };
@@ -3318,8 +3318,8 @@ async fn run_worker(
                         }
                         Some(WorkerCommand::SignIdentityBundle { name, timestamp, response }) => {
                             // Never the location: this bundle outlives the
-                            // moment — pasted into messages, printed as a
-                            // QR — and a position frozen into it goes
+                            // moment—pasted into messages, printed as a
+                            // QR—and a position frozen into it goes
                             // stale and then travels wherever it does.
                             let result = build_signed_identity_bundle(
                                 &signer,
@@ -3424,7 +3424,7 @@ async fn run_worker(
                             // The installed profile is a copy, so a live
                             // responder is reinstalled to serve the new
                             // position. Not discoverable means not
-                            // installed — nothing to refresh.
+                            // installed—nothing to refresh.
                             if discoverable {
                                 node.enable_identity_responder_default(phone_identity_profile(
                                     local_key,
@@ -3464,7 +3464,7 @@ async fn run_worker(
                                 // A broadcast request must carry at least one
                                 // filter option. An unrestricted ask carries a
                                 // zero-bit capability filter, which every node
-                                // satisfies — but a hint filter already narrows
+                                // satisfies—but a hint filter already narrows
                                 // the ask, and padding it would only cost bytes.
                                 let unfiltered = role_code.is_none() && node_hint.is_none();
                                 let capability_bits =
@@ -3603,7 +3603,7 @@ async fn run_worker(
                             } else {
                                 // Either the address is malformed, or it names
                                 // a channel this session does not hold a key
-                                // for — from here those are the same thing.
+                                // for—from here those are the same thing.
                                 Err(MobileMeshError::UnknownConversation)
                             };
                             let _ = response.send(result);
@@ -3990,7 +3990,7 @@ async fn queue_chat_transmissions<M: MacBackend>(
                     continue;
                 };
                 // The MAC will only address a registered peer, and a channel
-                // member is not one — nothing about being in a channel
+                // member is not one—nothing about being in a channel
                 // together registers anybody. Register on the way out rather
                 // than on sight: only the members we actually have to ask
                 // something of spend a peer slot, and this is the only place
@@ -4007,7 +4007,7 @@ async fn queue_chat_transmissions<M: MacBackend>(
                 // asked for here.
                 let mut options = SendOptions::default().with_full_source();
                 // Repairs carry the same message the multicast did, so they
-                // are held to the same rule — and have to be, since the
+                // are held to the same rule—and have to be, since the
                 // receiving side refuses encrypted emergency text whatever
                 // family it arrives in. It stays blind unicast even so: what
                 // an unencrypted blind unicast still carries over a plain one
@@ -4328,7 +4328,7 @@ fn publish_chat_drain(
 /// Attach a frame's radio metadata to the records it produced.
 ///
 /// The engine is transport-agnostic, so this is the only place the two are
-/// together. Only records describing received content carry it — an outbound
+/// together. Only records describing received content carry it—an outbound
 /// echo or a placeholder has no frame behind it.
 fn attach_rx_metadata(mutations: &mut [MobileChatMutationRecord], rx: &MobileChatRxMetadataRecord) {
     for mutation in mutations {
@@ -4365,7 +4365,7 @@ fn remember_member_route(
 
 /// The flood budget an observed hop count implies. A hop count includes the
 /// final link into this device, which no repeater has to pay for, so the
-/// budget is one less than the distance the frame was heard from — and at
+/// budget is one less than the distance the frame was heard from—and at
 /// least one, since a budget of zero forwards nowhere.
 fn flood_budget(hop_count: Option<u8>) -> u8 {
     hop_count
@@ -4874,8 +4874,8 @@ mod tests {
             .unwrap();
         complete_ping(&alice, &bob, address(&bob_identity)).await;
 
-        // Removal is idempotent — an unknown peer and a double removal are
-        // both fine — and must not disturb the session.
+        // Removal is idempotent—an unknown peer and a double removal are
+        // both fine—and must not disturb the session.
         alice
             .remove_peers(vec![address(&bob_identity)])
             .await
@@ -4912,7 +4912,7 @@ mod tests {
             .await
             .unwrap();
 
-        // The listing never arrives — no repeater is listening — so the ask
+        // The listing never arrives—no repeater is listening—so the ask
         // runs beside a loop watching for what it put on the air, and is
         // dropped once that has been seen.
         let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
@@ -4992,7 +4992,7 @@ mod tests {
         assert!(header.fcf.full_source());
 
         // A bystander session consumes the solicitation without error.
-        // (Whether it answers is its responder's business — the full
+        // (Whether it answers is its responder's business—the full
         // reply loop is covered separately below.)
         bob.receive(MobileMeshRxRecord {
             data: frame.data,
@@ -5040,7 +5040,7 @@ mod tests {
         assert!(has_vacuous_caps_filter);
 
         // Steered at a remote vantage point and aimed at one router there by
-        // its two-byte hint — the shape that identifies an intermediate hop.
+        // its two-byte hint—the shape that identifies an intermediate hop.
         // The ask still goes out with no flood budget for a repeater to spend
         // on its own initiative.
         alice
@@ -5120,7 +5120,7 @@ mod tests {
     /// The whole discover loop between two strangers: Alice's zero-hop
     /// broadcast ask reaches Bob, Bob's default-on responder answers with
     /// a jittered authenticated unicast carrying his full source key, and
-    /// Alice — who has never registered Bob — auto-registers him
+    /// Alice—who has never registered Bob—auto-registers him
     /// transiently, verifies the reply, and surfaces it as an
     /// advertisement event. This is the exact path the Discover sheet
     /// rides on hardware.
@@ -5320,7 +5320,7 @@ mod tests {
         }
 
         // The pong carried a trace route that accumulated no hints, because
-        // there is no repeater between the two. That is a direct peer — not a
+        // there is no repeater between the two. That is a direct peer—not a
         // source route naming no routers, which would put an empty (and
         // meaningless) SourceRoute option on every packet alice sends back.
         let route = alice.peer_route(address(&bob_identity)).await.unwrap();
@@ -5466,7 +5466,7 @@ mod tests {
                 assert_eq!(event.peer_address, address(&alice_identity));
                 // A broadcast has no MIC, so the platform is told the sender
                 // was not authenticated and must fall back to the bundle's
-                // own signature — which is why one is attached.
+                // own signature—which is why one is attached.
                 assert!(!event.source_authenticated);
                 let received =
                     crate::decode_node_identity(event.peer_address, event.payload).unwrap();
@@ -5604,7 +5604,7 @@ mod tests {
     }
 
     /// A beacon carries no payload at all, so what reaches a listener is
-    /// presence and a trace — never an advertisement.
+    /// presence and a trace—never an advertisement.
     #[tokio::test]
     async fn a_beacon_reports_presence_and_carries_nothing() {
         let directory = tempfile::tempdir().unwrap();
@@ -6426,7 +6426,7 @@ mod tests {
     /// together: what leaves carries no encryption, and a frame that arrives
     /// encrypted is refused however well it authenticates. The refused frame
     /// here is byte-for-byte the payload the accepted one carries, sealed
-    /// under the same channel key by the same sender — encryption is the only
+    /// under the same channel key by the same sender—encryption is the only
     /// difference between the message that is shown and the message that is
     /// not.
     #[tokio::test]
@@ -6506,7 +6506,7 @@ mod tests {
         );
 
         // Half two: the same payload, from the same sender, under the same
-        // channel key — encrypted. It authenticates perfectly and must still
+        // channel key—encrypted. It authenticates perfectly and must still
         // be refused. An earlier frame counter keeps it ahead of the real
         // frame in the channel's replay window, so the genuine copy that
         // follows is judged on its own merits.
@@ -6622,7 +6622,7 @@ mod tests {
     ///
     /// It also covers group repair as such, which nothing else does: it is
     /// the only test where a member has to ask for a fragment and get it.
-    /// Two separate faults used to stop that dead — the requester could not
+    /// Two separate faults used to stop that dead—the requester could not
     /// address a channel member it had never registered as a peer, and the
     /// sender refused to serve any frame still sitting in `in_flight`, which
     /// a multicast never left. Either one alone leaves this failing.
@@ -6767,7 +6767,7 @@ mod tests {
     /// Every multicast send carries our full source address so strangers can
     /// address repairs to us, which means a relayed copy comes back naming us
     /// as the sender. Feeding that to the transcript would show the user
-    /// their own message twice — once as sent, once as received from
+    /// their own message twice—once as sent, once as received from
     /// themselves.
     #[tokio::test]
     async fn a_relayed_copy_of_our_own_group_message_is_not_transcribed() {
@@ -7107,8 +7107,8 @@ mod tests {
 
     /// A batch id is issued exactly when the batch has events in it, and never
     /// otherwise. The platform reads the id as its whole signal to apply and
-    /// acknowledge, so a batch made of only one kind of event — a lone sender
-    /// resolution, say — must still be announced. One batch left
+    /// acknowledge, so a batch made of only one kind of event—a lone sender
+    /// resolution, say—must still be announced. One batch left
     /// unacknowledged holds the slot for the rest of the session, and every
     /// delivery receipt behind it never arrives: messages transmit fine and
     /// stay on "Sending" forever, in every conversation at once.
@@ -7236,7 +7236,7 @@ mod tests {
         // Every fragment reached the air off the original send. Had the
         // sender stalled waiting for an acknowledgement that a multicast
         // never produces, the message could only have completed through
-        // Bob asking for the rest — so a repair here would mean the
+        // Bob asking for the rest—so a repair here would mean the
         // transmit path is ack-gated even though the transcript recovered.
         assert!(
             transmitted >= usize::from(fragments),

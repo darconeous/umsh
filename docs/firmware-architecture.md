@@ -26,8 +26,8 @@ same image holding different property values, and the difference is
 configuration the operator applies over ULCP. What remains per-board is the
 BSP, the flash layout, and the target triple.
 
-"Companion radio" and "repeater" stay useful words — they name recognizable
-points in the configuration space, and host tooling offers them as presets —
+"Companion radio" and "repeater" stay useful words—they name recognizable
+points in the configuration space, and host tooling offers them as presets—
 but they no longer name build targets.
 
 ### The shipping matrix
@@ -42,7 +42,7 @@ but they no longer name build targets.
 | Heltec V2 | ESP32 | `heltec-v2` | BLE, UART | 1260/191 KiB (3008/see below) | bringup complete, hw validation open |
 
 For the nRF52840 boards, figures are `text+data` against the application
-flash window and `data+bss` against SRAM, from a release build — the two
+flash window and `data+bss` against SRAM, from a release build—the two
 left-hand columns of `arm-none-eabi-size <elf>`. On the Espressif boards
 `size` misleads: esp-hal's linker script fills the leftover DRAM with the
 `.stack` section and shadows flash-resident code into NOBITS placeholder
@@ -67,7 +67,7 @@ from a second unit.
 share a pin map, so one image covers them; the L1 e-ink variant drives a
 different panel on SPI1 and is not supported. The board's SoftDevice is
 S140 v7.3.0, so its application starts at `0x27000` rather than the
-T-Echo's `0x26000` — the one thing in its build that cannot be copied
+T-Echo's `0x26000`—the one thing in its build that cannot be copied
 from a sibling board.
 
 ### `*-console` is a bringup harness, not a product
@@ -75,7 +75,7 @@ from a sibling board.
 Each board also has a `<board>-console` binary, excluded from the shipping
 matrix above. These earn their place for one reason: they are the only thing
 exercising the non-BLE path end to end, and they are the natural tool for a
-new board before BLE stands up. Treat them as diagnostics — a board with a
+new board before BLE stands up. Treat them as diagnostics—a board with a
 working console image and no device image is a board in bringup.
 
 Console binaries compose a BSP with `umsh-app-ulcp-cli`, and each keeps its
@@ -85,8 +85,8 @@ own `src/main.rs`; they do not share the shipping sources.
 
 ```
 crates/
-  umsh-bsp-<chip>/          (chip-level BSP — peripherals, USB, GPREGRET, …)
-  umsh-bsp-<board>/         (board-level BSP — pins, sensors, radios, init)
+  umsh-bsp-<chip>/          (chip-level BSP—peripherals, USB, GPREGRET, …)
+  umsh-bsp-<board>/         (board-level BSP—pins, sensors, radios, init)
   umsh-ux-<class>/          (UX mechanism for one device class)
   umsh-ulcp-runtime/        (board-agnostic ULCP device runtime)
   umsh-app-ulcp-cli/        (console-harness app)
@@ -101,11 +101,11 @@ firmware/
   the `umsh::Platform` trait.
 - A **UX-class crate** is pure-logic mechanism for a family of devices with
   a similar physical UX. `umsh-ux-tracker` covers boards with one button, one
-  LED, one piezo buzzer, USB-CDC, and a battery — providing a button-gesture
+  LED, one piezo buzzer, USB-CDC, and a battery—providing a button-gesture
   FSM, an LED-heartbeat engine with overlay sequences, a buzzer melody
   sequencer, and a low-battery detector. `umsh-ux-display-tracker` covers
   boards that add a small display and possibly a D-pad (T-Echo, Heltec V3,
-  Wio Tracker L1) — providing the on-screen menu, the display-attention
+  Wio Tracker L1)—providing the on-screen menu, the display-attention
   policy, and the input gate, and borrowing the button recognizer from
   `umsh-ux-tracker` rather than duplicating it. A device class with a speaker
   and keyboard would have its own (totally different) `umsh-ux-handheld`
@@ -124,7 +124,7 @@ firmware/
   exactly one `board-*` feature, owns `memory.x` and `build.rs`, and pins the
   target triple through its `.cargo/config.toml`. It contains no source.
 
-The Espressif images do not share the nRF52840 sources — `firmware-esp32/`
+The Espressif images do not share the nRF52840 sources—`firmware-esp32/`
 carries its own shipping sources in `firmware/esp32-tracker/src/`, shared
 by the Heltec V2 and V3 board packages the same way the nRF boards share
 `nrf52-tracker/src/` (thin manifests selecting a `board-*` feature). The
@@ -160,8 +160,8 @@ Capability features name a hardware fact, not a board: `cap-battery-saadc`
 (SAADC battery monitor), `cap-buzzer` (a sounder the locate alert can drive),
 `display-epd` / `display-oled` (both imply `has-display`, which gates the menu
 subsystem), `button-nav`, `system-off-techo` / `system-off-wio`,
-`led-active-low`, `lfclk-rc`, `power-button`. A separate set —
-`no-ble`, `ble-debug`, `ble-store-fault-inject`, `ble-wipe-on-boot` — selects
+`led-active-low`, `lfclk-rc`, `power-button`. A separate set—
+`no-ble`, `ble-debug`, `ble-store-fault-inject`, `ble-wipe-on-boot`—selects
 diagnostic images that are never shipped.
 
 Features carry their weight on these parts because exclusion has to be
@@ -172,7 +172,7 @@ optimizer to prove those paths dead does not.
 
 The cost is that only combinations someone actually builds are ever
 type-checked. Keep CI building every shipping image, not a representative
-subset — a `#[cfg]` arm reachable from one board's feature set alone is
+subset—a `#[cfg]` arm reachable from one board's feature set alone is
 compiled nowhere else.
 
 **`t1000e` is the known wart.** It predates the capability split and still
@@ -197,7 +197,7 @@ fn report_snapshot_rejected(&mut self, fell_back: bool) {}
 
 A board with a battery overrides `sample_battery`; a board whose journal
 cannot walk back leaves `older_snapshot` alone and rejection is terminal. The
-required methods — snapshot and identity persistence, `fill_secret` — have no
+required methods—snapshot and identity persistence, `fill_secret`—have no
 default, so a board cannot forget them.
 
 The division is deliberate: `#[cfg]` for whether hardware exists, `DeviceEnv`
@@ -250,8 +250,8 @@ at runtime, so the BSP seeds a ChaCha20 CSPRNG from the hardware TRNG at boot.
 There is no non-cryptographic RNG anywhere in the tree.
 
 A BSP's `Board::init()` returns a struct implementing `Platform` and typically
-exposes additional board resources alongside it — buttons, LEDs, buzzers,
-GNSS, accelerometers — beyond what `Platform` requires.
+exposes additional board resources alongside it—buttons, LEDs, buzzers,
+GNSS, accelerometers—beyond what `Platform` requires.
 
 See `crates/umsh-mac/src/lib.rs` and `crates/umsh-hal/` for the exact
 definitions; treat those as the source of truth.
@@ -268,14 +268,14 @@ toolchain or build system:
 
 | Trigger | Action |
 |---|---|
-| Requires a vendor Rust fork (Xtensa via `espup`) | Exclude — the root `rust-toolchain.toml` can't be two things. |
-| Uses `esp-idf-sys` / `esp-idf-svc` (std-via-newlib) | Exclude — its build script and `sdkconfig` machinery don't play with a unified workspace. |
-| Drives builds via non-cargo orchestration (Zephyr, Yocto, IDF CMake) | Exclude — those tools don't respect cargo's view of the workspace. |
+| Requires a vendor Rust fork (Xtensa via `espup`) | Exclude—the root `rust-toolchain.toml` can't be two things. |
+| Uses `esp-idf-sys` / `esp-idf-svc` (std-via-newlib) | Exclude—its build script and `sdkconfig` machinery don't play with a unified workspace. |
+| Drives builds via non-cargo orchestration (Zephyr, Yocto, IDF CMake) | Exclude—those tools don't respect cargo's view of the workspace. |
 | Bare-metal embassy / `rp-hal` / cortex-m HAL on a stock toolchain | **Include.** Just a different target triple. |
 
 `firmware-esp32/` is excluded under the first trigger: the Xtensa targets need
 `channel = "esp"`. It is bare-metal `esp-hal`, which would otherwise qualify
-for inclusion — the toolchain, not the HAL, is what forces the split. A
+for inclusion—the toolchain, not the HAL, is what forces the split. A
 RISC-V ESP32 part on the stock toolchain would not need excluding.
 
 An excluded workspace still consumes `crates/*` via path dependencies and
@@ -328,7 +328,7 @@ rustflags = [
 
 This is what makes `cargo build` *inside the firmware directory* pick up the
 right target and link script. Building with `--manifest-path` or `-p` from the
-root silently drops these flags and yields a broken ELF — always build from
+root silently drops these flags and yields a broken ELF—always build from
 inside the crate, which is what the Makefile does.
 
 Firmware crates also need a `build.rs` that copies `memory.x` into `OUT_DIR`
@@ -341,8 +341,8 @@ Use the Makefile. It builds each firmware from inside its own directory and
 converts the ELF with the board's UF2 base address and family ID; hand-rolled
 `objcopy` / `uf2conv` / `espflash` invocations get these wrong.
 
-- `make build-<board>` / `make flash-<board>` — shipping image
-- `make build-<board>-console` / `make flash-<board>-console` — bringup harness
+- `make build-<board>` / `make flash-<board>`—shipping image
+- `make build-<board>-console` / `make flash-<board>-console`—bringup harness
 
 nRF52840 firmware **only links in `--release`**; dev builds overflow flash.
 `cargo check` is fine at any profile. Flashing requires the device in DFU mode
@@ -380,7 +380,7 @@ If the chip is new, you also need a chip-BSP. Otherwise just a board-BSP.
 7. **Register it** in root `members` but not `default-members`.
 8. **Add Makefile targets** (`build-<board>`, `flash-<board>`) and a
    `scripts/firmware_image.py` entry for the UF2 family ID and base address.
-9. **Add it to the CI matrix** — both the shipping image and the console
+9. **Add it to the CI matrix**—both the shipping image and the console
    harness.
 
 A board on a new MCU family that cannot share the existing sources needs its
@@ -396,7 +396,7 @@ piezo melody sequencer.
 
 1. **Create the crate** at `crates/umsh-ux-<class>/`. `no_std`, pure logic, no
    embassy, no I/O, no hardware dependencies. Provides the mechanism engines
-   for that class — input recognition, output sequencing.
+   for that class—input recognition, output sequencing.
 2. **Write unit tests** for every engine with synthetic time and synthetic
    inputs. This is the layer with the most test leverage, and the only one
    that tests cheaply on the host.
@@ -408,6 +408,6 @@ piezo melody sequencer.
 ## Why this doc exists
 
 This doc is the contract. Per-board plans and hardware documents cover what is
-specific to one device — the safety contract, the button UX, the pin map — and
+specific to one device—the safety contract, the button UX, the pin map—and
 inherit the conventions defined here. If a per-board plan and this doc
 disagree, this doc wins.

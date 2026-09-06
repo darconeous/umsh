@@ -11,7 +11,7 @@ use crate::ticket::SendProgressTicket;
 /// **Important:** `Transport` is a *context* abstraction, not a *security*
 /// abstraction. `LocalNode::send()` produces a unicast frame (destination-
 /// encrypted, only the recipient can decrypt). `BoundChannel::send()`
-/// produces a blind unicast frame (channel-encrypted — any node with the
+/// produces a blind unicast frame (channel-encrypted—any node with the
 /// channel key can decrypt). Generic code over `Transport` must not assume
 /// identical delivery or privacy properties.
 pub trait Transport {

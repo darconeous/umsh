@@ -4,8 +4,8 @@
 > This section is an early work in progress and this protocol may change significantly.
 
 The **UMSH Local Control Protocol** (ULCP) is the interface between a UMSH
-**device** — hardware that owns a physical transceiver and runs always-on
-firmware — and a **host** such as a phone, tablet, laptop, or small computer
+**device**—hardware that owns a physical transceiver and runs always-on
+firmware—and a **host** such as a phone, tablet, laptop, or small computer
 that configures or uses it over a local out-of-band link. The device is not
 merely a dumb modem, but it is also not normally the primary home of the
 user's long-term UMSH identity.
@@ -17,10 +17,10 @@ side. The protocol itself is specified in the chapters that follow:
 - [Framing and Common Semantics](ulcp-core.md) defines the frame format,
   the command grammar and property model, the classes of state a device
   holds, and the status, reset, and capability registries
-- one chapter per subsystem — [Radio Control](ulcp-radio.md),
+- one chapter per subsystem—[Radio Control](ulcp-radio.md),
   [Frame Transport](ulcp-transport.md), [Device Domain](ulcp-device.md),
   [Saved State](ulcp-saved-state.md), and
-  [Tethered Host Services](ulcp-host.md) — each defining its own
+  [Tethered Host Services](ulcp-host.md)—each defining its own
   capabilities, commands, and properties
 - [Minimum Requirements](ulcp-conformance.md) states what a device has to
   implement to be a ULCP device, and the
@@ -36,7 +36,7 @@ One protocol serves every deployment of a device; the familiar deployment
 names describe configuration, not distinct firmware:
 
 - a **companion radio** is a device tethered to a host that owns the user's
-  long-term identity — the device owns the physical LoRa transceiver, and it
+  long-term identity—the device owns the physical LoRa transceiver, and it
   may also host a **local device-owned node** for management and diagnostics
 - a **repeater** is a device commissioned over the same protocol and then
   left to run autonomously, forwarding traffic with no host attached
@@ -90,8 +90,8 @@ at a time. A host application that manages multiple user identities is
 expected to select one for the device to assist; it can still send and receive
 traffic for others through the raw frame stream while attached.
 
-Everything provisioned for the host identity — its public key, channel keys,
-peer keys, filters, and queued inbound traffic — forms the **host domain**:
+Everything provisioned for the host identity—its public key, channel keys,
+peer keys, filters, and queued inbound traffic—forms the **host domain**:
 state that is keyed by the host identity and wiped wholesale when a
 different host identity takes over the device. Pairing the device with a new
 phone therefore starts the host state over cleanly while leaving the
@@ -149,8 +149,8 @@ intent. The device does not track it; the host knows which it means and
 confines itself accordingly.
 
 **Tethered attach.** The host is *this device's host*. It writes
-`PROP_HOST_KEY`, provisions the host domain — channel keys, peer keys,
-receive filters, delegation policy — and thereafter the device filters,
+`PROP_HOST_KEY`, provisions the host domain—channel keys, peer keys,
+receive filters, delegation policy—and thereafter the device filters,
 queues, and acknowledges on its behalf. A device serves at most one
 tethered host at a time, and being tethered is a transient local
 relationship: it does not appear in the device's node identity, does not
@@ -163,7 +163,7 @@ the normal relationship for any device that is not somebody's radio.
 
 The rule that follows is short: configuring a device's device domain
 **MUST NOT** claim its host domain. One phone administering ten repeaters
-must not write `PROP_HOST_KEY` on any of them — it would make each
+must not write `PROP_HOST_KEY` on any of them—it would make each
 repeater start filtering and queueing for a host that has no intention of
 coming back, and would displace whatever host the repeater was actually
 serving.
@@ -172,7 +172,7 @@ Nothing in the protocol distinguishes the two: a host that has reached
 the link can do either (see [ULCP over
 BLE](ulcp-ble.md#administrative-authorization)). The
 distinction belongs in host implementations, which **SHOULD** make it
-explicit rather than incidental — an administrative handle that refuses
+explicit rather than incidental—an administrative handle that refuses
 host-domain writes cannot commit this error by accident.
 
 ## Security Boundary
@@ -223,7 +223,7 @@ symmetric key material for **specific already-known peers and channels**:
   from those peers and send MAC acks on the host's behalf while the host is
   asleep or disconnected, so that senders' retransmission logic is satisfied.
 - **Channel keys** let the device recognize multicast traffic on the host's
-  channels — and, importantly, **blind unicast** traffic addressed to the
+  channels—and, importantly, **blind unicast** traffic addressed to the
   host, whose destination and source addresses are concealed under the
   channel key (see [Blind Unicast
   Packet](packet-types.md#blind-unicast-packet)). Without the channel key the
@@ -244,7 +244,7 @@ Only the first two are unconditional.
 ### [Radio Control](ulcp-radio.md)
 
 The host configures the physical radio link, through an interface that is
-not LoRa-specific in shape where that can be avoided — different radios
+not LoRa-specific in shape where that can be avoided—different radios
 have different parameter sets. The host can:
 
 - configure frequency, bandwidth, spreading factor, coding rate, power, and
@@ -288,16 +288,16 @@ delegation: the work a device does on behalf of the host identity it is
 serving.
 
 A major value of a companion radio is letting the host sleep while the
-device stays awake. For that, the device filters — implicitly from the
+device stays awake. For that, the device filters—implicitly from the
 provisioned host identity and channel keys, explicitly by destination
-hint, channel identifier, or packet type — so it only wakes the host when
+hint, channel identifier, or packet type—so it only wakes the host when
 a frame is relevant. While the host is disconnected it may also be asked
 to buffer inbound frames until the host asks for them, and to send MAC
 acks for peers whose pairwise keys were provisioned.
 
 These remain tightly scoped: the device is assisting the host, not
 impersonating it in the general case. Outbound traffic is deliberately **not**
-queued — a transmit either happens or fails while the host is attached to
+queued—a transmit either happens or fails while the host is attached to
 observe the result.
 
 ## Suggested Capability Matrix
@@ -344,7 +344,7 @@ The key structural ideas:
 
 - lightweight binary framing with a one-byte header and small transaction
   identifiers, allowing up to seven in-flight host commands
-- **properties** for simple state — a change is confirmed by publication of
+- **properties** for simple state—a change is confirmed by publication of
   the new authoritative value, and asynchronous state changes use the same
   publication form
 - **streams** for packet-like flows such as raw UMSH frames, which are not
@@ -445,7 +445,7 @@ As a practical rule of thumb:
 This suggests a clean split:
 
 - if the goal is **host-to-device tethering**, prefer GATT first and L2CAP CoC
-  where available — this is what
+  where available—this is what
   [ULCP over BLE](ulcp-ble.md) specifies
 - if the goal is **nearby-device participation over BLE**, assume the bearer is
   constrained and design for small messages or fragmentation from the outset

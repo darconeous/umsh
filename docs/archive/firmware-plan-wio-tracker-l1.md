@@ -62,24 +62,24 @@ Wio Tracker L1 / L1 Pro:
 
 **Out of scope** for this bringup:
 
-- GNSS (Quectel L76K / UART1 + standby pin) — wired, not driven.
-- Joystick / trackball + user button — wired, not driven.
-- Grove / external I²C — not initialized.
-- QSPI flash (P25Q16H) — not used. Persistent identity and
+- GNSS (Quectel L76K / UART1 + standby pin)—wired, not driven.
+- Joystick / trackball + user button—wired, not driven.
+- Grove / external I²C—not initialized.
+- QSPI flash (P25Q16H)—not used. Persistent identity and
   flash-backed CounterStore are a later phase.
-- Buzzer (D12 / P1.00) — not driven.
-- Battery measurement (D16 ADC + D30 enable) — not driven.
-- Solar / charger introspection — not exposed by hardware in a way
+- Buzzer (D12 / P1.00)—not driven.
+- Battery measurement (D16 ADC + D30 enable)—not driven.
+- Solar / charger introspection—not exposed by hardware in a way
   firmware can read.
-- E-ink variant (D31–D36 on SPI1) — Pro is the OLED variant; the
+- E-ink variant (D31–D36 on SPI1)—Pro is the OLED variant; the
   e-ink panel is a separate board we don't have.
-- BLE — never in this binary.
+- BLE—never in this binary.
 
 ## Why this is not on `umsh-app-ulcp-cli` / `umsh-ux-tracker`
 
 A bringup binary's job is to expose exactly the peripherals on the
 path and nothing else. The intent is to **validate the hardware
-reconstruction** — pinout, peripheral choice, RXEN behavior — on a
+reconstruction**—pinout, peripheral choice, RXEN behavior—on a
 recoverable board, not to ship a real application.
 
 Once this bringup is at parity with what the T-Echo has today
@@ -113,7 +113,7 @@ for the external RXEN line (see Phase 3).
 Workspace `members` adds the two new crates; `default-members` adds
 only `umsh-bsp-wio-tracker-l1` (same pattern as `umsh-bsp-techo`).
 
-The BSP crate name follows the family naming convention — the same
+The BSP crate name follows the family naming convention—the same
 crate works for the L1 (OLED, no case), L1 Pro (OLED + case + battery),
 and L1 Lite (no display) variants, because they share the pin map.
 The e-ink variant (`L1 e-ink`) would warrant a separate BSP crate (or
@@ -167,7 +167,7 @@ Same shape as the T-Echo:
 4. The 1200-baud `SET_LINE_CODING` + DTR-drop path and the
    `\x03\x03\x03dfu\r` escape path both trigger `enter_dfu_uf2()` from
    the USB-CDC handler, *below* any CLI parser. Both paths are
-   structurally enforced by `CdcAcmRescue` — they cannot be bypassed
+   structurally enforced by `CdcAcmRescue`—they cannot be bypassed
    by application code.
 5. Panics route to `PanicSlot::capture` and to `SCB::sys_reset()`; the
    next boot reads the slot and prints the previous panic over
@@ -186,7 +186,7 @@ Smaller than the T-Echo phasing because most of the chip-level work
 is already done. Each phase ends in a flashable, demonstrable
 artifact.
 
-### Phase 0 — Bootloader reconnaissance ✅
+### Phase 0—Bootloader reconnaissance ✅
 
 Triggered UF2 mode on a stock Wio Tracker L1, mounted `TRACKER L1`,
 read `INFO_UF2.TXT`, and cross-referenced against the MeshCore
@@ -227,14 +227,14 @@ applies when enabled).
 **Gate:** ✅ assumptions confirmed; `memory.x` and UF2 family ID
 recorded; proceed to Phase 1.
 
-### Phase 1 — "Hello USB-CDC" + safety primitives ✅
+### Phase 1—"Hello USB-CDC" + safety primitives ✅
 
 Single combined phase because the T-Echo already proved out every
 step. New workspace members:
 
-- `crates/umsh-bsp-wio-tracker-l1/` — board BSP crate (stub; the
+- `crates/umsh-bsp-wio-tracker-l1/`—board BSP crate (stub; the
   Phase 1 firmware drives pins inline like `hello-techo` does).
-- `firmware/hello-wio-tracker-l1/` — the bringup binary.
+- `firmware/hello-wio-tracker-l1/`—the bringup binary.
 
 The firmware is a stripped-down copy of `hello-techo` with these
 changes from the T-Echo version:
@@ -246,7 +246,7 @@ changes from the T-Echo version:
   Bringup"`.
 - `memory.x`: app origin `0x26000` → `0x27000`, length `824K` →
   `820K` (S140 v7.3.0 footprint).
-- Dropped the `PIN_POWER_EN` (P0.12) drive — no equivalent on the
+- Dropped the `PIN_POWER_EN` (P0.12) drive—no equivalent on the
   Wio Tracker.
 - Phase 1 does not bring up the display, radio, or MAC, so those
   imports, tasks, and the `embedded-alloc` global allocator are
@@ -265,14 +265,14 @@ End-to-end verified on hardware:
 - Heartbeat LED blinks at the LedEngine cadence.
 - 1200-baud touchless reset, escape-sequence DFU, and panic
   capture/replay are all inherited from `umsh-bsp-nrf52840` and
-  are structurally enforced by `CdcAcmRescue` — the same tested
+  are structurally enforced by `CdcAcmRescue`—the same tested
   paths used by the T-Echo bringup.
 
 **Gate:** ✅ firmware enumerates, echoes, blinks. Inherited rescue
 and panic paths share their hardware-verified status with the
 T-Echo Phase 2 work.
 
-### Phase 2 — SH1106 OLED "hello world" ✅
+### Phase 2—SH1106 OLED "hello world" ✅
 
 Bring up the OLED display over I²C. The OLED is materially easier
 than the T-Echo's e-paper: no busy line, no ~2 s refresh, no
@@ -285,7 +285,7 @@ Hardware wiring:
 Driver choice: use the `sh1106` crate (`embedded-graphics`-compatible,
 maintained, async I²C support via `embedded-hal-async` in recent
 versions). Falling back to a hand-rolled driver if the crate is
-unsuitable for embassy is acceptable but unlikely to be needed —
+unsuitable for embassy is acceptable but unlikely to be needed—
 SH1106 is simpler than SSD1681.
 
 Display contents (mirror the T-Echo for visual parity):
@@ -301,7 +301,7 @@ be cheap insurance against a tight burst making the display
 flicker, but is not load-bearing.
 
 Hardware-verified: boots and displays "UMSH bringup" / git SHA /
-"MAC: 0" in landscape orientation — no panel-rotation transform
+"MAC: 0" in landscape orientation—no panel-rotation transform
 needed (unlike the T-Echo's e-paper). Default orientation with
 `0xA1` segment remap and `0xC8` COM scan remapped is correct.
 
@@ -320,11 +320,11 @@ Non-obvious integration notes:
 
 **Gate:** ✅ hardware-verified.
 
-### Phase 3 — SX1262 LoRa radio ✅
+### Phase 3—SX1262 LoRa radio ✅
 
 Wire `umsh-radio-sx126x` into the firmware with the Wio Tracker's
 pin map. The radio crate itself should not need to change for the
-common path — the lora-phy `Sx126x` driver takes pins as
+common path—the lora-phy `Sx126x` driver takes pins as
 constructor arguments and is board-agnostic.
 
 The one new piece is **RXEN**:
@@ -382,7 +382,7 @@ The rest of the radio configuration is identical to the T-Echo:
 - DIO2 as RF switch
 - DC-DC enabled
 - MeshCore US params (910.525 MHz, SF7, BW62.5, CR4-5, sync
-  0x1424) — same as the T-Echo so the two boards can hear each
+  0x1424)—same as the T-Echo so the two boards can hear each
   other immediately
 
 The radio sits on the primary SPI bus on the Wio Tracker (SPIM0 or
@@ -396,20 +396,20 @@ and the `AtomicWaker` TOCTOU mitigation are all reused unchanged.
 
 Hardware-verified: OLED shows "RX: N" with N increasing as nearby
 MeshCore frames arrive on the 910.525 MHz channel. RXEN handling
-confirmed correct — no special toggling needed in the runner because
+confirmed correct—no special toggling needed in the runner because
 lora-phy drives the `rf_switch_rx` pin automatically via
 `GenericSx126xInterfaceVariant`. Passing RXEN as `rf_switch_rx = Some(rxen)` and leaving `rf_switch_tx = None` matches the Wio Tracker's hardware (no separate TX enable pin).
 
 Non-obvious integration notes:
 - `rf_switch_rx` in `GenericSx126xInterfaceVariant` is exactly the
-  right hook for RXEN — no changes to `umsh-radio-sx126x` required.
+  right hook for RXEN—no changes to `umsh-radio-sx126x` required.
 - Drive RXEN LOW at boot before handing to lora-phy, so it is not
   asserted during radio init/calibration.
 - TWISPI1 is used for the radio SPI (TWISPI0 is taken by the OLED).
 
 **Gate:** ✅ hardware-verified; RX counter advancing.
 
-### Phase 4 — MAC coordinator integration ✅
+### Phase 4—MAC coordinator integration ✅
 
 Wire `Mac<WioTrackerL1Platform>` into the firmware. Mirror the
 T-Echo's Phase 6 work line-for-line:
@@ -419,7 +419,7 @@ T-Echo's Phase 6 work line-for-line:
   `SoftwareSha256`, `Sx1262Radio`, `EmbassyClock`,
   `TeChoRng`-equivalent FICR-seeded XorShift64, `RamCounterStore`,
   `NullKeyValueStore`).
-- `Mac<P, 1, 8, 4, 4, 8, 255, 32>` — same minimal capacity.
+- `Mac<P, 1, 8, 4, 4, 8, 255, 32>`—same minimal capacity.
 - `embedded-alloc` global allocator with a 4 KiB heap (required by
   `umsh-sync` → `extern crate alloc`).
 - `mac_task` drives `mac.run(on_event)` and increments a packet
@@ -437,7 +437,7 @@ Hardware-verified: boots and displays "MAC: 0". MeshCore frames on
 the same channel are received and silently dropped by the parser.
 
 `WioTrackerPlatform` associated types are identical to `TechoPlatform`
-in `firmware/hello-techo` — same software crypto, same FICR-seeded
+in `firmware/hello-techo`—same software crypto, same FICR-seeded
 XorShift64 RNG, same no-op stubs for CounterStore/KeyValueStore. The
 `WioMac` capacity alias matches: `Mac<WioTrackerPlatform, 1, 8, 4, 4, 8, 255, 32>`.
 
@@ -454,7 +454,7 @@ Non-obvious integration facts carry over verbatim from T-Echo Phase 6:
 **Gate:** ✅ boots, displays "MAC: 0", USB banner confirms MAC is
 running. Counter stays at 0 pending Phase 5 packet generation.
 
-### Phase 5 — Periodic broadcast beacon (TX path) ✅
+### Phase 5—Periodic broadcast beacon (TX path) ✅
 
 Both `hello-wio-tracker-l1` and `hello-techo` now transmit a
 UMSH broadcast frame every 10 seconds. The `mac_task` now uses a
@@ -471,13 +471,13 @@ loop instead of `mac.run(on_event)`:
 **Gate:** ✅ hardware-verified on both devices; both MAC counters
 advance. End-to-end UMSH frame exchange proven on real radios.
 
-### Phase 6+ — superseded by the shipping image ✅
+### Phase 6+—superseded by the shipping image ✅
 
 This bringup is complete, and the follow-up it anticipated has
 landed in a different shape than expected. Rather than growing the
 CLI harness into a product, the board joined the shared nRF52840
 tracker sources (`firmware/nrf52-tracker/src/main.rs`) as a fourth
-board package, `firmware/wio-tracker-l1` — the same image the
+board package, `firmware/wio-tracker-l1`—the same image the
 T-Echo, T-1000E, and SenseCAP Solar Node ship, selected by a
 `board-wio-tracker-l1` feature.
 
@@ -500,7 +500,7 @@ The bringup-era pieces that survived: the SH1106 driver (moved into
 into the SenseCAP Solar block), and `memory.x`.
 
 `firmware/wio-tracker-l1-console` stays in the tree as the bringup
-harness it is — the only thing exercising the non-BLE path end to
+harness it is—the only thing exercising the non-BLE path end to
 end on this board.
 
 The shipping image adds, beyond anything this plan covered: BLE
@@ -564,7 +564,7 @@ cp target/thumbv7em-none-eabihf/release/firmware-hello-wio-tracker-l1.uf2 \
 
 The `cp` step typically reports `Device not configured` on macOS
 because the bootloader unmounts the volume the instant the last
-UF2 block lands — *before* `cp` can finalize extended attributes.
+UF2 block lands—*before* `cp` can finalize extended attributes.
 The flash itself has already succeeded by that point.
 `scripts/flash.py` swallows that specific error message; bare `cp`
 will surface it but it's not a failure.
@@ -576,7 +576,7 @@ linker flags are only inherited from the CWD hierarchy; building
 from elsewhere silently produces a ~6 KiB ELF with no code
 sections.
 
-There is currently no `make monitor-*` target — use `screen
+There is currently no `make monitor-*` target—use `screen
 /dev/cu.usbmodem<N> 115200` or `kermit` directly.
 
 ## Why this is also a forcing function
@@ -589,7 +589,7 @@ intentionally did not solve speculatively earlier:
    nearly a stub because `hello-techo` does everything inline; we
    can do the same here, or we can take the chance to factor the
    pin map and peripheral handles into the BSP properly. Lean
-   toward inline-first, factor later — the third nRF52840 board
+   toward inline-first, factor later—the third nRF52840 board
    (T1000-E) will tell us what's worth extracting.
 2. **External RXEN handling.** The first board with an external
    RF-switch pin separate from DIO2. The eventual abstraction

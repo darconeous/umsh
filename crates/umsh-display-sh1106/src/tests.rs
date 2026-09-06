@@ -1,7 +1,7 @@
 //! Host tests over a recording mock I²C.
 //!
 //! These prove the driver's own byte streams and buffer arithmetic. They
-//! cannot prove the command values are what an SH1106 wants — that is a
+//! cannot prove the command values are what an SH1106 wants—that is a
 //! hardware-validation item, checked once per board bring-up.
 
 extern crate alloc;

@@ -1,7 +1,7 @@
 //! Persisted entropy pool: a flash-seeded, hash-ratcheted CSPRNG.
 //!
 //! The pool exists for platforms whose hardware entropy source is not
-//! always available — on the ESP32 the TRNG is only trustworthy while
+//! always available—on the ESP32 the TRNG is only trustworthy while
 //! the RF subsystem is up, which used to chain the RNG's lifetime to
 //! the BLE controller's. A seed stored in flash breaks that chain: the
 //! pool is cryptographically strong from the first instruction of boot,
@@ -12,14 +12,14 @@
 //!
 //! 1. Read the stored seed `S` and build the pool with
 //!    [`EntropyPool::from_seed`]. The working key is `HKDF(S, salt)`
-//!    with per-boot salt (chip id, reset reason) — flash never holds
+//!    with per-boot salt (chip id, reset reason)—flash never holds
 //!    the working key, and a flash image taken later reveals nothing
 //!    about this session's outputs.
 //! 2. Before the first draw, write [`next_seed`](EntropyPool::next_seed)
 //!    to flash and, once the write is confirmed, call
 //!    [`seed_committed`](EntropyPool::seed_committed).
 //! 3. Draw. [`draw`](EntropyPool::draw) refuses until step 2 has
-//!    happened — that ordering is the whole crash-safety story. A boot
+//!    happened—that ordering is the whole crash-safety story. A boot
 //!    that dies before the commit replays a working key that never
 //!    emitted a byte, which is harmless; a boot that dies after it
 //!    ratchets forward next time. No boot counter is needed.
@@ -33,7 +33,7 @@
 //! [`mix`](EntropyPool::mix) folds harvested entropy into the working
 //! key whenever a hardware source happens to be live. Mixing is what
 //! heals a compromised or cloned seed file, so callers should persist a
-//! fresh [`next_seed`](EntropyPool::next_seed) afterwards — but mixing
+//! fresh [`next_seed`](EntropyPool::next_seed) afterwards—but mixing
 //! never *invalidates* the commit, because replay safety comes from the
 //! boot-time ratchet, not from the stored seed tracking the live key.
 //!
@@ -130,7 +130,7 @@ impl<S: Sha256Provider> EntropyPool<S> {
     /// Fold harvested entropy into the working key.
     ///
     /// Hash mixing means adversary-known input cannot reduce the pool's
-    /// entropy, only fail to add any — so anything cheap is fair game.
+    /// entropy, only fail to add any—so anything cheap is fair game.
     /// Marks the pool dirty: the stored seed no longer reflects the
     /// best key we have, and the caller should persist a fresh
     /// [`next_seed`](Self::next_seed) when convenient.
@@ -242,7 +242,7 @@ mod tests {
         let mut sink = [0u8; 32];
         p2.draw(b"a", &mut sink).unwrap();
         // p2's live key has ratcheted, but the seed written at commit
-        // time is what counts — recompute from a fresh twin.
+        // time is what counts—recompute from a fresh twin.
         assert_eq!(pool(&[4; 32], b"salt").next_seed(), persisted);
     }
 

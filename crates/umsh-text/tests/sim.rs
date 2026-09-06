@@ -1,7 +1,7 @@
 //! Multi-node simulated-airtime tests for the text engine.
 //!
 //! Each node runs a real engine; frames travel over a simulated serialized
-//! half-duplex link — one outstanding physical transmission per node with a
+//! half-duplex link—one outstanding physical transmission per node with a
 //! fixed per-frame airtime, matching the mobile one-outstanding-TX rule. The
 //! simulation is fully deterministic: virtual clock, explicit drop list, no
 //! wall-clock time or RNG.

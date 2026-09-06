@@ -231,7 +231,7 @@ Use Swift actors to define ownership:
 - `MeshEngine` serializes calls into the Rust session and drains core events;
 - `IdentityVault` serializes protected key access and identity transitions;
 - `SendCoordinator` owns active send operations, their ordering, and the
-  identity/radio/channel guards checked at send time — there is no durable
+  identity/radio/channel guards checked at send time—there is no durable
   application queue to resume, although the MAC may schedule, back off, and
   retransmit while completing an active send; and
 - the persistence layer serializes transactional changes that couple messages,
@@ -274,12 +274,12 @@ items, crash metadata, or SwiftUI state. Public identity sharing uses a
 
 The first release creates and manages exactly one local identity, but the
 architecture must not assume a singleton, so that account-style multiple
-identities — as in a mail client — can arrive later without a schema or
+identities—as in a mail client—can arrive later without a schema or
 service rewrite. Concretely:
 
-- every identity-scoped record — conversations, messages, send attempts,
+- every identity-scoped record—conversations, messages, send attempts,
   channel keys, PFS relationships, counter and replay stores, and radio
-  provisioning state — references its owning `LocalIdentity` from the first
+  provisioning state—references its owning `LocalIdentity` from the first
   schema version, even while only one row exists;
 - counter and replay storage is keyed per identity, never global;
 - Keychain items are stored per identity;
@@ -297,9 +297,9 @@ experience is designed.
 ### Frame counters and replay state
 
 Persistent frame counters are security state, not ordinary preferences. Reuse
-the existing MAC counter-persistence contract — an injected storage backend
+the existing MAC counter-persistence contract—an injected storage backend
 with reservation blocks whose unused values are skipped rather than
-reclaimed — instead of defining a mobile-specific allocation protocol. Other
+reclaimed—instead of defining a mobile-specific allocation protocol. Other
 platforms already depend on that contract, and it must not be reshaped around
 iOS. The iOS contribution is a storage implementation with an appropriate
 protection class and defined failure behavior.
@@ -382,7 +382,7 @@ The companion specification divides capabilities into radio control, the frame
 data plane, receive filtering and wake policy, and offline assistance. The
 minimal protocol provides the first two, and that is sufficient: the phone
 runs the complete MAC over a transparent frame plane. The application must
-work against a minimal-protocol radio, with the consequences stated honestly —
+work against a minimal-protocol radio, with the consequences stated honestly—
 reception is promiscuous, nothing is filtered or buffered on the radio,
 receiving requires a live BLE link, and battery cost is higher on both sides.
 
@@ -423,7 +423,7 @@ radio's authoritative host key with the current phone identity. Never infer a
 match from a remembered peripheral alone. A radio without host provisioning is
 used as a transparent frame plane under the phone identity and has no host
 state to compare. Where host or configuration state does exist, an unexpected
-generation change — for example, another client attached in the interim — is a
+generation change—for example, another client attached in the interim—is a
 trust event requiring full resynchronization, not a silent re-sync.
 
 Host replacement requires the takeover confirmation specified in the mockups.
@@ -581,8 +581,8 @@ create a contact, transcript bubble, urgent notification, or trusted metadata.
 8. The logical item advances through Preparing, Sending, Sent over radio,
    Delivered to node, Accepted by room, Partially sent, or Failed using only
    evidence appropriate to its conversation kind. There is no queued Waiting
-   state: a send that cannot complete — the link drops mid-send, the radio
-   rejects it, or an error occurs — becomes Failed with a reason, and retry is
+   state: a send that cannot complete—the link drops mid-send, the radio
+   rejects it, or an error occurs—becomes Failed with a reason, and retry is
    only ever an explicit user action on the failed message. The composer
    prevents a send when current radio duty limits are known to reject it and
    explains when the radio is expected to become eligible; if the radio
@@ -1042,7 +1042,7 @@ Transcript / messaging:
 - Start a PFS session with a peer from the chat and from the peer sheet.
   Gating: facade API over `umsh-node` PFS establishment + UI state for
   pending/established/failed.
-- Custom chat bubble color (decided 2026-07-20: NOT a local preference —
+- Custom chat bubble color (decided 2026-07-20: NOT a local preference—
   the chosen color is carried on the wire with outbound messages via the
   text protocol's presentation options, so peers render the sender's
   messages in the sender's chosen color; it never restyles received
@@ -1130,7 +1130,7 @@ Captured verbatim intent from a second on-device session; same convention
 Transcript / messaging:
 - Resend a failed message by tapping it. Tapping a "not delivered" bubble
   should offer a Resend action (matches the iMessage-style manual-retry
-  send model — there is deliberately no outbound queue, so retry stays a
+  send model—there is deliberately no outbound queue, so retry stays a
   user gesture on the failed bubble). Gating: UI action on the failed-state
   bubble → facade re-send of the original message body; reuse the existing
   send path, no new persistence.
@@ -1138,7 +1138,7 @@ Transcript / messaging:
   **unicast** chat currently shows the group-channel warning copy. Keep a
   warning, but make it relevant to a direct conversation (the group copy
   presumably references channel members / shared visibility that does not
-  apply 1:1). Gating: UI-only — branch the confirmation copy on
+  apply 1:1). Gating: UI-only—branch the confirmation copy on
   conversation kind (`ConversationKey::Direct` vs channel).
 
 Navigation:
@@ -1146,7 +1146,7 @@ Navigation:
   pushing a new chat sheet onto the current stack, it should switch the
   app to the Conversations tab and open the conversation's sheet there, so
   there is a single canonical location for a conversation. Gating: shell
-  navigation — a cross-tab "open conversation" intent (select Conversations
+  navigation—a cross-tab "open conversation" intent (select Conversations
   tab + present/scroll to the target thread); avoid duplicate sheet stacks.
 
 Peer sheet:
@@ -1157,7 +1157,7 @@ Peer sheet:
   the peer record; UI renders a relative time.
 - Fetch/update a node's identity from the peer sheet. A button that solicits
   the peer's current identity. Gating: this is the phone side of the
-  Identity Request redesign — send a MAC **Identity Request** (command 1,
+  Identity Request redesign—send a MAC **Identity Request** (command 1,
   targeted; the old broadcast Advertisement Request / command 0 was removed)
   and apply the targeted unicast identity response the peer returns. This
   supersedes the 2026-07-20 "solicit a peer's advertisement" remaining item;
@@ -1166,7 +1166,7 @@ Peer sheet:
   firmware responder work (device-node) for the wire behavior.
 - Move "Ping" onto every peer sheet. Ping is currently only offered on peer
   sheets reached from the Network tab; it should be available on every peer
-  sheet regardless of entry point. Gating: UI — hoist the Ping action into
+  sheet regardless of entry point. Gating: UI—hoist the Ping action into
   the shared peer-sheet component rather than the Network-tab variant.
 
 Platform:
@@ -1174,7 +1174,7 @@ Platform:
   Settings → Bluetooth list shows the radio's **first-seen** name and never
   updates when the name is changed. Investigate how to get the current name
   to surface there (likely the GAP device-name characteristic / advertised
-  local name on the companion firmware side, plus whatever iOS caches — iOS
+  local name on the companion firmware side, plus whatever iOS caches—iOS
   is known to cache the GAP name aggressively). Gating: investigation
   spanning companion firmware (GAP name source) and iOS (cache behavior);
   outcome may be a firmware change, not an app change.

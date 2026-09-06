@@ -12,7 +12,7 @@
 //! - `main`:        boot sequencing, then parks on the display loop
 //! - `led_task`:    heartbeat LED and RWDT feed
 //! - `radio_task`:  owns `lora_phy::LoRa`, runs the RX/TX state machine
-//! - `mac_task`:    `Host::run` — the MAC pump, independent of the CLI
+//! - `mac_task`:    `Host::run`—the MAC pump, independent of the CLI
 //! - `cli_task`:    `CliSession::run` over UART0
 //! - `output_task`: owns the UART TX half, drains `OUTPUT_CH`
 //!
@@ -24,7 +24,7 @@
 //! ## Boot order is constrained
 //!
 //! The BLE controller comes up first and stays up. It is not used as a
-//! transport here — it is the RF entropy source without which
+//! transport here—it is the RF entropy source without which
 //! `EspCryptoRng` refuses to exist (see `umsh_bsp_esp32::rng`). Storage
 //! and the identity follow, because the MAC needs both.
 
@@ -162,13 +162,13 @@ async fn main(spawner: Spawner) {
             println!("ble: controller up (RF entropy source)");
             connector
         }
-        Err(e) => panic!("ble init failed ({e:?}) — no trustworthy RNG"),
+        Err(e) => panic!("ble init failed ({e:?})—no trustworthy RNG"),
     };
 
     // ── Flash storage ────────────────────────────────────────────────────
     // Resolved by label from the on-flash partition table. A board flashed
     // without `--partition-table firmware-esp32/partitions-umsh.csv` has no
-    // `umsh` partition and lands here — the panic names the cause instead
+    // `umsh` partition and lands here—the panic names the cause instead
     // of failing later as an unexplained identity loss.
     let storage: &'static EspStorage = STORAGE.init(
         flash_store::new_storage(peripherals.FLASH)
@@ -304,7 +304,7 @@ async fn main(spawner: Spawner) {
     // above interleave cleanly; steady-state `println!` would corrupt the
     // interactive line editing, so the firmware goes quiet from here.
     // Claiming UART0 resets the TX FIFO, which truncates whatever
-    // `esp-println` left in flight — observed on hardware as a boot line
+    // `esp-println` left in flight—observed on hardware as a boot line
     // cut mid-word. `esp-println` exposes no flush, so drain by time: 20 ms
     // clears a 64-byte FIFO at 115200 baud roughly four times over.
     Timer::after(Duration::from_millis(20)).await;
@@ -380,7 +380,7 @@ async fn radio_task(
 async fn mac_task(mut host: V3Host, identity_id: LocalIdentityId) {
     let sub_node = host.node(identity_id).expect("node just added");
     // Returns `false` throughout: this subscription observes, it does not
-    // consume — the CLI's own subscriptions still see every packet.
+    // consume—the CLI's own subscriptions still see every packet.
     let _sub = sub_node.on_receive(|pkt| {
         RX_COUNT.fetch_add(1, Ordering::Relaxed);
         if pkt.payload_type() != PayloadType::NodeIdentity {
@@ -402,7 +402,7 @@ async fn mac_task(mut host: V3Host, identity_id: LocalIdentityId) {
 }
 
 /// Persists `NodeIdentityPayload` bytes for peers already known to
-/// storage. Unknown senders are ignored — receiving an identity is not
+/// storage. Unknown senders are ignored—receiving an identity is not
 /// grounds for adding a peer.
 #[embassy_executor::task]
 async fn identity_persist_task(storage: &'static EspStorage) {

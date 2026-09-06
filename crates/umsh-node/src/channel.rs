@@ -6,7 +6,7 @@ use umsh_crypto::{
     software::{SoftwareAes, SoftwareSha256},
 };
 
-/// A channel descriptor — holds the key, derived ID, and display name.
+/// A channel descriptor—holds the key, derived ID, and display name.
 ///
 /// Not bound to any node. Create via [`Channel::named`] (key derived from name)
 /// or [`Channel::private`] (key independent of name).
@@ -47,7 +47,7 @@ impl Channel {
 
     /// Create a private channel with an explicit key.
     ///
-    /// The name is for display only — it does not affect the key.
+    /// The name is for display only—it does not affect the key.
     pub fn private(key: ChannelKey, name: &str) -> Self {
         let crypto = CryptoEngine::new(SoftwareAes, SoftwareSha256);
         let channel_id = crypto.derive_channel_id(&key);

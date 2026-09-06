@@ -4,7 +4,7 @@
 //! The bridge carries frames between radios that cannot hear each other,
 //! and that is all it does. Every participant's device runs in backhaul
 //! mode, so the node behind each radio is a repeater whose point-to-point
-//! neighbor is the participant — duplicate suppression, hop accounting,
+//! neighbor is the participant—duplicate suppression, hop accounting,
 //! trace prepending, and forwarding policy are that node's, applied to
 //! bridged traffic as to anything else it hears. A packet crossing the
 //! bridge is repeated twice: once by the device that heard it, whose
@@ -152,7 +152,7 @@ impl Hub {
 /// Lower `FHOPS_REM` to `max`, reporting whether the frame changed.
 ///
 /// The flood hop count is dynamic routing metadata, excluded from the
-/// MIC, so rewriting it in passing keeps the packet authentic — the same
+/// MIC, so rewriting it in passing keeps the packet authentic—the same
 /// reason a repeater may decrement it. It is the byte after the FCF
 /// whenever the FCF says it is present, so the rewrite is one byte and
 /// the accumulated count is left alone.
@@ -229,7 +229,7 @@ mod tests {
             .to_vec()
     }
 
-    /// A broadcast with no `FHOPS` field at all — what a sender emits
+    /// A broadcast with no `FHOPS` field at all—what a sender emits
     /// when the frame must not be flooded onward.
     fn unfloodable_frame() -> Vec<u8> {
         use umsh_core::{NodeHint, PacketBuilder};

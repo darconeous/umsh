@@ -7,8 +7,8 @@ fixture is generated from here and replayed by the Rust reader. The two must
 agree exactly, so the algorithm is written to be transcribed rather than to be
 clever.
 
-Only core geometry is stored. Effective membership — core plus the expansion
-margin — is decided by the sampled-dilation rule in `sampling.py`: test the
+Only core geometry is stored. Effective membership—core plus the expansion
+margin—is decided by the sampled-dilation rule in `sampling.py`: test the
 position itself, then a fixed pattern of points around it, against the core
 polygons. A hit on the position itself is a core match; a hit on any other
 sample is an expanded match.
@@ -227,7 +227,7 @@ class RegionDb:
         A pure bounding-box rejection, and only a rejection: a point outside a
         region's aggregate bounds cannot be inside any of its parts, so
         skipping is exact. This is what makes the exhaustive path usable on a
-        world database — without it, resolving one position means a query per
+        world database—without it, resolving one position means a query per
         region per sample, which is a quarter of a million queries against
         thirteen thousand regions.
         """
@@ -375,7 +375,7 @@ def _radio_regions(matches: list[RegionMatch]) -> list[RadioRegion]:
     """Collapse semantic matches onto the list a radio would be given.
 
     Two matches that encode identically are one region as far as the radio is
-    concerned — the airport and metro senses of `SFO`, for instance — so the
+    concerned—the airport and metro senses of `SFO`, for instance—so the
     first in policy order wins the slot and the rest drop out.
     """
     seen: set[int] = set()
@@ -396,8 +396,8 @@ def site_distance(match: RegionMatch, latitude: float, longitude: float) -> floa
     """Great-circle distance from a position to a match's generating site.
 
     Deliberately spherical, and deliberately not the WGS84 model the build
-    measures radius caps with. This distance is never a measurement — it only
-    orders two candidates that are both already within a hundred kilometers —
+    measures radius caps with. This distance is never a measurement—it only
+    orders two candidates that are both already within a hundred kilometers—
     and making it spherical means a browser or a phone can reproduce the
     ordering with arithmetic instead of a geodesic library.
 
@@ -426,8 +426,8 @@ def _suggested_default(
     """Pick the region to suggest as the packet default.
 
     Only the IATA-derived layers are eligible, and a core match beats an
-    expanded one from the same layer. Ties among expanded matches — which
-    happen wherever two expansion margins overlap — go to the nearest site.
+    expanded one from the same layer. Ties among expanded matches—which
+    happen wherever two expansion margins overlap—go to the nearest site.
     """
     eligible = [match for match in matches if match.default_rank is not None]
     if not eligible:

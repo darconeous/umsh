@@ -3,7 +3,7 @@
 Pinned in `upstream/sources.yaml`, recorded in `upstream/lock.json`, and
 attributed inside every compiled database's `sources` table.
 
-## OurAirports — positioned IATA locations and commercial candidates
+## OurAirports—positioned IATA locations and commercial candidates
 
 `https://ourairports.com/data/`, retrieved from the
 `davidmegginson/ourairports-data` mirror.
@@ -15,7 +15,7 @@ list is bootstrapped from. Public domain.
 Records need a three-letter IATA code and usable coordinates to take part.
 Closed facilities are dropped. Two records claiming the same IATA code at
 different positions stop the update pass rather than being resolved by
-whichever sorted first — the choice moves a routing boundary and has to be
+whichever sorted first—the choice moves a routing boundary and has to be
 somebody's decision.
 
 ### The name of this layer
@@ -30,7 +30,7 @@ airport, so another point dataset can be added without a format change.
 
 `scheduled_service = yes` is where the candidate list comes from and nothing
 more. The field means "some scheduled flight exists", which is not the question
-the commercial layer is trying to answer — whether a person here would call
+the commercial layer is trying to answer—whether a person here would call
 this their airport. San Carlos (`SQL`) is the standing example: general
 aviation, marked as having scheduled service, and not what anyone in San Carlos
 means by their airport.
@@ -42,7 +42,7 @@ whose classification looks uncertain rather than guessing.
 The OpenFlights route dataset is not used. It is interesting for experiments
 and too stale to be a source of truth.
 
-## Metropolitan codes — `lxndrblz/Airports`
+## Metropolitan codes—`lxndrblz/Airports`
 
 `citycodes.csv`, **CC BY-SA 4.0**. Used only as a seed list of metropolitan
 IATA codes. Its coordinates are city center points and are never used as
@@ -57,21 +57,21 @@ sized by eye and marked as such; any one of them can be replaced with a
 reviewed boundary by editing the file its record points at, without touching
 the others.
 
-Heliports are excluded from the database across the board for the time being —
+Heliports are excluded from the database across the board for the time being—
 not only from the commercial layer. A helipad's IATA code names a rooftop, and
 Manhattan alone has three with scheduled service upstream. Seaplane bases
 remain positioned locations but never commercial candidates.
 
-See `LICENSES.md` — this source is share-alike.
+See `LICENSES.md`—this source is share-alike.
 
-## Country regions — Marine Regions EEZ + land union
+## Country regions—Marine Regions EEZ + land union
 
 `https://www.marineregions.org/`, Flanders Marine Institute (VLIZ),
 **CC BY 4.0**, retrieved from the public WFS endpoint at `geo.vliz.be`
 (`MarineRegions:eez_land`).
 
 A country region is the country's charted land together with the water
-within the policy's maritime reach of it — 100 km by default — clipped to
+within the policy's maritime reach of it—100 km by default—clipped to
 this EEZ + land union. The full 200-nautical-mile jurisdiction proved too
 generous (a boat mid-Pacific is not meaningfully in any country's mesh), but
 it stays as the ceiling: its bilateral maritime lines are what keep the
@@ -80,7 +80,7 @@ unchanged. The land itself comes from Natural Earth's 50m physical layer
 (public domain), attributed to countries by intersection with this union;
 the handful of atoll territories below that chart's resolution keep their
 whole jurisdiction, named in the update report. The fractal coastline lies
-strictly inside the region and is never stored — what remains is smooth
+strictly inside the region and is never stored—what remains is smooth
 buffer arcs, land borders, and EEZ segments where neighbors are close,
 distilled at one kilometer.
 
@@ -99,29 +99,29 @@ The WFS response is not a versioned archive; the lock records the SHA-256 of
 what was retrieved, and `update --check` proves the committed extracts match
 it.
 
-## US state boundaries — Census TIGER/Line 2024
+## US state boundaries—Census TIGER/Line 2024
 
 `https://www.census.gov/geographies/mapping-files/time-series/geo/tiger-line-file.html`
 
 The 50 states plus the District of Columbia. State FIPS (`GEOID`) is the source
 key and `STUSPS` supplies the two-letter radio-facing code; display names are
-never keys. Territories are excluded in V1 — an explicit policy choice recorded
+never keys. Territories are excluded in V1—an explicit policy choice recorded
 in `policy.yaml`, not an accident of the source schema.
 
-The TIGER boundary is the legal state — islands, internal waters, a few miles
-of territorial sea — which strands the channels between a state's islands and
+The TIGER boundary is the legal state—islands, internal waters, a few miles
+of territorial sea—which strands the channels between a state's islands and
 its mainland. The extract therefore adds the water within the policy's
 maritime reach of the state, clipped to the country's own water so no state
 crosses the border and none annexes a neighbor's land. Where two states'
 reaches overlap, both cover the water.
 
-## World land — Natural Earth 50m physical
+## World land—Natural Earth 50m physical
 
 `ne_50m_land.zip`, public domain. Pinned for the map viewer's basemap, and
 also the land the country extracts buffer from: physical land with no idea of
 countries, attributed by intersection with the EEZ + land union above.
 
-## ISO 3166-1 crosswalk — `datasets/country-codes`
+## ISO 3166-1 crosswalk—`datasets/country-codes`
 
 `country-codes.csv`, PDDL 1.0. Alpha-3 to alpha-2 only. No two-letter code is
 derivable from a three-letter one by rule, so a table is required.

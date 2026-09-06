@@ -7,7 +7,7 @@
 //! Pure logic over a monotonic-millisecond clock. The engine reports the
 //! LED state to apply *right now* and the absolute time at which the
 //! caller should re-invoke [`LedEngine::tick`] for the next transition.
-//! No async, no I/O — fully unit-testable with synthetic time.
+//! No async, no I/O—fully unit-testable with synthetic time.
 //!
 //! # Heartbeat semantics
 //!
@@ -38,7 +38,7 @@ pub enum LedSequence {
     /// long hold.
     GnssOn,
     /// The GNSS receiver was switched off: a long hold breaking into
-    /// two pips — the mirror of [`GnssOn`](Self::GnssOn).
+    /// two pips—the mirror of [`GnssOn`](Self::GnssOn).
     GnssOff,
 }
 
@@ -97,7 +97,7 @@ pub const DIM_MIN_PERMILLE: u16 = 50;
 
 /// Ambient dimming scale, in permille of normal brightness: 1000 at or
 /// above [`DIM_FULL_MLUX`], falling linearly to [`DIM_MIN_PERMILLE`] at
-/// zero. `None` — no reading yet — is full brightness, so a board whose
+/// zero. `None`—no reading yet—is full brightness, so a board whose
 /// sensor never answers keeps its ordinary indicator.
 ///
 /// A free function rather than an engine method so writers that bypass
@@ -190,7 +190,7 @@ impl T1000eLedEngine {
     }
 
     /// Feed the most recent ambient light reading. Everything the engine
-    /// shows except the locate alert dims with it — the alert stays at
+    /// shows except the locate alert dims with it—the alert stays at
     /// full brightness because a radio being searched for values being
     /// seen over being comfortable, the same priority that lets it
     /// outrank the critical-battery blackout.
@@ -410,7 +410,7 @@ mod patterns {
         ],
     };
 
-    /// Receiver switched off: ON 500, OFF 60, ON 60, OFF 60, ON 60 —
+    /// Receiver switched off: ON 500, OFF 60, ON 60, OFF 60, ON 60—
     /// [`GNSS_ON`] played backwards, so the light dies away rather than
     /// settling.
     pub static GNSS_OFF: Pattern = Pattern {
@@ -949,7 +949,7 @@ mod tests {
         assert_eq!(e.tick(1).brightness, 0);
     }
 
-    /// PWM envelopes — the charging breathe here — dim by brightness,
+    /// PWM envelopes—the charging breathe here—dim by brightness,
     /// and a one-shot sequence dims the same way.
     #[test]
     fn darkness_dims_pwm_envelopes_by_duty() {
@@ -973,7 +973,7 @@ mod tests {
         assert_eq!(e.tick(0).brightness, 1_000);
     }
 
-    /// An attention-only indicator says nothing on its own — including at
+    /// An attention-only indicator says nothing on its own—including at
     /// t=0, where an ordinary engine's first heartbeat pulse begins.
     #[test]
     fn an_attention_only_engine_idles_dark() {

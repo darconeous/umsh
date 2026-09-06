@@ -117,7 +117,7 @@ This distinction allows forwarding-related metadata (source routes, trace routes
 
 This option represents a piggy-backed MAC ack that, when received, behaves as if it was an ack for the referenced packet, instead of sending both a MAC ack and an application-level response in two separate packets.
 
-- Type: 4-byte ack MIC — the first 4 bytes of the acknowledged packet's on-wire MIC (see [Ack Tag Construction](security.md#ack-tag-construction)).
+- Type: 4-byte ack MIC—the first 4 bytes of the acknowledged packet's on-wire MIC (see [Ack Tag Construction](security.md#ack-tag-construction)).
 
 The option carries only the correlation handle, not a keyed ack tag: the packet carrying the option is itself authenticated to the original sender, so its own MIC already proves the acknowledgement is genuine. The `ack_mic` value simply identifies which outstanding request the reply acknowledges.
 
@@ -147,7 +147,7 @@ A hop that measured neither field—one whose radio reports no signal quality, o
 - Because this option is dynamic, repeaters may insert it while flood-forwarding a packet that currently has no region code.
 - A repeater must never rewrite an existing region code and must never add a second region code to a packet that already has one or more region-code options.
 - Region insertion is a local policy decision. When no explicit local policy exists, a reasonable default is the IATA code of the closest regional commercial airport.
-- Region insertion applies only during flood forwarding. An untagged source-routed packet is first tagged by the repeater that flood-forwards it — the one that receives it with an already-empty source route — not by the repeater that emptied the route.
+- Region insertion applies only during flood forwarding. An untagged source-routed packet is first tagged by the repeater that flood-forwards it—the one that receives it with an already-empty source route—not by the repeater that emptied the route.
 
 #### Region Code Encoding
 

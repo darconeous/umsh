@@ -1,7 +1,7 @@
 import SwiftUI
 import UMSHMobileCore
 
-/// What a device's battery reports. Nothing here is settable — the readings
+/// What a device's battery reports. Nothing here is settable—the readings
 /// are the device describing itself.
 struct RemotePowerScreen: View {
     let model: ManageDeviceModel
@@ -42,7 +42,7 @@ struct RemotePowerScreen: View {
 
 /// The device's receiver: whether it runs, and what it currently sees.
 ///
-/// The fix is read-only — it is a measurement, and where a device *claims*
+/// The fix is read-only—it is a measurement, and where a device *claims*
 /// to be is on the Identity screen. How the device treats its receiver is a
 /// decision, so those two are settings.
 struct RemoteGnssScreen: View {
@@ -105,7 +105,7 @@ struct RemoteGnssScreen: View {
     }
 
     private func apply() async {
-        // Rebuilt from what the device answered — but only if it answered.
+        // Rebuilt from what the device answered—but only if it answered.
         // A write that never left the phone leaves these fields as the only
         // copy of what the operator asked for.
         if await model.apply(.gnss, desired: edits.desired, dirty: edits.dirty) {
@@ -132,7 +132,7 @@ struct RemoteGnssScreen: View {
         }
 
         /// The new reading as the baseline, with the operator's standing
-        /// edit carried over — see ``RemoteField/preserving(_:)``.
+        /// edit carried over—see ``RemoteField/preserving(_:)``.
         init(_ reading: RemoteCategoryReading?, preserving old: Edits) {
             self.init(reading)
             guard !old.isEmpty else { return }
@@ -170,7 +170,7 @@ struct RemoteGnssScreen: View {
 /// The device's wall clock: what time it holds, where it is meant to be,
 /// and whether the receiver may set the clock.
 ///
-/// The clock itself is live state — set from this phone the moment the
+/// The clock itself is live state—set from this phone the moment the
 /// button is tapped, never part of Apply, and never persisted by the
 /// device, which has no bound on how long it spends powered off. The time
 /// zone and the receiver's say over the clock are settings, and go through
@@ -188,7 +188,7 @@ struct RemoteTimeScreen: View {
                 Section {
                     // Uptime advances at exactly a second per second, so
                     // extrapolating from the read is as true as the read
-                    // was — and a stopped counter would read as a device
+                    // was—and a stopped counter would read as a device
                     // that had just rebooted.
                     TimelineView(.periodic(from: .now, by: 1)) { context in
                         LabeledContent(
@@ -333,7 +333,7 @@ struct RemoteTimeScreen: View {
         }
     }
 
-    /// The two settings here. The clock is deliberately not among them —
+    /// The two settings here. The clock is deliberately not among them—
     /// see the screen comment.
     private struct Edits {
         var tzOffset = RemoteField<Int16>(0, nil)
@@ -353,7 +353,7 @@ struct RemoteTimeScreen: View {
         }
 
         /// The new reading as the baseline, with the operator's standing
-        /// edits carried over — see ``RemoteField/preserving(_:)``.
+        /// edits carried over—see ``RemoteField/preserving(_:)``.
         init(_ reading: RemoteCategoryReading?, preserving old: Edits) {
             self.init(reading)
             guard !old.isEmpty else { return }

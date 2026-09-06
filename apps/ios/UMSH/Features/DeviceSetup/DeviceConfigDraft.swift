@@ -12,8 +12,8 @@ import UMSHMobileCore
 /// destination closure is re-invoked and its state is keyed to the pushed
 /// value.
 ///
-/// The whole draft is written as one record: Rust owns the ordering — the PHY
-/// is disabled first and re-enabled last, and the save rides the tail — so a
+/// The whole draft is written as one record: Rust owns the ordering—the PHY
+/// is disabled first and re-enabled last, and the save rides the tail—so a
 /// device is never left running half a configuration.
 @MainActor
 @Observable
@@ -39,7 +39,7 @@ final class DeviceConfigDraft {
 
     var deviceName: String
     var radioEnabled: Bool
-    // Touching any radio *parameter* settles an outstanding profile choice —
+    // Touching any radio *parameter* settles an outstanding profile choice—
     // whether it was settled by picking a preset or by typing a frequency is
     // not a distinction worth keeping, and `didSet` catches both without the
     // bindings having to know they are being watched. The switch above is not
@@ -111,7 +111,7 @@ final class DeviceConfigDraft {
         /// the Time screen is one tap away.
         case succeededWithoutClock
         /// Saved, and then reported something back differently. Not a
-        /// congratulation — the field is named so it can be looked at.
+        /// congratulation—the field is named so it can be looked at.
         case reportedDifferently(field: String)
     }
 
@@ -124,7 +124,7 @@ final class DeviceConfigDraft {
 
     /// The writer strictly outlives this draft, because it owns it. Holding it
     /// strongly would make a controller → draft → controller cycle and leak
-    /// the BLE session — the exact failure the controller exists to prevent.
+    /// the BLE session—the exact failure the controller exists to prevent.
     private unowned let writer: any DeviceConfigurationWriting
 
     init(
@@ -190,7 +190,7 @@ final class DeviceConfigDraft {
     // MARK: - Unreadable settings
 
     // A device can advertise a capability and still refuse the properties
-    // behind it — firmware older than the capability it reports. Rust leaves
+    // behind it—firmware older than the capability it reports. Rust leaves
     // those settings out of the snapshot and out of the write, so the form
     // hides them rather than showing a default that reads as the device's own
     // value and edits that would silently go nowhere.
@@ -204,7 +204,7 @@ final class DeviceConfigDraft {
             && sync.codingRateDenom != nil
     }
 
-    /// Mobility stands in for the whole advertised identity — the role alone
+    /// Mobility stands in for the whole advertised identity—the role alone
     /// cannot be told apart, because an empty role is also the device saying
     /// it derives its own.
     var showsIdentity: Bool { sync.supportsIdent && sync.identMobile != nil }
@@ -226,7 +226,7 @@ final class DeviceConfigDraft {
     var showsAnnouncements: Bool { sync.supportsAdvert && sync.advert != nil }
 
     /// The zone alone. A device that would not report it can still be given a
-    /// clock, so only the picker hides — the section stays.
+    /// clock, so only the picker hides—the section stays.
     var showsTimeZone: Bool { sync.supportsTime && sync.tzOffsetMin != nil }
 
     var showsDutyCycleLimit: Bool {
@@ -294,7 +294,7 @@ final class DeviceConfigDraft {
     }
 
     /// Let one more node manage this device. Idempotent, and bounded by
-    /// what the device will hold — the device's own refusal stays
+    /// what the device will hold—the device's own refusal stays
     /// authoritative, but a form that offers a ninth entry only to have it
     /// rejected is a form that wasted the operator's time.
     func add(administrator publicKey: Data) {
@@ -309,7 +309,7 @@ final class DeviceConfigDraft {
     // MARK: - Derived state
 
     /// What the device advertises *today*, from its reported settings rather
-    /// than the unsaved draft — a peer record must not be filed under a role
+    /// than the unsaved draft—a peer record must not be filed under a role
     /// the device has not been given yet.
     var advertisedPeerRole: PeerRole {
         guard let role = reported.identRole else {
@@ -440,7 +440,7 @@ final class DeviceConfigDraft {
 
     /// Which vetted profile these fields spell out is a question about the
     /// mesh this device can talk to, so only the parameters that decide
-    /// that are compared — the same exclusion of power and the transmit
+    /// that are compared—the same exclusion of power and the transmit
     /// limit that ``RadioProfile/interoperates(with:)`` makes.
     private func matches(_ preset: RadioPreset) -> Bool {
         frequencyKHz == String(preset.frequencyKHz)
@@ -452,7 +452,7 @@ final class DeviceConfigDraft {
     }
 
     /// The offered limits, plus whatever this device is already holding when
-    /// that is not one of them — a picker missing its own current value
+    /// that is not one of them—a picker missing its own current value
     /// silently rewrites the setting on the next apply.
     var dutyCycleOptions: [(value: UInt16, label: String)] {
         var options = dutyCycleLimitChoices.map { limit in
@@ -483,7 +483,7 @@ final class DeviceConfigDraft {
         }
         reported = readback
         // A device answers each write with the value it holds, and that answer
-        // stands whatever was asked for — transmit power comes back clamped to
+        // stands whatever was asked for—transmit power comes back clamped to
         // what the radio can reach. The form shows the device's figure, not the
         // operator's, so nobody walks away believing this radio transmits at a
         // power it cannot produce.
@@ -509,7 +509,7 @@ final class DeviceConfigDraft {
             }
         }
 
-        // The clock is not in the configuration record and never will be — an
+        // The clock is not in the configuration record and never will be—an
         // epoch in flash comes back arbitrarily wrong. So a goal that sets it
         // does so as a second, live write, strictly after the first: the
         // session runs one exchange at a time and rejects a second outright.
@@ -545,7 +545,7 @@ final class DeviceConfigDraft {
     /// session snapshot rather than in the sync record.
     ///
     /// Settings the device does not report are excluded as well. They were
-    /// never written, so there is nothing to hold the readback to — the
+    /// never written, so there is nothing to hold the readback to—the
     /// unreadable-settings notice already says so, and calling it a mismatch
     /// would send the operator looking for a fault that is not there.
     ///
@@ -627,7 +627,7 @@ protocol DeviceConfigurationWriting: AnyObject {
     func configure(_ configuration: UlcpDeviceConfigRecord) async -> UlcpSyncRecord?
     func setTime(epochSeconds: UInt32?) async throws
     /// Bring the device's administrator list to exactly `keys`, and persist
-    /// it. Throws if any part of that did not land — the device's list is
+    /// it. Throws if any part of that did not land—the device's list is
     /// then whatever it is, and the form says to read it again.
     func setAdministrators(_ keys: [Data]) async throws
 }
@@ -636,8 +636,8 @@ protocol DeviceConfigurationWriting: AnyObject {
 ///
 /// `DeviceSettingsView` commissions a device whether it is on the other end
 /// of a Bluetooth link or several hops away on the mesh. The two sessions
-/// have almost nothing in common — one owns a peripheral and a scan list,
-/// the other an operation on a worker thread — but the sheet asks the same
+/// have almost nothing in common—one owns a peripheral and a scan list,
+/// the other an operation on a worker thread—but the sheet asks the same
 /// handful of questions of both, and this is that handful.
 ///
 /// Setting the clock has a default implementation that declines, because it

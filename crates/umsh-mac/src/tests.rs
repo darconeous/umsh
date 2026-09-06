@@ -30,8 +30,8 @@ use umsh_hal::{
 /// When the `software-crypto` feature is enabled (which it is when these
 /// tests share a build graph with `umsh-node` and friends), the `seed`
 /// byte pattern is run through Ed25519 derivation so the resulting key
-/// lies on the curve. Otherwise — for example in pure-`alloc` test
-/// builds where the validator is compiled out — the seed bytes are
+/// lies on the curve. Otherwise—for example in pure-`alloc` test
+/// builds where the validator is compiled out—the seed bytes are
 /// returned verbatim, preserving the previous test wire-image where
 /// callers expected `[0xAB; 32]` literally.
 fn test_pubkey(seed: u8) -> PublicKey {
@@ -407,7 +407,7 @@ fn duplicate_ack_window_uses_modular_counter_distance() {
 }
 
 /// One ack per transmission, not one per copy: flood duplicates inside
-/// the holdoff — of the accepted transmission or of a retransmission —
+/// the holdoff—of the accepted transmission or of a retransmission—
 /// are covered by the ack that transmission already earned.
 #[test]
 fn duplicate_ack_window_holdoff_paces_flood_copies() {
@@ -471,7 +471,7 @@ fn receive_one_auto_replies_to_echo_request() {
     // The request arrived with no flood budget and no route, so it was heard
     // directly and the response goes back the same way. There is no repeater
     // on that path to write a trace, and the mirrored request is dropped
-    // rather than carried empty — see
+    // rather than carried empty—see
     // `echo_response_mirrors_a_trace_signal_request` for the traced path.
     assert!(
         options.trace_route.is_none(),
@@ -1817,8 +1817,8 @@ fn secure_send_continues_after_future_boundary_is_persisted() {
 fn load_persisted_counter_aligns_to_block_boundary() {
     let mut mac = make_mac();
     let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
-    // Key the store entry by the identity's actual public key — the
-    // persistence context — rather than the DummyIdentity seed.
+    // Key the store entry by the identity's actual public key—the
+    // persistence context—rather than the DummyIdentity seed.
     let context = mac
         .identity(local_id)
         .unwrap()
@@ -1946,7 +1946,7 @@ fn secure_send_survives_the_boundary_when_the_counter_starts_late_in_its_block()
 /// A deliberate reboot must persist every RX boundary, however little it
 /// advanced. The block cadence deliberately leaves up to a block of
 /// accepted counters in RAM; a device that resets on command inside that
-/// window would accept the same command again from the sender's retry —
+/// window would accept the same command again from the sender's retry—
 /// the reboot-on-repeat failure this call exists to prevent.
 #[test]
 fn persist_all_rx_counters_flushes_sub_block_boundaries_the_cadence_would_not() {
@@ -2038,7 +2038,7 @@ fn transmit_next_requeues_non_immediate_frame_when_cad_detects_activity() {
     assert_eq!(queued.receipt, Some(SendReceipt(3)));
     assert_eq!(queued.frame.as_slice(), b"app");
     assert_eq!(queued.cad_attempts, 1);
-    // Backoff is uniform over [T_frame/40, T_frame/4] — long enough for a frame
+    // Backoff is uniform over [T_frame/40, T_frame/4]—long enough for a frame
     // already on the air to finish, short enough that sixteen attempts stay
     // inside the sender's patience (channel-access.md § Backoff Procedure).
     let t_frame_ms = u64::from(mac.radio().t_frame_ms());
@@ -2225,7 +2225,7 @@ fn queue_mac_ack_for_peer_uses_cached_flood_route_regions_when_present() {
 }
 
 /// A routed ack is a repeat-confirmed send: silence where the repeat
-/// should be retries it, and the repeat — whenever it arrives — finishes
+/// should be retries it, and the repeat—whenever it arrives—finishes
 /// the entry and withdraws any retry still queued.
 #[test]
 fn routed_mac_ack_retries_until_its_repeat_is_heard() {
@@ -4185,7 +4185,7 @@ fn frame_has_trace_signal(frame: &[u8]) -> bool {
 }
 
 /// A peer nothing is known about is reached by flooding, and the flood is
-/// what discovers the path — so the frame records it whether or not the
+/// what discovers the path—so the frame records it whether or not the
 /// application asked.
 #[test]
 fn unicast_to_an_unrouted_peer_carries_a_trace_route_unasked() {
@@ -4245,7 +4245,7 @@ fn unicast_to_a_flood_distance_peer_still_carries_a_trace_route() {
 
 /// A frame that follows a source route already knows its path, and paying to
 /// record it again is the proactive-refresh behavior the spec leaves
-/// unspecified. This holds only while nothing has to come back — see
+/// unspecified. This holds only while nothing has to come back—see
 /// [`unicast_over_a_source_route_traces_when_it_asks_for_an_ack`].
 #[test]
 fn unicast_over_a_cached_source_route_carries_no_trace_route() {
@@ -4332,7 +4332,7 @@ fn unicast_over_a_source_route_traces_when_it_asks_for_an_ack() {
 
 /// A trace route asks repeaters to record themselves. With no flood budget
 /// and no source route nothing may forward the frame at all, so the option
-/// would arrive as empty as it left — a byte spent on a question no one is in
+/// would arrive as empty as it left—a byte spent on a question no one is in
 /// a position to answer.
 #[test]
 fn unrepeatable_unicast_carries_no_trace_route_even_to_an_unrouted_peer() {
@@ -4413,7 +4413,7 @@ fn mac_ack_to_a_directly_heard_peer_mirrors_no_trace_route() {
 
 /// The evidence an empty trace route used to carry, read off the frame's own
 /// shape. Nothing gave a repeater permission to carry this, so the only way
-/// it arrived is directly — which is what lets the trace come off the wire.
+/// it arrived is directly—which is what lets the trace come off the wire.
 #[test]
 fn a_frame_nothing_could_have_repeated_proves_a_direct_link() {
     let mut mac = make_mac();
@@ -4657,7 +4657,7 @@ fn a_retried_frame_teaches_its_route_before_the_re_ack_is_composed() {
     );
     assert_eq!(mac.peer_registry().get(peer_id).unwrap().route, None);
 
-    // Past the re-ack holdoff, the sender retries — this time flooding, with a
+    // Past the re-ack holdoff, the sender retries—this time flooding, with a
     // trace to collect a replacement route. Same counter, same MIC: the
     // rewritten options are dynamic and excluded from the associated data.
     mac.clock().advance_ms(60_000);
@@ -4820,7 +4820,7 @@ fn send_unicast_uses_cached_source_route_when_present() {
 
     assert_eq!(source_route.as_slice(), &[[0x01, 0x02], [0x03, 0x04]]);
     // The route spends no flood budget at all, so the wide first-contact
-    // default collapses to the slack past the route's end — and with no slack
+    // default collapses to the slack past the route's end—and with no slack
     // to spend, the field is left off the frame entirely.
     assert_eq!(
         header.flood_hops.map(|hops| hops.remaining()),
@@ -5331,8 +5331,8 @@ fn receive_one_repeater_ignores_signal_thresholds_for_source_routed_hops() {
 }
 
 /// Being the last hint in the route is still being named. The hop that empties
-/// the route is a source-routed hop like any other, so signal thresholds — a
-/// flood-forwarding policy — do not gate it.
+/// the route is a source-routed hop like any other, so signal thresholds—a
+/// flood-forwarding policy—do not gate it.
 #[test]
 fn receive_one_repeater_ignores_signal_thresholds_on_the_final_source_routed_hop() {
     let mut repeater = make_mac();
@@ -5606,7 +5606,7 @@ fn repeater_does_not_repeat_what_its_own_antenna_transmitted() {
 }
 
 /// A frame handed over a backhaul link is a frame nobody else heard, so
-/// it is the repeater's alone to carry — and it arrived with nothing
+/// it is the repeater's alone to carry—and it arrived with nothing
 /// measured, which the signal gates and the trace must both respect.
 #[test]
 fn repeater_forwards_a_backhauled_frame_without_inventing_measurements() {
@@ -5970,8 +5970,8 @@ fn trace_signal_saturates_rather_than_wrapping() {
 }
 
 /// A trace accumulated past what this repeater can extend is over-limit
-/// input from the air. The forward is declined — quietly, like any other
-/// rewrite that will not fit — rather than trusted as a buffer index.
+/// input from the air. The forward is declined—quietly, like any other
+/// rewrite that will not fit—rather than trusted as a buffer index.
 #[test]
 fn repeater_declines_to_forward_an_overgrown_trace_rather_than_panicking() {
     for option in [OptionNumber::TraceRoute, OptionNumber::TraceSignal] {
@@ -6029,8 +6029,8 @@ fn repeater_does_not_add_trace_signal_to_a_frame_that_carries_no_trace() {
     assert!(options.trace_route.is_none());
 }
 
-/// Hearing our own broadcast — off a repeater, off a reflection, off our own
-/// receiver during a post-TX listen — must not put it back on the air. The
+/// Hearing our own broadcast—off a repeater, off a reflection, off our own
+/// receiver during a post-TX listen—must not put it back on the air. The
 /// forwarding rewrite would prepend our router hint to the trace route,
 /// teaching the destination a return path that begins by routing back through
 /// the sender.
@@ -7553,7 +7553,7 @@ fn modeled_asymmetric_links_still_support_bidirectional_exchange() {
 #[test]
 fn modeled_dense_repeater_neighborhood_prefers_one_of_the_best_candidates() {
     // Alice and Bob have four candidate relays between them. Two hear Alice
-    // cleanly but faintly — the ones whose forward covers new ground — and two
+    // cleanly but faintly—the ones whose forward covers new ground—and two
     // sit right on top of her, loud enough that repeating buys little reach.
     // Flood learning should settle on one of the reaching pair.
     let clock = crate::test_support::DummyClock::new(0);
@@ -7672,7 +7672,7 @@ fn modeled_dense_repeater_neighborhood_prefers_one_of_the_best_candidates() {
     // window decides. Later flood copies of the same packet keep arriving, and
     // one that lands outside the re-ack holdoff is re-acknowledged and teaches
     // its own path, so the registry read after the exchange settles reflects
-    // whichever repeater forwarded last — not which one won the race.
+    // whichever repeater forwarded last—not which one won the race.
     let delivering_trace = RefCell::new(None::<heapless::Vec<u8, 32>>);
     pump_modeled_until(
         &network,
@@ -8761,7 +8761,7 @@ fn forwarded_ack_window_grows_with_the_hops_the_ack_must_cross() {
 }
 
 /// A route retry waits out a backoff in the transmit queue. The sweep that
-/// scheduled it runs again in that window — and must not read the fresh
+/// scheduled it runs again in that window—and must not read the fresh
 /// attempt as an expired one, which would report the send failed and pull the
 /// retry back out of the queue before it ever aired.
 #[test]
@@ -8834,7 +8834,7 @@ fn route_retry_survives_a_timeout_sweep_before_it_airs() {
 }
 
 /// The rewritten attempt reuses the original's MIC verbatim, so every byte the
-/// AAD covers has to survive the rewrite — including the FCF, whose
+/// AAD covers has to survive the rewrite—including the FCF, whose
 /// flood-hops-present bit flips when a source route is abandoned for a flood.
 #[test]
 fn route_retry_preserves_the_authenticated_header() {
@@ -8895,7 +8895,7 @@ fn route_retry_preserves_the_authenticated_header() {
 /// A peer cached as directly reachable transmits at
 /// `ESTABLISHED_ROUTE_EXTRA_FLOOD_HOPS` no matter how wide a flood the caller asked
 /// for, and carries no option saying so. When it stops answering, the cache
-/// entry is exactly as stale as a dead source-route hint — the retry has to
+/// entry is exactly as stale as a dead source-route hint—the retry has to
 /// abandon it and flood at the budget the application actually requested.
 ///
 /// This is the recovery that a zero `ESTABLISHED_ROUTE_EXTRA_FLOOD_HOPS` leans on: no
@@ -9295,8 +9295,8 @@ fn overheard_mac_ack_cancels_a_route_retry_copy_too() {
 
 /// Cancellation is an event on the queue, not a standing verdict: a
 /// route-retry copy arriving *after* the original was cancelled is a fresh
-/// forwarding identity — the origin resorted to it because the ack never
-/// reached it — and must be carried, and is in turn cancelable.
+/// forwarding identity—the origin resorted to it because the ack never
+/// reached it—and must be carried, and is in turn cancelable.
 #[test]
 fn cancellation_does_not_suppress_a_later_route_retry_copy() {
     let mut mac = make_repeater_mac();
@@ -9345,7 +9345,7 @@ fn unrelated_mac_ack_leaves_a_queued_forward_alone() {
 
 /// A MAC ack's own trailer opens with the same four bytes it echoes, so a
 /// second copy of the ack must not cancel the queued forward of the ack
-/// itself — only the acknowledged data packet's forward is fair game.
+/// itself—only the acknowledged data packet's forward is fair game.
 #[test]
 fn duplicate_mac_ack_does_not_cancel_the_queued_ack_forward() {
     let mut mac = make_repeater_mac();
@@ -9514,7 +9514,7 @@ fn non_ack_unicast_with_hops_retries_until_the_ladder_ends() {
     assert_eq!(timeouts, 0, "a best-effort send times out in silence");
 }
 
-/// A direct non-ACK unicast — no flood budget, no source route — is exactly
+/// A direct non-ACK unicast—no flood budget, no source route—is exactly
 /// one transmission: nothing tracked, nothing retried.
 #[test]
 fn non_ack_direct_unicast_is_transmitted_exactly_once() {
@@ -9628,8 +9628,8 @@ fn non_ack_routed_unicast_without_flood_is_tracked() {
 }
 
 /// The overheard repeat that confirms a repeat-only send is a *real* repeater
-/// rewrite — FHOPS decremented, a router hint prepended to the trace route, a
-/// region code inserted, the frame visibly longer — not the pristine frame the
+/// rewrite—FHOPS decremented, a router hint prepended to the trace route, a
+/// region code inserted, the frame visibly longer—not the pristine frame the
 /// sender transmitted. The confirmation key rides on the MIC, which a repeater
 /// may not touch, so the rewrite must still match.
 #[test]
@@ -9715,7 +9715,7 @@ fn repeat_confirmed_send_does_not_block_other_traffic() {
 }
 
 /// Overhearing a repeat completes a repeat-only send outright: `Forwarded`
-/// fires and the entry is gone — that repeat was the whole outcome.
+/// fires and the entry is gone—that repeat was the whole outcome.
 #[test]
 fn overheard_repeat_completes_a_non_ack_send() {
     let (mut mac, local_id, peer_key) = make_sender_mac();
@@ -9914,7 +9914,7 @@ fn complete_ack_withdraws_a_queued_retry() {
 }
 
 /// The last line of defense: a queued retransmission whose send no longer
-/// has pending state — completed or cancelled through any path — is dropped
+/// has pending state—completed or cancelled through any path—is dropped
 /// at the radio's doorstep instead of transmitted.
 #[test]
 fn transmit_next_drops_a_retry_whose_send_is_finished() {
@@ -10443,7 +10443,7 @@ impl DummyIdentity {
 /// The seeds share the prefix `AB AB AB`, so without `software-crypto`
 /// (where `DummyIdentity` uses the seed bytes verbatim as the public key)
 /// the hints collide trivially. With `software-crypto` the seeds derive real
-/// Ed25519 points — the pair below was found by a one-off birthday search
+/// Ed25519 points—the pair below was found by a one-off birthday search
 /// over seeds of the form `AB AB AB || u64-LE counter || zeros`
 /// (counters 1222 and 3291), whose derived public keys share the prefix
 /// `FB 24 12`. The assertions re-verify the collision at runtime so a change

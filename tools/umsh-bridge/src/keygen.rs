@@ -1,7 +1,7 @@
 //! Identity issuance, so a deployment needs nothing but this binary.
 //!
 //! An identity's Ed25519 seed is the only credential a participant
-//! holds. Its public half — the UMSH address — is what the other end of
+//! holds. Its public half—the UMSH address—is what the other end of
 //! the tunnel pins, and it is public: sharing it needs no confidential
 //! channel. The TLS certificates the handshake requires are minted in
 //! memory from the identity at startup and never stored.
@@ -26,7 +26,7 @@ pub fn write_identity(path: &Path, force: bool) -> Result<()> {
     Ok(())
 }
 
-/// Print the address of an existing identity — what the operator copies
+/// Print the address of an existing identity—what the operator copies
 /// into the other end's configuration.
 pub fn print_address(path: &Path) -> Result<()> {
     let identity = BridgeIdentity::load(path)?;

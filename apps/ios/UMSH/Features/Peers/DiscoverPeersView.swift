@@ -8,14 +8,14 @@ import SwiftUI
 /// reply straight back with their identities. Nothing is transmitted until
 /// the user asks. Passively, the sheet shows the announcements nodes make on
 /// their own. Either way the results are a live filter over the same peer
-/// records everything else uses — a node heard here lands in the transient
+/// records everything else uses—a node heard here lands in the transient
 /// tier, and Save is an ordinary promote.
 ///
 /// Where the ask goes is the `vantage`. By default it is one zero-hop direct
 /// broadcast: repeaters never carry it, so the blast radius is exactly the
 /// nodes in range. Given a vantage it is steered down that route instead and
 /// answered by whatever is in range of where it lands, which is the only way
-/// to find nodes this phone cannot hear. It is never flooded — nothing would
+/// to find nodes this phone cannot hear. It is never flooded—nothing would
 /// bound how many nodes answered.
 ///
 /// The radio listens whenever it is attached, so this sheet starts and stops
@@ -36,12 +36,12 @@ struct DiscoverPeersView: View {
     /// Drop every transient row nothing depends on.
     var clearDiscoveredNodes: (() async -> Void)? = nil
     /// Send one Identity Request asking matching nodes to identify
-    /// themselves — in this phone's own range, or in range of the vantage's
+    /// themselves—in this phone's own range, or in range of the vantage's
     /// landing point. Returns whether it was handed to the radio.
     var solicitNearbyIdentities: ((PeerRole?, SolicitVantage?) async -> Bool)? = nil
     /// Where the ask is aimed; nil is this phone's own neighborhood. A
     /// binding because the sheet is presented once at the app root and
-    /// re-aimed by deep links from peer pages — `@State` seeded from a
+    /// re-aimed by deep links from peer pages—`@State` seeded from a
     /// parameter would keep the first value forever.
     @Binding var vantage: SolicitVantage?
     /// Hands a freshly created conversation to the app root after this
@@ -63,7 +63,7 @@ struct DiscoverPeersView: View {
     @State private var lastSolicitedAt: Date?
     @State private var solicitNotice: String?
 
-    /// Minimum spacing between solicitations — one ask is one broadcast,
+    /// Minimum spacing between solicitations—one ask is one broadcast,
     /// and mashing the button must not become airtime.
     static let solicitCooldown: TimeInterval = 40
 
@@ -223,7 +223,7 @@ struct DiscoverPeersView: View {
         if cooldown > 0 {
             // One cooldown covers both kinds of ask: each is a transmission
             // whatever it is aimed at, so re-aiming does not buy a free one.
-            return "Asked — replies appear below. Ask again in \(Int(cooldown.rounded(.up))) s."
+            return "Asked—replies appear below. Ask again in \(Int(cooldown.rounded(.up))) s."
         }
         return vantageFooter
     }
@@ -370,7 +370,7 @@ struct DiscoverPeersView: View {
 
     private var announcePreview: String {
         let name = advertisedName.isEmpty
-            ? "without a name — only your address and hint"
+            ? "without a name—only your address and hint"
             : "as \"\(advertisedName)\""
         return "Broadcasts your signed public identity \(name) to every node in range, and repeaters may carry it further. It contains no private keys and cannot be unsent."
     }

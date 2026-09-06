@@ -10,7 +10,7 @@
 //! `bsp::enter_*` calls lives next to the runtime wiring.
 
 /// Things the firmware can decide to do that take the device out of its
-/// normal operating state. All variants are terminal — the calling task
+/// normal operating state. All variants are terminal—the calling task
 /// must assume the device will be reset or powered off shortly after
 /// the intent is delivered.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

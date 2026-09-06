@@ -1,7 +1,7 @@
 //! `phy`: report or set the radio's enable state and LoRa parameters.
 //!
 //! The PHY must be enabled before the radio can receive, forward, or
-//! transmit — so an autonomous node or repeater needs `phy on`.
+//! transmit—so an autonomous node or repeater needs `phy on`.
 
 use anyhow::Result;
 

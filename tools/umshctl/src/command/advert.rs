@@ -126,7 +126,7 @@ fn report(policy: &AdvertPolicy) {
     }
 }
 
-/// Seconds as written, with the human-scale reading beside them — the
+/// Seconds as written, with the human-scale reading beside them—the
 /// difference between 3600 and 36000 is easy to miss in a bare number.
 fn format_interval(seconds: u32) -> String {
     if seconds == 0 {

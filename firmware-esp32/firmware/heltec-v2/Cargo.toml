@@ -6,7 +6,7 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 
-# The full ULCP firmware on the classic ESP32 — the shared session
+# The full ULCP firmware on the classic ESP32—the shared session
 # driver from `umsh-ulcp-runtime` behind this board's transports (HDLC on
 # UART0/CP2102, UlcpService GATT on the esp-radio controller), with the
 # SX1276 behind the radio mux and the on-board device node.
@@ -15,7 +15,7 @@ repository.workspace = true
 # Board identity. Exactly one is on; it selects the BSP module, the pin
 # and peripheral wiring, the radio's power and band limits, and the
 # static capacities the board's RAM budget allows. This block is kept
-# identical across the ESP32 device boards — only `default` differs.
+# identical across the ESP32 device boards—only `default` differs.
 default = ["board-heltec-v2"]
 board-heltec-v2 = ["chip-esp32", "radio-sx127x", "vext-gates-battery"]
 board-heltec-v3 = ["chip-esp32s3", "radio-sx126x"]
@@ -38,7 +38,7 @@ board-tbeam-supreme = [
 chip-esp32 = []
 chip-esp32s3 = []
 # SX127x family: no BUSY handshake, a single DIO line carries every IRQ,
-# and the RF switch is driven by the radio's own RXTX output — so the
+# and the RF switch is driven by the radio's own RXTX output—so the
 # interface variant takes one fewer pin than the SX126x's.
 radio-sx127x = []
 # SX126x family: BUSY handshake, DIO1 for IRQs, DIO2 drives the RF switch
@@ -56,8 +56,8 @@ vext-gates-battery = []
 # Replaces Vext, the battery sampler, and the status LED wholesale.
 pmic-axp2101 = []
 # SH1106 panel (shared `umsh-display-sh1106` driver) instead of the
-# ssd1306 crate: the I²C address is probed (0x3D first — 0x3C may be a
-# magnetometer), and there is no reset GPIO — the panel's rail is its
+# ssd1306 crate: the I²C address is probed (0x3D first—0x3C may be a
+# magnetometer), and there is no reset GPIO—the panel's rail is its
 # reset.
 display-sh1106 = []
 # The wired ULCP transport is the chip's native USB-Serial-JTAG port
@@ -119,7 +119,7 @@ embassy-time = { version = "0.5", default-features = false }
 embedded-graphics = { version = "0.8", default-features = false }
 embedded-hal-bus = { version = "0.3", default-features = false, features = ["async"] }
 # The wired transport's read/write traits, which both the UART and the
-# USB-Serial-JTAG peripheral implement — one transport implementation
+# USB-Serial-JTAG peripheral implement—one transport implementation
 # whichever port a board wires.
 embedded-io-async = { version = "0.7", default-features = false }
 # Raw flash over the internal SPI NOR (journal backing). The chip feature

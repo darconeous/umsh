@@ -6,7 +6,7 @@
 //!
 //! Shared-resource constraints encoded in types:
 //! - `Vext` (GPIO21, active high) gates BOTH the OLED supply and the battery
-//!   divider — [`vext::Vext`] is the one owned handle, and both
+//!   divider—[`vext::Vext`] is the one owned handle, and both
 //!   [`display`] bring-up and [`battery::BatterySampler`] borrow it.
 //! - GPIO34/35 are input-only.
 //! - GPIO0 is a strapping pin shared with the user button.

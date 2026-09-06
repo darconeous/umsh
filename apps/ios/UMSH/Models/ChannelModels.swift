@@ -8,7 +8,7 @@ import Foundation
 struct ChannelSummary: Identifiable, Hashable, Sendable {
     let id: UUID
     let kind: StoredChannelKind
-    /// The folded form the key is derived from. Machinery — it decides which
+    /// The folded form the key is derived from. Machinery—it decides which
     /// channel this is, but it is not what the channel is called, and the
     /// interface does not show it.
     let canonicalName: String?
@@ -18,7 +18,7 @@ struct ChannelSummary: Identifiable, Hashable, Sendable {
     /// overwrites `name`, exactly as a peer alias behaves.
     let alias: String?
     /// Two-octet derived identifier, hex. Shown as a disambiguator, never as
-    /// an identity — distinct keys may collide here.
+    /// an identity—distinct keys may collide here.
     let channelIDHex: String
     /// Three presentation octets, the identifier extended by one byte. Drives
     /// the channel's color so it looks the same on every device that holds
@@ -87,11 +87,11 @@ struct ChannelSummary: Identifiable, Hashable, Sendable {
         case "public":
             [
                 "Every sender is identified. Messages that arrive without a full sender key are ignored.",
-                "This channel carries group traffic only — it is never used to conceal a direct message.",
+                "This channel carries group traffic only—it is never used to conceal a direct message.",
             ]
         case "emergency":
             [
-                "All traffic here is unencrypted, so any node in range can read it — including nodes that never joined.",
+                "All traffic here is unencrypted, so any node in range can read it—including nodes that never joined.",
                 "Every message is signed and identifies its sender. Anything unsigned or unattributed is ignored.",
                 "Repeaters give this channel priority.",
             ]
@@ -182,13 +182,13 @@ struct ChannelActions {
     var preview: ((String) async -> Result<ChannelPreview, MeshEngineError>)? = nil
     /// Join, or update local details when the key is already held.
     var join: ((MeshChannelPreview, ChannelDetails) async -> ChannelActionOutcome)? = nil
-    /// Re-join a channel whose row and key this phone still holds — a
+    /// Re-join a channel whose row and key this phone still holds—a
     /// built-in the user left. No invitation is involved.
     var rejoin: ((ChannelSummary) async -> ChannelActionOutcome)? = nil
     /// Leave on the phone. A private channel's key is deleted with it.
     var leave: ((ChannelSummary) async -> ChannelActionOutcome)? = nil
     /// Create a private channel with a freshly generated key. The name is the
-    /// channel's own — it travels with the invitation — not a local alias.
+    /// channel's own—it travels with the invitation—not a local alias.
     var createPrivate: ((String, ChannelDetails) async -> ChannelActionOutcome)? = nil
     var updateDetails: ((ChannelSummary, ChannelDetails) async -> Bool)? = nil
     /// Add or remove the channel on the companion radio's device identity.

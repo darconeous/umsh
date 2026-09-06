@@ -59,13 +59,13 @@ def copy_to_volume(uf2_path: str, copy_to: str) -> int:
         msg = str(exc).lower()
         if "device not configured" in msg or "no such file" in msg:
             print(f"flash.py: copied to {dest} (bootloader unmounted "
-                  f"mid-copy; this is normal — flash succeeded)")
+                  f"mid-copy; this is normal—flash succeeded)")
         elif "input/output error" in msg:
             # EIO is ambiguous: it is what in-flight writes get when
             # the bootloader detaches after the final block, but it is
             # also what a genuinely failed partial copy produces. The
             # volume disappearing shortly afterwards is the success
-            # signal — the bootloader only exits DFU on a complete UF2.
+            # signal—the bootloader only exits DFU on a complete UF2.
             mount_root = copy_to if os.path.isdir(copy_to) else os.path.dirname(dest)
             for _ in range(10):
                 if not os.path.exists(mount_root):
@@ -75,7 +75,7 @@ def copy_to_volume(uf2_path: str, copy_to: str) -> int:
                 print(f"flash.py: copy failed: {exc}", file=sys.stderr)
                 return 1
             print(f"flash.py: copied to {dest} (bootloader unmounted "
-                  f"mid-copy; this is normal — flash succeeded)")
+                  f"mid-copy; this is normal—flash succeeded)")
         else:
             print(f"flash.py: copy failed: {exc}", file=sys.stderr)
             return 1
@@ -116,7 +116,7 @@ def main(argv: list[str]) -> int:
 
     if not args.uf2.endswith(".uf2"):
         parser.error(
-            "expected a .uf2 — this script does not convert anything. "
+            "expected a .uf2—this script does not convert anything. "
             "Run `make build-<board>`, or scripts/mkimage.py directly."
         )
     if not os.path.isfile(args.uf2):

@@ -10,7 +10,7 @@
 //! Two of the five always answer: `PROP_GNSS_FIX` and
 //! `PROP_GNSS_SATELLITES` read `0` when the receiver is off or searching,
 //! because "no fix" is a fact the device is sure of. The three that
-//! describe a position — location, altitude, precision — answer the empty
+//! describe a position—location, altitude, precision—answer the empty
 //! value until there *is* a position to describe.
 
 use crate::ids::prop;
@@ -95,7 +95,7 @@ pub struct GnssSnapshot {
 }
 
 impl GnssSnapshot {
-    /// What a receiver that is off — or on but still searching — reports.
+    /// What a receiver that is off—or on but still searching—reports.
     pub const SEARCHING: Self = Self {
         fix: FixKind::None,
         location: [0; MAX_LOCATION_LEN],

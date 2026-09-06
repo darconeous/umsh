@@ -1,7 +1,7 @@
 //! This board's binding of the shared device node.
 //!
-//! The node itself — the MAC/`Host` pump, the device-domain sync, the
-//! beacon and identity paths — lives in
+//! The node itself—the MAC/`Host` pump, the device-domain sync, the
+//! beacon and identity paths—lives in
 //! [`umsh_ulcp_runtime::device_node`], shared with every other UMSH
 //! device firmware. What stays here is what cannot be shared: the
 //! counter-store type (backed by this board's flash), the board's UX
@@ -38,8 +38,8 @@ type SessionInput = umsh_ulcp_runtime::driver::InputChannel<
 // SAFETY of every `&mut` borrow below: `bring_up` runs at most once
 // (its documented contract), before any reference to the arena exists.
 //
-// On the classic ESP32 the ~32 KiB Mac lives in `dram2_seg` — the DRAM
-// past the ROM data and stack areas — because `dram_seg` shrinks to
+// On the classic ESP32 the ~32 KiB Mac lives in `dram2_seg`—the DRAM
+// past the ROM data and stack areas—because `dram_seg` shrinks to
 // 128 KiB once esp-hal reserves the BT controller's 64 KiB and the Mac
 // does not fit there alongside the rest of the image. `ram(reclaimed)`
 // only admits `MaybeUninit` statics (the section is NOLOAD, so nothing
@@ -108,7 +108,7 @@ fn hooks() -> node::NodeHooks {
 /// A task rather than something `main` awaits, and deliberately so. The
 /// MAC arena write below is ~32 KiB constructed in place, but the
 /// temporaries around it are sized into whichever poll frame the body is
-/// inlined into — and `main`'s poll frame is held for the whole boot, so
+/// inlined into—and `main`'s poll frame is held for the whole boot, so
 /// inlining it there leaves every other phase, and any interrupt that
 /// lands during one, running on what little is left underneath. As a
 /// task it gets a frame that exists only while bring-up runs. Nothing in

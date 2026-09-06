@@ -12,12 +12,12 @@ Only core geometry is stored. A region's expansion margin is carried as its
 filter still finds a region from inside its margin. The table keeps only what
 lookup needs: display names, municipalities, and other prose stay in the
 committed extracts, and the radio-facing name is stored only where it differs
-from the code — which today means custom regions.
+from the code—which today means custom regions.
 
 Reproducibility is a content guarantee rather than a byte guarantee. Rows go in
 in a fixed order, the page size is pinned, nothing carries a wall-clock
 timestamp that was not supplied as a build input, and the file is vacuumed the
-same way every time — but SQLite makes no promise that identical logical
+same way every time—but SQLite makes no promise that identical logical
 content yields identical bytes across versions, so what the build actually
 publishes and compares is `content_hash`, taken over the normalized logical
 tables.

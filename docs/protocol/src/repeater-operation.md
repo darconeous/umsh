@@ -15,7 +15,7 @@ The routing model is governed by a few simple rules:
 - A packet is forwarded as either a source-routed hop or a flood hop, never both.
   - A hop named in the source route is a source-routed hop, including the hop that consumes the final hint.
   - Every other forwarded hop is a flood hop.
-  - Rules written for flood forwarding — [flood hop accounting](packet-structure.md#flood-hop-count), signal-quality thresholds, [region policy](#forwarding-procedure), and forwarding contention — apply to flood hops only.
+  - Rules written for flood forwarding—[flood hop accounting](packet-structure.md#flood-hop-count), signal-quality thresholds, [region policy](#forwarding-procedure), and forwarding contention—apply to flood hops only.
 - Repeaters MUST mutate specific dynamic routing metadata while forwarding ([source route](packet-options.md#source-route-option-3), [trace route](packet-options.md#trace-route-option-2), [hop count](packet-structure.md#flood-hop-count), etc)
   - Typical examples are flood hop counts, trace routes, source routes.
   - A repeater SHALL NOT simply repeat a packet verbatim under any circumstances.
@@ -42,7 +42,7 @@ The cache key is derived from the packet as follows:
 - **Authenticated packets** (unicast, multicast, blind unicast): the cache key is normally the packet's MIC. Because the MIC covers all static fields and is unaffected by repeater modifications to dynamic options or the flood hop count, it remains stable across forwarding hops.
   - If the packet carries the [Route Retry option](packet-options.md#route-retry-option-6), the cache key must distinguish that retry attempt from the same packet without the option present. A simple and sufficient rule is to treat the cache key as `(MIC, route_retry_present)`.
   - This gives a packet two bounded forwarding identities: the original forwarding attempt and one explicit reroute attempt.
-- **MAC acks and broadcasts**: these packet types do not carry a MIC. The cache key is a locally-computed hash of the packet content, excluding the flood hop count and dynamic options — the same fields that would be excluded from a MIC. The hash does not need to be cryptographic; CRC-32 is suggested, but any hash with comparable distribution is acceptable. The choice of hash algorithm is a local implementation detail.
+- **MAC acks and broadcasts**: these packet types do not carry a MIC. The cache key is a locally-computed hash of the packet content, excluding the flood hop count and dynamic options—the same fields that would be excluded from a MIC. The hash does not need to be cryptographic; CRC-32 is suggested, but any hash with comparable distribution is acceptable. The choice of hash algorithm is a local implementation detail.
 
 Before forwarding a packet, the repeater checks the cache:
 
@@ -56,17 +56,17 @@ Shorter cache keys increase the probability of false-positive collisions. Deploy
 
 ### Entry Expiry
 
-Cache entries MUST also age out. Capacity alone does not bound how long a key is suppressed, and a MIC-less packet's cache key is derived from its content: a node that repeats an identical packet — a beacon, whose body is empty and whose non-dynamic options do not change — produces the same key every time. On a quiet mesh, capacity-only eviction would suppress that node's packets for as long as the repeater runs.
+Cache entries MUST also age out. Capacity alone does not bound how long a key is suppressed, and a MIC-less packet's cache key is derived from its content: a node that repeats an identical packet—a beacon, whose body is empty and whose non-dynamic options do not change—produces the same key every time. On a quiet mesh, capacity-only eviction would suppress that node's packets for as long as the repeater runs.
 
 An entry SHOULD be discarded once it is older than a **cache lifetime** measured from when the key was first inserted. One hour is a reasonable default: long enough that every retransmission of a single packet still collapses to one forward, short enough that a node re-announcing itself is heard again well within the time anyone would wait for it.
 
-MAC-ack entries are the exception: their lifetime SHOULD be on the order of tens of seconds — the scale of a sender's retry ladder — not an hour. An identical re-acknowledgement is the one duplicate a correct node emits deliberately (see the [duplicate acknowledgement window](security.md#duplicate-acknowledgement-window)), and it recovers a lost ack only if repeaters carry it; under a lifetime longer than the sender's recovery horizon, the first forward of an ack absorbs every later one and the recovery path dies at the first hop. A short lifetime still collapses the copies of any single exchange, which play out within a few confirmation windows.
+MAC-ack entries are the exception: their lifetime SHOULD be on the order of tens of seconds—the scale of a sender's retry ladder—not an hour. An identical re-acknowledgement is the one duplicate a correct node emits deliberately (see the [duplicate acknowledgement window](security.md#duplicate-acknowledgement-window)), and it recovers a lost ack only if repeaters carry it; under a lifetime longer than the sender's recovery horizon, the first forward of an ack absorbs every later one and the recovery path dies at the first hop. A short lifetime still collapses the copies of any single exchange, which play out within a few confirmation windows.
 
 A repeat of a key already held MUST NOT extend that entry's lifetime. Refreshing the timestamp on each sighting would let a node repeating itself inside the window hold its own suppression open indefinitely, which is the behavior expiry exists to prevent.
 
 ### Cache Sizing
 
-Each cache entry is small (equal to the cache key size — typically 4 to 16 bytes), so generous sizing is inexpensive. The recommended minimum is **32 entries**; the suggested default is **64 entries**. High-traffic deployments or networks with large diameters may benefit from 128 or more entries.
+Each cache entry is small (equal to the cache key size—typically 4 to 16 bytes), so generous sizing is inexpensive. The recommended minimum is **32 entries**; the suggested default is **64 entries**. High-traffic deployments or networks with large diameters may benefit from 128 or more entries.
 
 ## Forwarding Procedure
 
@@ -120,24 +120,24 @@ Each cache entry is small (equal to the cache key size — typically 4 to 16 byt
      - The contention window staggers the repeaters that all heard one transmission. A packet that arrived over a point-to-point link was heard by this repeater alone, so there is no contention to resolve and no window to wait out.
    - Forward the modified packet according to normal [channel access rules](channel-access.md).
 
-A packet that arrives carrying an **empty** source-route option matched no hint at this repeater, so it takes the flood path: steps 7 through 9 apply in full. This is how a hybrid route transitions to flooding — the transition is observed by the repeater *after* the one that emptied the route, not performed by it.
+A packet that arrives carrying an **empty** source-route option matched no hint at this repeater, so it takes the flood path: steps 7 through 9 apply in full. This is how a hybrid route transitions to flooding—the transition is observed by the repeater *after* the one that emptied the route, not performed by it.
 
 A [bridge](internet-bridging.md) rewrites nothing of its own: a repeater at each end of it forwards the packet by this procedure, so a crossing applies these rules twice.
 
 ## Forwarding Confirmation
 
-Repeaters do not generate MAC acks — acks are generated only by the [final destination](packet-types.md#mac-ack-packet). Instead, a node can passively confirm that a transmitted or forwarded packet was received by listening for a subsequent retransmission of the same packet (or it's ack).
+Repeaters do not generate MAC acks—acks are generated only by the [final destination](packet-types.md#mac-ack-packet). Instead, a node can passively confirm that a transmitted or forwarded packet was received by listening for a subsequent retransmission of the same packet (or it's ack).
 
 This applies to:
 
-- **Source-routed packets**: Each forwarding hop listens for the next hop — the node matching the next source-route hint — to retransmit.
+- **Source-routed packets**: Each forwarding hop listens for the next hop—the node matching the next source-route hint—to retransmit.
 - **Flood originators**: The originating node listens for any node to retransmit.
 - **Flood repeaters**: Intermediate flood-forwarding nodes MUST NOT retry. Multiple nodes may forward the same flood packet, and a repeater has no designated next hop to listen for; retrying would increase congestion without improving reliability.
 - **Routed MAC acks**: An ack that carries a source route or flood budget is a routed send like any other; the destination that produced it listens for the first hop to carry it onward and retries on silence. Retrying the ack first is what spares the sender a full data retransmission when only the ack's first hop failed.
 
-Confirmation, and the retry ladder below, apply whether or not the packet requests an ACK. An ack-requested sender goes on to await the ACK once forwarding is confirmed; a sender that requested no ACK is finished the moment it hears the packet carried onward, and if the retry budget runs out without that, the send simply ends — there is no failure signal to wait for. A point-to-point packet with no flood budget and no source route travels straight to its destination, confirms nothing, and MUST be transmitted exactly once.
+Confirmation, and the retry ladder below, apply whether or not the packet requests an ACK. An ack-requested sender goes on to await the ACK once forwarding is confirmed; a sender that requested no ACK is finished the moment it hears the packet carried onward, and if the retry budget runs out without that, the send simply ends—there is no failure signal to wait for. A point-to-point packet with no flood budget and no source route travels straight to its destination, confirms nothing, and MUST be transmitted exactly once.
 
-After transmitting, the node listens for the same packet — identified by its [cache key](#duplicate-suppression) — to be retransmitted. This confirmation timeout MUST be large enough to cover the worst-case forwarding delay allowed by [Channel Access](channel-access.md#flood-forwarding-contention-window), plus the airtime of the forwarded frame itself, plus a guard margin. A safe default is:
+After transmitting, the node listens for the same packet—identified by its [cache key](#duplicate-suppression)—to be retransmitted. This confirmation timeout MUST be large enough to cover the worst-case forwarding delay allowed by [Channel Access](channel-access.md#flood-forwarding-contention-window), plus the airtime of the forwarded frame itself, plus a guard margin. A safe default is:
 
 ```text
 confirm_timeout = 2 × T_frame + W_max + W_jitter + D_ack
@@ -159,9 +159,9 @@ A node MUST NOT retry more than 3 times.
 
 ### Ack Cancellation
 
-A MAC ack echoes the acknowledged packet's `ack_mic` — the first four bytes of its on-wire MIC — which any forwarder can read without keys, and which survives the mutations repeaters perform. A repeater that overhears a MAC ack (or an [Ack MIC option](packet-options.md#ack-mic-option-8)) whose `ack_mic` matches the MIC prefix of a queued, not-yet-transmitted forward of an ack-eliciting packet (UNAR or BUAR) SHOULD cancel that forward: the destination provably has the packet, and repeating it spends airtime on nothing. The [ACK protection interval](channel-access.md#ack-protection-interval) puts the ack on the air ahead of pending forwards precisely so that this observation is available.
+A MAC ack echoes the acknowledged packet's `ack_mic`—the first four bytes of its on-wire MIC—which any forwarder can read without keys, and which survives the mutations repeaters perform. A repeater that overhears a MAC ack (or an [Ack MIC option](packet-options.md#ack-mic-option-8)) whose `ack_mic` matches the MIC prefix of a queued, not-yet-transmitted forward of an ack-eliciting packet (UNAR or BUAR) SHOULD cancel that forward: the destination provably has the packet, and repeating it spends airtime on nothing. The [ACK protection interval](channel-access.md#ack-protection-interval) puts the ack on the air ahead of pending forwards precisely so that this observation is available.
 
-Cancellation acts on the queue, not on the future. It removes whatever matching forward is queued at that moment — a [Route Retry](packet-options.md#route-retry-option-6) copy included — and records nothing. A Route Retry copy received *after* a cancellation is a separate forwarding identity under [duplicate suppression](#duplicate-suppression) and is forwarded normally: the origin resorts to it precisely because the ack never reached it, and carrying the copy prompts the destination to acknowledge again. That copy is in turn cancelable by another overheard ack.
+Cancellation acts on the queue, not on the future. It removes whatever matching forward is queued at that moment—a [Route Retry](packet-options.md#route-retry-option-6) copy included—and records nothing. A Route Retry copy received *after* a cancellation is a separate forwarding identity under [duplicate suppression](#duplicate-suppression) and is forwarded normally: the origin resorts to it precisely because the ack never reached it, and carrying the copy prompts the destination to acknowledge again. That copy is in turn cancelable by another overheard ack.
 
 The duplicate-cache entry for a cancelled forward remains. The packet was handled; a later copy of the same attempt is still a duplicate.
 
@@ -174,7 +174,7 @@ When a node sends an ack-requested unicast or blind-unicast packet against a cac
 Two kinds of cached route can fail this way, and they fail identically from the sender's point of view:
 
 - an explicit **source route**, carried in the packet as a [source-route option](packet-options.md#source-route-option-3)
-- a cached **distance** — the destination believed to be directly reachable, or reachable within a known number of flood hops — which narrows `FHOPS` and leaves no trace in the options
+- a cached **distance**—the destination believed to be directly reachable, or reachable within a known number of flood hops—which narrows `FHOPS` and leaves no trace in the options
 
 A practical recovery rule is:
 

@@ -100,7 +100,7 @@ impl RegionCode {
     /// spells but a region may not use, is rejected, so that named regions
     /// cannot be mistaken for short codes.
     ///
-    /// An all-letter code is exclusive — no named region can derive it — and
+    /// An all-letter code is exclusive—no named region can derive it—and
     /// so reads back as itself. One bearing a digit encodes just as
     /// faithfully but shares its space with the hashes, so it does not.
     pub fn from_short_code(code: &str) -> Result<Self, RegionCodeError> {
@@ -198,8 +198,8 @@ impl fmt::Debug for Letters {
 ///
 /// The three lengths land in three consecutive blocks, longest first, so
 /// that adding the shorter ones left every code already assigned where it
-/// was. Anything that is not all letters — a code bearing a digit among
-/// them, or one already outside the letter space — is returned unchanged.
+/// was. Anything that is not all letters—a code bearing a digit among
+/// them, or one already outside the letter space—is returned unchanged.
 fn transform_letter_chunk(encoded: u16) -> u16 {
     let a = encoded / 1600;
     let b = (encoded / 40) % 40;
@@ -247,7 +247,7 @@ impl fmt::Write for LetterSink {
 /// three ASCII letters or digits is a short code, and anything else is a
 /// region name. The derivation is total over every string of one to
 /// [`REGION_NAME_MAX_LEN`] bytes: a string that merely looks like a literal
-/// code — `0x12`, `0xzz` — is not one, and is hashed as the name it is
+/// code—`0x12`, `0xzz`—is not one, and is hashed as the name it is
 /// (packet-options.md § Region Code Encoding).
 impl FromStr for RegionCode {
     type Err = RegionCodeError;
@@ -363,7 +363,7 @@ mod tests {
 
     #[test]
     fn encodes_short_codes_bearing_digits_without_making_them_readable() {
-        // These are encodable, injective and stable — but not vacated, so
+        // These are encodable, injective and stable—but not vacated, so
         // they share their space with the hashes and never render.
         for input in ["W7", "5", "0A1"] {
             let code = RegionCode::from_short_code(input).unwrap();
@@ -432,7 +432,7 @@ mod tests {
 
     #[test]
     fn transforms_a_named_region_that_lands_on_two_letters() {
-        // SHA-256("wasatch front") begins 0x5FA0, which decodes to `OL` —
+        // SHA-256("wasatch front") begins 0x5FA0, which decodes to `OL`—
         // vacated now that two letters are a short code of their own
         // (packet-options.md § Region Code Encoding).
         assert_eq!(transform_letter_chunk(0x5FA0), 0xEEDF);
@@ -517,7 +517,7 @@ mod tests {
         // Only `0x` plus exactly four hex digits spells a code. Everything
         // else is a name, which keeps the derivation total: there is no such
         // thing as a string with no region.
-        // `0x` and `0x1` are short codes — one to three alphanumerics — so
+        // `0x` and `0x1` are short codes—one to three alphanumerics—so
         // they are not among these.
         for input in ["0x12345", "0xzz", "0x 12", "0x+1"] {
             assert_eq!(

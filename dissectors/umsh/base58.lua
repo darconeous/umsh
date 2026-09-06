@@ -38,7 +38,7 @@ for i = 1, #ALPHABET do DIGIT_VALUE[ALPHABET:sub(i, i)] = i - 1 end
 
 -- Decode exactly ENCODED_LEN base58 digits back into 32 bytes.
 -- Returns nil on a wrong length, an out-of-alphabet character, or a value
--- too large to fit — the alphabet excludes 0/O/I/l precisely so that the
+-- too large to fit—the alphabet excludes 0/O/I/l precisely so that the
 -- characters people confuse are never silently accepted as something else.
 function M.decode32(digits)
   if type(digits) ~= "string" or #digits ~= M.ENCODED_LEN then return nil end
@@ -64,7 +64,7 @@ end
 
 -- Star-truncated rendering of a hint (a leading prefix of a public key).
 --
--- The hint is encoded twice — padded to 32 bytes with 0x00 and with 0xFF —
+-- The hint is encoded twice—padded to 32 bytes with 0x00 and with 0xFF—
 -- and the common prefix of the two encodings is emitted, up to `budget`
 -- characters, followed by a single `*` at the first divergence. Every
 -- character emitted before the star is one that every key matching the hint

@@ -8,7 +8,7 @@ repository.workspace = true
 
 # Mechanism-only UX layer for "display-tracker-class" UMSH devices:
 #
-#   * a small display — emissive (OLED) or persistent (e-paper)
+#   * a small display—emissive (OLED) or persistent (e-paper)
 #   * one button, or a button plus a D-pad / joystick
 #   * battery powered, no keyboard
 #
@@ -25,7 +25,7 @@ repository.workspace = true
 [features]
 default = []
 # Frame rendering (`screen`). Off by default so the boards in this family
-# that have no panel — T-1000E, SenseCAP Solar — still get the menu,
+# that have no panel—T-1000E, SenseCAP Solar—still get the menu,
 # attention, and gate policy without pulling in a graphics stack.
 screen = ["dep:embedded-graphics", "dep:heapless"]
 

@@ -7,7 +7,7 @@ already put every artifact in one directory under its release name; this
 describes what is there, so the web flasher can find and verify it.
 
 The manifest is the flasher's entry point. It carries only what is needed
-to put bytes on a board — board ids, the hardware model string a device
+to put bytes on a board—board ids, the hardware model string a device
 reports over ULCP, the chip, UF2 family and app base, the ESP32 write
 offset, and per file a size, a SHA-256, and where to get it. Everything
 presentational (photos, specs, prose about entering DFU) lives in
@@ -16,7 +16,7 @@ without either one duplicating the other.
 
 Board facts come from scripts/firmware_image.py rather than being repeated
 here, and the SoftDevice requirement is read back out of each DFU package
-rather than being asserted — so the manifest describes the artifacts that
+rather than being asserted—so the manifest describes the artifacts that
 exist, not the ones we meant to build.
 
   # Index a staged release:
@@ -57,7 +57,7 @@ SCHEMA_VERSION = 1
 MIRRORED_ROLES = frozenset({"dfu-zip", "merged-bin"})
 
 # Per-board release facts that BOARDS cannot carry: which ELF the build
-# produces, what the chip is, and — for boards outside the UF2 world — the
+# produces, what the chip is, and—for boards outside the UF2 world—the
 # whole flashing story. `uf2` boards inherit family/base/volume/model from
 # the BOARDS preset, keyed by the same id.
 RELEASE_BOARDS = {
@@ -221,7 +221,7 @@ def index_mirror(root: str, keep: int) -> int:
 
     The published tree holds one directory per mirrored release. This reads
     each one's own manifest for the index, points the top-level manifest at
-    the newest, and deletes the oldest beyond `keep` — the artifacts stay
+    the newest, and deletes the oldest beyond `keep`—the artifacts stay
     on GitHub Releases forever, so pruning here costs nothing but a click.
     """
     if not os.path.isdir(root):

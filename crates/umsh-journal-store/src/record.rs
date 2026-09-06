@@ -35,7 +35,7 @@ pub trait PageEraser {
 ///
 /// Synchronous, unlike the writer and eraser: every backend this runs on
 /// reads either from a memory-mapped window or from a cached SPI read,
-/// and a mount scan issues one call per slot across two pages — making
+/// and a mount scan issues one call per slot across two pages—making
 /// it async would put an await in that loop for no backend that needs
 /// one.
 pub trait RecordReader {

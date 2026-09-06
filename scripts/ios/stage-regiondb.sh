@@ -31,7 +31,7 @@ if [ -f "$world" ]; then
     cp "$world" "$destination"
     echo "Staged region database: $world"
 elif [ "${ACTION:-build}" = "install" ]; then
-    echo "error: no regions/dist/world.regiondb — an archive must carry the real" >&2
+    echo "error: no regions/dist/world.regiondb—an archive must carry the real" >&2
     echo "world database, not the test fixture. Run: make regions-build" >&2
     exit 1
 else

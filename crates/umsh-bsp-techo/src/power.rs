@@ -4,15 +4,15 @@
 //!
 //! - [`PowerSignaler`] and the [`SHUTDOWN_SIGNAL`] static, which bridge
 //!   the CLI's `umsh_hal::PowerControl` trait into board-level power
-//!   events. See `umsh-bsp-t1000e::power` for the design rationale — the
+//!   events. See `umsh-bsp-t1000e::power` for the design rationale—the
 //!   shape is identical here. The board-specific teardown sequence lives
 //!   in the firmware's `shutdown_task`, which awaits [`SHUTDOWN_SIGNAL`].
 //! - The battery monitor ([`run_battery_monitor`], [`sample_battery`],
-//!   [`BatterySample`], [`battery_state`]) — the same shape as the
+//!   [`BatterySample`], [`battery_state`])—the same shape as the
 //!   SenseCAP Solar and T-1000E monitors with this board's wiring, so the
 //!   device's `CAP_BATTERY` snapshot path stays board-agnostic.
 //!
-//! ## Voltage reading (nominal — uncalibrated)
+//! ## Voltage reading (nominal—uncalibrated)
 //!
 //! Reads AIN2/P0.04 through the on-board 150 kΩ / 150 kΩ divider. Our
 //! SAADC is `embassy-nrf`'s default single-ended config: 12-bit,
@@ -34,20 +34,20 @@
 //! configuration produces. The divider ratio is the same; only the
 //! reference term changes.
 //!
-//! This is the *nominal* network value, not a fitted calibration —
+//! This is the *nominal* network value, not a fitted calibration—
 //! resistor tolerance dominates the residual error. Good enough for the
 //! protective low-battery cutoff; a bench calibration can replace
 //! [`DIVIDER_MICRO`] with a fitted slope.
 //!
 //! Unlike the SenseCAP Solar and T-1000E boards, the T-Echo's divider has
-//! **no gate pin** — the 300 kΩ leg is hard-wired across the pack and
+//! **no gate pin**—the 300 kΩ leg is hard-wired across the pack and
 //! draws ~12 µA continuously. There is nothing for firmware to switch, so
 //! the monitor loop has no settle step.
 //!
 //! LilyGO's own README warns that this ADC reads high while USB is
 //! plugged in. That does not affect the reported *state* (external power
 //! is detected independently, see [`usb_power_present`]), but a voltage
-//! sampled on USB should not be read as a resting cell voltage — which is
+//! sampled on USB should not be read as a resting cell voltage—which is
 //! also why the level estimator gates on rest.
 
 use embassy_sync::blocking_mutex::raw::ThreadModeRawMutex;
@@ -145,7 +145,7 @@ mod monitor {
         }
     }
 
-    /// Raised when the charge class or estimated level moves — the two
+    /// Raised when the charge class or estimated level moves—the two
     /// things the on-screen indicator draws.
     ///
     /// This is a *redraw* prompt, never a wake: a battery sample the user
@@ -156,7 +156,7 @@ mod monitor {
     pub static BATTERY_UI_CHANGED: Signal<ThreadModeRawMutex, ()> = Signal::new();
 
     /// Whether the nRF USB regulator currently detects VBUS. This is the
-    /// only external-power signal on this board — the charger's status LED
+    /// only external-power signal on this board—the charger's status LED
     /// is hardware-driven and invisible to the MCU.
     ///
     /// Read straight from `POWER.usbregstatus`, which reflects the true
@@ -185,7 +185,7 @@ mod monitor {
     /// Battery measurements worth announcing to a remote observer, for
     /// `PROP_BATTERY` asynchronous updates. Multi-receiver, and filtered
     /// on charge class plus level rather than the five-way presentation
-    /// classification — see the T-1000E BSP's equivalent for the
+    /// classification—see the T-1000E BSP's equivalent for the
     /// reasoning, which is identical.
     pub static BATTERY_ANNOUNCE: Watch<
         ThreadModeRawMutex,
@@ -213,7 +213,7 @@ mod monitor {
     static BATTERY_SAMPLE_REQUEST: Signal<ThreadModeRawMutex, ()> = Signal::new();
     static BATTERY_SAMPLE_REPLY: Signal<ThreadModeRawMutex, BatterySample> = Signal::new();
 
-    /// Ask [`run_battery_monitor`] — the sole SAADC owner — for a fresh
+    /// Ask [`run_battery_monitor`]—the sole SAADC owner—for a fresh
     /// measurement and wait for it. Single-consumer. Never completes once
     /// the monitor has exited; callers should apply a timeout.
     pub async fn sample_battery() -> BatterySample {
@@ -230,7 +230,7 @@ mod monitor {
     /// samples below the critical threshold (≈3.1 V, sustained ~5 min,
     /// only ever reached off-USB since `classify` reports Charging while
     /// external power is present) fire [`super::SHUTDOWN_SIGNAL`] for a
-    /// protective System OFF — nothing in the T-Echo's documented hardware
+    /// protective System OFF—nothing in the T-Echo's documented hardware
     /// proves an MCU-independent undervoltage lockout, so this is the only
     /// deep-discharge protection we can count on.
     ///
@@ -240,7 +240,7 @@ mod monitor {
         const CONSECUTIVE_NEEDED: u8 = 10;
         /// Normal cadence. Nothing is learned by reading faster: the pack
         /// discharges over days and the level estimator quantizes to 5 %.
-        /// External-power changes do not wait for it —
+        /// External-power changes do not wait for it—
         /// [`VBUS_POLL_INTERVAL`] catches those.
         const SAMPLE_INTERVAL: Duration = Duration::from_secs(300);
         /// Cadence while the pack reads Low or Critical, so the protective
@@ -250,8 +250,8 @@ mod monitor {
         const LOW_SAMPLE_INTERVAL: Duration = Duration::from_secs(30);
         /// How often VBUS is checked between voltage samples.
         ///
-        /// This board has no charger-status GPIO — external power is
-        /// `POWER.usbregstatus` only — and the `POWER` USB interrupts are
+        /// This board has no charger-status GPIO—external power is
+        /// `POWER.usbregstatus` only—and the `POWER` USB interrupts are
         /// unavailable to this firmware (MPSL owns the shared CLOCK_POWER
         /// vector; enabling them is the post-DFU watchdog freeze). So the
         /// charge-state edge has to be polled. It costs one register read
@@ -277,7 +277,7 @@ mod monitor {
             let usb = usb_power_present();
             // No charge-detect pin: VBUS presence stands in for "charging".
             // Passing it as both flags means Charged is unreachable on this
-            // board — with external power the state is always Charging — so
+            // board—with external power the state is always Charging—so
             // a remote observer sees charging start and stop but never
             // charge *completion*. Distinguishing it would mean inferring
             // termination from a voltage LilyGO already warns is unreliable
@@ -330,7 +330,7 @@ mod monitor {
 
             // Protective cell cutoff: sustained critical voltage while on
             // battery drives a System OFF so the pack is not deep-discharged
-            // in a drawer. `!usb` is belt-and-suspenders — a Critical
+            // in a drawer. `!usb` is belt-and-suspenders—a Critical
             // classification already implies no external power.
             if state == BatteryState::BatteryCritical && !usb {
                 low_count = low_count.saturating_add(1);

@@ -7,11 +7,11 @@
 //! - GPIO DETECT signal (PIN_CNF SENSE = HIGH or LOW), this module's
 //!   [`power_off`] path
 //! - the LPCOMP analog comparator, this module's [`arm_lpcomp_wake_up`]
-//!   path — the wake a board with no button still gets, and the one that
+//!   path—the wake a board with no button still gets, and the one that
 //!   brings a solar node back when its cell recharges
 //! - NFC field, watchdog, debugger attach
 //!
-//! Wake-from-OFF is observed by software as a fresh boot — `RESETREAS`
+//! Wake-from-OFF is observed by software as a fresh boot—`RESETREAS`
 //! reports `OFF` (bit 16), plus `LPCOMP` (bit 17) when the comparator was
 //! the trigger. The firmware must therefore restore any state it cares
 //! about from non-volatile storage on the cold path.
@@ -169,7 +169,7 @@ pub fn drive_pin_high(port: Port, pin: u8) {
 /// ESD protection diodes on the peripheral's unpowered VCC rail.
 ///
 /// Overwrites the full PIN_CNF register. Any prior DIR/PULL/DRIVE/SENSE
-/// configuration is discarded — that's intentional since the chip is
+/// configuration is discarded—that's intentional since the chip is
 /// about to power off.
 pub fn tristate_pin(port: Port, pin: u8) {
     let addr = pin_cnf_addr(port, pin);
@@ -224,7 +224,7 @@ pub fn configure_wake_input(pin: WakePin, pull: WakePull) {
 /// Connect a pin's input buffer with the requested pull and SENSE disabled,
 /// so [`read_pin`] returns the physical level. Needed before polling a pin
 /// whose configuration may still be at the reset value (input buffer
-/// disconnected — the IN register then reads 0 regardless of the pad).
+/// disconnected—the IN register then reads 0 regardless of the pad).
 pub fn connect_input(port: Port, pin: u8, pull: WakePull) {
     let addr = pin_cnf_addr(port, pin);
     // DIR=input, INPUT=connect, standard drive, requested pull, SENSE off.
@@ -241,8 +241,8 @@ pub fn configure_wake_low(pin: WakePin) {
 
 pub use embassy_nrf::pac::lpcomp::vals::{PselPsel as LpcompInput, Refsel as LpcompReference};
 
-/// Arm LPCOMP as a System OFF wake source: the chip wakes — resets, with
-/// `RESETREAS.LPCOMP` (bit 17) set alongside `OFF` — when `input` crosses
+/// Arm LPCOMP as a System OFF wake source: the chip wakes—resets, with
+/// `RESETREAS.LPCOMP` (bit 17) set alongside `OFF`—when `input` crosses
 /// *upward* through `reference`, with 50 mV of hysteresis.
 ///
 /// This is the battery-recovery wake. Point `input` at the board's battery
@@ -252,7 +252,7 @@ pub use embassy_nrf::pac::lpcomp::vals::{PselPsel as LpcompInput, Refsel as Lpco
 /// has refilled it, with no button and no cable.
 ///
 /// Call immediately before [`enter_system_off`] or [`power_off`]. The two
-/// wake mechanisms are independent — a board can arm button DETECT and
+/// wake mechanisms are independent—a board can arm button DETECT and
 /// LPCOMP at once and be woken by whichever happens first.
 ///
 /// Caveats:
@@ -264,12 +264,12 @@ pub use embassy_nrf::pac::lpcomp::vals::{PselPsel as LpcompInput, Refsel as Lpco
 ///   with the rail. On a board whose regulator holds VDD at 3.3 V this is
 ///   benign: while the regulator is in dropout VDD tracks the cell and the
 ///   tap sits below the fraction, so the comparator cannot trip until the
-///   rail is back in regulation — one effective wake point. Boards running
+///   rail is back in regulation—one effective wake point. Boards running
 ///   the core straight off the cell must reason about this themselves.
 /// - `input`'s pin must be left tri-stated, not driven. The comparator
 ///   reaches the pad through the analog mux, so `PIN_CNF`'s input buffer is
 ///   irrelevant, but a driven output would fight the divider.
-/// - The divider feeding the pin must stay powered through System OFF —
+/// - The divider feeding the pin must stay powered through System OFF—
 ///   which usually means leaving its gate driven, since a board that raises
 ///   the gate to save the divider's quiescent draw has nothing left to
 ///   compare.
@@ -290,7 +290,7 @@ pub fn arm_lpcomp_wake_up(input: LpcompInput, reference: LpcompReference) {
     // threshold at entry does not wake, and a cell continuing to decay
     // produces a DOWN crossing, which this ignores.
     lpcomp.anadetect().write(|w| w.set_anadetect(Anadetect::Up));
-    // 50 mV at the comparator input — enough that ripple on a recovering
+    // 50 mV at the comparator input—enough that ripple on a recovering
     // cell doesn't chatter across the threshold.
     lpcomp.hyst().write(|w| w.set_hyst(true));
 
@@ -299,7 +299,7 @@ pub fn arm_lpcomp_wake_up(input: LpcompInput, reference: LpcompReference) {
 
     // Startup is tens of microseconds. Bound the spin anyway: if READY
     // never arrives we fall through and enter System OFF unarmed, which is
-    // just the old behavior — far better than hanging with the radio down
+    // just the old behavior—far better than hanging with the radio down
     // and the battery flat.
     for _ in 0..100_000u32 {
         if lpcomp.events_ready().read() != 0 {
@@ -317,7 +317,7 @@ pub fn arm_lpcomp_wake_up(input: LpcompInput, reference: LpcompReference) {
     // signal into the power controller, not the interrupt path.
 }
 
-/// Enter System OFF. Diverges — the chip either powers down (and later
+/// Enter System OFF. Diverges—the chip either powers down (and later
 /// resets on DETECT) or, when a debugger is attached, behaves like an
 /// infinite WFI per the product spec (we still spin to keep the diverging
 /// return type honest).
@@ -325,7 +325,7 @@ pub fn arm_lpcomp_wake_up(input: LpcompInput, reference: LpcompReference) {
 /// Clears both ports' `LATCH` immediately before the trigger. `embassy-nrf`
 /// puts the GPIOs in LDETECT mode, where the wake signal is derived from
 /// `LATCH` rather than from live pin state, so a bit left set by an earlier
-/// asynchronous pin wait holds that signal asserted — and writing
+/// asynchronous pin wait holds that signal asserted—and writing
 /// `SYSTEMOFF` with it asserted resets the chip instead of powering it down.
 pub fn enter_system_off() -> ! {
     // Mask all maskable interrupts so nothing preempts between the final

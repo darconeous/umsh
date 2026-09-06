@@ -1,7 +1,7 @@
 //! `routes`: what this tool has learned about reaching other nodes.
 //!
 //! Reads the cache file rather than a radio, so it answers with nothing
-//! attached — which is the state you are in when you want to know why
+//! attached—which is the state you are in when you want to know why
 //! last night's `manage` took the path it did.
 
 use anyhow::Result;

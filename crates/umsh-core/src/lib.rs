@@ -108,7 +108,7 @@ mod tests {
     #[test]
     fn empty_payload_emits_no_end_of_options_marker() {
         // A beacon is a broadcast with an empty payload. Nothing follows the
-        // options block, so the `0xFF` marker must not be emitted — it would
+        // options block, so the `0xFF` marker must not be emitted—it would
         // be a wasted byte on every beacon.
         let mut buf = [0u8; 64];
         let beacon = PacketBuilder::new(&mut buf)
@@ -255,7 +255,7 @@ mod tests {
         // New layout for unicast with hint source, encrypted, MIC8, no fhops:
         // FCF | DST(3) | SRC(3) | SECINFO(5) | OPTIONS(5) | 0xFF | payload(3) | MIC(8)
         // Total = 1 + 3 + 3 + 5 + 4 + 1 + 3 + 8 = 28 bytes
-        // Options: trace route (2, len 0) + region code (11, len 2) — both dynamic, excluded from AAD
+        // Options: trace route (2, len 0) + region code (11, len 2)—both dynamic, excluded from AAD
         let mut bytes = [0u8; 64];
         bytes[0] = Fcf::new(PacketType::Unicast, false, false).0;
         bytes[1..4].copy_from_slice(&[0xC3, 0xD4, 0x25]); // DST

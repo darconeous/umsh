@@ -8,7 +8,7 @@ import UMSHMobileCore
 /// device, and the operator is owed one answer about both.
 struct DeviceSetupResultView: View {
     let phase: DeviceConfigDraft.ApplyPhase
-    /// What the device was set up as — "tracker", "repeater".
+    /// What the device was set up as—"tracker", "repeater".
     let deviceNoun: String
     let deviceName: String?
     /// Nil when this app has nowhere to file a peer.

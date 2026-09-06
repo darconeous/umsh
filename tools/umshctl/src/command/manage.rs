@@ -2,7 +2,7 @@
 //!
 //! One Node Management exchange at a time against a device across the
 //! room, carried over the borrowed radio by the host stack in
-//! [`crate::mesh`] — which is also where the administrator identity these
+//! [`crate::mesh`]—which is also where the administrator identity these
 //! exchanges are signed with lives.
 
 use std::cell::RefCell;
@@ -102,7 +102,7 @@ pub enum ManageOp {
         op: BleOp,
     },
 
-    /// Nodes authorized to manage the device — including this tool.
+    /// Nodes authorized to manage the device—including this tool.
     Admins {
         #[command(subcommand)]
         op: Option<TableOp>,
@@ -132,8 +132,8 @@ pub enum BleOp {
 /// What the borrowed radio is being lent out for.
 ///
 /// Administering a device and asking a repeater who its neighbors are are
-/// different conversations — one is authorized node management, the other a
-/// plain MAC command anyone may send — but both need this tool to stop being
+/// different conversations—one is authorized node management, the other a
+/// plain MAC command anyone may send—but both need this tool to stop being
 /// a serial client and become a node on the mesh. That apparatus is what this
 /// enum is here to share.
 #[derive(Debug)]
@@ -361,7 +361,7 @@ where
                 }
                 // `CMD_RESTORE` on a device with no snapshot resets
                 // nothing and answers like any other command, so a reply
-                // is not a protocol violation — it is an answer.
+                // is not a protocol violation—it is an answer.
                 Outcome::Replied { .. } => report_value(prop::LAST_STATUS, ctl.manager.reply()),
                 Outcome::Failed(failure) => Err(describe(failure)),
             }
@@ -407,7 +407,7 @@ where
 
 /// `peer-repeaters`: ask the target which repeaters it knows of.
 ///
-/// Not node management — it is a plain MAC command any node may send, and
+/// Not node management—it is a plain MAC command any node may send, and
 /// the target need not list this tool as an administrator. It reuses the
 /// same borrowed radio because the tool still has to be a node to ask.
 async fn peer_repeaters<R: Radio>(ctl: &mut Ctl<'_, R>) -> Result<()>
@@ -470,7 +470,7 @@ where
         let Some(body) = body else {
             if listed == 0 {
                 bail!(
-                    "no answer — the repeater may be out of range, or may not answer peer-repeater \
+                    "no answer—the repeater may be out of range, or may not answer peer-repeater \
                      requests"
                 );
             }
@@ -613,8 +613,8 @@ where
         }
         TableOp::Remove { key } => {
             // Removing the administrator this tool is speaking as ends
-            // the conversation, which is legitimate — handing a device
-            // over is exactly this — but it should not be a surprise.
+            // the conversation, which is legitimate—handing a device
+            // over is exactly this—but it should not be a surprise.
             if key.0 == ctl.manager.device().0 {
                 note("that key is the device's own, not an administrator's");
             }
@@ -636,7 +636,7 @@ where
     R::Error: core::fmt::Debug,
 {
     if no_save {
-        note("--no-save — changes are live only; `manage <KEY> save` persists them");
+        note("--no-save—changes are live only; `manage <KEY> save` persists them");
         return Ok(());
     }
     let reply = ctl.reply(&encode(|buf| frame::save(buf, 0))?).await?;

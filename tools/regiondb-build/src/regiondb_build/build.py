@@ -114,7 +114,7 @@ def _build_cache(regions, settings) -> tuple[list[cells.Leaf], cells.CacheStats]
     An empty lookup_ranges table is the documented signal that a database has
     no cache: readers fall back to the R-tree candidate path over the same
     effective polygons. Emitting one whole-world range instead would be
-    catastrophically worse than no cache — every lookup would test every
+    catastrophically worse than no cache—every lookup would test every
     region.
     """
     if not settings.cache_enabled:

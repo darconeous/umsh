@@ -99,7 +99,7 @@ actor KeychainChannelKeyVault: ChannelKeyVault {
 
     func deleteAllKeys() throws {
         // No account: on iOS a delete matching only class and service takes
-        // every item under it, which is the point — this must not depend on
+        // every item under it, which is the point—this must not depend on
         // a channel list that may itself be gone.
         let query: [CFString: Any] = [
             kSecClass: kSecClassGenericPassword,

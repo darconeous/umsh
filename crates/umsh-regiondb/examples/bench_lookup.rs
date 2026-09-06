@@ -1,6 +1,6 @@
 //! Rough lookup-latency measurement against a real database.
 //!
-//! Not a benchmark harness — a sanity check against the performance budget
+//! Not a benchmark harness—a sanity check against the performance budget
 //! (median under 20 ms, worst boundary fallback under 250 ms, on hardware far
 //! slower than a build machine). Run with:
 //!

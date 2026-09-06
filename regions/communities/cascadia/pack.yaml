@@ -13,7 +13,7 @@ maintainers:
   # The people whose review makes a change to this directory authoritative.
   # Wire the same list into CODEOWNERS when the pack goes live.
   - placeholder@cascadiamesh.example
-# The fence. Nothing this pack defines may escape it — the build refuses the
+# The fence. Nothing this pack defines may escape it—the build refuses the
 # tree if a region does. It bounds what the pack may define, not what it has
 # defined, so it is drawn generously around the whole area the community's
 # plan describes, future rows included.

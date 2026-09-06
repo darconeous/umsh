@@ -1,4 +1,4 @@
-# Sibling workspace for Espressif (Xtensa) targets — classic ESP32 and
+# Sibling workspace for Espressif (Xtensa) targets—classic ESP32 and
 # ESP32-S3. Excluded from the
 # root workspace because the Xtensa Rust fork (`espup`, channel = "esp")
 # cannot coexist with the root `rust-toolchain.toml`, and esp-hal's embassy
@@ -25,7 +25,7 @@ version = "0.1.0"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/darconeous/umsh"
 
-# Replicated from the root workspace manifest — [patch] tables do not cross
+# Replicated from the root workspace manifest—[patch] tables do not cross
 # workspace boundaries. The trouble-host rev must stay in lockstep with the
 # root workspace pin (audited fork).
 [patch.crates-io]

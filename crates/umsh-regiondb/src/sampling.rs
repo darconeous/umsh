@@ -2,8 +2,8 @@
 //!
 //! Expanded coverage is not stored as geometry. A region's effective
 //! membership is *defined* as: a position belongs to a region if any point of
-//! a fixed sample pattern — the position itself, six points at half the
-//! region's expansion distance, and twelve at the full distance — lands inside
+//! a fixed sample pattern—the position itself, six points at half the
+//! region's expansion distance, and twelve at the full distance—lands inside
 //! the region's core. The pattern is the semantics, not an approximation of
 //! something else, which is what lets every implementation agree exactly: each
 //! computes the same nineteen spherical destinations and runs the same integer

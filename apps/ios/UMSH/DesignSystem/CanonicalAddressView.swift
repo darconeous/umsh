@@ -35,7 +35,7 @@ extension View {
     /// with a serial number.
     ///
     /// Addresses and hints are shown so they can be checked against something
-    /// else — another screen, a terminal, a message to someone. A 44-character
+    /// else—another screen, a terminal, a message to someone. A 44-character
     /// base58 address that can only be read is close to useless, and the rows
     /// these appear in are usually truncated on top of that.
     ///
@@ -56,7 +56,7 @@ extension View {
     /// built the same way: a modifier over the row rather than a control
     /// wrapped around it. A coordinate row is a readout, and a readout
     /// that is also a `Menu` or a `Button` acquires that control's
-    /// chrome — a tinted label, a filled capsule — and stops looking like
+    /// chrome—a tinted label, a filled capsule—and stops looking like
     /// the rows above and below it. A modifier contributes no appearance
     /// at all, so there is nothing to style back.
     ///
@@ -120,7 +120,7 @@ private struct CoordinateActions<Own: View>: ViewModifier {
     private var latitudeText: String { String(format: "%.\(fractionDigits)f", latitude) }
     private var longitudeText: String { String(format: "%.\(fractionDigits)f", longitude) }
 
-    /// What goes on the pasteboard: the pair and nothing else — no label,
+    /// What goes on the pasteboard: the pair and nothing else—no label,
     /// no degree signs, no parentheses. It is meant to be pasted into a
     /// search field or a message and work there unedited.
     private var plain: String { "\(latitudeText), \(longitudeText)" }

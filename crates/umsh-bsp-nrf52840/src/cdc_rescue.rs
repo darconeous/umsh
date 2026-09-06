@@ -29,7 +29,7 @@
 //! `Sender` (for writes). There is no constructor that exposes the
 //! inner `Receiver` or `ControlChanged`. So a future refactor that
 //! adds a CLI on top of this cannot accidentally bypass the rescue
-//! checks — they happen on every byte the application sees, by
+//! checks—they happen on every byte the application sees, by
 //! construction.
 //!
 //! The one contract the application owes: keep calling
@@ -90,7 +90,7 @@ impl<'d, D: Driver<'d>> CdcAcmRescue<'d, D> {
     ///   into [`gpregret::enter_dfu_uf2`].
     ///
     /// Returns `Ok(0)` when DTR drops at any other baud rate (port
-    /// closed normally — caller should loop back to `wait_connection`).
+    /// closed normally—caller should loop back to `wait_connection`).
     /// Returns `Err` on USB endpoint errors.
     pub async fn read_packet(&mut self, buf: &mut [u8]) -> Result<usize, EndpointError> {
         loop {
@@ -107,7 +107,7 @@ impl<'d, D: Driver<'d>> CdcAcmRescue<'d, D> {
                         if self.rx.line_coding().data_rate() == 1_200 {
                             gpregret::enter_dfu_uf2();
                         }
-                        // Port closed at a different baud — surface as EOF.
+                        // Port closed at a different baud—surface as EOF.
                         return Ok(0);
                     }
                     // DTR still high (baud/RTS change). Loop and retry the read.

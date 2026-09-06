@@ -1,9 +1,9 @@
-# UMSH iOS App — Feature Wishlist 2026-07-27
+# UMSH iOS App—Feature Wishlist 2026-07-27
 
 Checked against the app sources on 2026-07-30. `[x]` means the feature is
 present in the shipping iOS app; `[ ]` means it is not, with a note where
 something partial exists. Checking an item off is a statement about the iOS
-UI, not about firmware or protocol support — several unchecked items already
+UI, not about firmware or protocol support—several unchecked items already
 work at the ULCP layer and only lack a phone-side surface.
 
 ## 1. Device Connection & Pairing
@@ -17,7 +17,7 @@ independently of which device (if any) is currently this phone's companion radio
   - [x] Works while another companion radio is actively paired and connected, so
     stand-alone devices can be set up in the field.
 - [ ] Update/Change settings individually or from a pre-configured template for mass commissioning.
-  — individual editing is done; there is a regional radio-profile preset, but no
+  —individual editing is done; there is a regional radio-profile preset, but no
   saveable multi-setting template.
 - [x] Promote a connected device to this phone's companion radio.
 
@@ -38,15 +38,15 @@ Guided setup flows built on top of that primitive:
   - [x] Send a beacon on boot (`PROP_STARTUP_BEACON`, default on)
   - [x] Advertisement interval (`PROP_ADVERT_INTERVAL`, default: 4 hours)
   - [x] Beacon interval (`PROP_BEACON_INTERVAL`, default: 1 hour)
-  - [ ] Include full key in advertisement (default: false) — a signed
+  - [ ] Include full key in advertisement (default: false)—a signed
         broadcast advertisement must carry its full key, so this would
         only apply to a form that is not currently sent
   - [ ] Channel used for automatic advertisements
-- [ ] Channel membership — the channels the *device identity* has joined. Used for the device's own advertisements, blind unicast addressing, and repeater filtering. Not used by the phone identity.
+- [ ] Channel membership—the channels the *device identity* has joined. Used for the device's own advertisements, blind unicast addressing, and repeater filtering. Not used by the phone identity.
 
 ### Radio
 - [x] Regional presets
-- [x] LoRa settings (custom overrides to regional presets) — frequency, transmit
+- [x] LoRa settings (custom overrides to regional presets)—frequency, transmit
   power, bandwidth, spreading factor, coding rate
 - [x] Duty cycle requirements (Custom overrides to regional presets)
 - [ ] Amateur radio operation
@@ -73,7 +73,7 @@ Guided setup flows built on top of that primitive:
 - [ ] Button functions
 - [ ] Silent mode
 - [ ] Power schedule
-- [x] Time / date — set, sync from the phone, clear, and a timezone offset
+- [x] Time / date—set, sync from the phone, clear, and a timezone offset
 
 ### BLE security
 - [ ] Pairing bonds: view / rename / delete
@@ -88,7 +88,7 @@ Guided setup flows built on top of that primitive:
 - [ ] Enter wireless DFU mode
 - [x] Factory reset
 - [ ] Send advertisement/beacon now (for device identity)
-- [x] Find this device — locate alert (beep/flash), cancelled from the phone, by
+- [x] Find this device—locate alert (beep/flash), cancelled from the phone, by
   a button press on the device, or by its own timeout
 - [ ] Backup Configuration (omits private keys)
 - [ ] Restore Configuration (omits private keys)
@@ -140,7 +140,7 @@ Guided setup flows built on top of that primitive:
     * "Read Sensors"
     * "Ping/Get Identity"
     * "Blacklisted" (Do not let these packets through ever)
-- [x] "Shared with UMSH Device" — saved separately to this phone and to the
+- [x] "Shared with UMSH Device"—saved separately to this phone and to the
   companion radio's device identity
 - [ ] Per-peer Notifications
     - [ ] Notify on received message
@@ -194,7 +194,7 @@ can be left; leaving keeps the record so the join flow can offer them back.
 - [ ] Configure a channel
   - [x] Region
   - [x] Alias
-  - [x] Local, device, or both — which identity has joined the channel: the phone,
+  - [x] Local, device, or both—which identity has joined the channel: the phone,
     the companion radio's device identity, or each of them separately
   - [ ] Allow other members to request identity and public key
 
@@ -204,13 +204,13 @@ Locally-joined channels only. Group chat is the phone identity participating, so
 device-joined channels are out of scope by construction.
 
 - [x] Group chat channels are displayed alongside uncast chats in the conversations tab, not in a separate sheet or section. Groups chats are subject to the same ordering rules: new messages push conversations to the top.
-- [x] Join a channel group chat — joining from Settings is membership alone; a
+- [x] Join a channel group chat—joining from Settings is membership alone; a
   conversation is created on request, or automatically when joined through the
   conversations tab. `public` always has one while joined.
 - [x] Participate in a channel group chat
-- [x] Leave a channel group chat — removes the local transcript and keeps
+- [x] Leave a channel group chat—removes the local transcript and keeps
   channel membership
-- [x] Request the identity of a group chat participant — sent over the channel,
+- [x] Request the identity of a group chat participant—sent over the channel,
   filtered to the member's hint, routed by what their own frames showed
 - [x] See metadata about a specific received group message
   - [x] hop count

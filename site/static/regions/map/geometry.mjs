@@ -2,8 +2,8 @@
  * The compiled geometry encoding, in JavaScript.
  *
  * A port of `crates/umsh-regiondb/src/blob.rs` and its Python counterpart.
- * The three implementations must agree exactly — a map that answers a click
- * differently from the phone in your pocket is worse than no map — so this is
+ * The three implementations must agree exactly—a map that answers a click
+ * differently from the phone in your pocket is worse than no map—so this is
  * written to be transcribed rather than to be idiomatic, and
  * `regions/tests/geometry-golden.json` holds every implementation to the same
  * bytes and the same probes.

@@ -38,7 +38,7 @@ impl<'a> PacketBuilder<'a> {
 
     /// Build a MAC ACK packet.
     ///
-    /// The ack carries no destination hint — it is a return-routed token
+    /// The ack carries no destination hint—it is a return-routed token
     /// correlated by its trailer. `ack_trailer` is the 8-byte
     /// `ack_mic || ack_tag` value (see the crypto engine's
     /// `compute_ack_trailer`).
@@ -625,7 +625,7 @@ impl<'a> MacAckBuilder<'a, state::Configuring> {
     ///
     /// Layout: `FCF [FHOPS] OPTIONS ACK_TRAILER(8)` where the trailer is
     /// `ack_mic(4) || ack_tag(4)`. There is no destination hint. The `0xFF`
-    /// end-marker is omitted — the trailer is at a fixed offset from the end.
+    /// end-marker is omitted—the trailer is at a fixed offset from the end.
     pub fn build(mut self) -> Result<&'a [u8], BuildError> {
         let mut cursor = self.write_common_prefix()?;
         self.emit_options(&mut cursor, false)?;

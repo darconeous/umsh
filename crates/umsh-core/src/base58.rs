@@ -1,7 +1,7 @@
 //! Fixed-width base58 codec for 32-byte addresses.
 //!
 //! UMSH addresses render as exactly 44 base58 digits (Bitcoin alphabet),
-//! left-padded with `1` — the zero digit — so that character positions are
+//! left-padded with `1`—the zero digit—so that character positions are
 //! stable across all key values. See the "Addressing" chapter of the protocol
 //! specification.
 
@@ -61,7 +61,7 @@ fn digit_value(digit: u8) -> Result<u8, AddressParseError> {
 
 /// Write the star-truncated hint rendering defined in the addressing chapter.
 ///
-/// The hint is encoded twice — padded to 32 bytes with 0x00 and with 0xFF —
+/// The hint is encoded twice—padded to 32 bytes with 0x00 and with 0xFF—
 /// and the longest common prefix of the two encodings is emitted, up to
 /// `budget` characters, followed by a single `*` where they diverge. Every
 /// emitted non-`*` character is guaranteed to match the full base58 rendering

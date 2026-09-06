@@ -5,8 +5,8 @@ physical transceiver: frequency, modulation, transmit power, and the
 transmit duty-cycle budget. Every ULCP device implements it.
 
 The interface is deliberately not LoRa-specific in shape where that can be
-avoided. The properties that any radio has — enable, frequency, transmit
-power, RSSI, MTU — are unconditional; the LoRa modulation parameters are
+avoided. The properties that any radio has—enable, frequency, transmit
+power, RSSI, MTU—are unconditional; the LoRa modulation parameters are
 gated behind `CAP_PHY_LORA`, and duty-cycle accounting behind
 `CAP_PHY_DUTY_LIMIT`. Traffic counters are exposed by `CAP_STATS`.
 

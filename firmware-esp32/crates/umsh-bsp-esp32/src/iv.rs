@@ -3,11 +3,11 @@
 //! lora-phy's generic variants drive their pins through
 //! `embedded_hal_async::digital::Wait`, and esp-hal's implementation of
 //! that trait holds a [`WakeLock`](esp_hal::rtc_cntl::WakeLock) for the
-//! whole wait — which for a continuous-RX radio is essentially forever,
+//! whole wait—which for a continuous-RX radio is essentially forever,
 //! pinning the scheduler out of light sleep. This variant is the same
 //! logic driven through esp-hal's `Input` directly, with the IRQ wait
 //! wake-enabled: the pin becomes a light-sleep wake source (level
-//! events only — exactly what an SX12xx IRQ line is) instead of a lock
+//! events only—exactly what an SX12xx IRQ line is) instead of a lock
 //! holder, and a frame arriving mid-sleep wakes the chip. The radio
 //! latches its IRQ and buffers the frame in its own FIFO, so the
 //! sub-millisecond wake latency loses nothing.

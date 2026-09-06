@@ -1,6 +1,6 @@
 //! The tunnel's TLS 1.3 layer: mutual authentication by UMSH identity.
 //!
-//! Every participant holds an Ed25519 identity — the server's is the
+//! Every participant holds an Ed25519 identity—the server's is the
 //! bridge's node identity, and a client's is its own, ready to become a
 //! mesh-addressable management identity later. Each side is configured
 //! with the peer public keys it will accept, written as canonical UMSH
@@ -9,8 +9,8 @@
 //! X.509 never enters the trust decision. TLS requires a certificate, so
 //! each endpoint mints a throwaway self-signed one around its identity
 //! key at startup; what the verifier actually checks is the TLS 1.3
-//! handshake signature — proof of possession of the identity key over a
-//! transcript both sides contributed randomness to — against the pinned
+//! handshake signature—proof of possession of the identity key over a
+//! transcript both sides contributed randomness to—against the pinned
 //! public key. A certificate is a formality here: nothing it claims is
 //! believed, nothing about it is stored, and revoking a client is an
 //! edit to the server's configuration rather than a PKI operation.
@@ -99,7 +99,7 @@ impl Credential {
 
         let address = Address(*identity.public_key());
         // rcgen's default validity window is 1975 to 4096; since the
-        // verifier never consults it, wider is better — a window that
+        // verifier never consults it, wider is better—a window that
         // could expire would only ever be a scheduled outage.
         let mut params = rcgen::CertificateParams::new(vec!["umsh-bridge.invalid".to_string()])
             .context("building certificate params")?;
@@ -118,7 +118,7 @@ impl Credential {
     }
 }
 
-/// PKCS#8 v1 encoding of an Ed25519 seed — the fixed 16-byte prefix is
+/// PKCS#8 v1 encoding of an Ed25519 seed—the fixed 16-byte prefix is
 /// the whole ASN.1 structure for a key this shape.
 fn pkcs8_of_seed(seed: &[u8; 32]) -> Vec<u8> {
     const PREFIX: [u8; 16] = [
@@ -135,7 +135,7 @@ fn pkcs8_of_seed(seed: &[u8; 32]) -> Vec<u8> {
 /// 12-byte prefix is distinctive enough to scan for, which keeps a
 /// hostile certificate's DER out of any real parser. If a crafted
 /// certificate carries the pattern more than once, the first match wins
-/// — harmless, because the handshake signature must verify against the
+///—harmless, because the handshake signature must verify against the
 /// extracted key, so *naming* a key is worthless without holding it.
 pub fn certificate_key(cert: &CertificateDer<'_>) -> Option<Address> {
     const SPKI_PREFIX: [u8; 12] = [
@@ -183,7 +183,7 @@ fn provider() -> Arc<rustls::crypto::CryptoProvider> {
 
 /// The name presented in SNI. The pinned identity authenticates the
 /// server, so this is only a routing hint for a server that multiplexes
-/// on it — but rustls requires *some* name, and an IP literal is not
+/// on it—but rustls requires *some* name, and an IP literal is not
 /// one.
 pub fn server_name(name: &str) -> Result<ServerName<'static>> {
     ServerName::try_from(name.to_string())
@@ -191,7 +191,7 @@ pub fn server_name(name: &str) -> Result<ServerName<'static>> {
 }
 
 /// The load-bearing check, shared by both directions: the handshake
-/// signature must verify against `expected` — the pinned identity, not
+/// signature must verify against `expected`—the pinned identity, not
 /// whatever key the certificate happens to carry. `message` already
 /// binds the whole transcript, so a passing signature is live proof of
 /// possession, not a replayable artifact.
@@ -241,7 +241,7 @@ impl IdentityClientVerifier {
     }
 
     /// The signature is checked against the key extracted from the
-    /// *same certificate* the connection is attributed to later — that
+    /// *same certificate* the connection is attributed to later—that
     /// binding is what stops one pinned client from wearing another's
     /// address.
     fn check_signature(
@@ -379,7 +379,7 @@ mod tests {
     #[test]
     fn a_mistyped_or_invalid_address_is_rejected() {
         assert!("not-an-address".parse::<Address>().is_err());
-        // 32 bytes that decode fine but are not a curve point — found by
+        // 32 bytes that decode fine but are not a curve point—found by
         // search, since which y-coordinates decompress is not obvious.
         let junk = (0u8..=255)
             .map(|byte| {
@@ -436,7 +436,7 @@ mod tests {
 
     #[tokio::test]
     async fn one_pinned_client_cannot_wear_anothers_address() {
-        // Mallory is a legitimate, pinned client — but presents a
+        // Mallory is a legitimate, pinned client—but presents a
         // certificate naming Alice's key. The signature is Mallory's, so
         // the binding check must refuse it.
         let alice = identity(0x11);
@@ -482,7 +482,7 @@ mod tests {
             accepted: Address(*server.public_key()),
         };
         // Whatever certificate is presented, the transcript signature is
-        // checked against the pin — an impostor's signature fails, the
+        // checked against the pin—an impostor's signature fails, the
         // pinned server's passes.
         let message = b"transcript";
         let signature = signed(&impostor, message).await;

@@ -10,7 +10,7 @@ struct TcpEndpoint: Equatable {
     var port: UInt16
 
     /// Parse `host:port`, accepting a bracketed IPv6 literal. The port
-    /// is required — there is no registered one to assume.
+    /// is required—there is no registered one to assume.
     init?(_ text: String) {
         let text = text.trimmingCharacters(in: .whitespaces)
         let host: Substring
@@ -52,8 +52,8 @@ struct TcpEndpoint: Equatable {
 /// A companion radio reached over TCP, framed exactly as a serial one.
 ///
 /// This exists because the simulator has no Bluetooth. Bridging a real
-/// radio's port to a socket — `socat TCP-LISTEN:9000 /dev/cu.usbmodem…`
-/// — puts a real device in front of a simulator build, and because the
+/// radio's port to a socket—`socat TCP-LISTEN:9000 /dev/cu.usbmodem…`
+///—puts a real device in front of a simulator build, and because the
 /// bytes are the same HDLC-Lite frames a UART carries, the device
 /// cannot tell the difference.
 ///
@@ -122,8 +122,8 @@ final class TcpRadioConnection: UlcpRadioSession, RadioConnection, UlcpFrameLink
         }
     }
 
-    /// Nothing is persisted for a bridged radio — the endpoint is the
-    /// binding, and it lives in Settings — so forgetting is just
+    /// Nothing is persisted for a bridged radio—the endpoint is the
+    /// binding, and it lives in Settings—so forgetting is just
     /// disconnecting.
     func forget() async {
         await disconnect()
@@ -243,7 +243,7 @@ final class TcpRadioConnection: UlcpRadioSession, RadioConnection, UlcpFrameLink
         // failure stays on screen through the retry. Clearing it for the dial
         // and re-publishing it on the failure two seconds later made the
         // whole interface pulse with the banner. The message stands until a
-        // session update — which only a live connection produces — clears it,
+        // session update—which only a live connection produces—clears it,
         // or a new failure replaces it.
         snapshot.linkState = .connecting
         snapshot.name = endpoint.text
@@ -266,7 +266,7 @@ final class TcpRadioConnection: UlcpRadioSession, RadioConnection, UlcpFrameLink
                 break
             case .waiting(let error):
                 // Network.framework parks here and re-dials only when
-                // the network path changes — which never happens for a
+                // the network path changes—which never happens for a
                 // refused connection to the loopback, so it would wait
                 // forever. Since the usual cause is a bridge that has
                 // not been started yet (or was restarted by hand), take
@@ -321,8 +321,8 @@ final class TcpRadioConnection: UlcpRadioSession, RadioConnection, UlcpFrameLink
         } else if hadConnection {
             if wantsConnection {
                 // The dial two seconds out is part of the same standing
-                // attempt, so this publishes one steady state — connecting,
-                // and here is why it has not worked — rather than flapping
+                // attempt, so this publishes one steady state—connecting,
+                // and here is why it has not worked—rather than flapping
                 // through disconnected and back on every retry. With the
                 // message unchanged the snapshot is unchanged, and the
                 // interface holds perfectly still.

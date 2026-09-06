@@ -4,8 +4,8 @@
 [build]
 target = "xtensa-esp32-none-elf"
 
-# esp-hal defaults this to 300 (revision v3.0) on the classic ESP32 alone —
-# every other chip defaults to 0 — and `esp_hal::init` asserts the running
+# esp-hal defaults this to 300 (revision v3.0) on the classic ESP32 alone—
+# every other chip defaults to 0—and `esp_hal::init` asserts the running
 # silicon against it. Heltec V2 modules in the wild are frequently older
 # than v3.0, and the failure is a panic naming a revision rather than
 # anything pointing at this setting, so the floor is dropped to v1.0 here.

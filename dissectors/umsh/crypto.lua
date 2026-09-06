@@ -27,7 +27,7 @@ local function uint32_be(n)
 end
 
 -- ---------------------------------------------------------------------------
--- Backend detection — primitives: sha256, sha512, aes_ecb, aes_ctr
+-- Backend detection—primitives: sha256, sha512, aes_ecb, aes_ctr
 -- Priority: luagcrypt > Wireshark GcryptCipher + pure-Lua SHA > nothing
 -- ---------------------------------------------------------------------------
 
@@ -205,7 +205,7 @@ function M.aes_cmac(key, data_chunks)
 end
 
 -- ---------------------------------------------------------------------------
--- AES-256-CTR / AES-256-ECB — thin wrappers around backend
+-- AES-256-CTR / AES-256-ECB—thin wrappers around backend
 -- ---------------------------------------------------------------------------
 
 function M.aes_ctr(key, iv, data)
@@ -870,7 +870,7 @@ function M.try_decrypt_unicast(pkt_info, privkey_list, full_src_flag)
         if plain then return plain, "ok", keys, full_cmac end
       end
     else
-      -- Path 2: peer's Ed25519 pubkey unknown — try all other privkeys as
+      -- Path 2: peer's Ed25519 pubkey unknown—try all other privkeys as
       -- potential peer using their precomputed X25519 pubkeys.
       for idx2, pk2 in ipairs(privkey_list) do
         if pk2 ~= pk and pk2.x25519_pubkey then

@@ -3,7 +3,7 @@
 A region release is a geographic policy change, and the numbers here are what
 makes reviewing one possible: how many sites went in, how much geometry came
 out, how often the lookup cache has to fall back, and what the build was unsure
-about. `changes.json` answers the other half — what moved since the last
+about. `changes.json` answers the other half—what moved since the last
 release.
 """
 

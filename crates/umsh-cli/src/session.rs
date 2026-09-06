@@ -1,4 +1,4 @@
-//! `CliSession` — the driver object that owns a clone of `LocalNode<M>`,
+//! `CliSession`—the driver object that owns a clone of `LocalNode<M>`,
 //! a `CliIo`, and a `CliLogger`, plus the in-session state tables.
 //!
 //! The session holds a *clone* of `LocalNode<M>`. Other firmware components
@@ -257,7 +257,7 @@ where
                 return false;
             }
         }
-        // Register at the MAC layer too — otherwise inbound unicast/auth
+        // Register at the MAC layer too—otherwise inbound unicast/auth
         // packets from this peer would be dropped for missing keys.
         if self.node.peer(key).await.is_err() {
             let _ = self.peers.remove(&key);
@@ -273,7 +273,7 @@ where
     ///
     /// Joins the channel at the MAC layer and inserts it into the session
     /// channel table. Returns `false` if the channel or MAC table is full, or
-    /// if the key is invalid. Does NOT call `channel_store` — use this only
+    /// if the key is invalid. Does NOT call `channel_store`—use this only
     /// when restoring data that is already durable.
     #[cfg(feature = "software-crypto")]
     pub async fn register_channel(&mut self, name: &str, key_bytes: [u8; 32]) -> bool {
@@ -307,7 +307,7 @@ where
     /// Call this once before [`run`](Self::run), or rely on `run` calling it
     /// automatically at startup.
     pub async fn load_from_stores(&mut self) {
-        // Collect into a local Vec first — the callback is sync, but
+        // Collect into a local Vec first—the callback is sync, but
         // `register_peer`/`register_channel` are async.
         let mut peers: Vec<([u8; 32], Option<HString<16>>)> = Vec::new();
         let _ = self
@@ -355,7 +355,7 @@ where
     ///
     /// Each outer iteration arms one long-lived `read_line` future and races
     /// it against `wake` in an inner loop. The read future is only dropped
-    /// when it completes — wake-driven iterations preserve it across
+    /// when it completes—wake-driven iterations preserve it across
     /// `select!` rearms, so implementations of [`CliInput`] do not need to
     /// be cancel-safe.
     ///
@@ -462,7 +462,7 @@ where
                         }
                     }
                 }
-                // Unknown payload — show origin + hint.
+                // Unknown payload—show origin + hint.
                 let alias = self.peer_alias_display(&from);
                 let mut line: HString<EVENT_LINE_MAX> = HString::new();
                 let _ = write!(
@@ -587,7 +587,7 @@ where
                 }
             }
 
-            // Outbound variants are dead in this implementation — `execute()`
+            // Outbound variants are dead in this implementation—`execute()`
             // calls MAC I/O directly and never pushes these. See the TODO in
             // `events.rs` for context on the intended future model.
             CliEvent::SendText { .. }
@@ -736,89 +736,89 @@ where
     async fn cmd_help_topic(&mut self, topic: &str) -> Result<(), CliError<OUT::Error>> {
         let t = topic.trim().trim_start_matches('/');
         let detail: &[&str] = match t {
-            "quit" => &["/quit — exit the CLI (EOF does the same)."],
+            "quit" => &["/quit—exit the CLI (EOF does the same)."],
             "help" => &[
-                "/help [command] — list all commands, or show detailed help for one.",
+                "/help [command]—list all commands, or show detailed help for one.",
                 "  example: /help ping",
             ],
-            "whoami" => &["/whoami — print the local public key as hex."],
+            "whoami" => &["/whoami—print the local public key as hex."],
             "log" => &[
-                "/log <level> — set log verbosity.",
+                "/log <level>—set log verbosity.",
                 "  levels: error, warn, info, debug, trace",
             ],
             "poweroff" | "off" => &[
-                "/poweroff — request a controlled power-off.",
+                "/poweroff—request a controlled power-off.",
                 "  Persists any pending counters, sleeps the display, drops the",
                 "  peripheral rail, and enters System OFF. On supported boards a",
                 "  button press resumes the device (via reset + reboot).",
                 "  Alias: /off.",
             ],
             "reboot" => &[
-                "/reboot — request a soft reboot.",
+                "/reboot—request a soft reboot.",
                 "  Persists any pending counters, then triggers a system reset.",
                 "  The device comes back up running the same firmware image.",
             ],
             "peer" => &[
-                "/peer add <pubkey> [alias] — register a peer.",
+                "/peer add <pubkey> [alias]—register a peer.",
                 "  <pubkey> accepts base58, base64, or hex (32-byte Ed25519 key).",
                 "  Also registers the peer at the MAC layer so inbound frames validate.",
-                "/peer alias <peer-ref> <alias> — rename a registered peer.",
-                "/peer rm <peer-ref> — remove a peer. <peer-ref> is an alias or full key.",
+                "/peer alias <peer-ref> <alias>—rename a registered peer.",
+                "/peer rm <peer-ref>—remove a peer. <peer-ref> is an alias or full key.",
             ],
-            "peers" => &["/peers — list registered peers: alias and full public key (hex)."],
+            "peers" => &["/peers—list registered peers: alias and full public key (hex)."],
             "query" => &[
-                "/query <peer-ref> — set the current peer for bare-text sends.",
+                "/query <peer-ref>—set the current peer for bare-text sends.",
                 "  After /query bob, a bare line is sent to bob as a text message.",
             ],
-            "msg" => &["/msg <peer-ref> <text> — send a text message to a peer."],
+            "msg" => &["/msg <peer-ref> <text>—send a text message to a peer."],
             "me" => &[
-                "/me <action> — send an emote to the current peer.",
+                "/me <action>—send an emote to the current peer.",
                 "  example: /me waves  →  sent as \"* waves\"",
             ],
             "raw" => &[
-                "/raw <peer-ref> <hex> — send raw payload bytes as a unicast packet.",
+                "/raw <peer-ref> <hex>—send raw payload bytes as a unicast packet.",
                 "  <hex> is an even-length hex string (no 0x prefix, no spaces).",
             ],
             "ping" => &[
-                "/ping <peer-ref> [bytes] — send a MAC-level EchoRequest.",
+                "/ping <peer-ref> [bytes]—send a MAC-level EchoRequest.",
                 "  [bytes] is the total payload size (2..=60, default 8).",
                 "  The first 2 bytes are a nonce used to match the response.",
                 "  Prints \"pong <peer> rtt=<ms>\" when the reply arrives.",
             ],
-            "beacon" => &["/beacon — broadcast a beacon frame announcing this node."],
+            "beacon" => &["/beacon—broadcast a beacon frame announcing this node."],
             "stats" => &[
-                "/stats — print counters maintained by the CLI.",
+                "/stats—print counters maintained by the CLI.",
                 "  TX/RX packets, ACK outcomes, last RSSI/SNR, event-queue depth,",
                 "  and events_dropped (non-zero if the inbound queue overflowed).",
             ],
             "counters" => &[
-                "/counters — show the local TX frame counter and each known peer's RX counter (live and persisted boundaries).",
+                "/counters—show the local TX frame counter and each known peer's RX counter (live and persisted boundaries).",
             ],
             "pfs" => &[
-                "/pfs start <peer-ref> [minutes] — request a PFS session.",
+                "/pfs start <peer-ref> [minutes]—request a PFS session.",
                 "  [minutes] is the requested lifetime (default 60).",
-                "/pfs end <peer-ref> — tear down an active PFS session.",
-                "/pfs status [peer-ref] — show PFS state for one peer or all.",
+                "/pfs end <peer-ref>—tear down an active PFS session.",
+                "/pfs status [peer-ref]—show PFS state for one peer or all.",
             ],
             "channel" | "channels" => &[
-                "/channel join <name> <key-b58> — bind a channel by name + shared key.",
-                "/channel leave <name> — leave a channel.",
-                "/channel send <name> <text> — send a multicast text message.",
-                "/channels — list currently joined channels.",
+                "/channel join <name> <key-b58>—bind a channel by name + shared key.",
+                "/channel leave <name>—leave a channel.",
+                "/channel send <name> <text>—send a multicast text message.",
+                "/channels—list currently joined channels.",
             ],
             "set" => &[
-                "/set — show current CLI-local settings.",
-                "/set <var> <val> — change one setting (resets on exit).",
-                "  flood_hops     u8 in 0..=15 (default 5) — max FHOPS_REM; a known route narrows it",
-                "  ack_requested  bool (default true)     — request MAC acks on unicast",
-                "  show_hex       bool (default false)    — also print inbound bytes as hex",
-                "  show_raw       bool (default false)    — log every TX/RX packet as hex",
+                "/set—show current CLI-local settings.",
+                "/set <var> <val>—change one setting (resets on exit).",
+                "  flood_hops     u8 in 0..=15 (default 5)—max FHOPS_REM; a known route narrows it",
+                "  ack_requested  bool (default true)—request MAC acks on unicast",
+                "  show_hex       bool (default false)—also print inbound bytes as hex",
+                "  show_raw       bool (default false)—log every TX/RX packet as hex",
             ],
             other => {
                 let mut msg: HString<EVENT_LINE_MAX> = HString::new();
                 let _ = write!(
                     &mut msg,
-                    "no help for '{}' — try /help for the full list",
+                    "no help for '{}'—try /help for the full list",
                     other
                 );
                 return self.write_err(&msg).await;
@@ -1139,7 +1139,7 @@ where
             Some(k) => k,
             None => {
                 return self
-                    .write_err("no current peer — use /query <peer-ref> first")
+                    .write_err("no current peer—use /query <peer-ref> first")
                     .await;
             }
         };
@@ -1521,7 +1521,7 @@ where
 {
     let mut subs: Vec<Subscription> = Vec::new();
 
-    // on_receive — raw inbound packets
+    // on_receive—raw inbound packets
     {
         let ev = events.clone();
         let dr = dropped.clone();
@@ -1562,11 +1562,11 @@ where
                     prefix,
                 },
             );
-            false // don't consume — let other handlers see it too
+            false // don't consume—let other handlers see it too
         }));
     }
 
-    // on_transmitted — raw outbound MAC frames
+    // on_transmitted—raw outbound MAC frames
     {
         let ev = events.clone();
         let dr = dropped.clone();
@@ -1666,7 +1666,7 @@ where
         }));
     }
 
-    // on_mac_command — EchoRequest and EchoResponse are both silently ignored
+    // on_mac_command—EchoRequest and EchoResponse are both silently ignored
     // here. EchoRequest is auto-replied by the MAC coordinator. EchoResponse
     // is handled by on_pong below (match_pong is called in host.rs before
     // dispatch_mac_command fires).
@@ -1688,7 +1688,7 @@ where
         }));
     }
 
-    // on_pong — fired by node-layer ping tracking when an EchoResponse matches.
+    // on_pong—fired by node-layer ping tracking when an EchoResponse matches.
     {
         let ev = events.clone();
         let dr = dropped.clone();
@@ -1698,7 +1698,7 @@ where
         }));
     }
 
-    // on_ping_timeout — fired when a pending ping exceeds its deadline.
+    // on_ping_timeout—fired when a pending ping exceeds its deadline.
     {
         let ev = events.clone();
         let dr = dropped.clone();

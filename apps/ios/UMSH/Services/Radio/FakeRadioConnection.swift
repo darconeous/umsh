@@ -4,7 +4,7 @@ import UMSHMobileCore
 /// The ether around a fake radio: takes whatever the phone's mesh session
 /// transmits and delivers whatever the rest of the fabricated mesh says back.
 ///
-/// A `FakeRadioConnection` with no air is a radio in an empty room — sends
+/// A `FakeRadioConnection` with no air is a radio in an empty room—sends
 /// complete without ever being heard, which is all a preview needs. Staging
 /// hangs a whole mesh of real Rust sessions on this seam.
 protocol FakeRadioAir: Sendable {
@@ -52,7 +52,7 @@ actor FakeRadioConnection: RadioConnection {
     }
 
     /// Ask the staging air to have a staged peer message the phone. A no-op
-    /// on any other air — previews have no peers to speak as.
+    /// on any other air—previews have no peers to speak as.
     func stagedPeerSendsMessage(body: String, onChannel: Bool) async {
         #if DEBUG
         await (air as? StagingMeshAir)?.sendFromPeer(body: body, onChannel: onChannel)
@@ -280,7 +280,7 @@ actor FakeRadioConnection: RadioConnection {
     }
 
     /// The administrator list is not mirrored on `RadioProvisioningSummary`
-    /// — nothing in the app reads the phone's *own* radio's administrators,
+    ///—nothing in the app reads the phone's *own* radio's administrators,
     /// because managing that radio is what the local link is for. Accepting
     /// the mutation silently keeps a preview from reporting a failure that
     /// says nothing about the app.
@@ -337,8 +337,8 @@ actor FakeRadioConnection: RadioConnection {
     }
 
     /// Nothing in the snapshot describes the mute tables, and nothing in the
-    /// app reads them back — they steer a sound a simulated radio does not
-    /// make — so the fake accepts them and keeps nothing.
+    /// app reads them back—they steer a sound a simulated radio does not
+    /// make—so the fake accepts them and keeps nothing.
     func reconcileHostMutes(channelIdentifiers: [Data], peerKeys: [Data]) async throws {}
 
     func setHostAutoAcknowledgement(_ enabled: Bool) async throws {
@@ -449,7 +449,7 @@ actor FakeRadioConnection: RadioConnection {
         try await answerAsIfOverTheAir()
         // Echoed back verbatim, as a device that accepted them would. The
         // one thing a real device does that this cannot is clamp a value
-        // it holds differently — previews of that path want a real radio.
+        // it holds differently—previews of that path want a real radio.
         for write in writes {
             managedDevice.values[write.propertyId] = write.value
         }
@@ -712,7 +712,7 @@ actor FakeRadioConnection: RadioConnection {
 
     func reboot() async throws {
         // Same visible consequence as the real thing: the link drops while
-        // the radio is away. Nothing staged is erased — that is the whole
+        // the radio is away. Nothing staged is erased—that is the whole
         // difference between this and the factory reset above.
         publish(.disconnected)
     }
@@ -818,7 +818,7 @@ actor FakeRadioConnection: RadioConnection {
 
     /// Same delivery discipline as the real connection: a batch is yielded
     /// once, then re-yielded every couple of seconds until the app
-    /// acknowledges it — an unacknowledged batch stalls every batch behind it.
+    /// acknowledges it—an unacknowledged batch stalls every batch behind it.
     private func yieldChatUpdate(from update: MobileMeshSessionUpdateRecord) {
         guard let batchID = update.chatBatchId else { return }
         let now = ContinuousClock.now
@@ -890,14 +890,14 @@ private final class FakeMeshSessionWakeListener: MobileMeshWakeListener, @unchec
 /// A plausible tracker for the remote-management screens to manage.
 ///
 /// Everything here is the octets a real device would put on the air,
-/// decoded by the same Rust reducers the real path uses — so a preview
+/// decoded by the same Rust reducers the real path uses—so a preview
 /// exercises the actual decode rather than a hand-built record that could
 /// be shaped however the screen happens to want.
 struct FakeManagedDevice: Sendable {
     /// What this phone's own node key is, so an administrators list can
     /// show one row as "this phone".
     /// Distinct leading octets rather than one byte repeated: a node's hint
-    /// is the front of its key, and the avatar's color comes from the hint —
+    /// is the front of its key, and the avatar's color comes from the hint—
     /// so keys of all 0x11 render a row of near-black circles that look like
     /// a bug in the avatar.
     static let phoneKey = Data([0x3C, 0x8E, 0xD1]) + Data(repeating: 0x11, count: 29)
@@ -937,7 +937,7 @@ struct FakeManagedDevice: Sendable {
             id.uptime: UInt32(172_800).littleEndianData,
             id.identRole: Data([1]),
             id.identMobile: Data([0]),
-            // Four octets of cell — about 600 m across — over Mount Tallac,
+            // Four octets of cell—about 600 m across—over Mount Tallac,
             // where the staging mesh puts this repeater. Altitude is two
             // octets because 2967 does not fit in one.
             id.identLocation: Data([0xB2, 0x7A, 0x59, 0x58]),

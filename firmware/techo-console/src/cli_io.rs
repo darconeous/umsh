@@ -22,7 +22,7 @@
 //! (CLI responses) and `CdcInput` (echo) push chunks onto the channel.
 //! When the channel fills, writers `.send().await` naturally back-pressure;
 //! `read_line` stops calling `read_packet`, USB NAKs the host's OUT
-//! packets, and the host retries — proper end-to-end flow control with
+//! packets, and the host retries—proper end-to-end flow control with
 //! no shared mutable state.
 
 use embassy_sync::blocking_mutex::raw::ThreadModeRawMutex;
@@ -43,7 +43,7 @@ pub type OutChunk = heapless::Vec<u8, 64>;
 /// writers rather than silently buffering forever.
 pub static OUTPUT_CH: Channel<ThreadModeRawMutex, OutChunk, 16> = Channel::new();
 
-/// Drain `OUTPUT_CH` to the given `Sender` forever. Owns the sender —
+/// Drain `OUTPUT_CH` to the given `Sender` forever. Owns the sender—
 /// nothing else writes to it.
 pub async fn drain_to_sender<'d, D: UsbDriver<'d>>(sender: &mut Sender<'d, D>) -> ! {
     loop {
@@ -62,7 +62,7 @@ async fn push_chunk(bytes: &[u8]) {
 }
 
 /// Push `bytes` in 63-byte chunks. Multi-chunk pushes are not atomic with
-/// other writers — echo bytes can land between chunks of a long line. In
+/// other writers—echo bytes can land between chunks of a long line. In
 /// practice CLI lines are short, so this matches the existing visible
 /// behavior from prior revisions.
 async fn push_chunks(bytes: &[u8]) {
@@ -166,7 +166,7 @@ impl<'d, D: UsbDriver<'d>> CliInput for CdcInput<'d, D> {
             let mut pkt = [0u8; 64];
             let n = match self.rx.read_packet(&mut pkt).await {
                 Ok(0) | Err(_) => {
-                    self.len = 0; // disconnect mid-line — drop partial buffer
+                    self.len = 0; // disconnect mid-line—drop partial buffer
                     continue;
                 }
                 Ok(n) => n,
@@ -179,7 +179,7 @@ impl<'d, D: UsbDriver<'d>> CliInput for CdcInput<'d, D> {
             // When the output queue is full, each `push_chunk` awaits and
             // back-pressures the loop. Because we're inside `read_line` and
             // not calling `read_packet` while awaiting, USB OUT NAKs the
-            // host and the host retries — no RX data loss.
+            // host and the host retries—no RX data loss.
             let mut echo: OutChunk = heapless::Vec::new();
 
             for &b in &pkt[..n] {

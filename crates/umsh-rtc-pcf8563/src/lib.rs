@@ -2,7 +2,7 @@
 //! `embedded-hal-async` I²C.
 //!
 //! Time only: read the clock, set the clock. Alarms, the timer, and
-//! CLKOUT are not transcribed — no UMSH board wires them to anything
+//! CLKOUT are not transcribed—no UMSH board wires them to anything
 //! yet, and the alarm interrupt's polarity and open-drain behavior want
 //! hardware validation before anything depends on them.
 //!
@@ -16,7 +16,7 @@
 //!
 //! # Not knowing is a state
 //!
-//! The part latches a voltage-low flag when its oscillator has stopped —
+//! The part latches a voltage-low flag when its oscillator has stopped—
 //! a dead backup cell, a first power-up. In that condition it does not
 //! report *no* time, it reports whatever its registers hold. So
 //! [`Pcf8563::read`] answers `None` on that flag rather than handing up
@@ -29,7 +29,7 @@
 //! means 19xx, and the disagreement is old enough that both conventions
 //! exist in shipping hardware. UMSH sidesteps it: this driver reads and
 //! writes 2000–2099 only, writes the century bit as zero, and ignores it
-//! on read. Nothing is lost — the clock's `u32` epoch runs out in 2106
+//! on read. Nothing is lost—the clock's `u32` epoch runs out in 2106
 //! and the plausibility floor already refuses anything before 2020.
 
 #![no_std]
@@ -100,8 +100,8 @@ const fn to_bcd(value: u8) -> u8 {
 
 /// Day of week, 0 = Sunday, as the part numbers them.
 ///
-/// The PCF8563 keeps this field but never derives it — it only counts
-/// the register up — so a writer has to compute it or the field drifts
+/// The PCF8563 keeps this field but never derives it—it only counts
+/// the register up—so a writer has to compute it or the field drifts
 /// into nonsense.
 const fn weekday_from_unix(seconds: u32) -> u8 {
     // 1970-01-01 was a Thursday.

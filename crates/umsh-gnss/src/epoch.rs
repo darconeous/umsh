@@ -11,7 +11,7 @@
 //! cover.
 //!
 //! Everything here is UTC. A local time-zone offset is presentation,
-//! applied by whatever is doing the presenting — see
+//! applied by whatever is doing the presenting—see
 //! [`DateTime::shifted`].
 
 /// The largest second count [`u32`] can express: 2106-02-07T06:28:15Z.
@@ -24,8 +24,8 @@ pub const MAX_EPOCH: u32 = u32::MAX;
 /// The earliest instant a receiver is believed: 2020-01-01T00:00:00Z.
 ///
 /// A receiver whose backup domain has lost power does not report *no*
-/// time. It reports the start of its own epoch — a T1000-E's AG3335 comes
-/// back saying 1980-01-06, the GPS epoch — and an RMC carrying that is
+/// time. It reports the start of its own epoch—a T1000-E's AG3335 comes
+/// back saying 1980-01-06, the GPS epoch—and an RMC carrying that is
 /// well-formed in every respect except being wrong by decades.
 ///
 /// Nothing downstream can catch this. The wall clock's precedence rules
@@ -33,19 +33,19 @@ pub const MAX_EPOCH: u32 = u32::MAX;
 /// unset clock accepts a receiver-RTC restore by design. So the check
 /// belongs here, at the parse: an instant from before any of this software
 /// existed is not an instant, and a receiver reporting one is a receiver
-/// with no clock — which is a state the design already handles.
+/// with no clock—which is a state the design already handles.
 ///
 /// # The 2080 cliff
 ///
 /// This floor combines with the GPS-epoch two-digit-year window to accept
 /// **2020 through 2079** and nothing else. In 2080 a receiver reports `80`,
-/// the window reads that as 1980, and this rejects it — the same reading
+/// the window reads that as 1980, and this rejects it—the same reading
 /// that makes a reset receiver detectable today.
 ///
 /// Two digits cannot distinguish "the receiver's clock was lost" from "it
 /// is fifty-four years later", so the ambiguity is inherent rather than
 /// chosen; every NMEA consumer windowing on the GPS epoch shares it. The
-/// alternative — windowing forward, so `80` means 2080 — buys a working
+/// alternative—windowing forward, so `80` means 2080—buys a working
 /// 2080 at the cost of believing every clock-less receiver between now and
 /// then, which is the failure that actually happens. `PROP_TIME`'s `u32`
 /// runs out in 2106 regardless.
@@ -176,7 +176,7 @@ pub const fn is_leap_year(year: i32) -> bool {
 ///
 /// Hinnant's algorithm: shift the year so March is the first month, which
 /// puts the leap day at the end of the year and lets the day-of-year
-/// become a closed-form expression, then count 400-year eras — the cycle
+/// become a closed-form expression, then count 400-year eras—the cycle
 /// over which the Gregorian calendar exactly repeats.
 pub const fn days_from_civil(year: i32, month: u8, day: u8) -> i64 {
     let y = if month <= 2 { year - 1 } else { year } as i64;

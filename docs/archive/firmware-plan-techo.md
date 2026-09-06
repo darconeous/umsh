@@ -39,13 +39,13 @@ T-Echo:
 **Out of scope** for this bringup. Each of these is real future work,
 just not on the path to "hello world on e-ink":
 
-- LoRa (SX1262) — radio not initialized, MAC not run.
-- GNSS (Quectel L76K) — UART not initialized.
-- BME280, PCF8563 RTC, BHI260, DRV2605 — I²C not initialized.
-- External QSPI flash — not used.
+- LoRa (SX1262)—radio not initialized, MAC not run.
+- GNSS (Quectel L76K)—UART not initialized.
+- BME280, PCF8563 RTC, BHI260, DRV2605—I²C not initialized.
+- External QSPI flash—not used.
 - Buttons (user, touch) beyond what the bootloader handles for reset.
-- A real CLI — USB-CDC reads echo back for the bringup, that's it.
-- BLE — never in this binary.
+- A real CLI—USB-CDC reads echo back for the bringup, that's it.
+- BLE—never in this binary.
 - Plus-only back-panel peripherals.
 
 The point is to constrain surface area to what we need to prove the
@@ -74,7 +74,7 @@ So `umsh-ux-tracker`'s abstractions (single-button gesture FSM,
 single-LED heartbeat, piezo buzzer) only partially apply. The honest
 answer is that the T-Echo belongs to a future `umsh-ux-handheld` or
 similar class that we will design *when we actually need a real
-T-Echo firmware*. For bringup, we don't need that — we just need a
+T-Echo firmware*. For bringup, we don't need that—we just need a
 binary that talks to the few peripherals on the path.
 
 Concretely the bringup firmware uses these existing pure-logic pieces
@@ -89,7 +89,7 @@ directly, without a UX-class crate in between:
 | Buzzer engine | not used (no buzzer on standard T-Echo) |
 
 The lift on `PanicSlot` is the first sign of "this thing should
-graduate" — see the comment in
+graduate"—see the comment in
 `crates/umsh-bsp-t1000e/src/panic_persist.rs`. We'll do that move as
 part of this firmware's work.
 
@@ -139,7 +139,7 @@ If any of (1)–(5) turn out wrong, the plan changes; (6) we own.
 
 Same shape as the T1000-E plan, scaled down to what this bringup
 actually does. Because the T-Echo is recoverable, the invariants are
-*less* load-bearing — but we should still treat them as load-bearing
+*less* load-bearing—but we should still treat them as load-bearing
 since the goal is to validate the patterns we'll need on the sealed
 device.
 
@@ -153,7 +153,7 @@ Invariants:
 4. The 1200-baud `SET_LINE_CODING` + DTR drop path triggers
    `enter_dfu_uf2()` from the USB-CDC handler, *below* any CLI
    parser. Same for the Ctrl-C-x3 + `dfu\r` escape. Both paths are
-   structurally enforced by `CdcAcmRescue` — they cannot be bypassed
+   structurally enforced by `CdcAcmRescue`—they cannot be bypassed
    by application code.
 5. Panics route to `PanicSlot::capture` and to `SCB::sys_reset()`;
    the next boot reads the slot and prints the previous panic over
@@ -167,7 +167,7 @@ USB is connected; that's fine for a bringup target.
 Smaller than the T1000-E phasing because the scope is smaller. Each
 phase ends in a flashable, demonstrable artifact.
 
-### Phase 0 — Bootloader reconnaissance ✅
+### Phase 0—Bootloader reconnaissance ✅
 
 Triggered UF2 mode on a stock T-Echo, read `INFO_UF2.TXT` from the
 mounted bootloader volume. Findings:
@@ -196,7 +196,7 @@ The UF2 family ID `0xADA52840` is what the UF2 conversion step in the
 **Gate:** ✅ assumptions confirmed; flash window matches `memory.x`;
 proceed to Phase 1.
 
-### Phase 1 — "Hello USB-CDC" ✅
+### Phase 1—"Hello USB-CDC" ✅
 
 Minimal embassy main bringing up clocks, USB-CDC echo, and (because
 it was useful for diagnostics) a heartbeat LED. Hit a series of
@@ -239,7 +239,7 @@ End-to-end verified:
 
 **Gate:** ✅ achieved.
 
-### Phase 2 — Safety primitives ✅
+### Phase 2—Safety primitives ✅
 
 Added: WDT (8-second timeout, petted in heartbeat every ~2 s),
 retained-RAM `PanicSlot` capture and next-boot USB-CDC report,
@@ -279,14 +279,14 @@ Implementation notes:
    which exposes TECHOBOOT mass-storage *and* a CDC DFU port. Using
    serial-only mode (0x4e) would break the MeshCore web flasher and
    UF2 file drop. There is no reason to offer serial-only as a rescue
-   path — it is only exported for completeness.
+   path—it is only exported for completeness.
 4. **`CdcAcmRescue<'d, D>` wrapper.** The rescue checks are baked into
    a `Receiver`+`ControlChanged` wrapper in `umsh-bsp-nrf52840` so
    they cannot be bypassed by application code. The application only
    receives a `Sender` (writes) and a `CdcAcmRescue` (reads); the
    inner `Receiver` and `ControlChanged` are not exposed. A future
    developer adding a CLI on top of this cannot accidentally skip the
-   1200-baud or escape checks — they fire on every byte by construction.
+   1200-baud or escape checks—they fire on every byte by construction.
 5. **Rust 2024 `static_mut_refs` hard error.** `&mut *static_mut_ptr`
    is forbidden in edition 2024. `PANIC_REGION` is wrapped in
    `SyncNoinit<T>` (a `UnsafeCell<MaybeUninit<T>>` newtype) and the
@@ -310,7 +310,7 @@ Implementation notes:
 
 **Gate:** ✅ builds clean; all four hardware rescue paths verified on device.
 
-### Phase 3 — LED heartbeat
+### Phase 3—LED heartbeat
 
 Replaced the hand-rolled `Timer::after` timing loop in the heartbeat
 task with `LedEngine::tick()` from `umsh-ux-tracker`. The engine
@@ -320,7 +320,7 @@ the task sleeps to that deadline with `Timer::at(Instant::from_millis(...))`.
 
 The observable behavior (50 ms ON / 2 s period) is identical to Phase 2.
 The difference is that `LedEngine` owns the cadence and exposes
-`play(LedSequence, now_ms)` for one-shot overlays — future application
+`play(LedSequence, now_ms)` for one-shot overlays—future application
 code (power-on flash, location-advert double-blink) can call `play()`
 without touching the heartbeat timing.
 
@@ -331,7 +331,7 @@ The WDT pet remains at the top of the loop; it fires on every wake-up
 (hardware-verified there). Hardware re-flash pending user confirmation
 before proceeding to Phase 4.
 
-### Phase 5 — SX1262 LoRa radio ✅
+### Phase 5—SX1262 LoRa radio ✅
 
 New crate `crates/umsh-radio-sx126x` wraps `lora-phy` 3.0.1 and exposes
 `Sx1262Radio` which implements `umsh_hal::Radio`. The MAC coordinator can
@@ -348,21 +348,21 @@ Architecture:
   double-check / AtomicWaker pattern to avoid the TOCTOU race.
 
 T-Echo hardware wiring:
-- TWISPI1 (SPIM1) at 16 MHz, SPI Mode 0 — per SX1262 datasheet §8.2
+- TWISPI1 (SPIM1) at 16 MHz, SPI Mode 0—per SX1262 datasheet §8.2
 - CS=P0.24, SCK=P0.19, MOSI=P0.22, MISO=P0.23
 - RST=P0.25, BUSY=P0.17, DIO1=P0.20
 - `tcxo_ctrl = Ctrl1V8` (DIO3 → 1.8 V TCXO on the T-Echo module)
 - `use_dcdc = true` (T-Echo module has DC-DC converter)
 - DIO2 as RF switch is configured internally by lora-phy via
-  `SetDIO2AsRfSwitchCtrl` — no CPU GPIO needed
+  `SetDIO2AsRfSwitchCtrl`—no CPU GPIO needed
 - `lora-phy` unconditionally depends on `defmt 0.3`; a zero-overhead
   noop global logger (`defmt::global_logger` with empty trait impl) is
   defined in `hello-techo/src/main.rs` so the firmware links without
   a debug transport
 
 Default modulation parameters available via the radio crate:
-- `default_params()` — SF7 / BW125 / CR4-5 at 915 MHz (generic UMSH default).
-- `meshcore_us_params()` — 910.525 MHz / SF7 / BW62.5 / CR4-5 / 16-symbol
+- `default_params()`—SF7 / BW125 / CR4-5 at 915 MHz (generic UMSH default).
+- `meshcore_us_params()`—910.525 MHz / SF7 / BW62.5 / CR4-5 / 16-symbol
   TX preamble / private sync word 0x1424, sourced from MeshCore's
   `CustomSX1262.h` and `platformio.ini`. Used by hello-techo so a T-Echo
   on the bench can hear nearby MeshCore traffic.
@@ -372,20 +372,20 @@ calibration via lora-phy) completes successfully on every boot. The
 runner task spins in continuous RX, and the firmware drains received
 frames via:
 
-- **`packet_handler_task`** — always-on consumer of `RADIO_CH.rx`.
+- **`packet_handler_task`**—always-on consumer of `RADIO_CH.rx`.
   Increments a static packet counter, signals the display, and queues a
   pre-formatted `[RX] rssi=… snr=… len=… data=…` print line to a static
   print channel.
-- **`run_echo`** — drains the print channel to USB-CDC. When no serial
+- **`run_echo`**—drains the print channel to USB-CDC. When no serial
   client is connected, the print channel fills and oldest lines are
   dropped silently; the counter and display still advance.
-- **`display_task`** — re-renders the boot screen with the latest count
+- **`display_task`**—re-renders the boot screen with the latest count
   whenever the count-changed signal fires. 5 s throttle caps the visible
   refresh rate (full refresh, ~2 s of flashing per update; proper
   partial refresh on this panel needs RED-RAM previous-frame tracking
   which is deferred).
 
-### Phase 6 — MAC coordinator integration ✅
+### Phase 6—MAC coordinator integration ✅
 
 Wires `Mac<TechoPlatform>` into the firmware. `packet_handler_task` is
 replaced by `mac_task`, which drives `mac.run(on_event)` and counts only
@@ -399,13 +399,13 @@ on the same frequency are received and silently dropped by the parser.
 | `Identity` | `SoftwareIdentity` (ephemeral, regenerated on boot) |
 | `Aes` / `Sha` | `SoftwareAes` / `SoftwareSha256` |
 | `Radio` | `Sx1262Radio<ThreadModeRawMutex, 4, 2>` |
-| `Clock` | `EmbassyClock` — `Instant::now()` + `pin!(Timer::at())` for `poll_delay_until` |
-| `Rng` | `TeChoRng` — XorShift64 seeded from nRF52840 FICR DEVICEID (chip-unique; not crypto-grade) |
-| `CounterStore` | `RamCounterStore` — no-op (session-scoped replay protection only) |
-| `KeyValueStore` | `NullKeyValueStore` — always-None |
+| `Clock` | `EmbassyClock`—`Instant::now()` + `pin!(Timer::at())` for `poll_delay_until` |
+| `Rng` | `TeChoRng`—XorShift64 seeded from nRF52840 FICR DEVICEID (chip-unique; not crypto-grade) |
+| `CounterStore` | `RamCounterStore`—no-op (session-scoped replay protection only) |
+| `KeyValueStore` | `NullKeyValueStore`—always-None |
 | `Delay` | `embassy_time::Delay` |
 
-**Capacity:** `Mac<TechoPlatform, 1, 8, 4, 4, 8, 255, 32>` — 1 identity,
+**Capacity:** `Mac<TechoPlatform, 1, 8, 4, 4, 8, 255, 32>`—1 identity,
 8 peers, 4 channels, 4 pending ACKs, 8 TX slots, 255 B frame buffer,
 32-entry dup cache. Static footprint ≈ 6 KiB; fits comfortably in the
 nRF52840's 256 KiB RAM (total BSS ≈ 107 KiB after Phase 6 additions).
@@ -417,18 +417,18 @@ nRF52840's 256 KiB RAM (total BSS ≈ 107 KiB after Phase 6 additions).
 - Default MAC capacity (`IDENTITIES=4`, `PEERS=16`, …) overflows RAM by
   ~52 KiB; minimal const generics are essential on embedded.
 - The `static_mut_refs` lint requires `core::ptr::addr_of!(HEAP)` for
-  the heap init pointer — `HEAP.as_ptr()` is now denied.
+  the heap init pointer—`HEAP.as_ptr()` is now denied.
 - `umsh-hal` must be a direct firmware dep; `umsh-mac` does not
   re-export `Clock`, `CounterStore`, or `KeyValueStore`.
 - Build with `cargo build` from the firmware directory, not with
-  `--manifest-path` from the workspace root — the linker flags in
+  `--manifest-path` from the workspace root—the linker flags in
   `.cargo/config.toml` are only picked up from the CWD hierarchy.
 
 **Gate:** ✅ boots, displays "MAC: 0", USB serial shows startup banner.
 Count stays at 0 because no second UMSH node is available for packet
 generation; parser correctly drops all MeshCore frames on the channel.
 
-### Phase 4 — E-paper "hello world" ✅
+### Phase 4—E-paper "hello world" ✅
 
 Drive peripheral-power-enable high, initialize the e-paper bus (SPI
 + control pins), write a frame buffer using `embedded-graphics` (text
@@ -439,7 +439,7 @@ is a thin inline module in `main.rs`.
 Implementation notes (these cost roughly a full debugging session):
 
 1. **SPIM2 not SPIM3.** SPIM3 on nRF52840 produced a total SPI
-   failure — no SCK, no MOSI — on the T-Echo pin assignment. SPIM2
+   failure—no SCK, no MOSI—on the T-Echo pin assignment. SPIM2
    with the `SPI2` interrupt works. Root cause of SPIM3 failure not
    fully diagnosed (suspected errata or pin-mux conflict with another
    peripheral).
@@ -502,7 +502,7 @@ A few things will fall out of doing T-Echo bringup that we
    T-Echo bringup is the trigger to move it to `umsh-bsp-nrf52840`
    (or its own crate). The doc comment in `panic_persist.rs` already
    anticipates this.
-2. **Capability traits — finally a real shape.** The bringup
+2. **Capability traits—finally a real shape.** The bringup
    `main.rs` is the first concrete consumer of a board-BSP; the
    actual traits the BSP needs to expose (LED handle, USB-CDC
    handles, e-paper SPI handles, peripheral-power-switch handle)
@@ -517,7 +517,7 @@ A few things will fall out of doing T-Echo bringup that we
 
 ## Open questions before Phase 0
 
-1. **Which LED to use for the heartbeat?** I lean blue (P0.14) — easy
+1. **Which LED to use for the heartbeat?** I lean blue (P0.14)—easy
    to see, distinct from the charger-status red. RGB-combination
    patterns are not worth the complexity for bringup.
 2. **Do we use the `epd-waveshare` crate as-is, or wrap it behind a
@@ -529,6 +529,6 @@ A few things will fall out of doing T-Echo bringup that we
    but adds toolchain dependencies. For bringup, plain
    `core::fmt::write!` over CDC is enough.
 4. **Should the e-paper "hello" include a build timestamp / git SHA?**
-   Yes — it's the cheapest way to confirm visually that the flashed
+   Yes—it's the cheapest way to confirm visually that the flashed
    firmware is the one we just built. `build.rs` can pull `git
    rev-parse --short HEAD` into an env var.

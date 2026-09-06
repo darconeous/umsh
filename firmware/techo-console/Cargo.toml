@@ -7,7 +7,7 @@ license.workspace = true
 repository.workspace = true
 
 # Minimal bringup firmware for the LilyGO T-Echo. Does not pretend to
-# be a "real" companion radio or repeater — it is a stepping stone
+# be a "real" companion radio or repeater—it is a stepping stone
 # whose only jobs are to validate the embassy / UF2 / flash workflow
 # and prove out the safety primitives (1200-baud reset, escape rescue,
 # panic-persist, WDT) on a recoverable device before pointing the same

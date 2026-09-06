@@ -2,12 +2,12 @@
 
 A lookup can always be answered exactly from the core polygons and the
 sampled-dilation rule. The cache exists so that the overwhelming majority of
-lookups — positions nowhere near any boundary — are answered by one indexed
+lookups—positions nowhere near any boundary—are answered by one indexed
 range query and no geometry at all.
 
 The world is subdivided as a quadtree. Each region is classified against a
 cell with two shapes: its core, and a superset of its sampled-dilation reach.
-A cell inside the core is guaranteed member territory — the position sample
+A cell inside the core is guaranteed member territory—the position sample
 alone hits. A cell disjoint from the reach is guaranteed non-member territory,
 because the sample pattern never lands in core from outside it. Everything in
 between becomes a candidate the reader resolves with the real sampled test, so

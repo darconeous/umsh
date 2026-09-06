@@ -1,13 +1,13 @@
 //! Full-protocol snapshot journal records (spec §Saved State).
 //!
 //! Persists the opaque snapshot payload produced by
-//! `Session::encode_snapshot` — the journal knows nothing about its
+//! `Session::encode_snapshot`—the journal knows nothing about its
 //! contents. Deliberately separate from the BLE bond/PIN journal
 //! ([`ble`](crate::ble)): the two have different lifecycles (`CMD_CLEAR`
 //! erases this journal but never touches bonds or the pairing PIN) and
-//! different record sizes. The record machinery — two-page rotation,
+//! different record sizes. The record machinery—two-page rotation,
 //! CRC over the body, a trailing commit word written last, newest
-//! generation wins — is the shared [`record`](crate::record) engine.
+//! generation wins—is the shared [`record`](crate::record) engine.
 //!
 //! The same record format also carries the device identity and the
 //! device node's frame-counter map ([`counter`](crate::counter)), each
@@ -58,7 +58,7 @@ pub enum Record {
     Snapshot(heapless::Vec<u8, MAX_PAYLOAD>),
     /// A committed `CMD_CLEAR`: nothing is saved, and any older
     /// snapshot records still physically present are void. Erasing
-    /// pages is never the clear transaction — a single committed
+    /// pages is never the clear transaction—a single committed
     /// tombstone is, so an interrupted clear can never resurrect an
     /// older snapshot from a surviving page.
     Cleared,
@@ -83,7 +83,7 @@ pub struct Stored {
 }
 
 /// Encode one record body into a slot image. The payload must fit
-/// `MAX_PAYLOAD`; the commit word stays erased (0xFF) —
+/// `MAX_PAYLOAD`; the commit word stays erased (0xFF)—
 /// `write_committed_record` writes zeros there only after the body
 /// lands.
 pub fn encode_record(generation: u32, record: RecordRef<'_>) -> [u8; SLOT_SIZE] {
@@ -133,7 +133,7 @@ impl Stored {
     }
 }
 
-/// Validate one slot image — magic, commit word, CRC, kind, length —
+/// Validate one slot image—magic, commit word, CRC, kind, length—
 /// and return its generation, without touching the payload.
 ///
 /// Mount scans run on this: a scan's working set stays one slot buffer
@@ -438,7 +438,7 @@ mod tests {
         assert_eq!(flash.mounted_snapshot().unwrap(), record(2, 0xBB, 40));
 
         // Cut the tombstone write at every distinct byte boundary: the
-        // newest snapshot must remain authoritative — never the older
+        // newest snapshot must remain authoritative—never the older
         // one. Every header byte, the CRC and commit regions, and
         // samples of the 0xFF-filled body (where all cuts are
         // physically identical: writing 0xFF to erased flash changes

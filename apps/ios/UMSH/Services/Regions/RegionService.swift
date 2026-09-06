@@ -88,7 +88,7 @@ final class RegionService {
     /// Propose a region configuration for a position, against what the
     /// device currently holds.
     ///
-    /// Five lookups at worst, so a few milliseconds — well inside an
+    /// Five lookups at worst, so a few milliseconds—well inside an
     /// interaction budget even hopped off the main actor.
     func propose(
         position: MobileRegionPositionRecord,
@@ -113,7 +113,7 @@ final class RegionService {
     /// What went wrong, in a sentence an operator can act on.
     ///
     /// The Rust side names each of these with a `summary_key` rather than
-    /// prose, so this is the catalog those keys point at — one entry per
+    /// prose, so this is the catalog those keys point at—one entry per
     /// case, and nothing from Rust is ever shown directly.
     static func text(for error: any Error) -> String {
         switch error as? MobileRegionError {
@@ -126,7 +126,7 @@ final class RegionService {
             """
         case .MissingSpatialIndex:
             """
-            This build cannot search the region database — its copy of SQLite \
+            This build cannot search the region database—its copy of SQLite \
             has no spatial index.
             """
         case .Corrupt:

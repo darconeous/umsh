@@ -4,7 +4,7 @@
 //! 3.3 V rail (P1.06) and a sensor-enable line (P0.04), both active-high.
 //! It is a phototransistor loaded to ground, so the node voltage rises
 //! with illuminance from a small dark offset and rails once the load
-//! resistor saturates — the transfer function is a straight line between
+//! resistor saturates—the transfer function is a straight line between
 //! those two ends.
 //!
 //! The SAADC and the sensor rail are owned by
@@ -30,12 +30,12 @@
 // | 8965.086   | 185 lux    | the fit below   |
 // | 13478.391  | flashlight | the hard rail   |
 //
-// The response is linear across the usable range — verified against the
-// meter after fitting — so one slope through the origin describes it.
+// The response is linear across the usable range—verified against the
+// meter after fitting—so one slope through the origin describes it.
 //
 // The substantive correction to what was inherited from Seeed: **this
 // sensor has essentially no dark current.** 0.2 counts is 44 µV. Seeed's
-// 80 mV floor — 364 counts at this resolution — is a software noise
+// 80 mV floor—364 counts at this resolution—is a software noise
 // guard, not a property of the part, and subtracting it was discarding
 // the entire bottom of the range, which is precisely the region an
 // indicator-brightness policy works in.
@@ -69,13 +69,13 @@ pub const DARK_OFFSET_RAW: u32 = 0;
 pub const SATURATION_RAW: u32 = 12_288;
 
 /// Millilux per count above [`DARK_OFFSET_RAW`], as the fraction
-/// `SLOPE_MLUX_NUM / SLOPE_MLUX_DEN` — **20.636 mlux per count**.
+/// `SLOPE_MLUX_NUM / SLOPE_MLUX_DEN`—**20.636 mlux per count**.
 ///
 /// Fitted through the origin from the 185 lux point:
 /// `185000 / 8965.086 = 20.636`.
 ///
 /// A fraction rather than a whole number of millilux because rounding the
-/// slope to an integer would discard a percent or two of the answer —
+/// slope to an integer would discard a percent or two of the answer—
 /// more than the sub-count resolution the sampling in [`crate::power`]
 /// exists to buy.
 pub const SLOPE_MLUX_NUM: u32 = 20_636;
@@ -85,8 +85,8 @@ pub const SLOPE_MLUX_DEN: u32 = 1_000;
 ///
 /// Takes the **sum** and the number of conversions in it rather than a
 /// pre-computed mean, because the mean of a run of counts is fractional
-/// and a mean rounded to whole counts throws that away. Both divisions —
-/// by the conversion count and by the slope's denominator — are therefore
+/// and a mean rounded to whole counts throws that away. Both divisions—
+/// by the conversion count and by the slope's denominator—are therefore
 /// done last, against the scaled sum.
 ///
 /// Clamped at both ends: below the dark offset the sensor is reporting
@@ -107,18 +107,18 @@ pub fn millilux_from_sum(sum: u32, conversions: u32) -> u32 {
     scaled.min(u64::from(u32::MAX)) as u32
 }
 
-/// The largest value this board can report — the reading at
+/// The largest value this board can report—the reading at
 /// [`SATURATION_RAW`], about 253 lux.
 ///
 /// A ceiling, not a measurement: everything from a bright room to direct
 /// sunlight lands on it. The part is a dark-end instrument, and at the
-/// dark end it is a good one — one count is 21 mlux, so full moonlight
+/// dark end it is a good one—one count is 21 mlux, so full moonlight
 /// (~300 mlux) sits about 15 counts up with a 4 mlux noise floor beneath
 /// it. Anything wanting a daylight figure needs a different sensor.
 pub const MAX_REPORTABLE_MLUX: u32 =
     (SATURATION_RAW - DARK_OFFSET_RAW) * SLOPE_MLUX_NUM / SLOPE_MLUX_DEN;
 
-/// Convert one SAADC count on AIN5 to millilux — [`millilux_from_sum`]
+/// Convert one SAADC count on AIN5 to millilux—[`millilux_from_sum`]
 /// for a single conversion.
 pub fn raw_to_millilux(raw: u16) -> u32 {
     millilux_from_sum(u32::from(raw), 1)
@@ -137,7 +137,7 @@ mod sampling {
     pub(crate) static LIGHT_SAMPLE_REPLY: Signal<ThreadModeRawMutex, u32> = Signal::new();
 
     /// The most recent measurement, however it was triggered, in
-    /// millilux. `u32::MAX` until one exists — that cannot be a reading,
+    /// millilux. `u32::MAX` until one exists—that cannot be a reading,
     /// because the conversion tops out at
     /// [`MAX_REPORTABLE_MLUX`](super::MAX_REPORTABLE_MLUX).
     static AMBIENT_MILLILUX: AtomicU32 = AtomicU32::new(u32::MAX);
@@ -146,7 +146,7 @@ mod sampling {
     /// for it; `None` until the first one completes.
     ///
     /// This is the consumer side of [`request_sample`], but every
-    /// measurement lands here — an on-demand [`sample_illuminance`] for a
+    /// measurement lands here—an on-demand [`sample_illuminance`] for a
     /// protocol read refreshes it too.
     pub fn ambient_millilux() -> Option<u32> {
         match AMBIENT_MILLILUX.load(Ordering::Acquire) {
@@ -163,7 +163,7 @@ mod sampling {
 
     /// Ask for a measurement without waiting for it: the result appears
     /// in [`ambient_millilux`] once taken. For callers that must not
-    /// block on the monitor — the LED task requests from inside the
+    /// block on the monitor—the LED task requests from inside the
     /// select loop that also answers the sampler's blanking handshake.
     ///
     /// The request latches, so duplicates coalesce, and the reply signal
@@ -174,8 +174,8 @@ mod sampling {
         LIGHT_SAMPLE_REQUEST.signal(());
     }
 
-    /// Ask [`run_battery_monitor`](crate::power::run_battery_monitor) —
-    /// the sole SAADC and sensor-rail owner — for a fresh illuminance
+    /// Ask [`run_battery_monitor`](crate::power::run_battery_monitor)—
+    /// the sole SAADC and sensor-rail owner—for a fresh illuminance
     /// measurement in millilux and wait for it.
     ///
     /// Single-consumer, like the monitor itself. Never completes once the
@@ -215,7 +215,7 @@ mod tests {
     }
 
     /// Whatever the constants are set to, the conversion must never
-    /// overflow or wrap — the sum of a full run at full scale is the
+    /// overflow or wrap—the sum of a full run at full scale is the
     /// worst case the sampler can hand it.
     #[test]
     fn a_full_scale_run_does_not_overflow() {
@@ -231,7 +231,7 @@ mod tests {
     #[test]
     fn the_average_keeps_resolution_below_one_count() {
         let base = DARK_OFFSET_RAW + 100;
-        // Twenty conversions at `base`, three at `base + 1` — a mean of
+        // Twenty conversions at `base`, three at `base + 1`—a mean of
         // 100.13 counts above dark, which whole counts cannot express.
         let sum = 20 * base + 3 * (base + 1);
         let averaged = millilux_from_sum(sum, 23);

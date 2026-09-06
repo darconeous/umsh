@@ -10,7 +10,7 @@ struct ComposerBlock: Equatable {
 }
 
 /// Where a message is written: a capsule field floating over the transcript,
-/// or — with nothing able to carry a message — the reason and the way to fix
+/// or—with nothing able to carry a message—the reason and the way to fix
 /// it.
 ///
 /// The field is replaced rather than disabled, because a composer that takes
@@ -27,7 +27,7 @@ struct MessageComposer: View {
     let security: ConversationSecurity
     let blocked: ComposerBlock?
     /// Whether a send this instant would go somewhere. False in the transient
-    /// link states — a reconnect, an attach in progress — where the field
+    /// link states—a reconnect, an attach in progress—where the field
     /// stays put so typing is not interrupted, and only the send button waits.
     let canSend: Bool
     let send: () async -> Void
@@ -54,7 +54,7 @@ struct MessageComposer: View {
         // low the controls sit is the padding beneath them. The few points
         // kept there are not cosmetic: on a home-button phone the bottom safe
         // area is zero, and with the keyboard up its top edge is the inset on
-        // any phone — this is all that keeps the field off both.
+        // any phone—this is all that keeps the field off both.
         .padding(.top, 28)
         .padding(.bottom, 4)
         // The bar floats over the transcript, carrying on down through the
@@ -95,14 +95,14 @@ struct MessageComposer: View {
                         .font(.system(size: 28))
                         // Dimmed rather than removed while the link is in
                         // flux: absence means "nothing to send", and there is
-                        // something to send — it just has to wait a moment.
+                        // something to send—it just has to wait a moment.
                         .foregroundStyle(
                             .white,
                             canSend ? security.tint : Color(uiColor: .systemGray3)
                         )
                 }
                 // The glyph is the button. Left to the default style it picks
-                // up the system's own background — a grey rounded square sitting
+                // up the system's own background—a grey rounded square sitting
                 // behind the circle, which reads as a second control.
                 .buttonStyle(.plain)
                 .disabled(!canSend)

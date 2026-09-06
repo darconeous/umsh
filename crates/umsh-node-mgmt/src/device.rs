@@ -57,8 +57,8 @@ pub struct Dispatch<'p> {
     /// Exactly one ULCP frame, in the grammar of the local bindings. Its
     /// TID is zero and receivers ignore it.
     pub frame: &'p [u8],
-    /// Where in the logical trailing content — the value of a
-    /// `CMD_PROP_IS`, or the entry list of a `CMD_PROP_ARE` — this
+    /// Where in the logical trailing content—the value of a
+    /// `CMD_PROP_IS`, or the entry list of a `CMD_PROP_ARE`—this
     /// response resumes. Zero for a request carrying no cursor.
     pub resume: u32,
     /// Octets available for the reply frame, the envelope's worst case
@@ -159,8 +159,8 @@ fn encode_cursor(nonce: u16, generation: u16, tag: u16, offset: u16) -> [u8; CUR
 }
 
 /// A 16-bit FNV-1a of the request frame, binding a cursor to the read it
-/// was issued for. A continuation repeats the frame verbatim — the
-/// cursor rides in the envelope, not the frame — so an honest
+/// was issued for. A continuation repeats the frame verbatim—the
+/// cursor rides in the envelope, not the frame—so an honest
 /// continuation always matches.
 fn request_tag(frame: &[u8]) -> u16 {
     let mut hash: u32 = 0x811C_9DC5;
@@ -290,7 +290,7 @@ impl<const PAYLOAD: usize, const ENTRIES: usize> DeviceEngine<PAYLOAD, ENTRIES> 
         };
 
         // A retransmission is answered from the retained response
-        // without executing anything — before the request is even looked
+        // without executing anything—before the request is even looked
         // at, since the point is not to look at it again.
         if let Some(entry) = self.retained(from, token) {
             entry.last_ms = now_ms;
@@ -887,7 +887,7 @@ mod tests {
             .unwrap()
             .to_vec();
 
-        // Same generation — a counter that started over — but a new
+        // Same generation—a counter that started over—but a new
         // per-boot nonce.
         let mut rebooted = Engine::new(0x2222);
         let mut payload = [0u8; PAYLOAD];

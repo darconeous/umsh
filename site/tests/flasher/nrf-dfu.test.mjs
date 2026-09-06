@@ -4,8 +4,8 @@
  *     node --test site/tests/flasher/
  *
  * The golden frames come from an independent transcription of the framing
- * adafruit-nrfutil's `dfu_transport_serial.py` performs — the protocol `make
- * flash-<board>-serial` speaks — so a drift in the SLIP escaping, the CRC, the
+ * adafruit-nrfutil's `dfu_transport_serial.py` performs—the protocol `make
+ * flash-<board>-serial` speaks—so a drift in the SLIP escaping, the CRC, the
  * sequence numbering, or the packet layout shows up here rather than on a
  * board. See `testdata/README.md` for how the fixtures are regenerated.
  *

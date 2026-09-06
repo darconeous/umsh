@@ -16,7 +16,7 @@ struct PeerSummary: Identifiable, Hashable, Sendable {
     /// Whether the MAC authenticated the frame that delivered
     /// `advertisedIdentity`. See `advertisedIdentityIsAttributable`.
     var advertisedIdentityAuthenticated: Bool = false
-    /// When we last heard from this peer by any means — beacon, advertisement,
+    /// When we last heard from this peer by any means—beacon, advertisement,
     /// inbound message, delivery ack, or ping reply. `nil` until the first
     /// evidence.
     var lastHeard: Date? = nil
@@ -68,7 +68,7 @@ struct PeerSummary: Identifiable, Hashable, Sendable {
         return role == .unknown ? .unknown : .no
     }
 
-    /// This node's own two-byte router hint — the leading bytes of its key,
+    /// This node's own two-byte router hint—the leading bytes of its key,
     /// which is what a repeater carrying its traffic would put on the wire.
     /// `nil` only for a hint too short to take one from.
     var routerHintBytes: Data? {
@@ -163,7 +163,7 @@ enum PeerRole: String, CaseIterable, Hashable, Sendable, Identifiable {
     }
 
     /// How a role byte is described, keeping an unrecognized one visible as a
-    /// number rather than flattening it to "Unknown" — the node did claim
+    /// number rather than flattening it to "Unknown"—the node did claim
     /// something.
     static func label(forCode code: UInt8) -> String {
         let role = PeerRole(roleCode: code)
@@ -211,7 +211,7 @@ struct DirectConversationSummary: Identifiable, Hashable, Sendable {
     /// When the conversation was created, which stands in for activity until
     /// the first message.
     var createdAtMilliseconds: Int64 = 0
-    /// Whether this conversation may raise a notification — on the phone, and
+    /// Whether this conversation may raise a notification—on the phone, and
     /// on a companion radio holding its messages while the phone is away.
     ///
     /// Defaults on, where a channel's defaults off: a message addressed to you
@@ -231,7 +231,7 @@ struct DirectConversationSummary: Identifiable, Hashable, Sendable {
 }
 
 /// A channel's group conversation. Everyone holding the key is a participant,
-/// so there is no peer on the other end — only members, who are known by the
+/// so there is no peer on the other end—only members, who are known by the
 /// hint their messages claim until their full address is learned.
 struct ChannelConversationSummary: Identifiable, Hashable, Sendable {
     let id: Int64
@@ -332,20 +332,20 @@ struct ChatMessageSummary: Identifiable, Hashable, Sendable {
     /// Where this message sits in its conversation's storage order, so a
     /// transcript can page from the edges of what it holds.
     ///
-    /// Safe to compare alongside the rest of the message — `ChatMessageBubble`
-    /// is `Equatable` to avoid re-measuring its `UITextView` — because a row's
+    /// Safe to compare alongside the rest of the message—`ChatMessageBubble`
+    /// is `Equatable` to avoid re-measuring its `UITextView`—because a row's
     /// ordering key is fixed for its lifetime. Two summaries of the same
     /// message always agree on it.
     let cursor: ChatMessageCursor
-    /// A reserved gap slot awaiting repair — rendered as a spinner placeholder,
+    /// A reserved gap slot awaiting repair—rendered as a spinner placeholder,
     /// not a real bubble.
     var isGapPlaceholder: Bool = false
-    /// A gap whose repair failed — rendered as a subtle "message unavailable"
+    /// A gap whose repair failed—rendered as a subtle "message unavailable"
     /// marker.
     var isUnavailable: Bool = false
-    /// Filled its ordered slot out of order — annotated "Received late".
+    /// Filled its ordered slot out of order—annotated "Received late".
     var isReceivedLate: Bool = false
-    /// Outbound message delivered on a resend after a transport failure —
+    /// Outbound message delivered on a resend after a transport failure—
     /// annotated "Delivered Late".
     var isDeliveredLate: Bool = false
     /// Pre-edit text of the sender's own edited message, available for review
@@ -378,14 +378,14 @@ struct ChatMessageSummary: Identifiable, Hashable, Sendable {
         senderHint.map { hint in hint.map { String(format: "%02x", $0) }.joined() }
     }
 
-    /// When this was written, or nil for a record carrying no usable time —
+    /// When this was written, or nil for a record carrying no usable time—
     /// a gap placeholder standing in for a message nobody has seen yet.
     var sentDate: Date? {
         guard createdAtMilliseconds > 0 else { return nil }
         return Date(timeIntervalSince1970: Double(createdAtMilliseconds) / 1000)
     }
 
-    /// How long a message stays revisable in place — editable, or resendable
+    /// How long a message stays revisable in place—editable, or resendable
     /// as an edit of itself. Wire references only reach the recent past:
     /// peers keep a bounded window of recent IDs, and the stream may have
     /// reset since. Four hours is comfortably inside what survives.
@@ -413,7 +413,7 @@ struct MessageReaction: Identifiable, Hashable, Sendable {
     let wireID: UInt8?
     let epoch: UInt16?
     /// One of ours the radio could not deliver. Drawn faded; everything else
-    /// — including a reaction still in flight — looks normal, because being
+    ///—including a reaction still in flight—looks normal, because being
     /// in flight is the ordinary case and not worth alarming anyone about.
     let isFailed: Bool
 
@@ -432,7 +432,7 @@ struct MessageReaction: Identifiable, Hashable, Sendable {
 /// The reaction vocabulary: what the picker offers, what goes on the wire,
 /// and how an arriving body becomes one glyph.
 ///
-/// Short tokens are what the wire carries — they are what the protocol's own
+/// Short tokens are what the wire carries—they are what the protocol's own
 /// examples use, and two characters of airtime instead of four matters more
 /// here than anywhere else in the app. Reading is deliberately looser than
 /// writing: anything recognizable maps to the same glyph, and anything else
@@ -471,12 +471,12 @@ enum ReactionEmoji {
 
     /// What a reaction body renders as: a palette glyph when the body is one
     /// of its spellings, otherwise the body's own first character. Only ever
-    /// one glyph — a peer that sends a sentence still gets a chip.
+    /// one glyph—a peer that sends a sentence still gets a chip.
     static func displayGlyph(for body: String) -> String {
         let trimmed = body.trimmingCharacters(in: .whitespacesAndNewlines)
         if let upgraded = upgrades[trimmed.lowercased()] { return upgraded }
         guard let first = trimmed.first else { return "" }
-        // A single character may still be a spelling we know — a bare "?"
+        // A single character may still be a spelling we know—a bare "?"
         // reaches this only if the table above missed it.
         if let upgraded = upgrades[String(first).lowercased()] { return upgraded }
         return String(first)
@@ -501,7 +501,7 @@ struct ChatMessageActions: Sendable {
     /// reaction by passing the one already chosen.
     var react: @Sendable (ConversationListItem, ChatMessageSummary, String) async
         -> MessageSendResult = { _, _, _ in .failed("Messaging is unavailable.") }
-    /// Put a failed message back on the air — an edit of itself carrying the
+    /// Put a failed message back on the air—an edit of itself carrying the
     /// same text, so a peer who already has it never sees it twice. Recent
     /// failures only (``ChatMessageSummary/isWithinReviseWindow``).
     var resend: @Sendable (ConversationListItem, ChatMessageSummary) async
@@ -532,7 +532,7 @@ struct ChannelConversationActions: Sendable {
     /// Open a channel's conversation, creating it if this is the first time.
     let start: @Sendable (ChannelSummary) async -> ChannelConversationSummary?
     /// Open the conversation for a channel that was just joined. Joining from
-    /// here is a request to talk in the channel, so the chat opens with it —
+    /// here is a request to talk in the channel, so the chat opens with it—
     /// unlike joining from Settings, which is membership alone.
     let startAfterJoin: @Sendable (MeshChannelPreview) async -> ChannelConversationSummary?
     /// Leave the group chat: the transcript goes, channel membership stays.
@@ -541,7 +541,7 @@ struct ChannelConversationActions: Sendable {
     let requestMemberIdentity: @Sendable (ChannelConversationSummary, Data) async -> Void
     /// Turn this channel's banners on or off. The same setting the Channels
     /// tab carries, reachable from the conversation it actually affects.
-    /// Unread counts are unaffected — muting silences banners, not the channel.
+    /// Unread counts are unaffected—muting silences banners, not the channel.
     let setNotifications: @Sendable (ChannelSummary, Bool) async -> Void
 
     static let unavailable = ChannelConversationActions(
@@ -557,7 +557,7 @@ struct PeerPingReply: Equatable, Sendable {
     let roundTripMilliseconds: UInt64
     /// Radio links the reply crossed, counting the final one into this
     /// phone's radio: a direct reply is one hop. `nil` when the reply came
-    /// source-routed without a trace route — hops it took went unrecorded.
+    /// source-routed without a trace route—hops it took went unrecorded.
     let hopCount: UInt8?
     /// Intermediate routers in source-to-destination order, already rendered
     /// by the Rust core. The two endpoints are not included.
@@ -571,7 +571,7 @@ struct PeerPingReply: Equatable, Sendable {
 /// path the next frame will take, not a record of the last one.
 struct PeerRoute: Equatable, Sendable {
     enum Kind: Equatable, Sendable {
-        /// There is no mesh session to ask — no radio attached, or one that
+        /// There is no mesh session to ask—no radio attached, or one that
         /// is not set up for this phone. Distinct from `unknown`, which is a
         /// real answer from a live MAC.
         case unavailable
@@ -621,7 +621,7 @@ enum RepeaterEvidence: Equatable, Sendable {
 
 /// Where an Identity Request is asked from.
 ///
-/// `nil` — no vantage — is this phone's own neighborhood: the zero-hop
+/// `nil`—no vantage—is this phone's own neighborhood: the zero-hop
 /// broadcast only direct neighbors hear. A vantage steers the same ask down a
 /// route instead, so the nodes that answer are the ones in radio range of
 /// wherever it lands, which is the only way to discover nodes this phone
@@ -654,7 +654,7 @@ struct SolicitVantage: Hashable, Sendable {
     /// peer's own hint, which is only safe when we have positive evidence it
     /// repeats: the choice is asymmetric. Not appending when the peer does
     /// repeat lands the ask one hop short, which is still useful. Appending
-    /// when it does not kills the ask outright — the router before it looks
+    /// when it does not kills the ask outright—the router before it looks
     /// for a next hop that will never forward. So append only on evidence, and
     /// let the copy carry the uncertainty rather than the route.
     init?(peer: PeerSummary, route: PeerRoute?) {
@@ -674,8 +674,8 @@ struct SolicitVantage: Hashable, Sendable {
             }
         case .direct, .source:
             // Heard directly, so the route names no routers. Asking *through*
-            // this node is exactly how to reach what sits behind it — the
-            // bench case worth having — but only if it forwards at all. When
+            // this node is exactly how to reach what sits behind it—the
+            // bench case worth having—but only if it forwards at all. When
             // we know it does not, a plain nearby ask already covers it.
             guard evidence != .no else { return nil }
             routers = [peerHint]
@@ -720,9 +720,9 @@ enum RouterHintNaming {
 
 /// Everything the peer sheet can do with the node it is showing.
 ///
-/// Bundled because `PeerDetailView` is presented from four places — the
+/// Bundled because `PeerDetailView` is presented from four places—the
 /// Peers list, a conversation's title bar, Settings' radio identity, and
-/// device setup — and passing these one parameter at a time made the same
+/// device setup—and passing these one parameter at a time made the same
 /// sheet offer different things depending on where it was opened. One value
 /// threaded through means one sheet with one set of capabilities.
 /// Deliberately not `Sendable`: these are main-actor operations owned by the
@@ -749,7 +749,7 @@ struct PeerActions {
     /// Arm or disarm the one-shot watch on the node: notify once, the next
     /// time anything is heard from it, then disarm itself.
     var setNotifyWhenHeard: ((PeerSummary, Bool) async -> Bool)? = nil
-    /// Turn a direct conversation's notifications on or off — on the phone,
+    /// Turn a direct conversation's notifications on or off—on the phone,
     /// and on a companion radio holding its messages while the phone is away.
     var setConversationNotifications: ((DirectConversationSummary, Bool) async -> Void)? = nil
     /// Save a transient node onto the local identity.
@@ -758,7 +758,7 @@ struct PeerActions {
     /// searchability. The row survives as a transient.
     var demoteToTransient: ((PeerSummary) async -> Bool)? = nil
     /// Delete the node's row outright. Refused by the store when a
-    /// conversation exists — offer `deletePeerAndConversation` instead.
+    /// conversation exists—offer `deletePeerAndConversation` instead.
     var deletePeer: ((PeerSummary) async -> Bool)? = nil
     /// Delete the node and its conversation history in one transaction.
     var deletePeerAndConversation: ((PeerSummary) async -> Bool)? = nil
@@ -771,7 +771,7 @@ struct PeerActions {
     /// across the mesh. Nil only where no backend could exist at all.
     var manageDevice: ((PeerSummary) -> DeviceManagementBackend)? = nil
 
-    /// No app services wired up — used by previews and by any sheet built
+    /// No app services wired up—used by previews and by any sheet built
     /// before the mesh session exists.
     @MainActor static let unavailable = PeerActions()
 }

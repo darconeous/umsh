@@ -2,13 +2,13 @@ import SwiftUI
 
 /// A participant in a channel's group conversation.
 ///
-/// Membership is possession of the key, so there is no roster to consult —
+/// Membership is possession of the key, so there is no roster to consult—
 /// a member is only known once they have said something, and then only by
 /// the hint their message claimed.
 struct ChannelMember: Identifiable, Hashable, Sendable {
     let hint: Data
     let address: String?
-    /// The name this member attached to their message — their own claim,
+    /// The name this member attached to their message—their own claim,
     /// which the channel key authenticates as coming from *a* member and
     /// nothing more.
     let handle: String?
@@ -72,7 +72,7 @@ struct ChannelChatChooserView: View {
         .sheet(isPresented: $showsJoin) {
             NavigationStack {
                 // Joining from here is a request to talk in the channel, so
-                // the conversation opens with it — unlike joining from
+                // the conversation opens with it—unlike joining from
                 // Settings, which is membership alone.
                 ChannelJoinView(
                     actions: actions,
@@ -96,7 +96,7 @@ struct ChannelMemberSheet: View {
     let requestIdentity: ((Data) async -> Void)?
     let dismiss: () -> Void
     /// Everything the peer sheet needs to be itself once this member turns out
-    /// to be a node this phone knows — the same bundle the direct-conversation
+    /// to be a node this phone knows—the same bundle the direct-conversation
     /// sheet hands it, so the peer is the same wherever it is reached from.
     @Binding var conversations: [DirectConversationSummary]
     let radioSnapshot: RadioSnapshot
@@ -110,7 +110,7 @@ struct ChannelMemberSheet: View {
     var body: some View {
         Form {
             // A member who is also a saved peer is a node, with everything a
-            // node has — a route, a role, a way to message them directly. The
+            // node has—a route, a role, a way to message them directly. The
             // avatar in the transcript is the only thing pointing at it, so it
             // has to lead somewhere rather than stopping at four fields.
             if let knownPeer {
@@ -258,7 +258,7 @@ struct MessageDetailsSheet: View {
                     if !reception.routeHints.isEmpty {
                         // Stored in trace-route order, nearest us first;
                         // reversed here so the arrows read the way the message
-                        // travelled — sender toward this phone.
+                        // travelled—sender toward this phone.
                         let route = reception.routeHints
                             .reversed()
                             .map { $0.map { String(format: "%02x", $0) }.joined() }

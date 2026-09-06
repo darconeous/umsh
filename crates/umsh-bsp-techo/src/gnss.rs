@@ -6,7 +6,7 @@
 //! |---|---|---|
 //! | Standby / wake | P1.02 | High wakes the receiver; low lets it sleep |
 //! | Reset | P1.05 | Active low, held past 100 ms |
-//! | Module TX → MCU RX | P1.09 | 9600 baud — note the direction |
+//! | Module TX → MCU RX | P1.09 | 9600 baud—note the direction |
 //! | Module RX ← MCU TX | P1.08 | Unused today; the receiver needs no commands |
 //!
 //! The UART direction is the reverse of what the upstream variant files'
@@ -17,7 +17,7 @@
 //! The receiver has no enable pin of its own. It sits on the board's
 //! peripheral rail (P0.12), shared with the e-paper, the LoRa module and
 //! the sensors, so "off" here means the receiver's own standby state
-//! rather than an unpowered module — the rail cannot be dropped for the
+//! rather than an unpowered module—the rail cannot be dropped for the
 //! GNSS alone without taking the radio with it.
 //!
 //! That has one useful consequence and one limitation. The useful one:
@@ -47,8 +47,8 @@ const RESET_HOLD: Duration = Duration::from_millis(150);
 
 /// How long the receiver takes to start emitting sentences after reset.
 ///
-/// Not waited on for correctness — the parser resynchronizes at the next
-/// `$` whatever arrives first — but powering on and immediately reading
+/// Not waited on for correctness—the parser resynchronizes at the next
+/// `$` whatever arrives first—but powering on and immediately reading
 /// otherwise spends a wake-up on a UART with nothing behind it yet.
 const STARTUP: Duration = Duration::from_millis(100);
 

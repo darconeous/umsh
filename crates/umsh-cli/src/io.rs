@@ -1,6 +1,6 @@
 //! Transport-agnostic line I/O for the CLI.
 //!
-//! Split into two halves — [`CliInput`] for line-by-line reading, and
+//! Split into two halves—[`CliInput`] for line-by-line reading, and
 //! [`CliOutput`] for writing + flushing. Splitting the halves lets the
 //! [`CliSession::run`](crate::CliSession::run) loop hold a long-lived
 //! read future across `select!` iterations while the session simultaneously
@@ -82,7 +82,7 @@ mod stdio {
             'buf: 'io,
         {
             // The driver keeps this future alive across wake events, so we
-            // don't need an external partial-line accumulator — tokio's
+            // don't need an external partial-line accumulator—tokio's
             // internal `Vec<u8>` inside `ReadLine` retains consumed bytes
             // until the line is complete.
             let mut line = String::new();

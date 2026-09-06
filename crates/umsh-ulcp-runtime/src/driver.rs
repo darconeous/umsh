@@ -1,7 +1,7 @@
 //! The board-agnostic ULCP session driver (Phase 5, increment C).
 //!
 //! This is the extraction of the nRF firmware's `device_task` select loop, its
-//! `apply_effect` radio-effect dispatcher, and the `Emitter` frame stager —
+//! `apply_effect` radio-effect dispatcher, and the `Emitter` frame stager—
 //! the one copy of the session-driving logic shared by every device
 //! firmware (T-Echo, T-1000E, Heltec V3). The board personalities that used
 //! to be `cfg(feature = "t1000e")` forks inside the loop are expressed as
@@ -103,7 +103,7 @@ pub type AdminFrame = FrameBuf;
 /// A single static rather than a channel per request: there is one
 /// session driver per device, it serves one event at a time, and the
 /// responder that feeds it holds one exchange open at a time. An empty
-/// response — which is what a reset-class command produces — is
+/// response—which is what a reset-class command produces—is
 /// distinguished by its length, so the responder always receives exactly
 /// one message per request and never has to time the loop out.
 pub static ADMIN_REPLY: Channel<
@@ -128,7 +128,7 @@ pub enum InEvent {
         frame: AdminFrame,
         reply_budget: usize,
     },
-    /// Someone cancelled a running locate alert at the device — the
+    /// Someone cancelled a running locate alert at the device—the
     /// button press of whoever found the radio. Ignored when no alert is
     /// running, so a board may report the press unconditionally.
     CancelAlert,
@@ -138,14 +138,14 @@ pub enum InEvent {
     /// unconditionally.
     Toggle(Setting),
     /// The hold-through-power-on ceremony fired: `PROP_BLE_ENABLED` must
-    /// end up on, whatever it was. Not a toggle — the same gesture on a
-    /// device already reachable would otherwise strand it — and ignored
+    /// end up on, whatever it was. Not a toggle—the same gesture on a
+    /// device already reachable would otherwise strand it—and ignored
     /// entirely when Bluetooth is already on or the device has none.
     ForceBluetoothOn,
 }
 
 /// A device-domain switch a board may offer as a control the operator
-/// can reach — a menu entry, a button, a gesture.
+/// can reach—a menu entry, a button, a gesture.
 ///
 /// Each names a property rather than a piece of hardware: what the
 /// device does with it is the platform's business, and a board that
@@ -179,7 +179,7 @@ pub struct OutFrame {
 
 /// The per-transport outbound frame queues, drained by the board's
 /// transport output tasks. `wired` is the physical-possession transport
-/// (USB-CDC or UART), `ble` the bonded GATT transport — the same pairing
+/// (USB-CDC or UART), `ble` the bonded GATT transport—the same pairing
 /// `transport_policy::Transport` names.
 pub struct TransportChannels<M: RawMutex> {
     pub wired: Channel<M, OutFrame, 4>,
@@ -221,15 +221,15 @@ pub struct DevDomainSnapshot {
     ///
     /// The device node compares this against the key its MAC was built
     /// with rather than merely checking that *some* identity exists. The
-    /// two can disagree — a newly installed `PROP_DEV_PRIVATE_KEY` takes
+    /// two can disagree—a newly installed `PROP_DEV_PRIVATE_KEY` takes
     /// effect at the next boot, and `CMD_CLEAR` + `CMD_RST` erases the
-    /// stored one — and in every such case the running node is no longer
+    /// stored one—and in every such case the running node is no longer
     /// the identity the session describes and must stop originating
     /// traffic under it.
     pub dev_key: Option<[u8; 32]>,
     /// `PROP_MAC_REPEATER_ENABLED`: whether the device node should
     /// forward overheard routable frames. Advertised as the `REP`
-    /// capability bit — a fact about what the node does, not a choice
+    /// capability bit—a fact about what the node does, not a choice
     /// about what it calls itself.
     pub repeater_enabled: bool,
     /// `PROP_MAC_REPEATER_REGIONS` as the MAC's forwarding filter needs
@@ -237,7 +237,7 @@ pub struct DevDomainSnapshot {
     /// imposes no restriction.
     pub repeater_region_codes: heapless::Vec<[u8; 2], MAX_REPEATER_REGIONS>,
     /// The same regions as the identity advertises them: the string form
-    /// of each, which is what a reader can make sense of — a hash-derived
+    /// of each, which is what a reader can make sense of—a hash-derived
     /// code cannot be turned back into a name.
     pub repeater_region_names:
         heapless::Vec<heapless::Vec<u8, REGION_STRING_MAX_LEN>, MAX_REPEATER_REGIONS>,
@@ -281,7 +281,7 @@ pub struct DevDomainSnapshot {
     ///
     /// Carried here rather than as an effect of its own so that a host
     /// write, a boot restore, and a `CMD_RST` all reach the receiver by
-    /// the same path — the mirror is published whenever the device domain
+    /// the same path—the mirror is published whenever the device domain
     /// moves, which is exactly the set of moments this can change.
     pub gnss_enabled: bool,
     /// `PROP_GNSS_IDENT_UPDATE`: whether fixes refresh the advertised
@@ -321,8 +321,8 @@ pub enum PublishEvent {
     /// from the accompanying snapshot.
     Gnss(u32, umsh_ulcp::gnss::GnssSnapshot),
     /// A fix offered to the advertised identity, in the
-    /// variable-precision encoding. Not a publication at all — it is an
-    /// input the session may act on — but it arrives on the same arm
+    /// variable-precision encoding. Not a publication at all—it is an
+    /// input the session may act on—but it arrives on the same arm
     /// because it comes from the same receiver.
     IdentityFix(
         heapless::Vec<u8, { umsh_ulcp::gnss::MAX_LOCATION_LEN }>,
@@ -336,8 +336,8 @@ pub enum PublishEvent {
     /// other end of it. Connecting and walking away both happen below the
     /// session, so this is the only way `PROP_BLE_LINK` learns it moved.
     BleLink(umsh_ulcp::ble::BleLinkState),
-    /// Whether a pairing window is open. The window closes on its own —
-    /// a new bond, a timeout — and opens from the device's own menu and
+    /// Whether a pairing window is open. The window closes on its own—
+    /// a new bond, a timeout—and opens from the device's own menu and
     /// boot gesture too, so `PROP_BLE_PAIRING` moves without the host
     /// asking more often than because it asked.
     BlePairing(bool),
@@ -397,8 +397,8 @@ pub trait DeviceEnv {
     /// (`Effect::SampleIlluminance`). Only emitted on a board whose
     /// `SessionConfig::illuminance` is set, so the default reports nothing.
     ///
-    /// `None` is a legitimate answer — the sensor exists but could not be
-    /// read — and reaches the host as the empty value rather than an error.
+    /// `None` is a legitimate answer—the sensor exists but could not be
+    /// read—and reaches the host as the empty value rather than an error.
     async fn sample_illuminance(&mut self) -> Option<u32> {
         None
     }
@@ -409,7 +409,7 @@ pub trait DeviceEnv {
     /// The board owns the whole policy: the sampling cadence, the
     /// charge-state edges, and which changes matter. It is the only layer
     /// that sees every sample, so filtering there keeps the session free
-    /// of cached readings and keeps this hook's contract simple — every
+    /// of cached readings and keeps this hook's contract simple—every
     /// value it yields is published.
     ///
     /// Cancellation-safe: the driver drops and re-creates this future on
@@ -430,7 +430,7 @@ pub trait DeviceEnv {
     /// [`battery_event`](Self::battery_event), so a board that pushes only
     /// battery measurements implements that and nothing else. A board that
     /// also pushes time or position overrides this instead and selects
-    /// over its own sources — which it can do without fighting the
+    /// over its own sources—which it can do without fighting the
     /// borrow checker, since those are its own fields rather than three
     /// `&mut self` calls.
     ///
@@ -482,7 +482,7 @@ pub trait DeviceEnv {
     /// window. `true` once the deletion is durable.
     ///
     /// Unlike the factory reset below, this runs with the board still up,
-    /// so the live BLE stack has to be emptied alongside the journal — a
+    /// so the live BLE stack has to be emptied alongside the journal—a
     /// bond forgotten on flash but still held in RAM would keep working
     /// until the next boot. Boards that do not manage their own bonds
     /// never see this and keep the default, which refuses.
@@ -490,7 +490,7 @@ pub trait DeviceEnv {
         false
     }
     /// A `PROP_BLE_PAIRING` write: open (or renew) the pairing window, or
-    /// close it. `false` when the requested state cannot be entered —
+    /// close it. `false` when the requested state cannot be entered—
     /// only ever an open the board must refuse, because it is locked out
     /// after repeated pairing failures or its Bluetooth is off; a close
     /// always succeeds.
@@ -499,8 +499,8 @@ pub trait DeviceEnv {
         false
     }
     /// `CMD_FACTORY_RESET`: erase EVERY piece of persistent state the
-    /// platform owns — saved snapshot, device identity, frame-counter
-    /// boundaries, BLE bonds, pairing PIN, and any other journal — then
+    /// platform owns—saved snapshot, device identity, frame-counter
+    /// boundaries, BLE bonds, pairing PIN, and any other journal—then
     /// reboot. Never returns: the reset discards in-RAM state and the
     /// board comes back factory-fresh. Unlike
     /// [`clear_ble_bonds`](Self::clear_ble_bonds) it need not empty the
@@ -510,13 +510,13 @@ pub trait DeviceEnv {
     /// `CMD_REBOOT`: restart the hardware, keeping every persisted
     /// journal intact. Never returns. Only reached on a board whose
     /// `SessionConfig::reboot` advertises the capability, so there is no
-    /// default — a board that sets the flag owes an implementation.
+    /// default—a board that sets the flag owes an implementation.
     ///
     /// A board with a mesh node owes it two courtesies before the reset
     /// (`device_node::quiesce_for_reboot` provides both): airing the MAC
-    /// acknowledgment of the frame that carried the command — a
+    /// acknowledgment of the frame that carried the command—a
     /// reset-class command is answered by that acknowledgment and
-    /// nothing else — and forcing the frame-counter boundaries to
+    /// nothing else—and forcing the frame-counter boundaries to
     /// durable storage. Skipping the flush re-opens the replay window
     /// the command was admitted through, and the administrator's
     /// retries of that same command are then accepted again after boot:
@@ -534,7 +534,7 @@ pub trait DeviceEnv {
     /// Start or stop the board's locate indication (`PROP_ALERT`).
     ///
     /// Carries the authoritative state and is called for every
-    /// transition — host write, local cancellation, and deadline — so an
+    /// transition—host write, local cancellation, and deadline—so an
     /// implementation can treat it as idempotent and needs no notion of
     /// *why* the alert ended. `AlertState::Locate` must override a local
     /// silence setting without clearing it (spec §PROP_ALERT); boards
@@ -557,7 +557,7 @@ pub trait DeviceEnv {
     ///
     /// Called from the device-domain mirror rather than from any one
     /// gesture, so it arrives for a host write, a boot restore, a
-    /// `CMD_RST` and a menu entry alike — and arrives again whenever
+    /// `CMD_RST` and a menu entry alike—and arrives again whenever
     /// anything else in the domain moves. Implementations must therefore
     /// be idempotent, and boards without `CAP_BLE` never see anything
     /// but the default.
@@ -593,7 +593,7 @@ pub trait DeviceEnv {
 pub struct DeviceRuntime<M: RawMutex + 'static, const RX: usize, const TX: usize> {
     /// Inbound frames and connection edges from every transport task.
     pub input: &'static InputChannel<M>,
-    /// The session's radio endpoint — its private virtual `Channels`
+    /// The session's radio endpoint—its private virtual `Channels`
     /// bundle served by the board's radio mux (never the real radio
     /// bundle directly).
     pub radio: &'static Channels<M, RX, TX>,
@@ -695,7 +695,7 @@ impl Emitter {
 /// Where the frames a session emits while serving one command are
 /// delivered.
 ///
-/// The command paths do not know which they are feeding — that is the
+/// The command paths do not know which they are feeding—that is the
 /// point. A deferred property read makes the same `respond_*` call
 /// whether the value is going to an attached host over USB or back to an
 /// administrator across the mesh.
@@ -746,7 +746,7 @@ async fn apply_effect<A, S, const TXQ: usize, M, const RX: usize, const TX: usiz
                 power_dbm: i32::from(settings.tx_power_dbm),
             });
             // Published for anything that wants to show what the radio is
-            // actually set to — a board's stats page, in particular —
+            // actually set to—a board's stats page, in particular—
             // without having to hold the session to ask. The statics live
             // with the device node, which not every driver consumer
             // builds.
@@ -817,7 +817,7 @@ async fn apply_effect<A, S, const TXQ: usize, M, const RX: usize, const TX: usiz
 /// Mirror the session's device-domain node tables to the device node
 /// when their generation moved (device-node plan increment 3).
 /// `synced_version` is the caller's cache of the last published
-/// generation. Cheap when nothing changed — one u32 compare — so the
+/// generation. Cheap when nothing changed—one u32 compare—so the
 /// loop runs it after every session interaction.
 /// Generate, persist, and install a fresh device identity.
 ///
@@ -852,7 +852,7 @@ async fn regenerate_device_identity<A, S, const TXQ: usize, E>(
             ));
         }
         Err(()) => env.trace(format_args!(
-            "device identity regenerate: persist FAILED — none in effect"
+            "device identity regenerate: persist FAILED—none in effect"
         )),
     }
 }
@@ -938,7 +938,7 @@ enum Exchange<'a> {
 /// round trip, and `resume_multi` hands back the next one until the reply
 /// is emitted. For every other command `resume_multi` answers `None` and
 /// the loop runs exactly once. None of that changes because the answer is
-/// going to the mesh instead of to a cable — the only thing that changes
+/// going to the mesh instead of to a cable—the only thing that changes
 /// is where the frames go, which is `sink`'s business.
 async fn serve_frame<A, S, const TXQ: usize, M, const RX: usize, const TX: usize, E>(
     session: &mut Session<A, S, TXQ>,
@@ -1056,7 +1056,7 @@ async fn serve_frame<A, S, const TXQ: usize, M, const RX: usize, const TX: usize
                 // With the identity durably gone, its
                 // counter boundaries are dead weight;
                 // drop them with it. (Kept if the
-                // identity clear failed — the identity
+                // identity clear failed—the identity
                 // then survives the reboot and still
                 // needs its TX boundary.)
                 if result.is_ok() {
@@ -1107,7 +1107,7 @@ async fn serve_frame<A, S, const TXQ: usize, M, const RX: usize, const TX: usize
                 // the disconnect; the platform does the durable work
                 // first, so a host that hears zero has really been
                 // forgotten. Over Bluetooth this reply is the last thing
-                // the sender hears — dropping its bond drops its link.
+                // the sender hears—dropping its bond drops its link.
                 env.trace(format_args!(
                     "PROP_BLE_BOND_COUNT <- 0: forgetting every host"
                 ));
@@ -1144,7 +1144,7 @@ async fn serve_frame<A, S, const TXQ: usize, M, const RX: usize, const TX: usize
             Some(Effect::Reboot) => {
                 // Same shape as the factory reset above and none of the
                 // erasing: the platform restarts and the device comes
-                // back as itself. Never returns, and answers nothing —
+                // back as itself. Never returns, and answers nothing—
                 // the reboot drops the link.
                 env.trace(format_args!("CMD_REBOOT: restarting"));
                 env.reboot().await
@@ -1158,13 +1158,13 @@ async fn serve_frame<A, S, const TXQ: usize, M, const RX: usize, const TX: usize
     }
     // Whatever this exchange was, the next frame is served on its own
     // terms. Restoring the local binding here rather than at the next
-    // frame's arrival keeps every other emitting path — a publication, a
-    // transmit completion, an alert deadline — reading the binding it
+    // frame's arrival keeps every other emitting path—a publication, a
+    // transmit completion, an alert deadline—reading the binding it
     // expects.
     session.end_admin_exchange();
     // A device identity always exists. `CMD_CLEAR` erases the stored one
     // without touching live state, and the `CMD_RST` that completes a
-    // factory reset is where the live copy catches up — leaving the device
+    // factory reset is where the live copy catches up—leaving the device
     // with none, which is the one state the invariant forbids. Regenerate
     // here, exactly as first boot would, so the only way to reach an
     // identityless device is to physically remove it from existence.
@@ -1226,7 +1226,7 @@ where
     //
     // A payload that does not decode is not the end of it. The journal
     // is multi-record and newest-generation-wins, so an older readable
-    // generation usually sits behind the rejected one — and for an
+    // generation usually sits behind the rejected one—and for an
     // unattended repeater, falling back to it is the only outcome that
     // keeps the device forwarding. Walk back a bounded number of
     // generations: a systematically undecodable payload is a firmware
@@ -1276,7 +1276,7 @@ where
     // boot path rather than only after a successful restore.
     //
     // Two things depend on it. Detached multicast processing needs the
-    // restored tables without waiting for an attach — the original reason.
+    // restored tables without waiting for an attach—the original reason.
     // And anything that waits for the domain to be published before acting
     // needs that publication to happen on a device that has never been
     // configured, where the answer is "the post-reset defaults" rather than
@@ -1286,7 +1286,7 @@ where
 
     loop {
         // Resolve the next event in its own statement so the select's
-        // futures — one of which mutably borrows `env` — are dropped
+        // futures—one of which mutably borrows `env`—are dropped
         // before the arms below use `env` again. A `match select4(..)`
         // scrutinee would hold them for the whole match.
         let event = {
@@ -1305,7 +1305,7 @@ where
             // advertises CAP_ALERT, including ones whose UX layer has no
             // timer of its own. Idle (never completes) while no alert is
             // running. It borrows `session` immutably, alongside
-            // `tx_done` — only `publish_event` touches `env`.
+            // `tx_done`—only `publish_event` touches `env`.
             let alert_deadline = async {
                 match session.alert_deadline_ms() {
                     Some(deadline) => Timer::at(Instant::from_millis(deadline)).await,
@@ -1351,7 +1351,7 @@ where
             Either4::First(InEvent::CancelAlert) => {
                 // Whoever found the radio silenced it. Publishing the
                 // transition is not conditional on a host being
-                // attached — `cancel_alert` handles that — and a press
+                // attached—`cancel_alert` handles that—and a press
                 // with no alert running is simply nothing.
                 let effect = session.cancel_alert(&mut |frame: &[u8]| emitter.push(frame));
                 emitter
@@ -1524,7 +1524,7 @@ where
             Either4::Fourth(Either::First(event)) => {
                 // The board decided this is worth announcing; publish it
                 // unsolicited. Dropped silently while no host is
-                // attached, and no effect can result — a publication is
+                // attached, and no effect can result—a publication is
                 // not an operation.
                 let emit = &mut |frame: &[u8]| emitter.push(frame);
                 match event {
@@ -1584,7 +1584,7 @@ where
         // PROP_MAC_BACKHAUL is session-scoped but its routing lives in
         // the mux, which nothing inside the session can reach. Mirroring
         // it here rather than pushing it from each write is what keeps
-        // the two agreeing across every path that moves it — a host's
+        // the two agreeing across every path that moves it—a host's
         // write, an attach that discards session state, a CMD_RST off
         // the mesh. The store is a relaxed atomic, so doing it every
         // iteration costs nothing.

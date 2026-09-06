@@ -1,6 +1,6 @@
 # Sample unit for one end of a UMSH internet bridge.
 #
-# The role — server or client — comes from the configuration file, so
+# The role—server or client—comes from the configuration file, so
 # this one unit fits either. Validate a change before restarting:
 #
 #     umsh-bridge check -c /etc/umsh-bridge/config.toml
@@ -30,7 +30,7 @@ User=umsh-bridge
 Group=umsh-bridge
 SupplementaryGroups=dialout
 # No ExecReload: the configuration is read once at start-up, so applying
-# a change is `systemctl restart` — after `umsh-bridge check`.
+# a change is `systemctl restart`—after `umsh-bridge check`.
 Environment=UMSH_BRIDGE_CONFIG=/etc/umsh-bridge/config.toml
 ExecStart=/usr/local/bin/umsh-bridge run
 

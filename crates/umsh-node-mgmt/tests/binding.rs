@@ -2,8 +2,8 @@
 //! real ULCP session, talking to each other over a simulated link.
 //!
 //! The device half here is what the firmware's responder does, in the
-//! order it does it — authorization first, then [`DeviceEngine::begin`],
-//! then the session, then [`produce`] and [`DeviceEngine::complete`] — so
+//! order it does it—authorization first, then [`DeviceEngine::begin`],
+//! then the session, then [`produce`] and [`DeviceEngine::complete`]—so
 //! this is the binding's semantics under test rather than a paraphrase of
 //! them. The administrator half is the shipping [`Exchange`] engine.
 //!
@@ -29,7 +29,7 @@ use umsh_ulcp_device::{
 /// matching the nRF responder's derived ceiling.
 const PAYLOAD: usize = 180;
 
-/// A device whose radio carries less — a narrower bandwidth, a longer
+/// A device whose radio carries less—a narrower bandwidth, a longer
 /// preamble, anything that shrinks the MAC's payload. Used where a test
 /// needs a budget small enough to run out of on purpose.
 const SMALL_PAYLOAD: usize = 96;
@@ -387,7 +387,7 @@ fn entries_of(frame: &[u8]) -> Vec<(u32, Vec<u8>)> {
 }
 
 /// A commissioned device: an administrator provisioned over the bench
-/// link, and the device domain saved — which is what makes the
+/// link, and the device domain saved—which is what makes the
 /// administrator survive the resets the administrator itself can order.
 fn managed() -> Device<PAYLOAD> {
     let mut device = Device::new();
@@ -459,7 +459,7 @@ fn an_administrator_places_a_node_that_cannot_place_itself() {
 /// What one management screen costs: the properties it shows, asked for
 /// together and answered in one exchange.
 ///
-/// The design the phone's category screens are built on — a device several
+/// The design the phone's category screens are built on—a device several
 /// flood hops away answers slowly and at everyone's expense, so a screen
 /// asks for its own handful rather than the device whole. A property the
 /// device does not implement comes back as a refusal in its own position
@@ -520,7 +520,7 @@ fn a_radio_screen_is_one_exchange_too() {
             .map(|(key, _)| *key)
             .collect::<Vec<_>>(),
         radio,
-        "all eight in one answer — the screen costs one round trip, not eight"
+        "all eight in one answer—the screen costs one round trip, not eight"
     );
 }
 
@@ -548,7 +548,7 @@ fn an_administrator_inserts_and_removes_table_entries() {
     assert!(device.local_get(prop::DEV_PEERS).is_empty());
 }
 
-/// An unlisted node learns nothing — not even that the device declined to
+/// An unlisted node learns nothing—not even that the device declined to
 /// answer. From its side the exchange is indistinguishable from a device
 /// that is not there.
 #[test]
@@ -713,7 +713,7 @@ fn a_large_multi_read_is_continued_across_fragments() {
 #[test]
 fn a_write_sequence_stops_for_space_and_the_remainder_is_reissued() {
     // A write sequence's reply reports each property's resulting value,
-    // which for a table is close in size to what was written — so the
+    // which for a table is close in size to what was written—so the
     // request and the reply are nearly the same size, and the overflow
     // window on a full-size payload is narrow. A device with a smaller
     // payload shows the rule plainly, and the rule is the same either way.
@@ -786,7 +786,7 @@ fn a_reset_is_answered_by_nothing() {
 /// Bond management is not reset-class: an administrator hears what it
 /// did. Clearing bonds over the mesh addresses the device's node, not
 /// one of its Bluetooth hosts, so the link that carried the write
-/// survives it and the reply arrives — and both halves are ordinary
+/// survives it and the reply arrives—and both halves are ordinary
 /// property writes whose replies quote the state back.
 #[test]
 fn an_administrator_manages_bonds_and_is_told_the_outcome() {

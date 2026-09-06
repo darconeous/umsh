@@ -5,15 +5,15 @@
 
 The text message protocol carries human-readable text between nodes (unicast) or from a node to a channel (multicast).
 
-The payload consists of a CoAP-style option list terminated by a `0xFF` byte, followed by the message body. All options are non-critical — unrecognized options are ignored and the remainder of the message is displayed normally.
+The payload consists of a CoAP-style option list terminated by a `0xFF` byte, followed by the message body. All options are non-critical—unrecognized options are ignored and the remainder of the message is displayed normally.
 
 ## Message Options
 
 Every recognized option is a singleton unless a specification explicitly declares otherwise. How a receiver treats a duplicated recognized option depends on the option's role:
 
-- An option that carries identity, sequencing, or reference semantics — Message Type, Message Sequence, Regarding, Editing, and extension options in the same role such as Sender Sequence — makes the message invalid when repeated, even if the repeated values are identical. The message MUST be dropped.
-- A presentation option — Sender Handle, Background Color, Text Color — keeps the first occurrence when repeated; later occurrences are ignored and MAY be reported diagnostically.
-- Duplicates of a zero-length flag option — Sequence Reset, Channel Group Resend — are idempotent.
+- An option that carries identity, sequencing, or reference semantics—Message Type, Message Sequence, Regarding, Editing, and extension options in the same role such as Sender Sequence—makes the message invalid when repeated, even if the repeated values are identical. The message MUST be dropped.
+- A presentation option—Sender Handle, Background Color, Text Color—keeps the first occurrence when repeated; later occurrences are ignored and MAY be reported diagnostically.
+- Duplicates of a zero-length flag option—Sequence Reset, Channel Group Resend—are idempotent.
 
 Repeated unrecognized options remain ignorable.
 
@@ -44,7 +44,7 @@ If absent or empty, the message type defaults to 0 (basic text).
 
 The presence of the `Regarding` option changes the semantics a bit: A **reply** is a type 0 message with a `Regarding` option specifying which message is being replied to. A **reaction** is a type 1 message with a `Regarding` option specifying which message is being reacted to; the body is a single Unicode emoji or a short text token such as `+1`, `-1`, `!`, or `?`. Implementations may differentiate reactions from plain status text by the presence of the Regarding option.
 
-Reaction bodies SHOULD be short text tokens rather than emoji: `<3`, `+1`, `-1`, `ha`, `!`, and `?` cover the common reactions in one or two bytes. Receivers SHOULD accept the equivalent spellings — `♥` for `<3`, `haha` or `lol` for `ha`, `!!` for `!`, letter case being insignificant — as well as the emoji themselves, and SHOULD render a reaction as a single glyph, taking the first one when a body carries more.
+Reaction bodies SHOULD be short text tokens rather than emoji: `<3`, `+1`, `-1`, `ha`, `!`, and `?` cover the common reactions in one or two bytes. Receivers SHOULD accept the equivalent spellings—`♥` for `<3`, `haha` or `lol` for `ha`, `!!` for `!`, letter case being insignificant—as well as the emoji themselves, and SHOULD render a reaction as a single glyph, taking the first one when a body carries more.
 
 There are five canonical reactions:
 
@@ -128,16 +128,16 @@ A forward delta greater than 1 within one conversation-and-sender stream means m
 - Automatic repair is bounded: a receiver SHOULD NOT automatically request more than 8 missing messages from a single observed gap, and SHOULD apply per-peer and overall rate limits to all generated resend requests.
 - A forward delta greater than the receiver's automatic-repair bound, an ambiguous delta, the first message observed from a sender, and the first message after a Sequence Reset all establish a new baseline. Receivers MUST NOT generate automatic resend requests to backfill across a baseline.
 - Repair of a channel-group conversation requires addressing a blind unicast to the original sender, which requires that sender's full public key. A member holding only the source hint cannot construct the request and simply renders the loss.
-- In a channel-group conversation every member observes the same loss at nearly the same moment. Receivers MUST delay each automatic group repair request by an independently randomized interval, and MUST cancel a pending request when the missing message — or a Message Unavailable naming it — arrives on the channel before the request is sent.
+- In a channel-group conversation every member observes the same loss at nearly the same moment. Receivers MUST delay each automatic group repair request by an independently randomized interval, and MUST cancel a pending request when the missing message—or a Message Unavailable naming it—arrives on the channel before the request is sent.
 - Room conversations are unicast; room repair requests are sent directly to the room without group jitter, and responses repair only the requester.
 
-A repaired message occupies its position in **sequence order** within the sender's stream, not the position at which it happened to arrive. A receiver MAY reserve that ordered position when the gap is first observed — rendering a pending-gap placeholder there while a repair is outstanding — and fill the same position in place when the message arrives, rather than appending it at the end of the transcript. A message that fills a reserved position after later messages are already displayed MAY be marked as having arrived late. A gap whose repair is ultimately exhausted, expired, or disclaimed by the sender MAY be presented as an unavailable position rather than silently removed.
+A repaired message occupies its position in **sequence order** within the sender's stream, not the position at which it happened to arrive. A receiver MAY reserve that ordered position when the gap is first observed—rendering a pending-gap placeholder there while a repair is outstanding—and fill the same position in place when the message arrives, rather than appending it at the end of the transcript. A message that fills a reserved position after later messages are already displayed MAY be marked as having arrived late. A gap whose repair is ultimately exhausted, expired, or disclaimed by the sender MAY be presented as an unavailable position rather than silently removed.
 
-When a message is delivered in fragments, a receiver SHOULD raise any user-facing notification once the final fragment is received, or once a bounded latency (on the order of thirty seconds) has elapsed since the first fragment — whichever comes first — so a stalled reassembly still notifies without waiting for the full reassembly lifetime.
+When a message is delivered in fragments, a receiver SHOULD raise any user-facing notification once the final fragment is received, or once a bounded latency (on the order of thirty seconds) has elapsed since the first fragment—whichever comes first—so a stalled reassembly still notifies without waiting for the full reassembly lifetime.
 
 ### Sequence Reset
 
-A 0-byte flag option that signals the sender has reset its message ID counter for the current conversation — for example, after losing that conversation's persistent sequence state. Receivers SHOULD discard cached message context for this sender in this conversation, including pending fragment reassembly state. State for the same sender in other conversations is unaffected.
+A 0-byte flag option that signals the sender has reset its message ID counter for the current conversation—for example, after losing that conversation's persistent sequence state. Receivers SHOULD discard cached message context for this sender in this conversation, including pending fragment reassembly state. State for the same sender in other conversations is unaffected.
 
 The Sequence Reset option SHOULD accompany a Message Sequence option bearing the sender's new starting ID. In the absence of a Message Sequence option, receivers SHOULD treat the next message from that sender as starting a fresh sequence.
 
@@ -149,8 +149,8 @@ References a previously sent message for the purposes of replies and reactions.
 
 The option length depends on the conversation, not on how the MAC packet is addressed:
 
-- **One-to-one conversation** (unicast, or a blind-unicast conversation with a single logical destination): 1 byte — the Message ID of the referenced message.
-- **Channel-group conversation** (delivered by multicast to the channel): 4 bytes — the 1-byte Message ID followed by the first 3 bytes of the source public key of the original sender.
+- **One-to-one conversation** (unicast, or a blind-unicast conversation with a single logical destination): 1 byte—the Message ID of the referenced message.
+- **Channel-group conversation** (delivered by multicast to the channel): 4 bytes—the 1-byte Message ID followed by the first 3 bytes of the source public key of the original sender.
 
 The source prefix is necessary in multicast channels to disambiguate messages from different senders that may share the same Message ID. This means a message cannot be referenced if it is more than 255 messages old in that sender's sequence, or if the user has since reset their sequence ID.
 
@@ -166,9 +166,9 @@ For as long as a client retains sequence history for an edited or deleted messag
 
 Edit messages carry their own Message IDs. References in subsequent Editing or Regarding options MUST use the original message's ID, not the edit's ID.
 
-Once a message has been edited or deleted, its superseded content MUST NOT be retransmitted: a resend request naming the original Message ID is answered with the current content re-issued under that ID, or with Message Unavailable — never with the pre-edit bytes. This obligation is durable; it survives restarts of the sending node. Retaining superseded content locally for the sender's own review remains permitted, per the retention note above.
+Once a message has been edited or deleted, its superseded content MUST NOT be retransmitted: a resend request naming the original Message ID is answered with the current content re-issued under that ID, or with Message Unavailable—never with the pre-edit bytes. This obligation is durable; it survives restarts of the sending node. Retaining superseded content locally for the sender's own review remains permitted, per the retention note above.
 
-A receiver holding an unrepaired gap at an edited message's original ID MAY treat an arriving edit that references it as satisfying that gap — the edit already carries the position's current content — and cancel the pending repair rather than requesting content the sender is no longer willing to send.
+A receiver holding an unrepaired gap at an edited message's original ID MAY treat an arriving edit that references it as satisfying that gap—the edit already carries the position's current content—and cancel the pending repair rather than requesting content the sender is no longer willing to send.
 
 How edits are presented to users is implementation-defined. Implementations typically display only the most recent edit, with some indication that edits exist, and an optional mechanism to view edit history.
 

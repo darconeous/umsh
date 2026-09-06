@@ -1,8 +1,8 @@
 /**
  * Reading a compiled `.regiondb` in the browser.
  *
- * The viewer opens the actual released database — the same file a phone
- * downloads — rather than a separately generated approximation of it. That is
+ * The viewer opens the actual released database—the same file a phone
+ * downloads—rather than a separately generated approximation of it. That is
  * the whole point: a map that could disagree with the runtime would be worse
  * than no map, because it would be believed.
  *
@@ -226,7 +226,7 @@ export class RegionDb {
  * Collapse semantic matches onto the list a radio would be given.
  *
  * Two matches that encode identically are one region as far as the radio is
- * concerned — the airport and metro senses of a code, say — so the first in
+ * concerned—the airport and metro senses of a code, say—so the first in
  * policy order takes the slot.
  */
 export function radioRegions(matches) {

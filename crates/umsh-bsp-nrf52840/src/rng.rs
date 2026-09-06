@@ -26,7 +26,7 @@
 //! - the one-shot 32-byte identity-gen call at boot (~4 ms).
 //!
 //! Bias correction is non-negotiable for key material per the nRF52840
-//! Product Specification — the raw RNG output has a measurable bias and
+//! Product Specification—the raw RNG output has a measurable bias and
 //! is **not** suitable for cryptographic use without DERCEN.
 //!
 //! ## Why blocking
@@ -40,7 +40,7 @@
 //! 2. The MAC reads at most a handful of bytes per call, so a ~500 µs
 //!    spin (for 4 bytes) is invisible at radio timescales (frame airtimes
 //!    are tens to hundreds of milliseconds).
-//! 3. Identity generation is a one-shot at boot — a 4 ms blocking spin
+//! 3. Identity generation is a one-shot at boot—a 4 ms blocking spin
 //!    once per first-boot is irrelevant.
 //!
 //! No interrupt binding (`bind_interrupts!`) is required.
@@ -73,7 +73,7 @@ impl Nrf52840Rng {
     /// Consume the `RNG` peripheral and return a TRNG-backed RNG with
     /// bias correction (DERCEN) enabled.
     ///
-    /// Bias correction is enabled unconditionally — see the module-level
+    /// Bias correction is enabled unconditionally—see the module-level
     /// documentation for why this is the only safe default for key
     /// material.
     pub fn new(rng: Peri<'static, RNG>) -> Self {

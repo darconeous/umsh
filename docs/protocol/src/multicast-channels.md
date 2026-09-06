@@ -2,20 +2,20 @@
 
 A **channel** is a named communication context defined by a shared symmetric key. Possession of the channel key grants membership and enables two distinct roles in UMSH:
 
-- **Multicast** — any node that possesses the channel key can send and receive packets addressed to the channel, enabling group communication.
-- **Blind unicast** — the channel key conceals both sender and destination addresses on the wire, while the payload itself is protected end-to-end using [combined keys](security.md#blind-unicast-payload-keys) that require both the channel key and the pairwise shared secret. The channel serves as a metadata-concealment layer; the payload is readable only by the intended recipient, not by all channel members. See [Blind Unicast Packet](packet-types.md#blind-unicast-packet) and [Blind Unicast Address Encryption](security.md#blind-unicast-address-encryption) for details.
+- **Multicast**—any node that possesses the channel key can send and receive packets addressed to the channel, enabling group communication.
+- **Blind unicast**—the channel key conceals both sender and destination addresses on the wire, while the payload itself is protected end-to-end using [combined keys](security.md#blind-unicast-payload-keys) that require both the channel key and the pairwise shared secret. The channel serves as a metadata-concealment layer; the payload is readable only by the intended recipient, not by all channel members. See [Blind Unicast Packet](packet-types.md#blind-unicast-packet) and [Blind Unicast Address Encryption](security.md#blind-unicast-address-encryption) for details.
 
-In both cases, the channel key is the membership credential — possessing it is both necessary and sufficient to participate.
+In both cases, the channel key is the membership credential—possessing it is both necessary and sufficient to participate.
 
 ## Channel Keys
 
 A channel key is a 32-byte symmetric key. It serves as the root secret from which encryption, authentication, and identification keys are derived (see [Multicast Packet Keys](security.md#multicast-packet-keys)).
 
-How a node obtains a channel key depends on the type of channel — see [Joining a Channel](#joining-a-channel) below.
+How a node obtains a channel key depends on the type of channel—see [Joining a Channel](#joining-a-channel) below.
 
 ## Channel Identifier
 
-Each channel is identified on the wire by the first 2 bytes of the 16-byte channel identifier [derived from the channel key](packet-types.md#channel-identifier-derivation). What travels on the wire is a compact hint that allows receivers to quickly identify candidate channels without attempting decryption with every configured key. Like destination hints, it is not cryptographically authoritative — collisions are possible and must be resolved by attempting cryptographic verification. The full identifier is where a collision cannot be tolerated: it names a channel to a management interface without disclosing the key.
+Each channel is identified on the wire by the first 2 bytes of the 16-byte channel identifier [derived from the channel key](packet-types.md#channel-identifier-derivation). What travels on the wire is a compact hint that allows receivers to quickly identify candidate channels without attempting decryption with every configured key. Like destination hints, it is not cryptographically authoritative—collisions are possible and must be resolved by attempting cryptographic verification. The full identifier is where a collision cannot be tolerated: it names a channel to a management interface without disclosing the key.
 
 ## Encrypted and Unencrypted Modes
 
@@ -31,7 +31,7 @@ Channel-addressed packets are delivered via flood forwarding, bounded by the opt
 
 ## Sender Authentication
 
-Multicast authentication is based on the shared channel key, not on individual sender identity. The MIC proves that the sender possesses the channel key, but any channel member can construct a valid packet with any claimed source address. This is a fundamental property of symmetric-key multicast — see [Multicast Sender Authentication](limitations.md#multicast-sender-authentication) for further discussion.
+Multicast authentication is based on the shared channel key, not on individual sender identity. The MIC proves that the sender possesses the channel key, but any channel member can construct a valid packet with any claimed source address. This is a fundamental property of symmetric-key multicast—see [Multicast Sender Authentication](limitations.md#multicast-sender-authentication) for further discussion.
 
 Blind unicast payloads are additionally authenticated using pairwise keys derived from the sender and recipient's key agreement, so only the true sender can produce a valid payload and only the intended recipient can verify it.
 
@@ -47,7 +47,7 @@ Channel keys may be derived from human-readable channel names rather than distri
 umsh:cs:Public
 ```
 
-Named channels are effectively public — anyone who knows the name can derive the key and participate. Long, high-entropy names may provide practical obscurity, but this should not be treated as strong secrecy.
+Named channels are effectively public—anyone who knows the name can derive the key and participate. Long, high-entropy names may provide practical obscurity, but this should not be treated as strong secrecy.
 
 The channel key is derived from the channel name using HKDF-Extract:
 
@@ -67,19 +67,19 @@ For example, given `umsh:cs:Public`, the input to canonicalization is `Public`, 
 > [!NOTE]
 > Case-folding is restricted to ASCII deliberately. Correct case-folding of the full Unicode range is non-trivial (locale-dependent, with characters that fold to multiple code points), so UTF-8 channel names are deferred to a future revision. Note that percent-encoding does not provide a workaround: canonicalization operates on the *decoded* name, so a percent-encoded non-ASCII name still decodes to non-ASCII and is rejected. A group that wants a non-ASCII display name should use a private channel (`umsh:ck:`) with an explicit key and carry the display name as a URI parameter.
 
-HKDF-Extract is appropriate here because named channels are not secrets — the name is public input keying material, not a password. Password-based KDFs (PBKDF2, Argon2) would add computational cost without meaningful security benefit, since the channel name is assumed to be known to all participants.
+HKDF-Extract is appropriate here because named channels are not secrets—the name is public input keying material, not a password. Password-based KDFs (PBKDF2, Argon2) would add computational cost without meaningful security benefit, since the channel name is assumed to be known to all participants.
 
 ### Private Channels
 
-For channels that require real secrecy, the channel key is distributed out-of-band — via QR codes, `umsh:ck:` URIs (see [URI Formats](uri-formats.md#channel-uris)), or any other secure channel (including in-band exchange over an existing authenticated unicast session). Anyone who possesses the key is a member; there is no central authority and no mechanism to revoke membership without changing the key for everyone.
+For channels that require real secrecy, the channel key is distributed out-of-band—via QR codes, `umsh:ck:` URIs (see [URI Formats](uri-formats.md#channel-uris)), or any other secure channel (including in-band exchange over an existing authenticated unicast session). Anyone who possesses the key is a member; there is no central authority and no mechanism to revoke membership without changing the key for everyone.
 
 ### Managed Channels
 
 A managed channel is administered by a designated managing node that controls membership. Unlike named and private channels, a managed channel supports adding and removing individual members without requiring all remaining members to re-join manually.
 
-> **Note:** The specific wire formats and MAC commands for managed channel operations (join requests, key distribution, rotation signalling) are not yet defined. The MAC layer itself is unaffected — managed channels use the same multicast packet format and cryptographic processing as any other channel.
+> **Note:** The specific wire formats and MAC commands for managed channel operations (join requests, key distribution, rotation signalling) are not yet defined. The MAC layer itself is unaffected—managed channels use the same multicast packet format and cryptographic processing as any other channel.
 
-To join a managed channel, a node provides its public key to the managing node — either out-of-band or via an in-band join request that the manager can accept or deny. Once accepted, the new member receives the current channel key and channel metadata from the managing node.
+To join a managed channel, a node provides its public key to the managing node—either out-of-band or via an in-band join request that the manager can accept or deny. Once accepted, the new member receives the current channel key and channel metadata from the managing node.
 
 The managing node periodically rotates the channel key. When a key rotation occurs, each current member receives the new key along with the time at which it becomes active, allowing a coordinated switchover. Because the [channel identifier](packet-types.md#channel-identifier-derivation) is derived from the channel key, a key rotation also changes the channel's on-wire identifier; the application layer masks this from the user so the channel appears to be the same.
 
@@ -93,7 +93,7 @@ Implementations should recognize two well-known named channels with specific beh
 
 ### `public`
 
-The `public` channel (derived from `umsh:cs:public`) is the default flooded group chat channel. It provides a shared communication space analogous to an open town square — any node that knows the name can participate.
+The `public` channel (derived from `umsh:cs:public`) is the default flooded group chat channel. It provides a shared communication space analogous to an open town square—any node that knows the name can participate.
 
 - Maximum flood hops: **5** without a region code, **7** with a region code.
 - Traffic **may** be encrypted (E=1), but the key is known so this doesn't really offer privacy.
@@ -105,7 +105,7 @@ The `public` channel (derived from `umsh:cs:public`) is the default flooded grou
 The emergency channel (written `EMERGENCY` here for emphasis, but derived from `umsh:cs:emergency` after the ASCII case-folding described in [Named Channels](#named-channels), so `umsh:cs:EMERGENCY` and `umsh:cs:emergency` derive the same key) is reserved for emergency communications. Repeaters should prioritize forwarding packets on this channel.
 
 - Maximum flood hops: **5** without a region code, **7** with a region code.
-- Chat messages **must not** be encrypted — all emergency traffic must be readable by any node in range, including nodes that have not explicitly joined the channel.
+- Chat messages **must not** be encrypted—all emergency traffic must be readable by any node in range, including nodes that have not explicitly joined the channel.
 - Chat messages **must** include the full source key (`S=1`).
 - Chat messages **must** include an EdDSA signature in the payload.
 - Messages that do not meet all three requirements (unencrypted, full source key, signed) **must not** be accepted or displayed by the user interface.
@@ -114,4 +114,4 @@ These requirements ensure that emergency traffic is universally readable, attrib
 
 ## Payload Reuse
 
-Application-layer channel communication reuses the same payload types as unicast. For example, group chat uses the same [text message](app-text-messages.md) and [chat room](app-chat-rooms.md) payload formats as direct messaging. However, not all application types are valid over multicast — see [Payload Types](payload-format.md) for compatibility.
+Application-layer channel communication reuses the same payload types as unicast. For example, group chat uses the same [text message](app-text-messages.md) and [chat room](app-chat-rooms.md) payload formats as direct messaging. However, not all application types are valid over multicast—see [Payload Types](payload-format.md) for compatibility.

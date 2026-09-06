@@ -87,7 +87,7 @@ pub struct CaptureArgs {
     /// Decode nothing for a human: whatever reads the capture dissects
     /// it itself.
     ///
-    /// Not a command-line flag — it belongs to the extcap interface,
+    /// Not a command-line flag—it belongs to the extcap interface,
     /// where Wireshark is the consumer. Narrating each frame there would
     /// decode every packet twice and fill Wireshark's log with output
     /// that reads like dissection but is not.
@@ -174,7 +174,7 @@ enum Stop {
     /// The capture was asked to stop; the tool is not in trouble.
     ///
     /// Either the user interrupted it, or whoever was reading the
-    /// capture went away — Wireshark closing an extcap FIFO is a normal
+    /// capture went away—Wireshark closing an extcap FIFO is a normal
     /// end to a capture, not a failure worth recovering from.
     Interrupted,
 }
@@ -309,7 +309,7 @@ async fn capture_once(app: &mut App, args: &CaptureArgs, stats: &mut Stats) -> R
     // factory deliver-everything rule cannot be relied on; bypass the
     // filtering for this session (`PROP_MAC_PROMISCUOUS` is
     // session-scoped and reverts on detach). A device that predates the
-    // property refuses the set — capture then sees only frames matching
+    // property refuses the set—capture then sees only frames matching
     // its receive filtering.
     match session.device.set_prop(prop::MAC_PROMISCUOUS, &[1]).await {
         Ok(_) => println!("promiscuous mode enabled"),
@@ -422,7 +422,7 @@ async fn dump(
             continue;
         }
         // A frame the device transmitted itself was never received, so
-        // there is no signal to report — and the zeroes standing in for
+        // there is no signal to report—and the zeroes standing in for
         // one would read as a measurement.
         let mut meta = if info.origin.is_measured() {
             format!(

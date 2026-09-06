@@ -3,8 +3,8 @@ import UMSHMobileCore
 
 /// Who this device talks to, and who may change it.
 ///
-/// Two tables of public keys, edited one entry at a time — a device takes an
-/// insert or a remove, not a list — and saved once when the operator is
+/// Two tables of public keys, edited one entry at a time—a device takes an
+/// insert or a remove, not a list—and saved once when the operator is
 /// done. Both lists apply as they are edited rather than behind an Apply
 /// button, because each entry is its own exchange with the device and there
 /// is nothing to batch.
@@ -28,7 +28,7 @@ struct RemotePeerNodesScreen: View {
             RemoteProblemSection(model: model)
         }
         // Rows arrive and leave because the device answered a write and the
-        // reading republished — a plain model update that animates nothing
+        // reading republished—a plain model update that animates nothing
         // on its own. Unlike the region editors, an entry added here comes
         // out of a menu, not out of text already sitting where the row
         // lands, so the new row itself is what should animate in. Keyed on
@@ -111,7 +111,7 @@ struct RemotePeerNodesScreen: View {
     private var footer: String {
         var footer = "These nodes can read and change this device's settings over the mesh."
         if administrators.contains(where: \.isThisPhone) {
-            footer += " This phone cannot remove itself — connect over Bluetooth to do that."
+            footer += " This phone cannot remove itself—connect over Bluetooth to do that."
         }
         return footer
     }
@@ -130,7 +130,7 @@ struct RemotePeerNodesScreen: View {
     /// One key a device holds, as a node.
     ///
     /// Every key that reads as a node opens that node's page, whether or not
-    /// this phone has it saved — an unsaved one arrives there as itself, and
+    /// this phone has it saved—an unsaved one arrives there as itself, and
     /// saving it is what that page's own action is for. Removal is a swipe
     /// rather than a button on the row, so tapping a node does what tapping
     /// a node does everywhere else.

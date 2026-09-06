@@ -17,8 +17,8 @@ flow control. The framing mechanism depends on the underlying transport:
   exactly as used by Spinel.
 * BLE uses the GATT frame transport defined in
   [ULCP over BLE](ulcp-ble.md).
-* A reliable, in-order byte stream standing in for a serial link — a TCP
-  connection to a bridged port, say — uses the same HDLC-Lite framing.
+* A reliable, in-order byte stream standing in for a serial link—a TCP
+  connection to a bridged port, say—uses the same HDLC-Lite framing.
 
 In this chapter, the **device** is the side that owns the transceiver and
 the **host** is the side that attaches to it over the local link (see
@@ -154,7 +154,7 @@ no arguments.
 
 ## Commands
 
-This chapter defines the commands that operate on the protocol itself —
+This chapter defines the commands that operate on the protocol itself—
 resets, liveness, and the property grammar. The remaining commands are
 defined with the subsystem they act on: `CMD_STR_SEND` and `CMD_STR_RECV`
 in [Frame Transport](ulcp-transport.md), `CMD_QUEUE_DRAIN` in
@@ -272,7 +272,7 @@ accordingly to the status code for the error.
 The value reported by that `CMD_PROP_IS` need not be the value written: a
 device that adjusts a write to what it can honor reports the result, and
 that result is the property's value. A write fails only by way of
-`PROP_LAST_STATUS` — a differing value is a successful write, not a
+`PROP_LAST_STATUS`—a differing value is a successful write, not a
 rejected one.
 
 ### CMD 4: (Host -> Device) `CMD_PROP_INSERT` {#cmd-prop-insert}
@@ -376,7 +376,7 @@ of zero when the device adds an item to a multi-value property for its own
 reasons.
 
 The payload is the property identifier followed by the inserted item as
-the device reports it (see [Multi-Value Properties](ulcp-core.md#multi-value-properties)) — never in a
+the device reports it (see [Multi-Value Properties](ulcp-core.md#multi-value-properties))—never in a
 form containing key material.
 
 ### CMD 8: (Device -> Host) `CMD_PROP_REMOVED` {#cmd-prop-removed}
@@ -420,7 +420,7 @@ This differs from [`CMD_RST`](#cmd-reset), which returns protocol state to
 its post-reset values with the device still running, and from
 [`CMD_FACTORY_RESET`](ulcp-saved-state.md#cmd-factory-reset), which erases
 that state before restarting. Between the three, this is the one that
-changes nothing — it is how a host clears a condition the protocol cannot
+changes nothing—it is how a host clears a condition the protocol cannot
 name.
 
 The command payload SHOULD be empty and MUST be ignored. A device that
@@ -430,7 +430,7 @@ the device's subsequent reappearance announcing `STATUS_RESET_POWER_ON`)
 as completion, and MUST NOT wait for a `PROP_LAST_STATUS`.
 
 This command is only available on devices advertising `CAP_REBOOT`.
-A device without it answers `STATUS_UNIMPLEMENTED` — which is the only
+A device without it answers `STATUS_UNIMPLEMENTED`—which is the only
 response this command ever produces, and the only thing that distinguishes
 a device that declined from one that is already restarting.
 
@@ -475,7 +475,7 @@ Figure: Structure of `CMD_PROP_MULTI_SET`
 
 Set several property values in order. The payload is a sequence of
 entries, each the combined length of its key and value encoded as a
-packed unsigned integer, followed by that many octets — the property
+packed unsigned integer, followed by that many octets—the property
 identifier as a packed unsigned integer, then the value:
 
 ~~~
@@ -492,9 +492,9 @@ entry alone: the sequence is not a transaction, and a failure partway
 leaves the earlier entries applied.
 
 The reply is a single [`CMD_PROP_ARE`](#cmd-prop-are) containing, for
-each applied entry in order, the property and its reported value —
+each applied entry in order, the property and its reported value—
 exactly what the `CMD_PROP_IS` answering a lone `CMD_PROP_SET` would
-carry — and, for the failing entry, a `PROP_LAST_STATUS` entry carrying
+carry—and, for the failing entry, a `PROP_LAST_STATUS` entry carrying
 the error, after which the reply ends. Entries past the failure are not
 executed and contribute nothing; a reply whose every entry is a success
 covers the entire request.
@@ -517,7 +517,7 @@ Figure: Structure of `CMD_PROP_ARE`
 Multiple property value notification. The payload is a sequence of
 entries in the same encoding as `CMD_PROP_MULTI_SET`: a combined
 key-and-value length as a packed unsigned integer, the property
-identifier, and the value as the device reports it — under the same
+identifier, and the value as the device reports it—under the same
 reporting rules as `CMD_PROP_IS`, so key material never appears (see
 [Multi-Value Properties](#multi-value-properties)).
 
@@ -542,7 +542,7 @@ session-scoped property is back at its documented default under a host
 that did not ask for it. The TID **MUST** be zero: the frame is always
 unsolicited.
 
-**REASON** is a packed unsigned integer. It is diagnostic — a host's
+**REASON** is a packed unsigned integer. It is diagnostic—a host's
 obligation is the same for every value:
 
 Value | Meaning
@@ -606,7 +606,7 @@ filter tables of the device and host domains are mutable ones.
 The host writes items (`CMD_PROP_SET`, `CMD_PROP_INSERT`) in the
 property's **item form**. When the device reports items (`CMD_PROP_IS`,
 `CMD_PROP_INSERTED`, `CMD_PROP_REMOVED`), it reports them exactly as
-written — except where the item form contains symmetric key material. Such
+written—except where the item form contains symmetric key material. Such
 a property documents what is reported instead: the entry with its key
 material omitted, or a short derived **digest form** (a channel key is
 reported as its derived channel identifier), so that secrets can never be
@@ -614,16 +614,16 @@ read back (see [Provisioning Security](ulcp-core.md#provisioning-security)).
 
 The commands valid on a mutable multi-value property are:
 
-* `CMD_PROP_GET` — the device replies with `CMD_PROP_IS` whose value is the
+* `CMD_PROP_GET`—the device replies with `CMD_PROP_IS` whose value is the
   concatenation of all items as reported. If the property is documented
   as having an item length prefix, each item is preceded by its length in
   octets encoded as a packed unsigned integer; properties whose reported
   items are fixed-size omit the prefix.
-* `CMD_PROP_SET` — replaces the entire contents with the items encoded in
+* `CMD_PROP_SET`—replaces the entire contents with the items encoded in
   the value, each in item form (with the same length-prefix rule). Setting
   an empty value clears the property. Success is reported with a
   `CMD_PROP_IS` carrying the new complete value as reported.
-* `CMD_PROP_INSERT` / `CMD_PROP_REMOVE` — add or remove one item, as
+* `CMD_PROP_INSERT` / `CMD_PROP_REMOVE`—add or remove one item, as
   defined above.
 
 Hosts manipulating large tables **SHOULD** prefer `Insert`/`Remove` over
@@ -641,9 +641,9 @@ closed:
 * Whole-table replacement is atomic: no observer of device behavior (frame
   filtering, acknowledgement decisions) sees a mixture of the old and new
   contents.
-* Operations that include durable writes — `CMD_SAVE`, `CMD_CLEAR`,
+* Operations that include durable writes—`CMD_SAVE`, `CMD_CLEAR`,
   installing or generating the device identity, and setting
-  `PROP_BLE_PAIRING_PIN` — **MUST NOT** report success before the durable
+  `PROP_BLE_PAIRING_PIN`—**MUST NOT** report success before the durable
   write has completed.
 * On any failure, the prior live and durable state remains unchanged, and
   the device **MUST NOT** emit `CMD_PROP_IS`, `CMD_PROP_INSERTED`, or
@@ -654,7 +654,7 @@ closed:
 
 Atomicity is per operation, not per sequence. Establishing a host domain
 is several property writes, and an interruption between them leaves a
-mixture of old and new — bounded by the fact that a host-key change resets
+mixture of old and new—bounded by the fact that a host-key change resets
 the domain first and a reboot empties it. A host repairs this the same way
 it provisions in the first place: by writing everything again.
 
@@ -782,8 +782,8 @@ same firmware release covers several models, and a model outlives every
 release built for it.
 
 Firmware built for one specific board **SHOULD** implement this. A device
-whose hardware has no fixed identity — a simulator, or an implementation that
-runs on whatever it is compiled for — **SHOULD** omit the property rather than
+whose hardware has no fixed identity—a simulator, or an implementation that
+runs on whatever it is compiled for—**SHOULD** omit the property rather than
 return an empty or invented string. A host **MUST** treat a refused get as
 "this device does not name its hardware" and continue.
 
@@ -856,7 +856,7 @@ State that belongs to the device itself, independent of which
 host is attached:
 
 * the device identity keypair (independently persisted; never part of
-  the saved snapshot — see [Saved State](ulcp-saved-state.md#saved-state))
+  the saved snapshot—see [Saved State](ulcp-saved-state.md#saved-state))
 * the device identity's channel keys ([`PROP_DEV_CHANNEL_KEYS`](ulcp-device.md#prop-dev-channel-keys)) and peer
   list ([`PROP_DEV_PEERS`](ulcp-device.md#prop-dev-peers))
 * the RF configuration (`PROP_PHY_*`), including `PROP_PHY_ENABLED`, and
@@ -891,14 +891,14 @@ default.
 
 It emphatically does survive a *disconnect*. A detached radio keeps
 filtering, queueing and acknowledging on behalf of its host for as long as
-it stays powered — that is the entire value of the host domain, and
+it stays powered—that is the entire value of the host domain, and
 nothing about the host going out of range changes what the host wants
 done.
 
 The two together give the host a simple rule with no detection in it: a
 host **MUST** establish its complete host domain on every tethered
 attach, writing every part of it rather than reasoning about what the
-device already holds. Key material cannot be compared anyway — the key
+device already holds. Key material cannot be compared anyway—the key
 tables never read it back (see [Provisioning Security](ulcp-core.md#provisioning-security)), so a
 peer's pairwise keys can be replaced without changing anything the host
 can observe. Where the device is already provisioned as asked, the rewrite
@@ -932,12 +932,12 @@ use are listed in the
 
 How attach and detach are detected is defined by the transport binding:
 
-* **BLE** — enabling/disabling notifications on Frame Out, as specified in
+* **BLE**—enabling/disabling notifications on Frame Out, as specified in
   [ULCP over BLE](ulcp-ble.md#attach-semantics).
-* **USB-CDC** — assertion and deassertion of DTR on the ULCP
+* **USB-CDC**—assertion and deassertion of DTR on the ULCP
   interface.
-* **TCP** — establishment and closure of the connection.
-* **Bare UART** — implementation-defined. A device with no way to detect
+* **TCP**—establishment and closure of the connection.
+* **Bare UART**—implementation-defined. A device with no way to detect
   host presence MAY treat the host as permanently attached, in which case
   it never enters detached operation and offline assistance
   ([Inbound Queueing](ulcp-host.md#inbound-queueing), [Acknowledgement Delegation](ulcp-host.md#ack-delegation)) is unavailable on that
@@ -960,7 +960,7 @@ procedure is **RECOMMENDED**:
    reset since the last host command, so any state that is not restored
    from saved state (notably queue contents) has been lost.
 2. `CMD_PROP_GET` for `PROP_HOST_KEY`. An empty value is the ordinary
-   case after a power cycle — the host domain does not survive one — and
+   case after a power cycle—the host domain does not survive one—and
    the host simply provisions. A value matching the host's own identity
    means its provisioning is still live from before the disconnect. Any
    *other* value means another host has taken the radio over since this
@@ -999,7 +999,7 @@ delegation (if enabled) becomes active.
 
 Provisioning moves real key material onto the device, within the limits of the
 [security boundary](ulcp.md#security-boundary): channel keys and
-per-peer symmetric keys — and the device identity's own private key —
+per-peer symmetric keys—and the device identity's own private key—
 but never the host's private key. The rules:
 
 * **All symmetric key material, and the device identity private key, is
@@ -1010,13 +1010,13 @@ but never the host's private key. The rules:
   and never the device private key. This holds for **both** identities'
   key tables. These read-backs let the host verify *what* is provisioned
   after a reconnect without any secret ever crossing the link a second
-  time —
+  time—
   which matters because more than one host may be able to attach over the
   radio's lifetime (transport bonds are possession credentials, not
   identity credentials), and a later host must not be able to extract an
   earlier host's keys.
-* Commands that carry key material — `CMD_PROP_SET` and `CMD_PROP_INSERT`
-  for the key tables, and any set of `PROP_DEV_PRIVATE_KEY` — **MUST NOT**
+* Commands that carry key material—`CMD_PROP_SET` and `CMD_PROP_INSERT`
+  for the key tables, and any set of `PROP_DEV_PRIVATE_KEY`—**MUST NOT**
   be carried over a transport that does not meet the requirements of the
   transport's security binding: physical possession for serial transports,
   or an encrypted bonded LESC link as specified in
@@ -1113,14 +1113,14 @@ Id | Name
 
 `STATUS_CURSOR_INVALID`
 : The cursor presented in a [Node Management](app-node-management.md#cursors)
-  continuation is not one the device can honor — it does not parse, it was
+  continuation is not one the device can honor—it does not parse, it was
   issued for a different request, or the underlying data has changed so
   that the position is meaningless. The administrator restarts the read
   from an initial, cursor-less request.
 
 `STATUS_NOT_PERMITTED`
 : The property or command exists, but the binding the request arrived
-  over is not allowed to perform it — in particular, a [Node
+  over is not allowed to perform it—in particular, a [Node
   Management](app-node-management.md#authorization) write to a property
   reserved to the tethered host. Distinct from `STATUS_PROP_NOT_FOUND`
   and `STATUS_INVALID_COMMAND`: the operation would be accepted from a

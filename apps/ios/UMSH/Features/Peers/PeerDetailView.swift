@@ -8,7 +8,7 @@ struct PeerDetailView: View {
     private let pushedPeer: PeerSummary
 
     /// This peer as it stands now. A peer's details change while this view is
-    /// open — an identity response lands, or a reply teaches a route — and a
+    /// open—an identity response lands, or a reply teaches a route—and a
     /// value captured at push time would show none of it. Resolved by address
     /// so call sites that construct a synthetic summary (the radio's own
     /// identity, a device being set up) still converge on the stored row.
@@ -45,7 +45,7 @@ struct PeerDetailView: View {
     let updateDraft: ((Int64, String) async -> Void)?
     let sendMessage: ((DirectConversationSummary, String) async -> MessageSendResult)?
     let messageActions: ChatMessageActions
-    /// Offered when this node may not exist locally yet — a device the
+    /// Offered when this node may not exist locally yet—a device the
     /// phone is configuring, say. Saving records it in Peers and sends
     /// nothing to the node.
     let savePeer: (() async -> Bool)?
@@ -71,8 +71,8 @@ struct PeerDetailView: View {
     // eventually reaches this pushed view.
     @State private var currentFavorite: Bool
     /// What the watch switch was just set to, held only until the stored row
-    /// catches up. Unlike the favorite flag, this one also clears itself —
-    /// the watch coming due disarms it — so the stored value wins the moment
+    /// catches up. Unlike the favorite flag, this one also clears itself—
+    /// the watch coming due disarms it—so the stored value wins the moment
     /// it moves rather than the local copy standing in indefinitely.
     @State private var pendingWatch: Bool?
     /// What is in the name field. Empty means the peer has no name of this
@@ -130,7 +130,7 @@ struct PeerDetailView: View {
             Section {
                 // The name is the field, edited where it is shown, so there
                 // is no second row saying the same name again under another
-                // word. The hint is not written out either — the avatar is
+                // word. The hint is not written out either—the avatar is
                 // the hint, drawn.
                 HStack(spacing: 16) {
                     PeerAvatar(hint: peer.identity.hint, diameter: 64)
@@ -150,7 +150,7 @@ struct PeerDetailView: View {
                                     if !focused { Task { await saveName() } }
                                 }
                                 // Sitting there, this is a label and reads
-                                // like one — the advertised name in full
+                                // like one—the advertised name in full
                                 // strength, not the gray of a field waiting
                                 // to be filled. The gray placeholder beneath
                                 // is uncovered only once editing starts,
@@ -167,7 +167,7 @@ struct PeerDetailView: View {
                             Text(displayedName).font(.title2.bold())
                         }
                         // The node's own claim, refreshed whenever a fresher
-                        // identity lands — not a local category anyone has to
+                        // identity lands—not a local category anyone has to
                         // keep correct.
                         Text(peer.isUlcpDevice ? "Companion radio identity" : peer.role.label)
                             .foregroundStyle(.secondary)
@@ -194,7 +194,7 @@ struct PeerDetailView: View {
                         }
                     ))
                 }
-                // A one-shot watch, offered wherever a row exists to hold it —
+                // A one-shot watch, offered wherever a row exists to hold it—
                 // transient nodes included, since a node heard once and not
                 // saved is exactly the kind one waits to hear again. Not the
                 // attached radio: it is not something this phone waits for.
@@ -250,7 +250,7 @@ struct PeerDetailView: View {
                                 // A Button's label inside a Form row is tinted
                                 // with the accent color, which the prominent
                                 // style overrides for the title but not for the
-                                // icon — leaving a blue glyph on a blue fill.
+                                // icon—leaving a blue glyph on a blue fill.
                                 Label("Message", systemImage: "message.fill")
                                     .foregroundStyle(.white)
                                     .frame(maxWidth: .infinity)
@@ -295,7 +295,7 @@ struct PeerDetailView: View {
                     // hiding this behind what the mesh has heard would hide
                     // it exactly where it works. Silence is the answer, and
                     // the screen behind this says so in a sentence. The
-                    // companion radio is offered too — its backend is its
+                    // companion radio is offered too—its backend is its
                     // own link rather than the mesh, and the factory makes
                     // that call per peer.
                     if let management = actions.manageDevice {
@@ -387,7 +387,7 @@ struct PeerDetailView: View {
         // No navigation title: the name is already the first thing on the
         // screen, beside the avatar, and printing it twice was reading as
         // two different facts. Inline, so the bar does not go on reserving
-        // the height a large title would have taken — and with the list's
+        // the height a large title would have taken—and with the list's
         // own top margin dropped, since that margin exists to separate the
         // content from a title this screen does not have.
         .navigationBarTitleDisplayMode(.inline)
@@ -475,8 +475,8 @@ struct PeerDetailView: View {
     }
 
     /// Whether this node has a stored row at all. The sheet can be opened on
-    /// a synthetic summary — a device being set up, the radio's own identity
-    /// before it is recorded — and those have nothing to favorite or remove.
+    /// a synthetic summary—a device being set up, the radio's own identity
+    /// before it is recorded—and those have nothing to favorite or remove.
     private var isStoredLocally: Bool {
         actions.knownPeers.contains {
             $0.identity.canonicalAddress == pushedPeer.identity.canonicalAddress
@@ -535,8 +535,8 @@ struct PeerDetailView: View {
     }
 
     /// Whether the radio's device identity holds this key. The live radio
-    /// read-back wins when present — `radioSnapshot` is a binding, so it
-    /// stays current inside this pushed view — and the stored cache flag
+    /// read-back wins when present—`radioSnapshot` is a binding, so it
+    /// stays current inside this pushed view—and the stored cache flag
     /// covers a disconnected radio.
     private var isOnDeviceIdentity: Bool {
         if let addresses = radioSnapshot.provisioning?.devPeerAddresses {
@@ -577,7 +577,7 @@ struct PeerDetailView: View {
             // The other half of the same arrangement, and the half people
             // look for: this list is who the radio can reach, and Manage
             // Device is what reaching a node is for.
-            lines.append("Managing this node from here instead is under Manage Device, above — it works if the node lists this phone as one of its administrators.")
+            lines.append("Managing this node from here instead is under Manage Device, above—it works if the node lists this phone as one of its administrators.")
         }
         if let devicePeerNotice {
             lines.append(devicePeerNotice)
@@ -588,7 +588,7 @@ struct PeerDetailView: View {
         } else if !radioReportsDevicePeers {
             lines.append("This radio would not report what its device identity already stores, so this phone cannot change it.")
         } else if deviceListFull, !isOnDeviceIdentity {
-            lines.append("The radio's peer list is full (\(devicePeerCapacity) of \(devicePeerCapacity)) — remove one from the radio first.")
+            lines.append("The radio's peer list is full (\(devicePeerCapacity) of \(devicePeerCapacity))—remove one from the radio first.")
         }
         return lines.joined(separator: " ")
     }
@@ -605,7 +605,7 @@ struct PeerDetailView: View {
         case .success, nil:
             break
         case .deviceFull:
-            devicePeerNotice = "The radio's peer list is full (\(devicePeerCapacity) of \(devicePeerCapacity)) — remove one from the radio first."
+            devicePeerNotice = "The radio's peer list is full (\(devicePeerCapacity) of \(devicePeerCapacity))—remove one from the radio first."
         case .radioUnavailable:
             devicePeerNotice = "Connect a companion radio set up for this phone to change what it stores."
         case .unsupported:
@@ -661,7 +661,7 @@ struct PeerDetailView: View {
 
     /// Store what is in the name field, blank meaning no name of our own.
     ///
-    /// Called on every commit — submitting and leaving the field both — so
+    /// Called on every commit—submitting and leaving the field both—so
     /// it returns early when nothing moved rather than writing the same
     /// name back each time the field loses focus.
     private func saveName() async {
@@ -882,7 +882,7 @@ struct PeerDetailView: View {
         case .unknown, nil:
             return "Nothing learned yet. The next message floods until a reply teaches this phone a path."
         default:
-            return "Learned from this node's last reply. Resetting forgets the path — keys, counters, and messages are untouched — and the next message floods again."
+            return "Learned from this node's last reply. Resetting forgets the path—keys, counters, and messages are untouched—and the next message floods again."
         }
     }
 
@@ -959,7 +959,7 @@ struct PeerDetailView: View {
                     .textSelection(.enabled)
             } else {
                 // Selection is a long press too, and it wins the gesture where
-                // both are offered — the conflict `copyable` documents,
+                // both are offered—the conflict `copyable` documents,
                 // resolved the same way: the menu takes the press and carries
                 // the Copy itself.
                 hopRow(hop)
@@ -1166,7 +1166,7 @@ private struct RouteHop {
     /// router. Nil for the two endpoints and for hops that were only counted,
     /// which is what scopes the row's menu to nodes there is something to ask.
     var hint: MeshRouterHint?
-    /// The node the hint most plausibly names, if any — the same guess that
+    /// The node the hint most plausibly names, if any—the same guess that
     /// produced `title`, kept rather than flattened into it.
     var named: PeerSummary?
     /// The routers ahead of this one, in send order: the path an ask has to be
@@ -1212,7 +1212,7 @@ private struct RouteRefreshKey: Hashable {
 ///
 /// A good signature deliberately renders nothing. It proves only that the
 /// keypair which *is* this address asserted these claims about itself, which
-/// is no evidence the claims are true — a node can sign a fabricated name or
+/// is no evidence the claims are true—a node can sign a fabricated name or
 /// location as easily as a real one. A "verified" badge invites far more
 /// trust than that supports, so the affirmative case stays silent and only a
 /// failure, which is genuinely decision-relevant at import time, speaks up.
@@ -1334,7 +1334,7 @@ private enum PeerPingStatus: Equatable {
 }
 
 private extension PeerPingReply {
-    /// A reply without a count is not one that failed to report — it arrived
+    /// A reply without a count is not one that failed to report—it arrived
     /// source-routed with no trace, so it crossed hops nobody recorded. Say
     /// that, rather than a number nobody measured.
     var hopCountText: String {

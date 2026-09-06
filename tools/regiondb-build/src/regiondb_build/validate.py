@@ -74,8 +74,8 @@ def check_sampling(db: RegionDb, count: int, seed: int) -> list[str]:
     """Compare the cached path against an exhaustive scan.
 
     Half the positions are uniform over the sphere, half are jittered off the
-    vertices of stored geometry so that the boundary cases — the only ones the
-    cache cannot answer by itself — are densely covered.
+    vertices of stored geometry so that the boundary cases—the only ones the
+    cache cannot answer by itself—are densely covered.
     """
     generator = random.Random(seed)
     failures: list[str] = []

@@ -1,4 +1,4 @@
-# UMSH coloring rules — import from Wireshark's View → Coloring Rules → Import,
+# UMSH coloring rules—import from Wireshark's View → Coloring Rules → Import,
 # or run `make install-colorfilters` to prepend this to the personal rule set.
 #
 # A Lua dissector cannot color a packet-list row; only a coloring rule can.

@@ -14,7 +14,7 @@ struct LocalIdentitySnapshot: Equatable, Identifiable, Sendable {
 /// The third case is the one that needs a name. Deleting an app removes its
 /// container; it does not remove its Keychain items. A reinstall therefore
 /// finds the previous install's node key sitting on top of an empty
-/// database — the same identity to everyone on the mesh, with none of the
+/// database—the same identity to everyone on the mesh, with none of the
 /// conversations, peers, or channels that were keyed to it.
 enum StoredIdentity: Equatable, Sendable {
     /// Nothing on file: a genuinely new phone.
@@ -105,7 +105,7 @@ actor KeychainIdentityVault: IdentityVault {
     /// locked-phone background relaunch cannot read. Rewrite them as
     /// AfterFirstUnlock (still device-only, non-synchronizing). Best-effort:
     /// the secret is already in hand, so a failed migration only means the
-    /// next locked-phone relaunch cannot attach — same as before.
+    /// next locked-phone relaunch cannot attach—same as before.
     private func migrateAccessibilityIfNeeded(item: [CFString: Any], secret: Data) {
         let accessible = item[kSecAttrAccessible] as? String
         guard accessible != (kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly as String) else {
@@ -215,7 +215,7 @@ actor KeychainIdentityVault: IdentityVault {
 /// that outlives the app: the whole point is to hold something iOS *does*
 /// destroy on delete, so that a key with no anchor beside it is a key from
 /// an install that is gone. A file in Application Support is exactly that,
-/// and it survives the things that should not count as a reinstall — an
+/// and it survives the things that should not count as a reinstall—an
 /// upgrade, a restore, a device migration.
 ///
 /// Every operation is best-effort. An anchor that cannot be written leaves

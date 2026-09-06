@@ -1,7 +1,7 @@
 //! Buzzer melody engine.
 //!
 //! Pure-logic sequencer that plays short melodies on the T1000-E's
-//! piezo buzzer (P0.25, enable P1.05 — see `docs/hardware/t1000e-hardware.md`).
+//! piezo buzzer (P0.25, enable P1.05—see `docs/hardware/t1000e-hardware.md`).
 //! Symmetric in shape to the [`led`](crate::led) module, but with
 //! tones instead of on/off pulses and with silence semantics.
 //!
@@ -10,7 +10,7 @@
 //! - **Power-on:** rising melody.
 //! - **Power-off:** falling melody.
 //! - **Silence mode** (toggled by double-press) suppresses the buzzer
-//!   entirely. The LED is **not** affected by silence — that mapping
+//!   entirely. The LED is **not** affected by silence—that mapping
 //!   belongs to the LED engine, not here.
 //! - **Silence mid-melody** cuts the current melody short, so the
 //!   user's silence request is honored immediately rather than
@@ -116,7 +116,7 @@ pub mod melodies {
     ]);
 
     /// Receiver switched on: two pips at one pitch, then a higher held
-    /// note — "searching, and now looking".
+    /// note—"searching, and now looking".
     ///
     /// Deliberately not another rising ramp. `POWER_ON` and `POWER_OFF`
     /// already own that shape, and a fourth ramp would be a tone the
@@ -146,7 +146,7 @@ pub mod melodies {
     ]);
 
     /// Receiver switched off: the held note first, falling away into two
-    /// low pips — [`GNSS_ON`] in reverse.
+    /// low pips—[`GNSS_ON`] in reverse.
     pub static GNSS_OFF: Melody = Melody::new(&[
         Tone {
             frequency_hz: 2_600,
@@ -174,7 +174,7 @@ pub mod melodies {
     /// four-note run up E-G-B to C, about a fifth of a second all told.
     ///
     /// Lifted from MeshCore, whose companion firmware plays it for the
-    /// same event — `MsgRcv3:d=4,o=6,b=200:32e,32g,32b,16c7` in RTTTL,
+    /// same event—`MsgRcv3:d=4,o=6,b=200:32e,32g,32b,16c7` in RTTTL,
     /// which at 200 BPM is three 37.5 ms notes and a 75 ms one. Two radios
     /// on the same table should not disagree about what an arriving
     /// message sounds like, and this one is brief enough to go off in a
@@ -201,7 +201,7 @@ pub mod melodies {
     /// Group traffic was taken in for an absent host: two notes falling
     /// G-sharp to C-sharp, an eighth of a second.
     ///
-    /// MeshCore's again — `kerplop:d=16,o=6,b=120:32g#,32c#`, what it
+    /// MeshCore's again—`kerplop:d=16,o=6,b=120:32g#,32c#`, what it
     /// plays for a channel message. Told apart from [`QUEUED_DIRECT`]
     /// three ways over: two notes against four, falling against rising,
     /// and a lower register throughout. The distinction that matters is
@@ -326,8 +326,8 @@ impl ActiveMelody {
 
 /// Where a playing melody currently stands.
 enum Step {
-    /// A note written into the melody — a tone, or a rest when its
-    /// frequency is zero — ending at the given deadline.
+    /// A note written into the melody—a tone, or a rest when its
+    /// frequency is zero—ending at the given deadline.
     Note(Tone, u64),
     /// The dead time a repeating melody waits out before its next pass.
     Gap(u64),
@@ -361,7 +361,7 @@ impl BuzzerEngine {
 
     /// Toggle silence. Engaging silence stops any in-flight melody so
     /// the user's request is honored without waiting for the sequence
-    /// to finish — except a locate alert, which outranks it.
+    /// to finish—except a locate alert, which outranks it.
     pub fn set_silenced(&mut self, silenced: bool) {
         self.silenced = silenced;
         if silenced && !self.alert_active() {
@@ -399,7 +399,7 @@ impl BuzzerEngine {
     }
 
     /// Start a melody. No-op if silenced, and no-op while a locate alert
-    /// is running — an ordinary notification must not displace the alarm
+    /// is running—an ordinary notification must not displace the alarm
     /// someone is currently homing in on.
     pub fn play(&mut self, melody: &'static Melody, now_ms: u64) {
         if self.silenced || self.alert_active() {
@@ -416,7 +416,7 @@ impl BuzzerEngine {
     /// Start the locate alert: `melody` on repeat every `period_ms`,
     /// playing through silence, until [`Self::stop_alert`].
     ///
-    /// Intermittent by construction rather than a continuous tone — a
+    /// Intermittent by construction rather than a continuous tone—a
     /// lost radio is usually a nearly-flat radio, and a periodic chirp is
     /// easier to home in on than a constant one.
     pub fn play_alert(&mut self, melody: &'static Melody, now_ms: u64, period_ms: u64) {
@@ -440,7 +440,7 @@ impl BuzzerEngine {
     ///
     /// [`BuzzerDecision::Silent`] carries no deadline, but a repeating
     /// alert is silent *between* passes and must be woken for the next
-    /// one — a driver that only re-ticks on `Tone` deadlines would play
+    /// one—a driver that only re-ticks on `Tone` deadlines would play
     /// the alert once and stop. Drivers arm a timer on this whenever the
     /// decision is `Silent`.
     pub fn next_deadline_ms(&self, now_ms: u64) -> Option<u64> {
@@ -566,14 +566,14 @@ mod tests {
     /// A gap between notes has to be distinguishable from the end of
     /// the melody. A driver that powers its sounder down for the one
     /// pays a warm-up to bring it back, and the T1000-E's warm-up
-    /// rewinds the engine — so reporting a rest as `Silent` made every
+    /// rewinds the engine—so reporting a rest as `Silent` made every
     /// melody containing one restart at each gap and play forever.
     #[test]
     fn a_rest_is_not_the_end_of_the_melody() {
         let mut e = BuzzerEngine::new();
         e.play(&melodies::GNSS_ON, 0);
 
-        // Pip, gap, pip — the gap reports as a rest that still carries
+        // Pip, gap, pip—the gap reports as a rest that still carries
         // the sequence forward.
         assert_eq!(
             e.tick(0),
@@ -899,8 +899,8 @@ mod tests {
 
     #[test]
     fn the_queue_chirps_stay_brief() {
-        // A radio holding mail chirps on its own schedule — whenever a
-        // sender happens to reach it — so this has to be something an
+        // A radio holding mail chirps on its own schedule—whenever a
+        // sender happens to reach it—so this has to be something an
         // operator can have go off in a pocket all afternoon. Both carry
         // MeshCore's own timings; a fifth of a second is the ceiling.
         for melody in [&melodies::QUEUED_DIRECT, &melodies::QUEUED_GROUP] {

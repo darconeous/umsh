@@ -11,7 +11,7 @@ pub const MAX_PAIRING_FAILURES: u8 = 3;
 ///
 /// Lockout is conditioned on `pin_configured` deliberately: it exists to stop
 /// Passkey Entry bit-leak probing, and under Just Works there is no passkey to
-/// leak — gating the unauthenticated path on the same counter would let an
+/// leak—gating the unauthenticated path on the same counter would let an
 /// in-range attacker deny pairing for the rest of the power cycle with three
 /// bad confirm values.
 ///

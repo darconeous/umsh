@@ -1,6 +1,6 @@
 //! Static configuration: the whole of what the daemon knows.
 //!
-//! The role — server or client — is a property of the file rather than
+//! The role—server or client—is a property of the file rather than
 //! the invocation, so a deployment is one unit file and one config, and
 //! `umsh-bridge check` validates the exact artifact that will run.
 
@@ -66,7 +66,7 @@ pub struct ClientEntry {
     /// Interface name, used in log lines and in other clients'
     /// `allow_to`.
     pub name: String,
-    /// This client's identity — the address its `keygen identity`
+    /// This client's identity—the address its `keygen identity`
     /// printed.
     pub address: Address,
     /// Forwarding budget for frames arriving from this client. Absent
@@ -79,7 +79,7 @@ pub struct ClientEntry {
 
 /// A host interface: a plain socket presenting a simulated ULCP device
 /// whose radio is the bridge itself. Whoever connects attaches to the
-/// bridged medium directly, as a host — no radio, no repeater, no
+/// bridged medium directly, as a host—no radio, no repeater, no
 /// tunnel credential.
 ///
 /// The binding is unauthenticated and grants what a serial cable
@@ -114,7 +114,7 @@ pub struct ClientConfig {
     /// `host:port` of the bridge server. Every address it resolves to is
     /// tried, IPv6 and IPv4 alike.
     pub server: String,
-    /// The server's identity — the address its `keygen identity`
+    /// The server's identity—the address its `keygen identity`
     /// printed.
     pub server_address: Address,
     /// SNI name to present. The pinned identity is what authenticates
@@ -139,7 +139,7 @@ pub struct LimitsConfig {
     /// Ceiling applied to `FHOPS_REM` as a frame crosses. Absent leaves
     /// every frame's budget exactly as it arrived, which is the default:
     /// a crossing already spends two hops, one at each end's repeater.
-    /// Set it to hold traffic closer to home — 0 stops a bridged flood
+    /// Set it to hold traffic closer to home—0 stops a bridged flood
     /// at the far side's own segment.
     pub exit_clamp: Option<u8>,
 }
@@ -173,7 +173,7 @@ pub enum RadioConfig {
     /// A ULCP device over BLE, named or discovered.
     Ble {
         /// Radio name or scan id. Absent discovers, which is only
-        /// unambiguous where exactly one radio is in range — name the
+        /// unambiguous where exactly one radio is in range—name the
         /// radio for an unattended deployment.
         selector: Option<String>,
     },
@@ -196,7 +196,7 @@ pub enum RadioConfig {
 ///
 /// A tagged enum would be the obvious shape, but serde buffers an
 /// internally tagged enum's content and `deny_unknown_fields` never
-/// reaches the variant — a misspelled key would be silently ignored,
+/// reaches the variant—a misspelled key would be silently ignored,
 /// which for a daemon's configuration is the worst possible outcome.
 /// Reading the table flat also lets a key belonging to the wrong `type`
 /// be named in the error.

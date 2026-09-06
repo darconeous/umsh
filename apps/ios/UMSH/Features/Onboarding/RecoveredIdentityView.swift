@@ -5,7 +5,7 @@ import SwiftUI
 ///
 /// Deleting an app removes its container but not its Keychain items, so the
 /// node key outlives every message, contact, and channel that was filed
-/// under it. Neither answer is recovery — the records are gone either way.
+/// under it. Neither answer is recovery—the records are gone either way.
 /// What is actually being chosen is whether the mesh keeps seeing the same
 /// node, which is a question about other people's phones, so it is theirs
 /// to answer rather than the app's to assume.

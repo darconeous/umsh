@@ -16,7 +16,7 @@
 //!
 //! Future expansion (LoRa, I²C peripherals, QSPI flash, buttons,
 //! Plus-only back-panel) is welcome but is not yet implemented. The
-//! T-Echo is not a tracker-class device — when a "real" T-Echo firmware
+//! T-Echo is not a tracker-class device—when a "real" T-Echo firmware
 //! arrives, it should be designed against a new `umsh-ux-handheld` (or
 //! similar) class rather than `umsh-ux-tracker`.
 //!

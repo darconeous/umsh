@@ -56,7 +56,7 @@ struct SettingsView: View {
     var seedMessages: ((String, Int) async -> Void)? = nil
 
     /// Has a staged peer message this phone after a short delay, to exercise
-    /// notifications end to end — arrival, styling, and the inline reply.
+    /// notifications end to end—arrival, styling, and the inline reply.
     /// Debug builds only, and meaningful only in staging mode.
     var stagedPeerSendsMessage: ((Bool) -> Void)? = nil
     var stagedPeerReacts: (() -> Void)? = nil
@@ -205,7 +205,7 @@ struct SettingsView: View {
             } header: {
                 Text("Devices")
             } footer: {
-                Text("Configure any nearby UMSH device — a repeater or a tracker — without disturbing this phone's own connection.")
+                Text("Configure any nearby UMSH device—a repeater or a tracker—without disturbing this phone's own connection.")
             }
 
             regionDatabaseSection
@@ -223,7 +223,7 @@ struct SettingsView: View {
             } header: {
                 Text("Background relaunch")
             } footer: {
-                Text("Kills the app the way the system does when it reclaims memory, leaving the saved radio's connection armed. Power the radio on, or have another node send a message, and iOS should relaunch this app with no screen at all — far enough to store the message and raise a notification. Debug builds only.")
+                Text("Kills the app the way the system does when it reclaims memory, leaving the saved radio's connection armed. Power the radio on, or have another node send a message, and iOS should relaunch this app with no screen at all—far enough to store the message and raise a notification. Debug builds only.")
             }
 
             Section {
@@ -268,7 +268,7 @@ struct SettingsView: View {
                 Button("Reset staged data", role: .destructive) {
                     // Leaving staging hands the app back to the real store, so
                     // the emptied database is one nothing is about to write to
-                    // again — and the next time it is switched on, bootstrap
+                    // again—and the next time it is switched on, bootstrap
                     // seeds the staged mesh afresh against that day's clock.
                     stagingEnabled = false
                     Task {
@@ -288,7 +288,7 @@ struct SettingsView: View {
             } header: {
                 Text("Staging")
             } footer: {
-                Text("Replaces this phone's data with a fabricated trail-crew mesh — peers, conversations, reactions and map nodes — and reports a companion radio that is attached, charged and holding a fix. For marketing screenshots. Staged content lives in its own database and never touches your real one. Debug builds only.")
+                Text("Replaces this phone's data with a fabricated trail-crew mesh—peers, conversations, reactions and map nodes—and reports a companion radio that is attached, charged and holding a fix. For marketing screenshots. Staged content lives in its own database and never touches your real one. Debug builds only.")
             }
 
             Section {
@@ -435,7 +435,7 @@ struct IdentityDetailView: View {
             } header: {
                 Text("Announce on a schedule")
             } footer: {
-                Text("Both run only while UMSH is open — iOS gives a suspended app no way to keep talking to the mesh. A beacon publishes the path back to this phone; an identity announcement carries your name and reaches only nodes that can hear you directly. Each interval is a minimum: periods run a little longer at random, so phones on the same schedule do not all transmit at once.")
+                Text("Both run only while UMSH is open—iOS gives a suspended app no way to keep talking to the mesh. A beacon publishes the path back to this phone; an identity announcement carries your name and reaches only nodes that can hear you directly. Each interval is a minimum: periods run a little longer at random, so phones on the same schedule do not all transmit at once.")
             }
 
             Section {
@@ -486,7 +486,7 @@ struct IdentityDetailView: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("Your private key is destroyed and this phone comes back as a different node — nobody will recognize it as you again. Messages and contacts stay on the phone but belong to the old identity, so nothing will show them.")
+            Text("Your private key is destroyed and this phone comes back as a different node—nobody will recognize it as you again. Messages and contacts stay on the phone but belong to the old identity, so nothing will show them.")
         }
         .confirmationDialog(
             "Start over?",
@@ -537,7 +537,7 @@ struct IdentityDetailView: View {
         guard phoneSharesLocation else {
             return "Your identity says nothing about where you are."
         }
-        return "Identity announcements and replies name a \(precisionLabel(UInt8(clamping: phoneLocationPrecision))) area you are inside — never a more precise position than that. The shareable QR code never carries it, and your location is read only while UMSH is open."
+        return "Identity announcements and replies name a \(precisionLabel(UInt8(clamping: phoneLocationPrecision))) area you are inside—never a more precise position than that. The shareable QR code never carries it, and your location is read only while UMSH is open."
     }
 
     /// Live enough for a footer: re-read on every body evaluation, so it
@@ -867,7 +867,7 @@ struct RadioDetailView: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("Permanently erases the radio's saved settings, its device identity, and every Bluetooth pairing, then reboots it to a blank factory state. This cannot be undone — you will need to set the radio up again from scratch.")
+            Text("Permanently erases the radio's saved settings, its device identity, and every Bluetooth pairing, then reboots it to a blank factory state. This cannot be undone—you will need to set the radio up again from scratch.")
         }
         .alert(
             "Factory reset failed",
@@ -965,8 +965,8 @@ struct RadioDetailView: View {
                 Text(snapshot.linkState.accessibilityLabel)
                     .foregroundStyle(.secondary)
             }
-            // A connection attempt has no deadline of its own — Bluetooth
-            // waits indefinitely for a radio that never answers — so the way
+            // A connection attempt has no deadline of its own—Bluetooth
+            // waits indefinitely for a radio that never answers—so the way
             // out stays available at every step rather than appearing only
             // once the link settles.
             if snapshot.linkState != .disconnecting {

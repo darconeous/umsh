@@ -1,6 +1,6 @@
 # Payload Format
 
-The UMSH payload carries higher-layer content — either a network-layer protocol (e.g., 6LoWPAN), a third-party application protocol (e.g., CoAP), or one of the UMSH-defined application protocols (e.g., text messages, chat rooms). The MAC layer treats the payload opaquely; it does not interpret, fragment, or reassemble payload content (see [Layer Separation](introduction.md#layer-separation)).
+The UMSH payload carries higher-layer content—either a network-layer protocol (e.g., 6LoWPAN), a third-party application protocol (e.g., CoAP), or one of the UMSH-defined application protocols (e.g., text messages, chat rooms). The MAC layer treats the payload opaquely; it does not interpret, fragment, or reassemble payload content (see [Layer Separation](introduction.md#layer-separation)).
 
 Payloads are typically prefixed by a 1-byte payload type identifier. Values from 128-255
 (all values with the most significant bit set) are currently *RESERVED*.

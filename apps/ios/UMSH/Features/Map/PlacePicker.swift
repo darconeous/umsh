@@ -19,7 +19,7 @@ struct PlacePicker: View {
     /// would actually advertise and adjustable here. Absent where the
     /// coordinate is taken exactly and there is no cell to draw.
     var precision: UInt8?
-    /// Hand back the crosshair, unrounded, and the grid chosen for it —
+    /// Hand back the crosshair, unrounded, and the grid chosen for it—
     /// which is nil exactly where none was offered. What quantizes the point
     /// is the location encoding, where the value is written rather than
     /// here, so nothing on this screen has committed to anything.
@@ -146,7 +146,7 @@ struct PlacePicker: View {
     /// node reporting from here would disclose.
     ///
     /// Latitude and longitude are each cut into 16ⁿ equal parts and the point
-    /// lands in one of them — that is the encoding's own definition, so the
+    /// lands in one of them—that is the encoding's own definition, so the
     /// box follows from the precision alone. Derived here rather than by
     /// encoding and decoding through the core because it is redrawn on every
     /// frame of a pan.
@@ -192,7 +192,7 @@ struct PlacePicker: View {
             return
         }
         // Framed on the world before CoreLocation is asked anything. A phone
-        // that will not say where it is — refused, or never asked — must
+        // that will not say where it is—refused, or never asked—must
         // still leave a map somebody can move and a place they can take;
         // waiting on the fix to frame anything at all is how a denied
         // permission turns into a picker that cannot pick.

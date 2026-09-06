@@ -3,8 +3,8 @@ import SwiftUI
 /// The app's interface: tabs, sheets, and navigation over a running
 /// ``AppRuntime``.
 ///
-/// Everything with a lifetime longer than a screen — the store, the identity,
-/// the mesh session, the radio streams — belongs to the runtime, which the
+/// Everything with a lifetime longer than a screen—the store, the identity,
+/// the mesh session, the radio streams—belongs to the runtime, which the
 /// app delegate owns and starts at launch. This view reads it, hands its
 /// operations to the feature views as the closure bundles they already take,
 /// and holds only what is genuinely about what is on screen right now.
@@ -57,7 +57,7 @@ struct AppRootView: View {
 
     /// Whether launch bootstrap has yet to finish. It ends only once the
     /// identity is unlocked, the mesh session is installed, and the first
-    /// store read has published — so a list that is empty while this holds
+    /// store read has published—so a list that is empty while this holds
     /// has not been read yet, rather than having nothing in it.
     private var isBootstrapping: Bool { runtime.isLoadingIdentity }
 
@@ -66,7 +66,7 @@ struct AppRootView: View {
     /// Read-derived rather than stored, so it cannot disagree with the two
     /// runtime flags underneath it; writing through it dismisses whichever
     /// screen is up by clearing the flag that raised it. An orphan outranks
-    /// onboarding — there is nothing to introduce until it is answered.
+    /// onboarding—there is nothing to introduce until it is answered.
     private var firstRunBinding: Binding<FirstRunScreen?> {
         Binding(
             get: {
@@ -413,8 +413,8 @@ struct AppRootView: View {
                 await openConversationFromNotification(conversationAddress: address)
             }
         }
-        // Every path into a transcript gets the same reader — the
-        // conversations list, a peer's profile, a notification tap — without
+        // Every path into a transcript gets the same reader—the
+        // conversations list, a peer's profile, a notification tap—without
         // each one carrying it as a parameter.
         .environment(\.transcriptLoader, runtime.transcriptLoader)
         .environment(
@@ -428,8 +428,8 @@ struct AppRootView: View {
                 }
             )
         )
-        // Any region editor below this — the setup sheet, the remote
-        // repeater screen — can ask what covers a place, and read where
+        // Any region editor below this—the setup sheet, the remote
+        // repeater screen—can ask what covers a place, and read where
         // this phone is to ask about. Both are seams rather than data: the
         // database answers, and nothing it is asked about is stored.
         .environment(\.regionService, runtime.regionService)
@@ -437,8 +437,8 @@ struct AppRootView: View {
         // A composer with no radio behind it offers the way to attach one, and
         // the sheet that does it lives here.
         .environment(\.openRadioDetail) { showsRadioDetail = true }
-        // Any peer page below this — in Peers, on the Map, in a transcript's
-        // info view — can aim discovery at the node it is showing. The
+        // Any peer page below this—in Peers, on the Map, in a transcript's
+        // info view—can aim discovery at the node it is showing. The
         // Discover sheet overrides this for its own subtree, so a peer page
         // reached from inside it re-aims that sheet instead.
         .environment(\.askNearbyIdentities, openDiscovery)
@@ -463,7 +463,7 @@ struct AppRootView: View {
         }
     }
 
-    /// Open Discover Peers with its ask aimed at `vantage` — nil for this
+    /// Open Discover Peers with its ask aimed at `vantage`—nil for this
     /// phone's own neighborhood.
     @MainActor
     private func openDiscovery(_ vantage: SolicitVantage?) {
@@ -499,7 +499,7 @@ struct AppRootView: View {
         // Every other notification threads with a transcript that already
         // exists, so reaching here means this one does not: a node the phone
         // was watching for has turned up and has never been messaged. Opening
-        // an empty transcript is what the tap was for — the reason to arm a
+        // an empty transcript is what the tap was for—the reason to arm a
         // watch is to say something once the node is reachable.
         guard let peer = runtime.peers.first(where: {
             $0.identity.canonicalAddress == conversationAddress

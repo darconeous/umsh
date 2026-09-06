@@ -9,9 +9,9 @@ import UMSHMobileCore
 /// The messaging pipeline, alive for the whole process whether or not a
 /// scene ever connects.
 ///
-/// iOS launches this app into the background with no scene at all — for
+/// iOS launches this app into the background with no scene at all—for
 /// CoreBluetooth state restoration today, and for notification actions
-/// later — and everything a background launch needs lives here: the store,
+/// later—and everything a background launch needs lives here: the store,
 /// the identity, the mesh session, the radio streams, and the bootstrap
 /// that ties them together. Views observe this object and call into it;
 /// nothing in it presents UI or assumes a scene exists.
@@ -82,7 +82,7 @@ final class AppRuntime {
     /// An identity left in the Keychain by an install that is gone, waiting
     /// for someone to say whether this phone is still that node.
     ///
-    /// Set only when the container holds nothing that belonged to it — a
+    /// Set only when the container holds nothing that belonged to it—a
     /// key with an anchor, or a key the database still knows, is this
     /// install's and is adopted without asking. Nothing is unlocked, no
     /// session is installed, and no identity is minted while this stands:
@@ -96,7 +96,7 @@ final class AppRuntime {
     let applicationStore: SQLiteApplicationStore?
     /// Why ``applicationStore`` is nil, when it is. Every store call site
     /// degrades to a silent no-op without one, which renders as an account
-    /// with no contacts and no way to add any — indistinguishable from real
+    /// with no contacts and no way to add any—indistinguishable from real
     /// data loss. Keeping the reason lets the UI say what actually happened.
     let applicationStoreError: (any Error)?
     /// The one CoreLocation seam.
@@ -112,7 +112,7 @@ final class AppRuntime {
     /// builds, where nothing can set it.
     private let isStaging: Bool
     /// The last cell pushed into the mesh session, kept so a session
-    /// reinstall — which starts with none — can resume with it rather
+    /// reinstall—which starts with none—can resume with it rather
     /// than waiting for the phone to move.
     private var sharedLocation: MobileMeshSharedLocationRecord?
     /// Mutable, non-visual bookkeeping. A reference type on purpose: the
@@ -187,7 +187,7 @@ final class AppRuntime {
         // a moment when it can be read: iOS relaunches the app in the
         // background for a radio event, and before the phone's first unlock
         // the Keychain refuses the item outright. Without this the process
-        // would run to its end with no identity — no mesh session, and a
+        // would run to its end with no identity—no mesh session, and a
         // radio parked on a host decision the app cannot make. It fires
         // while still in the background, so the phone being unlocked is
         // enough to finish bootstrap and attach.
@@ -220,7 +220,7 @@ final class AppRuntime {
         })
         // The schedules are settings, and a runtime outlives the screen that
         // edits them. The keys contain dots, which rules out key-value
-        // observing, so this watches every defaults write and compares —
+        // observing, so this watches every defaults write and compares—
         // both the comparison and its usual answer are cheap enough to run
         // on the radio's own connection bookkeeping writes.
         observers.append(center.addObserver(
@@ -258,7 +258,7 @@ final class AppRuntime {
                 Task { await self.runBeaconSchedule(seconds: beaconSeconds) }
             )
         }
-        // Keyed on one Int so either change — the toggle or the cell size —
+        // Keyed on one Int so either change—the toggle or the cell size—
         // restarts the readings; zero is "off", which no precision can be.
         let locationKey = phoneSharesLocation ? phoneLocationPrecision : 0
         if locationSharing?.key != locationKey {
@@ -279,8 +279,8 @@ final class AppRuntime {
             // A snapshot is published for every ULCP frame the radio
             // sends, so the same state arrives many times a second while
             // the link is busy. Writing the observed property
-            // unconditionally would re-evaluate every observer — the whole
-            // tab tree included — on each one, which is felt as stutter
+            // unconditionally would re-evaluate every observer—the whole
+            // tab tree included—on each one, which is felt as stutter
             // while typing.
             if radioSnapshot != snapshot {
                 radioSnapshot = snapshot
@@ -399,8 +399,8 @@ final class AppRuntime {
             manageDevice: { [companionAddress = radioSnapshot.deviceIdentity?.canonicalAddress]
                 peer in
                 // The attached companion is managed over its own link;
-                // everyone else — a stale "companion" row from a radio
-                // since replaced included — across the mesh.
+                // everyone else—a stale "companion" row from a radio
+                // since replaced included—across the mesh.
                 peer.identity.canonicalAddress == companionAddress
                     ? self.companionDeviceManagement
                     : self.remoteDeviceManagement
@@ -468,7 +468,7 @@ final class AppRuntime {
             },
             // The attached radio's own key, which is what a managed device
             // sees requests arrive from. The phone's stored identity is the
-            // same bytes rendered, and stands in until a radio can say —
+            // same bytes rendered, and stands in until a radio can say—
             // otherwise a screen opened before one attaches would think
             // none of the listed administrators is this phone.
             phoneNodeKey: {
@@ -526,7 +526,7 @@ final class AppRuntime {
     /// Managing the companion radio itself, over its own link.
     ///
     /// The mesh backend with the transport swapped out: same store, same
-    /// cache rows — the radio is the same node by public address — but
+    /// cache rows—the radio is the same node by public address—but
     /// every exchange goes over the local link, refreshes are cheap enough
     /// to run on sight, and the radio's own announcements stream in as
     /// pushes.
@@ -555,7 +555,7 @@ final class AppRuntime {
         management.setAlert = { _, state in
             // The local write answers on the session snapshot rather than
             // inline; what was asked for stands until the radio's own
-            // announcement — which arrives as a push — corrects it.
+            // announcement—which arrives as a push—corrects it.
             try await self.radioConnection.setAlert(state)
             return state
         }
@@ -574,8 +574,8 @@ final class AppRuntime {
                 throw RemoteManagementError.unavailable
             }
         }
-        // Clearing bonds severs this very link — the bond it arrived on is
-        // one of the bonds forgotten — so it goes over the local path
+        // Clearing bonds severs this very link—the bond it arrived on is
+        // one of the bonds forgotten—so it goes over the local path
         // rather than out onto the mesh and back.
         management.clearBluetoothBonds = { _ in
             try await self.radioConnection.clearBluetoothBonds()
@@ -632,7 +632,7 @@ final class AppRuntime {
     ///
     /// A broadcast frame is unauthenticated at the MAC layer, so it is stored
     /// only when its embedded signature verifies against the claimed sender
-    /// key — anything else could be spoofed by any nearby transmitter. An
+    /// key—anything else could be spoofed by any nearby transmitter. An
     /// Identity Request reply is a unicast the MAC already authenticated and
     /// carries no signature of its own, so it is stored on that basis.
     @MainActor
@@ -670,7 +670,7 @@ final class AppRuntime {
     ///
     /// A beacon carries no payload, so this is the only trace it leaves: no
     /// advertisement, no message, no ping reply. Presence needs no
-    /// authentication to be worth recording — the claim being made is only
+    /// authentication to be worth recording—the claim being made is only
     /// "a frame naming this node was accepted", and a spoofer gains nothing
     /// by making a node look reachable. Nothing is created here: a node this
     /// phone has never saved has no row, and hearing it is not a reason to
@@ -680,7 +680,7 @@ final class AppRuntime {
         guard let peer = heard.resolve(among: peers) else { return }
         // Reloading the whole application state for every accepted frame
         // would be a full transcript read per packet. Skip the write and the
-        // reload when the recorded instant would not visibly move — unless a
+        // reload when the recorded instant would not visibly move—unless a
         // watch is armed, which is the one case where the write does
         // something a second hand cannot show.
         if !peer.notifyWhenHeard,
@@ -705,12 +705,12 @@ final class AppRuntime {
                 // and until it exists the whole UI is a set of controls that
                 // quietly do nothing. The vault reports a genuinely absent
                 // item as none and a Keychain it could not read as a throw,
-                // so this only ever fills a vacancy — a locked phone leaves
+                // so this only ever fills a vacancy—a locked phone leaves
                 // with an error instead and retries later.
                 minted = true
                 localIdentity = try await identityVault.createIdentity()
             case let .orphaned(snapshot):
-                // A key with no anchor, from an install that is gone — or
+                // A key with no anchor, from an install that is gone—or
                 // from a build that predates the anchor, which is the same
                 // key on the same phone with all its records intact. Ask the
                 // store which: a container that still knows this identity is
@@ -744,7 +744,7 @@ final class AppRuntime {
     /// store from it.
     ///
     /// The one sequence that turns an identity into a running app, shared by
-    /// launch, by minting one by hand, and by the two erasures — a phone
+    /// launch, by minting one by hand, and by the two erasures—a phone
     /// that has just destroyed its key comes back exactly the way one that
     /// never had a key comes up.
     @MainActor
@@ -774,7 +774,7 @@ final class AppRuntime {
     /// Decide whether this launch owes the user an introduction.
     ///
     /// A freshly minted identity always does. An identity that was already
-    /// there usually does not — but "already there" includes a flow that was
+    /// there usually does not—but "already there" includes a flow that was
     /// killed halfway through, so the tiebreak is whether the phone carries a
     /// name: one that does has been through setup, by this flow or by hand, and
     /// has nothing left to be shown.
@@ -799,7 +799,7 @@ final class AppRuntime {
     /// Scoped to attempts that actually failed: a phone with no identity yet
     /// reports success with none, and is waiting on onboarding rather than on
     /// anything a retry could change. `isLoadingIdentity` guards against
-    /// overlapping with the launch attempt or with a retry already running —
+    /// overlapping with the launch attempt or with a retry already running—
     /// bootstrap installs the mesh session and rebuilds application state, so
     /// two at once would be two sessions.
     @MainActor
@@ -830,7 +830,7 @@ final class AppRuntime {
     ///
     /// The key is what peers recognize, so keeping it means the mesh sees
     /// the same node it always did. Nothing recovers the records that were
-    /// keyed to it — those went with the container.
+    /// keyed to it—those went with the container.
     @MainActor
     func adoptOrphanedIdentity() async {
         guard orphanedIdentity != nil else { return }
@@ -852,8 +852,8 @@ final class AppRuntime {
     /// come back as a new node.
     ///
     /// The narrow erasure: the key material goes and the database stays.
-    /// What stays is unreachable — every row is keyed by the identity that
-    /// owned it, and that identity no longer exists — so this is the choice
+    /// What stays is unreachable—every row is keyed by the identity that
+    /// owned it, and that identity no longer exists—so this is the choice
     /// for someone who wants a different key rather than a clean phone.
     /// ``startOver()`` is the other one.
     @MainActor
@@ -1000,8 +1000,8 @@ final class AppRuntime {
     /// The readings only need to be good to the disclosed cell, so the
     /// chosen precision sizes both the accuracy asked of CoreLocation and
     /// how far the phone must move before a new cell is pushed. Each
-    /// reading goes to the mesh session immediately — the session holds
-    /// exactly one current cell, so there is no backlog to manage — and
+    /// reading goes to the mesh session immediately—the session holds
+    /// exactly one current cell, so there is no backlog to manage—and
     /// switching off clears the session's copy rather than letting the
     /// last position linger in every later advertisement.
     private func applyLocationSharing() async {
@@ -1016,7 +1016,7 @@ final class AppRuntime {
         let precision = UInt8(clamping: phoneLocationPrecision)
         // A precision change must not wait for the phone to move: the
         // retained reading is re-disclosed at the new cell size now, or
-        // the old — possibly finer — cell would stay on the air until a
+        // the old—possibly finer—cell would stay on the air until a
         // fresh reading cleared the new distance filter.
         if var record = sharedLocation, record.precisionBytes != precision {
             record.precisionBytes = precision
@@ -1063,7 +1063,7 @@ final class AppRuntime {
     /// The first send waits a full interval rather than firing at launch:
     /// an app opened and closed repeatedly would otherwise transmit on
     /// every launch, which is the one thing an interval is supposed to
-    /// prevent. A failed send is skipped rather than retried — the next
+    /// prevent. A failed send is skipped rather than retried—the next
     /// interval is the retry, and there is no backlog worth keeping.
     ///
     /// Each period is scattered later by up to a quarter, as on the radio,
@@ -1312,7 +1312,7 @@ final class AppRuntime {
 
     /// Take a peer off the local identity while keeping its row, history, and
     /// searchability. The mesh session keeps the peer registered when a
-    /// conversation exists — chat continuity is the point of demoting.
+    /// conversation exists—chat continuity is the point of demoting.
     private func demotePeerToTransient(_ peer: PeerSummary) async -> Bool {
         guard let applicationStore, let localIdentity else { return false }
         do {
@@ -1404,8 +1404,8 @@ final class AppRuntime {
 
     // MARK: - Channels
 
-    /// Resolve typed input — a public channel name or a pasted `umsh:cs:` /
-    /// `umsh:ck:` URI — into a preview, with whatever local context the user
+    /// Resolve typed input—a public channel name or a pasted `umsh:cs:` /
+    /// `umsh:ck:` URI—into a preview, with whatever local context the user
     /// needs to see before committing.
     private func previewChannel(_ input: String) async -> Result<ChannelPreview, MeshEngineError> {
         let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1488,7 +1488,7 @@ final class AppRuntime {
                 return .phoneFull
             }
             // Derived here, from the key in hand, because the address map is
-            // otherwise only rebuilt at session start — without this entry,
+            // otherwise only rebuilt at session start—without this entry,
             // "Enter Conversation" and inbound traffic cannot find the
             // channel until the app relaunches.
             if let address = try? await meshEngine.channelConversationAddress(key: preview.key) {
@@ -1594,7 +1594,7 @@ final class AppRuntime {
                 joinedDevice: channel.joinedDevice
             )
             // The address map is otherwise only rebuilt at session start, and
-            // leaving cleared this entry — a rejoin that skipped it would
+            // leaving cleared this entry—a rejoin that skipped it would
             // leave the channel unreachable from chat until relaunch.
             if joined, let address = try? await meshEngine.channelConversationAddress(key: key) {
                 coordinator.channelAddresses[channel.id] = address
@@ -1689,7 +1689,7 @@ final class AppRuntime {
     }
 
     /// Toggle a direct conversation's banners, from the same sheet the
-    /// channel switch lives in — and, through the mute tables, whether a
+    /// channel switch lives in—and, through the mute tables, whether a
     /// companion radio chirps when it takes one of these messages in for a
     /// phone that is away.
     func setConversationNotifications(
@@ -1714,7 +1714,7 @@ final class AppRuntime {
     /// Build the URI that invites someone else to this channel. A named
     /// channel shares only its name; a private one shares the key itself.
     ///
-    /// The name goes out written the way it is read — `umsh:cs:Trail%20Crew`,
+    /// The name goes out written the way it is read—`umsh:cs:Trail%20Crew`,
     /// not the folded form. Recipients percent-decode first and canonicalize
     /// after, so casing travels without changing which channel is meant.
     private func channelInvitation(_ channel: ChannelSummary) async -> String? {
@@ -1792,7 +1792,7 @@ final class AppRuntime {
     /// traffic while the phone is away, then turn delegated
     /// acknowledgement on.
     ///
-    /// Open conversations only — deliberately narrower than the chat
+    /// Open conversations only—deliberately narrower than the chat
     /// registry's union with checkpoints: key material leaves the phone
     /// here, and a conversation the user closed takes its key with it.
     /// Most recent activity first, capped at the radio's table size, so an
@@ -1833,7 +1833,7 @@ final class AppRuntime {
     /// sixteen frames and evicts the oldest to make room, so a busy hour
     /// away is not fully recoverable. There is nothing the user can do about
     /// it and no way to name what was lost, so this goes to the log rather
-    /// than to a banner — the Settings diagnostics row already shows the
+    /// than to a banner—the Settings diagnostics row already shows the
     /// count itself.
     private func noteDroppedFrames(from snapshot: RadioSnapshot) {
         guard let dropped = snapshot.provisioning?.droppedFrames else {
@@ -1859,7 +1859,7 @@ final class AppRuntime {
     /// a channel is muted unless its Notifications toggle is on (channels
     /// default off), a peer is muted when its conversation's toggle is off
     /// (direct conversations default on). Muting reaches the radio's cue
-    /// alone — the traffic is still queued, acknowledged, and drained.
+    /// alone—the traffic is still queued, acknowledged, and drained.
     private func reconcileHostMutes() async {
         guard radioSnapshot.linkState == .attached || radioSnapshot.linkState == .ready,
               radioSnapshot.hostState == .matchesCurrentIdentity,
@@ -2126,9 +2126,9 @@ final class AppRuntime {
     ///
     /// A repeater consumes its own hint while forwarding rather than while
     /// receiving, so a request whose route still names it is one it drops.
-    /// The ask is steered to the hop *before* it — `precedingRouters`, which
+    /// The ask is steered to the hop *before* it—`precedingRouters`, which
     /// is empty for a first hop, since that one is in direct range by
-    /// construction — and narrowed to the router's own two bytes, so it is
+    /// construction—and narrowed to the router's own two bytes, so it is
     /// the only node in that neighborhood that answers.
     private func identifyRouter(
         _ hint: MeshRouterHint,
@@ -2188,7 +2188,7 @@ final class AppRuntime {
     ///
     /// Runs with no scene, often in a process the reply action itself just
     /// launched: bootstrap and the radio link are awaited, briefly, rather
-    /// than assumed. A reply that cannot go out is never queued for later —
+    /// than assumed. A reply that cannot go out is never queued for later—
     /// a compose that fails after persisting shows as the transcript's
     /// `.failed` state as always, and one the radio guard refuses outright
     /// lands in the conversation's draft with a failure notification saying
@@ -2234,7 +2234,7 @@ final class AppRuntime {
 
     /// Keep the text of a reply that never reached the compose pipeline.
     /// Appended under any draft already sitting there rather than replacing
-    /// it — both are words the user typed and has not sent.
+    /// it—both are words the user typed and has not sent.
     private func preserveUndeliveredReply(_ item: ConversationListItem, _ text: String) async {
         let existing = item.draftText
         let combined = existing.isEmpty ? text : existing + "\n" + text
@@ -2258,7 +2258,7 @@ final class AppRuntime {
     }
 
     /// Wait for a main-actor condition to hold, or for the deadline. The
-    /// states involved — bootstrap fields, the radio snapshot — publish no
+    /// states involved—bootstrap fields, the radio snapshot—publish no
     /// completion signal to await, and a coarse poll is enough for the two
     /// launch-scale waits a notification reply performs.
     private func waitUntil(timeout: Duration, _ condition: () -> Bool) async {
@@ -2296,7 +2296,7 @@ final class AppRuntime {
     /// this content. Either way they end up with the message once. (The store
     /// recognizes an edit that changes nothing and does not annotate the
     /// message "Edited" for it.) The edit hands the row its own delivery
-    /// tracking as any edit does, so the badge clears — or comes back — on
+    /// tracking as any edit does, so the badge clears—or comes back—on
     /// the resend's real fate.
     func resendMessage(
         _ conversation: ConversationListItem,
@@ -2318,7 +2318,7 @@ final class AppRuntime {
         }
     }
 
-    /// Send a failed message's text again as a genuinely new message — the
+    /// Send a failed message's text again as a genuinely new message—the
     /// path for failures too old to resend as an edit of themselves: their
     /// wire ID has slid out of the reference window peers keep, so an
     /// in-place revision could no longer land anywhere.
@@ -2326,7 +2326,7 @@ final class AppRuntime {
     /// The old row is removed only after the new compose is durable and
     /// released; a compose that fails leaves the transcript exactly as it
     /// was. On success the failed bubble disappears and the same words
-    /// arrive at the bottom as the newest message — a fresh wire identity
+    /// arrive at the bottom as the newest message—a fresh wire identity
     /// with its own delivery tracking. A peer who did receive the original
     /// will see it twice; at this age, the resend being asked for is
     /// literally "send these words again."
@@ -2852,14 +2852,14 @@ final class AppRuntime {
     /// What a staged peer says when asked to speak, cycled so repeated tests
     /// stay tellable apart.
     private static let stagedPeerLines = [
-        "Radio check — you copy?",
+        "Radio check—you copy?",
         "Heading up the ridge now.",
         "Found the cache, all good.",
         "Back at basecamp before dark.",
     ]
 
     /// Staging only: have a staged peer message this phone after a short
-    /// delay — long enough to background the app or lock the screen, which
+    /// delay—long enough to background the app or lock the screen, which
     /// is the point of testing a notification. A no-op on a real radio.
     ///
     /// `onChannel` sends to the staged group chat instead of this phone. The
@@ -3031,8 +3031,8 @@ final class AppRuntime {
         )) ?? false
     }
 
-    /// Render wire router hints for display. A hint the core rejects — a
-    /// wrong-width option, say — is dropped rather than shown as raw bytes:
+    /// Render wire router hints for display. A hint the core rejects—a
+    /// wrong-width option, say—is dropped rather than shown as raw bytes:
     /// the route reads as incomplete, which it is.
     private func renderRouterHints(_ hints: [Data]) async -> [MeshRouterHint] {
         var rendered: [MeshRouterHint] = []
@@ -3048,7 +3048,7 @@ final class AppRuntime {
     }
 
     /// Solicit a peer's current identity over the mesh. The response is not
-    /// awaited here — it returns asynchronously as a node-identity
+    /// awaited here—it returns asynchronously as a node-identity
     /// advertisement, captured by `applyReceivedAdvertisement`, which upserts
     /// the fresh bundle and refreshes the sheet. Returns whether the request
     /// was sent, for a brief UI confirmation.
@@ -3067,7 +3067,7 @@ final class AppRuntime {
     }
 
     /// Record that we just heard from a peer by any inbound evidence. Safe to
-    /// call for peers not yet saved locally — the store no-ops on a missing
+    /// call for peers not yet saved locally—the store no-ops on a missing
     /// row. Callers reload application state afterward to surface the change.
     ///
     /// Every piece of evidence goes through here, which is what makes it the
@@ -3159,7 +3159,7 @@ final class AppRuntime {
         }
         do {
             // Edits whose originals this phone never stored come back from the
-            // store as materialized message rows — the shape a resend takes
+            // store as materialized message rows—the shape a resend takes
             // when the original never arrived. The engine could not flag them
             // `notify`, so they join the notification pass by hand.
             var materialized: [MobileChatMutationRecord] = []
@@ -3290,7 +3290,7 @@ final class AppRuntime {
             guard attempts >= Self.chatBatchAttemptLimit else { return }
             // The core holds one batch at a time and will not release the next
             // until this one is acknowledged. Dropping a batch loses the
-            // updates it carried — stale rows, a message stuck on "Sending" —
+            // updates it carried—stale rows, a message stuck on "Sending"—
             // but keeping it would freeze every conversation for the rest of
             // the session, which is the worse of the two.
             Self.chatLogger.fault(
@@ -3306,7 +3306,7 @@ final class AppRuntime {
         }
     }
 
-    /// Notify whenever the engine flags a mutation `notify == true` — the
+    /// Notify whenever the engine flags a mutation `notify == true`—the
     /// single, authoritative signal covering single-frame arrivals, fragment
     /// completion, the 30 s fragment deadline, and late backfills. Never fires
     /// for local echoes, placeholders, or control frames (the engine never
@@ -3418,7 +3418,7 @@ final class AppRuntime {
     /// Say out loud that a message is not going to arrive.
     ///
     /// The transcript already marks it failed, and the delegate suppresses
-    /// the banner when that transcript is on screen — so this speaks up
+    /// the banner when that transcript is on screen—so this speaks up
     /// exactly when nobody was watching it happen, which over a mesh is the
     /// normal case. A muted conversation stays muted: the user asked not to
     /// hear from it, and that covers the app's own bad news about it.
@@ -3495,7 +3495,7 @@ final class AppRuntime {
     /// A message as a notification *refers* to it, rather than shows it: one
     /// line, in quotation marks, clipped to about what a banner holds before
     /// it wraps. The quotation marks are what distinguish naming a message
-    /// from delivering one — a failure notice that simply printed the text
+    /// from delivering one—a failure notice that simply printed the text
     /// would read like the message arriving.
     private static func quotedBody(_ body: String, limit: Int) -> String {
         let flattened = body
@@ -3519,8 +3519,8 @@ final class AppRuntime {
     /// name we have given them or heard them advertise, then the name they
     /// attached to the message, then their address, then the bare hint.
     ///
-    /// A message-borne name is the sender's unverified claim — anyone holding
-    /// the channel key can write anything there — so it never displaces a
+    /// A message-borne name is the sender's unverified claim—anyone holding
+    /// the channel key can write anything there—so it never displaces a
     /// name this phone established for a peer it actually knows.
     private func memberName(address: String?, handle: String?, hint: Data?) -> String {
         if let address, let peer = peers.first(where: {
@@ -3565,7 +3565,7 @@ final class AppRuntime {
             // Runs before any compose in this process, so every 'pending'
             // outbound row is an orphan from a previous launch. No transcript
             // can be open this early, so the rows it rewrites need no revision
-            // bump — the first reload below publishes them.
+            // bump—the first reload below publishes them.
             try await applicationStore.failStalePendingMessages(
                 ownerIdentityID: localIdentity.id
             )
@@ -3618,7 +3618,7 @@ final class AppRuntime {
             }
         }
         // Only the four facts below reach storage. Every other part of a
-        // snapshot — duty cycle, queue depth, battery — changes constantly
+        // snapshot—duty cycle, queue depth, battery—changes constantly
         // while the radio works, and re-running an fsync-backed write plus a
         // full application-state reload behind each of those is what made the
         // UI feel like it was waiting on the radio.
@@ -3907,7 +3907,7 @@ private final class AppStateCoordinator {
     /// How many times the current chat batch has failed to apply. The core
     /// hands out one batch at a time and holds it until acknowledged, so a
     /// batch that can never be applied would otherwise stall every later
-    /// chat update — delivery receipts included — for the whole session.
+    /// chat update—delivery receipts included—for the whole session.
     var chatBatchFailures: (id: UInt64, count: Int)?
     /// How many times each conversation's stored messages have changed.
     ///
@@ -3937,7 +3937,7 @@ private final class AppStateCoordinator {
 }
 
 /// A message's durable identity, for collapsing repeated references to it
-/// within one batch — deliveries name the same message once per fragment.
+/// within one batch—deliveries name the same message once per fragment.
 private struct ChatMessageKey: Hashable {
     let sessionID: UInt64
     let handle: UInt32

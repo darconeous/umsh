@@ -5,7 +5,7 @@
 //! lapsing *does* differs, because their costs differ:
 //!
 //! - [`DisplayKind::Emissive`] (OLED) burns current for as long as it is
-//!   lit, so lapsing turns the panel off — falling smoothly into a dimmed
+//!   lit, so lapsing turns the panel off—falling smoothly into a dimmed
 //!   warning state first, so it reads as going to sleep rather than dying.
 //! - [`DisplayKind::Persistent`] (e-paper) costs nothing to keep
 //!   readable, so it stays visible. Lapsing instead collapses the menu
@@ -29,8 +29,8 @@
 //! 3. Call [`Attention::poll`] when [`Attention::next_deadline`]
 //!    elapses, and act on any [`Transition`] it returns.
 //!
-//! Content changes that are *not* the user's doing — a battery sample, a
-//! bond count — must not call `wake`. Redraw them only while
+//! Content changes that are *not* the user's doing—a battery sample, a
+//! bond count—must not call `wake`. Redraw them only while
 //! [`Attention::accepts_redraw`] is true, or a board that samples its
 //! battery on a timer will never let its panel sleep.
 
@@ -54,7 +54,7 @@ pub enum DisplayKind {
     Persistent,
 }
 
-/// Timing policy. Held by value so a board can adjust it at runtime —
+/// Timing policy. Held by value so a board can adjust it at runtime—
 /// the plumbing a future `PROP_DISPLAY_TIMEOUT` needs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct AttentionConfig {
@@ -66,7 +66,7 @@ pub struct AttentionConfig {
     pub dim_margin: Duration,
     /// How long the fall from full brightness to the dim floor is drawn
     /// out over. Zero drops in a single step, which is what a persistent
-    /// panel — and any board whose panel cannot be dimmed gradually —
+    /// panel—and any board whose panel cannot be dimmed gradually—
     /// wants.
     pub dim_ramp: Duration,
 }
@@ -88,7 +88,7 @@ impl AttentionConfig {
 
     /// E-paper default: menu returns home after 30 s. Longer than the
     /// emissive timeout because nothing is being spent to keep the
-    /// screen readable — only stale menu context is at stake — and
+    /// screen readable—only stale menu context is at stake—and
     /// because each partial refresh is visible enough that a twitchy
     /// fallback would be an annoyance of its own.
     pub const PERSISTENT: Self = Self {
@@ -125,7 +125,7 @@ pub enum HoldReason {
     /// A pairing window is open. Its PIN has to stay readable for the
     /// whole window.
     Pairing,
-    /// A locate alert is running — the display is part of being found.
+    /// A locate alert is running—the display is part of being found.
     Alert,
     /// A guided maintenance or update flow is on screen.
     Maintenance,
@@ -160,7 +160,7 @@ pub enum Transition {
     /// so the user never catches a stale frame. Persistent: just redraw.
     ///
     /// A wake snaps straight back to full brightness. Only the fall is
-    /// gradual — the user is waiting on the rise.
+    /// gradual—the user is waiting on the rise.
     Woke,
     /// Emissive only: apply [`Attention::brightness_permille`].
     ///
@@ -168,7 +168,7 @@ pub enum Transition {
     /// state, not one per lapse, so a caller that treats it as a single
     /// edge to a fixed contrast will draw a staircase of one step.
     Dimming,
-    /// Attention lapsed. Send the menu home, then — emissive only —
+    /// Attention lapsed. Send the menu home, then—emissive only—
     /// power the panel off.
     Lapsed,
 }
@@ -192,7 +192,7 @@ pub struct Attention {
 }
 
 impl Attention {
-    /// Start in [`DisplayState::Active`] — boot is itself a wake event.
+    /// Start in [`DisplayState::Active`]—boot is itself a wake event.
     pub fn new(kind: DisplayKind, config: AttentionConfig, now_ms: u64) -> Self {
         Self {
             kind,
@@ -234,7 +234,7 @@ impl Attention {
     /// False only for an emissive panel that has been powered off:
     /// pushing pixels at a dark panel wastes bus traffic and, on a
     /// board that samples its battery on a timer, would otherwise run
-    /// forever. Persistent panels always accept a redraw — that is how
+    /// forever. Persistent panels always accept a redraw—that is how
     /// their lapse is rendered.
     pub fn accepts_redraw(&self) -> bool {
         self.kind == DisplayKind::Persistent || !self.is_lapsed()
@@ -251,9 +251,9 @@ impl Attention {
     /// once it has settled there.
     ///
     /// Deliberately *not* an absolute brightness. Which two levels a
-    /// panel's floor and full are is the board's business — an SH1106's
+    /// panel's floor and full are is the board's business—an SH1106's
     /// dim contrast is an eighth of its normal one and an SSD1306's is
-    /// half — and a policy that named either would be wrong on the other.
+    /// half—and a policy that named either would be wrong on the other.
     /// All this says is where between them to sit.
     pub fn brightness_permille(&self) -> u16 {
         match self.state {
@@ -278,7 +278,7 @@ impl Attention {
     /// machine moves to [`DisplayState::Active`] while the glass stays
     /// dark, and because every later wake then finds it already active,
     /// nothing can light it again. A caller that genuinely has nothing to
-    /// do with a wake — a persistent panel has no power to restore —
+    /// do with a wake—a persistent panel has no power to restore—
     /// should say so with `let _ =`.
     #[must_use = "a wake that is not acted on leaves the panel dark while the policy calls it lit"]
     pub fn wake(&mut self, now_ms: u64) -> Option<Transition> {
@@ -301,7 +301,7 @@ impl Attention {
     /// The returned wake matters most exactly where it is easiest to
     /// overlook. A hold is often re-derived on a loop rather than
     /// received as an event, and an alert or a pairing window that
-    /// arrives at a sleeping tracker has no press behind it — so this
+    /// arrives at a sleeping tracker has no press behind it—so this
     /// call is the only thing that will ever say to light the panel. See
     /// [`wake`](Self::wake) for what dropping it costs.
     #[must_use = "asserting a hold can be the wake that lights the panel"]
@@ -344,8 +344,8 @@ impl Attention {
             return None;
         }
         // Which step the fall has reached is derived from the clock rather
-        // than counted, so a poll that arrives late — or several steps
-        // late — lands on the brightness the elapsed time asks for instead
+        // than counted, so a poll that arrives late—or several steps
+        // late—lands on the brightness the elapsed time asks for instead
         // of walking there one call at a time.
         let steps = self.config.ramp_steps();
         let elapsed = (idle - dim_after).as_millis() as u64;
@@ -474,7 +474,7 @@ mod tests {
         assert_eq!(a.brightness_permille(), 0);
     }
 
-    /// A task that misses several steps — a busy radio, a long flush —
+    /// A task that misses several steps—a busy radio, a long flush—
     /// lands on the brightness the clock asks for rather than walking
     /// there one poll at a time.
     #[test]

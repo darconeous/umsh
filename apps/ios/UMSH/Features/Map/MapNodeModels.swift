@@ -44,7 +44,7 @@ struct MapNode: Identifiable, Hashable {
 /// Which tier of node the map is drawing.
 ///
 /// The map's whole subject is nodes that reported a location, and most of
-/// those were heard over the air and never saved — so `all` is the default
+/// those were heard over the air and never saved—so `all` is the default
 /// and the narrower tiers are the deliberate act.
 enum MapTierFilter: String, CaseIterable, Identifiable {
     case all
@@ -139,7 +139,7 @@ extension MapNode {
         return (identity, latitude, longitude)
     }
 
-    /// Whether anything has a location at all, filters aside — what tells an
+    /// Whether anything has a location at all, filters aside—what tells an
     /// empty mesh apart from an over-narrow filter, without deriving and
     /// sorting the whole array to ask.
     static func anyLocations(peers: [PeerSummary]) -> Bool {

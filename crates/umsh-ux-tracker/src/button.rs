@@ -5,7 +5,7 @@
 //! defined in terms of: single, double, triple, and quadruple clicks,
 //! plus long-press and an optional very-long-press.
 //!
-//! The machine is **pure logic** — no embassy, no hardware, no I/O — so
+//! The machine is **pure logic**—no embassy, no hardware, no I/O—so
 //! it can be exhaustively unit-tested with synthetic time. Callers are
 //! expected to:
 //!
@@ -157,7 +157,7 @@ impl ButtonFsm {
                 None
             }
 
-            // Glitchy duplicate edges — ignore.
+            // Glitchy duplicate edges—ignore.
             (State::Pressed { .. }, ButtonEdge::Press) => None,
             (State::WaitingForNext { .. }, ButtonEdge::Release) => None,
             (State::Idle, ButtonEdge::Release) => None,
@@ -347,7 +347,7 @@ mod tests {
     #[test]
     fn triple_click_fires_after_gap() {
         // Since Quad was added, a triple no longer fires immediately on
-        // the third release — the FSM must wait out the inter-click gap
+        // the third release—the FSM must wait out the inter-click gap
         // in case a fourth click arrives.
         let mut fsm = fsm();
         click(&mut fsm, 0, 100);
@@ -459,7 +459,7 @@ mod tests {
     #[test]
     fn hold_between_click_and_long_press_discards_click_with_no_priors() {
         let mut fsm = fsm();
-        // Held 1 s — too long for a click, too short for long-press.
+        // Held 1 s—too long for a click, too short for long-press.
         fsm.on_edge(ButtonEdge::Press, 0);
         assert_eq!(fsm.on_edge(ButtonEdge::Release, 1_000), None);
         assert_eq!(fsm.poll(2_000), None);

@@ -3,7 +3,7 @@
 //!
 //! The divider only reads truthfully while `Vext` is enabled (hardware
 //! doc §9.2), which is why [`BatterySampler`] holds the shared
-//! [`VextHandle`] — it raises the rail for the burst and puts it back
+//! [`VextHandle`]—it raises the rail for the burst and puts it back
 //! the way it found it, so a reading taken while the panel is dark does
 //! not silently power the panel up behind the display task's back.
 //!
@@ -12,7 +12,7 @@
 //! panics while the esp-radio controller holds the claim, and esp-radio
 //! init panics while an `Adc` instance does. So the sampler holds only
 //! the *peripherals* and claims the ADC per sample, releasing it before
-//! returning — and the caller must guarantee the radio is down for the
+//! returning—and the caller must guarantee the radio is down for the
 //! duration of the call (the firmware's ADC2 arbiter does).
 //!
 //! The classic ESP32 ADC has no esp-hal calibration scheme; the
@@ -47,7 +47,7 @@ pub struct BatterySampler {
 }
 
 impl BatterySampler {
-    /// Take ownership of the peripherals. Nothing is claimed here — the
+    /// Take ownership of the peripherals. Nothing is claimed here—the
     /// per-sample claim inside [`sample_mv`](Self::sample_mv) is what
     /// keeps ADC2 free for the radio the rest of the time.
     pub fn new(adc2: ADC2<'static>, gpio13: GPIO13<'static>, vext: VextHandle) -> Self {

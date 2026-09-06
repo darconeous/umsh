@@ -8,7 +8,7 @@ import UMSHMobileCore
 /// Real Rust sessions stand behind the staged nodes: a message sent in
 /// staging is encrypted, framed, transmitted, decrypted, and acknowledged by
 /// the same code that does it over RF, using the same fixed-seed keys the
-/// seeded transcripts are signed with. Only the medium is fabricated —
+/// seeded transcripts are signed with. Only the medium is fabricated—
 /// frames move through memory instead of the ether, and airtime is free.
 ///
 /// The topology is a star: everything the phone transmits reaches every
@@ -67,7 +67,7 @@ actor StagingMeshAir: FakeRadioAir {
     }
 
     /// Drain one staged peer: complete its transmissions, feed them to the
-    /// phone, and consume its chat inbox — staged peers have no app above
+    /// phone, and consume its chat inbox—staged peers have no app above
     /// them, so acknowledging a batch is what reading it means here.
     private func pumpPeer(_ index: Int) {
         guard let peers, peers.indices.contains(index) else { return }
@@ -113,7 +113,7 @@ actor StagingMeshAir: FakeRadioAir {
 
     /// Have a staged peer message the phone, as if its person typed it.
     ///
-    /// The full inbound pipeline runs — the peer's real session encrypts and
+    /// The full inbound pipeline runs—the peer's real session encrypts and
     /// frames the text, the air carries it, and the phone's core decrypts,
     /// persists, acks, and notifies. Exists to exercise exactly that tail:
     /// notifications, their styling, and the notification reply path, with

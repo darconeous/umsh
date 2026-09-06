@@ -51,7 +51,7 @@
 //!
 //! # Modules and key types
 //!
-//! ## [`coordinator`] — the top-level state machine
+//! ## [`coordinator`]—the top-level state machine
 //!
 //! [`Mac<P>`] is the single top-level type. Create one with [`Mac::new`], register
 //! identities and peers, then drive it with [`Mac::run`], [`Mac::run_quiet`], or
@@ -61,73 +61,73 @@
 //!
 //! Supporting types in this module:
 //!
-//! - [`LocalIdentityId`] — opaque slot index returned when registering a local keypair.
-//! - [`LocalIdentity`] — either a long-term platform identity or an ephemeral software
+//! - [`LocalIdentityId`]—opaque slot index returned when registering a local keypair.
+//! - [`LocalIdentity`]—either a long-term platform identity or an ephemeral software
 //!   identity for PFS sessions.
-//! - [`IdentitySlot`] — per-identity runtime state: keys, frame counter, pending ACKs.
-//! - [`OperatingPolicy`] — transmission-time rules for the local node (amateur-radio mode,
+//! - [`IdentitySlot`]—per-identity runtime state: keys, frame counter, pending ACKs.
+//! - [`OperatingPolicy`]—transmission-time rules for the local node (amateur-radio mode,
 //!   operator callsign, per-channel overrides).
-//! - [`RepeaterConfig`] — controls whether and how inbound frames are forwarded.
-//! - [`AmateurRadioMode`] — shared enum governing encryption and identification requirements
+//! - [`RepeaterConfig`]—controls whether and how inbound frames are forwarded.
+//! - [`AmateurRadioMode`]—shared enum governing encryption and identification requirements
 //!   under ham-radio law.
-//! - [`ChannelPolicy`] — per-channel overrides within an [`OperatingPolicy`].
-//! - [`SendError`], [`MacError`], [`CounterPersistenceError`] — error types for queuing,
+//! - [`ChannelPolicy`]—per-channel overrides within an [`OperatingPolicy`].
+//! - [`SendError`], [`MacError`], [`CounterPersistenceError`]—error types for queuing,
 //!   runtime event processing, and frame-counter store operations respectively.
 //!
-//! ## [`send`] — outbound transmission types
+//! ## [`send`]—outbound transmission types
 //!
-//! - [`SendOptions`] — high-level parameters for a single send: MIC size, encryption,
+//! - [`SendOptions`]—high-level parameters for a single send: MIC size, encryption,
 //!   flood hops, ACK request, source route, salt, etc.
-//! - [`SendReceipt`] — opaque token returned for ACK-requested sends; matched against
+//! - [`SendReceipt`]—opaque token returned for ACK-requested sends; matched against
 //!   inbound MAC ACKs to confirm delivery.
-//! - [`TxQueue`] — priority-ordered, fixed-capacity queue of sealed frames waiting for
+//! - [`TxQueue`]—priority-ordered, fixed-capacity queue of sealed frames waiting for
 //!   radio transmission.
-//! - [`QueuedTx`] — one entry in the transmit queue; includes frame bytes, priority,
+//! - [`QueuedTx`]—one entry in the transmit queue; includes frame bytes, priority,
 //!   not-before timestamp, and CAD retry count.
-//! - [`TxPriority`] — priority classes from highest (`ImmediateAck`) to lowest
+//! - [`TxPriority`]—priority classes from highest (`ImmediateAck`) to lowest
 //!   (`Application`).
-//! - [`AckState`] — ACK lifecycle state machine covering queued sends, forwarding
+//! - [`AckState`]—ACK lifecycle state machine covering queued sends, forwarding
 //!   confirmation, retry scheduling, and final destination ACK waiting.
-//! - [`PendingAck`] — full tracking record for one in-flight ACK-requested send, stored
+//! - [`PendingAck`]—full tracking record for one in-flight ACK-requested send, stored
 //!   in the identity slot until delivery is confirmed or the deadline expires.
-//! - [`ResendRecord`] — verbatim sealed frame bytes retained for retransmission without
+//! - [`ResendRecord`]—verbatim sealed frame bytes retained for retransmission without
 //!   re-sealing.
 //!
-//! ## [`cache`] — duplicate suppression and replay protection
+//! ## [`cache`]—duplicate suppression and replay protection
 //!
-//! - [`DuplicateCache`] — a fixed-size FIFO ring that records recently-seen
+//! - [`DuplicateCache`]—a fixed-size FIFO ring that records recently-seen
 //!   [`DupCacheKey`] values. Before forwarding or delivering any received frame, the
 //!   coordinator checks this cache; matching entries are silently dropped. Prevents
 //!   re-delivery of frames that echoed back via multiple repeater paths. Entries
 //!   leave after [`DUP_CACHE_TTL_MS`] or when the ring recycles, whichever is first;
 //!   a hashed key repeats for the life of the sender, so age is what releases it.
-//! - [`DupCacheKey`] — keyed on the truncated MIC for authenticated packets (unforgeable
+//! - [`DupCacheKey`]—keyed on the truncated MIC for authenticated packets (unforgeable
 //!   and compact) or a 32-bit hash of the frame body for unauthenticated ones (broadcast).
-//! - [`ReplayWindow`] — per-peer, per-identity sliding window over frame counters. Rejects
+//! - [`ReplayWindow`]—per-peer, per-identity sliding window over frame counters. Rejects
 //!   exact counter replays and frames older than the backtrack window, while tolerating
 //!   a small amount of out-of-order delivery. Backed by a [`RecentMic`] ring for
 //!   backward-window disambiguation.
-//! - [`ReplayVerdict`] — outcome of a replay check: `Accept`, `Duplicate`, or `Replay`.
+//! - [`ReplayVerdict`]—outcome of a replay check: `Accept`, `Duplicate`, or `Replay`.
 //!
-//! ## [`peers`] — remote peer and channel registries
+//! ## [`peers`]—remote peer and channel registries
 //!
-//! - [`PeerRegistry`] — a flat list of [`PeerInfo`] records (public key + last-seen time +
+//! - [`PeerRegistry`]—a flat list of [`PeerInfo`] records (public key + last-seen time +
 //!   cached route). Looked up by hint or full key when matching inbound packets and routing
 //!   outbound sends.
-//! - [`PeerId`] — opaque index into the peer registry.
-//! - [`CachedRoute`] — a direct link, an explicit source route, or a flood-distance
+//! - [`PeerId`]—opaque index into the peer registry.
+//! - [`CachedRoute`]—a direct link, an explicit source route, or a flood-distance
 //!   estimate, learned from successfully received packets and used to route future sends
 //!   without unnecessary flooding.
-//! - [`PeerCryptoMap`] — per-identity map from [`PeerId`] to [`PeerCryptoState`]
+//! - [`PeerCryptoMap`]—per-identity map from [`PeerId`] to [`PeerCryptoState`]
 //!   (established pairwise keys + replay window). One map per [`IdentitySlot`].
-//! - [`ChannelTable`] — flat list of registered multicast channels. Each entry stores the
+//! - [`ChannelTable`]—flat list of registered multicast channels. Each entry stores the
 //!   raw channel key, the derived `k_enc`/`k_mic` keys (precomputed at registration time),
 //!   and the 2-byte channel ID (also precomputed). Looked up by channel ID when
 //!   authenticating inbound multicast and blind-unicast frames.
 //!
-//! ## [`handle`] — shared-ownership coordinator access
+//! ## [`handle`]—shared-ownership coordinator access
 //!
-//! - [`MacHandle`] — a `Copy`-able, lifetime-bounded reference to a `RefCell<Mac<P>>`.
+//! - [`MacHandle`]—a `Copy`-able, lifetime-bounded reference to a `RefCell<Mac<P>>`.
 //!   Designed for multi-task environments (e.g., `tokio` or RTOS task pairs) where one
 //!   task runs the `next_event` loop while another enqueues sends or updates configuration
 //!   without holding a long-lived mutable borrow.
@@ -194,7 +194,7 @@ pub(crate) const MAX_FORWARD_RETRIES: u8 = 3;
 /// CAD attempts a frame gets before it is dropped, from
 /// [Channel Access § Backoff Procedure][spec]: one initial attempt and
 /// fifteen retries. Public because every UMSH transmitter shares the
-/// procedure — a host relaying frames onto a segment contends with the
+/// procedure—a host relaying frames onto a segment contends with the
 /// same neighbors as the MAC does, and a second opinion about how long
 /// to persist would just be a second, wrong answer.
 ///
@@ -227,7 +227,7 @@ pub const DEFAULT_CHANNEL_HINT_REPLAY: usize = 8;
 /// Largest value the `FHOPS_REM` nibble can carry.
 ///
 /// A larger budget cannot be encoded, so requests above it are clamped rather
-/// than truncated — [`PacketBuilder::flood_hops`](umsh_core::PacketBuilder)
+/// than truncated—[`PacketBuilder::flood_hops`](umsh_core::PacketBuilder)
 /// drops the whole field for an out-of-range value, which would turn "flood
 /// further" into "do not flood at all".
 pub const MAX_FLOOD_HOPS: u8 = 15;
@@ -238,15 +238,15 @@ pub const MAX_FLOOD_HOPS: u8 = 15;
 /// A route learned from inbound traffic tells the sender how far away the peer
 /// was, so a unicast that follows it does not need the wide flood budget of a
 /// first-contact packet. Slack past that distance buys the send a backstop: a
-/// path that has grown one hop longer — a repeater moved, a link that now needs
-/// one more relay — still gets through and re-teaches the correct route.
+/// path that has grown one hop longer—a repeater moved, a link that now needs
+/// one more relay—still gets through and re-teaches the correct route.
 ///
 /// Zero spends nothing on that backstop. An established route is transmitted as
 /// exactly what it costs, and a route that has gone stale is recovered by the
 /// ack timeout rather than by a hop bolted onto every packet:
 /// route recovery compares what the application asked for against what the MAC
 /// narrowed it to, so a peer that moved is re-flooded on retry. A send with no
-/// ack coming has no such recovery and no repeat to listen for — that is the
+/// ack coming has no such recovery and no repeat to listen for—that is the
 /// reliability this trades away for the airtime.
 pub const ESTABLISHED_ROUTE_EXTRA_FLOOD_HOPS: u8 = 0;
 

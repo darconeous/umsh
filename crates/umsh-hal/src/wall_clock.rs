@@ -2,8 +2,8 @@
 //! whether it is known at all.
 //!
 //! A device of this class has a monotonic timer and, usually, nothing
-//! else. Wall-clock time arrives from outside — a GNSS fix, a
-//! battery-backed real-time clock, a host that was asked — and is held as
+//! else. Wall-clock time arrives from outside—a GNSS fix, a
+//! battery-backed real-time clock, a host that was asked—and is held as
 //! an *offset* from the monotonic timer rather than as a counter of its
 //! own, so it costs nothing to maintain and cannot drift relative to
 //! everything else the device schedules.
@@ -13,7 +13,7 @@
 //!
 //! * **Not knowing is a state.** [`WallClockState::now`] returns `None`
 //!   until something sets the clock. Callers must not substitute zero, a
-//!   build timestamp, or any other plausible-looking value — a device
+//!   build timestamp, or any other plausible-looking value—a device
 //!   that does not know the time **must not** display one.
 //! * **Sources outrank each other.** [`WallClockState::apply`] holds the
 //!   whole precedence rule, so no caller has to remember it and no two
@@ -25,7 +25,7 @@
 
 /// Where a wall-clock reading came from.
 ///
-/// The ordering is not a precedence ranking — see
+/// The ordering is not a precedence ranking—see
 /// [`WallClockState::apply`], where the rule depends on more than the
 /// source alone.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -108,7 +108,7 @@ pub struct WallClockState {
     /// at zero on a device whose wall clock is in 2026.
     offset_ms: Option<i64>,
     /// Minutes east of UTC (`PROP_TZ_OFFSET`). Always known, even while
-    /// the time is not — see the module documentation.
+    /// the time is not—see the module documentation.
     tz_offset_min: i16,
     /// Where the current reading came from, or `None` while unset.
     source: Option<TimeSource>,
@@ -153,8 +153,8 @@ impl WallClockState {
         Some(millis as u64)
     }
 
-    /// The local wall-clock reading in seconds — the time shifted by the
-    /// configured zone — or `None` when the time is unknown.
+    /// The local wall-clock reading in seconds—the time shifted by the
+    /// configured zone—or `None` when the time is unknown.
     ///
     /// A reading for presentation, not an instant: it does not name a
     /// point in time on its own, and nothing should send it anywhere.
@@ -205,7 +205,7 @@ impl WallClockState {
     ///
     /// * [`TimeSource::Manual`] always applies. The operator is the more
     ///   authoritative source by definition, including while the receiver
-    ///   is distrusted — distrusting the sky is *why* somebody would set
+    ///   is distrusted—distrusting the sky is *why* somebody would set
     ///   the clock by hand.
     /// * [`TimeSource::GnssFix`] applies whenever the receiver is
     ///   trusted, overwriting whatever was there. Every fix re-synchronizes
@@ -217,7 +217,7 @@ impl WallClockState {
     ///   that is already in hand.
     /// * [`TimeSource::ExternalRtc`] applies only when the clock is
     ///   unset, for the same reason, but is not subject to the receiver
-    ///   trust flag — it is not the receiver.
+    ///   trust flag—it is not the receiver.
     pub const fn apply(
         &mut self,
         epoch: u32,
@@ -317,7 +317,7 @@ mod live {
     /// What a display arms its redraw timer on. Computed in UTC, which
     /// costs nothing in correctness: every real time-zone offset is a
     /// whole number of minutes, so the local minute always turns over
-    /// with the UTC one — including in the half- and quarter-hour zones.
+    /// with the UTC one—including in the half- and quarter-hour zones.
     pub fn millis_to_next_minute() -> Option<u32> {
         let monotonic = Instant::now().as_millis();
         let millis = CLOCK.lock(|cell| cell.get().now_ms(monotonic))?;

@@ -1,4 +1,4 @@
-//! [`WioTrackerPlatform`] — the concrete `umsh_mac::Platform` bundle for
+//! [`WioTrackerPlatform`]—the concrete `umsh_mac::Platform` bundle for
 //! the Seeed Wio Tracker L1 family.
 //!
 //! Composes the chip-level nRF52840 plumbing from [`umsh_bsp_nrf52840`]

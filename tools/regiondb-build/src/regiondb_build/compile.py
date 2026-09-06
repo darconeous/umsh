@@ -49,8 +49,8 @@ def classify_commercial(tree: SourceTree) -> tuple[list[Site], list[str]]:
 
     `scheduled_service` is where the candidate list comes from and nothing
     more. The field means "some scheduled flight exists", which is not the same
-    question as "would someone here call this their airport" — San Carlos is
-    the standing counterexample — so the committed classification file has the
+    question as "would someone here call this their airport"—San Carlos is
+    the standing counterexample—so the committed classification file has the
     final say in both directions.
     """
     by_iata = {site.iata: site for site in tree.sites}
@@ -102,7 +102,7 @@ def _radio_identity(
         if layer == LAYER_CUSTOM and not allow_short_code:
             raise CompileError(
                 f"custom region {code!r} has radio name {radio_name!r}, which the runtime "
-                "reads as a short code, not as a name — it would claim an IATA or ISO "
+                "reads as a short code, not as a name—it would claim an IATA or ISO "
                 "identity. Rename it, or set `allow_short_code: true` to say the "
                 "short-code identity is deliberate."
             )

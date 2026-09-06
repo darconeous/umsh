@@ -44,11 +44,11 @@ LilyGo’s Arduino documentation identifies the Arduino board as `LilyGo-T-LoRa-
 
 LilyGo documentation lists the following selectable board/radio revisions:
 
-- `Radio-SX1262` — sub-GHz LoRa
-- `Radio-SX1280` — 2.4 GHz LoRa
-- `Radio-CC1101` — sub-GHz FSK/GFSK/ASK/OOK family
-- `Radio-LR1121` — sub-GHz + 2.4 GHz LoRa
-- `Radio-SI4432` — sub-GHz ISM
+- `Radio-SX1262`—sub-GHz LoRa
+- `Radio-SX1280`—2.4 GHz LoRa
+- `Radio-CC1101`—sub-GHz FSK/GFSK/ASK/OOK family
+- `Radio-LR1121`—sub-GHz + 2.4 GHz LoRa
+- `Radio-SI4432`—sub-GHz ISM
 
 Meshtastic’s `tlora-pager` variant declares support macros for:
 

@@ -1,12 +1,12 @@
 # Addressing
 
-UMSH nodes are identified by their 32-byte Ed25519 public keys. Including a full 32-byte address in every packet would be expensive in the constrained LoRa frame budget, so UMSH defines several compact **hint** representations — short prefixes of a public key that allow receivers to quickly identify likely matches without the full key. Hints are not cryptographically authoritative; they serve only as cheap prefilters to avoid unnecessary work.
+UMSH nodes are identified by their 32-byte Ed25519 public keys. Including a full 32-byte address in every packet would be expensive in the constrained LoRa frame budget, so UMSH defines several compact **hint** representations—short prefixes of a public key that allow receivers to quickly identify likely matches without the full key. Hints are not cryptographically authoritative; they serve only as cheap prefilters to avoid unnecessary work.
 
 The sections below describe the three addressing forms used across the protocol: node hints, router hints, and source addresses.
 
 ## Presentation
 
-UMSH addresses are canonically encoded and displayed using [base 58](https://bitcoinwiki.org/wiki/base58). Addresses may also be rendered using base 16 as 64 hexadecimal digits — lowercase preferred, either case accepted when parsing — but the preferred encoding is base58. The two forms are unambiguously distinguished by length.
+UMSH addresses are canonically encoded and displayed using [base 58](https://bitcoinwiki.org/wiki/base58). Addresses may also be rendered using base 16 as 64 hexadecimal digits—lowercase preferred, either case accepted when parsing—but the preferred encoding is base58. The two forms are unambiguously distinguished by length.
 
 The base58 encoding is fixed-length: a 32-byte address always renders as exactly 44 digits, left-padded with `1` (the base58 zero digit) when its numeric value would otherwise encode shorter.
 

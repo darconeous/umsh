@@ -49,7 +49,7 @@ pub struct ReplayWindow {
     /// One pair for the whole window, not a stamp per retained MIC:
     /// duplicate re-acks pace one packet's copies, and windows are
     /// replicated widely enough (per channel, per tracked sender) that
-    /// per-entry state is real RAM on the embedded targets — spent, for
+    /// per-entry state is real RAM on the embedded targets—spent, for
     /// channel traffic, on packets that are never acknowledged at all.
     pub last_dup_ack_counter: u32,
     /// When the duplicate carrying
@@ -133,7 +133,7 @@ impl ReplayWindow {
     ///
     /// A duplicate is re-acknowledged at most once per `holdoff_ms`. The
     /// duplicate-acknowledgement window exists so a sender whose ack was
-    /// lost can recover by retransmitting — but most duplicates are not
+    /// lost can recover by retransmitting—but most duplicates are not
     /// retransmissions, they are flood copies of a single transmission
     /// arriving over different paths, and each already-sent ack covers
     /// all of them. A sender cannot retransmit before its confirmation
@@ -143,7 +143,7 @@ impl ReplayWindow {
     /// radio timing offers) as `holdoff_ms`.
     ///
     /// Two clocks pace this. Copies of the *accepted* transmission are
-    /// caught by the entry's acceptance time — the acceptance already
+    /// caught by the entry's acceptance time—the acceptance already
     /// queued their ack. Copies of a *retransmission* are caught by the
     /// re-ack stamp the first copy leaves behind. A `true` return
     /// stamps: the caller is expected to queue the acknowledgement it

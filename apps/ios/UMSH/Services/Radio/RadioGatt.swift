@@ -2,8 +2,8 @@
 
 /// The UMSH ULCP GATT service.
 ///
-/// Every transport in the app that speaks ULCP over BLE — the companion
-/// connection and any administrative session — discovers the same service
+/// Every transport in the app that speaks ULCP over BLE—the companion
+/// connection and any administrative session—discovers the same service
 /// with the same characteristics on the same devices. There is exactly one
 /// definition of what that service is.
 enum RadioGatt {

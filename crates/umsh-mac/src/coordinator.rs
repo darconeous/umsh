@@ -108,11 +108,11 @@ struct PostTxListen {
 /// registered via [`Mac::add_identity`] (or [`Mac::register_ephemeral`] for PFS sessions),
 /// the coordinator allocates a slot and returns a `LocalIdentityId` that permanently names it.
 ///
-/// The inner `u8` is a stable zero-based slot index — slot `0` is the first identity
+/// The inner `u8` is a stable zero-based slot index—slot `0` is the first identity
 /// registered, slot `1` the second, and so on. All per-identity coordinator operations
 /// (`queue_unicast`, `queue_multicast`, ACK tracking, key installation, frame-counter
 /// persistence) accept a `LocalIdentityId` to select which local keypair to use, allowing a
-/// single coordinator instance to operate multiple identities simultaneously — for example, a
+/// single coordinator instance to operate multiple identities simultaneously—for example, a
 /// persistent long-term identity alongside an ephemeral PFS session identity.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct LocalIdentityId(pub u8);
@@ -123,12 +123,12 @@ pub struct LocalIdentityId(pub u8);
 /// the ability to derive pairwise keys via ECDH with the corresponding private key.
 /// Two variants are supported:
 ///
-/// - **`LongTerm(I)`** — wraps the platform-supplied `I: NodeIdentity`, which is typically
+/// - **`LongTerm(I)`**—wraps the platform-supplied `I: NodeIdentity`, which is typically
 ///   backed by secure-element storage, an HSM, or a platform keystore. Long-term identities
 ///   persist across reboots; their frame counters are saved to the [`umsh_hal::CounterStore`]
 ///   so that replay protection remains valid after a power cycle.
 ///
-/// - **`Ephemeral`** — wraps an in-memory [`SoftwareIdentity`](umsh_crypto::software::SoftwareIdentity)
+/// - **`Ephemeral`**—wraps an in-memory [`SoftwareIdentity`](umsh_crypto::software::SoftwareIdentity)
 ///   generated fresh at runtime for Perfect Forward Secrecy sessions. Because the key material
 ///   itself vanishes on power loss, ephemeral identities do not persist their frame counters;
 ///   replay protection is meaningful only within a single session. Requires the
@@ -201,9 +201,9 @@ impl<I: NodeIdentity> From<I> for LocalIdentity<I> {
 /// boundary values to the [`umsh_hal::CounterStore`] *before* using them. The slot tracks
 /// three values:
 ///
-/// - `frame_counter` — the live in-use value, advanced on every secured send.
-/// - `persisted_counter` — the last boundary safely committed to the store.
-/// - `pending_persist_target` — a scheduled future boundary written on the next call to
+/// - `frame_counter`—the live in-use value, advanced on every secured send.
+/// - `persisted_counter`—the last boundary safely committed to the store.
+/// - `pending_persist_target`—a scheduled future boundary written on the next call to
 ///   [`Mac::service_counter_persistence`].
 ///
 /// If the live counter reaches `persisted_counter + COUNTER_PERSIST_BLOCK_SIZE` without a
@@ -323,8 +323,8 @@ impl<I: NodeIdentity, const PEERS: usize, const ACKS: usize, const FRAME: usize>
         // counter, so the boundary lands one block out for a counter early in
         // its block and two blocks out for one already inside the renewal
         // zone. Deriving the target from the bare counter here once made the
-        // offset-triggered renewal a no-op — it re-derived the boundary that
-        // was already persisted — so an identity that reached that boundary
+        // offset-triggered renewal a no-op—it re-derived the boundary that
+        // was already persisted—so an identity that reached that boundary
         // had nothing scheduled, and since a refused send advances nothing,
         // it stayed refusing secure sends until reboot.
         let target = next_counter_persist_target(
@@ -450,13 +450,13 @@ impl<I: NodeIdentity, const PEERS: usize, const ACKS: usize, const FRAME: usize>
 /// overrides before sealing the packet.
 ///
 /// Typical use cases:
-/// - **Unlicensed spectrum compliance** — force `require_unencrypted = true` for channels
+/// - **Unlicensed spectrum compliance**—force `require_unencrypted = true` for channels
 ///   that must operate under Part 15 / ISM-band rules where encryption is permissible but
 ///   the channel operator has chosen to run openly.
-/// - **Metadata reduction** — force `require_full_source = true` when receiving nodes need
+/// - **Metadata reduction**—force `require_full_source = true` when receiving nodes need
 ///   to resolve the sender without a prior key-exchange round-trip (e.g., a public beacon
 ///   channel where all senders are first-contact).
-/// - **Propagation budget** — set `max_flood_hops` for high-density channels where
+/// - **Propagation budget**—set `max_flood_hops` for high-density channels where
 ///   uncontrolled flooding would waste airtime.
 ///
 /// Channels absent from the policy list use the permissive defaults inherited from
@@ -487,7 +487,7 @@ pub struct ChannelPolicy {
 /// | `Hybrid` | Allowed (local) | Optional | Added to forwarded frames |
 ///
 /// The mode appears on both [`OperatingPolicy`] (for locally-originated traffic) and
-/// [`RepeaterConfig`] (for forwarding decisions) and they may differ independently — a node
+/// [`RepeaterConfig`] (for forwarding decisions) and they may differ independently—a node
 /// might transmit its own encrypted application traffic (`Unlicensed`) while acting as a
 /// licensed-identified repeater (`LicensedOnly`) for third-party frames it forwards.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -574,12 +574,12 @@ fn trace_signal_entry(rx: &RxInfo) -> TraceSignalEntry {
 /// would violate it. This policy applies only to locally-originated frames; forwarding
 /// decisions are governed separately by [`RepeaterConfig`].
 ///
-/// - **`amateur_radio_mode`** — determines whether encryption and blind-unicast are permitted
+/// - **`amateur_radio_mode`**—determines whether encryption and blind-unicast are permitted
 ///   and whether an operator callsign must be appended to originated frames.
 ///   See [`AmateurRadioMode`].
-/// - **`operator_callsign`** — the ARNCE/HAM-64 callsign automatically appended to every
+/// - **`operator_callsign`**—the ARNCE/HAM-64 callsign automatically appended to every
 ///   locally-originated frame when set. Required in `LicensedOnly` mode; optional otherwise.
-/// - **`channel_policies`** — a small list of per-channel overrides for multicast and
+/// - **`channel_policies`**—a small list of per-channel overrides for multicast and
 ///   blind-unicast traffic. Channels absent from the list use permissive defaults.
 ///
 /// The default configuration (via [`Default`]) sets `Unlicensed` mode with no callsign and
@@ -610,29 +610,29 @@ impl Default for OperatingPolicy {
 /// successfully receives, extending the effective range of the network without requiring
 /// dedicated infrastructure. `RepeaterConfig` controls every facet of that behavior:
 ///
-/// - **`enabled`** — master on/off switch. When `false`, all inbound forwarding logic is
+/// - **`enabled`**—master on/off switch. When `false`, all inbound forwarding logic is
 ///   skipped even if the other fields are populated.
-/// - **`regions`** — a local list of 2-byte ARNCE region codes used as the flood-forwarding
+/// - **`regions`**—a local list of 2-byte ARNCE region codes used as the flood-forwarding
 ///   eligibility filter. When non-empty, packets carrying region codes are flood-forwarded only
 ///   if at least one of those codes appears here; when empty, forwarding imposes no region check
 ///   and a tagged packet is forwarded whatever its region.
-/// - **`default_region`** — the region code inserted into a flood-forwarded packet that carries
-///   none. `None` — the default — means the repeater never tags: untagged packets are forwarded
+/// - **`default_region`**—the region code inserted into a flood-forwarded packet that carries
+///   none. `None`—the default—means the repeater never tags: untagged packets are forwarded
 ///   untagged. Tagging is deliberately opt-in and independent of `regions`, because inserting a
 ///   code asserts where the packet *is*, not merely which regions the repeater will carry. An
 ///   already-tagged packet is always forwarded with its codes unchanged.
-/// - **`min_rssi` / `min_snr`** — signal-quality thresholds for flood forwarding. Packets
+/// - **`min_rssi` / `min_snr`**—signal-quality thresholds for flood forwarding. Packets
 ///   received below these values are not flood-forwarded; this prevents marginal receptions
 ///   from being re-injected into the network at full power, which would degrade SNR for
 ///   nearby nodes rather than help. These thresholds do not apply to source-routed hops.
-/// - **Flood contention tuning** — controls the signal-to-delay mapping used when several
+/// - **Flood contention tuning**—controls the signal-to-delay mapping used when several
 ///   eligible repeaters contend to flood-forward the same frame. The window is deterministic
 ///   in the reception's SNR and RSSI, with a small random tie-breaker on top. These values
 ///   should usually remain aligned across the mesh.
-/// - **`amateur_radio_mode`** — determines whether the repeater may forward encrypted or
+/// - **`amateur_radio_mode`**—determines whether the repeater may forward encrypted or
 ///   blind-unicast frames, and whether it must inject a station callsign. See
 ///   [`AmateurRadioMode`].
-/// - **`station_callsign`** — the ARNCE/HAM-64 callsign injected into the options block of
+/// - **`station_callsign`**—the ARNCE/HAM-64 callsign injected into the options block of
 ///   every forwarded frame when operating in `LicensedOnly` or `Hybrid` mode, satisfying the
 ///   third-party identification requirements of FCC §97.119 and equivalent regulations.
 ///
@@ -704,7 +704,7 @@ impl Default for RepeaterConfig {
 /// Errors returned by the [`Mac`] coordinator when queueing an outbound send.
 ///
 /// Returned synchronously by `queue_broadcast`, `queue_unicast`, `queue_multicast`, and
-/// related methods. An error here means the send could not be *enqueued* — it says nothing
+/// related methods. An error here means the send could not be *enqueued*—it says nothing
 /// about the fate of frames already in the transmit queue.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SendError {
@@ -723,7 +723,7 @@ pub enum SendError {
     /// The target [`umsh_core::ChannelId`] is not present in the channel table.
     /// Register the channel first via [`Mac::add_channel`] or [`Mac::add_named_channel`].
     ChannelMissing,
-    /// The [`OperatingPolicy`] rejected this send — for example, attempting to send an
+    /// The [`OperatingPolicy`] rejected this send—for example, attempting to send an
     /// encrypted frame while operating in [`AmateurRadioMode::LicensedOnly`] mode.
     PolicyViolation,
     /// The low-level packet builder failed, typically because the frame buffer is too small
@@ -820,27 +820,27 @@ impl<RadioError> From<TxError<RadioError>> for MacError<RadioError> {
 /// `Mac` is the top-level entry point for UMSH protocol operation. It combines a radio driver,
 /// cryptographic engine, clock, RNG, counter store, and all protocol state into a single
 /// fully-typed, allocation-free structure. All const-generic capacity parameters are enforced
-/// at compile time via `heapless` collections — there are no heap allocations inside `Mac`.
+/// at compile time via `heapless` collections—there are no heap allocations inside `Mac`.
 ///
 /// ## Generic parameters
 ///
-/// - **`P: Platform`** — a trait bundle supplying the concrete driver types for `Radio`,
+/// - **`P: Platform`**—a trait bundle supplying the concrete driver types for `Radio`,
 ///   `Aes`/`Sha` (crypto), `Clock`, `Rng`, and `CounterStore`. Implement [`Platform`] once
 ///   per deployment target to swap in real hardware drivers, software stubs, or test doubles.
-/// - **`IDENTITIES`** — maximum simultaneously active local identities (default
+/// - **`IDENTITIES`**—maximum simultaneously active local identities (default
 ///   [`DEFAULT_IDENTITIES`]).
-/// - **`PEERS`** — maximum known remote peers and their per-identity pairwise key entries
+/// - **`PEERS`**—maximum known remote peers and their per-identity pairwise key entries
 ///   (default [`DEFAULT_PEERS`]).
-/// - **`CHANNELS`** — maximum registered multicast channel keys (default
+/// - **`CHANNELS`**—maximum registered multicast channel keys (default
 ///   [`DEFAULT_CHANNELS`]).
-/// - **`ACKS`** — maximum simultaneously in-flight ACK-requested sends per identity
+/// - **`ACKS`**—maximum simultaneously in-flight ACK-requested sends per identity
 ///   (default [`DEFAULT_ACKS`]).
-/// - **`TX`** — depth of the transmit queue (default [`DEFAULT_TX`]). Must be large enough
+/// - **`TX`**—depth of the transmit queue (default [`DEFAULT_TX`]). Must be large enough
 ///   to absorb a burst of control frames (MAC ACKs + forwarded frames) alongside any
 ///   backlogged application sends.
-/// - **`FRAME`** — maximum byte length of a stored frame buffer for retransmission
+/// - **`FRAME`**—maximum byte length of a stored frame buffer for retransmission
 ///   (default [`MAX_RESEND_FRAME_LEN`]).
-/// - **`DUP`** — capacity of the duplicate-detection cache (default [`DEFAULT_DUP`]).
+/// - **`DUP`**—capacity of the duplicate-detection cache (default [`DEFAULT_DUP`]).
 ///
 /// ## Lifecycle
 ///
@@ -854,7 +854,7 @@ impl<RadioError> From<TxError<RadioError>> for MacError<RadioError> {
 /// 5. **Drive the event loop** via [`Mac::run`] / [`Mac::run_quiet`] for long-lived tasks,
 ///    or by awaiting [`Mac::next_event`] when you need to multiplex MAC progress with other
 ///    async work. The coordinator handles incoming frames, outgoing transmits, forwarding,
-///    ACK matching, retransmission scheduling, and timer deadlines — no external polling
+///    ACK matching, retransmission scheduling, and timer deadlines—no external polling
 ///    required.
 /// 6. **Send traffic** by calling `queue_broadcast`, `queue_unicast`, `queue_multicast`,
 ///    etc. from application code between (or concurrent with) event-loop iterations.
@@ -880,7 +880,7 @@ impl<RadioError> From<TxError<RadioError>> for MacError<RadioError> {
 ///
 /// Diagnostic only: nothing in the protocol depends on them, and they are
 /// deliberately not persisted. They exist so an operator can tell a
-/// working node from a deaf one without a capture — a radio whose
+/// working node from a deaf one without a capture—a radio whose
 /// `rx_frames` never moves is not hearing anybody.
 ///
 /// Every field saturates rather than wraps. A counter that rolled over
@@ -912,7 +912,7 @@ pub struct MacCounters {
     /// Deliberately narrow. Duplicates, traffic addressed to us, and
     /// frames arriving while forwarding is switched off are all reasons
     /// not to repeat something, and none of them is a decision the
-    /// operator made about *this* frame — counting them here would bury
+    /// operator made about *this* frame—counting them here would bury
     /// the refusals a repeater's settings can actually move.
     pub forward_dropped_policy: u32,
 }
@@ -1005,7 +1005,7 @@ impl<
         self.counters
     }
 
-    /// What has been heard from whom, most recently — the signal half of a
+    /// What has been heard from whom, most recently—the signal half of a
     /// peer-repeater listing.
     pub fn transmitter_observations(&self) -> &crate::TransmitterObservations {
         &self.transmitter_observations
@@ -1497,7 +1497,7 @@ impl<
     /// are silently forced to `false` because broadcasts cannot carry any of
     /// them on the wire.
     ///
-    /// TODO: this sanitization is silent — a caller that explicitly set
+    /// TODO: this sanitization is silent—a caller that explicitly set
     /// `ack_requested = true` for a broadcast will get a successful
     /// `SendReceipt` and never learn the flag was dropped. Surface this as a
     /// debug-level event (or split `SendOptions` into kind-specific
@@ -1688,13 +1688,13 @@ impl<
     /// way to be repeated. An ack going back to a peer we hear directly
     /// carries neither a flood budget nor a source route, so no repeater may
     /// touch it and the trace would arrive as empty as it left. The sender
-    /// reads the direct link off the ack's own shape instead — see
+    /// reads the direct link off the ack's own shape instead—see
     /// [`Mac::learn_route_for_peer`].
     ///
     /// An ack that does ride through repeaters is tracked like any other
     /// repeat-confirmed send: silence where the repeat should be means the
     /// first hop never got it, and the retry ladder retransmits. The ladder
-    /// ends in a silent abandon — the sender's own data retries are the
+    /// ends in a silent abandon—the sender's own data retries are the
     /// backstop; this just spares them in the common case.
     pub fn queue_mac_ack_for_peer(
         &mut self,
@@ -1772,12 +1772,12 @@ impl<
         Ok(())
     }
 
-    /// Track a routed MAC ack so silence — no repeat overheard — retries it.
+    /// Track a routed MAC ack so silence—no repeat overheard—retries it.
     ///
     /// Returns `None`, leaving the ack fire-and-forget, whenever tracking
     /// cannot help or cannot be afforded: an unknown peer, a full pending
     /// table (an ack is not worth displacing a send anyone is waiting on),
-    /// or an identical ack already in flight — re-arming a second ladder
+    /// or an identical ack already in flight—re-arming a second ladder
     /// for the same trailer would just double the retransmissions.
     fn prepare_repeat_confirmed_ack(
         &mut self,
@@ -2182,7 +2182,7 @@ impl<
 
         // A retransmission exists only to serve a send still waiting on an
         // outcome, and that send may have reached one while the frame sat in
-        // the queue — acknowledged, confirmed by an overheard repeat, timed
+        // the queue—acknowledged, confirmed by an overheard repeat, timed
         // out, or cancelled. All of those drop the pending entry, so its
         // absence is what makes the frame unwanted. Only retries are judged
         // this way: a first transmission carries a receipt for reporting
@@ -2427,7 +2427,7 @@ impl<
                 .await?;
 
             // Flush any pending TX or RX counter boundaries to durable storage.
-            // Errors are intentionally ignored — persistence is best-effort and
+            // Errors are intentionally ignored—persistence is best-effort and
             // must not block the radio event loop.
             let _ = self.service_counter_persistence().await;
             let _ = self.service_rx_counter_persistence().await;
@@ -2479,8 +2479,8 @@ impl<
         // transmit: during a post-transmit listen window only immediate-ACK
         // frames may go out, and the window's own expiry is already covered
         // by `earliest_deadline_ms` above. Reporting a blocked-but-ready
-        // frame here would spin this poll hot for the whole window —
-        // starving every other task sharing the executor — since the drain
+        // frame here would spin this poll hot for the whole window—
+        // starving every other task sharing the executor—since the drain
         // it triggers requeues the frame without progress.
         if self.tx_queue.has_ready(now_ms)
             && (self.post_tx_listen.is_none() || self.tx_queue.has_ready_immediate_ack(now_ms))
@@ -2498,7 +2498,7 @@ impl<
     /// # Precondition
     ///
     /// When `reason` is [`WakeReason::Received`], `buf` **must** be the same
-    /// buffer — containing the same bytes — that was passed to the matching
+    /// buffer—containing the same bytes—that was passed to the matching
     /// [`poll_wait_for_wake`](Self::poll_wait_for_wake) call. The received
     /// frame bytes live in `buf[..rx.len]`; `reason` only carries the
     /// accompanying metadata (`RxInfo`). Passing a different or reinitialized
@@ -2617,7 +2617,7 @@ impl<
             };
             // A piggy-backed Ack MIC option is read here, before any
             // decryption, because it is aimed at whoever happens to be
-            // carrying the acknowledged packet — not at this frame's
+            // carrying the acknowledged packet—not at this frame's
             // addressee.
             self.cancel_forwards_for_ack_mic_option(&buf[..current_len], &header);
             let forwarding_confirmed = if let Some((identity_id, receipt)) =
@@ -2806,7 +2806,7 @@ impl<
             // to it like any other. It is also the only packet an ack-only
             // exchange produces, so without this a sender that never receives
             // application traffic back from a peer never learns a route to it
-            // — the trace the peer mirrored onto the ack would arrive and be
+            //—the trace the peer mirrored onto the ack would arrive and be
             // discarded.
             if let Some((peer_id, _)) = self.peer_registry.lookup_by_key(&target_peer) {
                 self.learn_route_for_peer(peer_id, &buf[..frame_len], header, rx);
@@ -3515,7 +3515,7 @@ impl<
                             // in: an unarmed deadline reads as *already
                             // expired* to both the timeout sweep and
                             // `earliest_deadline_ms`, which would retire the
-                            // send — and drop the frame back out of the queue —
+                            // send—and drop the frame back out of the queue—
                             // before the retry it just scheduled ever aired.
                             let retry_deadline_ms =
                                 not_before_ms.saturating_add(self.forwarded_ack_timeout_ms(
@@ -3755,7 +3755,7 @@ impl<
     /// gets: such a send is confirmed only by overhearing a repeat, so a retry
     /// is defensible if and only if the frame visibly solicits one. The
     /// question is answered by parsing the frame itself rather than by the
-    /// option values the send was built from — the builder is allowed to
+    /// option values the send was built from—the builder is allowed to
     /// narrow or drop what was requested, and a prediction that drifts from
     /// the wire arms a retry ladder for a frame nothing will ever repeat.
     fn frame_solicits_repeat(frame: &[u8]) -> bool {
@@ -3781,8 +3781,8 @@ impl<
     /// Such a send has no acknowledgement coming, but it is not therefore
     /// unverifiable: hearing the next hop carry the frame onward says it was
     /// received, and hearing nothing says the one transmission may have been
-    /// the only chance it got. The receipt is the coordinator's own — the
-    /// caller asked for no tracking and gets none — and exists so the retry
+    /// the only chance it got. The receipt is the coordinator's own—the
+    /// caller asked for no tracking and gets none—and exists so the retry
     /// ladder has something to hang on.
     ///
     /// A send with no hops is left alone: there is no repeater to hear, and
@@ -3894,7 +3894,7 @@ impl<
     /// carry. A frame with no flood budget and no source route is not one:
     /// nothing may forward it, the trace is guaranteed to arrive empty, and
     /// the destination learns the link is direct from the frame's own shape
-    /// anyway — see [`Mac::learn_route_for_peer`].
+    /// anyway—see [`Mac::learn_route_for_peer`].
     ///
     /// Past that, a peer heard directly has no repeaters for a trace to
     /// record. Everything else floods toward a destination whose distance we
@@ -3903,21 +3903,21 @@ impl<
     /// destination a precise route back. The destination mirrors the option
     /// onto its ack, which closes the return direction, so a single exchange
     /// leaves both ends holding a route and this condition stops firing.
-    /// Discovery is paid for once per path rather than per packet — the
+    /// Discovery is paid for once per path rather than per packet—the
     /// always-on variant is [proactive route refresh], which the spec
     /// deliberately leaves unspecified.
     ///
     /// A source route is the one case where knowing the path is not enough.
     /// The frame reaches the destination with its hints consumed, so nothing
     /// on it describes the way back, and an ack composed against an empty
-    /// route cache carries neither a flood budget nor a route of its own —
+    /// route cache carries neither a flood budget nor a route of its own—
     /// it dies at the first hop, and the sender retries against a peer that
     /// has been answering all along. So a routed frame that asks for an ack
     /// traces as well: the routed hops record themselves, and the ack has a
     /// path home.
     ///
     /// This is unconditional for now. The narrower form only traces when the
-    /// peer has not shown it can reach us — a frame arriving from it with a
+    /// peer has not shown it can reach us—a frame arriving from it with a
     /// source-route option present, or with accumulated flood hops, is that
     /// proof, and [`Mac::learn_route_for_peer`] already sees both.
     /// Relax to that once there is enough field data to say the evidence bit
@@ -3980,7 +3980,7 @@ impl<
     /// without spending flood budget, so its slack is the entire budget.
     ///
     /// A budget of zero is returned as `None` rather than `Some(0)`. The two
-    /// say the same thing to every reader — no repeater may carry this frame —
+    /// say the same thing to every reader—no repeater may carry this frame—
     /// but the field costs a byte and an FCF bit to say it, and an absent
     /// `FHOPS` is what tells the receiver it heard us directly rather than
     /// across a zero-hop flood.
@@ -4003,8 +4003,8 @@ impl<
         let source_route = source_route.filter(|route| !route.is_empty());
 
         let ceiling = match (source_route, cached) {
-            // A source route costs no flood budget at all — routed hops do not
-            // touch `FHOPS` — so the whole budget is slack past the route's
+            // A source route costs no flood budget at all—routed hops do not
+            // touch `FHOPS`—so the whole budget is slack past the route's
             // end. Heard directly is the same shape: our own transmission is
             // the delivery, and any slack only buys a repeater backstop.
             (Some(_), _) | (None, Some(CachedRoute::Direct)) => ESTABLISHED_ROUTE_EXTRA_FLOOD_HOPS,
@@ -4415,7 +4415,7 @@ impl<
     /// Ensure `key` is registered at least transiently, returning its slot.
     ///
     /// A known peer is returned as-is; an unknown one is auto-registered
-    /// exactly like a full-source sender would be — unpinned and
+    /// exactly like a full-source sender would be—unpinned and
     /// LRU-evictable, never promoted. This is the node layer's hook for
     /// answering a stranger (an Identity Request reply, say) whose frame
     /// arrived on a path that does not auto-register its source, such as a
@@ -4483,7 +4483,7 @@ impl<
     /// Both are mirrored rather than just the route: a ping measures a link,
     /// and the signal entries are what make that measurement per-hop instead
     /// of end-to-end. Mirroring also keeps the reply the same shape as the
-    /// request, which is the point of a ping — a response routed or sized
+    /// request, which is the point of a ping—a response routed or sized
     /// differently from the traffic it stands in for measures a path that
     /// traffic will not take.
     ///
@@ -4542,7 +4542,7 @@ impl<
     ///
     /// A repeater is not a relay for itself. Re-flooding a packet we sent
     /// wastes airtime, and because the forwarding rewrite prepends our router
-    /// hint to the trace route it also fabricates a hop that never happened —
+    /// hint to the trace route it also fabricates a hop that never happened—
     /// the destination then learns a return path that starts by routing back
     /// through the originator.
     fn is_locally_originated(&self, frame: &[u8], header: &PacketHeader) -> bool {
@@ -4725,7 +4725,7 @@ impl<
     /// is the transmitter, whoever it was talking to. A frame forwarded past
     /// this node or simply overheard teaches nothing about a peer and never
     /// reaches the host, but it is exactly what proves a neighboring repeater
-    /// is on the air — which is what a peer-repeater listing reports.
+    /// is on the air—which is what a peer-repeater listing reports.
     ///
     /// Repeaters prepend to a trace route, so a trace's first hint is the hop
     /// just heard. Without one the frame came off the originator's own
@@ -4795,7 +4795,7 @@ impl<
             {
                 // A trace route that accumulated no hints means the packet
                 // reached us without passing through a repeater. That is a
-                // direct neighbour, not a zero-hop source route — caching it
+                // direct neighbour, not a zero-hop source route—caching it
                 // as a route would attach an empty SourceRoute option to
                 // everything we send back. Only a repeater consuming the
                 // final hint may leave an empty option behind, for
@@ -4810,8 +4810,8 @@ impl<
             }
         }
 
-        // A source-routed packet — including one whose hints are all consumed,
-        // since the emptied option is preserved for provenance — spends flood
+        // A source-routed packet—including one whose hints are all consumed,
+        // since the emptied option is preserved for provenance—spends flood
         // budget only after the route runs out. Its `FHOPS_ACC` therefore
         // counts the tail of the path, not its length, and would understate
         // how far away the peer is. Leave whatever route is already cached
@@ -4826,7 +4826,7 @@ impl<
             // any repeater permission to carry it, so the only way it reached
             // us is off the sender's own transmitter. That is the same
             // evidence an empty trace route carries, read off the frame's
-            // shape instead of out of an option — which is why a frame like
+            // shape instead of out of an option—which is why a frame like
             // this is not worth spending a trace route on.
             self.peer_registry
                 .update_route(peer_id, crate::CachedRoute::Direct);
@@ -4949,7 +4949,7 @@ impl<
         // whoever composed it. `is_locally_originated` cannot see this:
         // the source is whichever stack sharing the antenna sent it, and
         // an attached host's identity is not one of ours. Recording the
-        // duplicate key is the other half — a neighbor's repeat of the
+        // duplicate key is the other half—a neighbor's repeat of the
         // same frame will arrive shortly, and repeating that would put a
         // frame back on the air that already left this antenna once.
         if rx.origin == RxOrigin::LocalTx {
@@ -4962,8 +4962,8 @@ impl<
             return false;
         }
         // A packet that names one of our identities as its destination has
-        // arrived. Whether we could actually process it — we may lack the key,
-        // or it may be a replay — is a separate question from whether it still
+        // arrived. Whether we could actually process it—we may lack the key,
+        // or it may be a replay—is a separate question from whether it still
         // needs carrying, and it does not.
         if self.find_local_identity_for_dst(header.dst).is_some() {
             return false;
@@ -5070,8 +5070,8 @@ impl<
             // (packet-structure.md § Flood Hop Count). Emptying the route
             // makes the packet floodable, but the transition is observed by
             // the *next* repeater, which sees an empty route and pays for the
-            // first real flood hop. Everything gated below — hop accounting,
-            // signal thresholds, region policy, contention delay — is flood
+            // first real flood hop. Everything gated below—hop accounting,
+            // signal thresholds, region policy, contention delay—is flood
             // behavior and does not apply to a hop that was named explicitly.
             if source_route_bytes[..2] != router_hint.0 {
                 return None;
@@ -5087,7 +5087,7 @@ impl<
                 return None;
             }
             // Signal-quality filtering applies only to flood forwarding,
-            // not to source-routed hops — and only to frames that arrived
+            // not to source-routed hops—and only to frames that arrived
             // over a radio. A minimum RSSI asks how far away the sender
             // was; over a wire the question has no answer, and any value
             // the comparison reads is one nobody measured.
@@ -5260,7 +5260,7 @@ impl<
             .copy_from_slice(fixed_core);
         cursor = core_end;
 
-        // Re-encoded options (without 0xFF — caller emits marker)
+        // Re-encoded options (without 0xFF—caller emits marker)
         let options_len =
             self.encode_forwarded_options(src, header, options, plan, &mut dst[cursor..])?;
         cursor += options_len;
@@ -5562,7 +5562,7 @@ impl<
         source_route: Option<&heapless::Vec<RouterHint, MAX_SOURCE_ROUTE_HINTS>>,
         requested: Option<u8>,
     ) -> Option<u8> {
-        // The failed attempt was narrowed against a route assumption — either
+        // The failed attempt was narrowed against a route assumption—either
         // an attached source route, or a cached route that clamped `FHOPS_REM`
         // below what was asked for. Rediscovery has to reach past the break,
         // so prefer the budget the application was willing to spend; it is
@@ -5617,7 +5617,7 @@ impl<
     /// `max(1 − quality, signal)`, so a repeater waits longer if either the copy
     /// it holds is poor *or* it sits close enough to the previous hop that its
     /// forward would mostly cover ground already covered. Clean, distant
-    /// receptions — the ones that carry the flood outward — go first.
+    /// receptions—the ones that carry the flood outward—go first.
     ///
     /// The quality scale's floor is raised from the spec's constant to the
     /// effective minimum-SNR forwarding threshold when one is set: eligibility
@@ -5739,8 +5739,8 @@ impl<
 
     /// Drop any queued forward the destination has already acknowledged.
     ///
-    /// A MAC ack echoes `ack_mic` — the first four bytes of the acknowledged
-    /// packet's on-wire MIC — which every forwarder can read without keys, and
+    /// A MAC ack echoes `ack_mic`—the first four bytes of the acknowledged
+    /// packet's on-wire MIC—which every forwarder can read without keys, and
     /// which survives the rewrites a repeater performs. A forward still sitting
     /// in the transmit queue when that ack is overheard has been overtaken by
     /// events: the destination has the packet, so repeating it buys nothing but
@@ -5749,9 +5749,9 @@ impl<
     ///
     /// This cancels what is queued at this instant and leaves nothing behind. A
     /// [route-retry] copy that arrives later carries a distinct forwarding
-    /// identity, is queued and forwarded normally — the origin resorted to it
+    /// identity, is queued and forwarded normally—the origin resorted to it
     /// because the ack never reached it, and carrying it prompts the
-    /// destination to acknowledge again — and is in turn cancelable by another
+    /// destination to acknowledge again—and is in turn cancelable by another
     /// overheard ack.
     ///
     /// Only unattributed forwards are eligible. A queued frame carrying a
@@ -5865,8 +5865,8 @@ impl<
             pending.sent_ms = sent_ms;
             pending.confirm_key = confirm_key.clone();
             // Zero means the send has never aired and its window is still to
-            // be set. A route retry arrives here already armed — it has to be,
-            // to survive the wait in the queue — and keeps the deadline it was
+            // be set. A route retry arrives here already armed—it has to be,
+            // to survive the wait in the queue—and keeps the deadline it was
             // scheduled with.
             if pending.ack_deadline_ms == 0 {
                 pending.ack_deadline_ms = match (pending.completion, needs_forward_confirmation) {
@@ -5881,8 +5881,8 @@ impl<
                 pending.state = crate::AckState::AwaitingForward {
                     confirm_deadline_ms: deadline_ms,
                 };
-                // The dedicated listen window — which holds all other
-                // transmissions back for the whole confirmation wait — is
+                // The dedicated listen window—which holds all other
+                // transmissions back for the whole confirmation wait—is
                 // reserved for sends with an ACK on the line. A repeat-only
                 // send is best-effort by construction; the pending entry
                 // matches an overheard repeat whenever the radio hears one,
@@ -5964,7 +5964,7 @@ impl<
     /// sender's behalf. A peer cached as [`CachedRoute::Direct`] transmits at
     /// [`ESTABLISHED_ROUTE_EXTRA_FLOOD_HOPS`] however wide a flood the application
     /// asked for, so a peer that has since moved out of direct range cannot be
-    /// reached by repeating the same frame — and nothing in the options records
+    /// reached by repeating the same frame—and nothing in the options records
     /// that a route was ever assumed. That is the same staleness as a dead
     /// source-route hint, kept in `FHOPS` instead of in an option.
     ///
@@ -6017,7 +6017,7 @@ impl<
     /// How long an ACK-requested send that travels through repeaters waits
     /// before the ACK is declared lost.
     ///
-    /// The retry ladder covers the first hop — that is the only hop this node
+    /// The retry ladder covers the first hop—that is the only hop this node
     /// can observe. Everything past it is distance: the packet has to cross
     /// `forwards` repeaters to arrive and the ACK has to cross them back, and
     /// each crossing costs a frame time plus the forwarder's contention window
@@ -6099,8 +6099,8 @@ impl<
     /// Confirmation is not tied to the post-transmit listen window. That
     /// window governs when this node stays off the air waiting; the sender's
     /// interest in hearing its packet carried onward outlives it. A repeat
-    /// that arrives late — or while a retransmission is already sitting in
-    /// backoff — is the same evidence it would have been a moment earlier, so
+    /// that arrives late—or while a retransmission is already sitting in
+    /// backoff—is the same evidence it would have been a moment earlier, so
     /// every pending send still waiting for a repeat is matched, and a retry
     /// queued on its behalf is withdrawn.
     ///

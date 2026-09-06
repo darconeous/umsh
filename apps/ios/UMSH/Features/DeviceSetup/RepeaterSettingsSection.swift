@@ -3,8 +3,8 @@ import UMSHMobileCore
 
 /// Presentation for a 2-byte routing-domain region code.
 ///
-/// A code that decodes to letters came from a short code — an airport, a
-/// country, a state — and is shown as such; anything else has no
+/// A code that decodes to letters came from a short code—an airport, a
+/// country, a state—and is shown as such; anything else has no
 /// recoverable text form and is shown as its raw hex. Both forms carry the
 /// hex, because the hex is what the operator will see in a packet capture
 /// or on another node.
@@ -87,7 +87,7 @@ struct RepeaterSettingsSection: View {
     ///
     /// Only the repeater setup sheet does. A repeater is being commissioned
     /// at the place it will serve, so the regions covering that place are
-    /// the answer far more often than an empty list is — and everything the
+    /// the answer far more often than an empty list is—and everything the
     /// suggestion did is on screen, undoable, and editable before anything
     /// is written.
     var suggestsFromPhone = false
@@ -184,7 +184,7 @@ struct RepeaterSettingsSection: View {
                 } else if isSuggesting {
                     Text("Looking up the regions around this phone…")
                 } else if regions.isEmpty {
-                    Text("With no regions listed, this device forwards traffic from every region. Add regions to relay only for a named area — a short code such as SJC or WA, a region name your mesh has agreed on, or a raw code. This is a routing domain, not a radio band.")
+                    Text("With no regions listed, this device forwards traffic from every region. Add regions to relay only for a named area—a short code such as SJC or WA, a region name your mesh has agreed on, or a raw code. This is a routing domain, not a radio band.")
                 } else {
                     Text("Only floods tagged with one of these regions, or carrying no region at all, are relayed. This is a routing domain, not a radio band.")
                 }
@@ -192,7 +192,7 @@ struct RepeaterSettingsSection: View {
 
             Section {
                 Picker("Tag untagged traffic", selection: $defaultRegion) {
-                    Text("None — don't tag").tag(Data?.none)
+                    Text("None—don't tag").tag(Data?.none)
                     ForEach(defaultRegionChoices, id: \.self) { region in
                         Text(defaultRegionLabel(region)).tag(Data?.some(region))
                     }
@@ -236,7 +236,7 @@ struct RepeaterSettingsSection: View {
         let datasetVersion: String
         let cellMeters: Double?
         /// The forwarding list and tag the device reported, restored whole
-        /// by Undo — the suggestion replaced both, so half of it back would
+        /// by Undo—the suggestion replaced both, so half of it back would
         /// be a third configuration nobody chose.
         let displacedRegions: [String]
         let displacedDefaultRegion: Data?
@@ -322,7 +322,7 @@ struct RepeaterSettingsSection: View {
         }
         var note = """
             Filled in from where this phone is, using region data \
-            \(suggestion.datasetVersion). Edit them freely — nothing is sent \
+            \(suggestion.datasetVersion). Edit them freely—nothing is sent \
             until you apply.
             """
         if !suggestion.displacedRegions.isEmpty, displaces(suggestion) {
@@ -335,7 +335,7 @@ struct RepeaterSettingsSection: View {
     ///
     /// A default the device already holds that is not in its forwarding list
     /// stays on this list rather than being hidden. The device does not
-    /// cross-check the two, so that state is reachable — and hiding it would
+    /// cross-check the two, so that state is reachable—and hiding it would
     /// show **None** over a value still on the device, leave no way to clear
     /// it, and write it back unchanged on the next apply.
     /// The codes the listed regions derive to, which is the form the
@@ -353,7 +353,7 @@ struct RepeaterSettingsSection: View {
     private func defaultRegionLabel(_ region: Data) -> String {
         regionCodes.contains(region)
             ? RegionCodeText.label(region)
-            : "\(RegionCodeText.label(region)) — not relayed"
+            : "\(RegionCodeText.label(region))—not relayed"
     }
 
     private var rssiChoices: [Int16] {
@@ -367,18 +367,18 @@ struct RepeaterSettingsSection: View {
     private func addRegion() {
         let text = regionInput.trimmingCharacters(in: .whitespaces)
         guard !text.isEmpty else { return }
-        // Any string within the length bound is a region — a short code, a
-        // name, or a literal code — so the only rejection left is one the
+        // Any string within the length bound is a region—a short code, a
+        // name, or a literal code—so the only rejection left is one the
         // device would refuse to store.
         guard RegionCodeText.code(of: text) != nil else {
-            regionProblem = "That region name is too long. Use up to 24 characters — a short code like SJC or WA, a region name, or 0x followed by four hex digits."
+            regionProblem = "That region name is too long. Use up to 24 characters—a short code like SJC or WA, a region name, or 0x followed by four hex digits."
             return
         }
         regionProblem = nil
         regionInput = ""
         // A region already listed is not added twice. A different
-        // capitalization of one is the same region — it derives the same
-        // code — so it respells the entry rather than joining it.
+        // capitalization of one is the same region—it derives the same
+        // code—so it respells the entry rather than joining it.
         if let index = RegionCodeText.index(of: text, in: regions) {
             regions[index] = text
         } else {

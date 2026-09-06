@@ -24,7 +24,7 @@ fn panic(info: &core::panic::PanicInfo) -> ! {
         let _ = w.write_str("PANIC: ");
         let _ = core::fmt::write(&mut w, format_args!("{}", info));
         if w.pos == 7 {
-            // Only the marker — nothing printable from PanicInfo.
+            // Only the marker—nothing printable from PanicInfo.
             let _ = w.write_str("(no message)");
         }
         w.pos
@@ -34,7 +34,7 @@ fn panic(info: &core::panic::PanicInfo) -> ! {
 }
 
 /// Custom HardFault handler. cortex-m-rt's default is `loop {}`, which leaves
-/// the CPU spinning until the WDT trips ~8 s later — and bypasses our
+/// the CPU spinning until the WDT trips ~8 s later—and bypasses our
 /// `#[panic_handler]` entirely, so the panic slot stays whatever it was. By
 /// capturing the exception frame's faulting PC + LR into the panic slot and
 /// triggering a soft reset, every HardFault is now recoverable and visible on

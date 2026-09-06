@@ -1,4 +1,4 @@
-//! `umshctl`: the host tool for ULCP radio devices — inspection,
+//! `umshctl`: the host tool for ULCP radio devices—inspection,
 //! device identity, persistence, pairing, radio configuration, and
 //! packet capture.
 //!
@@ -7,7 +7,7 @@
 //! never disturbs its configuration: only the command explicitly given
 //! changes anything.
 //!
-//! With no command it opens a shell — one attach, many commands — which
+//! With no command it opens a shell—one attach, many commands—which
 //! is worth a great deal over BLE, where each fresh attach costs a
 //! discovery pass plus a handshake.
 
@@ -55,11 +55,11 @@ radio whose port has been bridged to a socket, which carries the same
 framing a wire does; there is nothing to discover, so it is always named.
 
 KEY values are 44-character base58 or 64-character hex. Secrets are
-never echoed in output or traces — though shell history keeps whatever
+never echoed in output or traces—though shell history keeps whatever
 was typed, the same as any shell.
 
-CODE values are a short code of one to three letters or digits — an IATA
-airport code (SJC) or a country or state (US, WA) — a raw 2-byte code
+CODE values are a short code of one to three letters or digits—an IATA
+airport code (SJC) or a country or state (US, WA)—a raw 2-byte code
 (0x7853), or any other text, which is hashed as a region name
 (\"Rogue Valley\"). Only an all-letter short code reads back as itself.
 Region codes are routing-domain tags, not RF band plans, so every
@@ -163,7 +163,7 @@ pub struct App {
     pub trace: bool,
     pub no_save: bool,
     pub baud: u32,
-    /// How a bare `connect` resolves a scan — `--pick` at launch keeps
+    /// How a bare `connect` resolves a scan—`--pick` at launch keeps
     /// asking for the rest of the shell session.
     pub discovery: Discovery,
     /// The last `ble-scan` listing, so `connect <N>` can refer to it.
@@ -177,7 +177,7 @@ impl App {
     pub fn session(&mut self) -> Result<&mut Session> {
         match &mut self.session {
             Some(session) => Ok(session),
-            None => bail!("not attached — try `ble-scan` or `connect`"),
+            None => bail!("not attached—try `ble-scan` or `connect`"),
         }
     }
 
@@ -197,7 +197,7 @@ impl App {
     ///
     /// Ending a mesh session drops its device handle first, which is what
     /// closes the link and lets the driver wind down and hand the
-    /// borrowed radio back — so the caller is left attached to the local
+    /// borrowed radio back—so the caller is left attached to the local
     /// radio again rather than to nothing.
     pub async fn detach(&mut self) -> Option<String> {
         let label = self.session.take().map(|session| session.label);
@@ -266,7 +266,7 @@ fn announce_attached(session: &Session) {
         session.target.transport(),
         session.device.dev_version(),
         // `PROP_DEV_MODEL` is optional; say nothing rather than "unknown"
-        // when the device does not name its hardware — and a device that
+        // when the device does not name its hardware—and a device that
         // answers with an empty string has named it no better than one
         // that refuses the read.
         session
@@ -369,7 +369,7 @@ async fn run(args: ToolArgs) -> Result<()> {
     // the named device across the mesh. With a command that is the
     // one-shot form of the shell's `remote`: run it and hand the radio
     // back, so a script gets the same session the shell would have. With
-    // no command it is simply where the shell starts — the prompt opens
+    // no command it is simply where the shell starts—the prompt opens
     // already talking to the far node.
     //
     // A one-shot spends nothing on the air before the command itself: a
@@ -404,8 +404,8 @@ async fn main() {
     // which is checked before the tool's parser so the two never have to
     // agree on a shared grammar.
     //
-    // Everything here is `!Send` — the node layer, the pcap tap, the
-    // whole session — so the one task a mesh session spawns to hold the
+    // Everything here is `!Send`—the node layer, the pcap tap, the
+    // whole session—so the one task a mesh session spawns to hold the
     // borrowed radio needs a `LocalSet` to be spawned onto.
     let local = tokio::task::LocalSet::new();
     let result = local
@@ -562,7 +562,7 @@ mod tests {
     #[test]
     fn factory_reset_confirmation_is_a_flag_not_a_parse_error() {
         // Unlike the tool this replaces, refusing an unconfirmed wipe is
-        // a decision made against the session — the shell asks instead.
+        // a decision made against the session—the shell asks instead.
         let Some(Command::FactoryReset { yes }) = parse(&["factory-reset"]).unwrap().command else {
             panic!("expected factory-reset");
         };
@@ -711,7 +711,7 @@ mod tests {
         assert!(refused(&["discover"]));
 
         // Everything else is an ordinary property conversation, and the
-        // binding carries it — including the reset-class commands and
+        // binding carries it—including the reset-class commands and
         // the write-only pairing PIN.
         for argv in [
             vec!["info"],

@@ -9,7 +9,7 @@
 //! is simply dropped by the MAC before the responder ever runs.
 //!
 //! The application supplies a [`NodeIdentityProfile`] (its role, capabilities,
-//! and descriptive fields) and, optionally, a respond **policy** — a
+//! and descriptive fields) and, optionally, a respond **policy**—a
 //! registerable discriminator that inspects the [`IdentityRequestContext`] and
 //! decides whether, and how, to answer (e.g. "known peers only", "only on a
 //! given channel", "repeater → always"). No signing key is required.
@@ -44,7 +44,7 @@ pub(crate) const RESPONSE_MAX_DELAY_MS: u16 = 30_000;
 /// not arrive together: a repeater carrying the second copy holds it for its
 /// own contention delay first. The window must also outlive the reply's own
 /// random hold, since a duplicate landing while the first reply still sits in
-/// the transmit queue is the case that queues a second one — so it is derived
+/// the transmit queue is the case that queues a second one—so it is derived
 /// from that hold rather than chosen independently.
 ///
 /// An immediate reply is covered by the same window with room to spare, and
@@ -57,7 +57,7 @@ const SOLICITATION_SUPPRESSION_MS: u64 = RESPONSE_MAX_DELAY_MS as u64 * 2;
 ///
 /// One entry per distinct solicitation, so this is how many separate
 /// questions a node can be holding answers to at once. Overflow evicts the
-/// oldest, which can then be answered twice — the pre-existing behavior
+/// oldest, which can then be answered twice—the pre-existing behavior
 /// rather than a new failure.
 const ANSWERED_CAPACITY: usize = 8;
 
@@ -68,7 +68,7 @@ struct AnsweredSolicitation {
     /// anything worse.
     requester: NodeHint,
     /// The request's `NONCE`, when it carried one. This is what makes the
-    /// entry name a *solicitation* and not merely a peer — a requester that
+    /// entry name a *solicitation* and not merely a peer—a requester that
     /// wants another answer inside the window asks with a fresh nonce, which
     /// is what the nonce is for. A request that carries none cannot be told
     /// apart from a repeat of itself, so within the window it is treated as
@@ -79,7 +79,7 @@ struct AnsweredSolicitation {
 
 /// This node's own identity, used to answer Identity Requests.
 ///
-/// Holds descriptive fields only — **no signing key**. Config-like fields
+/// Holds descriptive fields only—**no signing key**. Config-like fields
 /// (`role`, `capabilities`, `name`, `supported_regions`) are typically set once
 /// at bring-up; live fields (`location`, `altitude_m`) can be refreshed at any
 /// time via [`LocalNode::update_identity_profile`](crate::LocalNode::update_identity_profile),
@@ -103,7 +103,7 @@ pub struct NodeIdentityProfile {
     /// `None` on a node that does not know what time it is.
     ///
     /// A source rather than a value, because option 3 dates the *payload*
-    /// and every payload is built fresh — a stored number would be the
+    /// and every payload is built fresh—a stored number would be the
     /// time some earlier payload was built. It lives here so that the one
     /// canonical builder stamps every framing identically; a node with no
     /// clock keeps the default and simply omits the option.
@@ -172,7 +172,7 @@ impl NodeIdentityProfile {
 }
 
 /// Reception context for an incoming Identity Request, handed to the respond
-/// policy so it can decide whether — and how — to answer.
+/// policy so it can decide whether—and how—to answer.
 ///
 /// The request has already passed the filter gate (its `FILTER_*` options
 /// select this node) and its source has already been resolved to a key, so the
@@ -210,7 +210,7 @@ pub struct IdentityRequestContext<'a> {
     /// things: an empty option is a request that reached us without passing a
     /// repeater, while no option is a requester that asked for no path to be
     /// recorded. The reply mirrors the option the request carried, so it is
-    /// the presence — not the hop count — that decides.
+    /// the presence—not the hop count—that decides.
     pub trace_route: Option<&'a [u8]>,
     /// The request's accumulated trace signal, as packed option bytes, or
     /// `None` when the request carried no trace-signal option.
@@ -254,7 +254,7 @@ pub fn default_respond_policy(ctx: &IdentityRequestContext<'_>) -> RespondDecisi
 ///
 /// Lets a node keep a live profile while declining to be discovered. The
 /// profile is what unsolicited advertisements are built from, so silencing
-/// the responder this way — rather than by uninstalling it — is what keeps
+/// the responder this way—rather than by uninstalling it—is what keeps
 /// the two behaviors independent.
 pub fn never_respond_policy(_ctx: &IdentityRequestContext<'_>) -> RespondDecision {
     RespondDecision::Ignore
@@ -319,9 +319,9 @@ pub(crate) struct IdentityResponsePlan {
     /// this: it reads a source route as a path already known, which is true of
     /// a cached route and not of one handed back from a stranger's trace.
     ///
-    /// A reply no repeater may carry records nothing either way — the MAC
+    /// A reply no repeater may carry records nothing either way—the MAC
     /// drops the request on an unrepeatable frame rather than spending an
-    /// option header on it — so a genuinely direct answer stays bare.
+    /// option header on it—so a genuinely direct answer stays bare.
     pub(crate) trace_route: bool,
     /// Whether the reply also asks for per-hop signal quality, mirroring the
     /// request's trace-signal option on the same terms.
@@ -423,7 +423,7 @@ impl IdentityResponder {
     ///
     /// A clock that has gone backwards leaves an entry looking younger than
     /// it is, never older, so suppression can only be held slightly too long
-    /// — never released early, which is the direction that would let the
+    ///—never released early, which is the direction that would let the
     /// duplicate replies back.
     fn expire_answered(&mut self, now_ms: u64) {
         while let Some(entry) = self.answered.front() {

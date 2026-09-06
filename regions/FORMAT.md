@@ -99,8 +99,8 @@ every region except the custom ones.
 ### Only core geometry is stored
 
 `geometry_parts` holds each region's core polygons and nothing else. The
-expansion margin — the overlap that lets a repeater near a border serve both
-sides — is the `expansion_m` number, resolved at lookup time by the sampled
+expansion margin—the overlap that lets a repeater near a border serve both
+sides—is the `expansion_m` number, resolved at lookup time by the sampled
 rule below. The R-tree box of each part is the part's bounds grown by its
 region's expansion distance (latitude clamped at the poles, longitude allowed
 to run past ±180), so the candidate filter still finds a region from inside
@@ -176,7 +176,7 @@ Effective membership is *defined* by sampling, not approximated by it:
 > zero is tested at the position alone.
 
 Destinations are computed on the mean-radius sphere (R = 6 371 008.8 m) with
-the standard direct formulas — the same model as the tie-break below, chosen
+the standard direct formulas—the same model as the tie-break below, chosen
 because every platform reproduces it with plain arithmetic. Since the pattern
 is the semantics, implementations agree exactly; against true geodesic
 dilation the outer edge scallops by a few hundred meters between samples,
@@ -192,13 +192,13 @@ FROM lookup_ranges WHERE start_key <= ?1 ORDER BY start_key DESC LIMIT 1;
 Verify `?1 <= end_key`; a key past the range's end has no coverage. The base
 set lists regions that are members everywhere in the range (their core or
 expanded status still depends on the exact position). If
-`candidate_region_ids` is non-empty, those few regions — and only those — are
+`candidate_region_ids` is non-empty, those few regions—and only those—are
 resolved with the sampled rule and unioned in.
 
 A database built without the cache has an empty `lookup_ranges` table. There
-the reader collects candidates from `effective_rtree` instead — querying the
+the reader collects candidates from `effective_rtree` instead—querying the
 longitude at all three wrappings (λ−360, λ, λ+360), because padded boxes may
-hang past the antimeridian — and resolves each with the same sampled rule.
+hang past the antimeridian—and resolves each with the same sampled rule.
 
 `region_ids` blobs are sorted region ids stored as varint gaps.
 
@@ -221,7 +221,7 @@ or state is large enough that tagging a flood with one would broaden its scope
 far past what an operator setting up a repeater intends.
 
 That tie-break distance is a great-circle distance on a sphere of radius
-6 371 008.8 m — deliberately not the WGS84 model the build measures radius caps
+6 371 008.8 m—deliberately not the WGS84 model the build measures radius caps
 and buffers with. It is never a measurement, only an ordering between two
 candidates already within a hundred kilometers of each other, and keeping it
 spherical means a browser can reproduce it with arithmetic rather than a

@@ -1,8 +1,8 @@
 # Known-point expectations for the test fixture database.
 #
 # These are written against regions/tests/fixture, whose administrative
-# geometry is deliberately coarse rectangles. They assert geographic policy —
-# which semantic regions a position is in and out of — not boundary precision.
+# geometry is deliberately coarse rectangles. They assert geographic policy—
+# which semantic regions a position is in and out of—not boundary precision.
 version: 1
 
 points:
@@ -62,7 +62,7 @@ points:
       # Far closer to SFO and OAK than to SJC. A core SJC match here can only
       # be the force override in overrides/overrides.yaml. The suggested
       # default is the metro, which ranks above every airport where one
-      # exists — the override's effect shows in the commercial core match,
+      # exists—the override's effect shows in the commercial core match,
       # not in the default.
       include_semantic:
         - iata-airport:SJC

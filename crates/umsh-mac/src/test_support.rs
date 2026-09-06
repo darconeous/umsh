@@ -784,7 +784,7 @@ impl DummyIdentity {
     /// distinguishable byte patterns like `[0xAB; 32]`) while letting
     /// the MAC layer enforce real curve validation in `add_peer`.
     ///
-    /// Without `software-crypto` the bytes are used verbatim — useful
+    /// Without `software-crypto` the bytes are used verbatim—useful
     /// for `no_std` test scenarios where Ed25519 derivation is not
     /// available, and where the validator is also compiled out.
     pub fn new(bytes: [u8; 32]) -> Self {

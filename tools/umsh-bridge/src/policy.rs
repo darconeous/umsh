@@ -3,7 +3,7 @@
 //! Two things live here, and they exist for the same reason. An
 //! authenticated but misbehaving client is the realistic failure mode of
 //! a bridge, so the per-client rate limit is policy rather than a
-//! backstop — the device's duty ledger is the backstop. And two clients
+//! backstop—the device's duty ledger is the backstop. And two clients
 //! whose radios share a segment double every fanned-out frame's airtime,
 //! which the egress allowlist is the place to prevent.
 //!

@@ -2,10 +2,10 @@
 //!
 //! [`StatsLedger`] is the one place a device tallies what its radio did.
 //! It sits in a `static` and is written by whichever parts of the stack
-//! are in a position to see each event exactly once — on a firmware that
+//! are in a position to see each event exactly once—on a firmware that
 //! is the radio multiplexer for frames on the air, the PHY runner for
 //! receptions the demodulator rejected, and the device node's pump for
-//! what the MAC decided — and it is read by the ULCP session, by the
+//! what the MAC decided—and it is read by the ULCP session, by the
 //! device's own display, and by anything else that wants the same
 //! numbers rather than its own.
 //!
@@ -17,8 +17,8 @@
 //! `base = raw`.
 //!
 //! Zeroing `raw` instead would be wrong twice over. Two of the producers
-//! mirror tallies the ledger does not own — the MAC's counters and the
-//! PHY's — so a zeroed cell would be overwritten by the next mirror pass
+//! mirror tallies the ledger does not own—the MAC's counters and the
+//! PHY's—so a zeroed cell would be overwritten by the next mirror pass
 //! and the clear would visibly bounce back; and a cell another task is
 //! concurrently `fetch_add`-ing cannot be zeroed without losing whatever
 //! landed in between. Mirroring producers therefore feed the *difference*
@@ -221,7 +221,7 @@ impl core::fmt::Debug for StatsLedger {
 
 /// A mirror of a monotone tally kept somewhere else.
 ///
-/// Producers that copy someone else's counters — the MAC's, the PHY's —
+/// Producers that copy someone else's counters—the MAC's, the PHY's—
 /// hold one of these per source field and feed the ledger the difference
 /// since the last pass, so the ledger only ever sees additions. A source
 /// that goes backwards (a counter reconstructed, a peripheral restarted)

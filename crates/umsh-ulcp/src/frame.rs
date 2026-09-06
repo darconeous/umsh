@@ -93,9 +93,9 @@ pub enum Cmd {
     Clear = 13,
     /// Restore state from the saved snapshot (host to device).
     Restore = 14,
-    /// Factory reset (host to device): erase ALL mutable state — saved
+    /// Factory reset (host to device): erase ALL mutable state—saved
     /// provisioning, device identity, BLE bonds, pairing PIN, and every
-    /// other persisted journal — then reboot. Unlike `CMD_CLEAR` (which
+    /// other persisted journal—then reboot. Unlike `CMD_CLEAR` (which
     /// exempts bonds and the PIN and leaves the live session running),
     /// this returns the radio to a blank factory state and does not reply:
     /// the reboot drops the link.
@@ -442,7 +442,7 @@ pub fn prop_remove(
 }
 
 /// Encode a `CMD_PROP_INSERTED` frame. `digest` is the inserted item in
-/// the property's digest form — never in a form containing key material.
+/// the property's digest form—never in a form containing key material.
 pub fn prop_inserted(
     buf: &mut [u8],
     tid: u8,

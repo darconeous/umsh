@@ -19,15 +19,15 @@ pub enum DupCacheKey {
     Hash32(u32),
     /// MAC ack keyed the same way as [`Hash32`](Self::Hash32), carried as its
     /// own variant because acks age out of the cache on a much shorter clock
-    /// — see [`ACK_DUP_CACHE_TTL_MS`].
+    ///—see [`ACK_DUP_CACHE_TTL_MS`].
     AckHash32(u32),
 }
 
 /// How long a duplicate key stays suppressed.
 ///
 /// Capacity alone is not an expiry policy. A packet whose identity is
-/// derived from its contents rather than a MIC — a beacon, whose body is
-/// empty and whose non-dynamic options never change — hashes to the same key
+/// derived from its contents rather than a MIC—a beacon, whose body is
+/// empty and whose non-dynamic options never change—hashes to the same key
 /// on every repetition, so a quiet mesh that never pushes 64 further keys
 /// through the ring would suppress that node's beacons forever. An hour is
 /// long enough that a burst of retransmissions of one packet is still
@@ -44,8 +44,8 @@ pub const DUP_CACHE_TTL_MS: u64 = 60 * 60 * 1000;
 /// hour-long TTL would be forwarded once and then silently absorbed for
 /// the rest of the hour, killing the recovery path at the first hop.
 /// Ten seconds still collapses the burst of copies from a single
-/// exchange — flood copies and retransmission ladders both play out
-/// within a few confirmation windows — while a re-ack provoked by a
+/// exchange—flood copies and retransmission ladders both play out
+/// within a few confirmation windows—while a re-ack provoked by a
 /// sender's route retry, arriving tens of seconds later, is carried.
 pub const ACK_DUP_CACHE_TTL_MS: u64 = 10 * 1000;
 
@@ -115,7 +115,7 @@ impl<const N: usize> DuplicateCache<N> {
 
     /// A clock that has gone backwards (a resynchronized monotonic source)
     /// leaves the entry looking younger than it is, never older, so
-    /// suppression can only be held slightly too long — never released early.
+    /// suppression can only be held slightly too long—never released early.
     fn is_expired(key: &DupCacheKey, inserted_ms: u64, now_ms: u64) -> bool {
         let ttl_ms = match key {
             DupCacheKey::AckHash32(_) => ACK_DUP_CACHE_TTL_MS,

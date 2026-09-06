@@ -1,8 +1,8 @@
 //! Geographic region suggestions from a `.regiondb` database.
 //!
 //! The database proposes; it never writes to a radio. Everything here
-//! produces values for the existing repeater-settings surfaces —
-//! `regions` strings and a 2-octet `default_region` — and the editor's
+//! produces values for the existing repeater-settings surfaces—
+//! `regions` strings and a 2-octet `default_region`—and the editor's
 //! own apply path remains the only thing that transmits.
 //!
 //! Region-list policy lives on this side of the boundary deliberately.
@@ -21,7 +21,7 @@ use umsh_regiondb::{Membership, RegionDb, RegionDbError, RegionLookup, RegionMat
 /// Widest positional uncertainty a proposal accepts, in meters.
 ///
 /// Against 2 km expansion margins and 100 km airport radii, sampling the
-/// corners of a coarser position returns dozens of "uncertain" regions —
+/// corners of a coarser position returns dozens of "uncertain" regions—
 /// noise dressed up as diligence. 25 km admits advert cells of three
 /// bytes (≈ 9.8 km at the equator) and finer, and refuses one- and
 /// two-byte cells (≈ 2,500 km and ≈ 156 km).
@@ -131,8 +131,8 @@ impl From<Membership> for MobileRegionMembership {
 
 /// A place to propose regions for, with its honest uncertainty.
 ///
-/// Positions come from sources of very different quality — a node's
-/// advertised identity cell, a live GNSS fix, hand-entered coordinates —
+/// Positions come from sources of very different quality—a node's
+/// advertised identity cell, a live GNSS fix, hand-entered coordinates—
 /// and the proposal widens itself to match. At most one of
 /// `location_bytes` and `accuracy_m` should be set; the cell wins when
 /// both are.
@@ -297,9 +297,9 @@ impl MobileRegionDatabase {
     /// Propose a region configuration for a position, against what the
     /// device currently holds.
     ///
-    /// The proposal samples the position's uncertainty — an identity
+    /// The proposal samples the position's uncertainty—an identity
     /// cell's center and four corners, or a measured fix's center and
-    /// the four cardinal points of its accuracy circle — and suggests
+    /// the four cardinal points of its accuracy circle—and suggests
     /// every region any sample hit. A node whose position straddles a
     /// boundary should usually forward both sides, the same reasoning
     /// that gives the database its expansion margins; the non-unanimous
@@ -338,7 +338,7 @@ impl MobileRegionDatabase {
         })?;
 
         // The merged view: every match any sample hit, once, with its
-        // best membership — a core hit anywhere beats an expanded one.
+        // best membership—a core hit anywhere beats an expanded one.
         let mut merged: Vec<RegionMatch> = Vec::new();
         for lookup in &lookups {
             for candidate in &lookup.matches {
@@ -762,7 +762,7 @@ mod tests {
         // At this point OAK answers and SFO does not, but a 20 km circle
         // reaches across their boundary: the southern and western samples
         // return SFO and lose OAK. Both airports join the suggestion and
-        // both are uncertain — the honest answer near a bisector — while
+        // both are uncertain—the honest answer near a bisector—while
         // the regions every sample agrees on stay certain.
         let position = MobileRegionPositionRecord {
             accuracy_m: Some(20_000.0),

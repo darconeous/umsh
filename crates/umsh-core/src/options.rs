@@ -563,7 +563,7 @@ mod tests {
         let mut enc = OptionEncoder::new(&mut buf);
         enc.put(1, &[0x01]).unwrap();
         enc.put(3, &[0x02]).unwrap(); // delta from 1 → 3 is 2
-        enc.put(3, &[0x03]).unwrap(); // delta 0 — same option again
+        enc.put(3, &[0x03]).unwrap(); // delta 0—same option again
         let len = enc.finish();
 
         let items: Vec<_> = OptionDecoder::new(&buf[..len])
@@ -676,7 +676,7 @@ mod tests {
         let len = enc.finish();
 
         let dec = OptionDecoder::new(&buf[..len]);
-        // Haven't called next() yet — not finished.
+        // Haven't called next() yet—not finished.
         assert_eq!(dec.remainder(), &[] as &[u8]);
     }
 

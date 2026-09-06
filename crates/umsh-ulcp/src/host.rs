@@ -40,7 +40,7 @@ pub enum PropertyNotificationKind {
     Removed,
     /// `CMD_PROP_ARE`: several properties at once. Its payload is a
     /// list of entries rather than one key and value, so it has no
-    /// [`PropertyNotification`] form — iterate it with
+    /// [`PropertyNotification`] form—iterate it with
     /// [`crate::frame::MultiEntries`].
     Are,
 }

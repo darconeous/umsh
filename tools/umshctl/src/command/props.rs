@@ -129,8 +129,8 @@ pub fn spell(key: u32) -> String {
 /// value, and a topic of `info` is where one gets interpreted.
 pub fn format_value(key: u32, value: &[u8]) -> String {
     if value.is_empty() {
-        // Empty is a real value for a good many properties — no fix, no
-        // threshold, no name — and reads better as a word than as the
+        // Empty is a real value for a good many properties—no fix, no
+        // threshold, no name—and reads better as a word than as the
         // blank line an empty hex string would leave.
         return "(empty)".to_string();
     }

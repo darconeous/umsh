@@ -7,7 +7,7 @@
 //!
 //! [`DutyTracker`] is the accounting engine; [`DutyLedger`] wraps one
 //! tracker in a shared, interior-mutable form so every radio client on
-//! a device — the ULCP session and the device node — draws from
+//! a device—the ULCP session and the device node—draws from
 //! the same combined budget (`PROP_PHY_DUTY_LIMIT` bounds their *total*
 //! airtime, and `PROP_PHY_DUTY_NOW` reports the combined figure).
 
@@ -217,7 +217,7 @@ impl DutyLedger {
     /// (the device node's radio path): compute the airtime at the
     /// active modulation and test it against the combined budget.
     /// Returns the airtime to [`Self::record`] once the transmit
-    /// completes. Does not itself record — refused frames and failed
+    /// completes. Does not itself record—refused frames and failed
     /// transmits must not consume budget.
     pub fn admit(&self, now_ms: u64, frame_len: usize) -> Result<u32, DutyExceeded> {
         self.state.lock(|state| {

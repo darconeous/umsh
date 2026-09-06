@@ -4,8 +4,8 @@
 //! receive path taps arriving Node Management Request payloads,
 //! [`admit`] decides whether the sender is entitled to be heard at all,
 //! and [`responder_loop`] runs each admitted exchange: the
-//! [`DeviceEngine`] reads the envelope, the session — reached through the
-//! driver's event loop, since it belongs to that task — serves the frame
+//! [`DeviceEngine`] reads the envelope, the session—reached through the
+//! driver's event loop, since it belongs to that task—serves the frame
 //! inside, and the engine wraps the answer and retains it against a
 //! retransmission.
 //!
@@ -56,7 +56,7 @@ use crate::log::debug_log;
 /// Taken as 75 to leave room for an option this list does not yet know
 /// about. The asymmetry is deliberate: over-reserving costs a slightly
 /// smaller fragment and one more exchange, while under-reserving costs a
-/// response that cannot be sent at all — which an administrator cannot
+/// response that cannot be sent at all—which an administrator cannot
 /// tell from a lost packet.
 ///
 /// A full 32-octet source key is not reserved for. A response goes to an
@@ -101,7 +101,7 @@ struct Request {
 /// One slot. An administrator may not have more than one exchange
 /// outstanding, and the responder serves one at a time, so a second
 /// arrival while one is in flight is either a different administrator or
-/// a retransmission — and both are better served by being asked again
+/// a retransmission—and both are better served by being asked again
 /// than by being queued behind an exchange that may take several radio
 /// round trips.
 static REQUESTS: Channel<NodeMutex, Request, 1> = Channel::new();
@@ -180,7 +180,7 @@ fn is_admin(key: &[u8; 32]) -> bool {
 ///
 /// Registered as a receive handler at bring-up; returns `false` always,
 /// so the packet still reaches every other observer. Everything refused
-/// is refused silently — an unlisted sender learns nothing about whether
+/// is refused silently—an unlisted sender learns nothing about whether
 /// the device is manageable, not even that it declined to say.
 pub fn admit(packet: &ReceivedPacketRef<'_>) {
     match packet.payload_type() {
@@ -267,7 +267,7 @@ pub async fn responder_loop<CS: CounterStore + 'static, M: RawMutex + 'static>(
                     Ok(len) => len,
                     Err(error) => {
                         // Nothing goes out. The administrator retransmits,
-                        // and gets here again — which is the honest
+                        // and gets here again—which is the honest
                         // outcome for a reply this device cannot carry.
                         debug_log(format_args!("admin: reply REFUSED {error:?}"));
                         continue;
@@ -285,8 +285,8 @@ pub async fn responder_loop<CS: CounterStore + 'static, M: RawMutex + 'static>(
 /// Hand one frame to the session and wait for its answer.
 ///
 /// The session belongs to the driver's task, so the exchange crosses the
-/// event loop. It always answers — an empty reply is the answer for a
-/// reset — so this never has to time out.
+/// event loop. It always answers—an empty reply is the answer for a
+/// reset—so this never has to time out.
 async fn serve<M: RawMutex + 'static>(
     input: &'static InputChannel<M>,
     dispatch: &Dispatch<'_>,
@@ -301,8 +301,8 @@ async fn serve<M: RawMutex + 'static>(
         return AdminFrame::new();
     }
     // A read may be continued with a cursor, so let the session build the
-    // whole answer and cut it down here. Everything else — a write
-    // sequence above all — is measured against what actually fits,
+    // whole answer and cut it down here. Everything else—a write
+    // sequence above all—is measured against what actually fits,
     // because there is no continuing it: the binding's rule is that an
     // entry whose reply would not fit is not executed at all.
     let reply_budget = match dispatch.command() {
@@ -322,7 +322,7 @@ async fn serve<M: RawMutex + 'static>(
 ///
 /// No acknowledgment is requested. The administrator's token retry is the
 /// reliability layer for this binding, and it covers a lost response and
-/// a lost request alike — an ack would only tell the device something it
+/// a lost request alike—an ack would only tell the device something it
 /// has no use for.
 async fn respond<CS: CounterStore + 'static>(
     node: &DeviceNode<CS>,

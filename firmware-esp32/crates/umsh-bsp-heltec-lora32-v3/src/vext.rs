@@ -2,14 +2,14 @@
 //!
 //! GPIO36 gates the switched external 3.3 V rail that powers the OLED
 //! and the `Ve` header pins (hardware doc §10.1). The polarity is the
-//! opposite of the Heltec V2 — driving the pin LOW turns the rail ON —
+//! opposite of the Heltec V2—driving the pin LOW turns the rail ON—
 //! and the board's pull-up defaults the rail off until firmware drives
 //! the pin (§10.4). That inversion is the single most likely V2-habit
 //! bug in this port, so it is encoded here and no caller ever sees the
 //! raw level.
 //!
 //! Unlike the V2, the battery divider is NOT on this domain (its gate is
-//! GPIO37 — see [`crate::battery`]); `Vext` only affects the OLED and
+//! GPIO37—see [`crate::battery`]); `Vext` only affects the OLED and
 //! external sensors. After [`Vext::disable`], the OLED has lost power
 //! and must go through the full reset + init sequence again (see
 //! [`crate::display`]).

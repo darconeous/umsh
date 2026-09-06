@@ -5,7 +5,7 @@ import SwiftUI
 /// The failure mode this exists for is quiet: with no store, every read returns
 /// nothing and every write is dropped, so the app renders as a working install
 /// belonging to someone with no contacts. The one recovery a user reaches for
-/// in that situation — delete and reinstall — is also the only action that
+/// in that situation—delete and reinstall—is also the only action that
 /// destroys the data, because the database lives in Application Support while
 /// the identity lives in the Keychain and survives. So this screen's job is to
 /// say the records are intact and to talk the user out of erasing them.
@@ -27,7 +27,7 @@ struct StorageUnavailableView: View {
                     .fontWeight(.semibold)
                 Text(
                     """
-                    Do not delete the app — that erases the database this build \
+                    Do not delete the app—that erases the database this build \
                     is unable to read. Reinstalling the previous version, or a \
                     build that fixes the error below, restores everything.
                     """

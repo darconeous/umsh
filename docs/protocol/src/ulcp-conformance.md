@@ -113,13 +113,13 @@ A conforming host:
   **MUST NOT** treat one that differs from what it wrote as an error. A
   write is refused by a `PROP_LAST_STATUS` carrying the failure and by
   nothing else; anything a device reports as a property value is what that
-  property is, whether or not it is what was asked for — see
+  property is, whether or not it is what was asked for—see
   [`PROP_PHY_TX_POWER`](ulcp-radio.md#prop-phy-tx-power), which a device
   clamps to what its radio can reach. A host that shows the value to a user
   shows the reported one.
 * **MUST NOT** treat a failed capability-gated property read as a failed
   attach. A device advertising a capability implements its properties, so
-  a refusal is a device fault — but what is unknown is the setting, not the
+  a refusal is a device fault—but what is unknown is the setting, not the
   device. A host finishes the rest of the read, presents the affected
   setting as unavailable rather than as a default, and omits it from what
   it writes.
@@ -131,7 +131,7 @@ A conforming host:
   on every tethered attach, if it uses host services at all, rather than
   reasoning about what the device already holds.
 * **MUST NOT** write host-domain properties when it is merely
-  administering a device rather than being that device's host — see
+  administering a device rather than being that device's host—see
   [Two Kinds of Attach](ulcp.md#attach-relationships).
 * **SHOULD** follow the post-attach procedure in
   [Attach, Detach, and Synchronization](ulcp-core.md#attach-sync).

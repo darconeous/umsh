@@ -212,7 +212,7 @@ async fn phase_a(port: &str) -> Result<(), Box<dyn std::error::Error>> {
     expect(sync.phy_enabled, "PHY enabled")?;
     expect(sync.dev_key == Some(dev_key), "device key reported")?;
     println!("DEV_KEY={}", PublicKey(dev_key));
-    println!("PHASE A OK — power-cycle (or DFU-reboot) the board, then run phase-b");
+    println!("PHASE A OK—power-cycle (or DFU-reboot) the board, then run phase-b");
     Ok(())
 }
 
@@ -293,7 +293,7 @@ async fn phase_c(port: &str) -> Result<(), Box<dyn std::error::Error>> {
         sync.ownership == HostOwnership::Ours,
         "live host domain retained after CMD_CLEAR",
     )?;
-    println!("PHASE C OK — power-cycle (or DFU-reboot) the board, then run phase-d");
+    println!("PHASE C OK—power-cycle (or DFU-reboot) the board, then run phase-d");
     Ok(())
 }
 
@@ -318,7 +318,7 @@ async fn phase_d(port: &str) -> Result<(), Box<dyn std::error::Error>> {
     configure_phy(&mut radio).await?;
     radio.save().await?;
     println!("re-provisioned; DEV_KEY={}", PublicKey(dev_key));
-    println!("PHASE D OK — full-protocol hardware validation complete on this board");
+    println!("PHASE D OK—full-protocol hardware validation complete on this board");
     Ok(())
 }
 
@@ -412,7 +412,7 @@ async fn transmit<L: FrameLink>(
 /// unicasts to the provisioned host (counters base..base+count, spaced
 /// so the DUT has time to receive+queue each), without waiting for or
 /// asserting on the delegated ack. Decouples "does the DUT queue matched
-/// unicasts" from "does the ack round-trip land" — check the DUT queue
+/// unicasts" from "does the ack round-trip land"—check the DUT queue
 /// afterward with `phase-e` or `info`.
 async fn rf_blast(
     port: &str,
@@ -440,7 +440,7 @@ async fn rf_blast(
             "  unicast counter={counter} ({} bytes) on the air",
             frame.len()
         );
-        // Report everything the peer hears in the inter-frame window —
+        // Report everything the peer hears in the inter-frame window—
         // the DUT's delegated ack lands ~120 ms after each unicast, so
         // silence here while an air capture shows the ack is proof of a
         // post-TX receive gap on this peer's radio.
@@ -458,7 +458,7 @@ async fn rf_blast(
             println!("    peer heard {kind} {} bytes rssi={rssi}", heard.len());
         }
     }
-    println!("RF BLAST OK — check the DUT queue (expect count={count} if matching works)");
+    println!("RF BLAST OK—check the DUT queue (expect count={count} if matching works)");
     Ok(())
 }
 
@@ -516,7 +516,7 @@ async fn rf_peer(
     expect_air_ack(&mut radio, "duplicate re-acked, not re-queued").await?;
 
     // 3. Unrelated traffic (wrong destination, unknown keys) draws no
-    //    ack — and, per the final queue arithmetic, is never queued.
+    //    ack—and, per the final queue arithmetic, is never queued.
     let unrelated = sealed_unicast(
         base,
         true,
@@ -549,7 +549,7 @@ async fn rf_peer(
     expect(!stray_ack, "unrelated traffic not acknowledged")?;
 
     // 4. Overflow: 18 more frames (counters base+1..=base+18). With
-    //    the earlier frame that is 19 accepted into a 16-slot queue —
+    //    the earlier frame that is 19 accepted into a 16-slot queue—
     //    three evictions. Only the last frame requests (and earns) an
     //    ack, so exactly one drained frame carries RX_FLAG_ACKED.
     for offset in 1..=18u32 {
@@ -560,7 +560,7 @@ async fn rf_peer(
             expect_air_ack(&mut radio, "late acknowledged frame acked on the air").await?;
         }
     }
-    println!("RF PEER OK — run phase-e against the T-1000E: expected count=16 dropped=3 acked=1");
+    println!("RF PEER OK—run phase-e against the T-1000E: expected count=16 dropped=3 acked=1");
     Ok(())
 }
 
@@ -608,7 +608,7 @@ async fn rf_dev_multicast(
         tokio::time::sleep(Duration::from_millis(400)).await;
     }
     println!(
-        "RF DEV MULTICAST OK — check the T-1000E console for `node rx: Multicast ch={}`",
+        "RF DEV MULTICAST OK—check the T-1000E console for `node rx: Multicast ch={}`",
         hex(&derived.channel_id.0)
     );
     Ok(())
@@ -616,9 +616,9 @@ async fn rf_dev_multicast(
 
 /// Drive the T-Echo as an RF peer sending pairwise-sealed,
 /// ack-requesting unicast to the *device identity* (device-node plan
-/// increment 4 acceptance). The peer node identity is deterministic —
+/// increment 4 acceptance). The peer node identity is deterministic—
 /// register its printed public key once with
-/// `umshctl --port <port> dev-peer add <pk>` — and the pairwise
+/// `umshctl --port <port> dev-peer add <pk>`—and the pairwise
 /// keys come from the real X25519 derivation, so the device's MAC
 /// authenticates, acks through the shared duty ledger, and schedules
 /// an RX counter-boundary persist when the counter jump crosses a
@@ -626,7 +626,7 @@ async fn rf_dev_multicast(
 ///
 /// `expect` is `ack` (frames are fresh: every one must draw a MAC ack
 /// on the air) or `silence` (frames sit at or below the persisted
-/// replay boundary: none may be acknowledged) — the latter is the
+/// replay boundary: none may be acknowledged)—the latter is the
 /// power-cycle replay probe.
 async fn rf_dev_unicast(
     port: &str,
@@ -678,14 +678,14 @@ async fn rf_dev_unicast(
             )?;
         }
     }
-    println!("RF DEV UNICAST OK — check the T-1000E console for `node rx: Unicast` lines");
+    println!("RF DEV UNICAST OK—check the T-1000E console for `node rx: Unicast` lines");
     Ok(())
 }
 
 /// Drive the T-Echo as an RF peer soliciting an advertisement from the
 /// device identity (device-node plan increment 5): send an
 /// Advertisement Request MAC command as pairwise-sealed unicast, then
-/// expect a broadcast advertisement — a NodeIdentity payload carrying
+/// expect a broadcast advertisement—a NodeIdentity payload carrying
 /// the echoed nonce, the device name, and the standalone signature.
 async fn rf_advert_request(
     port: &str,
@@ -869,7 +869,7 @@ async fn phase_e(
 }
 
 /// The full-protocol attach over BLE: connect to the bonded companion
-/// service, attach without resetting, and synchronize — the same
+/// service, attach without resetting, and synchronize—the same
 /// workflow the USB phases prove, over the other transport binding.
 #[cfg(feature = "ble-radio")]
 async fn ble_sync(selector: &str) -> Result<(), Box<dyn std::error::Error>> {
@@ -913,7 +913,7 @@ async fn ble_sync(selector: &str) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 /// Neutral queue drain: attach without resetting, drain whatever is
-/// queued, and print each frame. No assertions — bench cleanup between
+/// queued, and print each frame. No assertions—bench cleanup between
 /// runs.
 async fn drain(port: &str) -> Result<(), Box<dyn std::error::Error>> {
     let mut radio = open(port).await?;
@@ -936,7 +936,7 @@ async fn drain(port: &str) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 /// Neutral inspection: attach without resetting and print everything
-/// `sync` can see — capabilities, ownership (against an optional
+/// `sync` can see—capabilities, ownership (against an optional
 /// expected key), PHY state, and the digest forms of all tables. Makes
 /// no assertions and changes nothing on the device.
 async fn info_serial(
@@ -983,7 +983,7 @@ async fn print_battery<L: FrameLink>(radio: &mut UlcpDevice<L>) {
 
 /// Focused battery validation: the capability gate, the snapshot's
 /// strict decode, field-set stability across reads, and a plausibility
-/// window on voltage. Charge-state transitions need an operator —
+/// window on voltage. Charge-state transitions need an operator—
 /// plug/unplug the charger between runs and watch the state follow
 /// within one read (sampling is on demand, never cached).
 async fn battery_check(port: &str) -> Result<(), Box<dyn std::error::Error>> {
@@ -995,7 +995,7 @@ async fn battery_check(port: &str) -> Result<(), Box<dyn std::error::Error>> {
     };
     println!("battery: {first:?}");
     if first.is_empty() {
-        println!("reporting unsupported (empty value) — the T-Echo profile");
+        println!("reporting unsupported (empty value)—the T-Echo profile");
         println!("BATTERY OK");
         return Ok(());
     }

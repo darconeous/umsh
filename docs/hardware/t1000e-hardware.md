@@ -28,7 +28,7 @@ The public product and firmware documentation describe it as an nRF52840 + LR111
 | Function | nRF52840 pin | Firmware names | Notes |
 |---|---:|---|---|
 | Battery ADC | P0.02 / AIN0 | `BATTERY_PIN` | Battery voltage divider, `ADC_MULTIPLIER = 2.0`, so likely a 1:1 divider. |
-| External / charger detect | P0.05 / AIN3 | `EXT_PWR_DETECT`, comment says `CHARGER_DET` | Detects external charger / VBUS-ish signal. **Observed to remain asserted after cable removal** — see “Hardware-validated power and UX findings”. |
+| External / charger detect | P0.05 / AIN3 | `EXT_PWR_DETECT`, comment says `CHARGER_DET` | Detects external charger / VBUS-ish signal. **Observed to remain asserted after cable removal**—see “Hardware-validated power and UX findings”. |
 | Charger “charging” status | P1.03 | `EXT_CHRG_DETECT`, comment says `CHARGE_STA` | Active-low charging-status input in Meshtastic. |
 | Charge done | P1.04 | commented `EXT_IS_CHRGD`, comment says `CHARGE_DONE` | Present in comments, but not used by Meshtastic. |
 | Sensor 3.3 V rail enable | P1.06 | `PIN_3V3_EN` | “Power to Sensors.” |
@@ -50,7 +50,7 @@ The public product and firmware documentation describe it as an nRF52840 + LR111
 | GNSS UART RX ← module TX | P0.14 | `GPS_RX_PIN`, `PIN_SERIAL1_RX` | 115200 baud. Carries NMEA. **Confirmed.** |
 | GNSS UART TX → module RX | P0.13 | `GPS_TX_PIN`, `PIN_SERIAL1_TX` | 115200 baud. **Confirmed.** |
 | GNSS main enable | P1.11 | `PIN_GPS_EN` / `GPS_EN` | Active **high** (`GPS_EN_ACTIVE HIGH`). **Confirmed.** |
-| GNSS reset | P1.15 | `PIN_GPS_RESET` / `GPS_RESET` | Active **high** (`GPS_RESET_MODE HIGH`) — pulsed high, then **held low** while running. **Confirmed.** |
+| GNSS reset | P1.15 | `PIN_GPS_RESET` / `GPS_RESET` | Active **high** (`GPS_RESET_MODE HIGH`)—pulsed high, then **held low** while running. **Confirmed.** |
 | GNSS RTC power enable | P0.08 | `GPS_VRTC_EN` | Backup / RTC domain. High from boot, and kept high through System OFF. **Confirmed.** |
 | GNSS sleep interrupt | P1.12 | `GPS_SLEEP_INT` | Driven high while the receiver is wanted. **Confirmed.** |
 | GNSS RTC interrupt | P0.15 | `GPS_RTC_INT` | An **input to the module**: must be driven low. High is a wake request. **Confirmed.** |
@@ -127,7 +127,7 @@ P0.05 (`CHARGER_DET`) **can remain asserted after the magnetic cable is
 removed**. Firmware must treat the nRF52840's native
 `POWER.USBREGSTATUS.VBUSDETECT` as the authoritative indication of external
 power; P0.05 is at most an edge/status hint for re-sampling. For the same
-reason P0.05 must not be a System OFF wake source — a stuck-high level defeats
+reason P0.05 must not be a System OFF wake source—a stuck-high level defeats
 a high-sense DETECT arm. USB insertion wakes the chip from System OFF through
 the native VBUS detector, which reports with its own `RESETREAS.VBUS` bit.
 
@@ -155,7 +155,7 @@ charging “breathing” LED indication from it.
 ### LED PWM polarity
 
 P0.24 is active-high, and with the nRF PWM peripheral (embassy-nrf
-`SimplePwm`), `DutyCycle::normal(0)` parks the output **high** — a solid-on
+`SimplePwm`), `DutyCycle::normal(0)` parks the output **high**—a solid-on
 LED. Brightness therefore requires `DutyCycle::inverted(duty)` (output high
 while the counter is below the duty value). The observable signature of the
 wrong mapping is an LED that is solid-on with brief dips where pulses should
@@ -185,7 +185,7 @@ but the firmware alone does not prove those details.
 
 ## GNSS / GPS control
 
-The AG3335 is on UART1 — RX P0.14, TX P0.13, 115200 baud — with six control
+The AG3335 is on UART1—RX P0.14, TX P0.13, 115200 baud—with six control
 pins. Direction and polarities below are confirmed: the receiver produces
 fixes under this sequence, and did not under any other combination tried.
 
@@ -196,8 +196,8 @@ it went to one of these:
 
 1. **`GPS_RESET` (P1.15) is active high.** It is pulsed *high* to reset and
    then **held low** for the entire time the receiver runs. Resting it high
-   — the safe-looking choice, and the correct one for the L76K boards
-   elsewhere in this tree — holds the module in reset indefinitely.
+   —the safe-looking choice, and the correct one for the L76K boards
+   elsewhere in this tree—holds the module in reset indefinitely.
 2. **`GPS_RTC_INT` (P0.15) is an input to the module**, not a status
    output. It must be driven low; high is a wake request. Left floating,
    the receiver does not run.
@@ -208,7 +208,7 @@ it went to one of these:
 The failure mode all three share is the reason this was expensive: a
 receiver held off this way leaves **both UART lines sitting high with no
 transitions**, because they are externally pulled up. That is
-indistinguishable from a correctly wired, idle port — the pin-sweep
+indistinguishable from a correctly wired, idle port—the pin-sweep
 technique that found the T-Echo's reversed UART reports "no edges
 anywhere" here and cannot say why. Sweeping enable, reset and sleep
 polarities against edge counts also finds nothing, because two of the
@@ -224,18 +224,18 @@ Power on (`start_gps` upstream, ~10 ms between steps):
 | Step | Pin | Level |
 |---|---|---|
 | 1 | `GPS_EN` P1.11 | high |
-| 2 | `GPS_VRTC_EN` P0.08 | high (already high here — raised at boot) |
+| 2 | `GPS_VRTC_EN` P0.08 | high (already high here—raised at boot) |
 | 3 | `GPS_RESET` P1.15 | high, then **low** after ~10 ms |
 | 4 | `GPS_SLEEP_INT` P1.12 | high |
 | 5 | `GPS_RTC_INT` P0.15 | low |
 | 6 | `GPS_RESETB` P1.14 | input, pull-up |
 
-Sleep — the receiver off, the clock still running. This is what UMSH uses
+Sleep—the receiver off, the clock still running. This is what UMSH uses
 for both `PROP_GNSS_ENABLED = 0` and System OFF:
 
 | Pin | Level |
 |---|---|
-| `GPS_VRTC_EN` P0.08 | **high** — the backup domain stays up |
+| `GPS_VRTC_EN` P0.08 | **high**—the backup domain stays up |
 | `GPS_EN` P1.11 | low |
 | `GPS_RESET` P1.15 | high (asserted) |
 | `GPS_SLEEP_INT` P1.12 | high |
@@ -255,15 +255,15 @@ high through shutdown keeps it counting; `crates/umsh-bsp-t1000e/src/shutdown.rs
 does exactly that and parks the other five pins in their sleep levels.
 
 Reading it back needs the main domain briefly up, since the backup domain
-cannot drive a UART on its own — `umsh_gnss::pump::rtc_read_once` raises
+cannot drive a UART on its own—`umsh_gnss::pump::rtc_read_once` raises
 the enable, takes the first dated `RMC`, and returns the receiver to off.
 That is a clock operation, so it is gated on `PROP_GNSS_TIME_TRUST` and not
 on `PROP_GNSS_ENABLED`.
 
 ### The receiver remembers which sentences to emit
 
-This unit emits **only `GGA` and `RMC`** — no `GSA`, no `GSV`, no `GLL`,
-no `VTG` — and that survives reflashing our firmware.
+This unit emits **only `GGA` and `RMC`**—no `GSA`, no `GSV`, no `GLL`,
+no `VTG`—and that survives reflashing our firmware.
 
 The mechanism is the Airoha `$PAIR` command set: `$PAIR062,<type>,<enable>`
 selects which NMEA sentences the receiver emits, and `$PAIR513` writes the
@@ -277,14 +277,14 @@ What is **observed**: the sentence set above, and that `$PAIR062,2,1` /
 What is **inferred**, not verified: that Meshtastic is what disabled them.
 Its `src/gps/GPS.cpp` sends exactly `$PAIR062,2,0` (GSA off),
 `$PAIR062,3,0` (GSV off), `$PAIR062,1,0`, `$PAIR062,5,0` and then
-`$PAIR513`, and these units ship with Meshtastic — but the write was not
+`$PAIR513`, and these units ship with Meshtastic—but the write was not
 watched happening, and a factory-default AG3335 may well emit the same
 reduced set anyway. Distinguishing the two needs a receiver that has never
 run Meshtastic.
 
 Not permanent, then, but persistent: the configuration is writable, and a
 `$PAIR062,…,1` followed by `$PAIR513` would presumably restore the missing
-sentences. UMSH does not do that — writing another project's configuration
+sentences. UMSH does not do that—writing another project's configuration
 into a chip's flash to make its own boot work is not a fix, and the missing
 sentences turn out to cost almost nothing (below).
 
@@ -296,7 +296,7 @@ $GNRMC,082303.000,A,4208.0391,N,12237.0552,W,0.01,0.00,050826,,,A,V*18
 ```
 
 Sending `$PAIR062,2,1` / `$PAIR062,3,1` at wake time does **not** bring
-`GSA` and `GSV` back — tried, and the sentence set was unchanged. Whether
+`GSA` and `GSV` back—tried, and the sentence set was unchanged. Whether
 they need `$PAIR513` to stick, or a quiet window after boot that a wake-time
 write does not give them, was not pursued: UMSH does not write another
 project's configuration into a chip's flash to make its own boot work, and
@@ -310,12 +310,12 @@ What this costs, and what it does not:
 | `PROP_GNSS_ALTITUDE` | `GGA` field 9 | yes |
 | `PROP_GNSS_PRECISION` | `GGA` field 8 (HDOP) | yes |
 | `PROP_GNSS_SATELLITES` (used) | `GGA` field 7 | yes |
-| `PROP_GNSS_SATELLITES` (in view) | `GSV` | **no** — reads as absent |
+| `PROP_GNSS_SATELLITES` (in view) | `GSV` | **no**—reads as absent |
 | `PROP_GNSS_FIX` 2D vs 3D | `GSA`, else altitude presence | yes, inferred |
 | `PROP_TIME` | `RMC` | yes |
 
 `umsh-gnss` reads HDOP from `GGA` as well as `GSA` for this reason, and
-falls back to "an altitude means three dimensions" when no `GSA` arrives —
+falls back to "an altitude means three dimensions" when no `GSA` arrives—
 NMEA has no dimension indicator anywhere else, since `GGA`'s quality field
 says only *whether* the receiver is fixed.
 
@@ -326,14 +326,14 @@ says only *whether* the receiver is fixed.
   on a meter.
 * **Retention across a real System OFF.** The boot-time read path is
   confirmed working, and confirmed to *reject* a receiver whose clock was
-  lost — but not yet confirmed to restore a good time after a button
+  lost—but not yet confirmed to restore a good time after a button
   shutdown and wake. Note that a DFU reflash is not a valid test: entering
   the bootloader drops `GPS_VRTC_EN` and resets the backup domain, so it
   exercises the rejection path instead.
 * **Time injection.** Whether the AG3335 accepts having its clock set is
   untested, and looks unpromising given that `$PAIR062` had no effect at
   wake time. Without it, a manually set time does not survive System OFF
-  on this board — the accepted fallback.
+  on this board—the accepted fallback.
 
 Upstream references: [MeshCore `variants/t1000-e`](https://github.com/meshcore-dev/MeshCore/tree/main/variants/t1000-e)
 (`target.cpp` `start_gps` / `sleep_gps` / `stop_gps`, `variant.h` pin
@@ -361,7 +361,7 @@ afterwards.
 beside the sensor and its light reaches it directly, so a reading taken
 while the LED is lit measures the indicator. Because the indicator
 normally *blinks*, successive readings catch different parts of the blink
-and disagree by more than every other noise source here put together —
+and disagree by more than every other noise source here put together—
 and none of them can help, because this is real light falling on a light
 sensor. The firmware gates every duty write on this board through a
 blanking flag the sampler raises, and waits for the LED task to confirm
@@ -369,7 +369,7 @@ the LED is off before it starts integrating.
 
 **Sample the light channel on its own.** The battery divider is on AIN0
 of the same converter, but enabling both puts the SAADC in scan mode, and
-scan mode forfeits the part's hardware oversampling — the single most
+scan mode forfeits the part's hardware oversampling—the single most
 effective noise tool it has. It also makes the two inputs share a
 sample-and-hold, so the high-impedance light node reads partly as
 whatever converted before it. The firmware therefore builds a
@@ -382,18 +382,18 @@ With one channel enabled, the light path uses:
   source impedance around 100 kΩ and the phototransistor node sits above
   that, so a shorter window leaves the sample-and-hold short of the true
   voltage.
-- **14-bit resolution** — the quantization step is a quarter of the
+- **14-bit resolution**—the quantization step is a quarter of the
   12-bit one the vendor driver works in.
 - **`Over32x` hardware oversampling**, which with `BURST` set makes one
   conversion request run the whole 32-sample accumulation internally.
 
-On top of that, 25 points spaced 2 ms apart — 800 hardware conversions in
+On top of that, 25 points spaced 2 ms apart—800 hardware conversions in
 all. The spacing is what handles **mains flicker**: artificial light
 pulses at twice the mains frequency, so a sub-millisecond reading lands
 wherever in that cycle it happens to and swings wildly between reads. 50 ms
 is a whole number of half-cycles at both 50 Hz (5) and 60 Hz (6), so the
 flicker integrates away for either mains rather than aliasing. No amount
-of oversampling within a single point can do this — the window has to be
+of oversampling within a single point can do this—the window has to be
 wide, which is what the vendor driver's back-to-back burst of 15 misses.
 
 Finally, the largest and smallest points are dropped and the remaining 23
@@ -410,7 +410,7 @@ mapping the span onto 0–100 % rather than to any physical unit.
 
 This firmware reports **millilux** through
 [`PROP_ILLUMINANCE`](../protocol/src/ulcp-device.md), converting with a
-two-constant linear fit — dark offset and slope — clamped at both ends;
+two-constant linear fit—dark offset and slope—clamped at both ends;
 the constants live in `crates/umsh-bsp-t1000e/src/light.rs`. At 14-bit
 over a 3.6 V full scale (`Gain1_6` against the 0.6 V internal reference)
 one count is 0.2197 mV, so Seeed's two voltages correspond to raw counts
@@ -433,14 +433,14 @@ Two findings contradicted the values inherited from Seeed:
 
 - **There is essentially no dark current.** 0.2 counts is 44 µV. Seeed's
   80 mV floor is a software noise guard, not a property of the part;
-  subtracting it discarded the whole bottom of the range — precisely the
+  subtracting it discarded the whole bottom of the range—precisely the
   region an indicator-brightness policy works in. The fit passes through
   the origin.
 - **The hard rail is at 13478 counts, not 11287.** The node bottoms out
   against its load resistor at 2.96 V of the 3.3 V rail, so Seeed's 2.48 V
   was conservative by about 20 %.
 
-The clamp is set at **12288 counts (2.7 V)** — a judgement between the two,
+The clamp is set at **12288 counts (2.7 V)**—a judgement between the two,
 rather than either. Sitting it on the measured rail leaves no margin for
 part-to-part or temperature variation in where that rail lands; Seeed's
 figure discards range the part demonstrably has. 2.7 V keeps a margin while
@@ -457,7 +457,7 @@ ambient light (see `docs/ux/src/hardware/t1000e.md`). The LED task requests
 a measurement at most once per 60 s on battery and every 10 s on external
 power, and only when it has just written a near-dark duty, so the LED
 blackout the sampler requires lands in a dark phase of whatever the
-indicator is showing — the charging breathe in particular is never visibly
+indicator is showing—the charging breathe in particular is never visibly
 interrupted. A button press-down also triggers a measurement outside the
 cadence: it is the moment the user is looking at the LED, and it completes
 during click recognition, before any confirmation plays. Every measurement,
@@ -494,7 +494,7 @@ handled entirely by the discrete AG3335 / Airoha GNSS module on UART1 (see the
 GNSS / GPS control section); the LR1110 is used purely as a LoRa radio.
 
 A practical consequence: the DIO3-gated 1.6 V TCXO exists only to serve the LoRa
-transceiver's frequency reference — it is **not** there to support LR1110 GNSS/WiFi
+transceiver's frequency reference—it is **not** there to support LR1110 GNSS/WiFi
 scanning (which would otherwise be the usual motivation for fitting a TCXO over a
 plain crystal on an LR11xx design).
 
@@ -503,7 +503,7 @@ plain crystal on an LR11xx design).
 The T1000-E module does **not** populate the external switching inductor
 required for the LR1110's internal DCDC regulator (the chip's BST pin appears
 unrouted on this board). The LR1110 must therefore be configured in **LDO
-mode** — calling `SetRegMode(DCDC)` produces a malfunctioning regulator that
+mode**—calling `SetRegMode(DCDC)` produces a malfunctioning regulator that
 draws noisy switching current on the shared 3V3 rail and disrupts everything
 sharing it.
 
@@ -514,11 +514,11 @@ Symptoms of incorrectly enabling DCDC (observed during Phase 2.5 bringup):
   buttons respond). USB has no other obvious failure mode that produces this
   pattern.
 - The fault appears immediately after `LoRa::new` runs the
-  `SetRegMode(DCDC)` command — bisected by toggling the configuration flag
+  `SetRegMode(DCDC)` command—bisected by toggling the configuration flag
   with all other init steps held constant.
 
 Reference: MeshCore (RadioLib) calls `setRegulatorLDO()` unconditionally on
-this board — it never enables DCDC. Match this in any LR1110-using firmware
+this board—it never enables DCDC. Match this in any LR1110-using firmware
 for the T1000-E. In `lora-phy` terms: `Config::use_dcdc = false`.
 
 ## LR1110 firmware driver quirks
@@ -552,7 +552,7 @@ loop {
     match select(lora.wait_for_irq(), tx_channel.receive()).await {
         Either::First(Ok(())) => {
             let result = lora.process_irq_event().await;
-            let _ = lora.clear_irq_status().await;  // REQUIRED — see above
+            let _ = lora.clear_irq_status().await;  // REQUIRED—see above
             if let Ok(Some(IrqState::Done)) = result {
                 let (len, _) = lora.get_rx_result().await?;
                 // read FIFO, dispatch packet ...
@@ -575,7 +575,7 @@ The T1000-E routes the LR1110 RF output through the high-power (HP) PA path. Sel
 
 ### Unverified observation: keeping the TCXO warm (StandbyXOSC) seemed to break replies
 
-This is an **observation, not a confirmed finding** — record it as a caution, not as established fact.
+This is an **observation, not a confirmed finding**—record it as a caution, not as established fact.
 
 While chasing LoRa reliability issues we experimented with resting the LR1110 in `StandbyXOSC` (reference oscillator left running) instead of the default `StandbyRC` (oscillator powered down between operations), with the intent of avoiding the per-operation TCXO warm-up. With that configuration we *appeared* to see the following on the T1000-E:
 
@@ -585,7 +585,7 @@ While chasing LoRa reliability issues we experimented with resting the LR1110 in
 
 Important caveats:
 
-- We do **not** understand the mechanism. The leading guess — that the short `StandbyRC` warm-up also gives the synthesizer settling time that a fast receive→transmit turnaround needs — is unverified speculation.
+- We do **not** understand the mechanism. The leading guess—that the short `StandbyRC` warm-up also gives the synthesizer settling time that a fast receive→transmit turnaround needs—is unverified speculation.
 - There were **several confounding changes in flight** at the same time (peer-registration timing, a separate `do_tx` TCXO change), so the `StandbyRC` vs `StandbyXOSC` variable was not cleanly isolated beyond a single A/B firmware flip late in the session.
 - The diagnosis was end-to-end ping behavior only; there was **no RF measurement** (SDR capture, spectrum, SNR of the failing frames) to confirm what actually went wrong on air.
 

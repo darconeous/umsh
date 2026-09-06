@@ -1,4 +1,4 @@
-// Seeed SenseCAP T1000-E CLI console firmware — Phase 3 bringup.
+// Seeed SenseCAP T1000-E CLI console firmware—Phase 3 bringup.
 //
 // Phases 0-2 established: bootloader recon, USB-CDC, WDT, panic persist,
 // DFU rescue paths, button FSM (long-press → shutdown, triple-tap → DFU),
@@ -65,7 +65,7 @@ mod panic;
 mod cli_io;
 
 // lora-phy 3.x unconditionally depends on defmt. A zero-overhead no-op global
-// logger satisfies the link without adding any debug transport — every log
+// logger satisfies the link without adding any debug transport—every log
 // call compiles out at release. Same pattern as techo-console.
 #[cfg(target_os = "none")]
 mod defmt_logger {
@@ -143,7 +143,7 @@ mod firmware {
     bind_interrupts!(struct Irqs {
         USBD        => embassy_nrf::usb::InterruptHandler<peripherals::USBD>;
         CLOCK_POWER => embassy_nrf::usb::vbus_detect::InterruptHandler;
-        // Shared SPIM0/TWIM0 block — named TWISPI0 in embassy-nrf.
+        // Shared SPIM0/TWIM0 block—named TWISPI0 in embassy-nrf.
         // LR1110 SPI is on this peripheral.
         TWISPI0     => embassy_nrf::spim::InterruptHandler<peripherals::TWISPI0>;
         SAADC       => embassy_nrf::saadc::InterruptHandler;
@@ -168,7 +168,7 @@ mod firmware {
     // pull in, so the firmware owns those two aliases.
     /// Host bound to the `'static` mac_cell. Owned by `mac_task`.
     type T1000EHost = Host<MacHandle<'static, T1000EPlatform, 2, 8, 4, 4, 8, 255, 32>>;
-    /// LocalNode handle. Cheap to clone — passed to `cli_task` and `beacon_task`.
+    /// LocalNode handle. Cheap to clone—passed to `cli_task` and `beacon_task`.
     type T1000ENode = LocalNode<MacHandle<'static, T1000EPlatform, 2, 8, 4, 4, 8, 255, 32>>;
 
     // ─── Concrete radio types ─────────────────────────────────────────────────
@@ -181,7 +181,7 @@ mod firmware {
     // ─── Static shared state ─────────────────────────────────────────────────
 
     /// Channels shared between radio_runner_task and LoraphyRadio / MAC.
-    /// 4 inbound frames, 2 pending TX requests — same as T-Echo.
+    /// 4 inbound frames, 2 pending TX requests—same as T-Echo.
     type RadioCh = umsh_radio_loraphy::Channels<ThreadModeRawMutex, 4, 2>;
     static RADIO_CH: RadioCh = RadioCh::new();
 
@@ -268,7 +268,7 @@ mod firmware {
     }
 
     /// Runs the `CliSession` over USB-CDC. This is the only task that
-    /// blocks on a host terminal connection — everything else (radio, MAC,
+    /// blocks on a host terminal connection—everything else (radio, MAC,
     /// button, buzzer, beacon) runs without it.
     #[embassy_executor::task]
     async fn cli_task(
@@ -491,7 +491,7 @@ mod firmware {
         // RESETREAS.OFF alone proves a button wake: P0.06 is the only GPIO
         // DETECT source armed at System OFF entry (USB insertion wakes via
         // the native VBUS detector and sets its own reason bit). The pin
-        // itself cannot be sampled this early — PIN_CNF resets to
+        // itself cannot be sampled this early—PIN_CNF resets to
         // input-disconnected, so the IN register reads 0 regardless of the
         // physical level.
         let woke_from_system_off = reset_reasons.off();
@@ -579,7 +579,7 @@ mod firmware {
 
         // ── Piezo buzzer ─────────────────────────────────────────────────────
         // P0.25 = PWM, P1.05 = power-enable for the buzzer driver chip.
-        // Div16 prescaler gives a 1 MHz PWM clock — comfortably covers the
+        // Div16 prescaler gives a 1 MHz PWM clock—comfortably covers the
         // 1–2 kHz melody range with max_duty 500–1000.
         let buzzer_pwm = {
             let mut cfg = SimpleConfig::default();
@@ -589,16 +589,16 @@ mod firmware {
         let buzzer_enable = Output::new(p.P1_05, Level::Low, OutputDrive::Standard);
         let initial_preferences = umsh_bsp_t1000e::preferences::load();
         spawner.spawn(buzzer_task(buzzer_pwm, buzzer_enable, initial_preferences.silent).unwrap());
-        // Boot chirp — independent of USB, so headless boots also signal life.
+        // Boot chirp—independent of USB, so headless boots also signal life.
         umsh_bsp_t1000e::BUZZER_SIGNAL.signal(&buzzer_melodies::POWER_ON);
 
         // ── Local identity ────────────────────────────────────────────────────
         // The hardware-TRNG RNG built here is the single RNG path for this
-        // firmware — used for first-boot identity generation AND passed
+        // firmware—used for first-boot identity generation AND passed
         // ownership-by-value into `Mac::new` below as `Platform::Rng`.
         //
         // Load identity from flash on subsequent boots; TRNG-generate on
-        // first boot. We do NOT fall back to any PRNG on failure — a
+        // first boot. We do NOT fall back to any PRNG on failure—a
         // predictable long-term key is worse than panicking.
         let mut rng = Nrf52840Rng::new(p.RNG);
         let sk_bytes: [u8; 32] = match storage.load_sk().await {
@@ -649,13 +649,13 @@ mod firmware {
                 radio_rst,
                 radio_interrupt,
                 radio_busy,
-                None, // rf_switch_rx: not external — DIO5-8 handle it internally
+                None, // rf_switch_rx: not external—DIO5-8 handle it internally
                 None, // rf_switch_tx: same
             )
             .unwrap_or_else(|_| panic!("lr1110 iv"));
 
             let lora_config = LoraConfig {
-                // HP PA — SetTx will route through tx_hp (0x0A = DIO6+DIO8)
+                // HP PA—SetTx will route through tx_hp (0x0A = DIO6+DIO8)
                 // on our RF-switch table. Combined with TX_POWER_DBM=22 this
                 // is the maximum output the chip + board can produce.
                 chip: Lr1110Chip::with_pa(PaSelection::Hp),
@@ -758,7 +758,7 @@ mod firmware {
 
         // Register persisted peers and channels into the MAC at boot, before
         // spawning tasks. The CLI task must not be the first thing that
-        // registers these — it only runs after a host opens the CDC port, and
+        // registers these—it only runs after a host opens the CDC port, and
         // the MAC needs the keys from the very first packet.
         {
             let mut peer_buf: heapless::Vec<([u8; 32], Option<heapless::String<16>>), 8> =

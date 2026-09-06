@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// A live list of nearby companion radios. Discovery runs while the sheet is
-/// open and never auto-connects — the user taps the radio they want. This is
+/// open and never auto-connects—the user taps the radio they want. This is
 /// the deliberate-selection counterpart to the auto-connect "first match"
 /// path, and is what makes a multi-radio test bench usable.
 struct RadioPickerView: View {
@@ -90,7 +90,7 @@ struct RadioScanList: View {
         }
         .task {
             // A gentle nudge after a few quiet seconds, without failing the
-            // scan — the radio may simply be booting.
+            // scan—the radio may simply be booting.
             try? await Task.sleep(nanoseconds: 4 * 1_000_000_000)
             hasSearchedAwhile = true
         }

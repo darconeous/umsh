@@ -4,7 +4,7 @@ import SwiftUI
 /// radio carries its traffic.
 ///
 /// Creating the identity is deliberately not a step. There is no decision in it
-/// — no name to choose, no options, nothing to confirm — and a phone without one
+///—no name to choose, no options, nothing to confirm—and a phone without one
 /// cannot save a peer, join a channel or send a message, so the only honest
 /// thing to do with a missing identity is to mint one. By the time this appears
 /// that has already happened, and what is left is the part that is genuinely the
@@ -19,7 +19,7 @@ struct OnboardingView: View {
     let discoverRadios: () async -> AsyncStream<[DiscoveredRadio]>
     let selectRadio: (UUID) async throws -> Void
     let stopDiscovery: () async -> Void
-    /// Ends the flow. Called however it finishes — radio paired or skipped —
+    /// Ends the flow. Called however it finishes—radio paired or skipped—
     /// so there is one way out and one place that records it as done.
     let finish: () -> Void
 
@@ -51,7 +51,7 @@ struct OnboardingView: View {
                     PeerAvatar(hint: identity.publicIdentity.hint, diameter: 72)
                     Text("Welcome to UMSH")
                         .font(.title2.weight(.semibold))
-                    Text("This phone now has an identity of its own — \(identity.publicIdentity.hint.text) — and the key behind it never leaves the device.")
+                    Text("This phone now has an identity of its own—\(identity.publicIdentity.hint.text)—and the key behind it never leaves the device.")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)

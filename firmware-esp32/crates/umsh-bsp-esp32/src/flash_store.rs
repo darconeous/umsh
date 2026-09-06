@@ -1,6 +1,6 @@
 //! ESP32 instantiation of the chip-agnostic [`umsh_flash_store`] engine.
 //!
-//! All of the map logic — identity, peers, channels, counters, key-value —
+//! All of the map logic—identity, peers, channels, counters, key-value—
 //! lives in [`umsh_flash_store`], generic over the async flash driver and
 //! the sharing mutex. This module supplies the Espressif backing
 //! (`BlockingAsync<esp_storage::FlashStorage>` + `CriticalSectionRawMutex`)
@@ -21,7 +21,7 @@
 //! ## CPU stall warning
 //!
 //! Erasing or writing internal flash suspends the flash cache for the
-//! duration of the operation — every task stalls, not just this one, and
+//! duration of the operation—every task stalls, not just this one, and
 //! no async scheduling can preempt it. This is the ESP32 analogue of the
 //! nRF52840's ~85 ms NVMC halt. Callers MUST batch writes; see
 //! [`umsh_flash_store`] for the batching contract.
@@ -31,7 +31,7 @@
 //! `esp-storage` defaults to [`MultiCoreStrategy::Error`] on multi-core
 //! parts, which fails writes while the second core is running. UMSH
 //! firmware never starts the app CPU, so the default is both correct and
-//! the safest posture — it turns a would-be flash corruption into a
+//! the safest posture—it turns a would-be flash corruption into a
 //! visible error. Do not relax it to `ignore` without parking core 1.
 //!
 //! [`MultiCoreStrategy::Error`]: esp_storage::MultiCoreStrategy
@@ -100,13 +100,13 @@ pub enum StorageInitError {
 ///
 /// The map's garbage collector rotates writes through its entire range,
 /// so the journal pages MUST be carved out here, at the single place the
-/// range is derived — otherwise map GC would eventually wrap into the
+/// range is derived—otherwise map GC would eventually wrap into the
 /// journal and erase the BLE bonds. Both [`new_storage`] (map, bottom of
 /// the partition) and journal placement (top of the partition, growing
 /// downward) derive from this one constant.
 ///
 /// Five page pairs, growing downward from the partition top:
-/// BLE security journal (topmost pair — anchored there so bonds survive
+/// BLE security journal (topmost pair—anchored there so bonds survive
 /// the reservation growing), protocol snapshot journal, device-identity
 /// journal, device-node counter journal (Phase 5), entropy-pool seed
 /// journal. Growing this reservation shrinks the map range from the
@@ -117,7 +117,7 @@ pub const JOURNAL_RESERVED: u32 = 10 * FlashStorage::SECTOR_SIZE;
 /// Locate the UMSH data partition and build the store over it.
 ///
 /// Reads the partition table, resolves [`STORAGE_PARTITION_LABEL`] to a
-/// flash range, and mounts the map lazily — nothing is erased or
+/// flash range, and mounts the map lazily—nothing is erased or
 /// formatted here. The map receives the partition minus the
 /// [`JOURNAL_RESERVED`] tail. Shrinking the range on boards written by
 /// earlier firmware is safe: `sequential-storage` fills from the bottom
@@ -135,7 +135,7 @@ pub fn new_storage(flash: FLASH<'static>) -> Result<EspStorage, StorageInitError
 /// range, without mounting the `sequential-storage` map.
 ///
 /// Used by firmware that needs raw byte-addressed access into the
-/// partition — the record journals (`umsh_journal_store`) live in the
+/// partition—the record journals (`umsh_journal_store`) live in the
 /// [`JOURNAL_RESERVED`] tail of this range rather than in the map.
 /// Discovering the range here keeps the journal region tied to the
 /// partition table, never hardcoded, exactly as [`new_storage`] does for

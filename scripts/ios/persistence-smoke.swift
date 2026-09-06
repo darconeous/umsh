@@ -183,7 +183,7 @@ struct PersistenceSmokeTest {
         precondition(migratedNodes.map(\.publicAddress) == ["legacy-peer"])
 
         // v12 → current upgrade on a populated database: restore the v12 shape
-        // — v13's columns gone, v14's dropped `is_contact` back — and stamp
+        //—v13's columns gone, v14's dropped `is_contact` back—and stamp
         // user_version 12, then reopen. Nothing may vanish, and every
         // pre-existing row must upgrade as saved.
         store = try SQLiteApplicationStore(path: databaseURL.path)
@@ -265,8 +265,8 @@ struct PersistenceSmokeTest {
 /// Times the reads a conversation list and an open transcript depend on, on a
 /// database large enough for their complexity to show.
 ///
-/// The numbers that matter are not the absolute times — those track whatever
-/// machine ran them — but two shapes: whether a whole-database read grows with
+/// The numbers that matter are not the absolute times—those track whatever
+/// machine ran them—but two shapes: whether a whole-database read grows with
 /// stored history, and whether paging into deep history costs more than paging
 /// at the head. The second is the one that decides whether the transcript index
 /// is really driving the range scan, so every query also prints its plan.
@@ -380,7 +380,7 @@ extension PersistenceSmokeTest {
         let deepAddress = directAddresses[0]
 
         // Page the whole deep transcript backward. This doubles as the
-        // correctness fixture — every later assertion compares against it — and
+        // correctness fixture—every later assertion compares against it—and
         // as proof that a full walk in bounded pages reassembles exactly what
         // one unbounded read used to return.
         var start = ContinuousClock.now

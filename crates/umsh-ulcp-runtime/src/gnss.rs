@@ -17,7 +17,7 @@
 //! # Reading versus announcing
 //!
 //! The last fix is cached here and nowhere else. The ULCP session
-//! deliberately never caches a reading — a `CMD_PROP_GET` samples — so
+//! deliberately never caches a reading—a `CMD_PROP_GET` samples—so
 //! "the most recent thing the receiver said" has to live somewhere the
 //! sampler can reach, and this is it.
 //!
@@ -25,7 +25,7 @@
 //! well it knows, and off how many satellites are all poll-only: a host
 //! that wants them asks, and asks no more often than it has something to
 //! do with the answer. Announcing them instead would put this board on
-//! the air continuously for no one — a receiver reports about a fix a
+//! the air continuously for no one—a receiver reports about a fix a
 //! second, and at the precision the cache keeps, ordinary noise from a
 //! receiver that has not moved is enough to make consecutive readings
 //! differ. Every one of those would have cost a BLE notification and a
@@ -120,7 +120,7 @@ static ANNOUNCE: Watch<CriticalSectionRawMutex, Announce, ANNOUNCE_RECEIVERS> = 
 
 /// The last cell offered to the identity, at the advertised precision.
 ///
-/// A rate limit, not a source of truth — `PROP_IDENT_LOCATION` on the
+/// A rate limit, not a source of truth—`PROP_IDENT_LOCATION` on the
 /// session is where the advertised position actually lives. A receiver
 /// produces a fix a second and a stationary node's fixes all clamp into
 /// one cell, so without this the driver would wake every second to be
@@ -146,7 +146,7 @@ pub type Announcer =
 /// Take the publication receiver.
 ///
 /// Cancellation-safe to await. `None` only if one was already taken,
-/// which would mean two things publishing the same properties — a wiring
+/// which would mean two things publishing the same properties—a wiring
 /// mistake rather than a runtime condition.
 pub fn announcer() -> Option<Announcer> {
     ANNOUNCE.receiver()
@@ -210,8 +210,8 @@ pub struct Outcome {
 /// The ULCP view of one fix.
 ///
 /// Pure, and separate from [`absorb`] for that reason: this is the part
-/// with rules in it — which fields survive a degraded solution, what a
-/// dilution figure becomes — and it is worth being able to check without
+/// with rules in it—which fields survive a degraded solution, what a
+/// dilution figure becomes—and it is worth being able to check without
 /// a clock, a receiver, or a board.
 pub fn to_snapshot(fix: &Fix) -> GnssSnapshot {
     let mut snapshot = GnssSnapshot::SEARCHING;
@@ -255,7 +255,7 @@ pub fn absorb(fix: &Fix, policy: Policy) -> Outcome {
     // The fix indicator is what a host watches to know whether the device
     // is located at all, so its transitions are always worth a frame. The
     // position, altitude, accuracy and satellite count are not announced
-    // at any threshold — see the module docs. They are read.
+    // at any threshold—see the module docs. They are read.
     if current.fix != previous.fix {
         publish(Announce::Gnss(prop::GNSS_FIX, current));
     }
@@ -263,8 +263,8 @@ pub fn absorb(fix: &Fix, policy: Policy) -> Outcome {
     // ─── The wall clock ──────────────────────────────────────────────
     //
     // Every fix carrying an instant offers it. The precedence rule in
-    // `wall_clock` decides what happens next — a manual set outranks
-    // this, and a cleared trust flag refuses it outright — so there is
+    // `wall_clock` decides what happens next—a manual set outranks
+    // this, and a cleared trust flag refuses it outright—so there is
     // no second copy of that decision here.
     if let Some(at) = fix.time
         && let Some(epoch) = at.to_unix()
@@ -291,7 +291,7 @@ pub fn absorb(fix: &Fix, policy: Policy) -> Outcome {
     //
     // Offered rather than applied: the session holds the advertised
     // position and decides what a fix does to it. Only a change in the
-    // *clamped* cell is worth waking it for — at the default precision a
+    // *clamped* cell is worth waking it for—at the default precision a
     // stationary node's fixes all land in the same one.
     if policy.update_identity
         && let Some(location) = location
@@ -315,7 +315,7 @@ pub fn absorb(fix: &Fix, policy: Policy) -> Outcome {
 pub fn configure(enabled: bool, policy: Policy) {
     let previous = POLICY.lock(|cell| cell.replace(policy));
     // A policy change can make an already-offered cell worth offering
-    // again — a finer precision asks a different question of the same
+    // again—a finer precision asks a different question of the same
     // fix, and auto-update coming back on has to re-establish a position
     // the operator may have edited in the meantime.
     if previous != policy {
@@ -334,7 +334,7 @@ pub fn configure(enabled: bool, policy: Policy) {
 ///
 /// The boot-time receiver-RTC read needs this. That read is gated on
 /// `PROP_GNSS_TIME_TRUST`, and [`policy`] answers with the post-reset
-/// default until the saved state has been restored — so a read that did
+/// default until the saved state has been restored—so a read that did
 /// not wait would trust a receiver on a device configured not to, exactly
 /// once per boot, which is the one time it matters.
 ///
@@ -346,7 +346,7 @@ pub async fn wait_configured() {
     let Some(mut configured) = CONFIGURED.receiver() else {
         // Silently skipping a wait a caller asked for would be worse than
         // the wiring bug that got here, but this is not worth a panic on a
-        // shipping device — the cost is one boot's clock restore.
+        // shipping device—the cost is one boot's clock restore.
         debug_assert!(false, "gnss: wait_configured is single-caller");
         return;
     };
@@ -373,7 +373,7 @@ pub struct EnableSource {
 
 impl EnableSource {
     /// Take the pump's enable receiver, or `None` if one was already
-    /// taken — which would mean two pumps for one receiver.
+    /// taken—which would mean two pumps for one receiver.
     pub fn new() -> Option<Self> {
         ENABLE.receiver().map(|changed| Self { changed })
     }
@@ -409,7 +409,7 @@ fn publish(announce: Announce) {
 /// A time driver for the host tests.
 ///
 /// [`absorb`] offers every fix's instant to the wall clock, so a test
-/// that calls it links `embassy_time`'s driver hook — which on a device
+/// that calls it links `embassy_time`'s driver hook—which on a device
 /// is the RTC and here is nothing at all. A monotonic counter is enough:
 /// no test in this module asserts on elapsed time.
 #[cfg(test)]
@@ -487,7 +487,7 @@ mod tests {
     }
 
     /// A searching receiver reports zero for the facts it is sure of and
-    /// empty for the position it does not have — never a stale one.
+    /// empty for the position it does not have—never a stale one.
     #[test]
     fn a_searching_cycle_carries_no_position() {
         let snapshot = to_snapshot(&Fix::default());
@@ -538,7 +538,7 @@ mod tests {
     /// purpose: it is the only one that touches the module's statics, and
     /// two of them would race each other for the same globals.
     ///
-    /// What *becomes* of an offer is the session's business — it holds
+    /// What *becomes* of an offer is the session's business—it holds
     /// `PROP_IDENT_LOCATION` and has its own tests. All this module
     /// decides is whether waking the driver is warranted.
     #[test]
@@ -575,7 +575,7 @@ mod tests {
         configure(true, updating);
         assert!(absorb(&here, updating).identity_moved);
 
-        // So does switching the receiver off and back on — the position
+        // So does switching the receiver off and back on—the position
         // it comes back with has to reach the identity even if the
         // device never left.
         configure(false, updating);

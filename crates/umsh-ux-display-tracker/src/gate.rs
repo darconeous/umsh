@@ -3,12 +3,12 @@
 //!
 //! Three conditions make a gesture unsafe to act on literally:
 //!
-//! - [`GateReason::ScreenOff`] — the user cannot see what they would be
+//! - [`GateReason::ScreenOff`]—the user cannot see what they would be
 //!   acting on, so the press only brings the display back.
-//! - [`GateReason::AlertActive`] — a locate alert is running, and
+//! - [`GateReason::AlertActive`]—a locate alert is running, and
 //!   whoever just found the device meant to silence it, not to navigate
 //!   its menus.
-//! - [`GateReason::Refreshing`] — a persistent panel is mid-refresh, so
+//! - [`GateReason::Refreshing`]—a persistent panel is mid-refresh, so
 //!   the visible selection and the acted-on selection could differ.
 //!
 //! One gesture always passes through regardless:
@@ -109,8 +109,8 @@ impl Gate {
     /// Release the latch once the recognizer is at rest.
     ///
     /// Pass `umsh_ux_tracker::button::ButtonFsm::next_deadline().is_none()`.
-    /// This covers gestures that end without producing an event — a hold
-    /// too long to be a click and too short to be a long-press — which
+    /// This covers gestures that end without producing an event—a hold
+    /// too long to be a click and too short to be a long-press—which
     /// would otherwise strand the latch and swallow the *next* gesture.
     pub fn settle(&mut self, resting: bool) {
         if resting {

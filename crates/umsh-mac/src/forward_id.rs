@@ -12,9 +12,9 @@
 //!   can recognize "the same packet, forwarded onward"
 //!
 //! It lives outside the coordinator because it is an interop surface,
-//! not private state: any forwarder that participates in the same mesh —
+//! not private state: any forwarder that participates in the same mesh—
 //! including an [internet bridge], whose two radios must agree on which
-//! frames are the same packet — has to compute it bit-for-bit
+//! frames are the same packet—has to compute it bit-for-bit
 //! identically.
 //!
 //! [internet bridge]: https://darconeous.github.io/umsh/docs/protocol/internet-bridging.html

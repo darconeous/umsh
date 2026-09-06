@@ -21,7 +21,7 @@ protocol RadioConnection: AnyObject, Sendable {
     func sendBeacon() async throws
     /// Set the position this phone's identity carries, already reduced to
     /// the disclosed cell, or nil to stop sharing one. Reaches live
-    /// identity payloads — advertisements and Identity Request replies —
+    /// identity payloads—advertisements and Identity Request replies—
     /// and never the durable QR/URI bundle. Best-effort, like
     /// discoverability: the value is reapplied on every session install.
     func setAdvertisedLocation(_ location: MobileMeshSharedLocationRecord?) async
@@ -57,14 +57,14 @@ protocol RadioConnection: AnyObject, Sendable {
     /// comes back is the same radio.
     func reboot() async throws
     /// Forget every host paired with the radio, along with its pairing PIN
-    /// — `PROP_BLE_BOND_COUNT` written to zero. The radio answers before
+    ///—`PROP_BLE_BOND_COUNT` written to zero. The radio answers before
     /// it acts on the link, then drops this phone with the rest and opens
-    /// a pairing window — so returning normally means it was done, and the
+    /// a pairing window—so returning normally means it was done, and the
     /// disconnect that follows is expected rather than a failure.
     func clearBluetoothBonds() async throws
     /// Start or stop the radio's locate alert (`PROP_ALERT`) so a
     /// misplaced radio announces itself. What the radio does is up to its
-    /// hardware — a buzzer, an indicator LED, or both — and the alert
+    /// hardware—a buzzer, an indicator LED, or both—and the alert
     /// overrides a silenced buzzer.
     ///
     /// It deliberately keeps running when the phone walks out of range;
@@ -87,7 +87,7 @@ protocol RadioConnection: AnyObject, Sendable {
     /// precision it keeps, ordinary noise from a receiver standing still
     /// moves the reading. Announcing that would keep the radio
     /// transmitting, and the phone waking, for a screen that may not even
-    /// be open — so a position is asked for, by whoever is showing one,
+    /// be open—so a position is asked for, by whoever is showing one,
     /// no more often than they can use the answer.
     ///
     /// Throws on a radio without `CAP_GNSS`, which has nothing to sample.
@@ -147,7 +147,7 @@ protocol RadioConnection: AnyObject, Sendable {
     /// away. Bookkeeping between the app and its own radio: callers reconcile
     /// on attach and after every membership change, and never surface it.
     func reconcileHostChannels(_ channelKeys: [Data]) async throws
-    /// Make the radio's host peer-key table match `entries` — the pairwise
+    /// Make the radio's host peer-key table match `entries`—the pairwise
     /// keys for the peers whose conversations are open, so the radio can
     /// verify and acknowledge their unicast traffic while the phone is away.
     /// Bookkeeping like the channel reconcile above, never surfaced.
@@ -166,12 +166,12 @@ protocol RadioConnection: AnyObject, Sendable {
     /// once per attach, after the host tables are reconciled.
     func drainOfflineQueue() async throws
     func ping(peerAddress: String) async throws -> RadioPingResult
-    /// This phone's own node public key — what a device lists to let this
+    /// This phone's own node public key—what a device lists to let this
     /// phone manage it from a distance. Nil before a mesh session exists.
     func nodePublicKey() async -> Data?
     /// Read named properties from a device on the mesh, in as few
     /// exchanges as the device will take, and answer with what it said
-    /// about each — values and refusals alike.
+    /// about each—values and refusals alike.
     ///
     /// Only what was asked for. A device several flood hops away answers
     /// slowly and at everyone's expense, so a screen asks for its own
@@ -236,14 +236,14 @@ protocol RadioConnection: AnyObject, Sendable {
         peerAddress: String,
         scope: MobileMeshResetScope
     ) async throws
-    /// Clear a device's Bluetooth bonds across the mesh — the same write
+    /// Clear a device's Bluetooth bonds across the mesh—the same write
     /// of `PROP_BLE_BOND_COUNT`. Unlike the resets above this is answered,
     /// so returning means the device said it did it; an administrator
     /// addresses the device's node rather than one of its Bluetooth hosts,
     /// so even clearing bonds leaves this exchange intact.
     func clearRemoteBluetoothBonds(peerAddress: String) async throws
     /// Read named properties from the companion radio itself, over the
-    /// local link, and answer with what it said about each — values and
+    /// local link, and answer with what it said about each—values and
     /// refusals alike. The local counterpart of `fetchRemoteProperties`,
     /// with the same shape of answer, so the same screens read both.
     func fetchCompanionProperties(
@@ -251,7 +251,7 @@ protocol RadioConnection: AnyObject, Sendable {
     ) async throws -> [MobileMeshManagementAnswerRecord]
     /// Write properties to the companion radio, in the given order, and
     /// answer with what it says each is now worth. The order is the
-    /// caller's plan — a radio-parameter write brackets the PHY — and is
+    /// caller's plan—a radio-parameter write brackets the PHY—and is
     /// preserved on the air.
     func writeCompanionProperties(
         _ writes: [MobileMeshPropertyWriteRecord]
@@ -259,7 +259,7 @@ protocol RadioConnection: AnyObject, Sendable {
     /// Persist the companion radio's live configuration.
     func saveCompanionDevice() async throws
     /// Values the companion radio announces on its own over the local
-    /// link — the battery moving, an alert ending, a fix arriving —
+    /// link—the battery moving, an alert ending, a fix arriving—
     /// verbatim, by property number. What the mesh path can never offer:
     /// a device pushes only to the host it is attached to.
     func companionPropertyPushes() async -> AsyncStream<UlcpPropertyPushRecord>
@@ -274,7 +274,7 @@ protocol RadioConnection: AnyObject, Sendable {
     /// An empty `sourceRoute` asks this phone's own neighbors: the request is
     /// zero-hop, so repeaters never carry it. Otherwise it is steered along
     /// those two-byte router hints, in send order, and answered by whatever is
-    /// in range of where the route ends. It is never flooded — nothing would
+    /// in range of where the route ends. It is never flooded—nothing would
     /// bound how many nodes replied.
     ///
     /// The filters narrow who answers, and nil for all of them asks everyone
@@ -287,13 +287,13 @@ protocol RadioConnection: AnyObject, Sendable {
         nodeHint: Data?,
         sourceRoute: [Data]
     ) async throws
-    /// Ask one channel member — known only by the hint their group messages
-    /// claim — to identify themselves. The request goes out over that
+    /// Ask one channel member—known only by the hint their group messages
+    /// claim—to identify themselves. The request goes out over that
     /// channel, since a hint is not an address anything can be unicast to.
     /// The reply arrives on `advertisementEvents()`.
     func requestIdentityByHint(conversationAddress: String, hint: Data) async throws
     /// Set the name carried on this phone's own group messages. Direct
-    /// messages never carry it — the recipient authenticated us by key.
+    /// messages never carry it—the recipient authenticated us by key.
     func setChatDisplayName(_ name: String) async throws
     /// The route the phone's MAC will use for the next frame to this peer.
     /// Read-only: inspecting a peer never registers it.
@@ -372,7 +372,7 @@ struct RadioAdvertisementEvent: Equatable, Sendable {
     /// A bundle is trustworthy when *something* authenticated it: either its
     /// embedded signature verifies against the claimed key, or the MAC
     /// authenticated the frame that delivered it. A broadcast advertisement
-    /// has no MIC, so it must be signed — anything else could be spoofed by
+    /// has no MIC, so it must be signed—anything else could be spoofed by
     /// any nearby transmitter. An Identity Request reply is a unicast
     /// authenticated by its MIC and deliberately carries no signature, so it
     /// is trusted without one.
@@ -388,7 +388,7 @@ struct RadioAdvertisementEvent: Equatable, Sendable {
     }
 }
 
-/// Evidence that a node was on the air. Carries no claims — only who sent a
+/// Evidence that a node was on the air. Carries no claims—only who sent a
 /// frame the mesh accepted, and how confidently that can be said.
 struct RadioPeerHeardEvent: Equatable, Sendable {
     /// Canonical Base58 address, when the frame named a full public key.
@@ -428,7 +428,7 @@ struct RadioPingReply: Equatable, Sendable {
     let roundTripMilliseconds: UInt64
     /// Radio links the reply crossed, counting the final one into this
     /// phone's radio: a direct reply is one hop. `nil` when the reply came
-    /// source-routed without a trace route — hops it took went unrecorded.
+    /// source-routed without a trace route—hops it took went unrecorded.
     let hopCount: UInt8?
     let routeHints: [Data]
     let rssiDBm: Int16?
@@ -507,7 +507,7 @@ enum RadioConnectionError: Error, Equatable, Sendable {
     case operationRejected(String)
     /// The device stopped answering partway through an exchange the link never
     /// reported as broken. Distinct from `operationRejected`: a refusal is the
-    /// device saying no, and this is the device saying nothing — so whether it
+    /// device saying no, and this is the device saying nothing—so whether it
     /// acted on the request is unknown.
     case operationTimedOut
 }
@@ -525,7 +525,7 @@ enum RemoteManagementError: Error, Equatable, Sendable {
     /// The device answered, and the answer was a refusal. Carries the ULCP
     /// status so the screen can name it.
     case refused(status: UInt32)
-    /// The device answered something this exchange cannot make sense of —
+    /// The device answered something this exchange cannot make sense of—
     /// a value where a status belonged, or a read that ended with nothing
     /// read.
     case unreadable

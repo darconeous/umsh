@@ -261,7 +261,7 @@ impl<const N: usize> PeerRegistry<N> {
 
     /// Remove a peer, freeing its slot for reuse.
     ///
-    /// The registry is dense — a `PeerId` is an index — so removal swap-moves
+    /// The registry is dense—a `PeerId` is an index—so removal swap-moves
     /// the last entry into the freed slot. The returned record names that
     /// move so the caller can re-key any state held under the moved peer's
     /// old identifier.

@@ -24,7 +24,7 @@ use umsh_ux_tracker::buzzer::{BuzzerDecision, BuzzerEngine, Melody, melodies};
 const COLD_START_WARMUP: Duration = Duration::from_millis(20);
 
 /// Firmware-visible signal: send a `&'static Melody` to request a tune.
-/// Latest signal wins — firing during playback replaces the current
+/// Latest signal wins—firing during playback replaces the current
 /// melody immediately. Silenced when `BUZZER_SILENCE_TOGGLE` has been
 /// toggled to the silenced state.
 pub static BUZZER_SIGNAL: Signal<ThreadModeRawMutex, &'static Melody> = Signal::new();
@@ -38,7 +38,7 @@ pub static BUZZER_SILENCE_SET: Signal<ThreadModeRawMutex, bool> = Signal::new();
 /// in the firmware binary so the linker sees a concrete monomorphisation.
 ///
 /// PWM clock is expected to be 1 MHz (caller picks `Prescaler::Div16`),
-/// so for the 1–2 kHz melody range max_duty is 500–1000 — plenty of
+/// so for the 1–2 kHz melody range max_duty is 500–1000—plenty of
 /// resolution for the 50% duty square wave we emit.
 pub async fn run(
     mut pwm: SimplePwm<'static>,
@@ -82,7 +82,7 @@ pub async fn run(
                     // activity before it emits audibly, so anything that
                     // played during this window would be lost. Once the
                     // wait completes we rewind the engine so its first
-                    // note gets its full declared duration — keeps the
+                    // note gets its full declared duration—keeps the
                     // chip-warmup quirk invisible to melody authors.
                     enable.set_high();
                     pwm.enable();
@@ -116,7 +116,7 @@ pub async fn run(
                 // driver chip stays powered and the tone is stopped by
                 // dropping the duty to zero: powering it down would cost
                 // the next note a cold start, and a cold start rewinds
-                // the melody — which would make any melody containing a
+                // the melody—which would make any melody containing a
                 // rest repeat until something else displaced it.
                 if driving {
                     pwm.set_duty(0, DutyCycle::normal(0));
@@ -186,7 +186,7 @@ const ALERT_PERIOD: Duration = Duration::from_millis(3_000);
 /// Start or stop the locate alert (`PROP_ALERT`).
 ///
 /// The alert plays through silence, and stopping it leaves the persisted
-/// silence preference exactly as it was — the engine suspends that
+/// silence preference exactly as it was—the engine suspends that
 /// preference rather than clearing it.
 fn apply_alert_state(engine: &mut BuzzerEngine, active: bool) {
     if active {

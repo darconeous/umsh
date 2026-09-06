@@ -20,13 +20,13 @@ persisted succeeds trivially.
 
 A device advertising `CAP_SAVE` can snapshot its provisioning to
 non-volatile storage so that it can operate autonomously across power
-cycles — the radio can be powered on in the morning with no phone present,
+cycles—the radio can be powered on in the morning with no phone present,
 restore its configuration, enable the PHY, and resume queueing and
 acknowledging on the host's behalf.
 
 * [`CMD_SAVE`](ulcp-saved-state.md#cmd-save) atomically writes the current **device
-  domain** configuration — including the RF configuration and the current
-  value of `PROP_PHY_ENABLED` — to non-volatile storage, replacing any
+  domain** configuration—including the RF configuration and the current
+  value of `PROP_PHY_ENABLED`—to non-volatile storage, replacing any
   previous snapshot.
 
   The host domain is **never** part of a snapshot (see [Host Domain](ulcp-core.md#host-domain)): a
@@ -36,7 +36,7 @@ acknowledging on the host's behalf.
   `PROP_BATTERY`, is likewise never saved. The device identity keypair is
   excluded for a different reason: it is independently persisted the
   moment it is installed or generated (see [`PROP_DEV_PRIVATE_KEY`](ulcp-device.md#prop-dev-private-key)) and is
-  changed only by explicit provisioning or `CMD_CLEAR` — neither
+  changed only by explicit provisioning or `CMD_CLEAR`—neither
   `CMD_RESTORE` nor a reboot can revert the device identity to an earlier
   key.
 
@@ -54,13 +54,13 @@ acknowledging on the host's behalf.
   operation accordingly *before* processing any host command: the RF
   configuration is applied and the PHY is re-enabled if it was enabled
   when saved, so a repeater is forwarding before anything else happens.
-  Host-domain behavior — filtering, queueing, acknowledgement delegation —
+  Host-domain behavior—filtering, queueing, acknowledgement delegation—
   does *not* resume, because there is no host domain until a host provides
   one. If no snapshot exists, all properties take their documented
   post-reset values.
 * [`CMD_RESTORE`](ulcp-saved-state.md#cmd-restore) reverts the device domain to the
   snapshot on demand, letting the host abort uncommitted configuration
-  changes — without rebooting the hardware or dropping the ULCP link.
+  changes—without rebooting the hardware or dropping the ULCP link.
   It is observable either as a protocol reset (`STATUS_RESET_RESTORED`) or
   as a series of property-update publications; hosts handle both.
 * [`CMD_CLEAR`](ulcp-saved-state.md#cmd-clear) erases the snapshot and all other
@@ -68,7 +68,7 @@ acknowledging on the host's behalf.
   does not modify live (in-RAM) state; a subsequent `CMD_RST` completes a
   factory reset. Transport-level state such as BLE bonds is not affected.
 * [`PROP_SAVED`](ulcp-saved-state.md#prop-saved) reports the state of the stored
-  snapshot, which is not simply whether one exists — see
+  snapshot, which is not simply whether one exists—see
   [Snapshot Integrity](ulcp-saved-state.md#snapshot-integrity).
 
 Saving is explicit rather than automatic: nothing is written to
@@ -81,7 +81,7 @@ keep.
 Two consequences deserve emphasis:
 
 * **Post-reset values come from the snapshot.** `CMD_RST` reverts
-  properties to their post-reset values, as always — but on a device with a
+  properties to their post-reset values, as always—but on a device with a
   snapshot, the post-reset value of every saved property is its saved
   value, not its documented default. This applies to the device domain
   only; the host domain has no saved value and always returns to its
@@ -92,7 +92,7 @@ Two consequences deserve emphasis:
   if it explicitly sets the properties it cares about.
 * **Queue contents and replay baselines are not saved.** Frames queued
   before a power loss are gone afterward, even if they were acknowledged
-  on the host's behalf — the sender believes them delivered. Likewise the
+  on the host's behalf—the sender believes them delivered. Likewise the
   per-peer frame-counter baselines used by acknowledgement delegation
   restart (see [Counter Resynchronization](security.md#counter-resynchronization)).
   These share the host domain's lifetime, which is why re-provisioning
@@ -184,12 +184,12 @@ state such as BLE bonds and `PROP_BLE_PAIRING_PIN` is also unaffected. A
 
 Because a device identity always exists (see [The Device Identity](ulcp-device.md#device-identity)), the
 `CMD_RST` that completes the sequence **MUST** generate and persist a new
-one rather than leave the device with none — the same thing a factory-fresh
+one rather than leave the device with none—the same thing a factory-fresh
 power-on does, and for the same reason. `PROP_DEV_KEY` therefore reports a
 *different* key after the sequence, never an empty one.
 
 The previous identity is gone from the moment `CMD_RST` completes, but
-anything the device built around it — a running device node, in particular —
+anything the device built around it—a running device node, in particular—
 **MUST NOT** continue to originate traffic under it, even where that state
 survives until the next boot.
 
@@ -223,8 +223,8 @@ the same:
   restore has nothing to revert it to. The inbound queue contents,
   per-peer replay baselines, filters and delegation policy all survive
   unconditionally;
-* independently persisted state outside the snapshot — the device
-  identity keypair and `PROP_BLE_PAIRING_PIN` — is not affected; and
+* independently persisted state outside the snapshot—the device
+  identity keypair and `PROP_BLE_PAIRING_PIN`—is not affected; and
 * the saved snapshot itself is not modified.
 
 **A restore never enables the PHY under an identity the snapshot was not
@@ -252,7 +252,7 @@ reports a successful restore in one of two forms, both valid; the two
 forms differ only in reporting and in session-state handling, never in
 the resulting configuration or retained data:
 
-* **Reset form** — the device additionally resets its protocol session
+* **Reset form**—the device additionally resets its protocol session
   state (transaction bookkeeping and session-scoped properties), as on
   attach. As with `CMD_RST`, the TID is ignored; completion is signaled
   by an unsolicited `CMD_PROP_IS` for `PROP_LAST_STATUS` carrying the
@@ -262,7 +262,7 @@ the resulting configuration or retained data:
   properties (such as `PROP_HOST_RX_QUEUE_COUNT`) reflect live state and
   are re-fetched.
 
-* **Update form** — the device applies the revert in place, emitting an
+* **Update form**—the device applies the revert in place, emitting an
   unsolicited `CMD_PROP_IS` (with key material omitted, where applicable) for
   **every property whose value changed**, and then reports completion
   with `CMD_PROP_IS` for `PROP_LAST_STATUS` carrying `STATUS_OK` and the
@@ -271,14 +271,14 @@ the resulting configuration or retained data:
 A host **MUST** handle both forms: it treats `STATUS_RESET_RESTORED` as
 full reversion to saved values, applies any unsolicited property updates,
 and recognizes completion by either the reset notification or the
-matching-TID `STATUS_OK`. This is not an extra burden in practice — hosts
+matching-TID `STATUS_OK`. This is not an extra burden in practice—hosts
 must already tolerate unsolicited `CMD_PROP_IS` value changes at any time
 (see [Attach, Detach, and Synchronization](ulcp-core.md#attach-sync)). A host that does not know the snapshot's contents
 (for example, because a previous session saved it) re-fetches the
 properties it depends on, exactly as in the post-attach procedure.
 
-If an error occurs — in particular `STATUS_INVALID_STATE` when no snapshot
-exists (see `PROP_SAVED`) — the value of the emitted `PROP_LAST_STATUS`
+If an error occurs—in particular `STATUS_INVALID_STATE` when no snapshot
+exists (see `PROP_SAVED`)—the value of the emitted `PROP_LAST_STATUS`
 will be set accordingly, no state is modified, and no reset code is
 emitted.
 
@@ -294,11 +294,11 @@ emitted.
 Figure: Structure of `CMD_FACTORY_RESET`
 
 Return the radio to a blank factory state. Commands the device to erase
-**every** piece of mutable state it holds — both the persisted state
+**every** piece of mutable state it holds—both the persisted state
 `CMD_CLEAR` erases (the saved snapshot, all persisted provisioning, and
 the device identity private key) **and** the transport-level state
 `CMD_CLEAR` deliberately preserves: all BLE bonds and the configured
-`PROP_BLE_PAIRING_PIN` — and then reboot. After the reboot the radio is
+`PROP_BLE_PAIRING_PIN`—and then reboot. After the reboot the radio is
 indistinguishable from one that has never been provisioned or paired.
 
 This differs from `CMD_CLEAR` + `CMD_RST` in two ways: it also clears
@@ -331,8 +331,8 @@ Id | Mnemonic     | Commands | Description
 * Required: `CAP_SAVE`
 * Value Type: UINT8
 
-Whether a saved snapshot is in effect (see [Saved State](ulcp-saved-state.md#saved-state)) — that is,
-whether the device is armed for autonomous operation across a power cycle —
+Whether a saved snapshot is in effect (see [Saved State](ulcp-saved-state.md#saved-state))—that is,
+whether the device is armed for autonomous operation across a power cycle—
 and, when the answer is qualified, how:
 
 Value | Meaning

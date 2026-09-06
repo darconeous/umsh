@@ -88,7 +88,7 @@ final class UMSHMobileCoreTests: XCTestCase {
     }
 
     /// The shipped world database has no lookup cache, so every lookup on
-    /// a real build goes through SQLite's R-tree — a module Apple's SQLite
+    /// a real build goes through SQLite's R-tree—a module Apple's SQLite
     /// is not contractually required to carry, and whose absence surfaces
     /// only as a failed lookup. The fixture *does* have a cache, so a test
     /// against it as-built proves nothing about that path; this one empties

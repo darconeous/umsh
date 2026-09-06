@@ -3,13 +3,13 @@
 # A metro code is a containment region: it applies inside its polygon and
 # nowhere else. IATA publishes no boundaries for these codes, so every
 # geometry here is a UMSH routing definition. The current polygons are all
-# generated circular placeholders — good enough for "am I in the Tokyo area",
+# generated circular placeholders—good enough for "am I in the Tokyo area",
 # sized generously, and individually replaceable with reviewed boundaries by
 # editing the file a record points at.
 #
 # Metro regions are default-eligible and rank first: inside a metro polygon
 # the metro code is the suggested packet default, above the commercial
-# airport. A metro-tagged flood covers the whole area, which is the point —
+# airport. A metro-tagged flood covers the whole area, which is the point—
 # the tag matches how people name where they are.
 version: 1
 

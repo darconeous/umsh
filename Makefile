@@ -37,26 +37,26 @@
 # `build-*` targets emit the `.uf2` alongside the ELF, packed with the
 # board's base address and family ID (see the BOARDS dict in
 # scripts/firmware_image.py). Building is what produces a flashable
-# artifact — the same one a release attaches and the web flasher will
-# serve — so `flash-*` only copies it to the bootloader volume. That
+# artifact—the same one a release attaches and the web flasher will
+# serve—so `flash-*` only copies it to the bootloader volume. That
 # needs no toolchain beyond Rust and Python.
 #
 # The device must be in DFU mode before `flash-*` (1200-baud touch,
-# double-tap reset, or the board's own button gesture — the T1000-E
+# double-tap reset, or the board's own button gesture—the T1000-E
 # wants the user button held while USB power is cycled twice, not held
 # through a single plug-in).
 #
 # `flash-<board>` flashes the **shipping image** for that board: a
 # repeater and a companion radio are the same image holding different
 # property values (docs/firmware-architecture.md). `<board>-console`
-# is the per-board bringup harness — the only thing exercising the
+# is the per-board bringup harness—the only thing exercising the
 # non-BLE path end to end, and the right tool before BLE stands up on a
 # new board.
 
 TARGET_DIR := target/thumbv7em-none-eabihf/release
 
-# Release staging. `VERSION` is the release *tag* — `fw-2026.08.01`, never the
-# bare number — and it defaults to the tag on HEAD, so cutting a release takes
+# Release staging. `VERSION` is the release *tag*—`fw-2026.08.01`, never the
+# bare number—and it defaults to the tag on HEAD, so cutting a release takes
 # no argument at all:
 #
 #     git tag -a fw-2026.08.01 -m "UMSH firmware 2026.08.01"
@@ -99,7 +99,7 @@ endef
 # It has to travel through the environment because that is what cargo can
 # watch: build.rs declares `rerun-if-env-changed=UMSH_FW_VERSION`, so
 # changing it forces the rebuild. Creating a tag, by contrast, touches
-# neither HEAD nor any ref build.rs depends on — without this, tagging and
+# neither HEAD nor any ref build.rs depends on—without this, tagging and
 # then packaging would quietly ship the pre-tag binary.
 UMSH_FW_VERSION ?=
 export UMSH_FW_VERSION
@@ -110,7 +110,7 @@ RELEASE_BOARDS_NRF52 = techo t1000e sensecap-solar wio-tracker-l1 xiao-nrf52
 # The Espressif boards, which ship a merged `.bin` instead: no UF2
 # bootloader, so no family id or app base, and a different artifact
 # entirely. Both are ESP32-S3, which `merged-bin-%` assumes. heltec-v2 is
-# not here — it is a classic ESP32 and has no working image yet.
+# not here—it is a classic ESP32 and has no working image yet.
 RELEASE_BOARDS_ESP32 = heltec-v3 tbeam-supreme
 
 build-techo-console:
@@ -153,7 +153,7 @@ flash-t1000e-console: build-t1000e-console
 	scripts/flash.py --board t1000e --copy-default \
 		$(TARGET_DIR)/firmware-t1000e-console.uf2
 
-# Serial DFU goes straight to adafruit-nrfutil — there is nothing for us
+# Serial DFU goes straight to adafruit-nrfutil—there is nothing for us
 # to add. pip installs it outside PATH on macOS, so override NRFUTIL with
 # a full path if the bare name does not resolve. `--dev-type` is
 # arbitrary but must be non-zero: the bootloader ignores it, the tool
@@ -170,7 +170,7 @@ NRFUTIL ?= adafruit-nrfutil
 # stops that.
 #
 # Named by SoftDevice rather than by board because that is what the value
-# actually identifies — which board uses which is a property of the board's
+# actually identifies—which board uses which is a property of the board's
 # `base` in scripts/firmware_image.py, and of `softdevice` in
 # site/data/hardware.toml.
 SD_REQ_S140_6_1_1 := 0x00B6
@@ -220,7 +220,7 @@ flash-sensecap-solar: build-sensecap-solar
 # hardware); a re-bootloadered unit may present XIAO-BOOT instead, so
 # --copy-default can miss. Override with `--copy-to` or drag the .uf2
 # across by hand if it does. The image is packed with the generic
-# 0xADA52840 family, which both configs accept — a wrong-family UF2 is
+# 0xADA52840 family, which both configs accept—a wrong-family UF2 is
 # copied with no error and silently not written.
 build-xiao-nrf52:
 	cd firmware/xiao-nrf52 && cargo build --release
@@ -238,8 +238,8 @@ flash-t1000e: build-t1000e
 	scripts/flash.py --board t1000e --copy-default \
 		$(TARGET_DIR)/firmware-t1000e.uf2
 
-# For a board already sitting in DFU. The board has exactly two ways in — hold
-# the user button while cycling USB power twice, or trigger it from software —
+# For a board already sitting in DFU. The board has exactly two ways in—hold
+# the user button while cycling USB power twice, or trigger it from software—
 # and either one lands in the Adafruit bootloader, which presents the T1000-E
 # volume *and* a CDC serial port. `flash-t1000e` uses the former, this the
 # latter; both work whichever way the board got there. The bootloader's port is
@@ -250,7 +250,7 @@ flash-t1000e-serial: build-t1000e
 	$(call dfu-serial,$(TARGET_DIR)/firmware-t1000e,$(SD_REQ_S140_7_3_0))
 
 # The T-Echo's counterpart. Double-tapping reset puts it in the Adafruit
-# bootloader, which presents the TECHOBOOT volume *and* a CDC serial port —
+# bootloader, which presents the TECHOBOOT volume *and* a CDC serial port—
 # `flash-techo` uses the former, this the latter. The port is not the one
 # the application enumerates, so pass it explicitly:
 #
@@ -293,9 +293,9 @@ dfu-zip-xiao-nrf52: build-xiao-nrf52
 # carries its own `rust-toolchain.toml` (channel = "esp", via espup).
 # Each firmware is built from inside its own directory so its
 # `.cargo/config.toml` (target triple + chip-quirk env overrides) is
-# picked up — `-p` from the workspace root picks a wrong target.
+# picked up—`-p` from the workspace root picks a wrong target.
 # Flashing goes through the ROM serial bootloader via espflash over the
-# CP2102 port — no UF2/DFU machinery, and the flasher cannot be bricked.
+# CP2102 port—no UF2/DFU machinery, and the flasher cannot be bricked.
 # `flash-*` targets stay attached as a serial monitor after flashing;
 # override port autodetection with: make ... ESPFLASH_PORT=/dev/cu.usbserial-<N>
 
@@ -326,7 +326,7 @@ ESP_ENV = if [ -f $(ESP_EXPORT) ]; then . $(ESP_EXPORT); fi;
 # "toolchain 'esp' is not installed" and no mention of espup, and a missing
 # espflash surfaces as make reporting "No such file or directory" about a
 # recipe line. Both are one-time per-machine setup, so the ESP32 targets ask
-# first and print what to run. Each check is also a target in its own right —
+# first and print what to run. Each check is also a target in its own right—
 # `make esp-toolchain-check` answers "is this machine set up?" without
 # building anything.
 ESP_SETUP_URL = firmware-esp32/README.md
@@ -408,11 +408,11 @@ flash-tbeam-supreme: espflash-check build-tbeam-supreme
 #
 # `--skip-padding` is not an optimization. Without it espflash pads the
 # image out to the full flash size with 0xFF, and writing that at 0x0 runs
-# straight over the `umsh` data partition at 0x300000 — every device would
+# straight over the `umsh` data partition at 0x300000—every device would
 # lose its identity and saved state on update. With it the image stops after
 # the application and 0x300000 is never touched.
 #
-# `-s 4mb` is the partition table's layout, not the chip's flash size —
+# `-s 4mb` is the partition table's layout, not the chip's flash size—
 # both boards fit 8 MiB and neither claims past 0x310000.
 $(addprefix merged-bin-,$(RELEASE_BOARDS_ESP32)): merged-bin-%: espflash-check build-%
 	@mkdir -p $(FW_DIR)
@@ -461,7 +461,7 @@ release-artifacts:
 # The build half, split out so the guards above run once and the version
 # reaches every board's build.rs through the environment. Each dfu-zip-*
 # depends on its build-*, which is also what writes the UF2 the copy below
-# picks up — the release never re-converts an image, it ships the one the
+# picks up—the release never re-converts an image, it ships the one the
 # build produced.
 release-stage: $(addprefix dfu-zip-,$(RELEASE_BOARDS_NRF52)) \
                $(addprefix merged-bin-,$(RELEASE_BOARDS_ESP32))
@@ -474,7 +474,7 @@ release-stage: $(addprefix dfu-zip-,$(RELEASE_BOARDS_NRF52)) \
 # Attach the staged artifacts to a GitHub Release: the archival home for
 # every file, and the download URL the manifest points at. Drafted rather
 # than published outright, so the asset list can be looked at before anyone
-# else can see it — promote it from the web UI, or with
+# else can see it—promote it from the web UI, or with
 # `gh release edit $(RELEASE_TAG) --draft=false`.
 release-publish:
 	@test -f $(FW_DIR)/manifest.json || { \
@@ -494,7 +494,7 @@ release-publish:
 # Copy what the web flasher fetches into the published tree, same-origin.
 #
 # GitHub's release assets send no CORS headers, so a page on umsh.dev cannot
-# fetch() them — hence this mirror. Only what is actually fetched goes here:
+# fetch() them—hence this mirror. Only what is actually fetched goes here:
 # the DFU packages and the merged ESP32 image. UF2 files are left on the
 # Release, because a browser cannot write a mass-storage volume anyway and
 # the download-and-drag flow works fine from a plain GitHub link.
@@ -509,7 +509,7 @@ release-mirror:
 	@# Version directories are immutable: every URL under one is meant to be
 	@# cacheable forever, which only holds if the bytes never change.
 	@test ! -d $(GH_PAGES_WT)/firmware/$(FW_VERSION) || { \
-		echo "/firmware/$(FW_VERSION) is already published — bump the version"; \
+		echo "/firmware/$(FW_VERSION) is already published—bump the version"; \
 		git worktree remove $(GH_PAGES_WT); exit 1; }
 	mkdir -p $(GH_PAGES_WT)/firmware/$(FW_VERSION)
 	cp $(FW_DIR)/umsh-*-$(FW_VERSION)-dfu.zip \
@@ -530,7 +530,7 @@ release-mirror:
 # The build number is passed on the xcodebuild command line instead of being
 # stored in the project. GENERATE_INFOPLIST_FILE synthesizes CFBundleVersion
 # from CURRENT_PROJECT_VERSION, and App Store Connect rejects a build number it
-# has already accepted under the same MARKETING_VERSION — so every upload needs
+# has already accepted under the same MARKETING_VERSION—so every upload needs
 # a fresh one. Deriving it from the commit count keeps uploads distinct and
 # traceable back to a commit with no pbxproj edit to remember or commit.
 # ExportOptions.plist sets `manageAppVersionAndBuildNumber = false`, so the
@@ -543,11 +543,11 @@ release-mirror:
 #     make ios-archive IOS_BUILD_NUMBER=$(date -u +%s)
 #
 # The xcframework is gitignored, so a clean checkout must build umsh-mobile-core
-# before Xcode can resolve the package — hence the ios-mobile-core prerequisite.
+# before Xcode can resolve the package—hence the ios-mobile-core prerequisite.
 
 # Xcode's Organizer (Window → Organizer → Archives) lists only what sits under
 # ~/Library/Developer/Xcode/Archives/<date>/. An archive written anywhere else is
-# perfectly valid and uploads fine, it just never appears in that window — so the
+# perfectly valid and uploads fine, it just never appears in that window—so the
 # archive path here is the Organizer's own directory, matching where Product →
 # Archive would have put it. Organizer watches the folder and picks it up live.
 
@@ -571,7 +571,7 @@ ios-mobile-core:
 
 ios-archive: ios-mobile-core
 	@test -f regions/dist/world.regiondb || \
-		{ echo "No regions/dist/world.regiondb — an archive must bundle the real"; \
+		{ echo "No regions/dist/world.regiondb—an archive must bundle the real"; \
 		  echo "world database. Run: make regions-build"; exit 1; }
 	xcodebuild -project $(IOS_PROJECT) -scheme UMSH \
 		-destination 'generic/platform=iOS' \
@@ -581,7 +581,7 @@ ios-archive: ios-mobile-core
 
 ios-upload:
 	@test -n "$(IOS_UPLOAD_ARCHIVE)" || \
-		{ echo "No archive found under $(IOS_ARCHIVES_ROOT) — run: make ios-archive"; exit 1; }
+		{ echo "No archive found under $(IOS_ARCHIVES_ROOT)—run: make ios-archive"; exit 1; }
 	@echo "Uploading $(IOS_UPLOAD_ARCHIVE)"
 	xcodebuild -exportArchive -archivePath "$(IOS_UPLOAD_ARCHIVE)" \
 		-exportOptionsPlist apps/ios/ExportOptions.plist \
@@ -625,8 +625,8 @@ install-dissector:
 	mkdir -p $(WIRESHARK_PLUGIN_DIR)
 	ln -sfn "$(CURDIR)/dissectors/umsh" $(WIRESHARK_PLUGIN_DIR)/umsh
 
-# Coloring rules cannot come from the dissector — a Lua dissector has no way
-# to colour a packet-list row — so the rule that inverts protocol violations
+# Coloring rules cannot come from the dissector—a Lua dissector has no way
+# to colour a packet-list row—so the rule that inverts protocol violations
 # has to be installed into Wireshark's own rule set.
 #
 # The rule goes at the TOP: rules are first-match-wins, and the stock set ends
@@ -673,7 +673,7 @@ web-debugger:
 
 # Every workspace crate is documented and published. `--no-deps` means
 # target/doc holds exactly our crates plus rustdoc's shared assets, so
-# gh-pages copies the tree wholesale rather than naming crates — a list
+# gh-pages copies the tree wholesale rather than naming crates—a list
 # would silently omit each new crate.
 #
 # A crate that only compiles for the embedded target still has to *document*
@@ -787,7 +787,7 @@ regions-map-serve:
 	else \
 		mkdir -p site/static/regions; \
 		cp $(REGIONS_FIXTURE)/fixture.regiondb site/static/regions/world.regiondb; \
-		echo "No world build — serving the Bay Area fixture. Build the real one with: make regions-build"; \
+		echo "No world build—serving the Bay Area fixture. Build the real one with: make regions-build"; \
 	fi
 	$(MAKE) --no-print-directory site-serve
 
@@ -808,7 +808,7 @@ regions-diff:
 
 # ─── Website (umsh.dev) ──────────────────────────────────────────────────────
 #
-# Sources live in site/. Zola 0.23 or newer is required — it moved to Tera v2,
+# Sources live in site/. Zola 0.23 or newer is required—it moved to Tera v2,
 # and the templates use its syntax.
 
 ZOLA ?= zola
@@ -819,7 +819,7 @@ site:
 		{ echo "zola not found. Install it with: brew install zola"; exit 1; }
 	$(ZOLA) --root site build
 
-# Fast loop for templates and styles. Note that /docs/* 404s here — those
+# Fast loop for templates and styles. Note that /docs/* 404s here—those
 # trees are layered in only when the whole site is assembled.
 site-serve:
 	$(ZOLA) --root site serve
@@ -878,9 +878,9 @@ site-preview: docs rust-docs-nightly
 
 # Who owns what in the published tree:
 #
-#   /              the Zola site — wiped and replaced on every run
-#   /docs/protocol the mdBook spec — wiped and replaced on every run
-#   /docs/rust     rustdoc — wiped and replaced by `gh-pages`, left alone by
+#   /              the Zola site—wiped and replaced on every run
+#   /docs/protocol the mdBook spec—wiped and replaced on every run
+#   /docs/rust     rustdoc—wiped and replaced by `gh-pages`, left alone by
 #                  `gh-pages-site`
 #   /firmware      release artifacts, written by `release-mirror`
 #   /tools         reserved for the ULCP web debugger
@@ -914,7 +914,7 @@ endef
 define gh-pages-commit
 	@# Pushing a tree with no CNAME makes GitHub drop the custom domain.
 	@test -s $(GH_PAGES_WT)/CNAME || \
-		{ echo "CNAME missing from the published tree — refusing to publish."; exit 1; }
+		{ echo "CNAME missing from the published tree—refusing to publish."; exit 1; }
 	cd $(GH_PAGES_WT) && \
 		git add -A && \
 		git diff --cached --quiet || git commit -m "$(1)"
@@ -924,8 +924,8 @@ endef
 
 # /regions is deliberately absent from the preserve list below: the region
 # map arrives through site/static/, so Zola owns it and rewriting it every
-# deploy is correct. The published database goes the same way — regions-stage
-# copies it into site/static/regions/ before Zola runs — which is what keeps
+# deploy is correct. The published database goes the same way—regions-stage
+# copies it into site/static/regions/ before Zola runs—which is what keeps
 # this list short. Writing a .regiondb into the published tree from outside
 # Zola, the way release-mirror writes /firmware, would instead need /regions
 # preserved here, or the next `make gh-pages` would delete the database out
@@ -955,7 +955,7 @@ gh-pages: site docs rust-docs-nightly
 
 # The site and the spec without the rustdoc rebuild, which is the slow half of
 # a deploy: `rust-docs-nightly` wipes target/doc first, so it never gets to be
-# incremental. /docs/rust is left exactly as published — not deleted, and not
+# incremental. /docs/rust is left exactly as published—not deleted, and not
 # round-tripped through a possibly stale local target/doc. Use `gh-pages` when
 # the API docs themselves need to move.
 gh-pages-site: site docs

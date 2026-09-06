@@ -2,7 +2,7 @@
 //!
 //! The full CLI command set (/msg, /ping, /pfs, /channel, /stats, …)
 //! with the host owning the MAC and a device board supplying the LoRa
-//! PHY — `cli_udp` with the fake radio swapped for the real one.
+//! PHY—`cli_udp` with the fake radio swapped for the real one.
 //!
 //! Usage:
 //!   cargo run --example cli_ulcp --features cli,ble-radio -- \

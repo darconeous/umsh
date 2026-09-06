@@ -8,7 +8,7 @@
 //! The seed is what `umsh_crypto::pool::EntropyPool` ratchets forward
 //! at every boot; the write cadence is once per boot-that-drew plus the
 //! occasional post-harvest refresh, so at 64 records per page the pair
-//! sees an erase every couple hundred boots — wear is a non-issue.
+//! sees an erase every couple hundred boots—wear is a non-issue.
 
 use crate::record::{crc32, generation_is_newer};
 

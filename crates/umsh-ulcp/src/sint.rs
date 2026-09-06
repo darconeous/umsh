@@ -2,7 +2,7 @@
 //!
 //! Two's complement, little-endian, in the fewest octets that hold the
 //! value: one octet up to ±128, two up to ±32768, and so on to four. An
-//! altitude in meters is the motivating case — most of the world is
+//! altitude in meters is the motivating case—most of the world is
 //! within a byte of sea level, and the property that carries it is read
 //! over LoRa.
 //!

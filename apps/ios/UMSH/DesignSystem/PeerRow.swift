@@ -7,7 +7,7 @@ import SwiftUI
 /// next list of nodes gets that for free.
 ///
 /// The avatar carries the node's hint, so a subtitle repeating it says
-/// nothing — pass the detail that is worth the line, or none at all.
+/// nothing—pass the detail that is worth the line, or none at all.
 struct PeerRow: View {
     /// The node's hint, or nil for a key this phone cannot read as one.
     let hint: MeshNodeHint?
@@ -15,7 +15,7 @@ struct PeerRow: View {
     var subtitle: String?
     var diameter: CGFloat = 44
     var showsFavoriteStar = false
-    /// Rendered in the same style as the title, beside it — a badge or a
+    /// Rendered in the same style as the title, beside it—a badge or a
     /// warning that belongs to the name rather than under it.
     var titleAccessory: AnyView?
 

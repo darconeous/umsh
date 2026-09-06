@@ -8,7 +8,7 @@ import UMSHMobileCore
 /// cause the Rust core named, the frame's own structure, and the octets
 /// all exist at the point of failure and are worth carrying.
 ///
-/// Cause and structure are logged `.public` — they are what a bug report
+/// Cause and structure are logged `.public`—they are what a bug report
 /// needs and neither carries user content. The octets are `.private`: a
 /// ULCP payload is message plaintext.
 enum UlcpFrameDiagnostic {
@@ -84,8 +84,8 @@ protocol UlcpFrameLink: AnyObject {
     /// trustworthy.
     ///
     /// `retrying` says whether the session intends to come back. When it
-    /// does, the transport takes its ordinary link-loss path — the
-    /// standing reconnect, the reconnecting state — because that is what
+    /// does, the transport takes its ordinary link-loss path—the
+    /// standing reconnect, the reconnecting state—because that is what
     /// this is. When it does not, the transport stops trying and
     /// preserves the failure the session has already published, which an
     /// ordinary disconnect notice would otherwise overwrite.
@@ -108,7 +108,7 @@ protocol UlcpFrameLink: AnyObject {
 /// ULCP handshake, the property model, the mesh pump, and every
 /// operation the app performs against a radio.
 ///
-/// Subclasses supply the link — and, with it, discovery, connection
+/// Subclasses supply the link—and, with it, discovery, connection
 /// lifecycle, and whatever the transport persists. This class never
 /// names a transport.
 class UlcpRadioSession: NSObject, @unchecked Sendable {
@@ -127,8 +127,8 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
 
     /// Reconnects left to spend on a fatal protocol fault.
     ///
-    /// Most of these faults are one bad frame — a corrupted segment, a
-    /// response that arrived after its transaction was retired — and the
+    /// Most of these faults are one bad frame—a corrupted segment, a
+    /// response that arrived after its transaction was retired—and the
     /// link comes back clean. A radio whose firmware genuinely disagrees
     /// with this app fails the same way every time, so the budget is
     /// small: reconnecting past it only hides the disagreement behind
@@ -136,7 +136,7 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
     ///
     /// Refilled by an attach that *held*, so a fault after hours of
     /// healthy session gets its own budget rather than inheriting a spent
-    /// one — while a radio that attaches and immediately faults cannot
+    /// one—while a radio that attaches and immediately faults cannot
     /// refill its way into reconnecting forever.
     private var fatalFaultRetriesRemaining = UlcpRadioSession.fatalFaultRetryBudget
 
@@ -159,7 +159,7 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
     static let fatalFaultRetryBudget = 2
     /// How long an attach must hold before it earns a fresh retry budget.
     /// Below this, the attach is part of the failure rather than proof
-    /// against it — a radio that attaches and immediately faults would
+    /// against it—a radio that attaches and immediately faults would
     /// otherwise refill its budget on every cycle and never give up.
     static let fatalFaultBudgetRefillSeconds: UInt64 = 60
     // The current mobile MAC needs the device's physical TX completion
@@ -169,9 +169,9 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
     /// Budget for one frame's physical transmission, from handing it to the
     /// device to the device saying what became of it.
     ///
-    /// Generous beside the worst legitimate case — a maximum-size frame at
+    /// Generous beside the worst legitimate case—a maximum-size frame at
     /// the slowest spreading factor, after the device's channel-activity
-    /// backoff — because expiring early fails a send that would have
+    /// backoff—because expiring early fails a send that would have
     /// succeeded. It exists because the Rust MAC awaits this completion
     /// while holding the coordinator borrow: a device that accepts a frame
     /// and then never reports it parks every later send, ping, and identity
@@ -219,13 +219,13 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
     var pingWaiters: [UInt64: CheckedContinuation<RadioPingResult, any Error>] = [:]
     /// Callers awaiting a node-management exchange, by operation id.
     ///
-    /// Shaped like `pingWaiters` because the operations are shaped alike —
+    /// Shaped like `pingWaiters` because the operations are shaped alike—
     /// the Rust worker owns the timeout and reports the outcome as an event
-    /// — with one addition: a whole-device read reports its progress along
+    ///—with one addition: a whole-device read reports its progress along
     /// the way, and the handler for that has to outlive each report.
     var managementWaiters: [UInt64: ManagementWaiter] = [:]
-    /// The one outstanding local management exchange — a property fetch,
-    /// write pass, or save against the companion radio itself — resolved
+    /// The one outstanding local management exchange—a property fetch,
+    /// write pass, or save against the companion radio itself—resolved
     /// by the session update that carries its completion. One at a time
     /// because the Rust session runs one at a time.
     var localManagementWaiter:
@@ -242,7 +242,7 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
     var nextRawTransmitWatchdogToken: UInt64 = 0
     /// Transactions the watchdog gave up on. A device that answers after the
     /// deadline is answering about a frame already failed, which is worth a
-    /// line in the log but must not read as a protocol violation — that would
+    /// line in the log but must not read as a protocol violation—that would
     /// tear down a link whose only fault was being slow.
     var abandonedRawTransactions: Set<UInt8> = []
     var lastYieldedChatBatchID: UInt64?
@@ -522,7 +522,7 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
         guard link?.linkIsReady == true, let selectedHostKey else {
             Self.logger.error(
                 """
-                claim: precondition failed — link=\(self.link != nil, privacy: .public) \
+                claim: precondition failed—link=\(self.link != nil, privacy: .public) \
                 ready=\(self.link?.linkIsReady == true, privacy: .public) \
                 hostKey=\(self.selectedHostKey != nil, privacy: .public)
                 """
@@ -766,7 +766,7 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
     }
 
     /// Map a completed device-domain mutation's status to its caller-facing
-    /// outcome. `ALREADY` and `ITEM_NOT_FOUND` are idempotent successes —
+    /// outcome. `ALREADY` and `ITEM_NOT_FOUND` are idempotent successes—
     /// the device holds (or lacks) the key exactly as requested. A failed
     /// chained save leaves the mutation live; the existing `saved` warning
     /// in Radio Detail covers persistence.
@@ -840,7 +840,7 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
                 }
                 // The radio erases all state and reboots, dropping the link
                 // itself. Abandon the binding so the app does not auto-reconnect
-                // to the now-blank device — but do NOT cancel the connection
+                // to the now-blank device—but do NOT cancel the connection
                 // here: leaving the live link up lets the command's GATT write
                 // flush before the radio's own reboot performs the disconnect.
                 // (Set after applySessionUpdate, which re-remembers an attached
@@ -868,7 +868,7 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
                 // The link drops when the radio restarts, and the same
                 // flush argument as the factory reset applies: leave the
                 // connection up so the GATT write lands. The binding is
-                // deliberately *kept* — the radio coming back is the same
+                // deliberately *kept*—the radio coming back is the same
                 // radio, with the same bond and the same host key, and
                 // reconnecting to it is the whole point.
                 result.resume()
@@ -947,7 +947,7 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
             }
             // A device stops before the answer it is composing would
             // overflow, so a short reply is the ordinary case rather than a
-            // fault — but a reply with nothing in it says the first write
+            // fault—but a reply with nothing in it says the first write
             // alone would not fit, and reissuing it would loop forever.
             guard !event.answers.isEmpty else { throw RemoteManagementError.unreadable }
             answers.append(contentsOf: event.answers)
@@ -961,8 +961,8 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
     /// The reset-class commands are answered by nothing: the device acts and
     /// the MAC acknowledgment is the confirmation, so `.acknowledged` is
     /// success rather than a shortfall and there is no status to require.
-    /// The one reply any of them produces is a refusal — a device without
-    /// `CAP_REBOOT` saying it cannot restart — and that is worth surfacing.
+    /// The one reply any of them produces is a refusal—a device without
+    /// `CAP_REBOOT` saying it cannot restart—and that is worth surfacing.
     func resetRemoteDevice(peerAddress: String, scope: MobileMeshResetScope) async throws {
         let event = try await performManagement { session in
             try session.beginManagementReset(peerAddress: peerAddress, scope: scope)
@@ -1082,7 +1082,7 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
     /// asked for.
     ///
     /// `ALREADY` and `ITEM_NOT_FOUND` are a complaint about a request that
-    /// was already satisfied — the same reading `devicePeerOutcome` gives
+    /// was already satisfied—the same reading `devicePeerOutcome` gives
     /// them on the local link, and for the same reason: an operator asked
     /// for a state, not for a change.
     static func requireSuccess(_ status: UInt32?) throws {
@@ -1098,7 +1098,7 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
     ///
     /// The local counterpart of `fetchRemoteProperties`: same answers,
     /// same refusal semantics, no mesh in between. `multiHint` has no
-    /// local meaning — single reads already pipeline on a fast link.
+    /// local meaning—single reads already pipeline on a fast link.
     func fetchCompanionProperties(
         _ propertyIDs: [UInt32]
     ) async throws -> [MobileMeshManagementAnswerRecord] {
@@ -1150,7 +1150,7 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
     func companionPropertyPushes() async -> AsyncStream<UlcpPropertyPushRecord> {
         await withCheckedContinuation { result in
             sessionQueue.async { [self] in
-                // Pushes are sparse — battery, alert, the occasional fix —
+                // Pushes are sparse—battery, alert, the occasional fix—
                 // and each merges independently, so a small bounded buffer
                 // rides out a busy consumer without unbounded growth.
                 let stream = AsyncStream(bufferingPolicy: .bufferingNewest(16)) { continuation in
@@ -1189,7 +1189,7 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
                 }
                 localManagementWaiter = result
                 do {
-                    // An immediate completion — a save with nothing to ask —
+                    // An immediate completion—a save with nothing to ask—
                     // resolves the waiter inside this call.
                     try applySessionUpdate(start(ulcpSession))
                 } catch {
@@ -1214,7 +1214,7 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
     /// Run one node-management exchange to completion.
     ///
     /// Unlike a ULCP operation over the local link, several of these can be
-    /// in flight — the Rust worker refuses a second device outright and
+    /// in flight—the Rust worker refuses a second device outright and
     /// answers for it, so there is nothing to serialize here.
     func performManagement(
         progress: (@Sendable (UInt32?) -> Void)? = nil,
@@ -1395,7 +1395,7 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
                 // Shares the refresh waiters, because it shares the
                 // machinery: both are a bounded read whose completion is
                 // the same event. A caller polling this cannot starve a
-                // full refresh — it joins it.
+                // full refresh—it joins it.
                 refreshWaiters.append(result)
                 guard !refreshInProgress else { return }
                 refreshInProgress = true
@@ -1453,7 +1453,7 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
     /// is gone does the failure stick and the UI report it.
     ///
     /// `detail` names the cause and the frame's structure for the log;
-    /// `bytes` are the octets that caused it. Neither reaches the UI —
+    /// `bytes` are the octets that caused it. Neither reaches the UI—
     /// `message` is the only part a user sees.
     func terminateConnectionForFatalProtocolError(
         _ message: String,
@@ -1535,7 +1535,7 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
         link?.linkResetFraming()
         // The session started below cannot answer for transactions submitted
         // to the one it replaces. Frames carried across the boundary would
-        // wait on completions that can never arrive — or collide with the new
+        // wait on completions that can never arrive—or collide with the new
         // session's transaction IDs, which reads as a protocol violation.
         abandonOutstandingMeshFrames()
         do {
@@ -1593,7 +1593,7 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
             // while the link was down announced itself exactly once, into a
             // pump that declined to run. Reopening the gate must re-arm the
             // drain, or that frame waits in the outbound queue forever with
-            // the MAC coordinator borrow — and every mesh command — parked
+            // the MAC coordinator borrow—and every mesh command—parked
             // behind it.
             scheduleMeshPump()
             // Stamped here, read at the next fault: how long this attach
@@ -1617,7 +1617,7 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
         } else {
             snapshot.deviceIdentity = nil
         }
-        // Present only on the update that carries a new measurement — from
+        // Present only on the update that carries a new measurement—from
         // a read we asked for, or from the radio publishing one on its own
         // (a charge-state change, or the level moving). Absent means no
         // news, so the previous reading and its timestamp stand rather than
@@ -1629,7 +1629,7 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
             snapshot.batteryReadAt = .now
         }
         // Unlike battery, carried on every update: the radio ends an
-        // alert on its own — a button press or its deadline — and the
+        // alert on its own—a button press or its deadline—and the
         // button has to follow the radio, not what we last asked for.
         snapshot.alert = update.snapshot.alert.map(RadioAlertState.init)
         // Reported once, like battery: an epoch means nothing without the
@@ -1696,7 +1696,7 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
         }
         if let operationErrorMessage {
             Self.logger.error("ULCP operation rejected: \(operationErrorMessage, privacy: .public)")
-            // A device-peer mutation reports through its own waiter — NOMEM
+            // A device-peer mutation reports through its own waiter—NOMEM
             // is an inline answer for that UI, not a radio problem banner.
             if devicePeerWaiter == nil {
                 snapshot.problemDescription = operationErrorMessage
@@ -1717,7 +1717,7 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
         // every power cycle would otherwise park at awaitingHost and demand
         // "Set Up for This Phone" again. Binding a radio in the app (picking
         // it, or completing an attach) is the user's decision; once bound,
-        // the phone simply takes the radio — even from another host, since
+        // the phone simply takes the radio—even from another host, since
         // the last claim legitimately wins. One attempt per transport
         // generation: a rejected claim falls back to the manual buttons
         // instead of looping.
@@ -1739,7 +1739,7 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
         // read the phone identity out of the Keychain, in which case the
         // session began with no host key and parked here with nothing to
         // re-judge it. `useHostIdentity` restarts a session that is already
-        // parked when the key lands; this covers the opposite ordering — the
+        // parked when the key lands; this covers the opposite ordering—the
         // key arrived while the first synchronization was still in flight, so
         // the parked state is stale the moment it is reported. One attempt
         // per generation, and a restart carrying a key cannot classify the
@@ -1960,7 +1960,7 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
             }
             Self.logger.fault(
                 """
-                ulcp: no response for 8s — parked at \
+                ulcp: no response for 8s—parked at \
                 \(String(describing: phaseAtSchedule), privacy: .public), now \
                 \(String(describing: self.snapshot.linkState), privacy: .public) \
                 host \(String(describing: self.snapshot.hostState), privacy: .public) \
@@ -1979,7 +1979,7 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
     /// answering.
     ///
     /// These waiters are otherwise resolved only by an update that says the
-    /// device is no longer working on anything, or by a teardown — so on a
+    /// device is no longer working on anything, or by a teardown—so on a
     /// link that stays up while the device goes quiet, nothing resolves them
     /// and the caller's `await` never returns. `operationTimedOut` is the
     /// honest answer: unlike a rejection, it does not claim to know whether
@@ -2128,7 +2128,7 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
             // A batch id is issued only for a batch that has events in it, so
             // its presence is the whole condition. Testing the event lists
             // instead would drop any batch made only of a kind this check
-            // forgot — and a batch that is never delivered is never
+            // forgot—and a batch that is never delivered is never
             // acknowledged, which stalls every later batch behind it.
             if let chatBatchID = update.chatBatchId {
                 // The facade replays a batch until it is acknowledged, and a
@@ -2304,17 +2304,17 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
         }
     }
 
-    /// Abandon every mesh frame currently in this adapter's hands — queued in
+    /// Abandon every mesh frame currently in this adapter's hands—queued in
     /// `pendingRawFrames` or submitted to the device in `rawTransmitsInFlight`
-    /// — and fail their Rust delivery tickets.
+    ///—and fail their Rust delivery tickets.
     ///
     /// `BridgeRadio::transmit` awaits each ticket while the MAC coordinator
     /// borrow is held, so a frame dropped without failing its ticket wedges
     /// the entire mesh session: every later send, ping, and identity
     /// discovery queues behind that borrow forever, surviving reconnects.
-    /// Any path that walks away from the frames it was carrying —
+    /// Any path that walks away from the frames it was carrying—
     /// disconnect, fatal teardown, or a fresh synchronization whose device
-    /// session cannot answer for the old one's transactions — must come
+    /// session cannot answer for the old one's transactions—must come
     /// through here.
     func abandonOutstandingMeshFrames() {
         // A restarted session issues transaction IDs from the start of the
@@ -2443,17 +2443,17 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
     /// One complete ULCP frame arrived.
     ///
     /// Consuming the frame and applying what it produced fail for
-    /// unrelated reasons — a frame this session cannot read, against a
-    /// value inside a frame it read fine — so they are reported apart
+    /// unrelated reasons—a frame this session cannot read, against a
+    /// value inside a frame it read fine—so they are reported apart
     /// rather than under one message that blames the framing for both.
     func linkDidReceive(frame: Data) {
         let update: UlcpSessionUpdateRecord
         do {
             update = try ulcpSession.consume(frame: frame)
         } catch MobileError.UlcpUnexpectedCommand {
-            // A well-formed command this session does not handle — an
+            // A well-formed command this session does not handle—an
             // unsolicited notification from newer firmware, a
-            // `CMD_PROP_ARE` — is not a broken link. Ignoring it costs at
+            // `CMD_PROP_ARE`—is not a broken link. Ignoring it costs at
             // most one operation that times out; tearing the link down
             // costs the whole session.
             Self.logger.notice(
@@ -2494,7 +2494,7 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
     /// device and retire the generation, so delayed work armed against
     /// it cannot act on whatever link comes next.
     ///
-    /// The frames the Rust session is holding open matter most — a
+    /// The frames the Rust session is holding open matter most—a
     /// dropped completion parks every later send behind it for the life
     /// of the session.
     func sessionDidLoseLink() {

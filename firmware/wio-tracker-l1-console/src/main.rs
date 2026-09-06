@@ -135,7 +135,7 @@ mod firmware {
     // firmware owns them). Const params match `WioMac`'s capacities.
     /// Host bound to the `'static` mac_cell. Owned by `mac_task`.
     type WioHost = Host<MacHandle<'static, WioTrackerPlatform, 2, 8, 4, 4, 8, 255, 32>>;
-    /// LocalNode handle. Cheap to clone — passed to `cli_task`.
+    /// LocalNode handle. Cheap to clone—passed to `cli_task`.
     type WioNode = LocalNode<MacHandle<'static, WioTrackerPlatform, 2, 8, 4, 4, 8, 255, 32>>;
 
     // ─── Platform types ───────────────────────────────────────────────────────
@@ -163,7 +163,7 @@ mod firmware {
     /// reference can be handed to the spawned `umsh_task` (which builds
     /// `MacHandle` / `Host` / `CliSession` off of it). The cell itself is
     /// `Send` (since `WioMac: Send`); `MacHandle` and `CliSession` are `!Send`
-    /// but that's fine — Embassy's local `Spawner::spawn` accepts `!Send`
+    /// but that's fine—Embassy's local `Spawner::spawn` accepts `!Send`
     /// tasks (only `SendSpawner` requires `Send`).
     static MAC_CELL: StaticCell<AsyncRefCell<WioMac>> = StaticCell::new();
     static STORAGE: StaticCell<NvmcStorage> = StaticCell::new();
@@ -279,7 +279,7 @@ mod firmware {
     }
 
     /// Runs the `CliSession` over USB-CDC. The only task that blocks on a host
-    /// terminal connection — the radio, MAC pump, and identity relay all run
+    /// terminal connection—the radio, MAC pump, and identity relay all run
     /// without it.
     #[embassy_executor::task]
     async fn cli_task(
@@ -297,7 +297,7 @@ mod firmware {
         let mut input = cli_io::CdcInput::new(rx);
         let mut out = cli_io::CdcOutput::new();
 
-        // Wait for the host to open the CDC port before writing the banner —
+        // Wait for the host to open the CDC port before writing the banner—
         // otherwise the writes silently disappear into a closed IN endpoint.
         input.wait_connection().await;
 
@@ -350,7 +350,7 @@ mod firmware {
         let (_wdt, [wdt_handle]) =
             Watchdog::try_new::<_, 1>(p.WDT, wdt_config).unwrap_or_else(|_| panic!("wdt"));
 
-        // Panic message from previous boot — stored in a StaticCell so cli_task
+        // Panic message from previous boot—stored in a StaticCell so cli_task
         // can hold a 'static reference to it without lifetime issues.
         static PREV_PANIC_BUF: StaticCell<[u8; 256]> = StaticCell::new();
         let mut prev_panic_tmp = [0u8; 256];
@@ -442,11 +442,11 @@ mod firmware {
 
         // ── MAC coordinator ───────────────────────────────────────────────────
         // The hardware-TRNG RNG built here is the single RNG path for this
-        // firmware — used for first-boot identity generation AND passed
+        // firmware—used for first-boot identity generation AND passed
         // ownership-by-value into `Mac::new` below as `Platform::Rng`.
         //
         // Load identity from flash on subsequent boots; TRNG-generate on
-        // first boot. We do NOT fall back to any PRNG on failure — a
+        // first boot. We do NOT fall back to any PRNG on failure—a
         // predictable long-term key is worse than refusing to start.
         let mut rng = Nrf52840Rng::new(p.RNG);
         let sk_bytes: [u8; 32] = match storage.load_sk().await {
@@ -489,7 +489,7 @@ mod firmware {
 
         // ── Host + node + boot-time peer/channel registration ─────────────────
         // Build the Host/node here so the MAC pump (`mac_task`) is independent
-        // of USB, and register persisted peer/channel keys into the MAC now —
+        // of USB, and register persisted peer/channel keys into the MAC now—
         // not from the CLI task, which only runs after a host opens the CDC
         // port. Without this the coordinator had no keys until a serial client
         // attached, so it couldn't authenticate inbound secure frames and

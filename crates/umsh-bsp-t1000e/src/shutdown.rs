@@ -24,7 +24,7 @@ use crate::power::SHUTDOWN_SIGNAL;
 /// Runs the shutdown orchestrator. Wrap in `#[embassy_executor::task]`
 /// in the firmware binary so the linker sees a concrete monomorphisation.
 ///
-/// Diverges via `power_off` — never returns.
+/// Diverges via `power_off`—never returns.
 pub async fn run() -> ! {
     SHUTDOWN_SIGNAL.wait().await;
 
@@ -155,13 +155,13 @@ async fn enter_system_off() -> ! {
 
     // The AG3335 GNSS. Its pins were never parked here before, which left
     // the receiver's state across System OFF up to whatever the last task
-    // to touch them happened to leave behind — including, for a firmware
+    // to touch them happened to leave behind—including, for a firmware
     // that never drove them at all, the reset configuration.
     //
     // This is upstream's "sleep" teardown rather than its "stop" one: the
     // receiver proper is shut down while the backup domain below stays up.
     // Reset and the stop line are both *asserted*, which for these two
-    // means high and low respectively — the polarities are the module's,
+    // means high and low respectively—the polarities are the module's,
     // not a convention. The UART line into the module is driven low
     // because a pin idling high against a powered-down input back-powers
     // it through the protection diodes; the module's own output is

@@ -38,7 +38,7 @@ def is_short_code_form(text: str) -> bool:
     """Whether `text` occupies the short-code input space.
 
     One to three ASCII alphanumerics are *always* read as a short code by the
-    runtime — there is no way to spell such a name and get a hash instead. A
+    runtime—there is no way to spell such a name and get a hash instead. A
     custom region whose radio name has this shape has silently claimed an IATA
     or ISO code, which is why the builder rejects one unless the source says
     the short-code identity is deliberate.

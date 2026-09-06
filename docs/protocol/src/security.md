@@ -51,7 +51,7 @@ Shorter MICs save bytes on the wire but reduce forgery resistance and increase t
 
 - **16 bytes** (default): Recommended for long-term stable identities where the same pairwise keys may be used for months or years. The cost of a successful forgery is high (attacker gains persistent access to impersonate a node), and the 2^-128 forgery probability makes brute-force infeasible regardless of how many packets an attacker can attempt.
 
-- **8 bytes**: A reasonable middle ground for most communication. Provides 2^-64 forgery probability — well beyond practical brute-force for LoRa's low packet rates — while saving 8 bytes per packet. Suitable for general unicast and multicast traffic.
+- **8 bytes**: A reasonable middle ground for most communication. Provides 2^-64 forgery probability—well beyond practical brute-force for LoRa's low packet rates—while saving 8 bytes per packet. Suitable for general unicast and multicast traffic.
 
 - **4 bytes**: Appropriate for short-lived contexts where the keys will be discarded soon, such as [PFS sessions](#perfect-forward-secrecy-sessions) or one-time exchanges using ephemeral node addresses. The 2^-32 forgery probability (~1 in 4 billion) is adequate when the window of exposure is brief. Also useful for latency-sensitive or payload-constrained scenarios where every byte matters, such as sensor telemetry on slow LoRa links.
 
@@ -62,7 +62,7 @@ As a general principle: the longer the keys will be in use and the higher the va
 ### Frame Counter
 
 The 4-byte frame counter must increase monotonically for a given shared secret and
-traffic direction. UMSH uses this monotonic counter — rather than timestamps — for replay protection, keeping the protocol free of any dependency on synchronized clocks or absolute time.
+traffic direction. UMSH uses this monotonic counter—rather than timestamps—for replay protection, keeping the protocol free of any dependency on synchronized clocks or absolute time.
 
 The exact mechanism for how the frame counter is handled is implementation specific,
 assuming that it always increases. For example, the frame counter may be unique for
@@ -82,9 +82,9 @@ delta = (received_counter - last_accepted_counter) mod 2^32
 
 If `delta` is zero or exceeds the forward window, the packet is rejected. This modular comparison allows the counter to wrap around `2^32` without requiring special overflow handling. The suggested default forward window is **172800**. Implementations MAY use a different value, but it should be large enough to accommodate gaps from packets sent to other destinations and small enough to limit the scope of replay attacks.
 
-Implementations that need to tolerate out-of-order delivery may also define a **backward window** — a small range of counter values *behind* the highest accepted counter within which late-arriving packets are still considered. The suggested default backward window is **8**. When a packet's counter falls within the backward window, the receiver checks a small cache of recently accepted packet MICs (similar to the approach used for [duplicate suppression](repeater-operation.md#duplicate-suppression) in repeaters): if the MIC is already present, the packet is a replay and is rejected; if not, the packet is accepted and its MIC is added to the cache.
+Implementations that need to tolerate out-of-order delivery may also define a **backward window**—a small range of counter values *behind* the highest accepted counter within which late-arriving packets are still considered. The suggested default backward window is **8**. When a packet's counter falls within the backward window, the receiver checks a small cache of recently accepted packet MICs (similar to the approach used for [duplicate suppression](repeater-operation.md#duplicate-suppression) in repeaters): if the MIC is already present, the packet is a replay and is rejected; if not, the packet is accepted and its MIC is added to the cache.
 
-Regardless of window sizes, a packet must not be accepted if it is more than **5 minutes** out of order — that is, if the highest accepted counter was last advanced more than 5 minutes ago and the received counter is behind it. MIC cache entries only need to be retained for the duration of this time bound. Additionally, the first packet accepted from a given node (or after a [counter resynchronization](#counter-resynchronization)) establishes that node's counter baseline — packets with earlier counter values must be rejected, even if they arrive within the backward window.
+Regardless of window sizes, a packet must not be accepted if it is more than **5 minutes** out of order—that is, if the highest accepted counter was last advanced more than 5 minutes ago and the received counter is behind it. MIC cache entries only need to be retained for the duration of this time bound. Additionally, the first packet accepted from a given node (or after a [counter resynchronization](#counter-resynchronization)) establishes that node's counter baseline—packets with earlier counter values must be rejected, even if they arrive within the backward window.
 
 ##### Duplicate Acknowledgement Window {#duplicate-acknowledgement-window}
 
@@ -129,7 +129,7 @@ How a node persists and recovers its frame counter across reboots is implementat
 
 #### Counter Resynchronization
 
-On first contact with a new peer, the received frame counter is accepted at face value and recorded as the baseline for future replay detection. If a known peer's frame counter subsequently falls outside the forward window — for example, after the peer reboots and loses its persisted counter — the receiver MAY use the Echo Request MAC command (including a nonce, see [MAC Commands](mac-commands.md#echo-request)) to determine the peer's current counter value and re-establish a valid baseline.
+On first contact with a new peer, the received frame counter is accepted at face value and recorded as the baseline for future replay detection. If a known peer's frame counter subsequently falls outside the forward window—for example, after the peer reboots and loses its persisted counter—the receiver MAY use the Echo Request MAC command (including a nonce, see [MAC Commands](mac-commands.md#echo-request)) to determine the peer's current counter value and re-establish a valid baseline.
 
 
 ### Salt
@@ -152,9 +152,9 @@ For unicast and blind unicast:
 
 UMSH uses a single Ed25519 keypair per node as both its identity (for addressing) and the basis for key agreement. Standard cryptographic guidance recommends separate keys for signing and key agreement, so this choice warrants justification.
 
-The Ed25519 and X25519 curves are birationally equivalent (both are defined over Curve25519), and the conversion between Edwards and Montgomery form is a well-understood, deterministic mapping. Using a single keypair for both purposes is not itself insecure — it is the approach taken by, among others, the Signal protocol's X3DH key agreement and libsodium's `crypto_sign_ed25519_pk_to_curve25519` API.
+The Ed25519 and X25519 curves are birationally equivalent (both are defined over Curve25519), and the conversion between Edwards and Montgomery form is a well-understood, deterministic mapping. Using a single keypair for both purposes is not itself insecure—it is the approach taken by, among others, the Signal protocol's X3DH key agreement and libsodium's `crypto_sign_ed25519_pk_to_curve25519` API.
 
-The alternative — carrying separate Ed25519 (signing) and X25519 (key agreement) keys per node — would require a cryptographic binding between the two. Each node must distribute an additional 32-byte X25519 public key alongside its Ed25519 key, and the binding must be authenticated (e.g. by including the X25519 key in a signed advertisement). Every recipient must then verify that binding before trusting the key agreement key. On a LoRa link where the entire frame budget is ~255 bytes, even 32 extra bytes per identity exchange is a significant cost. By deriving X25519 keys from Ed25519 keys, UMSH eliminates this overhead entirely: the node address *is* the key agreement key, with no additional key distribution required.
+The alternative—carrying separate Ed25519 (signing) and X25519 (key agreement) keys per node—would require a cryptographic binding between the two. Each node must distribute an additional 32-byte X25519 public key alongside its Ed25519 key, and the binding must be authenticated (e.g. by including the X25519 key in a signed advertisement). Every recipient must then verify that binding before trusting the key agreement key. On a LoRa link where the entire frame budget is ~255 bytes, even 32 extra bytes per identity exchange is a significant cost. By deriving X25519 keys from Ed25519 keys, UMSH eliminates this overhead entirely: the node address *is* the key agreement key, with no additional key distribution required.
 
 UMSH assumes standard Edwards-to-Montgomery conversion:
 
@@ -214,7 +214,7 @@ Because the key derivation depends only on the ECDH shared secret and fixed UMSH
 
 ### Blind Unicast Payload Keys
 
-Blind unicast payload encryption and authentication must require knowledge of *both* the pairwise shared secret and the channel key. This ensures that an attacker who compromises one of the two secrets — but not both — cannot decrypt blind unicast payloads.
+Blind unicast payload encryption and authentication must require knowledge of *both* the pairwise shared secret and the channel key. This ensures that an attacker who compromises one of the two secrets—but not both—cannot decrypt blind unicast payloads.
 
 The blind unicast payload keys are derived by XORing the pairwise unicast keys (see [HKDF Inputs for Unicast](#hkdf-inputs-for-unicast)) with the channel's multicast keys (see [Multicast Packet Keys](#multicast-packet-keys)):
 
@@ -228,9 +228,9 @@ Where:
 - `K_enc_pairwise`, `K_mic_pairwise` are the stable pairwise keys derived from the sender/recipient ECDH shared secret
 - `K_enc_channel`, `K_mic_channel` are the stable channel keys derived from the channel key
 
-Both sets of input keys are independent HKDF outputs — pseudorandom and uncorrelated. XOR of two independent uniform random values is uniform random: an attacker who knows only one side sees the combined key as informationally equivalent to a one-time pad over the unknown side.
+Both sets of input keys are independent HKDF outputs—pseudorandom and uncorrelated. XOR of two independent uniform random values is uniform random: an attacker who knows only one side sees the combined key as informationally equivalent to a one-time pad over the unknown side.
 
-These combined keys are stable for a given (sender, recipient, channel) triple and may be cached. If the same two nodes use blind unicast over different channels, they get different payload keys — compromise of one channel key does not expose blind unicast traffic on another channel between the same pair.
+These combined keys are stable for a given (sender, recipient, channel) triple and may be cached. If the same two nodes use blind unicast over different channels, they get different payload keys—compromise of one channel key does not expose blind unicast traffic on another channel between the same pair.
 
 Both the pairwise and channel keys can be cached independently by the implementation. Computing the blind unicast keys requires only a 32-byte XOR per key, with no additional HKDF calls.
 
@@ -303,9 +303,9 @@ IV[8]  = IV[8]  & 0x7F
 IV[12] = IV[12] & 0x7F
 ```
 
-The bit-clearing step is applied unconditionally, whatever bytes — MIC, SECINFO, or zero padding — occupy positions 8 and 12.
+The bit-clearing step is applied unconditionally, whatever bytes—MIC, SECINFO, or zero padding—occupy positions 8 and 12.
 
-For the 16-byte MIC, SECINFO is entirely truncated away and the IV is the masked synthetic IV — exactly the initial counter `Q` from RFC 5297 §2.6. For shorter MICs, the IV incorporates the frame counter and optional salt from SECINFO, providing additional per-packet IV variability.
+For the 16-byte MIC, SECINFO is entirely truncated away and the IV is the masked synthetic IV—exactly the initial counter `Q` from RFC 5297 §2.6. For shorter MICs, the IV incorporates the frame counter and optional salt from SECINFO, providing additional per-packet IV variability.
 
 | MIC Length | SECINFO (5 B) | SECINFO (7 B) | SECINFO bytes in IV |
 |---:|---|---|---|
@@ -316,7 +316,7 @@ For the 16-byte MIC, SECINFO is entirely truncated away and the IV is the masked
 
 ### Unencrypted Packets
 
-When encryption is disabled, the MIC is computed exactly as for encrypted packets — the truncated `S2V(K_mic, S1 = AAD, S2 = payload)` — and the encryption step is simply omitted.
+When encryption is disabled, the MIC is computed exactly as for encrypted packets—the truncated `S2V(K_mic, S1 = AAD, S2 = payload)`—and the encryption step is simply omitted.
 
 ### Associated Data
 
@@ -325,9 +325,9 @@ The associated data (AAD) binds the immutable header fields to the MIC so that a
 The AAD is constructed by concatenating the following fields in order:
 
 1. **FCF** (1 byte, with the flood-hops-present (`H`) bit cleared)
-2. **Static options** — re-encoded as type-length-value (see below)
+2. **Static options**—re-encoded as type-length-value (see below)
 3. **DST** (3-byte destination hint, unicast) or **CHANNEL** (2 bytes, multicast)
-4. **SRC** (3-byte hint or 32-byte full key) — included only when the source field is outside the ciphertext
+4. **SRC** (3-byte hint or 32-byte full key)—included only when the source field is outside the ciphertext
 5. **SECINFO** (5 or 7 bytes)
 
 Dynamic options and the flood hop count are excluded from the AAD because they may be modified by repeaters during forwarding. The FCF's flood-hops-present (`H`) bit is part of that budget rather than of the packet's identity, and is cleared before the byte enters the AAD: a sender abandoning a source route re-floods a packet that is already sealed, which adds `FHOPS` where the original had none. Masking the bit does not weaken the binding. Flipping it on the wire shifts every field the parser reads after it, so DST/CHANNEL, SRC, and SECINFO enter the AAD as different values and the MIC check still fails.
@@ -359,7 +359,7 @@ The **ack MIC** is simply the first 4 bytes of the original packet's on-wire MIC
 ack_mic = first_4_bytes( on_wire_MIC )
 ```
 
-It is public — any node that received the original packet, including forwarding repeaters, can compute it. Its purpose is correlation: it lets the original sender match the ack to the outstanding request it belongs to, and lets a repeater that forwarded the original packet recognize the ack as its acknowledgement (enabling passive-ack optimizations). It is not an authenticator.
+It is public—any node that received the original packet, including forwarding repeaters, can compute it. Its purpose is correlation: it lets the original sender match the ack to the outstanding request it belongs to, and lets a repeater that forwarded the original packet recognize the ack as its acknowledgement (enabling passive-ack optimizations). It is not an authenticator.
 
 The **ack tag** is a keyed value that only the original sender and the final destination can produce. It is computed as follows:
 
@@ -373,16 +373,16 @@ ack_tag = truncate_to_4( AES-256-ECB( key=K_enc, block=V ) )
 
 Where:
 
-- `K_enc` is the encryption key used for the packet — the pairwise key for unicast (see [HKDF Inputs for Unicast](#hkdf-inputs-for-unicast)), or the combined blind unicast key for blind unicast (see [Blind Unicast Payload Keys](#blind-unicast-payload-keys))
+- `K_enc` is the encryption key used for the packet—the pairwise key for unicast (see [HKDF Inputs for Unicast](#hkdf-inputs-for-unicast)), or the combined blind unicast key for blind unicast (see [Blind Unicast Payload Keys](#blind-unicast-payload-keys))
 - `V` is the full 16-byte S2V output computed during packet processing, before truncation to the on-wire MIC length
 
 The standalone [MAC Ack](packet-types.md#mac-ack-packet) carries both fields (`ack_mic` followed by `ack_tag`, 8 bytes total). The [Ack MIC option](packet-options.md#ack-mic-option-8) carries only `ack_mic`, because the packet carrying the option is itself authenticated to the original sender and therefore needs no separate keyed tag.
 
-The `ack_mic` is a prefix of the original packet's on-wire MIC, so it was already visible to anyone who received that packet. The keyed `ack_tag`, by contrast, never appears in the original packet: producing it requires knowledge of `K_enc`, so a passive observer who intercepts the original packet cannot forge a valid standalone ack even though `ack_mic` is public. With a 4-byte keyed tag, a blind forgery succeeds with probability `2^-32` per attempt; over a bandwidth-limited LoRa channel, online guessing at that scale is infeasible. A successful forgery would cause the sender to treat an undelivered packet as delivered and suppress retransmission — a reliability denial-of-service, not a confidentiality or integrity break. A weaker variant needs no forged tag at all: repeaters [cancel queued forwards](repeater-operation.md#ack-cancellation) on the public `ack_mic` alone, so an observer who saw the original packet can suppress its pending forwards at repeaters within earshot. The exposure is the same reliability class, costs the attacker a transmission per suppression, and is bounded by the sender's [Route Retry](packet-options.md#route-retry-option-6) recovery.
+The `ack_mic` is a prefix of the original packet's on-wire MIC, so it was already visible to anyone who received that packet. The keyed `ack_tag`, by contrast, never appears in the original packet: producing it requires knowledge of `K_enc`, so a passive observer who intercepts the original packet cannot forge a valid standalone ack even though `ack_mic` is public. With a 4-byte keyed tag, a blind forgery succeeds with probability `2^-32` per attempt; over a bandwidth-limited LoRa channel, online guessing at that scale is infeasible. A successful forgery would cause the sender to treat an undelivered packet as delivered and suppress retransmission—a reliability denial-of-service, not a confidentiality or integrity break. A weaker variant needs no forged tag at all: repeaters [cancel queued forwards](repeater-operation.md#ack-cancellation) on the public `ack_mic` alone, so an observer who saw the original packet can suppress its pending forwards at repeaters within earshot. The exposure is the same reliability class, costs the attacker a transmission per suppression, and is bounded by the sender's [Route Retry](packet-options.md#route-retry-option-6) recovery.
 
-The correlation exposed by `ack_mic` is deliberate. To an observer who already received the original packet, it confirms that the packet was delivered and links the ack to that packet. Because the MAC ack carries no destination hint, it adds no explicit endpoint identifier of its own — which removes the direct sender-identity leak a destination hint would introduce. This is not a guarantee of unlinkability: a determined adversary may still correlate an ack with its endpoints through timing, RF fingerprinting, return-path analysis, or by tying the `ack_mic` back to an original packet that itself exposed endpoint hints. For blind unicast, whose forward frame reveals no endpoint identity to a non-channel observer, omitting the destination hint keeps that concealment from being undone by the ack.
+The correlation exposed by `ack_mic` is deliberate. To an observer who already received the original packet, it confirms that the packet was delivered and links the ack to that packet. Because the MAC ack carries no destination hint, it adds no explicit endpoint identifier of its own—which removes the direct sender-identity leak a destination hint would introduce. This is not a guarantee of unlinkability: a determined adversary may still correlate an ack with its endpoints through timing, RF fingerprinting, return-path analysis, or by tying the `ack_mic` back to an original packet that itself exposed endpoint hints. For blind unicast, whose forward frame reveals no endpoint identity to a non-channel observer, omitting the destination hint keeps that concealment from being undone by the ack.
 
-AES-ECB on a single 16-byte block is the raw AES block cipher — a pseudorandom permutation — and does not have the pattern-leakage weakness associated with multi-block ECB encryption.
+AES-ECB on a single 16-byte block is the raw AES block cipher—a pseudorandom permutation—and does not have the pattern-leakage weakness associated with multi-block ECB encryption.
 
 ### Blind Unicast Address Encryption
 
@@ -421,7 +421,7 @@ After this exchange, both sides hold each other's ephemeral addresses and can in
 
 ### Session Key Derivation
 
-A PFS session is cryptographically identical to a normal UMSH unicast session in every respect — the only difference is that the participating node addresses are ephemeral rather than long-term. Key derivation follows the exact same process as [Unicast Key Agreement](#unicast-key-agreement).
+A PFS session is cryptographically identical to a normal UMSH unicast session in every respect—the only difference is that the participating node addresses are ephemeral rather than long-term. Key derivation follows the exact same process as [Unicast Key Agreement](#unicast-key-agreement).
 
 The PFS property arises not from any difference in how the keys are derived, but from the fact that the private keys for the ephemeral addresses are never stored durably and are securely erased when the session ends.
 
@@ -435,9 +435,9 @@ While a PFS session is active, packet hint fields are derived from the ephemeral
 
 Because ephemeral node addresses are structurally identical to long-term node addresses, an observer cannot distinguish PFS session traffic from ordinary unicast traffic, nor associate the ephemeral addresses with the original nodes that created the session.
 
-This identity separation is not unconditional. The PFS handshake messages are authenticated with the nodes' long-term keys, so an attacker who later compromises a long-term private key can retroactively identify which long-term identities established the session — even though the session's content remains protected by the erased ephemeral keys.
+This identity separation is not unconditional. The PFS handshake messages are authenticated with the nodes' long-term keys, so an attacker who later compromises a long-term private key can retroactively identify which long-term identities established the session—even though the session's content remains protected by the erased ephemeral keys.
 
-Additionally, implementations that use a single device-wide frame counter expose a correlation opportunity: an observer who can read the frame counter field across packets (e.g. by receiving a packet before and after the PFS handshake) may notice continuity in the counter value and link the ephemeral addresses to the originating nodes. Implementations that wish to preserve wire-level identity unlinkability should use independent frame counters for each node address — including ephemeral ones — so that session traffic is not correlated with long-term traffic through counter continuity.
+Additionally, implementations that use a single device-wide frame counter expose a correlation opportunity: an observer who can read the frame counter field across packets (e.g. by receiving a packet before and after the PFS handshake) may notice continuity in the counter value and link the ephemeral addresses to the originating nodes. Implementations that wish to preserve wire-level identity unlinkability should use independent frame counters for each node address—including ephemeral ones—so that session traffic is not correlated with long-term traffic through counter continuity.
 
 From the application layer's perspective, the implementation maps the ephemeral identity back to the originating long-term node ID throughout the session, so applications continue to see communication with the same peer they initiated the session with.
 

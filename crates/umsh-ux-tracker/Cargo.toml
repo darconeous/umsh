@@ -19,8 +19,8 @@ repository.workspace = true
 # board-BSP; this crate provides the pure-logic engines that interpret
 # inputs and arbitrate outputs.
 #
-# Devices in a different class — handheld with screen + speaker +
-# keyboard, headless mesh nodes with just radios — get their own
+# Devices in a different class—handheld with screen + speaker +
+# keyboard, headless mesh nodes with just radios—get their own
 # `umsh-ux-<class>` crate. They do not share this one because the
 # abstractions (heartbeat LED, melody sequencer, single-button gesture
 # FSM) do not generalize meaningfully across classes.

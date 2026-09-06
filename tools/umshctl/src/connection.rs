@@ -3,7 +3,7 @@
 //!
 //! Discovery is BLE-only on purpose. Identifying a ULCP device over
 //! serial means opening the port and speaking to whatever is behind it,
-//! and opening a port has side effects — DTR toggles reset some boards,
+//! and opening a port has side effects—DTR toggles reset some boards,
 //! and a 1200-baud touch is this repository's own DFU trigger. A bench
 //! is full of `usbmodem`/`usbserial` devices that are not ULCP radios,
 //! so a serial port is used only when the user names one. BLE scanning
@@ -47,8 +47,8 @@ pub fn attach_config() -> UlcpDeviceConfig {
 /// How long a mesh session waits for one command to come back.
 ///
 /// Strictly longer than the driver's own per-request budget, so a
-/// command that ran out of patience is reported by the driver — which
-/// knows whether the device was unreachable or this tool unlisted — and
+/// command that ran out of patience is reported by the driver—which
+/// knows whether the device was unreachable or this tool unlisted—and
 /// not by the handle, which would only know that nothing arrived.
 const MESH_RESPONSE_TIMEOUT: Duration = Duration::from_secs(200);
 
@@ -286,7 +286,7 @@ impl Session {
 
     /// Open a fresh link to the same radio.
     ///
-    /// This really does drop the connection — it exists for recovering a
+    /// This really does drop the connection—it exists for recovering a
     /// capture whose BLE link failed. The capture tap comes along so a
     /// recovered capture stays one file.
     pub async fn reconnect(self, trace: bool) -> Result<Self> {
@@ -517,7 +517,7 @@ pub enum Discovery {
     #[default]
     Auto,
     /// Always show the listing and ask. The saved default is not
-    /// consulted at all — the point of asking is to reach the radio the
+    /// consulted at all—the point of asking is to reach the radio the
     /// preference does not name.
     Ask,
 }
@@ -554,7 +554,7 @@ pub async fn discover(prefs: &Prefs, interactive: bool, how: Discovery) -> Resul
 }
 
 /// Turn a scan result set into a single target, asking the user when the
-/// answer is ambiguous — or, under [`Discovery::Ask`], whenever there is
+/// answer is ambiguous—or, under [`Discovery::Ask`], whenever there is
 /// anything to ask about.
 pub fn choose(found: Vec<Found>, interactive: bool, how: Discovery) -> Result<Option<Target>> {
     match found.len() {
@@ -627,7 +627,7 @@ pub fn confirm(question: &str) -> Result<bool> {
 ///
 /// Both fields are kept: the platform id is the primary key, and the
 /// name is a fallback for the day a Bluetooth cache reset churns the
-/// ids — as well as what the user recognizes in a message.
+/// ids—as well as what the user recognizes in a message.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct DefaultDevice {
     pub selector: String,
@@ -751,7 +751,7 @@ pub fn history_path() -> Option<PathBuf> {
 /// The identity is persistent because a device authorizes an
 /// administrator by public key: a tool that generated a fresh one each
 /// run would have to be re-authorized every time. The counters must
-/// persist for the same reason any node's must — a peer that has seen a
+/// persist for the same reason any node's must—a peer that has seen a
 /// higher counter rejects a lower one as a replay.
 pub fn admin_identity_path() -> Option<PathBuf> {
     state_dir().map(|dir| dir.join("umshctl-admin.key"))

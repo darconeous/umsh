@@ -7,7 +7,7 @@ which case the layer contributes nothing.
 
 The construction is local rather than global, and deliberately so. A cell is
 only ever needed inside its own radius cap, and a point within R of site i can
-only be taken from i by a site within 2R of i — by the triangle inequality, a
+only be taken from i by a site within 2R of i—by the triangle inequality, a
 site further away than that loses everywhere in the disk. So each cell is
 computed as its capping disk clipped by the geodesic bisector half-space of
 every site within 2R, which is exactly the spherical Voronoi cell restricted
@@ -15,7 +15,7 @@ to the cap, with none of the fragility a global tessellation brings near
 coincident sites or over cells that span a hemisphere.
 
 The clipping happens in a gnomonic projection centered on the site, where
-great circles — and therefore geodesic bisectors — are exactly straight lines,
+great circles—and therefore geodesic bisectors—are exactly straight lines,
 so the clip is a plain convex polygon operation with no approximation. The
 capping disk is centered on the projection center, so it too maps exactly to a
 circle. Only when the result is converted back to longitude and latitude does
@@ -151,7 +151,7 @@ def _disk_polygon(
     Building the cap from `pyproj.Geod` rather than as a circle of spherical
     radius keeps the cap on the WGS84 ellipsoid, where the policy's 100 km is
     measured. A spherical cap would be off by a few hundred meters at that
-    distance — harmless for routing, but it would make the radius check
+    distance—harmless for routing, but it would make the radius check
     disagree with the radius policy asked for.
     """
     segments = _disk_segments(radius_m, cap_error_m)
@@ -256,7 +256,7 @@ def build_cells(
 
         # Densification returns longitudes wrapped into [-180, 180]. A cell
         # near the antimeridian needs its ring continuous around the site
-        # instead — a jump from +179.9 to -179.9 mid-ring reads as a trip
+        # instead—a jump from +179.9 to -179.9 mid-ring reads as a trip
         # around the world, and repair slices the result into garbage slabs.
         densified = [
             (

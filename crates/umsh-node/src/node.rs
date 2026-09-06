@@ -37,7 +37,7 @@ const PEER_REPEATERS_RESPONSE_BUDGET: usize = 160;
 /// The generation moves when an identity is recorded, which is what makes a
 /// stale cursor recognizable. It does not move when the MAC hears a new
 /// transmitter, so a neighbor first heard part way through a walk can shift
-/// the entries after it by one — a listing describes a neighborhood at a
+/// the entries after it by one—a listing describes a neighborhood at a
 /// moment, and the spec lets a responder page imperfectly rather than freeze
 /// a snapshot per requester.
 const PEER_REPEATERS_CURSOR_LEN: usize = 3;
@@ -291,7 +291,7 @@ pub(crate) enum PfsLifecycle {
 /// reason instead of silently doing nothing.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PfsFailure {
-    /// No free identity or peer slot to activate the ephemeral session —
+    /// No free identity or peer slot to activate the ephemeral session—
     /// e.g. the MAC `IDENTITIES`/peer table is exhausted, or more concurrent
     /// PFS sessions were requested than there are ephemeral identity slots.
     Capacity,
@@ -458,7 +458,7 @@ impl<M: MacBackend> LocalNode<M> {
 
     /// Remove a peer from the MAC and drop this node's per-peer bookkeeping:
     /// outstanding pings and per-peer subscription tables. Returns whether
-    /// the peer was registered in the MAC. Idempotent — removing an unknown
+    /// the peer was registered in the MAC. Idempotent—removing an unknown
     /// peer still clears any node-layer residue and reports `false`.
     pub async fn remove_peer(&self, key: &PublicKey) -> bool {
         let removed = self.mac.remove_peer(key).await;
@@ -479,7 +479,7 @@ impl<M: MacBackend> LocalNode<M> {
     }
 
     /// Derive the pairwise transport keys this node's identity shares with
-    /// `peer` — what a host exports to a companion radio so it can verify
+    /// `peer`—what a host exports to a companion radio so it can verify
     /// and acknowledge unicast traffic while the host is away. Deterministic
     /// per (identity, peer); the peer need not have exchanged anything yet.
     /// `None` when the backend cannot derive keys.
@@ -648,8 +648,8 @@ impl<M: MacBackend> LocalNode<M> {
     ///
     /// The point of reading it rather than reconstructing it is that
     /// there is one statement of what this node is, and every framing of
-    /// it — the Identity Request reply, a standalone signed
-    /// advertisement, a local-control read — has to be that same
+    /// it—the Identity Request reply, a standalone signed
+    /// advertisement, a local-control read—has to be that same
     /// statement.
     pub fn with_identity_profile<R>(&self, f: impl FnOnce(&NodeIdentityProfile) -> R) -> Option<R> {
         self.state
@@ -672,7 +672,7 @@ impl<M: MacBackend> LocalNode<M> {
     ) -> Option<IdentityResponsePlan> {
         // Flood management for solicitations that can reach many nodes: a
         // broadcast (or multicast) Identity Request must not carry a routing
-        // constraint (a Route option is fine only when empty) — a steered
+        // constraint (a Route option is fine only when empty)—a steered
         // request is still on its way to the neighborhood it meant to ask.
         //
         // A request that no FILTER_NODE_HINT narrows may additionally be
@@ -744,8 +744,8 @@ impl<M: MacBackend> LocalNode<M> {
     /// Send a resolved Identity Request reply as an authenticated unicast.
     ///
     /// Uses the node's long-term identity (not a PFS ephemeral). Relies on the
-    /// crypto state the MAC already resolved for the requester — permanent or
-    /// transient — and never promotes/pins the peer. Failures are dropped: the
+    /// crypto state the MAC already resolved for the requester—permanent or
+    /// transient—and never promotes/pins the peer. Failures are dropped: the
     /// requester can always ask again.
     pub(crate) async fn send_identity_response(&self, plan: IdentityResponsePlan) {
         let unrouted = || {
@@ -776,7 +776,7 @@ impl<M: MacBackend> LocalNode<M> {
         // a trace is the case this exists for: the requester learns a route
         // home from its own trace and nothing from the answer, since a routed
         // reply arrives with its source route consumed and teaches the MAC no
-        // path. Asking costs nothing on a reply no repeater may carry — the
+        // path. Asking costs nothing on a reply no repeater may carry—the
         // MAC drops the request rather than airing an option that could only
         // arrive empty.
         if plan.trace_route {
@@ -807,7 +807,7 @@ impl<M: MacBackend> LocalNode<M> {
         }
         // A broadcast solicitation's source is not auto-registered on
         // receive, so the requester may be a complete stranger. Take a
-        // transient slot for them — never a pinned one — so the unicast
+        // transient slot for them—never a pinned one—so the unicast
         // below has somewhere to go.
         let _ = self.mac.ensure_transient_peer(&plan.to).await;
         let _ = self
@@ -818,8 +818,8 @@ impl<M: MacBackend> LocalNode<M> {
     /// Answer Peer Repeaters Requests with what this node knows about the
     /// repeaters around it.
     ///
-    /// Off by default. The table itself fills regardless — an identity is
-    /// recorded when it arrives, whether or not anyone will ever ask — so
+    /// Off by default. The table itself fills regardless—an identity is
+    /// recorded when it arrives, whether or not anyone will ever ask—so
     /// switching this on does not start from an empty neighborhood.
     pub fn enable_peer_repeaters_responder(&self) {
         self.state.borrow_mut().peer_repeaters_responder = true;
@@ -927,7 +927,7 @@ impl<M: MacBackend> LocalNode<M> {
             return;
         };
 
-        // The payload-type byte, then the command — the framing every MAC
+        // The payload-type byte, then the command—the framing every MAC
         // command travels in.
         let mut framed = [0u8; PEER_REPEATERS_RESPONSE_BUDGET + 8];
         framed[0] = umsh_core::PayloadType::MacCommand as u8;
@@ -1052,7 +1052,7 @@ impl<M: MacBackend> LocalNode<M> {
     /// Subscribe to PFS negotiation failures for any peer. The handler is
     /// invoked with the peer's long-term key and a coarse [`PfsFailure`]
     /// reason whenever a local PFS step (accepting a request, completing a
-    /// response, or tearing down) fails — so a stalled negotiation reports a
+    /// response, or tearing down) fails—so a stalled negotiation reports a
     /// reason instead of silently doing nothing.
     pub fn on_pfs_failed<F>(&self, handler: F) -> Subscription
     where
@@ -1370,7 +1370,7 @@ impl<M: MacBackend> LocalNode<M> {
                 let state = self.dispatcher.borrow_mut().register_ticket(token, false);
                 SendProgressTicket::new(token, state)
             }
-            // Unicast/blind-unicast without ACK requested — no tracking.
+            // Unicast/blind-unicast without ACK requested—no tracking.
             None => SendProgressTicket::fire_and_forget(),
         }
     }

@@ -56,7 +56,7 @@ enum DeviceSetupGoal: String, CaseIterable, Identifiable, Hashable {
 /// A value a goal decides on the operator's behalf.
 ///
 /// An assumption is only two things: whether the device can honour it, and how
-/// it is forced. There is deliberately no third member describing it in words —
+/// it is forced. There is deliberately no third member describing it in words—
 /// a goal named "set up a tracker" already says the device will not forward,
 /// and a second description of the same value is a thing that can drift out of
 /// step with the value itself.
@@ -79,7 +79,7 @@ enum DeviceSetupAssumption: String, Hashable {
     /// Set the device's wall clock from the phone's when the sheet applies.
     ///
     /// Alone among these it forces nothing on the draft, because the clock is
-    /// not part of the configuration record — it is written live, and a saved
+    /// not part of the configuration record—it is written live, and a saved
     /// epoch would come back arbitrarily wrong anyway. It is listed here
     /// because it is a thing the goal decides, and `setsClockOnApply` reads it
     /// back off the list.
@@ -97,7 +97,7 @@ enum DeviceSetupAssumption: String, Hashable {
             // forwarding policy has one this sheet must not decide blind.
             return sync.supportsRepeater && sync.repeater != nil
         case .radioEnabled:
-            // Radio settings are not capability-gated — every device has a PHY.
+            // Radio settings are not capability-gated—every device has a PHY.
             return true
         case .advertisesTracker, .roleDerivedFromForwarding, .mobile, .stationary:
             return sync.supportsIdent
@@ -134,7 +134,7 @@ enum DeviceSetupAssumption: String, Hashable {
 ///
 /// Each goal's sheet is this same form rendered from a different list of
 /// these, which is what keeps two goals from becoming two forms. Changing a
-/// device's settings is not a goal's sheet at all — it opens the management
+/// device's settings is not a goal's sheet at all—it opens the management
 /// screens every device gets, over whichever link reaches it.
 enum DeviceSetupSection: String, Hashable {
     case link
@@ -148,10 +148,10 @@ enum DeviceSetupSection: String, Hashable {
     case name
     /// The whole PHY as one row, pushing an editor.
     case radioProfile
-    /// Discoverability alone — the role and mobility are the goal's to decide,
+    /// Discoverability alone—the role and mobility are the goal's to decide,
     /// and only this one is the operator's.
     case discoverability
-    /// The four positioning policy controls — no fix, no satellites, no
+    /// The four positioning policy controls—no fix, no satellites, no
     /// coordinates.
     case positioningPolicy
     case announcements
@@ -193,7 +193,7 @@ struct DeviceSetupPlan {
         case .tracker:
             // A tracker carries its own identity and announces it on a
             // schedule. Without an identity there is nothing to announce, and
-            // without the schedule nothing would ever hear it — the protocol
+            // without the schedule nothing would ever hear it—the protocol
             // makes the second imply the first, but a device can advertise the
             // identity capability without the schedule, so check both.
             if !sync.supportsDeviceIdentity {

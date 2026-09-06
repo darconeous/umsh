@@ -5,10 +5,10 @@
 //! high nibble indexing latitude and the low nibble indexing longitude.
 //!
 //! The encoding has a useful truncation property: dropping trailing bytes gives the
-//! correct lower-precision encoding of the same position — no recomputation needed.
+//! correct lower-precision encoding of the same position—no recomputation needed.
 //!
 //! Every coordinate pair in this module is `(latitude, longitude)`, in that
-//! order, without exception — parameters, return tuples, and rendered text alike.
+//! order, without exception—parameters, return tuples, and rendered text alike.
 //!
 //! # Encoding
 //!
@@ -121,7 +121,7 @@ impl NodeLocation {
     /// degrees, exactly and without floating point.
     ///
     /// This is the constructor to use for a position that arrived as
-    /// decimal digits — a GNSS receiver's `ddmm.mmmm` fields, most of
+    /// decimal digits—a GNSS receiver's `ddmm.mmmm` fields, most of
     /// all. [`from_lat_lon`](Self::from_lat_lon) has to round the value
     /// into a binary float first, which at 6–7 byte precision can land it
     /// in the neighbouring cell; this cannot, at any precision, with or
@@ -186,7 +186,7 @@ impl NodeLocation {
         let len = self.len.min(precision.min(MAX_PRECISION));
         // Bytes past `len` are cleared, not merely ignored. Every
         // constructor maintains that invariant, and the derived
-        // `PartialEq`/`Hash` compare the whole array — so a `clamped`
+        // `PartialEq`/`Hash` compare the whole array—so a `clamped`
         // value that kept its dropped tail would fail to equal the
         // identical encoding built any other way, and callers that
         // compare cells to decide whether a position has moved would see
@@ -394,7 +394,7 @@ mod tests {
     }
 
     /// The integer path agrees with the float one wherever the float one
-    /// is trustworthy — precisions 1 through 5, which is exactly the
+    /// is trustworthy—precisions 1 through 5, which is exactly the
     /// range `from_lat_lon` documents as reliable under `f32`.
     #[test]
     fn from_e7_agrees_with_the_float_path_where_that_path_is_sound() {

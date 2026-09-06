@@ -1,4 +1,4 @@
-//! [`TBeamSupremePlatform`] — the concrete `umsh_mac::Platform` bundle
+//! [`TBeamSupremePlatform`]—the concrete `umsh_mac::Platform` bundle
 //! for the LILYGO T-Beam Supreme.
 //!
 //! Composes the chip-level Espressif plumbing from [`umsh_bsp_esp32`]
@@ -7,7 +7,7 @@
 //! [`umsh_crypto`] and the channel-based radio handle from
 //! [`umsh_radio_loraphy`] (driving the on-board SX1262 LoRa modem).
 //!
-//! Identical to the Heltec V3's bundle — the two boards share the chip,
+//! Identical to the Heltec V3's bundle—the two boards share the chip,
 //! the radio, and therefore the whole type surface; what differs between
 //! them (power topology, display, GNSS) lives outside the MAC.
 //!

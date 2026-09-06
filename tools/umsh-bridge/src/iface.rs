@@ -1,9 +1,9 @@
 //! The server's interfaces: its own radio, plus one per configured
 //! client.
 //!
-//! The set is static — clients are named in the configuration, and a
+//! The set is static—clients are named in the configuration, and a
 //! disconnected client is an interface that is down, not an interface
-//! that is gone — so an interface is an index for the whole run and the
+//! that is gone—so an interface is an index for the whole run and the
 //! engine can name one in a log line without a lookup.
 
 use std::sync::Arc;
@@ -46,7 +46,7 @@ impl Interface {
         self.connected.store(connected, Ordering::Relaxed);
     }
 
-    /// Queue a frame for transmission, unless the interface is down —
+    /// Queue a frame for transmission, unless the interface is down—
     /// in which case there is nothing to hold it for.
     pub fn send(&self, frame: TunnelFrame) {
         if !self.is_connected() {

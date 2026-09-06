@@ -2,7 +2,7 @@
  * Web Serial byte-stream link for the firmware flasher.
  *
  * Adapted from `tools/ulcp-web-debugger/www/transports/serial.js` in this
- * repository — same nested read-loop structure — with three changes the
+ * repository—same nested read-loop structure—with three changes the
  * flasher needs: the baud rate is a parameter (1200 for the DFU touch, 115200
  * for serial DFU), the caller supplies an already-chosen port so the user
  * gesture stays in the UI layer, and reads are pull-based so the DFU packet
@@ -166,7 +166,7 @@ export function describePort(port) {
  *
  * `TouchlessResetWatcher` in `crates/umsh-bsp-nrf52840/src/rescue.rs` triggers
  * on a DTR *falling* edge while the line coding is 1200 baud, and DTR must have
- * been asserted first — so opening and closing the port is not enough on its
+ * been asserted first—so opening and closing the port is not enough on its
  * own, and the signals are driven explicitly here.
  *
  * Resolving does not prove the device rebooted: firmware that does not

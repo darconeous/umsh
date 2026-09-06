@@ -3,8 +3,8 @@
 //! [`UlcpDevice`](crate::ulcp::UlcpDevice) speaks to whatever satisfies
 //! [`FrameLink`]: send one frame, receive one frame. That is also the
 //! whole of what an administrative exchange does, so a link made of the
-//! two lets the ordinary host surface — properties, capabilities, the
-//! synchronization procedure, every category command built on them —
+//! two lets the ordinary host surface—properties, capabilities, the
+//! synchronization procedure, every category command built on them—
 //! reach a device across the mesh with nothing about it rewritten for
 //! the occasion.
 //!
@@ -20,13 +20,13 @@
 //!   carried.
 //! - **Reset-class commands.** `CMD_RST`, `CMD_RESTORE` and
 //!   `CMD_FACTORY_RESET` are answered over the binding by no payload at
-//!   all — delivery is the acknowledgment. A local device announces its
+//!   all—delivery is the acknowledgment. A local device announces its
 //!   new status instead, and callers wait for that announcement, so this
 //!   synthesizes the announcement the device would have sent.
 //!
 //!   One consequence is worth knowing about. The exchange engine decides
 //!   a command is reset-class by reading the *request*, and settles it as
-//!   soon as the acknowledgment lands — before any reply is drained. A
+//!   soon as the acknowledgment lands—before any reply is drained. A
 //!   `CMD_RESTORE` that the device refuses for want of a snapshot does
 //!   answer, with `STATUS_INVALID_STATE`, and that answer loses the race:
 //!   the caller is told the restore completed. Reading
@@ -34,8 +34,8 @@
 //!   out what actually happened, and it remains the way to tell these two
 //!   apart over the mesh.
 //!
-//! Everything else the binding refuses — the host domain, session state,
-//! the private key — it refuses as `STATUS_PROP_NOT_FOUND`, which is an
+//! Everything else the binding refuses—the host domain, session state,
+//! the private key—it refuses as `STATUS_PROP_NOT_FOUND`, which is an
 //! answer and needs no help from here.
 
 use tokio::sync::mpsc;
@@ -51,8 +51,8 @@ const SYNTHETIC_BUF: usize = 8;
 
 /// Why an exchange produced no frame to hand back.
 ///
-/// A fault is per-request, not terminal — the link stays usable for the
-/// next command — except [`MeshFault::Radio`], which ends the session
+/// A fault is per-request, not terminal—the link stays usable for the
+/// next command—except [`MeshFault::Radio`], which ends the session
 /// because the radio underneath it is gone.
 #[derive(Clone, Debug)]
 pub enum MeshFault {
@@ -85,7 +85,7 @@ pub struct MeshRequest {
     /// The TID the caller used, and the one its reply must wear.
     tid: u8,
     /// The command, when it is one this crate defines. `None` is not an
-    /// error — the binding carries whatever the caller encoded.
+    /// error—the binding carries whatever the caller encoded.
     cmd: Option<Cmd>,
 }
 
@@ -223,8 +223,8 @@ impl MeshEndpoint {
     /// session.
     ///
     /// For the failures that belong to one command rather than to the
-    /// link — a request that ran out of patience, an engine that would
-    /// not take it — where the next command may well succeed.
+    /// link—a request that ran out of patience, an engine that would
+    /// not take it—where the next command may well succeed.
     pub fn refuse(&mut self, message: String) {
         self.report(Err(MeshFault::Exchange(message)));
     }
@@ -248,8 +248,8 @@ impl MeshEndpoint {
             // A factory reset is not waited on at all: the device wipes
             // itself and reboots, and the link dropping is the report.
             Some(Cmd::FactoryReset) => return,
-            // Unreachable in practice — the exchange engine only reports
-            // `NoResponse` for the three above — but silence here would
+            // Unreachable in practice—the exchange engine only reports
+            // `NoResponse` for the three above—but silence here would
             // hang the caller until its own timeout, which is a worse
             // way to learn about a bug.
             _ => {
@@ -279,7 +279,7 @@ impl MeshEndpoint {
 pub fn describe(failure: Failure) -> String {
     match failure {
         Failure::TimedOut => {
-            "no answer — the device may be out of range, or this host may not be one of its \
+            "no answer—the device may be out of range, or this host may not be one of its \
              administrators"
                 .into()
         }

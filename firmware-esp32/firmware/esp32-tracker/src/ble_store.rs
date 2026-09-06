@@ -3,7 +3,7 @@
 //! The record engine, codecs, and power-cut recovery all live in
 //! [`umsh_journal_store`] (proven by the same crate's host tests on the
 //! nRF path). This module supplies the Espressif flash primitive, the
-//! two-page rotation policy, and the runtime handles — the exact
+//! two-page rotation policy, and the runtime handles—the exact
 //! analogue of the `JournalFlash` / `BleStore` / `ProtoStore` trio in
 //! `techo/src/main.rs`, backed by `esp_storage::FlashStorage`
 //! behind an embassy mutex instead of the MPSL-shared nRF NVMC.
@@ -39,7 +39,7 @@ use umsh_journal_store::seed;
 pub use umsh_journal_store::ble::{MAX_BONDS, SLOT_SIZE, StoredBond};
 
 /// Newtype over the flash driver so the foreign journal traits can be
-/// implemented for it (orphan rule — both `RecordWriter` and
+/// implemented for it (orphan rule—both `RecordWriter` and
 /// `FlashStorage` are foreign). Reads go through the inner driver.
 pub struct JournalFlash(pub FlashStorage<'static>);
 
@@ -85,7 +85,7 @@ const _: () = assert!(
     "five journal page pairs must fit inside the map carve-out"
 );
 
-/// BLE security journal: the topmost page pair (anchored — see module doc).
+/// BLE security journal: the topmost page pair (anchored—see module doc).
 pub fn ble_page0(partition: &core::ops::Range<u32>) -> u32 {
     partition.end - 2 * PAGE_SIZE
 }
@@ -166,7 +166,7 @@ impl SeedStore {
     }
 
     /// Write `seed` as the next committed record. Returns only after the
-    /// commit word is on flash — the caller may release pool output once
+    /// commit word is on flash—the caller may release pool output once
     /// this is `Ok`.
     pub async fn persist(&mut self, seed: [u8; 32]) -> Result<(), ()> {
         let record = seed::SeedRecord {
@@ -296,7 +296,7 @@ impl BleStore {
     /// Move the bond matching `address_kind`/`address` to the MRU end and
     /// persist it, if it isn't already there. Called on reconnect via an
     /// existing bond, so the LRU order reflects actual use rather than only
-    /// pairing events — without this the list is insertion-ordered and
+    /// pairing events—without this the list is insertion-ordered and
     /// eviction takes the wrong bond.
     pub async fn touch_bond(&mut self, address_kind: u8, address: [u8; 6]) -> Result<bool, ()> {
         let mut next = self.snapshot.clone();
@@ -307,7 +307,7 @@ impl BleStore {
         Ok(true)
     }
 
-    /// Drop every bond and the PIN, preserving the device's local IRK —
+    /// Drop every bond and the PIN, preserving the device's local IRK—
     /// the device's security-wipe operation.
     pub async fn clear_security(&mut self) -> Result<(), ()> {
         let mut next = Snapshot::empty();

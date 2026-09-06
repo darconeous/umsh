@@ -21,7 +21,7 @@ fn main() {
 /// tool does.
 ///
 /// Rust ignores `SIGPIPE` so that a write to a closed pipe surfaces as an
-/// error — which `println!` then turns into a panic. `umsh-bridge check |
+/// error—which `println!` then turns into a panic. `umsh-bridge check |
 /// head` is an ordinary thing to type, and it should not produce a
 /// backtrace.
 #[cfg(unix)]

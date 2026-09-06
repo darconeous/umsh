@@ -59,7 +59,7 @@ pub enum Step {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Outcome {
     /// The device answered. The reply frame is the reassembly buffer's
-    /// first `len` octets — one whole ULCP frame, its trailing content
+    /// first `len` octets—one whole ULCP frame, its trailing content
     /// the concatenation of every fragment.
     Replied { len: usize },
     /// A reset-class command, which is answered by no response payload.
@@ -98,8 +98,8 @@ impl<'a> Reassembly<'a> {
 
     /// Take up a reassembly whose position the caller kept.
     ///
-    /// A caller that cannot hold the borrow between exchanges — anything
-    /// awaiting a radio round trip — keeps the storage and the length it
+    /// A caller that cannot hold the borrow between exchanges—anything
+    /// awaiting a radio round trip—keeps the storage and the length it
     /// reached, and hands both back for the next fragment.
     pub fn resume(buf: &'a mut [u8], len: usize) -> Self {
         let len = len.min(buf.len());
@@ -167,7 +167,7 @@ impl<const REQUEST: usize> Exchange<REQUEST> {
     ///
     /// `seed` picks the first token. A device retains its answer to every
     /// recent token against retransmission, and answers a reused token
-    /// with the retained response instead of executing — so the seed must
+    /// with the retained response instead of executing—so the seed must
     /// come from above [`Exchange::counter`] of every exchange the device
     /// may still remember: a counter carried across exchanges, itself
     /// seeded unpredictably.
@@ -273,8 +273,8 @@ impl<const REQUEST: usize> Exchange<REQUEST> {
         Step::Send { len }
     }
 
-    /// A reset-class command has been delivered — the MAC acknowledged
-    /// it — and no response is coming.
+    /// A reset-class command has been delivered—the MAC acknowledged
+    /// it—and no response is coming.
     ///
     /// Calling this for anything else discards a reply that may still
     /// arrive; the caller checks [`Exchange::expects_response`] first.
@@ -286,9 +286,9 @@ impl<const REQUEST: usize> Exchange<REQUEST> {
     /// commands, whose completion is observed by reading state in a
     /// later exchange rather than by a reply.
     ///
-    /// One that arrives anyway is still accepted — `CMD_RESTORE` on a
+    /// One that arrives anyway is still accepted—`CMD_RESTORE` on a
     /// device with no saved snapshot resets nothing and answers like any
-    /// other command — so this says when to wait on the acknowledgment
+    /// other command—so this says when to wait on the acknowledgment
     /// instead, not when to stop listening.
     pub fn expects_response(&self) -> bool {
         !self.resets
@@ -299,7 +299,7 @@ impl<const REQUEST: usize> Exchange<REQUEST> {
     ///
     /// A payload whose token does not match the outstanding one is not
     /// this exchange's; the caller discards it with accounting. Returns
-    /// `None` in that case, and otherwise what to do next — which for a
+    /// `None` in that case, and otherwise what to do next—which for a
     /// fragmented read is the next continuation to send.
     pub fn receive(
         &mut self,
@@ -313,7 +313,7 @@ impl<const REQUEST: usize> Exchange<REQUEST> {
         }
 
         // The token leads the payload, so even a response whose options
-        // are unreadable can be attributed — and one that cannot be
+        // are unreadable can be attributed—and one that cannot be
         // attributed is not this exchange's problem.
         let &[token0, token1, ..] = payload else {
             return None;

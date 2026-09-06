@@ -20,15 +20,15 @@ errors use stable categories and must not contain input or key material.
 A Keychain item outlives the app container: deleting the app removes the
 database keyed to the identity and leaves the identity itself behind. The
 key alone therefore cannot say whether it belongs to *this* install, so an
-**anchor** — a file at `Application Support/UMSH/identity-anchor` naming the
-identity — is written whenever an identity is minted or adopted. The anchor
+**anchor**—a file at `Application Support/UMSH/identity-anchor` naming the
+identity—is written whenever an identity is minted or adopted. The anchor
 lives where iOS destroys it on delete and keeps it across an upgrade,
 restore, or device migration, which is exactly the distinction wanted.
 
 A key found with no anchor is *orphaned*. Nothing is unlocked into service
 and nothing is minted over it; the app asks whether to keep the identity or
 start fresh. An orphan the store still holds records for is adopted without
-asking — that is a container that lost its anchor, not a container that lost
+asking—that is a container that lost its anchor, not a container that lost
 its data.
 
 ### Erasure

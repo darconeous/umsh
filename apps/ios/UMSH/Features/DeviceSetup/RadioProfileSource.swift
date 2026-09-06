@@ -6,7 +6,7 @@ import UMSHMobileCore
 struct RadioProfile: Equatable, Sendable {
     var frequencyKHz: UInt32
     var transmitPowerDBm: Int8
-    /// The modem triple, present together or not at all — on a radio with
+    /// The modem triple, present together or not at all—on a radio with
     /// `CAP_PHY_LORA` that reported all three.
     var bandwidthHz: UInt32?
     var spreadingFactor: UInt8?
@@ -19,7 +19,7 @@ struct RadioProfile: Equatable, Sendable {
     ///
     /// Transmit power and the duty-cycle limit are deliberately excluded.
     /// Neither changes what a receiver can decode, and a radio reports power
-    /// clamped to what it can actually reach — so comparing power would call
+    /// clamped to what it can actually reach—so comparing power would call
     /// two radios on the same mesh profile "custom" merely because one of them
     /// cannot transmit as hard as the other.
     func interoperates(with other: RadioProfile) -> Bool {
@@ -41,7 +41,7 @@ struct CompanionRadioProfile: Equatable, Sendable {
     let profile: RadioProfile
 
     /// Nil when no companion radio is attached, or when it has not reported
-    /// its PHY — `provisioning` is populated only once a session attaches.
+    /// its PHY—`provisioning` is populated only once a session attaches.
     init?(_ provisioning: RadioProvisioningSummary?, name: String?) {
         guard let provisioning else { return nil }
         self.name = name
@@ -59,7 +59,7 @@ struct CompanionRadioProfile: Equatable, Sendable {
 /// The PHY a setup sheet starts on, and what to say about how it got there.
 ///
 /// Resolved once, when the device attaches and its capabilities are known.
-/// All three cases render as the same single row — the operator finds the
+/// All three cases render as the same single row—the operator finds the
 /// radio profile in the same place every time, and only the value and the
 /// explanation differ.
 enum ResolvedRadioProfile: Equatable {

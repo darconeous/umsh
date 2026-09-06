@@ -1,6 +1,6 @@
 # Channel Access
 
-This chapter describes how UMSH nodes contend for channel access before transmitting. These procedures apply to all transmissions — original packets, forwarded packets, and acknowledgments — unless otherwise specified.
+This chapter describes how UMSH nodes contend for channel access before transmitting. These procedures apply to all transmissions—original packets, forwarded packets, and acknowledgments—unless otherwise specified.
 
 ## Frame Duration
 
@@ -88,12 +88,12 @@ Nodes waiting for implicit forwarding confirmation MUST size their confirmation 
 
 The final destination of an ack-requested packet transmits its ACK as soon as the packet ends, without performing CAD (see [Immediate ACK Transmission](#immediate-ack-transmission)). CAD alone cannot protect that ACK from flood forwarders triggered by the end of the same reception: the contention delay `W + uniform_random(0, W_jitter)` may be arbitrarily small, CAD detects preamble energy and may miss an ACK already past its preamble, and a forwarder may not be able to hear the destination at all.
 
-`D_ack` therefore provides deterministic separation. When the packet being flood-forwarded requests an ACK (UNAR or BUAR) and was received with no remaining source-route hops — the conditions under which its destination transmits an immediate ACK — the forwarder MUST delay by at least `D_ack` before transmitting, in addition to the computed contention delay. `D_ack` SHOULD cover the destination's receive-to-transmit turnaround plus the on-air duration of a MAC Ack packet at the configured channel settings. The suggested default is **0.25 × T_frame**; implementations that compute the actual MAC Ack airtime MAY use a tighter bound.
+`D_ack` therefore provides deterministic separation. When the packet being flood-forwarded requests an ACK (UNAR or BUAR) and was received with no remaining source-route hops—the conditions under which its destination transmits an immediate ACK—the forwarder MUST delay by at least `D_ack` before transmitting, in addition to the computed contention delay. `D_ack` SHOULD cover the destination's receive-to-transmit turnaround plus the on-air duration of a MAC Ack packet at the configured channel settings. The suggested default is **0.25 × T_frame**; implementations that compute the actual MAC Ack airtime MAY use a tighter bound.
 
 A packet received with source-route hops still pending does not elicit an immediate ACK from its destination, so `D_ack` does not apply when forwarding it.
 
 ## Immediate ACK Transmission
 
-When a node is the final destination of an ack-requested packet (UNAR or BUAR) and the packet has no remaining source route hops, the node SHOULD transmit the ACK immediately — without performing CAD — provided the radio is available for transmission. This is warranted because the channel is known to have been clear at the moment the received packet ended, and flood forwarders hold their transmissions back by the [ACK protection interval](#ack-protection-interval) so the ACK gets first use of the channel.
+When a node is the final destination of an ack-requested packet (UNAR or BUAR) and the packet has no remaining source route hops, the node SHOULD transmit the ACK immediately—without performing CAD—provided the radio is available for transmission. This is warranted because the channel is known to have been clear at the moment the received packet ended, and flood forwarders hold their transmissions back by the [ACK protection interval](#ack-protection-interval) so the ACK gets first use of the channel.
 
 If the radio is not immediately available for transmission, the node SHOULD perform normal CAD and backoff before transmitting the ACK.

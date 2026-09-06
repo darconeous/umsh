@@ -3,7 +3,7 @@ version: 1
 metros:
   # XSF rather than SFO on purpose, twice over: a metro code that collides
   # with a positioned site's code is dropped by the compiler (the airport
-  # sense wins), and this fixture needs a metro that survives — while a real
+  # sense wins), and this fixture needs a metro that survives—while a real
   # metro code would misleadingly suggest real-world data. XSF is assigned to
   # nothing.
   - id: iata-metro:XSF

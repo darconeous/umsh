@@ -2,7 +2,7 @@
 #
 # The candidate list is bootstrapped from OurAirports' scheduled_service flag,
 # which answers "does some scheduled flight exist" and not the question this
-# layer asks — whether a person nearby would call this their airport. Entries
+# layer asks—whether a person nearby would call this their airport. Entries
 # here have the final say in both directions, and each carries a reason so the
 # next reviewer knows what was decided rather than just what.
 version: 1
@@ -23,7 +23,7 @@ overrides:
       Teterboro is a general-aviation reliever for corporate and charter
       traffic, with no scheduled passenger service anyone books. Upstream
       marks it scheduled_service=yes, which put it in the commercial layer
-      competing with LaGuardia for northern Manhattan — the San Carlos case
+      competing with LaGuardia for northern Manhattan—the San Carlos case
       again, in the densest airport cluster in the country.
     evidence:
       - "https://www.panynj.gov/airports/en/teterboro.html"
@@ -38,7 +38,7 @@ overrides:
   # Reviewed sweep: candidates within 30 km of a large-airport candidate,
   # where a general-aviation field wrongly marked scheduled_service takes
   # routing territory from the gateway everyone actually names. Airports
-  # further out were left alone — out there a small field may genuinely be
+  # further out were left alone—out there a small field may genuinely be
   # the airport its area means.
 
   BED:
@@ -182,7 +182,7 @@ overrides:
     commercial: false
     reason: >
       Nairobi Wilson is the hub for Kenyan light-aircraft domestic flying, and
-      the busiest airport in East Africa by movements — which is why this one
+      the busiest airport in East Africa by movements—which is why this one
       was close. But the layer asks which airport a person here would call
       theirs, not which handles the most departures, and for Nairobi that is
       Jomo Kenyatta. Wilson keeps its positioned-location identity.
@@ -205,7 +205,7 @@ overrides:
 
   # Promotions. Upstream's scheduled_service says no, which keeps these out
   # of the candidate list entirely, so the override is the only thing that
-  # puts them in the layer — the build says as much in a warning when it
+  # puts them in the layer—the build says as much in a warning when it
   # applies one. A small field earns this by being the airport its area
   # actually means, with the nearest gateway far enough away that offering
   # it instead would name somewhere nobody there is.
@@ -215,8 +215,8 @@ overrides:
     reason: >
       Crater Lake-Klamath Regional is the passenger airport for the Klamath
       Basin, and the only medium-sized field in it. Scheduled service is thin
-      and has changed hands over the years — currently a single route to
-      Portland — which is why upstream carries scheduled_service=no; the flag
+      and has changed hands over the years—currently a single route to
+      Portland—which is why upstream carries scheduled_service=no; the flag
       tracks whether a carrier is filed today, not whether a region has an
       airport. Without this, the nearest commercial region is Medford at
       97 km, just inside the layer's 100 km cap and on the far side of the

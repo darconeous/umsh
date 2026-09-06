@@ -79,7 +79,7 @@ final class ChatNotificationService: NSObject, UNUserNotificationCenterDelegate,
             )
         ])
         // A transcript left open while the app was backgrounded banners its
-        // arrivals (correctly — nobody was looking), but coming back through
+        // arrivals (correctly—nobody was looking), but coming back through
         // the app icon re-reveals it without an appearance event. Foreground
         // entry is that missing moment: whatever is visible is now seen.
         NotificationCenter.default.addObserver(
@@ -187,7 +187,7 @@ final class ChatNotificationService: NSObject, UNUserNotificationCenterDelegate,
         replyState.withLock { $0.handler = nil }
     }
 
-    /// Ask for notification permission the first time a radio attaches —
+    /// Ask for notification permission the first time a radio attaches—
     /// the first moment a notification has concrete meaning. The system
     /// remembers the user's answer; a denied state is never re-prompted.
     func requestAuthorizationIfNeeded() {
@@ -212,8 +212,8 @@ final class ChatNotificationService: NSObject, UNUserNotificationCenterDelegate,
     /// `sender` names who sent it within a group conversation, where the
     /// title is the channel and the body alone would not say who is talking.
     /// A direct message needs no sender: the title already is one. The
-    /// identity parameters feed the communication styling — the sender's
-    /// avatar and chat grouping — and the title/subtitle stay behind them as
+    /// identity parameters feed the communication styling—the sender's
+    /// avatar and chat grouping—and the title/subtitle stay behind them as
     /// the fallback for anywhere that styling does not reach.
     ///
     /// `channel` is what makes this a group message: it names the room, and
@@ -268,7 +268,7 @@ final class ChatNotificationService: NSObject, UNUserNotificationCenterDelegate,
     /// This is what a drained offline queue looks like: a radio that held a
     /// conversation's traffic for an hour hands it over all at once, and
     /// sixteen banners for one conversation are worse than useless. No
-    /// message body is quoted — with more than one there is no single
+    /// message body is quoted—with more than one there is no single
     /// message this is about, and quoting the last would misrepresent the
     /// rest.
     func postInboundMessageSummary(
@@ -318,7 +318,7 @@ final class ChatNotificationService: NSObject, UNUserNotificationCenterDelegate,
     /// Tell the user a node they were watching for has turned up.
     ///
     /// The watch is one-shot and has already been disarmed by the time this
-    /// runs, so this notice is the whole of what the user asked for — which
+    /// runs, so this notice is the whole of what the user asked for—which
     /// is why it presents even with that node's transcript open. Nothing has
     /// necessarily been said: what was heard may be a beacon, an
     /// advertisement, or an ack, and none of those appear in a transcript.
@@ -336,7 +336,7 @@ final class ChatNotificationService: NSObject, UNUserNotificationCenterDelegate,
     ///
     /// No communication styling: nothing here was said by a person, and
     /// dressing it as a message would put a face and a name on the app's own
-    /// account of events. No reply action either — answering a failure notice
+    /// account of events. No reply action either—answering a failure notice
     /// with more undeliverable text helps nobody. It threads with the
     /// conversation it concerns, so it groups where it belongs and a tap
     /// opens the transcript.
@@ -422,7 +422,7 @@ final class ChatNotificationService: NSObject, UNUserNotificationCenterDelegate,
         do {
             let styled = try content.updating(from: intent)
             // Styling titles the notification with whoever is speaking, which
-            // is right, but it leaves the subtitle alone — and the subtitle
+            // is right, but it leaves the subtitle alone—and the subtitle
             // was carrying the speaker's name as the unstyled fallback. Left
             // as-is, a channel message names the sender twice and the channel
             // not at all. The room belongs on that second line.
@@ -441,7 +441,7 @@ final class ChatNotificationService: NSObject, UNUserNotificationCenterDelegate,
 
     /// The local user, as the nominal recipient a group intent requires.
     /// Nothing about this phone's identity belongs in it: the intent is
-    /// styling, not a message. Built per call — `INPerson` is not Sendable,
+    /// styling, not a message. Built per call—`INPerson` is not Sendable,
     /// so it cannot sit in a shared static.
     private static func mePerson() -> INPerson {
         INPerson(
@@ -455,7 +455,7 @@ final class ChatNotificationService: NSObject, UNUserNotificationCenterDelegate,
         )
     }
 
-    /// One avatar, drawn the way the app draws it, in UIKit strokes —
+    /// One avatar, drawn the way the app draws it, in UIKit strokes—
     /// notification content cannot host a SwiftUI view.
     ///
     /// Always a circle, including for a channel, whose badge is a rounded
@@ -540,7 +540,7 @@ final class ChatNotificationService: NSObject, UNUserNotificationCenterDelegate,
     ) {
         let conversationAddress = response.notification.request.content
             .userInfo[Self.conversationAddressKey] as? String
-        // An inline reply — typed on the notification, or dictated on a
+        // An inline reply—typed on the notification, or dictated on a
         // paired watch. The app may have just been launched for exactly
         // this, with no scene; the send runs under a background assertion
         // and the system callback is answered only once it settles.
@@ -564,8 +564,8 @@ final class ChatNotificationService: NSObject, UNUserNotificationCenterDelegate,
                 completionHandler()
                 return
             }
-            // The completion is safe to carry to the main actor — the system
-            // wants it called once, from anywhere — but it is not marked
+            // The completion is safe to carry to the main actor—the system
+            // wants it called once, from anywhere—but it is not marked
             // Sendable, so say so explicitly.
             nonisolated(unsafe) let completion = completionHandler
             Task { @MainActor in

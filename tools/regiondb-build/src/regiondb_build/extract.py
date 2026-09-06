@@ -5,7 +5,7 @@ is the build's actual input: small, sorted, canonically formatted files that go
 into the repository. A data refresh then lands as an ordinary pull request
 whose diff is the geographic change, reviewed like any other.
 
-The pass is idempotent by construction — same vendor bytes, same output bytes —
+The pass is idempotent by construction—same vendor bytes, same output bytes—
 so `update --check` can prove that the committed extracts are exactly what the
 pinned sources produce, and that nobody hand-edited them. Manual corrections
 belong in `classifications/` and `overrides/`, which the build applies on top.
@@ -53,7 +53,7 @@ from .sourcetree import (
 # requires vendor data to regenerate an extract.
 BOUNDARY_EXTRACT_TOLERANCE_M = 50.0
 
-# Country regions are jurisdiction areas — land plus EEZ — whose edges are
+# Country regions are jurisdiction areas—land plus EEZ—whose edges are
 # either legal constructs or 200-nautical-mile arcs. Nothing about them needs
 # fifty-meter fidelity, and one kilometer keeps the whole committed layer
 # under four megabytes.
@@ -62,14 +62,14 @@ BOUNDARY_COORDINATE_DIGITS = 6
 
 # Facility types dropped from the database entirely. Closed facilities are
 # gone from the world; heliports are excluded across the board for the time
-# being — a helipad's IATA code names a rooftop, not an area anyone would
+# being—a helipad's IATA code names a rooftop, not an area anyone would
 # configure a repeater for, and Manhattan alone carries three of them.
 EXCLUDED_AIRPORT_TYPES = {"closed", "heliport", "balloonport"}
 
 # Facility types eligible to be commercial-airport candidates. The commercial
 # layer answers "which airport would a person here say they fly from", and a
 # heliport or seaplane base is not an answer to that question even when a
-# scheduled shuttle technically serves it — Manhattan's helipads all carry
+# scheduled shuttle technically serves it—Manhattan's helipads all carry
 # scheduled_service=yes upstream, and a database suggesting a helipad as the
 # region default has misunderstood the question. Such facilities remain
 # positioned IATA locations, which is the layer that means "nearby IATA-coded
@@ -80,7 +80,7 @@ COMMERCIAL_CANDIDATE_TYPES = {"small_airport", "medium_airport", "large_airport"
 # excludes them from V1; see `regions/policy.yaml`.
 TERRITORY_FIPS_FLOOR = 60
 # Half a kilometer, in degrees: the notional island under an airfield. Only
-# its existence matters — the maritime reach supplies the size.
+# its existence matters—the maritime reach supplies the size.
 AIRFIELD_LAND_RADIUS_DEG = 500.0 / 111_320.0
 
 
@@ -283,8 +283,8 @@ def _water_reach(land_area, ceiling, reach_m: float) -> MultiPolygon:
     The ceiling is what keeps the buffer politically neutral: a country's is
     its EEZ + land union, whose bilateral maritime lines already divide the
     water between neighbors, so growing toward a neighbor stops exactly where
-    the law does. Buffering is done on land simplified to a kilometer — the
-    outline of a 100 km buffer cannot remember 50 m coastline detail anyway —
+    the law does. Buffering is done on land simplified to a kilometer—the
+    outline of a 100 km buffer cannot remember 50 m coastline detail anyway—
     and the land itself is unioned back so the coastline stays interior.
     """
     slimmed = geom.polygonal(geom.simplify_m(land_area, 1000.0))
@@ -333,8 +333,8 @@ def countries(
     """Write country regions: land buffered seaward, capped by the EEZ.
 
     A country region is its charted land together with the water within
-    `reach_m` of it — enough to close the channels between islands and their
-    mainland, and to match how far the IATA layers project offshore — clipped
+    `reach_m` of it—enough to close the channels between islands and their
+    mainland, and to match how far the IATA layers project offshore—clipped
     to the Marine Regions EEZ + land union. The full 200-nautical-mile
     jurisdiction proved too generous (a boat in the middle of the Pacific is
     not meaningfully in any country's mesh), but it remains the ceiling: its
@@ -413,7 +413,7 @@ def countries(
             if extra is not None:
                 charted = geom.polygonal(unary_union([charted, extra.intersection(jurisdiction)]))
             if charted.is_empty:
-                # No land at 50m scale — an atoll nation below the chart's
+                # No land at 50m scale—an atoll nation below the chart's
                 # resolution. Keeping the whole jurisdiction is the safe
                 # failure: the country stays findable, merely generous.
                 unlanded.append(code)
@@ -442,7 +442,7 @@ def _resolve_contested_water(
     """Give water claimed by several states to the nearest one, in place.
 
     Each contested piece is split along the Voronoi diagram of the
-    claimants' coastlines, sampled every couple of kilometers — the
+    claimants' coastlines, sampled every couple of kilometers—the
     equidistance construction maritime boundaries use. Longitude is scaled
     by cos(latitude) around each piece so distance means roughly the same
     thing in both axes; sea borders here need to be reasonable, not
@@ -515,8 +515,8 @@ def _state_rows(vendor: Path) -> tuple[list[tuple[MultiPolygon, str, str, str]],
     fips = fields[names.index("GEOID")]
     labels = fields[names.index("NAME")]
     # Full detail, deliberately: TIGER's states do not overlap, and
-    # simplifying them here — independently, before they are simplified
-    # together — is what would make them overlap, by cutting the corners of
+    # simplifying them here—independently, before they are simplified
+    # together—is what would make them overlap, by cutting the corners of
     # a shared meander differently on each side.
     rows = [
         (
@@ -544,16 +544,16 @@ def us_states(
 ) -> tuple[list[str], dict[str, MultiPolygon]]:
     """Write the 50 states plus the District of Columbia, keyed by USPS code.
 
-    The TIGER boundary is the legal state — its islands, its internal waters,
-    a few miles of territorial sea — which strands the channels between a
+    The TIGER boundary is the legal state—its islands, its internal waters,
+    a few miles of territorial sea—which strands the channels between a
     state's islands and its mainland as unclaimed water: the sea between the
     Hawaiian islands is plainly Hawaiʻi. Each state therefore also gets the
     water within `reach_m` of it, clipped to the country's own water so no
     state reaches past the border, and clipped away from every state's land
     so it can never annex a neighbor. Water within reach of more than one
-    state goes to the nearest one — a radial reach makes the naive overlap a
+    state goes to the nearest one—a radial reach makes the naive overlap a
     two-hundred-kilometer lens along the coast, which told repeaters far
-    down the California shore about Oregon — so the reaches meet along an
+    down the California shore about Oregon—so the reaches meet along an
     equidistance curve running seaward from the state line, the way maritime
     boundaries actually behave.
     """

@@ -20,7 +20,7 @@
 //! - two user LEDs and two buttons for identification (Phase 1)
 //! - calibrated battery measurement (Phase 2)
 //! - SX1262 LoRa radio + external RXEN pin (Phase 3)
-//! - low-battery System OFF with LPCOMP solar recovery (Phase 6) — see
+//! - low-battery System OFF with LPCOMP solar recovery (Phase 6)—see
 //!   [`shutdown`]
 //!
 //! Future expansion (device-node behavior, GNSS) is welcome but is not yet
@@ -51,13 +51,13 @@
 //! | LED_A ("User LED")           | 11      | `P0.15`      | **white, active-high** (confirmed 2026-07-23) |
 //! | LED_B ("Breathing"/TX LED)   | 12      | `P0.19`      | **blue, active-high** (confirmed); heartbeat LED |
 //! | PWR button (USER_BUTTON)     | 13      | `P1.01`      | active-low, internal pull-up (confirmed); hold → System OFF. A press from System OFF reaches the bootloader, not the application |
-//! | Grove SDA                    | 14      | `P0.09`      | NFC pin — NFCT off / UICR NFCPINS cleared for GPIO |
+//! | Grove SDA                    | 14      | `P0.09`      | NFC pin—NFCT off / UICR NFCPINS cleared for GPIO |
 //! | Grove SCL                    | 15      | `P0.10`      | NFC pin, ditto |
 //! | Battery ADC                  | 16      | `P0.31`/AIN7 | Phase 2 |
-//! | GNSS RESET (candidate)       | 17      | `P1.03`      | never driven — input only until characterized |
+//! | GNSS RESET (candidate)       | 17      | `P1.03`      | never driven—input only until characterized |
 //! | GNSS ENABLE                  | 18      | `P1.05`      | likely active-high; held inactive in bringup |
 //! | Battery divider enable (n)   | 19      | `P0.14`      | active-low per MeshCore, verify (Phase 2) |
-//! | USR button (USER_BUTTON_2)   | 20      | `P1.07`      | active-low, pull-up (confirmed); soft — pressing it does NOT cut the MCU rail. The only button that powers the node on |
+//! | USR button (USER_BUTTON_2)   | 20      | `P1.07`      | active-low, pull-up (confirmed); soft—pressing it does NOT cut the MCU rail. The only button that powers the node on |
 //! | QSPI flash (P25Q16H)         | 21–26   | see hw doc   | reserved, unused (NV store is internal NVMC) |
 
 #[cfg(target_os = "none")]
@@ -78,6 +78,6 @@ pub use platform::{SensecapSolarMac, SensecapSolarPlatform};
 pub use power::PowerSignaler;
 
 // TODO:
-//   Phase 2: pub mod power  — port the T1000-E battery monitor
+//   Phase 2: pub mod power—port the T1000-E battery monitor
 //            (SAADC AIN7/P0.31, gated divider P0.14) with calibrated
 //            slope/offset constants.

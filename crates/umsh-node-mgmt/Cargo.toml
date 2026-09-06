@@ -29,8 +29,8 @@ umsh-node = { path = "../umsh-node", default-features = false, optional = true }
 umsh-ulcp = { path = "../umsh-ulcp" }
 
 [dev-dependencies]
-# The `binding` integration test drives a real device session — the same
-# one the firmware runs — from the administrator engine, so the two halves
+# The `binding` integration test drives a real device session—the same
+# one the firmware runs—from the administrator engine, so the two halves
 # of the binding are exercised against each other rather than against a
 # stand-in. Nothing in the library depends on either.
 umsh-ulcp-device = { path = "../umsh-ulcp-device" }

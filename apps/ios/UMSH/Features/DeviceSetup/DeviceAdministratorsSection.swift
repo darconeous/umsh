@@ -4,7 +4,7 @@ import UMSHMobileCore
 /// One entry of a device's administrator list.
 ///
 /// A device reports keys, not names: what the list means to a person is
-/// whatever this phone can put to those bytes — itself, a node it has
+/// whatever this phone can put to those bytes—itself, a node it has
 /// saved, or nothing at all.
 struct DeviceAdministrator: Identifiable, Hashable {
     let publicKey: Data
@@ -119,7 +119,7 @@ struct DeviceAdministratorsSection: View {
             footer += " Without this phone on the list, its settings can only be changed from here, over Bluetooth."
         }
         if isFull {
-            footer += " The list is full (\(deviceAdminCapacity) of \(deviceAdminCapacity)) — remove one to add another."
+            footer += " The list is full (\(deviceAdminCapacity) of \(deviceAdminCapacity))—remove one to add another."
         }
         return footer
     }

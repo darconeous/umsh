@@ -296,7 +296,7 @@ end
 -- `public` and `emergency` are derived from names the spec fixes, so their
 -- keys are known to everyone by construction. Adding them unconditionally
 -- means emergency traffic verifies and public traffic decrypts with no
--- configuration at all — which is the point of a channel whose key is
+-- configuration at all—which is the point of a channel whose key is
 -- public knowledge.
 -- ---------------------------------------------------------------------------
 

@@ -90,14 +90,14 @@ pub struct MobileChatRxMetadataRecord {
     pub lqi: Option<u8>,
     /// Radio links the frame crossed to get here, counting the final one into
     /// this device: a frame heard directly from its sender is one hop. The
-    /// same count a ping reply reports, and absent for the same reason — a
+    /// same count a ping reply reports, and absent for the same reason—a
     /// frame source-routed without a trace route crossed hops nobody
     /// recorded.
     pub hop_count: Option<u8>,
     /// Intermediate-router hints in trace-route order: each forwarding
     /// repeater prepends its own hint, so the list starts nearest us and ends
-    /// nearest the sender. That is return-path order — usable directly as a
-    /// source route back — and the reverse of the path the frame travelled.
+    /// nearest the sender. That is return-path order—usable directly as a
+    /// source route back—and the reverse of the path the frame travelled.
     pub route_hints: Vec<Vec<u8>>,
     pub source_authenticated: bool,
     /// Seconds the frame spent queued on the radio before delivery; zero
@@ -179,7 +179,7 @@ pub struct MobileChatMutationRecord {
     /// The host should raise a user notification for this record (single-frame
     /// arrival, fragment completion, or notify deadline; never placeholders).
     ///
-    /// Whether a notification is actually shown remains the host's decision —
+    /// Whether a notification is actually shown remains the host's decision—
     /// a muted conversation still produces records with this set, and still
     /// counts as unread.
     pub notify: bool,
@@ -336,8 +336,8 @@ pub(crate) struct MobileChatState {
     pub session_id: u64,
     next_batch_id: u64,
     pub pending_batches: BTreeMap<u64, PendingChatBatch>,
-    /// Shared with the worker so a batch rejection — which rebuilds the
-    /// reducer — cannot lose the channels the platform registered.
+    /// Shared with the worker so a batch rejection—which rebuilds the
+    /// reducer—cannot lose the channels the platform registered.
     pub channels: Rc<RefCell<ChannelRegistry>>,
     /// Full keys learned for claimed member hints, per channel. A hint is only
     /// 3 bytes and two members could in principle claim the same one, so this
@@ -460,7 +460,7 @@ impl MobileChatState {
         )
     }
 
-    /// Emote about a message: a reaction, or — with an empty body — the
+    /// Emote about a message: a reaction, or—with an empty body—the
     /// withdrawal of one. Replacing a reaction is another emote, not an edit
     /// of the previous one; the newest emote from a sender is the one that
     /// counts.
@@ -827,7 +827,7 @@ impl MobileChatState {
     }
 
     /// Resolve a stored address back to a conversation. A channel address only
-    /// resolves while its key is registered — the platform registers channels
+    /// resolves while its key is registered—the platform registers channels
     /// before restoring chat, so an unresolvable one means the channel was
     /// left.
     pub fn parse_conversation_address(&self, value: &str) -> Option<ConversationKey> {
@@ -1019,7 +1019,7 @@ mod tests {
     }
 
     /// A checkpoint whose channel this session no longer holds is reported
-    /// rather than dropped in silence — the channel was left, and the stream
+    /// rather than dropped in silence—the channel was left, and the stream
     /// it belonged to cannot be resumed without the key.
     #[test]
     fn a_checkpoint_for_an_unheld_channel_is_diagnosed() {
@@ -1041,7 +1041,7 @@ mod tests {
 
     /// The full restart round trip at the facade level: the persisted
     /// (wire_id, epoch) of a message composed by one facade session lets a
-    /// fresh session — restored from the persisted checkpoint — compose an
+    /// fresh session—restored from the persisted checkpoint—compose an
     /// edit whose mutation record exports a platform-resolvable reference.
     #[test]
     fn edit_by_persisted_reference_after_facade_restart() {
@@ -1162,7 +1162,7 @@ mod tests {
         );
         assert_eq!(insert.regarding_sender_hint, Some(hint));
 
-        // Withdrawal is the same message with nothing in it — never an edit
+        // Withdrawal is the same message with nothing in it—never an edit
         // or a delete, which would target the emote row instead.
         let withdrawn = state
             .compose_reaction(conversation, 2, &target, "", 1)

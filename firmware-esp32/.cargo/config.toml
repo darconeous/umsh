@@ -1,6 +1,6 @@
 # Chip-agnostic workspace defaults. Each firmware crate selects its own
 # target triple in a per-firmware `.cargo/config.toml` ([build] target,
-# plus any chip-quirk env overrides — the Heltec V2's ancient-silicon
+# plus any chip-quirk env overrides—the Heltec V2's ancient-silicon
 # revision floor lives there, not here). Per-directory configs only apply
 # when cargo runs from inside the firmware directory, so build from there
 # (the Makefile targets do); `-p` from the workspace root picks a wrong or

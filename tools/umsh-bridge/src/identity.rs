@@ -1,7 +1,7 @@
 //! A participant's Ed25519 identity.
 //!
 //! Every endpoint has one, and it is the credential the tunnel
-//! authenticates with (see [`crate::tls`]) — nothing more. A bridge has
+//! authenticates with (see [`crate::tls`])—nothing more. A bridge has
 //! no presence on the mesh: it addresses nothing, signs nothing, and
 //! appears in no route. The nodes it carries traffic for are the ones
 //! behind each participant's radio, and they hold their own identities.

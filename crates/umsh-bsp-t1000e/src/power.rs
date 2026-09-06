@@ -3,7 +3,7 @@
 //! trait into board-level power events, and the [`run_battery_monitor`]
 //! task that triggers a protective shutdown on low VBAT.
 //!
-//! The BSP owns these because the *signaling* shape is uniform — fire a
+//! The BSP owns these because the *signaling* shape is uniform—fire a
 //! signal for soft-poweroff, hit `SYSRESETREQ` for reboot. The actual
 //! board-specific teardown sequence lives in [`crate::shutdown::run`],
 //! which awaits [`SHUTDOWN_SIGNAL`].
@@ -76,7 +76,7 @@ pub struct BatterySample {
 /// Multi-receiver, unlike [`BATTERY_STATE_CHANGED`], and filtered on a
 /// different question: that signal tracks the five-way *presentation*
 /// classification for the LED, while this one fires when the reported
-/// **charge class** or **level** moves — the two fields a remote observer
+/// **charge class** or **level** moves—the two fields a remote observer
 /// can act on. Voltage rides along on whichever sample triggered the
 /// publication but never triggers one itself: it moves by a few
 /// millivolts on every reading, so it would make every sample an event.
@@ -111,7 +111,7 @@ pub fn note_external_load() {
 static BATTERY_SAMPLE_REQUEST: Signal<ThreadModeRawMutex, ()> = Signal::new();
 static BATTERY_SAMPLE_REPLY: Signal<ThreadModeRawMutex, BatterySample> = Signal::new();
 
-/// Ask [`run_battery_monitor`] — the sole SAADC and sensor-rail owner —
+/// Ask [`run_battery_monitor`]—the sole SAADC and sensor-rail owner—
 /// for a fresh measurement and wait for it. The monitor services the
 /// request by running its normal gated sample/classify/publish iteration
 /// early, so protocol reads share the exact policy of the periodic scan.
@@ -130,7 +130,7 @@ pub async fn sample_battery() -> BatterySample {
 /// - `request_power_off` raises [`SHUTDOWN_SIGNAL`] so the firmware's
 ///   `shutdown_task` can run its board-specific teardown sequence.
 /// - `request_reboot` triggers an ARM Cortex-M `SYSRESETREQ` directly.
-///   Deliberately performs no flushing or teardown — that would mask
+///   Deliberately performs no flushing or teardown—that would mask
 ///   persistence and state-recovery bugs we want the `/reboot` command
 ///   to surface.
 pub struct PowerSignaler;
@@ -149,7 +149,7 @@ impl umsh_hal::PowerControl for PowerSignaler {
 /// Monitors battery voltage via the nRF52840 SAADC (P0.02 = AIN0, 2:1 divider),
 /// and serves on-demand ambient light readings from P0.29 (AIN5).
 ///
-/// The sensor rail (P1.06) must be enabled during sampling — it gates the
+/// The sensor rail (P1.06) must be enabled during sampling—it gates the
 /// analog path to the battery divider. The rail is dropped immediately after
 /// the read to minimise the power overhead.
 ///
@@ -203,7 +203,7 @@ pub async fn run_battery_monitor<I>(
     const SAMPLE_INTERVAL: Duration = Duration::from_secs(300);
     /// Cadence while the cell is Low or Critical. The protective cutoff
     /// counts [`CONSECUTIVE_NEEDED`] consecutive critical samples, so its
-    /// latency is a multiple of the interval in force — at the normal
+    /// latency is a multiple of the interval in force—at the normal
     /// cadence that would be most of an hour of deep-discharge exposure.
     /// Sampling faster once the voltage is already alarming keeps the
     /// cutoff at its intended ~5 minutes without paying for it in the
@@ -318,7 +318,7 @@ pub async fn run_battery_monitor<I>(
         // Wait for the next battery iteration. Light requests are serviced
         // inside this wait and do not end it: they have their own enable,
         // settle and averaging, and must not pull a battery sample forward
-        // — the estimator, the announce filter and the critical-battery
+        //—the estimator, the announce filter and the critical-battery
         // cutoff all count iterations.
         let mut deadline = Timer::after(interval);
         loop {
@@ -364,7 +364,7 @@ pub async fn run_battery_monitor<I>(
 const LIGHT_POINTS: u32 = 25;
 
 /// Spacing between points. Chosen with [`LIGHT_POINTS`] so the reading
-/// spans exactly 50 ms — see [`sample_light`].
+/// spans exactly 50 ms—see [`sample_light`].
 const LIGHT_POINT_SPACING: Duration = Duration::from_millis(2);
 
 /// Hardware conversions accumulated and averaged by the SAADC itself for
@@ -380,7 +380,7 @@ const LIGHT_OVERSAMPLE: Oversample = Oversample::Over32x;
 ///
 /// Raises both enables, settles, then takes [`LIGHT_POINTS`] points
 /// spaced [`LIGHT_POINT_SPACING`] apart before dropping the enables
-/// again — 800 hardware conversions in total.
+/// again—800 hardware conversions in total.
 ///
 /// Three separate things make the raw reading noisy, and each needs its
 /// own treatment:
@@ -393,14 +393,14 @@ const LIGHT_OVERSAMPLE: Oversample = Oversample::Over32x;
 /// the mains frequency, so a reading taken in under a millisecond
 /// measures wherever in that cycle it happened to land and varies wildly
 /// between reads. The points are therefore spread over 50 ms, which is a
-/// whole number of half-cycles at both 50 Hz (5) and 60 Hz (6) — the
+/// whole number of half-cycles at both 50 Hz (5) and 60 Hz (6)—the
 /// flicker integrates away for either mains, rather than aliasing. No
 /// amount of oversampling inside a single point can do this; the window
 /// has to be wide.
 ///
 /// **Outliers.** The single largest and single smallest points are
-/// dropped before averaging, so one disturbed point — a shadow crossing
-/// the sensor, a transient on the shared rail — moves the result by
+/// dropped before averaging, so one disturbed point—a shadow crossing
+/// the sensor, a transient on the shared rail—moves the result by
 /// nothing instead of by a twenty-fifth of its excursion.
 ///
 /// The kept points are handed to
@@ -409,7 +409,7 @@ const LIGHT_OVERSAMPLE: Oversample = Oversample::Over32x;
 /// rounded away in the last step.
 ///
 /// Before any of that, the **LED is held dark** for the whole
-/// measurement — see [`blank_requested`](crate::indicator::blank_requested).
+/// measurement—see [`blank_requested`](crate::indicator::blank_requested).
 /// It sits beside the sensor and its light reaches it, so a reading taken
 /// while it is lit measures the indicator; because the indicator usually
 /// blinks, successive readings catch different parts of the blink and
@@ -430,7 +430,7 @@ where
     /// How long to wait for the LED task to confirm the LED is off. A
     /// task wake and one duty write; generous by orders of magnitude.
     /// Bounded rather than open-ended because this runs inside the loop
-    /// that guards the cell — a firmware with no LED task must give a
+    /// that guards the cell—a firmware with no LED task must give a
     /// polluted reading, never a stalled battery monitor.
     const LED_BLANK_TIMEOUT: Duration = Duration::from_millis(20);
 

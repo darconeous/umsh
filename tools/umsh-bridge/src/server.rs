@@ -37,7 +37,7 @@ pub async fn run(identity: BridgeIdentity, config: Config) -> Result<()> {
         Credential::for_identity(&identity).context("minting the server's TLS credential")?;
 
     // A configured client with this server's own address would let the
-    // hub attribute the server's traffic to a client — and it can only
+    // hub attribute the server's traffic to a client—and it can only
     // be a mistake, because no client can hold this server's key.
     for client in &server.clients {
         if client.address.0 == *identity.public_key() {
@@ -252,7 +252,7 @@ async fn serve(stream: TcpStream, acceptor: TlsAcceptor, shared: Arc<Shared>) ->
 
     // Only tear the interface down if this connection is still the one
     // holding it. A displaced session lingers until its idle timeout
-    // fires, and by then a successor owns the interface — marking it
+    // fires, and by then a successor owns the interface—marking it
     // down here would silence the live session until *its* idle timer
     // noticed. The successor's clear bumped the generation, which is how
     // this connection knows its claim has lapsed.

@@ -1,4 +1,4 @@
-# iOS background running and notifications — design
+# iOS background running and notifications—design
 
 Status: ACCEPTED 2026-07-20 (Keychain migration to
 AfterFirstUnlockThisDeviceOnly approved by the user); increments 1–3
@@ -11,7 +11,7 @@ Platform entry in the requested-feature backlog).
 
 Goal: messages received by the connected companion radio reach durable
 storage and produce a local notification while the app is backgrounded,
-suspended, or has been terminated by the system — for as long as iOS keeps
+suspended, or has been terminated by the system—for as long as iOS keeps
 or restores the BLE link. The product never promises **Always connected**;
 every claim in UI copy must map to a measured, capability-specific behavior.
 
@@ -33,20 +33,20 @@ dedicated thread with a current-thread tokio runtime
 (`mobile_mesh.rs`, `build()`); MAC ACK timeouts, repair timers, and ping
 timeouts fire on that runtime without any help from Swift. The Swift
 `pollUpdate` cadence (25 ms bursts during pings, 250 ms steady while chat
-consumers exist — `CoreBluetoothRadioConnection.scheduleMeshPump`) exists
+consumers exist—`CoreBluetoothRadioConnection.scheduleMeshPump`) exists
 only to drain std-mpsc queues: outbound frames, ping/advertisement events,
 and the replayed chat batch. Nothing in Rust needs Swift to poll on a clock;
 Swift needs to know *when there is something to drain*.
 
-**iOS suspension freezes the worker.** When the app suspends, all threads —
-including the Rust worker — stop. tokio timers do not fire late-by-a-little;
+**iOS suspension freezes the worker.** When the app suspends, all threads—
+including the Rust worker—stop. tokio timers do not fire late-by-a-little;
 they fire whenever the process next runs. With `bluetooth-central`
 background mode, the process runs exactly when CoreBluetooth delivers an
 event (GATT notification, connect/disconnect), for a short grace window
 (~10 s). Additionally, `std::time::Instant` on Darwin counts only awake
 time, so deep device sleep stretches every Rust-side deadline further.
 Consequence: while suspended, the phone's MAC behaves like a node with a
-very slow scheduler — inbound frames are processed promptly (the BLE event
+very slow scheduler—inbound frames are processed promptly (the BLE event
 wakes us), but purely timer-driven actions (resend, repair, ping timeout)
 run late. That is honest behavior for a phone and is acceptable; it must be
 stated in diagnostics copy rather than papered over.
@@ -80,7 +80,7 @@ pub trait MobileMeshWakeListener: Send + Sync {
 - The callback runs on the worker thread. The Swift implementation does
   nothing but `bluetoothQueue.async { self.pumpMeshSession() }` (reusing the
   existing `meshPumpScheduled` coalescing).
-- `pollUpdate` keeps its exact shape — it stays the single drain point and
+- `pollUpdate` keeps its exact shape—it stays the single drain point and
   the chat-batch replay contract is untouched.
 - MOBILE_API_VERSION bumps.
 
@@ -116,13 +116,13 @@ zero polls instead of four per second, and ping/chat latency improves
   `CBCentralManagerOptionRestoreIdentifierKey` (one stable key; single
   central). Implement `centralManager(_:willRestoreState:)`: reclaim the
   restored peripherals, then run the normal saved-radio attach path
-  (`attach_existing`, measured 242 ms over BLE — comfortably inside the
+  (`attach_existing`, measured 242 ms over BLE—comfortably inside the
   background grace window).
 - Ordering hazard: restored delegate events can arrive before the mesh
   session finishes rebuilding. The connection must buffer inbound GATT
   notifications (bounded, newest-wins like the existing streams) until the
   session is attached, then replay in order. Frames lost here are just RF
-  loss to the protocol — the MAC/text-engine repair path already covers it —
+  loss to the protocol—the MAC/text-engine repair path already covers it—
   so the buffer is an optimization, not a correctness requirement.
 - Wrap the wake-triggered work (pump → SQLite apply → notification post →
   batch ack) in a `beginBackgroundTask` assertion so a suspension race
@@ -156,18 +156,18 @@ operation, keeping the same account/service identifiers).
 
 SQLite: the store files stay under the default
 `NSFileProtectionCompleteUntilFirstUserAuthentication`, which matches the
-Keychain class — verify, don't assume, during the measurement pass.
+Keychain class—verify, don't assume, during the measurement pass.
 
 ### 4. Local notifications
 
 Trigger point: `AppRootView.applyChatUpdate`, strictly *after*
-`applyChatMutations` succeeds and *before* `acknowledgeChatBatch` — i.e.
+`applyChatMutations` succeeds and *before* `acknowledgeChatBatch`—i.e.
 notifications are only ever posted for messages that reached durable
 storage (plan rule: "Notifications are considered only after validation and
 local policy"). Classification: notify for mutations that insert a new
 inbound message; never for local echoes, delivery-state changes, edits of
 already-seen messages, or archive lookups. The store apply already knows
-which rows were inserts — surface that (e.g. `applyChatMutations` returns
+which rows were inserts—surface that (e.g. `applyChatMutations` returns
 the inserted inbound message summaries) instead of re-deriving it from the
 mutation records.
 
@@ -186,8 +186,8 @@ Policy and content:
   `didReceive response` routes through the existing `openedConversation`
   binding (same surface the `umsh:` URL routing uses).
 - Authorization: request `.alert .sound` on the first successful radio
-  attach for an identity — the first moment notifications have a concrete
-  meaning — not during onboarding. Denied state is reflected in Settings
+  attach for an identity—the first moment notifications have a concrete
+  meaning—not during onboarding. Denied state is reflected in Settings
   with a link to system settings; we never re-prompt.
 - No disconnect/reconnect notifications in this pass. If measurement shows
   iOS drops the link often enough to matter, a default-off "radio link"
@@ -251,7 +251,7 @@ foreground poll load and is a prerequisite for everything else.
   enqueue re-notifies. `set_wake_listener` fires immediately when data is
   already pending. One extra seam discovered during implementation:
   `acknowledge_chat_batch` also notifies, because events that queued while
-  a batch was outstanding cannot form the next batch until the slot frees —
+  a batch was outstanding cannot form the next batch until the slot frees—
   with no cadence, nothing else would trigger that drain. API version 25.
   Rust tests cover fire-without-poll, re-arm-after-drain, and
   late-registration.
@@ -266,7 +266,7 @@ foreground poll load and is a prerequisite for everything else.
   `autoConnect` skips when a restored link is pending/connected. Inbound
   frames that arrive before the mesh session installs are buffered
   (bounded 32, oldest dropped) and replayed in `useMeshSession`.
-- Notifications: no store change was needed — `MobileChatMutationRecord`
+- Notifications: no store change was needed—`MobileChatMutationRecord`
   already carries kind/direction/complete/peerAddress/body, so the app
   classifies inbound inserts directly (kind == insert, direction ==
   inbound, complete != false). Known gap, deliberate: a long fragmented
@@ -277,7 +277,7 @@ foreground poll load and is a prerequisite for everything else.
 - The background-task assertion wraps `applyChatUpdate`
   (persist → notify → ack) on the app side.
 - Standing pending connect (same day, follow-up): the saved-radio
-  reconnect's 8 s window is now UI honesty only — on expiry the app
+  reconnect's 8 s window is now UI honesty only—on expiry the app
   settles into a new `waitingForRadio` link state and leaves the system
   connection request armed indefinitely, so powering the radio on
   connects (and background-wakes/relaunches the app) with no user action.

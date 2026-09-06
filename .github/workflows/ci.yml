@@ -3,7 +3,7 @@ name: CI
 # Tiering rationale: the "fast" job covers the bulk of
 # protocol/crypto/wire-format regressions in about a minute on stock Ubuntu.
 # The nRF52840 firmware job is release-only because dev builds overflow flash
-# on these boards (see CLAUDE.md) — it's also the only thing that would have
+# on these boards (see CLAUDE.md)—it's also the only thing that would have
 # caught a flash-budget regression before it shipped. The Apple job runs on
 # every push/PR since this is a public repo (macOS runner minutes are free
 # here); ESP32 is pushed to main-only / manual-dispatch since it's the least
@@ -34,7 +34,7 @@ jobs:
 
       # umsh-bridge's default `ble-radio` feature reaches BlueZ over D-Bus
       # (btleplug → libdbus-sys), which needs the C library's dev package at
-      # build time. macOS runners need nothing — CoreBluetooth is native.
+      # build time. macOS runners need nothing—CoreBluetooth is native.
       - name: Install libdbus (umsh-bridge BLE)
         run: |
           sudo apt-get update
@@ -47,24 +47,24 @@ jobs:
 
       # firmware-esp32 is a separate workspace and is invisible to the check
       # above. `+stable` because its rust-toolchain.toml pins the `esp`
-      # channel, which this job doesn't install — stable rustfmt produces
+      # channel, which this job doesn't install—stable rustfmt produces
       # identical output on that tree.
       - name: cargo fmt --check (firmware-esp32)
         run: cd firmware-esp32 && cargo +stable fmt --all --check
 
-      # NOTE: plain `cargo test`, not `--workspace` — the latter drags in
+      # NOTE: plain `cargo test`, not `--workspace`—the latter drags in
       # firmware/* crates that aren't meant to build on host and currently
       # fail (umsh-ulcp-runtime needs an embedded-target embassy feature).
       # default-members in Cargo.toml is what excludes them.
       # --locked here (and not in the firmware/ESP32 jobs, which go through
       # the Makefile) is enough to catch a Cargo.toml change that forgot to
-      # update the committed lockfile — they all share the root Cargo.lock.
+      # update the committed lockfile—they all share the root Cargo.lock.
       - name: cargo test
         run: cargo test --locked
 
       # umsh-ulcp-runtime's heavier modules are behind features no host
       # crate turns on, so their unit tests are invisible to the run above
-      # — `gnss` carries the fix-folding rules and `device-node` the
+      #—`gnss` carries the fix-folding rules and `device-node` the
       # announcement scatter, both host-testable and both exactly the part
       # worth catching before it reaches a board.
       - name: cargo test (umsh-ulcp-runtime gnss, device-node)
@@ -87,8 +87,8 @@ jobs:
 
       # run_tests.lua needs Lua 5.3+ and stubs the Wireshark API, so no
       # Wireshark install is required. The crypto section self-skips when
-      # luagcrypt is absent — which is how the hard-coded golden vectors once
-      # went stale unnoticed — so build luagcrypt (pinned) against the distro
+      # luagcrypt is absent—which is how the hard-coded golden vectors once
+      # went stale unnoticed—so build luagcrypt (pinned) against the distro
       # libgcrypt and fail the step if anything still reports SKIP.
       - name: Wireshark dissector unit tests
         run: |
@@ -182,7 +182,7 @@ jobs:
             make_target: build-wio-tracker-l1
           - board: wio-tracker-l1-console
             make_target: build-wio-tracker-l1-console
-          # No console harness for this board — new boards ship the device
+          # No console harness for this board—new boards ship the device
           # image only.
           - board: xiao-nrf52
             make_target: build-xiao-nrf52
@@ -196,7 +196,7 @@ jobs:
       # The firmware crates are members of the ROOT workspace (no per-firmware
       # Cargo.lock, and the Makefile's TARGET_DIR is root-relative), so the
       # cache tracks the root workspace, not firmware/<board>. Only the
-      # working directory differs per board — that's what picks up the
+      # working directory differs per board—that's what picks up the
       # per-firmware .cargo/config.toml.
       - uses: Swatinem/rust-cache@v2
         with:
@@ -233,7 +233,7 @@ jobs:
       # GitHub rotates the simulators in its macOS images, so pinning a device
       # name is a standing breakage: the image this first ran on had no
       # "iPhone 16" at all (its oldest iPhone was 16e). Resolve a concrete
-      # simulator UDID at run time instead — newest iOS runtime, any iPhone.
+      # simulator UDID at run time instead—newest iOS runtime, any iPhone.
       - name: Select an iOS simulator
         id: sim
         run: |
@@ -258,7 +258,7 @@ jobs:
           echo "udid=$udid" >> "$GITHUB_OUTPUT"
 
       # The package pins .iOS(.v18), so `swift test` on the macOS host can't
-      # run it — a simulator destination is required. xcodebuild derives the
+      # run it—a simulator destination is required. xcodebuild derives the
       # UMSHMobileCore scheme from Package.swift (no checked-in .xcscheme).
       - name: Test UMSHMobileCore Swift package
         run: |
@@ -269,7 +269,7 @@ jobs:
             CODE_SIGNING_ALLOWED=NO
 
       # No app-level XCTest target exists yet (UMSH.xcscheme's TestAction has
-      # no Testables) — this is a build-only gate until one's added.
+      # no Testables)—this is a build-only gate until one's added.
       - name: Build UMSH app (simulator)
         run: |
           xcodebuild build \

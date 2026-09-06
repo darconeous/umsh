@@ -181,8 +181,8 @@ def _load_communities(communities: Path, tree: SourceTree) -> None:
 
     A pack is a directory a local group maintains: a manifest declaring the
     pack and its area of influence, and regions defined against it. One
-    invariant makes the delegation safe — nothing a pack defines may escape
-    its declared area — so inside the fence the pack's file is authoritative
+    invariant makes the delegation safe—nothing a pack defines may escape
+    its declared area—so inside the fence the pack's file is authoritative
     and outside it the pack cannot say anything. Everything a pack adds
     compiles as an ordinary custom region; packs add regions, they never
     reshape the global layers.
@@ -214,7 +214,7 @@ def _load_communities(communities: Path, tree: SourceTree) -> None:
             region_id = str(entry["id"])
             if not region_id.startswith(prefix):
                 raise SourceError(
-                    f"{pack_dir}: region id {region_id!r} must start with {prefix!r} — "
+                    f"{pack_dir}: region id {region_id!r} must start with {prefix!r}—"
                     "the prefix is what keeps packs from colliding with each other "
                     "or with the root custom regions"
                 )
@@ -230,7 +230,7 @@ def _load_communities(communities: Path, tree: SourceTree) -> None:
                 if str(parent) not in loaded:
                     raise SourceError(
                         f"{pack_dir}: region {region_id!r} names parent {parent!r}, "
-                        "which is not defined earlier in the same pack — order "
+                        "which is not defined earlier in the same pack—order "
                         "parents before children"
                     )
                 fenced_parent = loaded[str(parent)].buffer(

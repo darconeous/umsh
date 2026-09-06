@@ -1,9 +1,9 @@
-# Companion Radio BLE Transport — Implementation Plan
+# Companion Radio BLE Transport—Implementation Plan
 
 *Drafted 2026-07-13. Phase measurements and the license check are
 recorded inline as phases complete.*
 
-## Implementation status — 2026-07-15
+## Implementation status—2026-07-15
 
 Phases A, B, C, and the implementation portion of D are now present.
 The workspace is on `embassy-nrf` 0.11 / `embassy-sync` 0.8. Trouble
@@ -211,8 +211,8 @@ survives the activation soft reset into the application. With VBUS present the
 corresponding events latch after boot; once MPSL initializes it owns the
 shared `CLOCK_POWER` vector but services only CLOCK events, so the pending
 POWER USB event re-enters `MPSL_IRQ_CLOCK_Handler` forever at that interrupt
-priority. Thread mode and embassy-time starve — the power-on chirp's first
-PWM note latches on, heartbeat pets stop — and the 8 s watchdog is the only
+priority. Thread mode and embassy-time starve—the power-on chirp's first
+PWM note latches on, heartbeat pets stop—and the 8 s watchdog is the only
 thing that survives to reset the device. This is why the freeze required the
 BLE image (the `no-ble` diagnostic build never enables that vector and booted
 clean over the identical DFU chain), only followed DFU (a normal bootloader
@@ -227,7 +227,7 @@ main; on it the symptom would have been a silent post-DFU watchdog reboot
 (no buzzer), easy to miss.**
 
 Diagnosis evidence and remaining caveats: the freeze was localized with
-retained-RAM instrumentation still present in the tree — boot-stage
+retained-RAM instrumentation still present in the tree—boot-stage
 breadcrumbs and a heartbeat counter, a WDT TIMEOUT-interrupt exception-frame
 capture (the nRF52840 fires the WDT interrupt ~61 µs before the reset), and a
 1 kHz TIMER2 PC-sampling ring whose contents are dumped as ASCII over the
@@ -242,7 +242,7 @@ transfer, so a post-DFU `RESET_WATCHDOG` boot status alone does not indicate
 an application freeze. Forced pairing on the startup-held gesture remains
 implemented but hardware-unverified.
 
-## Full-protocol handoff — current position and next work
+## Full-protocol handoff—current position and next work
 
 The BLE transport is no longer the primary implementation blocker. Both the
 T-Echo and T-1000E now run the same host-tested NCP session engine over USB and
@@ -303,7 +303,7 @@ Extend `crates/umsh-ulcp` with:
 
 * `CMD_PROP_INSERT`, `CMD_PROP_REMOVE`, `CMD_PROP_INSERTED`, and
   `CMD_PROP_REMOVED` (4, 5, 7, and 8);
-* `CMD_QUEUE_DRAIN`, `CMD_SAVE`, `CMD_CLEAR`, and `CMD_RESTORE` (11–14) —
+* `CMD_QUEUE_DRAIN`, `CMD_SAVE`, `CMD_CLEAR`, and `CMD_RESTORE` (11–14)—
   all four carry no payload (spec amended 2026-07-15: `CMD_QUEUE_DRAIN` no
   longer takes a stream key; it drains the sole `STR_PHY_RAW` inbound
   queue). Note `CMD_CLEAR` is base-protocol, not gated on `CAP_SAVE`: until
@@ -377,7 +377,7 @@ the correlated completion response immediately after the last one. Live
 arrivals during the drain interleave with the buffered deliveries
 (`RX_FLAG_BUFFERED` distinguishes them); UMSH does not promise total
 ordering. The spec's `CMD_QUEUE_DRAIN` section was amended 2026-07-15 to
-this live-interleave model — it previously required mid-drain arrivals to
+this live-interleave model—it previously required mid-drain arrivals to
 be appended and delivered buffered after the response.
 
 Use the standard authenticated replay/MIC identity to coalesce duplicates and
@@ -394,7 +394,7 @@ coalescing, and reset/host-replacement behavior are covered.
 Implement host channel-key and peer-key tables with strict validate-before-
 mutate semantics. `CMD_PROP_INSERT` into `PROP_HOST_PEER_KEYS` with a
 `PEER_PUBLIC_KEY` matching an existing entry replaces that entry's key
-material only — the peer's replay baseline and queued frames are untouched
+material only—the peer's replay baseline and queued frames are untouched
 (both are keyed by the peer's identity, per the spec's 2026-07-15
 clarification). Symmetric keys are accepted only over an authorized secure
 transport and are never returned: gets and mutation notifications use digest
@@ -481,7 +481,7 @@ into detached autonomous filtering/queueing/ACK operation, and a returning host
 can safely identify ownership, reconcile state, and drain buffered traffic on
 both firmware targets.
 
-### Increments 1 and 2 — complete (2026-07-15)
+### Increments 1 and 2—complete (2026-07-15)
 
 The full wire vocabulary is in `crates/umsh-ulcp`: commands 4/5/7/8 and
 11–14, the full property and capability identifiers, the `items` module
@@ -503,7 +503,7 @@ bounded `pop_prop_event` queue for unsolicited `PROP_IS`/`PROP_INSERTED`/
 satisfy a property transaction.
 
 `Session` is refactored into explicit `DeviceDomain`/`HostDomain`/
-`SessionState` structs. `attach()` now resets session state only — the PHY
+`SessionState` structs. `attach()` now resets session state only—the PHY
 configuration and enable state, device name, and duty accounting survive, and
 nothing is emitted; `detach()` exists and firmware calls it only when the
 active transport detaches (stale-detach immune). The boot reset cause is seeded
@@ -524,7 +524,7 @@ T-1000E completes the USB probe handshake twice: the first attach reported the
 retained hardware boot cause and the second reported `RESET_SOFTWARE` from the
 prior session's `CMD_RST`, confirming the new attach semantics on hardware.
 
-### Increment 3 — complete (2026-07-15)
+### Increment 3—complete (2026-07-15)
 
 `CAP_HOST_FILTER` is implemented and advertised. `umsh-ulcp-device` now
 depends on `umsh-core` (no default features) for `PacketHeader` parsing;
@@ -539,8 +539,8 @@ remains an effect executor.
   semantics. Insert/remove enforce `STATUS_ALREADY`/`STATUS_ITEM_NOT_FOUND`/
   `STATUS_NOMEM` and emit `CMD_PROP_INSERTED`/`CMD_PROP_REMOVED` digests.
   Filter validation also rejects packet types above 7.
-* Receive filtering follows the spec union: explicit filters (dest hint —
-  which also matches a MAC ack's DST — channel id, packet type) plus the
+* Receive filtering follows the spec union: explicit filters (dest hint—
+  which also matches a MAC ack's DST—channel id, packet type) plus the
   implicit destination-hint filter derived from the host key. The factory
   compatibility rule is preserved: with no host key and an empty table,
   every frame is delivered without being parsed at all (raw/junk frames
@@ -563,19 +563,19 @@ promiscuous live delivery, factory compatibility, replacement
 rollback/busy/abandonment, `CMD_RST` clearing the host domain, and filters
 surviving attach. Both firmware images build; firmware host tests pass.
 
-### Increment 4 — complete (2026-07-15)
+### Increment 4—complete (2026-07-15)
 
 `CAP_HOST_RX_QUEUE` is implemented and advertised. The session now tracks
 attached-vs-detached (`attach()`/`detach()` set it; `Session::new` starts
 detached): while attached, accepted frames are delivered live exactly as
 before; while detached, accepted frames go into a fixed 16-entry circular
 `RxQueue` inside `HostDomain` (frame, RSSI/LQI/SNR, receive time, acked
-flag — always false until `CAP_HOST_AUTO_ACK`). Overflow evicts the
+flag—always false until `CAP_HOST_AUTO_ACK`). Overflow evicts the
 oldest entry and counts it in `PROP_HOST_RX_QUEUE_DROPPED` (wrapping
 u32). Count and capacity are exposed as properties; the capacity is fixed
 (set fails `UNIMPLEMENTED`, the spec-sanctioned choice). Host-domain
 resets (`CMD_RST`, host replacement) discard the queue and its counters
-in place — `HostDomain::reset` deliberately avoids staging the multi-KB
+in place—`HostDomain::reset` deliberately avoids staging the multi-KB
 entry array on an embedded stack.
 
 `CMD_QUEUE_DRAIN` is effect-driven for transport backpressure: the
@@ -602,14 +602,14 @@ read-only/fixed-capacity property behavior. Host-side
 `queue_drain_with`, firmware host tests, and both release images remain
 green.
 
-### Increment 5, first half: CAP_HOST_KEYS — complete (2026-07-15)
+### Increment 5, first half: CAP_HOST_KEYS—complete (2026-07-15)
 
 Increment 5 was split at its natural capability boundary: `CAP_HOST_KEYS`
 requires only `CAP_HOST_FILTER`, so advertising it without
 `CAP_HOST_AUTO_ACK` is spec-clean. The dependency-boundary decision:
 `Session` is now generic over `umsh-crypto`'s `AesProvider`/
 `Sha256Provider` and owns a `CryptoEngine` (constructed by the firmware
-with the software providers — no hardware providers exist in the BSPs,
+with the software providers—no hardware providers exist in the BSPs,
 and the linker strips the unused dalek identity code). This is the same
 engine the MAC uses, so channel-identifier derivation matches the core
 spec by construction, and the AUTO_ACK half gets `open_packet`/
@@ -618,10 +618,10 @@ spec by construction, and the AUTO_ACK half gets `open_packet`/
 * `PROP_HOST_CHANNEL_KEYS` (8 entries; digest = derived channel id,
   remove selector = the 32-byte key) and `PROP_HOST_PEER_KEYS` (8
   entries; digest and selector = the peer public key; inserting a
-  matching public key replaces the stored key material — never
+  matching public key replaces the stored key material—never
   `STATUS_ALREADY`). Whole-table sets validate into a candidate table
   before committing; channel duplicates collapse, repeated peer public
-  keys replace in order. Secrets are never read back — GETs and
+  keys replace in order. Secrets are never read back—GETs and
   INSERTED/REMOVED notices carry digest forms only, and a test asserts
   the pairwise key material appears in no emitted frame.
 * Transport-security gate per spec §Provisioning Security:
@@ -642,7 +642,7 @@ spec by construction, and the AUTO_ACK half gets `open_packet`/
 65 session tests pass; firmware host tests and both release images
 remain green.
 
-### Increment 5, second half: CAP_HOST_AUTO_ACK — complete (2026-07-15)
+### Increment 5, second half: CAP_HOST_AUTO_ACK—complete (2026-07-15)
 
 Two structural changes landed alongside the feature:
 
@@ -654,7 +654,7 @@ Two structural changes landed alongside the feature:
 * **Latent `umsh-crypto` interop bug fixed**: `open_packet` and
   `decrypt_blind_addr` reconstructed the received packet's SECINFO
   bytes as "immediately before the body", but every secure layout puts
-  SECINFO before the *options block* — the options end marker and the
+  SECINFO before the *options block*—the options end marker and the
   blind address block sit between it and the body. The CTR IV only
   consumes SECINFO bytes when the MIC is shorter than 16 bytes
   (`build_ctr_iv` takes 16), so all existing Mic16 traffic was
@@ -665,17 +665,17 @@ Two structural changes landed alongside the feature:
 
 The auto-ACK implementation follows spec §Acknowledgement Delegation
 exactly: while detached, an accepted frame is evaluated on a scratch
-copy (the queue always holds original wire bytes) — UNAR authenticates
+copy (the queue always holds original wire bytes)—UNAR authenticates
 with the provisioned pairwise keys; BUAR requires the channel key to
 decrypt the address block and forms the combined blind payload keys.
 The source must resolve by full public key (S flag) or **unique**
 3-byte prefix; ambiguous hints never ack. Each provisioned peer carries
 a `ReplayWindow` (never saved; key-material replacement leaves it
-untouched — proven by a test that reuses a counter across a key
+untouched—proven by a test that reuses a counter across a key
 replacement). New frames are queued (acked flag set), the baseline
 advances, and a MAC ack (`PacketBuilder::mac_ack` + `compute_ack_tag`
 over the plaintext-body CMAC) is staged through the ordinary
-single-transmit radio path and duty limiter — a refused ack (auto-ack
+single-transmit radio path and duty limiter—a refused ack (auto-ack
 off, radio busy, duty exhausted) leaves the frame queued unacked and
 the sender's retransmission hits the re-ack window later. Identified
 duplicates (same counter + retained MIC, Route Retry forms included)
@@ -693,15 +693,15 @@ first-contact baselines, ambiguous vs full-key source resolution,
 duplicates inside and outside the re-ack window, attached suppression,
 auto-ack-off and duty-refusal paths, `RX_FLAG_ACKED` in drained
 metadata, and unstorable-frame non-acknowledgement. The full workspace
-suite passes and both boards build. `CAP_HOST_AUTO_ACK` is advertised —
+suite passes and both boards build. `CAP_HOST_AUTO_ACK` is advertised—
 the full-protocol capability set is now
 FILTER/RX_QUEUE/KEYS/AUTO_ACK.
 
-### Increment 6 — complete (2026-07-16)
+### Increment 6—complete (2026-07-16)
 
 `CAP_SAVE` is implemented and advertised. Session side:
 
-* `SavedState` is the RAM mirror of the durable snapshot — the saveable
+* `SavedState` is the RAM mirror of the durable snapshot—the saveable
   subset of both domains (RF config including the PHY enable state,
   duty limit, device name, host key, filters, channel keys, peer key
   material, auto-ACK) and deliberately never the queue, the replay
@@ -714,7 +714,7 @@ FILTER/RX_QUEUE/KEYS/AUTO_ACK.
 * `CMD_SAVE` → `Effect::SaveSnapshot` (bytes from `encode_snapshot`);
   `CMD_CLEAR` → `Effect::ClearSaved`; both complete through
   `respond_save`/`respond_clear` and report success only after the
-  durable operation commits — a failure leaves the previous snapshot
+  durable operation commits—a failure leaves the previous snapshot
   and `PROP_SAVED` untouched. `CMD_RST` post-reset values now come from
   the snapshot when one exists (the PHY comes back configured and
   enabled); factory defaults require `CMD_CLEAR` + `CMD_RST`.
@@ -728,13 +728,13 @@ FILTER/RX_QUEUE/KEYS/AUTO_ACK.
 * Host replacement's durable wipe is now real: the firmware persists
   `encode_wiped_snapshot` (saved device domain + defaulted host domain)
   before `respond_host_wipe(Ok)` installs the new key, and the RAM
-  mirror wipes with it — a power cycle cannot resurrect the previous
+  mirror wipes with it—a power cycle cannot resurrect the previous
   host's provisioning, verified by booting a fresh session from the
   wiped bytes.
 
 Firmware side: the snapshot journal (`proto_store`) lives in the two
 4 KB pages after the BLE store's (0x000E_6000..0x000E_8000, inside the
-NV region both boards share), with 2048-byte slots — MAGIC `UPRS`,
+NV region both boards share), with 2048-byte slots—MAGIC `UPRS`,
 generation, length-prefixed opaque payload, CRC, and a trailing commit
 word written last, reusing `ble_store`'s record machinery (its
 committed-write helper is now generic over slot size). The single
@@ -742,8 +742,8 @@ MPSL-coordinated flash driver moved into a shared async mutex so the
 BLE store and the NCP task can both reach it; the two-page rotation
 logic was factored out and shared. The journal is mounted at boot
 before the NCP session starts, and `restore_at_boot` applies the saved
-configuration — re-enabling the PHY and beginning detached
-filtering/queueing/delegation — before the first host command. The
+configuration—re-enabling the PHY and beginning detached
+filtering/queueing/delegation—before the first host command. The
 `no-ble` diagnostic image has no MPSL flash driver: saves and clears
 fail honestly there.
 
@@ -752,7 +752,7 @@ rollback, `PROP_SAVED`, reset-from-snapshot including the PHY enable
 state, factory reset via clear+reset, restore preserving queue and
 baselines, restore-as-host-replacement, wiped-snapshot semantics) and
 27 firmware host tests including a byte-boundary power-cut sweep over
-the whole record write — every cut point mounts the complete old
+the whole record write—every cut point mounts the complete old
 record. Both boards and the no-ble variant build.
 
 ### Review fixes for increments 4–6 (2026-07-16)
@@ -774,24 +774,24 @@ all fixed:
    marks it. A failed TX leaves the entry unacked, the retransmission
    hits the re-ack window, and a confirmed re-ack marks the original
    entry (located by authenticated identity). Handles are immune to
-   rotation/eviction/reset — a stale handle marks nothing.
+   rotation/eviction/reset—a stale handle marks nothing.
 3. **Delegated acks carry flood return routing**: a frame that arrived
    by flood gets an ack whose remaining hops seed from the frame's
    accumulated count (clamped 1–15), mirroring the MAC's cached
    flood-route acks; FHOPS is dynamic (outside the AAD) so a duplicate
    re-ack routes from the retransmission it answers. Region-code
-   scoping is deliberately omitted for now — an unscoped return flood
+   scoping is deliberately omitted for now—an unscoped return flood
    is correct, just broader.
 4. **Authenticated multicast coalesces queue-locally**: with the
    channel key held, a multicast frame authenticates and its logical
    identity (frame counter + verified MIC) is matched against the
-   entries currently queued — exact retransmissions and Route Retry
+   entries currently queued—exact retransmissions and Route Retry
    forms coalesce with no per-channel/per-sender replay registry, no
    ack, and no retained state once the entry drains or evicts.
    Unauthenticated multicast still occupies separate entries per spec.
 5. **TID-zero commands are properly fire-and-forget**: one `complete()`
    helper now gates every command completion (status responses, value
-   echoes, INSERTED/REMOVED) — TID 0 mutates state and records
+   echoes, INSERTED/REMOVED)—TID 0 mutates state and records
    `PROP_LAST_STATUS` silently; a TID-0 drain delivers the buffered
    frames but no completion. The deliberate unsolicited notifications
    (`CMD_RST` reset notice, `STATUS_RESET_RESTORED`, live/buffered
@@ -802,7 +802,7 @@ all fixed:
 flag clearing, eviction-safe handles, flood-return acks including the
 re-ack path, multicast coalescing, and the TID-zero matrix).
 
-### Increment 7 — complete (2026-07-16)
+### Increment 7—complete (2026-07-16)
 
 `CAP_DEV_IDENTITY` is implemented and advertised. Session side:
 
@@ -816,7 +816,7 @@ re-ack path, multicast coalescing, and the TID-zero matrix).
   (`IdentitySource::Install`/`Generate`), performs the key math and
   the durable write, and completes with `respond_identity`, which
   announces success as `CMD_PROP_IS` for **`PROP_DEV_KEY`** carrying
-  the public key — never the private key — only after the identity is
+  the public key—never the private key—only after the identity is
   durably stored. Concurrent writes are `STATUS_BUSY`; a reported
   failure leaves the previous identity in effect.
 * The identity lives outside the snapshot: the session tracks the live
@@ -831,13 +831,13 @@ re-ack path, multicast coalescing, and the TID-zero matrix).
   whole-table-set semantics matching the host tables. Both are in the
   snapshot (post-reset: empty or restored) and survive host
   replacement. Device channel keys deliberately create no implicit
-  host receive filters — verified by a detached-queueing test.
+  host receive filters—verified by a detached-queueing test.
   `SNAPSHOT_VERSION` bumped to 2, `SNAPSHOT_MAX` to 1536 (any
   version-1 snapshot on flashed hardware is ignored at boot; re-save
   after flashing).
 
 Firmware side: the identity journal reuses the `proto_store` record
-machinery in its own two pages (0x000E_8000..0x000E_A000) — a separate
+machinery in its own two pages (0x000E_8000..0x000E_A000)—a separate
 journal rather than a shared clear-epoch because snapshot saves must
 never rotate the identity record away; each journal clears atomically
 with its own committed tombstone. The payload is the private key plus
@@ -861,38 +861,38 @@ no-implicit-filter proof, TID-0 silence) and 30 firmware host tests
 (identity payload codec, journal page layout inside the NV region).
 Both boards and the no-ble variant build with zero warnings.
 
-### Increment 8 — complete (2026-07-16)
+### Increment 8—complete (2026-07-16)
 
 The host-facing provisioning/synchronization workflow and the
 adapter-free integration harness. Host side (`umsh::ulcp`):
 
-* `UlcpDevice::attach_existing` — the full-protocol attach: only
+* `UlcpDevice::attach_existing`—the full-protocol attach: only
   the identity handshake runs (retained `PROP_LAST_STATUS`, protocol
   version check, NCP version, MTU); no `CMD_RST`, no reconfiguration,
   no PHY enable. The existing resetting constructor remains the
   minimal-protocol path and is documented as unsuitable for an
   autonomously operating NCP.
-* `sync(expected_host_key)` — the spec's post-attach procedure:
+* `sync(expected_host_key)`—the spec's post-attach procedure:
   retained status with reset-since-last-contact detection, decoded
   `PROP_CAPS`, an ownership verdict (`Ours`/`Unclaimed`/
-  `OtherHost(key)`/`Unsupported`), and capability-gated state — PHY
+  `OtherHost(key)`/`Unsupported`), and capability-gated state—PHY
   enable/frequency, device name, `PROP_SAVED`, queue count/dropped,
   and the digest forms of filters, channel identifiers, peer public
-  keys, auto-ack, and the device key — into one `DeviceSync`.
-* `provision(&HostProvisioning)` — digest-based reconciliation of the
+  keys, auto-ack, and the device key—into one `DeviceSync`.
+* `provision(&HostProvisioning)`—digest-based reconciliation of the
   host domain. A differing host key replaces the domain first (spec
   §Host Replacement); filters replace whole-table when the sets
   differ; channel keys insert individually unless the NCP holds an
-  identifier the host has no key for (unremovable individually — the
-  selector is the key — so the table is replaced atomically); peers
+  identifier the host has no key for (unremovable individually—the
+  selector is the key—so the table is replaced atomically); peers
   reconcile by public-key membership so pairwise secrets the NCP
   already holds never cross the link again; auto-ack lands last. The
   `ProvisionReport` says exactly what changed; a reattach reconcile of
   matching state is a verified no-op. Saving stays explicit.
-* `ensure_device_identity()` — returns the device key, commanding
+* `ensure_device_identity()`—returns the device key, commanding
   spec-recommended on-device generation when none is configured (the
   success response is `PROP_IS` for `PROP_DEV_KEY`).
-* `set_frame_trace` + `describe_frame` — a per-frame trace hook in
+* `set_frame_trace` + `describe_frame`—a per-frame trace hook in
   both directions producing one-line summaries (command, TID, property
   mnemonic, decoded status; values summarized by length so traces can
   never leak key material), for placing a hardware failure at the host
@@ -900,7 +900,7 @@ adapter-free integration harness. Host side (`umsh::ulcp`):
 
 Integration harness (`umsh/tests/ulcp_full_protocol.rs`): a
 `FrameLink` implementation driving the **real**
-`umsh_ulcp_device::Session` — no fake NCP — with RAM stand-ins for
+`umsh_ulcp_device::Session`—no fake NCP—with RAM stand-ins for
 the snapshot/identity journals, the radio, entropy, and the clock, and
 a per-command log of both directions. The flagship test runs the
 increment-9 hardware script in-process: provision + identity
@@ -918,35 +918,35 @@ Gate: 4 integration tests + the existing 12 companion_radio unit
 tests, full workspace sweep green, firmware unaffected (host-only
 increment; T-Echo release build re-verified).
 
-### Increment 9, first pass — T-1000E over USB complete (2026-07-16)
+### Increment 9, first pass—T-1000E over USB complete (2026-07-16)
 
 The single-board, USB-tethered portion of the hardware validation ran
 green end to end on the T-1000E, driven by the new
 `umsh/examples/ulcp_hw_validate.rs` (one phase per invocation so
 the board can be power-cycled between phases; every frame printed
 through the host trace hook). Reboots were induced by DFU reflash of
-the same image — which additionally proves both journals survive a DFU
+the same image—which additionally proves both journals survive a DFU
 cycle. Results:
 
-* **Phase A** — `attach_existing` + `sync` on a fresh image: all ten
+* **Phase A**—`attach_existing` + `sync` on a fresh image: all ten
   capabilities advertised (8, 16, 38, 515, 32–37); on-device identity
   generated (spec-recommended empty `PROP_DEV_PRIVATE_KEY` write, real
   TRNG-seeded ChaCha20 path) and stable across repeated ensure calls;
   host domain provisioned (host key, one filter, channel key `9b68`,
   one peer, auto-ack); PHY configured/enabled; `CMD_SAVE` committed.
-* **Phase B** (after reboot) — reset detected from the retained
+* **Phase B** (after reboot)—reset detected from the retained
   status; ownership `Ours`; boot restore re-enabled the PHY at the
   saved 906 875 kHz with auto-ack armed; the device identity survived;
   the reattach reconcile was a verified no-op (no key material crossed
   the link again); empty-queue drain completed.
-* **Phases C+D** — `CMD_CLEAR` erased the snapshot and durable
+* **Phases C+D**—`CMD_CLEAR` erased the snapshot and durable
   identity while every live value stayed in effect; after the next
   reboot the board was factory-fresh (unclaimed, nothing saved,
-  `PROP_DEV_KEY` empty — the identity tombstone held across the power
-  cycle — PHY disabled, default frequency). Re-provisioning generated
+  `PROP_DEV_KEY` empty—the identity tombstone held across the power
+  cycle—PHY disabled, default frequency). Re-provisioning generated
   a **different** identity, confirming fresh entropy per generation.
   The board is left provisioned and saved for autonomous use.
-* **Measurements** — attach handshake ≈ 2–310 ms (the high end is
+* **Measurements**—attach handshake ≈ 2–310 ms (the high end is
   first-open after enumeration); command RTT over USB-CDC: min 434 µs
   / median 459 µs / max 534 µs (50 × `PROP_LAST_STATUS` get); queue
   capacity 16; flash 481.3 KiB (T-1000E) / 499.4 KiB (T-Echo) of the
@@ -956,32 +956,32 @@ cycle. Results:
   The temporary freeze diagnostics ("d6" version string) were still in
   the validated image.
 
-### Increment 9, second pass — RF, T-Echo, and BLE attach (2026-07-16)
+### Increment 9, second pass—RF, T-Echo, and BLE attach (2026-07-16)
 
 With the T-Echo connected as the second radio, the RF portion ran
 green (`ulcp_hw_validate rf-peer` drives the T-Echo as the
 transmitting peer while the T-1000E operates detached; `phase-e`
 verifies the drain):
 
-* **Delegated acknowledgement on the air** — a sealed,
+* **Delegated acknowledgement on the air**—a sealed,
   ack-requesting unicast from the provisioned peer was queued by the
   detached T-1000E and answered with a MAC ack observed on the T-Echo
   (12 bytes, −20 dBm across the desk).
-* **Duplicate coalescing** — the exact retransmission was re-acked on
+* **Duplicate coalescing**—the exact retransmission was re-acked on
   the air and occupied no second queue entry.
-* **Unrelated traffic** — a sealed ack-requesting unicast to a foreign
+* **Unrelated traffic**—a sealed ack-requesting unicast to a foreign
   destination drew no ack and (by the final queue arithmetic) was
   never queued.
-* **Overflow** — 19 accepted frames into the 16-slot queue: eviction
-  counted exactly (the dropped counter is cumulative across drains —
+* **Overflow**—19 accepted frames into the 16-slot queue: eviction
+  counted exactly (the dropped counter is cumulative across drains—
   the first expectation mistake was mine, not the board's), and the
   drain delivered all 16 oldest-first with correct ages; exactly the
   one late ack-requesting frame carried `RX_FLAG_ACKED`.
 * **A real host-side bug found and fixed**: `queue_drain_with`'s
   callback used to lose every frame the driver's 8-deep receive
   buffer evicted mid-drain (an NCP queue of 16 delivered only 8).
-  The callback is now fed at ingest time — lossless regardless of the
-  bounded buffer — with an in-process regression test that fails on
+  The callback is now fed at ingest time—lossless regardless of the
+  bounded buffer—with an in-process regression test that fails on
   the old code (`full_queue_drains_losslessly_through_the_callback`).
 
 The T-Echo then passed storage phases a–d itself (identity generation,
@@ -994,7 +994,7 @@ interval bound; USB was ~443 µs median on the same board).
 
 One diagnosis worth remembering: the T-Echo's boot restore initially
 appeared to lose the saved frequency after every reboot. The journal
-and decode were fine — a leftover `umsh-capture --ble` soak process
+and decode were fine—a leftover `umsh-capture --ble` soak process
 from earlier in the day was auto-reconnecting over BLE after each
 reboot, and its minimal-protocol attach (`CMD_RST` + configure +
 enable, at the default profile) legally reconfigured the radio. Two
@@ -1011,7 +1011,7 @@ Follow-up (2026-07-16): MAC-owner hosts (desktop_chat, cli_ulcp)
 currently enable `PROP_MAC_PROMISCUOUS` per session so a provisioned
 NCP's host-domain filters cannot eat their live traffic. That is the
 accepted short-term shim; the battery-correct long-term form is a
-provisioned live-filter plan — `PROP_HOST_KEY` = own identity
+provisioned live-filter plan—`PROP_HOST_KEY` = own identity
 (implicit destination-hint filter: unicast + MAC acks) plus channel
 coverage per subscribed channel (provisioned channel keys or explicit
 non-secret `ChannelId` filters) and `PktType(Broadcast)` if discovery
@@ -1031,14 +1031,14 @@ example flags. A user-facing tool should cover: neutral inspection
 (the `info` modes graduate out of the validation example),
 provisioning with the operator's real keys (host identity, channel
 keys, peer entries from args or a file), device-identity management,
-save/restore/clear, pairing-PIN management, and factory reset — over
+save/restore/clear, pairing-PIN management, and factory reset—over
 both serial and BLE. Fill this before the companion radio can be
 operated by anyone who is not developing it.
 
 **Gap filled (2026-07-16): `umsh-ulcpctl`**
 (`umsh/src/bin/umsh_ulcpctl.rs`, `required-features =
 ["tokio-support"]` with serial/BLE paths feature-gated like
-`umsh-capture`). Commands: `info` (neutral inspection — sync fields
+`umsh-capture`). Commands: `info` (neutral inspection—sync fields
 plus LoRa parameters, duty cycle, and queue capacity; optional
 `--expect-host-key` ownership verdict), `provision` (operator keys
 from repeatable flags or a `setting = value` file; refuses to displace
@@ -1048,7 +1048,7 @@ another host without `--force`; optional `--save`), `identity` /
 `pin <6-digits|clear>`. Transports: `<serial-port>` (`--baud`) or
 `--ble[=selector]` (the `=` form disambiguates selectors that collide
 with command words). `--trace` wires the frame-trace hook to stderr.
-Attach is always `attach_existing` — the tool never resets or
+Attach is always `attach_existing`—the tool never resets or
 reconfigures an operating NCP except where the command says so. Keys
 parse as 44-char base58 or 64-char hex and print as base58; secrets
 (channel keys, peer pairwise keys, PIN) are never echoed. Supporting
@@ -1056,7 +1056,7 @@ API addition: public `UlcpDevice::reset()` (CMD_RST + reset
 notification), unit-tested against the fake NCP. Ten arg-parsing unit
 tests ride in the binary. Hardware smoke test (2026-07-16): read-only
 `info --expect-host-key` and `identity --trace` against the live
-provisioned T-1000E over BLE — attach, full sync report, ownership
+provisioned T-1000E over BLE—attach, full sync report, ownership
 verdict, and trace hook all correct, with the snapshot-restored state
 matching what increment 9 left on the board; the T-Echo run is still
 pending. Flashing
@@ -1069,7 +1069,7 @@ detaching after the last block and means success). The temporary
 freeze diagnostics must still be stripped or gated before any
 release-quality image (keep the POWER-INTEN disarm fix).
 
-## BLE transport closure work — parallel, not a full-protocol prerequisite
+## BLE transport closure work—parallel, not a full-protocol prerequisite
 
 1. **Complete the BLE/live-LoRa soak.** Continue running the recovery-enabled
    `umsh-capture --ble` with representative RF traffic and retain any failure
@@ -1109,11 +1109,11 @@ needs to be dumped before relying on it.
 
 **Decision (2026-07-13): proceed with a pinned trouble fork** that adds
 the pairing-request rejection gate (and, only if the spike shows it is
-needed, bond-gated attribute access) — see
+needed, bond-gated attribute access)—see
 [The trouble fork](#the-trouble-fork). The `nrf-softdevice` fallback is
 demoted to last resort: `nrf-softdevice`'s bindings target S140 v7.x,
 which the T-Echo's resident v6.1.1 image is not, so the fallback would
-itself require reprovisioning the SoftDevice and moving the app base —
+itself require reprovisioning the SoftDevice and moving the app base—
 the "already resident, zero provisioning risk" advantage that
 originally justified it does not exist on this board.
 
@@ -1153,7 +1153,7 @@ bridge is deferred; the only work it imposes here is captured in the
 
 ## Architecture overview
 
-Layer map — asterisks mark what this plan adds or changes:
+Layer map—asterisks mark what this plan adds or changes:
 
 ~~~
 Host                                    NCP firmware (techo)
@@ -1201,13 +1201,13 @@ tradeoff isn't relitigated later):
 
 - The spec invariant stays one testable predicate; the alternative
   smears policy across the bondable flag, dynamic IO-capability
-  downgrades, `PairingComplete` cleanup, and per-access checks — all
+  downgrades, `PairingComplete` cleanup, and per-access checks—all
   of which must be simultaneously correct in every mode.
 - Unbonded strangers never exercise the SMP stack (no free P-256 work
   for anyone in radio range; future SMP bugs are not reachable
   pre-authorization).
 - Allow-then-neutralize leaves the *central* with a stored bond the
-  peripheral never kept — the classic asymmetric-bond failure where
+  peripheral never kept—the classic asymmetric-bond failure where
   the phone can't reconnect until the user manually forgets the
   device.
 
@@ -1217,13 +1217,13 @@ tradeoff isn't relitigated later):
   the workspace `[patch]` table, same discipline as the `lora-phy`
   fork. Its pinned controller
   (`alexmoon/nrf-sdc@abe49d2`) is used as-is.
-- **Patch 1 (required) — pairing-acceptance gate.** A runtime
+- **Patch 1 (required)—pairing-acceptance gate.** A runtime
   `set_pairing_enabled(bool)` on the security manager, surfaced
   through the public stack API. While disabled, an idle incoming
   `PairingRequest` is answered with SMP `Pairing Failed`, reason
-  **`Pairing Not Supported` (0x05)** — an explicit rejection, not a
+  **`Pairing Not Supported` (0x05)**—an explicit rejection, not a
   silent drop, so the central fails immediately instead of hanging
-  into the 30 s SMP timeout — and no pairing state machine is
+  into the 30 s SMP timeout—and no pairing state machine is
   constructed. An exchange already in progress is unaffected; C4's
   mode-exit rules govern those.
 - **Fixed responder passkey (required after the spike audit).** Upstream
@@ -1232,7 +1232,7 @@ tradeoff isn't relitigated later):
   `set_fixed_passkey(Option<u32>)`; the value is range-checked and used
   in the LESC display-role paths. A paired central/peripheral test proves
   both sides derive matching keys from the configured six-digit value.
-- **Patch 2 (only if the spike proves it necessary) — bond-gated
+- **Patch 2 (only if the spike proves it necessary)—bond-gated
   access.** The spec requires refusing non-bonded access with an ATT
   security error. If trouble's `GattEvent` accept/reject surface lets
   the application reject Frame In writes and the Frame Out CCCD write
@@ -1246,7 +1246,7 @@ tradeoff isn't relitigated later):
   `INSUFFICIENT_AUTHENTICATION`. The production server performs the
   `is_bonded_peer()` check at those two protected handles; service
   discovery remains available to an unbonded central.
-- **Patch 3 (required after hardware stale-bond testing) — negative LTK
+- **Patch 3 (required after hardware stale-bond testing)—negative LTK
   reply.** When the controller raises `LE Long Term Key Request` and no
   matching bond exists, the host sends
   `LE Long Term Key Request Negative Reply`, as defined by the Bluetooth
@@ -1258,7 +1258,7 @@ tradeoff isn't relitigated later):
   proved the negative reply completed successfully and that the ensuing
   stale-bond disconnect was initiated by iOS.
 - **Upstream hedge.** Open the upstream issue/PR for Patch 1
-  immediately and track it — "application-controlled pairing policy"
+  immediately and track it—"application-controlled pairing policy"
   is generically useful, so the fork is expected to be temporary. If
   upstream lands a different shape, converge on theirs at the next
   deliberate pin move; until then the pin only moves deliberately.
@@ -1266,7 +1266,7 @@ tradeoff isn't relitigated later):
   (!pin_configured || !locked_out)`. A configured PIN selects the
   association model and never authorizes enrollment on its own, so it
   cannot stand in for pairing mode; OOB is the only exception. Bond-store
-  capacity is *not* a term — a full store evicts its least-recently-used
+  capacity is *not* a term—a full store evicts its least-recently-used
   bond (Phase D) rather than refusing to pair.
 
   The C4 lockout narrows that gate rather than opening one. It applies
@@ -1277,7 +1277,7 @@ tradeoff isn't relitigated later):
   there would let an in-range attacker burn three confirm values to deny
   pairing to the legitimate user for the rest of the power cycle.
 
-## Phase 0 — BLE stack spike (gate)
+## Phase 0—BLE stack spike (gate)
 
 Prove `trouble-host` + `nrf-sdc` on our T-Echo alongside everything
 the NCP firmware already uses, before touching real firmware. Exit
@@ -1315,10 +1315,10 @@ workspace `default-members`; release-only like the rest).
    characteristic, both requiring encryption. Advertise, connect from
    nRF Connect (phone), from macOS, **and from Linux**: pair via
    `bluetoothctl`, then run a `btleplug` smoke test proving a
-   security-gated subscription works after out-of-process pairing —
+   security-gated subscription works after out-of-process pairing—
    this BlueZ recovery path is exactly what Phase B2 depends on and
    is not established by the phone test.
-6. Security spike — validated on the fork:
+6. Security spike—validated on the fork:
    - LESC-only enforcement (reject legacy pairing)?
    - Just Works bonding?
    - Pairing rejection via the fork's `set_pairing_enabled(false)`:
@@ -1329,7 +1329,7 @@ workspace `default-members`; release-only like the rest).
    - Static passkey as responder (peripheral IO capability
      `DisplayOnly` with a fixed passkey)?
    - Encrypted+bonded enforcement on characteristic access and CCCD
-     writes — this answer decides whether the fork needs Patch 2 or
+     writes—this answer decides whether the fork needs Patch 2 or
      application-side `is_bonded_peer()` rejection suffices?
    - Bond data export/import (needed for Phase D persistence)?
 7. Coexistence: initialize the SX1262 over SPIM and keep USB-CDC echo
@@ -1376,10 +1376,10 @@ means reprovisioning the SoftDevice (a combined bootloader+SD DFU
 package over serial DFU, or SWD), moving the app base to `0x27000`,
 raising the RAM origin by the SD's claim, routing flash writes through
 `sd_flash_write`, and reshaping the Phase C task code. Phases A/B and
-the spec are unaffected — but with no resident-image advantage, this
+the spec are unaffected—but with no resident-image advantage, this
 is strictly a last resort if the fork approach fails on hardware.
 
-## Phase A — wire crate: `umsh_ulcp::gatt`
+## Phase A—wire crate: `umsh_ulcp::gatt`
 
 New module beside `hdlc`, same rules: `no_std`, allocation-free, zero
 dependencies, host-tested.
@@ -1453,9 +1453,9 @@ builds, never produce an infinite iterator or reach `chunks(0)`.
 **Exit criteria.** `cargo test -p umsh-ulcp` green; module doc
 cross-references the spec chapter.
 
-## Phase B — host: framing refactor + BLE central
+## Phase B—host: framing refactor + BLE central
 
-### B1 — make `UlcpDevice` framing-pluggable
+### B1—make `UlcpDevice` framing-pluggable
 
 Today `UlcpDevice<IO: AsyncRead + AsyncWrite + Unpin>` owns an
 `hdlc::Decoder<WIRE_BUF>` and does byte I/O in `send_frame_buf` /
@@ -1495,7 +1495,7 @@ pub trait FrameLink {
 Regression gate before B2: `cargo test -p umsh`, plus
 `ulcp_probe` against real T-Echo hardware over USB.
 
-### B2 — `BleFrameLink` (btleplug)
+### B2—`BleFrameLink` (btleplug)
 
 New `ble-radio` feature: `ble-radio = ["tokio-support",
 "dep:btleplug"]`; macOS and Linux are the supported targets, Windows
@@ -1509,7 +1509,7 @@ best-effort.
   session silently, so `UlcpDevice::new` proceeds directly to its
   normal `CMD_RST` handshake. Pairing is OS-mediated: the first
   security-gated operation triggers the platform pairing flow (macOS
-  prompts; Linux needs a BlueZ agent — document the `bluetoothctl`
+  prompts; Linux needs a BlueZ agent—document the `bluetoothctl`
   pair/PIN flow in the example's help text).
 - **recv path**: btleplug's notification stream feeds a
   `tokio::sync::mpsc`; `recv_frame` drains it through
@@ -1517,16 +1517,16 @@ best-effort.
 - **send path**: `gatt::segments(frame, seg_payload)` written with
   `WriteType::WithResponse` (the response is our flow control, per
   spec). btleplug does not portably expose the negotiated ATT_MTU, so
-  `seg_payload` defaults to **19** (the ATT 23-octet floor — always
+  `seg_payload` defaults to **19** (the ATT 23-octet floor—always
   correct, merely chatty) with a config override; B2 investigates
   per-platform MTU discovery and raises the default where reliable.
   Host→NCP frames are small (commands; STR_SEND ≤ ~270 octets ≈ 14
-  writes worst-case), and the NCP→host direction — the bulk of
-  traffic — segments at the *NCP's* true ATT MTU, so the conservative
+  writes worst-case), and the NCP→host direction—the bulk of
+  traffic—segments at the *NCP's* true ATT MTU, so the conservative
   default costs little.
 - **Disconnect** surfaces as `UlcpError::Disconnected`.
 
-### B3 — examples and operational tools
+### B3—examples and operational tools
 
 `ulcp_probe` and `desktop_chat` accept `--ble [selector]` as an
 alternative to the serial path, gated on the `ble-radio` feature
@@ -1549,12 +1549,12 @@ with a partial successor, and cancellation with buffered tail bytes;
 `ulcp_probe --ble` connects, bonds, and completes the property
 handshake against the Phase C firmware (this criterion lands with C).
 
-## Phase C — NCP firmware integration
+## Phase C—NCP firmware integration
 
 All in `firmware/techo`. C1 is a pure refactor verified
 on USB alone; BLE code first appears in C2.
 
-### C1 — framing out of `device_task` (USB-only refactor)
+### C1—framing out of `device_task` (USB-only refactor)
 
 Today `device_task` owns the HDLC decoder and the `Emitter` HDLC-encodes
 at emit time (`OUTPUT_CH` carries 64-byte wire chunks). Move framing
@@ -1584,7 +1584,7 @@ to the transport edges so `device_task` deals only in companion frames:
 Verify on hardware: `ulcp_probe` + `desktop_chat` over USB behave
 identically. Commit before any BLE code.
 
-### C2 — BLE stack + companion service
+### C2—BLE stack + companion service
 
 From the Phase 0 spike, into the real firmware:
 
@@ -1596,7 +1596,7 @@ From the Phase 0 spike, into the real firmware:
 - Inbound: Frame In writes → `gatt::Reassembler<512>` (the spec's
   service maximum) → `InEvent::Frame(Transport::Ble, ..)`. A
   reassembled frame larger than `FRAME_IN_MAX` is **dropped whole**,
-  never truncated — the transport carries frames unchanged or not at
+  never truncated—the transport carries frames unchanged or not at
   all, and truncation could turn oversize input into a different
   valid command. CCCD
   subscribe on a link that meets security → `Attached(Ble)`;
@@ -1606,7 +1606,7 @@ From the Phase 0 spike, into the real firmware:
   notifies. If the host is gone mid-frame the remainder is dropped
   with the connection (reassembly resets on detach per spec).
 
-### C3 — transport arbitration + advertising policy
+### C3—transport arbitration + advertising policy
 
 In `device_task`, one place, with a **session generation counter** so a
 displaced session's state can never leak into its successor:
@@ -1649,7 +1649,7 @@ Policy truth table:
 | none  | disconnected | yes | only per pairing-mode/PIN/OOB rules |
 | none  | connected, not yet attached | no (connected) | per pairing-mode/PIN/OOB rules |
 
-### C4 — pairing mode, display UI, lockout, PIN property
+### C4—pairing mode, display UI, lockout, PIN property
 
 - **Pairing-mode state machine** in `ble_task`:
   - Entry at boot: no bonds → auto pairing mode, 30 s timer. Bonds
@@ -1670,13 +1670,13 @@ Policy truth table:
     evicting the least-recently-used bond.
   - LED: add a pairing-mode pattern to `LedEngine` timings.
 - **Lockout**: failed-pairing counter in `ble_task` (RAM; resets on a
-  successful pairing or reboot). At 3, `locked_out = true` — with a PIN
+  successful pairing or reboot). At 3, `locked_out = true`—with a PIN
   configured the gate formula above then rejects *all* pairing until
   power cycle; once locked, a pairing cannot succeed and therefore
   cannot clear the lockout. With no PIN configured the counter is not
   consulted, because Just Works has no passkey to probe and the counter
   would only give a remote peer a denial of service.
-- **`PROP_BLE_PAIRING_PIN` (4864)** — deferred completion, mirroring
+- **`PROP_BLE_PAIRING_PIN` (4864)**—deferred completion, mirroring
   the existing `PROP_PHY_RSSI` pattern (`Effect::SampleRssi { tid }` →
   `Session::respond_rssi`):
   - `umsh-ulcp/src/ids.rs`: `pub const BLE_PAIRING_PIN: u32 =
@@ -1692,7 +1692,7 @@ Policy truth table:
     `STATUS_INTERNAL_ERROR` on apply/commit failure (per spec: this
     property is never echoed, and success is not reported before the
     value is applied and durably stored). **No PIN state is stored in
-    `Session`** — the PIN survives `CMD_RST` by design, so its
+    `Session`**—the PIN survives `CMD_RST` by design, so its
     authority lives in the firmware/persistence layer.
   - `Session::prop_get` for 4864: `STATUS_UNIMPLEMENTED`, without
     revealing whether a PIN is set (i.e., the same answer always).
@@ -1732,7 +1732,7 @@ failures (and only authentication failures) and clears on power
 cycle; a successful pairing also resets a nonzero failure count;
 bonded reconnect kills pairing mode.
 
-## Phase D — persistence
+## Phase D—persistence
 
 - Storage region per [firmware-storage-plan.md](firmware-storage-plan.md):
   sequential-storage on internal NVMC, 64 KB at the top of the app
@@ -1743,7 +1743,7 @@ bonded reconnect kills pairing mode.
   feature). This firmware persists nothing else, so this is the only
   flash/BLE interaction.
 - Persist: bond store (identity keys + LTKs; cap 4 bonds, with a separate
-  most-recently-used slot-order record — at capacity a new pairing evicts
+  most-recently-used slot-order record—at capacity a new pairing evicts
   the bond at the back of that list) and the pairing PIN (write-only at the protocol; never logged or echoed in
   diagnostics). PIN updates are transactional: validate, commit the
   new value with the MPSL-coordinated flash interface, then publish it
@@ -1760,7 +1760,7 @@ bonded reconnect kills pairing mode.
   - The list is reordered when a bond is created (new slot goes to the
     front) and when a peer completes an encrypted reconnect (its slot
     moves to the front). **If the slot is already at the front, nothing is
-    written** — the common case of the same phone reconnecting repeatedly
+    written**—the common case of the same phone reconnecting repeatedly
     costs no flash writes at all, and the worst case is one small
     fixed-size record rewrite.
   - When a new bond must be committed and all four slots are occupied, the
@@ -1776,7 +1776,7 @@ bonded reconnect kills pairing mode.
     unparseable list is rebuilt in arbitrary order over whatever bonds
     exist rather than wiping them.
   - Any bond backing an active encrypted connection is skipped as a
-    victim — walk toward the front of the list until an unpinned slot is
+    victim—walk toward the front of the list until an unpinned slot is
     found. If every slot is pinned that way, the new pairing fails rather
     than tearing down a live link.
   - The pairing gate stays `pairing_mode || (pin_configured &&
@@ -1793,7 +1793,7 @@ bonded reconnect kills pairing mode.
   are ordered so power loss is always recoverable: commit the new bond
   record into the victim's slot first, then rewrite the order list. A
   reboot between the two shows the new bond in the store with a stale
-  position in the list — correct keys, merely imprecise recency — which
+  position in the list—correct keys, merely imprecise recency—which
   the boot-time reconciliation above repairs. There is never a store
   missing the victim without the replacement, and never five bonds.
 - Local bond deletion (spec requirement) is an explicit destructive action
@@ -1814,7 +1814,7 @@ every surviving bond usable, with boot-time reconciliation repairing the
 order list. Reconnecting the same phone repeatedly issues no flash writes
 after the first (the order list is already fronted on that slot).
 
-## Phase E — hardware validation and polish
+## Phase E—hardware validation and polish
 
 - `ulcp_link_soak` is the repeatable, non-mutating control-plane harness
   for this phase. It supports serial and BLE selectors, configurable duration,
@@ -1867,9 +1867,9 @@ Nordic license identity and required notices.
 
 - L2CAP CoC binding (one SDU = one frame) once host platforms allow.
 - Numeric-comparison ceremony beyond the initial T-Echo display UI.
-- LESC OOB pairing (QR conveyance) — spec leaves room; format
+- LESC OOB pairing (QR conveyance)—spec leaves room; format
   undefined until a device needs it.
-- BLE on T1000E and Wio Tracker L1 — mechanical once companion-ncp-
+- BLE on T1000E and Wio Tracker L1—mechanical once companion-ncp-
   techo is proven; T1000E is factory-sealed, so it goes last.
 - iOS/Android host library.
 - RNG sharing story for future firmware that runs both BLE and the
@@ -1883,7 +1883,7 @@ Nordic license identity and required notices.
 | A wire crate | spec | none | tests green |
 | B1 host refactor | A | T-Echo (USB regression) | probe over USB unchanged |
 | B2/B3 host BLE | B1, A | none until C lands | compiles; loopback tests |
-| C1 firmware refactor | — (parallel with A/B) | T-Echo | USB behavior identical |
+| C1 firmware refactor | —(parallel with A/B) | T-Echo | USB behavior identical |
 | C2–C4 firmware BLE | 0, A, C1 | T-Echo + phone + host | probe/chat over BLE; security checklist |
 | D persistence | C | T-Echo | bonds/PIN survive power cycle |
 | E validation | C, D | full setup | soak + measurements recorded |

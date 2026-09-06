@@ -1,6 +1,6 @@
 import Foundation
 
-/// One loaded slice of a transcript, oldest first — the order it renders in.
+/// One loaded slice of a transcript, oldest first—the order it renders in.
 struct TranscriptPage: Equatable, Sendable {
     var messages: [ChatMessageSummary] = []
     /// Storage holds messages older than this slice.
@@ -42,9 +42,9 @@ struct TranscriptLoader: Sendable {
 /// How a message sits among its neighbours.
 ///
 /// A *run* is a stretch of consecutive messages from one sender with nothing
-/// in between. Messages draws a run as a single utterance — the sender named
+/// in between. Messages draws a run as a single utterance—the sender named
 /// once at the top, their avatar once at the bottom, one tail on the last
-/// bubble — rather than repeating all of that on every line. Which line is
+/// bubble—rather than repeating all of that on every line. Which line is
 /// which is a property of the surrounding rows, so it is settled here, where
 /// the rows are, and not in a bubble that can only see itself.
 struct MessagePresentation: Equatable, Sendable {
@@ -85,8 +85,8 @@ enum TranscriptItem: Identifiable, Equatable {
 /// The slice of a transcript a thread view currently holds, and what lies
 /// beyond it in either direction.
 ///
-/// A transcript is rendered without laziness — every bubble measures a
-/// `UITextView` up front — so the window, not the conversation, is what bounds
+/// A transcript is rendered without laziness—every bubble measures a
+/// `UITextView` up front—so the window, not the conversation, is what bounds
 /// the cost of having one open.
 ///
 /// The rows the view actually renders are derived here, once per change, rather
@@ -141,8 +141,8 @@ struct TranscriptWindow: Equatable {
     /// Take a page of older messages onto the front.
     ///
     /// Deliberately does not trim. Growing at the top and shrinking at the
-    /// bottom want opposite scroll anchors — content added above should hold
-    /// the bottom still, content removed below should hold the top still — and
+    /// bottom want opposite scroll anchors—content added above should hold
+    /// the bottom still, content removed below should hold the top still—and
     /// doing both in one layout pass means one of them loses and the transcript
     /// lurches under a moving finger. Trimming is left to ``trimToCapacity()``,
     /// which the view calls once scrolling has stopped.
@@ -208,7 +208,7 @@ struct TranscriptWindow: Equatable {
     /// A gap run is identified by its *newest* placeholder. A run can straddle
     /// the window's older edge, and identifying it by its oldest loaded
     /// placeholder would change that identity the moment a page of history
-    /// arrives and extends the run backward — SwiftUI would see a row replaced
+    /// arrives and extends the run backward—SwiftUI would see a row replaced
     /// rather than grown, at the seam, while the scroll position is being
     /// restored. Keyed at the newest end, prepended placeholders form their own
     /// row instead. Date separators are keyed the same way, to the message

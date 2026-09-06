@@ -163,7 +163,7 @@ mod tests {
         condition.trigger();
         assert_eq!(waiter.now_or_never(), Some(()));
 
-        // Join a waiter with a trigger — the trigger resolves the waiter.
+        // Join a waiter with a trigger—the trigger resolves the waiter.
         futures::executor::block_on(async {
             let waiter = condition.wait();
             futures::join!(waiter, async {

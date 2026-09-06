@@ -1,11 +1,11 @@
-//! `AsyncRefCell<T>` — an async-aware `RefCell`.
+//! `AsyncRefCell<T>`—an async-aware `RefCell`.
 //!
 //! `borrow()` / `borrow_mut()` return futures that wait until the cell is
 //! available instead of panicking. Built on top of [`AsyncCondition`]: when
 //! the last outstanding guard is dropped, all waiting borrowers are woken
 //! and race to re-probe the underlying `RefCell`. Losers re-queue.
 //!
-//! This is a single-threaded primitive — it holds a `RefCell` internally
+//! This is a single-threaded primitive—it holds a `RefCell` internally
 //! and is `!Sync`. For cross-thread sharing, use a proper mutex crate.
 
 use core::cell::{self, RefCell};
@@ -93,7 +93,7 @@ impl<T: ?Sized> AsyncRefCell<T> {
     ///
     /// This is the primitive for `poll_fn`-style drivers that need to race a
     /// borrow attempt against other wake sources (radio I/O, a timer) *and* be
-    /// re-polled whenever a guard is released — for example when a second
+    /// re-polled whenever a guard is released—for example when a second
     /// handle mutates the cell and drops its borrow.
     ///
     /// Behavior per poll:
@@ -102,11 +102,11 @@ impl<T: ?Sized> AsyncRefCell<T> {
     ///    drop triggers the condition, so a waker registered *before* taking
     ///    the borrow would be woken by our **own** guard drop in step 2,
     ///    re-polling the task in a busy loop. This crate is single-threaded,
-    ///    so nothing can trigger between this step and step 3 — no wakeup can
+    ///    so nothing can trigger between this step and step 3—no wakeup can
     ///    be lost to the gap.
     /// 2. If the cell is free, take the exclusive borrow and run `f` (which
     ///    may register other wakers, e.g. radio or timer). The guard is
-    ///    dropped — waking *other* waiters — before step 3.
+    ///    dropped—waking *other* waiters—before step 3.
     /// 3. If `f` returned `Pending` (or the cell was busy), re-register on the
     ///    condition so a later guard release re-polls this task.
     ///
@@ -127,8 +127,8 @@ impl<T: ?Sized> AsyncRefCell<T> {
         );
         ticket.cond.forget_ticket(&mut ticket.ticket);
         let result = match self.try_borrow_mut() {
-            // The guard drops at the end of this arm — while this task is
-            // deregistered — so our own release never wakes us.
+            // The guard drops at the end of this arm—while this task is
+            // deregistered—so our own release never wakes us.
             Some(mut guard) => f(&mut guard, cx),
             None => Poll::Pending,
         };
@@ -361,7 +361,7 @@ mod tests {
     /// Regression test: a `Pending` poll of `poll_with_mut` must not be woken
     /// by its **own** guard drop. The pre-`poll_with_mut` pattern registered
     /// on the condition before taking the borrow, so the guard drop at the end
-    /// of each poll re-woke the task — a permanent executor spin.
+    /// of each poll re-woke the task—a permanent executor spin.
     #[test]
     fn poll_with_mut_own_guard_drop_does_not_self_wake() {
         use core::task::{Context, Poll};
@@ -412,7 +412,7 @@ mod tests {
     }
 
     /// Race: holder releases between a waiter's `wait()` registration and
-    /// its `try_borrow_mut()` probe. The probe succeeds — the waiter never
+    /// its `try_borrow_mut()` probe. The probe succeeds—the waiter never
     /// actually `.await`s. Verifies the "register-first, probe-second"
     /// ordering closes the lost-wakeup window.
     #[test]

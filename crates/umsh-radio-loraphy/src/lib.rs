@@ -2,22 +2,22 @@
 //!
 //! Works with any chip that implements `lora_phy::mod_traits::RadioKind`
 //! (SX126x, LR11xx, etc.). Per-board parameters (frequency, modulation,
-//! preamble, TCXO, RF switch) are supplied by the caller — this crate
+//! preamble, TCXO, RF switch) are supplied by the caller—this crate
 //! only owns the RX/TX state machine.
 //!
 //! # Architecture
 //!
 //! Two concurrent actors share a [`Channels`] bundle:
 //!
-//! 1. **[`runner`]** — an Embassy task that owns the `lora_phy::LoRa` instance.
+//! 1. **[`runner`]**—an Embassy task that owns the `lora_phy::LoRa` instance.
 //!    It loops between continuous RX and TX: when a TX request arrives on the
 //!    TX channel it exits RX, transmits, signals the result, then re-enters RX.
 //!    A request that arrives while a frame is being received is refused with
 //!    [`TxError::CadTimeout`] (up to [`RX_GATE_MAX_STRIKES`] times) instead of
-//!    tearing down the reception — the channel is busy either way, and the MAC
+//!    tearing down the reception—the channel is busy either way, and the MAC
 //!    already backs off and retries on that error.
 //!
-//! 2. **[`LoraphyRadio`]** — a lightweight handle used by the MAC coordinator.
+//! 2. **[`LoraphyRadio`]**—a lightweight handle used by the MAC coordinator.
 //!    It borrows `&'static Channels` for `transmit()` (sends request, awaits
 //!    result signal) and `poll_receive()` (non-blocking probe of the RX channel
 //!    with waker registration via `AtomicWaker`).
@@ -204,7 +204,7 @@ fn copy_frame(frame: RxFrame, buf: &mut [u8]) -> RxInfo {
 /// Maximum consecutive TX requests refused with [`TxError::CadTimeout`] while
 /// a reception appears to be in progress (preamble seen, frame not finished).
 ///
-/// Refusing without touching the radio keeps the in-flight frame receivable —
+/// Refusing without touching the radio keeps the in-flight frame receivable—
 /// tearing down RX for the CAD gate would lose it, and the gate would report
 /// busy anyway. The chip raises no IRQ when a detected preamble turns out to
 /// be noise, so the flag can go stale; after this many refusals the next
@@ -222,7 +222,7 @@ pub const RX_GATE_MAX_STRIKES: u8 = 3;
 /// re-queueing the frame.
 ///
 /// NOT cancel-safe (`cad`, `prepare_for_tx`, and `tx` must all run to
-/// completion) — call outside any `select` branch, like the TX arm it
+/// completion)—call outside any `select` branch, like the TX arm it
 /// replaces.
 async fn perform_tx<RK, DLY>(
     lora: &mut LoRa<RK, DLY>,
@@ -267,7 +267,7 @@ where
 /// `wait_for_irq` is the only `await` point that may be cancelled (it just
 /// awaits a DIO edge and is safe to drop). `process_irq_event`,
 /// `prepare_for_tx`, and `tx` all run to completion outside any `select`
-/// branch — cancelling those leaves the radio in a wedged state from which
+/// branch—cancelling those leaves the radio in a wedged state from which
 /// `prepare_for_tx` will hang forever (lora-phy explicitly warns against
 /// dropping `process_irq_event` futures). The convenience `lora.rx()`
 /// helper internally calls `complete_rx`/`process_irq_event`, so it is
@@ -309,7 +309,7 @@ where
         loop {
             match select(lora.wait_for_irq(), ch.tx.receive()).await {
                 Either::First(Ok(())) => {
-                    // process_irq_event is NOT cancel-safe — it MUST run to
+                    // process_irq_event is NOT cancel-safe—it MUST run to
                     // completion. The public method passes clear_interrupts=false
                     // (unlike complete_rx's internal call), so we explicitly
                     // clear afterwards or DIO1 stays latched high on LR1110.
@@ -348,7 +348,7 @@ where
                         // past this point is forwarded, and its damaged bytes
                         // give it a duplicate-cache identity no node in the
                         // mesh has seen. The frame is dropped and RX
-                        // re-prepared; the bytes are left unread — but it is
+                        // re-prepared; the bytes are left unread—but it is
                         // counted, because a climbing CRC tally beside a flat
                         // packet count is the signature of interference and
                         // is otherwise invisible from anywhere above here.
@@ -374,12 +374,12 @@ where
                         ch.tx_done.signal(Err(TxError::CadTimeout));
                         continue;
                     }
-                    // TX is also NOT cancel-safe — run the CAD gate and
+                    // TX is also NOT cancel-safe—run the CAD gate and
                     // prepare_for_tx + tx to completion outside any select.
                     let result =
                         perform_tx(&mut lora, &mdltn, &mut tx_pkt, power_dbm, &tx_req).await;
                     ch.tx_done.signal(result);
-                    continue 'outer; // chip is left in standby — re-prepare RX
+                    continue 'outer; // chip is left in standby—re-prepare RX
                 }
             }
         }
@@ -485,7 +485,7 @@ pub enum RxStrategy {
     /// Only for chips whose driver implements `RxMode::DutyCycle`
     /// (SX126x, LR11xx). An SX127x rejects it with
     /// `DutyCycleUnsupported` at RX setup, which the runner's
-    /// prepare-retry loop turns into a busy spin — SX127x boards must
+    /// prepare-retry loop turns into a busy spin—SX127x boards must
     /// pass [`RxStrategy::Continuous`].
     PreambleDutyCycle,
 }
@@ -495,7 +495,7 @@ const DUTY_CYCLE_UNIT_NS: u64 = 15_625;
 
 /// Time the SX126x spends restarting its TCXO on each duty-cycle wake,
 /// mirroring lora-phy's `BRD_TCXO_WAKEUP_TIME` (5 ms since fork rev
-/// bddfba7a, not exported — keep the two in lockstep). Each RX window
+/// bddfba7a, not exported—keep the two in lockstep). Each RX window
 /// is inflated by this much so the sniff window survives even if the
 /// chip bills the TCXO settling time against `rx_time`; if the chip
 /// instead settles before starting the window timer, the extra is a
@@ -517,7 +517,7 @@ const TCXO_WAKEUP_NS: u64 = 5_000_000;
 /// acquisition length, so the real margin is wider.)
 ///
 /// Falls back to continuous RX when the TX preamble is too short to
-/// leave any sleep (`tx_preamble < 2*rx_preamble + 2` — the LR1110's
+/// leave any sleep (`tx_preamble < 2*rx_preamble + 2`—the LR1110's
 /// 16-symbol acquisition against the 32-symbol MeshCore preamble lands
 /// here) or when a window overflows the chip's 24-bit timers.
 pub fn duty_cycle_rx_mode(
@@ -597,7 +597,7 @@ pub fn coding_rate_from_denom(cr: u8) -> Option<CodingRate> {
 /// [`DeviceControl`] at runtime instead of being fixed at spawn.
 ///
 /// The radio starts idle (in standby) until the first enabled settings
-/// arrive. While disabled, TX requests stay queued — the ULCP session
+/// arrive. While disabled, TX requests stay queued—the ULCP session
 /// rejects transmits with `STATUS_INVALID_STATE` before they reach
 /// this queue, so nothing accumulates in practice.
 ///
@@ -953,7 +953,7 @@ mod tests {
             32,
         ));
         // t_sym = 1.024 ms. RX window: 9 symbols + the 5 ms TCXO
-        // wake = 14.216 ms; sleep: 15 symbols = 15.36 ms — in units of
+        // wake = 14.216 ms; sleep: 15 symbols = 15.36 ms—in units of
         // 15.625 µs.
         assert_eq!(params.rx_time, 909);
         assert_eq!(params.sleep_time, 983);

@@ -5,7 +5,7 @@ import SwiftUI
 ///
 /// Nothing here says a location is true. The affirmative case draws no badge,
 /// because a signature that verifies is evidence about who wrote the claim
-/// and none at all about whether it is accurate — only the unattributable
+/// and none at all about whether it is accurate—only the unattributable
 /// case is marked, and only because it means nobody vouched for the claim.
 struct MapNodeMarker: View {
     let node: MapNode
@@ -52,7 +52,7 @@ struct MapNodeMarker: View {
 /// The operator's own position.
 ///
 /// Deliberately not a blue dot. The fix belongs to the companion radio, and a
-/// blue dot is the system's way of saying "this phone is here" — a claim this
+/// blue dot is the system's way of saying "this phone is here"—a claim this
 /// app is not yet in a position to make.
 struct MapSelfPositionMarker: View {
     var body: some View {

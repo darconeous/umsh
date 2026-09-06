@@ -5,7 +5,7 @@ import Foundation
 ///
 /// `localizedDescription` on a CoreBluetooth error is written for whoever
 /// is reading a crash log. A device that has never been paired answers with
-/// **Encryption is insufficient** — the name of the ATT response, which
+/// **Encryption is insufficient**—the name of the ATT response, which
 /// tells the person holding the radio nothing about what went wrong or what
 /// to do about it.
 ///
@@ -17,11 +17,11 @@ enum BluetoothErrorText {
     /// characteristics are unreadable.
     static let notPaired = """
         This device is not paired with this phone. Put it in pairing mode and \
-        try again — most UMSH devices accept a new pairing only for a short \
+        try again—most UMSH devices accept a new pairing only for a short \
         time after they are powered on.
         """
 
-    /// The phone holds a pairing the device has since forgotten — a factory
+    /// The phone holds a pairing the device has since forgotten—a factory
     /// reset, or a bond table the device cleared. iOS will not re-pair until
     /// its stale record is removed, and only the user can remove it.
     static let pairingLost = """
@@ -35,7 +35,7 @@ enum BluetoothErrorText {
     /// iOS caches a bonded device's GATT database and reuses it across
     /// connections without re-reading it. A device whose firmware changed
     /// the shape of that database therefore receives requests aimed at
-    /// whatever now occupies the old handles — a write lands on some
+    /// whatever now occupies the old handles—a write lands on some
     /// unrelated attribute and is refused for its length, or the handle no
     /// longer exists at all. Nothing the app can do clears that cache.
     static let staleDatabase = """

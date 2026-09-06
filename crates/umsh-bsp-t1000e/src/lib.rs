@@ -3,9 +3,9 @@
 //! Board support for the Seeed Studio SenseCAP T1000-E tracker.
 //!
 //! Composes [`umsh-bsp-nrf52840`](../umsh_bsp_nrf52840/index.html) with the
-//! T1000-E's pinout and on-board peripherals — LR1110 LoRa, AG3335 GNSS,
+//! T1000-E's pinout and on-board peripherals—LR1110 LoRa, AG3335 GNSS,
 //! QMA6100P accelerometer, buzzer, LED, button, battery ADC, switched
-//! power rails — and exposes a `Board::init()` entry point that returns a
+//! power rails—and exposes a `Board::init()` entry point that returns a
 //! struct implementing `umsh::Platform` and the board-capability traits.
 //!
 //! See `docs/hardware/t1000e-hardware.md` for the firmware-derived hardware reference.

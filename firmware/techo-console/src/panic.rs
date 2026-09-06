@@ -3,12 +3,12 @@
 //! Wires together three BSP pieces that are each unit-testable in
 //! isolation but must be glued together in the binary:
 //!
-//! - `umsh_bsp_nrf52840::panic_persist::SyncNoinit` — the `.uninit`
+//! - `umsh_bsp_nrf52840::panic_persist::SyncNoinit`—the `.uninit`
 //!   retained-RAM static that survives warm resets.
-//! - `umsh_bsp_nrf52840::panic_persist::{PanicSlot, SliceWriter}` —
+//! - `umsh_bsp_nrf52840::panic_persist::{PanicSlot, SliceWriter}`—
 //!   framing and formatting over that region.
 //! - `umsh_bsp_nrf52840::gpregret::reset_to_app` (GPREGRET=0, then
-//!   `SCB::sys_reset`) — ensures the bootloader boots the app on the
+//!   `SCB::sys_reset`)—ensures the bootloader boots the app on the
 //!   next start so the panic message is visible over USB-CDC.
 //!
 //! The `#[panic_handler]` attribute is permitted only in binary crates;

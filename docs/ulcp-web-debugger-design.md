@@ -1,11 +1,11 @@
-# Companion Radio Web Debugger — Design
+# Companion Radio Web Debugger—Design
 
 Status: in progress (2026-07-17). The implementation and build instructions
 live in [`tools/ulcp-web-debugger`](../tools/ulcp-web-debugger/README.md).
 Companion documents:
 [ulcp-ble-plan.md](archive/ulcp-ble-plan.md) (implementation
 history) and the protocol chapters under
-[Local Control Protocol](protocol/src/ulcp.md) — in particular
+[Local Control Protocol](protocol/src/ulcp.md)—in particular
 [framing](protocol/src/ulcp-core.md),
 [frame transport](protocol/src/ulcp-transport.md), and
 [ULCP over BLE](protocol/src/ulcp-ble.md).
@@ -14,7 +14,7 @@ history) and the protocol chapters under
 
 Every CRP debugging aid we have today requires a Rust toolchain and a
 terminal: `umshctl` and its `capture` subcommand, the validation phases.
-That is fine for us and useless for anyone else — a tester with a
+That is fine for us and useless for anyone else—a tester with a
 T-1000E and a laptop cannot look at what their radio is doing without
 building the workspace. A static web page that connects over Web
 Bluetooth or Web Serial turns "install a toolchain" into "click a
@@ -35,14 +35,14 @@ properties, and NCP state visible and pokeable.
 * Show a **live, decoded frame trace** in both directions, with raw
   hex on demand and export for offline analysis.
 * Provide an **attach dashboard** (protocol/NCP versions, boot status,
-  capabilities, MTU) and a **property inspector** — get/set/insert/
+  capabilities, MTU) and a **property inspector**—get/set/insert/
   remove any property by name or number, with unsolicited updates
   surfaced as they arrive.
 * Decode what the protocol carries: buffered RX metadata (RSSI, SNR,
   flags), UMSH MAC packet headers in queued frames, filter tables,
   digest lists.
 * Run the **same protocol code** the firmware and native tools run.
-  No JavaScript reimplementation of frame parsing, HDLC, or SAR —
+  No JavaScript reimplementation of frame parsing, HDLC, or SAR—
   those compile to wasm from the existing crates, so the debugger can
   never drift from the spec independently of the implementation.
 * Work with **zero hardware** via a browser-resident simulated device
@@ -82,7 +82,7 @@ A browser cannot and should not implement any of that: Chromium
 triggers the platform pairing ceremony when a GATT operation fails
 with insufficient authentication, the OS renders the passkey dialog
 when the device requests Passkey Entry, and the bond is stored by the OS.
-The debugger therefore contains **no pairing code** — only UX: surface
+The debugger therefore contains **no pairing code**—only UX: surface
 "pairing required" states clearly, explain pairing mode and the
 passkey-lockout behavior, and never treat a security error as a
 protocol error.
@@ -102,7 +102,7 @@ correctly regardless.
 attach semantics, enabling Frame Out notifications silently resets the
 NCP's protocol session and detaches any other host, USB included; the
 serial transports behave equivalently on open. The debugger must say
-so before connecting — it is a debugging tool pointed at radios that
+so before connecting—it is a debugging tool pointed at radios that
 may be autonomously serving another host. After attach it follows the
 full-protocol discipline: fetch, never assume, never reset
 (`attach_existing` semantics, not the minimal-protocol resetting
@@ -206,7 +206,7 @@ the streams API. This transport also covers the RAK4631-style targets
 later without page changes.
 
 **Web Bluetooth.** `requestDevice({filters: [{services:
-[COMPANION_LINK_SERVICE]}]})` — discovery by service UUID per the
+[COMPANION_LINK_SERVICE]}]})`—discovery by service UUID per the
 advertising section, with the device-name string as the human label.
 Connect → get Frame In (write) and Frame Out (notify) characteristics
 → `startNotifications()` (this is the attach). Notifications feed the
@@ -221,12 +221,12 @@ the spec's "attach implies no known state".
 the wasm module and loops frames back through the same engine paths,
 with a fake radio that can inject canned UMSH packets. This is the
 demo mode, the UI-development mode, and the browser-independent test
-harness — the same trick as `umsh/tests/ulcp_full_protocol.rs`,
+harness—the same trick as `umsh/tests/ulcp_full_protocol.rs`,
 compiled for the page.
 
 ## Feature phases
 
-**Phase 1 — connect and see.** Transport picker with feature
+**Phase 1—connect and see.** Transport picker with feature
 detection and the displacement warning; attach handshake; dashboard
 (versions, boot status, capability names, MTU); live trace with
 direction, timestamp, `describe_frame` summary, expandable raw hex;
@@ -234,7 +234,7 @@ trace filter and clear; JSON export of the trace. Simulated NCP behind
 the same picker. This alone replaces "flash a debug build and read
 RTT" for protocol-level questions.
 
-**Phase 2 — inspect and poke.** Property inspector: the full known-ID
+**Phase 2—inspect and poke.** Property inspector: the full known-ID
 table (names from `ids`), typed rendering for the properties the sync
 procedure knows (enables, frequencies, tables, digests), raw hex
 get/set for everything, insert/remove for multi-value properties,
@@ -243,7 +243,7 @@ decoded `BufferedRxMeta` (RSSI/SNR/flags, ACKED badge), MAC header
 summary per frame (type, hints, counter) via `umsh-core`. Raw TX
 (`STR_SEND` hex entry) for prodding a peer under test.
 
-**Phase 3 — state operations and capture parity.** Guarded buttons
+**Phase 3—state operations and capture parity.** Guarded buttons
 for save/restore/clear/reset with the same confirmation posture as
 `umshctl` (`factory-reset`-grade actions spell out what they
 erase); pairing-PIN set/clear (masked entry, never logged); pcapng
@@ -300,18 +300,18 @@ page until there is a concrete need.
 
 ## Open questions
 
-1. **MTU probing** — is adaptive segment sizing worth it, or should
+1. **MTU probing**—is adaptive segment sizing worth it, or should
    the device advertise a preferred segment payload (a future property,
    spec change) so hosts stop guessing? Conservative-fixed is correct
    meanwhile.
-2. **pcapng encapsulation** — settle the exact companion-layer link
+2. **pcapng encapsulation**—settle the exact companion-layer link
    type with `umshctl capture` before phase 3 so the two tools never
    diverge (capture currently writes an Ethernet/IPv4/UDP wrapping or
    raw-LoRa with an explicit linktype).
-3. **Where the simulated device's radio ends** — canned packet injection
+3. **Where the simulated device's radio ends**—canned packet injection
    is cheap; simulating a second peer (for ack-delegation demos) drags
    in MAC-layer construction. Probably worth it later as a spec
    demonstration, not for phase 1.
-4. **Publication timing** — the page is also an implicit protocol
+4. **Publication timing**—the page is also an implicit protocol
    disclosure; publish alongside the spec chapters or keep it in-repo
    until the spec is public-ready.

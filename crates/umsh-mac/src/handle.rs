@@ -124,8 +124,8 @@ impl<
             .await
     }
 
-    /// Persist every frame-counter boundary — TX reservations and every
-    /// peer's RX replay boundary — to durable storage, now.
+    /// Persist every frame-counter boundary—TX reservations and every
+    /// peer's RX replay boundary—to durable storage, now.
     ///
     /// The pump persists on a block cadence, which is the right trade
     /// against flash wear right up until the device is about to reset on
@@ -143,7 +143,7 @@ impl<
     ///
     /// The coordinator borrow is held across a frame's whole time on the
     /// air, so an answer of `true` from this method means every queued
-    /// frame — a pending MAC acknowledgment above all — has finished
+    /// frame—a pending MAC acknowledgment above all—has finished
     /// transmitting, not merely left the queue.
     pub async fn tx_queue_empty(&self) -> bool {
         self.mac.borrow().await.tx_queue().is_empty()
@@ -241,7 +241,7 @@ impl<
     /// by whoever administers the repeater; passing an empty `regions` slice
     /// or `None` clears that gate rather than leaving the previous value in
     /// place. The master `enabled` switch, the flood-contention tuning, and
-    /// the amateur-radio fields are deliberately untouched — those are
+    /// the amateur-radio fields are deliberately untouched—those are
     /// separate concerns with their own accessors.
     ///
     /// Region codes beyond the configured capacity are ignored; callers that
@@ -271,7 +271,7 @@ impl<
     ///
     /// Static-static agreement plus HKDF, so the result is deterministic per
     /// (identity, peer) and identical to what the MAC installs lazily on
-    /// first secure traffic — the peer need not have exchanged anything yet.
+    /// first secure traffic—the peer need not have exchanged anything yet.
     /// This is what a host exports to a companion radio so it can verify and
     /// acknowledge unicast traffic while the host is away; the keys leave
     /// the MAC, so callers own their custody.
@@ -404,7 +404,7 @@ impl<
             // `poll_with_mut` keeps us registered on the cell's wake condition
             // across Pending polls, so we re-poll both when the cell frees up
             // and when another handle mutates coordinator state (e.g.
-            // `cli.send_unicast` enqueues a frame and drops its borrow) —
+            // `cli.send_unicast` enqueues a frame and drops its borrow)—
             // without that, TX queued by concurrent handles would sit until
             // the next radio/timer event. It also deregisters us around our
             // own borrow so our guard release cannot self-wake into a spin,
@@ -431,7 +431,7 @@ impl<
                 .await?;
 
             // Flush any pending TX or RX counter boundaries to durable storage.
-            // Mirrors `Mac::next_event`. Errors are intentionally ignored —
+            // Mirrors `Mac::next_event`. Errors are intentionally ignored—
             // persistence is best-effort and must not block the radio event
             // loop. Borrow is dropped before the next phase.
             {

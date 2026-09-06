@@ -185,7 +185,7 @@ fn region_codes(regions: &[String]) -> Vec<RegionCode> {
 }
 
 /// Render one region as the operator wrote it, with the code the
-/// forwarding filter actually compares — a hashed name is otherwise
+/// forwarding filter actually compares—a hashed name is otherwise
 /// unrecognizable in a packet capture.
 ///
 /// A short code is shown uppercase whatever case it was written in, which

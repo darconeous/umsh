@@ -57,7 +57,7 @@ impl TunnelFrame {
     }
 
     /// `None` for a body that is malformed rather than merely
-    /// unexpected — too short to hold a length, or claiming more data
+    /// unexpected—too short to hold a length, or claiming more data
     /// than it carries.
     pub fn parse(body: &[u8]) -> Option<Self> {
         let (length, rest) = body.split_at_checked(2)?;
@@ -224,7 +224,7 @@ impl TunnelQueue {
 ///
 /// The session is the caller's to name: pass the generation read right
 /// after the `clear` that opened it, so clearing the queue again is what
-/// ends this pump — and a pump that is spawned but not yet polled cannot
+/// ends this pump—and a pump that is spawned but not yet polled cannot
 /// adopt a successor's session in the meantime.
 pub async fn pump_writer<W: AsyncWrite + Unpin>(
     writer: &mut TunnelWriter<W>,
@@ -300,8 +300,8 @@ pub struct TunnelReader<R> {
 pub enum ReadError {
     /// The peer closed the connection, or the stream failed.
     Closed(std::io::Error),
-    /// Nothing at all arrived within the idle timeout — not even a
-    /// keepalive — so the peer's relay has stopped even if its TLS
+    /// Nothing at all arrived within the idle timeout—not even a
+    /// keepalive—so the peer's relay has stopped even if its TLS
     /// session has not.
     Idle,
 }

@@ -32,18 +32,18 @@ final class TranscriptScrollState {
     /// At most one automatic page per gesture, so a single long pull cannot
     /// walk backward through the whole history.
     var pagedThisGesture = false
-    /// The transcript is at rest — no finger down, no momentum, no bounce.
+    /// The transcript is at rest—no finger down, no momentum, no bounce.
     /// Only then does growing the content above the viewport leave the reader
     /// where they were: with a finger down the pan gesture owns the offset
     /// outright, and during deceleration or the rubber-band settle the system
-    /// is animating toward a point in the *old* content — either way the
+    /// is animating toward a point in the *old* content—either way the
     /// prepended rows shove the viewport a page up the history. Pages that
     /// arrive while the transcript is moving wait in `pendingOlderPage`.
     var isSettled = true
     var pendingOlderPage: PendingOlderPage?
 
     /// A page of older rows read while the transcript was moving, with the
-    /// cursor the window began at when it was requested — the proof it still
+    /// cursor the window began at when it was requested—the proof it still
     /// belongs to this window when it is finally applied.
     struct PendingOlderPage {
         let page: TranscriptPage

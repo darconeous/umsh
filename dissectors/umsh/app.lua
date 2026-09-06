@@ -55,7 +55,7 @@ local PKT_TYPE_NAME = {
 local RESERVED_PAYLOAD_TYPES = {[0x04] = true, [0x06] = true}
 
 -- ──────────────────────────────────────────────────────────────────────────
--- Protocol and fields — registered at load time (Wireshark requires all
+-- Protocol and fields—registered at load time (Wireshark requires all
 -- Protos and their fields to be set up before any dissection begins).
 -- ──────────────────────────────────────────────────────────────────────────
 local proto = Proto("umsh.app", "UMSH Application Layer")
@@ -199,7 +199,7 @@ local function uint16_be(s, i) return s:byte(i) * 256 + s:byte(i+1) end
 -- a real Wireshark dissect context.
 -- ──────────────────────────────────────────────────────────────────────────
 local function make_tvb(raw_str, name)
-  -- ByteArray.new(hex_string) — available in all Wireshark Lua versions
+  -- ByteArray.new(hex_string)—available in all Wireshark Lua versions
   local ba = ByteArray.new(raw_str:gsub(".", function(c)
     return string.format("%02x", c:byte())
   end))
@@ -371,7 +371,7 @@ local function dissect_node_identity(payload, subtree, tvb, ctx, pinfo)
   -- Not checked here: "the response MUST NOT carry a FHOPS field". That
   -- rule holds for a response to a request confined to its requester's
   -- neighborhood, and a response frame does not record which kind of
-  -- request drew it — the echoed nonce marks it as a response but says
+  -- request drew it—the echoed nonce marks it as a response but says
   -- nothing about how the request was addressed or filtered.
 end
 
@@ -508,7 +508,7 @@ local function dissect_mac_command(payload, subtree, tvb, ctx, pinfo)
   -- Identity Request is the only one that does; a receiver drops the rest.
   if ctx and ctx.flag and (ctx.pkt_type == 0 or ctx.pkt_type == 4) and cmd ~= 1 then
     ctx.flag(subtree, tvb(0, 1), string.format(
-      "%s must not be carried in a %s — only the Identity Request defines rules for that",
+      "%s must not be carried in a %s—only the Identity Request defines rules for that",
       MAC_COMMANDS[cmd] or string.format("MAC command %d", cmd),
       PKT_TYPE_NAME[ctx.pkt_type] or "?"))
   end
@@ -580,8 +580,8 @@ local function dissect_mac_command(payload, subtree, tvb, ctx, pinfo)
       end
       -- The hop limit is confined only for a request that selects by role
       -- or capability, since every node it reaches may answer. One naming
-      -- a node by hint draws a single reply however far it travels — a few
-      -- at most, where the hint is partial — so its hop count is its own
+      -- a node by hint draws a single reply however far it travels—a few
+      -- at most, where the hint is partial—so its hop count is its own
       -- business.
       if not saw_hint_filter and ctx.fhops ~= nil and ctx.fhops ~= 0 then
         ctx.flag(subtree, tvb(0, 1), string.format(

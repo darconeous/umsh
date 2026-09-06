@@ -6,7 +6,7 @@ import UMSHMobileCore
 // Each goal's sheet is the same form rendered from a different section list,
 // so a section has to stand on its own: each takes the bindings and closures
 // it needs and nothing else. None of them take the flow
-// controller — a section that could reach the session could also reach the
+// controller—a section that could reach the session could also reach the
 // device, and then "which screens can write to this device" stops being
 // answerable by reading the call site.
 
@@ -40,7 +40,7 @@ struct LinkNoticesSection: View {
     }
 }
 
-/// What this goal will not manage on this device — stated plainly rather than
+/// What this goal will not manage on this device—stated plainly rather than
 /// left as sections that are quietly missing.
 ///
 /// Not a warning: none of it stops the device being set up, and dressing a
@@ -85,7 +85,7 @@ struct ForeignRadioSection: View {
 ///
 /// Labeled in the row rather than only by a section header: a bare text field
 /// showing a value says nothing about what the value is, and a header reading
-/// "Device" said even less. `Required` is not decoration — a device that
+/// "Device" said even less. `Required` is not decoration—a device that
 /// accepts a name will not accept an empty one, and an empty field is what
 /// keeps Apply disabled.
 struct DeviceNameSection: View {
@@ -323,7 +323,7 @@ struct DiscoverabilitySection: View {
 
 /// The receiver and what is done with a fix.
 ///
-/// The switch and the three policy settings are written as a set —
+/// The switch and the three policy settings are written as a set—
 /// Rust puts the switch last, so a receiver that starts looking does
 /// it under the disclosure and trust policy on this form rather than
 /// the one the device happened to be holding.
@@ -357,7 +357,7 @@ struct PositioningSection: View {
             ? "The receiver is usually the largest continuous load on a battery-powered node."
             : "The receiver is powered down to the lowest state this board can reach."
         footer += identUpdate
-            ? " Nodes that can read this device's identity are told a \(precisionLabel(identPrecision)) area it is inside — never a more precise position than that."
+            ? " Nodes that can read this device's identity are told a \(precisionLabel(identPrecision)) area it is inside—never a more precise position than that."
             : " The device does not put its location in the identity it advertises."
         footer += timeTrust
             ? " Fixes set the device's clock."

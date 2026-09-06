@@ -51,7 +51,7 @@ struct DeviceManagementBackend {
     /// flow only because it is destructive and confirmed on its own.
     var clearBluetoothBonds: (String) async throws -> Void
     /// This phone's own node key, so the administrator list can say which
-    /// entry is this phone — and refuse to remove it.
+    /// entry is this phone—and refuse to remove it.
     ///
     /// Asked of the radio rather than read off the local identity: what the
     /// managed device sees requests arrive from is the key the mesh session
@@ -85,14 +85,14 @@ extension DeviceManagementBackend {
     ///
     /// Only where the device is in hand. A wipe takes the device's identity
     /// with it, so the node the command was addressed to stops existing
-    /// mid-exchange — there is no confirmation to wait for and no way back
+    /// mid-exchange—there is no confirmation to wait for and no way back
     /// if it was the wrong node. Restarting is offered everywhere; this is
     /// not.
     var offersFactoryReset: Bool { link != .mesh }
 
     /// Whether where this phone is stands for where the device is.
     ///
-    /// True on a local link — a bench session or the companion radio — where
+    /// True on a local link—a bench session or the companion radio—where
     /// the two are within a few meters of each other, and where the phone's
     /// own fix is the freshest thing either of them knows. Across the mesh
     /// the device is by definition somewhere the phone is not, so its
@@ -118,7 +118,7 @@ extension UlcpDevicePropertiesRecord {
 /// goes on the air: a screen asks for its own handful and nothing else.
 ///
 /// The octets are the truth here and the decoded record is derived from
-/// them, so a write's echoes fold in as a dictionary merge — no field of
+/// them, so a write's echoes fold in as a dictionary merge—no field of
 /// the record needs its own rule for what a partial update means.
 struct RemoteCategoryReading {
     /// What each property last came back as, verbatim.
@@ -141,7 +141,7 @@ struct RemoteCategoryReading {
     ///
     /// The three outcomes a screen has to tell apart: answered, refused,
     /// and never asked. Absence in ``properties`` covers the last two
-    /// together, which is not enough — a refusal is the device saying it
+    /// together, which is not enough—a refusal is the device saying it
     /// does not have the property, and that is the signal for leaving its
     /// controls out rather than showing them empty.
     func answered(_ property: UInt32) -> Bool {
@@ -163,7 +163,7 @@ struct RemoteCategoryReading {
 /// One device managed across the mesh: what it is, what it holds, and the
 /// one operation at a time this phone is allowed to run against it.
 ///
-/// Deliberately not a session — there is nothing to hold open. An operation
+/// Deliberately not a session—there is nothing to hold open. An operation
 /// is a handful of frames that either come back or do not, and a failure is
 /// reported rather than recovered from. What makes this worth an object is
 /// the cache: the card and the last-known values are what let opening a
@@ -186,7 +186,7 @@ final class ManageDeviceModel {
     private(set) var propertiesRemaining: UInt32?
     /// What went wrong, in a sentence an operator can act on.
     var problem: String?
-    /// Values the device rejected on the last apply, by property — each a
+    /// Values the device rejected on the last apply, by property—each a
     /// sentence for the row that offered the value. Cleared by the next
     /// apply or refresh of that category.
     private(set) var writeRefusals: [UlcpManageCategory: [UInt32: String]] = [:]
@@ -212,7 +212,7 @@ final class ManageDeviceModel {
 
     /// Whether this device manages its own Bluetooth bonds on command.
     ///
-    /// Not a capability — Bluetooth has only one, and the rest is
+    /// Not a capability—Bluetooth has only one, and the rest is
     /// discovered by asking. The device answering for its bond count is
     /// the claim; a refusal, or a screen that has not been read yet, is
     /// not, so the controls stay out until the device has said otherwise.
@@ -226,11 +226,11 @@ final class ManageDeviceModel {
     /// companion or bench link and leaves a mesh one untouched.
     var link: DeviceManagementLink { management.link }
 
-    /// Whether a factory reset is offered here at all — a question about
+    /// Whether a factory reset is offered here at all—a question about
     /// how the device is reached, not about what it can do.
     var offersFactoryReset: Bool { management.offersFactoryReset }
 
-    /// Whether this phone's own position can stand in for the device's — a
+    /// Whether this phone's own position can stand in for the device's—a
     /// question about how the device is reached, not about what it can do.
     var phoneStandsForDevice: Bool { management.phoneStandsForDevice }
 
@@ -239,8 +239,8 @@ final class ManageDeviceModel {
 
     /// Ask the radio for this phone's key, once.
     ///
-    /// Costs nothing on the air — it is the attached radio answering about
-    /// itself — but it is a round trip over the link, so it is not repeated
+    /// Costs nothing on the air—it is the attached radio answering about
+    /// itself—but it is a round trip over the link, so it is not repeated
     /// on every screen that opens.
     private func learnPhoneNodeKey() async {
         guard phoneNodeKey == nil else { return }
@@ -254,7 +254,7 @@ final class ManageDeviceModel {
     private var cardIsFresh = false
 
     /// Fill the card in from the cache, and ask the device only if this
-    /// phone has never asked — or if the device is on a local link, where
+    /// phone has never asked—or if the device is on a local link, where
     /// asking costs nothing anyone else can hear.
     ///
     /// The whole point of the design: over the mesh, the second and every
@@ -356,7 +356,7 @@ final class ManageDeviceModel {
         return properties
     }
 
-    /// Fill a category in from the cache, and — on a local link — follow
+    /// Fill a category in from the cache, and—on a local link—follow
     /// with a fresh read when nothing has come off the air this session.
     ///
     /// Every screen opens from the cache first, read-only ones included.
@@ -364,7 +364,7 @@ final class ManageDeviceModel {
     /// reading asks for one, and one who is walking the screens to see
     /// what is there does not spend a device's airtime doing it. A local
     /// link answers in the time the screen takes to settle, so there the
-    /// stale-or-empty case refreshes itself — but only that case: a
+    /// stale-or-empty case refreshes itself—but only that case: a
     /// screen already refreshed this session is not re-asked on every
     /// visit, and nothing ever reads a category no screen is showing.
     func loadCategory(_ category: UlcpManageCategory) async {
@@ -411,12 +411,12 @@ final class ManageDeviceModel {
     /// Write the fields the operator changed, and normally save.
     ///
     /// What the device echoes is what it is now holding, which is not always
-    /// what was asked for — a transmit power above what the hardware can
+    /// what was asked for—a transmit power above what the hardware can
     /// reach comes back clamped. Those echoes are the readback: they answer
     /// the question a second full read would have asked, and they cost
     /// nothing extra.
     ///
-    /// Returns whether the device answered — false when nothing reached it,
+    /// Returns whether the device answered—false when nothing reached it,
     /// which is when the operator's unapplied fields are still the only
     /// record of what they asked for and must not be thrown away.
     @discardableResult
@@ -476,7 +476,7 @@ final class ManageDeviceModel {
         case 11: // NOMEM
             "it is too large for the device to hold"
         case 10, 12: // IN_PROGRESS, BUSY
-            "the device was busy — try again"
+            "the device was busy—try again"
         default:
             "the device answered \(ulcpStatusName(status: status))"
         }
@@ -509,7 +509,7 @@ final class ManageDeviceModel {
                 try await edit(address, key, true)
             }
             // Live the moment the device answers, and saved only when it is
-            // told to — unlike the Bluetooth path, where the session chains
+            // told to—unlike the Bluetooth path, where the session chains
             // a save behind each mutation.
             try await management.save(address)
             let table = desired.sorted { $0.lexicographicallyPrecedes($1) }
@@ -526,7 +526,7 @@ final class ManageDeviceModel {
     /// Fold values the device announces on its own into whatever is on
     /// screen, for as long as the caller keeps this running.
     ///
-    /// Local links only — the backend says whether there is anything to
+    /// Local links only—the backend says whether there is anything to
     /// hear. A push merges like a write's echo: the affected readings
     /// redecode around it, clean fields on an editor follow it, and a
     /// field the operator is editing keeps the edit. It deliberately does
@@ -590,7 +590,7 @@ final class ManageDeviceModel {
     /// Forget every host paired with the device, along with its pairing PIN.
     ///
     /// The bond count on screen is stale the moment this returns, and on a
-    /// local link the value the device pushes back cannot arrive — clearing
+    /// local link the value the device pushes back cannot arrive—clearing
     /// bonds drops the very link it would arrive on. Refresh the reading
     /// from what the write means rather than from what the device says
     /// next, so the screen is not left reporting hosts that no longer exist.
@@ -603,7 +603,7 @@ final class ManageDeviceModel {
             UlcpPropertyPushRecord(propertyId: ulcpProperties.bleBondCount, value: Data([0]))
         )
         // Clearing opens a pairing window, and the window is a property
-        // this screen shows as a toggle — reflect what the write means.
+        // this screen shows as a toggle—reflect what the write means.
         await absorb(
             UlcpPropertyPushRecord(propertyId: ulcpProperties.blePairing, value: Data([1]))
         )
@@ -611,8 +611,8 @@ final class ManageDeviceModel {
 
     /// Return the device to a blank factory state.
     ///
-    /// It comes back as a different node — a factory reset takes the device
-    /// identity with it — so everything cached under this address describes
+    /// It comes back as a different node—a factory reset takes the device
+    /// identity with it—so everything cached under this address describes
     /// something that no longer exists. Drop it rather than let the next
     /// open present a dead device's settings as current.
     func factoryReset() async {
@@ -678,7 +678,7 @@ final class ManageDeviceModel {
         switch error as? RemoteManagementError {
         case .noAnswer:
             """
-            No response — this phone may not be an administrator of that \
+            No response—this phone may not be an administrator of that \
             device, or the device may be out of reach.
             """
         case let .refused(status):

@@ -3,19 +3,19 @@
 //!
 //! Every output the part has, in one table. A channel this does not
 //! name is a channel nobody decided about, left wherever the PMIC's
-//! reset default put it — so the ones this board does not use are
+//! reset default put it—so the ones this board does not use are
 //! switched off explicitly rather than merely not switched on:
 //!
 //! | Output | Load | State after `bring_up` |
 //! |---|---|---|
-//! | DCDC1 | ESP32-S3 core | untouched — unnameable in the driver |
+//! | DCDC1 | ESP32-S3 core | untouched—unnameable in the driver |
 //! | ALDO3 | SX1262 | on, 3.3 V |
 //! | ALDO1 | OLED, BME280, QMC6309 | on, 3.3 V |
-//! | ALDO4 | GNSS | configured 3.3 V, **off** — [`crate::gnss::Gnss`] owns it |
-//! | BLDO1 | SD card | off — out of scope |
+//! | ALDO4 | GNSS | configured 3.3 V, **off**—[`crate::gnss::Gnss`] owns it |
+//! | BLDO1 | SD card | off—out of scope |
 //! | ALDO2, BLDO2 | nothing on this carrier | **off** |
 //! | DCDC2–5, DLDO1/2 | nothing on this carrier | **off** |
-//! | CPUSLDO | unattributed | untouched — see `UnusedOutput` |
+//! | CPUSLDO | unattributed | untouched—see `UnusedOutput` |
 //!
 //! The exported-rail entries are the T-Beam S3 Core module's outputs to
 //! its carrier, and this carrier takes none of them (§5.2). Switching
@@ -25,7 +25,7 @@
 //! On a cold boot the sensor and SD rails are first held down for
 //! ~250 ms, reproducing the LILYGO/MeshCore sequence that lets a device
 //! caught mid-transaction by an unclean power-down release its bus
-//! before anything probes it (§5.3). Warm restarts skip it — the rails
+//! before anything probes it (§5.3). Warm restarts skip it—the rails
 //! were under firmware control the whole time.
 
 use embedded_hal_async::delay::DelayNs;
@@ -64,7 +64,7 @@ pub async fn bring_up<I: I2c, D: DelayNs>(
     delay: &mut D,
     cold_boot: bool,
 ) -> Result<(), Error<I::Error>> {
-    // Refuse to configure rails at a chip that is not an AXP2101 —
+    // Refuse to configure rails at a chip that is not an AXP2101—
     // writing rail registers blind can drive a supply somewhere wrong.
     pmic.probe().await?;
 
@@ -104,7 +104,7 @@ pub async fn bring_up<I: I2c, D: DelayNs>(
     // The TS pin is populated on this board (§6.5), so the charger's
     // thermal protection has something real to act on. Whether the part
     // is an NTC or the fixed resistor often fitted in its place is still
-    // open — `thermistor_raw` is there to answer it.
+    // open—`thermistor_raw` is there to answer it.
     pmic.set_thermistor_measurement(true).await?;
 
     // Events latched while the MCU was down would hold the IRQ line
@@ -112,7 +112,7 @@ pub async fn bring_up<I: I2c, D: DelayNs>(
     pmic.clear_all_irqs().await?;
     pmic.set_irq_enabled(IRQS).await?;
 
-    // The PMIC's own hard power-off on a 4 s POWER hold — the escape
+    // The PMIC's own hard power-off on a 4 s POWER hold—the escape
     // hatch that works even with firmware wedged. MeshCore parity.
     pmic.set_power_off_press(PowerOffPress::S4).await?;
 

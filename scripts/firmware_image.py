@@ -81,7 +81,7 @@ BOARDS = {
         # We pack with the GENERIC 0xADA52840 family, not the
         # board-specific 0x28860045. The 0.6.1 `write_block` accepts
         # either, and the generic one works whichever bootloader config a
-        # given unit shipped with — which matters precisely because Seeed
+        # given unit shipped with—which matters precisely because Seeed
         # ships the Sense config here, so a unit with the plain
         # `XIAO-BOOT` config (family 0x28860044, volume XIAO-BOOT) is also
         # plausible in the wild. Verified accepted by probe.
@@ -93,7 +93,7 @@ BOARDS = {
         # to succeed but the board comes back running the old image, check
         # the family before anything else.
         "base":   0x00027000,        # S140 v7.3.0 reserves 156 KiB (confirmed)
-        "family": 0xADA52840,        # generic nRF52840 — tolerates XIAO-BOOT and XIAO-SENSE
+        "family": 0xADA52840,        # generic nRF52840—tolerates XIAO-BOOT and XIAO-SENSE
         # Retail units mount as XIAO-SENSE; a re-bootloadered unit may
         # mount as XIAO-BOOT instead, so --copy-default is less reliable
         # here than on the other boards. Use --copy-to with the volume you
@@ -136,7 +136,7 @@ def elf_sections(data: bytes):
 
     This is what `objcopy -O binary` operates on: allocatable sections
     that occupy space in the file. Program headers are deliberately not
-    used to select content — the first PT_LOAD on these images covers the
+    used to select content—the first PT_LOAD on these images covers the
     ELF header itself, well below the application base, and emitting it
     would place junk over the SoftDevice. Segments are consulted only to
     translate a section's virtual address into its load address, which is

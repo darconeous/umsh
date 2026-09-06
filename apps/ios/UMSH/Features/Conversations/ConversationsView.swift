@@ -15,7 +15,7 @@ struct ConversationsView: View {
     let radioSnapshot: RadioSnapshot
     /// Whether launch bootstrap is still running, so the list can say it is
     /// still reading rather than claim there is nothing to read. The stored
-    /// conversations arrive well after first paint — identity, then store —
+    /// conversations arrive well after first paint—identity, then store—
     /// and an empty list is otherwise indistinguishable from a loaded one.
     var isLoading = false
     let inspectPeerIdentity: (String) async -> Result<MeshNodeURIPreview, MeshEngineError>
@@ -72,7 +72,7 @@ struct ConversationsView: View {
                         ConversationRow(item: item)
                     }
                     .swipeActions(edge: .trailing) {
-                        // Not role: .destructive — that role animates the row
+                        // Not role: .destructive—that role animates the row
                         // away on the tap, and this button only asks. The row
                         // must stand still behind the confirmation dialog.
                         Button("Delete", systemImage: "trash") {
@@ -97,7 +97,7 @@ struct ConversationsView: View {
         .navigationTitle("Conversations")
         // Hidden until the list is dragged down, which is where a reader
         // looking for someone reaches for it. Conversations, peers, and joined
-        // channels — not messages: finding a message is a separate feature,
+        // channels—not messages: finding a message is a separate feature,
         // and this one is about reaching somewhere, whether or not a
         // conversation there exists yet.
         .searchable(text: $searchText, prompt: "Name, alias, address, or hint")
@@ -528,8 +528,8 @@ extension EnvironmentValues {
     @Entry var visibleConversationReporter = VisibleConversationReporter()
     /// Reads a bounded slice of whichever transcript is open. In the
     /// environment rather than passed down, because a transcript is reached
-    /// from several places — the conversations list, a peer's profile, a
-    /// notification tap — and none of the views in between have any use for it.
+    /// from several places—the conversations list, a peer's profile, a
+    /// notification tap—and none of the views in between have any use for it.
     @Entry var transcriptLoader = TranscriptLoader.unavailable
     /// Opens the radio sheet from wherever a view found the radio to be what
     /// was missing. In the environment for the same reason as the loader: the

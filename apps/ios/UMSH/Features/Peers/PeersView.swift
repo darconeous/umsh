@@ -32,7 +32,7 @@ struct PeersView: View {
     var body: some View {
         // One `List` at the root, with every state inside it, so the search
         // field belongs to a scroll view and hides until the list is dragged
-        // down — the same reach the Conversations tab answers. Wrapped in
+        // down—the same reach the Conversations tab answers. Wrapped in
         // anything else it is pinned under the title with nowhere to go.
         List {
             if isSearching {
@@ -178,7 +178,7 @@ struct PeersView: View {
     }
 
     /// Search spans every recorded node, including the transient tier the
-    /// main list hides — that is the deliberate way discovered-but-unsaved
+    /// main list hides—that is the deliberate way discovered-but-unsaved
     /// nodes stay reachable.
     @ViewBuilder
     private var searchResults: some View {
@@ -255,7 +255,7 @@ struct PeersView: View {
         }
         .swipeActions(edge: .trailing, allowsFullSwipe: false) {
             if isRemovable(peer) {
-                // Deliberately not role: .destructive — that role makes the
+                // Deliberately not role: .destructive—that role makes the
                 // list animate the row away on the tap, and this button only
                 // asks. The row must stand still behind the confirmation
                 // dialog; the role belongs to the dialog's delete buttons.

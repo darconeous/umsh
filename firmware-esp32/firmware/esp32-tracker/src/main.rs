@@ -2,10 +2,10 @@
 //! LILYGO T-Beam Supreme), selected by `board-*` features.
 //!
 //! The protocol brain is the shared board-agnostic driver
-//! (`umsh_ulcp_runtime::driver`) — the same session loop the T-Echo
-//! and T-1000E images run — behind each board's couplings:
+//! (`umsh_ulcp_runtime::driver`)—the same session loop the T-Echo
+//! and T-1000E images run—behind each board's couplings:
 //!
-//! - **Wired transport**: HDLC-framed CRP on the board's serial port —
+//! - **Wired transport**: HDLC-framed CRP on the board's serial port—
 //!   UART0 behind a CP2102 bridge on the Heltecs, the native
 //!   USB-Serial-JTAG peripheral where `wired-usb-serial-jtag` is on.
 //!   Neither has usable connection state, so wired attachment is lazy
@@ -26,7 +26,7 @@
 //! On a `pmic-axp2101` board there is also **power**: everything
 //! interesting sits behind an AXP2101 rail, battery telemetry is the
 //! PMIC's own (with a real charge state), and power-off is a PMIC
-//! operation rather than deep sleep — the POWER key brings the board
+//! operation rather than deep sleep—the POWER key brings the board
 //! back with no firmware involved. `gnss` adds the shared `umsh_gnss`
 //! pump on UART1, and `rtc-pcf8563` a hardware wall clock read at boot
 //! and written back when a trusted source steps the time.
@@ -127,7 +127,7 @@ use board::radio as board_radio;
 // Boards whose `Vext` also gates the battery divider share one rail
 // between the display task and the sampler, so their handle is `Copy`
 // rather than an owned pin; the API surface is otherwise identical.
-// PMIC boards have no `Vext` at all — the panel's rail belongs to the
+// PMIC boards have no `Vext` at all—the panel's rail belongs to the
 // AXP2101 and drops in the shutdown path instead.
 #[cfg(not(any(feature = "vext-gates-battery", feature = "pmic-axp2101")))]
 use board::vext::Vext;
@@ -199,7 +199,7 @@ const MAX_TX_POWER_DBM: i8 = 22;
 
 /// SX1276 PA limits. The antenna is on the PA_BOOST port and the BSP
 /// configures `tx_boost: true`, which is the [2, 20] dBm path in the
-/// driver — the RFO path's [-4, 14] range is unreachable on this board.
+/// driver—the RFO path's [-4, 14] range is unreachable on this board.
 /// Above 17 dBm the driver switches PA_DAC to its 20 dBm mode and raises
 /// OCP to 240 mA, so the top of this range is duty-limited in practice.
 #[cfg(feature = "radio-sx127x")]
@@ -213,7 +213,7 @@ const BLE_L2CAP_CHANNELS_MAX: usize = 2;
 const HCI_SLOTS: usize = 4;
 
 /// The one BLE controller this image builds, named so the GATT host's
-/// resource block can be a `static` — a generic function cannot own one.
+/// resource block can be a `static`—a generic function cannot own one.
 type BleController = ExternalController<BleConnector<'static>, HCI_SLOTS>;
 
 /// The GATT host's resource block. Tens of kilobytes; see `ble_app`.
@@ -245,9 +245,9 @@ const DEV_VERSION: &str = concat!("umsh/", env!("GIT_DESCRIBE"));
 /// (`heltec-v2` / `heltec-v3` / `tbeam-supreme`).
 const DEV_MODEL: &str = board::BOARD_NAME;
 
-/// The board default name plus a stable per-die suffix — the low 16
+/// The board default name plus a stable per-die suffix—the low 16
 /// bits of the factory eFuse MAC, the same die-unique value the BLE
-/// identity address is built from — so factory-fresh radios are
+/// identity address is built from—so factory-fresh radios are
 /// tellable apart in scan lists and on multi-board benches.
 fn default_device_name() -> &'static str {
     static NAME: OnceLock<heapless09::String<24>> = OnceLock::new();
@@ -315,7 +315,7 @@ fn session_config() -> SessionConfig {
         min_tx_power_dbm: MIN_TX_POWER_DBM,
         max_tx_power_dbm: MAX_TX_POWER_DBM,
         // Chip tunable range. Wider than any one module's matching
-        // network — the operator is responsible for staying legal and
+        // network—the operator is responsible for staying legal and
         // for what the antenna path can actually radiate.
         #[cfg(feature = "radio-sx126x")]
         freq_khz_min: 150_000,
@@ -348,7 +348,7 @@ fn session_config() -> SessionConfig {
             charge_state: false,
         }),
         // The AXP2101 measures its own battery terminal, runs a fuel
-        // gauge, and knows which way current is flowing — the first
+        // gauge, and knows which way current is flowing—the first
         // ESP32 board that can advertise all three fields.
         #[cfg(feature = "pmic-axp2101")]
         battery: Some(BatteryFields {
@@ -358,7 +358,7 @@ fn session_config() -> SessionConfig {
         }),
         // No locate alert. The boards' only conspicuous output is the
         // OLED, and the permanent wired attach means a second host can
-        // be present while the alert runs — neither is worth the wiring.
+        // be present while the alert runs—neither is worth the wiring.
         alert: None,
         // No clock. A permanently-wired bench board reads the time from
         // the host it is wired to.
@@ -370,7 +370,7 @@ fn session_config() -> SessionConfig {
         time: Some(TimeConfig),
         #[cfg(not(feature = "gnss"))]
         gnss: None,
-        // The receiver stays off until asked — a battery board, not a
+        // The receiver stays off until asked—a battery board, not a
         // fixed outdoor node.
         #[cfg(feature = "gnss")]
         gnss: Some(GnssConfig::DEFAULT),
@@ -439,7 +439,7 @@ static DEVICE_CTL: DeviceControl<CriticalSectionRawMutex> = DeviceControl::new()
 /// The one traffic ledger for the whole device.
 ///
 /// The mux is where every real transmit and every off-air reception passes
-/// exactly once, so that is where the air counters are kept — counting at
+/// exactly once, so that is where the air counters are kept—counting at
 /// the MAC would miss everything the session sends, which on a
 /// phone-attached tracker is most of it. The runner adds the CRC failures
 /// it alone can see, and the node's pump mirrors the four figures only the
@@ -583,7 +583,7 @@ static PAIRING_MODE_ACK: Signal<CriticalSectionRawMutex, bool> = Signal::new();
 /// `PROP_BLE_BOND_COUNT` follows enrollment without polling.
 static BLE_BOND_COUNT_CHANGED: Signal<CriticalSectionRawMutex, u8> = Signal::new();
 /// The pairing window moved, carrying the new state to `publish_event`
-/// so `PROP_BLE_PAIRING` follows the window without polling — including
+/// so `PROP_BLE_PAIRING` follows the window without polling—including
 /// the transitions nobody commanded (a timeout, the boot-time window)
 /// and the boot seeding of the session's mirror.
 static BLE_PAIRING_CHANGED: Signal<CriticalSectionRawMutex, bool> = Signal::new();
@@ -602,7 +602,7 @@ static BLE_ENABLED: AtomicBool = AtomicBool::new(true);
 static ADV_POLICY_CHANGED: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 /// Wakes the BLE supervisor on a `PROP_BLE_ENABLED` edge. Separate from
 /// [`ADV_POLICY_CHANGED`] because embassy's `Signal` holds a single
-/// waker — the advertiser loop and the supervisor cannot share one.
+/// waker—the advertiser loop and the supervisor cannot share one.
 static BLE_LIFECYCLE: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 
 /// Heltec V2 only: arbitration for ADC2, which the classic ESP32 shares
@@ -626,7 +626,7 @@ static VBUS_PRESENT: AtomicBool = AtomicBool::new(true);
 static VBUS_EDGE: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 
 /// OLED redraw trigger for content that changed without the user asking
-/// — a battery sample, a bond count. Deliberately *not* a wake event:
+///—a battery sample, a bond count. Deliberately *not* a wake event:
 /// the battery is sampled on a timer, so a redraw that woke the panel
 /// would keep it lit forever.
 static UI_REFRESH: Signal<CriticalSectionRawMutex, ()> = Signal::new();
@@ -783,7 +783,7 @@ static PMU_BUS: StaticCell<PmuBus> = StaticCell::new();
 static PMIC_CELL: StaticCell<SharedPmic> = StaticCell::new();
 
 /// The PCF8563. Read once at boot, then handed to the session's
-/// [`BoardDeviceEnv`] — the only thing that ever writes it back.
+/// [`BoardDeviceEnv`]—the only thing that ever writes it back.
 ///
 /// Deliberately not a global: esp-hal's `Async` peripherals are `!Send`
 /// by design (they belong to the executor that drives them), so the
@@ -815,7 +815,7 @@ async fn rtc_writeback(rtc: &'static RtcMutex, epoch: u32) {
 ///
 /// The estimator is deliberately not used here. It releases its
 /// never-rise-while-discharging clamp only on a `Charging` or `Charged`
-/// classification, and this board cannot produce either — the LGS4056H's
+/// classification, and this board cannot produce either—the LGS4056H's
 /// status output drives the orange LED and reaches no GPIO. Fed
 /// perpetually-discharging samples the clamp would never lift, so a fully
 /// recharged pack would keep reporting the level it bottomed out at until
@@ -828,7 +828,7 @@ const BATTERY_LEVEL_STEP: u8 = 5;
 /// Matched to the nRF estimator's five-point step so every board
 /// announces level movement at the same granularity. The level itself
 /// prefers the PMIC's fuel gauge and falls back to the OCV table while
-/// the gauge is unlearned — which of the two should be primary
+/// the gauge is unlearned—which of the two should be primary
 /// long-term is a hardware-validation question.
 #[cfg(feature = "pmic-axp2101")]
 const BATTERY_LEVEL_STEP: u8 = 5;
@@ -858,7 +858,7 @@ async fn battery_task(mut sampler: BatterySampler) {
         // V2: ADC2 belongs to the radio while the BLE controller is up
         // (`Adc::new` would panic), so sampling waits for a BLE-off
         // window and the last reading is served in the meantime. Until
-        // a first reading exists there is nothing to serve — skip, and
+        // a first reading exists there is nothing to serve—skip, and
         // let an on-demand request time out rather than answer with a
         // made-up voltage.
         #[cfg(feature = "board-heltec-v2")]
@@ -994,7 +994,7 @@ async fn battery_task(pmic: &'static SharedPmic) {
             BATTERY_REPLY.signal(reading);
         }
         // Announce a level that moved far enough to be worth a frame, and
-        // every charge-class edge — plugging in is always news. On-demand
+        // every charge-class edge—plugging in is always news. On-demand
         // reads pass through here too, so a read that reveals a move
         // rebaselines rather than leaving a duplicate behind it.
         let level = battery_level(&reading);
@@ -1054,7 +1054,7 @@ fn battery_snapshot(reading: &board_battery::Reading) -> umsh_ulcp::battery::Bat
 
 /// Serve the AXP2101's interrupt line (active low).
 ///
-/// Power-key presses wake the panel — the POWER key is a PMIC input,
+/// Power-key presses wake the panel—the POWER key is a PMIC input,
 /// not a GPIO, so this is the only path a press reaches firmware by.
 /// Supply and charger edges poke the battery task, whose announce
 /// policy decides whether the change is worth a frame.
@@ -1093,7 +1093,7 @@ async fn pmu_irq_task(pmic: &'static SharedPmic, mut irq: Input<'static>) {
         }
         // The line is level-triggered: the AXP2101 holds it low until
         // every latched status bit is cleared, which is why this waits on
-        // the level rather than an edge — a source latched between the
+        // the level rather than an edge—a source latched between the
         // read and the write-back would otherwise be lost for good.
         //
         // The cost of that choice is that `wait_for_low` returns
@@ -1101,8 +1101,8 @@ async fn pmu_irq_task(pmic: &'static SharedPmic, mut irq: Input<'static>) {
         // has to be floored here or a source that re-latches as fast as
         // it is cleared becomes an unbounded I2C flood on the bus the
         // battery reads and the RTC share. Empty means the line is low
-        // with nothing latched at all — noise, or a source this build
-        // does not enable — and is worth backing off from much harder.
+        // with nothing latched at all—noise, or a source this build
+        // does not enable—and is worth backing off from much harder.
         Timer::after_millis(if taken.is_empty() { 50 } else { 2 }).await;
     }
 }
@@ -1163,8 +1163,8 @@ fn set_bond_count(count: u8) {
 }
 
 /// Move the pairing window, waking anything that reports it. What is
-/// published is `pairing_window_open()` — the window as the property
-/// defines it, gated on `PROP_BLE_ENABLED` — so the session's mirror
+/// published is `pairing_window_open()`—the window as the property
+/// defines it, gated on `PROP_BLE_ENABLED`—so the session's mirror
 /// and the panel read the same fact.
 fn set_pairing_mode(open: bool) {
     let was = pairing_window_open();
@@ -1178,7 +1178,7 @@ fn set_pairing_mode(open: bool) {
 
 /// Record how far the BLE link has got, waking anything that reports it.
 /// Every write to the state goes through here for the same reason the
-/// bond count does — the panel and `PROP_BLE_LINK` are two readings of
+/// bond count does—the panel and `PROP_BLE_LINK` are two readings of
 /// one fact and must not disagree.
 ///
 /// The panel wake goes with it: on this family a connection arriving is
@@ -1291,7 +1291,7 @@ fn classify_pairing_failure(error: &trouble_host::Error) -> PairingFailureClass 
 
 /// Persistence, entropy, pairing, and indicator couplings for
 /// `umsh_ulcp_runtime::driver`. The attention/load hooks keep the
-/// driver's no-op defaults — this board has no buzzer or battery-sag
+/// driver's no-op defaults—this board has no buzzer or battery-sag
 /// estimator to feed.
 struct BoardDeviceEnv {
     proto_store: ProtoStore,
@@ -1305,13 +1305,13 @@ struct BoardDeviceEnv {
     #[cfg(feature = "pmic-axp2101")]
     battery: embassy_sync::watch::DynReceiver<'static, board_battery::Reading>,
     /// Positioning changes worth publishing unasked. The runtime's GNSS
-    /// sink owns the policy — a stationary receiver produces a fix a
-    /// second and almost none of them are news — so this only forwards
+    /// sink owns the policy—a stationary receiver produces a fix a
+    /// second and almost none of them are news—so this only forwards
     /// what it decided to raise.
     #[cfg(feature = "gnss")]
     gnss_announce: umsh_ulcp_runtime::gnss::Announcer,
     /// The hardware clock, for writing a stepped time back. `None` when
-    /// the chip did not answer at boot — the board still keeps time,
+    /// the chip did not answer at boot—the board still keeps time,
     /// it just will not survive a power-off.
     #[cfg(feature = "rtc-pcf8563")]
     rtc: Option<&'static RtcMutex>,
@@ -1472,9 +1472,9 @@ impl DeviceEnv for BoardDeviceEnv {
     /// hardware RTC too, so the board wakes up with it.
     ///
     /// The empty write returns the wall clock to not knowing. The RTC
-    /// keeps its time — "the host cleared the clock" is a statement
+    /// keeps its time—"the host cleared the clock" is a statement
     /// about the running device, not an instruction to destroy the
-    /// hardware clock's state — so the next boot restores from it.
+    /// hardware clock's state—so the next boot restores from it.
     #[cfg(feature = "rtc-pcf8563")]
     async fn apply_time(&mut self, epoch: Option<u32>) {
         match epoch {
@@ -1505,8 +1505,8 @@ impl DeviceEnv for BoardDeviceEnv {
     ///
     /// The driver has exactly one, because a hook per property would
     /// need one `&mut self` borrow apiece. The bond count and the link
-    /// state are the two sources that need no board hardware — both come
-    /// off statics — so they ride here on every board, GNSS or not, while
+    /// state are the two sources that need no board hardware—both come
+    /// off statics—so they ride here on every board, GNSS or not, while
     /// [`sensor_event`](Self::sensor_event) keeps the sources that do
     /// vary by board behind their own features.
     async fn publish_event(&mut self) -> driver::PublishEvent {
@@ -1542,7 +1542,7 @@ impl DeviceEnv for BoardDeviceEnv {
     async fn set_ble_pairing(&mut self, open: bool) -> bool {
         if !BLE_ENABLED.load(Ordering::Acquire) {
             // Nothing can pair through a transport that is off, so a
-            // window cannot open — and closing one is trivially done
+            // window cannot open—and closing one is trivially done
             // without the stack's help, which matters on this family:
             // the task that would answer is torn down with the
             // controller, and waiting on it would hang the session.
@@ -1558,7 +1558,7 @@ impl DeviceEnv for BoardDeviceEnv {
 
     async fn factory_reset(&mut self) -> ! {
         // TODO: erase the runtime-discovered `umsh` partition span
-        // (`partition.start..partition.end`) — all journals live there —
+        // (`partition.start..partition.end`)—all journals live there—
         // then esp32 reset. Unlike techo's hardcoded NV region, the span
         // is not currently held by `BoardDeviceEnv`, so this needs the
         // partition bounds threaded in first.
@@ -1570,7 +1570,7 @@ impl DeviceEnv for BoardDeviceEnv {
         // a mesh-commanded reboot, and force the frame counters to
         // flash. Without the flush, the boundary that admitted the
         // reboot command dies with the RAM it lives in, and the
-        // administrator's retries are accepted again after boot — one
+        // administrator's retries are accepted again after boot—one
         // reboot per retry.
         device_node::quiesce_for_reboot().await;
         // A plain restart: every journal in the `umsh` partition stays
@@ -1614,7 +1614,7 @@ impl DeviceEnv for BoardDeviceEnv {
     fn publish_dev_domain(&mut self, snapshot: driver::DevDomainSnapshot) {
         // The zone and the positioning policy ride the device-domain
         // mirror, so a host write, a boot restore, and a `CMD_RST` all
-        // reach the clock and the receiver by the same path — and
+        // reach the clock and the receiver by the same path—and
         // neither needs anything to remember to push it.
         #[cfg(feature = "rtc-pcf8563")]
         umsh_hal::wall_clock::set_tz(snapshot.tz_offset_min);
@@ -1633,7 +1633,7 @@ impl DeviceEnv for BoardDeviceEnv {
         // place that can honestly say they moved. A host write, a boot
         // restore, a `CMD_RST` and a press on the panel all arrive here,
         // which is why none of them has to remember to raise it for
-        // itself. `UI_REFRESH` never lights a dark panel — the press that
+        // itself. `UI_REFRESH` never lights a dark panel—the press that
         // caused this already did.
         UI_REFRESH.signal(());
     }
@@ -1675,8 +1675,8 @@ async fn pairing_timeout<C: Controller, P: PacketPool>(stack: &Stack<'_, C, P>) 
 /// Each of these has a durable half in the bond journal, which is
 /// mounted for the life of the board, and a live half on the BLE stack,
 /// which exists only while `PROP_BLE_ENABLED` is set. So they are served
-/// in two places — by [`pairing_config_task`] while the stack is up, and
-/// by [`serve_pairing_request_offline`] while the supervisor is parked —
+/// in two places—by [`pairing_config_task`] while the stack is up, and
+/// by [`serve_pairing_request_offline`] while the supervisor is parked—
 /// and never by both at once.
 enum PairingRequest {
     /// A `PROP_BLE_PAIRING_PIN` write; `None` clears the PIN.
@@ -1690,8 +1690,8 @@ enum PairingRequest {
 /// Wait for the next pairing request. Cancel-safe: nothing is taken from
 /// the channel or the signals until one is ready, so the supervisor can
 /// race this against a lifecycle edge and lose no request. A request
-/// that arrives while neither server is listening — the moments either
-/// side of a controller bring-up — waits latched until one is.
+/// that arrives while neither server is listening—the moments either
+/// side of a controller bring-up—waits latched until one is.
 async fn next_pairing_request() -> PairingRequest {
     match select3(
         PAIRING_CONFIG_CH.receive(),
@@ -1719,7 +1719,7 @@ async fn persist_pairing_pin(store: &BleStoreMutex, pin: Option<u32>) -> bool {
 }
 
 /// The durable half of forgetting every host: empty the security journal
-/// and reset every mirror that describes it, including pairing mode — a
+/// and reset every mirror that describes it, including pairing mode—a
 /// device that has forgotten every host it trusts and is not accepting
 /// new ones is reachable by nothing.
 ///
@@ -1789,9 +1789,9 @@ async fn pairing_config_task<C: Controller, P: PacketPool>(
                 let locked_out = PAIRING_LOCKED_OUT.load(Ordering::Acquire);
                 // A window that cannot be walked through is not a window:
                 // while locked out nothing is opened and the caller is
-                // told so rather than left waiting out a timeout — and
+                // told so rather than left waiting out a timeout—and
                 // `PROP_BLE_PAIRING` never reports a window nothing can
-                // use. A full store is not that case — enrollment at
+                // use. A full store is not that case—enrollment at
                 // capacity evicts rather than refuses, so it warns the
                 // operator without failing the request.
                 if !locked_out {
@@ -1844,7 +1844,7 @@ async fn pairing_config_task<C: Controller, P: PacketPool>(
 /// complete here exactly as they would with a stack up; only the window
 /// needs a live transport, and there is none.
 ///
-/// The window requests that reach this are the menu's — a
+/// The window requests that reach this are the menu's—a
 /// `PROP_BLE_PAIRING` write never gets here, because
 /// [`BoardDeviceEnv::set_ble_pairing`] answers it without the stack when
 /// Bluetooth is off. Serving them anyway is what keeps a press on a
@@ -1887,7 +1887,7 @@ async fn serve_pairing_request_offline(request: PairingRequest, store: &BleStore
 /// `Peripheral::advertise` mid-configuration (before its internal
 /// `LeSetAdvEnable(true)`) leaves trouble's `advertise_command_state`
 /// in `Cancel` with nothing for the runner's disable arm to disable,
-/// and every later `advertise()` then parks in `request()` forever —
+/// and every later `advertise()` then parks in `request()` forever—
 /// observed as "configuring" with no "active" on the esp-radio
 /// external controller. Cancellation belongs on the returned
 /// [`Advertiser`] (dropping it is the designed clean-stop path).
@@ -2223,7 +2223,7 @@ async fn gatt_connection<C: Controller, P: PacketPool>(
             }
             Either3::First(GattConnectionEvent::RequestConnectionParams(request)) => {
                 // trouble hands ownership of the request; dropping it
-                // unanswered only logs — the central's parameter
+                // unanswered only logs—the central's parameter
                 // renegotiation then stalls until a procedure/supervision
                 // timeout drops the link. Answer it, as techo does.
                 match request.accept(None, stack).await {
@@ -2280,7 +2280,7 @@ async fn ble_peripheral<'values, C: Controller>(
         }
         // The configuration phase runs unraced (see `advertise`); only
         // the connection wait may be cancelled, by dropping the
-        // Advertiser — the runner then disables advertising cleanly and
+        // Advertiser—the runner then disables advertising cleanly and
         // the next loop iteration reconfigures with fresh name/policy.
         // The advertisement and the GAP characteristic must agree, and this
         // is the one place both are about to matter.
@@ -2324,12 +2324,12 @@ async fn ble_peripheral<'values, C: Controller>(
 /// tear it back down.
 ///
 /// Only for the boot paths that cannot proceed without hardware
-/// entropy — an empty seed journal, or a refused seed commit. The
+/// entropy—an empty seed journal, or a refused seed commit. The
 /// connector's drop deinitializes the controller again; the BLE
 /// supervisor brings its own up when advertising is wanted.
 fn harvest_trng_once(bt: &mut esp_hal::peripherals::BT<'static>) -> [u8; 32] {
     let connector = BleConnector::new(bt.reborrow(), Default::default())
-        .unwrap_or_else(|e| panic!("ble init failed ({e:?}) — no entropy source"));
+        .unwrap_or_else(|e| panic!("ble init failed ({e:?})—no entropy source"));
     let mut rng = EspCryptoRng::new().unwrap_or_else(|e| panic!("crypto rng unavailable: {e:?}"));
     let mut out = [0u8; 32];
     rng.fill_bytes(&mut out);
@@ -2342,8 +2342,8 @@ fn harvest_trng_once(bt: &mut esp_hal::peripherals::BT<'static>) -> [u8; 32] {
 ///
 /// While BLE is enabled this owns the whole trouble stack. When the
 /// property goes false, [`run_ble_stack`] unwinds and everything drops
-/// in reverse order — server, peripheral, runner, stack, controller,
-/// connector — and the connector's drop is what deinitializes the btdm
+/// in reverse order—server, peripheral, runner, stack, controller,
+/// connector—and the connector's drop is what deinitializes the btdm
 /// controller, powers down the PHY, and releases esp-radio's wake
 /// lock, the gate on the scheduler's light-sleep path. Re-enabling
 /// builds a fresh stack over the same static `HostResources`, which
@@ -2359,7 +2359,7 @@ async fn ble_app(
     store: BleStore,
 ) -> ! {
     // `HostResources` is tens of kilobytes, and `ble_app` is awaited
-    // directly from `main` — so a stack-built one lands as a temporary in
+    // directly from `main`—so a stack-built one lands as a temporary in
     // main's poll frame, which is already the largest frame in the image.
     // The same rule the `Mac` arena follows applies here: build it
     // through `StaticCell::init_with`, never on the stack.
@@ -2374,7 +2374,7 @@ async fn ble_app(
             debug_log(format_args!("ble supervisor: controller down"));
             // Parked, but not deaf. Bond clearing and PIN writes are
             // journal work, and a host still reaches them over the mesh
-            // admin binding or a wired link — a command that waited here
+            // admin binding or a wired link—a command that waited here
             // for a stack-scoped task to answer would never be answered
             // at all. Serving happens outside the `select` so an enable
             // edge cannot cancel a flash write halfway.
@@ -2412,7 +2412,7 @@ async fn ble_app(
             }
         };
         // Harvest: the RF entropy source is live for as long as the
-        // connector exists. A failed seed refresh is not fatal — the
+        // connector exists. A failed seed refresh is not fatal—the
         // mix still hardens this session, and the boot-time commit
         // already covers replay.
         if let Ok(mut rng) = EspCryptoRng::new() {
@@ -2433,8 +2433,8 @@ async fn ble_app(
     }
 }
 
-/// One enable-cycle of the trouble stack. Returns — unwinding every
-/// borrow of `resources` — when `PROP_BLE_ENABLED` goes false.
+/// One enable-cycle of the trouble stack. Returns—unwinding every
+/// borrow of `resources`—when `PROP_BLE_ENABLED` goes false.
 async fn run_ble_stack(
     controller: BleController,
     resources: &mut BleResources,
@@ -2513,7 +2513,7 @@ async fn run_ble_stack(
     )
     .await;
     // Cancelled futures may leave trouble's advertise command state
-    // wedged (the hazard `advertise()` documents) — harmless here,
+    // wedged (the hazard `advertise()` documents)—harmless here,
     // because the entire stack this state lives in is dropped on
     // return and rebuilt fresh next cycle.
     //
@@ -2534,7 +2534,7 @@ async fn run_ble_stack(
 /// cycle for a time, but a counted bench campaign found an intrinsic
 /// loss mode: the chip's raw preamble detector false-fires in sniff
 /// mode and each false detection camps the demodulator, deaf to real
-/// frames, until the host re-arms RX — a few percent of unretried
+/// frames, until the host re-arms RX—a few percent of unretried
 /// traffic lost, unfixable chip-side without breaking real detection.
 /// See `docs/sx1262-rx-duty-cycle-findings.md` before reintroducing it.
 #[embassy_executor::task]
@@ -2567,7 +2567,7 @@ async fn radio_mux_task() {
 /// The whole of the per-board GNSS code: the UART and the board's power
 /// control, handed to the shared pump. An `#[embassy_executor::task]`
 /// cannot be generic, which is the only reason this shim exists at all
-/// — the loop it delegates to lives in `umsh_gnss::pump` and is common
+///—the loop it delegates to lives in `umsh_gnss::pump` and is common
 /// to both cargo workspaces.
 ///
 /// The receiver stays powered down until `PROP_GNSS_ENABLED` says
@@ -2608,7 +2608,7 @@ async fn gnss_task(
 /// `UartRx` holds a `WakeLock` for its entire lifetime, so a UART that
 /// exists while the receiver is off is a light-sleep veto with nobody
 /// on the other end. The pump's `Power` edges own the driver's
-/// lifecycle instead: opened in `power_on`, dropped in `power_off` —
+/// lifecycle instead: opened in `power_on`, dropped in `power_off`—
 /// which also makes "GNSS enabled forbids sleep" true by construction,
 /// exactly the right policy while NMEA is streaming (a light-sleeping
 /// UART loses RX bytes).
@@ -2631,8 +2631,8 @@ impl GnssUartSlot {
             return;
         }
         let (uart1, rx, tx) = self.boot.take().unwrap_or_else(|| {
-            // SAFETY: the previous open's driver — the singletons' only
-            // consumer — was dropped by `power_off` before this runs,
+            // SAFETY: the previous open's driver—the singletons' only
+            // consumer—was dropped by `power_off` before this runs,
             // and the slot (single-task, behind one `RefCell`) is the
             // sole place they are ever (re)constructed.
             unsafe {
@@ -2725,7 +2725,7 @@ type WiredRx = UsbSerialJtagRx<'static, Async>;
 const WIRED_WRITE_TIMEOUT: Duration = Duration::from_millis(500);
 
 /// Write all of `bytes`, best-effort. Returns false when the host
-/// stopped draining — the caller abandons the rest of the frame, since
+/// stopped draining—the caller abandons the rest of the frame, since
 /// half an HDLC frame is worth less than nothing.
 async fn wired_write_all(tx: &mut WiredTx, bytes: &[u8]) -> bool {
     let mut sent = 0;
@@ -2756,7 +2756,7 @@ async fn output_task(mut tx: WiredTx, panic_report: Option<heapless::String<128>
 async fn output_pump(tx: &mut WiredTx, panic_report: Option<heapless::String<128>>) {
     // Emit the previous boot's panic message as ASCII. HDLC hosts
     // resynchronize past it; humans read it with a serial terminal.
-    // There is no reader handshake to wait for — it lands in the bridge
+    // There is no reader handshake to wait for—it lands in the bridge
     // (or the bounded write drops it with no host attached), which is
     // the correct behavior for a serial console.
     if let Some(report) = panic_report {
@@ -2795,7 +2795,7 @@ async fn output_pump(tx: &mut WiredTx, panic_report: Option<heapless::String<128
 /// Owns the wired RX half and HDLC decoder, forwarding frames into
 /// `INPUT_CH`. Neither peripheral exposes usable connection state, so
 /// wired attachment is lazy and permanent: the first valid HDLC frame
-/// attaches the wired transport, and no wired detach ever fires — a
+/// attaches the wired transport, and no wired detach ever fires—a
 /// serial host is assumed present for good once it has spoken. Detach
 /// semantics exist only for BLE, whose link genuinely drops; a board
 /// nobody serials into therefore stays detached and operates
@@ -2811,7 +2811,7 @@ async fn uart_in_task(mut rx: WiredRx) {
 
 /// The wired RX pump. Never returns; on the USB-Serial-JTAG board the
 /// supervisor cancels it when VBUS drops, and the decoder state dies
-/// with it — a torn frame cannot outlive the cable that carried it.
+/// with it—a torn frame cannot outlive the cable that carried it.
 async fn input_pump(rx: &mut WiredRx) {
     let mut decoder: hdlc::Decoder<FRAME_IN_MAX> = hdlc::Decoder::new();
     let mut local_generation = SESSION_GEN.load(Ordering::Acquire);
@@ -2874,12 +2874,12 @@ async fn input_pump(rx: &mut WiredRx) {
 /// present.
 ///
 /// Both halves of the driver hold a `WakeLock` for their entire
-/// lifetime — the peripheral cannot receive across light sleep — so a
+/// lifetime—the peripheral cannot receive across light sleep—so a
 /// driver that exists on battery is a driver that forbids sleep
 /// forever. Keying its existence off VBUS turns that lock into policy:
 /// on USB power the transport is up and the board never sleeps (there
 /// is nothing to save), on battery the transport does not exist and
-/// its locks with it. Wired ULCP attach loses nothing — with no VBUS
+/// its locks with it. Wired ULCP attach loses nothing—with no VBUS
 /// there is no host on the other end of the pins.
 #[cfg(feature = "wired-usb-serial-jtag")]
 #[embassy_executor::task]
@@ -2895,8 +2895,8 @@ async fn wired_transport_task(
             continue;
         }
         let device = usb.take().unwrap_or_else(|| {
-            // SAFETY: the previous cycle's driver — the singleton's only
-            // consumer — was dropped before this loop came back around,
+            // SAFETY: the previous cycle's driver—the singleton's only
+            // consumer—was dropped before this loop came back around,
             // and this task is the sole place the peripheral is ever
             // (re)constructed.
             unsafe { esp_hal::peripherals::USB_DEVICE::steal() }
@@ -2924,8 +2924,8 @@ async fn wired_transport_task(
 // ─── ULCP session ────────────────────────────────────────────────────────
 
 /// Owns the framing-free protocol session: hosts the shared ULCP driver
-/// (`umsh_ulcp_runtime::driver::run`) — host frames, radio
-/// receptions, transmit completions, and every session effect — over
+/// (`umsh_ulcp_runtime::driver::run`)—host frames, radio
+/// receptions, transmit completions, and every session effect—over
 /// this board's channel wiring and [`BoardDeviceEnv`] couplings.
 #[embassy_executor::task]
 async fn device_task(
@@ -2980,7 +2980,7 @@ async fn device_task(
 
 /// What this board's menu can do.
 ///
-/// Everything the class defines — minus the receiver entries on a board
+/// Everything the class defines—minus the receiver entries on a board
 /// with no GNSS fitted, where both come out and the submenu that led to
 /// them goes with them. Clearing bonds is a menu item rather than a
 /// bare gesture because the confirmation page in front of it is what
@@ -3079,7 +3079,7 @@ fn ui_status<'a>(name: &'a DeviceName, identity: &'a IdentityText) -> screen::St
     screen::StatusModel {
         device_name: core::str::from_utf8(name).unwrap_or(DEFAULT_DEVICE_NAME),
         // Boards with no receiver report nothing on both positioning
-        // switches rather than a guess — and neither is on their menu.
+        // switches rather than a guess—and neither is on their menu.
         settings: screen::SettingsModel {
             bluetooth: Some(BLE_ENABLED.load(Ordering::Acquire)),
             #[cfg(not(feature = "gnss"))]
@@ -3107,8 +3107,8 @@ fn ui_status<'a>(name: &'a DeviceName, identity: &'a IdentityText) -> screen::St
             _ => screen::LinkState::OffWired,
         },
         bonds: BLE_BOND_COUNT.load(Ordering::Acquire),
-        // Bluetooth off outranks everything — a lockout on a transport
-        // that is off is not a state anyone can act on — then lockout
+        // Bluetooth off outranks everything—a lockout on a transport
+        // that is off is not a state anyone can act on—then lockout
         // outranks the window: while locked out there is no window to
         // describe.
         pairing: if !BLE_ENABLED.load(Ordering::Acquire) {
@@ -3128,7 +3128,7 @@ fn ui_status<'a>(name: &'a DeviceName, identity: &'a IdentityText) -> screen::St
         stats: ui_stats(),
         // Boards without `CAP_TIME` never know what time it is and must
         // not indicate one. On the rest, `None` whenever the device does
-        // not know, which the renderer draws as nothing at all — there
+        // not know, which the renderer draws as nothing at all—there
         // is deliberately no fallback, because a placeholder would be an
         // indication of the current time.
         #[cfg(not(feature = "rtc-pcf8563"))]
@@ -3161,7 +3161,7 @@ fn ui_stats() -> screen::StatsModel {
     }
 }
 
-/// Render the current page. Best-effort — a display error just leaves the
+/// Render the current page. Best-effort—a display error just leaves the
 /// panel stale; it never blocks the protocol paths.
 async fn render_frame(display: &mut Display, model: &UiModel, status: &screen::StatusModel<'_>) {
     screen::render_frame(display, &screen::Layout::OLED_128X64, model, status);
@@ -3185,7 +3185,7 @@ async fn render_message(
 /// The display layer's standing rule is that panels redraw on events
 /// and never on a timer, because a timer on a panel nobody is watching
 /// is a battery drain that reports nothing. A clock is the one thing
-/// that has to move on its own, so this is the sanctioned exception —
+/// that has to move on its own, so this is the sanctioned exception—
 /// bounded to exactly the case that needs it: it never completes unless
 /// the panel is already awake *and* the device knows what time it is
 /// (a clockless board never sets the wall clock, so this pends forever
@@ -3201,7 +3201,7 @@ async fn clock_tick(awake: bool) {
     }
 }
 
-/// Owns the OLED, the `Vext` rail that powers it (where one exists —
+/// Owns the OLED, the `Vext` rail that powers it (where one exists—
 /// on a PMIC board the panel's rail drops in the shutdown path
 /// instead), and the display attention policy.
 ///
@@ -3237,7 +3237,7 @@ async fn display_task(mut display: Display, #[cfg(not(feature = "pmic-axp2101"))
         // press behind it. So the transition is carried into this pass
         // rather than dropped. Dropping it leaves the policy believing the
         // panel is lit while the glass stays dark, and every later wake is
-        // then a no-op against an already-active state — the panel cannot
+        // then a no-op against an already-active state—the panel cannot
         // be brought back at all until a lapse puts the two back in
         // agreement.
         let now = Instant::now().as_millis();
@@ -3251,7 +3251,7 @@ async fn display_task(mut display: Display, #[cfg(not(feature = "pmic-axp2101"))
         let lapse = async {
             match attention.next_deadline() {
                 // A hold pins the panel awake, so there is no deadline to
-                // wait for — but a wake it just produced still has to be
+                // wait for—but a wake it just produced still has to be
                 // applied. Falling through to the arm below is what gets
                 // this pass to the power-on; blocking here would hold it
                 // until some unrelated event arrived.
@@ -3321,7 +3321,7 @@ async fn display_task(mut display: Display, #[cfg(not(feature = "pmic-axp2101"))
                     transition = attention.wake(Instant::now().as_millis()).or(transition);
                     redraw = true;
                 }
-                // A wake on its own changes no content — a lit panel is
+                // A wake on its own changes no content—a lit panel is
                 // already showing the truth, and the events that do
                 // change something raise `UI_REFRESH` alongside this.
                 Either3::Third(()) => {
@@ -3360,7 +3360,7 @@ async fn display_task(mut display: Display, #[cfg(not(feature = "pmic-axp2101"))
             }
             // One step of the fall, not the whole of it: the policy sends
             // one of these per ramp step and says where between the
-            // panel's two contrasts to sit. Nothing is redrawn — a
+            // panel's two contrasts to sit. Nothing is redrawn—a
             // contrast write leaves the framebuffer alone, which is what
             // makes a fade affordable on a panel that redraws only on
             // events.
@@ -3436,7 +3436,7 @@ async fn button_task(mut button: Input<'static>) {
                     pressed = matches!(edge, ButtonEdge::Press);
                     if pressed {
                         // Latch the pre-wake screen state, read on the
-                        // press edge — this task can park for a minute
+                        // press edge—this task can park for a minute
                         // awaiting an edge, and the panel lapses dark
                         // during exactly such a park. Then wake on the
                         // press, not on the resolved gesture, so the
@@ -3505,7 +3505,7 @@ async fn heartbeat_task(
             // LEDs, so it takes a bare flick to read as alive rather
             // than their 20 ms.
             //
-            // Four seconds is also as slow as this loop may go — it
+            // Four seconds is also as slow as this loop may go—it
             // carries the `WDT_TIMEOUT` feed, and half of eight seconds
             // is the margin the watchdog has left for a late wake.
             (3, 4_000)
@@ -3559,7 +3559,7 @@ async fn shutdown(
     // GPIO0 is stolen rather than handed over: `button_task` holds an
     // `Input` on it for the life of the board, and the wake source wants
     // the bare pin. Both uses are read-only, nothing drives the pin, and
-    // `sleep_deep` never returns — so no other task observes the
+    // `sleep_deep` never returns—so no other task observes the
     // duplicate.
     {
         let button = Input::new(
@@ -3583,7 +3583,7 @@ async fn shutdown(
     deep_sleep.deep_sleep(&[&wake]);
 }
 
-/// The RWDT feed, with no LED behind it — this board's only LEDs belong
+/// The RWDT feed, with no LED behind it—this board's only LEDs belong
 /// to the PMIC's charger and the receiver's PPS output.
 ///
 /// It also owns the shutdown sequence, because it owns the `Rtc` whose
@@ -3608,7 +3608,7 @@ async fn heartbeat_task(mut rtc: Rtc<'static>, pmic: &'static SharedPmic) -> ! {
     }
 }
 
-/// Quiesce the board and hand the power topology back to the PMIC —
+/// Quiesce the board and hand the power topology back to the PMIC—
 /// "off" on this board is a PMIC power-off, not deep sleep, and the
 /// POWER key brings it back with no firmware involved.
 ///
@@ -3628,7 +3628,7 @@ async fn heartbeat_task(mut rtc: Rtc<'static>, pmic: &'static SharedPmic) -> ! {
 /// Counter persistence needs nothing here: `MacHandle::next_event`
 /// flushes it as it goes, so there is no buffered state to lose. And if
 /// the PMIC refuses the power-off, the abandoned RWDT resets the board
-/// back to a running state — worse than off, better than wedged.
+/// back to a running state—worse than off, better than wedged.
 #[cfg(feature = "pmic-axp2101")]
 async fn shutdown(rtc: &mut Rtc<'static>, pmic: &'static SharedPmic) -> ! {
     debug_log(format_args!("shutdown: power-off hold"));
@@ -3639,7 +3639,7 @@ async fn shutdown(rtc: &mut Rtc<'static>, pmic: &'static SharedPmic) -> ! {
 
     // GPIO0 is stolen rather than handed over: `button_task` holds an
     // `Input` on it for the life of the board. Both uses are read-only,
-    // nothing drives the pin, and this function never returns — so no
+    // nothing drives the pin, and this function never returns—so no
     // other task observes the duplicate.
     {
         let button = Input::new(
@@ -3746,13 +3746,13 @@ async fn main(spawner: Spawner) {
     // The classic ESP32's `dram_seg` is only 128 KiB once esp-hal reserves
     // the BT controller's 64 KiB, and the static side of this image does
     // not fit alongside a heap of any useful size. `dram2_seg` is the
-    // ~96 KiB of DRAM past the ROM data and stack areas — unusable for
+    // ~96 KiB of DRAM past the ROM data and stack areas—unusable for
     // zero-initialized statics (NOLOAD, nothing clears it) but fine for
     // a heap arena, which is `MaybeUninit` by nature. Smaller than the
     // S3's 72 KiB deliberately: on the S3 the BLE controller allocates
     // from this heap, while here it lives in its own 64 KiB reservation,
     // so this heap only carries umsh-node/umsh-sync (8 KiB on the nRF
-    // boards) plus esp-radio's residual allocations — and the device
+    // boards) plus esp-radio's residual allocations—and the device
     // node's ~32 KiB Mac arena shares the same 96 KiB region.
     #[cfg(feature = "chip-esp32")]
     esp_alloc::heap_allocator!(#[esp_hal::ram(reclaimed)] size: 48 * 1024);
@@ -3767,10 +3767,10 @@ async fn main(spawner: Spawner) {
     // tasks, no `WakeLock` is held, and the next timer deadline is far
     // enough away, the idle hook enters light sleep until that deadline
     // (GPIO wake always armed) instead of spinning `waiti` at 80 MHz.
-    // The gating is entirely lock-driven — esp-radio holds a lock from
+    // The gating is entirely lock-driven—esp-radio holds a lock from
     // BLE init to deinit, the wired-transport and UART drivers hold
     // theirs for their lifetimes, and GPIO waits hold one unless the
-    // pin is wake-enabled — so a board whose locks never all clear
+    // pin is wake-enabled—so a board whose locks never all clear
     // simply falls back to WFI, and sleep arrives exactly when the
     // holders learn to let go.
     let sleep = esp_rtos::sleep::configure(peripherals.LPWR);
@@ -3885,7 +3885,7 @@ async fn main(spawner: Spawner) {
     #[cfg(feature = "board-heltec-v2")]
     let led = Output::new(peripherals.GPIO25, Level::Low, OutputConfig::default());
     // The Heltecs' power-off is deep sleep, entered through the same
-    // `Sleep` handle whose idle hook was installed above — LPWR has one
+    // `Sleep` handle whose idle hook was installed above—LPWR has one
     // owner now. A PMIC board powers off through the PMIC instead and
     // has no use for the deep-sleep half.
     #[cfg(not(feature = "pmic-axp2101"))]
@@ -3898,7 +3898,7 @@ async fn main(spawner: Spawner) {
     // divider and the radio; the V2 sampler therefore claims the ADC
     // per sample under [`ADC2_ARBITER`] instead of holding it, so the
     // BLE supervisor can bring the controller up and down freely. The
-    // V3's ADC1 is independent, and a PMIC board has no ADC at all —
+    // V3's ADC1 is independent, and a PMIC board has no ADC at all—
     // its rails came up above, and the battery is read over the PMU
     // bus.
     #[cfg(feature = "board-heltec-v3")]
@@ -3922,7 +3922,7 @@ async fn main(spawner: Spawner) {
     let shared: &'static ble_store::SharedFlash = SHARED_FLASH.init(ble_store::shared(flash));
 
     // The radio peripheral: constructed into a controller by the BLE
-    // supervisor, one lifecycle per PROP_BLE_ENABLED cycle — and
+    // supervisor, one lifecycle per PROP_BLE_ENABLED cycle—and
     // borrowed briefly below if the entropy pool needs a hardware
     // bootstrap before the supervisor exists.
     let mut bt = peripherals.BT;
@@ -3932,7 +3932,7 @@ async fn main(spawner: Spawner) {
     // working key one-way from the stored seed plus per-boot salt,
     // commit the next boot's seed to flash, and only then draw. The
     // RF-gated TRNG is a source the pool harvests when the radio
-    // happens to be up — not a liveness requirement, which is what lets
+    // happens to be up—not a liveness requirement, which is what lets
     // the BLE controller be torn down while the node keeps running.
     let mut seed_store = ble_store::SeedStore::mount(shared, &partition).await;
     let mut pool = match seed_store.seed() {
@@ -3963,7 +3963,7 @@ async fn main(spawner: Spawner) {
             // The commit is what makes a crash unable to replay this
             // boot's outputs. With the write refused, break the replay
             // instead by mixing in a fresh TRNG draw.
-            println!("entropy seed persist FAILED — mixing TRNG for this boot");
+            println!("entropy seed persist FAILED—mixing TRNG for this boot");
             let fresh = harvest_trng_once(&mut bt);
             pool.mix(&fresh);
             pool.seed_committed();
@@ -3984,7 +3984,7 @@ async fn main(spawner: Spawner) {
     // off the journal, not the radio. A board that boots with
     // `PROP_BLE_ENABLED` cleared never brings the stack up, so state
     // seeded only inside `run_ble_stack` keeps its `static` initializer
-    // instead: a count of zero on a device holding bonds, and — worse — a
+    // instead: a count of zero on a device holding bonds, and—worse—a
     // pairing window stuck open, which held the panel awake forever and
     // announced "pairing" on a transport that is off. Seeded here, at
     // the mount, exactly as the nRF image seeds them.
@@ -4020,14 +4020,14 @@ async fn main(spawner: Spawner) {
     // session's PROP_DEV_KEY surface, the secret brings up the device
     // node's MAC identity.
     //
-    // A device identity always exists. When the journal is empty — a
-    // factory-fresh board, or the boot that completes a factory reset —
+    // A device identity always exists. When the journal is empty—a
+    // factory-fresh board, or the boot that completes a factory reset—
     // one is generated here and persisted before anything can observe
     // its absence, so identity is never a commissioning step the
     // operator has to perform.
     //
     // The draw comes from the entropy pool, whose no-seed bootstrap
-    // path above ran on the RF-gated TRNG — so a first-boot identity is
+    // path above ran on the RF-gated TRNG—so a first-boot identity is
     // true-random by construction, and a later regeneration inherits
     // the pool's ratcheted, TRNG-healed state.
     let mut identity_keys = identity_payload
@@ -4042,7 +4042,7 @@ async fn main(spawner: Spawner) {
         match identity_store.persist(&record).await {
             Ok(()) => println!("device identity generated at first boot"),
             Err(()) => {
-                println!("device identity generated but persist FAILED — volatile this boot")
+                println!("device identity generated but persist FAILED—volatile this boot")
             }
         }
         identity_keys = Some((secret, public));
@@ -4325,7 +4325,7 @@ async fn main(spawner: Spawner) {
         }
     }
     // The SH1106's address is a population variable and there is no
-    // reset pin — the rail is the reset, and it is already up. A panel
+    // reset pin—the rail is the reset, and it is already up. A panel
     // that does not answer leaves the board headless rather than
     // stopping the boot.
     #[cfg(feature = "display-sh1106")]

@@ -1,4 +1,4 @@
-//! [`HeltecV3Platform`] — the concrete `umsh_mac::Platform` bundle for the
+//! [`HeltecV3Platform`]—the concrete `umsh_mac::Platform` bundle for the
 //! Heltec WiFi LoRa 32 V3.
 //!
 //! Composes the chip-level Espressif plumbing from [`umsh_bsp_esp32`]

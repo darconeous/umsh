@@ -48,7 +48,7 @@ pub enum ItemError {
 }
 
 /// One `PROP_HOST_PEER_KEYS` entry in item form: the peer's public key
-/// and the pairwise keys derived by the host. **Secret-bearing** — the
+/// and the pairwise keys derived by the host. **Secret-bearing**—the
 /// digest form is [`Self::public_key`] alone.
 ///
 /// Inserting an entry whose public key matches an existing entry

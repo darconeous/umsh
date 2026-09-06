@@ -14,7 +14,7 @@
 //!   is off on hardware, [`TCXO_VOLTAGE`] is the one line to flip.
 //!
 //! As on the Heltec V3: DIO2 drives the RF switch from inside the chip
-//! (`SetDio2AsRfSwitchCtrl` — no MCU pin switches TX/RX), NRESET is
+//! (`SetDio2AsRfSwitchCtrl`—no MCU pin switches TX/RX), NRESET is
 //! wired and driven, `rx_boost` on, DC-DC regulator mode (the chip's
 //! buck converter roughly halves RX/TX supply current versus the LDO;
 //! every nRF52 SX1262 board here already runs it), private sync word
@@ -28,7 +28,7 @@ use lora_phy::LoRa;
 use lora_phy::mod_params::RadioError;
 use lora_phy::sx126x::{Config, Sx126x, Sx1262, TcxoCtrlVoltage};
 
-/// DIO3 TCXO supply voltage — a board constant with an open question
+/// DIO3 TCXO supply voltage—a board constant with an open question
 /// behind it; see the module docs before changing it, and change nothing
 /// else with it.
 pub const TCXO_VOLTAGE: TcxoCtrlVoltage = TcxoCtrlVoltage::Ctrl1V6;
@@ -51,8 +51,8 @@ pub type RadioKind = Sx126x<RadioSpi, RadioIv, Sx1262>;
 pub type Radio = LoRa<RadioKind, Delay>;
 
 /// Assemble the board's `RadioKind` from the SPI device and control
-/// pins. Follow with `LoRa::new(kind, false, Delay)` — private sync
-/// word — and the parameter builders in `umsh-radio-loraphy`.
+/// pins. Follow with `LoRa::new(kind, false, Delay)`—private sync
+/// word—and the parameter builders in `umsh-radio-loraphy`.
 pub fn new_radio_kind(
     spi: RadioSpi,
     reset: Output<'static>,

@@ -6,7 +6,7 @@ shaped by what a browser can and cannot do.
 
 ## Versioning
 
-Releases are currently tagged `fw-YYYY.MM.NN` — annotated, with a zero-padded sequence
+Releases are currently tagged `fw-YYYY.MM.NN`—annotated, with a zero-padded sequence
 number within the month:
 
 ```bash
@@ -20,7 +20,7 @@ makes tags and filenames sort correctly, so `2026.08.09` comes before
 `scripts/release.py` already sorts either.
 
 The `fw-` prefix namespaces the tag so that a future crate or app tag cannot
-be mistaken for a firmware version — each `build.rs` runs
+be mistaken for a firmware version—each `build.rs` runs
 `git describe --tags --match 'fw-*' --always --dirty`, which sees only these.
 
 Every board reports the result as `PROP_DEV_VERSION`:
@@ -59,13 +59,13 @@ git push origin gh-pages
 ```
 
 No step takes a version argument. `VERSION` defaults to the tag on `HEAD`, so
-the tag you just created is the one that gets built — it cannot disagree with
+the tag you just created is the one that gets built—it cannot disagree with
 itself. To work on a release other than the one `HEAD` is on, pass the **tag**:
 `make release-artifacts VERSION=fw-2026.08.01`. The bare `2026.08.01` is
 rejected rather than quietly missing the tag by one prefix.
 
 `release-artifacts` refuses to run unless the working tree is clean, the
-annotated tag exists, and `HEAD` is exactly at it — `git describe` has no way
+annotated tag exists, and `HEAD` is exactly at it—`git describe` has no way
 to warn you about any of those on its own. It builds all seven shipping images,
 converts them, and writes `manifest.json` and `SHA256SUMS` into
 `target/firmware-release/<version>/`, where `<version>` is the tag without its
@@ -95,7 +95,7 @@ bringup harnesses, not products.
 
 Named `umsh-<board>-<version>.<ext>`. Board ids match the `BOARDS` presets in
 `scripts/firmware_image.py`, the `make` target suffixes, and
-`site/data/hardware.toml` — keep the four in step.
+`site/data/hardware.toml`—keep the four in step.
 
 The UF2 is not converted by the release; `make build-<board>` already writes
 it, and the release ships that exact file.
@@ -117,7 +117,7 @@ and have not been individually checked.
 adafruit-nrfutil's default is `0xFFFE`, "any SoftDevice", which is fine for a
 zip you built thirty seconds ago and wrong for one published on the internet:
 the app base differs with the SoftDevice, so the wrong image lands at the
-wrong offset. This is the check that stops it — and it matters more once a
+wrong offset. This is the check that stops it—and it matters more once a
 web page can push a package to whatever board is plugged in.
 
 `scripts/release.py` reads the value back out of each package's own manifest
@@ -137,19 +137,19 @@ widening the table is a separate, deliberate change.
 
 `--skip-padding` is load-bearing. Without it espflash pads the image out to
 the full flash size with `0xFF`, and writing that at `0x0` runs straight over
-the `umsh` data partition at `0x300000` — every device would lose its
+the `umsh` data partition at `0x300000`—every device would lose its
 identity and saved state on update. With it the image stops after the
 application, around `0x13E000`, and `0x300000` is never touched.
 
 ## Where the artifacts live
 
-### GitHub Releases — the archive
+### GitHub Releases—the archive
 
 `https://github.com/darconeous/umsh/releases/tag/fw-<version>` holds every
 artifact, permanently. Direct links work in an `<a href>`: GitHub serves
 assets with `Content-Disposition: attachment`, so a click downloads.
 
-### umsh.dev/firmware/ — what the flasher reads
+### umsh.dev/firmware/—what the flasher reads
 
 GitHub's release assets send **no CORS headers**, so a page on umsh.dev
 cannot `fetch()` them. Anything the flasher must read is therefore mirrored
@@ -158,15 +158,15 @@ same-origin into the `gh-pages` tree, whose ownership map reserves
 
 | URL | Changes |
 |---|---|
-| `/firmware/manifest.json` | every release — a copy of the current version's manifest |
-| `/firmware/releases.json` | every release — the mirrored versions, newest first |
+| `/firmware/manifest.json` | every release—a copy of the current version's manifest |
+| `/firmware/releases.json` | every release—the mirrored versions, newest first |
 | `/firmware/<version>/manifest.json` | never, once written |
 | `/firmware/<version>/umsh-<board>-<version>-dfu.zip` | never |
 | `/firmware/<version>/umsh-<board>-<version>.bin` | never |
 
 `MIRROR_KEEP` (default 3) versions are kept so a bad release can be backed
 out from the flasher itself; older ones are pruned from the tree and remain
-on GitHub Releases forever. Version directories are immutable — every URL
+on GitHub Releases forever. Version directories are immutable—every URL
 under one is cacheable indefinitely, and `release-mirror` refuses to
 overwrite one.
 
@@ -175,7 +175,7 @@ resolving git symlinks, so one would 404 or serve its target's path as text.
 The manifest is the pointer instead.
 
 **UF2 files are published but not mirrored.** Mirroring exists to satisfy
-`fetch()`, and nothing fetches a UF2 — a browser cannot write to a
+`fetch()`, and nothing fetches a UF2—a browser cannot write to a
 mass-storage volume, so that flow is a download the user drags onto the
 drive, which works from the GitHub URL. Add `"uf2"` to `MIRRORED_ROLES` in
 `scripts/release.py` if a File System Access flow ever makes the bytes worth
@@ -201,9 +201,9 @@ by the same board ids, so the two join without duplicating each other.
 Before promoting a draft release:
 
 - [ ] `shasum -a 256 -c SHA256SUMS` in the staging directory
-- [ ] `cmp` each staged UF2 against `target/thumbv7em-none-eabihf/release/firmware-<board>.uf2` — the release renames, it must not re-convert
+- [ ] `cmp` each staged UF2 against `target/thumbv7em-none-eabihf/release/firmware-<board>.uf2`—the release renames, it must not re-convert
 - [ ] Flash one nRF52 board from the staged UF2; confirm `PROP_DEV_VERSION` reads `umsh/fw-<version>` and `PROP_DEV_MODEL` names the board. This also proves `UMSH_FW_VERSION` reached the compiler.
 - [ ] Install a DFU package over serial DFU on a T1000-E (S140 7.3.0) and a T-Echo (S140 6.1.1). A wrong FWID is a clean init-packet rejection, not a damaged board. If either is refused, drop `--sd-req` back to the `0xFFFE` default and note it here. *(Both passed 2026-08-09; only re-check if the SoftDevice table above changes.)*
-- [ ] Confirm the negative: a T-Echo package must be **refused** by a T1000-E. Still unchecked — it proves the guard guards, rather than that a correct package installs. If it were ever to *succeed*, the wrong-base image is recoverable with a normal UF2 flash, since the bootloader is untouched.
-- [ ] Write the merged ESP32 image at offset zero with a plain flasher — `espflash write-bin 0x0 <bin>`, and again with `esptool.py --chip esp32s3 write_flash 0x0 <bin>`, since that is the path esptool-js mirrors. Set and save a device name first, and confirm it **survives** the reflash: that is what proves `--skip-padding` kept the image clear of `0x300000`.
+- [ ] Confirm the negative: a T-Echo package must be **refused** by a T1000-E. Still unchecked—it proves the guard guards, rather than that a correct package installs. If it were ever to *succeed*, the wrong-base image is recoverable with a normal UF2 flash, since the bootloader is untouched.
+- [ ] Write the merged ESP32 image at offset zero with a plain flasher—`espflash write-bin 0x0 <bin>`, and again with `esptool.py --chip esp32s3 write_flash 0x0 <bin>`, since that is the path esptool-js mirrors. Set and save a device name first, and confirm it **survives** the reflash: that is what proves `--skip-padding` kept the image clear of `0x300000`.
 - [ ] After `release-mirror` and a push, fetch `https://umsh.dev/firmware/manifest.json` from a browser console on another origin, and spot-check one mirrored file's SHA-256 against it.

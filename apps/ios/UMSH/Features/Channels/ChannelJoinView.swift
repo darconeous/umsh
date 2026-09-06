@@ -2,12 +2,12 @@ import SwiftUI
 
 /// The single way into a channel: a public name, or an invitation URI.
 ///
-/// Follows the staged import the app uses everywhere — acquire, parse locally,
-/// preview, confirm — so nothing is stored and nothing is transmitted until
+/// Follows the staged import the app uses everywhere—acquire, parse locally,
+/// preview, confirm—so nothing is stored and nothing is transmitted until
 /// the user commits.
 struct ChannelJoinView: View {
     let actions: ChannelActions
-    /// Channels this phone still holds keys for but has left — the standard
+    /// Channels this phone still holds keys for but has left—the standard
     /// ones. Offered here, where the user has come looking for a channel to
     /// join, and nowhere else.
     var rejoinable: [ChannelSummary] = []
@@ -39,7 +39,7 @@ struct ChannelJoinView: View {
             } header: {
                 Text("Channel")
             } footer: {
-                Text("A public channel is joined by name — anyone who knows the name can join it. A private channel needs its invitation.")
+                Text("A public channel is joined by name—anyone who knows the name can join it. A private channel needs its invitation.")
             }
 
             if resolved == nil, !rejoinable.isEmpty {
@@ -132,7 +132,7 @@ struct ChannelJoinView: View {
             Section {
                 Label("A different channel is already called “\(conflict.title)”", systemImage: "exclamationmark.triangle.fill")
                     .foregroundStyle(.orange)
-                Text("Same name, different key — they are separate channels and messages will not cross between them. Give this one a different name to tell them apart.")
+                Text("Same name, different key—they are separate channels and messages will not cross between them. Give this one a different name to tell them apart.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

@@ -7,10 +7,10 @@ import UMSHMobileCore
 /// sections appear, and nothing else about them differs. Two views over the
 /// same settings would be two things to keep in step, and the short one would
 /// be the one that fell behind. Changing a device's settings afterward is not
-/// this screen — it is the management screens every device gets.
+/// this screen—it is the management screens every device gets.
 ///
 /// The draft is owned by the flow rather than by this screen, so what is
-/// edited here is the same configuration another screen may have started —
+/// edited here is the same configuration another screen may have started—
 /// see `DeviceConfigDraft`.
 struct DeviceSettingsView: View {
     let controller: any DeviceAdministering
@@ -45,7 +45,7 @@ struct DeviceSettingsView: View {
         // mutation is a plain draft assignment that animates nothing on its
         // own, so the reflow is animated here, keyed on the list alone. The
         // added row itself is exempted (its transition is .identity in
-        // RepeaterSettingsSection) — the typed text is already on screen
+        // RepeaterSettingsSection)—the typed text is already on screen
         // where the row lands.
         .animation(UMSHAnimation.list, value: draft.regions)
         // Administrators are different: an entry comes out of a menu, not

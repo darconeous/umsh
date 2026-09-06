@@ -3,12 +3,12 @@
 //! Wires together three BSP pieces that are each unit-testable in
 //! isolation but must be glued together in the binary:
 //!
-//! - `umsh_bsp_nrf52840::panic_persist::SyncNoinit` — the `.uninit`
+//! - `umsh_bsp_nrf52840::panic_persist::SyncNoinit`—the `.uninit`
 //!   retained-RAM static that survives warm resets.
-//! - `umsh_bsp_nrf52840::panic_persist::{PanicSlot, SliceWriter}` —
+//! - `umsh_bsp_nrf52840::panic_persist::{PanicSlot, SliceWriter}`—
 //!   framing and formatting over that region.
 //! - `umsh_bsp_nrf52840::gpregret::reset_to_app` (GPREGRET=0, then
-//!   `SCB::sys_reset`) — ensures the bootloader boots the app on the
+//!   `SCB::sys_reset`)—ensures the bootloader boots the app on the
 //!   next start so the panic message is visible over USB-CDC.
 //!
 //! The `#[panic_handler]` attribute is permitted only in binary crates;
@@ -72,7 +72,7 @@ pub fn breadcrumb_take() -> (u8, u16) {
 /// count.
 ///
 /// Calls are sequential (boot code and executor tasks on one core), so
-/// the short-lived `&mut` regions never overlap in practice — the same
+/// the short-lived `&mut` regions never overlap in practice—the same
 /// discipline as [`panic_region`].
 pub fn breadcrumb_mark(stage: u8) {
     let region = unsafe { BREADCRUMB_REGION.as_bytes_mut() };

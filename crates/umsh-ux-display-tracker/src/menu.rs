@@ -18,7 +18,7 @@
 //! three entries takes the whole panel while the cursor is on it. Every
 //! level below it is a list, and reading an entry there takes a Select,
 //! which opens a [`Page::Detail`]. Reading in place is a property of the
-//! level rather than of the entry, and the top level is the exception —
+//! level rather than of the entry, and the top level is the exception—
 //! a submenu that answered a question the moment the cursor crossed it
 //! would make walking the list a way of asking questions.
 //!
@@ -99,7 +99,7 @@ impl Level {
 
 /// Which setting a [`EntryKind::Toggle`] entry flips.
 ///
-/// The model never learns a toggle's value — that is device state the
+/// The model never learns a toggle's value—that is device state the
 /// firmware owns and the renderer is handed separately. All the model
 /// does is say which one the user asked for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -114,7 +114,7 @@ pub enum ToggleId {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EntryKind {
     /// Has something to read. At the top level it reads in place, and
-    /// Select does nothing or the one extra action the entry defines —
+    /// Select does nothing or the one extra action the entry defines—
     /// home's check-in is the only one today. Below the top level it is
     /// an ordinary list row, and Select opens its [`Page::Detail`].
     Reading(Option<UiEffect>),
@@ -255,7 +255,7 @@ impl MenuItem {
     /// Entries a board never has to ask for.
     ///
     /// Home has to exist or there is nowhere to return to, and a Back
-    /// entry has to exist or a level the user entered has no exit — on a
+    /// entry has to exist or a level the user entered has no exit—on a
     /// one-button board the entry *is* the way out.
     const fn always_enabled(self) -> bool {
         matches!(
@@ -290,7 +290,7 @@ impl MenuItem {
     }
 
     /// What activating this item asks the firmware to do. Reading
-    /// entries, submenus, and Back are inert — they move the user
+    /// entries, submenus, and Back are inert—they move the user
     /// around rather than changing anything.
     pub const fn effect(self) -> Option<UiEffect> {
         match self.kind() {
@@ -342,8 +342,8 @@ impl MenuItems {
     /// The counterpart to [`with`](Self::with) for boards that start from
     /// [`all`](Self::all) and name what they cannot do, which is the
     /// shorter list on most hardware. Removing every entry of a level
-    /// removes the way into it too — see
-    /// [`level_is_empty`](Self::level_is_empty) — so a board need not
+    /// removes the way into it too—see
+    /// [`level_is_empty`](Self::level_is_empty)—so a board need not
     /// also remember to disable the submenu that led there.
     pub const fn without(self, item: MenuItem) -> Self {
         Self(self.0 & !item.bit())
@@ -420,8 +420,8 @@ impl MenuItems {
         let n = MenuItem::ALL.len();
         let mut index = from.index();
         // At worst this visits every item once. Every level holds at
-        // least one always-enabled entry — Status at the top, Back
-        // below it — so it always terminates on something.
+        // least one always-enabled entry—Status at the top, Back
+        // below it—so it always terminates on something.
         for _ in 0..n {
             index = (index as isize + step).rem_euclid(n as isize) as usize;
             let candidate = MenuItem::ALL[index];
@@ -530,7 +530,7 @@ impl UiModel {
     /// Whether the model is showing its home page with nothing pending.
     ///
     /// The attention lapse uses this to skip a pointless redraw, so it
-    /// must be false anywhere below the top level — a bistable panel
+    /// must be false anywhere below the top level—a bistable panel
     /// that skips the refresh keeps showing a submenu the user walked
     /// away from.
     pub const fn is_home(&self) -> bool {
@@ -551,7 +551,7 @@ impl UiModel {
     ///
     /// Called when display attention lapses, so the next press always
     /// starts from a page whose meaning the user can see rather than
-    /// from a confirmation they walked away from — or from a settings
+    /// from a confirmation they walked away from—or from a settings
     /// list three levels down.
     pub fn go_home(&mut self) {
         self.page = Page::Menu(MenuItem::Status);
@@ -567,7 +567,7 @@ impl UiModel {
     ///
     /// The entry that opened a level is what the user is returning to, so
     /// the way back in is under the cursor rather than a list-length
-    /// away. Leaving the top level — which nothing opened — goes home
+    /// away. Leaving the top level—which nothing opened—goes home
     /// instead, so Back is never a press that does nothing.
     fn leave(&mut self, level: Level) {
         self.page = Page::Menu(level.opened_by().unwrap_or(MenuItem::Status));
@@ -587,7 +587,7 @@ impl UiModel {
             (Page::Menu(item), UiInput::Select) => match item.kind() {
                 // At the top level the entry is already the whole screen,
                 // so it stays where it is and Select is free to carry its
-                // action — home's check-in is the only one.
+                // action—home's check-in is the only one.
                 EntryKind::Reading(effect) if item.reads_in_place() => effect,
                 // Below the top the entry is one row of a list, so Select
                 // is what opens it. Reaching a page by walking past it

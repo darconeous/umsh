@@ -37,20 +37,20 @@ extension MapCardDetent {
 /// glass running under the floating tab bar to the screen's bottom edge.
 ///
 /// The drag follows Find My's rule for who owns a vertical swipe: while the
-/// card is collapsed, the card does — the list cannot scroll at peek or
+/// card is collapsed, the card does—the list cannot scroll at peek or
 /// half, so pulling anywhere on the card moves the card. At tall the list
 /// takes the vertical axis back for scrolling and the grabber and header
 /// remain the card's drag surface. Horizontal swipes are never claimed, so
 /// row swipe actions keep working.
 struct MapBottomCard<Header: View, Content: View>: View {
     @Binding var detent: MapCardDetent
-    /// How tall the card is allowed to get — the height of the region it is
+    /// How tall the card is allowed to get—the height of the region it is
     /// inset into. Supplied rather than measured: the card is what creates
     /// that region's inset, so measuring it from inside would be circular.
     let availableHeight: CGFloat
     /// How much of the bottom edge the floating tab bar covers. The card's
-    /// frame runs underneath it — a panel that stopped short would leave a
-    /// strip of map showing through the bar's glass — and its list runs down
+    /// frame runs underneath it—a panel that stopped short would leave a
+    /// strip of map showing through the bar's glass—and its list runs down
     /// with it, rows frosting through the bar the way Find My's do. The same
     /// amount becomes the list's bottom scroll margin, so every row can
     /// scroll clear of the bar.
@@ -76,7 +76,7 @@ struct MapBottomCard<Header: View, Content: View>: View {
         VStack(spacing: 0) {
             VStack(spacing: 8) {
                 // The only thing saying the card moves, over a material that
-                // is itself over a map — a fainter fill disappears into
+                // is itself over a map—a fainter fill disappears into
                 // whatever happens to be underneath.
                 Capsule()
                     .fill(.secondary)
@@ -100,7 +100,7 @@ struct MapBottomCard<Header: View, Content: View>: View {
                 // expected to win.
                 .scrollDisabled(detent != .tall)
                 // Margins rather than padding: scrollable content may run
-                // under the tab bar — that is the point — but it has to be
+                // under the tab bar—that is the point—but it has to be
                 // able to scroll back out.
                 .contentMargins(.bottom, bottomInset, for: .scrollContent)
                 .contentMargins(.bottom, bottomInset, for: .scrollIndicators)
@@ -123,7 +123,7 @@ struct MapBottomCard<Header: View, Content: View>: View {
 
     /// Where the top edge sits right now: the resting height adjusted by the
     /// finger (down is positive, so subtracting shrinks the card), with the
-    /// travel past either end divided down — movement that still follows the
+    /// travel past either end divided down—movement that still follows the
     /// finger, but reluctantly, which is what says "there is no more".
     private var height: CGFloat {
         let raw = restingHeight(for: detent) - dragOffset
@@ -135,7 +135,7 @@ struct MapBottomCard<Header: View, Content: View>: View {
     private var dragGesture: some Gesture {
         // Global space, without exception: the gesture rides a view that
         // moves with the drag, and translations measured in the moving
-        // space feed back into the height that moves it — the finger holds
+        // space feed back into the height that moves it—the finger holds
         // still, the card chases it, and the reading collapses to zero.
         // Screen space is the one place the finger's travel is just the
         // finger's travel.

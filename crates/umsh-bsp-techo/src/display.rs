@@ -186,7 +186,7 @@ async fn wait_idle(busy: &mut Input<'_>) {
 
 /// Send one SSD1681 command byte plus optional small data payload.
 ///
-/// All buffers are copied to the stack first — nRF52840 EasyDMA can only
+/// All buffers are copied to the stack first—nRF52840 EasyDMA can only
 /// read SRAM, and `&[...]` literals in release builds may live in flash
 /// (`.rodata`), which would silently produce garbage on the bus.
 async fn cmd(
@@ -212,7 +212,7 @@ async fn cmd(
 }
 
 /// Write a large pixel payload to the addressed RAM (`cmd_byte` = 0x24 for
-/// B/W, 0x26 for RED). Single DMA burst — SPIM2's TXD MAXCNT comfortably
+/// B/W, 0x26 for RED). Single DMA burst—SPIM2's TXD MAXCNT comfortably
 /// covers 5000 bytes despite the misleading 8-bit-only rumor for SPIM0/1.
 async fn write_ram(
     spi: &mut Spim<'_>,

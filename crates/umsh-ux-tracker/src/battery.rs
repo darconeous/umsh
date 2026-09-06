@@ -23,8 +23,8 @@ impl BatteryState {
     }
 }
 
-/// The charge-state distinction reported to something outside the UX —
-/// a protocol property, a companion app — as opposed to the five-way
+/// The charge-state distinction reported to something outside the UX—
+/// a protocol property, a companion app—as opposed to the five-way
 /// presentation classification.
 ///
 /// Low and Critical are presentation policy layered over one physical
@@ -40,8 +40,8 @@ pub enum ChargeClass {
 
 /// The [`ChargeClass`] behind a five-way [`BatteryState`].
 ///
-/// One definition so every consumer of the same monitor — an on-demand
-/// read and an asynchronous notification, in particular — reports the
+/// One definition so every consumer of the same monitor—an on-demand
+/// read and an asynchronous notification, in particular—reports the
 /// same charge state for the same sample.
 pub const fn charge_class(state: BatteryState) -> ChargeClass {
     match state {
@@ -153,7 +153,7 @@ const LEVEL_QUANT: u8 = 5;
 /// Deciding sag by "was there a load since the previous sample" instead
 /// couples it to the sampling cadence: at a multi-minute cadence an
 /// ordinary duty cycle puts one transmission in nearly every interval,
-/// every sample looks sagged, and the anchor window never fills — so the
+/// every sample looks sagged, and the anchor window never fills—so the
 /// level would silently stop tracking on exactly the busy nodes that
 /// matter most.
 pub const SAG_WINDOW_MS: u32 = 30_000;
@@ -196,8 +196,8 @@ pub const fn load_recent(now_ms: u32, last_load_ms: Option<u32>) -> bool {
 /// - **Every quiet sample** sets a ceiling. A terminal voltage that is
 ///   not sagging relaxes downward toward true OCV, so the table can only
 ///   overstate what is in the pack; the level is capped to that reading
-///   immediately. This is what keeps a stale estimate — most visibly the
-///   one bootstrapped from a charger's elevated rail — from surviving
+///   immediately. This is what keeps a stale estimate—most visibly the
+///   one bootstrapped from a charger's elevated rail—from surviving
 ///   long after the pack has been unplugged.
 /// - **A rested window of [`LEVEL_WINDOW`] samples** anchors. Only after
 ///   [`LEVEL_REST_MS`] of quiet (no external power, no reported load)
@@ -207,7 +207,7 @@ pub const fn load_recent(now_ms: u32, last_load_ms: Option<u32>) -> bool {
 /// Anchored levels never rise while discharging, so the output is stable
 /// and monotone between charge sessions. A charge since the last anchor
 /// invalidates the stored level in both directions, so until the next
-/// anchor the ceiling replaces it rather than capping it — which is how
+/// anchor the ceiling replaces it rather than capping it—which is how
 /// a partial charge shows up without waiting out a full window.
 ///
 /// While charging there is no level at all: charging voltage is not
@@ -239,7 +239,7 @@ impl LevelEstimator {
         }
     }
 
-    /// The current estimate, or `None` when no trustworthy one exists —
+    /// The current estimate, or `None` when no trustworthy one exists—
     /// before the first quiet sample, and for as long as the pack is
     /// charging.
     pub const fn level(&self) -> Option<u8> {
@@ -263,7 +263,7 @@ impl LevelEstimator {
                 // Charging terminal voltage does not map through the
                 // discharge table, and on a charger that reports no
                 // completion there is no later moment to correct against
-                // either — so there is no level to report, and holding the
+                // either—so there is no level to report, and holding the
                 // pre-charge one would state a number that only grows more
                 // wrong the longer the pack is plugged in. Report nothing
                 // until a quiet reading says otherwise.
@@ -290,7 +290,7 @@ impl LevelEstimator {
                 // A quiet reading bounds the charge from above straight
                 // away. Terminal voltage relaxes *downward* toward true
                 // OCV once a charge stops, so the table can only overstate
-                // what is left in the pack — which makes it a ceiling
+                // what is left in the pack—which makes it a ceiling
                 // worth applying on the spot rather than holding a stale
                 // number until an anchor lands twenty-odd minutes later.
                 // The median runs over however much of the window has
@@ -344,7 +344,7 @@ fn quantize(pct: u8) -> u8 {
 /// Median of a non-empty run of samples, at most [`LEVEL_WINDOW`] long.
 ///
 /// An even-length run takes the upper of the two middle values, which
-/// biases a partially filled window's bound very slightly high — the
+/// biases a partially filled window's bound very slightly high—the
 /// forgiving direction for a ceiling.
 fn median(samples: &[u16]) -> u16 {
     let mut sorted = [0u16; LEVEL_WINDOW];
@@ -473,7 +473,7 @@ mod tests {
         });
         assert_eq!(estimator.level(), None);
         // Unplugged. The pack is nowhere near full and the very next
-        // quiet reading is enough to say so — no five-sample anchor, no
+        // quiet reading is enough to say so—no five-sample anchor, no
         // twenty-five minute wait.
         estimator.sample(quiet(3_600, 300_000));
         assert_eq!(estimator.level(), Some(10));
@@ -499,7 +499,7 @@ mod tests {
     }
 
     /// Once an anchor has re-established the clamp, the ceiling can only
-    /// ever lower the level — no amount of voltage recovery raises it
+    /// ever lower the level—no amount of voltage recovery raises it
     /// without a charge in between.
     #[test]
     fn the_ceiling_never_raises_a_level_that_has_been_anchored() {
@@ -521,7 +521,7 @@ mod tests {
         // Inside the window.
         assert!(load_recent(500_000, Some(500_000)));
         assert!(load_recent(500_000, Some(500_000 - SAG_WINDOW_MS + 1)));
-        // At and past the boundary the cell is considered recovered —
+        // At and past the boundary the cell is considered recovered—
         // this is what lets a multi-minute sampling cadence still find
         // quiet samples on a node that transmits regularly.
         assert!(!load_recent(500_000, Some(500_000 - SAG_WINDOW_MS)));
@@ -562,8 +562,8 @@ mod tests {
         assert_eq!(estimator.level(), Some(95));
     }
 
-    /// A board whose charger reports no completion — the T-Echo, the Wio
-    /// Tracker L1, the SenseCAP Solar Node — stays in `BatteryCharging`
+    /// A board whose charger reports no completion—the T-Echo, the Wio
+    /// Tracker L1, the SenseCAP Solar Node—stays in `BatteryCharging`
     /// for the whole session and never reaches `BatteryCharged`. It must
     /// report no level for that entire time rather than inventing one
     /// from the charger's elevated rail.

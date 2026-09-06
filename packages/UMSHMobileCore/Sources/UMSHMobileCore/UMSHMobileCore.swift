@@ -51,7 +51,7 @@ fileprivate extension ForeignBytes {
 // Converter for `&[u8]` / `[ByRef] bytes` arguments.
 //
 // Conforms to `FfiConverter` so the compiler enforces the full converter
-// method set. Only the scope-bound `lower(_:_body:)` overload is sound —
+// method set. Only the scope-bound `lower(_:_body:)` overload is sound—
 // zero-copy byte buffers only flow foreign -> Rust, and only in argument
 // position. The four protocol-witness methods (`lift`, `lower`, `read`,
 // `write`) `fatalError` at runtime if anyone reaches them.
@@ -1008,7 +1008,7 @@ public protocol MobileHdlcDecoderProtocol: AnyObject, Sendable {
      * one call can complete none or several. Corrupt and oversized
      * frames are discarded rather than reported: the decoder
      * resynchronizes on the next flag, and a byte stream can carry
-     * line noise that belongs to nobody — a bridge opening a serial
+     * line noise that belongs to nobody—a bridge opening a serial
      * port mid-transmission, most commonly. This is the one place the
      * two transports differ, GATT being reliable enough that a bad
      * segment is a protocol violation worth surfacing.
@@ -1098,7 +1098,7 @@ public convenience init() {
      * one call can complete none or several. Corrupt and oversized
      * frames are discarded rather than reported: the decoder
      * resynchronizes on the next flag, and a byte stream can carry
-     * line noise that belongs to nobody — a bridge opening a serial
+     * line noise that belongs to nobody—a bridge opening a serial
      * port mid-transmission, most commonly. This is the one place the
      * two transports differ, GATT being reliable enough that a bad
      * segment is a protocol violation worth surfacing.
@@ -1345,7 +1345,7 @@ public protocol MobileMeshSessionProtocol: AnyObject, Sendable {
      * Read a named set of properties across the mesh.
      *
      * The caller names what it wants, in as many exchanges as the
-     * answers need — a screenful of settings is normally one. Every
+     * answers need—a screenful of settings is normally one. Every
      * property comes back answered, refusals included, so a caller can
      * tell "the device would not say" from "nobody asked".
      *
@@ -1363,7 +1363,7 @@ public protocol MobileMeshSessionProtocol: AnyObject, Sendable {
      * Read one property from a device across the mesh.
      *
      * Every `begin_management_*` call returns immediately with an
-     * operation identifier, and reports through `poll_update` — the same
+     * operation identifier, and reports through `poll_update`—the same
      * shape as `ping`, because it is the same kind of thing: a
      * round-trip over a network that promises nothing. One operation runs
      * at a time; starting another while one is outstanding fails it.
@@ -1375,14 +1375,14 @@ public protocol MobileMeshSessionProtocol: AnyObject, Sendable {
      *
      * A device answers as many as fit and stops; the answers that arrive
      * are the ones it sent, and the rest are simply absent. Requires
-     * `CAP_CMD_MULTI` on the device — one that lacks it refuses the whole
+     * `CAP_CMD_MULTI` on the device—one that lacks it refuses the whole
      * request rather than answering part of it.
      */
     func beginManagementGetMany(peerAddress: String, propertyIds: [UInt32]) throws  -> UInt64
 
     /**
      * Add one item to a multiple-value property on a device across the
-     * mesh — a peer key, an administrator key, a channel key.
+     * mesh—a peer key, an administrator key, a channel key.
      */
     func beginManagementInsert(peerAddress: String, propertyId: UInt32, item: Data) throws  -> UInt64
 
@@ -1393,7 +1393,7 @@ public protocol MobileMeshSessionProtocol: AnyObject, Sendable {
      * Named rather than left to [`Self::begin_management_insert`] for the
      * same reason `MobileUlcpSession::insert_device_admin` is: this is a
      * decision about who may configure a node, and a caller should not
-     * have to name the property — or be able to reach a different one by
+     * have to name the property—or be able to reach a different one by
      * naming it wrong. The device holds it live until a save.
      */
     func beginManagementInsertAdmin(peerAddress: String, publicKey: Data) throws  -> UInt64
@@ -1419,7 +1419,7 @@ public protocol MobileMeshSessionProtocol: AnyObject, Sendable {
      * Take a node's authority to manage this device away again.
      *
      * A device that removes the administrator it is answering keeps
-     * answering this exchange — the reply is already authorized — and
+     * answering this exchange—the reply is already authorized—and
      * refuses the next one.
      */
     func beginManagementRemoveAdmin(peerAddress: String, publicKey: Data) throws  -> UInt64
@@ -1432,8 +1432,8 @@ public protocol MobileMeshSessionProtocol: AnyObject, Sendable {
     /**
      * Reset a device across the mesh.
      *
-     * A device answers a reset with nothing — it is busy doing what was
-     * asked — so the operation ends `Acknowledged` on the MAC
+     * A device answers a reset with nothing—it is busy doing what was
+     * asked—so the operation ends `Acknowledged` on the MAC
      * acknowledgment. `Restore` on a device holding no snapshot resets
      * nothing and answers like any other command, which arrives as an
      * ordinary `Replied` status.
@@ -1461,7 +1461,7 @@ public protocol MobileMeshSessionProtocol: AnyObject, Sendable {
      * Live state, never saved: an alert is a thing happening now, and one
      * restored at boot would be a device that woke up beeping. The device
      * ends it on its own deadline as well, so a search that outlasts that
-     * is kept alive by asking again — the same contract as the local link,
+     * is kept alive by asking again—the same contract as the local link,
      * with the round trip of the mesh in front of it.
      */
     func beginManagementSetAlert(peerAddress: String, state: UlcpAlertState) throws  -> UInt64
@@ -1531,13 +1531,13 @@ public protocol MobileMeshSessionProtocol: AnyObject, Sendable {
      * from this node's own neighbors or from a remote vantage point.
      *
      * With an empty `source_route` the request goes out as a direct
-     * broadcast with no flood budget, so repeaters never carry it — the
+     * broadcast with no flood budget, so repeaters never carry it—the
      * blast radius is exactly the nodes in radio range. Given a route, the
      * request is steered along it instead: each repeater consumes its hint,
      * so the request arrives with an empty Route option in the neighborhood
      * the route ends at, and the nodes *there* are the ones that answer. A
      * steered request also carries a trace route, which is what gives the
-     * answering strangers a path back — without it their replies would have
+     * answering strangers a path back—without it their replies would have
      * no route and no flood budget, and would die on their own transmitter.
      *
      * Either way it carries this phone's full source address, so a matching
@@ -1578,8 +1578,8 @@ public protocol MobileMeshSessionProtocol: AnyObject, Sendable {
      * This phone's own node public key, which is what a device lists in
      * `PROP_DEV_ADMINS` to let this phone manage it over the mesh.
      *
-     * Handing this to a radio the phone is attached to —
-     * `MobileUlcpSession::insert_device_admin` — is the whole of making
+     * Handing this to a radio the phone is attached to—
+     * `MobileUlcpSession::insert_device_admin`—is the whole of making
      * this phone an administrator of that radio. Nothing else is
      * exchanged: the session both ends derive comes from their two
      * identities.
@@ -1623,7 +1623,7 @@ public protocol MobileMeshSessionProtocol: AnyObject, Sendable {
      * Remove peers from the live MAC. Idempotent: a peer that was never
      * registered is already in the requested state, so it is not an error.
      * A removed peer that transmits again may be auto-re-registered
-     * (unpinned) by the MAC — removal here tracks the app's stored peer
+     * (unpinned) by the MAC—removal here tracks the app's stored peer
      * list, it is not a block list.
      */
     func removePeers(peerAddresses: [String]) async throws
@@ -1643,7 +1643,7 @@ public protocol MobileMeshSessionProtocol: AnyObject, Sendable {
      *
      * A group message carries a 3-byte hint and nothing else, so there is no
      * address to unicast a request to. This goes out over the channel itself,
-     * filtered to that hint, and only the member it names answers — with a
+     * filtered to that hint, and only the member it names answers—with a
      * targeted unicast, since the request carries this phone's full address.
      *
      * The request is routed by what that member's own frames have shown:
@@ -1679,8 +1679,8 @@ public protocol MobileMeshSessionProtocol: AnyObject, Sendable {
      * Set the position this phone's identity carries, or `None` to stop
      * sharing one.
      *
-     * Reaches every *live* identity payload — advertisements, manual and
-     * scheduled, and Identity Request replies while discoverable — but
+     * Reaches every *live* identity payload—advertisements, manual and
+     * scheduled, and Identity Request replies while discoverable—but
      * never the shareable QR/URI bundle: that bundle is durable, and a
      * position frozen into it would go stale and then travel wherever
      * the QR is pasted. The coordinate is reduced to the cell named by
@@ -1691,7 +1691,7 @@ public protocol MobileMeshSessionProtocol: AnyObject, Sendable {
 
     /**
      * Set whether this phone answers Identity Requests with its own
-     * identity — the passive counterpart of [`discover_identities`]:
+     * identity—the passive counterpart of [`discover_identities`]:
      * discoverable phones show up in other people's Discover sessions.
      *
      * `name` is the display name carried in replies (truncated to the
@@ -1869,7 +1869,7 @@ open func applyChatArchiveResult(requestId: UInt32, kind: MobileChatArchiveResul
      * Read a named set of properties across the mesh.
      *
      * The caller names what it wants, in as many exchanges as the
-     * answers need — a screenful of settings is normally one. Every
+     * answers need—a screenful of settings is normally one. Every
      * property comes back answered, refusals included, so a caller can
      * tell "the device would not say" from "nobody asked".
      *
@@ -1897,7 +1897,7 @@ open func beginManagementFetch(peerAddress: String, propertyIds: [UInt32], multi
      * Read one property from a device across the mesh.
      *
      * Every `begin_management_*` call returns immediately with an
-     * operation identifier, and reports through `poll_update` — the same
+     * operation identifier, and reports through `poll_update`—the same
      * shape as `ping`, because it is the same kind of thing: a
      * round-trip over a network that promises nothing. One operation runs
      * at a time; starting another while one is outstanding fails it.
@@ -1918,7 +1918,7 @@ open func beginManagementGet(peerAddress: String, propertyId: UInt32)throws  -> 
      *
      * A device answers as many as fit and stops; the answers that arrive
      * are the ones it sent, and the rest are simply absent. Requires
-     * `CAP_CMD_MULTI` on the device — one that lacks it refuses the whole
+     * `CAP_CMD_MULTI` on the device—one that lacks it refuses the whole
      * request rather than answering part of it.
      */
 open func beginManagementGetMany(peerAddress: String, propertyIds: [UInt32])throws  -> UInt64  {
@@ -1934,7 +1934,7 @@ open func beginManagementGetMany(peerAddress: String, propertyIds: [UInt32])thro
 
     /**
      * Add one item to a multiple-value property on a device across the
-     * mesh — a peer key, an administrator key, a channel key.
+     * mesh—a peer key, an administrator key, a channel key.
      */
 open func beginManagementInsert(peerAddress: String, propertyId: UInt32, item: Data)throws  -> UInt64  {
     return try  FfiConverterUInt64.lift(try rustCallWithError(FfiConverterTypeMobileMeshError_lift) {
@@ -1955,7 +1955,7 @@ open func beginManagementInsert(peerAddress: String, propertyId: UInt32, item: D
      * Named rather than left to [`Self::begin_management_insert`] for the
      * same reason `MobileUlcpSession::insert_device_admin` is: this is a
      * decision about who may configure a node, and a caller should not
-     * have to name the property — or be able to reach a different one by
+     * have to name the property—or be able to reach a different one by
      * naming it wrong. The device holds it live until a save.
      */
 open func beginManagementInsertAdmin(peerAddress: String, publicKey: Data)throws  -> UInt64  {
@@ -2009,7 +2009,7 @@ open func beginManagementRemove(peerAddress: String, propertyId: UInt32, selecto
      * Take a node's authority to manage this device away again.
      *
      * A device that removes the administrator it is answering keeps
-     * answering this exchange — the reply is already authorized — and
+     * answering this exchange—the reply is already authorized—and
      * refuses the next one.
      */
 open func beginManagementRemoveAdmin(peerAddress: String, publicKey: Data)throws  -> UInt64  {
@@ -2040,8 +2040,8 @@ open func beginManagementRemovePeer(peerAddress: String, publicKey: Data)throws 
     /**
      * Reset a device across the mesh.
      *
-     * A device answers a reset with nothing — it is busy doing what was
-     * asked — so the operation ends `Acknowledged` on the MAC
+     * A device answers a reset with nothing—it is busy doing what was
+     * asked—so the operation ends `Acknowledged` on the MAC
      * acknowledgment. `Restore` on a device holding no snapshot resets
      * nothing and answers like any other command, which arrives as an
      * ordinary `Replied` status.
@@ -2096,7 +2096,7 @@ open func beginManagementSet(peerAddress: String, propertyId: UInt32, value: Dat
      * Live state, never saved: an alert is a thing happening now, and one
      * restored at boot would be a device that woke up beeping. The device
      * ends it on its own deadline as well, so a search that outlasts that
-     * is kept alive by asking again — the same contract as the local link,
+     * is kept alive by asking again—the same contract as the local link,
      * with the round trip of the mesh in front of it.
      */
 open func beginManagementSetAlert(peerAddress: String, state: UlcpAlertState)throws  -> UInt64  {
@@ -2282,13 +2282,13 @@ open func composeText(conversationAddress: String, clientToken: UInt32, body: St
      * from this node's own neighbors or from a remote vantage point.
      *
      * With an empty `source_route` the request goes out as a direct
-     * broadcast with no flood budget, so repeaters never carry it — the
+     * broadcast with no flood budget, so repeaters never carry it—the
      * blast radius is exactly the nodes in radio range. Given a route, the
      * request is steered along it instead: each repeater consumes its hint,
      * so the request arrives with an empty Route option in the neighborhood
      * the route ends at, and the nodes *there* are the ones that answer. A
      * steered request also carries a trace route, which is what gives the
-     * answering strangers a path back — without it their replies would have
+     * answering strangers a path back—without it their replies would have
      * no route and no flood budget, and would die on their own transmitter.
      *
      * Either way it carries this phone's full source address, so a matching
@@ -2363,8 +2363,8 @@ open func hostPeerKeyEntries(peerAddresses: [String])async throws  -> [HostPeerK
      * This phone's own node public key, which is what a device lists in
      * `PROP_DEV_ADMINS` to let this phone manage it over the mesh.
      *
-     * Handing this to a radio the phone is attached to —
-     * `MobileUlcpSession::insert_device_admin` — is the whole of making
+     * Handing this to a radio the phone is attached to—
+     * `MobileUlcpSession::insert_device_admin`—is the whole of making
      * this phone an administrator of that radio. Nothing else is
      * exchanged: the session both ends derive comes from their two
      * identities.
@@ -2508,7 +2508,7 @@ open func removeChannels(keys: [Data])async throws   {
      * Remove peers from the live MAC. Idempotent: a peer that was never
      * registered is already in the requested state, so it is not an error.
      * A removed peer that transmits again may be auto-re-registered
-     * (unpinned) by the MAC — removal here tracks the app's stored peer
+     * (unpinned) by the MAC—removal here tracks the app's stored peer
      * list, it is not a block list.
      */
 open func removePeers(peerAddresses: [String])async throws   {
@@ -2556,7 +2556,7 @@ open func requestIdentity(peerAddress: String)async throws   {
      *
      * A group message carries a 3-byte hint and nothing else, so there is no
      * address to unicast a request to. This goes out over the channel itself,
-     * filtered to that hint, and only the member it names answers — with a
+     * filtered to that hint, and only the member it names answers—with a
      * targeted unicast, since the request carries this phone's full address.
      *
      * The request is routed by what that member's own frames have shown:
@@ -2662,8 +2662,8 @@ open func sendBeacon()async throws   {
      * Set the position this phone's identity carries, or `None` to stop
      * sharing one.
      *
-     * Reaches every *live* identity payload — advertisements, manual and
-     * scheduled, and Identity Request replies while discoverable — but
+     * Reaches every *live* identity payload—advertisements, manual and
+     * scheduled, and Identity Request replies while discoverable—but
      * never the shareable QR/URI bundle: that bundle is durable, and a
      * position frozen into it would go stale and then travel wherever
      * the QR is pasted. The coordinate is reduced to the cell named by
@@ -2688,7 +2688,7 @@ open func setAdvertisedLocation(location: MobileMeshSharedLocationRecord?)async 
 
     /**
      * Set whether this phone answers Identity Requests with its own
-     * identity — the passive counterpart of [`discover_identities`]:
+     * identity—the passive counterpart of [`discover_identities`]:
      * discoverable phones show up in other people's Discover sessions.
      *
      * `name` is the display name carried in replies (truncated to the
@@ -3058,9 +3058,9 @@ public protocol MobileRegionDatabaseProtocol: AnyObject, Sendable {
      * Propose a region configuration for a position, against what the
      * device currently holds.
      *
-     * The proposal samples the position's uncertainty — an identity
+     * The proposal samples the position's uncertainty—an identity
      * cell's center and four corners, or a measured fix's center and
-     * the four cardinal points of its accuracy circle — and suggests
+     * the four cardinal points of its accuracy circle—and suggests
      * every region any sample hit. A node whose position straddles a
      * boundary should usually forward both sides, the same reasoning
      * that gives the database its expansion margins; the non-unanimous
@@ -3189,9 +3189,9 @@ open func lookup(latitude: Double, longitude: Double)throws  -> MobileRegionLook
      * Propose a region configuration for a position, against what the
      * device currently holds.
      *
-     * The proposal samples the position's uncertainty — an identity
+     * The proposal samples the position's uncertainty—an identity
      * cell's center and four corners, or a measured fix's center and
-     * the four cardinal points of its accuracy circle — and suggests
+     * the four cardinal points of its accuracy circle—and suggests
      * every region any sample hit. A node whose position straddles a
      * boundary should usually forward both sides, the same reasoning
      * that gives the database its expansion margins; the non-unanimous
@@ -3318,7 +3318,7 @@ public protocol MobileUlcpSessionProtocol: AnyObject, Sendable {
      * Write the given properties, in the given order, and answer with
      * what the device says each is now worth.
      *
-     * The order is the caller's to state and is preserved — a dirty-write
+     * The order is the caller's to state and is preserved—a dirty-write
      * plan brackets the radio with `PROP_PHY_ENABLED`, and reordering it
      * would ask the device to retune mid-transmission. Writes go out one
      * at a time for the same reason. A refusal is recorded as that
@@ -3334,7 +3334,7 @@ public protocol MobileUlcpSessionProtocol: AnyObject, Sendable {
      * status on the completion event.
      *
      * On a device without `CAP_SAVE` there is nothing to ask, and the
-     * operation completes immediately with no status — running
+     * operation completes immediately with no status—running
      * configuration is all such a device has.
      */
     func beginSave() throws  -> UlcpSessionUpdateRecord
@@ -3365,7 +3365,7 @@ public protocol MobileUlcpSessionProtocol: AnyObject, Sendable {
      * it forwards for the mesh on its own.
      *
      * This is what commissioning writes. It touches nothing in the host
-     * domain — no host key, no filters, no queues — so it is equally
+     * domain—no host key, no filters, no queues—so it is equally
      * valid from an administrative session on someone else's radio and
      * from a tethered session on this phone's own.
      */
@@ -3376,7 +3376,7 @@ public protocol MobileUlcpSessionProtocol: AnyObject, Sendable {
      * nothing else.
      *
      * [`Self::configure_device`] can write these too, as part of a whole
-     * device domain — that is what commissioning does. This exists for
+     * device domain—that is what commissioning does. This exists for
      * the case commissioning does not cover: a phone changing the
      * positioning settings of the radio it is *tethered* to, which has
      * no reason to restate that radio's role, discoverability, or
@@ -3410,7 +3410,7 @@ public protocol MobileUlcpSessionProtocol: AnyObject, Sendable {
     /**
      * Erase ALL mutable state on the radio (saved provisioning, device
      * identity, BLE bonds, pairing PIN, every persisted journal) and
-     * reboot it. The radio does not reply — the reset drops the link —
+     * reboot it. The radio does not reply—the reset drops the link—
      * so this is fire-and-forget: send the frame, then treat the ensuing
      * disconnect as completion. Permitted from any stage so a misbehaving
      * radio can always be wiped; unlike `claim`/`configure` it makes no
@@ -3426,13 +3426,13 @@ public protocol MobileUlcpSessionProtocol: AnyObject, Sendable {
      * This is the bench half of node management: a key listed here may
      * manage this radio over the mesh, so the phone puts its own node key
      * on a radio it is attached to and manages it later from across the
-     * valley. The list is what authorizes an administrator — no pairwise
+     * valley. The list is what authorizes an administrator—no pairwise
      * provisioning follows, because the session is derived from the two
      * identities.
      *
      * Requires an attached, otherwise-idle session on a device advertising
      * `CAP_ADMIN`. Failures surface as `operation_error` with the device's
-     * status name — `NOMEM` when the list is full (capacity
+     * status name—`NOMEM` when the list is full (capacity
      * [`ulcp_max_dev_admins`]), `ALREADY` when the key is already listed,
      * which callers should treat as success.
      */
@@ -3450,7 +3450,7 @@ public protocol MobileUlcpSessionProtocol: AnyObject, Sendable {
      * Requires an attached, otherwise-idle session on a device advertising
      * `CAP_DEV_IDENTITY`, and the device additionally requires an encrypted
      * link before it will accept key material. Failures surface as
-     * `operation_error` with the device's status name — `NOMEM` when the list
+     * `operation_error` with the device's status name—`NOMEM` when the list
      * is full (capacity [`ulcp_max_dev_channels`]), `ALREADY` when the key is
      * already stored, which callers should treat as success.
      */
@@ -3463,7 +3463,7 @@ public protocol MobileUlcpSessionProtocol: AnyObject, Sendable {
      *
      * Requires an attached, otherwise-idle session on a device advertising
      * `CAP_DEV_IDENTITY`. Failures surface as `operation_error` with the
-     * device's status name — `NOMEM` when the list is full (capacity
+     * device's status name—`NOMEM` when the list is full (capacity
      * [`ulcp_max_dev_peers`]), `ALREADY` when the key is already stored,
      * which callers should treat as success.
      */
@@ -3492,7 +3492,7 @@ public protocol MobileUlcpSessionProtocol: AnyObject, Sendable {
      * own radio, not a user-facing setting: callers reconcile on attach and
      * after every join or leave, and never surface it.
      *
-     * The host domain is volatile — the device does not persist it — so no
+     * The host domain is volatile—the device does not persist it—so no
      * `CMD_SAVE` is chained and reconciling on attach is what makes it stick.
      * Requires an attached, idle session on a device advertising
      * `CAP_HOST_KEYS`; otherwise the table is not this session's to manage
@@ -3510,7 +3510,7 @@ public protocol MobileUlcpSessionProtocol: AnyObject, Sendable {
      * `channel_identifiers` are full 16-byte channel identifiers (see
      * [`crate::channel_identifier`]) and `peer_keys` are 32-byte public
      * keys; both name what the device should queue without chirping.
-     * Muting reaches the receipt cue and nothing else — the frames are
+     * Muting reaches the receipt cue and nothing else—the frames are
      * still queued, acknowledged, counted, and drained.
      *
      * Both tables are diffed against the values cached at attach and
@@ -3523,7 +3523,7 @@ public protocol MobileUlcpSessionProtocol: AnyObject, Sendable {
 
     /**
      * Make the radio's host peer-key table (`PROP_HOST_PEER_KEYS`) match
-     * the supplied entries — the pairwise keys for the peers whose
+     * the supplied entries—the pairwise keys for the peers whose
      * conversations are open, so the radio can verify and acknowledge
      * their unicast traffic while the phone is away.
      *
@@ -3550,7 +3550,7 @@ public protocol MobileUlcpSessionProtocol: AnyObject, Sendable {
      * Sample where the device is, and how well it knows.
      *
      * The device announces a fix indicator and nothing else about a
-     * position — a receiver reports about a fix a second and ordinary
+     * position—a receiver reports about a fix a second and ordinary
      * noise moves the reading, so announcing any of this would keep the
      * radio transmitting for a host that may not be looking. A host that
      * *is* looking asks, at whatever rate it can use the answer.
@@ -3569,7 +3569,7 @@ public protocol MobileUlcpSessionProtocol: AnyObject, Sendable {
      * Same preconditions as [`Self::insert_device_admin`]. Emptying the
      * list is how a device stops being manageable over the mesh at all.
      * `ITEM_NOT_FOUND` surfaces as `operation_error` and callers should
-     * treat it as success — the key is not listed either way.
+     * treat it as success—the key is not listed either way.
      */
     func removeDeviceAdmin(publicKey: Data) throws  -> UlcpSessionUpdateRecord
 
@@ -3591,7 +3591,7 @@ public protocol MobileUlcpSessionProtocol: AnyObject, Sendable {
      * device can.
      *
      * Same preconditions as [`Self::insert_device_peer`]. `ITEM_NOT_FOUND`
-     * surfaces as `operation_error` and callers should treat it as success —
+     * surfaces as `operation_error` and callers should treat it as success—
      * the key is not on the device either way.
      */
     func removeDevicePeer(publicKey: Data) throws  -> UlcpSessionUpdateRecord
@@ -3607,7 +3607,7 @@ public protocol MobileUlcpSessionProtocol: AnyObject, Sendable {
      *
      * Not part of `configure_device`, and never saved: this is live
      * behavior rather than configuration, and it deliberately survives
-     * the phone walking out of BLE range — which is precisely when a
+     * the phone walking out of BLE range—which is precisely when a
      * search needs it. What ends it is this call, a button press at the
      * radio, or the radio's own deadline; the latter two arrive as an
      * unsolicited `PROP_ALERT` carried on the session snapshot.
@@ -3619,7 +3619,7 @@ public protocol MobileUlcpSessionProtocol: AnyObject, Sendable {
 
     /**
      * Turn the radio's delegated acknowledgement (`PROP_HOST_AUTO_ACK`)
-     * on or off — whether it acks queued unicast on this host's behalf
+     * on or off—whether it acks queued unicast on this host's behalf
      * while the host is away, using the peer keys provisioned above.
      *
      * A no-op update when the cached value already matches, which is what
@@ -3629,12 +3629,12 @@ public protocol MobileUlcpSessionProtocol: AnyObject, Sendable {
     func setHostAutoAck(enabled: Bool) throws  -> UlcpSessionUpdateRecord
 
     /**
-     * Set — or clear — the device's wall clock (`PROP_TIME`).
+     * Set—or clear—the device's wall clock (`PROP_TIME`).
      *
      * Live state rather than configuration, and never saved: an epoch
      * written to flash would come back arbitrarily wrong, since nothing
      * bounds how long a device spends powered off. So this is not part
-     * of [`Self::configure_device`], which carries the time *zone* —
+     * of [`Self::configure_device`], which carries the time *zone*—
      * where the device is meant to be is worth persisting even when what
      * time it is is not.
      *
@@ -3653,7 +3653,7 @@ public protocol MobileUlcpSessionProtocol: AnyObject, Sendable {
      * The platform adapter supplies only opaque bytes from `MobileMeshSession`;
      * Rust owns the ULCP command, stream identifier, metadata, TID, and
      * confirmation matching. `nocca` sets `TX_FLAG_NOCCA` so the device
-     * transmits without its pre-transmit channel-activity check — used for
+     * transmits without its pre-transmit channel-activity check—used for
      * immediate MAC acks (see [`MobileMeshOutboundFrameRecord::nocca`]).
      */
     func transmitRaw(data: Data, nocca: Bool) throws  -> UlcpSessionUpdateRecord
@@ -3745,8 +3745,8 @@ public static func administrative() -> MobileUlcpSession  {
      * An administrative session that attaches without reading the device
      * whole.
      *
-     * Post-attach inspection is cut to what attaching itself requires —
-     * the interface check and the always-present radio basics — so the
+     * Post-attach inspection is cut to what attaching itself requires—
+     * the interface check and the always-present radio basics—so the
      * link is usable in a couple of exchanges instead of tens. Everything
      * else is read on demand through
      * [`Self::begin_property_fetch`], which is the point: a settings
@@ -3755,8 +3755,8 @@ public static func administrative() -> MobileUlcpSession  {
      *
      * The provisioning snapshot such a session reports lists every
      * unread capability-gated property as unreadable, so the
-     * whole-record configure calls — which withdraw writes to unreadable
-     * properties — are not meaningful here. A lazy session writes
+     * whole-record configure calls—which withdraw writes to unreadable
+     * properties—are not meaningful here. A lazy session writes
      * through [`Self::begin_property_writes`].
      */
 public static func administrativeLazy() -> MobileUlcpSession  {
@@ -3837,7 +3837,7 @@ open func beginPropertyFetch(propertyIds: [UInt32])throws  -> UlcpSessionUpdateR
      * Write the given properties, in the given order, and answer with
      * what the device says each is now worth.
      *
-     * The order is the caller's to state and is preserved — a dirty-write
+     * The order is the caller's to state and is preserved—a dirty-write
      * plan brackets the radio with `PROP_PHY_ENABLED`, and reordering it
      * would ask the device to retune mid-transmission. Writes go out one
      * at a time for the same reason. A refusal is recorded as that
@@ -3861,7 +3861,7 @@ open func beginPropertyWrites(writes: [MobileMeshPropertyWriteRecord])throws  ->
      * status on the completion event.
      *
      * On a device without `CAP_SAVE` there is nothing to ask, and the
-     * operation completes immediately with no status — running
+     * operation completes immediately with no status—running
      * configuration is all such a device has.
      */
 open func beginSave()throws  -> UlcpSessionUpdateRecord  {
@@ -3923,7 +3923,7 @@ open func configureAdvertising(advert: UlcpAdvertSettingsRecord?)throws  -> Ulcp
      * it forwards for the mesh on its own.
      *
      * This is what commissioning writes. It touches nothing in the host
-     * domain — no host key, no filters, no queues — so it is equally
+     * domain—no host key, no filters, no queues—so it is equally
      * valid from an administrative session on someone else's radio and
      * from a tethered session on this phone's own.
      */
@@ -3942,7 +3942,7 @@ open func configureDevice(configuration: UlcpDeviceConfigRecord)throws  -> UlcpS
      * nothing else.
      *
      * [`Self::configure_device`] can write these too, as part of a whole
-     * device domain — that is what commissioning does. This exists for
+     * device domain—that is what commissioning does. This exists for
      * the case commissioning does not cover: a phone changing the
      * positioning settings of the radio it is *tethered* to, which has
      * no reason to restate that radio's role, discoverability, or
@@ -4000,7 +4000,7 @@ open func drainQueue()throws  -> UlcpSessionUpdateRecord  {
     /**
      * Erase ALL mutable state on the radio (saved provisioning, device
      * identity, BLE bonds, pairing PIN, every persisted journal) and
-     * reboot it. The radio does not reply — the reset drops the link —
+     * reboot it. The radio does not reply—the reset drops the link—
      * so this is fire-and-forget: send the frame, then treat the ensuing
      * disconnect as completion. Permitted from any stage so a misbehaving
      * radio can always be wiped; unlike `claim`/`configure` it makes no
@@ -4023,13 +4023,13 @@ open func factoryReset()throws  -> UlcpSessionUpdateRecord  {
      * This is the bench half of node management: a key listed here may
      * manage this radio over the mesh, so the phone puts its own node key
      * on a radio it is attached to and manages it later from across the
-     * valley. The list is what authorizes an administrator — no pairwise
+     * valley. The list is what authorizes an administrator—no pairwise
      * provisioning follows, because the session is derived from the two
      * identities.
      *
      * Requires an attached, otherwise-idle session on a device advertising
      * `CAP_ADMIN`. Failures surface as `operation_error` with the device's
-     * status name — `NOMEM` when the list is full (capacity
+     * status name—`NOMEM` when the list is full (capacity
      * [`ulcp_max_dev_admins`]), `ALREADY` when the key is already listed,
      * which callers should treat as success.
      */
@@ -4055,7 +4055,7 @@ open func insertDeviceAdmin(publicKey: Data)throws  -> UlcpSessionUpdateRecord  
      * Requires an attached, otherwise-idle session on a device advertising
      * `CAP_DEV_IDENTITY`, and the device additionally requires an encrypted
      * link before it will accept key material. Failures surface as
-     * `operation_error` with the device's status name — `NOMEM` when the list
+     * `operation_error` with the device's status name—`NOMEM` when the list
      * is full (capacity [`ulcp_max_dev_channels`]), `ALREADY` when the key is
      * already stored, which callers should treat as success.
      */
@@ -4076,7 +4076,7 @@ open func insertDeviceChannelKey(channelKey: Data)throws  -> UlcpSessionUpdateRe
      *
      * Requires an attached, otherwise-idle session on a device advertising
      * `CAP_DEV_IDENTITY`. Failures surface as `operation_error` with the
-     * device's status name — `NOMEM` when the list is full (capacity
+     * device's status name—`NOMEM` when the list is full (capacity
      * [`ulcp_max_dev_peers`]), `ALREADY` when the key is already stored,
      * which callers should treat as success.
      */
@@ -4120,7 +4120,7 @@ open func reboot()throws  -> UlcpSessionUpdateRecord  {
      * own radio, not a user-facing setting: callers reconcile on attach and
      * after every join or leave, and never surface it.
      *
-     * The host domain is volatile — the device does not persist it — so no
+     * The host domain is volatile—the device does not persist it—so no
      * `CMD_SAVE` is chained and reconciling on attach is what makes it stick.
      * Requires an attached, idle session on a device advertising
      * `CAP_HOST_KEYS`; otherwise the table is not this session's to manage
@@ -4146,7 +4146,7 @@ open func reconcileHostChannelKeys(keys: [Data])throws  -> UlcpSessionUpdateReco
      * `channel_identifiers` are full 16-byte channel identifiers (see
      * [`crate::channel_identifier`]) and `peer_keys` are 32-byte public
      * keys; both name what the device should queue without chirping.
-     * Muting reaches the receipt cue and nothing else — the frames are
+     * Muting reaches the receipt cue and nothing else—the frames are
      * still queued, acknowledged, counted, and drained.
      *
      * Both tables are diffed against the values cached at attach and
@@ -4168,7 +4168,7 @@ open func reconcileHostMutes(channelIdentifiers: [Data], peerKeys: [Data])throws
 
     /**
      * Make the radio's host peer-key table (`PROP_HOST_PEER_KEYS`) match
-     * the supplied entries — the pairwise keys for the peers whose
+     * the supplied entries—the pairwise keys for the peers whose
      * conversations are open, so the radio can verify and acknowledge
      * their unicast traffic while the phone is away.
      *
@@ -4210,7 +4210,7 @@ open func refresh()throws  -> UlcpSessionUpdateRecord  {
      * Sample where the device is, and how well it knows.
      *
      * The device announces a fix indicator and nothing else about a
-     * position — a receiver reports about a fix a second and ordinary
+     * position—a receiver reports about a fix a second and ordinary
      * noise moves the reading, so announcing any of this would keep the
      * radio transmitting for a host that may not be looking. A host that
      * *is* looking asks, at whatever rate it can use the answer.
@@ -4236,7 +4236,7 @@ open func refreshPositioning()throws  -> UlcpSessionUpdateRecord  {
      * Same preconditions as [`Self::insert_device_admin`]. Emptying the
      * list is how a device stops being manageable over the mesh at all.
      * `ITEM_NOT_FOUND` surfaces as `operation_error` and callers should
-     * treat it as success — the key is not listed either way.
+     * treat it as success—the key is not listed either way.
      */
 open func removeDeviceAdmin(publicKey: Data)throws  -> UlcpSessionUpdateRecord  {
     return try  FfiConverterTypeUlcpSessionUpdateRecord_lift(try rustCallWithError(FfiConverterTypeMobileError_lift) {
@@ -4274,7 +4274,7 @@ open func removeDeviceChannelKey(channelKey: Data)throws  -> UlcpSessionUpdateRe
      * device can.
      *
      * Same preconditions as [`Self::insert_device_peer`]. `ITEM_NOT_FOUND`
-     * surfaces as `operation_error` and callers should treat it as success —
+     * surfaces as `operation_error` and callers should treat it as success—
      * the key is not on the device either way.
      */
 open func removeDevicePeer(publicKey: Data)throws  -> UlcpSessionUpdateRecord  {
@@ -4305,7 +4305,7 @@ open func reset() -> UlcpSessionUpdateRecord  {
      *
      * Not part of `configure_device`, and never saved: this is live
      * behavior rather than configuration, and it deliberately survives
-     * the phone walking out of BLE range — which is precisely when a
+     * the phone walking out of BLE range—which is precisely when a
      * search needs it. What ends it is this call, a button press at the
      * radio, or the radio's own deadline; the latter two arrive as an
      * unsolicited `PROP_ALERT` carried on the session snapshot.
@@ -4325,7 +4325,7 @@ open func setAlert(state: UlcpAlertState)throws  -> UlcpSessionUpdateRecord  {
 
     /**
      * Turn the radio's delegated acknowledgement (`PROP_HOST_AUTO_ACK`)
-     * on or off — whether it acks queued unicast on this host's behalf
+     * on or off—whether it acks queued unicast on this host's behalf
      * while the host is away, using the peer keys provisioned above.
      *
      * A no-op update when the cached value already matches, which is what
@@ -4343,12 +4343,12 @@ open func setHostAutoAck(enabled: Bool)throws  -> UlcpSessionUpdateRecord  {
 }
 
     /**
-     * Set — or clear — the device's wall clock (`PROP_TIME`).
+     * Set—or clear—the device's wall clock (`PROP_TIME`).
      *
      * Live state rather than configuration, and never saved: an epoch
      * written to flash would come back arbitrarily wrong, since nothing
      * bounds how long a device spends powered off. So this is not part
-     * of [`Self::configure_device`], which carries the time *zone* —
+     * of [`Self::configure_device`], which carries the time *zone*—
      * where the device is meant to be is worth persisting even when what
      * time it is is not.
      *
@@ -4375,7 +4375,7 @@ open func setTime(epochSeconds: UInt32?)throws  -> UlcpSessionUpdateRecord  {
      * The platform adapter supplies only opaque bytes from `MobileMeshSession`;
      * Rust owns the ULCP command, stream identifier, metadata, TID, and
      * confirmation matching. `nocca` sets `TX_FLAG_NOCCA` so the device
-     * transmits without its pre-transmit channel-activity check — used for
+     * transmits without its pre-transmit channel-activity check—used for
      * immediate MAC acks (see [`MobileMeshOutboundFrameRecord::nocca`]).
      */
 open func transmitRaw(data: Data, nocca: Bool)throws  -> UlcpSessionUpdateRecord  {
@@ -4449,7 +4449,7 @@ public struct ChannelPreviewRecord: Equatable, Hashable {
     /**
      * Canonicalized (ASCII-lowercased) name for a named channel. The UI
      * should show this when it differs from what the user typed, because it
-     * — not the input — is what determines the key.
+     *—not the input—is what determines the key.
      */
     public var canonicalName: String?
     /**
@@ -4463,7 +4463,7 @@ public struct ChannelPreviewRecord: Equatable, Hashable {
      */
     public var channelId: Data
     /**
-     * Three octets for presentation — a deterministic color for the
+     * Three octets for presentation—a deterministic color for the
      * channel. The first two are the identifier above.
      */
     public var tint: Data
@@ -4487,7 +4487,7 @@ public struct ChannelPreviewRecord: Equatable, Hashable {
         /**
          * Canonicalized (ASCII-lowercased) name for a named channel. The UI
          * should show this when it differs from what the user typed, because it
-         * — not the input — is what determines the key.
+         *—not the input—is what determines the key.
          */canonicalName: String?,
         /**
          * The 32-octet channel key.
@@ -4498,7 +4498,7 @@ public struct ChannelPreviewRecord: Equatable, Hashable {
          * resolve collisions by trial decryption.
          */channelId: Data,
         /**
-         * Three octets for presentation — a deterministic color for the
+         * Three octets for presentation—a deterministic color for the
          * channel. The first two are the identifier above.
          */tint: Data,
         /**
@@ -5151,7 +5151,7 @@ public struct MobileChatMutationRecord: Equatable, Hashable {
      * The host should raise a user notification for this record (single-frame
      * arrival, fragment completion, or notify deadline; never placeholders).
      *
-     * Whether a notification is actually shown remains the host's decision —
+     * Whether a notification is actually shown remains the host's decision—
      * a muted conversation still produces records with this set, and still
      * counts as unread.
      */
@@ -5205,7 +5205,7 @@ public struct MobileChatMutationRecord: Equatable, Hashable {
          * The host should raise a user notification for this record (single-frame
          * arrival, fragment completion, or notify deadline; never placeholders).
          *
-         * Whether a notification is actually shown remains the host's decision —
+         * Whether a notification is actually shown remains the host's decision—
          * a muted conversation still produces records with this set, and still
          * counts as unread.
          */notify: Bool,
@@ -5510,7 +5510,7 @@ public struct MobileChatRxMetadataRecord: Equatable, Hashable {
     /**
      * Radio links the frame crossed to get here, counting the final one into
      * this device: a frame heard directly from its sender is one hop. The
-     * same count a ping reply reports, and absent for the same reason — a
+     * same count a ping reply reports, and absent for the same reason—a
      * frame source-routed without a trace route crossed hops nobody
      * recorded.
      */
@@ -5518,8 +5518,8 @@ public struct MobileChatRxMetadataRecord: Equatable, Hashable {
     /**
      * Intermediate-router hints in trace-route order: each forwarding
      * repeater prepends its own hint, so the list starts nearest us and ends
-     * nearest the sender. That is return-path order — usable directly as a
-     * source route back — and the reverse of the path the frame travelled.
+     * nearest the sender. That is return-path order—usable directly as a
+     * source route back—and the reverse of the path the frame travelled.
      */
     public var routeHints: [Data]
     public var sourceAuthenticated: Bool
@@ -5537,15 +5537,15 @@ public struct MobileChatRxMetadataRecord: Equatable, Hashable {
         /**
          * Radio links the frame crossed to get here, counting the final one into
          * this device: a frame heard directly from its sender is one hop. The
-         * same count a ping reply reports, and absent for the same reason — a
+         * same count a ping reply reports, and absent for the same reason—a
          * frame source-routed without a trace route crossed hops nobody
          * recorded.
          */hopCount: UInt8?,
         /**
          * Intermediate-router hints in trace-route order: each forwarding
          * repeater prepends its own hint, so the list starts nearest us and ends
-         * nearest the sender. That is return-path order — usable directly as a
-         * source route back — and the reverse of the path the frame travelled.
+         * nearest the sender. That is return-path order—usable directly as a
+         * source route back—and the reverse of the path the frame travelled.
          */routeHints: [Data], sourceAuthenticated: Bool,
         /**
          * Seconds the frame spent queued on the radio before delivery; zero
@@ -5705,7 +5705,7 @@ public struct MobileMeshAdvertisementRecord: Equatable, Hashable {
      * this bundle.
      *
      * A unicast Identity Request reply is authenticated by its MIC, so it
-     * carries no detached signature and decodes as `Unsigned` — it is
+     * carries no detached signature and decodes as `Unsigned`—it is
      * nonetheless trustworthy, and the platform must accept it. A broadcast
      * advertisement has no MIC, so it is `false` and the platform must
      * require a `Valid` embedded signature before trusting any claim.
@@ -5727,7 +5727,7 @@ public struct MobileMeshAdvertisementRecord: Equatable, Hashable {
          * this bundle.
          *
          * A unicast Identity Request reply is authenticated by its MIC, so it
-         * carries no detached signature and decodes as `Unsigned` — it is
+         * carries no detached signature and decodes as `Unsigned`—it is
          * nonetheless trustworthy, and the platform must accept it. A broadcast
          * advertisement has no MIC, so it is `false` and the platform must
          * require a `Valid` embedded signature before trusting any claim.
@@ -5879,7 +5879,7 @@ public struct MobileMeshManagementEventRecord: Equatable, Hashable {
      */
     public var answers: [MobileMeshManagementAnswerRecord]
     /**
-     * The status when the device answered the whole exchange with one —
+     * The status when the device answered the whole exchange with one—
      * what a save or a whole-table write reports.
      */
     public var statusCode: UInt32?
@@ -5904,7 +5904,7 @@ public struct MobileMeshManagementEventRecord: Equatable, Hashable {
          * The answers, in the order they were asked for.
          */answers: [MobileMeshManagementAnswerRecord],
         /**
-         * The status when the device answered the whole exchange with one —
+         * The status when the device answered the whole exchange with one—
          * what a save or a whole-table write reports.
          */statusCode: UInt32?,
         /**
@@ -6054,7 +6054,7 @@ public func FfiConverterTypeMobileMeshOutboundFrameRecord_lower(_ value: MobileM
  * A beacon is the case this exists for: it has no payload, so it produces no
  * advertisement, no message, and no ping reply, yet it is the cheapest
  * possible proof that a node is still reachable. Presence is not a claim
- * about content, so nothing here needs to be authenticated to be useful —
+ * about content, so nothing here needs to be authenticated to be useful—
  * it says only that a frame naming this sender was accepted.
  */
 public struct MobileMeshPeerHeardRecord: Equatable, Hashable {
@@ -6062,7 +6062,7 @@ public struct MobileMeshPeerHeardRecord: Equatable, Hashable {
      * Canonical Base58 address of the sender, when the frame named a full
      * public key or the MAC could resolve one. `None` for a hint-only
      * source, which the platform may still resolve against its own peer
-     * list — see `node_hint`.
+     * list—see `node_hint`.
      */
     public var peerAddress: String?
     /**
@@ -6086,7 +6086,7 @@ public struct MobileMeshPeerHeardRecord: Equatable, Hashable {
          * Canonical Base58 address of the sender, when the frame named a full
          * public key or the MAC could resolve one. `None` for a hint-only
          * source, which the platform may still resolve against its own peer
-         * list — see `node_hint`.
+         * list—see `node_hint`.
          */peerAddress: String?,
         /**
          * The 3-byte source node hint, when the frame carried one. Hints are
@@ -6276,7 +6276,7 @@ public struct MobileMeshPingEventRecord: Equatable, Hashable {
     /**
      * Radio links the response crossed, counting the final one into this
      * device: a direct response is one hop. Absent on a reply that was
-     * source-routed without a trace route — it crossed hops nobody recorded,
+     * source-routed without a trace route—it crossed hops nobody recorded,
      * so no count is claimed.
      */
     public var hopCount: UInt8?
@@ -6298,7 +6298,7 @@ public struct MobileMeshPingEventRecord: Equatable, Hashable {
         /**
          * Radio links the response crossed, counting the final one into this
          * device: a direct response is one hop. Absent on a reply that was
-         * source-routed without a trace route — it crossed hops nobody recorded,
+         * source-routed without a trace route—it crossed hops nobody recorded,
          * so no count is claimed.
          */hopCount: UInt8?,
         /**
@@ -7154,8 +7154,8 @@ public func FfiConverterTypeMobileRegionOutcomeRecord_lower(_ value: MobileRegio
 /**
  * A place to propose regions for, with its honest uncertainty.
  *
- * Positions come from sources of very different quality — a node's
- * advertised identity cell, a live GNSS fix, hand-entered coordinates —
+ * Positions come from sources of very different quality—a node's
+ * advertised identity cell, a live GNSS fix, hand-entered coordinates—
  * and the proposal widens itself to match. At most one of
  * `location_bytes` and `accuracy_m` should be set; the cell wins when
  * both are.
@@ -8264,7 +8264,7 @@ public struct UlcpDeviceCardRecord: Equatable, Hashable {
     public var capabilities: Data
     /**
      * `PROP_DEV_VERSION`: what firmware it is running. The natural key
-     * for everything cached about it — capabilities cannot change
+     * for everything cached about it—capabilities cannot change
      * without this changing too.
      */
     public var deviceVersion: String?
@@ -8310,7 +8310,7 @@ public struct UlcpDeviceCardRecord: Equatable, Hashable {
          */capabilities: Data,
         /**
          * `PROP_DEV_VERSION`: what firmware it is running. The natural key
-         * for everything cached about it — capabilities cannot change
+         * for everything cached about it—capabilities cannot change
          * without this changing too.
          */deviceVersion: String?,
         /**
@@ -8434,7 +8434,7 @@ public func FfiConverterTypeUlcpDeviceCardRecord_lower(_ value: UlcpDeviceCardRe
  * which describes only the radio. Every capability-gated field must be
  * present exactly when the device advertises the matching capability, so
  * the record always states a whole desired configuration rather than a
- * patch — a property that a future template feature can lean on.
+ * patch—a property that a future template feature can lean on.
  */
 public struct UlcpDeviceConfigRecord: Equatable, Hashable {
     /**
@@ -8594,7 +8594,7 @@ public func FfiConverterTypeUlcpDeviceConfigRecord_lower(_ value: UlcpDeviceConf
  * Everything the management screens show, all of it optional.
  *
  * A category read answers a handful of properties, so anything outside
- * it is simply absent — this record says what the last read of *some*
+ * it is simply absent—this record says what the last read of *some*
  * category found, and a screen fills in from it whatever it recognizes.
  * The counterpart to [`UlcpSyncRecord`], which describes a whole device
  * and can insist on the properties every device must answer.
@@ -8633,7 +8633,7 @@ public struct UlcpDevicePropertiesRecord: Equatable, Hashable {
     public var identLatitudeDeg: Double?
     public var identLongitudeDeg: Double?
     /**
-     * Width of the advertised cell at the equator, in meters — what the
+     * Width of the advertised cell at the equator, in meters—what the
      * length of the location actually discloses.
      */
     public var identLocationCellMeters: Double?
@@ -8673,7 +8673,7 @@ public struct UlcpDevicePropertiesRecord: Equatable, Hashable {
     /**
      * Whether a host is on the device's Bluetooth right now: 0 nobody,
      * 1 connected, 2 attached and running ULCP. Read-only, and always 2
-     * when the question was asked over Bluetooth — the session asking is
+     * when the question was asked over Bluetooth—the session asking is
      * the session it reports.
      */
     public var bleLink: UInt8?
@@ -8709,7 +8709,7 @@ public struct UlcpDevicePropertiesRecord: Equatable, Hashable {
          * position, which is different from not having been asked.
          */identLocation: Data?, identLatitudeDeg: Double?, identLongitudeDeg: Double?,
         /**
-         * Width of the advertised cell at the equator, in meters — what the
+         * Width of the advertised cell at the equator, in meters—what the
          * length of the location actually discloses.
          */identLocationCellMeters: Double?, identAltitudeM: Int32?, devDiscoverable: Bool?,
         /**
@@ -8735,7 +8735,7 @@ public struct UlcpDevicePropertiesRecord: Equatable, Hashable {
         /**
          * Whether a host is on the device's Bluetooth right now: 0 nobody,
          * 1 connected, 2 attached and running ULCP. Read-only, and always 2
-         * when the question was asked over Bluetooth — the session asking is
+         * when the question was asked over Bluetooth—the session asking is
          * the session it reports.
          */bleLink: UInt8?,
         /**
@@ -8940,8 +8940,8 @@ public func FfiConverterTypeUlcpDevicePropertiesRecord_lower(_ value: UlcpDevice
  * telemetry properties.
  *
  * Unlike a battery reading this is carried on *every* snapshot rather
- * than reported once: it is state the UI mirrors — a map pin does not
- * disappear because an unrelated property arrived — and the receiver
+ * than reported once: it is state the UI mirrors—a map pin does not
+ * disappear because an unrelated property arrived—and the receiver
  * announces position and fix changes on its own schedule.
  */
 public struct UlcpGnssRecord: Equatable, Hashable {
@@ -9097,7 +9097,7 @@ public func FfiConverterTypeUlcpGnssRecord_lower(_ value: UlcpGnssRecord) -> Rus
  * is done with what it finds.
  *
  * Read and written as a whole, like [`UlcpRepeaterSettingsRecord`] and
- * for the same reason — a receiver switched on under half a policy
+ * for the same reason—a receiver switched on under half a policy
  * starts advertising a position nobody just agreed to. `enabled` is
  * written last so the rest is already in force when it does.
  */
@@ -9116,7 +9116,7 @@ public struct UlcpGnssSettingsRecord: Equatable, Hashable {
     /**
      * `PROP_GNSS_IDENT_PRECISION`: how many location bytes that
      * advertised position is clamped to, 1 (coarsest) through 7. This is
-     * a disclosure control — see [`ulcp_location_cell_meters`].
+     * a disclosure control—see [`ulcp_location_cell_meters`].
      */
     public var identPrecision: UInt8
     /**
@@ -9141,7 +9141,7 @@ public struct UlcpGnssSettingsRecord: Equatable, Hashable {
         /**
          * `PROP_GNSS_IDENT_PRECISION`: how many location bytes that
          * advertised position is clamped to, 1 (coarsest) through 7. This is
-         * a disclosure control — see [`ulcp_location_cell_meters`].
+         * a disclosure control—see [`ulcp_location_cell_meters`].
          */identPrecision: UInt8,
         /**
          * `PROP_GNSS_TIME_TRUST`: whether receiver-derived time may set the
@@ -9206,7 +9206,7 @@ public func FfiConverterTypeUlcpGnssSettingsRecord_lower(_ value: UlcpGnssSettin
  * measurement.
  *
  * A position names a cell rather than a point, so the encoded cell is
- * carried verbatim alongside what it decodes to — the bytes are what a
+ * carried verbatim alongside what it decodes to—the bytes are what a
  * region proposal needs, because the cell's bounds *are* the
  * uncertainty, and the degrees are what a readout shows.
  */
@@ -9316,7 +9316,7 @@ public func FfiConverterTypeUlcpIdentPositionRecord_lower(_ value: UlcpIdentPosi
  *
  * Answers wear the same record the mesh management path reports, and mean
  * the same things: a value is what the device holds, a status in its
- * place is a refusal of that one property. What differs is the carrier —
+ * place is a refusal of that one property. What differs is the carrier—
  * here the completion rides the session update instead of a mesh event.
  */
 public struct UlcpLocalManagementEventRecord: Equatable, Hashable {
@@ -9761,8 +9761,8 @@ public func FfiConverterTypeUlcpPropertyFrameRecord_lower(_ value: UlcpPropertyF
 
 
 /**
- * One property value the device announced on its own — `CMD_PROP_IS`
- * with the unsolicited transaction — as opposed to the answer to
+ * One property value the device announced on its own—`CMD_PROP_IS`
+ * with the unsolicited transaction—as opposed to the answer to
  * anything this session asked.
  */
 public struct UlcpPropertyPushRecord: Equatable, Hashable {
@@ -10046,8 +10046,8 @@ public func FfiConverterTypeUlcpReceivedFrameRecord_lower(_ value: UlcpReceivedF
 /**
  * The device identity's autonomous flood-forwarding policy.
  *
- * The filter is written as region strings — the same strings the device
- * advertises as its Supported Regions identity option — while the
+ * The filter is written as region strings—the same strings the device
+ * advertises as its Supported Regions identity option—while the
  * default tag is a 2-octet code, because that is what goes on the air
  * packet by packet. [`region_code_from_string`] and
  * [`region_code_description`] convert between the two.
@@ -10060,7 +10060,7 @@ public struct UlcpRepeaterSettingsRecord: Equatable, Hashable {
     public var enabled: Bool
     /**
      * `PROP_MAC_REPEATER_REGIONS`: which region-tagged floods to
-     * forward, as region strings of 1 to 24 octets — a short code, a
+     * forward, as region strings of 1 to 24 octets—a short code, a
      * name, or a literal `0x1234`. Empty imposes no regional
      * restriction rather than blocking every flood.
      */
@@ -10088,7 +10088,7 @@ public struct UlcpRepeaterSettingsRecord: Equatable, Hashable {
          */enabled: Bool,
         /**
          * `PROP_MAC_REPEATER_REGIONS`: which region-tagged floods to
-         * forward, as region strings of 1 to 24 octets — a short code, a
+         * forward, as region strings of 1 to 24 octets—a short code, a
          * name, or a literal `0x1234`. Empty imposes no regional
          * restriction rather than blocking every flood.
          */regions: [String],
@@ -10176,13 +10176,13 @@ public struct UlcpSessionSnapshotRecord: Equatable, Hashable {
      *
      * Unlike `battery`, this is carried on *every* snapshot rather than
      * reported once: it is state the UI mirrors, and the radio ends an
-     * alert on its own — a button press or its deadline — so the button
+     * alert on its own—a button press or its deadline—so the button
      * must follow the radio rather than what the phone last asked for.
      */
     public var alert: UlcpAlertState?
     /**
      * A clock reading that arrived with this update, on a `CAP_TIME`
-     * device. Reported once — see [`UlcpTimeRecord`].
+     * device. Reported once—see [`UlcpTimeRecord`].
      */
     public var time: UlcpTimeRecord?
     /**
@@ -10201,12 +10201,12 @@ public struct UlcpSessionSnapshotRecord: Equatable, Hashable {
          *
          * Unlike `battery`, this is carried on *every* snapshot rather than
          * reported once: it is state the UI mirrors, and the radio ends an
-         * alert on its own — a button press or its deadline — so the button
+         * alert on its own—a button press or its deadline—so the button
          * must follow the radio rather than what the phone last asked for.
          */alert: UlcpAlertState?,
         /**
          * A clock reading that arrived with this update, on a `CAP_TIME`
-         * device. Reported once — see [`UlcpTimeRecord`].
+         * device. Reported once—see [`UlcpTimeRecord`].
          */time: UlcpTimeRecord?,
         /**
          * What the receiver reports, on a `CAP_GNSS` device, or `None` until
@@ -10453,7 +10453,7 @@ public struct UlcpSyncRecord: Equatable, Hashable {
      * A reading rather than a setting, and absent for a reason that is
      * never a fault: on the local link a device announces this on its own
      * schedule, so a session that has only just attached has not heard one
-     * yet. Deliberately not counted among `unreadable_properties` — there
+     * yet. Deliberately not counted among `unreadable_properties`—there
      * is no setting here to be written over.
      */
     public var battery: UlcpBatteryRecord?
@@ -10474,7 +10474,7 @@ public struct UlcpSyncRecord: Equatable, Hashable {
     /**
      * The device keeps a wall clock (`CAP_TIME`). It says nothing about
      * where the time comes from, or whether the device currently knows
-     * it — an unset clock is a device with `CAP_TIME` and no epoch.
+     * it—an unset clock is a device with `CAP_TIME` and no epoch.
      */
     public var supportsTime: Bool
     /**
@@ -10550,7 +10550,7 @@ public struct UlcpSyncRecord: Equatable, Hashable {
     /**
      * `PROP_IDENT_ROLE`. `None` covers "the device derives its role from
      * what it is actually doing", "no `CAP_IDENT`", and "the device would
-     * not report it" — `supports_ident` and `unreadable_properties`
+     * not report it"—`supports_ident` and `unreadable_properties`
      * distinguish them.
      */
     public var identRole: UInt8?
@@ -10594,8 +10594,8 @@ public struct UlcpSyncRecord: Equatable, Hashable {
      * Capability-gated properties the device advertised but would not
      * report, in ascending order.
      *
-     * A device that refuses a property — old firmware behind a newer
-     * capability, a property it never implemented — is a device with an
+     * A device that refuses a property—old firmware behind a newer
+     * capability, a property it never implemented—is a device with an
      * unknown setting, not one this phone cannot administer. Their values
      * are absent above, they are left out of configuration writes, and
      * nothing about them can be verified after a save.
@@ -10619,7 +10619,7 @@ public struct UlcpSyncRecord: Equatable, Hashable {
          * A reading rather than a setting, and absent for a reason that is
          * never a fault: on the local link a device announces this on its own
          * schedule, so a session that has only just attached has not heard one
-         * yet. Deliberately not counted among `unreadable_properties` — there
+         * yet. Deliberately not counted among `unreadable_properties`—there
          * is no setting here to be written over.
          */battery: UlcpBatteryRecord?,
         /**
@@ -10636,7 +10636,7 @@ public struct UlcpSyncRecord: Equatable, Hashable {
         /**
          * The device keeps a wall clock (`CAP_TIME`). It says nothing about
          * where the time comes from, or whether the device currently knows
-         * it — an unset clock is a device with `CAP_TIME` and no epoch.
+         * it—an unset clock is a device with `CAP_TIME` and no epoch.
          */supportsTime: Bool,
         /**
          * A GNSS receiver is fitted (`CAP_GNSS`), so the positioning
@@ -10686,7 +10686,7 @@ public struct UlcpSyncRecord: Equatable, Hashable {
         /**
          * `PROP_IDENT_ROLE`. `None` covers "the device derives its role from
          * what it is actually doing", "no `CAP_IDENT`", and "the device would
-         * not report it" — `supports_ident` and `unreadable_properties`
+         * not report it"—`supports_ident` and `unreadable_properties`
          * distinguish them.
          */identRole: UInt8?,
         /**
@@ -10723,8 +10723,8 @@ public struct UlcpSyncRecord: Equatable, Hashable {
          * Capability-gated properties the device advertised but would not
          * report, in ascending order.
          *
-         * A device that refuses a property — old firmware behind a newer
-         * capability, a property it never implemented — is a device with an
+         * A device that refuses a property—old firmware behind a newer
+         * capability, a property it never implemented—is a device with an
          * unknown setting, not one this phone cannot administer. Their values
          * are absent above, they are left out of configuration writes, and
          * nothing about them can be verified after a save.
@@ -12758,7 +12758,7 @@ public enum UlcpAlertState: Equatable, Hashable {
     case none
     /**
      * The radio is making itself as conspicuous as its hardware allows
-     * — beeping, flashing, or both, depending on the board.
+     *—beeping, flashing, or both, depending on the board.
      */
     case locate
 
@@ -12997,7 +12997,7 @@ public func FfiConverterTypeUlcpChargeState_lower(_ value: UlcpChargeState) -> R
 public enum UlcpFixKind: Equatable, Hashable {
 
     /**
-     * No solution — the receiver is off, or on and still searching.
+     * No solution—the receiver is off, or on and still searching.
      */
     case none
     /**
@@ -14981,7 +14981,7 @@ public func channelConversationAddress(key: Data)throws  -> String  {
  *
  * The two-octet identifier is its prefix and is what travels on the wire;
  * this is the width at which two channels can be told apart, which is what
- * naming one to a device takes — `PROP_HOST_MUTED_CHANNELS` is where that
+ * naming one to a device takes—`PROP_HOST_MUTED_CHANNELS` is where that
  * matters today.
  */
 public func channelIdentifier(key: Data)throws  -> Data  {
@@ -15022,7 +15022,7 @@ public func deriveChannelId(key: Data)throws  -> Data  {
 })
 }
 /**
- * Derive the three presentation octets for a key — the identifier extended by
+ * Derive the three presentation octets for a key—the identifier extended by
  * one byte, so a channel's color is stable wherever it is shown.
  */
 public func deriveChannelTint(key: Data)throws  -> Data  {
@@ -15223,8 +15223,8 @@ public func renderRouterHint(bytes: Data)throws  -> RouterHintRecord  {
  * that describe a node other than the caller: fixtures, and the iOS app's
  * staging mode, which needs nodes that report a location. The live
  * advertisement path keeps a position out of the durable bundle it signs on
- * purpose — a frozen position goes stale and then travels wherever the QR is
- * pasted — so a located bundle cannot be obtained from it.
+ * purpose—a frozen position goes stale and then travels wherever the QR is
+ * pasted—so a located bundle cannot be obtained from it.
  *
  * This grants nothing a holder of the secret key does not already have:
  * signing a statement about a key is what holding that key means. The name is
@@ -15250,8 +15250,8 @@ public func signNodeIdentityBundle(secretKey: Data, profile: NodeIdentityProfile
  * device being configured across the mesh.
  *
  * A phone holding a device open writes a configuration through
- * `MobileUlcpSession::configure_device`, which owns the ordering — the
- * PHY goes down first and comes back up last — and closes with a save.
+ * `MobileUlcpSession::configure_device`, which owns the ordering—the
+ * PHY goes down first and comes back up last—and closes with a save.
  * An administrator has no session to hand a record to, only the record
  * its read produced, so it asks for the same writes here and sends them
  * with [`MobileMeshSession::begin_management_set_many`]. The reduction is
@@ -15260,7 +15260,7 @@ public func signNodeIdentityBundle(secretKey: Data, profile: NodeIdentityProfile
  *
  * `reported` is the device as a completed read found it. Its
  * capabilities decide which fields must be present, and the properties
- * it would not report are left out — writing one of those fails, and a
+ * it would not report are left out—writing one of those fails, and a
  * device fails the write it is on rather than the ones after it.
  */
 public func ulcpDeviceConfigWrites(configuration: UlcpDeviceConfigRecord, reported: UlcpSyncRecord)throws  -> [MobileMeshPropertyWriteRecord]  {
@@ -15276,8 +15276,8 @@ public func ulcpDeviceConfigWrites(configuration: UlcpDeviceConfigRecord, report
  * Present the answers to a management read as the property frames the
  * ULCP inspectors read.
  *
- * A mesh answer and a GATT property frame carry the same thing — a
- * property and what the device said it is worth — so the decoders are
+ * A mesh answer and a GATT property frame carry the same thing—a
+ * property and what the device said it is worth—so the decoders are
  * the same decoders. Refusals drop out here: they are answers *about* a
  * property rather than values of one, and the event still carries them
  * for a caller that needs to know which.
@@ -15331,7 +15331,7 @@ public func inspectUlcpBattery(value: Data)throws  -> UlcpBatteryRecord  {
 /**
  * Reduce the answers to a card read into what a device is.
  *
- * Capabilities are required — without them there is nothing to plan the
+ * Capabilities are required—without them there is nothing to plan the
  * rest against. Everything else is absent rather than fatal: a device
  * that will not name its hardware is a device that does not name its
  * hardware.
@@ -15386,8 +15386,8 @@ public func inspectUlcpStatus(value: Data)throws  -> UInt32  {
  * Validate and reduce the property responses from the read-only post-attach
  * inspection.
  *
- * The four properties every ULCP device must answer — the interface type
- * and the live PHY triple — are required: without them there is no radio
+ * The four properties every ULCP device must answer—the interface type
+ * and the live PHY triple—are required: without them there is no radio
  * to describe. Everything else is capability-gated and merely *expected*,
  * so a device that refuses one, or answers it with something undecodable,
  * yields a snapshot with that setting absent and named in
@@ -15418,8 +15418,8 @@ public func regionCodeDescription(code: Data)throws  -> String  {
  * Read a region code from what someone typed, yielding the two wire
  * octets used everywhere else in the ULCP and mesh surfaces.
  *
- * One to three ASCII letters or digits are a short code — an airport,
- * a country, a state — `0xXXXX` is a literal code, and anything else is a
+ * One to three ASCII letters or digits are a short code—an airport,
+ * a country, a state—`0xXXXX` is a literal code, and anything else is a
  * region *name* hashed into a part of the code space disjoint from the
  * all-letter short codes. So "SJC" and "San Jose" are deliberately
  * different regions, and no name can ever collide with a letter code.
@@ -15488,7 +15488,7 @@ public func ulcpDirtyWrites(desired: UlcpDevicePropertiesRecord, dirtyPropertyId
  *
  * The counterpart to the latitude and longitude an inspection reports:
  * what goes on the air is a cell rather than a point, and how large that
- * cell is — the precision, which is also the value's length — is what the
+ * cell is—the precision, which is also the value's length—is what the
  * device discloses. See [`ulcp_location_cell_meters`] for what each
  * precision is worth in meters.
  *
@@ -15531,8 +15531,8 @@ public func ulcpGattSegments(frame: Data, maximumValueLength: UInt16)throws  -> 
 })
 }
 /**
- * Frame a ULCP frame for an HDLC-Lite byte stream — a serial port, or
- * a socket standing in for one — including both delimiting flags.
+ * Frame a ULCP frame for an HDLC-Lite byte stream—a serial port, or
+ * a socket standing in for one—including both delimiting flags.
  *
  * The byte-stream counterpart of [`ulcp_gatt_segments`]: a stream has
  * no segmentation, so one frame encodes to one write.
@@ -15559,7 +15559,7 @@ public func ulcpInspectionProperties(capabilities: Data)throws  -> [UInt32]  {
 }
 /**
  * Approximate width, at the equator, of the cell one location precision
- * names — 2,500 km at one byte down to 15 cm at seven. `None` outside
+ * names—2,500 km at one byte down to 15 cm at seven. `None` outside
  * 1–7.
  *
  * This is what makes a precision mean something to a person: the setting
@@ -15613,7 +15613,7 @@ public func ulcpMaxDevChannels() -> UInt8  {
 /**
  * Capacity of the device identity's peer list (`PROP_DEV_PEERS`).
  *
- * A label constant only — the device's `NOMEM` stays authoritative for
+ * A label constant only—the device's `NOMEM` stays authoritative for
  * when the list is actually full.
  */
 public func ulcpMaxDevPeers() -> UInt8  {
@@ -15688,7 +15688,7 @@ public func ulcpPropSet(transactionId: UInt8, propertyId: UInt32, value: Data)th
  *
  * What [`ulcp_records_from_answers`] does for a fresh answer, for a value
  * that came out of a cache instead. Cached octets and answered octets are
- * the same octets, so they decode through the same path — and a caller
+ * the same octets, so they decode through the same path—and a caller
  * never has to know which command byte a reported value wears.
  */
 public func ulcpPropertyRecord(propertyId: UInt32, value: Data) -> UlcpPropertyFrameRecord  {

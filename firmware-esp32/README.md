@@ -1,4 +1,4 @@
-# firmware-esp32 — Espressif (Xtensa) sibling workspace
+# firmware-esp32—Espressif (Xtensa) sibling workspace
 
 Firmware and BSPs for Espressif targets: the
 [Heltec WiFi LoRa 32 V3](../docs/hardware/heltec-lora32-v3-hardware.md) and the
@@ -8,7 +8,7 @@ Firmware and BSPs for Espressif targets: the
 (classic ESP32). This is a separate cargo workspace because the
 Xtensa chips need the Xtensa Rust fork (`rust-toolchain.toml` here pins
 `channel = "esp"`), which cannot coexist with the root workspace's toolchain
-file — see the decision table in
+file—see the decision table in
 [firmware-architecture.md](../docs/firmware-architecture.md).
 
 ## Toolchain setup (once per machine)
@@ -38,20 +38,20 @@ make flash-tbeam-supreme     # espflash over native USB, then monitor
 
 The workspace `.cargo/config.toml` carries only chip-agnostic settings
 (espflash runner, linker flags, build-std); each firmware selects its
-own target triple — plus any chip-quirk env overrides, like the Heltec
-V2's ancient-silicon `ESP_HAL_CONFIG_MIN_CHIP_REVISION` floor — in a
+own target triple—plus any chip-quirk env overrides, like the Heltec
+V2's ancient-silicon `ESP_HAL_CONFIG_MIN_CHIP_REVISION` floor—in a
 per-firmware `.cargo/config.toml`. Per-directory configs only apply when
 cargo runs from inside the directory, so build each firmware **from
 inside its own directory** (`cargo build --release` there, or `cargo run
---release` to flash+monitor) — the Makefile targets do exactly that.
-Flashing uses the mask-ROM serial bootloader with DTR/RTS auto-entry —
+--release` to flash+monitor)—the Makefile targets do exactly that.
+Flashing uses the mask-ROM serial bootloader with DTR/RTS auto-entry—
 there is no bootloader to brick and no DFU/UF2 machinery.
 
 ## Version pins
 
 The whole esp-hal family (esp-hal, esp-rtos, esp-radio, esp-alloc,
 esp-println, esp-bootloader-esp-idf) is pinned to a single git rev of
-esp-rs/esp-hal in this workspace's `[patch.crates-io]` — the published
+esp-rs/esp-hal in this workspace's `[patch.crates-io]`—the published
 esp-radio 1.0.0-beta.0 speaks bt-hci 0.8 while our audited trouble-host
 fork requires bt-hci 0.9; main carries the 0.9 bump. All family members
 must move together (they share in-repo path dependencies). Drop the block

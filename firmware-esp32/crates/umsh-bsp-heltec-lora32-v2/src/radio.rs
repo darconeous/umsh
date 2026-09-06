@@ -2,7 +2,7 @@
 //! NSS=GPIO18, reset=GPIO14, DIO0=GPIO26).
 //!
 //! The SX127x family has no BUSY pin, and this board's RF switch is
-//! driven by the radio's own RXTX output — so the esp-aware
+//! driven by the radio's own RXTX output—so the esp-aware
 //! `EspInterfaceVariant` runs in its no-BUSY shape, which makes
 //! `wait_on_busy` and the `enable_rf_switch_*` hooks no-ops. DIO0
 //! carries every IRQ lora-phy needs; DIO1 (GPIO35) and DIO2 (GPIO34)
@@ -15,7 +15,7 @@
 //! (0x12 = private) at the `LoRa` level and the SX126x driver expands
 //! it to the two-byte register form (0x12 → 0x14 0x24) internally, so
 //! `LoRa::new(kind, false, delay)` yields interoperable sync words on
-//! both this board and the SX1262 boards — no mapping needed here.
+//! both this board and the SX1262 boards—no mapping needed here.
 
 use embassy_time::{Delay, Timer};
 use embedded_hal_async::spi::SpiDevice;
@@ -49,7 +49,7 @@ const REG_VERSION: u8 = 0x42;
 
 /// Reset the radio and read `RegVersion` (0x42) raw over SPI, before
 /// the lora-phy driver takes ownership of the bus. Anything other than
-/// [`EXPECTED_VERSION`] means the SPI wiring or the chip is bad —
+/// [`EXPECTED_VERSION`] means the SPI wiring or the chip is bad—
 /// surface it before blaming RF behavior.
 ///
 /// The driver re-runs its own reset during `LoRa::new`, so the extra
@@ -73,8 +73,8 @@ pub async fn probe_version(
 }
 
 /// Assemble the board's `RadioKind` from the SPI device and control
-/// pins. Follow with `LoRa::new(kind, false, Delay)` — private sync
-/// word — and the parameter builders in `umsh-radio-loraphy`.
+/// pins. Follow with `LoRa::new(kind, false, Delay)`—private sync
+/// word—and the parameter builders in `umsh-radio-loraphy`.
 pub fn new_radio_kind(
     spi: RadioSpi,
     reset: Output<'static>,

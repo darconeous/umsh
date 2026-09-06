@@ -5,13 +5,13 @@
 //! stand-ins; every protocol decision is made by the real session. What
 //! stands where a radio would is a queue: transmissions accumulate until
 //! [`SimulatedDevice::take_transmitted`] drains them, so the caller
-//! decides what "the air" is — the web debugger discards it, a bridge
+//! decides what "the air" is—the web debugger discards it, a bridge
 //! copies it to real segments.
 //!
 //! The [`SessionConfig`] is the caller's: it names the device and
 //! declares its capability surface. A simulated device has no node
 //! behind it, so its configuration must leave
-//! [`SessionConfig::mac_node`] unset — a backhaul would connect the host
+//! [`SessionConfig::mac_node`] unset—a backhaul would connect the host
 //! to nothing.
 
 use std::collections::VecDeque;
@@ -49,7 +49,7 @@ pub struct SimulatedDevice {
     identity_seed: u8,
     pairing_pin: Option<u32>,
     /// Bonds the simulated transport is holding. Nothing here pairs, so
-    /// the count only ever falls — it starts non-zero so a host has
+    /// the count only ever falls—it starts non-zero so a host has
     /// something to clear, which is the state the command is for.
     bond_count: u8,
     air: Vec<Vec<u8>>,
@@ -57,7 +57,7 @@ pub struct SimulatedDevice {
     /// The caller's clock reading when this device last came up.
     /// `Clock::now_ms` is specified as milliseconds since boot, and a
     /// factory reset reboots the hardware, so the simulated clock has to
-    /// restart with it — otherwise a freshly reset device would report the
+    /// restart with it—otherwise a freshly reset device would report the
     /// uptime of the process driving it.
     boot_ms: u64,
     /// The simulated wall clock, as a Unix second, or `None` for a device
@@ -162,7 +162,7 @@ impl SimulatedDevice {
     }
 
     /// Put a radio frame through the real device receive path with the
-    /// caller's own reception facts — all-`None` for a frame that
+    /// caller's own reception facts—all-`None` for a frame that
     /// crossed no air and was measured by nobody.
     pub fn inject_radio_rx_with_info(&mut self, bytes: &[u8], info: &RadioRxInfo, now_ms: u64) {
         self.now_ms = now_ms;
@@ -259,8 +259,8 @@ impl SimulatedDevice {
             }
             Some(Effect::SetBlePairing { tid, open }) => {
                 // Nothing here can pair, so the window opens and nothing
-                // walks through it. A full store is not a refusal —
-                // enrollment at capacity evicts — and the one state that
+                // walks through it. A full store is not a refusal—
+                // enrollment at capacity evicts—and the one state that
                 // would refuse an open, a pairing lockout, needs failed
                 // pairings this device cannot have.
                 self.session.respond_ble_pairing(tid, Ok(open), &mut emit);
@@ -289,7 +289,7 @@ impl SimulatedDevice {
                 // Emulate the platform wipe-and-reboot: drop every persisted
                 // artifact (snapshot, identity, bonds/PIN) and bring the
                 // session back up factory-fresh as from a power cycle. No
-                // reply is emitted — on hardware the reboot drops the link.
+                // reply is emitted—on hardware the reboot drops the link.
                 self.snapshot = None;
                 self.identity = None;
                 self.identity_seed = 0;
@@ -363,8 +363,8 @@ impl SimulatedDevice {
     /// The simulated receiver's view, walked one cell east per sample.
     ///
     /// A receiver that has been switched off reports
-    /// [`GnssSnapshot::SEARCHING`] — zero for the facts it is sure of,
-    /// empty for the position it does not have — which is the state most
+    /// [`GnssSnapshot::SEARCHING`]—zero for the facts it is sure of,
+    /// empty for the position it does not have—which is the state most
     /// worth being able to see in a debugger.
     fn gnss_sample(&mut self) -> GnssSnapshot {
         if !self.session.gnss_enabled() {

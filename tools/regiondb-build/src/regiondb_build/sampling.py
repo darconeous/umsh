@@ -2,8 +2,8 @@
 
 Expanded coverage is not stored as geometry. A region's effective membership is
 *defined* as: a position belongs to a region if any point of a fixed sample
-pattern — the position itself, six points at half the region's expansion
-distance, and twelve at the full distance — lands inside the region's core.
+pattern—the position itself, six points at half the region's expansion
+distance, and twelve at the full distance—lands inside the region's core.
 The pattern is the semantics, not an approximation of something else, which is
 what lets three implementations agree exactly: each computes the same nineteen
 spherical destinations and runs the same integer point-in-polygon test.
@@ -14,7 +14,7 @@ a border can be configured for both sides; its outer edge is fuzzy by nature,
 and no routing decision changes inside the scallops.
 
 Destinations are computed on the mean-radius sphere with the standard direct
-formulas — the same model as the suggested-default tie-break, and for the same
+formulas—the same model as the suggested-default tie-break, and for the same
 reason: it is arithmetic every platform reproduces without a geodesic library.
 A membership test never measures anything; it only has to be the same test
 everywhere.

@@ -34,8 +34,8 @@ const RELOAD_SCAN: Duration = Duration::from_secs(3);
 
 /// Whether Wireshark, rather than a person, is running this process.
 ///
-/// Every phase carries at least one `--extcap-` flag — `--capture` always
-/// arrives with `--extcap-interface` — so the arguments alone settle it.
+/// Every phase carries at least one `--extcap-` flag—`--capture` always
+/// arrives with `--extcap-interface`—so the arguments alone settle it.
 /// Deliberately not a check on argv[0]: a copy and a symlink of the same
 /// binary must behave identically.
 pub fn is_extcap_invocation() -> bool {
@@ -206,7 +206,7 @@ async fn capture(args: ExtcapArgs) -> Result<()> {
         .context("--capture requires --fifo=PATH")?;
 
     // Everything downstream narrates the capture on stdout, which here is
-    // a pipe Wireshark does not promise to drain — a full pipe would park
+    // a pipe Wireshark does not promise to drain—a full pipe would park
     // the capture forever. Stderr is no place for it either: Wireshark
     // reads this process's stderr as a fault report and raises whatever
     // accumulated there when the capture ends, so a progress line becomes
@@ -324,7 +324,7 @@ async fn resolve_target(args: &ExtcapArgs, prefs: &Prefs) -> Result<Target> {
 /// A blunt instrument on purpose: it catches every print in the capture
 /// path, including ones added later, which auditing call sites would not.
 /// Restoring on the way out is what keeps the one message Wireshark's
-/// error dialog is good for — the fatal error `main` reports — from being
+/// error dialog is good for—the fatal error `main` reports—from being
 /// silenced along with the narration.
 #[cfg(unix)]
 struct Silenced {

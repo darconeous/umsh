@@ -6,7 +6,7 @@
 //! This crate implements the stateful text-message protocol once, for use by
 //! both mobile applications and embedded pagers:
 //!
-//! - [`codec`]: exact wire bytes — borrowed decoding and encoding, with
+//! - [`codec`]: exact wire bytes—borrowed decoding and encoding, with
 //!   extension options preserved for profile-specific validation. Works
 //!   without `alloc`.
 //! - [`validate`]: semantic validation of a decoded message in conversation

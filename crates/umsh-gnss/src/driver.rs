@@ -38,7 +38,7 @@ pub enum FixQuality {
 
 /// Everything one cycle of sentences said, in integers.
 ///
-/// Coordinates are in units of 1e-7 degrees — about 11 mm, and exact,
+/// Coordinates are in units of 1e-7 degrees—about 11 mm, and exact,
 /// because they were parsed from the receiver's decimal digits without
 /// ever passing through a float.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -223,8 +223,8 @@ impl Driver {
 
                 // The dimension comes from GSA when it said anything.
                 // Without GSA there is no dimension indicator anywhere in
-                // NMEA — GGA's quality field says *whether* the receiver
-                // is fixed, never in how many dimensions — so the presence
+                // NMEA—GGA's quality field says *whether* the receiver
+                // is fixed, never in how many dimensions—so the presence
                 // of an altitude stands in for it. That is not a receiver
                 // that emits GSA and merely happened not to this cycle; it
                 // is one configured never to emit it at all, which is the
@@ -493,7 +493,7 @@ mod tests {
     }
 
     /// Each constellation counts only its own satellites, so a
-    /// multi-constellation receiver's bursts have to be summed — and the
+    /// multi-constellation receiver's bursts have to be summed—and the
     /// repeat messages within a burst must not be summed again.
     #[test]
     fn satellites_in_view_sum_across_constellations_once_each() {
@@ -507,7 +507,7 @@ mod tests {
         assert_eq!(fix.sats_in_view, Some(18), "11 GPS + 7 GLONASS");
 
         // A repeated first message from the same talker replaces rather
-        // than adds — the count is a property of the burst.
+        // than adds—the count is a property of the burst.
         let mut driver = Driver::new();
         feed(&mut driver, "GPGSV,1,1,05,03,03,111,00");
         feed(&mut driver, "GPGSV,1,1,05,03,03,111,00");

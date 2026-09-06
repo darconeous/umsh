@@ -8,7 +8,7 @@
 //! `NodeManager` that `umshctl manage` drives.
 //!
 //! What that adds is everything the engines deliberately know nothing
-//! about — that a request reaches the device sealed and comes back
+//! about—that a request reaches the device sealed and comes back
 //! authenticated, that a response is attributed to the peer that sent it,
 //! and that the administrator's loop terminates.
 

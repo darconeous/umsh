@@ -1,4 +1,4 @@
-//! [`XiaoNrf52Platform`] — the concrete `umsh_mac::Platform` bundle for the
+//! [`XiaoNrf52Platform`]—the concrete `umsh_mac::Platform` bundle for the
 //! Seeed XIAO nRF52840 + Wio-SX1262 Kit.
 //!
 //! Composes the chip-level nRF52840 plumbing from [`umsh_bsp_nrf52840`]

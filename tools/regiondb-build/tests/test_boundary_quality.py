@@ -32,7 +32,7 @@ BOUNDARIES = REGIONS / "extracts" / "boundaries"
 DEGREE_KM = 111.32
 
 # Below this a detached component is a sliver rather than a place. Size
-# alone does not say so — see `test_no_region_carries_a_detached_speck`.
+# alone does not say so—see `test_no_region_carries_a_detached_speck`.
 ARTIFACT_KM2 = 1000.0
 
 # A region whose own largest piece is smaller than this is simply a small
@@ -85,7 +85,7 @@ def test_no_region_carries_a_detached_speck(countries, states):
     and the District of Columbia are all smaller than the slivers this is
     hunting, because a landlocked region never receives a maritime reach.
     What marks an artifact is being minute *and* detached from a region
-    that is otherwise enormous — the little rectangles that hung off the
+    that is otherwise enormous—the little rectangles that hung off the
     Mississippi, next to a Mississippi.
     """
     specks = []
@@ -96,7 +96,7 @@ def test_no_region_carries_a_detached_speck(countries, states):
         largest = max(_area_km2(component) for component in components)
         # "A speck beside a continent" needs an actual continent. Bouvet
         # Island's whole region is fifty square kilometers, and the tenth
-        # of one beside it is Larsøya — a real rock, not a sliver.
+        # of one beside it is Larsøya—a real rock, not a sliver.
         if largest < CONTINENT_KM2:
             continue
         for component in components:
@@ -152,7 +152,7 @@ def test_nothing_is_claimed_across_the_dateline(states, latitude, longitude, exp
 
     Projecting a buffer back through pyproj wraps into [-180, 180], which
     puts a 360-degree jump inside a ring for anything within reach of the
-    dateline, and `make_valid` reads that as a segment across the world —
+    dateline, and `make_valid` reads that as a segment across the world—
     the slab that ran through the Aleutians, claiming open sea.
 
     This asks what the geometry answers rather than what it looks like.
@@ -233,7 +233,7 @@ def test_survey_corners_stay_square(states, code, longitude, latitude, name):
 
 # How much of a country may fall inside another before it is being annexed
 # rather than meeting it. Real neighbors overlap by hairlines where the EEZ
-# ceiling and the buffer arcs disagree — the worst is Samoa and American
+# ceiling and the buffer arcs disagree—the worst is Samoa and American
 # Samoa at two tenths of a percent, and most are hundredths. Lesotho was
 # inside South Africa by all of itself.
 SWALLOWED_FRACTION = 0.05

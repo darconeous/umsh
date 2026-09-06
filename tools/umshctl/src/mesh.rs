@@ -9,8 +9,8 @@
 //!
 //! Two identities are in play and it is worth keeping them apart. The
 //! attached radio has its own device identity, which `identity` shows.
-//! This tool has a separate, persistent administrator identity —
-//! `admin-key` prints it — and a device is managed from here only once
+//! This tool has a separate, persistent administrator identity—
+//! `admin-key` prints it—and a device is managed from here only once
 //! that key is listed in its `PROP_DEV_ADMINS`, which `dev-admin add`
 //! does over a bench link.
 
@@ -45,7 +45,7 @@ use crate::output::{field, note};
 
 // ─── The host stack this tool becomes ────────────────────────────────────────
 
-/// One identity — the administrator's. Channels and queues are sized for
+/// One identity—the administrator's. Channels and queues are sized for
 /// a tool that talks to one device at a time and holds one exchange open
 /// while it does.
 ///
@@ -136,7 +136,7 @@ pub fn show_admin_key() -> Result<()> {
 /// real ones before borrowing the link.
 ///
 /// A radio whose PHY is switched off refuses every transmission, and it
-/// does so far downstream — as an `INVALID_STATE` on the first frame the
+/// does so far downstream—as an `INVALID_STATE` on the first frame the
 /// MAC tries to send, long after the radio has been borrowed. Reading
 /// the flag here turns that into an answer the caller can act on, while
 /// it still has its attachment.
@@ -220,8 +220,8 @@ pub fn counter_store() -> Result<TokioFileCounterStore> {
 /// Something this tool runs as a node on its own radio.
 ///
 /// `manage`, the messaging commands, and `discover` all want the same
-/// preamble — read the device's PHY, take the attachment over, turn it
-/// into a MAC — and the same guarantee afterwards, that the attachment
+/// preamble—read the device's PHY, take the attachment over, turn it
+/// into a MAC—and the same guarantee afterwards, that the attachment
 /// comes back whether the errand worked or not. That is
 /// [`borrowing_the_radio`]; this is the part that differs. It is a trait
 /// rather than a closure because it has to be generic over whatever
@@ -241,7 +241,7 @@ pub trait RadioErrand {
 ///
 /// This tool has one radio. A command that kept it on failure would
 /// leave the session holding nothing, so the give-back is unconditional
-/// — every early return here happens before the link is consumed.
+///—every early return here happens before the link is consumed.
 pub async fn borrowing_the_radio<E: RadioErrand>(app: &mut App, errand: E) -> Result<()> {
     let identity = admin_identity()?;
     // Read the device's own PHY before taking the link over, so the host
@@ -249,7 +249,7 @@ pub async fn borrowing_the_radio<E: RadioErrand>(app: &mut App, errand: E) -> Re
     let config = adopt_phy(app.device()?).await?;
 
     let Some(session) = app.session.take() else {
-        bail!("not attached — try `ble-scan` or `connect`");
+        bail!("not attached—try `ble-scan` or `connect`");
     };
     let Session {
         device,
@@ -403,7 +403,7 @@ where
 pub fn describe(failure: Failure) -> anyhow::Error {
     match failure {
         Failure::TimedOut => anyhow!(
-            "no answer — the device may be out of range, or this tool may not be one of its \
+            "no answer—the device may be out of range, or this tool may not be one of its \
              administrators (`admin-key` prints the key it would have to list)"
         ),
         Failure::CursorInvalid => {
@@ -452,7 +452,7 @@ pub enum Greeting {
 /// not one you would use twice.
 pub async fn open_remote(app: &mut App, target: PublicKey, greeting: Greeting) -> Result<()> {
     if app.mesh.is_some() {
-        bail!("already on a mesh session — `disconnect` returns to the radio");
+        bail!("already on a mesh session—`disconnect` returns to the radio");
     }
     let identity = admin_identity()?;
 
@@ -462,7 +462,7 @@ pub async fn open_remote(app: &mut App, target: PublicKey, greeting: Greeting) -
     let store = counter_store()?;
 
     let Some(session) = app.session.take() else {
-        bail!("not attached — try `ble-scan` or `connect`");
+        bail!("not attached—try `ble-scan` or `connect`");
     };
     let connection::Session {
         device,
@@ -510,8 +510,8 @@ pub async fn open_remote(app: &mut App, target: PublicKey, greeting: Greeting) -
 
 /// Open the device handle at the far end of `link`.
 ///
-/// Opening costs nothing on the air — the binding needs no session and
-/// the device is told nothing — so the only exchange here is the name,
+/// Opening costs nothing on the air—the binding needs no session and
+/// the device is told nothing—so the only exchange here is the name,
 /// and only when one was asked for.
 async fn open_session(
     link: MeshFrameLink,
@@ -527,7 +527,7 @@ async fn open_session(
     let label = match greeting {
         Greeting::Silent => target.to_string(),
         Greeting::Named => {
-            note("reaching the device over the mesh — an exchange can take a while");
+            note("reaching the device over the mesh—an exchange can take a while");
             match device.device_name().await {
                 Ok(name) if !name.is_empty() => name,
                 Ok(_) => target.to_string(),
@@ -675,7 +675,7 @@ async fn serve<R: Radio>(
                     Ok(Outcome::Failed(failure)) => {
                         endpoint.deliver(&request, DeliveredOutcome::Failed(failure))
                     }
-                    // This command could not be carried — it ran out of
+                    // This command could not be carried—it ran out of
                     // patience, or the engine would not take it. The
                     // session survives: a radio that has actually died
                     // fails the pump on the very next turn of this loop,

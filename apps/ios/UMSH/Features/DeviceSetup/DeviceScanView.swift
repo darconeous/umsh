@@ -6,7 +6,7 @@ import SwiftUI
 /// This is not `RadioPickerView`: that one picks *this phone's* radio and
 /// its selection is a persistent binding. Here a selection is a foreground
 /// visit, and the phone's own radio is the one entry the list steers away
-/// from — administering the device the companion connection is already
+/// from—administering the device the companion connection is already
 /// holding would put two links in contention for one peripheral.
 struct DeviceScanView: View {
     let controller: AdminFlowController
@@ -69,7 +69,7 @@ struct DeviceScanView: View {
         }
         .task {
             // A gentle nudge after a few quiet seconds, without failing the
-            // scan — the device may simply be booting.
+            // scan—the device may simply be booting.
             try? await Task.sleep(nanoseconds: 4 * 1_000_000_000)
             hasSearchedAwhile = true
         }
@@ -80,7 +80,7 @@ struct DeviceScanView: View {
         if let problem = controller.problem {
             Text(problem).foregroundStyle(.red)
         } else if controller.devices.contains(where: controller.isCompanion) {
-            Text("This phone's own radio is listed but cannot be set up from here — use the companion radio screen for that. Devices drop out of the list a few seconds after they stop advertising.")
+            Text("This phone's own radio is listed but cannot be set up from here—use the companion radio screen for that. Devices drop out of the list a few seconds after they stop advertising.")
         } else {
             Text("Discovery keeps running while this list is open. Devices drop out a few seconds after they stop advertising.")
         }
@@ -92,8 +92,8 @@ struct DeviceScanView: View {
 /// It is its own screen rather than a spinner on the list because connecting
 /// stops the scan: the list empties, and an operator left in front of it
 /// watches every device disappear under a message about searching for them.
-/// The wait is genuinely long — a device this phone has never bonded with puts
-/// a system pairing prompt in the middle of it — so the screen says what it is
+/// The wait is genuinely long—a device this phone has never bonded with puts
+/// a system pairing prompt in the middle of it—so the screen says what it is
 /// waiting for and offers a way to stop.
 struct DeviceConnectingView: View {
     let name: String?

@@ -5,7 +5,7 @@ import SwiftUI
 ///
 /// The radio does not announce where it is. A receiver reports about a fix
 /// a second and ordinary noise moves the reading, so a radio that pushed
-/// them would transmit continuously — and wake the phone each time — for a
+/// them would transmit continuously—and wake the phone each time—for a
 /// screen that may not even be open. Instead the screens that show a
 /// position ask for one, and this is the asking: a sample on appear, then
 /// one a minute for as long as the view is on screen.
@@ -16,7 +16,7 @@ import SwiftUI
 /// on their own.
 private struct RadioPositionPoll: ViewModifier {
     /// Whether the screen has a live reason to know. False stops the
-    /// asking entirely — a radio that is not attached, or one with no
+    /// asking entirely—a radio that is not attached, or one with no
     /// receiver, would answer every sample with a refusal.
     let isNeeded: Bool
     let sample: (() async -> Void)?

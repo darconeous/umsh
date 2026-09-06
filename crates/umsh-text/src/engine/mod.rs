@@ -12,7 +12,7 @@
 //! apply message mutations idempotently (a mutation with a `revision` not
 //! newer than the last applied for its handle is a no-op). Rendered bodies
 //! live in an internal arena addressed by [`BodyRef`]; drain all outputs
-//! after each command — the arena resets once the queue is empty.
+//! after each command—the arena resets once the queue is empty.
 
 pub mod fragment;
 pub mod repair;
@@ -386,8 +386,8 @@ pub enum Output {
     },
     /// Delete every archived fragment stored under this message ID (the
     /// unfragmented entry included). Emitted before an edit's replacement
-    /// [`Output::StoreArchive`]s — so stale fragments of a differently
-    /// fragmented original can never be served — and on delete, where the
+    /// [`Output::StoreArchive`]s—so stale fragments of a differently
+    /// fragmented original can never be served—and on delete, where the
     /// retracted content must no longer be resendable at all.
     DeleteArchive {
         conversation: ConversationKey,
@@ -444,8 +444,8 @@ pub enum ComposeRef {
     Handle(MessageHandle),
     /// A persisted original from an earlier process: the wire ID and epoch
     /// recorded when it was composed. Valid only while the outbound stream
-    /// is still in that epoch — a Sequence Reset invalidates older wire IDs
-    /// as reference targets — and while the ID is within the recently
+    /// is still in that epoch—a Sequence Reset invalidates older wire IDs
+    /// as reference targets—and while the ID is within the recently
     /// allocated serial half-space.
     Wire { message_id: u8, epoch: u16 },
 }
@@ -456,7 +456,7 @@ pub enum ComposeRef {
 /// target is usually a message someone else sent, and usually one this
 /// process did not witness arrive: reacting to a message read yesterday is
 /// the ordinary case, not the exotic one. The wire form therefore carries the
-/// direction and — for channel groups, where the ID alone is meaningless —
+/// direction and—for channel groups, where the ID alone is meaningless—
 /// the target sender's hint.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RegardingRef {
@@ -538,8 +538,8 @@ pub struct Engine<P: TextProfile, const SLOTS: usize = 4, const PAGES: usize = 2
     revision: u32,
     /// A display name attached to our own group messages.
     ///
-    /// A multicast reaches members who may hold no identity for us at all —
-    /// the wire carries only a 3-byte hint — so a group message says who sent
+    /// A multicast reaches members who may hold no identity for us at all—
+    /// the wire carries only a 3-byte hint—so a group message says who sent
     /// it or arrives anonymous. Unicast never needs it: the recipient
     /// authenticated us by key.
     local_handle: heapless::String<24>,
@@ -612,7 +612,7 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
     /// Set the display name carried on our own group messages.
     ///
     /// Truncated to the wire limit on a character boundary. An empty name
-    /// clears it, and group messages then go out unnamed — recipients see
+    /// clears it, and group messages then go out unnamed—recipients see
     /// only the claimed hint.
     pub fn set_local_handle(&mut self, handle: &str) {
         self.local_handle.clear();
@@ -648,7 +648,7 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
     /// supplied than the cold stash holds, the earliest entries are the
     /// ones displaced. A conversation without retained continuity (never
     /// restored, or displaced past the bound) starts a fresh epoch and
-    /// announces a lazy Sequence Reset — safe by design, at the cost of
+    /// announces a lazy Sequence Reset—safe by design, at the cost of
     /// receivers re-baselining that stream.
     pub fn restore(&mut self, checkpoints: &[StreamCheckpoint], _now_ms: u64) {
         for checkpoint in checkpoints {
@@ -918,7 +918,7 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
         // `Sent` is not terminal for a frame that is still waiting to be
         // acknowledged, but it is the whole story for one that never will
         // be. Holding a multicast here forever would make this node refuse
-        // every resend request for it — the one thing a group member has no
+        // every resend request for it—the one thing a group member has no
         // other way to recover from.
         let terminal = match state {
             DeliveryState::Acked | DeliveryState::Failed => true,
@@ -1241,7 +1241,7 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
         now_ms: u64,
     ) {
         // A handle already registered for this wire ID is a gap placeholder
-        // reserved earlier at the live edge — this frame fills it in place.
+        // reserved earlier at the live edge—this frame fills it in place.
         let placeholder = self
             .inbound
             .get(&key)
@@ -1277,8 +1277,8 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
                 return;
             }
             // The edit supersedes the original outright, resolved or not. A
-            // late copy of that original — a repeater can still be retrying
-            // frames the sender abandoned — must render as a duplicate, not
+            // late copy of that original—a repeater can still be retrying
+            // frames the sender abandoned—must render as a duplicate, not
             // as a second message beside the edited one.
             if let Some(stream) = self.inbound.get_mut(&key) {
                 stream.seen.insert(original_id);
@@ -1425,8 +1425,8 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
         if content.body.len() > FRAGMENT_BODY_MAX {
             // Syntactically valid but beyond this receiver's storage (the
             // sender violated the wire maximum). Salvage the rest of the
-            // message: mark just this fragment unavailable — a resend would
-            // return the same oversized bytes — and let the assembly proceed
+            // message: mark just this fragment unavailable—a resend would
+            // return the same oversized bytes—and let the assembly proceed
             // for every fragment we can hold.
             self.push_output(Output::Diagnostic(Diagnostic::OversizedFragment {
                 message_id: id,
@@ -1498,7 +1498,7 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
         // repair by at least the configured grace, and by twice the observed
         // inter-fragment gap when the link is slower than that. Requesting a
         // resend of a frame the sender has merely not reached yet duplicates
-        // it on air and delays the frames behind it — the repair timer must
+        // it on air and delays the frames behind it—the repair timer must
         // only fire once arrivals actually stall.
         {
             let group = matches!(key.conversation, ConversationKey::ChannelGroup { .. });
@@ -1532,8 +1532,8 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
     ///
     /// `content` is the fragment that triggered this call. The announcing
     /// Insert always runs during the call that delivered fragment zero
-    /// (`have_meta` is set in that same call), so presentation metadata —
-    /// sender handle and colors — is borrowed from `content` at full
+    /// (`have_meta` is set in that same call), so presentation metadata—
+    /// sender handle and colors—is borrowed from `content` at full
     /// fidelity instead of being retained in the slot.
     fn publish_slot(
         &mut self,
@@ -1824,7 +1824,7 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
             return;
         }
 
-        // The requested frame is still in flight on this node's own radio —
+        // The requested frame is still in flight on this node's own radio—
         // queued behind earlier frames or awaiting its delivery report. On a
         // slow serialized link the requester's patience can lapse before the
         // original arrives; answering now would duplicate the frame on air
@@ -2303,12 +2303,12 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
     /// Re-encode `body` under the original message ID and emit it as
     /// archive-only material (never transmitted): the resend service will
     /// serve this in place of the superseded original. The replacement is a
-    /// plain content frame — the option set the original carried is not
+    /// plain content frame—the option set the original carried is not
     /// retained by the engine, and a requester that missed the original only
     /// needs its current content at its sequence position. Best-effort: an
     /// encode failure leaves the ID's archive empty (the preceding
     /// [`Output::DeleteArchive`] already retired the original), which the
-    /// resend service answers as Message Unavailable — never stale content.
+    /// resend service answers as Message Unavailable—never stale content.
     fn archive_replacement(&mut self, conversation: ConversationKey, message_id: u8, body: &[u8]) {
         let mut template = TextMessage::basic("");
         template.sequence = Some(MessageSequence::unfragmented(message_id));
@@ -2717,7 +2717,7 @@ impl<P: TextProfile, const SLOTS: usize, const PAGES: usize> Engine<P, SLOTS, PA
     /// reserved gap slot. The edit *is* that slot's current content: fill the
     /// placeholder with it (or remove the placeholder for a delete), cancel
     /// the pending repair, and account for the original ID so the superseded
-    /// original — should it still arrive — is dropped as a duplicate instead
+    /// original—should it still arrive—is dropped as a duplicate instead
     /// of overwriting the newer content. Returns whether a slot was filled.
     fn fill_gap_with_edit(
         &mut self,

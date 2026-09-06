@@ -75,7 +75,7 @@ struct BubbleShape: Shape {
         guard !isOutbound else { return path }
         // Mirrored rather than traced a second time. One closed outline fills
         // the same whichever way round it is wound, so the reflection needs no
-        // correction — which is exactly what an added-on tail would have.
+        // correction—which is exactly what an added-on tail would have.
         return path.applying(
             CGAffineTransform(a: -1, b: 0, c: 0, d: 1, tx: 2 * rect.midX, ty: 0)
         )
@@ -85,7 +85,7 @@ struct BubbleShape: Shape {
     ///
     /// One path, not a rounded rectangle with a tail added to it: the scoop
     /// under the tail is a bite taken *out* of the bottom edge, and a separate
-    /// tail unioned onto a full rectangle can only ever add to it — the
+    /// tail unioned onto a full rectangle can only ever add to it—the
     /// rectangle's own bottom edge fills the bite straight back in, leaving a
     /// wedge.
     private func outboundPath(in rect: CGRect) -> Path {
@@ -286,7 +286,7 @@ struct ChatMessageBubble: View, @MainActor Equatable {
                             .padding(.horizontal, 12)
                     }
                     reactionsAndBubble
-                        // The whole group — bubble and chips — is what the
+                        // The whole group—bubble and chips—is what the
                         // context menu lifts. The preview mask must cover the
                         // chips too or they are sliced at the bubble outline
                         // the moment the menu opens; a full-rect mask works
@@ -305,7 +305,7 @@ struct ChatMessageBubble: View, @MainActor Equatable {
                             Text(message.originalBody ?? "")
                         }
                         // The row's frame changes size when its first
-                        // reaction arrives or its last one leaves — the
+                        // reaction arrives or its last one leaves—the
                         // reserved chip strips appear and disappear with
                         // them. The context-menu interaction UIKit hangs on
                         // this view caches the lift geometry it was born
@@ -338,7 +338,7 @@ struct ChatMessageBubble: View, @MainActor Equatable {
     }
 
     /// The avatar column beside a group's inbound bubbles. Every bubble in a
-    /// run reserves it so they line up, and only the last one fills it — the
+    /// run reserves it so they line up, and only the last one fills it—the
     /// avatar belongs beside the end of what that member said, as in Messages.
     @ViewBuilder
     private var gutter: some View {
@@ -363,7 +363,7 @@ struct ChatMessageBubble: View, @MainActor Equatable {
         BubbleShape(isOutbound: message.isOutbound, showsTail: presentation.isLastInRun)
     }
 
-    /// The bubble with its reaction chips laid out over the top corner — the
+    /// The bubble with its reaction chips laid out over the top corner—the
     /// unit the transcript shows and the context menu lifts.
     ///
     /// The chips are laid out here rather than floated as an overlay: an
@@ -374,14 +374,14 @@ struct ChatMessageBubble: View, @MainActor Equatable {
         // The reserved strips above and outside the bubble are what the
         // cluster lives in: the chips sit high, the corner chip overhangs the
         // bubble's outer edge, and the thought-dot trail falls wholly outside
-        // it — all without anything ever poking past the group's own bounds,
+        // it—all without anything ever poking past the group's own bounds,
         // where the neighbouring rows (and the lift snapshot) would clip it.
         //
         // Nothing beside the bubble is ever a layout sibling. The failure
         // badge and the reaction chips both hang in *reserved* padding and
         // draw as overlays: a sibling feeds SwiftUI's width negotiation with
         // the UITextView-backed bubble, and on short messages that
-        // negotiation does not converge — the placement pass re-proposes the
+        // negotiation does not converge—the placement pass re-proposes the
         // row its ideal width minus the sibling again, and the bubble
         // collapses to a character-wide column. A constant inset subtracts
         // the same amount from every proposal, so there is nothing to
@@ -468,7 +468,7 @@ struct ChatMessageBubble: View, @MainActor Equatable {
     /// tracking it. Only the style and the labels differ.
     ///
     /// On a Mac the app's UIKit menus are bridged to real AppKit menus, whose
-    /// items carry a title, an image and a state — not a label view. A
+    /// items carry a title, an image and a state—not a label view. A
     /// palette option's `Text` has no image to cross with it, so every slot
     /// arrives empty and only the selection state survives: blank rows
     /// wearing checkmarks. An inline picker is built from exactly what the
@@ -598,7 +598,7 @@ private struct SelectableMessageText: UIViewRepresentable {
     /// Only ours. `dataDetectorTypes` stays on and keeps everything else, and
     /// keeps doing it better than a pattern here could: it knows the schemes
     /// this device can actually act on, so `tel:` links where there is a phone
-    /// and an unknown `scheme://` links only where an app has claimed it —
+    /// and an unknown `scheme://` links only where an app has claimed it—
     /// never offering a link that would go nowhere.
     ///
     /// What it will not claim is an opaque path under a scheme it does not
@@ -624,7 +624,7 @@ private struct SelectableMessageText: UIViewRepresentable {
     }
 
     /// The three forms `umsh-uri` emits, with a payload that may be
-    /// percent-encoded and — for a channel key — carry a query.
+    /// percent-encoded and—for a channel key—carry a query.
     ///
     /// The last character is matched apart from the rest so a URI ending a
     /// sentence does not swallow the full stop, or the comma in a list, or the

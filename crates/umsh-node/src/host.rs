@@ -38,7 +38,7 @@ pub enum HostError<E> {
 ///
 /// Receive and control callbacks (`on_receive`, `on_text`, `on_ack_received`, …) are invoked
 /// synchronously from inside [`pump_once`](Self::pump_once) while the coordinator borrow is
-/// held. A callback therefore MUST NOT call back into the MAC — it cannot `await` a `send`,
+/// held. A callback therefore MUST NOT call back into the MAC—it cannot `await` a `send`,
 /// and a blocking or re-entrant borrow of the coordinator would deadlock. Keep callbacks
 /// short and side-effect-free with respect to the MAC: record what you need (e.g. push to a
 /// queue or set a flag) and perform any follow-up sends after `pump_once` / `run` returns
@@ -257,7 +257,7 @@ impl<M: MacBackend> Host<M> {
     ///
     /// Use this when the host pump runs as its own long-lived future (so the
     /// `Host` is exclusively borrowed) and a sibling timer task must still
-    /// fire ping/PFS timeouts — e.g. while the pump is parked awaiting a slow
+    /// fire ping/PFS timeouts—e.g. while the pump is parked awaiting a slow
     /// physical transmit. The handle snapshots the current node set; nodes
     /// added afterwards are not covered by it.
     pub fn protocol_timeout_servicer(&self) -> ProtocolTimeoutServicer<M>

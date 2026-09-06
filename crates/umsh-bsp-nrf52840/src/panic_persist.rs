@@ -3,7 +3,7 @@
 //! On nRF52840 a region of RAM can be marked as `noinit` so its
 //! contents survive a soft reset (warm boot, watchdog, panic-driven
 //! `SCB::sys_reset()`). This module provides the framing layer for
-//! that region — it lives here in `umsh-bsp-nrf52840` because every
+//! that region—it lives here in `umsh-bsp-nrf52840` because every
 //! nRF52840-based board (T1000-E, T-Echo, …) shares this mechanism.
 //!
 //! The [`PanicSlot`] API operates on a borrowed `&'static mut [u8]`,
@@ -41,15 +41,15 @@
 /// [`as_bytes_mut`](Self::as_bytes_mut) forms a `&mut [u8]` over memory
 /// the compiler believes is uninitialized, which is formally UB: uninit
 /// is not a valid `u8`. A retained region always holds real bits after a
-/// reset, but the abstract machine cannot express that — it has no
+/// reset, but the abstract machine cannot express that—it has no
 /// notion of the previous boot, so bytes written then read as never
 /// written. Making this formally sound needs a `freeze` operation stable
 /// Rust does not expose, so no construction available here is sound;
 /// the choice is only about which shape to prefer.
 ///
-/// The reads that touch never-written bytes are the record validators —
+/// The reads that touch never-written bytes are the record validators—
 /// [`PanicSlot::read`]'s magic compare, and the equivalent checks in the
-/// firmware's breadcrumb and capture regions — on a cold boot. They are
+/// firmware's breadcrumb and capture regions—on a cold boot. They are
 /// already written to treat the region as arbitrary: magic, length bound
 /// and Fletcher-16 all have to pass before any byte is believed.
 ///
@@ -63,14 +63,14 @@
 ///
 /// - **Do not give the cell a concrete initializer** (`UnsafeCell::new([0;
 ///   N])`) to silence the uninit question. `.uninit` is a `NOLOAD`
-///   section, so the initializer never reaches RAM — but the compiler
+///   section, so the initializer never reaches RAM—but the compiler
 ///   now believes the region is zero at startup and may constant-fold
 ///   the magic comparison to `false`, silently killing the feature.
 /// - **Do not swap the return type for `&mut [MaybeUninit<u8>]`** as a
 ///   fix. It removes the UB at acquisition and on the write path, but
 ///   every validator read then needs `assume_init` on the same
-///   never-written bytes. The UB relocates to the read path — the one
-///   that runs at boot on every device — and buys nothing.
+///   never-written bytes. The UB relocates to the read path—the one
+///   that runs at boot on every device—and buys nothing.
 pub struct SyncNoinit<T>(pub core::cell::UnsafeCell<core::mem::MaybeUninit<T>>);
 
 // Safety: nRF52840 is a single-core device; concurrent access is impossible.
@@ -114,7 +114,7 @@ impl<T> SyncNoinit<T> {
 /// A `core::fmt::Write` sink over a fixed-size byte slice.
 ///
 /// Used to format a `core::panic::PanicInfo` into a stack buffer without
-/// heap allocation. Truncates silently when the buffer fills — acceptable
+/// heap allocation. Truncates silently when the buffer fills—acceptable
 /// for a best-effort panic message capture.
 pub struct SliceWriter<'a> {
     pub buf: &'a mut [u8],
@@ -131,7 +131,7 @@ impl<'a> core::fmt::Write for SliceWriter<'a> {
     }
 }
 
-const PANIC_MAGIC: u32 = 0x554D_5350; // "UMSP" — UMSH Panic
+const PANIC_MAGIC: u32 = 0x554D_5350; // "UMSP"—UMSH Panic
 const HEADER_LEN: usize = 8;
 
 /// Framing wrapper around a borrowed RAM region.
@@ -221,7 +221,7 @@ impl<'a> PanicSlot<'a> {
 }
 
 /// Fletcher-16 over two byte slices (header front + payload). The
-/// header's checksum field itself is skipped by construction — callers
+/// header's checksum field itself is skipped by construction—callers
 /// pass `header[0..6]` (magic + length, omitting bytes 6..8 where the
 /// checksum will be stored).
 fn checksum(header_front: &[u8], payload: &[u8]) -> u16 {

@@ -4,7 +4,7 @@
 //! The tool already becomes a node on the mesh to administer a device;
 //! these do the same thing for the oldest reason there is to have a
 //! mesh. Both borrow the attached radio, so they need a local
-//! attachment — a mesh session has already lent that radio out.
+//! attachment—a mesh session has already lent that radio out.
 //!
 //! The identity is the administrator identity `admin-key` prints, so a
 //! message from this tool arrives from the same key a device authorizes
@@ -55,7 +55,7 @@ pub struct SendArgs {
 
     /// Send without asking for an acknowledgment.
     ///
-    /// Nothing comes back, so nothing says the message arrived — which
+    /// Nothing comes back, so nothing says the message arrived—which
     /// is what you want for a message to somebody who is not listening
     /// yet, and never what you want otherwise.
     #[arg(long)]
@@ -165,7 +165,7 @@ where
 /// Pump the radio until the message is done, or until patience runs out.
 ///
 /// "Done" means two different things. An acknowledged send is done when
-/// the MAC says so — an ack arrived, or every retransmission timed out.
+/// the MAC says so—an ack arrived, or every retransmission timed out.
 /// A send that asked for no acknowledgment has no receipt to track, so
 /// its ticket is finished the moment it is issued, before the frame has
 /// been anywhere near the radio; what finishes that one is the frame

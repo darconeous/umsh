@@ -87,7 +87,7 @@ impl I2c for MockRtc {
     }
 }
 
-/// 2026-08-25T17:04:09Z — a Tuesday.
+/// 2026-08-25T17:04:09Z—a Tuesday.
 const SAMPLE_EPOCH: u32 = 1_787_677_449;
 const SAMPLE_BLOCK: [u8; TIME_BLOCK_LEN] = [
     0x09, // seconds, VL clear

@@ -5,7 +5,7 @@ import UIKit
 /// Owns the messaging pipeline for the lifetime of the process.
 ///
 /// iOS launches this app with no scene at all when CoreBluetooth restores a
-/// connection — and, later, when the user answers a notification — so
+/// connection—and, later, when the user answers a notification—so
 /// anything the pipeline needs has to exist before a scene does. A delegate
 /// is the only object the system builds that early: `AppRootView` is a
 /// value SwiftUI creates when it first renders a body, which on a
@@ -179,7 +179,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate, ObservableObject {
     ///
     /// The keys contain dots, which rules out key-value observing, so this
     /// watches every defaults write and compares. Both the comparison and
-    /// the usual answer — nothing changed — are cheap enough to run on the
+    /// the usual answer—nothing changed—are cheap enough to run on the
     /// radio's own connection bookkeeping writes.
     private func observeDebugRadioMode() {
         defaultsObserver = NotificationCenter.default.addObserver(
@@ -219,8 +219,8 @@ struct UMSHApp: App {
 /// The one view that observes the delegate, so a runtime swap re-renders.
 ///
 /// An `App`'s own body does not re-evaluate when the adaptor's delegate
-/// publishes — verified the hard way: flipping the staging toggle rebuilt
-/// the runtime and the interface kept showing the old one — while an
+/// publishes—verified the hard way: flipping the staging toggle rebuilt
+/// the runtime and the interface kept showing the old one—while an
 /// `@ObservedObject` view re-renders on every publish, which is the whole
 /// contract this needs.
 private struct AppRootHost: View {

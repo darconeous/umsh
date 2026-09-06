@@ -32,10 +32,10 @@ side will need the same treatment when we wire up peer-counter persistence.
 defines `COUNTER_PERSIST_BLOCK_SIZE = 128`. Each `IdentitySlot` tracks
 three values:
 
-- `frame_counter` — live, advances on every secured send.
-- `persisted_counter` — last boundary safely committed to the
+- `frame_counter`—live, advances on every secured send.
+- `persisted_counter`—last boundary safely committed to the
   `CounterStore`.
-- `pending_persist_target` — scheduled future boundary, flushed by
+- `pending_persist_target`—scheduled future boundary, flushed by
   `Mac::service_counter_persistence()`.
 
 On first TX after boot the slot schedules a new reservation
@@ -50,7 +50,7 @@ per local identity.
 Peer-side replay protection lives in `PeerCryptoState::replay_window`
 ([`crates/umsh-mac/src/peers.rs`](../crates/umsh-mac/src/peers.rs)) as
 an in-memory `ReplayWindow` tracking `last_accepted: u32`. On reboot
-it resets to zero — replay of previously-seen frames from a peer is
+it resets to zero—replay of previously-seen frames from a peer is
 not currently detected across reboots.
 
 The fix mirrors the TX-side design:
@@ -97,7 +97,7 @@ periodic page compaction.
 - Pure Rust, no C toolchain dependency.
 - Async-native via `embedded-storage-async`.
 - Stable on-disk format.
-- Per-key updates are appends, not erases — friendly for frequent small
+- Per-key updates are appends, not erases—friendly for frequent small
   updates like peer location.
 - Page erase only on compaction, not on every write.
 - Sufficient for our scale; LSM-tree advantages don't kick in below ~1000 keys.
@@ -120,7 +120,7 @@ periodic page compaction.
 ### Why not ekv
 
 - Each write transaction triggers a full page erase. Exact opposite of
-  our update pattern — every peer-location update would cost ~85 ms of
+  our update pattern—every peer-location update would cost ~85 ms of
   CPU stall.
 - On-disk format explicitly unstable across major versions; bad for shipped
   firmware that needs upgrade-safe storage.
@@ -143,7 +143,7 @@ erase takes roughly 85 ms. During that time:
 - The LoRa MAC is not polled.
 
 No software threading model (Embassy `InterruptExecutor`, FreeRTOS, Zephyr)
-can preempt this — the stall is a hardware constraint, not a scheduling
+can preempt this—the stall is a hardware constraint, not a scheduling
 one. The only way to avoid it is to move storage to a peripheral that
 operates via DMA (i.e. the QSPI external flash).
 
@@ -226,7 +226,7 @@ Keys are pubkey-addressed wherever an entity has a stable cryptographic
 identity. Specifically:
 
 - `<pubkey>`, `<peer-pk>`, `<local-pk>` are the **raw 32-byte** Ed25519
-  public key bytes appended after the ASCII prefix — not hex-encoded.
+  public key bytes appended after the ASCII prefix—not hex-encoded.
   `sequential-storage` keys are arbitrary byte slices, so hex would just
   double the per-entry key overhead (32 → 64 bytes) for no operational
   benefit.
@@ -245,7 +245,7 @@ them logically separate.
 
 ## Implementation plan
 
-### Phase 1 — foundation in `umsh-bsp-nrf52840`
+### Phase 1—foundation in `umsh-bsp-nrf52840`
 
 1. Reduce `FLASH` length in both `firmware/*/memory.x` by 64 KB.
 2. Add `sequential-storage` and `embedded-storage-async` to
@@ -261,25 +261,25 @@ them logically separate.
    - `NvmcCounterStore` implementing `umsh_hal::CounterStore`, sharing
      the same flash range (the namespacing is by key prefix).
 
-### Phase 2 — identity persistence
+### Phase 2—identity persistence
 
 4. On boot:
    - Try to load `id.sk` from the store.
    - If missing, generate a fresh Ed25519 key from the **hardware TRNG**
-     (`embassy_nrf::rng::Rng` with bias correction enabled — see
+     (`embassy_nrf::rng::Rng` with bias correction enabled—see
      "Entropy requirement" below) and persist it. This will cost one
      85 ms stall on first boot only.
    - If present, reconstruct the identity from the stored scalar.
 5. Replace the current `WioRng::from_ficr()` FICR-seeded identity in both
    firmwares with the persistent path. **Do not fall back to FICR** if
-   storage init fails — that would silently downgrade the device to a
+   storage init fails—that would silently downgrade the device to a
    predictable key. Surface the error and refuse to operate the secure
    send path instead.
 
 #### Entropy requirement
 
 The persisted private key is the device's long-term secret. It MUST be
-generated from a true entropy source — not from FICR DEVICEID, not from
+generated from a true entropy source—not from FICR DEVICEID, not from
 a PRNG seeded by FICR, and not from any input known to or derivable by
 an attacker who has the device's part number and serial.
 
@@ -290,22 +290,22 @@ Concretely, on nRF52840:
   output is slower but suitable for cryptographic key generation. The
   raw biased output is **not** suitable.
 - Block until enough entropy has been gathered to fill the full key
-  buffer. First-boot key generation is allowed to be slow — it happens
+  buffer. First-boot key generation is allowed to be slow—it happens
   once.
 - Do not mix in FICR DEVICEID, RTC values, or other low-entropy public
   inputs in a way that would let the attacker invert the seed. If we
   want defence-in-depth, mix RNG output with another independent
-  entropy source (e.g. radio noise samples) using HKDF — but the RNG
+  entropy source (e.g. radio noise samples) using HKDF—but the RNG
   alone is sufficient and is the baseline requirement.
 
 The existing `WioRng` / `TeChoRng` types in the bringup firmwares are
 XorShift64 PRNGs seeded from FICR. They are explicitly **not** suitable
 for identity generation. They also incorrectly implement `TryCryptoRng`
-despite an in-source comment acknowledging they are non-cryptographic —
+despite an in-source comment acknowledging they are non-cryptographic—
 worth fixing as a separate cleanup (untyped `TryRng` is fine for MAC
 backoff jitter, which is their actual purpose).
 
-### Phase 3 — wire into firmwares
+### Phase 3—wire into firmwares
 
 6. `firmware/hello-techo/src/main.rs`:
    - Construct the `NvmcStorage` after `Bsp::init`.
@@ -314,14 +314,14 @@ backoff jitter, which is their actual purpose).
    - Use the store for the identity load/save in step 4.
 7. `firmware/hello-wio-tracker-l1/src/main.rs`: same.
 
-### Phase 4 — peer / channel persistence
+### Phase 4—peer / channel persistence
 
 8. Hook `LocalNode` / CLI peer-add to write through to the store.
 9. On boot, scan the `peer:*` namespace and hydrate `LocalNode`.
-10. Channel keys similarly via `ch:*` (lower priority — channels aren't
+10. Channel keys similarly via `ch:*` (lower priority—channels aren't
     user-added yet).
 
-### Phase 5 — lazy-write batching (optional follow-up)
+### Phase 5—lazy-write batching (optional follow-up)
 
 11. Add a debounced "dirty" set in the firmware binary for peer-location
     updates. Flush on a short timer (start at 5 s, tune later) and on
@@ -329,7 +329,7 @@ backoff jitter, which is their actual purpose).
 12. Make sure the watchdog timeout window is comfortably larger than
     `flush_interval + worst-case erase time`.
 
-### Phase 6 — RX-side peer counter persistence (follow-up to `umsh-mac`)
+### Phase 6—RX-side peer counter persistence (follow-up to `umsh-mac`)
 
 13. Extend `PeerCryptoState` with `persisted_last_accepted: u32`.
 14. After each accepted RX frame, if `last_accepted - persisted_last_accepted >= N`,

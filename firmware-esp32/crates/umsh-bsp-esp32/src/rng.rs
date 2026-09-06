@@ -1,7 +1,7 @@
 //! RF-gated cryptographic RNG for Espressif targets.
 //!
 //! [`EspCryptoRng`] is the **single** RNG path for every ESP32-based UMSH
-//! firmware — identity generation, MAC backoff jitter, frame-counter init,
+//! firmware—identity generation, MAC backoff jitter, frame-counter init,
 //! reply/resync nonces and salts, and PFS ephemeral key material all route
 //! through it. There is deliberately no second "non-crypto" PRNG to
 //! confuse it with.
@@ -15,7 +15,7 @@
 //! - the SAR ADC being used as an entropy source
 //!   (`esp_hal::rng::TrngSource`, which **occupies ADC1**).
 //!
-//! With no entropy source the peripheral still returns bytes — they are
+//! With no entropy source the peripheral still returns bytes—they are
 //! merely pseudo-random. That silent degradation is the hazard this
 //! wrapper exists to prevent.
 //!
@@ -65,7 +65,7 @@ pub struct EspCryptoRng {
 impl EspCryptoRng {
     /// Obtain the RNG, or fail if no entropy source is currently active.
     ///
-    /// Call this only after the BLE controller has been initialized —
+    /// Call this only after the BLE controller has been initialized—
     /// that is what makes the underlying RNG a true noise source.
     pub fn new() -> Result<Self, TrngError> {
         // The handle is dropped immediately; this is purely the gate check.
@@ -79,7 +79,7 @@ impl EspCryptoRng {
         match Trng::try_new() {
             Ok(trng) => trng,
             Err(e) => panic!(
-                "crypto RNG used with no RF entropy source ({e:?}) — \
+                "crypto RNG used with no RF entropy source ({e:?})—\
                  the BLE controller must stay alive while the RNG is in use"
             ),
         }

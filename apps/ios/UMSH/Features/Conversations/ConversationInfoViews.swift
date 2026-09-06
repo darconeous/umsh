@@ -3,7 +3,7 @@ import SwiftUI
 /// What an open conversation *is*, reached from the transcript header.
 ///
 /// Both kinds of conversation answer the question the same way: a row leading
-/// to whoever — or whatever — is on the other end, what the transcript holds,
+/// to whoever—or whatever—is on the other end, what the transcript holds,
 /// and the conversation-level actions underneath. The sheet is deliberately
 /// not the peer or channel sheet itself; those describe a node and a key,
 /// which outlive any one conversation with them.
@@ -64,14 +64,14 @@ struct DirectConversationDetailView: View {
                                 conversation, enabled
                             )
                             // The store has reloaded by now, so hand the toggle
-                            // back to it — including when the write failed and
+                            // back to it—including when the write failed and
                             // the honest answer is the old value.
                             pendingNotifications = nil
                         }
                     }
                 ))
             } footer: {
-                Text("Messages from \(peer.displayName) still arrive and still count as unread. This decides only whether they interrupt you — and whether a companion radio holding them while this phone is away makes a sound.")
+                Text("Messages from \(peer.displayName) still arrive and still count as unread. This decides only whether they interrupt you—and whether a companion radio holding them while this phone is away makes a sound.")
             }
             Section("Conversation") {
                 LabeledContent("Node hint") {
@@ -146,7 +146,7 @@ struct ChannelConversationDetailView: View {
                         Task {
                             await setNotifications(conversation.channel, enabled)
                             // The store has reloaded by now, so hand the toggle
-                            // back to it — including when the write failed and
+                            // back to it—including when the write failed and
                             // the honest answer is the old value.
                             pendingNotifications = nil
                         }

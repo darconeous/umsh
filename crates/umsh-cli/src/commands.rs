@@ -3,7 +3,7 @@
 
 use alloc::string::String;
 
-/// A parsed CLI input line. Borrows from the input buffer — the caller is
+/// A parsed CLI input line. Borrows from the input buffer—the caller is
 /// expected to own that buffer on the stack while dispatching.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Command<'a> {

@@ -91,7 +91,7 @@ extension AvatarStyle {
     }
 
     /// The first letter of each word, up to four. A private channel that was
-    /// never named has nothing to initial, so its identifier stands in — the
+    /// never named has nothing to initial, so its identifier stands in—the
     /// same digits shown beside it in the row.
     private static func channelInitials(title: String, identifierHex: String) -> String {
         let letters = title

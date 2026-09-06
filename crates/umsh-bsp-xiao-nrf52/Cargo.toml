@@ -18,12 +18,12 @@ repository.workspace = true
 # What actually differs from the Solar Node, and therefore what this
 # crate exists to hold:
 #
-#   * one common-anode RGB LED, ACTIVE LOW (P0.26/P0.06/P0.30) — the
+#   * one common-anode RGB LED, ACTIVE LOW (P0.26/P0.06/P0.30)—the
 #     Solar Node's two discrete LEDs are active high
 #   * a BQ25100 charger with a firmware-visible status pin and a
 #     charge-current select, where the Solar Node's CN3165 is autonomous
 #   * the battery divider is UNGATED: P0.14 is held LOW at all times
-#     (see the power module — this is a hardware rule, not a policy)
+#     (see the power module—this is a hardware rule, not a policy)
 #   * no buttons at all as shipped, so no gesture UX and no GPIO wake
 #
 # In scope:
@@ -34,8 +34,8 @@ repository.workspace = true
 #   * headless System OFF teardown (no button wake source exists)
 #
 # Out of scope for now:
-#   * L76K GNSS UART (P1.11/P1.12) — the module is a separate purchase
-#   * QSPI external flash deep power-down (P25Q16H) — pins reserved, NV
+#   * L76K GNSS UART (P1.11/P1.12)—the module is a separate purchase
+#   * QSPI external flash deep power-down (P25Q16H)—pins reserved, NV
 #     stays on internal NVMC
 #   * LPCOMP low-battery recovery wake
 #   * the retrofitted-K1 user button on P0.02 (see lib.rs)

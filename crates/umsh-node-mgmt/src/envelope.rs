@@ -15,11 +15,11 @@ use umsh_core::options::{OptionDecoder, OptionEncoder};
 use umsh_core::{EncodeError, ParseError};
 use umsh_ulcp::pui;
 
-/// Option 1 — the continuation handle for a read spanning several
+/// Option 1—the continuation handle for a read spanning several
 /// exchanges. Critical: a device that cannot honor a cursor must say so
 /// rather than answer from the beginning.
 pub const OPT_CURSOR: u16 = 1;
-/// Option 2 — approximate octets not yet returned. Elective: it drives a
+/// Option 2—approximate octets not yet returned. Elective: it drives a
 /// progress bar and nothing else.
 pub const OPT_REMAINING: u16 = 2;
 
@@ -123,7 +123,7 @@ impl<'a> Envelope<'a> {
         }
 
         // The frame follows the end marker, so a payload that never
-        // reached one has no frame at all — an empty frame, which the
+        // reached one has no frame at all—an empty frame, which the
         // caller answers `STATUS_PARSE_ERROR`.
         Ok(Self {
             token: [*token0, *token1],

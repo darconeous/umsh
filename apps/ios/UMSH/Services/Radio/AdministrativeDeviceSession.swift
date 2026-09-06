@@ -11,7 +11,7 @@ import UMSHMobileCore
 /// that exists to read a configuration and write one back.
 ///
 /// `sync` is carried as the Rust record rather than remapped into an app
-/// model on purpose — the commissioning sheet reads `UlcpSyncRecord` and
+/// model on purpose—the commissioning sheet reads `UlcpSyncRecord` and
 /// writes `UlcpDeviceConfigRecord`, so read and write speak one vocabulary
 /// and no field can be lost in a translation layer.
 struct AdministeredDeviceSnapshot: Equatable, Sendable {
@@ -81,7 +81,7 @@ final class AdministrativeDeviceSession: NSObject, @unchecked Sendable {
     /// an e-paper display is not in a hurry.
     private static let attachTimeoutSeconds: TimeInterval = 60
     /// Budget for one post-attach exchange. No user gesture is involved, the
-    /// link is already up, and the device has already proved it answers — so
+    /// link is already up, and the device has already proved it answers—so
     /// this is short. It exists because a wedged device holds the link open
     /// while answering nothing, and CoreBluetooth has no failure to report;
     /// without a deadline the caller waits forever.
@@ -116,7 +116,7 @@ final class AdministrativeDeviceSession: NSObject, @unchecked Sendable {
     private var frameOut: CBCharacteristic?
 
     private let reassembler = MobileGattReassembler()
-    /// Recreated per connect, in the attach mode that connect asks for —
+    /// Recreated per connect, in the attach mode that connect asks for—
     /// see `connect(_:lazyAttach:)`.
     private var ulcpSession = MobileUlcpSession.administrative()
     private var selectedHostKey: Data?
@@ -141,7 +141,7 @@ final class AdministrativeDeviceSession: NSObject, @unchecked Sendable {
     /// reading the mirror could still see the state from before the attach.
     private var attachWaiter: CheckedContinuation<UlcpSyncRecord?, any Error>?
     private var attachGeneration = UUID()
-    /// The caller awaiting a post-attach exchange — a configuration write or
+    /// The caller awaiting a post-attach exchange—a configuration write or
     /// a re-read. Both complete on the same condition (the session is back
     /// at `attached` with nothing outstanding), so one waiter serves both
     /// and also enforces that only one runs at a time.
@@ -153,8 +153,8 @@ final class AdministrativeDeviceSession: NSObject, @unchecked Sendable {
     /// the previous one.
     private var operationWaiter: CheckedContinuation<UlcpSyncRecord?, any Error>?
     private var operationGeneration = UUID()
-    /// The caller awaiting a local management exchange — a property fetch,
-    /// write pass, or save — resolved by the session update carrying its
+    /// The caller awaiting a local management exchange—a property fetch,
+    /// write pass, or save—resolved by the session update carrying its
     /// completion rather than by the attached-and-idle condition, because
     /// its result is the event, not the sync record.
     private var managementWaiter:
@@ -163,8 +163,8 @@ final class AdministrativeDeviceSession: NSObject, @unchecked Sendable {
     private var propertyPushContinuations:
         [UUID: AsyncStream<UlcpPropertyPushRecord>.Continuation] = [:]
 
-    /// A flow abandoned without calling `disconnect()` — the sheet is
-    /// dismissed, the controller goes away — must not leave the device
+    /// A flow abandoned without calling `disconnect()`—the sheet is
+    /// dismissed, the controller goes away—must not leave the device
     /// connected or its registry claim standing. Both CoreBluetooth
     /// delegates are weak, so this runs even mid-session.
     deinit {
@@ -219,7 +219,7 @@ final class AdministrativeDeviceSession: NSObject, @unchecked Sendable {
     ///
     /// `companionIdentifier` marks the phone's own radio in the list so the
     /// UI can steer the user away from administering the device it is
-    /// already tethered to — the two links would contend for the same
+    /// already tethered to—the two links would contend for the same
     /// peripheral.
     func discover(companionIdentifier: UUID? = nil) async -> AsyncStream<[DiscoveredRadio]> {
         await withCheckedContinuation { result in
@@ -320,7 +320,7 @@ final class AdministrativeDeviceSession: NSObject, @unchecked Sendable {
 
     private func currentDiscoveryList() -> [DiscoveredRadio] {
         // Arrival order, and nothing else. Every other property of a
-        // discovered device changes while the list is on screen — RSSI with
+        // discovered device changes while the list is on screen—RSSI with
         // every advertisement, and the name when one finally arrives, since a
         // device is first heard with only whatever `CBPeripheral.name` gives
         // us. Sorting on any of them moves rows under the user's finger.
@@ -371,14 +371,14 @@ final class AdministrativeDeviceSession: NSObject, @unchecked Sendable {
     ///
     /// `lazyAttach` cuts the post-attach inspection to what attaching
     /// itself requires, leaving the device to be read a screenful at a
-    /// time through `fetchProperties` — the sync it resolves with is
+    /// time through `fetchProperties`—the sync it resolves with is
     /// card-grade, not the device whole. The full attach is what
     /// commissioning's whole-configuration draft needs, and a lazy
     /// settings screen must never pay for.
     ///
     /// Throws if the device cannot be reached, refuses the protocol, or the
     /// whole exchange overruns its budget. A drop *after* this resolves is
-    /// not thrown anywhere — it arrives on `snapshots()` as a failed link,
+    /// not thrown anywhere—it arrives on `snapshots()` as a failed link,
     /// because by then the caller is a UI showing an editor, not an
     /// `await`.
     @discardableResult
@@ -459,7 +459,7 @@ final class AdministrativeDeviceSession: NSObject, @unchecked Sendable {
 
     /// Release every CoreBluetooth and ULCP resource for the current
     /// device, including its registry claim. Does not itself cancel the
-    /// connection — callers decide whether the link is being torn down or
+    /// connection—callers decide whether the link is being torn down or
     /// has already dropped.
     private func teardownPeripheral() {
         if let identifier = peripheral?.identifier {
@@ -519,14 +519,14 @@ final class AdministrativeDeviceSession: NSObject, @unchecked Sendable {
     /// Start or stop the device's locate alert (`PROP_ALERT`).
     ///
     /// Live behavior rather than configuration: it is never part of a
-    /// configuration write, never saved, and it outlives this session —
+    /// configuration write, never saved, and it outlives this session—
     /// an alert left running keeps running after the setup sheet closes.
     func setAlert(_ state: RadioAlertState) async throws {
         Self.logger.notice("action: user set locate alert to \(state.rawValue, privacy: .public)")
         _ = try await perform { session in try session.setAlert(state: state.wire) }
     }
 
-    /// Set — or clear — the device's wall clock (`PROP_TIME`).
+    /// Set—or clear—the device's wall clock (`PROP_TIME`).
     ///
     /// Live state like the alert, and for the same kind of reason: the
     /// clock is never saved, so it is not part of a configuration write.
@@ -541,7 +541,7 @@ final class AdministrativeDeviceSession: NSObject, @unchecked Sendable {
     /// Re-read the device's authoritative configuration and return it.
     ///
     /// A write is already echo-verified property by property, so this is not
-    /// how a bad write is caught — it is how the *saved* device is read back
+    /// how a bad write is caught—it is how the *saved* device is read back
     /// after the trailing `CMD_SAVE`, which is a different question.
     @discardableResult
     func refresh() async throws -> UlcpSyncRecord? {
@@ -551,7 +551,7 @@ final class AdministrativeDeviceSession: NSObject, @unchecked Sendable {
     /// Sample where the device is, and how well it knows.
     ///
     /// A device announces a fix indicator and nothing else about a
-    /// position — see ``RadioPositionPoll``. Commissioning is where that
+    /// position—see ``RadioPositionPoll``. Commissioning is where that
     /// matters most: switching a receiver on and watching it acquire is
     /// the whole point of the positioning section, and without asking, the
     /// screen would show the reading taken at attach forever.
@@ -563,7 +563,7 @@ final class AdministrativeDeviceSession: NSObject, @unchecked Sendable {
     // MARK: - Local management
 
     /// Read named properties from the attached device, answering with what
-    /// it said about each — values and refusals alike. The administrative
+    /// it said about each—values and refusals alike. The administrative
     /// counterpart of the companion session's `fetchCompanionProperties`,
     /// with the same shape of answer.
     func fetchProperties(
@@ -598,7 +598,7 @@ final class AdministrativeDeviceSession: NSObject, @unchecked Sendable {
         }
     }
 
-    /// Forget every host paired with the attached device — the bond count
+    /// Forget every host paired with the attached device—the bond count
     /// written to zero.
     ///
     /// Unlike the resets below this is answered, so the exchange runs to
@@ -689,7 +689,7 @@ final class AdministrativeDeviceSession: NSObject, @unchecked Sendable {
                 managementGeneration = UUID()
                 scheduleManagementTimeout(generation: managementGeneration)
                 do {
-                    // An immediate completion — a save with nothing to ask —
+                    // An immediate completion—a save with nothing to ask—
                     // resolves the waiter inside this call.
                     try applySessionUpdate(start(ulcpSession), from: peripheral)
                 } catch {
@@ -799,7 +799,7 @@ final class AdministrativeDeviceSession: NSObject, @unchecked Sendable {
             try applySessionUpdate(ulcpSession.consume(frame: frame), from: peripheral)
         } catch MobileError.UlcpUnexpectedCommand {
             // Unhandled but well formed: ignored here for the same reason
-            // the tethered session ignores it — see `linkDidReceive`.
+            // the tethered session ignores it—see `linkDidReceive`.
             Self.logger.notice(
                 """
                 administrative session: ignoring unhandled command \
@@ -826,8 +826,8 @@ final class AdministrativeDeviceSession: NSObject, @unchecked Sendable {
         snapshot.linkState = switch update.snapshot.phase {
         case .idle: .attaching
         case .synchronizing: .synchronizing
-        // An administrative session never parks awaiting a host decision —
-        // Rust does not emit that phase for this attach mode — but the
+        // An administrative session never parks awaiting a host decision—
+        // Rust does not emit that phase for this attach mode—but the
         // switch has to be total.
         case .awaitingHost: .awaitingHost
         case .claiming: .provisioning
@@ -859,7 +859,7 @@ final class AdministrativeDeviceSession: NSObject, @unchecked Sendable {
             snapshot.chargeState = battery.chargeState.map(RadioChargeState.init)
         }
         // Carried on every update, unlike battery: the device ends an alert
-        // on its own — a button press or its deadline — so the control has
+        // on its own—a button press or its deadline—so the control has
         // to follow the device rather than what was last asked for.
         snapshot.alert = update.snapshot.alert.map(RadioAlertState.init)
         // Stamped on arrival, like battery: an epoch says nothing without

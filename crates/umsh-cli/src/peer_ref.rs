@@ -6,7 +6,7 @@
 //! - hex-encoded 32-byte pubkey (64 hex chars, optional `0x` prefix),
 //! - base64-encoded 32-byte pubkey (standard or URL-safe alphabet).
 //!
-//! 3-byte hints are NOT accepted — they aren't unique and the CLI refuses
+//! 3-byte hints are NOT accepted—they aren't unique and the CLI refuses
 //! to guess.
 
 use umsh_core::PublicKey;

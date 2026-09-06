@@ -4,7 +4,7 @@
 //! The controller is only usable after the full power-up sequence from
 //! hardware doc §5.3: `Vext` up (see [`crate::vext::Vext`]) → reset
 //! pulse → controller init. Because the panel supply is `Vext`, every
-//! `Vext` power cycle invalidates the controller state — callers must
+//! `Vext` power cycle invalidates the controller state—callers must
 //! repeat [`reset`] plus the driver's `init()` after re-enabling the
 //! rail, not just resume drawing (§5.4).
 //!
@@ -22,7 +22,7 @@ use ssd1306::{I2CDisplayInterface, Ssd1306Async};
 
 // The trait carrying `Display::init()`; re-exported so firmware doesn't
 // need its own ssd1306 dependency just to call it. `Brightness` rides
-// along for the same reason — the display-attention policy dims the
+// along for the same reason—the display-attention policy dims the
 // panel before switching it off.
 pub use ssd1306::mode::DisplayConfigAsync;
 pub use ssd1306::prelude::Brightness;
@@ -35,7 +35,7 @@ pub use ssd1306::prelude::Brightness;
 /// `Brightness::DIM` (0x2F). This panel needs it: measured against the
 /// hardware, an SSD1306 at the 0x07 the SH1106 boards dim to is still
 /// bright enough that the warning does not read as one. Contrast 0 is not
-/// off — the panel stays faintly legible, which is the whole point of the
+/// off—the panel stays faintly legible, which is the whole point of the
 /// dim state. `CONTRAST_NORMAL` is the crate's `Brightness::NORMAL`, so
 /// the lit end is exactly where it has always been.
 const CONTRAST_DIM: u8 = 0x00;
@@ -49,7 +49,7 @@ const PRECHARGE_DIM: u8 = 0x1;
 const PRECHARGE_NORMAL: u8 = 0x2;
 
 /// A point on the way from the dim floor to full brightness, given a
-/// permille of the gap — what the display-attention policy's
+/// permille of the gap—what the display-attention policy's
 /// `brightness_permille` hands back while the panel is falling into its
 /// dim state. Present under this name on every board in the ESP32
 /// workspace, so the shared display task never learns which panel it has.

@@ -864,7 +864,7 @@ fn wire_referenced_reaction_is_rejected_without_continuity() {
 #[test]
 fn empty_body_emote_composes_and_inserts() {
     // Withdrawing a reaction is an emote with no body. It must never be
-    // mistaken for a delete — that meaning belongs to an empty *edit*.
+    // mistaken for a delete—that meaning belongs to an empty *edit*.
     let mut sender = engine();
     feed(
         &mut sender,
@@ -1641,7 +1641,7 @@ fn edit_of_missing_message_fills_placeholder() {
 }
 
 /// A resend arrives as an edit of a message the receiver never saw, on a
-/// stream with no baseline to open a gap from — the first frame ever heard
+/// stream with no baseline to open a gap from—the first frame ever heard
 /// from this sender. The engine cannot resolve the original, so it exports
 /// the wire reference for the platform to settle against persisted rows; and
 /// the superseded original still arriving later must drop as a duplicate,
@@ -1677,8 +1677,8 @@ fn edit_of_unknown_original_on_fresh_stream_exports_wire_ref_and_seals_the_id() 
         "no gap can open: the edit itself established the baseline"
     );
 
-    // A late copy of the abandoned original — a repeater can still be
-    // retrying frames the sender gave up on — duplicates content the edit
+    // A late copy of the abandoned original—a repeater can still be
+    // retrying frames the sender gave up on—duplicates content the edit
     // already delivered.
     feed(
         &mut engine,
@@ -3209,7 +3209,7 @@ fn resend_request_for_recently_transmitted_frame_is_coalesced() {
 /// The in-flight guard above is meant to last as long as the frame is
 /// genuinely queued on our own radio. A multicast gets one report and no
 /// acknowledgement ever, so a frame that only retires on `Acked` stays in
-/// flight for good and this node refuses every resend request for it — the
+/// flight for good and this node refuses every resend request for it—the
 /// one thing a group member has no other way to recover from.
 #[test]
 fn a_multicast_retires_from_flight_on_its_only_report() {
@@ -3272,7 +3272,7 @@ fn a_multicast_retires_from_flight_on_its_only_report() {
     );
 
     // Fragment 2 has drawn no report at all, so it really is still queued
-    // behind fragment 1 — that request is coalesced, as before.
+    // behind fragment 1—that request is coalesced, as before.
     feed(&mut engine, &blind, None, &request(2), 6_000);
     let outputs = drain(&mut engine);
     assert!(

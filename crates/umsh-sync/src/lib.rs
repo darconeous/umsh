@@ -1,8 +1,8 @@
 //! Single-threaded async synchronization primitives for UMSH.
 //!
-//! - [`AsyncCondition`] — a wake-all condition variable with slab-backed
+//! - [`AsyncCondition`]—a wake-all condition variable with slab-backed
 //!   ticketed deregistration.
-//! - [`AsyncRefCell`] — an async-aware `RefCell` whose `borrow()` /
+//! - [`AsyncRefCell`]—an async-aware `RefCell` whose `borrow()` /
 //!   `borrow_mut()` futures wait instead of panicking when the cell is in
 //!   use.
 //!

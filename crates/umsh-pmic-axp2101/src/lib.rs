@@ -7,7 +7,7 @@
 //! not that the part is missing (hardware doc §5.3). So a board brings
 //! this driver up before it probes anything else.
 //!
-//! The surface here is deliberately narrow — rails, charging, telemetry,
+//! The surface here is deliberately narrow—rails, charging, telemetry,
 //! interrupts, and the power key. The AXP2101 does considerably more
 //! (JEITA profiles, watchdogs, sleep sequencing, backup-battery
 //! charging); none of it is reachable through UMSH, so none of it is
@@ -98,7 +98,7 @@ impl Rail {
 ///
 /// - **DCDC1**, the MCU core supply on every board UMSH supports.
 ///   Clearing its bit switches off the processor doing the clearing, so
-///   no value of this type can name it — the mistake is unrepresentable
+///   no value of this type can name it—the mistake is unrepresentable
 ///   rather than runtime-guarded.
 /// - **CPUSLDO**, whose load is unattributed on the boards we have. An
 ///   output nobody has traced is not an output to switch off blind.
@@ -242,7 +242,7 @@ pub enum ChargeDirection {
 /// Who drives the charge LED.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ChargeLed {
-    /// The charger drives it — the board's default, and what LILYGO
+    /// The charger drives it—the board's default, and what LILYGO
     /// ships. Prefer this: the LED is wired to the PMIC's charge logic,
     /// not to a free GPIO, so firmware "status LED" use of it is a lie
     /// about what the light means (hardware doc §6.4, §14.5).
@@ -262,7 +262,7 @@ pub struct IrqMask(pub u32);
 
 impl IrqMask {
     pub const NONE: IrqMask = IrqMask(0);
-    /// Every bit the part defines — used to clear stale status at boot.
+    /// Every bit the part defines—used to clear stale status at boot.
     pub const ALL: IrqMask = IrqMask(0x00FF_FFFF);
 
     // Register 0x41.
@@ -418,7 +418,7 @@ impl<I: I2c> Axp2101<I> {
         Ok(decode_rail_mv(self.read(rail.voltage_reg()).await?))
     }
 
-    /// Set a rail's voltage and switch it on, in that order — bringing a
+    /// Set a rail's voltage and switch it on, in that order—bringing a
     /// rail up at whatever the previous session left configured can
     /// overvolt what is behind it.
     pub async fn enable_rail_at(&mut self, rail: Rail, millivolts: u16) -> Result<(), I::Error> {
@@ -428,7 +428,7 @@ impl<I: I2c> Axp2101<I> {
 
     /// Switch off an output this board does not use.
     ///
-    /// Read-modify-write, so the neighboring bits — DCDC1's included —
+    /// Read-modify-write, so the neighboring bits—DCDC1's included—
     /// come back unchanged.
     pub async fn disable_unused(&mut self, output: UnusedOutput) -> Result<(), I::Error> {
         let (register, bit) = output.enable_bit();
@@ -562,7 +562,7 @@ impl<I: I2c> Axp2101<I> {
         self.get_bit(reg::STATUS1, reg::STATUS1_VBUS_GOOD).await
     }
 
-    /// Battery voltage in millivolts, or `None` with no cell attached —
+    /// Battery voltage in millivolts, or `None` with no cell attached—
     /// the ADC reads a meaningless value rather than nothing.
     pub async fn battery_millivolts(&mut self) -> Result<Option<u16>, I::Error> {
         if !self.battery_present().await? {
@@ -594,7 +594,7 @@ impl<I: I2c> Axp2101<I> {
     /// Fuel-gauge state of charge, whole percent.
     ///
     /// `None` with no cell attached, and also when the gauge reports a
-    /// value outside 0–100 — it returns 0xFF until it has learned the
+    /// value outside 0–100—it returns 0xFF until it has learned the
     /// pack, which a caller must not show as 255%.
     pub async fn battery_percent(&mut self) -> Result<Option<u8>, I::Error> {
         if !self.battery_present().await? {
@@ -674,7 +674,7 @@ impl<I: I2c> Axp2101<I> {
     ///
     /// Returns once the request is written; the rails fall shortly after,
     /// so a caller must not expect execution to continue meaningfully.
-    /// The board comes back with a POWER key press — no firmware runs in
+    /// The board comes back with a POWER key press—no firmware runs in
     /// between.
     pub async fn power_off(&mut self) -> Result<(), I::Error> {
         self.set_bit(reg::COMMON_CONFIG, reg::COMMON_CONFIG_SOFT_POWEROFF, true)

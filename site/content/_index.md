@@ -13,7 +13,7 @@ template = "index.html"
 [extra]
 # Browser tab and search-result title, which is deliberately more descriptive
 # than the `title` above.
-page_title = "UMSH — an experimental LoRa mesh protocol"
+page_title = "UMSH—an experimental LoRa mesh protocol"
 
 hero_eyebrow = "Open mesh networking over LoRa"
 
@@ -26,7 +26,7 @@ without relying on cellular connectivity or internet access—designed from the 
 for strong security and ease of use."""
 
 # The first button points at TestFlight once `ios_beta_url` is set in
-# config.toml, and at the app page until then — hence the two labels.
+# config.toml, and at the app page until then—hence the two labels.
 hero_cta_beta = "Join the iOS beta"
 hero_cta_beta_pending = "Get the iOS beta"
 hero_cta_spec = "Read the specification"

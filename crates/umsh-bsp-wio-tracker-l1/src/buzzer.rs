@@ -2,7 +2,7 @@
 //!
 //! Simpler than the T1000-E's buzzer: this transducer is driven straight
 //! from a PWM channel with no driver chip behind it, so there is no
-//! power-enable gate to hold and no cold-start warmup to wait out — the
+//! power-enable gate to hold and no cold-start warmup to wait out—the
 //! first note of a melody is audible immediately.
 //!
 //! Firmwares fire [`BUZZER_SIGNAL`] with a `&'static Melody` from
@@ -22,7 +22,7 @@ use embassy_time::{Duration, Instant, Timer};
 use umsh_ux_tracker::buzzer::{BuzzerDecision, BuzzerEngine, Melody, melodies};
 
 /// Firmware-visible signal: send a `&'static Melody` to request a tune.
-/// Latest signal wins — firing during playback replaces the current
+/// Latest signal wins—firing during playback replaces the current
 /// melody immediately.
 pub static BUZZER_SIGNAL: Signal<ThreadModeRawMutex, &'static Melody> = Signal::new();
 
@@ -39,7 +39,7 @@ const ALERT_PERIOD: Duration = Duration::from_millis(3_000);
 /// in the firmware binary so the linker sees a concrete monomorphisation.
 ///
 /// PWM clock is expected to be 1 MHz (caller picks `Prescaler::Div16`),
-/// so for the 1–2 kHz melody range max_duty is 500–1000 — plenty of
+/// so for the 1–2 kHz melody range max_duty is 500–1000—plenty of
 /// resolution for the 50% duty square wave we emit.
 pub async fn run(mut pwm: SimplePwm<'static>) {
     let mut engine = BuzzerEngine::new();

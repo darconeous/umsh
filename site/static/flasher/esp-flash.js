@@ -1,7 +1,7 @@
 /**
  * ESP32-S3 flashing, over the ROM serial bootloader, via esptool-js.
  *
- * The release image is a single merged binary written at offset 0 — on the
+ * The release image is a single merged binary written at offset 0—on the
  * ESP32-S3 the second-stage bootloader lives at 0x0, not at 0x1000 as on the
  * classic ESP32. `make merged-bin-<board>` builds it with `--skip-padding`,
  * so it stops short of the `umsh` data partition at 0x300000 and a flash does
@@ -9,7 +9,7 @@
  * rewritten, including the partition table.
  *
  * DTR/RTS drops the chip into its ROM bootloader, so there is no button
- * sequence — whether those lines arrive over a CP2102 bridge, as on the
+ * sequence—whether those lines arrive over a CP2102 bridge, as on the
  * Heltec V3, or over the S3's own USB-Serial-JTAG peripheral, as on the
  * T-Beam Supreme. Either way the ROM is mask ROM: this path cannot brick
  * the board.
@@ -47,7 +47,7 @@ function terminalShim(log) {
  * Write `image` to `port` and reset the board into it.
  *
  * Tries 921600 baud first and falls back to 115200, which some cables and USB
- * hubs need. `port` must not already be open — esptool-js opens it itself.
+ * hubs need. `port` must not already be open—esptool-js opens it itself.
  */
 export async function flashEsp(port, { image, onProgress = () => {}, onStage = () => {}, log = () => {} }) {
   let lastError;
@@ -74,7 +74,7 @@ export async function flashEsp(port, { image, onProgress = () => {}, onStage = (
 
       onStage("finishing");
       // Not loader.after("hard_reset"): the vendored esptool-js 0.6.1 only
-      // *releases* RTS there, assuming EN was still held low — which it is
+      // *releases* RTS there, assuming EN was still held low—which it is
       // not after flashing, so nothing happens and the board sits in the
       // flasher stub until someone pokes it. Pulse EN ourselves: DTR low
       // first so IO0 is high when EN rises, and the chip boots the new

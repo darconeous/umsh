@@ -317,7 +317,7 @@ impl<A: AesProvider, S: Sha256Provider> CryptoEngine<A, S> {
         ChannelId(out)
     }
 
-    /// Derive three bytes for presentation — a deterministic color a user
+    /// Derive three bytes for presentation—a deterministic color a user
     /// interface can give a channel.
     ///
     /// This is the channel-identifier derivation run one byte longer, so the
@@ -330,7 +330,7 @@ impl<A: AesProvider, S: Sha256Provider> CryptoEngine<A, S> {
         out
     }
 
-    /// Derive the channel tag — a local identity wide enough to tell apart two
+    /// Derive the channel tag—a local identity wide enough to tell apart two
     /// channels whose keys derive the same channel identifier.
     ///
     /// Same derivation as the channel identifier, run to sixteen bytes, so the
@@ -395,7 +395,7 @@ impl<A: AesProvider, S: Sha256Provider> CryptoEngine<A, S> {
     ///
     /// The name is canonicalized first, per the spec (multicast-channels.md
     /// § Named Channels): it must be ASCII, and ASCII letters are folded to
-    /// lowercase before derivation — so `Public`, `public`, and `PUBLIC` all
+    /// lowercase before derivation—so `Public`, `public`, and `PUBLIC` all
     /// derive the same key. Non-ASCII names are rejected (UTF-8 case-folding
     /// is deferred by the spec). Names longer than
     /// [`MAX_CHANNEL_NAME_LEN`] are rejected as an implementation limit of
@@ -608,7 +608,7 @@ impl<A: AesProvider, S: Sha256Provider> CryptoEngine<A, S> {
     ///
     /// - **`ack_mic`** = the first 4 bytes of `full_tag`. Because the on-wire
     ///   MIC is a prefix-truncation of the full tag, this equals the first
-    ///   4 bytes of the acknowledged packet's on-wire MIC — a *public*
+    ///   4 bytes of the acknowledged packet's on-wire MIC—a *public*
     ///   correlation handle any node that received the original packet
     ///   (including forwarding repeaters) can compute.
     /// - **`ack_tag`** = `truncate_4( AES-256-ECB(k_enc, full_tag) )`. A keyed
@@ -647,7 +647,7 @@ impl<A: AesProvider, S: Sha256Provider> CryptoEngine<A, S> {
 
     /// Construct the CTR IV from MIC bytes and SECINFO bytes.
     ///
-    /// With a 16-byte MIC the IV is the masked MIC alone — exactly the
+    /// With a 16-byte MIC the IV is the masked MIC alone—exactly the
     /// initial counter `Q` from RFC 5297 §2.6; shorter MICs are padded
     /// from the SECINFO bytes, so the IV construction of a received
     /// packet must locate SECINFO exactly (see [`sec_info_bytes_range`]).
@@ -672,7 +672,7 @@ impl<A: AesProvider, S: Sha256Provider> CryptoEngine<A, S> {
 }
 
 /// HKDF-SHA256 over any [`Sha256Provider`], for callers that have no
-/// [`CryptoEngine`] — the entropy pool derives keys before any AES
+/// [`CryptoEngine`]—the entropy pool derives keys before any AES
 /// provider exists.
 pub fn hkdf_sha256<S: Sha256Provider>(
     sha: &S,
@@ -730,7 +730,7 @@ fn dbl(block: &[u8; 16]) -> [u8; 16] {
 
 /// The on-wire SECINFO byte range of a parsed secure packet. In every
 /// secure layout (unicast, multicast, blind unicast) SECINFO
-/// immediately precedes the options block — not the body, which the
+/// immediately precedes the options block—not the body, which the
 /// options end marker or a blind address block may separate from it.
 fn sec_info_bytes_range(header: &PacketHeader) -> Result<Range<usize>, CryptoError> {
     let sec_info = header.sec_info.ok_or(CryptoError::InvalidPacket)?;
@@ -1019,7 +1019,7 @@ mod tests {
         assert_eq!(engine.aes_cmac(&key, &[&msg]), expected);
     }
 
-    /// NIST SP 800-38A Section F.5.5 — AES-256 CTR mode, single block.
+    /// NIST SP 800-38A Section F.5.5—AES-256 CTR mode, single block.
     #[cfg(feature = "software-crypto")]
     #[test]
     fn aes_ctr_matches_nist_sp800_38a_block_1() {
@@ -1031,7 +1031,7 @@ mod tests {
         assert_eq!(data, hex_vec("601ec313775789a5b7a7f504bbf3d228"));
     }
 
-    /// NIST SP 800-38A Section F.5.5 — AES-256 CTR mode, 4 blocks.
+    /// NIST SP 800-38A Section F.5.5—AES-256 CTR mode, 4 blocks.
     /// Verifies counter increment across multiple blocks.
     #[cfg(feature = "software-crypto")]
     #[test]
@@ -1055,7 +1055,7 @@ mod tests {
         assert_eq!(data, expected);
     }
 
-    /// NIST SP 800-38A Section F.5.6 — CTR decrypt (symmetric operation).
+    /// NIST SP 800-38A Section F.5.6—CTR decrypt (symmetric operation).
     #[cfg(feature = "software-crypto")]
     #[test]
     fn aes_ctr_decrypt_matches_nist_sp800_38a() {
@@ -1131,7 +1131,7 @@ mod tests {
         }
     }
 
-    /// RFC 5297 Appendix A.1 — deterministic authenticated encryption.
+    /// RFC 5297 Appendix A.1—deterministic authenticated encryption.
     /// Exercises the single-AD path and S2V's dbl-and-pad branch (the
     /// 14-byte plaintext is shorter than a block).
     #[cfg(feature = "software-crypto")]
@@ -1157,7 +1157,7 @@ mod tests {
         assert_eq!(data, hex_vec("40c02b9690c4dc04daef7f6afe5c"));
     }
 
-    /// RFC 5297 Appendix A.2 — nonce-based authenticated encryption.
+    /// RFC 5297 Appendix A.2—nonce-based authenticated encryption.
     /// Exercises multiple S2V components and the xorend branch (the
     /// 47-byte plaintext spans multiple blocks).
     #[cfg(feature = "software-crypto")]
@@ -1384,7 +1384,7 @@ mod tests {
     }
 
     /// Regression: with a MIC shorter than 16 bytes the CTR IV includes
-    /// SECINFO bytes, and SECINFO precedes the options block — not the
+    /// SECINFO bytes, and SECINFO precedes the options block—not the
     /// body, which the options end marker separates from it. The IV of
     /// a received packet must be built from the true SECINFO position
     /// or decryption diverges from sealing.
@@ -1672,7 +1672,7 @@ mod tests {
     fn software_identity_generate_produces_valid_key() {
         use rand_core::{CryptoRng, RngCore};
 
-        // Minimal deterministic RNG for testing — counter-based, not cryptographically
+        // Minimal deterministic RNG for testing—counter-based, not cryptographically
         // strong, but sufficient to exercise the generate() code path.
         struct CounterRng(u64);
         impl RngCore for CounterRng {
@@ -1907,7 +1907,7 @@ mod tests {
     #[test]
     fn is_valid_ed25519_public_key_accepts_real_key() {
         // Any verifying key produced by a SigningKey is by construction a
-        // valid Ed25519 point — the validator must accept it.
+        // valid Ed25519 point—the validator must accept it.
         let identity = SoftwareIdentity::from_secret_bytes(&[0x11; 32]);
         assert!(is_valid_ed25519_public_key(identity.public_key()));
     }
@@ -1917,7 +1917,7 @@ mod tests {
     fn is_valid_ed25519_public_key_rejects_non_curve_bytes() {
         // Y = 2 (little-endian) is not on the Ed25519 curve: the
         // recovered x^2 from the curve equation has no square root in
-        // GF(2^255 - 19). Confirm the validator rejects it — this is
+        // GF(2^255 - 19). Confirm the validator rejects it—this is
         // the exact failure mode a user typo trips when they paste a
         // mistyped hex pubkey on the CLI.
         let mut bytes = [0u8; 32];

@@ -21,8 +21,8 @@ from this repository still says where it came from.
 
 `citycodes.csv` is CC BY-SA 4.0, which can extend share-alike terms to a
 derivative work. UMSH uses it only as a seed list of metropolitan IATA
-codes — three-letter codes and their names, facts rather than creative
-expression — and none of its coordinates or geometry. Whether that makes the
+codes—three-letter codes and their names, facts rather than creative
+expression—and none of its coordinates or geometry. Whether that makes the
 compiled database a derivative work of it is a question about the boundary
 between a database's contents and its structure, and this file is not the place
 it gets settled.

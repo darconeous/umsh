@@ -7,7 +7,7 @@ use umsh_mac::SendOptions;
 ///
 /// A ping frame is otherwise nearly half MIC: with a 2-byte nonce the whole
 /// frame is 34 bytes, 16 of them the authenticator. Dropping to 8 takes a
-/// quarter off the airtime while leaving forgery resistance at 2^-64 — far
+/// quarter off the airtime while leaving forgery resistance at 2^-64—far
 /// out of reach at LoRa packet rates, and the echo payload is a random nonce
 /// and filler that is worth nothing to forge.
 ///
@@ -23,7 +23,7 @@ use crate::transport::Transport;
 
 /// Relationship with one remote peer, bound to a transport context.
 ///
-/// Generic over `T: Transport` — works with `LocalNode` (unicast) or
+/// Generic over `T: Transport`—works with `LocalNode` (unicast) or
 /// `BoundChannel` (blind unicast) identically.
 #[derive(Clone)]
 pub struct PeerConnection<T: Transport> {
@@ -246,7 +246,7 @@ where
     ///
     /// `options` is honoured as given, so a ping travels the same way the
     /// traffic it is measuring would: same MIC size, same encryption, same
-    /// routing and region options. Only `ack_requested` is overridden — the
+    /// routing and region options. Only `ack_requested` is overridden—the
     /// echo response *is* the acknowledgement, so asking for a MAC ack as
     /// well would put a second frame on the air for nothing.
     ///
@@ -308,7 +308,7 @@ where
 
     /// Solicit this peer's current identity by sending a targeted MAC
     /// Identity Request (command 1). Because the request is a unicast to a
-    /// specific peer, no filter options are needed — filters exist only to
+    /// specific peer, no filter options are needed—filters exist only to
     /// narrow a broadcast solicitation. A random NONCE is included so the
     /// peer echoes it in its identity response, matching the responder's
     /// correlation contract.

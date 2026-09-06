@@ -5,7 +5,7 @@ import CoreLocation
 ///
 /// A seam over CoreLocation rather than a location layer: the app starts
 /// readings while sharing is on and stops them when it is off, and
-/// everything about *what* is disclosed — the cell, the precision — is
+/// everything about *what* is disclosed—the cell, the precision—is
 /// decided past the seam, where the identity is built. Nothing here
 /// stores a coordinate.
 ///
@@ -56,7 +56,7 @@ final class PhoneLocationService: NSObject {
     }
 
     /// One reading, for a screen that needs to know where the phone is
-    /// rather than to disclose it — the region lookup behind "Update based
+    /// rather than to disclose it—the region lookup behind "Update based
     /// on location".
     ///
     /// Nothing is stored and nothing is shared: the answer goes to the
@@ -77,7 +77,7 @@ final class PhoneLocationService: NSObject {
         guard onReading != nil else { return }
         switch manager.authorizationStatus {
         case .authorizedWhenInUse, .authorizedAlways:
-            // A grant that arrives after `start` — the first run, where
+            // A grant that arrives after `start`—the first run, where
             // the permission sheet sat between asking and answering.
             manager.startUpdatingLocation()
         case .denied, .restricted:
@@ -96,7 +96,7 @@ final class PhoneLocationService: NSObject {
 ///
 /// `requestLocation` delivers exactly one reading or one failure, so this is
 /// a continuation with a manager attached rather than a stream. It holds
-/// itself alive until it answers, because the caller holds only the task —
+/// itself alive until it answers, because the caller holds only the task—
 /// and it answers exactly once however the attempt ends, including the case
 /// nobody covers otherwise: a permission sheet left standing.
 @MainActor

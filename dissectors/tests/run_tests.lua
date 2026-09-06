@@ -72,7 +72,7 @@ end
 -- ─────────────────────────────────────────────────────────────────────────────
 section("ARNCE decode")
 
--- "SJC" — from Example 7 Region Code option value 78 53
+-- "SJC"—from Example 7 Region Code option value 78 53
 -- chunk = 0x7853 = 30803
 -- c0 = floor(30803/1600)%40 = floor(19.25)%40 = 19 → S
 -- c1 = floor(30803/40)%40  = floor(770.075)%40 = 770%40 = 10 → J
@@ -612,7 +612,7 @@ else
         plain_e5 and plain_e5:sub(4), "Hello")
 
   -- ── NIST SP 800-38A AES-256-CTR test vectors (Section F.5.5/F.5.6) ──
-  -- Non-zero IV — this is what broke under GcryptCipher:setctr().
+  -- Non-zero IV—this is what broke under GcryptCipher:setctr().
   local nist_key = from_hex(
     "603deb1015ca71be2b73aef0857d7781"
  .. "1f352c073b6108d72d9810a30914dff4")
@@ -634,7 +634,7 @@ else
   check("NIST AES-CTR block 1 decrypt",
         nist_dec1, nist_pt1)
 
-  -- Multi-block (4 blocks = 64 bytes) — tests counter increment across blocks
+  -- Multi-block (4 blocks = 64 bytes)—tests counter increment across blocks
   local nist_pt_all = from_hex(
     "6bc1bee22e409f96e93d7e117393172a"
  .. "ae2d8a571e03ac9c9eb76fac45af8e51"
@@ -989,7 +989,7 @@ check("the flagged command is named",
       true)
 
 -- A session reset concerns the local tethered session, so it may not ride
--- this binding in either direction — the direction tables alone would only
+-- this binding in either direction—the direction tables alone would only
 -- catch the request half.
 for _, case in ipairs({{"08", "request"}, {"09", "response"}}) do
   local local_only = dissect_payload(case[1] .. " 0001 FF 8018 00")

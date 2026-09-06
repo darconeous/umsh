@@ -1,8 +1,8 @@
 //! Contact sheets of every frame kind, so a layout change can be looked
 //! at instead of reasoned about.
 //!
-//! Renders each panel at its real resolution and colors — lit pixels on
-//! black for the OLEDs, ink on paper for the e-paper — and writes one BMP
+//! Renders each panel at its real resolution and colors—lit pixels on
+//! black for the OLEDs, ink on paper for the e-paper—and writes one BMP
 //! per layout:
 //!
 //! ```text
@@ -276,7 +276,7 @@ fn frames(layout: &Layout) -> Vec<Panel> {
     // Every entry of every level, in the order the tree declares them:
     // the top level's three pages, then each settings list with its
     // highlight on a different row so the window and the bar can both be
-    // looked at — and, for the entries that open one, the page behind the
+    // looked at—and, for the entries that open one, the page behind the
     // Select.
     for item in MenuItem::ALL {
         let mut m = UiModel::new(MenuItems::all());

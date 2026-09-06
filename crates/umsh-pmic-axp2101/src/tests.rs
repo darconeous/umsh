@@ -3,7 +3,7 @@
 //! These prove the driver's own arithmetic and access patterns: which
 //! registers it touches, which bits it preserves, how it encodes and
 //! decodes. They cannot prove a register address or bit position is the
-//! one the silicon uses — that stays a hardware-validation item, and no
+//! one the silicon uses—that stays a hardware-validation item, and no
 //! test here should be read as evidence for it.
 
 extern crate alloc;

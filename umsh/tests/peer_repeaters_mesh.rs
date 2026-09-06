@@ -4,7 +4,7 @@
 //! directly, which pins what a page contains. This one puts a link between
 //! the two halves: a repeater that has heard identities and traffic, an
 //! asker that sends command 10 and reads command 11 back off the air, and
-//! the host receive path — including the unicast-only gate — in between.
+//! the host receive path—including the unicast-only gate—in between.
 
 #![cfg(feature = "tokio-support")]
 
@@ -50,7 +50,7 @@ type Responses = Rc<RefCell<Vec<Vec<u8>>>>;
 
 /// Both nodes on a link: one answering, one asking.
 ///
-/// Pumped by hand rather than spawned — the node layer is `!Send`, and a
+/// Pumped by hand rather than spawned—the node layer is `!Send`, and a
 /// test that owns its own scheduling cannot race itself.
 struct Mesh<'a, R: Radio> {
     asker_host: Host<SimHandle<'a, R>>,
@@ -222,7 +222,7 @@ async fn stand_up<'a, R: Radio>(
     }
 }
 
-/// `mesh!(name, binding)` — two nodes on a link, bound to `binding`.
+/// `mesh!(name, binding)`—two nodes on a link, bound to `binding`.
 macro_rules! mesh {
     ($name:literal, $mesh:ident) => {
         let scratch = Scratch::new($name);
@@ -236,7 +236,7 @@ macro_rules! mesh {
 
 // ─── Tests ───────────────────────────────────────────────────────────────
 
-/// The asker announces itself as a repeater, then asks — and finds itself in
+/// The asker announces itself as a repeater, then asks—and finds itself in
 /// the answer, described by both the identity it sent and the reception that
 /// carried it.
 #[tokio::test(flavor = "current_thread")]
@@ -278,7 +278,7 @@ async fn a_repeater_names_the_repeaters_it_knows_of() {
 }
 
 /// A node that has only been heard, never introduced, is still a hop worth
-/// naming — by the router hint a trace would give it, with signal and
+/// naming—by the router hint a trace would give it, with signal and
 /// nothing else.
 #[tokio::test(flavor = "current_thread")]
 async fn a_hop_heard_on_the_air_is_listed_without_a_name() {

@@ -1,8 +1,8 @@
 //! `time`: read, set, or clear the device's wall clock (`PROP_TIME`,
 //! `PROP_TZ_OFFSET`).
 //!
-//! The clock is not persisted — an epoch written to flash accumulates
-//! unbounded error while the device is off — so it comes back from a real
+//! The clock is not persisted—an epoch written to flash accumulates
+//! unbounded error while the device is off—so it comes back from a real
 //! source or not at all. The time zone *is* persisted: where a device is
 //! meant to be is known even when the time is not.
 
@@ -55,8 +55,8 @@ pub enum TzOp {
 
 /// A time-zone offset in minutes east of UTC.
 ///
-/// Accepts the shapes people actually type — `-08:00`, `+0530`, `-8`,
-/// `330` — because the one thing a time-zone argument must not do is
+/// Accepts the shapes people actually type—`-08:00`, `+0530`, `-8`,
+/// `330`—because the one thing a time-zone argument must not do is
 /// silently mean a different zone than it looks like.
 #[derive(Clone, Copy, Debug)]
 pub struct TzOffsetArg(pub i16);
@@ -269,7 +269,7 @@ mod tests {
     #[test]
     fn the_host_zone_is_a_real_zone() {
         // Whatever the build machine's TZ is, the answer has to be one a
-        // device would accept — the same range `TzOffsetArg` enforces.
+        // device would accept—the same range `TzOffsetArg` enforces.
         let minutes = host_tz_offset().expect("a host has a time zone");
         assert!((-12 * 60..=14 * 60).contains(&minutes), "{minutes}");
     }

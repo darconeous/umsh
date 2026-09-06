@@ -21,7 +21,7 @@
 //! ## CPU stall warning
 //!
 //! Page erases block the executor for a long time on every backend we
-//! use — the nRF52840 NVMC halts the CPU for ~85 ms, and the ESP32
+//! use—the nRF52840 NVMC halts the CPU for ~85 ms, and the ESP32
 //! suspends the flash cache for the duration of the write. No amount of
 //! async scheduling can preempt either. Callers MUST batch writes; the
 //! MAC's TX-side `COUNTER_PERSIST_BLOCK_SIZE = 128` and the RX-side
@@ -34,7 +34,7 @@
 //! [`KeyValueView`], [`CounterView`], [`PeerView`], and [`ChannelView`]
 //! are zero-cost view types that each hold a `&'static FlashStore`. They
 //! exist as separate types because the `umsh-hal` traits both define
-//! `load` and `store` methods — implementing both on a single type would
+//! `load` and `store` methods—implementing both on a single type would
 //! force every caller to disambiguate via UFCS. Keep them split.
 #![no_std]
 
@@ -127,7 +127,7 @@ where
     M: RawMutex,
 {
     /// Wrap an async flash driver over `range`. Does NOT erase or format
-    /// the flash — the underlying map mounts lazily on first access.
+    /// the flash—the underlying map mounts lazily on first access.
     ///
     /// `range` must be page-aligned and at least two pages long;
     /// `MapConfig::new` panics otherwise. Callers pass a board constant,
@@ -217,7 +217,7 @@ where
         let mut buf = [0u8; 32];
         match self.load_bytes(SK_KEY, &mut buf).await? {
             Some(32) => Ok(Some(buf)),
-            // Missing or wrong length — treat as "not yet written".
+            // Missing or wrong length—treat as "not yet written".
             Some(_) | None => Ok(None),
         }
     }
@@ -793,7 +793,7 @@ where
         let mut buf = [0u8; 4];
         match self.storage.load_bytes(context, &mut buf).await? {
             Some(4) => Ok(u32::from_le_bytes(buf)),
-            // Missing entry, or a corrupt one of unexpected size — treat
+            // Missing entry, or a corrupt one of unexpected size—treat
             // as "no boundary persisted yet" so the MAC layer reseeds.
             Some(_) | None => Ok(0),
         }

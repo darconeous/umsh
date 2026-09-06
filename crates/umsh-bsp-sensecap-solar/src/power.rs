@@ -2,15 +2,15 @@
 //!
 //! Two pieces:
 //!
-//! - [`PowerSignaler`] — the CLI's `umsh_hal::PowerControl` bridge.
+//! - [`PowerSignaler`]—the CLI's `umsh_hal::PowerControl` bridge.
 //!   `request_power_off` raises [`SHUTDOWN_SIGNAL`] for the teardown in
 //!   [`crate::shutdown`]; `request_reboot` is a plain `SYSRESETREQ`.
 //! - The battery monitor ([`run_battery_monitor`], [`sample_battery`],
-//!   [`BatterySample`], [`battery_state`]) — ported from the T1000-E BSP
+//!   [`BatterySample`], [`battery_state`])—ported from the T1000-E BSP
 //!   with this board's wiring, so the device's `CAP_BATTERY`
 //!   snapshot path is board-agnostic.
 //!
-//! ## Voltage reading (MeshCore method, nominal — uncalibrated)
+//! ## Voltage reading (MeshCore method, nominal—uncalibrated)
 //!
 //! Reads AIN7/P0.31 through the on-board 1 MΩ / 512 kΩ resistor bridge,
 //! matching MeshCore's `SenseCapSolarBoard::getBattMilliVolts`. Our SAADC
@@ -24,7 +24,7 @@
 //!         = raw * (3600 * 1512 / 512) / 4096 = raw * 10631 / 4096
 //! ```
 //!
-//! This is the *nominal* network value, not a fitted calibration —
+//! This is the *nominal* network value, not a fitted calibration—
 //! resistor tolerance (±1 %) dominates the residual error. Good enough
 //! for the protective low-battery cutoff; a bench calibration (plan
 //! Phase 2) can still replace [`DIVIDER_MICRO`] with a fitted slope.
@@ -102,7 +102,7 @@ mod monitor {
     }
 
     /// Whether the nRF USB regulator currently detects VBUS. This is the
-    /// only external-power signal on this board — the CN3165 charger
+    /// only external-power signal on this board—the CN3165 charger
     /// exposes nothing to the MCU (its red/green/yellow LEDs are
     /// hardware-driven).
     pub fn usb_power_present() -> bool {
@@ -128,7 +128,7 @@ mod monitor {
     /// Battery measurements worth announcing to a remote observer, for
     /// `PROP_BATTERY` asynchronous updates. Multi-receiver, and filtered
     /// on charge class plus level rather than the five-way presentation
-    /// classification — see the T1000-E BSP's equivalent for the
+    /// classification—see the T1000-E BSP's equivalent for the
     /// reasoning, which is identical.
     pub static BATTERY_ANNOUNCE: Watch<
         ThreadModeRawMutex,
@@ -156,8 +156,8 @@ mod monitor {
     static BATTERY_SAMPLE_REQUEST: Signal<ThreadModeRawMutex, ()> = Signal::new();
     static BATTERY_SAMPLE_REPLY: Signal<ThreadModeRawMutex, BatterySample> = Signal::new();
 
-    /// Ask [`run_battery_monitor`] — the sole SAADC and divider-gate owner
-    /// — for a fresh measurement and wait for it. Single-consumer. Never
+    /// Ask [`run_battery_monitor`]—the sole SAADC and divider-gate owner
+    ///—for a fresh measurement and wait for it. Single-consumer. Never
     /// completes once the monitor has exited; callers should apply a
     /// timeout.
     pub async fn sample_battery() -> BatterySample {
@@ -177,7 +177,7 @@ mod monitor {
     /// samples below the critical threshold (≈3.1 V, sustained ~5 min,
     /// only ever reached off-USB since `classify` reports Charging while
     /// external power is present) fire [`SHUTDOWN_SIGNAL`] for a protective
-    /// System OFF — the unattended-node counterpart of the PWR button.
+    /// System OFF—the unattended-node counterpart of the PWR button.
     /// That signal carries `ShutdownReason::BatteryCritical`, which is what
     /// makes the teardown leave the divider connected and arm LPCOMP: an
     /// unattended node that runs its cell down comes back by itself once
@@ -192,7 +192,7 @@ mod monitor {
         const CONSECUTIVE_NEEDED: u8 = 10;
         /// Normal cadence. Nothing is learned by reading the divider
         /// faster: the pack discharges over days and the level estimator
-        /// quantizes to 5 %. External-power changes do not wait for it —
+        /// quantizes to 5 %. External-power changes do not wait for it—
         /// [`VBUS_POLL_INTERVAL`] catches those.
         const SAMPLE_INTERVAL: Duration = Duration::from_secs(300);
         /// Cadence while the pack reads Low or Critical, so the protective
@@ -202,8 +202,8 @@ mod monitor {
         const LOW_SAMPLE_INTERVAL: Duration = Duration::from_secs(30);
         /// How often VBUS is checked between voltage samples.
         ///
-        /// This board has no charger-status GPIO — external power is
-        /// `POWER.usbregstatus` only — and the `POWER` USB interrupts are
+        /// This board has no charger-status GPIO—external power is
+        /// `POWER.usbregstatus` only—and the `POWER` USB interrupts are
         /// unavailable to this firmware (MPSL owns the shared CLOCK_POWER
         /// vector; enabling them is the post-DFU watchdog freeze). So the
         /// charge-state edge has to be polled. It costs one register read,
@@ -236,8 +236,8 @@ mod monitor {
             let usb = usb_power_present();
             // No charge-detect pin: VBUS presence stands in for "charging"
             // (provisional). Passing it as both flags means Charged is
-            // unreachable on this board — with external power the state is
-            // always Charging — so a remote observer sees charging start
+            // unreachable on this board—with external power the state is
+            // always Charging—so a remote observer sees charging start
             // and stop but never charge *completion*. Distinguishing it
             // would mean inferring termination from voltage, i.e.
             // inventing charger state the hardware does not report.
@@ -281,7 +281,7 @@ mod monitor {
 
             // Protective cell cutoff: sustained critical voltage while on
             // battery drives a System OFF so the pack is not deep-discharged
-            // when nobody is present. `!usb` is belt-and-suspenders — a
+            // when nobody is present. `!usb` is belt-and-suspenders—a
             // Critical classification already implies no external power.
             if state == BatteryState::BatteryCritical && !usb {
                 low_count = low_count.saturating_add(1);

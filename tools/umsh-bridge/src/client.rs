@@ -1,7 +1,7 @@
 //! The bridge client: a byte-faithful relay between one radio and the
 //! server.
 //!
-//! There is no forwarding logic here, deliberately — nor anywhere else
+//! There is no forwarding logic here, deliberately—nor anywhere else
 //! in the bridge. A client does not parse what it carries, does not
 //! suppress duplicates, and does not decide anything about a frame. The
 //! node behind its radio does all of that, to bridged traffic as to
@@ -135,7 +135,7 @@ async fn session(
 }
 
 /// Try every address the name resolves to, in the order the resolver
-/// gave them — which is how a dual-stacked server is reached over
+/// gave them—which is how a dual-stacked server is reached over
 /// whichever family actually works from here.
 async fn connect_any(server: &str) -> Result<TcpStream> {
     let addresses: Vec<_> = tokio::net::lookup_host(server)

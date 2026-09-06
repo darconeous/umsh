@@ -189,8 +189,8 @@ pub const PROPERTIES: &[u32] = &[
 /// How a property's octets are meant to be read.
 ///
 /// Enough to render a value a person can check and to accept one typed
-/// by hand. Anything whose shape is a structure rather than a scalar —
-/// a battery snapshot, an interleaved location, a table of keys — is
+/// by hand. Anything whose shape is a structure rather than a scalar—
+/// a battery snapshot, an interleaved location, a table of keys—is
 /// [`PropertyType::Bytes`], which is an honest answer: the octets are
 /// the value, and whatever decodes them knows more than this table does.
 ///
@@ -603,7 +603,7 @@ mod tests {
 
     /// The three tables answer for the same set of properties. A name
     /// with no entry in `PROPERTIES` cannot be looked up backwards, and
-    /// one with no type reads back as hex forever — both are the kind of
+    /// one with no type reads back as hex forever—both are the kind of
     /// omission that happens when a property is added in a hurry.
     #[test]
     fn every_named_property_is_listed_and_typed() {

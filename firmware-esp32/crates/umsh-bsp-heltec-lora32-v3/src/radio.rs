@@ -6,13 +6,13 @@
 //! fixed board roles that are **mandatory configuration, not tuning**
 //! (hardware doc §4.6–4.7):
 //!
-//! - DIO2 drives the external RF switch (`SetDio2AsRfSwitchCtrl` — no
+//! - DIO2 drives the external RF switch (`SetDio2AsRfSwitchCtrl`—no
 //!   MCU pin is involved in TX/RX switching).
 //! - DIO3 powers the 1.8 V TCXO. A crystal-configured init will hang or
 //!   start flaky; `TcxoCtrlVoltage::Ctrl1V8` is required.
 //!
 //! MeshCore declares NRESET unconnected; that is driver policy, not
-//! hardware truth (§4.3) — GPIO12 is wired and we drive a real reset
+//! hardware truth (§4.3)—GPIO12 is wired and we drive a real reset
 //! pulse through the interface variant.
 //!
 //! MeshCore parity notes: `rx_boost` on (`SX126X_RX_BOOSTED_GAIN=1`),
@@ -52,8 +52,8 @@ pub type RadioKind = Sx126x<RadioSpi, RadioIv, Sx1262>;
 pub type Radio = LoRa<RadioKind, Delay>;
 
 /// Assemble the board's `RadioKind` from the SPI device and control
-/// pins. Follow with `LoRa::new(kind, false, Delay)` — private sync
-/// word — and the parameter builders in `umsh-radio-loraphy`.
+/// pins. Follow with `LoRa::new(kind, false, Delay)`—private sync
+/// word—and the parameter builders in `umsh-radio-loraphy`.
 pub fn new_radio_kind(
     spi: RadioSpi,
     reset: Output<'static>,

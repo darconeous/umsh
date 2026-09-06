@@ -191,8 +191,8 @@ fn field_map(header: &PacketHeader, len: usize) -> Vec<Option<Field>> {
 
 /// Render the hex dump, grouped by field.
 ///
-/// Colorized output needs no separators — the color change marks each field
-/// boundary — so the bytes run together and stay compact. Without color the
+/// Colorized output needs no separators—the color change marks each field
+/// boundary—so the bytes run together and stay compact. Without color the
 /// same grouping is spelled with spaces between fields.
 fn print_hex(packet: &[u8], map: &[Option<Field>], color: bool) {
     for line in hex_lines(packet, map, color) {
@@ -426,8 +426,8 @@ fn source_text(packet: &[u8], header: &PacketHeader) -> Option<String> {
 /// Render the options that are actually present, decoding each one's value.
 ///
 /// This walks the option block directly rather than going through
-/// `ParsedOptions`, so options that the MAC has no use for — callsigns, and
-/// anything unrecognized — still show up in a capture.
+/// `ParsedOptions`, so options that the MAC has no use for—callsigns, and
+/// anything unrecognized—still show up in a capture.
 fn options_line(packet: &[u8], header: &PacketHeader, color: bool) -> Option<String> {
     let range = header.options_range.clone();
     if range.is_empty() {
@@ -600,7 +600,7 @@ mod tests {
             "MacAck  fhops=1:0  ack_mic=8cb68f5d  ack_tag=9700ede7",
         );
 
-        // The two fields are body, and a MAC ack has no MIC of its own —
+        // The two fields are body, and a MAC ack has no MIC of its own—
         // even though `PacketHeader` reports the same range as `mic_range`.
         let map = field_map(&header, MAC_ACK.len());
         assert_eq!(map[0], Some(Field::Fcf));

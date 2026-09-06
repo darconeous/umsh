@@ -9,12 +9,12 @@
 //!
 //! - The address is a **population variable**, not a constant: 0x3C
 //!   normally, 0x3D when a QMC6310N magnetometer occupies 0x3C
-//!   (hardware doc §2.4). [`probe`] resolves it — 0x3D first, so a
+//!   (hardware doc §2.4). [`probe`] resolves it—0x3D first, so a
 //!   magnetometer ACK cannot be mistaken for the panel.
 //! - There is no reset GPIO. The panel's reset is its ALDO1 rail; after
 //!   a rail cycle, re-init is the whole recovery path (§9.1).
 //! - The bus must not be probed before [`crate::power::bring_up`] has
-//!   the sensor rails on (§8.1) — an unpowered panel looks exactly like
+//!   the sensor rails on (§8.1)—an unpowered panel looks exactly like
 //!   an absent one.
 
 use embedded_graphics::draw_target::DrawTarget;
@@ -42,7 +42,7 @@ impl Brightness {
 }
 
 /// A point on the way from [`Brightness::DIM`] to [`Brightness::NORMAL`],
-/// given a permille of the gap — what the display-attention policy's
+/// given a permille of the gap—what the display-attention policy's
 /// `brightness_permille` hands back while the panel is falling into its
 /// dim state. Present under this name on every board in the ESP32
 /// workspace, so the shared display task never learns which panel it has.
@@ -62,7 +62,7 @@ pub struct Display {
     fb: Sh1106Fb,
 }
 
-/// Bind the panel at a probed address — the value [`probe`] returned.
+/// Bind the panel at a probed address—the value [`probe`] returned.
 pub fn new_display(i2c: Bus, addr: u8) -> Display {
     Display {
         panel: Sh1106::new(i2c, addr),

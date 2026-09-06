@@ -1,14 +1,14 @@
 //! Panic handler for the sensecap-solar-console bringup firmware.
 //!
-//! Identical in structure to the Wio Tracker / T-Echo panic handlers —
+//! Identical in structure to the Wio Tracker / T-Echo panic handlers—
 //! wires together the three BSP pieces that must be glued in a binary:
 //!
-//! - `umsh_bsp_nrf52840::panic_persist::SyncNoinit` — the `.uninit`
+//! - `umsh_bsp_nrf52840::panic_persist::SyncNoinit`—the `.uninit`
 //!   retained-RAM static that survives warm resets.
-//! - `umsh_bsp_nrf52840::panic_persist::{PanicSlot, SliceWriter}` —
+//! - `umsh_bsp_nrf52840::panic_persist::{PanicSlot, SliceWriter}`—
 //!   framing and formatting over that region.
 //! - `umsh_bsp_nrf52840::gpregret::reset_to_app` (GPREGRET=0, then
-//!   `SCB::sys_reset`) — ensures the bootloader boots the app on the
+//!   `SCB::sys_reset`)—ensures the bootloader boots the app on the
 //!   next start so the panic message is visible over USB-CDC.
 
 use umsh_bsp_nrf52840::panic_persist::{PanicSlot, SliceWriter, SyncNoinit};

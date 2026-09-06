@@ -132,7 +132,7 @@ def buffer_m(geometry: BaseGeometry, distance_m: float) -> MultiPolygon:
 
     Each component is buffered in a projection centered on itself, so the
     distance means the same thing at every latitude. A component large enough
-    that one local frame would distort it — a country — is why policy keeps
+    that one local frame would distort it—a country—is why policy keeps
     expansion at zero for the administrative layers.
     """
     if distance_m <= 0:
@@ -147,7 +147,7 @@ def buffer_m(geometry: BaseGeometry, distance_m: float) -> MultiPolygon:
         restored = shapely_transform(lambda x, y, t=inverse: t.transform(x, y), grown)
         # pyproj wraps longitudes into [-180, 180], so a component near the
         # dateline comes back with jumps of 360° that read as a chord across
-        # the whole world — make_valid then bakes that chord into the shape
+        # the whole world—make_valid then bakes that chord into the shape
         # as horizontal spikes and eaten coverage. Unwrap around the
         # component's own center; split_antimeridian below expects exactly
         # this continuous past-±180 form.
@@ -169,8 +169,8 @@ def fill_holes(geometry: BaseGeometry) -> MultiPolygon:
     """Fill every hole in every component.
 
     For a region unioned with its maritime reach, a hole is usually water
-    enclosed entirely by that one region's own water — the middle of the
-    Sea of Okhotsk, the center of Hudson Bay — and filling it stops an
+    enclosed entirely by that one region's own water—the middle of the
+    Sea of Okhotsk, the center of Hudson Bay—and filling it stops an
     enclosed sea from rendering as a bite out of its country, giving the
     only sensible answer to the rare node in the middle of one.
 
@@ -220,7 +220,7 @@ _KEEP_ORIGINAL_ABOVE = 0.25
 _SEAM_ARTIFACT_KM2 = 120.0
 
 # Detached fragments up to this size go too, but only when the region
-# they hang off is a hundred times bigger — Monaco is smaller than these
+# they hang off is a hundred times bigger—Monaco is smaller than these
 # and must stay.
 _DETACHED_ARTIFACT_KM2 = 1000.0
 
@@ -230,7 +230,7 @@ def _sweep(geometry: MultiPolygon) -> MultiPolygon:
 
     Sweeping by size alone cannot be safe here: a threshold high enough
     to catch a sliver along a border is higher than Bouvet Island's whole
-    region, and applying it deleted the country outright — which the
+    region, and applying it deleted the country outright—which the
     write step then refused, as it should. So components go only by the
     detached rule, which needs a larger sibling to compare against, and
     punctures are filled without touching components at all.
@@ -258,7 +258,7 @@ def _drop_detached(geometry: MultiPolygon, floor_km2: float) -> MultiPolygon:
     District of Columbia are all smaller than the fragments this removes,
     because a landlocked region never receives a maritime reach. What
     marks an artifact is being minute *and* detached from something
-    enormous — a speck beside a continent, rather than a country that
+    enormous—a speck beside a continent, rather than a country that
     happens to be small.
     """
     components = list(geometry.geoms)
@@ -289,8 +289,8 @@ def simplify_shared(shapes: dict[str, BaseGeometry], tolerance_m: float) -> dict
     per side, and the two halves stop meeting. GEOS solves this directly:
     `coverage_simplify` runs Visvalingam-Whyatt over a polygonal coverage
     and keeps shared edges identical by construction, so no border can
-    come apart, no sliver can appear between neighbors, and corners — a
-    triangle of large area, unlike a meander's — survive on their own
+    come apart, no sliver can appear between neighbors, and corners—a
+    triangle of large area, unlike a meander's—survive on their own
     merit rather than by being detected.
 
     The shapes must already be a coverage: non-overlapping, and matching
@@ -313,7 +313,7 @@ def simplify_shared(shapes: dict[str, BaseGeometry], tolerance_m: float) -> dict
     # stages before this, having skipped the sweep applied to the rest.
     given = {key: _sweep(polygonal(shapes[key])) for key in keys}
     # Well below the tolerance, and enough to make near-coincident edges
-    # actually coincident — the coverage precondition.
+    # actually coincident—the coverage precondition.
     grid = tolerance / 8.0
     snapped = [polygonal(set_precision(make_valid(given[key]), grid)) for key in keys]
 

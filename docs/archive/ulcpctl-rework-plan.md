@@ -5,7 +5,7 @@ written, both recorded in the decisions section below: the binary is
 named `umshctl`, and the REPL's `provision` re-attach dance is done over
 the open link rather than by reconnecting.
 
-Everything below is retained as written — it is the reasoning, not a
+Everything below is retained as written—it is the reasoning, not a
 checklist. Where the implementation diverged, the decision entry says
 so.
 
@@ -15,7 +15,7 @@ so.
 hand-roll argv parsing (~450 lines of it in ulcpctl alone), each has its
 own transport-selection grammar (`<port> <command>` vs `<port>
 [options]`, `--ble=SEL` vs `--ble [SEL]`), help is a hand-maintained
-`USAGE` string, and every invocation pays a fresh attach — which over
+`USAGE` string, and every invocation pays a fresh attach—which over
 BLE means a discovery pass plus ~300 ms handshake *per command*. There
 is no completion, no history, and no way to run several commands
 against one session.
@@ -70,8 +70,8 @@ REPL, and so clap can generate help for them:
 umsh-ulcpctl [-p PORT | -b[=SELECTOR]] [--baud N] [--trace] [--color WHEN] [COMMAND ...]
 ```
 
-- `-p, --port <PORT>` — serial.
-- `-b, --ble[=SELECTOR]` — BLE, selector optional (name or scan id).
+- `-p, --port <PORT>`—serial.
+- `-b, --ble[=SELECTOR]`—BLE, selector optional (name or scan id).
   The selector **must** be declared `require_equals = true`
   (msecretctl does the same for `--passphrase`): a space-separated
   optional value would make clap eat the following subcommand as the
@@ -92,7 +92,7 @@ umsh-ulcpctl [-p PORT | -b[=SELECTOR]] [--baud N] [--trace] [--color WHEN] [COMM
 ### No connection specified: discover and choose
 
 When neither `--port` nor `--ble` is given, the tool finds the device
-itself. **Serial is never auto-detected or probed** — the bench has
+itself. **Serial is never auto-detected or probed**—the bench has
 plenty of `usbmodem`/`usbserial` devices that are not ULCP, the only
 way to verify one is to open it and speak (and opening ports has side
 effects: DTR toggles reset some boards, and a 1200-baud touch is this
@@ -101,7 +101,7 @@ via `--port`/env. BLE discovery, by contrast, is passive and filtered
 to companion radios advertising the UMSH service, so it cannot land on
 a foreign device. Precedence:
 
-1. **Explicit flags / env var** — always win.
+1. **Explicit flags / env var**—always win.
 2. **Saved default device** (see the `default` command below): a
    targeted BLE scan that connects the moment the saved radio appears
    (typically well under the window). Not seen within ~5 s → print a
@@ -117,19 +117,19 @@ a foreign device. Precedence:
    to stderr) before any command runs, so a mutating one-shot never
    acts on a silently-chosen device.
 
-The saved default is set **explicitly, never implicitly** — a one-off
+The saved default is set **explicitly, never implicitly**—a one-off
 `connect` to a bench unit must not silently become tomorrow's default.
 `default set` in an attached REPL saves the current device;
 `default set <SELECTOR>`, `default show`, `default clear` work
 anywhere. The preference stores the BLE id (primary) *and* the device
-name (fallback + display — macOS peripheral UUIDs can churn on a
-Bluetooth cache reset), in a config file beside the REPL history —
+name (fallback + display—macOS peripheral UUIDs can churn on a
+Bluetooth cache reset), in a config file beside the REPL history—
 trivial `setting = value` lines parsed like the provision file, no new
 dependency. A saved default also makes non-TTY scripting deterministic
 without env vars.
 
 Chooser rules: numbered list showing name, id, RSSI; **sorted stably
-by name with id tiebreak — never by RSSI** (RSSI jitter reorders the
+by name with id tiebreak—never by RSSI** (RSSI jitter reorders the
 list between scans; this is the iOS RadioPicker sort-bug lesson).
 Input is a plain number via rustyline. The chooser only appears when
 stdin is a TTY; multiple candidates in a non-TTY one-shot invocation
@@ -138,7 +138,7 @@ hanging on a prompt. Scripts that need determinism pass `--port`/
 `--ble` or set the env var, as ever.
 
 `scan`, the launch flow, and the REPL's bare `connect` share one
-scan/sort/render routine in `connection.rs` — but they end
+scan/sort/render routine in `connection.rs`—but they end
 differently: `scan` stops at the numbered listing (the REPL retains
 that listing so a later `connect <N>` can reference it), while the
 launch flow and bare `connect` continue into choose-and-attach.
@@ -173,7 +173,7 @@ default [show | set [SELECTOR] | clear]
 ```
 
 REPL-only: `exit`/`quit` (msecretctl pattern: a `Command::Exit`
-variant that one-shot mode rejects — or simpler, only the REPL wrapper
+variant that one-shot mode rejects—or simpler, only the REPL wrapper
 enum carries it), plus `connect`/`disconnect` (below).
 
 Grammar cleanups folded in (there is no installed base; no compat
@@ -200,7 +200,7 @@ the serial numbers filed off:
   session. `provision` inside the REPL is the one command that wants a
   *tethered* attach; since the mode is fixed at attach time, the REPL
   runs `provision` by re-attaching tethered for that command and
-  re-attaching administrative afterward — or more simply, the REPL
+  re-attaching administrative afterward—or more simply, the REPL
   attaches administratively and `provision` explains it needs a
   one-shot invocation. **Decision below.**
 - **Prompt**: device name + transport, e.g. `T-Echo (ble)> `,
@@ -210,12 +210,12 @@ the serial numbers filed off:
   `shellwords` crate msecretctl uses) → prepend a program token →
   `ReplCommandLine::try_parse_from`. clap's error/help rendering does
   the rest; `help`, `help phy`, `phy --help` all work.
-- **Completion**: port msecretctl's `ReplHelper` completer — it walks
+- **Completion**: port msecretctl's `ReplHelper` completer—it walks
   the `clap::Command` tree generically (subcommands, aliases,
   `--flags`, possible values). The msecret-specific
   `is_ecc_curve_position` hook generalizes into a small trait/callback
   for runtime value completion; first useful client: completing
-  `on|off|none|show` (free via possible-values) — BLE names and serial
+  `on|off|none|show` (free via possible-values)—BLE names and serial
   ports later if ever worth it. This completer is candidate for
   extraction into a tiny shared module if msecret and umsh want to
   literally share it someday, but the plan is copy-adapt, not a new
@@ -232,19 +232,19 @@ the serial numbers filed off:
   foreign host key likewise offers the `--force` decision
   interactively.
 - **Attachment is a REPL-managed state, not a launch-time constant.**
-  The REPL can be *unattached* (prompt `(unattached)> `) — that's
+  The REPL can be *unattached* (prompt `(unattached)> `)—that's
   where discovery-gives-up lands, and where `disconnect` goes.
-  Session commands in that state get a one-line "not attached — try
+  Session commands in that state get a one-line "not attached—try
   `scan` or `connect`" instead of a transport error.
-  - `scan [--timeout SECS]` — works attached or unattached; numbered,
+  - `scan [--timeout SECS]`—works attached or unattached; numbered,
     name-sorted results (chooser rules above) that `connect` can
     reference by number or name.
-  - `connect [SELECTOR | -p PORT | -b SEL]` — bare `connect` reruns
+  - `connect [SELECTOR | -p PORT | -b SEL]`—bare `connect` reruns
     the launch discovery-and-choose flow; with an argument it attaches
     to that device. While already attached it detaches cleanly first
     (which also reverts session-scoped state like promiscuous mode on
     the old device), then attaches to the new one; the prompt follows.
-  - `disconnect` — drop to `(unattached)>`.
+  - `disconnect`—drop to `(unattached)>`.
   This matches real bench flow with several boards on the desk: scan,
   pick, work, switch.
 
@@ -279,14 +279,14 @@ stats/idle-probe loop move over essentially intact into
 `command/capture/` (`mod.rs`, `pcap.rs`, `decode.rs`). Their unit
 tests move with them.
 
-**Semantic change — RF profile.** `umsh-capture` today always pushes
+**Semantic change—RF profile.** `umsh-capture` today always pushes
 an RF profile at attach (`UlcpDevice::new` with the T-Echo bringup
 defaults), which is exactly the "disturb the device" behavior ulcpctl
 was designed to never do. Merged behavior: **`capture` with no RF
 flags attaches administratively and listens on the device's current
 RF configuration** (the common case: sniffing the network the device
 is already on). Passing any RF flag writes those PHY properties as
-live-only state for the session — never auto-saved — with a printed
+live-only state for the session—never auto-saved—with a printed
 note that the radio's live config was changed. The old
 always-configure behavior is reachable by spelling out the profile.
 
@@ -302,7 +302,7 @@ promiscuous, and returns to the prompt.
 
 **BLE reconnect loop**: kept for one-shot capture (it owns the link
 and can rediscover). In the REPL the *session* owns the link, so
-capture there simply fails back to the prompt on link loss — the REPL
+capture there simply fails back to the prompt on link loss—the REPL
 itself is then dead too and says so. No reconnect-inside-REPL
 machinery in this plan.
 
@@ -337,7 +337,7 @@ in phase 3. `required-features = ["tokio-support"]` is already in
 place, so the new dependencies ride the same feature:
 
 ```toml
-# Versions illustrative — check crates.io for current at implementation time.
+# Versions illustrative—check crates.io for current at implementation time.
 clap      = { version = "4", optional = true, features = ["derive", "env", "wrap_help"] }
 rustyline = { version = "*", optional = true }   # current major, derive helpers as in msecretctl
 shlex     = { version = "1", optional = true }
@@ -352,7 +352,7 @@ existing tokio dep.
 
 ## Testing
 
-- `Command::command().debug_assert()` unit test — clap validates the
+- `Command::command().debug_assert()` unit test—clap validates the
   whole tree (conflicting flags, bad defaults) at test time.
 - Port the existing `parse_invocation` tests to `try_parse_from`
   equivalents; they already cover the interesting grammar (BLE
@@ -398,7 +398,7 @@ Each phase lands independently and leaves both modes working.
 ## Decisions taken (flag disagreement before phase 1)
 
 - **Binary name: `umshctl`** (changed during implementation, at the
-  user's direction — the plan had argued for keeping `umsh-ulcpctl`).
+  user's direction—the plan had argued for keeping `umsh-ulcpctl`).
   The tool is still ULCP-device-scoped, so a future host-*node* CLI
   will have to find another name; that cost was accepted for the
   shorter one people actually type. Env var `UMSHCTL_PORT`; settings
@@ -406,7 +406,7 @@ Each phase lands independently and leaves both modes working.
 - **Auto-save stays per-mutation in the REPL** (rationale above).
 - **Serial is explicit-only; discovery is BLE-only.** The bench hosts
   many non-ULCP serial devices, and identifying a ULCP one requires
-  opening the port — which can reset or DFU-trigger foreign hardware.
+  opening the port—which can reset or DFU-trigger foreign hardware.
   BLE scanning is passive and service-filtered, so it is the only safe
   discovery surface. (Supersedes the earlier "wired wins" auto-detect
   idea.)
@@ -419,7 +419,7 @@ Each phase lands independently and leaves both modes working.
 - **`provision` in the REPL**: the re-attach dance, done *over the open
   link*. `AttachMode` is host-side bookkeeping, so a new
   `UlcpDevice::into_link` recovers the transport and re-attaches
-  tethered for the one command and administrative afterwards — four
+  tethered for the one command and administrative afterwards—four
   property reads, no reconnect, and the device never sees a detach (so
   session-scoped state survives). This is why the fallback the plan
   reserved was not needed; the fiddly part was the reconnect it

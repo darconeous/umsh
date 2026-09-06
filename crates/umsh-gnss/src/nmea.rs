@@ -4,18 +4,18 @@
 //! this is the one parser and each board contributes only its power
 //! sequencing. Four sentence types carry everything UMSH wants:
 //!
-//! * **RMC** — the time, the date, and whether the fix is valid. The only
+//! * **RMC**—the time, the date, and whether the fix is valid. The only
 //!   sentence carrying a *date*, which is why it is the one that can set
 //!   a wall clock.
-//! * **GGA** — fix quality, altitude, and satellites in use.
-//! * **GSA** — whether the solution is two- or three-dimensional, and the
+//! * **GGA**—fix quality, altitude, and satellites in use.
+//! * **GSA**—whether the solution is two- or three-dimensional, and the
 //!   dilution of precision.
-//! * **GSV** — satellites in view.
+//! * **GSV**—satellites in view.
 //!
 //! # Integers only
 //!
 //! No floating point anywhere. Latitude and longitude are parsed into
-//! `i32` at 1e-7 degrees, which resolves about 11 mm — two orders finer
+//! `i32` at 1e-7 degrees, which resolves about 11 mm—two orders finer
 //! than the 7-byte location encoding needs, and exact, so a position
 //! never shifts by a rounding step between the receiver and the wire.
 //! Parsing `ddmm.mmmm` in binary floating point would introduce error
@@ -64,7 +64,7 @@ pub enum Sentence {
 /// The only one that carries a date, and therefore the only one that can
 /// establish what day it is. A receiver emits RMC with `status = V`
 /// (void) while searching, sometimes already carrying a valid time from
-/// its own real-time clock — which is exactly the case the
+/// its own real-time clock—which is exactly the case the
 /// [`valid`](Self::valid) flag separates from a real fix.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Rmc {
@@ -175,7 +175,7 @@ impl Assembler {
     /// Feed one byte, yielding a parsed sentence when one completes.
     ///
     /// Returns `None` for every byte that does not finish a *valid*
-    /// sentence — including ones that finish an invalid one, since a bad
+    /// sentence—including ones that finish an invalid one, since a bad
     /// checksum and an unrecognized sentence are both simply nothing to
     /// report.
     pub fn push(&mut self, byte: u8) -> Option<Sentence> {
@@ -217,8 +217,8 @@ pub fn parse(body: &[u8]) -> Option<Sentence> {
     let payload = verify_checksum(body)?;
     let mut fields = Fields::split(payload);
     let kind = fields.next()?;
-    // The talker prefix is two characters — `GP`, `GN`, `GA`, `BD`, `GL`
-    // and others — and says which constellation produced the sentence.
+    // The talker prefix is two characters—`GP`, `GN`, `GA`, `BD`, `GL`
+    // and others—and says which constellation produced the sentence.
     // UMSH wants the solution, not its provenance, so any talker is
     // accepted and only the three-letter type is dispatched on.
     if kind.len() != 5 {
@@ -391,7 +391,7 @@ fn parse_instant(date: &[u8], time: &[u8]) -> Option<crate::DateTime> {
     let minute = parse_pair(&time[2..4])?;
     let second = parse_pair(&time[4..6])?;
 
-    // Two-digit years window on the GPS epoch, 1980–2079 — the convention
+    // Two-digit years window on the GPS epoch, 1980–2079—the convention
     // NMEA receivers themselves use, and the one that matters here because
     // a receiver whose clock has been lost reports 1980 rather than
     // nothing. Mapping that to 2080 instead would turn an obvious fault
@@ -424,7 +424,7 @@ fn parse_instant(date: &[u8], time: &[u8]) -> Option<crate::DateTime> {
 
 /// Parse a `ddmm.mmmm` / `dddmm.mmmm` coordinate into 1e-7 degrees.
 ///
-/// `degree_digits` is 2 for latitude and 3 for longitude — the field is
+/// `degree_digits` is 2 for latitude and 3 for longitude—the field is
 /// positional, not delimited, which is the one genuinely awkward thing
 /// about the format.
 ///
@@ -538,7 +538,7 @@ mod tests {
         last
     }
 
-    /// Wrap a sentence body — no leading `$`, no trailer — into a
+    /// Wrap a sentence body—no leading `$`, no trailer—into a
     /// complete line with a correct checksum.
     ///
     /// Fixtures are written without checksums on purpose: a hand-computed
@@ -561,7 +561,7 @@ mod tests {
         feed(&mut Assembler::new(), &line(body))
     }
 
-    /// One verbatim line — checksum and terminator exactly as given —
+    /// One verbatim line—checksum and terminator exactly as given—
     /// through a fresh assembler.
     fn one_raw(raw: &str) -> Option<Sentence> {
         feed(&mut Assembler::new(), raw)
@@ -610,7 +610,7 @@ mod tests {
 
     /// A receiver whose backup domain lost power comes back reporting the
     /// start of its own epoch, in a sentence that is well-formed in every
-    /// other respect. Believing it would set the device's clock to 1980 —
+    /// other respect. Believing it would set the device's clock to 1980—
     /// or, with the wrong two-digit-year window, to 2080, which looks far
     /// more like a real reading and is no less wrong.
     ///
@@ -635,7 +635,7 @@ mod tests {
         };
         assert_eq!(rmc.time.map(|at| at.year), Some(2026));
 
-        // 99 is 1999, which is implausible — and would have been 2099
+        // 99 is 1999, which is implausible—and would have been 2099
         // under the naive window, which is not.
         let Some(Sentence::Rmc(rmc)) = one("GPRMC,081836.00,V,,,,,,,130899,,") else {
             panic!("RMC did not parse");
@@ -749,7 +749,7 @@ mod tests {
     #[test]
     fn a_torn_leading_line_is_discarded_and_the_next_one_parses() {
         let mut assembler = Assembler::new();
-        // Arrives with no leading `$` — the tail of a sentence sent
+        // Arrives with no leading `$`—the tail of a sentence sent
         // before anyone was listening.
         assert_eq!(feed(&mut assembler, "038,N,01131.000,E*11\r\n"), None);
         assert!(matches!(

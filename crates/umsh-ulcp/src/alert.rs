@@ -8,10 +8,10 @@
 /// `PROP_ALERT` states.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum AlertState {
-    /// `ALERT_NONE` — the nominal state.
+    /// `ALERT_NONE`—the nominal state.
     #[default]
     None = 0,
-    /// `ALERT_LOCATE` — make the device as conspicuous as its hardware
+    /// `ALERT_LOCATE`—make the device as conspicuous as its hardware
     /// allows until the alert is cleared.
     Locate = 1,
 }

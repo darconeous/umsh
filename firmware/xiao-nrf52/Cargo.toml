@@ -11,8 +11,8 @@ repository.workspace = true
 # block is kept identical across the device boards, only the `default`
 # differs. Default build = Seeed XIAO nRF52840 + Wio-SX1262 Kit.
 #
-# The XIAO kit is the SenseCAP Solar's closest relative — same SX1262
-# wiring, same SAADC battery topology — with two differences that show up
+# The XIAO kit is the SenseCAP Solar's closest relative—same SX1262
+# wiring, same SAADC battery topology—with two differences that show up
 # here: the RGB LED is active-low (`led-active-low`), and the board has no
 # buttons at all, so it takes neither `power-button` nor `button-nav` and
 # no `system-off-*` gesture feature. System OFF exists but is commanded,
@@ -60,7 +60,7 @@ power-button = []
 # Open a 20 s BLE pairing window on every boot, bonded or not, instead of
 # only when there are no bonds. For boards with no button and no display,
 # where there is otherwise NO way to reach pairing mode again after the
-# first bond — a bonded node would be locked to its first host forever.
+# first bond—a bonded node would be locked to its first host forever.
 # RESET is the physical-presence ceremony on such a board. Interim
 # measure; a proper story for these boards is still owed.
 boot-pairing-window = []

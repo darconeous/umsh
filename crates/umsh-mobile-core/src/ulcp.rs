@@ -81,8 +81,8 @@ impl UlcpChargeState {
 
 /// The device identity's autonomous flood-forwarding policy.
 ///
-/// The filter is written as region strings — the same strings the device
-/// advertises as its Supported Regions identity option — while the
+/// The filter is written as region strings—the same strings the device
+/// advertises as its Supported Regions identity option—while the
 /// default tag is a 2-octet code, because that is what goes on the air
 /// packet by packet. [`region_code_from_string`] and
 /// [`region_code_description`] convert between the two.
@@ -92,7 +92,7 @@ pub struct UlcpRepeaterSettingsRecord {
     /// this is false, but are still read and written.
     pub enabled: bool,
     /// `PROP_MAC_REPEATER_REGIONS`: which region-tagged floods to
-    /// forward, as region strings of 1 to 24 octets — a short code, a
+    /// forward, as region strings of 1 to 24 octets—a short code, a
     /// name, or a literal `0x1234`. Empty imposes no regional
     /// restriction rather than blocking every flood.
     pub regions: Vec<String>,
@@ -109,7 +109,7 @@ pub struct UlcpRepeaterSettingsRecord {
 /// is done with what it finds.
 ///
 /// Read and written as a whole, like [`UlcpRepeaterSettingsRecord`] and
-/// for the same reason — a receiver switched on under half a policy
+/// for the same reason—a receiver switched on under half a policy
 /// starts advertising a position nobody just agreed to. `enabled` is
 /// written last so the rest is already in force when it does.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Record)]
@@ -123,7 +123,7 @@ pub struct UlcpGnssSettingsRecord {
     pub ident_update: bool,
     /// `PROP_GNSS_IDENT_PRECISION`: how many location bytes that
     /// advertised position is clamped to, 1 (coarsest) through 7. This is
-    /// a disclosure control — see [`ulcp_location_cell_meters`].
+    /// a disclosure control—see [`ulcp_location_cell_meters`].
     pub ident_precision: u8,
     /// `PROP_GNSS_TIME_TRUST`: whether receiver-derived time may set the
     /// wall clock. Cleared, a hand-set clock is safe from a jammed or
@@ -154,7 +154,7 @@ pub struct UlcpAdvertSettingsRecord {
 /// measurement.
 ///
 /// A position names a cell rather than a point, so the encoded cell is
-/// carried verbatim alongside what it decodes to — the bytes are what a
+/// carried verbatim alongside what it decodes to—the bytes are what a
 /// region proposal needs, because the cell's bounds *are* the
 /// uncertainty, and the degrees are what a readout shows.
 #[derive(Clone, Debug, PartialEq, uniffi::Record)]
@@ -175,7 +175,7 @@ pub struct UlcpIdentPositionRecord {
 /// `PROP_GNSS_FIX`: what kind of position solution the receiver has.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, uniffi::Enum)]
 pub enum UlcpFixKind {
-    /// No solution — the receiver is off, or on and still searching.
+    /// No solution—the receiver is off, or on and still searching.
     #[default]
     None,
     /// Position without altitude.
@@ -198,8 +198,8 @@ impl UlcpFixKind {
 /// telemetry properties.
 ///
 /// Unlike a battery reading this is carried on *every* snapshot rather
-/// than reported once: it is state the UI mirrors — a map pin does not
-/// disappear because an unrelated property arrived — and the receiver
+/// than reported once: it is state the UI mirrors—a map pin does not
+/// disappear because an unrelated property arrived—and the receiver
 /// announces position and fix changes on its own schedule.
 #[derive(Clone, Debug, PartialEq, uniffi::Record)]
 pub struct UlcpGnssRecord {
@@ -273,7 +273,7 @@ pub struct UlcpSyncRecord {
     /// A reading rather than a setting, and absent for a reason that is
     /// never a fault: on the local link a device announces this on its own
     /// schedule, so a session that has only just attached has not heard one
-    /// yet. Deliberately not counted among `unreadable_properties` — there
+    /// yet. Deliberately not counted among `unreadable_properties`—there
     /// is no setting here to be written over.
     pub battery: Option<UlcpBatteryRecord>,
     /// The device can forward for the mesh on its own (`CAP_REPEATER`).
@@ -286,7 +286,7 @@ pub struct UlcpSyncRecord {
     pub supports_device_identity: bool,
     /// The device keeps a wall clock (`CAP_TIME`). It says nothing about
     /// where the time comes from, or whether the device currently knows
-    /// it — an unset clock is a device with `CAP_TIME` and no epoch.
+    /// it—an unset clock is a device with `CAP_TIME` and no epoch.
     pub supports_time: bool,
     /// A GNSS receiver is fitted (`CAP_GNSS`), so the positioning
     /// properties exist and the device can locate itself.
@@ -340,7 +340,7 @@ pub struct UlcpSyncRecord {
     pub dev_channel_ids: Option<Vec<Vec<u8>>>,
     /// `PROP_IDENT_ROLE`. `None` covers "the device derives its role from
     /// what it is actually doing", "no `CAP_IDENT`", and "the device would
-    /// not report it" — `supports_ident` and `unreadable_properties`
+    /// not report it"—`supports_ident` and `unreadable_properties`
     /// distinguish them.
     pub ident_role: Option<u8>,
     /// `PROP_IDENT_MOBILE`. Present when `supports_ident` and the device
@@ -370,8 +370,8 @@ pub struct UlcpSyncRecord {
     /// Capability-gated properties the device advertised but would not
     /// report, in ascending order.
     ///
-    /// A device that refuses a property — old firmware behind a newer
-    /// capability, a property it never implemented — is a device with an
+    /// A device that refuses a property—old firmware behind a newer
+    /// capability, a property it never implemented—is a device with an
     /// unknown setting, not one this phone cannot administer. Their values
     /// are absent above, they are left out of configuration writes, and
     /// nothing about them can be verified after a save.
@@ -430,7 +430,7 @@ pub struct UlcpRadioSettingsRecord {
 /// which describes only the radio. Every capability-gated field must be
 /// present exactly when the device advertises the matching capability, so
 /// the record always states a whole desired configuration rather than a
-/// patch — a property that a future template feature can lean on.
+/// patch—a property that a future template feature can lean on.
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
 pub struct UlcpDeviceConfigRecord {
     /// The live radio profile, applied with the same disable-first,
@@ -485,7 +485,7 @@ fn gnss_record(snapshot: &GnssSnapshot) -> UlcpGnssRecord {
 }
 
 /// Approximate width, at the equator, of the cell one location precision
-/// names — 2,500 km at one byte down to 15 cm at seven. `None` outside
+/// names—2,500 km at one byte down to 15 cm at seven. `None` outside
 /// 1–7.
 ///
 /// This is what makes a precision mean something to a person: the setting
@@ -506,7 +506,7 @@ pub enum UlcpAlertState {
     /// Nothing; the nominal state.
     None,
     /// The radio is making itself as conspicuous as its hardware allows
-    /// — beeping, flashing, or both, depending on the board.
+    ///—beeping, flashing, or both, depending on the board.
     Locate,
 }
 
@@ -553,11 +553,11 @@ pub struct UlcpSessionSnapshotRecord {
     ///
     /// Unlike `battery`, this is carried on *every* snapshot rather than
     /// reported once: it is state the UI mirrors, and the radio ends an
-    /// alert on its own — a button press or its deadline — so the button
+    /// alert on its own—a button press or its deadline—so the button
     /// must follow the radio rather than what the phone last asked for.
     pub alert: Option<UlcpAlertState>,
     /// A clock reading that arrived with this update, on a `CAP_TIME`
-    /// device. Reported once — see [`UlcpTimeRecord`].
+    /// device. Reported once—see [`UlcpTimeRecord`].
     pub time: Option<UlcpTimeRecord>,
     /// What the receiver reports, on a `CAP_GNSS` device, or `None` until
     /// the first positioning property is read. Mirrored like `alert`
@@ -593,8 +593,8 @@ pub struct UlcpOperationErrorRecord {
     pub status_name: String,
 }
 
-/// One property value the device announced on its own — `CMD_PROP_IS`
-/// with the unsolicited transaction — as opposed to the answer to
+/// One property value the device announced on its own—`CMD_PROP_IS`
+/// with the unsolicited transaction—as opposed to the answer to
 /// anything this session asked.
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
 pub struct UlcpPropertyPushRecord {
@@ -609,7 +609,7 @@ pub struct UlcpPropertyPushRecord {
 ///
 /// Answers wear the same record the mesh management path reports, and mean
 /// the same things: a value is what the device holds, a status in its
-/// place is a refusal of that one property. What differs is the carrier —
+/// place is a refusal of that one property. What differs is the carrier—
 /// here the completion rides the session update instead of a mesh event.
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
 pub struct UlcpLocalManagementEventRecord {
@@ -678,8 +678,8 @@ enum SessionStage {
 /// One insert or removal in a mute reconciliation.
 ///
 /// Both mute tables are reconciled by the same pass because the phone
-/// decides both from the same thing — which conversations the user wants
-/// to hear about — and a device that has one and not the other does not
+/// decides both from the same thing—which conversations the user wants
+/// to hear about—and a device that has one and not the other does not
 /// exist: `CAP_HOST_RX_QUEUE` grants the pair.
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct HostMuteStep {
@@ -704,8 +704,8 @@ enum ExpectedResponse {
     RawTransmit,
     /// A `CMD_PROP_INSERT` of this key into a device-domain public-key
     /// table: `PROP_DEV_PEERS` or `PROP_DEV_ADMINS`. The two are the same
-    /// operation on different lists — a table of 32-byte keys the device
-    /// echoes back item by item — so they are confirmed the same way.
+    /// operation on different lists—a table of 32-byte keys the device
+    /// echoes back item by item—so they are confirmed the same way.
     DevKeyInsert {
         property: u32,
         item: Vec<u8>,
@@ -721,7 +721,7 @@ enum ExpectedResponse {
     },
     /// A `CMD_PROP_INSERT` into `PROP_DEV_CHANNEL_KEYS`. Carries the derived
     /// identifier rather than the key, because the device confirms a channel
-    /// mutation by echoing the identifier — key material is never read back.
+    /// mutation by echoing the identifier—key material is never read back.
     DevChannelInsert(Vec<u8>),
     /// A `CMD_PROP_REMOVE` from `PROP_DEV_CHANNEL_KEYS`, selected by key and
     /// confirmed by identifier.
@@ -789,7 +789,7 @@ impl ExpectedResponse {
 /// is still to write, and what the device has answered so far.
 ///
 /// The local counterpart of a mesh management exchange, kept to the same
-/// shape deliberately — one operation at a time, answers accumulated
+/// shape deliberately—one operation at a time, answers accumulated
 /// until everything is answered, refusals recorded per property rather
 /// than failing the run.
 #[derive(Debug, Default)]
@@ -826,7 +826,7 @@ struct UlcpSessionState {
     /// Deliberately *not* a cache: it is taken when an update record is
     /// built, so `UlcpSessionSnapshotRecord::battery` means "a fresh
     /// measurement arrived with this update" rather than "the last
-    /// measurement ever seen". Battery is live telemetry — a consumer that
+    /// measurement ever seen". Battery is live telemetry—a consumer that
     /// timestamps what it receives would otherwise restamp a minutes-old
     /// reading on every unrelated update and report it as current.
     battery: Option<UlcpBatteryRecord>,
@@ -932,8 +932,8 @@ impl MobileUlcpSession {
     /// An administrative session that attaches without reading the device
     /// whole.
     ///
-    /// Post-attach inspection is cut to what attaching itself requires —
-    /// the interface check and the always-present radio basics — so the
+    /// Post-attach inspection is cut to what attaching itself requires—
+    /// the interface check and the always-present radio basics—so the
     /// link is usable in a couple of exchanges instead of tens. Everything
     /// else is read on demand through
     /// [`Self::begin_property_fetch`], which is the point: a settings
@@ -942,8 +942,8 @@ impl MobileUlcpSession {
     ///
     /// The provisioning snapshot such a session reports lists every
     /// unread capability-gated property as unreadable, so the
-    /// whole-record configure calls — which withdraw writes to unreadable
-    /// properties — are not meaningful here. A lazy session writes
+    /// whole-record configure calls—which withdraw writes to unreadable
+    /// properties—are not meaningful here. A lazy session writes
     /// through [`Self::begin_property_writes`].
     #[uniffi::constructor]
     pub fn administrative_lazy() -> Arc<Self> {
@@ -1024,7 +1024,7 @@ impl MobileUlcpSession {
 
     /// Erase ALL mutable state on the radio (saved provisioning, device
     /// identity, BLE bonds, pairing PIN, every persisted journal) and
-    /// reboot it. The radio does not reply — the reset drops the link —
+    /// reboot it. The radio does not reply—the reset drops the link—
     /// so this is fire-and-forget: send the frame, then treat the ensuing
     /// disconnect as completion. Permitted from any stage so a misbehaving
     /// radio can always be wiped; unlike `claim`/`configure` it makes no
@@ -1060,7 +1060,7 @@ impl MobileUlcpSession {
     ///
     /// Not part of `configure_device`, and never saved: this is live
     /// behavior rather than configuration, and it deliberately survives
-    /// the phone walking out of BLE range — which is precisely when a
+    /// the phone walking out of BLE range—which is precisely when a
     /// search needs it. What ends it is this call, a button press at the
     /// radio, or the radio's own deadline; the latter two arrive as an
     /// unsolicited `PROP_ALERT` carried on the session snapshot.
@@ -1084,12 +1084,12 @@ impl MobileUlcpSession {
         Ok(session.update(vec![frame]))
     }
 
-    /// Set — or clear — the device's wall clock (`PROP_TIME`).
+    /// Set—or clear—the device's wall clock (`PROP_TIME`).
     ///
     /// Live state rather than configuration, and never saved: an epoch
     /// written to flash would come back arbitrarily wrong, since nothing
     /// bounds how long a device spends powered off. So this is not part
-    /// of [`Self::configure_device`], which carries the time *zone* —
+    /// of [`Self::configure_device`], which carries the time *zone*—
     /// where the device is meant to be is worth persisting even when what
     /// time it is is not.
     ///
@@ -1144,7 +1144,7 @@ impl MobileUlcpSession {
     /// it forwards for the mesh on its own.
     ///
     /// This is what commissioning writes. It touches nothing in the host
-    /// domain — no host key, no filters, no queues — so it is equally
+    /// domain—no host key, no filters, no queues—so it is equally
     /// valid from an administrative session on someone else's radio and
     /// from a tethered session on this phone's own.
     pub fn configure_device(
@@ -1171,7 +1171,7 @@ impl MobileUlcpSession {
     /// nothing else.
     ///
     /// [`Self::configure_device`] can write these too, as part of a whole
-    /// device domain — that is what commissioning does. This exists for
+    /// device domain—that is what commissioning does. This exists for
     /// the case commissioning does not cover: a phone changing the
     /// positioning settings of the radio it is *tethered* to, which has
     /// no reason to restate that radio's role, discoverability, or
@@ -1257,7 +1257,7 @@ impl MobileUlcpSession {
     /// Sample where the device is, and how well it knows.
     ///
     /// The device announces a fix indicator and nothing else about a
-    /// position — a receiver reports about a fix a second and ordinary
+    /// position—a receiver reports about a fix a second and ordinary
     /// noise moves the reading, so announcing any of this would keep the
     /// radio transmitting for a host that may not be looking. A host that
     /// *is* looking asks, at whatever rate it can use the answer.
@@ -1323,7 +1323,7 @@ impl MobileUlcpSession {
     /// Write the given properties, in the given order, and answer with
     /// what the device says each is now worth.
     ///
-    /// The order is the caller's to state and is preserved — a dirty-write
+    /// The order is the caller's to state and is preserved—a dirty-write
     /// plan brackets the radio with `PROP_PHY_ENABLED`, and reordering it
     /// would ask the device to retune mid-transmission. Writes go out one
     /// at a time for the same reason. A refusal is recorded as that
@@ -1353,7 +1353,7 @@ impl MobileUlcpSession {
     /// status on the completion event.
     ///
     /// On a device without `CAP_SAVE` there is nothing to ask, and the
-    /// operation completes immediately with no status — running
+    /// operation completes immediately with no status—running
     /// configuration is all such a device has.
     pub fn begin_save(&self) -> Result<UlcpSessionUpdateRecord, MobileError> {
         let mut state = self.inner.lock().expect("ULCP session mutex poisoned");
@@ -1383,7 +1383,7 @@ impl MobileUlcpSession {
     /// Requires an attached, otherwise-idle session on a device advertising
     /// `CAP_DEV_IDENTITY`, and the device additionally requires an encrypted
     /// link before it will accept key material. Failures surface as
-    /// `operation_error` with the device's status name — `NOMEM` when the list
+    /// `operation_error` with the device's status name—`NOMEM` when the list
     /// is full (capacity [`ulcp_max_dev_channels`]), `ALREADY` when the key is
     /// already stored, which callers should treat as success.
     pub fn insert_device_channel_key(
@@ -1433,7 +1433,7 @@ impl MobileUlcpSession {
     /// own radio, not a user-facing setting: callers reconcile on attach and
     /// after every join or leave, and never surface it.
     ///
-    /// The host domain is volatile — the device does not persist it — so no
+    /// The host domain is volatile—the device does not persist it—so no
     /// `CMD_SAVE` is chained and reconciling on attach is what makes it stick.
     /// Requires an attached, idle session on a device advertising
     /// `CAP_HOST_KEYS`; otherwise the table is not this session's to manage
@@ -1521,7 +1521,7 @@ impl MobileUlcpSession {
     }
 
     /// Make the radio's host peer-key table (`PROP_HOST_PEER_KEYS`) match
-    /// the supplied entries — the pairwise keys for the peers whose
+    /// the supplied entries—the pairwise keys for the peers whose
     /// conversations are open, so the radio can verify and acknowledge
     /// their unicast traffic while the phone is away.
     ///
@@ -1601,7 +1601,7 @@ impl MobileUlcpSession {
     }
 
     /// Turn the radio's delegated acknowledgement (`PROP_HOST_AUTO_ACK`)
-    /// on or off — whether it acks queued unicast on this host's behalf
+    /// on or off—whether it acks queued unicast on this host's behalf
     /// while the host is away, using the peer keys provisioned above.
     ///
     /// A no-op update when the cached value already matches, which is what
@@ -1635,7 +1635,7 @@ impl MobileUlcpSession {
     /// `channel_identifiers` are full 16-byte channel identifiers (see
     /// [`crate::channel_identifier`]) and `peer_keys` are 32-byte public
     /// keys; both name what the device should queue without chirping.
-    /// Muting reaches the receipt cue and nothing else — the frames are
+    /// Muting reaches the receipt cue and nothing else—the frames are
     /// still queued, acknowledged, counted, and drained.
     ///
     /// Both tables are diffed against the values cached at attach and
@@ -1710,7 +1710,7 @@ impl MobileUlcpSession {
     ///
     /// Requires an attached, otherwise-idle session on a device advertising
     /// `CAP_DEV_IDENTITY`. Failures surface as `operation_error` with the
-    /// device's status name — `NOMEM` when the list is full (capacity
+    /// device's status name—`NOMEM` when the list is full (capacity
     /// [`ulcp_max_dev_peers`]), `ALREADY` when the key is already stored,
     /// which callers should treat as success.
     pub fn insert_device_peer(
@@ -1725,7 +1725,7 @@ impl MobileUlcpSession {
     /// device can.
     ///
     /// Same preconditions as [`Self::insert_device_peer`]. `ITEM_NOT_FOUND`
-    /// surfaces as `operation_error` and callers should treat it as success —
+    /// surfaces as `operation_error` and callers should treat it as success—
     /// the key is not on the device either way.
     pub fn remove_device_peer(
         &self,
@@ -1741,13 +1741,13 @@ impl MobileUlcpSession {
     /// This is the bench half of node management: a key listed here may
     /// manage this radio over the mesh, so the phone puts its own node key
     /// on a radio it is attached to and manages it later from across the
-    /// valley. The list is what authorizes an administrator — no pairwise
+    /// valley. The list is what authorizes an administrator—no pairwise
     /// provisioning follows, because the session is derived from the two
     /// identities.
     ///
     /// Requires an attached, otherwise-idle session on a device advertising
     /// `CAP_ADMIN`. Failures surface as `operation_error` with the device's
-    /// status name — `NOMEM` when the list is full (capacity
+    /// status name—`NOMEM` when the list is full (capacity
     /// [`ulcp_max_dev_admins`]), `ALREADY` when the key is already listed,
     /// which callers should treat as success.
     pub fn insert_device_admin(
@@ -1764,7 +1764,7 @@ impl MobileUlcpSession {
     /// Same preconditions as [`Self::insert_device_admin`]. Emptying the
     /// list is how a device stops being manageable over the mesh at all.
     /// `ITEM_NOT_FOUND` surfaces as `operation_error` and callers should
-    /// treat it as success — the key is not listed either way.
+    /// treat it as success—the key is not listed either way.
     pub fn remove_device_admin(
         &self,
         public_key: Vec<u8>,
@@ -1777,7 +1777,7 @@ impl MobileUlcpSession {
     /// The platform adapter supplies only opaque bytes from `MobileMeshSession`;
     /// Rust owns the ULCP command, stream identifier, metadata, TID, and
     /// confirmation matching. `nocca` sets `TX_FLAG_NOCCA` so the device
-    /// transmits without its pre-transmit channel-activity check — used for
+    /// transmits without its pre-transmit channel-activity check—used for
     /// immediate MAC acks (see [`MobileMeshOutboundFrameRecord::nocca`]).
     pub fn transmit_raw(
         &self,
@@ -1872,8 +1872,8 @@ impl MobileUlcpSession {
             // A settled session re-reads: this phone holds nothing
             // session-scoped of its own, but everything it synchronized
             // was read from a session that no longer exists. A session
-            // still synchronizing — including the one this notice's own
-            // attach produced — is already on its way to reading all of
+            // still synchronizing—including the one this notice's own
+            // attach produced—is already on its way to reading all of
             // it, and interrupting that would restart the handshake it
             // belongs to.
             if state.stage != SessionStage::Attached || !state.expected.is_empty() {
@@ -1966,7 +1966,7 @@ impl MobileUlcpSession {
                         return Err(MobileError::UlcpMismatchedResponse);
                     }
                     // Whatever the device reports is its host key, even if
-                    // it is not the one just written — a claim that did not
+                    // it is not the one just written—a claim that did not
                     // take means this radio belongs to someone else, which
                     // `ownership()` reads off this value and reports as
                     // `OtherHost`. That is an answer, not a broken session.
@@ -2015,8 +2015,8 @@ impl MobileUlcpSession {
                 } else {
                     // A `CMD_PROP_IS` is the device's authoritative value,
                     // whatever was written. It reports what the device holds
-                    // — clamped to hardware, reduced to what it supports,
-                    // changed for a reason this host has no view of — and a
+                    //—clamped to hardware, reduced to what it supports,
+                    // changed for a reason this host has no view of—and a
                     // value differing from the write is that report, not a
                     // fault. The snapshot published to the UI is what the
                     // device says, never what was asked for. Failure is a
@@ -2073,8 +2073,8 @@ impl MobileUlcpSession {
                         response.value.as_slice(),
                     )?;
                     // A channel key is its own item, so ALREADY asserts the
-                    // state that was asked for. Anything else — NOMEM above
-                    // all — stops the pass; the phone still runs its own MAC
+                    // state that was asked for. Anything else—NOMEM above
+                    // all—stops the pass; the phone still runs its own MAC
                     // while attached, so this degrades radio-side filtering
                     // rather than the user's ability to use the channel.
                     if error.status_code != umsh_ulcp::Status::ALREADY.0 {
@@ -2409,7 +2409,7 @@ impl MobileUlcpSession {
                 if response.property_id == prop::LAST_STATUS && property != prop::LAST_STATUS {
                     // A refused write leaves the device holding whatever it
                     // held. The answer records the refusal and the run
-                    // continues — the caller decides per property, like the
+                    // continues—the caller decides per property, like the
                     // mesh path.
                     let status_code = inspect_ulcp_status(response.value.clone())?;
                     state.record_management_answer(MobileMeshManagementAnswerRecord {
@@ -2422,7 +2422,7 @@ impl MobileUlcpSession {
                     return Err(MobileError::UlcpMismatchedResponse);
                 } else {
                     // The echo is the device's authoritative value, whatever
-                    // was written — see the ConfigurationProperty arm.
+                    // was written—see the ConfigurationProperty arm.
                     state.responses.insert(property, response.clone());
                     state.apply_property(&response)?;
                     state.record_management_answer(MobileMeshManagementAnswerRecord {
@@ -2722,7 +2722,7 @@ impl UlcpSessionState {
     /// A tethered session must pause: it is about to become the radio's
     /// host, and taking a radio from another phone is a decision only the
     /// user can make. An administrative session never claims anything, so
-    /// there is no decision to pause for — whose radio this is stays worth
+    /// there is no decision to pause for—whose radio this is stays worth
     /// reporting, but only as information.
     fn attaches_without_host_decision(&self) -> bool {
         self.mode == UlcpAttachMode::Administrative
@@ -2771,7 +2771,7 @@ impl UlcpSessionState {
     /// A transaction identifier no outstanding exchange is using.
     ///
     /// The allocator cycles blindly, which is safe for the staged bulk
-    /// reads — they only run with nothing outstanding — but a management
+    /// reads—they only run with nothing outstanding—but a management
     /// round can coexist with a live one-off like an alert write, and
     /// must not reuse its identifier.
     fn allocate_management_tid(&mut self) -> Result<u8, MobileError> {
@@ -3233,7 +3233,7 @@ impl UlcpSessionState {
     /// so that case still returns to the host prompt. Every *other*
     /// published value is news, not a decision: a session attached to a
     /// radio owned by another identity (a tethered claim that did not
-    /// take, which attaches deliberately — see the `Claim` arm) would
+    /// take, which attaches deliberately—see the `Claim` arm) would
     /// otherwise be thrown back to the prompt by any unsolicited update at
     /// all. `PROP_BATTERY` makes that concrete, being the one notification
     /// that arrives on its own schedule for the life of the session.
@@ -3383,8 +3383,8 @@ pub(crate) fn ulcp_refresh_properties(capabilities: Vec<u8>) -> Result<Vec<u32>,
 /// Validate and reduce the property responses from the read-only post-attach
 /// inspection.
 ///
-/// The four properties every ULCP device must answer — the interface type
-/// and the live PHY triple — are required: without them there is no radio
+/// The four properties every ULCP device must answer—the interface type
+/// and the live PHY triple—are required: without them there is no radio
 /// to describe. Everything else is capability-gated and merely *expected*,
 /// so a device that refuses one, or answers it with something undecodable,
 /// yields a snapshot with that setting absent and named in
@@ -3466,7 +3466,7 @@ pub fn inspect_ulcp_sync(
     // has not reported its battery yet has not withheld a setting, and
     // saying it had would put "its battery" in a notice about configuration
     // this phone is about to write over. On the local link neither is even
-    // asked for at attach — the battery arrives unsolicited — while a
+    // asked for at attach—the battery arrives unsolicited—while a
     // reading across the mesh asks for both and gets an answer or none.
     let battery = reported_value(&responses, has(cap::BATTERY), prop::BATTERY, |value| {
         inspect_ulcp_battery(value.to_vec())
@@ -3937,7 +3937,7 @@ pub struct UlcpDeviceCardRecord {
     /// the device again.
     pub capabilities: Vec<u8>,
     /// `PROP_DEV_VERSION`: what firmware it is running. The natural key
-    /// for everything cached about it — capabilities cannot change
+    /// for everything cached about it—capabilities cannot change
     /// without this changing too.
     pub device_version: Option<String>,
     /// `PROP_DEV_MODEL`: the hardware, when the device names it.
@@ -3968,7 +3968,7 @@ pub struct UlcpDeviceCardRecord {
 
 /// Reduce the answers to a card read into what a device is.
 ///
-/// Capabilities are required — without them there is nothing to plan the
+/// Capabilities are required—without them there is nothing to plan the
 /// rest against. Everything else is absent rather than fatal: a device
 /// that will not name its hardware is a device that does not name its
 /// hardware.
@@ -4013,7 +4013,7 @@ pub fn inspect_ulcp_device_card(
 /// Everything the management screens show, all of it optional.
 ///
 /// A category read answers a handful of properties, so anything outside
-/// it is simply absent — this record says what the last read of *some*
+/// it is simply absent—this record says what the last read of *some*
 /// category found, and a screen fills in from it whatever it recognizes.
 /// The counterpart to [`UlcpSyncRecord`], which describes a whole device
 /// and can insist on the properties every device must answer.
@@ -4047,7 +4047,7 @@ pub struct UlcpDevicePropertiesRecord {
     pub ident_location: Option<Vec<u8>>,
     pub ident_latitude_deg: Option<f64>,
     pub ident_longitude_deg: Option<f64>,
-    /// Width of the advertised cell at the equator, in meters — what the
+    /// Width of the advertised cell at the equator, in meters—what the
     /// length of the location actually discloses.
     pub ident_location_cell_meters: Option<f64>,
     pub ident_altitude_m: Option<i32>,
@@ -4075,7 +4075,7 @@ pub struct UlcpDevicePropertiesRecord {
     pub ble_bond_count: Option<u8>,
     /// Whether a host is on the device's Bluetooth right now: 0 nobody,
     /// 1 connected, 2 attached and running ULCP. Read-only, and always 2
-    /// when the question was asked over Bluetooth — the session asking is
+    /// when the question was asked over Bluetooth—the session asking is
     /// the session it reports.
     pub ble_link: Option<u8>,
     /// Whether a pairing window is open. Read-write, and absent on a
@@ -4099,7 +4099,7 @@ pub struct UlcpDevicePropertiesRecord {
 ///
 /// The counterpart to the latitude and longitude an inspection reports:
 /// what goes on the air is a cell rather than a point, and how large that
-/// cell is — the precision, which is also the value's length — is what the
+/// cell is—the precision, which is also the value's length—is what the
 /// device discloses. See [`ulcp_location_cell_meters`] for what each
 /// precision is worth in meters.
 ///
@@ -4133,7 +4133,7 @@ pub fn ulcp_encode_location(
 ///
 /// What [`ulcp_records_from_answers`] does for a fresh answer, for a value
 /// that came out of a cache instead. Cached octets and answered octets are
-/// the same octets, so they decode through the same path — and a caller
+/// the same octets, so they decode through the same path—and a caller
 /// never has to know which command byte a reported value wears.
 #[uniffi::export]
 pub fn ulcp_property_record(property_id: u32, value: Vec<u8>) -> UlcpPropertyFrameRecord {
@@ -4449,7 +4449,7 @@ pub fn ulcp_dirty_writes(
     if values.iter().any(|(key, _)| RADIO.contains(key)) {
         let ends_enabled = match values.iter().find(|(key, _)| *key == prop::PHY_ENABLED) {
             Some((_, value)) => value.first() == Some(&1),
-            // Not edited, so it ends however it started — which the
+            // Not edited, so it ends however it started—which the
             // caller states by filling this in from the last read.
             None => desired.phy_enabled.unwrap_or(true),
         };
@@ -4719,7 +4719,7 @@ fn decode_optional_region(value: &[u8]) -> Result<Option<Vec<u8>>, MobileError> 
 /// Drop the writes the device has already refused to answer for.
 ///
 /// A capability-gated property that would not read is one the device does
-/// not implement, so writing it fails — and one rejected write abandons
+/// not implement, so writing it fails—and one rejected write abandons
 /// the whole configuration pass. The caller still states a complete
 /// configuration; what cannot land is left out here, where the device's
 /// own answers are known, rather than in the form.
@@ -4745,7 +4745,7 @@ fn writable(values: Vec<(u32, Vec<u8>)>, unreadable: &[u32]) -> Vec<(u32, Vec<u8
 ///
 /// This is [`MobileUlcpSession::configure_device`] with the session taken
 /// out of it: an administrator on the mesh writes the same properties, in
-/// the same order, and drops the same unreadable ones — it just has no
+/// the same order, and drops the same unreadable ones—it just has no
 /// attached device to ask, only the record it read.
 pub(crate) fn device_config_writes(
     configuration: UlcpDeviceConfigRecord,
@@ -4817,7 +4817,7 @@ impl DeviceCapabilities {
 /// once the complete new profile is in place.
 ///
 /// `device_values` are the device-domain writes, which ride between the
-/// two PHY_ENABLED writes for the same reason the PHY parameters do — a
+/// two PHY_ENABLED writes for the same reason the PHY parameters do—a
 /// repeater must not start forwarding under half of its new policy.
 fn configuration_values(
     settings: UlcpRadioSettingsRecord,
@@ -4913,7 +4913,7 @@ fn validate_device_settings(
         }
         // Enabling last means the forwarding policy is already whole by
         // the time the device starts acting on it. The device does not
-        // cross-check the default region against the forwarding list —
+        // cross-check the default region against the forwarding list—
         // that is a SHOULD the presenting UI is better placed to warn on.
         values.extend([
             (prop::MAC_REPEATER_REGIONS, regions),
@@ -4993,7 +4993,7 @@ fn advert_values(
 /// Reduce the zone and the positioning policy to property writes.
 ///
 /// Split out because these are the one part of a device's own domain a
-/// phone changes on its *companion* radio without commissioning it —
+/// phone changes on its *companion* radio without commissioning it—
 /// [`MobileUlcpSession::configure_positioning`] writes exactly this list
 /// and nothing else, where [`validate_device_settings`] folds it into a
 /// whole-domain write. Same values either way, so the two paths cannot
@@ -5079,7 +5079,7 @@ fn validate_radio_settings(
     Ok(())
 }
 
-/// A device name, which is UTF-8 and may be empty — a device that has not
+/// A device name, which is UTF-8 and may be empty—a device that has not
 /// been named, rather than one named nothing.
 fn decode_device_name(value: &[u8]) -> Result<Option<String>, MobileError> {
     let name = core::str::from_utf8(value).map_err(|_| MobileError::InvalidUlcpFrame)?;
@@ -5147,8 +5147,8 @@ pub fn ulcp_gatt_segments(
         .collect())
 }
 
-/// Frame a ULCP frame for an HDLC-Lite byte stream — a serial port, or
-/// a socket standing in for one — including both delimiting flags.
+/// Frame a ULCP frame for an HDLC-Lite byte stream—a serial port, or
+/// a socket standing in for one—including both delimiting flags.
 ///
 /// The byte-stream counterpart of [`ulcp_gatt_segments`]: a stream has
 /// no segmentation, so one frame encodes to one write.
@@ -5220,7 +5220,7 @@ fn ulcp_prop_remove(
 
 /// Capacity of the device identity's peer list (`PROP_DEV_PEERS`).
 ///
-/// A label constant only — the device's `NOMEM` stays authoritative for
+/// A label constant only—the device's `NOMEM` stays authoritative for
 /// when the list is actually full.
 #[uniffi::export]
 pub fn ulcp_max_dev_peers() -> u8 {
@@ -5469,8 +5469,8 @@ pub fn inspect_ulcp_alert(value: Vec<u8>) -> Result<UlcpAlertState, MobileError>
 /// Read a region code from what someone typed, yielding the two wire
 /// octets used everywhere else in the ULCP and mesh surfaces.
 ///
-/// One to three ASCII letters or digits are a short code — an airport,
-/// a country, a state — `0xXXXX` is a literal code, and anything else is a
+/// One to three ASCII letters or digits are a short code—an airport,
+/// a country, a state—`0xXXXX` is a literal code, and anything else is a
 /// region *name* hashed into a part of the code space disjoint from the
 /// all-letter short codes. So "SJC" and "San Jose" are deliberately
 /// different regions, and no name can ever collide with a letter code.
@@ -5551,7 +5551,7 @@ impl MobileHdlcDecoder {
     /// one call can complete none or several. Corrupt and oversized
     /// frames are discarded rather than reported: the decoder
     /// resynchronizes on the next flag, and a byte stream can carry
-    /// line noise that belongs to nobody — a bridge opening a serial
+    /// line noise that belongs to nobody—a bridge opening a serial
     /// port mid-transmission, most commonly. This is the one place the
     /// two transports differ, GATT being reliable enough that a bad
     /// segment is a protocol violation worth surfacing.
@@ -6232,7 +6232,7 @@ mod tests {
         let other_phone = vec![0xBB; 32];
 
         // A radio someone else tethered. An administrative session has no
-        // decision to put to the user, so it attaches — and still reports
+        // decision to put to the user, so it attaches—and still reports
         // whose radio it is, because that is worth showing.
         let session = MobileUlcpSession::administrative();
         let attached = attach_commissionable(&session, Some(phone.clone()), other_phone.clone());
@@ -6358,7 +6358,7 @@ mod tests {
         assert_eq!(sync.ident_mobile, Some(true));
 
         // An odd-length region list is not a set of region codes, so the
-        // policy is not reported — but the device still is. A repeater
+        // policy is not reported—but the device still is. A repeater
         // without an identity of its own, on the other hand, is not a
         // repeater, and that is a malformed capability set.
         let malformed = |property, value: &[u8]| {
@@ -6402,8 +6402,8 @@ mod tests {
         );
     }
 
-    /// A device that refuses one capability-gated property — firmware
-    /// older than the capability it advertises — is a device with one
+    /// A device that refuses one capability-gated property—firmware
+    /// older than the capability it advertises—is a device with one
     /// unknown setting, not one this phone cannot administer. It attaches,
     /// it describes itself, and it stays configurable; the refused setting
     /// is absent, named, and left out of the write that follows.
@@ -6437,7 +6437,7 @@ mod tests {
         // The rest of the same capability is unaffected.
         assert_eq!(sync.dev_peer_keys, Some(Vec::new()));
         // A policy missing one part is not a policy, so none of it is
-        // reported — the device still says it can forward.
+        // reported—the device still says it can forward.
         assert!(sync.supports_repeater);
         assert_eq!(sync.repeater, None);
 
@@ -6469,8 +6469,8 @@ mod tests {
             })
             .unwrap();
         let (written, _, _) = drive_configuration(&session, configured.outbound_frames);
-        // The write the device would have rejected — failing the whole
-        // pass over a setting nobody can even see — is never sent, and
+        // The write the device would have rejected—failing the whole
+        // pass over a setting nobody can even see—is never sent, and
         // neither is the rest of the policy it belongs to: a device left
         // forwarding under half a policy is worse than one left alone.
         assert!(!written.contains_key(&prop::DEV_DISCOVERABLE));
@@ -6550,8 +6550,8 @@ mod tests {
                 (prop::PHY_ENABLED, vec![1]),
             ])
         );
-        // Forwarding starts only once the whole policy — and the radio it
-        // forwards over — is in place.
+        // Forwarding starts only once the whole policy—and the radio it
+        // forwards over—is in place.
         assert_eq!(
             &order[order.len() - 2..],
             &[prop::MAC_REPEATER_ENABLED, prop::PHY_ENABLED]
@@ -6711,7 +6711,7 @@ mod tests {
             Err(MobileError::UlcpMismatchedResponse)
         );
         // The rejection consumed the expectation, so a second response on
-        // that transaction is a different fault — nobody is waiting on it —
+        // that transaction is a different fault—nobody is waiting on it—
         // and says so rather than reusing one catch-all.
         assert_eq!(
             session.consume(property_response(tid, prop::PHY_FREQ, &[0; 4])),
@@ -6726,8 +6726,8 @@ mod tests {
             session.consume(vec![0x00, 0x06]),
             Err(MobileError::UlcpFrameUnparsable)
         );
-        // A well-formed command this session does not handle — a newer
-        // firmware's unsolicited notification, or a `CMD_PROP_ARE` — is
+        // A well-formed command this session does not handle—a newer
+        // firmware's unsolicited notification, or a `CMD_PROP_ARE`—is
         // named as such, not reported as a corrupt frame.
         let mut save = [0u8; 8];
         let len = frame::save(&mut save, 1).unwrap();
@@ -7365,7 +7365,7 @@ mod tests {
             assert_eq!(written.get(key), Some(value));
         }
         // Not vacuous: the name leads, and the PHY is the last thing turned
-        // on — a repeater must not start forwarding under half a policy.
+        // on—a repeater must not start forwarding under half a policy.
         assert_eq!(writes.first().unwrap().0, prop::DEV_NAME);
         assert_eq!(writes.last().unwrap(), &(prop::PHY_ENABLED, vec![1]));
     }
@@ -7410,8 +7410,8 @@ mod tests {
             gnss: None,
             advert: None,
         };
-        // The record still states discoverability — the form does not know
-        // which properties a device refuses — and the write does not.
+        // The record still states discoverability—the form does not know
+        // which properties a device refuses—and the write does not.
         let writes = device_config_writes(configuration, &reported).unwrap();
         assert!(!writes.iter().any(|(key, _)| *key == prop::DEV_DISCOVERABLE));
     }
@@ -7892,7 +7892,7 @@ mod tests {
         );
 
         // Dropping one conversation sheds exactly its key, selected by the
-        // digest — no whole-table write needed.
+        // digest—no whole-table write needed.
         let update = session
             .reconcile_host_peer_keys(vec![peer_entry(0xE2)])
             .unwrap();
@@ -8328,7 +8328,7 @@ mod tests {
             .unwrap();
         assert_eq!(started.snapshot.alert, Some(UlcpAlertState::Locate));
 
-        // Unlike battery, the state persists across unrelated updates —
+        // Unlike battery, the state persists across unrelated updates—
         // the UI mirrors it rather than reacting to it once.
         let unrelated = session
             .consume(property_response(
@@ -8391,7 +8391,7 @@ mod tests {
                 prop::HOST_KEY => (property, vec![0xAA; 32]),
                 prop::TIME => (property, 1_754_000_000u32.to_le_bytes().to_vec()),
                 // Pacific daylight time, which is an offset and not a zone
-                // — the device has no database to shift itself with.
+                //—the device has no database to shift itself with.
                 prop::TZ_OFFSET => (property, (-420i16).to_le_bytes().to_vec()),
                 prop::GNSS_ENABLED | prop::GNSS_IDENT_UPDATE | prop::GNSS_TIME_TRUST => {
                     (property, vec![1])
@@ -8444,7 +8444,7 @@ mod tests {
 
     /// A commissioning phone has no way to ask for one property on its
     /// own, so the position the device advertises has to arrive with the
-    /// attach snapshot — it is where a region proposal starts from.
+    /// attach snapshot—it is where a region proposal starts from.
     #[test]
     fn the_advertised_position_folds_into_the_sync_record() {
         let cell = NodeLocation::from_lat_lon(37.5119, -122.2495, 4);
@@ -8582,7 +8582,7 @@ mod tests {
         );
     }
 
-    /// A five-byte fix — a ~38 m cell, the default identity precision.
+    /// A five-byte fix—a ~38 m cell, the default identity precision.
     fn placed_location() -> NodeLocation {
         NodeLocation::from_e7(377_749_290, -1_224_194_160, 5)
     }
@@ -8683,7 +8683,7 @@ mod tests {
         let session = MobileUlcpSession::new();
         attach_positioning(&session);
 
-        // The device never announces where it is — a receiver reports
+        // The device never announces where it is—a receiver reports
         // about a fix a second and noise moves the reading, so a host that
         // wants a position asks for one.
         let poll = session.refresh_positioning().unwrap();
@@ -8754,7 +8754,7 @@ mod tests {
         assert_eq!(payload.value, &1_754_000_900u32.to_le_bytes()[..]);
 
         // What the device answers is what the snapshot reports, even when
-        // it is not what was written — a trusted receiver may have moved
+        // it is not what was written—a trusted receiver may have moved
         // the clock between the write and the echo.
         let set = session
             .consume(property_response(
@@ -9172,7 +9172,7 @@ mod tests {
         // `ownership()` reports `OtherHost` (see the `Claim` arm). Battery
         // is the first unsolicited notification that arrives *routinely*,
         // so this is the path that turns a latent re-decision into one the
-        // user would actually see — a settled session must not bounce back
+        // user would actually see—a settled session must not bounce back
         // to awaiting-host every time the radio reports its charge.
         let session = MobileUlcpSession::new();
         let ours = vec![0x11; 32];
@@ -9471,7 +9471,7 @@ mod tests {
     /// The bug this pins: an edit to one property must not drag its
     /// neighbors into the write. A device holding a value nobody touched
     /// keeps it because nothing was sent, not because the same value was
-    /// sent back — restating it can be refused, and a refusal abandons
+    /// sent back—restating it can be refused, and a refusal abandons
     /// the settings someone actually changed.
     #[test]
     fn only_what_was_edited_is_written() {

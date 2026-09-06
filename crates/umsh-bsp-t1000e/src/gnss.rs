@@ -4,13 +4,13 @@
 //!
 //! | Signal | Pin | Notes |
 //! |---|---|---|
-//! | Backup-domain enable | P0.08 | `GPS_VRTC_EN` — high from boot, and stays high |
+//! | Backup-domain enable | P0.08 | `GPS_VRTC_EN`—high from boot, and stays high |
 //! | Main enable | P1.11 | `GPS_EN`, active high |
-//! | Reset | P1.15 | `GPS_RESET`, **active high** — pulsed, then held low |
-//! | Sleep interrupt | P1.12 | `GPS_SLEEP_INT` — held high |
-//! | RTC interrupt | P0.15 | `GPS_RTC_INT` — driven low; high is a wake request |
-//! | Reset / stop | P1.14 | `GPS_RESETB` — pulled up to run, driven low to stop |
-//! | MCU RX ← module TX | P0.14 | 115200 baud — carries NMEA |
+//! | Reset | P1.15 | `GPS_RESET`, **active high**—pulsed, then held low |
+//! | Sleep interrupt | P1.12 | `GPS_SLEEP_INT`—held high |
+//! | RTC interrupt | P0.15 | `GPS_RTC_INT`—driven low; high is a wake request |
+//! | Reset / stop | P1.14 | `GPS_RESETB`—pulled up to run, driven low to stop |
+//! | MCU RX ← module TX | P0.14 | 115200 baud—carries NMEA |
 //! | MCU TX → module RX | P0.13 | 115200 baud |
 //!
 //! Polarities and sequence follow the upstream variant definitions rather
@@ -18,8 +18,8 @@
 //! a bringup session between them:
 //!
 //! * **Reset is active high.** The line rests *low* while the receiver
-//!   runs, and a pulse high resets it. Resting it high — the safe-looking
-//!   choice, and the correct one for the L76K boards in this tree — holds
+//!   runs, and a pulse high resets it. Resting it high—the safe-looking
+//!   choice, and the correct one for the L76K boards in this tree—holds
 //!   the receiver in reset forever, with both UART lines sitting at their
 //!   external pull-ups looking exactly like an idle port.
 //! * **`GPS_RTC_INT` is an input to the module**, not a status output, and
@@ -32,7 +32,7 @@
 //!
 //! Unlike every other board in the tree, the T1000-E has no dedicated RTC
 //! chip. What it has is the AG3335's own backup domain, gated by
-//! `GPS_VRTC_EN` and independent of the main enable — so the receiver can
+//! `GPS_VRTC_EN` and independent of the main enable—so the receiver can
 //! be powered down to a state where it neither receives nor draws
 //! meaningful current, while its clock keeps counting.
 //!
@@ -40,8 +40,8 @@
 //! path leaves it high through nRF52840 System OFF (driven levels are
 //! retained). Cutting it would save a negligible amount of current and
 //! cost the device its only knowledge of the time across a power cycle.
-//! Upstream's own two teardown sequences make the same distinction — one
-//! keeps this rail, one drops it — and this is the first.
+//! Upstream's own two teardown sequences make the same distinction—one
+//! keeps this rail, one drops it—and this is the first.
 //!
 //! Reading that clock back is [`umsh_gnss::pump::rtc_read_once`]: the
 //! backup domain cannot speak a UART by itself, so the read briefly
@@ -67,8 +67,8 @@ const RESET_HOLD: Duration = Duration::from_millis(10);
 
 /// How long the receiver takes to start emitting sentences.
 ///
-/// Not waited on for correctness — the parser resynchronizes at the next
-/// `$` whatever arrives first — but powering on and immediately reading
+/// Not waited on for correctness—the parser resynchronizes at the next
+/// `$` whatever arrives first—but powering on and immediately reading
 /// otherwise spends a wake-up on a UART with nothing behind it yet.
 const STARTUP: Duration = Duration::from_millis(100);
 
@@ -77,7 +77,7 @@ const STARTUP: Duration = Duration::from_millis(100);
 /// Implements [`umsh_gnss::pump::Power`], which is the whole of its public
 /// surface: the pump owns when the receiver runs, and this owns how.
 pub struct Gnss<'d> {
-    /// Backup domain. Raised in [`Gnss::new`] and never lowered — see the
+    /// Backup domain. Raised in [`Gnss::new`] and never lowered—see the
     /// module documentation.
     #[expect(dead_code, reason = "held high for its lifetime; never read back")]
     vrtc: Output<'d>,

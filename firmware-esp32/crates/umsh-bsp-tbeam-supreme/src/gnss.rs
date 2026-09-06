@@ -7,7 +7,7 @@
 //! | ALDO4 | The receiver's supply rail | PMIC-switched; this module owns it |
 //! | GPIO7 | L76K wake/control | Documented for the L76K population only (§7.4) |
 //!
-//! "Off" here is genuinely off — the rail drops, and with it the
+//! "Off" here is genuinely off—the rail drops, and with it the
 //! receiver's backup domain, so a power cycle costs the almanac and a
 //! warm start. That is the right trade on this board because **the
 //! clock does not live here**: the PCF8563 holds the time, so unlike
@@ -51,8 +51,8 @@ pub type SharedPmic = Mutex<CriticalSectionRawMutex, Axp2101<PmuI2cDevice>>;
 const RAIL_SETTLE: Duration = Duration::from_millis(10);
 
 /// How long the receiver takes to start emitting sentences after power
-/// arrives. Not waited on for correctness — the parser resynchronizes
-/// at the next `$` — but reading earlier spends the wake-up on a UART
+/// arrives. Not waited on for correctness—the parser resynchronizes
+/// at the next `$`—but reading earlier spends the wake-up on a UART
 /// with nothing behind it yet.
 const STARTUP: Duration = Duration::from_millis(100);
 
@@ -67,7 +67,7 @@ pub struct Gnss {
 }
 
 impl Gnss {
-    /// Take the wake pin (driven low — receiver rail is off at boot and
+    /// Take the wake pin (driven low—receiver rail is off at boot and
     /// the control line must not back-feed it) and the shared PMIC.
     ///
     /// [`crate::power::bring_up`] has already set ALDO4's voltage and
@@ -97,7 +97,7 @@ impl umsh_gnss::pump::Power for Gnss {
             let _ = pmic.set_rail_enabled(GNSS_RAIL, false).await;
         }
         // After the rail, so the last state the module sees is a driven
-        // wake — and what remains is a low line into a dead supply.
+        // wake—and what remains is a low line into a dead supply.
         self.wake.set_low();
     }
 }

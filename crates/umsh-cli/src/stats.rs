@@ -1,4 +1,4 @@
-//! CLI-maintained session counters. Not a node-level metrics API — just
+//! CLI-maintained session counters. Not a node-level metrics API—just
 //! tallies populated from subscription callbacks and around send calls.
 
 #[derive(Debug, Default, Clone)]

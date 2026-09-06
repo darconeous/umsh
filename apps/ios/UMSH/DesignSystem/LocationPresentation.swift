@@ -4,13 +4,13 @@ import UMSHMobileCore
 /// How a reported location is put into words.
 ///
 /// A location names a grid cell, not a point, and everything shown about one
-/// — the size of the area, how many coordinate digits are real — follows from
+///—the size of the area, how many coordinate digits are real—follows from
 /// the cell rather than from the coordinate pair. The core owns the
 /// conversion; this is the one place that asks it, so the peer sheet, the
 /// radio's own readout, and the map cannot drift apart.
 enum LocationPresentation {
     /// Cell width at the equator. Map bodies re-derive per render, so the
-    /// crossing is made once — and the whole byte is probed rather than the
+    /// crossing is made once—and the whole byte is probed rather than the
     /// seven values the wire allows today, so the core stays the only place
     /// that knows the range.
     private static let cellMetersByPrecision: [UInt8: Double] = Dictionary(

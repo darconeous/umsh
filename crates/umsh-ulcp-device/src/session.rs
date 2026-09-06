@@ -75,7 +75,7 @@ pub enum TxPower {
 /// through `PROP_BATTERY`. Fixed for the life of a session: these bits
 /// bound the field-flags octet of every snapshot.
 ///
-/// An individual sample may populate fewer fields than are advertised —
+/// An individual sample may populate fewer fields than are advertised—
 /// a level estimated from resting terminal voltage has no value while the
 /// pack is charging, and the spec would rather see the field omitted than
 /// a number the device knows to be wrong. The reverse is refused: a
@@ -121,7 +121,7 @@ pub struct AlertConfig {
 }
 
 impl AlertConfig {
-    /// The recommended bound — five minutes.
+    /// The recommended bound—five minutes.
     pub const DEFAULT: Self = Self {
         timeout_ms: 5 * 60 * 1000,
     };
@@ -147,7 +147,7 @@ pub struct GnssConfig {
     ///
     /// Off almost everywhere, because on a battery a receiver nobody
     /// asked for is the largest thing on the bill. The exception is a
-    /// board whose whole job is to sit outdoors and know where it is —
+    /// board whose whole job is to sit outdoors and know where it is—
     /// there, off is the surprising answer, and a fixed node that has to
     /// be told to find itself after every reset is a worse default than
     /// the power it costs.
@@ -186,7 +186,7 @@ pub struct SessionConfig {
     pub dev_version: &'static str,
     /// `PROP_DEV_MODEL` string (without NUL terminator), naming the
     /// hardware this firmware runs on. `None` on a device with no fixed
-    /// model — a simulator, or a board brought up before it has a name —
+    /// model—a simulator, or a board brought up before it has a name—
     /// and the property is then absent rather than empty.
     pub dev_model: Option<&'static str>,
     /// Factory/post-reset value of `PROP_DEV_NAME`.
@@ -228,7 +228,7 @@ pub struct SessionConfig {
     pub time: Option<TimeConfig>,
     /// `None`: no GNSS receiver; `CAP_GNSS` is absent and the positioning
     /// properties are unknown. Meaningful only alongside
-    /// [`time`](Self::time) — see [`GnssConfig`].
+    /// [`time`](Self::time)—see [`GnssConfig`].
     pub gnss: Option<GnssConfig>,
     /// Whether an ambient light sensor is fitted. When set,
     /// `CAP_ILLUMINANCE` is advertised and `PROP_ILLUMINANCE` samples on
@@ -248,7 +248,7 @@ pub struct SessionConfig {
     /// Deliberately not a capability of its own. `CAP_BLE` is the only
     /// Bluetooth capability there is, and a host that wants to know
     /// whether this device manages its bonds asks for the count and reads
-    /// the refusal — a question it has to be able to answer anyway, since
+    /// the refusal—a question it has to be able to answer anyway, since
     /// any property may be refused by firmware older than the host.
     pub ble_pairing: bool,
     /// Whether the platform can restart the hardware on command. When
@@ -262,9 +262,9 @@ pub struct SessionConfig {
     /// unknown. `Some`: the capability is advertised and the counters
     /// are read and cleared through it.
     ///
-    /// Shared for the same reason the duty ledger is — the session is
+    /// Shared for the same reason the duty ledger is—the session is
     /// one of several radio clients and none of them sees the whole
-    /// picture — and read straight out of `encode_prop` rather than
+    /// picture—and read straight out of `encode_prop` rather than
     /// fetched through an effect, because a host asks for all of these
     /// at once and nine deferred round trips to answer one screen would
     /// be absurd.
@@ -273,7 +273,7 @@ pub struct SessionConfig {
     /// ([`Counter::needs_node`]) additionally require
     /// [`mac_node`](Self::mac_node).
     pub stats: Option<&'static StatsLedger>,
-    /// Whether a mesh node runs behind this session — a MAC of the
+    /// Whether a mesh node runs behind this session—a MAC of the
     /// device's own that can repeat and that a backhauled host can sit
     /// point-to-point behind. Every firmware sets this; a simulated
     /// device with no node behind it must not, or it would advertise
@@ -341,8 +341,8 @@ pub enum Effect {
     /// Unix second; `None` returns it to not knowing what time it is,
     /// which is what stops a device with a screen from displaying a clock.
     ///
-    /// A manual set outranks every receiver-derived one — the operator is
-    /// the more authoritative source by definition — so the platform
+    /// A manual set outranks every receiver-derived one—the operator is
+    /// the more authoritative source by definition—so the platform
     /// applies this unconditionally, including while
     /// `PROP_GNSS_TIME_TRUST` is clear.
     ApplyTime { epoch: Option<u32> },
@@ -366,8 +366,8 @@ pub enum Effect {
     /// be reported before the write has committed.
     SaveSnapshot { tid: u8 },
     /// `CMD_CLEAR`: erase the stored snapshot and all other persisted
-    /// provisioning — including the independently persisted device
-    /// identity — then complete with [`Session::respond_clear`]. Live
+    /// provisioning—including the independently persisted device
+    /// identity—then complete with [`Session::respond_clear`]. Live
     /// state, BLE bonds, and the pairing PIN are unaffected.
     ClearSaved { tid: u8 },
     /// A `PROP_DEV_PRIVATE_KEY` write is provisioning the device
@@ -381,12 +381,12 @@ pub enum Effect {
     ProvisionIdentity { tid: u8 },
     /// The locate alert changed; start or stop the board's physical
     /// indication. Carries the authoritative new state, so a board can
-    /// treat it as idempotent — it is emitted for a host write, a local
+    /// treat it as idempotent—it is emitted for a host write, a local
     /// cancellation, and the deadline alike.
     ApplyAlert(AlertState),
-    /// `CMD_FACTORY_RESET`: erase ALL mutable state — every persisted
+    /// `CMD_FACTORY_RESET`: erase ALL mutable state—every persisted
     /// journal (saved snapshot, device identity, frame-counter
-    /// boundaries, BLE bonds, pairing PIN) — and reboot. The platform
+    /// boundaries, BLE bonds, pairing PIN)—and reboot. The platform
     /// performs the wipe and reset; nothing is emitted and no `respond_*`
     /// completion follows, because the reboot drops the link. In-RAM
     /// session state is discarded by the reset itself.
@@ -400,13 +400,13 @@ pub enum Effect {
     /// A `PROP_BLE_BOND_COUNT` write of zero: delete every stored bond,
     /// the pairing PIN, and the pairing failure lockout, then open a
     /// pairing window so the device can be paired again. Complete with
-    /// [`Session::respond_ble_bond_count`] once the deletion is durable —
+    /// [`Session::respond_ble_bond_count`] once the deletion is durable—
     /// over Bluetooth that reply is the last thing the sender hears, since
     /// dropping its bond drops its link.
     ClearBleBonds { tid: u8 },
     /// A `PROP_BLE_PAIRING` write: open (or renew) the pairing window, or
     /// close it. Complete with [`Session::respond_ble_pairing`], quoting
-    /// the state the transport is actually in — a device that cannot open
+    /// the state the transport is actually in—a device that cannot open
     /// a window right now (locked out after repeated pairing failures, or
     /// Bluetooth disabled) refuses rather than echoing a window that is
     /// not there.
@@ -436,7 +436,7 @@ struct PendingTx {
     autonomous: bool,
     /// Queue-entry sequence handle of the frame this transmission
     /// acknowledges. Only on confirmed transmission does the entry earn
-    /// `RX_FLAG_ACKED` — the host MUST NOT re-ack a flagged frame, so
+    /// `RX_FLAG_ACKED`—the host MUST NOT re-ack a flagged frame, so
     /// the flag must never assert an ack that was not actually sent.
     ack_for: Option<u16>,
     /// `TX_FLAG_NOCCA`: transmit without the pre-transmit
@@ -447,7 +447,7 @@ struct PendingTx {
 /// A delegated MAC acknowledgement ready to transmit.
 struct AckPlan {
     /// The 8-byte ack trailer (`ack_mic || ack_tag`). The ack carries no
-    /// destination hint — it is correlated by this trailer.
+    /// destination hint—it is correlated by this trailer.
     trailer: [u8; 8],
     /// The way back to the sender.
     route: AckReturn,
@@ -498,8 +498,8 @@ impl AckPlan {
     ///
     /// The precedence is the MAC's: a trace names the path and wins; an
     /// empty trace is a direct neighbor. Without one, a source-route
-    /// option — even emptied, since the last repeater keeps it for
-    /// provenance — says the frame followed a path the flood accumulator
+    /// option—even emptied, since the last repeater keeps it for
+    /// provenance—says the frame followed a path the flood accumulator
     /// never saw, so `FHOPS_ACC` is not a distance and the ack floods at
     /// a default instead. A flood hop count alone is a distance. Nothing
     /// at all means no repeater could have carried the frame here.
@@ -572,7 +572,7 @@ impl AckPlan {
 /// Delegation).
 enum SecureRx {
     /// Not authenticated (no keys, ambiguous source, bad MIC, or a
-    /// suspected replay outside the window): queue it unacknowledged —
+    /// suspected replay outside the window): queue it unacknowledged—
     /// hints only over-accept and the host MAC remains authoritative.
     Plain,
     /// Authenticated and new. `ack` is present when the frame requests
@@ -636,13 +636,13 @@ struct DeviceDomain {
     name: [u8; MAX_DEVICE_NAME_LEN],
     name_len: usize,
     /// `PROP_DEV_CHANNEL_KEYS`: the device identity's own channels.
-    /// Independent of the host domain — they survive host replacement
+    /// Independent of the host domain—they survive host replacement
     /// and never create implicit host receive filters.
     channel_keys: ChannelKeyTable,
     /// `PROP_DEV_PEERS`: peer public keys the device node recognizes.
     peers: DevPeerTable,
     /// `PROP_DEV_ADMINS`: nodes authorized to manage this device over
-    /// the mesh. Empty by default — a device answers node management
+    /// the mesh. Empty by default—a device answers node management
     /// only from keys someone deliberately put here.
     admins: DevAdminTable,
     /// `PROP_MAC_REPEATER_ENABLED`: when set, the device identity's
@@ -694,7 +694,7 @@ struct DeviceDomain {
     /// regardless of the width it arrived in.
     ident_altitude_m: Option<i32>,
     /// `PROP_DEV_DISCOVERABLE`: whether the device identity answers
-    /// Identity Requests. On by default — a deployed device is
+    /// Identity Requests. On by default—a deployed device is
     /// infrastructure, and being askable is most of the point; the
     /// property is the opt-out.
     dev_discoverable: bool,
@@ -704,8 +704,8 @@ struct DeviceDomain {
     advert_interval_s: u32,
     /// `PROP_BEACON_INTERVAL`: seconds between unsolicited beacons, 0 for
     /// none. Separate from the advertisement interval because the two
-    /// announce different things at different costs — a beacon is a path,
-    /// an advertisement is an identity — and a mesh usually wants the
+    /// announce different things at different costs—a beacon is a path,
+    /// an advertisement is an identity—and a mesh usually wants the
     /// cheap one far more often than the expensive one.
     beacon_interval_s: u32,
     /// `PROP_STARTUP_BEACON`: whether one beacon goes out once the device
@@ -713,8 +713,8 @@ struct DeviceDomain {
     /// the node whose neighbours' cached paths are most likely stale.
     startup_beacon: bool,
     /// `PROP_TZ_OFFSET`: minutes east of UTC. Configuration rather than
-    /// measurement — where a device is meant to be is known even when the
-    /// time is not — so unlike `PROP_TIME` it always has a value.
+    /// measurement—where a device is meant to be is known even when the
+    /// time is not—so unlike `PROP_TIME` it always has a value.
     tz_offset_min: i16,
     /// `PROP_GNSS_ENABLED`: whether the receiver is powered.
     ///
@@ -732,11 +732,11 @@ struct DeviceDomain {
     /// clamped down from what the receiver actually knows.
     gnss_ident_precision: u8,
     /// `PROP_GNSS_TIME_TRUST`: whether receiver-derived time may set the
-    /// wall clock. On by default — the sky is normally the best clock a
-    /// board has — and the opt-out for when it demonstrably is not.
+    /// wall clock. On by default—the sky is normally the best clock a
+    /// board has—and the opt-out for when it demonstrably is not.
     gnss_time_trust: bool,
     /// `PROP_BLE_ENABLED`: whether the device is reachable over
-    /// Bluetooth. On by default — a device nobody can attach to is a
+    /// Bluetooth. On by default—a device nobody can attach to is a
     /// device nobody can configure, and on most boards the menu that
     /// clears this is reached over the very link it drops.
     ble_enabled: bool,
@@ -948,7 +948,7 @@ impl RadioRxInfo {
 
 /// One inbound-queue entry: the frame, its receive metadata, the time
 /// of reception, whether the device acknowledged it on the host's behalf,
-/// and — for authenticated frames — the logical packet identity used
+/// and—for authenticated frames—the logical packet identity used
 /// for duplicate coalescing and deferred ack marking.
 #[derive(Clone, Copy)]
 struct QueueEntry {
@@ -994,7 +994,7 @@ struct RxQueue {
     head: usize,
     len: usize,
     dropped: u32,
-    /// Next entry sequence number. Never reset — a stale ack handle
+    /// Next entry sequence number. Never reset—a stale ack handle
     /// from before a queue reset must not match a new entry.
     next_seq: u16,
 }
@@ -1153,7 +1153,7 @@ impl ChannelKeyTable {
 
 /// One provisioned peer: the host-derived pairwise key material plus
 /// this peer's replay window. The window is keyed by the peer's
-/// identity — replacing the key material leaves it untouched (spec
+/// identity—replacing the key material leaves it untouched (spec
 /// §PROP_HOST_PEER_KEYS), and it is never saved (spec §Saved State).
 struct PeerSlot {
     entry: items::PeerKeyEntry,
@@ -1467,8 +1467,8 @@ impl RepeaterRegions {
 
 /// Validate one region item and derive its forwarding code.
 ///
-/// The derivation itself is total over every string this accepts — a
-/// short code, a name, or a literal `0x` code — so the only failures are
+/// The derivation itself is total over every string this accepts—a
+/// short code, a name, or a literal `0x` code—so the only failures are
 /// the bounds the property sets: 1 to 24 octets of UTF-8
 /// (ulcp-device.md § PROP_MAC_REPEATER_REGIONS).
 fn region_entry(item: &[u8]) -> Result<RegionEntry, Status> {
@@ -1497,7 +1497,7 @@ fn parse_region_code(value: &[u8]) -> Result<Option<[u8; REGION_CODE_LEN]>, Stat
 }
 
 /// Number of recently-transmitted frames whose MIC prefixes we remember for
-/// receive filtering. Sized to cover what can still produce an echo — a
+/// receive filtering. Sized to cover what can still produce an echo—a
 /// returning ack over a round trip, a repeat within the confirmation window;
 /// 4 bytes each, so the whole ring is tiny.
 const TRANSMITTED_MIC_SLOTS: usize = 16;
@@ -1510,7 +1510,7 @@ const TRANSMITTED_MIC_SLOTS: usize = 16;
 ///   is defined as the first 4 bytes of the acknowledged frame's MIC
 /// - a **repeat** of our own frame carried onward by a repeater, whose
 ///   destination hint is the remote peer's; the rewrite may touch only
-///   mutable routing state, so the MIC rides through unchanged — the same
+///   mutable routing state, so the MIC rides through unchanged—the same
 ///   identity the host's forwarding-confirmation machinery keys on
 ///
 /// One table serves both: whatever the packet type, a trailer opening with a
@@ -1518,8 +1518,8 @@ const TRANSMITTED_MIC_SLOTS: usize = 16;
 ///
 /// Eviction is **lazy**: entries are displaced oldest-first only when the
 /// ring fills, and are *never* removed on a match. A single send can be
-/// echoed several times — acks arriving over different routes, repeats from
-/// different repeaters — each carrying distinct routing state; keeping the
+/// echoed several times—acks arriving over different routes, repeats from
+/// different repeaters—each carrying distinct routing state; keeping the
 /// entry live lets the host collect all of them.
 #[derive(Default)]
 struct TransmittedMics {
@@ -1599,7 +1599,7 @@ impl HostDomain {
     }
 
     /// Record the MIC prefix of a frame we are about to transmit, so its
-    /// echoes — a returning MAC ack, a repeater's onward copy — can be
+    /// echoes—a returning MAC ack, a repeater's onward copy—can be
     /// recognized as ours. MAC acks we emit ourselves are skipped: their
     /// trailer names the *other* side's frame, which needs no pass-through.
     fn note_tx_mic(&mut self, frame: &[u8]) {
@@ -1630,22 +1630,22 @@ impl HostDomain {
     /// The compatibility rule is the first difference. Accepting every
     /// frame when nothing is configured exists so a host using the radio
     /// as a plain frame pipe sees a filtering device behave like one that
-    /// has no host services at all — an argument about what an *attached*
+    /// has no host services at all—an argument about what an *attached*
     /// host is handed. Queueing has no equivalent: the host domain does
     /// not survive a power cycle, so between boot and the host's first
     /// write there is no host key, no filters, and no channel keys, and a
     /// device that queued on the compatibility rule would spend that
-    /// window recording every frame in earshot on nobody's behalf — its
+    /// window recording every frame in earshot on nobody's behalf—its
     /// own transmissions among them.
     ///
     /// What the implicit filters admit is the second. They exist to
     /// recognize traffic the device can take custody of, and custody is
     /// what an acknowledgement request asks for: a sender that wanted one
     /// retries until it arrives, which is the retrying this queue exists
-    /// to stop. Traffic nobody asked to have confirmed is opportunistic —
+    /// to stop. Traffic nobody asked to have confirmed is opportunistic—
     /// a broadcast addressed to every node at once, an echo or identity
     /// reply answering a question that has timed out by the time a drain
-    /// runs — and it must not displace frames held under custody. So a
+    /// runs—and it must not displace frames held under custody. So a
     /// detached device queues a broadcast, a plain unicast, or a plain
     /// blind unicast only where an explicit filter names its packet type,
     /// which is the host having asked for it.
@@ -1653,7 +1653,7 @@ impl HostDomain {
     /// The host cannot ask any other way, which is why the default has to
     /// be the strict one: filters are a union, so an entry for
     /// `UNICAST_ACK_REQ` would only widen what the implicit host-hint
-    /// filter already admits — it could never narrow it to exclude
+    /// filter already admits—it could never narrow it to exclude
     /// `UNICAST`.
     fn accepts_queued_frame(&self, data: &[u8]) -> bool {
         if !self.filtering_configured() {
@@ -1672,8 +1672,8 @@ impl HostDomain {
     }
 
     /// Whether receive filtering accepts this frame for live delivery:
-    /// a Broadcast packet is addressed to every node — the host
-    /// included — so it is implicitly accepted. The broadcast rule is
+    /// a Broadcast packet is addressed to every node—the host
+    /// included—so it is implicitly accepted. The broadcast rule is
     /// live-only; see [`accepts_queued_frame`](Self::accepts_queued_frame).
     fn accepts_live_frame(&self, data: &[u8]) -> bool {
         if PacketHeader::parse(data)
@@ -1686,7 +1686,7 @@ impl HostDomain {
 
     /// Whether receive filtering accepts this frame: any explicit
     /// filter or the implicit destination-hint filter for the host key
-    /// matches. Hints are prefilters — over-acceptance is fine, the
+    /// matches. Hints are prefilters—over-acceptance is fine, the
     /// host verifies cryptographically. A frame that does not parse as
     /// UMSH can match no filter.
     fn accepts_frame(&self, data: &[u8]) -> bool {
@@ -1700,13 +1700,13 @@ impl HostDomain {
         // transmitted is an echo of our own send, accepted regardless of
         // packet type: a MAC ack's public ack_mic is defined as those 4
         // bytes, and a repeater's onward copy carries the MIC verbatim.
-        // Neither is addressed to us — the ack has no destination hint at
-        // all, the repeat names the remote peer — so without this rule the
+        // Neither is addressed to us—the ack has no destination hint at
+        // all, the repeat names the remote peer—so without this rule the
         // host could never see its ack arrive or its frame carried onward,
         // and its forwarding-confirmation machinery would retry sends the
         // mesh already accepted. Entries evict lazily, so multiple echoes of
-        // one send — acks over different routes, repeats from different
-        // repeaters — all pass. A miss falls through to the explicit filters
+        // one send—acks over different routes, repeats from different
+        // repeaters—all pass. A miss falls through to the explicit filters
         // below (a FILTER_PKT_TYPE entry for MacAck must still be honored),
         // preserving the union-of-filters rule.
         if let Some(mic) = data.get(header.mic_range.start..header.mic_range.start + 4)
@@ -1736,7 +1736,7 @@ impl HostDomain {
         self.matches_explicit_filter(&header)
     }
 
-    /// Whether an entry in `PROP_HOST_RX_FILTERS` selects this frame —
+    /// Whether an entry in `PROP_HOST_RX_FILTERS` selects this frame—
     /// the host having named something, as opposed to the implicit
     /// filters a host key and its channel keys create on their own.
     fn matches_explicit_filter(&self, header: &PacketHeader) -> bool {
@@ -1760,7 +1760,7 @@ impl HostDomain {
 /// the rest is headroom for properties not yet allocated. A persisted
 /// table of public keys costs about 272 octets at capacity, so there is
 /// room for three more before this has to grow, and it can only grow to
-/// `umsh_journal_store::proto::MAX_PAYLOAD` — 2029 — before the journal
+/// `umsh_journal_store::proto::MAX_PAYLOAD`—2029—before the journal
 /// record format itself has to change.
 pub const SNAPSHOT_MAX: usize = 1792;
 
@@ -1769,9 +1769,9 @@ pub const SNAPSHOT_MAX: usize = 1792;
 /// Not a version in the usual sense: the option list behind it evolves
 /// by allocating property numbers, so this byte changes only if the
 /// *framing* changes. It exists because a retired positional payload
-/// does not reliably fail the option decoder — the leading `0x03` of the
+/// does not reliably fail the option decoder—the leading `0x03` of the
 /// last positional format reads as a well-formed option header (delta 0,
-/// length 3) — so without a discriminator a stale snapshot would
+/// length 3)—so without a discriminator a stale snapshot would
 /// mis-decode into a plausible-looking domain instead of being rejected.
 /// Values 1–3 are the retired positional formats and are never decoded;
 /// re-provisioning replaces them.
@@ -1829,7 +1829,7 @@ const fn saved(number: u32, phase: ApplyPhase, repeatable: bool) -> SavedPropert
 ///
 /// **Rows must be in ascending identifier order.** The option encoder
 /// emits deltas and refuses a number below the last one written, so this
-/// ordering is a codec requirement — and precisely why it cannot also
+/// ordering is a codec requirement—and precisely why it cannot also
 /// carry the apply order, which comes from `phase`.
 ///
 /// Adding a saved property is one row plus its arm in
@@ -1839,9 +1839,9 @@ const fn saved(number: u32, phase: ApplyPhase, repeatable: bool) -> SavedPropert
 /// skipped.
 ///
 /// **The host domain is deliberately absent.** It is volatile across
-/// reboot by design — a detached radio keeps filtering, queueing and
+/// reboot by design—a detached radio keeps filtering, queueing and
 /// acknowledging for its host while powered, and forgets on power cycle
-/// — so 96 (`PROP_HOST_KEY`), 97, 98, 99 and 100 are retired numbers
+///—so 96 (`PROP_HOST_KEY`), 97, 98, 99 and 100 are retired numbers
 /// here, not omissions. An older snapshot that still carries them
 /// decodes with those options skipped, which is exactly the wanted
 /// behavior and needed no migration code.
@@ -1889,8 +1889,8 @@ const _: () = assert!(
 
 /// The snapshot is a delta-encoded option list, so the schema has to be
 /// in ascending property order. A row in the wrong place still compiles
-/// and still passes every test that does not save — it fails at the
-/// encoder, at runtime, on every device at once — so the order is
+/// and still passes every test that does not save—it fails at the
+/// encoder, at runtime, on every device at once—so the order is
 /// checked here instead.
 const _: () = {
     let mut index = 1;
@@ -1927,7 +1927,7 @@ pub enum SavedStatus {
     None,
     /// The newest saved generation is in effect.
     Current,
-    /// A newer generation was rejected and an older one is in effect —
+    /// A newer generation was rejected and an older one is in effect—
     /// the device is running on generation N−1 and needs attention.
     Fallback,
     /// A snapshot exists but no generation could be read; the device
@@ -1952,7 +1952,7 @@ impl SavedStatus {
 ///
 /// The host domain is not here. It is volatile across reboot and only
 /// across reboot: a detached radio keeps its host's keys, filters and
-/// queue while powered — that is the entire value of the host domain —
+/// queue while powered—that is the entire value of the host domain—
 /// and forgets them on power cycle, when the host re-provisions in full.
 /// Also excluded: queue contents, per-peer replay baselines, and the
 /// independently persisted device identity keypair.
@@ -1965,7 +1965,7 @@ struct SavedState {
     /// `PROP_DEV_KEY` at the time of the save: which node this snapshot
     /// describes.
     ///
-    /// Saved as provenance, not as configuration — the identity keypair
+    /// Saved as provenance, not as configuration—the identity keypair
     /// lives in its own journal and a restore never installs it. It
     /// exists so that restoring a repeater's saved domain onto
     /// replacement hardware cannot bring the PHY up under the
@@ -2036,7 +2036,7 @@ impl SavedState {
 
     /// The state a snapshot carrying no options at all decodes to:
     /// every saved property at its documented post-reset value. Forward
-    /// compatibility rests on this — an option an older writer never
+    /// compatibility rests on this—an option an older writer never
     /// emitted is simply absent, and absence is the default.
     fn defaults(config: &SessionConfig) -> Self {
         let mut settings = config.defaults;
@@ -2082,8 +2082,8 @@ impl SavedState {
     /// Encode as a format byte followed by an option list keyed by ULCP
     /// property identifier, in [`SAVED_SCHEMA`] order.
     ///
-    /// Tables emit one option per entry; a value equal to its default —
-    /// an absent host key, an empty table — is omitted, since absence
+    /// Tables emit one option per entry; a value equal to its default—
+    /// an absent host key, an empty table—is omitted, since absence
     /// and the default decode identically. Scalars are always written,
     /// because omitting one would silently mean "whatever this firmware
     /// build calls the default" rather than the value that was saved.
@@ -2137,7 +2137,7 @@ impl SavedState {
             // empty is the default, so an unset gate is omitted outright
             // rather than written as a zero-length option.
             // Repeatable: one option per region string. The derived codes
-            // are not persisted — they follow from the strings, and a
+            // are not persisted—they follow from the strings, and a
             // stored copy could only ever disagree with them.
             prop::MAC_REPEATER_REGIONS => {
                 for entry in self.repeater_regions.iter() {
@@ -2202,13 +2202,13 @@ impl SavedState {
     /// Channel identifiers are left unset here and re-derived by
     /// [`SavedState::derive_channel_ids`] rather than trusted from
     /// storage, which is what keeps this step free of the crypto engine
-    /// — so a caller can ask whether a stored generation is readable
+    ///—so a caller can ask whether a stored generation is readable
     /// without building one.
     ///
     /// Unknown options are skipped (a newer writer's property, or a
-    /// retired one). Everything else — a bad format byte, a malformed
+    /// retired one). Everything else—a bad format byte, a malformed
     /// option block, a repeated single-valued property, an out-of-range
-    /// value, a table over capacity — rejects the whole payload, leaving
+    /// value, a table over capacity—rejects the whole payload, leaving
     /// the caller to fall back to an older generation.
     fn decode(config: &SessionConfig, bytes: &[u8]) -> Result<Self, SnapshotError> {
         let (format, options) = bytes.split_first().ok_or(SnapshotError::Malformed)?;
@@ -2247,8 +2247,8 @@ impl SavedState {
             prop::PHY_FREQ => {
                 self.settings.freq_khz = validate_freq_khz(config, value).map_err(invalid)?
             }
-            // A snapshot carrying a power this radio cannot reach — one
-            // restored across a hardware change — clamps like a live
+            // A snapshot carrying a power this radio cannot reach—one
+            // restored across a hardware change—clamps like a live
             // write rather than failing the whole restore.
             prop::PHY_TX_POWER => {
                 self.settings.tx_power_dbm = clamp_tx_power(config, value).map_err(invalid)?
@@ -2374,7 +2374,7 @@ fn channel_key_item(value: &[u8]) -> Result<[u8; items::CHANNEL_KEY_LEN], Snapsh
 struct SessionState<const TX: usize> {
     /// `PROP_MAC_PROMISCUOUS`.
     promiscuous: bool,
-    /// `PROP_MAC_BACKHAUL` — the host is a point-to-point neighbor of the
+    /// `PROP_MAC_BACKHAUL`—the host is a point-to-point neighbor of the
     /// device's own node rather than another listener on the medium.
     backhaul: bool,
     /// Accepted host transmissions, including the one currently owned by the
@@ -2444,7 +2444,7 @@ pub struct Session<A: AesProvider, S: Sha256Provider, const TX: usize = 1> {
     snapshot_rejected: bool,
     /// `PROP_DEV_KEY`: the live device identity public key.
     dev_key: Option<[u8; items::PUBLIC_KEY_LEN]>,
-    /// RAM mirror of the *independently persisted* identity — the
+    /// RAM mirror of the *independently persisted* identity—the
     /// value `CMD_RST` reverts to. Identical to `dev_key` except
     /// between a `CMD_CLEAR` (which erases only the durable copy; live
     /// state is unaffected) and the reset that completes the factory
@@ -2466,7 +2466,7 @@ pub struct Session<A: AesProvider, S: Sha256Provider, const TX: usize = 1> {
     /// Deliberately neither device-domain nor session state. Not the
     /// former because it is live physical behavior that is never saved
     /// and that `CMD_RST` must not silence; not the latter because a
-    /// detach is exactly when an alert matters — the link to the
+    /// detach is exactly when an alert matters—the link to the
     /// searching host drops as soon as the searcher walks out of range.
     /// The deadline is the only thing that stops it unattended.
     alert: AlertState,
@@ -2485,8 +2485,8 @@ pub struct Session<A: AesProvider, S: Sha256Provider, const TX: usize = 1> {
     ble_bond_count: u8,
     ble_link: BleLinkState,
     /// `PROP_BLE_PAIRING`: whether a pairing window is open. Live like
-    /// its two neighbors, and doubly so: the window closes on its own —
-    /// a new bond, a timeout — and the transport reports every
+    /// its two neighbors, and doubly so: the window closes on its own—
+    /// a new bond, a timeout—and the transport reports every
     /// transition through [`Session::set_ble_pairing`].
     ble_pairing_open: bool,
     /// The most recent detached frame to enter the inbound queue,
@@ -2521,7 +2521,7 @@ pub struct Session<A: AesProvider, S: Sha256Provider, const TX: usize = 1> {
 /// The command grammar and the property surface are the same either way;
 /// what differs is who is asking. A local host is tethered to the device
 /// and owns the session and host domains; a mesh administrator reaches
-/// the device domain and nothing else (spec §Node Management —
+/// the device domain and nothing else (spec §Node Management—
 /// Authorization).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum Binding {
@@ -2681,7 +2681,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         self.config.max_tx_power_dbm
     }
 
-    /// Whether the pending transmit requested `TX_FLAG_NOCCA` — skip the
+    /// Whether the pending transmit requested `TX_FLAG_NOCCA`—skip the
     /// pre-transmit channel-activity check.
     pub fn tx_nocca(&self) -> bool {
         self.session
@@ -2796,7 +2796,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     }
 
     /// The live `PROP_DEV_KEY` value. `None` once a factory reset
-    /// (`CMD_CLEAR` + `CMD_RST`) completes — the firmware uses this
+    /// (`CMD_CLEAR` + `CMD_RST`) completes—the firmware uses this
     /// edge to make a running device node dormant.
     pub fn dev_key(&self) -> Option<&[u8; items::PUBLIC_KEY_LEN]> {
         self.dev_key.as_ref()
@@ -2808,7 +2808,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     ///
     /// Used for `CMD_RST` (with [`Status::RESET_SOFTWARE`]). With a
     /// saved snapshot the post-reset value of every saved device-domain
-    /// property is its saved value — including the PHY enable state; the
+    /// property is its saved value—including the PHY enable state; the
     /// documented defaults apply only when nothing is saved. The host
     /// domain always returns to its documented defaults: it is never
     /// saved. Queue contents and replay baselines are discarded either
@@ -2859,7 +2859,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                     // The PHY comes up only if this snapshot describes
                     // the node the device currently is. Restoring a
                     // repeater's saved domain onto replacement hardware
-                    // — before its identity has been installed —
+                    //—before its identity has been installed—
                     // otherwise puts it on the air advertising as the
                     // repeater under an auto-generated throwaway key.
                     // A snapshot that does not record its identity is
@@ -2913,7 +2913,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                     prop::STARTUP_BEACON => self.device.startup_beacon = saved.startup_beacon,
                     // A position the operator placed is not a claim about
                     // hardware, so it survives a restore under any
-                    // identity — the same reasoning as the receiver
+                    // identity—the same reasoning as the receiver
                     // switch below.
                     prop::IDENT_LOCATION => {
                         self.device.ident_location = saved.ident_location.clone()
@@ -2942,9 +2942,9 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     }
 
     /// A host attached. Resets session state only (spec §Attach): the
-    /// device and host domains — PHY configuration and enable state,
+    /// device and host domains—PHY configuration and enable state,
     /// device name, duty accounting, provisioning, and the inbound
-    /// queue — are untouched. Accepted frames are delivered live from
+    /// queue—are untouched. Accepted frames are delivered live from
     /// here on; queued frames wait for `CMD_QUEUE_DRAIN`.
     ///
     /// The discarded session state is owed to the host as a
@@ -3003,7 +3003,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     /// that caused the reset has been served: an administrative
     /// `CMD_RST` has released the admin binding by then, so the notice
     /// goes where it belongs. Detaching clears the debt without emitting
-    /// — a detach discards session state with nobody to tell, and a debt
+    ///—a detach discards session state with nobody to tell, and a debt
     /// carried across would fire into the next session.
     pub fn take_session_reset_notice(&mut self, emit: &mut impl FnMut(&[u8])) -> bool {
         let Some(reason) = self.session_reset_pending.take() else {
@@ -3055,7 +3055,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     /// the session cannot see: that the packet arrived by unicast or
     /// blind unicast, that its source is authenticated, and that the
     /// source key is listed in `PROP_DEV_ADMINS`. Everything else the
-    /// binding changes is here — the property surface an administrator
+    /// binding changes is here—the property surface an administrator
     /// reaches, the commands it may not use, and the fact that responses
     /// are correlated by token rather than by TID, so a frame whose TID
     /// is zero (as this binding requires) is still answered.
@@ -3072,7 +3072,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         emit: &mut impl FnMut(&[u8]),
     ) -> Option<Effect> {
         self.binding = Binding::Admin;
-        // A local binding ignores a frame it cannot parse — the host
+        // A local binding ignores a frame it cannot parse—the host
         // will notice its own transport went wrong. An administrator is
         // owed an answer, because silence over the mesh is
         // indistinguishable from a lost packet and it would retransmit
@@ -3129,7 +3129,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             },
             // The raw PHY stream and the host-facing receive queue are
             // the tethered host's, and an administrator is not one
-            // (spec §Node Management — Authorization).
+            // (spec §Node Management—Authorization).
             Some(Cmd::StrSend | Cmd::QueueDrain) if self.is_admin() => {
                 self.complete(tid, Status::NOT_PERMITTED, emit);
                 None
@@ -3182,7 +3182,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             // and an unsolicited STATUS_RESET_RESTORED announces
             // completion (the TID is ignored, as with CMD_RST).
             //
-            // The host domain is untouched — it is not in the snapshot,
+            // The host domain is untouched—it is not in the snapshot,
             // so there is nothing to revert it to and no host-key
             // special case to apply. Queue contents and replay baselines
             // therefore survive a restore unconditionally.
@@ -3201,15 +3201,15 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             // completes a factory reset. Base-protocol: succeeds even
             // with nothing saved (the erase is idempotent).
             Some(Cmd::Clear) => Some(Effect::ClearSaved { tid }),
-            // Erase EVERY piece of mutable state — saved provisioning,
+            // Erase EVERY piece of mutable state—saved provisioning,
             // device identity, BLE bonds, pairing PIN, and any other
-            // persisted journal — then reboot. Unlike CMD_CLEAR this is
+            // persisted journal—then reboot. Unlike CMD_CLEAR this is
             // not confined to the durable provisioning copy and does not
             // reply: the platform wipes storage and resets, so the link
             // drops. The TID is irrelevant (no response is sent).
             Some(Cmd::FactoryReset) => Some(Effect::FactoryReset),
             // Restart the hardware, keeping everything persisted. Like
-            // CMD_FACTORY_RESET this does not reply — the reboot drops
+            // CMD_FACTORY_RESET this does not reply—the reboot drops
             // the link, and the TID is irrelevant. A board that cannot
             // reset itself says so instead, which is the one answer this
             // command ever produces.
@@ -3327,7 +3327,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         };
         // The flags byte costs five bytes a frame, so a live delivery
         // only grows to the buffered layout when it has something to say
-        // — which today means the frame is one the device sent itself.
+        //—which today means the frame is one the device sent itself.
         let mut rx_meta = [0u8; BufferedRxMeta::WIRE_LEN];
         let meta_len = if info.self_tx {
             BufferedRxMeta {
@@ -3551,7 +3551,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             ReplayVerdict::Replay => {
                 // Same logical packet (Route Retry forms included: same
                 // MIC and counter): coalesce, and re-ack only within
-                // the idempotent duplicate-acknowledgement window — and
+                // the idempotent duplicate-acknowledgement window—and
                 // at most once per holdoff, so flood copies of one
                 // transmission share a single ack. The holdoff stands in
                 // for the MAC's forwarding-confirmation window,
@@ -3655,7 +3655,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                 if pending.autonomous {
                     // device-initiated: PROP_LAST_STATUS is left alone so a
                     // pending reset code still reaches the next host. Only
-                    // now — with the ack actually on the air — does the
+                    // now—with the ack actually on the air—does the
                     // acknowledged frame earn RX_FLAG_ACKED. A handle whose
                     // entry has since been drained, evicted, or discarded
                     // marks nothing.
@@ -3824,7 +3824,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         // produce on its own. While the PHY is enabled (in RX), defer to the
         // caller to sample it; while disabled there is no ambient RSSI to read.
         //
-        // The write-only properties must not disclose their values —
+        // The write-only properties must not disclose their values—
         // for the device private key, not even whether one is
         // configured (spec §PROP_DEV_PRIVATE_KEY).
         if key == prop::BLE_PAIRING_PIN || key == prop::DEV_PRIVATE_KEY {
@@ -3864,7 +3864,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         }
         // The wall clock belongs to the platform: only it knows whether
         // the clock has been set and how far it has run since. Deferring
-        // is also what keeps "we do not know what time it is" honest —
+        // is also what keeps "we do not know what time it is" honest—
         // the session has nothing to answer with, rather than a stale
         // reading it would have to decide the age of.
         if key == prop::TIME && self.config.time.is_some() {
@@ -3903,8 +3903,8 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
 
     /// Complete a deferred `PROP_IDENT` read requested via
     /// [`Effect::SignIdentity`]. `blob` is the complete signed
-    /// node-identity payload — the canonical unsigned encoding followed
-    /// by its 64-octet detached signature — or `Err` if it could not be
+    /// node-identity payload—the canonical unsigned encoding followed
+    /// by its 64-octet detached signature—or `Err` if it could not be
     /// produced. Quote the same `tid` the effect carried.
     pub fn respond_identity_blob(
         &mut self,
@@ -4088,7 +4088,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         }
     }
 
-    /// Cancel a running alert from the device itself — the button press
+    /// Cancel a running alert from the device itself—the button press
     /// of whoever found the radio.
     ///
     /// Returns the effect that stops the indication, or `None` when no
@@ -4098,7 +4098,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         self.clear_alert(emit)
     }
 
-    /// Flip `PROP_GNSS_ENABLED` from the device itself — a button on a
+    /// Flip `PROP_GNSS_ENABLED` from the device itself—a button on a
     /// board that offers the receiver as a user-facing switch.
     ///
     /// Returns the new state, or `None` on a device without `CAP_GNSS`
@@ -4129,7 +4129,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
 
     /// Flip `PROP_MAC_REPEATER_ENABLED` from the device itself.
     ///
-    /// Every device carries the repeater, so this never refuses — the
+    /// Every device carries the repeater, so this never refuses—the
     /// return is the new state rather than an availability answer.
     pub fn toggle_repeater(&mut self, emit: &mut impl FnMut(&[u8])) -> Option<bool> {
         self.toggle_device_flag(
@@ -4154,7 +4154,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         )
     }
 
-    /// Force `PROP_BLE_ENABLED` on for a physical gesture at the device —
+    /// Force `PROP_BLE_ENABLED` on for a physical gesture at the device—
     /// the hold-through-power-on ceremony that must always end with a
     /// reachable radio, including one whose operator turned Bluetooth off
     /// and walked away. A toggle would re-strand the ones already on.
@@ -4180,7 +4180,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     /// No effect is returned: the switch reaches the platform through the
     /// device-domain mirror, the same path a host write, a boot restore
     /// and a `CMD_RST` all take. The transition is published like any the
-    /// host did not command — none of these properties otherwise moves
+    /// host did not command—none of these properties otherwise moves
     /// behind the host's back, but a switch someone can flip is exactly a
     /// thing that does.
     fn toggle_device_flag(
@@ -4225,7 +4225,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     /// Publish an unsolicited `PROP_BATTERY` snapshot (spec
     /// §PROP_BATTERY, *Asynchronous Updates: Yes*).
     ///
-    /// The platform decides *when* a measurement is worth announcing —
+    /// The platform decides *when* a measurement is worth announcing—
     /// it owns the sampling cadence and the charge-state edges, and it
     /// is the only layer that sees every sample. This publishes what it
     /// hands over, so the session keeps its rule that it never caches a
@@ -4234,7 +4234,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     /// Returns whether a frame was emitted. Nothing is published while
     /// no host is attached (there is nobody to notify), and a snapshot
     /// populating a field the configured [`BatteryFields`] never claimed
-    /// is dropped rather than sent — an unsolicited notification has no
+    /// is dropped rather than sent—an unsolicited notification has no
     /// transaction to fail. A snapshot that merely omits an advertised
     /// field is published as-is: absence is how the device says the value
     /// is not knowable right now.
@@ -4311,8 +4311,8 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     /// Quote the same `tid` the effect carried.
     ///
     /// Not knowing is a legitimate answer, not a failure: it is reported
-    /// as the empty value, which is precisely what tells a host — and a
-    /// device's own display — that there is no clock to show.
+    /// as the empty value, which is precisely what tells a host—and a
+    /// device's own display—that there is no clock to show.
     pub fn respond_time(&mut self, tid: u8, epoch: Option<u32>, emit: &mut impl FnMut(&[u8])) {
         match epoch {
             Some(seconds) => self.send_prop_is(tid, prop::TIME, &seconds.to_le_bytes(), emit),
@@ -4323,7 +4323,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     /// Publish an unsolicited `PROP_TIME` (spec §PROP_TIME,
     /// *Asynchronous Updates: Yes*).
     ///
-    /// The platform decides what is worth announcing — it owns the clock
+    /// The platform decides what is worth announcing—it owns the clock
     /// and is the only layer that sees every source that touches it. A
     /// clock going from unknown to known is the announcement that matters
     /// most; a fresh fix agreeing with the clock to the second is not.
@@ -4345,7 +4345,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     /// `Err` if it could not be obtained. Quote the same `tid` and `key`
     /// the effect carried.
     ///
-    /// A receiver that is off or still searching is not a failure — it
+    /// A receiver that is off or still searching is not a failure—it
     /// reports [`GnssSnapshot::SEARCHING`], which answers zero for the
     /// facts it is sure of and empty for the position it does not have.
     pub fn respond_gnss(
@@ -4447,7 +4447,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     }
 
     /// Restore a stored snapshot at boot, before any host command is
-    /// processed. On success the saved configuration is applied — the
+    /// processed. On success the saved configuration is applied—the
     /// returned effect re-enables the PHY if it was enabled when saved,
     /// and detached operation (filtering, queueing, delegation) begins
     /// immediately.
@@ -4469,7 +4469,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     /// Record that a stored generation was rejected at boot.
     ///
     /// Called once per rejected generation. If a later, older generation
-    /// restores, `PROP_SAVED` reports [`SavedStatus::Fallback`] — the
+    /// restores, `PROP_SAVED` reports [`SavedStatus::Fallback`]—the
     /// device is working but running on stale configuration, which is
     /// both more actionable and more urgent than "something was wrong".
     /// If none restores it reports [`SavedStatus::Unreadable`], which a
@@ -4504,7 +4504,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     }
 
     /// Note that the live state was persisted without a host having
-    /// asked — a device-initiated save, such as a switch the operator
+    /// asked—a device-initiated save, such as a switch the operator
     /// flipped at the board.
     ///
     /// Required after any such write. The session answers `CMD_RST` and
@@ -4550,7 +4550,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     /// Complete the device-identity provisioning requested via
     /// [`Effect::ProvisionIdentity`], quoting the same `tid`. `result`
     /// carries the new identity's *public* key once the keypair is
-    /// durably stored — success is announced as `CMD_PROP_IS` for
+    /// durably stored—success is announced as `CMD_PROP_IS` for
     /// `PROP_DEV_KEY` and the private key is never emitted (spec
     /// §PROP_DEV_PRIVATE_KEY). On `Ok` the new identity is adopted even
     /// if the transaction was abandoned by a detach: the durable write
@@ -4613,7 +4613,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
 
     /// Complete a deferred `PROP_BLE_BOND_COUNT` write.
     ///
-    /// `Ok(())` is a durable deletion, answered the way any set is — with
+    /// `Ok(())` is a durable deletion, answered the way any set is—with
     /// the property's value, which after a clear is zero. `Err(())` is a
     /// platform that could not empty its store, and the host's bonds are
     /// where they were.
@@ -4654,7 +4654,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     ///
     /// Announced like the bond count, and for the same reason: a host
     /// connecting or walking away is a transition nobody asked for. An
-    /// announcement only ever reaches a host on some *other* binding —
+    /// announcement only ever reaches a host on some *other* binding—
     /// the Bluetooth host that would hear "attached" is the one that
     /// caused it, and by the time the state is `None` there is nobody
     /// there to tell.
@@ -4671,7 +4671,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     /// Whether a pairing window is open, as reported by
     /// `PROP_BLE_PAIRING`.
     ///
-    /// The transport calls this on every transition, commanded or not —
+    /// The transport calls this on every transition, commanded or not—
     /// and "or not" is the whole reason the window is a property: it
     /// closes by itself on a new bond or a timeout, and a host showing a
     /// toggle has to see it flip back.
@@ -4688,7 +4688,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     /// Complete a deferred `PROP_BLE_PAIRING` write.
     ///
     /// `Ok(state)` quotes the state the transport is now in, which
-    /// answers the write the way any set is answered — with the
+    /// answers the write the way any set is answered—with the
     /// property's value. `Err(())` is a window the device cannot open
     /// right now: locked out after repeated pairing failures, or
     /// Bluetooth disabled.
@@ -4734,7 +4734,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             return Some(Effect::SetPairingPin { tid, pin });
         }
         // Forgetting every host. Defers because it is not safe to
-        // acknowledge before the deletion is durable — a clear that
+        // acknowledge before the deletion is durable—a clear that
         // replied first and then failed would leave a host believing it
         // had been forgotten. Zero is the only count a host can write:
         // bonds arrive one pairing ceremony at a time, so no other value
@@ -4770,8 +4770,8 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             return Some(Effect::SetBlePairing { tid, open });
         }
         if key == prop::DEV_PRIVATE_KEY {
-            // Both forms — installing a key and commanding on-device
-            // generation — are key provisioning and require the
+            // Both forms—installing a key and commanding on-device
+            // generation—are key provisioning and require the
             // transport's security binding (spec §Provisioning
             // Security).
             if let Err(status) = self.require_secure_link() {
@@ -4850,7 +4850,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         }
         // The wall clock lives in the platform, not in session state, so
         // a write completes with its own effect. The empty value is not a
-        // malformed `UINT32_LE` — it is the host saying the device should
+        // malformed `UINT32_LE`—it is the host saying the device should
         // go back to not knowing what time it is.
         if key == prop::TIME && self.config.time.is_some() {
             let epoch = match value {
@@ -4880,8 +4880,8 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             };
             // Session-scoped: reverts to false on every attach. The
             // multiplexer follows `backhaul()` rather than an effect, so
-            // every path that moves this — an attach, a CMD_RST, an
-            // administrator over the mesh — takes the routing with it.
+            // every path that moves this—an attach, a CMD_RST, an
+            // administrator over the mesh—takes the routing with it.
             self.session.backhaul = enabled;
             self.send_prop_is(tid, key, &[enabled as u8], emit);
             return None;
@@ -5049,7 +5049,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                 Ok(false)
             }
             // Peer public keys carry no secret material, so no
-            // secure-link gate — like PROP_HOST_KEY itself.
+            // secure-link gate—like PROP_HOST_KEY itself.
             prop::DEV_PEERS => {
                 self.device.peers = DevPeerTable::parse_table(value)?;
                 self.bump_dev_domain();
@@ -5075,7 +5075,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             // The advertised role. An empty value hands the choice back
             // to the device, which derives it from what it is actually
             // doing; any other value is advertised verbatim, including
-            // combinations the device cannot infer — a mobile repeater,
+            // combinations the device cannot infer—a mobile repeater,
             // a fixed tracker.
             prop::IDENT_ROLE => {
                 self.device.ident_role = match value.len() {
@@ -5232,7 +5232,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             // Positioning telemetry reports what the receiver found and
             // is not writable. `PROP_GNSS_LOCATION` and
             // `PROP_GNSS_ALTITUDE` are the ones that could plausibly
-            // become writable — a fixed node placed by hand — but that
+            // become writable—a fixed node placed by hand—but that
             // needs a rule for which source wins over the other, so they
             // stay read-only until there is one.
             key if gnss::is_positioning_property(key) && self.config.gnss.is_some() => {
@@ -5585,7 +5585,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         // rather than transmitted, so it costs no airtime here. What the
         // node then chooses to repeat is charged to the duty ledger when
         // the node transmits it, which is where the airtime is actually
-        // spent — charging both would bill one frame twice.
+        // spent—charging both would bill one frame twice.
         let airtime_ms = if self.session.backhaul {
             0
         } else {
@@ -5633,8 +5633,8 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             nocca: tx_meta.flags & meta::TX_FLAG_NOCCA != 0,
         });
         debug_assert!(queued.is_ok(), "queue fullness checked above");
-        // Remember this frame's MIC prefix so its echoes — the returning
-        // (destination-hintless) MAC ack, a repeater's onward copy — can be
+        // Remember this frame's MIC prefix so its echoes—the returning
+        // (destination-hintless) MAC ack, a repeater's onward copy—can be
         // recognized as ours.
         self.host.note_tx_mic(payload.data);
         was_empty.then_some(Effect::StartTransmit)
@@ -5645,7 +5645,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     /// Whether `key` names a property this session knows, including
     /// write-only (`PROP_BLE_PAIRING_PIN`) and deferred-read
     /// (`PROP_PHY_RSSI`) properties that `encode_prop` cannot produce.
-    /// The counter a key names, together with the ledger holding it —
+    /// The counter a key names, together with the ledger holding it—
     /// or `None` when this device does not have that property.
     ///
     /// One gate for the get, the set, and `known_prop`, so the three can
@@ -6086,7 +6086,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     // ─── Emission helpers ────────────────────────────────────────────
 
     /// Emit `CMD_PROP_IS` for `key` with `value` as a correlated
-    /// response. Fire-and-forget commands (TID 0) receive nothing —
+    /// response. Fire-and-forget commands (TID 0) receive nothing—
     /// the state change still happened.
     fn send_prop_is(&mut self, tid: u8, key: u32, value: &[u8], emit: &mut impl FnMut(&[u8])) {
         // While a multi-property command is being served, the value a
@@ -6187,7 +6187,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     /// Record a command's completion status, success or failure.
     /// Correlated commands get a `PROP_LAST_STATUS` response;
     /// fire-and-forget (TID 0) commands only update `PROP_LAST_STATUS`
-    /// — the spec grants them no correlated response. Deliberate
+    ///—the spec grants them no correlated response. Deliberate
     /// unsolicited notifications (reset notices, `STATUS_RESET_RESTORED`)
     /// bypass this via [`Self::send_status`] with `TID_UNSOLICITED`.
     fn complete(&mut self, tid: u8, status: Status, emit: &mut impl FnMut(&[u8])) {
@@ -6212,7 +6212,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     ///
     /// The counterpart to [`Self::complete`], and the reason the
     /// administrative binding needs the two told apart. That binding
-    /// carries nothing the device was not asked for — a reset command is
+    /// carries nothing the device was not asked for—a reset command is
     /// answered by no response payload at all, its delivery confirmed by
     /// the MAC acknowledgment and its completion by a later exchange
     /// reading `PROP_LAST_STATUS`. The status is still recorded, which is
@@ -6233,7 +6233,7 @@ fn put(out: &mut [u8], bytes: &[u8]) -> usize {
 
 /// Write a STRING property value: the bytes plus the NUL terminator the
 /// spec requires. A value too long for the buffer is truncated rather
-/// than refused — these are constant identification strings, and a
+/// than refused—these are constant identification strings, and a
 /// shortened one is more useful to a host than an error.
 fn put_str(out: &mut [u8], value: &str) -> usize {
     let bytes = value.as_bytes();
@@ -6297,7 +6297,7 @@ fn valid_device_name(value: &[u8]) -> bool {
 // rejected outright when unsupported, because the nearest supported
 // value is a different choice and silently substituting it produces a
 // radio that cannot talk to the network it was pointed at. Values
-// expressing "as much as the hardware has" are clamped instead — see
+// expressing "as much as the hardware has" are clamped instead—see
 // `clamp_tx_power`.
 
 fn validate_freq_khz(config: &SessionConfig, value: &[u8]) -> Result<u32, Status> {
@@ -6343,8 +6343,8 @@ fn validate_cr(value: &[u8]) -> Result<u8, Status> {
 
 /// `PROP_TZ_OFFSET`, in minutes east of UTC.
 ///
-/// Bounded by the real range of civil offsets — UTC−12:00 through
-/// UTC+14:00 — rather than the width of the field. Everything outside it
+/// Bounded by the real range of civil offsets—UTC−12:00 through
+/// UTC+14:00—rather than the width of the field. Everything outside it
 /// is a byte-order or unit mistake, and a device that accepted one would
 /// display a confidently wrong local time.
 fn validate_tz_offset(value: &[u8]) -> Result<i16, Status> {
@@ -6372,7 +6372,7 @@ fn validate_ident_precision(value: &[u8]) -> Result<u8, Status> {
 /// `PROP_IDENT_LOCATION`, in the variable-precision encoding.
 ///
 /// The length is the precision, so anything up to the encoding's limit is
-/// a legitimate statement of position — a host advertising a
+/// a legitimate statement of position—a host advertising a
 /// neighbourhood writes fewer bytes than one advertising an address.
 fn validate_ident_location(
     value: &[u8],
@@ -6397,7 +6397,7 @@ fn validate_ident_altitude(value: &[u8]) -> Result<Option<i32>, Status> {
 /// `PROP_ADVERT_INTERVAL` / `PROP_BEACON_INTERVAL`, in seconds.
 ///
 /// Zero is the off switch, so the bounds apply only above it. Neither is
-/// an airtime control — the duty ledger is — but the two ends fail
+/// an airtime control—the duty ledger is—but the two ends fail
 /// differently: too short spends everyone's airtime on this device's
 /// announcements, while too long is a schedule that has stopped being
 /// one. Refusing both at the write is cheaper than discovering either on
@@ -7065,8 +7065,8 @@ mod tests {
         }
     }
 
-    /// A session with no node behind it — a simulated device, a bridge's
-    /// soft device — must not claim one: `CAP_MAC_BACKHAUL` is exactly
+    /// A session with no node behind it—a simulated device, a bridge's
+    /// soft device—must not claim one: `CAP_MAC_BACKHAUL` is exactly
     /// what a bridge checks before trusting a device to front a segment,
     /// and the repeater surface configures a forwarder that does not
     /// exist.
@@ -7116,7 +7116,7 @@ mod tests {
     }
 
     /// `CMD_REBOOT` is the platform's to perform, and a platform that
-    /// cannot says so rather than staying silent — silence is how a
+    /// cannot says so rather than staying silent—silence is how a
     /// device that *is* rebooting answers, and a host has no other way
     /// to tell the two apart.
     #[test]
@@ -7180,7 +7180,7 @@ mod tests {
         expect_status(&emitted[0], 3, Status::PROP_NOT_FOUND);
         // The refusal is the whole of what the host is told. Bluetooth
         // has one capability, and a device that keeps its bonds to itself
-        // still advertises it — so the count, not the caps list, is what
+        // still advertises it—so the count, not the caps list, is what
         // a host asks.
         assert!(capabilities(&mut fixed).contains(&cap::BLE));
         let len = frame::prop_get(&mut buf, 6, prop::BLE_BOND_COUNT).unwrap();
@@ -7189,8 +7189,8 @@ mod tests {
     }
 
     /// The pairing window is a property, not a command: it can be
-    /// opened, closed, observed, and — the case no command could
-    /// express — the transport reports it closing on its own.
+    /// opened, closed, observed, and—the case no command could
+    /// express—the transport reports it closing on its own.
     #[test]
     fn the_pairing_window_is_a_toggle_the_transport_answers_for() {
         let mut session = test_session();
@@ -7210,7 +7210,7 @@ mod tests {
         assert_eq!(value, [1]);
         assert_eq!(get(&mut session, prop::BLE_PAIRING), [1]);
 
-        // A refused open — locked out, or Bluetooth disabled — is a
+        // A refused open—locked out, or Bluetooth disabled—is a
         // state the caller can retry out of, not an internal error.
         let len = frame::prop_set(&mut buf, 5, prop::BLE_PAIRING, &[1]).unwrap();
         let (_, effect) = dispatch(&mut session, &buf[..len], 0);
@@ -7219,8 +7219,8 @@ mod tests {
         session.respond_ble_pairing(5, Err(()), &mut |frame| emitted.push(frame.to_vec()));
         expect_status(&emitted[0], 5, Status::INVALID_STATE);
 
-        // The transport closing the window on its own — a bond enrolled,
-        // a timeout — is published like any transition the host did not
+        // The transport closing the window on its own—a bond enrolled,
+        // a timeout—is published like any transition the host did not
         // command.
         let mut announced = Vec::new();
         session.set_ble_pairing(false, &mut |frame| announced.push(frame.to_vec()));
@@ -7246,7 +7246,7 @@ mod tests {
     /// The bond count mirrors the transport, and the only count a host
     /// may write is zero: bonds arrive one ceremony at a time, so no other
     /// value names a state the device could be put into. It is not
-    /// configuration either, so a protocol reset does not clear it —
+    /// configuration either, so a protocol reset does not clear it—
     /// bonds outlive `CMD_RST`, and a count that said zero would be lying
     /// about hosts that are still enrolled.
     #[test]
@@ -7273,7 +7273,7 @@ mod tests {
 
     /// The link is live transport state on the same footing as the bond
     /// count: reported, announced, not writable, and untouched by a
-    /// protocol reset — the host on the other end of it does not
+    /// protocol reset—the host on the other end of it does not
     /// disconnect because someone sent `CMD_RST`.
     #[test]
     fn link_state_reports_the_transport_and_survives_a_reset() {
@@ -7552,7 +7552,7 @@ mod tests {
     ///
     /// The subtle one is the saved baseline. A snapshot omits nothing
     /// scalar, but the baseline is what an *older* snapshot's absent
-    /// options decode against — so if `SavedState::defaults` kept saying
+    /// options decode against—so if `SavedState::defaults` kept saying
     /// `false` here, restoring such a snapshot would switch the receiver
     /// off on the one board that wants it on.
     #[test]
@@ -7571,7 +7571,7 @@ mod tests {
         assert_eq!(get(&mut session, prop::GNSS_ENABLED), [1]);
         assert!(session.gnss_enabled());
 
-        // Switching it off and saving means off — a board default is a
+        // Switching it off and saving means off—a board default is a
         // starting point, not a policy the operator has to fight.
         set(&mut session, prop::GNSS_ENABLED, &[0]);
         let mut buf = [0u8; 512];
@@ -7624,7 +7624,7 @@ mod tests {
     /// way: flip the value, move the mirror, publish the transition.
     #[test]
     fn every_local_toggle_flips_its_own_property() {
-        // (start, toggle, property) — each starts at its post-reset value.
+        // (start, toggle, property)—each starts at its post-reset value.
         let cases: [(
             bool,
             fn(&mut TestSession, &mut Vec<Vec<u8>>) -> Option<bool>,
@@ -7803,7 +7803,7 @@ mod tests {
 
     /// A snapshot written before these properties existed carries none of
     /// them, and absence has to decode as the documented default rather
-    /// than as zero — otherwise an upgrade would silently switch every
+    /// than as zero—otherwise an upgrade would silently switch every
     /// automatic announcement off.
     #[test]
     fn a_snapshot_without_advertisement_options_restores_the_defaults() {
@@ -7950,7 +7950,7 @@ mod tests {
     }
 
     /// While the device maintains the position from its own fixes, a
-    /// written one would survive only until the next fix — so it is
+    /// written one would survive only until the next fix—so it is
     /// refused rather than silently reverted. Switching auto-update off
     /// freezes what the fixes found, which is how a fixed node is placed.
     #[test]
@@ -7984,8 +7984,8 @@ mod tests {
         assert_eq!(get(&mut session, prop::IDENT_LOCATION), [5, 5]);
     }
 
-    /// Discoverability defaults on — a deployed device being askable is
-    /// most of the point — and the opt-out is saved device-domain state.
+    /// Discoverability defaults on—a deployed device being askable is
+    /// most of the point—and the opt-out is saved device-domain state.
     #[test]
     fn dev_discoverable_defaults_on_and_the_opt_out_survives_reboot() {
         let mut session = test_session();
@@ -8015,8 +8015,8 @@ mod tests {
     }
 
     /// `PROP_IDENT` is a signature the session cannot produce, so the
-    /// read defers to the platform and the platform's answer — success
-    /// or failure — is what the host sees.
+    /// read defers to the platform and the platform's answer—success
+    /// or failure—is what the host sees.
     #[test]
     fn prop_ident_defers_to_the_platform_for_signing() {
         let mut session = test_session();
@@ -8077,7 +8077,7 @@ mod tests {
     }
 
     /// The four forwarding gates are configurable while forwarding is
-    /// off — an administrator stages the policy and enables it last —
+    /// off—an administrator stages the policy and enables it last—
     /// and each survives save and boot-from-snapshot.
     #[test]
     fn repeater_policy_round_trips_and_persists() {
@@ -8155,7 +8155,7 @@ mod tests {
     }
 
     /// Every gate clears back to unset by writing it empty, and a
-    /// snapshot taken with them unset carries no option at all — which
+    /// snapshot taken with them unset carries no option at all—which
     /// is what makes absence and the default decode identically.
     #[test]
     fn repeater_policy_clears_back_to_unset() {
@@ -8203,7 +8203,7 @@ mod tests {
         let mut session = test_session();
 
         // A region string is 1 to 24 octets of UTF-8. Everything outside
-        // that is malformed, not merely unrecognized — the derivation
+        // that is malformed, not merely unrecognized—the derivation
         // itself is total over every string within the bounds.
         for bad in [
             b"".as_slice(),
@@ -8289,7 +8289,7 @@ mod tests {
     }
 
     /// The region table is also editable one entry at a time, so a host
-    /// adding a region does not have to know — or resend — the rest of
+    /// adding a region does not have to know—or resend—the rest of
     /// the table it is not changing.
     #[test]
     fn repeater_regions_insert_and_remove_one_entry_at_a_time() {
@@ -8718,8 +8718,8 @@ mod tests {
     }
 
     /// The test radio spans -9..=22 dBm. A request outside it succeeds
-    /// at the nearest reachable power, and the echoed `CMD_PROP_IS` —
-    /// the only place the range is visible — reports what was installed.
+    /// at the nearest reachable power, and the echoed `CMD_PROP_IS`—
+    /// the only place the range is visible—reports what was installed.
     #[test]
     fn tx_power_clamps_to_radio_range() {
         let mut session = test_session();
@@ -8794,7 +8794,7 @@ mod tests {
         assert_eq!(read_at(&mut session, 3_600_500), 3600);
 
         // A protocol reset is not a reboot, so it must not disturb the
-        // reading — that is what makes uptime worth reading next to
+        // reading—that is what makes uptime worth reading next to
         // PROP_LAST_STATUS.
         let mut buf = [0u8; 4];
         let len = frame::reset(&mut buf, 0).unwrap();
@@ -9000,7 +9000,7 @@ mod tests {
         assert_eq!(value, 12_345u32.to_le_bytes());
     }
 
-    /// A sensor that could not be read reports no reading, not a failure —
+    /// A sensor that could not be read reports no reading, not a failure—
     /// the same shape `PROP_TIME` uses for a clock that was never set.
     #[test]
     fn illuminance_reports_a_failed_read_as_empty() {
@@ -9561,8 +9561,8 @@ mod tests {
 
     /// The ledger is shared with every other radio client on the
     /// device (the device node). Airtime recorded by another client
-    /// counts against the session's limit — host transmits refuse with
-    /// STATUS_DUTY_LIMIT — and PROP_PHY_DUTY_NOW reports the combined
+    /// counts against the session's limit—host transmits refuse with
+    /// STATUS_DUTY_LIMIT—and PROP_PHY_DUTY_NOW reports the combined
     /// figure, all without the session transmitting anything itself.
     #[test]
     fn foreign_client_airtime_counts_against_the_session() {
@@ -9918,8 +9918,8 @@ mod tests {
         assert_eq!(get(&mut session, prop::HOST_KEY), key);
 
         // The implicit destination-hint filter: unicast traffic to the
-        // host's 3-byte prefix is accepted, everything else — including
-        // unparseable frames — is not. A MAC ack carries no destination
+        // host's 3-byte prefix is accepted, everything else—including
+        // unparseable frames—is not. A MAC ack carries no destination
         // hint; with nothing transmitted, its ack_mic matches no expected
         // send, so it is dropped (see mac_ack_accepted_only_when_expected).
         assert!(delivered(&mut session, &unicast_to([0xC4, 0xC4, 0xC4])));
@@ -9994,7 +9994,7 @@ mod tests {
             .unwrap();
         let frame = packet.as_bytes().to_vec();
 
-        // The repeat: mutable routing state rewritten, MIC untouched — what
+        // The repeat: mutable routing state rewritten, MIC untouched—what
         // a repeater is permitted to do.
         let header = PacketHeader::parse(&frame).unwrap();
         let mut repeat = frame.clone();
@@ -10009,8 +10009,8 @@ mod tests {
         assert_eq!(effect, Some(Effect::StartTransmit));
         session.on_tx_result(TxOutcome::Sent, 0, &mut |_: &[u8]| {});
 
-        // Now it is an echo of our own send: accepted, and — like a
-        // returning ack — not evicted on match, so a second repeater's copy
+        // Now it is an echo of our own send: accepted, and—like a
+        // returning ack—not evicted on match, so a second repeater's copy
         // passes too.
         assert!(delivered(&mut session, &repeat));
         assert!(delivered(&mut session, &repeat));
@@ -10343,8 +10343,8 @@ mod tests {
     /// A detached session whose queue can actually fill.
     ///
     /// An explicit packet-type filter for unicast is what makes filtering
-    /// configured — a device with nothing configured queues nothing,
-    /// because there is no host to hold traffic for — and it admits these
+    /// configured—a device with nothing configured queues nothing,
+    /// because there is no host to hold traffic for—and it admits these
     /// tests' frames whatever destination hint they carry.
     fn queueing_session() -> TestSession {
         let mut session = test_session();
@@ -10482,7 +10482,7 @@ mod tests {
         // addressee, the host included.
         install_host_key(&mut session, &[0xC4; 32]);
         assert!(delivered(&mut session, &broadcast_frame()));
-        // While detached the implicit rule does not apply — ambient
+        // While detached the implicit rule does not apply—ambient
         // broadcast traffic must not displace queued unicast frames.
         session.detach();
         receive_detached(&mut session, &broadcast_frame(), 0);
@@ -10504,7 +10504,7 @@ mod tests {
         receive_detached(&mut session, &broadcast_frame(), 0);
         session.attach(true);
         assert_eq!(queue_count(&mut session), 0);
-        // Nothing was evicted either — the frames never entered.
+        // Nothing was evicted either—the frames never entered.
         assert_eq!(
             get(&mut session, prop::HOST_RX_QUEUE_DROPPED),
             0u32.to_le_bytes()
@@ -10562,8 +10562,8 @@ mod tests {
         session.detach();
 
         // Both reach the queue's door through the implicit channel
-        // filter — a blind unicast's destination is concealed, so the
-        // channel is what admits it — and only the ack-requesting form
+        // filter—a blind unicast's destination is concealed, so the
+        // channel is what admits it—and only the ack-requesting form
         // goes through.
         receive_detached(&mut session, &sealed_blind_unicast(1, &channel_key), 0);
         rx_effect(&mut session, &sealed_buar(2, &channel_key), 0);
@@ -11088,7 +11088,7 @@ mod tests {
 
         // Sealed with keys the device does not hold: authentication fails,
         // but filtering accepted it (host destination hint), so it is
-        // queued for the host — unacknowledged.
+        // queued for the host—unacknowledged.
         let wrong_keys = PairwiseKeys {
             k_enc: [1; 32],
             k_mic: [2; 32],
@@ -11625,7 +11625,7 @@ mod tests {
     }
 
     /// The buffer every caller sizes from `SNAPSHOT_MAX` has to hold a
-    /// snapshot with every table full — the option framing costs about
+    /// snapshot with every table full—the option framing costs about
     /// two octets an entry over the retired positional format.
     #[test]
     fn snapshot_at_capacity_fits_the_buffer() {
@@ -11682,7 +11682,7 @@ mod tests {
         let effect = session.reset(Status::RESET_SOFTWARE, &mut |bytes: &[u8]| {
             emitted.push(bytes.to_vec())
         });
-        // Post-reset values are the saved ones — including the PHY
+        // Post-reset values are the saved ones—including the PHY
         // enable state, which comes back up.
         assert!(matches!(effect, Effect::ApplyRadio(s) if s.enabled && s.freq_khz == 906_875));
         assert_eq!(session.device_name(), "saved name");
@@ -11931,7 +11931,7 @@ mod tests {
         session.attach(true);
         assert_eq!(queue_count(&mut session), RX_QUEUE_CAPACITY as u16);
         let flags = drained_flags(&mut session);
-        // Frame 1 was evicted; the oldest remaining entry is frame 2 —
+        // Frame 1 was evicted; the oldest remaining entry is frame 2—
         // the only acknowledged one.
         assert_eq!(flags[0], RX_FLAG_BUFFERED | RX_FLAG_ACKED);
         assert!(
@@ -11942,7 +11942,7 @@ mod tests {
 
     /// Build a sealed UNAR carrying flood-hop state with the given
     /// accumulated count. FHOPS is dynamic (excluded from the AAD), so
-    /// rewriting it after sealing preserves the MIC — exactly as a
+    /// rewriting it after sealing preserves the MIC—exactly as a
     /// relaying node would.
     fn sealed_flooded_unar(counter: u32, keys: &PairwiseKeys, accumulated: u8) -> Vec<u8> {
         let mut buf = [0u8; 96];
@@ -12063,7 +12063,7 @@ mod tests {
     }
 
     /// A source-routed frame arrives with its route consumed and no
-    /// flood budget, so the frame's own shape says "direct" — and a
+    /// flood budget, so the frame's own shape says "direct"—and a
     /// direct ack dies at the first hop. The trace the routed hops
     /// recorded is the way back, and it is what the MAC would ack along.
     #[test]
@@ -12375,7 +12375,7 @@ mod tests {
     fn device_identity_provisioning_lifecycle() {
         let mut session = test_session();
         // Unconfigured: PROP_DEV_KEY is empty, and the write-only
-        // private key discloses nothing — not even whether one exists.
+        // private key discloses nothing—not even whether one exists.
         assert!(get(&mut session, prop::DEV_KEY).is_empty());
         let mut buf = [0u8; 16];
         let len = frame::prop_get(&mut buf, 4, prop::DEV_PRIVATE_KEY).unwrap();
@@ -12630,7 +12630,7 @@ mod tests {
         remove_item(&mut session, prop::DEV_PEERS, &[0xEE; 32]);
         assert_eq!(session.dev_domain_version(), 2);
 
-        // Neither do host-domain mutations — device and host tables are
+        // Neither do host-domain mutations—device and host tables are
         // independent surfaces.
         insert_item(&mut session, prop::HOST_CHANNEL_KEYS, &[0x42; 32]);
         assert_eq!(session.dev_domain_version(), 2);
@@ -12642,7 +12642,7 @@ mod tests {
         assert_eq!(session.dev_domain_version(), 4);
 
         // CMD_RST rebuilds the tables (from the snapshot when one is
-        // saved, post-reset defaults otherwise) — always a re-sync.
+        // saved, post-reset defaults otherwise)—always a re-sync.
         let _ = session.reset(Status::RESET_SOFTWARE, &mut |_: &[u8]| {});
         assert_eq!(session.dev_domain_version(), 5);
         assert_eq!(session.dev_channel_keys().count(), 0);
@@ -12675,7 +12675,7 @@ mod tests {
         let dev_id = test_engine().derive_channel_id(&ChannelKey(dev_channel)).0;
 
         // Traffic on the device channel reaches the host only through
-        // the host's own filtering — it is not queued.
+        // the host's own filtering—it is not queued.
         session.detach();
         receive_detached(&mut session, &multicast_on(dev_id), 0);
         session.attach(true);
@@ -12705,7 +12705,7 @@ mod tests {
         let _ = session.reset(Status::RESET_SOFTWARE, &mut |_: &[u8]| {});
         assert_eq!(get(&mut session, prop::DEV_PEERS), [0xD0; 32]);
 
-        // A boot from the snapshot restores the tables — but not the
+        // A boot from the snapshot restores the tables—but not the
         // identity, which is persisted (and installed) independently.
         let mut bytes = [0u8; SNAPSHOT_MAX];
         let len = session.encode_snapshot(&mut bytes).unwrap();
@@ -12732,8 +12732,8 @@ mod tests {
         let first = provision_identity(&mut session, 7, &[0x11; 32]);
         save(&mut session);
 
-        // CMD_RESTORE reverts configuration but the identity — outside
-        // the snapshot — keeps its newest value.
+        // CMD_RESTORE reverts configuration but the identity—outside
+        // the snapshot—keeps its newest value.
         let second = provision_identity(&mut session, 3, &[0x22; 32]);
         assert_ne!(second, first);
         let _ = restore(&mut session);
@@ -12883,7 +12883,7 @@ mod tests {
     }
 
     /// The whole point of the binding's TID handling: correlation is by
-    /// token, so a request whose TID is zero — which the spec requires —
+    /// token, so a request whose TID is zero—which the spec requires—
     /// is still answered, where a local host's TID-zero request is
     /// fire-and-forget.
     #[test]
@@ -12973,7 +12973,7 @@ mod tests {
             assert_eq!(response_key, key);
         }
 
-        // Write-only stays write-only — the same answer a local host gets.
+        // Write-only stays write-only—the same answer a local host gets.
         let len = frame::prop_get(&mut buf, TID_UNSOLICITED, prop::DEV_PRIVATE_KEY).unwrap();
         let emitted = admin(&mut session, &buf[..len]);
         expect_status(&emitted[0], TID_UNSOLICITED, Status::UNIMPLEMENTED);
@@ -13078,8 +13078,8 @@ mod tests {
         assert_eq!(value.len(), 1);
     }
 
-    /// A multi read reaches everything the device serves — the host
-    /// domain included — and reports the refused slots in place, without
+    /// A multi read reaches everything the device serves—the host
+    /// domain included—and reports the refused slots in place, without
     /// ending the sequence.
     #[test]
     fn a_multi_read_reports_refused_slots_in_place() {

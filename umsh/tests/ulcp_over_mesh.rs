@@ -8,7 +8,7 @@
 //! wire.
 //!
 //! What that adds is everything the adapter is responsible for and the
-//! binding is not — that opening a handle puts nothing on the air, that a
+//! binding is not—that opening a handle puts nothing on the air, that a
 //! reply files as a response despite the TID the binding insists on, that
 //! the properties out of an administrator's reach are absent rather than
 //! fatal, and that the commands the binding answers with silence still
@@ -185,7 +185,7 @@ async fn the_synchronization_procedure_reads_the_host_domain_too() {
         .expect("sync completes over the administrative binding");
 
     // Reads are not the gated half. An administrator asks for the host
-    // domain like anything else and is told what is actually there —
+    // domain like anything else and is told what is actually there—
     // here, a device no host has claimed.
     assert_eq!(sync.ownership, HostOwnership::Unclaimed);
     assert_eq!(sync.host_key, None);
@@ -242,7 +242,7 @@ async fn a_restore_completes_on_silence_even_when_the_device_refused_it() {
     let mut device = open(link);
 
     // Nothing has been saved, so the device refuses with
-    // STATUS_INVALID_STATE — and the caller is told the restore
+    // STATUS_INVALID_STATE—and the caller is told the restore
     // completed anyway. The exchange engine classifies a command as
     // reset-class from the request and settles it the moment the
     // acknowledgment lands, so the refusal never gets drained. Pinned

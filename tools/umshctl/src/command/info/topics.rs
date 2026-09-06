@@ -55,7 +55,7 @@ pub struct Topic {
     /// The properties the renderers below read.
     pub keys: fn(&Context) -> Vec<u32>,
     pub render: fn(&PropSet, &Context) -> Vec<Line>,
-    /// `NAME=VALUE` pairs, unprefixed — the caller adds [`Self::prefix`].
+    /// `NAME=VALUE` pairs, unprefixed—the caller adds [`Self::prefix`].
     ///
     /// A component the device did not report is an *absent* variable
     /// rather than an empty one, so `${RADIO_SF:-}` is how a script asks
@@ -241,7 +241,7 @@ fn render_device(set: &PropSet, ctx: &Context) -> Vec<Line> {
                 saved::NONE => "no".to_string(),
                 saved::CURRENT => "yes".to_string(),
                 saved::FALLBACK => "yes, but running on an older generation (re-save)".to_string(),
-                saved::UNREADABLE => "unreadable — booted with defaults".to_string(),
+                saved::UNREADABLE => "unreadable—booted with defaults".to_string(),
                 other => format!("unknown state {other}"),
             },
         ));
@@ -312,7 +312,7 @@ fn capability_list(set: &PropSet) -> String {
 }
 
 /// The spec mnemonic, or the bare number for a capability this build has
-/// never heard of — a device newer than the tool still reports honestly.
+/// never heard of—a device newer than the tool still reports honestly.
 fn capability_name(code: u32) -> String {
     umsh::ulcp_wire::capability_name(code).map_or_else(|| code.to_string(), str::to_owned)
 }

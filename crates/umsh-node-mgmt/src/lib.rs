@@ -6,12 +6,12 @@
 //! the mesh itself, in the same command grammar and property model
 //! [`umsh_ulcp`] defines for the local link. **Node Management Request**
 //! (payload type 8) and **Node Management Response** (payload type 9)
-//! payloads carry ordinary ULCP frames between an **administrator** — a
-//! node listed in the device's `PROP_DEV_ADMINS` — and the **device**.
+//! payloads carry ordinary ULCP frames between an **administrator**—a
+//! node listed in the device's `PROP_DEV_ADMINS`—and the **device**.
 //! `docs/protocol/src/app-node-management.md` specifies it.
 //!
-//! The binding relies on exactly what secure unicast guarantees — an
-//! authenticated source, confidentiality, and replay protection — and
+//! The binding relies on exactly what secure unicast guarantees—an
+//! authenticated source, confidentiality, and replay protection—and
 //! adds what the ULCP grammar needs on a transport that promises neither
 //! delivery nor ordering:
 //!
@@ -50,8 +50,8 @@ pub use node_adapter::{BeginError, ManagementError, NodeManager, Progress};
 /// The Node Management payload an administrator sizes its requests
 /// against.
 ///
-/// A device derives its own ceiling from the radio it has — see
-/// `ADMIN_PAYLOAD_MAX` in `umsh-ulcp-runtime` — and it is the device's
+/// A device derives its own ceiling from the radio it has—see
+/// `ADMIN_PAYLOAD_MAX` in `umsh-ulcp-runtime`—and it is the device's
 /// number that actually bounds an exchange. An administrator cannot ask
 /// what that number is, so it assumes the smallest a device is allowed
 /// to have, and the device's derivation is checked against this one at

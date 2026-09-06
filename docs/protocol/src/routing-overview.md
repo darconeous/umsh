@@ -20,7 +20,7 @@ See [Packet Structure § Flood Hop Count](packet-structure.md#flood-hop-count) f
 
 The **region code option** restricts flood forwarding to repeaters configured for that specific geographic region. A repeater that does not recognize or is not configured for the region MUST NOT flood-forward the packet.
 If multiple region code options are present, matching any one of them is sufficient for flood forwarding. If a packet is being flood-forwarded without a region code, a repeater may add one according to local policy, but it must never rewrite an existing region code or add a second one.
-Region scoping is not enforced during the source-routed portion of a hybrid route — only after the source-route hints are exhausted and the packet transitions to flooding.
+Region scoping is not enforced during the source-routed portion of a hybrid route—only after the source-route hints are exhausted and the packet transitions to flooding.
 
 See [Packet Options § Region Code](packet-options.md#region-code-option-11).
 
@@ -28,8 +28,8 @@ See [Packet Options § Region Code](packet-options.md#region-code-option-11).
 
 Two packet options let the sender control which links are acceptable for flood forwarding:
 
-- **Minimum RSSI** — a repeater that received the packet below the specified signal strength must not flood-forward it.
-- **Minimum SNR** — a repeater that received the packet below the specified signal-to-noise ratio must not flood-forward it.
+- **Minimum RSSI**—a repeater that received the packet below the specified signal strength must not flood-forward it.
+- **Minimum SNR**—a repeater that received the packet below the specified signal-to-noise ratio must not flood-forward it.
 
 These thresholds prevent retransmission over weak links that are unlikely to deliver the packet reliably, saving airtime and transmit power. The repeater may also enforce its own local thresholds; the effective threshold is the higher of the two.
 
@@ -39,7 +39,7 @@ See [Packet Options § Minimum RSSI](packet-options.md#minimum-rssi-option-5) an
 
 When the sender knows a path to the destination, it can include a **source-route option** listing the sequence of repeater hints the packet should traverse. Each repeater checks whether it matches the next hint, removes its own hint, and forwards. Only the designated repeaters handle the packet, so source routing avoids the airtime cost of flooding.
 
-Source routes are learned from the **trace-route option**: when a packet carries a trace-route option, each forwarding repeater prepends its own hint, on routed hops as well as flooded ones. The recipient can reverse the accumulated trace and cache it as a source route for future replies. This means path discovery is not a separate operation — it falls out of normal packet exchange.
+Source routes are learned from the **trace-route option**: when a packet carries a trace-route option, each forwarding repeater prepends its own hint, on routed hops as well as flooded ones. The recipient can reverse the accumulated trace and cache it as a source route for future replies. This means path discovery is not a separate operation—it falls out of normal packet exchange.
 
 Knowing the path forward is not the same as the destination knowing the path back. A source-routed packet arrives with its hints consumed, so nothing on it describes the return direction, and a destination with no cached route composes a reply that no repeater may carry. A sender that source-routes a packet requesting an acknowledgement should therefore include a trace-route option as well, unless it already knows the destination can reach it. The routed hops record themselves, and the acknowledgement has a path home.
 
@@ -47,13 +47,13 @@ See [Packet Options § Source Route](packet-options.md#source-route-option-3), [
 
 ## Hybrid Routing
 
-A packet can carry both a source-route option and a flood hop count. The packet is source-routed through the listed repeaters first; once the source-route hints are exhausted, it transitions to flood routing bounded by the remaining flood hop count. This enables "deliver to a region, then flood locally" behavior — useful for reaching a node in a known area without flooding the entire mesh.
+A packet can carry both a source-route option and a flood hop count. The packet is source-routed through the listed repeaters first; once the source-route hints are exhausted, it transitions to flood routing bounded by the remaining flood hop count. This enables "deliver to a region, then flood locally" behavior—useful for reaching a node in a known area without flooding the entire mesh.
 
 See [Repeater Operation § Routing Implications](repeater-operation.md#routing-implications).
 
 ## Bridging
 
-A **bridge** is a node that relays UMSH packets between two different media or RF channels — for example, from a local LoRa radio to an internet backhaul and back to a distant LoRa radio, or between two radio bands.
+A **bridge** is a node that relays UMSH packets between two different media or RF channels—for example, from a local LoRa radio to an internet backhaul and back to a distant LoRa radio, or between two radio bands.
 
 Bridges are not prohibited per-se, as that is not a protocol-level decision. Instead, this document provides some guidance on how bridges can be deployed while lowering the risk of hurting local mesh performance.
 
@@ -84,6 +84,6 @@ See [Repeater Operation § Forwarding Confirmation](repeater-operation.md#forwar
 
 ## Channel Access
 
-Before any transmission — original, forwarded, or acknowledgment — a node performs Channel Activity Detection (CAD) and backs off if the channel is busy. Flood-forwarding repeaters additionally use a contention window based on received SNR and RSSI, so that better-positioned repeaters transmit first and the rest can suppress their retransmission if they overhear an earlier forward.
+Before any transmission—original, forwarded, or acknowledgment—a node performs Channel Activity Detection (CAD) and backs off if the channel is busy. Flood-forwarding repeaters additionally use a contention window based on received SNR and RSSI, so that better-positioned repeaters transmit first and the rest can suppress their retransmission if they overhear an earlier forward.
 
 See [Channel Access](channel-access.md).

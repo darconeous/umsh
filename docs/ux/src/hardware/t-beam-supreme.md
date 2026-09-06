@@ -17,7 +17,7 @@ board comes back on with no firmware involved.
 The menu is the three-level tree in
 [Display Tracker Screens](../classes/display-tracker-screens.md), and this is
 the first ESP32 board to show all of it: Status, Identity, and Settings at the
-top, with Bluetooth, Radio, and — because a receiver is fitted — GNSS behind
+top, with Bluetooth, Radio, and—because a receiver is fitted—GNSS behind
 Settings. Row 0 always names the device and carries the battery indicator, and
 the entry under the cursor is drawn inverted across the whole row. The Status
 page shows only state that departs from nominal, the Statistics page reports
@@ -51,7 +51,7 @@ would itself be an indication of the current time.
 | Continue holding for 4 seconds | Power off (PMIC) |
 
 The POWER key is not in that table. It reaches firmware only as an AXP2101
-interrupt, and a press wakes the panel — it is not a menu control. Its own
+interrupt, and a press wakes the panel—it is not a menu control. Its own
 four-second hold is the PMIC's hard power-off, which works with firmware
 wedged and is deliberately left alone.
 
@@ -68,7 +68,7 @@ whole duration, because the OLED is the only place the pairing PIN is ever
 shown.
 
 Battery samples, bond-count changes, and the clock advancing a minute redraw
-the panel while it is lit but never light it — the battery is sampled on a
+the panel while it is lit but never light it—the battery is sampled on a
 timer and the clock moves on its own, so treating either as attention would
 keep the display on forever. Button presses, BLE connection-state changes, and
 POWER-key presses do wake it.
@@ -80,7 +80,7 @@ status page.
 
 ### Power off
 
-The four-second hold passes through regardless of display state — a dark board
+The four-second hold passes through regardless of display state—a dark board
 still has to be switchable off. The sequence is ordered:
 
 1. The radio enters chip sleep, so it stops transmitting before its rail is
@@ -88,7 +88,7 @@ still has to be switchable off. The sequence is ordered:
 2. The display renders “Powering off / hold to wake” and blanks. The panel's
    rail belongs to the PMIC and drops with the others in step 4, not here.
 3. The board waits for the BOOT button to be released, feeding the watchdog
-   throughout. This is not about wake sources — the PMIC handles waking — but
+   throughout. This is not about wake sources—the PMIC handles waking—but
    about the strap: GPIO0 held low across the *next* power-on would drop the
    board into the ROM bootloader.
 4. The switched rails go down, then the PMIC's soft power-off. If the PMIC
@@ -101,9 +101,9 @@ rails.
 Counter persistence needs no shutdown step: it is flushed as the MAC runs, so
 nothing is buffered at power-off.
 
-Implemented in [`firmware-esp32/firmware/esp32-tracker/src/main.rs`][src] — the
+Implemented in [`firmware-esp32/firmware/esp32-tracker/src/main.rs`][src]—the
 sources every ESP32 board shares, with this board selected by its
-`board-tbeam-supreme` feature — over the shared
+`board-tbeam-supreme` feature—over the shared
 [`umsh-ux-display-tracker`][ux-crate] menu, attention, and gate modules.
 
 ## Notes and limitations
@@ -113,7 +113,7 @@ sources every ESP32 board shares, with this board selected by its
   reference's validation checklist is the gate.
 - The panel's I²C address is a population variable: 0x3C normally, 0x3D where a
   QMC6310N magnetometer occupies 0x3C. The firmware probes 0x3D first for
-  exactly that reason — an ACK at 0x3C is not proof the display is there. A
+  exactly that reason—an ACK at 0x3C is not proof the display is there. A
   board whose panel never answers boots headless rather than failing.
 - There is no firmware-owned status LED. The charge LED belongs to the PMIC's
   charger and the PPS LED to the receiver, so pairing mode is visible on the

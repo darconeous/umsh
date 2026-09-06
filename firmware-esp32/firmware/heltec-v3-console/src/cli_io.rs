@@ -12,14 +12,14 @@
 //!
 //! What does NOT carry over is connection state. UART has no notion of a
 //! host opening the port, so there is no `wait_connection` and no
-//! disconnect handling — bytes written with no terminal attached simply
+//! disconnect handling—bytes written with no terminal attached simply
 //! go to the CP2102 and are lost, which is the correct behavior for a
 //! serial console.
 //!
 //! `esp-println` writes to this same UART0 by direct register access.
 //! Boot diagnostics therefore interleave cleanly ahead of the CLI banner,
 //! but steady-state `println!` from other tasks would corrupt the
-//! interactive line editing — the firmware keeps quiet once the CLI is up.
+//! interactive line editing—the firmware keeps quiet once the CLI is up.
 
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Channel;
@@ -37,7 +37,7 @@ pub type OutChunk = heapless::Vec<u8, 64>;
 /// without bound.
 pub static OUTPUT_CH: Channel<CriticalSectionRawMutex, OutChunk, 16> = Channel::new();
 
-/// Drain [`OUTPUT_CH`] to the UART forever. Owns the TX half — nothing
+/// Drain [`OUTPUT_CH`] to the UART forever. Owns the TX half—nothing
 /// else writes to it.
 pub async fn drain_to_uart(tx: &mut UartTx<'static, Async>) -> ! {
     loop {
@@ -104,7 +104,7 @@ impl CliOutput for UartOutput {
 /// handling. Echo bytes are queued through [`OUTPUT_CH`]; this type never
 /// touches the TX half.
 ///
-/// `read_line` never returns `Ok(None)` — a serial console has no EOF.
+/// `read_line` never returns `Ok(None)`—a serial console has no EOF.
 pub struct UartInput {
     rx: UartRx<'static, Async>,
     buf: [u8; 256],

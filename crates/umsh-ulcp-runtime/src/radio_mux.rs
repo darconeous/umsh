@@ -15,7 +15,7 @@
 //!   clients share one antenna, and a client that never learns what the
 //!   antenna beside it emitted cannot talk to it at all.
 //! - **RX**: every received frame is fanned out to every client. Dual
-//!   delivery is what the ULCP spec requires — frames addressed
+//!   delivery is what the ULCP spec requires—frames addressed
 //!   to the device identity are processed by the device itself *and*
 //!   independently offered to host receive filtering. A client whose RX
 //!   queue is full loses that frame (the same drop policy the radio
@@ -104,8 +104,8 @@ pub static MUX_MODE: MuxMode = MuxMode::new();
 ///
 /// This is the only place on a device where every frame that reaches the
 /// air, and every frame that comes off it, passes exactly once no matter
-/// which client owns it — the ULCP session transmits straight to the
-/// radio and never touches the device node's MAC — so `stats` is
+/// which client owns it—the ULCP session transmits straight to the
+/// radio and never touches the device node's MAC—so `stats` is
 /// tallied here rather than anywhere further up. A board with no ledger
 /// passes `None`.
 pub async fn radio_mux<M, const RX: usize, const TX: usize>(
@@ -161,7 +161,7 @@ where
                 let aired = result.is_ok();
                 if let Some(stats) = stats {
                     // Every completion the radio reports arrives here, and
-                    // only frames that went to the radio have one — see
+                    // only frames that went to the radio have one—see
                     // the backhaul branch below, which answers its own.
                     match &result {
                         Ok(()) => stats.bump(Counter::TxPackets),
@@ -235,8 +235,8 @@ struct InFlight {
 
 /// Tally one reception off the air, split by whether it is ours.
 ///
-/// The test is the frame-control field alone — the protocol version and
-/// the reserved bit — not a header parse. The MAC walks the header
+/// The test is the frame-control field alone—the protocol version and
+/// the reserved bit—not a header parse. The MAC walks the header
 /// anyway a moment later, and this runs in the path every client shares.
 ///
 /// It is a test of provenance, not of health: a truncated or damaged
@@ -575,7 +575,7 @@ mod tests {
             let granted = real.tx.receive().await;
             assert_eq!(granted.data.as_slice(), &[0xA1]);
 
-            // No completion yet — fan-out must not be blocked behind it.
+            // No completion yet—fan-out must not be blocked behind it.
             real.rx.send(rx_frame(0x22)).await;
             assert_eq!(b.rx.receive().await.data.as_slice(), &[0x22]);
             assert_eq!(a.rx.receive().await.data.as_slice(), &[0x22]);
@@ -736,7 +736,7 @@ mod tests {
         let stats = ledger();
 
         run_with_stats(real, clients, mode(), stats, async {
-            // A session transmit — the traffic the device node's MAC
+            // A session transmit—the traffic the device node's MAC
             // never sees, and the reason counting happens here.
             session.tx.send(tx_request(0xA1)).await;
             let _ = real.tx.receive().await;
@@ -775,7 +775,7 @@ mod tests {
     }
 
     /// In backhaul mode a session frame is handed to the medium clients
-    /// and never reaches the radio, so it is not a transmission — and the
+    /// and never reaches the radio, so it is not a transmission—and the
     /// busy verdict the mux invents to report a backed-up tunnel is not a
     /// busy channel either.
     #[test]

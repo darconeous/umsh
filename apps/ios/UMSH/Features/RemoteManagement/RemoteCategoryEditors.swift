@@ -26,8 +26,8 @@ struct RemoteField<Value: Equatable & Sendable>: Sendable {
 
     /// Fold a typed field's text back in, once it has parsed.
     ///
-    /// Text that does not parse is not an edit — it is someone partway
-    /// through typing one — so it reads as whatever the device holds. And a
+    /// Text that does not parse is not an edit—it is someone partway
+    /// through typing one—so it reads as whatever the device holds. And a
     /// field the device never answered for takes nothing at all: an empty
     /// box compared against no baseline would stand permanently dirty, and
     /// Apply would offer to write a value nobody entered.
@@ -36,7 +36,7 @@ struct RemoteField<Value: Equatable & Sendable>: Sendable {
         edited = parsed ?? reported
     }
 
-    /// This field — freshly built on a new baseline — keeping the
+    /// This field—freshly built on a new baseline—keeping the
     /// operator's edit where one stands.
     ///
     /// The non-intrusive rule for a reading that moves under an open
@@ -57,7 +57,7 @@ extension Binding {
     /// there is none.
     ///
     /// The controls here bind to fields that may have no value at all, and
-    /// only render once they do — so the stand-in is never what is on
+    /// only render once they do—so the stand-in is never what is on
     /// screen. It exists because `Toggle` and `Picker` take a value rather
     /// than the absence of one.
     func replacingNil<Wrapped: Sendable>(with fallback: Wrapped) -> Binding<Wrapped>
@@ -71,8 +71,8 @@ extension Binding {
 /// The radio: what it transmits on, how loudly, and under what modem
 /// profile.
 ///
-/// Applying anything here brackets the radio — it goes down before the
-/// change and comes back up after — so a device is never asked to move the
+/// Applying anything here brackets the radio—it goes down before the
+/// change and comes back up after—so a device is never asked to move the
 /// frequency it is transmitting on. It is also the screen most able to
 /// strand a device, which is what the confirmation is for.
 struct RemoteRadioEditor: View {
@@ -257,7 +257,7 @@ struct RemoteRadioEditor: View {
         }
 
         /// The new reading as the baseline, with the operator's standing
-        /// edits carried over field by field — see
+        /// edits carried over field by field—see
         /// ``RemoteField/preserving(_:)``.
         init(_ reading: RemoteCategoryReading?, preserving old: Edits) {
             self.init(reading)
@@ -304,7 +304,7 @@ struct RemoteRadioEditor: View {
         /// Which vetted profile a device is on is a question about the mesh
         /// it can talk to, so only the parameters that decide that are
         /// compared. Transmit power and the transmit limit are how hard
-        /// this one device pushes and how often — local decisions that
+        /// this one device pushes and how often—local decisions that
         /// leave it on the same profile as everyone else, and a radio
         /// reports power clamped to what it can actually reach. Comparing
         /// either would call a device "custom" for turning itself down.
@@ -332,7 +332,7 @@ struct RemoteRadioEditor: View {
 
         /// Whether these edits touch what the device listens on. Frequency
         /// and the modem profile decide who can hear whom, and a radio
-        /// switched off hears nothing — those get the warning. Power and
+        /// switched off hears nothing—those get the warning. Power and
         /// the transmit limit only change how far the device reaches.
         var strandsIfWrong: Bool {
             let typed = self.typed
@@ -396,7 +396,7 @@ struct RemoteRadioEditor: View {
 /// The position here is a claim rather than a measurement: a repeater on a
 /// mast with no receiver still has a place, and this is where an operator
 /// states it. When the device maintains its own position from its receiver,
-/// these rows go read-only and say so — the device would refuse the write
+/// these rows go read-only and say so—the device would refuse the write
 /// anyway.
 struct RemoteIdentityEditor: View {
     let model: ManageDeviceModel
@@ -627,7 +627,7 @@ struct RemoteIdentityEditor: View {
     /// How coarsely the position is reported.
     ///
     /// The same choice reached two ways. A device with a receiver holds it as
-    /// a property — it is the clamp its own fixes pass through — and there
+    /// a property—it is the clamp its own fixes pass through—and there
     /// this writes it. A device without one has no such property and never
     /// answered for it, so the choice is local: it decides how many bytes a
     /// hand-placed position is encoded to, and reaches the device only inside
@@ -657,7 +657,7 @@ struct RemoteIdentityEditor: View {
     ///
     /// Offered only on a local link, where the two are in the same room. The
     /// altitude comes along when the fix states one, because a phone that
-    /// knows its own height knows the device's — and is left alone otherwise
+    /// knows its own height knows the device's—and is left alone otherwise
     /// rather than written as a zero.
     private func placeFromPhone() async {
         guard let readPhonePosition, !isReadingPhone else { return }
@@ -702,7 +702,7 @@ struct RemoteIdentityEditor: View {
         var altitudeText = ""
         /// The grid a hand-placed position is encoded to on a device that
         /// holds no precision property of its own. Never on the air as
-        /// itself — it shapes ``location`` and nothing else.
+        /// itself—it shapes ``location`` and nothing else.
         var manualPrecision = Self.defaultPrecision
         var isEmpty = true
         /// What the device last said, in full.
@@ -717,7 +717,7 @@ struct RemoteIdentityEditor: View {
             name = RemoteField(id.deviceName, held.deviceName)
             // A role the device does not state is a device deriving its
             // own, and an altitude it leaves empty is a device at no stated
-            // height — values rather than absences, so both are known
+            // height—values rather than absences, so both are known
             // exactly when the property was read.
             role = RemoteField(id.identRole, read(id.identRole) ? .some(held.identRole) : nil)
             mobile = RemoteField(id.identMobile, held.identMobile)
@@ -737,7 +737,7 @@ struct RemoteIdentityEditor: View {
             longitude = held.identLongitudeDeg.map { Self.coordinate($0) } ?? ""
             altitudeText = held.identAltitudeM.map(String.init) ?? ""
             // Precision belongs to the receiver, so a device without one
-            // never answers for it — and a position written by hand still
+            // never answers for it—and a position written by hand still
             // has to be encoded to some grid. The grid the device already
             // advertises on is that answer where it has one; a device placed
             // nowhere yet takes the same default a device resets to.
@@ -750,7 +750,7 @@ struct RemoteIdentityEditor: View {
         }
 
         /// The new reading as the baseline, with the operator's standing
-        /// edits carried over field by field — see
+        /// edits carried over field by field—see
         /// ``RemoteField/preserving(_:)``.
         init(_ reading: RemoteCategoryReading?, preserving old: Edits) {
             self.init(reading)
@@ -791,7 +791,7 @@ struct RemoteIdentityEditor: View {
         ///
         /// Always a precision the encoding accepts. Deriving it from the
         /// byte count of whatever the device last reported cannot promise
-        /// that — an unplaced device reports no bytes at all, which is a
+        /// that—an unplaced device reports no bytes at all, which is a
         /// precision of zero and encodes nothing.
         var encodingPrecision: UInt8 { precision.value ?? manualPrecision }
 
@@ -803,7 +803,7 @@ struct RemoteIdentityEditor: View {
         }
 
         /// Take a precision from wherever it was chosen into whichever of
-        /// the two places holds it — the device's property where there is
+        /// the two places holds it—the device's property where there is
         /// one, the local choice otherwise. See ``encodingPrecision``.
         mutating func setPrecision(_ value: UInt8) {
             if precision.isKnown {
@@ -883,7 +883,7 @@ struct RemoteIdentityEditor: View {
             if typed.precision.isDirty { dirty.insert(typed.precision.property) }
             // A device keeping its own position would refuse both of
             // these, and turning that off in the same apply does not
-            // change what it refuses — the write is judged against the
+            // change what it refuses—the write is judged against the
             // policy the device is holding when it arrives.
             if !isSelfPositioning, selfPositions.reported != true {
                 if typed.location.isDirty { dirty.insert(typed.location.property) }
@@ -1094,7 +1094,7 @@ struct RemoteRepeaterEditor: View {
                 currentDefaultRegion: edits.defaultRegion.value ?? nil,
                 sources: positionSources,
                 // Over a local link the phone is at the device, so where it
-                // is stands for where the device is — and is offered first,
+                // is stands for where the device is—and is offered first,
                 // being the freshest position either of them has. Across
                 // the mesh it stands for nothing about the device.
                 offersPhone: model.phoneStandsForDevice,
@@ -1129,7 +1129,7 @@ struct RemoteRepeaterEditor: View {
     }
 
     /// Take a suggestion into the fields, marking dirty only what actually
-    /// moved — so an outcome that changes the list but not the tag puts one
+    /// moved—so an outcome that changes the list but not the tag puts one
     /// property on the air, not two.
     private func adopt(_ outcome: MobileRegionOutcomeRecord) {
         edits.regions.edited = outcome.regions
@@ -1158,7 +1158,7 @@ struct RemoteRepeaterEditor: View {
         let text = newRegion.trimmingCharacters(in: .whitespaces)
         guard !text.isEmpty else { return }
         guard RegionCodeText.code(of: text) != nil else {
-            regionProblem = "That region name is too long. Use up to 24 characters — a short code like SJC or WA, a region name, or 0x followed by four hex digits."
+            regionProblem = "That region name is too long. Use up to 24 characters—a short code like SJC or WA, a region name, or 0x followed by four hex digits."
             return
         }
         regionProblem = nil
@@ -1220,7 +1220,7 @@ struct RemoteRepeaterEditor: View {
         }
 
         /// The new reading as the baseline, with the operator's standing
-        /// edits carried over field by field — see
+        /// edits carried over field by field—see
         /// ``RemoteField/preserving(_:)``.
         init(_ reading: RemoteCategoryReading?, preserving old: Edits) {
             self.init(reading)
@@ -1406,7 +1406,7 @@ struct RadioPreset: Identifiable {
     let dutyCycleLimit: UInt16
 
     /// Whether a node on this preset and one on `profile` can hear each
-    /// other — the same exclusion of power and the transmit limit that
+    /// other—the same exclusion of power and the transmit limit that
     /// ``RadioProfile/interoperates(with:)`` makes.
     func interoperates(with profile: RadioProfile) -> Bool {
         profile.frequencyKHz == frequencyKHz

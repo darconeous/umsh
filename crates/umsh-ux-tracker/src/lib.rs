@@ -9,13 +9,13 @@
 //!
 //! The crate provides only **mechanism**, not policy:
 //!
-//! - [`button`] — recognize Single / Double / Triple / Long button
+//! - [`button`]—recognize Single / Double / Triple / Long button
 //!   events from raw debounced edges + a monotonic-millisecond clock.
-//! - [`led`] — drive a single-LED heartbeat with one-shot sequences
+//! - [`led`]—drive a single-LED heartbeat with one-shot sequences
 //!   layered on top (power-on, power-off, location-advert, …).
-//! - [`buzzer`] — play short tone melodies on a piezo buzzer with
+//! - [`buzzer`]—play short tone melodies on a piezo buzzer with
 //!   silence-mode support.
-//! - [`power`] — vocabulary ([`PowerIntent`](power::PowerIntent),
+//! - [`power`]—vocabulary ([`PowerIntent`](power::PowerIntent),
 //!   [`PowerIntentSource`](power::PowerIntentSource)) shared by every
 //!   source that wants to take the device out of normal operation,
 //!   plus a [`LowBatteryDetector`](power::LowBatteryDetector) that
@@ -28,8 +28,8 @@
 //!
 //! Devices in a different class (handheld with screen + speaker +
 //! keyboard, headless mesh nodes) need their own `umsh-ux-<class>`
-//! crate because the abstractions here — single-LED heartbeat,
-//! piezo-tone melodies, gesture-on-one-button — do not generalize
+//! crate because the abstractions here—single-LED heartbeat,
+//! piezo-tone melodies, gesture-on-one-button—do not generalize
 //! meaningfully across classes.
 //!
 //! See `docs/firmware-architecture.md` for the broader BSP / UX / App

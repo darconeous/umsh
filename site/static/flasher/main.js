@@ -2,9 +2,9 @@
  * The web flasher: pick a board, pick firmware, flash it over USB.
  *
  * Two paths, chosen by what the board is:
- *   nRF52840 — reboot into the Adafruit bootloader (or let the user do it by
+ *   nRF52840—reboot into the Adafruit bootloader (or let the user do it by
  *              hand), then speak legacy Nordic serial DFU at 115200.
- *   ESP32-S3 — hand the port to esptool-js, which drives the ROM bootloader
+ *   ESP32-S3—hand the port to esptool-js, which drives the ROM bootloader
  *              itself over DTR/RTS.
  *
  * Everything the page fetches is same-origin, which is what lets the template
@@ -154,12 +154,12 @@ function renderFirmwareStep() {
   elements["flasher-file-hint"].innerHTML = isEsp(board)
     ? "For developers: a merged image, as <code>make merged-bin-" +
       board.id +
-      "</code> writes it — <code>umsh-" +
+      "</code> writes it—<code>umsh-" +
       board.id +
       "-&lt;version&gt;.bin</code>."
     : "For developers: a DFU package, as <code>make dfu-zip-" +
       board.id +
-      "</code> writes it — <code>umsh-" +
+      "</code> writes it—<code>umsh-" +
       board.id +
       "-&lt;version&gt;-dfu.zip</code>.";
 }
@@ -225,7 +225,7 @@ function renderFlashStep() {
       ? "Firmware downloads are unavailable right now."
       : isEsp(board)
         ? "To flash by hand, write the downloaded image to the board at address 0x0 with esptool or espflash."
-        : `To flash by hand: put the radio in update mode (${updateModeFor(board)}) — a small USB drive named ${board.flash.volume} appears. Copy the downloaded UF2 onto it, and the radio restarts with the new firmware.`;
+        : `To flash by hand: put the radio in update mode (${updateModeFor(board)})—a small USB drive named ${board.flash.volume} appears. Copy the downloaded UF2 onto it, and the radio restarts with the new firmware.`;
     return;
   }
 
@@ -247,12 +247,12 @@ function renderFlashStep() {
   );
   appendDownloadLinks(actions);
 
-  // For a radio already running UMSH, clicking Flash is the whole job — the
+  // For a radio already running UMSH, clicking Flash is the whole job—the
   // page restarts it into update mode itself. This line covers the boards
   // that can't do that yet, without asking anyone to decode "bootloader".
   elements["flasher-entry"].textContent = isEsp(board)
     ? ""
-    : `Brand-new board, or not running UMSH yet? Put it in update mode first — ${updateModeFor(board)} — then click Flash radio.`;
+    : `Brand-new board, or not running UMSH yet? Put it in update mode first—${updateModeFor(board)}—then click Flash radio.`;
 }
 
 /**
@@ -303,7 +303,7 @@ async function flashNrf() {
   if (!port) return;
 
   // Anything that is not a running UMSH radio is either already in update
-  // mode — flash it right here, on the port the user just picked — or still
+  // mode—flash it right here, on the port the user just picked—or still
   // on factory firmware, in which case the attempt times out and the error
   // explains the button gesture. A second picker helps neither case.
   if (!isUmshAppPort(port)) {
@@ -327,7 +327,7 @@ async function flashNrf() {
 
   state.awaitingBootloader = true;
   setStatus(
-    "The radio restarted into update mode, so it shows up as a new entry in the port list. Click Continue and pick it again — same radio, possibly a different name. If a small USB drive popped up too, just ignore it.",
+    "The radio restarted into update mode, so it shows up as a new entry in the port list. Click Continue and pick it again—same radio, possibly a different name. If a small USB drive popped up too, just ignore it.",
   );
 }
 
@@ -361,7 +361,7 @@ async function flashPort(port) {
   // A radio that has just re-enumerated into update mode reliably drops the
   // very first connection on some machines (macOS is still probing the new
   // device and mounting its little USB drive). Nothing durable has happened
-  // when that occurs — update mode only applies a complete image — so retry
+  // when that occurs—update mode only applies a complete image—so retry
   // quietly instead of asking the user to press the button again. The
   // permission survives re-enumeration, so no second picker is needed.
   const ATTEMPTS = 3;
@@ -383,7 +383,7 @@ async function flashPort(port) {
       const retriable = error instanceof SerialLostError || error?.name === "NetworkError";
       if (!retriable || attempt >= ATTEMPTS) throw error;
       log(`Connection dropped (${error.message}); waiting for the radio to settle, then retrying.`);
-      setStatus("The radio is still settling into update mode — trying again…");
+      setStatus("The radio is still settling into update mode—trying again…");
       hideProgress();
       await sleep(2000);
       port = (await reacquirePort(port)) ?? port;
@@ -454,7 +454,7 @@ async function requestPort() {
     return await navigator.serial.requestPort();
   } catch (error) {
     if (error?.name === "NotFoundError" || error?.name === "AbortError") {
-      setStatus("Nothing was flashed — the picker was closed. Click the button again and choose your radio from the list.");
+      setStatus("Nothing was flashed—the picker was closed. Click the button again and choose your radio from the list.");
       return null;
     }
     throw error;
@@ -486,9 +486,9 @@ function fail(error) {
     message = "the connection to the radio dropped partway through.";
     guidance = isEsp(state.board)
       ? " The board is not damaged—an interrupted flash just has to be redone. Plug it back in and click Flash radio again."
-      : ` The radio is not damaged—it just didn't get the whole update, so it may not start until it does. Put it back in update mode — ${updateModeFor(state.board)} — and click Flash radio again.`;
+      : ` The radio is not damaged—it just didn't get the whole update, so it may not start until it does. Put it back in update mode—${updateModeFor(state.board)}—and click Flash radio again.`;
   } else if (error?.name === "DfuTimeoutError") {
-    guidance = ` Try putting it in update mode yourself — ${updateModeFor(state.board)} — then click Flash radio again.`;
+    guidance = ` Try putting it in update mode yourself—${updateModeFor(state.board)}—then click Flash radio again.`;
   } else if (error?.name === "NetworkError" || /already open|failed to open/i.test(message)) {
     guidance = " Another program on this computer is probably using the port—close any serial monitor or flashing tool and try again.";
   }

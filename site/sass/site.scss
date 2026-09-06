@@ -467,7 +467,7 @@ pre {
 }
 
 // The composite is a transparent PNG, so it sits on the page with no tile,
-// frame, or caption around it — nothing to theme, and nothing to align.
+// frame, or caption around it—nothing to theme, and nothing to align.
 .hero__image {
   display: block;
   width: 100%;
@@ -958,7 +958,7 @@ th:first-child {
 
 // Centered pages put the title and its standfirst on the page's axis, to
 // match the centered section headings further down. Body copy underneath
-// stays left-aligned inside a centered block — only the headings are
+// stays left-aligned inside a centered block—only the headings are
 // centered text.
 .page-head--center {
   text-align: center;
@@ -1118,7 +1118,7 @@ th:first-child {
   // `repeat(auto-fit, ...)` cannot be used alongside the brand column.
   // auto-fit picks its repetition count from the *minimum* contribution of
   // the other tracks, and a flexible track's minimum is zero, so it fits two
-  // 9rem link columns first and leaves the brand whatever remains — 1px at a
+  // 9rem link columns first and leaves the brand whatever remains—1px at a
   // 393pt iPhone, with the blurb overflowing across the links. An explicit
   // track count with a real minimum cannot collapse that way.
   > .container:first-child {

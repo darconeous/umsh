@@ -630,7 +630,7 @@ Header numbers increase from bottom to top.
 
 Before designing a carrier PCB, verify orientation against the physical board and continuity-test critical pins.
 
-### 12.2 Header J2 — right side in Heltec's front-view diagram
+### 12.2 Header J2—right side in Heltec's front-view diagram
 
 | J2 pin | Signal | Notes |
 |---:|---|---|
@@ -653,7 +653,7 @@ Before designing a carrier PCB, verify orientation against the physical board an
 | 17 | GPIO20 | Native USB D+ capability |
 | 18 | GPIO19 | Native USB D- capability |
 
-### 12.3 Header J3 — left side in Heltec's front-view diagram
+### 12.3 Header J3—left side in Heltec's front-view diagram
 
 | J3 pin | Signal | Notes |
 |---:|---|---|

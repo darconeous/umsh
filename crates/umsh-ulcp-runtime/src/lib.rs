@@ -14,14 +14,14 @@
 //! journal handle (mount scan, write-target rotation, boot walk-back) and
 //! [`node_counters`] the device node's persisted frame counters. Both are
 //! generic over the board's flash type, which is the only part of that
-//! stack that is genuinely per-board — the nRF images drive
+//! stack that is genuinely per-board—the nRF images drive
 //! MPSL-coordinated NVMC, the ESP32 image its SPI part. Shared modules
 //! emit diagnostics through [`log`], whose sink each board installs once
 //! at boot.
 
 #![cfg_attr(not(test), no_std)]
 
-// Pure, dependency-free — always available.
+// Pure, dependency-free—always available.
 pub mod ble_security;
 pub mod log;
 pub mod transport_policy;

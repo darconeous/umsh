@@ -22,7 +22,7 @@ pub use umsh_hal::{
 
 /// [`CliSession`] sized for typical desktop and tracker-class targets.
 ///
-/// Uses [`NoPeerStore`], [`NoChannelStore`], and [`NoPowerControl`] — state is
+/// Uses [`NoPeerStore`], [`NoChannelStore`], and [`NoPowerControl`]—state is
 /// tracked in-memory only and `/poweroff` is a no-op. For embedded targets
 /// with flash storage and a real shutdown path, use `CliSession<…>` directly.
 ///

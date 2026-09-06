@@ -2,7 +2,7 @@
 //! continued.
 //!
 //! A read whose answer does not fit one payload is carried across several
-//! exchanges by fragmenting the response frame's **trailing content** —
+//! exchanges by fragmenting the response frame's **trailing content**—
 //! the value of a `CMD_PROP_IS`, or the entry list of a `CMD_PROP_ARE`.
 //! Every fragment repeats the frame's leading bytes, so each is a
 //! well-formed frame on its own, and the administrator recovers the whole
@@ -18,8 +18,8 @@ use crate::device::{Dispatch, Produced};
 
 /// Whether a cursor may continue a request bearing this command.
 ///
-/// Reads only. A write sequence cannot be continued — resuming one would
-/// mean deciding whether to apply its entries again — so a
+/// Reads only. A write sequence cannot be continued—resuming one would
+/// mean deciding whether to apply its entries again—so a
 /// `CMD_PROP_MULTI_SET` whose reply does not fit stops instead, and the
 /// administrator reissues the remainder as a new exchange.
 pub const fn continuable(cmd: Cmd) -> bool {
@@ -62,7 +62,7 @@ pub fn trailing(frame: &[u8]) -> &[u8] {
 /// leading bytes followed by the slice of its trailing content beginning
 /// at `dispatch.resume`, sized to `dispatch.budget` and to `buf`.
 ///
-/// A reply the caller cannot cut — one with no trailing content — is
+/// A reply the caller cannot cut—one with no trailing content—is
 /// copied through whole. If it does not fit, that is not this function's
 /// to hide: [`DeviceEngine::complete`](crate::device::DeviceEngine::complete)
 /// refuses it.
@@ -199,7 +199,7 @@ mod tests {
     fn everything_else_has_no_trailing_content() {
         let mut buf = [0u8; 32];
         let len = frame::last_status(&mut buf, 0, umsh_ulcp::status::Status::OK).unwrap();
-        // A status is a CMD_PROP_IS, so it does have trailing content —
+        // A status is a CMD_PROP_IS, so it does have trailing content—
         // it is simply always short enough to fit.
         assert!(!trailing(&buf[..len]).is_empty());
 

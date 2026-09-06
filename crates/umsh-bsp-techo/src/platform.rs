@@ -1,4 +1,4 @@
-//! [`TechoPlatform`] — the concrete `umsh_mac::Platform` bundle for the
+//! [`TechoPlatform`]—the concrete `umsh_mac::Platform` bundle for the
 //! LilyGO T-Echo.
 //!
 //! Composes the chip-level nRF52840 plumbing from [`umsh_bsp_nrf52840`]

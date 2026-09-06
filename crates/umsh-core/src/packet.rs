@@ -340,7 +340,7 @@ pub struct ChannelId(pub [u8; 2]);
 /// distinguish channels that a [`ChannelId`] cannot.
 ///
 /// The two-byte identifier is a hint, and collisions between distinct channel
-/// keys are legal — a frame belongs to whichever channel key authenticates it,
+/// keys are legal—a frame belongs to whichever channel key authenticates it,
 /// not to whichever key derives the same identifier. Bookkeeping that has no
 /// key at hand to authenticate against therefore needs a wider name; this is
 /// that name. Nothing on the wire carries it.
@@ -677,7 +677,7 @@ impl PacketHeader {
                 if options_end < options_start {
                     return Err(ParseError::Truncated);
                 }
-                // MAC ACK has no payload — the options region is bounded by
+                // MAC ACK has no payload—the options region is bounded by
                 // the fixed 8-byte ack trailer. The scan must consume the
                 // entire region: either the marker is absent (and the scan
                 // exhausts the region), or the marker is the last byte (and

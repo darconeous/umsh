@@ -3,14 +3,14 @@
 # name a `parent` defined earlier in this file, which the build verifies
 # contains it.
 #
-# The two entries below are worked examples with placeholder geometry — the
+# The two entries below are worked examples with placeholder geometry—the
 # hand-drawn kind of region a pack exists for. The community's full hierarchy
 # (west / pnw / wa / w-wa / sea, and so on) belongs here as reviewed shapes,
 # ordered parents-first; a repeater inside `sea` then receives the whole
 # chain from containment alone, with nothing else to configure.
 #
 # Radio naming: a name of one to three ASCII alphanumerics is read by the
-# runtime as a short code — `sea` IS the code SEA, the same wire code as the
+# runtime as a short code—`sea` IS the code SEA, the same wire code as the
 # airport, which for a Seattle metro region is exactly right. That identity
 # grab must be declared: set `allow_short_code: true` on such a region or the
 # build refuses it. Longer names (`palouse`, `salishmesh`) hash into the
@@ -35,7 +35,7 @@ regions:
     source:
       type: manual
       notes: >-
-        Placeholder sketch of the Palouse — Pullman WA with Moscow, Lewiston
+        Placeholder sketch of the Palouse—Pullman WA with Moscow, Lewiston
         and the Clearwater in ID, deliberately cross-border. Pending a
         boundary reviewed by the community.
 

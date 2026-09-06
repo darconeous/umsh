@@ -2,8 +2,8 @@
 
 Frame transport is the data plane: the host transmits and receives raw,
 complete UMSH frames through the device. Frames cross the link
-untouched — the ULCP link carries UMSH frames, not re-encoded UMSH
-semantics — so the host runs the entire UMSH MAC and the device moves
+untouched—the ULCP link carries UMSH frames, not re-encoded UMSH
+semantics—so the host runs the entire UMSH MAC and the device moves
 frames on its behalf.
 
 One practical consequence is that a host can address the device's own

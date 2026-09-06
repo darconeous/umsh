@@ -296,7 +296,7 @@ impl Command {
     pub fn mesh_refusal(&self) -> Option<&'static str> {
         match self {
             // Captured frames arrive as unsolicited stream traffic, and
-            // the binding carries nothing unsolicited — there is no
+            // the binding carries nothing unsolicited—there is no
             // remote form of this to reach for.
             Self::Capture(_) => Some(
                 "capture listens on the attached radio's own receiver, which a mesh session \
@@ -317,7 +317,7 @@ impl Command {
         }
     }
 
-    /// Check whatever clap's grammar cannot — combinations of flags —
+    /// Check whatever clap's grammar cannot—combinations of flags—
     /// *before* a device is opened.
     ///
     /// Connecting takes seconds over BLE and disturbs a radio that was
@@ -469,7 +469,7 @@ fn default(app: &mut App, op: DefaultOp) -> Result<()> {
 /// `save`, and the device treats saving as cheap.
 pub async fn persist<L: FrameLink>(device: &mut UlcpDevice<L>, no_save: bool) -> Result<()> {
     if no_save {
-        output::note("--no-save — changes are live only; the save command persists them");
+        output::note("--no-save—changes are live only; the save command persists them");
     } else {
         device.save().await?;
         println!("saved: changes persist across reboots");
@@ -493,7 +493,7 @@ fn duty_percent(raw: u16) -> f64 {
 /// A span of seconds at human scale, to at most two units: `45s`, `20m`,
 /// `1h30m`, `12d6h`.
 ///
-/// Two units is the point where more precision stops helping — nobody
+/// Two units is the point where more precision stops helping—nobody
 /// reading an uptime of `12d6h` wanted the seconds. Days matter because
 /// this also renders uptimes, where hour counts run into the hundreds.
 fn format_duration(seconds: u32) -> String {

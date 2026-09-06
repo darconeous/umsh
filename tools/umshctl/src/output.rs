@@ -83,7 +83,7 @@ pub fn warn(text: impl std::fmt::Display) {
     eprintln!("warning: {text}");
 }
 
-/// Lowercase hex, no separators — the form every digest and id in this
+/// Lowercase hex, no separators—the form every digest and id in this
 /// tool's output uses. Public keys go through [`address`] instead.
 pub fn hex(bytes: &[u8]) -> String {
     use std::fmt::Write as _;
@@ -94,7 +94,7 @@ pub fn hex(bytes: &[u8]) -> String {
     text
 }
 
-/// A public key in the canonical fixed-width base58 address form — how
+/// A public key in the canonical fixed-width base58 address form—how
 /// this tool prints every key, wherever it came from. Anything that is
 /// not key-shaped has no address to render and falls back to hex, so a
 /// device that quotes something unexpected still shows what it said.

@@ -1,4 +1,4 @@
-# UMSH Geographic Region Database — Comprehensive Implementation Plan
+# UMSH Geographic Region Database—Comprehensive Implementation Plan
 
 **Repository:** `https://github.com/darconeous/umsh`  
 **Primary data directory:** `regions/`  
@@ -82,10 +82,10 @@ The detailed lookup result must preserve the semantic matches even when the fina
 
 UMSH already exposes repeater configuration in the mobile facade. `UlcpRepeaterSettingsRecord` contains:
 
-- `enabled: bool` — whether the repeater role is on;
-- `regions: Vec<String>` — the configured region filter, expressed as region strings (empty imposes no regional restriction);
-- `default_region: Option<Vec<u8>>` — the 2-octet region inserted into an otherwise untagged flood;
-- `min_rssi_dbm: Option<i16>` and `min_snr_db: Option<i8>` — signal-quality forwarding thresholds, not relevant to this project.
+- `enabled: bool`—whether the repeater role is on;
+- `regions: Vec<String>`—the configured region filter, expressed as region strings (empty imposes no regional restriction);
+- `default_region: Option<Vec<u8>>`—the 2-octet region inserted into an otherwise untagged flood;
+- `min_rssi_dbm: Option<i16>` and `min_snr_db: Option<i8>`—signal-quality forwarding thresholds, not relevant to this project.
 
 The geographic database should return both:
 
@@ -259,10 +259,10 @@ The source format must support manual changes to generated boundaries.
 
 At minimum support:
 
-- **force assignment** — inside a polygon, a particular region wins the core assignment for an exclusive generated layer;
-- **include** — union a polygon into a region without removing other regions;
-- **exclude** — subtract a polygon from a region;
-- **replace** — replace an explicitly authored/non-generated core geometry.
+- **force assignment**—inside a polygon, a particular region wins the core assignment for an exclusive generated layer;
+- **include**—union a polygon into a region without removing other regions;
+- **exclude**—subtract a polygon from a region;
+- **replace**—replace an explicitly authored/non-generated core geometry.
 
 For generated nearest-site layers, `force` is generally safer than a naïve “replace one Voronoi polygon” operation because changing one member of a partition affects its neighbors.
 
@@ -433,9 +433,9 @@ site/
 
 Do not commit multi-hundred-megabyte raw GIS snapshots. The pipeline has three stages with distinct commit policies:
 
-1. **Fetch** (`make regions-fetch`) — downloads raw upstream data into `regions/vendor/`, gitignored, pinned by `regions/upstream/lock.json`.
-2. **Update** (`make regions-update`) — distills the vendor data into small, deterministic, diff-friendly extracts under `regions/extracts/`, which **are committed**. These contain only the data the compilation actually consumes: point/attribute datasets (IATA codes, coordinates, classifications) as sorted stable-keyed CSV, and boundary layers only where the simplified geometry is measured small enough to be worth committing—large polygon layers may stay on the fetch path.
-3. **Build** (`make regions-build`) — consumes only committed files (`regions/extracts/` plus the human-authored manifests). It needs neither network access nor `regions/vendor/`, so a clean checkout builds offline and reproducibly.
+1. **Fetch** (`make regions-fetch`)—downloads raw upstream data into `regions/vendor/`, gitignored, pinned by `regions/upstream/lock.json`.
+2. **Update** (`make regions-update`)—distills the vendor data into small, deterministic, diff-friendly extracts under `regions/extracts/`, which **are committed**. These contain only the data the compilation actually consumes: point/attribute datasets (IATA codes, coordinates, classifications) as sorted stable-keyed CSV, and boundary layers only where the simplified geometry is measured small enough to be worth committing—large polygon layers may stay on the fetch path.
+3. **Build** (`make regions-build`)—consumes only committed files (`regions/extracts/` plus the human-authored manifests). It needs neither network access nor `regions/vendor/`, so a clean checkout builds offline and reproducibly.
 
 Extract files are machine-written and never hand-edited: each carries a provenance header (source id, upstream revision, SHA-256, retrieval date), and the update pass is idempotent—the same vendor data yields byte-identical extracts. Manual corrections belong in `classifications/` and `overrides/`, which the build applies on top; edits to extracts would be clobbered by the next update. Because refreshes land as ordinary commits, the PR diff of `regions/extracts/` is the geographic-policy review.
 
@@ -1821,12 +1821,12 @@ Create `regions/LICENSES.md` and treat data licensing separately from UMSH sourc
 
 Expected examples:
 
-- OurAirports — Public Domain
-- `datasets/airport-codes` — PDDL packaging, derived from OurAirports
-- `lxndrblz/Airports` city-code seed — CC BY-SA 4.0
-- geoBoundaries gbOpen — CC BY 4.0
-- US Census TIGER/Line — US government/public data; record source/vintage
-- Natural Earth, if used — Public Domain
+- OurAirports—Public Domain
+- `datasets/airport-codes`—PDDL packaging, derived from OurAirports
+- `lxndrblz/Airports` city-code seed—CC BY-SA 4.0
+- geoBoundaries gbOpen—CC BY 4.0
+- US Census TIGER/Line—US government/public data; record source/vintage
+- Natural Earth, if used—Public Domain
 
 The compiled `.regiondb` must include source attribution metadata.
 
@@ -1985,7 +1985,7 @@ A developer must be able to answer “why did this position get this region?” 
 
 ## 32. Suggested implementation phases
 
-### Phase 0 — format/spec skeleton and benchmark
+### Phase 0—format/spec skeleton and benchmark
 
 Deliver:
 
@@ -2004,7 +2004,7 @@ Acceptance:
 - iOS UniFFI smoke test can call the reader;
 - browser can open the fixture DB.
 
-### Phase 1 — IATA sources and generated cores
+### Phase 1—IATA sources and generated cores
 
 Deliver:
 
@@ -2022,7 +2022,7 @@ Acceptance:
 - known western-US points behave sensibly;
 - global generated core topology validates.
 
-### Phase 2 — `.regiondb` V1 compiler
+### Phase 2—`.regiondb` V1 compiler
 
 Deliver:
 
@@ -2041,7 +2041,7 @@ Acceptance:
 - DB is within initial size budget;
 - Rust lookup meets performance target.
 
-### Phase 3 — country/state/metro/custom/override/expansion
+### Phase 3—country/state/metro/custom/override/expansion
 
 Deliver:
 
@@ -2060,7 +2060,7 @@ Acceptance:
 - metro is containment-only;
 - forced override is visible in map/debug export.
 
-### Phase 4 — mobile integration
+### Phase 4—mobile integration
 
 The Rust half is delivered: `umsh-regiondb` is a dependency of
 `umsh-mobile-core`, the `MobileRegionDatabase` object and its records are
@@ -2089,7 +2089,7 @@ Acceptance:
 - applying suggested regions writes the existing repeater settings correctly;
 - existing manually configured regions are never silently replaced.
 
-### Phase 5 — web viewer/debugger
+### Phase 5—web viewer/debugger
 
 Deliver:
 
@@ -2108,7 +2108,7 @@ Acceptance:
 - no mixed/scrambled map tiles from missing external CSS;
 - the viewer consumes the actual released `.regiondb`.
 
-### Phase 6 — release pipeline and optional HTTP API
+### Phase 6—release pipeline and optional HTTP API
 
 Deliver:
 
@@ -2290,7 +2290,7 @@ This order will catch format/API mistakes while the dataset is small enough to i
 
 ---
 
-## Appendix A — Expected source references
+## Appendix A—Expected source references
 
 These are starting references, not substitutes for pinned source manifests.
 
@@ -2334,7 +2334,7 @@ Alternative/background map source:
 
 ---
 
-## Appendix B — Key design rationale
+## Appendix B—Key design rationale
 
 The database is deliberately a **compiled routing dataset**, not merely a copy of airport points.
 

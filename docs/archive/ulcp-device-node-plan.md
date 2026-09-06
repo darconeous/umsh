@@ -1,4 +1,4 @@
-# Companion Radio Device Node — Implementation Plan
+# Companion Radio Device Node—Implementation Plan
 
 Bring the **device identity** on the companion-radio (NCP) firmware to life as
 a real UMSH node: a full `umsh-mac`/`umsh-node` stack running on the radio
@@ -7,7 +7,7 @@ The first user-visible feature is the T-1000E single-click **beacon from the
 device identity**, sent through the ordinary node API.
 
 Status: **all five increments complete and hardware-validated
-(increment 5 on 2026-07-18) — the milestone is done.** Remaining
+(increment 5 on 2026-07-18)—the milestone is done.** Remaining
 follow-ups are recorded in increment 5's closing notes.
 Increment 1 (radio mux): host tests plus the T-1000E gate (companion
 probe, RF delegated-ack, drain) green. Increment 2 (device node +
@@ -16,11 +16,11 @@ received on a T-Echo (6-byte spec-form broadcast, source hint of the
 device key, −26 dBm) with acceptance-gated LED/melody confirm; the RF
 delegated-ack gate re-passes with the node running beside the session.
 Bring-up hard lesson: the ~37 KiB Mac must be constructed in place
-(`StaticCell::init_with`) — building it on the stack overflowed the
+(`StaticCell::init_with`)—building it on the stack overflowed the
 ~114 KiB left above this image's statics and corrupted .bss on every
 boot. Increment 3 (device-domain wiring + RAM diet): acceptance ran on
 the T-1000E with the T-Echo as sealed-multicast peer
-(`ulcp_hw_validate rf-dev-multicast`) — live `dev-channel add`
+(`ulcp_hw_validate rf-dev-multicast`)—live `dev-channel add`
 joins the node and multicast is processed (`node rx: Multicast
 ch=1d06 auth=true` on the debug console); the host queue stays at
 0/0 through detached bursts (filter independence); `dev-channel
@@ -53,7 +53,7 @@ possible without a MAC.
 
 What exists today is only the provisioning surface: the keypair (generated or
 installed, independently persisted in the identity journal), `PROP_DEV_KEY`,
-and the `PROP_DEV_CHANNEL_KEYS`/`PROP_DEV_PEERS` tables stored — but unused —
+and the `PROP_DEV_CHANNEL_KEYS`/`PROP_DEV_PEERS` tables stored—but unused—
 inside the session. The BLE-transport plan deliberately deferred the rest
 (`docs/ulcp-ble-plan.md` increment 7: "does not yet require repeater or
 autonomous application behavior for the device identity"), and deliberately
@@ -68,9 +68,9 @@ through that door.
   (`umsh_radio_loraphy::Channels<ThreadModeRawMutex, 4, 2>`) and `DEVICE_CTL`.
   The session is the radio's only client: it forwards the host's raw frames,
   filters/queues inbound traffic, and hand-builds delegated MAC acks with
-  `PacketBuilder` (`stage_ack`) — a small, specialized partial-MAC that
+  `PacketBuilder` (`stage_ack`)—a small, specialized partial-MAC that
   exists precisely because no real MAC runs in this firmware.
-- `Channels` has a **single** `tx_done: Signal` — completion attribution
+- `Channels` has a **single** `tx_done: Signal`—completion attribution
   breaks the moment a second client transmits. This is the load-bearing
   structural change.
 - The full node stack is already proven on both boards in other images:
@@ -102,10 +102,10 @@ through that door.
   `Channels` per client. TX: forwards one request at a time, waits the real
   `tx_done`, routes the result to the requesting client's `tx_done`. RX:
   fans every `RxFrame` out to both clients (dual delivery is what the spec
-  requires — device-identity frames are processed by the NCP *and*
+  requires—device-identity frames are processed by the NCP *and*
   independently offered to host filtering).
 - **Session is unchanged in role**: host domain only. It keeps its raw
-  TX/RX stream, filtering, queueing, and delegated acks — against virtual
+  TX/RX stream, filtering, queueing, and delegated acks—against virtual
   Channels A instead of the real ones. (Migrating delegated acks into MAC
   filters is explicitly out of scope; see the filtering-over-promiscuous
   direction note below.)
@@ -154,7 +154,7 @@ NCP platform variant (mux client B, CSPRNG adapter), `MacHandle` with the
 identity-journal keypair, `Host` pump task. Wire the T-1000E single-click
 slot: button → beacon request → `node.send_all(&[], …)`, with confirmation
 feedback (LED confirm + `BEACON_ACK` melody, silence-aware) emitted only
-when the node accepts the send — an unprovisioned identity or duty refusal
+when the node accepts the send—an unprovisioned identity or duty refusal
 leaves the slot inert per the UX guidelines. No identity → node stays
 dormant; `no-ble` image behaves the same (identity fails closed).
 Acceptance: beacon received by a second board; RAM/flash deltas recorded;
@@ -171,14 +171,14 @@ independent (device traffic reaches the host only through host filters).
 
 Fold in the 2026-07-17 RAM audit (T-1000E statics 141.7 KiB): now that
 this increment fixes the node's real capacity needs, right-size
-`DeviceNodeMac`'s generics (37.5 KiB today, ~15–20 KiB savable — 1 identity,
+`DeviceNodeMac`'s generics (37.5 KiB today, ~15–20 KiB savable—1 identity,
 no PFS; peer/TX counts from the actual device-domain tables); share one
 scratch buffer across the session's CMD-arm locals (`device_task` future is
 29.5 KiB against a measured 11.2 KiB `Session`); stop holding UX encode
 buffers across awaits in `t1000e_button_task` (8.5 KiB → <1 KiB). Guard
 the results with `memory_budget.rs`-style size tests and record the
 final table here. Stack headroom (~114 KiB, ~90 KiB spare after the
-in-place-construction fix) and the 8 KiB heap are deliberate margins —
+in-place-construction fix) and the 8 KiB heap are deliberate margins—
 leave them.
 
 **Implemented and hardware-validated 2026-07-17.** Wiring: rather than
@@ -188,7 +188,7 @@ restore, and boot restore) plus `dev_channel_keys()`/`dev_peers()`/
 `dev_key()` accessors; `device_task` publishes a `DevDomainSnapshot`
 through a latest-wins `Signal` whenever the version moves (one u32
 compare per loop otherwise), and a `node_dev_sync_task` reconciles the
-node against it — `join` for new channels, `leave` + the new
+node against it—`join` for new channels, `leave` + the new
 `Mac::remove_channel` (dropping that channel's replay state) for
 removed ones, add-or-refresh `node.peer()` for peers. Peer *removal*
 stays live-until-reboot (registry entries hold no key material). A
@@ -198,7 +198,7 @@ debug tap logs every packet the node processes (the acceptance
 instrument).
 
 RAM diet results (T-1000E, measured via `arm-none-eabi-nm`): the MAC's
-channel table dominated everything — each tracked sender costs one
+channel table dominated everything—each tracked sender costs one
 ~330-byte replay window per channel, so `Mac` gained two trailing
 const generics `RN`/`HN` (per-channel full-key/hint-only replay-window
 capacities, default 8/8 = previous behavior; a full map fail-closes).
@@ -228,14 +228,14 @@ survive a power cycle.
 
 **Implemented and hardware-validated 2026-07-17.** Duty: the session's
 `DutyTracker` moved behind a shared `DutyLedger`
-(`umsh-ulcp-device::duty`, one static per image) — the session keeps
+(`umsh-ulcp-device::duty`, one static per image)—the session keeps
 owning the limit lifecycle (defaults, property sets, snapshot
 save/restore, reset) and recording its own completed transmissions,
 while the node's radio path is wrapped in `DutyGatedRadio`
 (`duty_gate.rs`) admitting every transmit against the combined budget.
 The enforcement point is the client's own TX path rather than the mux
 grant loop, for one load-bearing reason: a refusal must surface as
-`TxError::CadTimeout` (the MAC's back-off-and-shed path) — a mux-side
+`TxError::CadTimeout` (the MAC's back-off-and-shed path)—a mux-side
 `tx_done` error would surface as fatal `MacError::Transmit` and kill
 the node pump. The ledger also mirrors the session's applied
 modulation, so node frames are priced at what is actually on the air.
@@ -260,16 +260,16 @@ sealed with the real X25519 derivation authenticated on the node
 the duty gate (12-byte MAC acks at −30 dBm); the accepted counter jump
 committed an RX-boundary record (`proto-store commit generation=1
 slot=0x0ec000`, second commit rotated to `0x0ec800`); after a reboot,
-counter 4000 drew silence (boundary loaded from flash — without the
+counter 4000 drew silence (boundary loaded from flash—without the
 journal it would have been accepted fresh) while 6000 was accepted and
 acked, with counter 5002 confirming the documented 128-frame block
 granularity; under `duty limit 0` fresh frames were still processed
 but both acks were shed (no ack on air, pump alive), recovering
 immediately at `limit off`; `PROP_PHY_DUTY_NOW` moved from node acks
-(1) and later from the session's delegated acks (4) — both clients
+(1) and later from the session's delegated acks (4)—both clients
 visibly draw one budget. rf-peer (4/4) + phase-e (16/3/1) re-pass on
 the production image; dev tables, identity, and provisioning intact.
-The TX-boundary round trip is host-tested only for now — the node
+The TX-boundary round trip is host-tested only for now—the node
 sends no secured traffic until increment 5, whose BeaconRequest work
 inherits that hardware check. RAM: T-1000E statics 116.2→117.4 KiB
 (counter map + ledger).
@@ -284,7 +284,7 @@ power cycle. The milestone is complete when the device node runs on both
 boards with the companion session fully functional beside it.
 
 **Implemented and hardware-validated 2026-07-18.** Spec decision along
-the way: MAC command 0 is really an *Advertisement Request* — the
+the way: MAC command 0 is really an *Advertisement Request*—the
 response is an advertisement (a broadcast carrying the responder's
 node identity payload, newly defined in `beacons.md`), and the
 request's nonce is echoed in the identity payload's new Nonce option
@@ -298,7 +298,7 @@ signed range for a detached Ed25519 signing step.
 On the NCP, the request is a third beacon-trigger input: the node's
 `on_mac_command` tap feeds `BeaconTrigger::Advertise { nonce }` into
 the same depth-2 coalescing queue as the button slot (NODE_ACTIVE-
-gated, duty-bounded like every node transmit, no LED/melody — that
+gated, duty-bounded like every node transmit, no LED/melody—that
 feedback stays button-only), and the beacon task answers with a
 *signed* solicited advertisement carrying the live device name
 (24-byte spec cap) and the echoed nonce. Tooling:
@@ -316,12 +316,12 @@ again on the production image immediately after a power cycle (boot
 restore, nonce 0xDEADBEEF). Dual delivery: with the dev channel key
 provisioned in *both* domains, one multicast burst produced `node rx:
 Multicast ch=1d06` on the node AND live STR_RECV delivery to an
-attached host — and, detached, the same burst queued 3/3 in the host
+attached host—and, detached, the same burst queued 3/3 in the host
 queue, drained clean (phase-e 3/0/0). Duty interplay: `duty limit 0`
 shed the advertisement (frames still processed, request logged,
 nothing on air), recovery after `limit off` with a one-request lag
 from the shed frame's CAD backoff. Button beacon re-verified by hand
-(beep + beacon received on the T-Echo) — closing the increment-2
+(beep + beacon received on the T-Echo)—closing the increment-2
 leftover. rf-peer (4/4) + phase-e (16/3/1) re-pass on the production
 image; both boards end on the increment-5 image with the T-1000E in
 canonical fixture provisioning.
@@ -343,7 +343,7 @@ acks; a dedicated check rides the next counter-block flush).
   input, not baked in.
 - Whether `Host`/`LocalNode` is wanted for increment 2 or `MacHandle` alone
   suffices until management lands (leaning: bring `umsh-node` up immediately
-  — beacons and `BeaconRequest` handling come with it, and the CLI proves
+  —beacons and `BeaconRequest` handling come with it, and the CLI proves
   the footprint).
 - Long-term: folding delegated acks and host filters into MAC-level
   machinery (the filtering-over-promiscuous direction). Out of scope here.
@@ -355,5 +355,5 @@ acks; a dedicated check rides the next counter-block flush).
   Classes, §PROP_DEV_*, §Receive Filtering, §Ack Delegation
 - `docs/ulcp-ble-plan.md` §Architecture guardrails, increment 7
 - `docs/ux/src/hardware/t1000e.md` §Button behavior (single-click slot)
-- `firmware/t1000e-console/src/main.rs` — the proven full-stack
+- `firmware/t1000e-console/src/main.rs`—the proven full-stack
   reference on identical hardware

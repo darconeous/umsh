@@ -2,14 +2,14 @@
 //!
 //! Server and client both run on the test's `LocalSet`, joined by a real
 //! TLS tunnel over loopback and fronted by the UDP-multicast fake radio
-//! on two different groups — one "segment" each. Injecting a frame on
+//! on two different groups—one "segment" each. Injecting a frame on
 //! one segment and watching what appears on the other exercises the
 //! tunnel, the relay, and the hub together, which is the only way to
 //! catch the places where those three disagree.
 //!
 //! The fake radio has no node behind it, and so no repeater: what
 //! crosses here crosses exactly as the bridge carried it. That is the
-//! point of these tests — they pin what the *bridge* does, which is very
+//! point of these tests—they pin what the *bridge* does, which is very
 //! nearly nothing. Hop accounting, duplicate suppression, and trace
 //! prepending belong to the repeaters on either side, and are tested
 //! where they live.
@@ -275,8 +275,8 @@ fn a_spent_flood_budget_is_the_repeaters_business_not_the_bridges() {
             .unwrap();
 
         // It crosses. A real deployment's ingress repeater would never
-        // have transmitted it — a spent budget is refused at the node,
-        // before the bridge is offered anything — but the bridge itself
+        // have transmitted it—a spent budget is refused at the node,
+        // before the bridge is offered anything—but the bridge itself
         // does not read hop counts, and a fake radio has no repeater to
         // stop it.
         let arrived = expect_frame(&mut segment_a).await.expect("crossed");
@@ -359,7 +359,7 @@ fn a_reconnecting_client_displaces_its_predecessor_without_being_torn_down() {
         let live = connect_pinned(&config).await;
         tokio::time::sleep(Duration::from_millis(100)).await;
 
-        // The stale session's teardown runs now — it must not mark the
+        // The stale session's teardown runs now—it must not mark the
         // interface down or end the writer its successor is using.
         drop(stale);
         tokio::time::sleep(Duration::from_millis(100)).await;
@@ -453,7 +453,7 @@ fn a_client_cannot_wear_a_pinned_address_without_holding_its_key() {
         });
         tokio::time::sleep(Duration::from_millis(200)).await;
 
-        // The attacker presents cabin's certificate — public material —
+        // The attacker presents cabin's certificate—public material—
         // but holds only its own key. rustls's own builder refuses a
         // mismatched pair, so the forgery needs a resolver that skips
         // the consistency check; a real attacker gets to skip it too.
@@ -709,8 +709,8 @@ fn a_hosts_frames_stop_at_the_hub_once_its_budget_is_spent() {
             "the first frame is within budget"
         );
 
-        // A second frame is accepted by the device — a host's own duty
-        // ledger has nothing to say about simulated airtime — and then
+        // A second frame is accepted by the device—a host's own duty
+        // ledger has nothing to say about simulated airtime—and then
         // discarded by the hub.
         transmit_from_host(&mut alice, &broadcast(3, 0x22, &[])).await;
         let starved = tokio::time::timeout(Duration::from_millis(500), async {

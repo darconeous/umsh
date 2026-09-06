@@ -22,7 +22,7 @@ use umsh_ulcp::{
 pub use umsh_ulcp_simdev::SimulatedDevice;
 
 /// The browser-simulated device's shape: every optional surface enabled,
-/// so the whole property schema is explorable, and no node behind it —
+/// so the whole property schema is explorable, and no node behind it—
 /// see [`umsh_ulcp_simdev::SessionConfig::mac_node`].
 #[cfg(feature = "sim-device")]
 pub fn web_sim_config() -> umsh_ulcp_simdev::SessionConfig {
@@ -65,7 +65,7 @@ pub fn web_sim_config() -> umsh_ulcp_simdev::SessionConfig {
         // Likewise for the clock and the receiver: the simulator keeps a
         // settable epoch and walks a scripted track, which is enough to
         // exercise every state of the property surface including the two
-        // that matter most — a clock that is not set, and a receiver that
+        // that matter most—a clock that is not set, and a receiver that
         // is switched off.
         time: Some(TimeConfig),
         gnss: Some(GnssConfig::DEFAULT),
@@ -79,7 +79,7 @@ pub fn web_sim_config() -> umsh_ulcp_simdev::SessionConfig {
         // near enough a power cycle for the debugger to exercise.
         reboot: true,
         // No node behind the session: a backhaul would connect the host
-        // to nothing, so the device must not claim `CAP_MAC_BACKHAUL` —
+        // to nothing, so the device must not claim `CAP_MAC_BACKHAUL`—
         // that claim is exactly what a bridge checks before trusting a
         // device to front a segment.
         stats: None,
@@ -264,7 +264,7 @@ const PROPERTY_SPECS: &[PropertySpec] = &[
         None,
     ),
     // Optional and ungated, so it is fetched by the post-attach refresh
-    // rather than the handshake — a device that refuses it simply shows
+    // rather than the handshake—a device that refuses it simply shows
     // nothing, instead of stalling the attach announcement on a value
     // that may never arrive.
     spec(
@@ -2072,7 +2072,7 @@ mod tests {
     use super::*;
 
     /// The editor's bandwidth choices carry display labels, so they are
-    /// spelled out rather than generated — but a device would refuse any
+    /// spelled out rather than generated—but a device would refuse any
     /// value outside the shared list, so the two must not drift.
     #[test]
     fn bandwidth_choices_match_the_shared_list() {

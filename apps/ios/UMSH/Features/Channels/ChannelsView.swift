@@ -2,7 +2,7 @@ import SwiftUI
 
 /// The Channels tab: which channels this identity has joined, and the ways in.
 ///
-/// A channel is a shared key, so this list is membership, not a directory —
+/// A channel is a shared key, so this list is membership, not a directory—
 /// nothing here was discovered over the air, and nothing on the air can add to
 /// it. `public` and `EMERGENCY` are seeded joined; leaving either keeps the key
 /// so the join sheet can offer it back, but this list shows only what the user
@@ -37,7 +37,7 @@ struct ChannelsView: View {
                             ChannelRow(channel: channel)
                         }
                         .swipeActions(edge: .trailing) {
-                            // Not role: .destructive — that role animates the
+                            // Not role: .destructive—that role animates the
                             // row away on the tap, and this button only asks.
                             // The row must stand still behind the
                             // confirmation.
@@ -139,7 +139,7 @@ struct ChannelsView: View {
 
     /// Built-in channels the user has left, offered again only inside the join
     /// sheet. Leaving one is a decision, and the list this tab shows is what
-    /// the user is actually in — not a standing invitation to reconsider.
+    /// the user is actually in—not a standing invitation to reconsider.
     private var suggested: [ChannelSummary] {
         channels.filter { $0.kind == .builtin && !$0.isJoined }
     }

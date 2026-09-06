@@ -50,7 +50,7 @@ pub struct PeerRepeaterRecord {
 }
 
 impl PeerRepeaterRecord {
-    /// The router hint an observation would be keyed by — the first two
+    /// The router hint an observation would be keyed by—the first two
     /// bytes of the same public key.
     pub fn router_hint(&self) -> RouterHint {
         RouterHint([self.hint.0[0], self.hint.0[1]])
@@ -76,8 +76,8 @@ impl PeerRepeaterTable {
 
     /// Whether an identity describes a repeater, and so belongs here.
     ///
-    /// The capability is the claim that matters — a node may forward while
-    /// presenting itself as something else — but a node whose whole role is
+    /// The capability is the claim that matters—a node may forward while
+    /// presenting itself as something else—but a node whose whole role is
     /// repeating counts even if it advertises no capability bitmap.
     pub fn is_repeater(identity: &NodeIdentityPayload) -> bool {
         identity.capabilities.contains(NodeCapabilities::REPEATER)
@@ -188,7 +188,7 @@ pub struct MergedPeerRepeater {
 ///
 /// Identity records come first and claim the observation whose router hint
 /// they start with; each remaining observation becomes a two-byte-hint entry.
-/// Signal figures come only from observations — an identity that arrived
+/// Signal figures come only from observations—an identity that arrived
 /// flooded crossed hops this node never heard, so its arrival says nothing
 /// about the link to the peer that owns it.
 pub fn merge<'a>(
@@ -248,7 +248,7 @@ pub fn merge<'a>(
 }
 
 /// Whole minutes between `then_ms` and now, saturating at the two octets the
-/// wire form allows — about 45 days, past which "longer ago than that" is the
+/// wire form allows—about 45 days, past which "longer ago than that" is the
 /// only useful answer anyway.
 fn minutes_since(then_ms: Option<u64>, now_ms: u64) -> Option<u16> {
     let then_ms = then_ms?;
@@ -297,7 +297,7 @@ mod tests {
         assert!(!table.observe_identity(&key(1), &chat, 0));
         assert!(table.is_empty());
 
-        // The capability alone is enough — a node may forward while
+        // The capability alone is enough—a node may forward while
         // presenting itself as something else.
         let mut forwarding_handset = chat.clone();
         forwarding_handset.capabilities |= NodeCapabilities::REPEATER;

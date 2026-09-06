@@ -6,20 +6,20 @@
 //! |---|---|---|
 //! | Module power enable | P1.05 (D18) | `GPS_EN`; high powers the module |
 //! | Standby / wake | P0.02 (D0) | High wakes the receiver; low lets it sleep |
-//! | Module TX → MCU RX | P1.12 (D7) | 9600 baud — note the direction |
+//! | Module TX → MCU RX | P1.12 (D7) | 9600 baud—note the direction |
 //! | Module RX ← MCU TX | P1.11 (D6) | Unused today; the receiver needs no commands |
 //!
 //! This is the only board in the family that can cut the receiver's power
 //! outright, and on a solar node that is the point: GNSS is the largest
 //! discretionary load here, and a panel-fed battery has no headroom to
 //! spend on a module that is switched off but still warm. So "off" means
-//! off — the enable drops, and with it the module's backup domain, its
+//! off—the enable drops, and with it the module's backup domain, its
 //! ephemeris, and its clock. Nothing on this board keeps time across a
 //! power cut; the next fix or a manual set is where the clock comes from.
 //!
 //! Standby is still driven on the way down. It sits on the module's side
 //! of the load switch, and a pin driving into an unpowered module is
-//! current through its protection diodes — the same reason the shutdown
+//! current through its protection diodes—the same reason the shutdown
 //! path pins the enable rather than releasing it.
 //!
 //! The board also brings out a reset candidate on P1.03 (D17), which
@@ -29,7 +29,7 @@
 //!
 //! Both polarities are confirmed on hardware: `GPS_EN` is active-high,
 //! and standby wakes on high like the T-Echo's identical module. The
-//! delays below are generous rather than measured — nobody has probed
+//! delays below are generous rather than measured—nobody has probed
 //! how much of either the L76K actually needs. See
 //! `docs/hardware/sensecap-solar-node-p1-pro-hardware.md`.
 //!
@@ -51,8 +51,8 @@ const RAIL_SETTLE: Duration = Duration::from_millis(50);
 
 /// How long the receiver takes to start emitting sentences after power-up.
 ///
-/// Not waited on for correctness — the parser resynchronizes at the next
-/// `$` whatever arrives first — but powering on and immediately reading
+/// Not waited on for correctness—the parser resynchronizes at the next
+/// `$` whatever arrives first—but powering on and immediately reading
 /// otherwise spends a wake-up on a UART with nothing behind it yet.
 const STARTUP: Duration = Duration::from_millis(150);
 

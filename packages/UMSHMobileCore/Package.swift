@@ -28,7 +28,7 @@ let package = Package(
             name: "UMSHMobileCoreTests",
             dependencies: ["UMSHMobileCore"],
             // A copy of regions/tests/fixture/fixture.regiondb, kept in
-            // sync by `make regions-build-fixture` — SwiftPM resources
+            // sync by `make regions-build-fixture`—SwiftPM resources
             // must live inside the target directory.
             resources: [.copy("Resources/fixture.regiondb")]
         ),

@@ -48,7 +48,7 @@ pub enum ReplCommand {
     ///
     /// The radio is borrowed for as long as the session lasts, and every
     /// command that reads or writes the device works the same as it does
-    /// over a wire — slower, and without the host domain, which is not an
+    /// over a wire—slower, and without the host domain, which is not an
     /// administrator's to see. `disconnect` gives the radio back.
     Remote {
         /// The device to manage, as its node public key.
@@ -230,7 +230,7 @@ pub async fn run(app: &mut App) -> Result<()> {
 }
 
 fn banner(app: &App) {
-    println!("umshctl — `help` lists commands, `exit` leaves.");
+    println!("umshctl—`help` lists commands, `exit` leaves.");
     if app.session.is_none() {
         println!("not attached: `ble-scan` to look for radios, `connect` to attach.");
     }
@@ -274,7 +274,7 @@ async fn process_line(app: &mut App, line: &str) -> Result<bool> {
         ReplCommand::Shared(command) => {
             command.validate()?;
             if command.needs_device() && app.session.is_none() {
-                anyhow::bail!("not attached — try `ble-scan` or `connect`");
+                anyhow::bail!("not attached—try `ble-scan` or `connect`");
             }
             command.run(app).await?;
         }
@@ -320,7 +320,7 @@ async fn connect(app: &mut App, selector: Option<String>, pick: bool) -> Result<
 ///
 /// The `tcp://` test comes first: the scheme's own slashes would
 /// satisfy the path rule below it. A bare `host:port` stays a BLE
-/// selector — the scheme is what separates an endpoint from a name.
+/// selector—the scheme is what separates an endpoint from a name.
 fn named_target(selector: String, baud: u32) -> Result<Target> {
     if let Some(endpoint) = selector.strip_prefix(TCP_SCHEME) {
         let (host, port) = connection::parse_endpoint(endpoint)?;

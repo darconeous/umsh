@@ -3,8 +3,8 @@
 A device is most useful to a phone when it can keep working while the
 phone is asleep or out of range. The services in this chapter are what
 that means concretely: the device learns which traffic is relevant to its
-host, holds that traffic while the host is away, and — for peers the host
-has explicitly provisioned — acknowledges it so that senders' retransmission
+host, holds that traffic while the host is away, and—for peers the host
+has explicitly provisioned—acknowledges it so that senders' retransmission
 logic is satisfied.
 
 Everything here is **assistance**, tightly scoped. The host still owns the
@@ -18,8 +18,8 @@ attached host. Of the identity keypair itself, the device holds only the
 32-byte public key; the host's private key **MUST NOT** be transferred to
 the device, and this protocol provides no mechanism for doing so (see
 [Security Boundary](ulcp.md#security-boundary)). The device may
-additionally hold host-domain state derived or delegated by the host —
-channel keys, per-peer symmetric keys, filters, and queued traffic — as
+additionally hold host-domain state derived or delegated by the host—
+channel keys, per-peer symmetric keys, filters, and queued traffic—as
 defined in this chapter.
 
 Because the device never holds the host's private key, it cannot perform
@@ -35,8 +35,8 @@ different host identity takes over the device.
 ### Host Replacement {#host-replacement}
 
 The host domain is keyed by `PROP_HOST_KEY`. Setting `PROP_HOST_KEY` to a
-value **different** from its current value — including setting it to empty
-— **MUST** atomically reset the entire host domain to defaults: the key
+value **different** from its current value—including setting it to empty
+—**MUST** atomically reset the entire host domain to defaults: the key
 tables, filter table, and mute tables are cleared, `PROP_HOST_AUTO_ACK`
 reverts to false, and the inbound queue is discarded. Because the host
 domain is never persisted, this is a live-state operation with no durable component:
@@ -47,7 +47,7 @@ effects.
 
 This rule is what makes re-pairing safe: when a companion radio is paired
 with a different phone, the new host configures its own identity and the
-previous host's keys, filters, and queued traffic cease to exist — while
+previous host's keys, filters, and queued traffic cease to exist—while
 the device domain (the radio's own identity, channels, and settings) is
 untouched.
 
@@ -272,7 +272,7 @@ Where `PEER_PUBLIC_KEY` is the peer's Ed25519 public key and `K_ENC` and
 `K_MIC` are the stable pairwise keys for the (host, peer) pair, derived by
 the **host** as described in
 [HKDF Inputs for Unicast](security.md#hkdf-inputs-for-unicast). The device
-never derives these itself — it cannot, because it does not hold the host's
+never derives these itself—it cannot, because it does not hold the host's
 private key.
 
 As an exception to the usual `CMD_PROP_INSERT` duplicate rule, inserting an
@@ -368,9 +368,9 @@ adjustment fail values they cannot honor with `STATUS_INVALID_ARGUMENT`.
 * Units: frames
 * Post-Reset Value: 0
 
-The cumulative number of frames discarded from the inbound queue — evicted
+The cumulative number of frames discarded from the inbound queue—evicted
 by the circular queue-full policy or otherwise not retained (see
-[Inbound Queueing](ulcp-host.md#inbound-queueing)) — since the device last reset. A non-zero increase
+[Inbound Queueing](ulcp-host.md#inbound-queueing))—since the device last reset. A non-zero increase
 across a detached interval tells the host that its view of that interval
 is incomplete. The counter wraps modulo 2^32.
 
@@ -411,7 +411,7 @@ already.
 ## Receipt Cues {#receipt-cues}
 
 A device may indicate locally that it took a frame in for a host that is
-not attached — a sound, a light, a count on a panel. What form the
+not attached—a sound, a light, a count on a panel. What form the
 indication takes, and whether a device makes one at all, is a property of
 the board rather than of the protocol.
 
@@ -420,8 +420,8 @@ frames are taken in without one. They govern the indication and nothing
 else: a frame from a muted source is filtered, queued, acknowledged, and
 drained exactly as any other, and counts toward
 `PROP_HOST_RX_QUEUE_COUNT` and `PROP_HOST_RX_QUEUE_DROPPED` the same way.
-Indications that describe the queue as a whole rather than one arrival — a
-queued count, a "something is waiting" light — still follow every frame,
+Indications that describe the queue as a whole rather than one arrival—a
+queued count, a "something is waiting" light—still follow every frame,
 because they describe what a drain will deliver.
 
 The tables are not validated against the key tables. An entry naming a
@@ -433,7 +433,7 @@ no entry.
 ## Receive Filtering {#receive-filtering}
 
 Receive filtering determines which successfully received frames are
-**accepted** for the host — delivered live when the host is attached, or
+**accepted** for the host—delivered live when the host is attached, or
 queued when it is not.
 
 The device evaluates each received frame against the union of:
@@ -463,15 +463,15 @@ MIC, and a repeater's onward copy of a host frame keeps the host's MIC while
 its destination hint names the remote peer. The device therefore records the
 leading 4 MIC bytes of each frame it transmits on the host's behalf and
 implicitly accepts any received frame whose trailer opens with a recorded
-value — for a MAC Ack this matches the returning acknowledgement, and for
+value—for a MAC Ack this matches the returning acknowledgement, and for
 other packet types it matches the host's own send being carried onward, which
 the host's forwarding-confirmation machinery must overhear to stop
-retransmitting. These records evict lazily, so multiple echoes of one send —
+retransmitting. These records evict lazily, so multiple echoes of one send—
 acks arriving over different return routes, repeats from different
-repeaters — are all delivered. A MAC Ack whose `ack_mic` matches no recorded
+repeaters—are all delivered. A MAC Ack whose `ack_mic` matches no recorded
 frame is still accepted if an explicit `FILTER_PKT_TYPE` entry selects it.
 
-Broadcast packets — payload-carrying broadcasts and beacons alike — are
+Broadcast packets—payload-carrying broadcasts and beacons alike—are
 implicitly accepted **for live delivery**: a broadcast is addressed to
 every node, the host included. The rule is live-only. While the host is
 detached, a broadcast is queued only when an explicit filter selects it
@@ -482,7 +482,7 @@ Directed traffic that asks for no acknowledgement follows the same shape.
 A `UNIC` or `BUNI` frame accepted only by an implicit filter is delivered
 live but **MUST NOT** be queued; queueing it requires an explicit
 `FILTER_PKT_TYPE` entry selecting that packet type. Its sender is not
-waiting on the device — nothing about it will be repeated or given up on —
+waiting on the device—nothing about it will be repeated or given up on—
 so the frame is a request whose asker has moved on by the time a drain
 runs, while the queue slot it takes is one an ack-requesting frame needed.
 The rule is stated as a default the host must override rather than one it
@@ -506,8 +506,8 @@ Like the broadcast rule, this one is live-only. A device with filtering
 unconfigured queues nothing while detached: the host domain does not
 survive a power cycle, so every device passes through this state on the
 way from power-on to its host's first write, and a device that queued
-here would fill its queue with whatever was in earshot — its own
-transmissions included — on nobody's behalf.
+here would fill its queue with whatever was in earshot—its own
+transmissions included—on nobody's behalf.
 
 A device **MUST NOT** queue a frame it transmitted itself. The copy a
 device delivers of its own transmission (`RX_FLAG_SELF_TX`) lets an
@@ -535,7 +535,7 @@ a drain (`RX_FLAG_BUFFERED` distinguishes them). A host that wants to
 process the backlog first drains promptly after attaching and MAY defer
 its processing of interleaved live deliveries; `RX_AGE` in the
 buffered-frame metadata gives coarse (one-second) relative timing but is
-not sufficient to reconstruct a strict total order — and UMSH itself does
+not sufficient to reconstruct a strict total order—and UMSH itself does
 not guarantee in-order delivery in any case.
 
 The queue is **circular**: when a new frame is accepted and the queue is
@@ -545,7 +545,7 @@ frame discarded by this eviction increments
 `PROP_HOST_RX_QUEUE_DROPPED`.
 
 Eviction can discard a frame that was already acknowledged on the host's
-behalf — the sender believes it delivered, but the host will never
+behalf—the sender believes it delivered, but the host will never
 receive it. This is the same best-effort custody semantic that applies to
 power loss (see [Acknowledgement Delegation](ulcp-host.md#ack-delegation) and [Saved State](ulcp-saved-state.md#saved-state)): a delegated ack
 asserts volatile custody, not guaranteed delivery.
@@ -559,7 +559,7 @@ additional queue slot; it is coalesced with the existing entry. A
 [Route Retry](packet-options.md#route-retry-option-6) form of a queued
 frame is the same logical packet (same MIC and frame counter) and
 coalesces with it. Coalescing a duplicate is separate from acknowledging
-it — a coalesced duplicate may still have its ack retransmitted under the
+it—a coalesced duplicate may still have its ack retransmitted under the
 duplicate-acknowledgement window (see [Acknowledgement Delegation](ulcp-host.md#ack-delegation)). For frames the
 device cannot authenticate (no provisioned keys), no protocol-defined
 duplicate detection applies and each received frame occupies its own
@@ -577,7 +577,7 @@ if all of the following hold:
    where the device also holds the frame's channel key.
 3. The frame is addressed to the host identity: its (possibly decrypted)
    destination hint matches `PROP_HOST_KEY`, and its source resolves to
-   an entry in `PROP_HOST_PEER_KEYS` — by full public key when the `S`
+   an entry in `PROP_HOST_PEER_KEYS`—by full public key when the `S`
    flag is set, or by unique 3-byte prefix match otherwise.
 4. The frame authenticates: its MIC verifies under the pairwise `K_MIC`
    for `UNAR`, or under the combined
@@ -596,8 +596,8 @@ if all of the following hold:
    the sender keeps retrying until the host returns.
 
 **Duplicates.** An authenticated frame that replay detection identifies as
-a previously accepted frame — typically a retransmission whose original
-ack was lost — is not queued again, but the device **MAY** retransmit its
+a previously accepted frame—typically a retransmission whose original
+ack was lost—is not queued again, but the device **MAY** retransmit its
 acknowledgement under the core
 [duplicate-acknowledgement window](security.md#duplicate-acknowledgement-window):
 only when the frame authenticates and its counter is no more than 8 behind
@@ -645,8 +645,8 @@ device holds no other routing state for the host's peers:
   gets a direct ack.
 - A frame carrying no trace but a flood hop count gets `FHOPS_REM`
   initialized from its `FHOPS_ACC`, with any region-code options replayed.
-- A frame carrying a source-route option and no trace — including an
-  emptied option, which the last repeater keeps for provenance — spent flood
+- A frame carrying a source-route option and no trace—including an
+  emptied option, which the last repeater keeps for provenance—spent flood
   hops only past the route's end, so its `FHOPS_ACC` is not a distance. The
   ack floods at a default budget of 5 flood hops, or at `FHOPS_ACC` if that
   is larger.
@@ -662,8 +662,8 @@ subject to the configured duty-cycle limit; the device **MUST NOT** exceed the
 limit to send an ack. An ack that cannot be sent leaves the queued frame
 marked unacknowledged.
 
-Frames that are accepted but fail any of conditions 2–5 — no peer key, no
-channel key, authentication impossible to evaluate — are still queued
+Frames that are accepted but fail any of conditions 2–5—no peer key, no
+channel key, authentication impossible to evaluate—are still queued
 (subject to filtering); they are simply not acknowledged. The host
 performs its own verification after draining and may ack late if the
 application finds that useful.

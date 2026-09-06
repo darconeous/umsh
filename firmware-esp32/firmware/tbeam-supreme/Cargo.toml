@@ -6,7 +6,7 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 
-# The full ULCP firmware on ESP32-S3 — the shared session driver from
+# The full ULCP firmware on ESP32-S3—the shared session driver from
 # `umsh-ulcp-runtime` behind this board's transports (HDLC on the native
 # USB-Serial-JTAG port, UlcpService GATT on the esp-radio controller),
 # with the SX1262 behind the radio mux, the on-board device node, the
@@ -17,7 +17,7 @@ repository.workspace = true
 # Board identity. Exactly one is on; it selects the BSP module, the pin
 # and peripheral wiring, the radio's power and band limits, and the
 # static capacities the board's RAM budget allows. This block is kept
-# identical across the ESP32 device boards — only `default` differs.
+# identical across the ESP32 device boards—only `default` differs.
 default = ["board-tbeam-supreme"]
 board-heltec-v2 = ["chip-esp32", "radio-sx127x", "vext-gates-battery"]
 board-heltec-v3 = ["chip-esp32s3", "radio-sx126x"]
@@ -40,7 +40,7 @@ board-tbeam-supreme = [
 chip-esp32 = []
 chip-esp32s3 = []
 # SX127x family: no BUSY handshake, a single DIO line carries every IRQ,
-# and the RF switch is driven by the radio's own RXTX output — so the
+# and the RF switch is driven by the radio's own RXTX output—so the
 # interface variant takes one fewer pin than the SX126x's.
 radio-sx127x = []
 # SX126x family: BUSY handshake, DIO1 for IRQs, DIO2 drives the RF switch
@@ -58,8 +58,8 @@ vext-gates-battery = []
 # Replaces Vext, the battery sampler, and the status LED wholesale.
 pmic-axp2101 = []
 # SH1106 panel (shared `umsh-display-sh1106` driver) instead of the
-# ssd1306 crate: the I²C address is probed (0x3D first — 0x3C may be a
-# magnetometer), and there is no reset GPIO — the panel's rail is its
+# ssd1306 crate: the I²C address is probed (0x3D first—0x3C may be a
+# magnetometer), and there is no reset GPIO—the panel's rail is its
 # reset.
 display-sh1106 = []
 # The wired ULCP transport is the chip's native USB-Serial-JTAG port
@@ -94,7 +94,7 @@ umsh-ulcp = { path = "../../../crates/umsh-ulcp", default-features = false }
 umsh-ulcp-device = { path = "../../../crates/umsh-ulcp-device", default-features = false }
 # Board-agnostic device runtime shared with the T-Echo/T-1000E images:
 # session driver, radio mux, transport policy, pairing policy, counter
-# map, and — first on an ESP32 board — the GNSS positioning runtime.
+# map, and—first on an ESP32 board—the GNSS positioning runtime.
 umsh-ulcp-runtime = { path = "../../../crates/umsh-ulcp-runtime", features = ["device-node", "gnss"] }
 umsh-crypto = { path = "../../../crates/umsh-crypto", default-features = false, features = ["software-crypto"] }
 umsh-gnss = { path = "../../../crates/umsh-gnss" }

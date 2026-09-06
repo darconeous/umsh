@@ -16,17 +16,17 @@ UMSH does **not** assume a trusted infrastructure, a reliable transport, or a sy
 
 **Eavesdropping.** When encryption is enabled, payload content is protected by AES-256-CTR keyed with material derived from ECDH (unicast) or the channel key (multicast). An observer without the relevant key cannot recover plaintext.
 
-**Forgery.** All authenticated packets carry a MIC computed with S2V (AES-CMAC). An attacker who does not possess the encryption and authentication keys cannot produce a valid MIC. The [MIC size](security.md#security-control-field) determines the forgery resistance — from 2^-32 (4-byte MIC) to 2^-128 (16-byte MIC).
+**Forgery.** All authenticated packets carry a MIC computed with S2V (AES-CMAC). An attacker who does not possess the encryption and authentication keys cannot produce a valid MIC. The [MIC size](security.md#security-control-field) determines the forgery resistance—from 2^-32 (4-byte MIC) to 2^-128 (16-byte MIC).
 
 **Replay attacks.** Monotonically increasing [frame counters](security.md#frame-counter) allow receivers to detect and reject replayed packets. The [backward window and MIC cache](security.md#replay-detection) provide tolerance for out-of-order delivery without weakening replay protection.
 
-**Nonce misuse.** The [AES-SIV construction](security.md#encrypted-packets) derives the CTR IV from the key, associated data, and plaintext, so accidental nonce reuse (e.g., due to a buggy counter implementation) does not produce the catastrophic plaintext leakage that would occur with AES-GCM or raw AES-CTR. In the worst case, an attacker can detect when two packets carry identical associated data and plaintext — the keys and other traffic remain uncompromised.
+**Nonce misuse.** The [AES-SIV construction](security.md#encrypted-packets) derives the CTR IV from the key, associated data, and plaintext, so accidental nonce reuse (e.g., due to a buggy counter implementation) does not produce the catastrophic plaintext leakage that would occur with AES-GCM or raw AES-CTR. In the worst case, an attacker can detect when two packets carry identical associated data and plaintext—the keys and other traffic remain uncompromised.
 
 **Long-term key compromise (with PFS).** If a [PFS session](security.md#perfect-forward-secrecy-sessions) was active and the ephemeral keys were properly erased, traffic from that session cannot be retroactively decrypted even if the long-term private keys are later compromised.
 
 ## What UMSH Does Not Protect Against
 
-**Traffic analysis.** A passive observer can see packet timing, frequency, size, hint values, frame counters, and flood hop counts — all in the clear. This reveals communication patterns (who is active, how often, rough network topology) even when payloads are encrypted. Hint values are stable for a given identity, enabling long-term tracking of a node's activity.
+**Traffic analysis.** A passive observer can see packet timing, frequency, size, hint values, frame counters, and flood hop counts—all in the clear. This reveals communication patterns (who is active, how often, rough network topology) even when payloads are encrypted. Hint values are stable for a given identity, enabling long-term tracking of a node's activity.
 
 **Multicast sender impersonation.** Multicast authentication is based on the shared channel key. Any node possessing the key can construct a valid packet with any claimed source address. Other channel members cannot cryptographically distinguish the true sender from an impersonator. See [Multicast Sender Authentication](limitations.md#multicast-sender-authentication).
 
@@ -40,7 +40,7 @@ UMSH does **not** assume a trusted infrastructure, a reliable transport, or a sy
 
 **Traffic amplification via broadcast or multicast requests.** A broadcast packet is unauthenticated by design, and a multicast packet may be attributable only to a shared channel key or an ephemeral source identity. An attacker can exploit this by sending a request that appears to warrant a response or some other follow-on action from every receiving node. If the request does not include a trace-route option, recipients do not learn a specific return path. Any per-node reply may therefore fall back to flood routing, using the inbound `FHOPS_ACC` as a distance estimate or flooding more broadly if no better routing state exists. The result is an amplification attack: one injected request can trigger many independent flood-routed responses, consuming airtime and effectively causing a distributed denial of service. Implementations and application protocols must therefore treat broadcast and multicast requests as fan-out hazards. They should not automatically generate per-node responses unless those responses are explicitly designed to avoid amplification through mechanisms such as route learning, strict rate limits, randomized suppression, aggregation, or making the request one-way only.
 
-**Non-repudiation.** UMSH's MIC is computed with symmetric pairwise keys that both sender and recipient possess, so a recipient cannot cryptographically prove to a third party who authored a given packet — either party could have constructed it. However, UMSH does not claim to provide deniability. Real-world deniability depends on the entire system: usage patterns, device forensics, metadata, and interactions with other systems. The symmetric MIC is a narrow property, not a deniability guarantee. When the application layer includes an EdDSA signature in the payload (as required by the `EMERGENCY` channel), even this narrow property is lost — a signature can only be produced by the private key holder.
+**Non-repudiation.** UMSH's MIC is computed with symmetric pairwise keys that both sender and recipient possess, so a recipient cannot cryptographically prove to a third party who authored a given packet—either party could have constructed it. However, UMSH does not claim to provide deniability. Real-world deniability depends on the entire system: usage patterns, device forensics, metadata, and interactions with other systems. The symmetric MIC is a narrow property, not a deniability guarantee. When the application layer includes an EdDSA signature in the payload (as required by the `EMERGENCY` channel), even this narrow property is lost—a signature can only be produced by the private key holder.
 
 **Forward secrecy without PFS sessions.** Normal unicast traffic uses stable pairwise keys derived from long-term ECDH. If a node's long-term private key is compromised, all past and future unicast traffic with that node can be decrypted. Forward secrecy requires explicit use of [PFS sessions](security.md#perfect-forward-secrecy-sessions).
 
@@ -63,7 +63,7 @@ A node must not reuse frame counter values across reboots. Implementations must 
 PFS sessions derive their security from the guarantee that ephemeral private keys are erased when the session ends. Implementations must ensure that ephemeral keys are:
 
 - Never written to persistent storage, swap files, or logs
-- Explicitly zeroed in memory upon session termination (not just freed — freed memory may not be overwritten promptly)
+- Explicitly zeroed in memory upon session termination (not just freed—freed memory may not be overwritten promptly)
 - Not retained in core dumps or crash reports
 
 Failure to erase ephemeral keys eliminates the forward secrecy property entirely. See [Session Lifetime](security.md#session-lifetime).
@@ -74,7 +74,7 @@ MIC comparison must use constant-time comparison (e.g., a fixed-iteration XOR-an
 
 ### Public Key Validation
 
-Implementations must reject malformed Ed25519 public keys before converting them to X25519 form. Accepting a malformed key can produce a low-order X25519 point, resulting in a shared secret of zero — which would cause all pairwise keys to be identical across different peers. See [Ed25519 to X25519 Conversion](security.md#ed25519-to-x25519-conversion).
+Implementations must reject malformed Ed25519 public keys before converting them to X25519 form. Accepting a malformed key can produce a low-order X25519 point, resulting in a shared secret of zero—which would cause all pairwise keys to be identical across different peers. See [Ed25519 to X25519 Conversion](security.md#ed25519-to-x25519-conversion).
 
 ### Reserved Bits
 
@@ -86,7 +86,7 @@ Even with encryption enabled, the following information is visible to a passive 
 
 | Field | Packet types | What it reveals |
 |---|---|---|
-| Packet timing and frequency | All | Communication patterns — when a node is active, how often it transmits |
+| Packet timing and frequency | All | Communication patterns—when a node is active, how often it transmits |
 | Destination hint (3 bytes) | Unicast | Stable per-identity; enables tracking a node's correspondents over time |
 | Source hint (3 bytes) | Unicast, unencrypted multicast, broadcast | Stable per-identity; enables tracking a node's activity over time |
 | Channel identifier (2 bytes) | Multicast, blind unicast | Stable per-channel; reveals which channel a packet belongs to |
@@ -96,7 +96,7 @@ Even with encryption enabled, the following information is visible to a passive 
 | MIC | All authenticated | Unique per-packet; usable as a packet fingerprint for correlation across hops |
 | Ack MIC (4 bytes) | MAC Ack | Prefix of the acknowledged packet's MIC; links the ack to the original packet and confirms its delivery. Carries no explicit endpoint identifier (the MAC Ack has no destination hint), but the link to the original packet remains a correlation vector |
 
-In encrypted multicast, the source address is encrypted inside the ciphertext. In blind unicast, both the source and destination addresses are encrypted using the channel key — only the channel identifier remains in the clear. Normal unicast exposes both the destination hint and source hint (or full source key) to passive observers.
+In encrypted multicast, the source address is encrypted inside the ciphertext. In blind unicast, both the source and destination addresses are encrypted using the channel key—only the channel identifier remains in the clear. Normal unicast exposes both the destination hint and source hint (or full source key) to passive observers.
 
 ### Frame Counter Correlation and PFS
 
@@ -110,17 +110,17 @@ Because hints are derived deterministically from public keys, they remain stable
 
 ### AES-SIV over AES-GCM
 
-UMSH uses AES-SIV (RFC 5297) rather than AES-GCM. AES-GCM is catastrophically vulnerable to nonce reuse: a single repeated nonce leaks the authentication key and allows forgery of arbitrary messages. On a mesh network where counter management is distributed across many independent nodes and persistence across reboots is not guaranteed, nonce reuse is a realistic failure mode. AES-SIV degrades gracefully — nonce reuse reveals only whether two packets are identical, without compromising keys or enabling forgery. Deterministic SIV-style alternatives built on other primitives, such as ChaCha20-Poly1305-SIV, were considered, but none is as mature or as widely analyzed as RFC 5297. See the [FAQ](faq.md#why-use-aes-siv-instead-of-aes-gcm).
+UMSH uses AES-SIV (RFC 5297) rather than AES-GCM. AES-GCM is catastrophically vulnerable to nonce reuse: a single repeated nonce leaks the authentication key and allows forgery of arbitrary messages. On a mesh network where counter management is distributed across many independent nodes and persistence across reboots is not guaranteed, nonce reuse is a realistic failure mode. AES-SIV degrades gracefully—nonce reuse reveals only whether two packets are identical, without compromising keys or enabling forgery. Deterministic SIV-style alternatives built on other primitives, such as ChaCha20-Poly1305-SIV, were considered, but none is as mature or as widely analyzed as RFC 5297. See the [FAQ](faq.md#why-use-aes-siv-instead-of-aes-gcm).
 
 ### AES-256 over AES-128
 
-UMSH's asymmetric layer — Ed25519 identities and X25519 key agreement — provides roughly 128-bit classical security, so AES-128 would be a matched choice against classical adversaries, and a cheaper one on low-power hardware. UMSH uses AES-256 anyway, because the symmetric layer is the one part of the protocol that can meaningfully survive a quantum adversary.
+UMSH's asymmetric layer—Ed25519 identities and X25519 key agreement—provides roughly 128-bit classical security, so AES-128 would be a matched choice against classical adversaries, and a cheaper one on low-power hardware. UMSH uses AES-256 anyway, because the symmetric layer is the one part of the protocol that can meaningfully survive a quantum adversary.
 
-No standardized post-quantum key exchange or signature scheme fits within a LoRa frame budget, so the asymmetric layer cannot be hardened against Shor's algorithm. Recovering a private key that way, however, requires the complete public key. Most UMSH traffic exposes only a 3-byte hint, and blind unicast conceals even a full first-contact source key inside the channel-encrypted address block. A deployment that avoids exposing full public keys and leans on shared channel keys therefore retains meaningful — though reduced — security against a quantum adversary: physical compromise of any channel member defeats it, but a purely over-the-air attacker is left facing the symmetric layer alone. That fallback is only as strong as the symmetric primitives, and Grover's algorithm halves a symmetric key's effective strength: AES-128 would be reduced to roughly 64-bit post-quantum strength, while AES-256 remains far out of reach. Choosing AES-256 preserves the symmetric fallback at the cost of extra cycles and code size on constrained devices.
+No standardized post-quantum key exchange or signature scheme fits within a LoRa frame budget, so the asymmetric layer cannot be hardened against Shor's algorithm. Recovering a private key that way, however, requires the complete public key. Most UMSH traffic exposes only a 3-byte hint, and blind unicast conceals even a full first-contact source key inside the channel-encrypted address block. A deployment that avoids exposing full public keys and leans on shared channel keys therefore retains meaningful—though reduced—security against a quantum adversary: physical compromise of any channel member defeats it, but a purely over-the-air attacker is left facing the symmetric layer alone. That fallback is only as strong as the symmetric primitives, and Grover's algorithm halves a symmetric key's effective strength: AES-128 would be reduced to roughly 64-bit post-quantum strength, while AES-256 remains far out of reach. Choosing AES-256 preserves the symmetric fallback at the cost of extra cycles and code size on constrained devices.
 
 ### Stable Keys over Ratcheting
 
-UMSH uses stable pairwise keys rather than a ratcheting protocol. Ratcheting provides forward secrecy per-message but requires synchronized state between sender and receiver. On a lossy, high-latency mesh where packets are routinely dropped, duplicated, or delivered out of order, ratchet state can desynchronize — potentially requiring expensive resynchronization exchanges over a slow radio link. UMSH's stable keys combined with per-packet counter and salt inputs provide per-packet IV uniqueness without requiring synchronized state. Optional [PFS sessions](security.md#perfect-forward-secrecy-sessions) provide forward secrecy when needed, without imposing ratcheting's fragility on all traffic. See the [FAQ](faq.md#why-does-umsh-use-stable-pairwise-keys-instead-of-a-ratcheting-scheme-like-the-signal-protocol).
+UMSH uses stable pairwise keys rather than a ratcheting protocol. Ratcheting provides forward secrecy per-message but requires synchronized state between sender and receiver. On a lossy, high-latency mesh where packets are routinely dropped, duplicated, or delivered out of order, ratchet state can desynchronize—potentially requiring expensive resynchronization exchanges over a slow radio link. UMSH's stable keys combined with per-packet counter and salt inputs provide per-packet IV uniqueness without requiring synchronized state. Optional [PFS sessions](security.md#perfect-forward-secrecy-sessions) provide forward secrecy when needed, without imposing ratcheting's fragility on all traffic. See the [FAQ](faq.md#why-does-umsh-use-stable-pairwise-keys-instead-of-a-ratcheting-scheme-like-the-signal-protocol).
 
 ### Single Keypair for Signing and Key Agreement
 
@@ -130,11 +130,11 @@ UMSH uses a single Ed25519 keypair per node for both identity (signing) and key 
 
 ### Named Channel Security
 
-Named channels derive their key from a human-readable name via HKDF-Extract. Anyone who knows (or guesses) the name can derive the key. Named channels should be treated as public — they provide a shared namespace, not confidentiality. Long, high-entropy names offer practical obscurity but should not be relied upon for security.
+Named channels derive their key from a human-readable name via HKDF-Extract. Anyone who knows (or guesses) the name can derive the key. Named channels should be treated as public—they provide a shared namespace, not confidentiality. Long, high-entropy names offer practical obscurity but should not be relied upon for security.
 
 ### Emergency Channel Integrity
 
-The `EMERGENCY` channel requires unencrypted transmission, full source key (`S=1`), and an EdDSA payload signature. These requirements ensure that emergency traffic is universally readable and cryptographically attributable. However, an attacker with a valid Ed25519 keypair can still send fraudulent emergency messages — the signature proves only that the sender possesses the key, not that the emergency is real. Social and operational controls (e.g., reputation, identity verification) are needed to complement the cryptographic guarantees.
+The `EMERGENCY` channel requires unencrypted transmission, full source key (`S=1`), and an EdDSA payload signature. These requirements ensure that emergency traffic is universally readable and cryptographically attributable. However, an attacker with a valid Ed25519 keypair can still send fraudulent emergency messages—the signature proves only that the sender possesses the key, not that the emergency is real. Social and operational controls (e.g., reputation, identity verification) are needed to complement the cryptographic guarantees.
 
 ### Blind Unicast Key Binding
 

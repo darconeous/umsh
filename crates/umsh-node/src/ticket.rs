@@ -34,7 +34,7 @@ pub(crate) struct TicketState {
     pub repeated: bool,
     /// Transport ACK received from the destination.
     pub acked: bool,
-    /// ACK timeout — all retransmits exhausted without ACK.
+    /// ACK timeout—all retransmits exhausted without ACK.
     pub failed: bool,
     /// MAC is completely done with this send (no more events will fire).
     pub finished: bool,
@@ -50,7 +50,7 @@ pub(crate) struct TicketState {
 /// methods (`was_transmitted`, `was_acked`, `is_finished`, etc.).
 ///
 /// Dropping the ticket unregisters it from the dispatcher (via `Weak` reference
-/// invalidation). The MAC continues the in-flight send — dropping only stops
+/// invalidation). The MAC continues the in-flight send—dropping only stops
 /// *observation*, not the send itself.
 pub struct SendProgressTicket {
     token: Option<SendToken>,
@@ -110,12 +110,12 @@ impl SendProgressTicket {
         self.state.borrow().acked
     }
 
-    /// True when the ACK timed out — all retransmits exhausted without ACK.
+    /// True when the ACK timed out—all retransmits exhausted without ACK.
     pub fn has_failed(&self) -> bool {
         self.state.borrow().failed
     }
 
-    /// True when the MAC is completely done — no more retransmissions,
+    /// True when the MAC is completely done—no more retransmissions,
     /// no more events will fire for this ticket.
     ///
     /// For non-ACK sends (broadcast/multicast), this becomes `true`

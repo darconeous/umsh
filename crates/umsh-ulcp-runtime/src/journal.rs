@@ -1,7 +1,7 @@
 //! Two-page rotating journal handles, generic over the board's flash.
 //!
 //! `umsh-journal-store` owns the record *formats* and the committed-write
-//! engine; this module owns the runtime handle wrapped around them — the
+//! engine; this module owns the runtime handle wrapped around them—the
 //! mount scan, the write-target rotation, and the boot path's walk-back.
 //! Both were previously duplicated in each firmware, identical except for
 //! which flash driver they closed over.
@@ -122,7 +122,7 @@ pub async fn journal_write_target<F: JournalFlash>(
 
 /// Runtime handle for one full-protocol record journal: the snapshot
 /// journal, the device-identity journal, the device-node counter
-/// journal, or a board's own preferences journal — selected by its first
+/// journal, or a board's own preferences journal—selected by its first
 /// page. Executes durable effects; a caller's RAM mirror is only updated
 /// after these return.
 pub struct ProtoStore<M: RawMutex + 'static, F: JournalFlash + 'static> {
@@ -157,7 +157,7 @@ impl<M: RawMutex + 'static, F: JournalFlash + 'static> ProtoStore<M, F> {
         // Read the winner once, after the scan, and copy its payload
         // straight into what this returns. The scan itself only tracks
         // addresses and generations, so a mount's working set is one slot
-        // buffer no matter how many records are live — and no full record
+        // buffer no matter how many records are live—and no full record
         // is ever materialized on the way out.
         //
         // A tombstone is authoritative "nothing saved": older records
@@ -195,7 +195,7 @@ impl<M: RawMutex + 'static, F: JournalFlash + 'static> ProtoStore<M, F> {
     /// The shared flash this journal writes through.
     ///
     /// Exposed for whole-region operations that are not journal writes
-    /// at all — a factory reset erases every page in the NV region,
+    /// at all—a factory reset erases every page in the NV region,
     /// including journals no handle is currently mounted on.
     pub fn flash(&self) -> &'static SharedFlash<M, F> {
         self.flash
@@ -255,7 +255,7 @@ impl<M: RawMutex + 'static, F: JournalFlash + 'static> ProtoStore<M, F> {
     /// The clear transaction is one committed tombstone record: if its
     /// write fails or is interrupted, the previous snapshot remains
     /// authoritative and the caller reports failure. Pages are never
-    /// erased as part of a clear — stale records are reclaimed by the
+    /// erased as part of a clear—stale records are reclaimed by the
     /// ordinary rotation.
     pub async fn clear(&mut self) -> Result<(), ()> {
         self.write(proto::RecordRef::Cleared).await

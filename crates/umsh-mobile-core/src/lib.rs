@@ -337,7 +337,7 @@ pub struct ChannelPreviewRecord {
     pub kind: ChannelKindRecord,
     /// Canonicalized (ASCII-lowercased) name for a named channel. The UI
     /// should show this when it differs from what the user typed, because it
-    /// — not the input — is what determines the key.
+    ///—not the input—is what determines the key.
     pub canonical_name: Option<String>,
     /// The 32-octet channel key.
     pub key: Vec<u8>,
@@ -345,7 +345,7 @@ pub struct ChannelPreviewRecord {
     /// identity: distinct keys may derive the same value, and receivers
     /// resolve collisions by trial decryption.
     pub channel_id: Vec<u8>,
-    /// Three octets for presentation — a deterministic color for the
+    /// Three octets for presentation—a deterministic color for the
     /// channel. The first two are the identifier above.
     pub tint: Vec<u8>,
     /// Suggested local display name from the invitation (`n=`), decoded.
@@ -429,7 +429,7 @@ pub fn derive_channel_id(key: Vec<u8>) -> Result<Vec<u8>, MobileError> {
 ///
 /// The two-octet identifier is its prefix and is what travels on the wire;
 /// this is the width at which two channels can be told apart, which is what
-/// naming one to a device takes — `PROP_HOST_MUTED_CHANNELS` is where that
+/// naming one to a device takes—`PROP_HOST_MUTED_CHANNELS` is where that
 /// matters today.
 #[uniffi::export]
 pub fn channel_identifier(key: Vec<u8>) -> Result<Vec<u8>, MobileError> {
@@ -442,7 +442,7 @@ pub fn channel_identifier(key: Vec<u8>) -> Result<Vec<u8>, MobileError> {
         .to_vec())
 }
 
-/// Derive the three presentation octets for a key — the identifier extended by
+/// Derive the three presentation octets for a key—the identifier extended by
 /// one byte, so a channel's color is stable wherever it is shown.
 #[uniffi::export]
 pub fn derive_channel_tint(key: Vec<u8>) -> Result<Vec<u8>, MobileError> {
@@ -709,8 +709,8 @@ pub struct NodeIdentityProfileRecord {
 /// that describe a node other than the caller: fixtures, and the iOS app's
 /// staging mode, which needs nodes that report a location. The live
 /// advertisement path keeps a position out of the durable bundle it signs on
-/// purpose — a frozen position goes stale and then travels wherever the QR is
-/// pasted — so a located bundle cannot be obtained from it.
+/// purpose—a frozen position goes stale and then travels wherever the QR is
+/// pasted—so a located bundle cannot be obtained from it.
 ///
 /// This grants nothing a holder of the secret key does not already have:
 /// signing a statement about a key is what holding that key means. The name is
@@ -991,7 +991,7 @@ mod tests {
     use super::*;
 
     /// A signed bundle decodes back to the claims it was built from, with a
-    /// signature that verifies against the signing key's own address — the
+    /// signature that verifies against the signing key's own address—the
     /// property every consumer of a stored advertisement relies on.
     #[tokio::test]
     async fn signed_identity_bundle_round_trips_through_decoding() {
@@ -1256,7 +1256,7 @@ mod tests {
         let preview = inspect_channel_name("EMERGENCY".to_owned()).unwrap();
         assert_eq!(preview.canonical_name.as_deref(), Some("emergency"));
         assert_eq!(preview.display_name.as_deref(), Some("EMERGENCY"));
-        // Same channel either way — only the folded form reaches the key.
+        // Same channel either way—only the folded form reaches the key.
         assert_eq!(
             preview.key,
             inspect_channel_name("emergency".to_owned()).unwrap().key

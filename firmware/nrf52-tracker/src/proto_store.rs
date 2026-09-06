@@ -2,7 +2,7 @@
 //! from `umsh-journal-store`, plus this firmware's flash placement.
 //!
 //! The record codec and its power-cut tests live in the crate; only the
-//! journal page chain — a `memory.x` fact — is decided here.
+//! journal page chain—a `memory.x` fact—is decided here.
 
 pub use umsh_journal_store::proto::*;
 pub use umsh_journal_store::record::PAGE_SIZE;

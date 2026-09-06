@@ -88,7 +88,7 @@ pub const PEER_REPEATER_NAME_MAX_LEN: usize = 24;
 /// the mesh.
 ///
 /// Two bytes is one node in 65,536 and three is one in 16.7 million, either of
-/// which is unique across any plausible mesh. One byte is one node in 256 — a
+/// which is unique across any plausible mesh. One byte is one node in 256—a
 /// fraction, not a name.
 const UNIQUE_HINT_PREFIX_LEN: usize = 2;
 
@@ -407,8 +407,8 @@ impl<'a> IdentityRequestFilters<'a> {
     /// A hint filter names one node, or with a partial hint a handful, so such
     /// a request solicits few replies however far it travels. Without one the
     /// request selects by role or capability and every node it reaches may
-    /// answer, which is what confines a broadcast or multicast solicitation —
-    /// and its replies — to the requester's own neighborhood.
+    /// answer, which is what confines a broadcast or multicast solicitation—
+    /// and its replies—to the requester's own neighborhood.
     ///
     /// A malformed option block reads as unfiltered, which is the conservative
     /// answer: it keeps the strict rules in force.
@@ -433,7 +433,7 @@ impl<'a> IdentityRequestFilters<'a> {
     /// OR, so one short filter widens the whole request and the shortest is
     /// what decides.
     ///
-    /// A malformed option block reads as unnarrowed — the conservative answer,
+    /// A malformed option block reads as unnarrowed—the conservative answer,
     /// since it keeps the hold in force.
     pub fn hint_names_one_node(&self) -> bool {
         let mut named = false;
@@ -479,8 +479,8 @@ impl<'a> IdentityRequestFilters<'a> {
                 identity_filter::FILTER_NODE_HINT => {
                     hint_present = true;
                     // A partial hint matches as a prefix of the node hint. That
-                    // is what lets a two-byte router hint — the only name a
-                    // route gives an intermediate hop — ask that hop to
+                    // is what lets a two-byte router hint—the only name a
+                    // route gives an intermediate hop—ask that hop to
                     // identify itself. An empty value matches nothing: it would
                     // otherwise select every node while `hint_filtered` reported
                     // the request narrowed to one.
@@ -550,7 +550,7 @@ impl IdentityRequestBuilder {
     }
 
     /// Add a `FILTER_NODE_HINT` filter that matches on a leading part of the
-    /// node hint, for a caller that holds less than the whole of one — a route
+    /// node hint, for a caller that holds less than the whole of one—a route
     /// names its intermediate hops by a two-byte
     /// [router hint](umsh_core::RouterHint) and nothing more.
     ///
@@ -696,7 +696,7 @@ impl<'a> Iterator for PeerRepeaterEntries<'a> {
 /// One peer repeater, as a lazily decoded option list.
 ///
 /// Every accessor returns `None` for an option the responder omitted or wrote
-/// in a length this cannot read — a peer that names itself and nothing else is
+/// in a length this cannot read—a peer that names itself and nothing else is
 /// a legitimate entry, and one bad field is not a reason to drop the rest.
 #[derive(Clone, Copy, Debug)]
 pub struct PeerRepeaterEntryView<'a> {
@@ -786,7 +786,7 @@ pub struct PeerRepeatersRequestBuilder {
 }
 
 impl PeerRepeatersRequestBuilder {
-    /// Start an empty builder — the first page of an unnonced enumeration.
+    /// Start an empty builder—the first page of an unnonced enumeration.
     pub fn new() -> Self {
         Self::default()
     }
@@ -885,7 +885,7 @@ impl PeerRepeatersResponseBuilder {
     pub fn try_push(&mut self, entry: &PeerRepeaterEntry<'_>) -> Result<bool, AppEncodeError> {
         let encoded = entry.encode()?;
         // Every entry but the last is followed by its terminator, and the
-        // last one may omit it — so an entry fits when it and one separator
+        // last one may omit it—so an entry fits when it and one separator
         // do.
         let separator = usize::from(!self.entries.is_empty());
         let options = self.encode_options()?.len() + self.cursor_reserve;
@@ -1751,7 +1751,7 @@ mod tests {
     }
 
     /// Once an entry's framing is broken, the next entry boundary is
-    /// unknowable — the terminator is only recognizable through correct
+    /// unknowable—the terminator is only recognizable through correct
     /// framing, since values may contain `0xFF`. The walk keeps what it
     /// decoded and stops there.
     #[test]

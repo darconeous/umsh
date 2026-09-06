@@ -2,8 +2,8 @@
 //! moves, reported at once rather than one restart at a time.
 //!
 //! It reads the identity key for real and mints the TLS credential the
-//! daemon would present — a configuration that parses but names a key
-//! the daemon cannot read or use is not a configuration that works —
+//! daemon would present—a configuration that parses but names a key
+//! the daemon cannot read or use is not a configuration that works—
 //! but opens no socket and touches no radio, so it is safe to run
 //! against a live deployment's config.
 

@@ -2,7 +2,7 @@
 //! policy for what is done with a fix (`PROP_GNSS_*`).
 //!
 //! The switch is persisted device-domain state, so a receiver left on
-//! comes back on. Off means the lowest power state the board can reach —
+//! comes back on. Off means the lowest power state the board can reach—
 //! on most of them the receiver is the largest continuous load there is.
 
 use anyhow::{Result, bail};
@@ -219,7 +219,7 @@ mod tests {
     #[test]
     fn a_position_renders_as_degrees_at_the_encoded_precision() {
         // Three bytes name a ~9.8 km cell, so it prints two decimals and
-        // stops — the same grid code as the test above.
+        // stops—the same grid code as the test above.
         assert_eq!(
             format_position(&[0x8a, 0x1f, 0x4c]),
             "0.90, 67.19 (lat, lon)"

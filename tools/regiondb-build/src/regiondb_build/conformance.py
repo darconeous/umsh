@@ -1,7 +1,7 @@
 """The cross-implementation fixture.
 
-Every implementation that answers a lookup — this builder, the Rust runtime,
-the mobile facade, and eventually the browser — replays the same file and must
+Every implementation that answers a lookup—this builder, the Rust runtime,
+the mobile facade, and eventually the browser—replays the same file and must
 agree exactly. Generating it from the compiled database rather than from the
 compiler's in-memory geometry is deliberate: what the implementations share is
 the file, so that is what the fixture is taken over.

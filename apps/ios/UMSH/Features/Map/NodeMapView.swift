@@ -4,8 +4,8 @@ import SwiftUI
 /// Where the mesh is, as opposed to who is in it.
 ///
 /// Deliberately separate from the peer list rather than a second presentation
-/// of it. What belongs here is every node that has reported a location —
-/// mostly nodes heard over the air and never saved — so the peer list is not
+/// of it. What belongs here is every node that has reported a location—
+/// mostly nodes heard over the air and never saved—so the peer list is not
 /// the set being drawn, and a toggle above the peer list would say it was.
 /// The tier filter narrows to saved or favorite nodes on request, but the
 /// default is the whole set.
@@ -26,7 +26,7 @@ struct NodeMapView: View {
     /// Open the Discover Peers sheet, which the app root owns and presents.
     var discoverPeers: () -> Void = {}
     /// Ask the radio where it is. Driven on a cadence by
-    /// ``RadioPositionPoll`` — the radio never volunteers this.
+    /// ``RadioPositionPoll``—the radio never volunteers this.
     var refreshPosition: (() async -> Void)? = nil
 
     @AppStorage("map.tier") private var tierFilter: MapTierFilter = .all
@@ -45,7 +45,7 @@ struct NodeMapView: View {
     /// Enough of the card for the grabber, the header, and one whole row. A
     /// shorter peek saves a little map and cuts the first row through the
     /// middle of its text, which reads as a rendering fault rather than as
-    /// more to come — and everything the 132 points hold is text, so the
+    /// more to come—and everything the 132 points hold is text, so the
     /// height has to grow with the reader's type size or large text
     /// recreates that fault.
     @ScaledMetric(relativeTo: .body) private var cardPeekHeight: CGFloat = 132
@@ -56,7 +56,7 @@ struct NodeMapView: View {
     /// part of the map anyone can actually see is neither the map's frame nor
     /// the layout region: it is the map less whatever the card covers.
     private struct MapViewport: Equatable {
-        /// The map's own size, safe areas included — it ignores them.
+        /// The map's own size, safe areas included—it ignores them.
         var mapSize: CGSize = .zero
         /// The region the card's detents are a fraction of.
         var cardRegionHeight: CGFloat = 0
@@ -88,7 +88,7 @@ struct NodeMapView: View {
         // The card is the content and the map is its background, rather than
         // the two being stacked. A `Map` gives up the safe area so it can
         // draw edge to edge, and anything stacked with it inherits that and
-        // lands under the tab bar — but a background does not affect what it
+        // lands under the tab bar—but a background does not affect what it
         // sits behind. So the map still fills the screen while the card keeps
         // the safe area, resting on the tab bar's top edge with every tab
         // reachable at any detent.
@@ -99,7 +99,7 @@ struct NodeMapView: View {
         GeometryReader { proxy in
             // The reader's child region stops at the floating tab bar; the
             // card opts past that boundary so its glass and its list run to
-            // the screen's bottom edge, the way Find My's sheet does — rows
+            // the screen's bottom edge, the way Find My's sheet does—rows
             // show frosted through the bar, and a matching scroll margin
             // (applied inside the card) lets every row scroll clear of it.
             let tabBar = proxy.safeAreaInsets.bottom
@@ -136,7 +136,7 @@ struct NodeMapView: View {
         } action: { newViewport in
             // The first framing may have run before the map had a size, in
             // which case it was uncorrected. Nothing later re-frames, so the
-            // arrival of a size is the only chance to put that right — and
+            // arrival of a size is the only chance to put that right—and
             // only that first arrival, or a rotation would yank a pan.
             let wasUnknown = viewport.mapSize == .zero
             viewport = newViewport
@@ -186,7 +186,7 @@ struct NodeMapView: View {
                 .annotationTitles(.hidden)
             }
             if let selfPosition {
-                // The nodes' rule — coarse or selected — does not transfer:
+                // The nodes' rule—coarse or selected—does not transfer:
                 // the self marker cannot be selected, so any cell big enough
                 // to see gets drawn. Below ~100 m the circle is smaller than
                 // the marker at any zoom the map spends time at.
@@ -197,7 +197,7 @@ struct NodeMapView: View {
                 }
                 // Unlike the nodes', this title stays visible: the marker is
                 // the one thing on the map that is not a peer, and the label
-                // is what says whose position it is — the radio's, not this
+                // is what says whose position it is—the radio's, not this
                 // phone's.
                 Annotation(selfPosition.sourceLabel, coordinate: selfPosition.coordinate) {
                     MapSelfPositionMarker()
@@ -245,7 +245,7 @@ struct NodeMapView: View {
         }
     }
 
-    /// The count, plus what is being left out — but only when something is.
+    /// The count, plus what is being left out—but only when something is.
     /// Unfiltered, naming the whole set again would say nothing, and one
     /// line is one line the list does not get.
     private func cardHeader(nodes: [MapNode]) -> some View {
@@ -397,7 +397,7 @@ struct NodeMapView: View {
     /// sitting on.
     ///
     /// A camera region is measured against the whole map view, and the card
-    /// covers its bottom — nearly half of it at the middle detent. So a
+    /// covers its bottom—nearly half of it at the middle detent. So a
     /// region centered honestly puts its subject behind the card, which is
     /// the one place a reader who just tapped its row will not look. Growing
     /// the span by the fraction the card hides and pushing the center down by
@@ -407,7 +407,7 @@ struct NodeMapView: View {
     /// drag in progress is not where the card is going to end up.
     ///
     /// The span is squared to the map's shape first, because MapKit widens
-    /// whichever axis it must to fill the view — and a shift measured against
+    /// whichever axis it must to fill the view—and a shift measured against
     /// the span we asked for rather than the one we got would fall short.
     private func regionClearingCard(
         _ region: MKCoordinateRegion,
