@@ -35,10 +35,11 @@ use umsh_radio_loraphy::{
     CadPolicy, Channels, DeviceControl, DeviceSettings, MAX_PAYLOAD, RxFrame, TxRequest,
     bandwidth_from_hz, coding_rate_from_denom, spreading_factor_from_u8,
 };
+use umsh_ulcp::Status;
 use umsh_ulcp_device::{
     Effect, IdentitySource, MAX_CHANNEL_KEYS, MAX_DEV_ADMINS, MAX_DEV_PEERS, MAX_REPEATER_REGIONS,
-    QueuedNotice, REGION_STRING_MAX_LEN, RadioRxInfo, SNAPSHOT_MAX, SavedStatus, Session,
-    TxOutcome, TxPower,
+    NETWORK_TABLE_MAX, QueuedNotice, REGION_STRING_MAX_LEN, RadioRxInfo, Resolvers, SNAPSHOT_MAX,
+    SavedStatus, Session, TxOutcome, TxPower,
 };
 
 /// The session sizes its snapshots and the journal sizes its records
@@ -304,6 +305,32 @@ pub struct DevDomainSnapshot {
     pub ble_enabled: bool,
 }
 
+/// What the device's Wi-Fi station and IP stack have been configured to
+/// do, delivered alongside the device-domain mirror.
+///
+/// Alongside rather than on it, for the reason Bluetooth reachability is
+/// delivered that way: a station is the platform's business and not the
+/// node's. Delivered from the mirror rather than as an effect of its own,
+/// for the reason the receiver switch is: a host write, a boot restore
+/// and a `CMD_RST` all move this, and one path that fires whenever the
+/// device domain moves reaches the driver from all three. What the
+/// station and the stack then make of it is theirs—nothing here is
+/// answered.
+pub struct NetworkConfig<'a> {
+    /// `PROP_WIFI_ENABLED`: whether the station should be powered.
+    /// Always false on a board without `CAP_WIFI`.
+    pub wifi_enabled: bool,
+    /// `PROP_WIFI_NETWORK`: which stored network to use, empty for none.
+    pub network: &'a [u8],
+    /// `PROP_IPV4_CONFIG`: how IPv4 is configured.
+    pub v4: umsh_ulcp::ip::V4Config,
+    /// `PROP_IPV6_CONFIG`: how IPv6 is configured.
+    pub v6: umsh_ulcp::ip::V6Config,
+    /// `PROP_IP_DNS`: the resolvers the device was told to use, on top of
+    /// whatever the network offers. Empty is the usual case.
+    pub resolvers: &'a Resolvers,
+}
+
 /// A device-initiated property publication, yielded by
 /// [`DeviceEnv::publish_event`].
 ///
@@ -341,6 +368,31 @@ pub enum PublishEvent {
     /// boot gesture too, so `PROP_BLE_PAIRING` moves without the host
     /// asking more often than because it asked.
     BlePairing(bool),
+    /// Whether the receiver is scanning. A scan ends on its own, and the
+    /// device starts one of its own accord often enough—at bring-up,
+    /// after losing a link—that both edges arrive here.
+    WifiScanning(bool),
+    /// One access point the receiver heard, encoded as a
+    /// `PROP_WIFI_SCAN_RESULTS` item.
+    ///
+    /// Carried as encoded bytes rather than as a
+    /// [`ScanResult`](umsh_ulcp::wifi::ScanResult) because that borrows
+    /// its SSID, and an event crossing a channel owns what it carries.
+    WifiScanResult(heapless::Vec<u8, { umsh_ulcp::wifi::SCAN_RESULT_MAX_LEN }>),
+    /// How far the station has got with the network it was told to join.
+    /// Associating, losing an access point and being rejected all happen
+    /// below the session.
+    WifiLink(umsh_ulcp::wifi::Link),
+    /// The signal of the current association, or `None` with nothing to
+    /// measure. Stored rather than announced—`PROP_WIFI_RSSI` is read,
+    /// never pushed—so this only refreshes what a read would answer.
+    WifiRssi(Option<i8>),
+    /// The station's own MAC address, once the platform knows it.
+    WifiMac([u8; umsh_ulcp::wifi::MAC_LEN]),
+    /// How far one family has got, named by `PROP_IPV4_STATE` or
+    /// `PROP_IPV6_STATE`. An address arrives when the network hands one
+    /// over, which is exactly the transition a host waits on.
+    IpState(u32, umsh_ulcp::ip::FamilyState),
 }
 
 /// Board couplings of the session driver. Everything the loop needs from
@@ -497,6 +549,76 @@ pub trait DeviceEnv {
     async fn set_ble_pairing(&mut self, open: bool) -> bool {
         let _ = open;
         false
+    }
+    /// The Wi-Fi station and the IP stack are now configured this way.
+    ///
+    /// Arrives with the device-domain mirror, so an implementation must be
+    /// idempotent and must expect it again whenever anything else in the
+    /// domain moves. Synchronous like the other mirror hooks: a driver
+    /// that has real work to do here signals its own task rather than
+    /// doing it on the session's. Boards without Wi-Fi or a stack never
+    /// see anything but the default.
+    fn apply_network_config(&mut self, config: NetworkConfig<'_>) {
+        let _ = config;
+    }
+    /// A `PROP_WIFI_SCANNING` write: start looking for access points, or
+    /// abandon a scan in progress.
+    ///
+    /// Answers with what the receiver is actually doing, which is what
+    /// reaches the host. `Err` is a receiver that cannot look right now:
+    /// `STATUS_INVALID_STATE` for one that is powered down,
+    /// `STATUS_BUSY` for one already scanning.
+    ///
+    /// A scan's results do not come back through this. They arrive on
+    /// [`publish_event`](Self::publish_event) as
+    /// [`PublishEvent::WifiScanResult`], one per access point, which is
+    /// what makes a scan watchable rather than a wait.
+    async fn set_wifi_scanning(&mut self, scanning: bool) -> Result<bool, Status> {
+        let _ = scanning;
+        Err(Status::UNIMPLEMENTED)
+    }
+    /// A `PROP_WIFI_NETWORK` write: use this stored network, or none where
+    /// `ssid` is empty.
+    ///
+    /// The platform holds the table, so only the platform can say whether
+    /// the name is one it knows; `STATUS_ITEM_NOT_FOUND` says it is not.
+    /// The session records the selection only once this succeeds.
+    async fn select_wifi_network(&mut self, ssid: &[u8]) -> Result<(), Status> {
+        let _ = ssid;
+        Err(Status::UNIMPLEMENTED)
+    }
+    /// A `PROP_WIFI_NETWORKS` insert: store this entry durably, replacing
+    /// any entry under the same SSID.
+    ///
+    /// `entry` is a validated [`NetworkEntry`](umsh_ulcp::wifi::NetworkEntry)
+    /// in its item form, credential included—this hook is the credential's
+    /// destination and the only layer that sees it. What is left to decide
+    /// is whether the hardware can do that security mode
+    /// (`STATUS_UNIMPLEMENTED`) and whether there is room (`STATUS_NOMEM`).
+    async fn store_wifi_network(&mut self, entry: &[u8]) -> Result<(), Status> {
+        let _ = entry;
+        Err(Status::UNIMPLEMENTED)
+    }
+    /// A `PROP_WIFI_NETWORKS` remove: forget this network and its
+    /// credential. `STATUS_ITEM_NOT_FOUND` for a name the table does not
+    /// hold.
+    async fn forget_wifi_network(&mut self, ssid: &[u8]) -> Result<(), Status> {
+        let _ = ssid;
+        Err(Status::UNIMPLEMENTED)
+    }
+    /// Read one of the tables the platform owns rather than the session:
+    /// `PROP_WIFI_NETWORKS`, `PROP_WIFI_SCAN_RESULTS`,
+    /// `PROP_IPV4_ADDRESS`, `PROP_IPV6_ADDRESSES` or `PROP_IP_RESOLVERS`,
+    /// named by `key`.
+    ///
+    /// Writes the encoded item list into `out` and returns its length.
+    /// `out` holds [`NETWORK_TABLE_MAX`] octets, which is the bound the
+    /// spec requires a device to keep its retained scan inside. Network
+    /// entries go in their reported form: no answer ever carries a
+    /// credential.
+    async fn read_network_table(&mut self, key: u32, out: &mut [u8]) -> Result<usize, Status> {
+        let _ = (key, out);
+        Err(Status::UNIMPLEMENTED)
     }
     /// `CMD_FACTORY_RESET`: erase EVERY piece of persistent state the
     /// platform owns—saved snapshot, device identity, frame-counter
@@ -804,6 +926,11 @@ async fn apply_effect<A, S, const TXQ: usize, M, const RX: usize, const TX: usiz
         | Some(Effect::SetPairingPin { .. })
         | Some(Effect::ClearBleBonds { .. })
         | Some(Effect::SetBlePairing { .. })
+        | Some(Effect::SetWifiScanning { .. })
+        | Some(Effect::SelectWifiNetwork { .. })
+        | Some(Effect::InsertWifiNetwork { .. })
+        | Some(Effect::RemoveWifiNetwork { .. })
+        | Some(Effect::ReadNetworkTable { .. })
         | Some(Effect::DrainQueue)
         | Some(Effect::SaveSnapshot { .. })
         | Some(Effect::ClearSaved { .. })
@@ -911,7 +1038,15 @@ fn sync_dev_domain<A, S, const TXQ: usize, E>(
     }
     // Ahead of the mirror: the mirror is consumed by the device node,
     // and Bluetooth reachability is the transport's business rather than
-    // the node's.
+    // the node's. The station and the stack are neither the node's
+    // business nor the transport's, and arrive here for the same reason.
+    env.apply_network_config(NetworkConfig {
+        wifi_enabled: session.wifi_enabled(),
+        network: session.selected_network(),
+        v4: session.ipv4_config(),
+        v6: session.ipv6_config(),
+        resolvers: session.dns_resolvers(),
+    });
     env.set_ble_enabled(snapshot.ble_enabled);
     env.publish_dev_domain(snapshot);
 }
@@ -1130,6 +1265,43 @@ async fn serve_frame<A, S, const TXQ: usize, M, const RX: usize, const TX: usize
                     applied.then_some(open).ok_or(()),
                     &mut |frame: &[u8]| emitter.push(frame),
                 );
+                emitter.flush(sink).await;
+            }
+            Some(Effect::SetWifiScanning { tid, scanning }) => {
+                let result = env.set_wifi_scanning(scanning).await;
+                session.respond_wifi_scanning(tid, result, &mut |frame: &[u8]| emitter.push(frame));
+                emitter.flush(sink).await;
+            }
+            Some(Effect::SelectWifiNetwork { tid }) => {
+                let result = env.select_wifi_network(session.pending_network()).await;
+                session.respond_wifi_network(tid, result, &mut |frame: &[u8]| emitter.push(frame));
+                emitter.flush(sink).await;
+            }
+            Some(Effect::InsertWifiNetwork { tid }) => {
+                // The one place a Wi-Fi credential is handled, and
+                // deliberately untraced.
+                let result = env
+                    .store_wifi_network(session.pending_network_entry())
+                    .await;
+                session.respond_wifi_network_stored(tid, result, &mut |frame: &[u8]| {
+                    emitter.push(frame)
+                });
+                emitter.flush(sink).await;
+            }
+            Some(Effect::RemoveWifiNetwork { tid }) => {
+                let result = env.forget_wifi_network(session.pending_network()).await;
+                session.respond_wifi_network_forgotten(tid, result, &mut |frame: &[u8]| {
+                    emitter.push(frame)
+                });
+                emitter.flush(sink).await;
+            }
+            Some(Effect::ReadNetworkTable { tid, key }) => {
+                let mut table = [0u8; NETWORK_TABLE_MAX];
+                let read = env.read_network_table(key, &mut table).await;
+                let items = read.map(|len| &table[..len]);
+                session.respond_network_table(tid, key, items, &mut |frame: &[u8]| {
+                    emitter.push(frame)
+                });
                 emitter.flush(sink).await;
             }
             Some(Effect::FactoryReset) => {
@@ -1545,6 +1717,32 @@ where
                     }
                     PublishEvent::BlePairing(open) => {
                         session.set_ble_pairing(open, emit);
+                    }
+                    PublishEvent::WifiScanning(scanning) => {
+                        // The clear goes first, so every insert that
+                        // follows lands in a table the host knows to be
+                        // empty (spec §PROP_WIFI_SCANNING).
+                        if scanning {
+                            session.clear_scan_results(emit);
+                        }
+                        session.set_wifi_scanning(scanning, emit);
+                    }
+                    PublishEvent::WifiScanResult(item) => {
+                        if let Ok(result) = umsh_ulcp::wifi::ScanResult::decode(&item) {
+                            session.publish_scan_result(&result, emit);
+                        }
+                    }
+                    PublishEvent::WifiLink(link) => {
+                        session.set_wifi_link(link, emit);
+                    }
+                    PublishEvent::WifiRssi(dbm) => {
+                        session.set_wifi_rssi(dbm);
+                    }
+                    PublishEvent::WifiMac(mac) => {
+                        session.set_wifi_mac(mac);
+                    }
+                    PublishEvent::IpState(key, state) => {
+                        session.set_ip_state(key, state, emit);
                     }
                     PublishEvent::IdentityFix(location, altitude_m) => {
                         // The session clamps, compares, and bumps the

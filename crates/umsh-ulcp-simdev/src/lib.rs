@@ -23,12 +23,17 @@ use umsh_crypto::{
 };
 use umsh_ulcp::battery::{BatteryChargeState, BatteryStatus};
 use umsh_ulcp::gnss::{FixKind, GnssSnapshot};
-use umsh_ulcp::{Status, hdlc};
+use umsh_ulcp::ids::prop;
+use umsh_ulcp::ip::{FamilyState, V4Address, V6Item};
+use umsh_ulcp::wifi::{
+    Association, Link, LinkReason, LinkState, NetworkEntry, ScanResult, SecurityMode,
+};
+use umsh_ulcp::{Status, hdlc, items};
 use umsh_ulcp_device::{Effect, IdentitySource, SNAPSHOT_MAX, Session, TxOutcome};
 
 pub use umsh_ulcp_device::{
-    AlertConfig, BatteryFields, DutyLedger, GnssConfig, RadioRxInfo, RadioSettings, SessionConfig,
-    TimeConfig,
+    AlertConfig, BatteryFields, DutyLedger, GnssConfig, IpConfig, RadioRxInfo, RadioSettings,
+    SessionConfig, TimeConfig, WifiConfig,
 };
 
 const WIRE_CAPACITY: usize = umsh_ulcp::gatt::MAX_FRAME;
@@ -68,6 +73,81 @@ pub struct SimulatedDevice {
     /// step per sample so a host watching `PROP_GNSS_LOCATION` sees a
     /// track rather than a fixed point.
     fix_step: u32,
+    /// What stands where a Wi-Fi driver and an IP stack would.
+    network: SimulatedNetwork,
+}
+
+/// The access points the simulated receiver can hear.
+///
+/// Two of them share a name, which is the case a host has to handle and
+/// the one a single canned network would never exercise: a picker groups
+/// on SSID and keeps the strongest, a list of radios shows both. One is
+/// nameless, standing for a hidden network, and it is the reason the
+/// BSSID is what identifies an entry.
+const SIMULATED_ACCESS_POINTS: &[(u16, i8, [u8; 6], &[u8])] = &[
+    (
+        5220,
+        -48,
+        [0x02, 0x11, 0xA0, 0x01, 0x00, 0x01],
+        b"Field Office",
+    ),
+    (
+        2437,
+        -71,
+        [0x02, 0x11, 0xA0, 0x01, 0x00, 0x02],
+        b"Field Office",
+    ),
+    (
+        2412,
+        -66,
+        [0x02, 0x33, 0xB4, 0x0C, 0x10, 0x07],
+        b"Depot Guest",
+    ),
+    (5745, -83, [0x02, 0x9E, 0x44, 0x2D, 0x88, 0x01], b""),
+];
+
+/// The station's own address, which never changes.
+const SIMULATED_WIFI_MAC: [u8; 6] = [0x02, 0x55, 0x4D, 0x53, 0x48, 0x01];
+
+/// The simulated Wi-Fi station and IP stack.
+///
+/// Where the driver would be: the network table with its credentials, the
+/// results of a scan, and whatever the link and the stack have made of
+/// the configuration the session holds. Nothing here is protocol state —
+/// the session owns that—which is exactly the division the effects
+/// exist to draw.
+#[derive(Default)]
+struct SimulatedNetwork {
+    /// Stored networks in item form, credential included, keyed by SSID.
+    networks: Vec<Vec<u8>>,
+    /// Whether the station is currently on the selected network.
+    associated: bool,
+    /// Whether a scan has run. A device that has never looked reports an
+    /// empty table rather than the results of a scan nobody asked for.
+    scanned: bool,
+}
+
+impl SimulatedNetwork {
+    /// Where a stored network with this SSID sits, if one does.
+    fn position(&self, ssid: &[u8]) -> Option<usize> {
+        self.networks
+            .iter()
+            .position(|entry| Self::ssid_of(entry) == ssid)
+    }
+
+    fn ssid_of(entry: &[u8]) -> &[u8] {
+        NetworkEntry::decode(entry)
+            .map(|entry| entry.ssid)
+            .unwrap_or(&[])
+    }
+
+    /// Store an entry, replacing any held under the same name.
+    fn store(&mut self, entry: &[u8]) {
+        match self.position(Self::ssid_of(entry)) {
+            Some(index) => self.networks[index] = entry.to_vec(),
+            None => self.networks.push(entry.to_vec()),
+        }
+    }
 }
 
 impl SimulatedDevice {
@@ -95,6 +175,7 @@ impl SimulatedDevice {
             boot_ms: 0,
             epoch: None,
             fix_step: 0,
+            network: SimulatedNetwork::default(),
         }
     }
 
@@ -198,6 +279,7 @@ impl SimulatedDevice {
             .session
             .handle_frame(frame, device_ms, &mut |bytes| emitted.push(bytes.to_vec()));
         self.execute(effect, &mut emitted);
+        self.settle_network(&mut |frame: &[u8]| emitted.push(frame.to_vec()));
         self.queue_emitted(emitted);
         self.flush_session_reset_notice();
     }
@@ -357,7 +439,225 @@ impl SimulatedDevice {
                 };
                 self.session.respond_identity(tid, result, &mut emit);
             }
+            // A scan the whole way through, in the four frames the spec
+            // orders: the clear, the reply, an insert per access point,
+            // and the drop to zero. Instant rather than progressive,
+            // which is the shape of every stack that hands a scan back
+            // only when it finishes.
+            Some(Effect::SetWifiScanning { tid, scanning }) => {
+                if self.session.wifi_station() && !self.session.wifi_enabled() {
+                    self.session
+                        .respond_wifi_scanning(tid, Err(Status::INVALID_STATE), &mut emit);
+                    return;
+                }
+                if !scanning {
+                    self.session
+                        .respond_wifi_scanning(tid, Ok(false), &mut emit);
+                    return;
+                }
+                self.network.scanned = true;
+                self.session.clear_scan_results(&mut emit);
+                self.session.respond_wifi_scanning(tid, Ok(true), &mut emit);
+                for &(frequency_mhz, rssi_dbm, bssid, ssid) in SIMULATED_ACCESS_POINTS {
+                    self.session.publish_scan_result(
+                        &ScanResult {
+                            modes: Self::simulated_modes(ssid),
+                            frequency_mhz,
+                            rssi_dbm,
+                            bssid,
+                            ssid,
+                        },
+                        &mut emit,
+                    );
+                }
+                self.session.set_wifi_scanning(false, &mut emit);
+            }
+            Some(Effect::SelectWifiNetwork { tid }) => {
+                let ssid = self.session.pending_network().to_vec();
+                let result = match ssid.is_empty() || self.network.position(&ssid).is_some() {
+                    true => Ok(()),
+                    false => Err(Status::ITEM_NOT_FOUND),
+                };
+                self.session.respond_wifi_network(tid, result, &mut emit);
+            }
+            Some(Effect::InsertWifiNetwork { tid }) => {
+                let entry = self.session.pending_network_entry().to_vec();
+                // A mode the simulated hardware does not do, so that a
+                // host's step-down path has something to step down from.
+                let result = match NetworkEntry::decode(&entry).map(|entry| entry.security) {
+                    Ok(SecurityMode::Wpa3Ent192) => Err(Status::UNIMPLEMENTED),
+                    _ => {
+                        self.network.store(&entry);
+                        Ok(())
+                    }
+                };
+                self.session
+                    .respond_wifi_network_stored(tid, result, &mut emit);
+            }
+            Some(Effect::RemoveWifiNetwork { tid }) => {
+                let ssid = self.session.pending_network().to_vec();
+                let result = match self.network.position(&ssid) {
+                    Some(index) => {
+                        self.network.networks.remove(index);
+                        Ok(())
+                    }
+                    None => Err(Status::ITEM_NOT_FOUND),
+                };
+                self.session
+                    .respond_wifi_network_forgotten(tid, result, &mut emit);
+            }
+            Some(Effect::ReadNetworkTable { tid, key }) => {
+                let items = self.network_table(key);
+                self.session
+                    .respond_network_table(tid, key, Ok(&items), &mut emit);
+            }
         }
+    }
+
+    /// What the simulated access points offer, by name.
+    ///
+    /// The office network is a WPA2/WPA3 transition deployment, the guest
+    /// network is Enhanced Open beside a plain open BSS, and the nameless
+    /// one is ordinary WPA2—three shapes a picker has to render
+    /// differently.
+    fn simulated_modes(ssid: &[u8]) -> u16 {
+        match ssid {
+            b"Field Office" => SecurityMode::Wpa2.bit() | SecurityMode::Wpa3.bit(),
+            b"Depot Guest" => SecurityMode::Open.bit() | SecurityMode::Owe.bit(),
+            _ => SecurityMode::Wpa2.bit(),
+        }
+    }
+
+    /// One of the tables the platform owns rather than the session,
+    /// encoded as a length-prefixed item list.
+    fn network_table(&self, key: u32) -> Vec<u8> {
+        let mut items = Vec::new();
+        let mut push = |item: &[u8]| {
+            let mut buf = [0u8; 1 + umsh_ulcp::wifi::NETWORK_ENTRY_MAX_LEN];
+            if let Ok(len) = items::encode_prefixed_item(item, &mut buf) {
+                items.extend_from_slice(&buf[..len]);
+            }
+        };
+        match key {
+            // Reported form: the credential stops here and goes no
+            // further, which is the entire point of the table living
+            // with the driver.
+            prop::WIFI_NETWORKS => {
+                for entry in &self.network.networks {
+                    let mut reported = [0u8; umsh_ulcp::wifi::NETWORK_ENTRY_MAX_LEN];
+                    let encoded = NetworkEntry::decode(entry)
+                        .and_then(|entry| entry.encode_reported(&mut reported));
+                    if let Ok(len) = encoded {
+                        push(&reported[..len]);
+                    }
+                }
+            }
+            // Whatever the last scan heard, strongest first, which is
+            // how a device reports its retained table.
+            prop::WIFI_SCAN_RESULTS if self.network.scanned => {
+                for &(frequency_mhz, rssi_dbm, bssid, ssid) in SIMULATED_ACCESS_POINTS {
+                    let mut buf = [0u8; umsh_ulcp::wifi::SCAN_RESULT_MAX_LEN];
+                    let result = ScanResult {
+                        modes: Self::simulated_modes(ssid),
+                        frequency_mhz,
+                        rssi_dbm,
+                        bssid,
+                        ssid,
+                    };
+                    if let Ok(len) = result.encode(&mut buf) {
+                        push(&buf[..len]);
+                    }
+                }
+            }
+            prop::IPV4_ADDRESS if self.network.associated => {
+                let mut buf = [0u8; umsh_ulcp::ip::V4_ADDRESS_LEN];
+                let address = V4Address {
+                    address: [192, 168, 8, 42],
+                    prefix: 24,
+                    gateway: [192, 168, 8, 1],
+                };
+                if let Ok(len) = address.encode(&mut buf) {
+                    push(&buf[..len]);
+                }
+            }
+            prop::IPV6_ADDRESSES if self.network.associated => {
+                let mut address = [0u8; 16];
+                address[..2].copy_from_slice(&[0x20, 0x01]);
+                address[2..4].copy_from_slice(&[0x0d, 0xb8]);
+                address[15] = 0x2a;
+                let mut router = [0u8; 16];
+                router[0] = 0xfe;
+                router[1] = 0x80;
+                router[15] = 0x01;
+                for item in [
+                    V6Item::Address {
+                        address,
+                        prefix: 64,
+                    },
+                    V6Item::Router { address: router },
+                ] {
+                    let mut buf = [0u8; umsh_ulcp::ip::V6_ADDRESS_ITEM_LEN];
+                    if let Ok(len) = item.encode(&mut buf) {
+                        push(&buf[..len]);
+                    }
+                }
+            }
+            // What the stack resolves through: the device's own list
+            // where it has one, and the network's offer where it does
+            // not.
+            prop::IP_RESOLVERS if self.network.associated => {
+                let configured: Vec<Vec<u8>> = self
+                    .session
+                    .dns_resolvers()
+                    .iter()
+                    .map(<[u8]>::to_vec)
+                    .collect();
+                match configured.is_empty() {
+                    true => push(&[192, 168, 8, 1]),
+                    false => configured.iter().for_each(|resolver| push(resolver)),
+                }
+            }
+            _ => {}
+        }
+        items
+    }
+
+    /// Bring the simulated link and stack to what the session now holds.
+    ///
+    /// Where a driver would react to the device-domain mirror. Called
+    /// after every frame, so a write that switches the station off or
+    /// picks a different network is followed by the state that write
+    /// produced.
+    fn settle_network(&mut self, emit: &mut impl FnMut(&[u8])) {
+        if !self.session.wifi_station() {
+            return;
+        }
+        self.session.set_wifi_mac(SIMULATED_WIFI_MAC);
+        let selected = self.session.selected_network().to_vec();
+        let associated = self.session.wifi_enabled()
+            && !selected.is_empty()
+            && self.network.position(&selected).is_some();
+        self.network.associated = associated;
+        let link = match associated {
+            true => Link {
+                state: LinkState::Up,
+                reason: LinkReason::None,
+                association: Some(Association {
+                    bssid: SIMULATED_ACCESS_POINTS[0].2,
+                    frequency_mhz: SIMULATED_ACCESS_POINTS[0].0,
+                }),
+            },
+            false => Link::default(),
+        };
+        self.session.set_wifi_link(link, emit);
+        self.session
+            .set_wifi_rssi(associated.then_some(SIMULATED_ACCESS_POINTS[0].1));
+        let state = match associated {
+            true => FamilyState::Ready,
+            false => FamilyState::NoLink,
+        };
+        self.session.set_ip_state(prop::IPV4_STATE, state, emit);
+        self.session.set_ip_state(prop::IPV6_STATE, state, emit);
     }
 
     /// The simulated receiver's view, walked one cell east per sample.
@@ -436,6 +736,8 @@ mod tests {
             // A simulated device has no radio to count for.
             stats: None,
             mac_node: false,
+            wifi: Some(WifiConfig::STATION),
+            ip: Some(IpConfig::DUAL),
         }
     }
 

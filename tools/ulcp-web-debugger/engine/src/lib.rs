@@ -28,8 +28,8 @@ pub use umsh_ulcp_simdev::SimulatedDevice;
 pub fn web_sim_config() -> umsh_ulcp_simdev::SessionConfig {
     use umsh_ulcp::profiles;
     use umsh_ulcp_simdev::{
-        AlertConfig, BatteryFields, DutyLedger, GnssConfig, RadioSettings, SessionConfig,
-        TimeConfig,
+        AlertConfig, BatteryFields, DutyLedger, GnssConfig, IpConfig, RadioSettings, SessionConfig,
+        TimeConfig, WifiConfig,
     };
     SessionConfig {
         dev_version: "umsh-web-sim/0.1",
@@ -84,6 +84,13 @@ pub fn web_sim_config() -> umsh_ulcp_simdev::SessionConfig {
         // device to front a segment.
         stats: None,
         mac_node: false,
+        // A station and a dual-stack, for the same reason as the clock
+        // and the receiver: the simulator answers the whole property
+        // surface, joins its own canned networks, and hands back an
+        // address, so every state a host has to render is reachable from
+        // a browser tab.
+        wifi: Some(WifiConfig::STATION),
+        ip: Some(IpConfig::DUAL),
     }
 }
 

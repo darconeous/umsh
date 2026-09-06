@@ -46,7 +46,9 @@ const READ_CHUNK: usize = 4096;
 ///
 /// Deliberately spare. A board's capabilities describe hardware, and
 /// this has none: no battery to sample, no light sensor, no receiver, no
-/// Bluetooth to switch off, and above all no node—see
+/// Bluetooth to switch off, no Wi-Fi and no stack of its own (the
+/// bridge's own network is the operator's business, not a property
+/// surface), and above all no node—see
 /// [`SessionConfig::mac_node`], which is what keeps a participant from
 /// mistaking this for something it can backhaul through.
 ///
@@ -89,6 +91,8 @@ fn session_config() -> SessionConfig {
         // A soft device on the bridge has no antenna of its own.
         stats: None,
         mac_node: false,
+        wifi: None,
+        ip: None,
     }
 }
 

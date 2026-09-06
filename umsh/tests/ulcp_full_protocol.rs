@@ -26,17 +26,24 @@ use umsh_core::{MicSize, NodeHint, PacketBuilder, PacketHeader, PacketType};
 use umsh_crypto::software::{SoftwareAes, SoftwareIdentity, SoftwareSha256};
 use umsh_crypto::{CryptoEngine, NodeIdentity as _, PairwiseKeys};
 use umsh_ulcp::Status;
-use umsh_ulcp::ids::cap;
+use umsh_ulcp::ids::{cap, prop};
 use umsh_ulcp::items::{Filter, PeerKeyEntry};
 use umsh_ulcp::meta::{BufferedRxMeta, RX_FLAG_ACKED, RX_FLAG_BUFFERED};
 use umsh_ulcp_device::{
-    Effect, IdentitySource, RadioRxInfo, RadioSettings, SNAPSHOT_MAX, SessionConfig, TxOutcome,
+    Effect, IdentitySource, IpConfig, RadioRxInfo, RadioSettings, SNAPSHOT_MAX, SessionConfig,
+    TxOutcome, WifiConfig,
 };
 
 type Session = umsh_ulcp_device::Session<SoftwareAes, SoftwareSha256>;
 
 const HOST_KEY: [u8; 32] = [0xC4; 32];
 const PEER_PUB: [u8; 32] = [0x0A; 32];
+
+/// What the simulated receiver hears, weakest last.
+const SIM_ACCESS_POINTS: &[(i8, [u8; 6], &[u8])] = &[
+    (-52, [0x02, 0x11, 0xA0, 0x01, 0x00, 0x01], b"Field Office"),
+    (-74, [0x02, 0x33, 0xB4, 0x0C, 0x10, 0x07], b"Depot Guest"),
+];
 
 fn engine() -> CryptoEngine<SoftwareAes, SoftwareSha256> {
     CryptoEngine::new(SoftwareAes, SoftwareSha256)
@@ -87,6 +94,8 @@ fn session_config() -> SessionConfig {
         reboot: true,
         stats: None,
         mac_node: true,
+        wifi: Some(WifiConfig::STATION),
+        ip: Some(IpConfig::DUAL),
     }
 }
 
@@ -110,6 +119,8 @@ struct SimDevice {
     epoch: Option<u32>,
     /// Per-command capture, both directions.
     log: Vec<String>,
+    /// The stored networks a Wi-Fi driver would hold, credential and all.
+    networks: Vec<Vec<u8>>,
 }
 
 impl SimDevice {
@@ -130,6 +141,7 @@ impl SimDevice {
             now_ms: 0,
             epoch: None,
             log: Vec::new(),
+            networks: Vec::new(),
         }))
     }
 
@@ -165,6 +177,19 @@ impl SimDevice {
         snapshot.sats_in_view = Some(13);
         snapshot.set_location(&[0x8a, 0x1f, 0x4c, 0x00, 0xd3]);
         snapshot
+    }
+
+    /// Where a stored network with this name sits, if one does.
+    fn network_index(&self, ssid: &[u8]) -> Option<usize> {
+        self.networks
+            .iter()
+            .position(|entry| Self::entry_ssid(entry) == ssid)
+    }
+
+    fn entry_ssid(entry: &[u8]) -> &[u8] {
+        umsh_ulcp::wifi::NetworkEntry::decode(entry)
+            .map(|entry| entry.ssid)
+            .unwrap_or(&[])
     }
 
     /// Execute one session effect the way the firmware's effect arms
@@ -251,6 +276,88 @@ impl SimDevice {
             // responder lands.
             Some(Effect::SignIdentity { tid }) => {
                 self.session.respond_identity_blob(tid, Err(()), &mut emit);
+            }
+            // A whole scan in the four frames the spec orders, from a
+            // stack that hands its results back at the end.
+            Some(Effect::SetWifiScanning { tid, scanning }) => {
+                if !self.session.wifi_enabled() {
+                    self.session
+                        .respond_wifi_scanning(tid, Err(Status::INVALID_STATE), &mut emit);
+                    return;
+                }
+                if !scanning {
+                    self.session
+                        .respond_wifi_scanning(tid, Ok(false), &mut emit);
+                    return;
+                }
+                self.session.clear_scan_results(&mut emit);
+                self.session.respond_wifi_scanning(tid, Ok(true), &mut emit);
+                for (rssi_dbm, bssid, ssid) in SIM_ACCESS_POINTS {
+                    self.session.publish_scan_result(
+                        &umsh_ulcp::wifi::ScanResult {
+                            modes: umsh_ulcp::wifi::SecurityMode::Wpa2.bit(),
+                            frequency_mhz: 2437,
+                            rssi_dbm: *rssi_dbm,
+                            bssid: *bssid,
+                            ssid,
+                        },
+                        &mut emit,
+                    );
+                }
+                self.session.set_wifi_scanning(false, &mut emit);
+            }
+            Some(Effect::SelectWifiNetwork { tid }) => {
+                let ssid = self.session.pending_network().to_vec();
+                let result = match ssid.is_empty() || self.network_index(&ssid).is_some() {
+                    true => Ok(()),
+                    false => Err(Status::ITEM_NOT_FOUND),
+                };
+                self.session.respond_wifi_network(tid, result, &mut emit);
+            }
+            Some(Effect::InsertWifiNetwork { tid }) => {
+                let entry = self.session.pending_network_entry().to_vec();
+                let ssid = Self::entry_ssid(&entry).to_vec();
+                match self.network_index(&ssid) {
+                    Some(index) => self.networks[index] = entry,
+                    None => self.networks.push(entry),
+                }
+                self.session
+                    .respond_wifi_network_stored(tid, Ok(()), &mut emit);
+            }
+            Some(Effect::RemoveWifiNetwork { tid }) => {
+                let ssid = self.session.pending_network().to_vec();
+                let result = match self.network_index(&ssid) {
+                    Some(index) => {
+                        self.networks.remove(index);
+                        Ok(())
+                    }
+                    None => Err(Status::ITEM_NOT_FOUND),
+                };
+                self.session
+                    .respond_wifi_network_forgotten(tid, result, &mut emit);
+            }
+            // Only the stored networks are answered from anything: the
+            // rest of the tables belong to a stack this simulator does
+            // not have, and an empty list is a truthful answer for them.
+            Some(Effect::ReadNetworkTable { tid, key }) => {
+                let mut items = Vec::new();
+                if key == umsh_ulcp::ids::prop::WIFI_NETWORKS {
+                    for entry in &self.networks {
+                        let mut reported = [0u8; umsh_ulcp::wifi::NETWORK_ENTRY_MAX_LEN];
+                        let encoded = umsh_ulcp::wifi::NetworkEntry::decode(entry)
+                            .and_then(|entry| entry.encode_reported(&mut reported));
+                        if let Ok(len) = encoded {
+                            items.push(reported[..len].to_vec());
+                        }
+                    }
+                }
+                let mut encoded = Vec::new();
+                for item in &items {
+                    encoded.push(item.len() as u8);
+                    encoded.extend_from_slice(item);
+                }
+                self.session
+                    .respond_network_table(tid, key, Ok(&encoded), &mut emit);
             }
             Some(Effect::ProvisionIdentity { tid }) => {
                 let result = match self.session.identity_request() {
@@ -1067,4 +1174,122 @@ async fn a_reboot_restarts_the_device_and_keeps_what_was_saved() {
     assert_eq!(sync.device_name, "named before the reboot");
     assert!(sync.phy_enabled, "the snapshot re-enabled the PHY at boot");
     assert_eq!(sync.freq_khz, host_config().freq_khz);
+}
+
+/// A whole scan against the real session: the write defers to the
+/// platform, the results stream back as inserts, and the property falls
+/// to zero on its own when the scan is over.
+#[tokio::test]
+async fn a_scan_streams_its_results_and_completes() {
+    let sim = SimDevice::new();
+    let mut radio = attached_host(&sim).await;
+
+    // A station that is switched off has nothing to scan with.
+    let refusal = radio
+        .set_prop(prop::WIFI_SCANNING, &[1])
+        .await
+        .expect_err("a powered-down station refuses");
+    assert!(
+        matches!(refusal, UlcpError::Status(Status::INVALID_STATE)),
+        "unexpected refusal: {refusal:?}"
+    );
+
+    assert_eq!(radio.set_prop(prop::WIFI_ENABLED, &[1]).await.unwrap(), [1]);
+    assert_eq!(
+        radio.set_prop(prop::WIFI_SCANNING, &[1]).await.unwrap(),
+        [1]
+    );
+
+    // This simulator hands its results back at the end, which the spec
+    // permits, so by the time the reply has been served the inserts and
+    // the completion are already behind it.
+    assert_eq!(radio.get_prop(prop::WIFI_SCANNING).await.unwrap(), [0]);
+    assert!(
+        radio
+            .get_prop(prop::WIFI_NETWORKS)
+            .await
+            .unwrap()
+            .is_empty(),
+        "hearing a network is not storing one"
+    );
+}
+
+/// Storing a network, choosing it, reading the table back, and forgetting
+/// it: the four table operations against the real session, with the
+/// credential travelling in exactly one direction.
+#[tokio::test]
+async fn a_network_is_stored_chosen_read_back_and_forgotten() {
+    let sim = SimDevice::new();
+    let mut radio = attached_host(&sim).await;
+
+    let mut item = [0u8; umsh_ulcp::wifi::NETWORK_ENTRY_MAX_LEN];
+    let len = umsh_ulcp::wifi::NetworkEntry {
+        hidden: false,
+        raw_key: false,
+        security: umsh_ulcp::wifi::SecurityMode::Wpa2,
+        ssid: b"Field Office",
+        credential: b"hunter2hunter2",
+    }
+    .encode(&mut item)
+    .unwrap();
+
+    // Choosing a name the device does not hold is refused, and the
+    // selection stays empty.
+    let refusal = radio
+        .set_prop(prop::WIFI_NETWORK, b"Field Office")
+        .await
+        .expect_err("no such stored network");
+    assert!(
+        matches!(refusal, UlcpError::Status(Status::ITEM_NOT_FOUND)),
+        "unexpected refusal: {refusal:?}"
+    );
+    assert!(radio.get_prop(prop::WIFI_NETWORK).await.unwrap().is_empty());
+
+    let digest = radio
+        .insert_prop_item(prop::WIFI_NETWORKS, &item[..len])
+        .await
+        .unwrap();
+    assert!(
+        umsh_ulcp::wifi::NetworkEntry::decode(&digest)
+            .unwrap()
+            .credential
+            .is_empty(),
+        "the acknowledgement stops at the SSID"
+    );
+
+    assert_eq!(
+        radio
+            .set_prop(prop::WIFI_NETWORK, b"Field Office")
+            .await
+            .unwrap(),
+        b"Field Office"
+    );
+
+    let table = radio.get_prop(prop::WIFI_NETWORKS).await.unwrap();
+    let stored = umsh_ulcp::wifi::NetworkEntry::decode(&table[1..]).unwrap();
+    assert_eq!(stored.ssid, b"Field Office");
+    assert_eq!(stored.security, umsh_ulcp::wifi::SecurityMode::Wpa2);
+    assert!(
+        stored.credential.is_empty(),
+        "no read ever carries a credential back"
+    );
+
+    assert_eq!(
+        radio
+            .remove_prop_item(prop::WIFI_NETWORKS, b"Field Office")
+            .await
+            .unwrap(),
+        b"Field Office"
+    );
+    assert!(
+        radio.get_prop(prop::WIFI_NETWORK).await.unwrap().is_empty(),
+        "forgetting the chosen network clears the choice"
+    );
+    assert!(
+        radio
+            .get_prop(prop::WIFI_NETWORKS)
+            .await
+            .unwrap()
+            .is_empty()
+    );
 }

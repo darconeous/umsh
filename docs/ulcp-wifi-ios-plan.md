@@ -459,23 +459,47 @@ actually runs, and it can run before any board has a Wi-Fi driver.
 * `crates/umsh-ulcp-device`: `SessionConfig` gains `wifi: Option<WifiConfig>`
   and `ip: Option<IpConfig>` in the shape of `gnss` and `ble`, the
   session serves the sixteen properties by the chapters, enforces the
-  refusals and the frame orders, and the saved schema gains the six
-  configuration properties. Station and stack *behavior*, joining,
-  scanning, leasing, is behind new `Effect` variants and `DeviceEnv`
-  hooks with default implementations that refuse, so both firmwares
-  compile unchanged and advertise neither capability.
+  refusals and the frame orders, and the saved schema gains the five
+  configuration properties—`PROP_WIFI_ENABLED`, `PROP_WIFI_NETWORK`,
+  `PROP_IPV4_CONFIG`, `PROP_IPV6_CONFIG`, `PROP_IP_DNS`. Station and
+  stack *behavior*, joining, scanning, leasing, is behind new `Effect`
+  variants and `DeviceEnv` hooks with default implementations that
+  refuse, so both firmwares compile unchanged and advertise neither
+  capability.
+
+  The division the effects draw: the session owns the *configuration*
+  and saves it; the platform owns the *behavior* and the two large
+  tables. `PROP_WIFI_NETWORKS` carries credentials and
+  `PROP_WIFI_SCAN_RESULTS` is every access point in the building, so
+  neither is mirrored—both are read through
+  `Effect::ReadNetworkTable`, and the credential reaches exactly one
+  hook, `store_wifi_network`, staged rather than carried on the `Copy`
+  effect and zeroed the moment the platform has it. `PROP_WIFI_ENABLED`
+  and the IP configuration reach the platform on the device-domain
+  mirror instead, as `NetworkConfig` beside `set_ble_enabled`, so a host
+  write, a boot restore and a `CMD_RST` all arrive by one path.
 * `crates/umsh-ulcp-simdev`: an in-memory station and stack that
-  answer the hooks: a fixed set of access points to hear, a join that
-  succeeds against a known passphrase and fails `WIFI_REASON_AUTH`
-  against any other, a lease that arrives a tick after the link.
-* `umsh-bridge` `[[server.hosts]]` presents it on a socket; the app's
-  TCP radio mode attaches to it from the simulator. `umsh/tests/ulcp_full_protocol.rs`
-  gains the scan and join flows end to end, which pins the frame order
-  in a test a firmware change cannot break silently.
+  answer the effects: four access points to hear, two of them sharing a
+  name and one nameless, a table that stores and forgets, a link that
+  comes up when an enabled station has a stored network selected, and a
+  lease behind it.
+* `umsh-bridge` `[[server.hosts]]` presents a soft device on a socket;
+  the app's TCP radio mode attaches to it from the simulator. That
+  device advertises neither capability—a bridge host has no hardware
+  and the bridge's own network is not a property surface—so the
+  Wi-Fi screens are exercised against the staged fixture and the
+  browser simulator instead. `umsh/tests/ulcp_full_protocol.rs` gains
+  the scan and the store/select/read/forget flows end to end, which pins
+  the frame order in a test a firmware change cannot break silently.
 
 Nothing in this stage touches `firmware/` or `firmware-esp32/`. What it
 leaves for the platform plan is exactly the `DeviceEnv` hooks, with the
-simulated device as the reference for what each must do.
+simulated device as the reference for what each must do—and one
+refusal that needs a hook the platform plan will have to add:
+`PROP_WIFI_ENABLED` answering `STATUS_INVALID_STATE` where the station
+cannot run beside another radio. That case needs a device with an
+access point, which is out of scope here, and the write is applied
+rather than deferred until one exists.
 
 ## Sequence and commits
 

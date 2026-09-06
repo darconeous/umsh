@@ -387,6 +387,12 @@ fn session_config() -> SessionConfig {
         reboot: true,
         // A real MAC runs behind this session.
         mac_node: true,
+        // These chips have the radio, but nothing here drives it yet:
+        // the capability is a promise about the property surface, and
+        // claiming it before there is a station to serve it would be a
+        // device answering for hardware it is not using.
+        wifi: None,
+        ip: None,
         stats: Some(&STATS),
     }
 }

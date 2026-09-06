@@ -120,6 +120,8 @@ impl DeviceSide {
             reboot: true,
             stats: None,
             mac_node: true,
+            wifi: None,
+            ip: None,
         };
         let mut session = Session::new(
             config,

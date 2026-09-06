@@ -507,6 +507,11 @@ mod firmware {
             reboot: true,
             // A real MAC runs behind every session here.
             mac_node: true,
+            // No nRF52840 board has a Wi-Fi radio or a stack of its own,
+            // so neither capability is advertised and none of those
+            // properties exists.
+            wifi: None,
+            ip: None,
             stats: Some(&STATS),
         }
     }

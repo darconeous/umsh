@@ -29,14 +29,16 @@
 //! the existing firmware radio path).
 
 pub mod duty;
+pub mod net;
 pub mod session;
 
 pub use duty::{DutyExceeded, DutyLedger, DutyTracker};
+pub use net::{IpConfig, MAX_RESOLVERS, ResolverError, Resolvers, SelectedNetwork, WifiConfig};
 pub use session::{
     AlertConfig, BatteryFields, Binding, CHANNEL_TAG_LEN, DEFAULT_IDENT_PRECISION, Effect,
     GnssConfig, IdentitySource, MAX_CHANNEL_KEYS, MAX_DEV_ADMINS, MAX_DEV_PEERS,
     MAX_DEVICE_NAME_LEN, MAX_IDENT_PRECISION, MAX_PEER_KEYS, MAX_REPEATER_REGIONS, MULTI_MAX,
-    PRIVATE_KEY_LEN, QueuedClass, QueuedNotice, REGION_STRING_MAX_LEN, RadioRxInfo, RadioSettings,
-    SNAPSHOT_MAX, SavedStatus, Session, SessionConfig, SnapshotError, TimeConfig, TxOutcome,
-    TxPower,
+    NETWORK_TABLE_MAX, PRIVATE_KEY_LEN, QueuedClass, QueuedNotice, REGION_STRING_MAX_LEN,
+    RadioRxInfo, RadioSettings, SNAPSHOT_MAX, SavedStatus, Session, SessionConfig, SnapshotError,
+    TimeConfig, TxOutcome, TxPower,
 };
