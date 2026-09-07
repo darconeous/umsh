@@ -198,17 +198,23 @@ pub struct MergedPeerRepeater {
 
 /// Merge the identity table with the MAC's transmitter observations.
 ///
-/// Identity records come first and claim the observation whose router hint
-/// they start with; each remaining observation becomes a two-byte-hint entry.
-/// Both sources are direct receptions, so whichever heard the peer more
-/// recently supplies the signal figures.
+/// An identity claims the observation whose router hint it starts with; each
+/// remaining observation becomes a two-byte-hint entry. Both sources are
+/// direct receptions, so whichever heard the peer more recently supplies the
+/// signal figures.
+///
+/// The listing is ordered most recently heard first. The first page is the
+/// one a requester is surest to read, and the neighbors on the air right
+/// now are the ones it is asking about.
 pub fn merge<'a>(
     identities: &PeerRepeaterTable,
     observations: impl IntoIterator<Item = &'a umsh_mac::TransmitterObservation>,
     now_ms: u64,
 ) -> Vec<MergedPeerRepeater> {
     let observations: Vec<&umsh_mac::TransmitterObservation> = observations.into_iter().collect();
-    let mut merged = Vec::new();
+    // Each entry alongside the monotonic time it was last heard, which orders
+    // the list more finely than the wire's whole minutes can.
+    let mut merged: Vec<(u64, MergedPeerRepeater)> = Vec::new();
     let mut claimed: Vec<RouterHint> = Vec::new();
 
     for record in identities.iter() {
@@ -227,42 +233,44 @@ pub fn merge<'a>(
             Some(entry) => record.rssi_snr.or(Some((entry.rssi_dbm, entry.snr))),
             None => record.rssi_snr,
         };
-        merged.push(MergedPeerRepeater {
-            hint: Vec::from(&record.hint.0[..]),
-            name: record.name.clone(),
-            location: record.location,
-            regions: record.regions.clone(),
-            rssi_dbm: rssi_snr.map(|(rssi, _)| rssi),
-            snr: rssi_snr.map(|(_, snr)| snr),
-            last_heard_min: minutes_since(
-                [
-                    Some(record.last_identity_ms),
-                    observation.map(|entry| entry.last_seen_ms),
-                ]
-                .into_iter()
-                .flatten()
-                .max(),
-                now_ms,
-            ),
-        });
+        let last_heard_ms = observation
+            .map(|entry| entry.last_seen_ms.max(record.last_identity_ms))
+            .unwrap_or(record.last_identity_ms);
+        merged.push((
+            last_heard_ms,
+            MergedPeerRepeater {
+                hint: Vec::from(&record.hint.0[..]),
+                name: record.name.clone(),
+                location: record.location,
+                regions: record.regions.clone(),
+                rssi_dbm: rssi_snr.map(|(rssi, _)| rssi),
+                snr: rssi_snr.map(|(_, snr)| snr),
+                last_heard_min: minutes_since(Some(last_heard_ms), now_ms),
+            },
+        ));
     }
 
     for observation in observations {
         if claimed.contains(&observation.hint) {
             continue;
         }
-        merged.push(MergedPeerRepeater {
-            hint: Vec::from(&observation.hint.0[..]),
-            name: None,
-            location: None,
-            regions: Vec::new(),
-            rssi_dbm: Some(observation.rssi_dbm),
-            snr: Some(observation.snr),
-            last_heard_min: minutes_since(Some(observation.last_seen_ms), now_ms),
-        });
+        merged.push((
+            observation.last_seen_ms,
+            MergedPeerRepeater {
+                hint: Vec::from(&observation.hint.0[..]),
+                name: None,
+                location: None,
+                regions: Vec::new(),
+                rssi_dbm: Some(observation.rssi_dbm),
+                snr: Some(observation.snr),
+                last_heard_min: minutes_since(Some(observation.last_seen_ms), now_ms),
+            },
+        ));
     }
 
-    merged
+    // Stable, so peers heard in the same instant keep identity-first order.
+    merged.sort_by_key(|(last_heard_ms, _)| core::cmp::Reverse(*last_heard_ms));
+    merged.into_iter().map(|(_, entry)| entry).collect()
 }
 
 /// Whole minutes between `then_ms` and now, saturating at the two octets the
@@ -406,6 +414,42 @@ mod tests {
             Some(-60),
             "the older forwarding does not outrank the newer advertisement"
         );
+    }
+
+    /// Whoever was heard last is listed first, whichever source heard them.
+    #[test]
+    fn the_listing_is_ordered_most_recently_heard_first() {
+        let mut table = PeerRepeaterTable::new();
+        // An identity heard long ago whose owner was heard forwarding since,
+        // one heard recently, and one heard long ago and never since.
+        table.observe_identity(
+            &key(0xAA),
+            &repeater_identity("Refreshed", &[]),
+            None,
+            10_000,
+        );
+        table.observe_identity(&key(0xBB), &repeater_identity("Recent", &[]), None, 200_000);
+        table.observe_identity(&key(0xCC), &repeater_identity("Stale", &[]), None, 20_000);
+        let refreshed = key(0xAA).hint();
+        let observations = [
+            observation(RouterHint([refreshed.0[0], refreshed.0[1]]), 300_000),
+            // Never introduced, heard forwarding between the other two.
+            observation(RouterHint([0x11, 0x22]), 100_000),
+        ];
+
+        let merged = merge(&table, observations.iter(), 400_000);
+        let order: Vec<&[u8]> = merged.iter().map(|entry| &entry.hint[..]).collect();
+        assert_eq!(
+            order,
+            [
+                &refreshed.0[..],
+                &key(0xBB).hint().0[..],
+                &[0x11, 0x22][..],
+                &key(0xCC).hint().0[..],
+            ]
+        );
+        assert_eq!(merged[0].last_heard_min, Some(1));
+        assert_eq!(merged[3].last_heard_min, Some(6));
     }
 
     /// A radio that reported no measurement for the advertisement leaves the
