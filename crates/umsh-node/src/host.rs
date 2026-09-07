@@ -390,9 +390,25 @@ fn dispatch_payload_callbacks<M: MacBackend>(
 ) {
     if packet.payload_type() == PayloadType::NodeIdentity {
         if let Ok(identity) = NodeIdentityPayload::from_bytes(packet.payload()) {
-            // Recorded before the callback so an observer that asks for the
-            // peer-repeater listing from inside it sees this identity in it.
-            node.observe_peer_identity(from, &identity, now_ms);
+            // Only an advertisement heard off its owner's own transmitter
+            // places the owner in this node's repeater neighborhood: one
+            // that arrived forwarded says nothing about whether the owner
+            // is in range, one replayed from a device's queue was heard
+            // minutes ago, and one with no measurement never crossed a
+            // radio at all. Recorded before the callback so an observer
+            // that asks for the peer-repeater listing from inside it sees
+            // this identity in it.
+            let heard_directly = packet.hop_count() == Some(1)
+                && packet.rx().buffered_age_s() == 0
+                && packet.rssi().is_some();
+            if heard_directly {
+                node.observe_peer_identity(
+                    from,
+                    &identity,
+                    packet.rssi().zip(packet.snr()),
+                    now_ms,
+                );
+            }
             node.dispatch_node_discovered(from, identity.name.as_deref());
         }
         return;

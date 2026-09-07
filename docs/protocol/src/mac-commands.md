@@ -214,6 +214,8 @@ type that requests an ACK.
 
 Asks the destination—typically a repeater—for its list of known peer repeaters.
 
+The list is the responder's repeater neighborhood: the repeaters it has heard from their own transmitters. A repeater enters it in one of two ways. Forwarding a frame the responder receives is one—a repeater prepends its router hint to the frame's [Trace Route](packet-options.md#trace-route-option-2), so the first hint names the repeater whose transmission was just heard. Advertising is the other—a [node identity](node-identity.md) claiming the repeater role or capability, heard directly rather than forwarded. Frames heard from nodes that are not repeaters, and identities that arrived through a repeater, put nothing in the list.
+
 The command-specific payload is a CoAP-style option list, using the delta-length encoding defined in [Packet Options](packet-options.md#attribute-encoding):
 
 | Number | Name | Value | Description |

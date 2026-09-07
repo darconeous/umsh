@@ -1,29 +1,32 @@
-//! What the radio has heard from whom, independent of who it was for.
+//! Which repeaters the radio has heard forwarding, and how well.
 //!
 //! Route learning records the way to a *peer*; this records the last
-//! reception from a *transmitter*. The two differ for exactly the traffic
-//! that makes a repeater useful: a frame forwarded past this node teaches
-//! nothing about a peer, and a frame overheard on the air never reaches the
-//! host at all, but both prove a neighbor was on the air and how well it was
-//! heard. That is what a
+//! reception from a neighboring *repeater*. A repeater prepends its router
+//! hint to the trace route of every frame it forwards, so the first hint of
+//! a trace names the transmitter just heard, and a frame with no such hint
+//! came off its originator and names no repeater at all. The two differ for
+//! exactly the traffic that makes a repeater useful: a frame forwarded past
+//! this node teaches nothing about a peer, and a frame overheard on the air
+//! never reaches the host, but both prove a neighboring repeater was on the
+//! air. That is what a
 //! [Peer Repeaters Response](../../docs/protocol/src/mac-commands.md) reports
 //! about the hops it names.
 
 use umsh_core::RouterHint;
 use umsh_hal::Snr;
 
-/// How many transmitters the table remembers.
+/// How many repeaters the table remembers.
 ///
 /// A neighborhood larger than this is one where the least recently heard
 /// entries are the ones worth losing, and the whole table has to fit a
 /// single response page's worth of answers anyway.
 pub const MAX_TRANSMITTER_OBSERVATIONS: usize = 16;
 
-/// The most recent reception from one transmitter.
+/// The most recent reception from one neighboring repeater.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TransmitterObservation {
-    /// All a trace or source route reveals about a hop, and so all this
-    /// table can key on.
+    /// All a trace route reveals about the hop that forwarded a frame, and
+    /// so all this table can key on.
     pub hint: RouterHint,
     /// Received signal strength of the most recent reception, in dBm.
     pub rssi_dbm: i16,
@@ -33,7 +36,7 @@ pub struct TransmitterObservation {
     pub last_seen_ms: u64,
 }
 
-/// A bounded, least-recently-heard table of transmitter observations.
+/// A bounded, least-recently-heard table of repeater observations.
 #[derive(Clone, Debug, Default)]
 pub struct TransmitterObservations {
     entries: heapless::Vec<TransmitterObservation, MAX_TRANSMITTER_OBSERVATIONS>,

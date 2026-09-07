@@ -1,15 +1,18 @@
-//! What a node knows about the repeaters around it, and how it answers a
+//! The repeaters a node has heard directly, and how it answers a
 //! [Peer Repeaters Request](../../docs/protocol/src/mac-commands.md).
 //!
-//! Two sources feed one answer, because neither is enough on its own:
+//! The list is a neighborhood: repeaters heard off their own transmitters.
+//! Two sources feed it, because neither is enough on its own:
 //!
 //! - **Identities.** A repeater that advertises tells its neighbors its name,
 //!   its position, and the regions it forwards for. None of that can be
-//!   recovered from a hint, and an identity that arrived over several hops
-//!   says nothing about the link to the node that sent it.
+//!   recovered from a hint. Only an identity heard directly counts—one that
+//!   arrived forwarded says nothing about whether its owner is in range.
 //! - **Transmitter observations** ([`umsh_mac::TransmitterObservations`]).
-//!   Every frame off the air proves who was on it and how well they were
-//!   heard, including hops that never send this node anything of their own.
+//!   A repeater prepends its router hint to the trace route of every frame
+//!   it forwards, so every traced frame off the air proves which repeater
+//!   just transmitted it and how well it was heard—including repeaters that
+//!   never send this node anything of their own.
 //!
 //! A [`RouterHint`] is the first two bytes of a public key and a [`NodeHint`]
 //! the first three, so the observation's key is a prefix of the identity's.
@@ -21,6 +24,7 @@ use alloc::string::String;
 use alloc::vec::Vec;
 
 use umsh_core::{NodeHint, PublicKey, RouterHint};
+use umsh_hal::Snr;
 
 use crate::identity::{NodeCapabilities, NodeIdentityPayload, NodeRole};
 use crate::location::NodeLocation;
@@ -45,6 +49,8 @@ pub struct PeerRepeaterRecord {
     /// The codes the peer flood-forwards for, derived from the region
     /// strings its identity carried.
     pub regions: Vec<[u8; 2]>,
+    /// How well the identity was heard, when the radio measured it.
+    pub rssi_snr: Option<(i16, Snr)>,
     /// When the identity arrived, on the monotonic clock.
     pub last_identity_ms: u64,
 }
@@ -57,7 +63,7 @@ impl PeerRepeaterRecord {
     }
 }
 
-/// The repeaters whose identities this node has seen.
+/// The repeaters whose identities this node has heard directly.
 ///
 /// RAM-only: a listing describes a neighborhood as it is now, and a table
 /// restored from flash would name repeaters that may have moved or gone.
@@ -84,15 +90,19 @@ impl PeerRepeaterTable {
             || identity.role == NodeRole::Repeater
     }
 
-    /// Record what an identity said, if it came from a repeater.
+    /// Record what an identity heard directly said, if it came from a
+    /// repeater.
     ///
-    /// Returns whether the table changed. A repeat identity replaces the
-    /// record rather than merging with it: the newest advertisement is the
-    /// node's own account of itself.
+    /// The caller vouches that the identity came off its owner's own
+    /// transmitter; `rssi_snr` is that reception's measurement, when the
+    /// radio made one. Returns whether the table changed. A repeat identity
+    /// replaces the record rather than merging with it: the newest
+    /// advertisement is the node's own account of itself.
     pub fn observe_identity(
         &mut self,
         from: &PublicKey,
         identity: &NodeIdentityPayload,
+        rssi_snr: Option<(i16, Snr)>,
         now_ms: u64,
     ) -> bool {
         if !Self::is_repeater(identity) {
@@ -103,6 +113,7 @@ impl PeerRepeaterTable {
             name: identity.name.clone(),
             location: identity.location,
             regions: region_codes(identity),
+            rssi_snr,
             last_identity_ms: now_ms,
         };
         self.generation = self.generation.wrapping_add(1);
@@ -177,9 +188,10 @@ pub struct MergedPeerRepeater {
     pub name: Option<String>,
     pub location: Option<NodeLocation>,
     pub regions: Vec<[u8; 2]>,
-    /// The most recent reception, when one was measured.
+    /// The most recent measured reception, from whichever source heard the
+    /// peer last.
     pub rssi_dbm: Option<i16>,
-    pub snr: Option<umsh_hal::Snr>,
+    pub snr: Option<Snr>,
     /// Minutes since this peer was last heard from, by either source.
     pub last_heard_min: Option<u16>,
 }
@@ -188,9 +200,8 @@ pub struct MergedPeerRepeater {
 ///
 /// Identity records come first and claim the observation whose router hint
 /// they start with; each remaining observation becomes a two-byte-hint entry.
-/// Signal figures come only from observations—an identity that arrived
-/// flooded crossed hops this node never heard, so its arrival says nothing
-/// about the link to the peer that owns it.
+/// Both sources are direct receptions, so whichever heard the peer more
+/// recently supplies the signal figures.
 pub fn merge<'a>(
     identities: &PeerRepeaterTable,
     observations: impl IntoIterator<Item = &'a umsh_mac::TransmitterObservation>,
@@ -209,13 +220,20 @@ pub fn merge<'a>(
         if observation.is_some() {
             claimed.push(router_hint);
         }
+        let rssi_snr = match observation {
+            Some(entry) if entry.last_seen_ms >= record.last_identity_ms => {
+                Some((entry.rssi_dbm, entry.snr))
+            }
+            Some(entry) => record.rssi_snr.or(Some((entry.rssi_dbm, entry.snr))),
+            None => record.rssi_snr,
+        };
         merged.push(MergedPeerRepeater {
             hint: Vec::from(&record.hint.0[..]),
             name: record.name.clone(),
             location: record.location,
             regions: record.regions.clone(),
-            rssi_dbm: observation.map(|entry| entry.rssi_dbm),
-            snr: observation.map(|entry| entry.snr),
+            rssi_dbm: rssi_snr.map(|(rssi, _)| rssi),
+            snr: rssi_snr.map(|(_, snr)| snr),
             last_heard_min: minutes_since(
                 [
                     Some(record.last_identity_ms),
@@ -259,7 +277,6 @@ fn minutes_since(then_ms: Option<u64>, now_ms: u64) -> Option<u16> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use umsh_hal::Snr;
 
     fn key(seed: u8) -> PublicKey {
         PublicKey([seed; 32])
@@ -294,21 +311,26 @@ mod tests {
         let mut chat = repeater_identity("Handset", &[]);
         chat.role = NodeRole::Chat;
         chat.capabilities = NodeCapabilities::TEXT_MESSAGES;
-        assert!(!table.observe_identity(&key(1), &chat, 0));
+        assert!(!table.observe_identity(&key(1), &chat, None, 0));
         assert!(table.is_empty());
 
         // The capability alone is enough—a node may forward while
         // presenting itself as something else.
         let mut forwarding_handset = chat.clone();
         forwarding_handset.capabilities |= NodeCapabilities::REPEATER;
-        assert!(table.observe_identity(&key(1), &forwarding_handset, 0));
+        assert!(table.observe_identity(&key(1), &forwarding_handset, None, 0));
         assert_eq!(table.len(), 1);
     }
 
     #[test]
     fn an_identity_supplies_the_name_and_regions_an_observation_cannot() {
         let mut table = PeerRepeaterTable::new();
-        table.observe_identity(&key(0xAA), &repeater_identity("Ridge", &["SJC"]), 1_000);
+        table.observe_identity(
+            &key(0xAA),
+            &repeater_identity("Ridge", &["SJC"]),
+            None,
+            1_000,
+        );
 
         let record = table.iter().next().unwrap();
         assert_eq!(record.name.as_deref(), Some("Ridge"));
@@ -321,7 +343,12 @@ mod tests {
     #[test]
     fn an_identity_claims_the_observation_whose_hint_it_starts_with() {
         let mut table = PeerRepeaterTable::new();
-        table.observe_identity(&key(0xAA), &repeater_identity("Ridge", &["SJC"]), 60_000);
+        table.observe_identity(
+            &key(0xAA),
+            &repeater_identity("Ridge", &["SJC"]),
+            Some((-60, Snr::from_decibels(8))),
+            60_000,
+        );
         let hint = key(0xAA).hint();
         let observations = [
             observation(RouterHint([hint.0[0], hint.0[1]]), 120_000),
@@ -333,7 +360,11 @@ mod tests {
 
         assert_eq!(merged[0].hint, hint.0);
         assert_eq!(merged[0].name.as_deref(), Some("Ridge"));
-        assert_eq!(merged[0].rssi_dbm, Some(-95));
+        assert_eq!(
+            merged[0].rssi_dbm,
+            Some(-95),
+            "the newer reception supplies the signal"
+        );
         assert_eq!(
             merged[0].last_heard_min,
             Some(1),
@@ -348,25 +379,63 @@ mod tests {
         assert_eq!(merged[1].last_heard_min, Some(2));
     }
 
-    /// An identity may arrive over hops this node never heard, so it is not
-    /// evidence about the link to the peer that owns it.
+    /// An identity heard directly is a reception in its own right, so a
+    /// repeater that has only ever advertised still comes with a signal.
     #[test]
-    fn an_unobserved_identity_reports_no_signal() {
+    fn an_identity_heard_more_recently_than_any_forwarding_supplies_the_signal() {
         let mut table = PeerRepeaterTable::new();
-        table.observe_identity(&key(0xAA), &repeater_identity("Far", &[]), 0);
-        let merged = merge(&table, [].iter(), 60_000);
-        assert_eq!(merged.len(), 1);
+        table.observe_identity(
+            &key(0xAA),
+            &repeater_identity("Ridge", &[]),
+            Some((-60, Snr::from_decibels(8))),
+            120_000,
+        );
+        let hint = key(0xAA).hint();
+
+        let alone = merge(&table, [].iter(), 180_000);
+        assert_eq!(alone.len(), 1);
+        assert_eq!(alone[0].rssi_dbm, Some(-60));
+        assert_eq!(alone[0].snr, Some(Snr::from_decibels(8)));
+        assert_eq!(alone[0].last_heard_min, Some(1));
+
+        let older = [observation(RouterHint([hint.0[0], hint.0[1]]), 60_000)];
+        let merged = merge(&table, older.iter(), 180_000);
+        assert_eq!(merged.len(), 1, "the identity claimed the observation");
+        assert_eq!(
+            merged[0].rssi_dbm,
+            Some(-60),
+            "the older forwarding does not outrank the newer advertisement"
+        );
+    }
+
+    /// A radio that reported no measurement for the advertisement leaves the
+    /// signal to whatever forwarding was heard, however old.
+    #[test]
+    fn an_unmeasured_identity_falls_back_to_the_observation_it_claimed() {
+        let mut table = PeerRepeaterTable::new();
+        table.observe_identity(&key(0xAA), &repeater_identity("Ridge", &[]), None, 120_000);
+        let hint = key(0xAA).hint();
+
+        let merged = merge(&table, [].iter(), 180_000);
         assert_eq!(merged[0].rssi_dbm, None);
         assert_eq!(merged[0].snr, None);
-        assert_eq!(merged[0].last_heard_min, Some(1));
+
+        let older = [observation(RouterHint([hint.0[0], hint.0[1]]), 60_000)];
+        let merged = merge(&table, older.iter(), 180_000);
+        assert_eq!(merged[0].rssi_dbm, Some(-95));
     }
 
     #[test]
     fn a_repeat_identity_replaces_the_record_and_moves_the_generation() {
         let mut table = PeerRepeaterTable::new();
-        table.observe_identity(&key(0xAA), &repeater_identity("Ridge", &["SJC"]), 0);
+        table.observe_identity(&key(0xAA), &repeater_identity("Ridge", &["SJC"]), None, 0);
         let first = table.generation();
-        table.observe_identity(&key(0xAA), &repeater_identity("Ridge Two", &[]), 1_000);
+        table.observe_identity(
+            &key(0xAA),
+            &repeater_identity("Ridge Two", &[]),
+            None,
+            1_000,
+        );
         assert_eq!(table.len(), 1);
         assert_ne!(table.generation(), first);
         let record = table.iter().next().unwrap();
@@ -384,10 +453,11 @@ mod tests {
             table.observe_identity(
                 &key(seed),
                 &repeater_identity("Peer", &[]),
+                None,
                 1_000 + u64::from(seed),
             );
         }
-        table.observe_identity(&key(200), &repeater_identity("Newcomer", &[]), 9_000);
+        table.observe_identity(&key(200), &repeater_identity("Newcomer", &[]), None, 9_000);
         assert_eq!(table.len(), MAX_PEER_REPEATERS);
         assert!(table.iter().any(|entry| entry.hint == key(200).hint()));
         assert!(

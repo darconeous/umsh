@@ -4719,7 +4719,8 @@ impl<
         Some((peer_id, info.public_key))
     }
 
-    /// Record who was heard, and how well, from any frame off the air.
+    /// Record which repeater was heard forwarding, and how well, from any
+    /// frame off the air.
     ///
     /// Distinct from route learning, which records the way to a *peer*: this
     /// is the transmitter, whoever it was talking to. A frame forwarded past
@@ -4729,7 +4730,9 @@ impl<
     ///
     /// Repeaters prepend to a trace route, so a trace's first hint is the hop
     /// just heard. Without one the frame came off the originator's own
-    /// transmitter, and the originator is who was heard.
+    /// transmitter, and an originator is not a repeater merely for having
+    /// been heard: the source address names nobody here. A repeater that
+    /// only originates is introduced by its identity advertisement instead.
     fn note_transmitter_observation(&mut self, frame: &[u8], rx: &RxInfo) {
         // Only a real reception carries measurements; a loopback or a
         // backhauled frame would record a link that has no radio in it.
@@ -4744,26 +4747,13 @@ impl<
         let Ok(header) = PacketHeader::parse(frame) else {
             return;
         };
-        let hint = ParsedOptions::extract(frame, header.options_range.clone())
+        let Some(hint) = ParsedOptions::extract(frame, header.options_range.clone())
             .ok()
             .and_then(|options| options.trace_route)
             .and_then(|range| frame.get(range))
             .and_then(|trace| trace.get(..2))
             .map(|hint| RouterHint([hint[0], hint[1]]))
-            .or_else(|| match header.source {
-                SourceAddrRef::Hint(hint) => Some(RouterHint([hint.0[0], hint.0[1]])),
-                SourceAddrRef::FullKeyAt { offset } => frame
-                    .get(offset..offset + 32)
-                    .and_then(|bytes| <[u8; 32]>::try_from(bytes).ok())
-                    .map(|bytes| {
-                        let node = PublicKey(bytes).hint();
-                        RouterHint([node.0[0], node.0[1]])
-                    }),
-                // A blind frame hides who sent it, so there is nobody here
-                // to record.
-                SourceAddrRef::None | SourceAddrRef::Encrypted { .. } => None,
-            });
-        let Some(hint) = hint else {
+        else {
             return;
         };
         let now_ms = self.clock.now_ms();

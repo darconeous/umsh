@@ -833,21 +833,29 @@ impl<M: MacBackend> LocalNode<M> {
         self.state.borrow().peer_repeaters_responder
     }
 
-    /// Record what an arriving identity said, if it came from a repeater.
+    /// Record what an identity heard directly off the air said, if it came
+    /// from a repeater.
+    ///
+    /// The caller vouches that the frame came off its sender's own
+    /// transmitter; `rssi_snr` is that reception's measurement, when the
+    /// radio made one. An identity that arrived forwarded is not offered
+    /// here—it says nothing about whether its owner is in range.
     pub(crate) fn observe_peer_identity(
         &self,
         from: PublicKey,
         identity: &crate::NodeIdentityPayload,
+        rssi_snr: Option<(i16, umsh_hal::Snr)>,
         now_ms: u64,
     ) {
         self.state
             .borrow_mut()
             .peer_repeaters
-            .observe_identity(&from, identity, now_ms);
+            .observe_identity(&from, identity, rssi_snr, now_ms);
     }
 
-    /// The peer repeaters this node knows of, merged with what the radio has
-    /// heard from each.
+    /// The repeaters this node has heard directly: those introduced by their
+    /// own identity advertisements, merged with those the radio has heard
+    /// forwarding.
     pub async fn peer_repeaters(&self) -> Vec<peer_repeaters::MergedPeerRepeater> {
         let now_ms = self.mac.now_ms().await;
         let mut observations = Vec::new();

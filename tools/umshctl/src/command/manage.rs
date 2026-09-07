@@ -507,23 +507,28 @@ where
 const PEER_REPEATERS_PAGE_TIMEOUT: Duration = Duration::from_secs(30);
 
 fn print_peer_repeater(entry: &umsh::node::mac_command::PeerRepeaterEntryView<'_>) {
-    let Some(hint) = entry.hint() else {
+    // The entry's own length says how much of the hint the responder held:
+    // the whole node hint from an identity, or the router hint a trace
+    // named. Each renders in the address form the rest of the tool uses.
+    let hint = match entry.hint() {
+        Some([a, b, c]) => umsh::core::NodeHint([*a, *b, *c]).to_string(),
+        Some([a, b]) => umsh::core::RouterHint([*a, *b]).to_string(),
         // An entry that names nobody is not an entry; the responder is
         // still describing a real neighborhood around it.
-        return;
+        _ => return,
     };
     field(
         "peer",
         match entry.name() {
-            Some(name) => format!("{} ({name})", hex(hint)),
-            None => hex(hint),
+            Some(name) => format!("{hint} ({name})"),
+            None => hint,
         },
     );
     if let Some((rssi, snr)) = entry.rssi_snr() {
         subfield("signal", format!("{rssi} dBm, {snr}"));
     }
     if let Some(minutes) = entry.last_heard_min() {
-        subfield("last heard", format!("{minutes} min ago"));
+        subfield("last heard", last_heard(minutes));
     }
     if let Some(location) = entry.location() {
         let (lat, lon) = location.center();
@@ -535,6 +540,20 @@ fn print_peer_repeater(entry: &umsh::node::mac_command::PeerRepeaterEntryView<'_
         .collect();
     if !regions.is_empty() {
         subfield("regions", regions.join(", "));
+    }
+}
+
+/// A peer-repeater entry's Last Heard, at the human scale the rest of the
+/// tool uses for ages.
+///
+/// The wire carries whole minutes in two octets and saturates there, so
+/// the ceiling is a floor on the real age rather than a measurement of it.
+fn last_heard(minutes: u16) -> String {
+    let age = super::format_duration(u32::from(minutes) * 60);
+    match minutes {
+        0 => "under a minute ago".to_string(),
+        u16::MAX => format!("over {age} ago"),
+        _ => format!("{age} ago"),
     }
 }
 

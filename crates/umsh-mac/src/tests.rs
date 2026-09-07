@@ -2777,6 +2777,92 @@ fn receive_one_does_not_learn_routes_or_observations_from_a_buffered_frame() {
     assert!(mac.transmitter_observations().is_empty());
 }
 
+/// The first hint of a trace route is the repeater whose transmission was
+/// just heard; the rest of the trace, and the originator, were not.
+#[test]
+fn receive_one_observes_the_repeater_named_first_in_the_trace_route() {
+    let mut mac = make_mac();
+    let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
+    let remote = DummyIdentity::new([0xAB; 32]);
+    let peer_id = mac.add_peer(*remote.public_key()).unwrap();
+    let keys = PairwiseKeys {
+        k_enc: [1; 32],
+        k_mic: [2; 32],
+    };
+    mac.install_pairwise_keys(local_id, peer_id, keys.clone())
+        .unwrap();
+    let dst_hint = mac
+        .identity(local_id)
+        .unwrap()
+        .identity()
+        .public_key()
+        .hint();
+    let trace = [RouterHint([0x01, 0x02]), RouterHint([0x03, 0x04])];
+
+    mac.radio_mut().queue_received_unicast_with_route(
+        &remote,
+        &keys,
+        &dst_hint,
+        b"hello",
+        false,
+        7,
+        None,
+        Some(&trace),
+        None,
+    );
+    assert!(block_on(mac.receive_one(|_, _| {})).unwrap());
+
+    let observed: Vec<RouterHint> = mac
+        .transmitter_observations()
+        .iter()
+        .map(|entry| entry.hint)
+        .collect();
+    assert_eq!(observed, [RouterHint([0x01, 0x02])]);
+}
+
+/// A frame that arrives with no trace hint came off its originator, and an
+/// originator is not a repeater merely for having been heard.
+#[test]
+fn receive_one_does_not_observe_an_originator_as_a_repeater() {
+    let mut mac = make_mac();
+    let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
+    let remote = DummyIdentity::new([0xAB; 32]);
+    let peer_id = mac.add_peer(*remote.public_key()).unwrap();
+    let keys = PairwiseKeys {
+        k_enc: [1; 32],
+        k_mic: [2; 32],
+    };
+    mac.install_pairwise_keys(local_id, peer_id, keys.clone())
+        .unwrap();
+    let dst_hint = mac
+        .identity(local_id)
+        .unwrap()
+        .identity()
+        .public_key()
+        .hint();
+
+    // Heard directly with no trace at all, then directly again with a trace
+    // the originator started and nobody added to.
+    mac.radio_mut().queue_received_unicast_with_route(
+        &remote, &keys, &dst_hint, b"hello", false, 7, None, None, None,
+    );
+    assert!(block_on(mac.receive_one(|_, _| {})).unwrap());
+    mac.radio_mut().queue_received_unicast_with_route(
+        &remote,
+        &keys,
+        &dst_hint,
+        b"again",
+        false,
+        8,
+        None,
+        Some(&[]),
+        None,
+    );
+    assert!(block_on(mac.receive_one(|_, _| {})).unwrap());
+
+    assert!(mac.transmitter_observations().is_empty());
+}
+
 #[test]
 fn receive_one_drops_replayed_unicast_after_first_delivery() {
     let mut mac = make_mac();

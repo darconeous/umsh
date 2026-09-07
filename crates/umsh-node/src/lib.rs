@@ -1906,7 +1906,7 @@ mod tests {
     fn a_disabled_responder_answers_nothing() {
         let mac = FakeMac::new(Vec::new());
         let node = responder_node(&mac);
-        node.observe_peer_identity(PublicKey([0xAA; 32]), &peer_identity("Ridge", &[]), 0);
+        node.observe_peer_identity(PublicKey([0xAA; 32]), &peer_identity("Ridge", &[]), None, 0);
 
         block_on_ready(node.answer_peer_repeaters_request(
             PublicKey([0x41; 32]),
@@ -1924,8 +1924,14 @@ mod tests {
         node.enable_peer_repeaters_responder();
 
         let peer = PublicKey([0xAA; 32]);
-        node.observe_peer_identity(peer, &peer_identity("Ridge", &["SJC", "0x1234"]), 0);
-        // The same peer heard on the air: only this supplies signal.
+        // Heard advertising at one signal, then heard forwarding at another;
+        // the forwarding is newer, so its figures are the ones reported.
+        node.observe_peer_identity(
+            peer,
+            &peer_identity("Ridge", &["SJC", "0x1234"]),
+            Some((-60, umsh_hal::Snr::from_decibels(8))),
+            0,
+        );
         mac.observe(
             umsh_core::RouterHint([peer.0[0], peer.0[1]]),
             -95,
@@ -1989,6 +1995,7 @@ mod tests {
             node.observe_peer_identity(
                 PublicKey([seed; 32]),
                 &peer_identity(&format!("Repeater number {seed:08}"), &["Rogue Valley"]),
+                None,
                 0,
             );
         }
@@ -2049,7 +2056,7 @@ mod tests {
         let node = responder_node(&mac);
         node.enable_peer_repeaters_responder();
         for seed in 0..3u8 {
-            node.observe_peer_identity(PublicKey([seed; 32]), &peer_identity("Peer", &[]), 0);
+            node.observe_peer_identity(PublicKey([seed; 32]), &peer_identity("Peer", &[]), None, 0);
         }
 
         // A cursor whose generation matches resumes; index 2 leaves one entry.
@@ -2065,7 +2072,12 @@ mod tests {
 
         // One more identity moves the generation on, and the same cursor is
         // now stale.
-        node.observe_peer_identity(PublicKey([0x77; 32]), &peer_identity("Newcomer", &[]), 0);
+        node.observe_peer_identity(
+            PublicKey([0x77; 32]),
+            &peer_identity("Newcomer", &[]),
+            None,
+            0,
+        );
         block_on_ready(node.answer_peer_repeaters_request(
             PublicKey([0x41; 32]),
             None,

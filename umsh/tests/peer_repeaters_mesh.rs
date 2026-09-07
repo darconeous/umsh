@@ -277,25 +277,34 @@ async fn a_repeater_names_the_repeaters_it_knows_of() {
     assert!(entry.last_heard_min().is_some());
 }
 
-/// A node that has only been heard, never introduced, is still a hop worth
-/// naming—by the router hint a trace would give it, with signal and
-/// nothing else.
+/// A node that has only been heard is not a repeater for having been heard.
+/// The request itself was a reception off the asker's own transmitter, and
+/// it puts nothing in the list.
 #[tokio::test(flavor = "current_thread")]
-async fn a_hop_heard_on_the_air_is_listed_without_a_name() {
+async fn a_node_merely_heard_is_not_listed() {
     mesh!("observed", mesh);
     let body = mesh.ask(1, None).await;
     let view = PeerRepeatersResponseView::new(&body);
 
-    let entries: Vec<_> = view.entries().collect();
-    assert_eq!(entries.len(), 1, "the request itself was a reception");
-    assert_eq!(
-        entries[0].hint().map(<[u8]>::len),
-        Some(2),
-        "an observation with no identity behind it names a router hint"
-    );
-    assert_eq!(entries[0].name(), None);
-    assert!(entries[0].rssi_snr().is_some());
-    assert!(entries[0].regions().next().is_none());
+    assert_eq!(view.total(), Some(0), "nobody has been heard forwarding");
+    assert_eq!(view.entries().count(), 0);
+    assert_eq!(view.cursor(), None);
+}
+
+/// An identity that does not claim to repeat introduces nobody, however
+/// directly it was heard.
+#[tokio::test(flavor = "current_thread")]
+async fn a_handset_that_announces_itself_is_not_listed() {
+    mesh!("handset", mesh);
+    let mut handset = repeater_identity("Handset", &[]);
+    handset.role = NodeRole::Chat;
+    handset.capabilities = NodeCapabilities::TEXT_MESSAGES;
+    mesh.announce(&handset).await;
+
+    let body = mesh.ask(2, None).await;
+    let view = PeerRepeatersResponseView::new(&body);
+    assert_eq!(view.total(), Some(0));
+    assert_eq!(view.entries().count(), 0);
 }
 
 /// MAC commands are unicast-only unless the command defines multicast rules,
