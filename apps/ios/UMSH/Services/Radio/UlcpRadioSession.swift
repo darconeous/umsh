@@ -388,6 +388,24 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
         try await session.requestIdentity(peerAddress: peerAddress)
     }
 
+    func requestPeerRepeaters(
+        peerAddress: String,
+        cursor: Data?
+    ) async throws -> MobileMeshPeerRepeatersPageRecord {
+        // Guarded like a ping rather than like an identity request: this
+        // waits up to the page deadline for an answer, and a link that
+        // cannot carry the ask should say so now rather than after it.
+        let session = try await readyMeshSession()
+        do {
+            return try await session.requestPeerRepeatersPage(
+                peerAddress: peerAddress,
+                cursor: cursor
+            )
+        } catch MobileMeshError.NoAnswer {
+            throw RemoteManagementError.noAnswer
+        }
+    }
+
     func requestNearbyIdentities(
         roleFilter: UInt8?,
         nodeHint: Data?,
@@ -2092,6 +2110,26 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
             sessionQueue.async { [self] in
                 guard let meshSession else {
                     result.resume(throwing: RadioConnectionError.identityUnavailable)
+                    return
+                }
+                result.resume(returning: meshSession)
+            }
+        }
+    }
+
+    /// The mesh session, but only while the radio can carry a frame for it:
+    /// the link is up, attached, and set up for this phone's identity. The
+    /// guard a ping applies, for callers that await an answer over the air
+    /// rather than merely handing a frame off.
+    private func readyMeshSession() async throws -> MobileMeshSession {
+        try await withCheckedThrowingContinuation { result in
+            sessionQueue.async { [self] in
+                guard let meshSession,
+                      link?.linkIsReady == true,
+                      snapshot.linkState == .attached,
+                      snapshot.hostState == .matchesCurrentIdentity
+                else {
+                    result.resume(throwing: RemoteManagementError.unavailable)
                     return
                 }
                 result.resume(returning: meshSession)

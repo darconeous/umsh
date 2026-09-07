@@ -64,6 +64,10 @@ final class AppRuntime {
     var identityError: IdentityVaultError?
     var isLoadingIdentity = true
     var peers: [PeerSummary] = []
+    /// Every neighbor a router has reported to this phone, with the router
+    /// that said so—nodes the map can place that this phone may never have
+    /// heard itself.
+    var neighborReports: [PeerRepeaterNeighborReport] = []
     var conversations: [DirectConversationSummary] = []
     var channelConversations: [ChannelConversationSummary] = []
     var channels: [ChannelSummary] = []
@@ -383,6 +387,8 @@ final class AppRuntime {
             loadRoute: peerRoute,
             resetRoute: clearPeerRoute,
             identifyRouter: identifyRouter(_:precededBy:),
+            cachedPeerRepeaters: cachedPeerRepeaters,
+            loadPeerRepeaters: loadPeerRepeaters(_:cursor:),
             setFavorite: setPeerFavorite,
             setNotifyWhenHeard: setPeerNotifyWhenHeard,
             setConversationNotifications: setConversationNotifications,
@@ -2910,6 +2916,13 @@ final class AppRuntime {
         Task { await staging.setTransmissionsFailing(dropping) }
     }
 
+    /// Staging only: put every canned remote device out of reach, so the
+    /// screens that ask across the mesh show what silence looks like.
+    func stagedRemoteDevicesReachable(_ reachable: Bool) {
+        guard let staging = radioConnection as? FakeRadioConnection else { return }
+        Task { await staging.setRemoteDeviceReachable(reachable) }
+    }
+
     func stagedPeerSendsMessage(onChannel: Bool) {
         guard let staging = radioConnection as? FakeRadioConnection else { return }
         let line = Self.stagedPeerLines[
@@ -2934,6 +2947,7 @@ final class AppRuntime {
     var stagedPeerSendsMessage: ((Bool) -> Void)? { nil }
     var stagedPeerReacts: (() -> Void)? { nil }
     var stagedDropTransmissions: ((Bool) -> Void)? { nil }
+    var stagedRemoteDevicesReachable: ((Bool) -> Void)? { nil }
     #endif
 
     /// How many messages a conversation holds, for the info sheet. The only
@@ -3065,6 +3079,142 @@ final class AppRuntime {
             rendered.append(routerHint)
         }
         return rendered
+    }
+
+    // MARK: - Neighboring routers
+
+    /// What a router last said about its neighbors, from this phone's own
+    /// store. Nothing goes on the air.
+    private func cachedPeerRepeaters(_ peer: PeerSummary) async -> PeerRepeaterListing? {
+        guard let applicationStore, let localIdentity,
+              let stored = try? await applicationStore.peerRepeaterListing(
+                  ownerIdentityID: localIdentity.id,
+                  publicAddress: peer.identity.canonicalAddress
+              )
+        else { return nil }
+        return await listing(from: stored)
+    }
+
+    /// Ask a router for one page of its neighbor listing and fold it into
+    /// what this phone holds about that router. The cursor is the caller's:
+    /// none asks for the top of the listing and replaces what was held, one
+    /// asks for the page after it and adds to it. Never follows a cursor on
+    /// its own.
+    private func loadPeerRepeaters(
+        _ peer: PeerSummary,
+        cursor: Data?
+    ) async -> PeerRepeatersPageResult {
+        guard radioSnapshot.linkState == .attached || radioSnapshot.linkState == .ready else {
+            return .unavailable(
+                reason: "Connect a configured companion radio to ask this router."
+            )
+        }
+        guard radioSnapshot.hostState == .matchesCurrentIdentity else {
+            return .unavailable(
+                reason: "Set up this radio for the current phone identity before asking routers."
+            )
+        }
+        let page: MobileMeshPeerRepeatersPageRecord
+        do {
+            page = try await radioConnection.requestPeerRepeaters(
+                peerAddress: peer.identity.canonicalAddress,
+                cursor: cursor
+            )
+        } catch RemoteManagementError.noAnswer {
+            return .noAnswer
+        } catch {
+            return .failed
+        }
+
+        // The page is authenticated unicast from the router, which is as
+        // good a hearing as a pong.
+        let now = Date()
+        await touchLastHeard(peer.identity.canonicalAddress)
+        let entries = page.entries.map { record in
+            StoredPeerRepeaterEntry(
+                hint: record.hint,
+                name: record.name,
+                rssiDBm: record.rssiDbm,
+                snrQuarterDB: record.snrQuarterDb,
+                lastHeardMinutes: record.lastHeardMinutes,
+                latitude: record.latitudeDegrees,
+                longitude: record.longitudeDegrees,
+                locationPrecision: record.locationPrecision,
+                regionCodes: record.regionCodes,
+                reportedAt: now
+            )
+        }
+        if let applicationStore, let localIdentity {
+            try? await applicationStore.savePeerRepeaterPage(
+                ownerIdentityID: localIdentity.id,
+                publicAddress: peer.identity.canonicalAddress,
+                entries: entries,
+                total: page.total.map(Int.init),
+                nextCursor: page.nextCursor,
+                replacing: cursor == nil,
+                at: now
+            )
+        }
+        await reloadApplicationState()
+        if let cached = await cachedPeerRepeaters(peer) {
+            return .page(cached)
+        }
+        // A router this phone holds no row for has nowhere to keep the
+        // listing; the page is still what it said.
+        return .page(
+            await listing(
+                from: StoredPeerRepeaterListing(
+                    entries: entries,
+                    total: page.total.map(Int.init),
+                    nextCursor: page.nextCursor,
+                    asOf: now
+                )
+            )
+        )
+    }
+
+    private func listing(from stored: StoredPeerRepeaterListing) async -> PeerRepeaterListing {
+        var entries: [PeerRepeaterNeighbor] = []
+        entries.reserveCapacity(stored.entries.count)
+        for entry in stored.entries {
+            entries.append(await neighbor(from: entry))
+        }
+        return PeerRepeaterListing(
+            entries: entries,
+            total: stored.total,
+            nextCursor: stored.nextCursor,
+            asOf: stored.asOf
+        )
+    }
+
+    /// A stored entry with its hint rendered the way the core renders every
+    /// hint, so a neighbor reads the same as the node it may turn out to be.
+    private func neighbor(from stored: StoredPeerRepeaterEntry) async -> PeerRepeaterNeighbor {
+        let hintText: String
+        if stored.hint.count == 3,
+           let rendered = try? await meshEngine.renderNodeHint(stored.hint)
+        {
+            hintText = rendered.text
+        } else if stored.hint.count >= 2,
+                  let rendered = try? await meshEngine.renderRouterHint(Data(stored.hint.prefix(2)))
+        {
+            hintText = rendered.text
+        } else {
+            hintText = stored.hint.map { String(format: "%02X", $0) }.joined()
+        }
+        return PeerRepeaterNeighbor(
+            hint: stored.hint,
+            hintText: hintText,
+            name: stored.name,
+            rssiDBm: stored.rssiDBm,
+            snrQuarterDB: stored.snrQuarterDB,
+            lastHeardMinutes: stored.lastHeardMinutes,
+            latitude: stored.latitude,
+            longitude: stored.longitude,
+            locationPrecision: stored.locationPrecision,
+            regionCodes: stored.regionCodes,
+            reportedAt: stored.reportedAt
+        )
     }
 
     /// Solicit a peer's current identity over the mesh. The response is not
@@ -3738,6 +3888,23 @@ final class AppRuntime {
             let mappedPeerList = storedPeers.compactMap { mappedPeers[$0.id] }
             if peers != mappedPeerList {
                 peers = mappedPeerList
+            }
+            let storedReports = try await applicationStore.allPeerRepeaterEntries(
+                ownerIdentityID: localIdentity.id
+            )
+            var mappedReports: [PeerRepeaterNeighborReport] = []
+            mappedReports.reserveCapacity(storedReports.count)
+            for report in storedReports {
+                guard let reporter = mappedPeers[report.reporterNodeID] else { continue }
+                mappedReports.append(
+                    PeerRepeaterNeighborReport(
+                        reporter: reporter,
+                        neighbor: await neighbor(from: report.entry)
+                    )
+                )
+            }
+            if neighborReports != mappedReports {
+                neighborReports = mappedReports
             }
             var mappedConversations: [DirectConversationSummary] = []
             for stored in storedConversations {

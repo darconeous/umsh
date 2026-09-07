@@ -7,6 +7,10 @@ import SwiftUI
 /// because a signature that verifies is evidence about who wrote the claim
 /// and none at all about whether it is accurate—only the unattributable
 /// case is marked, and only because it means nobody vouched for the claim.
+///
+/// A position a router reported for one of its neighbors is drawn with a
+/// dashed ring and a small antenna: second-hand, and said so, without the
+/// warning that means nobody vouched for it—the router did.
 struct MapNodeMarker: View {
     let node: MapNode
     let isSelected: Bool
@@ -16,14 +20,21 @@ struct MapNodeMarker: View {
     var body: some View {
         VStack(spacing: -2) {
             PeerAvatar(
-                hint: node.peer.identity.hint,
+                hint: node.hint,
                 diameter: diameter,
-                showsFavoriteStar: node.peer.isFavorite
+                showsFavoriteStar: node.isFavorite
             )
             .padding(3)
             .background(.background, in: Circle())
             .overlay {
-                Circle().strokeBorder(isSelected ? Color.accentColor : .clear, lineWidth: 2.5)
+                if node.isReported {
+                    Circle().strokeBorder(
+                        isSelected ? Color.accentColor : Color.secondary,
+                        style: StrokeStyle(lineWidth: isSelected ? 2.5 : 1.5, dash: [4, 3])
+                    )
+                } else {
+                    Circle().strokeBorder(isSelected ? Color.accentColor : .clear, lineWidth: 2.5)
+                }
             }
             .overlay(alignment: .bottomTrailing) {
                 if !node.isAttributable {
@@ -31,6 +42,12 @@ struct MapNodeMarker: View {
                         .font(.system(size: diameter * 0.30))
                         .foregroundStyle(.orange)
                         .background(Circle().fill(.background).padding(1))
+                } else if node.isReported {
+                    Image(systemName: "antenna.radiowaves.left.and.right")
+                        .font(.system(size: diameter * 0.26, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .padding(2)
+                        .background(Circle().fill(.background))
                 }
             }
             MarkerTail()
@@ -44,8 +61,14 @@ struct MapNodeMarker: View {
     }
 
     private var accessibilityLabel: String {
-        let trust = node.isAttributable ? "" : ", location unverified"
-        return "\(node.peer.displayName)\(trust)"
+        var label = node.displayName
+        if let reporter = node.reportedBy {
+            label += ", reported by \(reporter.displayName)"
+        }
+        if !node.isAttributable {
+            label += ", location unverified"
+        }
+        return label
     }
 }
 

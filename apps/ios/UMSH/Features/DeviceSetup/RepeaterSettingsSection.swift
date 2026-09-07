@@ -5,34 +5,34 @@ import UMSHMobileCore
 ///
 /// A code that decodes to letters came from a short code—an airport, a
 /// country, a state—and is shown as such; anything else has no
-/// recoverable text form and is shown as its raw hex. Both forms carry the
-/// hex, because the hex is what the operator will see in a packet capture
-/// or on another node.
+/// recoverable text form and is shown as its raw hex. The hex is never
+/// added beside a name: it is what a packet capture shows, not what an
+/// operator reads, and a name that reads is the whole point of having one.
 enum RegionCodeText {
-    /// `SJC (0x7853)`, or `0xC0F9` for a derived code.
+    /// `SJC` for a code with a readable form, `0xC0F9` for a derived code
+    /// that has none.
     static func label(_ code: Data) -> String {
         let hex = self.hex(code)
         guard let description = try? regionCodeDescription(code: code),
               description != hex else { return hex }
-        return "\(description) (\(hex))"
+        return description
     }
 
     static func hex(_ code: Data) -> String {
         "0x" + code.map { String(format: "%02X", $0) }.joined()
     }
 
-    /// `SJC (0x7853)` for a region as the operator wrote it. The code is
-    /// what a capture shows, and a hashed name cannot be read back out of
-    /// it, so the string alone would leave the two unconnectable.
+    /// A region as the operator wrote it, made presentable.
     ///
     /// A short code is shown uppercase whatever case it was typed in,
     /// which is how airport and country codes are written everywhere else.
-    /// A name is the operator's to capitalize and is shown as written.
+    /// A name is the operator's to capitalize and is shown as written. A
+    /// literal hex code is normalized to the one spelling.
     static func label(region: String) -> String {
         guard let code = try? regionCodeFromString(text: region) else { return region }
         let hex = self.hex(code)
         guard region.caseInsensitiveCompare(hex) != .orderedSame else { return hex }
-        return "\(isShortCode(region) ? region.uppercased() : region) (\(hex))"
+        return isShortCode(region) ? region.uppercased() : region
     }
 
     /// Whether the string is a short code: one to three ASCII letters or

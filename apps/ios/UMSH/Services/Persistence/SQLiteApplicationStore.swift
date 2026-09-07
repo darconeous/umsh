@@ -110,6 +110,44 @@ struct StoredCachedProperty: Equatable, Sendable {
     let fetchedAt: Date
 }
 
+/// One neighbor a router reported, as the page carried it.
+///
+/// Stored decoded rather than as the wire entry: the fields are few and
+/// fixed, the map reads them without a decoder in the loop, and the location
+/// arrives from the core already reduced to a center and a precision.
+struct StoredPeerRepeaterEntry: Equatable, Sendable {
+    /// Two or three bytes; the row's key within the router's listing.
+    let hint: Data
+    let name: String?
+    let rssiDBm: Int16?
+    let snrQuarterDB: Int16?
+    let lastHeardMinutes: UInt16?
+    let latitude: Double?
+    let longitude: Double?
+    let locationPrecision: UInt8?
+    let regionCodes: [Data]
+    /// When the page naming this neighbor was answered.
+    let reportedAt: Date
+}
+
+/// What a router last said about its neighbors, as far as this phone asked.
+///
+/// The cursor is kept so the next open can carry on where the last page
+/// stopped rather than starting the listing over—the ask is the operator's
+/// to make, and the cache should make it cheap to make the right one.
+struct StoredPeerRepeaterListing: Equatable, Sendable {
+    let entries: [StoredPeerRepeaterEntry]
+    let total: Int?
+    let nextCursor: Data?
+    let asOf: Date
+}
+
+/// A neighbor entry with the row of the router that reported it.
+struct StoredPeerRepeaterReport: Equatable, Sendable {
+    let reporterNodeID: Int64
+    let entry: StoredPeerRepeaterEntry
+}
+
 /// The newest message in a conversation, reduced to what a list row draws.
 ///
 /// This is the literal last row in transcript order, tombstones and gap
@@ -414,7 +452,7 @@ actor SQLiteApplicationStore {
     /// store refuses to open any database above this constant, so a stale value
     /// lets the new schema apply once and then locks the user out of their own
     /// data on the next launch. ``migrate(_:)`` checks the two agree.
-    static let currentSchemaVersion: Int32 = 21
+    static let currentSchemaVersion: Int32 = 22
 
     nonisolated(unsafe) private let database: OpaquePointer
 
@@ -1541,6 +1579,213 @@ actor SQLiteApplicationStore {
                 try stepDone(statement)
             }
         }
+    }
+
+    // MARK: - Peer repeater listings
+
+    /// What a router last said about its neighbors, or `nil` when it was
+    /// never asked. Entries come back in the order the router listed them.
+    func peerRepeaterListing(
+        ownerIdentityID: String,
+        publicAddress: String
+    ) throws -> StoredPeerRepeaterListing? {
+        guard let nodeID = try nodeIdentifier(
+            ownerIdentityID: ownerIdentityID,
+            publicAddress: publicAddress
+        ) else { return nil }
+        let header = try prepare(
+            "SELECT total, next_cursor, as_of_ms FROM node_peer_repeaters WHERE node_id = ?"
+        )
+        defer { sqlite3_finalize(header) }
+        try check(sqlite3_bind_int64(header, 1, nodeID))
+        guard sqlite3_step(header) == SQLITE_ROW else { return nil }
+        let total = Self.optionalIntColumn(header, at: 0).map(Int.init)
+        let nextCursor = Self.optionalDataColumn(header, at: 1)
+        let asOf = Date(timeIntervalSince1970: Double(sqlite3_column_int64(header, 2)) / 1000)
+
+        let rows = try prepare(
+            """
+            SELECT \(Self.peerRepeaterEntryColumns)
+            FROM node_peer_repeater_entry
+            WHERE node_id = ?
+            ORDER BY position
+            """
+        )
+        defer { sqlite3_finalize(rows) }
+        try check(sqlite3_bind_int64(rows, 1, nodeID))
+        var entries: [StoredPeerRepeaterEntry] = []
+        while sqlite3_step(rows) == SQLITE_ROW {
+            entries.append(Self.peerRepeaterEntry(rows))
+        }
+        return StoredPeerRepeaterListing(
+            entries: entries,
+            total: total,
+            nextCursor: nextCursor,
+            asOf: asOf
+        )
+    }
+
+    /// Record one page of a router's neighbor listing.
+    ///
+    /// A page asked for without a cursor is the top of a fresh listing and
+    /// replaces whatever was held. A page that followed a cursor is added to
+    /// it: new neighbors take their place at the end, and a neighbor the
+    /// router named again—the responder restarts a listing whose table has
+    /// moved under a stale cursor—updates in place rather than appearing
+    /// twice. Either way the cursor and the instant are the latest page's.
+    func savePeerRepeaterPage(
+        ownerIdentityID: String,
+        publicAddress: String,
+        entries: [StoredPeerRepeaterEntry],
+        total: Int?,
+        nextCursor: Data?,
+        replacing: Bool,
+        at instant: Date
+    ) throws {
+        try transaction {
+            guard let nodeID = try nodeIdentifier(
+                ownerIdentityID: ownerIdentityID,
+                publicAddress: publicAddress
+            ) else { return }
+
+            if replacing {
+                let clear = try prepare("DELETE FROM node_peer_repeater_entry WHERE node_id = ?")
+                defer { sqlite3_finalize(clear) }
+                try check(sqlite3_bind_int64(clear, 1, nodeID))
+                try stepDone(clear)
+            }
+
+            let header = try prepare(
+                """
+                INSERT INTO node_peer_repeaters (node_id, total, next_cursor, as_of_ms)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(node_id) DO UPDATE SET
+                    total = excluded.total,
+                    next_cursor = excluded.next_cursor,
+                    as_of_ms = excluded.as_of_ms
+                """
+            )
+            defer { sqlite3_finalize(header) }
+            try check(sqlite3_bind_int64(header, 1, nodeID))
+            try bindOptionalInt(total.map(Int64.init), to: header, at: 2)
+            try bindOptional(nextCursor, to: header, at: 3)
+            try check(sqlite3_bind_int64(header, 4, Self.milliseconds(instant)))
+            try stepDone(header)
+
+            let nextPosition = try prepare(
+                "SELECT COALESCE(MAX(position), -1) + 1 FROM node_peer_repeater_entry WHERE node_id = ?"
+            )
+            defer { sqlite3_finalize(nextPosition) }
+            try check(sqlite3_bind_int64(nextPosition, 1, nodeID))
+            guard sqlite3_step(nextPosition) == SQLITE_ROW else {
+                throw Self.sqliteFailure(database, sqlite3_errcode(database))
+            }
+            var position = sqlite3_column_int64(nextPosition, 0)
+
+            // A repeated hint keeps the position it already holds; only the
+            // figures move. `excluded.position` would shuffle it to the end.
+            let upsert = try prepare(
+                """
+                INSERT INTO node_peer_repeater_entry (
+                    node_id, hint, position, name, rssi_dbm, snr_quarter_db,
+                    last_heard_min, latitude, longitude, location_precision,
+                    region_codes, reported_at_ms
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(node_id, hint) DO UPDATE SET
+                    name = excluded.name,
+                    rssi_dbm = excluded.rssi_dbm,
+                    snr_quarter_db = excluded.snr_quarter_db,
+                    last_heard_min = excluded.last_heard_min,
+                    latitude = excluded.latitude,
+                    longitude = excluded.longitude,
+                    location_precision = excluded.location_precision,
+                    region_codes = excluded.region_codes,
+                    reported_at_ms = excluded.reported_at_ms
+                """
+            )
+            defer { sqlite3_finalize(upsert) }
+            for entry in entries {
+                try check(sqlite3_reset(upsert))
+                try check(sqlite3_bind_int64(upsert, 1, nodeID))
+                try bind(entry.hint, to: upsert, at: 2)
+                try check(sqlite3_bind_int64(upsert, 3, position))
+                try bindOptional(entry.name, to: upsert, at: 4)
+                try bindOptionalInt(entry.rssiDBm.map(Int64.init), to: upsert, at: 5)
+                try bindOptionalInt(entry.snrQuarterDB.map(Int64.init), to: upsert, at: 6)
+                try bindOptionalInt(entry.lastHeardMinutes.map(Int64.init), to: upsert, at: 7)
+                try bindOptionalDouble(entry.latitude, to: upsert, at: 8)
+                try bindOptionalDouble(entry.longitude, to: upsert, at: 9)
+                try bindOptionalInt(entry.locationPrecision.map(Int64.init), to: upsert, at: 10)
+                try bind(Data(entry.regionCodes.joined()), to: upsert, at: 11)
+                try check(sqlite3_bind_int64(upsert, 12, Self.milliseconds(entry.reportedAt)))
+                try stepDone(upsert)
+                position += 1
+            }
+        }
+    }
+
+    /// Every neighbor any router has reported to this phone, with the row of
+    /// the router that said so. What the map draws.
+    func allPeerRepeaterEntries(ownerIdentityID: String) throws -> [StoredPeerRepeaterReport] {
+        let statement = try prepare(
+            """
+            SELECT e.node_id, \(Self.peerRepeaterEntryColumns(prefix: "e."))
+            FROM node_peer_repeater_entry e JOIN node n ON n.id = e.node_id
+            WHERE n.owner_identity_id = ?
+            ORDER BY e.node_id, e.position
+            """
+        )
+        defer { sqlite3_finalize(statement) }
+        try bind(ownerIdentityID, to: statement, at: 1)
+        var reports: [StoredPeerRepeaterReport] = []
+        while sqlite3_step(statement) == SQLITE_ROW {
+            reports.append(
+                StoredPeerRepeaterReport(
+                    reporterNodeID: sqlite3_column_int64(statement, 0),
+                    entry: Self.peerRepeaterEntry(statement, offset: 1)
+                )
+            )
+        }
+        return reports
+    }
+
+    /// The entry columns, in the order `peerRepeaterEntry` reads them.
+    private static let peerRepeaterEntryColumns = peerRepeaterEntryColumns(prefix: "")
+
+    private static func peerRepeaterEntryColumns(prefix: String) -> String {
+        [
+            "hint", "name", "rssi_dbm", "snr_quarter_db", "last_heard_min", "latitude",
+            "longitude", "location_precision", "region_codes", "reported_at_ms",
+        ]
+        .map { prefix + $0 }
+        .joined(separator: ", ")
+    }
+
+    private static func peerRepeaterEntry(
+        _ statement: OpaquePointer,
+        offset: Int32 = 0
+    ) -> StoredPeerRepeaterEntry {
+        let codes = dataColumn(statement, at: offset + 8)
+        // Two octets per code, as the wire carries them; a trailing odd
+        // octet is nothing a code could be and is left out.
+        let regionCodes = stride(from: 0, to: codes.count - codes.count % 2, by: 2).map {
+            codes.subdata(in: codes.startIndex + $0 ..< codes.startIndex + $0 + 2)
+        }
+        return StoredPeerRepeaterEntry(
+            hint: dataColumn(statement, at: offset),
+            name: optionalStringColumn(statement, at: offset + 1),
+            rssiDBm: optionalIntColumn(statement, at: offset + 2).map { Int16(clamping: $0) },
+            snrQuarterDB: optionalIntColumn(statement, at: offset + 3).map { Int16(clamping: $0) },
+            lastHeardMinutes: optionalIntColumn(statement, at: offset + 4).map { UInt16(clamping: $0) },
+            latitude: optionalDoubleColumn(statement, at: offset + 5),
+            longitude: optionalDoubleColumn(statement, at: offset + 6),
+            locationPrecision: optionalIntColumn(statement, at: offset + 7).map { UInt8(clamping: $0) },
+            regionCodes: regionCodes,
+            reportedAt: Date(
+                timeIntervalSince1970: Double(sqlite3_column_int64(statement, offset + 9)) / 1000
+            )
+        )
     }
 
     /// This phone's row for a peer, or `nil` for one it does not store. A
@@ -3731,6 +3976,18 @@ actor SQLiteApplicationStore {
         try bindOptionalInt(value.map { $0 ? 1 : 0 }, to: statement, at: index)
     }
 
+    private func bindOptionalDouble(
+        _ value: Double?,
+        to statement: OpaquePointer,
+        at index: Int32
+    ) throws {
+        if let value {
+            try check(sqlite3_bind_double(statement, index, value))
+        } else {
+            try check(sqlite3_bind_null(statement, index))
+        }
+    }
+
     private func stepDone(_ statement: OpaquePointer) throws {
         let status = sqlite3_step(statement)
         guard status == SQLITE_DONE else {
@@ -4443,6 +4700,53 @@ actor SQLiteApplicationStore {
             }
         }
 
+        if version < 22 {
+            try execute(database, sql: "BEGIN IMMEDIATE")
+            do {
+                // What a router last said about its neighbors, page by page.
+                // Cached for the same reason a device's properties are: every
+                // page is a mesh exchange at everyone's expense, so the
+                // screen opens on what was last heard and asks only when
+                // told to. The header holds where the next page starts; the
+                // entries are keyed by hint so a page the router repeats
+                // updates rows rather than doubling them. Both go with the
+                // node's row.
+                try execute(
+                    database,
+                    sql: """
+                    CREATE TABLE node_peer_repeaters (
+                        node_id INTEGER PRIMARY KEY REFERENCES node(id) ON DELETE CASCADE,
+                        total INTEGER,
+                        next_cursor BLOB,
+                        as_of_ms INTEGER NOT NULL
+                    );
+
+                    CREATE TABLE node_peer_repeater_entry (
+                        node_id INTEGER NOT NULL REFERENCES node(id) ON DELETE CASCADE,
+                        hint BLOB NOT NULL,
+                        position INTEGER NOT NULL,
+                        name TEXT,
+                        rssi_dbm INTEGER,
+                        snr_quarter_db INTEGER,
+                        last_heard_min INTEGER,
+                        latitude REAL,
+                        longitude REAL,
+                        location_precision INTEGER,
+                        region_codes BLOB,
+                        reported_at_ms INTEGER NOT NULL,
+                        PRIMARY KEY (node_id, hint)
+                    ) WITHOUT ROWID;
+
+                    PRAGMA user_version = 22;
+                    """
+                )
+                try execute(database, sql: "COMMIT")
+            } catch {
+                try? execute(database, sql: "ROLLBACK")
+                throw error
+            }
+        }
+
         // Every migration above has run, so the database must now sit exactly
         // at the version this build claims to support. A mismatch means a
         // migration stamped a `user_version` the constant was not raised to
@@ -4551,6 +4855,14 @@ actor SQLiteApplicationStore {
     ) -> Int64? {
         guard sqlite3_column_type(statement, index) != SQLITE_NULL else { return nil }
         return sqlite3_column_int64(statement, index)
+    }
+
+    private static func optionalDoubleColumn(
+        _ statement: OpaquePointer,
+        at index: Int32
+    ) -> Double? {
+        guard sqlite3_column_type(statement, index) != SQLITE_NULL else { return nil }
+        return sqlite3_column_double(statement, index)
     }
 
     /// Read a REAL column holding a Unix-epoch-seconds instant.

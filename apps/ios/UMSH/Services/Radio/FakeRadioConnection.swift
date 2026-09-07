@@ -421,6 +421,21 @@ actor FakeRadioConnection: RadioConnection {
         )
     }
 
+    /// Two pages of neighbors, however the router is addressed: the first
+    /// for no cursor, the second for the cursor the first hands back, and
+    /// the first again for any other—a stale cursor restarts the listing
+    /// at the top, as the real responder does.
+    func requestPeerRepeaters(
+        peerAddress: String,
+        cursor: Data?
+    ) async throws -> MobileMeshPeerRepeatersPageRecord {
+        try await answerAsIfOverTheAir()
+        if cursor == FakePeerRepeatersListing.secondPageCursor {
+            return FakePeerRepeatersListing.secondPage
+        }
+        return FakePeerRepeatersListing.firstPage
+    }
+
     /// The phone's own node key, fabricated so the management screens can
     /// tell "this phone" apart from any other administrator.
     func nodePublicKey() async -> Data? { FakeManagedDevice.phoneKey }
@@ -1157,6 +1172,105 @@ private final class FakeMeshSessionWakeListener: MobileMeshWakeListener, @unchec
     func onUpdatePending() {
         guard let connection else { return }
         Task { await connection.pump() }
+    }
+}
+
+/// What the canned router says about its neighborhood: five repeaters over
+/// two pages, covering every shape a row can take.
+///
+/// One neighbor is a staged node this phone knows, so the row resolves to a
+/// name and the map declines to pin it twice; one is a stranger with a
+/// coarse cell, so the map has a reported pin to draw with its uncertainty;
+/// one is a bare two-byte hint with a signal and nothing else; the second
+/// page holds a named node without a position and an identity-only entry
+/// nobody has heard. The staged repeater is excluded from the staged air,
+/// so this is where its listing comes from.
+enum FakePeerRepeatersListing {
+    /// The cursor the first page hands back, shaped like the responder's
+    /// own: a table generation and an index.
+    static let secondPageCursor = Data([0x00, 0x01, 0x03])
+
+    static let firstPage = MobileMeshPeerRepeatersPageRecord(
+        entries: [
+            MobileMeshPeerRepeaterRecord(
+                hint: stagedNodeHint(seed: 0x77),
+                name: "Glen Alpine Relay",
+                rssiDbm: -72,
+                snrQuarterDb: 26,
+                lastHeardMinutes: 12,
+                latitudeDegrees: 38.8759,
+                longitudeDegrees: -120.0827,
+                locationPrecision: 5,
+                regionCodes: [RegionCodeText.code(of: "SJC")].compactMap { $0 }
+            ),
+            MobileMeshPeerRepeaterRecord(
+                hint: Data([0x9E, 0x27, 0x6B]),
+                name: "Freel Peak Repeater",
+                rssiDbm: -94,
+                snrQuarterDb: -6,
+                lastHeardMinutes: 47,
+                latitudeDegrees: 38.8571,
+                longitudeDegrees: -119.8994,
+                locationPrecision: 4,
+                regionCodes: [RegionCodeText.code(of: "SJC"), RegionCodeText.code(of: "RNO")]
+                    .compactMap { $0 }
+            ),
+            MobileMeshPeerRepeaterRecord(
+                hint: Data([0x41, 0xC3]),
+                name: nil,
+                rssiDbm: -108,
+                snrQuarterDb: -22,
+                lastHeardMinutes: 3,
+                latitudeDegrees: nil,
+                longitudeDegrees: nil,
+                locationPrecision: nil,
+                regionCodes: []
+            ),
+        ],
+        total: 5,
+        nextCursor: secondPageCursor
+    )
+
+    static let secondPage = MobileMeshPeerRepeatersPageRecord(
+        entries: [
+            MobileMeshPeerRepeaterRecord(
+                hint: Data([0xD2, 0x0A, 0x55]),
+                name: "Echo Summit",
+                rssiDbm: -81,
+                snrQuarterDb: 14,
+                // Three days: past the age at which a row goes gray.
+                lastHeardMinutes: 4_320,
+                latitudeDegrees: nil,
+                longitudeDegrees: nil,
+                locationPrecision: nil,
+                regionCodes: [RegionCodeText.code(of: "SJC")].compactMap { $0 }
+            ),
+            MobileMeshPeerRepeaterRecord(
+                hint: Data([0x18, 0x7F, 0xE4]),
+                name: "Luther Pass",
+                rssiDbm: nil,
+                snrQuarterDb: nil,
+                lastHeardMinutes: UInt16.max,
+                latitudeDegrees: 38.7863,
+                longitudeDegrees: -119.9469,
+                locationPrecision: 3,
+                regionCodes: []
+            ),
+        ],
+        total: 5,
+        nextCursor: nil
+    )
+
+    /// The hint of a staged node, derived from the same one-byte seed the
+    /// scenario builds its key from, so the listing names a node the store
+    /// actually holds. A seed that fails to unlock leaves a two-byte hint
+    /// the row can still draw.
+    private static func stagedNodeHint(seed: UInt8) -> Data {
+        let secret = Data(repeating: seed, count: 32)
+        guard let identity = try? MobileIdentity.unlock(secretKey: secret) else {
+            return Data([seed, seed])
+        }
+        return identity.publicIdentity().hint.bytes
     }
 }
 

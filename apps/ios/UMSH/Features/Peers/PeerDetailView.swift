@@ -18,6 +18,12 @@ struct PeerDetailView: View {
         } ?? pushedPeer
     }
 
+    /// Whether to offer the router's own account of its neighborhood. See
+    /// the Actions section for why evidence short of a denial qualifies.
+    private var offersNeighboringRouters: Bool {
+        actions.loadPeerRepeaters != nil && peer.repeaterEvidence != .no && !peer.isUlcpDevice
+    }
+
     /// How a screen pushed from here opens another node: by pushing this
     /// same page for it. Everything one needs is already in hand here,
     /// which is why the sheet builds it rather than passing the parts on.
@@ -240,7 +246,7 @@ struct PeerDetailView: View {
             }
 
             if actions.startConversation != nil || actions.ping != nil
-                || actions.manageDevice != nil {
+                || actions.manageDevice != nil || offersNeighboringRouters {
                 Section("Actions") {
                     HStack(spacing: 12) {
                         if actions.startConversation != nil {
@@ -307,6 +313,29 @@ struct PeerDetailView: View {
                             )
                         } label: {
                             Label("Manage Device", systemImage: "slider.horizontal.3")
+                        }
+                    }
+
+                    // Offered on anything short of a denial. Ping and Fetch
+                    // identity are answered by any node, so they are offered
+                    // regardless; this is answered only by a node that
+                    // forwards, so a node whose identity says *tracker* would
+                    // buy thirty seconds of silence. A node never heard from
+                    // stays offered: a hint someone's trace named is very
+                    // likely a repeater, and hiding the ask there hides it
+                    // where it is most wanted.
+                    if offersNeighboringRouters {
+                        NavigationLink {
+                            PeerRepeatersScreen(
+                                peer: peer,
+                                actions: actions,
+                                browsing: peerBrowsing
+                            )
+                        } label: {
+                            Label(
+                                "Neighboring Routers",
+                                systemImage: "antenna.radiowaves.left.and.right"
+                            )
                         }
                     }
 

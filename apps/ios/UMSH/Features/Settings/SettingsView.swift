@@ -61,6 +61,8 @@ struct SettingsView: View {
     var stagedPeerSendsMessage: ((Bool) -> Void)? = nil
     var stagedPeerReacts: (() -> Void)? = nil
     var stagedDropTransmissions: ((Bool) -> Void)? = nil
+    /// Staging only: whether the canned remote devices answer at all.
+    var stagedRemoteDevicesReachable: ((Bool) -> Void)? = nil
 
     @Environment(\.regionService) private var regionService
     @State private var showsDeviceSetup = false
@@ -74,6 +76,8 @@ struct SettingsView: View {
     @State private var stagingResetFailed = false
     /// Staging only: whether the fake radio is currently dropping everything.
     @State private var dropsTransmissions = false
+    /// Staging only: whether the canned remote devices are answering silence.
+    @State private var remoteDevicesOutOfReach = false
     @AppStorage("debug.radioTcp.enabled") private var tcpRadioEnabled = false
     @AppStorage("debug.radioTcp.endpoint") private var tcpRadioEndpoint = "127.0.0.1:9000"
     #endif
@@ -268,6 +272,15 @@ struct SettingsView: View {
                     Toggle("Drop everything sent", isOn: $dropsTransmissions)
                         .onChange(of: dropsTransmissions) { _, dropping in
                             stagedDropTransmissions(dropping)
+                        }
+                }
+                if stagingEnabled, let stagedRemoteDevicesReachable {
+                    // Distinct from dropping sends: the ask leaves, and
+                    // nothing comes back—the shape every mesh-side screen
+                    // has to survive.
+                    Toggle("Remote devices out of reach", isOn: $remoteDevicesOutOfReach)
+                        .onChange(of: remoteDevicesOutOfReach) { _, outOfReach in
+                            stagedRemoteDevicesReachable(!outOfReach)
                         }
                 }
                 Button("Reset staged data", role: .destructive) {

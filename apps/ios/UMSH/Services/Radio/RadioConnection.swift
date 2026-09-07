@@ -288,6 +288,18 @@ protocol RadioConnection: AnyObject, Sendable {
     /// Identity Request. Resolves once the request is handed to the radio;
     /// the peer's response arrives asynchronously on `advertisementEvents()`.
     func requestIdentity(peerAddress: String) async throws
+    /// Ask a router for one page of the repeaters it knows of. Resolves with
+    /// the page as answered; a listing longer than one frame comes back with
+    /// a cursor, and the next page is a separate call with that cursor. The
+    /// cursor is never followed here.
+    ///
+    /// A plain MAC command any node may send: unlike the remote-management
+    /// reads above, the router need not list this phone as an administrator.
+    /// Throws `RemoteManagementError.noAnswer` when the page deadline passes.
+    func requestPeerRepeaters(
+        peerAddress: String,
+        cursor: Data?
+    ) async throws -> MobileMeshPeerRepeatersPageRecord
     /// Ask matching nodes around a chosen point to identify themselves, with
     /// one broadcast Identity Request. Replies arrive on
     /// `advertisementEvents()`.

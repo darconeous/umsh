@@ -1653,16 +1653,17 @@ public protocol MobileMeshSessionProtocol: AnyObject, Sendable {
     func requestIdentityByHint(conversationAddress: String, hint: Data) async throws
 
     /**
-     * Ask one repeater which repeaters it knows of, and return the whole
-     * listing.
+     * Ask one repeater which repeaters it knows of, one page at a time.
      *
      * Unlike `discover_identities`, which scatters a request and lets the
      * answers arrive as events, this is one node's own account of its
-     * neighborhood: a single addressed exchange, paged when it does not fit
-     * one frame, so it resolves to a list rather than a stream. Pages are
-     * followed here; the caller sees only the finished listing.
+     * neighborhood: a single addressed exchange that resolves to what the
+     * repeater answered. A listing too long for one frame comes back with
+     * a cursor, and asking for the next page is a separate call with that
+     * cursor—never followed here, so no tap costs the mesh more than one
+     * exchange. Resolves with `NoAnswer` when the page deadline passes.
      */
-    func requestPeerRepeaters(peer: Data) async throws  -> [MobileMeshPeerRepeaterRecord]
+    func requestPeerRepeatersPage(peerAddress: String, cursor: Data?) async throws  -> MobileMeshPeerRepeatersPageRecord
 
     func restoreChat(checkpoints: [MobileChatCheckpointRecord]) async throws
 
@@ -2580,27 +2581,28 @@ open func requestIdentityByHint(conversationAddress: String, hint: Data)async th
 }
 
     /**
-     * Ask one repeater which repeaters it knows of, and return the whole
-     * listing.
+     * Ask one repeater which repeaters it knows of, one page at a time.
      *
      * Unlike `discover_identities`, which scatters a request and lets the
      * answers arrive as events, this is one node's own account of its
-     * neighborhood: a single addressed exchange, paged when it does not fit
-     * one frame, so it resolves to a list rather than a stream. Pages are
-     * followed here; the caller sees only the finished listing.
+     * neighborhood: a single addressed exchange that resolves to what the
+     * repeater answered. A listing too long for one frame comes back with
+     * a cursor, and asking for the next page is a separate call with that
+     * cursor—never followed here, so no tap costs the mesh more than one
+     * exchange. Resolves with `NoAnswer` when the page deadline passes.
      */
-open func requestPeerRepeaters(peer: Data)async throws  -> [MobileMeshPeerRepeaterRecord]  {
+open func requestPeerRepeatersPage(peerAddress: String, cursor: Data?)async throws  -> MobileMeshPeerRepeatersPageRecord  {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
-                uniffi_umsh_mobile_core_fn_method_mobilemeshsession_request_peer_repeaters(
-                        self.uniffiCloneHandle(),FfiConverterData.lower(peer)
+                uniffi_umsh_mobile_core_fn_method_mobilemeshsession_request_peer_repeaters_page(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(peerAddress),FfiConverterOptionData.lower(cursor)
                 )
             },
             pollFunc: ffi_umsh_mobile_core_rust_future_poll_rust_buffer,
             completeFunc: ffi_umsh_mobile_core_rust_future_complete_rust_buffer,
             freeFunc: ffi_umsh_mobile_core_rust_future_free_rust_buffer,
-            liftFunc: FfiConverterSequenceTypeMobileMeshPeerRepeaterRecord.lift,
+            liftFunc: FfiConverterTypeMobileMeshPeerRepeatersPageRecord_lift,
             errorHandler: FfiConverterTypeMobileMeshError_lift
         )
 }
@@ -6220,10 +6222,16 @@ public struct MobileMeshPeerRepeaterRecord: Equatable, Hashable {
      */
     public var lastHeardMinutes: UInt16?
     /**
-     * The peer's position as a raw location cell, decodable with the
-     * location helpers.
+     * Center of the cell the peer's identity disclosed, decoded here the
+     * way a node identity's position is, so the platform never handles a
+     * raw cell. Absent when the entry carried no location.
      */
-    public var location: Data?
+    public var latitudeDegrees: Double?
+    public var longitudeDegrees: Double?
+    /**
+     * The cell's precision in encoded bytes, for the cell-size helpers.
+     */
+    public var locationPrecision: UInt8?
     /**
      * The 2-octet flood-forwarding codes the peer advertised.
      */
@@ -6244,9 +6252,13 @@ public struct MobileMeshPeerRepeaterRecord: Equatable, Hashable {
          * Minutes since the answering node last heard from this peer.
          */lastHeardMinutes: UInt16?,
         /**
-         * The peer's position as a raw location cell, decodable with the
-         * location helpers.
-         */location: Data?,
+         * Center of the cell the peer's identity disclosed, decoded here the
+         * way a node identity's position is, so the platform never handles a
+         * raw cell. Absent when the entry carried no location.
+         */latitudeDegrees: Double?, longitudeDegrees: Double?,
+        /**
+         * The cell's precision in encoded bytes, for the cell-size helpers.
+         */locationPrecision: UInt8?,
         /**
          * The 2-octet flood-forwarding codes the peer advertised.
          */regionCodes: [Data]) {
@@ -6255,7 +6267,9 @@ public struct MobileMeshPeerRepeaterRecord: Equatable, Hashable {
         self.rssiDbm = rssiDbm
         self.snrQuarterDb = snrQuarterDb
         self.lastHeardMinutes = lastHeardMinutes
-        self.location = location
+        self.latitudeDegrees = latitudeDegrees
+        self.longitudeDegrees = longitudeDegrees
+        self.locationPrecision = locationPrecision
         self.regionCodes = regionCodes
     }
 
@@ -6280,7 +6294,9 @@ public struct FfiConverterTypeMobileMeshPeerRepeaterRecord: FfiConverterRustBuff
                 rssiDbm: FfiConverterOptionInt16.read(from: &buf),
                 snrQuarterDb: FfiConverterOptionInt16.read(from: &buf),
                 lastHeardMinutes: FfiConverterOptionUInt16.read(from: &buf),
-                location: FfiConverterOptionData.read(from: &buf),
+                latitudeDegrees: FfiConverterOptionDouble.read(from: &buf),
+                longitudeDegrees: FfiConverterOptionDouble.read(from: &buf),
+                locationPrecision: FfiConverterOptionUInt8.read(from: &buf),
                 regionCodes: FfiConverterSequenceData.read(from: &buf)
         )
     }
@@ -6291,7 +6307,9 @@ public struct FfiConverterTypeMobileMeshPeerRepeaterRecord: FfiConverterRustBuff
         FfiConverterOptionInt16.write(value.rssiDbm, into: &buf)
         FfiConverterOptionInt16.write(value.snrQuarterDb, into: &buf)
         FfiConverterOptionUInt16.write(value.lastHeardMinutes, into: &buf)
-        FfiConverterOptionData.write(value.location, into: &buf)
+        FfiConverterOptionDouble.write(value.latitudeDegrees, into: &buf)
+        FfiConverterOptionDouble.write(value.longitudeDegrees, into: &buf)
+        FfiConverterOptionUInt8.write(value.locationPrecision, into: &buf)
         FfiConverterSequenceData.write(value.regionCodes, into: &buf)
     }
 }
@@ -6309,6 +6327,85 @@ public func FfiConverterTypeMobileMeshPeerRepeaterRecord_lift(_ buf: RustBuffer)
 #endif
 public func FfiConverterTypeMobileMeshPeerRepeaterRecord_lower(_ value: MobileMeshPeerRepeaterRecord) -> RustBuffer {
     return FfiConverterTypeMobileMeshPeerRepeaterRecord.lower(value)
+}
+
+
+/**
+ * One page of a repeater's Peer Repeaters listing, as it answered.
+ *
+ * A page is all one ask buys. Following `next_cursor` is the caller's
+ * decision each time, because each page costs the mesh airtime and the
+ * operator may have seen enough.
+ */
+public struct MobileMeshPeerRepeatersPageRecord: Equatable, Hashable {
+    public var entries: [MobileMeshPeerRepeaterRecord]
+    /**
+     * How many peers the whole listing holds, when the page said.
+     */
+    public var total: UInt8?
+    /**
+     * Opaque; hand it back to ask for the page after this one. Absent on
+     * the final page.
+     */
+    public var nextCursor: Data?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(entries: [MobileMeshPeerRepeaterRecord],
+        /**
+         * How many peers the whole listing holds, when the page said.
+         */total: UInt8?,
+        /**
+         * Opaque; hand it back to ask for the page after this one. Absent on
+         * the final page.
+         */nextCursor: Data?) {
+        self.entries = entries
+        self.total = total
+        self.nextCursor = nextCursor
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileMeshPeerRepeatersPageRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileMeshPeerRepeatersPageRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileMeshPeerRepeatersPageRecord {
+        return
+            try MobileMeshPeerRepeatersPageRecord(
+                entries: FfiConverterSequenceTypeMobileMeshPeerRepeaterRecord.read(from: &buf),
+                total: FfiConverterOptionUInt8.read(from: &buf),
+                nextCursor: FfiConverterOptionData.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileMeshPeerRepeatersPageRecord, into buf: inout [UInt8]) {
+        FfiConverterSequenceTypeMobileMeshPeerRepeaterRecord.write(value.entries, into: &buf)
+        FfiConverterOptionUInt8.write(value.total, into: &buf)
+        FfiConverterOptionData.write(value.nextCursor, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileMeshPeerRepeatersPageRecord_lift(_ buf: RustBuffer) throws -> MobileMeshPeerRepeatersPageRecord {
+    return try FfiConverterTypeMobileMeshPeerRepeatersPageRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileMeshPeerRepeatersPageRecord_lower(_ value: MobileMeshPeerRepeatersPageRecord) -> RustBuffer {
+    return FfiConverterTypeMobileMeshPeerRepeatersPageRecord.lower(value)
 }
 
 
@@ -12791,6 +12888,11 @@ enum MobileMeshError: Swift.Error, Equatable, Hashable, Foundation.LocalizedErro
      * asked for nothing at all.
      */
     case InvalidRequest
+    /**
+     * An addressed ask went out and nothing came back before its
+     * deadline.
+     */
+    case NoAnswer
 
 
 
@@ -12832,6 +12934,7 @@ public struct FfiConverterTypeMobileMeshError: FfiConverterRustBuffer {
         case 10: return .UnknownConversation
         case 11: return .InvalidLocation
         case 12: return .InvalidRequest
+        case 13: return .NoAnswer
 
          default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -12890,6 +12993,10 @@ public struct FfiConverterTypeMobileMeshError: FfiConverterRustBuffer {
 
         case .InvalidRequest:
             writeInt(&buf, Int32(12))
+
+
+        case .NoAnswer:
+            writeInt(&buf, Int32(13))
 
         }
     }
@@ -17422,7 +17529,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_request_identity_by_hint() != 17184) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_request_peer_repeaters() != 29496) {
+    if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_request_peer_repeaters_page() != 43345) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_restore_chat() != 28606) {

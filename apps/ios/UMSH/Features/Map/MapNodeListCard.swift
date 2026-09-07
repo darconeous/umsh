@@ -5,7 +5,7 @@ import SwiftUI
 /// the order they are nearest.
 struct MapNodeListCard: View {
     let nodes: [MapNode]
-    @Binding var selectedNodeID: Int64?
+    @Binding var selectedNodeID: MapNodeID?
     let selfPosition: MapSelfPosition?
     /// Whether any node at all reported a location, regardless of filters—
     /// the difference between an empty mesh and an empty filter.
@@ -79,7 +79,7 @@ struct MapNodeListCard: View {
     private var orderedNodes: [MapNode] {
         guard let selfPosition else {
             return nodes.sorted {
-                $0.peer.displayName.localizedCaseInsensitiveCompare($1.peer.displayName)
+                $0.displayName.localizedCaseInsensitiveCompare($1.displayName)
                     == .orderedAscending
             }
         }
@@ -94,19 +94,24 @@ struct MapNodeListCard: View {
     private func row(_ node: MapNode, now: Date) -> some View {
         HStack(spacing: 12) {
             PeerAvatar(
-                hint: node.peer.identity.hint,
+                hint: node.hint,
                 diameter: 40,
-                showsFavoriteStar: node.peer.isFavorite
+                showsFavoriteStar: node.isFavorite
             )
             VStack(alignment: .leading, spacing: 1) {
                 HStack(spacing: 4) {
-                    Text(node.peer.displayName)
+                    Text(node.displayName)
                         .lineLimit(1)
                     if !node.isAttributable {
                         Image(systemName: "exclamationmark.triangle.fill")
                             .font(.caption2)
                             .foregroundStyle(.orange)
                             .accessibilityLabel("Location unverified")
+                    } else if node.isReported {
+                        Image(systemName: "antenna.radiowaves.left.and.right")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .accessibilityLabel("Position reported by a router")
                     }
                 }
                 if let subtitle = subtitle(node, now: now) {
@@ -137,10 +142,14 @@ struct MapNodeListCard: View {
             latitude: node.latitude,
             longitude: node.longitude,
             fractionDigits: LocationPresentation.coordinateDecimals(cellMeters: node.cellMeters),
-            pinName: node.peer.displayName
+            pinName: node.displayName
         ) {
-            Button("Details", systemImage: "info.circle") {
-                nodePendingDetail = node.peer
+            // A neighbor known only by a hint has no page: a hint is not a
+            // key to address, and there is nothing behind it to show.
+            if let peer = node.peer {
+                Button("Details", systemImage: "info.circle") {
+                    nodePendingDetail = peer
+                }
             }
         }
         // The tap gesture confers nothing on VoiceOver: without the trait
@@ -149,15 +158,7 @@ struct MapNodeListCard: View {
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(.isButton)
         .accessibilityAction { selectedNodeID = node.id }
-        .accessibilityAction(named: "Details") { nodePendingDetail = node.peer }
-        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-            Button {
-                nodePendingDetail = node.peer
-            } label: {
-                Label("Details", systemImage: "info.circle")
-            }
-            .tint(.blue)
-        }
+        .modifier(NodeDetailsAffordances(peer: node.peer) { nodePendingDetail = $0 })
     }
 
     /// How far off the node claims to be, from wherever we are.
@@ -191,7 +192,15 @@ struct MapNodeListCard: View {
     /// `RelativeDateTimeFormatter` rather than the `.relative` format style
     /// used elsewhere in the app: only the formatter takes a reference date.
     private func subtitle(_ node: MapNode, now: Date) -> String? {
-        guard let heard = node.peer.lastHeard else { return nil }
+        if let reporter = node.reportedBy {
+            // Second-hand: who said so, and when they last heard the node.
+            var parts = ["Reported by \(reporter.displayName)"]
+            if let heard = node.lastHeard {
+                parts.append("heard \(Self.ageText(heard, now: now))")
+            }
+            return parts.joined(separator: " · ")
+        }
+        guard let heard = node.lastHeard else { return nil }
         let heardText = "Heard \(Self.ageText(heard, now: now))"
         if let reported = node.reportedAt,
            heard.timeIntervalSince(reported) > 4 * 3_600
@@ -247,6 +256,32 @@ struct MapNodeListCard: View {
                     .buttonStyle(.borderedProminent)
                 Button("Show list", action: openPeersList)
             }
+        }
+    }
+}
+
+/// The swipe and the VoiceOver action that open a node's page, present only
+/// when there is a page: a reported neighbor this phone does not know has
+/// none. A modifier rather than two conditionals in the row, so the row's
+/// view identity does not change with what it is showing.
+private struct NodeDetailsAffordances: ViewModifier {
+    let peer: PeerSummary?
+    let open: (PeerSummary) -> Void
+
+    func body(content: Content) -> some View {
+        if let peer {
+            content
+                .accessibilityAction(named: "Details") { open(peer) }
+                .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                    Button {
+                        open(peer)
+                    } label: {
+                        Label("Details", systemImage: "info.circle")
+                    }
+                    .tint(.blue)
+                }
+        } else {
+            content
         }
     }
 }

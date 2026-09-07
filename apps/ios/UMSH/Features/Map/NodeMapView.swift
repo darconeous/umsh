@@ -13,6 +13,9 @@ struct NodeMapView: View {
     @Binding var radioSnapshot: RadioSnapshot
     @Binding var conversations: [DirectConversationSummary]
     let peers: [PeerSummary]
+    /// Positions routers have reported for their neighbors, drawn beside the
+    /// nodes' own claims for nodes that made none.
+    var neighborReports: [PeerRepeaterNeighborReport] = []
     /// Whether launch bootstrap is still running, so an empty map reads as
     /// "not read yet" rather than "nothing is out there".
     var isLoading = false
@@ -38,7 +41,7 @@ struct NodeMapView: View {
     /// The map frames itself once. After that the camera belongs to the
     /// reader: an advertisement landing mid-pan must not yank the view.
     @State private var hasFramedNodes = false
-    @State private var selectedNodeID: Int64?
+    @State private var selectedNodeID: MapNodeID?
     @State private var cardDetent: MapCardDetent = .peek
     @State private var viewport = MapViewport()
 
@@ -69,11 +72,16 @@ struct NodeMapView: View {
     }
 
     private var nodes: [MapNode] {
-        MapNode.nodes(peers: peers, tier: tierFilter, capabilities: capabilityFilter)
+        MapNode.nodes(
+            peers: peers,
+            neighborReports: neighborReports,
+            tier: tierFilter,
+            capabilities: capabilityFilter
+        )
     }
 
     private var hasAnyLocations: Bool {
-        MapNode.anyLocations(peers: peers)
+        MapNode.anyLocations(peers: peers, neighborReports: neighborReports)
     }
 
     private var isFiltered: Bool { tierFilter != .all || !capabilityFilter.isEmpty }
@@ -179,7 +187,7 @@ struct NodeMapView: View {
                         .foregroundStyle(Color.accentColor.opacity(0.12))
                         .stroke(Color.accentColor.opacity(0.45), lineWidth: 1)
                 }
-                Annotation(node.peer.displayName, coordinate: node.coordinate, anchor: .bottom) {
+                Annotation(node.displayName, coordinate: node.coordinate, anchor: .bottom) {
                     MapNodeMarker(node: node, isSelected: node.id == selectedNodeID)
                 }
                 .tag(node.id)
@@ -345,9 +353,11 @@ struct NodeMapView: View {
 
     /// A cell this coarse covers a city or more; a marker on its own would
     /// read as an address the node never gave. Finer cells draw their circle
-    /// only when selected, so a crowded map stays legible.
+    /// only when selected, so a crowded map stays legible. A position a
+    /// router reported always draws its cell: the uncertainty is the point
+    /// of showing a second-hand pin at all.
     private func shouldDrawCell(_ node: MapNode) -> Bool {
-        node.isCoarse || node.id == selectedNodeID
+        node.isCoarse || node.isReported || node.id == selectedNodeID
     }
 
     /// A card at its lowest with nothing in it shows a count and no reason

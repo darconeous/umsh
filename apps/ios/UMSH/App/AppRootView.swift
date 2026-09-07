@@ -177,6 +177,7 @@ struct AppRootView: View {
                     radioSnapshot: $runtime.radioSnapshot,
                     conversations: $runtime.conversations,
                     peers: runtime.peers,
+                    neighborReports: runtime.neighborReports,
                     isLoading: isBootstrapping,
                     peerActions: runtime.peerActions,
                     updateDraft: runtime.updateDraft,
@@ -263,7 +264,8 @@ struct AppRootView: View {
                     seedMessages: runtime.seedGeneratedMessages,
                     stagedPeerSendsMessage: runtime.stagedPeerSendsMessage,
                     stagedPeerReacts: runtime.stagedPeerReacts,
-                    stagedDropTransmissions: runtime.stagedDropTransmissions
+                    stagedDropTransmissions: runtime.stagedDropTransmissions,
+                    stagedRemoteDevicesReachable: runtime.stagedRemoteDevicesReachable
                 )
                     .appRadioToolbar(runtime.radioSnapshot) {
                         showsRadioDetail = true
