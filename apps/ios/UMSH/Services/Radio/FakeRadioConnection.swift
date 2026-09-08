@@ -1253,7 +1253,9 @@ enum FakePeerRepeatersListing {
                 lastHeardMinutes: UInt16.max,
                 latitudeDegrees: 38.7863,
                 longitudeDegrees: -119.9469,
-                locationPrecision: 3,
+                // A two-byte cell is wider than the distance to the router,
+                // so the row can only bound how far off this one is.
+                locationPrecision: 2,
                 regionCodes: []
             ),
         ],

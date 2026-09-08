@@ -3081,7 +3081,7 @@ final class AppRuntime {
         return rendered
     }
 
-    // MARK: - Neighboring routers
+    // MARK: - Neighboring repeaters
 
     /// What a router last said about its neighbors, from this phone's own
     /// store. Nothing goes on the air.

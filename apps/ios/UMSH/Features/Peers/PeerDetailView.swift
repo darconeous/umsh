@@ -333,7 +333,7 @@ struct PeerDetailView: View {
                             )
                         } label: {
                             Label(
-                                "Neighboring Routers",
+                                "Neighboring Repeaters",
                                 systemImage: "antenna.radiowaves.left.and.right"
                             )
                         }

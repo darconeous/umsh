@@ -167,16 +167,8 @@ struct MapNodeListCard: View {
     /// one that has yet to get a fix. A dash would imply zero.
     private func distanceText(_ node: MapNode) -> String? {
         guard let selfPosition else { return nil }
-        return Measurement(
-            value: node.distance(from: selfPosition.coordinate),
-            unit: UnitLength.meters
-        )
-        .formatted(
-            .measurement(
-                width: .abbreviated,
-                usage: .road,
-                numberFormatStyle: .number.precision(.fractionLength(0...1))
-            )
+        return LocationPresentation.distanceText(
+            meters: node.distance(from: selfPosition.coordinate)
         )
     }
 

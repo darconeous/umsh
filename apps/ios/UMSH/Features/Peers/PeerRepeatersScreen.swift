@@ -32,7 +32,7 @@ struct PeerRepeatersScreen: View {
                 Section { Text(problem).foregroundStyle(.red) }
             }
         }
-        .navigationTitle("Neighboring Routers")
+        .navigationTitle("Neighboring Repeaters")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
@@ -95,18 +95,11 @@ struct PeerRepeatersScreen: View {
                     asOf: listing?.asOf,
                     isFresh: isFresh,
                     isBusy: isBusy,
-                    subject: "the router"
+                    subject: "the repeater"
                 )
                 if let listing, listing.isComplete, let total = listing.total, total > 0 {
                     Text("\(listing.entries.count) of \(total) neighbors listed.")
                 }
-                if entries.contains(where: { namedByGuess($0) }) {
-                    Text(RouterHintNaming.ambiguityNote)
-                }
-                Text(
-                    "What the router itself has heard: identities it received name a node, "
-                        + "receptions supply the signal, and neither is this phone's own account."
-                )
             }
         }
     }
@@ -162,12 +155,6 @@ struct PeerRepeatersScreen: View {
         )
     }
 
-    /// Whether the row's name came from matching a two-byte hint against
-    /// known nodes, which can narrow but never prove.
-    private func namedByGuess(_ neighbor: PeerRepeaterNeighbor) -> Bool {
-        neighbor.hint.count < 3 && neighbor.resolve(among: actions.knownPeers) != nil
-    }
-
     /// The signal and age on one line, the regions and position on the next.
     /// Lines with nothing to say are left out rather than shown as dashes.
     private func subtitle(_ neighbor: PeerRepeaterNeighbor) -> String? {
@@ -183,21 +170,54 @@ struct PeerRepeatersScreen: View {
             detail.append(neighbor.regionCodes.map(RegionCodeText.label).joined(separator: ", "))
         }
         if let latitude = neighbor.latitude, let longitude = neighbor.longitude {
+            // The cell size only decides how many digits are real; the size
+            // itself is not something a person reading a neighbor list weighs.
             let cellMeters = neighbor.locationPrecision
                 .flatMap { LocationPresentation.cellMeters(precisionBytes: $0) }
-            var place = LocationPresentation.coordinateText(
+            detail.append(
+                LocationPresentation.coordinateText(
+                    latitude: latitude,
+                    longitude: longitude,
+                    cellMeters: cellMeters
+                )
+            )
+            if let separation = separationText(
                 latitude: latitude,
                 longitude: longitude,
                 cellMeters: cellMeters
-            )
-            if let cellMeters {
-                place += " (\(LocationPresentation.cellLabel(meters: cellMeters)))"
+            ) {
+                detail.append(separation)
             }
-            detail.append(place)
         }
         if !detail.isEmpty { lines.append(detail.joined(separator: " · ")) }
 
         return lines.isEmpty ? nil : lines.joined(separator: "\n")
+    }
+
+    /// How far the neighbor is from the repeater being asked, which is the
+    /// distance a neighbor listing is about: the reach of one hop, not how
+    /// far anything is from this phone. `nil` when the repeater has not
+    /// placed itself.
+    private func separationText(
+        latitude: Double,
+        longitude: Double,
+        cellMeters: Double?
+    ) -> String? {
+        guard let identity = peer.advertisedIdentity,
+              let routerLatitude = identity.latitude,
+              let routerLongitude = identity.longitude
+        else { return nil }
+        return LocationPresentation.separationText(
+            centerMeters: LocationPresentation.distanceMeters(
+                fromLatitude: routerLatitude,
+                longitude: routerLongitude,
+                toLatitude: latitude,
+                longitude: longitude
+            ),
+            cellMeters: identity.locationPrecision
+                .flatMap { LocationPresentation.cellMeters(precisionBytes: $0) },
+            otherCellMeters: cellMeters
+        )
     }
 
     /// `−72 dBm, 6.5 dB`. Quarter-decibel steps on the wire, unlike the
@@ -237,7 +257,7 @@ struct PeerRepeatersScreen: View {
                 listing = page
                 isFresh = true
             case .noAnswer:
-                problem = "The router did not answer. It may be out of reach, "
+                problem = "The repeater did not answer. It may be out of reach, "
                     + "or it may not keep a neighbor table."
             case .failed:
                 problem = "This phone could not send the request."

@@ -1,3 +1,4 @@
+import CoreLocation
 import Foundation
 import UMSHMobileCore
 
@@ -74,5 +75,48 @@ enum LocationPresentation {
         let format = FloatingPointFormatStyle<Double>.number
             .precision(.fractionLength(coordinateDecimals(cellMeters: cellMeters)))
         return "\(latitude.formatted(format))°, \(longitude.formatted(format))°"
+    }
+
+    /// Great-circle distance between two cell centers, in meters.
+    static func distanceMeters(
+        fromLatitude: Double,
+        longitude fromLongitude: Double,
+        toLatitude: Double,
+        longitude toLongitude: Double
+    ) -> Double {
+        CLLocation(latitude: fromLatitude, longitude: fromLongitude)
+            .distance(from: CLLocation(latitude: toLatitude, longitude: toLongitude))
+    }
+
+    /// How far apart two located nodes are, honest about the cells.
+    ///
+    /// Each node is somewhere in its cell, so the distance between the two
+    /// centers is off by up to half a cell at either end. When the centers
+    /// are closer than that slack, the real figure is unknown beyond an upper
+    /// bound, and the text says so: "< 1.2 km" rather than a number the grid
+    /// cannot support. Farther apart, the center distance stands.
+    static func separationText(
+        centerMeters: Double,
+        cellMeters: Double?,
+        otherCellMeters: Double?
+    ) -> String {
+        let slack = (cellMeters ?? 0) / 2 + (otherCellMeters ?? 0) / 2
+        if centerMeters < slack {
+            return "< \(distanceText(meters: centerMeters + slack))"
+        }
+        return distanceText(meters: centerMeters)
+    }
+
+    /// A distance as a person would say it on the road: "3.6 km", "850 m".
+    /// One style for every place the app states how far apart two nodes are.
+    static func distanceText(meters: Double) -> String {
+        Measurement(value: meters, unit: UnitLength.meters)
+            .formatted(
+                .measurement(
+                    width: .abbreviated,
+                    usage: .road,
+                    numberFormatStyle: .number.precision(.fractionLength(0...1))
+                )
+            )
     }
 }
