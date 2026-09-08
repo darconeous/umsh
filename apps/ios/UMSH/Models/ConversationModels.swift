@@ -55,6 +55,15 @@ struct PeerSummary: Identifiable, Hashable, Sendable {
                 .contains(MeshNodeIdentity.repeaterCapabilityLabel) == true
     }
 
+    /// Whether this node says it exchanges text messages: the chat role, or
+    /// the text-messages capability alongside some other role. A node that
+    /// has never advertised anything answers `false`—nothing has claimed
+    /// otherwise.
+    var offersTextMessages: Bool {
+        role == .chat
+            || advertisedIdentity?.capabilityBits.contains(.textMessages) == true
+    }
+
     /// What this phone actually knows about whether the node repeats.
     ///
     /// `isLikelyRepeater` answers `false` identically for a node we know to be

@@ -26,22 +26,33 @@ final class ChatNotificationService: NSObject, UNUserNotificationCenterDelegate,
     /// Marks a notification that must banner even while the conversation it
     /// threads with is on screen. See `postNotice`.
     private static let alwaysPresentKey = "umsh.alwaysPresent"
+    /// Marks a notification whose subject is a node rather than what was
+    /// said in its transcript. A tap on one is about the node. See
+    /// `postPeerHeard`.
+    private static let peerAddressKey = "umsh.peerAddress"
     private static let messageCategoryIdentifier = "umsh.chat.message"
     private static let replyActionIdentifier = "umsh.chat.reply"
+
+    /// What a tapped notification asks the interface to show.
+    enum Destination: Equatable, Sendable {
+        /// The transcript with this peer or channel, by conversation address.
+        case conversation(String)
+        /// This node, by canonical address. Where that lands is the
+        /// interface's call: nothing about the node need have been said.
+        case peer(String)
+    }
 
     /// Peer address of the conversation currently on screen, if any.
     /// Read from the delegate callbacks; written by the UI on navigation.
     private let visibleConversation = OSAllocatedUnfairLock<String?>(initialState: nil)
 
-    /// The live subscriber's continuation, if any, and the conversation a
-    /// tap asked for while there was none. See `conversationOpens()`.
-    private let conversationOpenState = OSAllocatedUnfairLock<ConversationOpenState>(
-        initialState: ConversationOpenState()
-    )
+    /// The live subscriber's continuation, if any, and the destination a
+    /// tap asked for while there was none. See `navigationRequests()`.
+    private let tapState = OSAllocatedUnfairLock<TapState>(initialState: TapState())
 
-    private struct ConversationOpenState {
-        var continuation: AsyncStream<String>.Continuation?
-        var pending: String?
+    private struct TapState {
+        var continuation: AsyncStream<Destination>.Continuation?
+        var pending: Destination?
     }
 
     private let authorizationRequested = OSAllocatedUnfairLock(initialState: false)
@@ -96,19 +107,19 @@ final class ChatNotificationService: NSObject, UNUserNotificationCenterDelegate,
         }
     }
 
-    /// Peer addresses of tapped message notifications. The UI consumes this
-    /// stream and routes to the conversation. Each call starts a fresh
-    /// subscription and ends any previous one: the consuming task lives in the
-    /// interface and restarts when the interface is rebuilt, and a stream its
-    /// cancelled predecessor had terminated would swallow every later tap.
+    /// Where tapped notifications ask to go. The UI consumes this stream and
+    /// navigates. Each call starts a fresh subscription and ends any previous
+    /// one: the consuming task lives in the interface and restarts when the
+    /// interface is rebuilt, and a stream its cancelled predecessor had
+    /// terminated would swallow every later tap.
     ///
     /// A tap that arrives before anyone is subscribed is held rather than
     /// dropped. Tapping a notification is exactly what launches a terminated
     /// app, and this delegate is answering while the interface it routes
     /// through is still being built.
-    func conversationOpens() -> AsyncStream<String> {
+    func navigationRequests() -> AsyncStream<Destination> {
         AsyncStream(bufferingPolicy: .bufferingNewest(1)) { continuation in
-            conversationOpenState.withLock { state in
+            tapState.withLock { state in
                 state.continuation?.finish()
                 state.continuation = continuation
                 if let pending = state.pending {
@@ -322,12 +333,16 @@ final class ChatNotificationService: NSObject, UNUserNotificationCenterDelegate,
     /// is why it presents even with that node's transcript open. Nothing has
     /// necessarily been said: what was heard may be a beacon, an
     /// advertisement, or an ack, and none of those appear in a transcript.
+    /// The tap is about the node, not a transcript—it may be a repeater
+    /// with nothing to say—so it asks for the peer and leaves the interface
+    /// to decide what page that is.
     func postPeerHeard(peerAddress: String, displayName: String) {
         postNotice(
             conversationAddress: peerAddress,
             title: "\(displayName) is on the air",
             body: "You asked to be told the next time this node was heard.",
-            alwaysPresent: true
+            alwaysPresent: true,
+            aboutPeer: true
         )
     }
 
@@ -342,12 +357,16 @@ final class ChatNotificationService: NSObject, UNUserNotificationCenterDelegate,
     /// opens the transcript.
     ///
     /// `alwaysPresent` overrides the visible-transcript suppression, for a
-    /// notice whose subject is not the transcript's contents.
+    /// notice whose subject is not the transcript's contents. `aboutPeer`
+    /// makes a tap ask for the node rather than its transcript; the notice
+    /// still threads with the conversation, so it is withdrawn with the rest
+    /// when that transcript is opened.
     private func postNotice(
         conversationAddress: String,
         title: String,
         body: String,
-        alwaysPresent: Bool = false
+        alwaysPresent: Bool = false,
+        aboutPeer: Bool = false
     ) {
         let content = UNMutableNotificationContent()
         content.title = title
@@ -358,6 +377,9 @@ final class ChatNotificationService: NSObject, UNUserNotificationCenterDelegate,
             Self.conversationAddressKey: conversationAddress,
             Self.alwaysPresentKey: alwaysPresent,
         ]
+        if aboutPeer {
+            content.userInfo[Self.peerAddressKey] = conversationAddress
+        }
         let request = UNNotificationRequest(
             identifier: UUID().uuidString,
             content: content,
@@ -538,8 +560,8 @@ final class ChatNotificationService: NSObject, UNUserNotificationCenterDelegate,
         didReceive response: UNNotificationResponse,
         withCompletionHandler completionHandler: @escaping () -> Void
     ) {
-        let conversationAddress = response.notification.request.content
-            .userInfo[Self.conversationAddressKey] as? String
+        let userInfo = response.notification.request.content.userInfo
+        let conversationAddress = userInfo[Self.conversationAddressKey] as? String
         // An inline reply—typed on the notification, or dictated on a
         // paired watch. The app may have just been launched for exactly
         // this, with no scene; the send runs under a background assertion
@@ -578,12 +600,19 @@ final class ChatNotificationService: NSObject, UNUserNotificationCenterDelegate,
             }
             return
         }
-        if let conversationAddress {
-            conversationOpenState.withLock { state in
+        let destination: Destination? = if let peerAddress = userInfo[Self.peerAddressKey] as? String {
+            .peer(peerAddress)
+        } else if let conversationAddress {
+            .conversation(conversationAddress)
+        } else {
+            nil
+        }
+        if let destination {
+            tapState.withLock { state in
                 if let continuation = state.continuation {
-                    continuation.yield(conversationAddress)
+                    continuation.yield(destination)
                 } else {
-                    state.pending = conversationAddress
+                    state.pending = destination
                 }
             }
         }

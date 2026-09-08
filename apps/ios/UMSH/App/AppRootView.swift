@@ -23,6 +23,9 @@ struct AppRootView: View {
     @State private var discoveryVantage: SolicitVantage?
     @State private var openedConversation: DirectConversationSummary?
     @State private var openedChannelConversation: ChannelConversationSummary?
+    /// A node the Peers tab has been asked to show, from a notification about
+    /// the node itself rather than anything it said.
+    @State private var openedPeer: PeerSummary?
     @State private var incomingPeerImport: IncomingPeerImport?
     @State private var pendingPeerImport: PendingPeerImport?
     @State private var incomingChannelImport: IncomingChannelImport?
@@ -138,6 +141,7 @@ struct AppRootView: View {
                     radioSnapshot: $runtime.radioSnapshot,
                     conversations: $runtime.conversations,
                     peers: runtime.peers,
+                    openedPeer: $openedPeer,
                     isLoading: isBootstrapping,
                     inspectPeerIdentity: runtime.inspectPeerIdentity,
                     savePeer: { preview, details, startConversation in
@@ -411,8 +415,13 @@ struct AppRootView: View {
         // subscribed by the runtime, which outlives this view and every
         // scene it belongs to.
         .task {
-            for await address in notificationService.conversationOpens() {
-                await openConversationFromNotification(conversationAddress: address)
+            for await destination in notificationService.navigationRequests() {
+                switch destination {
+                case let .conversation(address):
+                    await openConversationFromNotification(conversationAddress: address)
+                case let .peer(address):
+                    await openPeerFromNotification(peerAddress: address)
+                }
             }
         }
         // Every path into a transcript gets the same reader—the
@@ -492,20 +501,38 @@ struct AppRootView: View {
         }) == nil {
             await runtime.reloadApplicationState()
         }
-        if let conversation = runtime.conversations.first(where: {
+        openedConversation = runtime.conversations.first {
             $0.peer.identity.canonicalAddress == conversationAddress
+        }
+    }
+
+    /// A notification about a node itself—one the phone was watching for
+    /// has turned up. Where that lands depends on what the node is: a node
+    /// that exchanges text messages opens its transcript, empty if need be,
+    /// since the reason to arm a watch on one is to say something once it is
+    /// reachable. Anything else—a repeater, a sensor, a node that has never
+    /// said what it is—opens its page, where every action that does apply
+    /// to it is waiting.
+    @MainActor
+    private func openPeerFromNotification(peerAddress: String) async {
+        if runtime.peers.first(where: { $0.identity.canonicalAddress == peerAddress }) == nil {
+            await runtime.reloadApplicationState()
+        }
+        guard let peer = runtime.peers.first(where: {
+            $0.identity.canonicalAddress == peerAddress
+        }) else { return }
+        guard peer.offersTextMessages else {
+            selectedTab = .peers
+            openedPeer = peer
+            return
+        }
+        selectedTab = .conversations
+        if let conversation = runtime.conversations.first(where: {
+            $0.peer.identity.canonicalAddress == peerAddress
         }) {
             openedConversation = conversation
             return
         }
-        // Every other notification threads with a transcript that already
-        // exists, so reaching here means this one does not: a node the phone
-        // was watching for has turned up and has never been messaged. Opening
-        // an empty transcript is what the tap was for—the reason to arm a
-        // watch is to say something once the node is reachable.
-        guard let peer = runtime.peers.first(where: {
-            $0.identity.canonicalAddress == conversationAddress
-        }) else { return }
         openedConversation = await runtime.peerActions.startConversation?(peer)
     }
 

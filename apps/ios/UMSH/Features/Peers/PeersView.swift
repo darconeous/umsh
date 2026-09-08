@@ -5,6 +5,10 @@ struct PeersView: View {
     @Binding var radioSnapshot: RadioSnapshot
     @Binding var conversations: [DirectConversationSummary]
     let peers: [PeerSummary]
+    /// A node to push the page of, set from outside the tab: a notification
+    /// about the node itself lands here rather than in a transcript it may
+    /// have no use for.
+    @Binding var openedPeer: PeerSummary?
     /// Whether launch bootstrap is still running. Same reason as the
     /// conversations list: the stored peers arrive after first paint, and an
     /// empty list would otherwise read as "no nodes" before any were read.
@@ -68,6 +72,17 @@ struct PeersView: View {
         .animation(UMSHAnimation.list, value: peers)
         .navigationTitle("Peers")
         .searchable(text: $searchText, prompt: "Name, alias, address, or hint")
+        .navigationDestination(item: $openedPeer) { peer in
+            PeerDetailView(
+                peer: peer,
+                radioSnapshot: $radioSnapshot,
+                conversations: $conversations,
+                actions: peerActions,
+                updateDraft: updateDraft,
+                sendMessage: sendMessage,
+                messageActions: messageActions
+            )
+        }
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 sortAndFilterMenu
