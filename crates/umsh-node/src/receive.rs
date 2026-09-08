@@ -4,4 +4,6 @@
 //! callbacks. That keeps the application-facing receive boundary close to the accepted on-wire
 //! packet instead of inventing a second node-specific event envelope.
 
-pub use umsh_mac::{ChannelInfoRef, PacketFamily, ReceivedPacketRef, RouterHints, RxMetadata, Snr};
+pub use umsh_mac::{
+    ChannelInfoRef, PacketFamily, ReceivedPacketRef, RepeaterHints, RxMetadata, Snr,
+};

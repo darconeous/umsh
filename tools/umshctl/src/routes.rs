@@ -334,20 +334,22 @@ fn parse_line(line: &str) -> Option<([u8; 32], RouteRecord)> {
 
 /// How a route reads in a listing: what it does, not how it is encoded.
 ///
-/// A flood route is described by its distance in hops, the number a ping
-/// reply reports, with the wire value beside it: `FHOPS_ACC` is one less,
-/// since the final transmission of a flood spends no budget.
+/// Every route is described by its distance in hops, the number a ping
+/// reply reports. A flood route shows the wire value beside it, since
+/// `FHOPS_ACC` is one less: the final transmission of a flood spends no
+/// budget.
 pub fn describe(route: &CachedRoute) -> String {
     match route {
         CachedRoute::Direct => "direct".to_string(),
-        CachedRoute::Source(hints) if hints.is_empty() => "source route, no routers".to_string(),
+        CachedRoute::Source(hints) if hints.is_empty() => "direct (empty source route)".to_string(),
         CachedRoute::Source(hints) => format!(
-            "via {}",
+            "via {}, {} hops",
             hints
                 .iter()
                 .map(|hint| format!("{:02x}{:02x}", hint.0[0], hint.0[1]))
                 .collect::<Vec<_>>()
-                .join(" > ")
+                .join(" > "),
+            route.hop_count()
         ),
         CachedRoute::Flood {
             flood_hops,
@@ -546,7 +548,14 @@ mod tests {
         );
         assert_eq!(
             describe(&CachedRoute::source(&[]).unwrap()),
-            "source route, no routers"
+            "direct (empty source route)"
+        );
+        assert_eq!(
+            describe(
+                &CachedRoute::source(&[RouterHint([0xA1, 0xB2]), RouterHint([0xC3, 0xD4])])
+                    .unwrap()
+            ),
+            "via a1b2 > c3d4, 3 hops"
         );
     }
 }

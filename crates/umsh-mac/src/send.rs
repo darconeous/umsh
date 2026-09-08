@@ -813,11 +813,11 @@ impl PacketFamily {
     }
 }
 
-/// Iterator over the packed two-byte router hints of a source-route or
+/// Iterator over the packed two-byte repeater hints of a source-route or
 /// trace-route option. Each hint names one repeater, so a route yields one
 /// fewer entry than the path has hops.
 #[derive(Clone, Copy, Debug)]
-pub struct RouterHints<'a> {
+pub struct RepeaterHints<'a> {
     bytes: &'a [u8],
     cursor: usize,
 }
@@ -883,13 +883,13 @@ impl RxMetadata {
     }
 }
 
-impl<'a> RouterHints<'a> {
+impl<'a> RepeaterHints<'a> {
     pub fn new(bytes: &'a [u8]) -> Self {
         Self { bytes, cursor: 0 }
     }
 }
 
-impl Iterator for RouterHints<'_> {
+impl Iterator for RepeaterHints<'_> {
     type Item = RouterHint;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -1126,10 +1126,10 @@ impl<'a> ReceivedPacketRef<'a> {
             .and_then(|range| self.wire.get(range.clone()))
     }
 
-    /// Iterate the router hints of the source-route option, one per
+    /// Iterate the repeater hints of the source-route option, one per
     /// repeater still to visit.
-    pub fn source_route_hints(&self) -> RouterHints<'a> {
-        RouterHints::new(self.source_route().unwrap_or(&[]))
+    pub fn source_route_hints(&self) -> RepeaterHints<'a> {
+        RepeaterHints::new(self.source_route().unwrap_or(&[]))
     }
 
     pub fn trace_route(&self) -> Option<&'a [u8]> {
@@ -1139,10 +1139,10 @@ impl<'a> ReceivedPacketRef<'a> {
             .and_then(|range| self.wire.get(range.clone()))
     }
 
-    /// Iterate the router hints of the trace-route option, one per repeater
+    /// Iterate the repeater hints of the trace-route option, one per repeater
     /// the frame passed through, most recent first.
-    pub fn trace_route_hints(&self) -> RouterHints<'a> {
-        RouterHints::new(self.trace_route().unwrap_or(&[]))
+    pub fn trace_route_hints(&self) -> RepeaterHints<'a> {
+        RepeaterHints::new(self.trace_route().unwrap_or(&[]))
     }
 
     /// The packed trace-signal option, when the frame carried one. Entry `N`
@@ -1187,7 +1187,7 @@ impl<'a> ReceivedPacketRef<'a> {
         }
     }
 
-    /// Router hints left in the source-route option: repeaters still to
+    /// Repeater hints left in the source-route option: repeaters still to
     /// visit, zero for a consumed or absent route.
     pub fn source_route_hint_count(&self) -> usize {
         self.source_route()
@@ -1195,7 +1195,7 @@ impl<'a> ReceivedPacketRef<'a> {
             .unwrap_or(0)
     }
 
-    /// Router hints in the trace-route option: repeaters the frame passed
+    /// Repeater hints in the trace-route option: repeaters the frame passed
     /// through, one less than the hops it took.
     pub fn trace_route_hint_count(&self) -> usize {
         self.trace_route().map(|route| route.len() / 2).unwrap_or(0)

@@ -69,7 +69,7 @@ pub struct PingArgs {
     pub flood: bool,
 
     /// Steer the ping down an explicit route: a comma-separated list of
-    /// routers, first router first, each four hex digits of a router hint
+    /// repeaters, first repeater first, each four hex digits of its hint
     /// or a full node key.
     #[arg(long, value_name = "HINT,HINT")]
     pub route: Option<RouteArg>,

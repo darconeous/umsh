@@ -345,10 +345,11 @@ impl FromStr for RegionCodeArg {
     }
 }
 
-/// A comma-separated source route, first router first.
+/// A comma-separated source route, first repeater first.
 ///
-/// Each router is either the four hex digits of its hint, as a capture or
-/// a trace route renders it, or a full public key to derive the hint from.
+/// Each repeater is either the four hex digits of its hint, as a capture
+/// or a trace route renders it, or a full public key to derive the hint
+/// from.
 /// An empty route is not a way to say "flood"—`--flood` is—so it is
 /// rejected rather than quietly meaning something else.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -368,19 +369,19 @@ impl FromStr for RouteArg {
                     parse_key32(hint)
                         .map(|key| RouterHint::from_public_key(&PublicKey(key)))
                         .map_err(|error| {
-                            format!("router {hint:?}: 4 hex digits or a full key: {error}")
+                            format!("repeater {hint:?}: 4 hex digits or a full key: {error}")
                         })
                 }
             })
             .collect::<Result<Vec<_>, String>>()?;
         if hints.is_empty() {
-            return Err(String::from("a source route needs at least one router"));
+            return Err(String::from("a source route needs at least one repeater"));
         }
         // The MAC rejects a longer route too; catching it here attributes the
         // error to the flag that carried it.
         if hints.len() > MAX_ROUTE_HINTS {
             return Err(format!(
-                "a source route names at most {MAX_ROUTE_HINTS} routers, got {}",
+                "a source route names at most {MAX_ROUTE_HINTS} repeaters, got {}",
                 hints.len()
             ));
         }
@@ -388,7 +389,7 @@ impl FromStr for RouteArg {
     }
 }
 
-/// The MAC's ceiling on an explicit source route: router hints, one per
+/// The MAC's ceiling on an explicit source route: hints, one per
 /// repeater.
 const MAX_ROUTE_HINTS: usize = 15;
 

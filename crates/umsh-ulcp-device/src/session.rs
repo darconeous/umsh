@@ -513,7 +513,7 @@ struct AckPlan {
     regions: HeaplessVec<[u8; 2], MAX_ACK_REGIONS>,
 }
 
-/// Router hints an ack's source route can name: one per repeater, the
+/// Repeater hints an ack's source route can name: one per repeater, the
 /// same ceiling as a trace route.
 const MAX_ACK_ROUTE_HINTS: usize = 15;
 /// Region codes a flooded ack replays.

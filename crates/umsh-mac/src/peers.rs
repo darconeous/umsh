@@ -34,7 +34,7 @@ pub enum CachedRoute {
 }
 
 impl CachedRoute {
-    /// Maximum router hints a source route can name, matching
+    /// Maximum repeater hints a source route can name, matching
     /// `MAX_SOURCE_ROUTE_HINTS`.
     pub const MAX_HINTS: usize = 15;
     /// Maximum region codes a learned flood route carries.
@@ -496,7 +496,7 @@ mod tests {
 
     /// The distance a cached route reports agrees with what a received
     /// frame reports for the same path: a direct peer is one hop, and each
-    /// router hint or flood hop adds one to the leg no count covers.
+    /// repeater hint or flood hop adds one to the leg no count covers.
     #[test]
     fn hop_count_is_one_more_than_what_the_route_names() {
         assert_eq!(CachedRoute::Direct.hop_count(), 1);

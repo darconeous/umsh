@@ -586,7 +586,7 @@ struct PeerRoute: Equatable, Sendable {
     /// Routers named by a source route, in send order.
     let hints: [MeshRouterHint]
     /// Distance to the peer in hops, the same number a ping reply's hop
-    /// count reports: one for a direct peer, routers plus one for a source
+    /// count reports: one for a direct peer, repeaters plus one for a source
     /// route, flood hops plus one for a flood route.
     let hopCount: UInt8?
     /// Flood hops a flood route was learned at, the raw `FHOPS_ACC`; one

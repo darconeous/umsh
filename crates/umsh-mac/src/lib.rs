@@ -184,7 +184,7 @@ use embedded_hal_async::delay::DelayNs;
 
 #[cfg(test)]
 pub(crate) use umsh_crypto::replay::{RECENT_MIC_CAPACITY, REPLAY_STALE_MS};
-/// Router hints a source route or trace route can name: one per repeater,
+/// Repeater hints a source route or trace route can name: one per repeater,
 /// so a path one hop longer than this.
 pub(crate) const MAX_SOURCE_ROUTE_HINTS: usize = 15;
 pub(crate) const MAX_RESEND_FRAME_LEN: usize = 256;
@@ -332,7 +332,7 @@ pub use peers::{
 };
 pub use send::{
     AckState, ChannelInfoRef, CompletionSignal, MacEventRef, PacketFamily, PendingAck,
-    PendingAckError, QueuedTx, ReceivedPacketRef, ResendRecord, RouterHints, RxMetadata,
+    PendingAckError, QueuedTx, ReceivedPacketRef, RepeaterHints, ResendRecord, RxMetadata,
     SendOptions, SendReceipt, TxPriority, TxQueue,
 };
 pub use umsh_hal::Snr;
