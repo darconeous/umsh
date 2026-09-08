@@ -18,6 +18,10 @@ struct PeerRow: View {
     /// Rendered in the same style as the title, beside it—a badge or a
     /// warning that belongs to the name rather than under it.
     var titleAccessory: AnyView?
+    /// How solid the avatar is drawn. A row whose text is dimmed for a node
+    /// that has gone quiet dims the avatar with it, since the avatar's color
+    /// would otherwise be the loudest thing left on the row.
+    var avatarOpacity: Double = 1
 
     init(
         hint: MeshNodeHint?,
@@ -25,7 +29,8 @@ struct PeerRow: View {
         subtitle: String? = nil,
         diameter: CGFloat = 44,
         showsFavoriteStar: Bool = false,
-        titleAccessory: AnyView? = nil
+        titleAccessory: AnyView? = nil,
+        avatarOpacity: Double = 1
     ) {
         self.hint = hint
         self.title = title
@@ -33,6 +38,7 @@ struct PeerRow: View {
         self.diameter = diameter
         self.showsFavoriteStar = showsFavoriteStar
         self.titleAccessory = titleAccessory
+        self.avatarOpacity = avatarOpacity
     }
 
     /// The usual case: a node this phone knows, named the way it is named
@@ -56,6 +62,7 @@ struct PeerRow: View {
         HStack(spacing: 12) {
             if let hint {
                 PeerAvatar(hint: hint, diameter: diameter, showsFavoriteStar: showsFavoriteStar)
+                    .opacity(avatarOpacity)
             } else {
                 Image(systemName: "person.crop.circle.badge.questionmark")
                     .font(.system(size: diameter * 0.62))

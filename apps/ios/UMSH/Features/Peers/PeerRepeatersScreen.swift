@@ -131,10 +131,14 @@ struct PeerRepeatersScreen: View {
 
     /// How long since the router last heard a neighbor before the row is
     /// drawn as a memory rather than a presence.
-    private static let staleAge: TimeInterval = 2 * 24 * 60 * 60
+    private static let staleAge: TimeInterval = 6 * 60 * 60
 
     private func rowContent(_ neighbor: PeerRepeaterNeighbor, resolved: PeerSummary?) -> some View {
-        PeerRow(
+        // A neighbor the repeater has not heard in hours is still in its
+        // table, but the table is remembering rather than reporting, and
+        // the row should read that way at a glance: text and avatar both.
+        let isStale = neighbor.lastHeard(isOlderThan: Self.staleAge)
+        return PeerRow(
             // The known node's own hint when there is one: the row is that
             // node, and its avatar should be the one it wears everywhere
             // else. A two-byte hint draws gray, which is what a node known
@@ -143,16 +147,10 @@ struct PeerRepeatersScreen: View {
             title: neighbor.title(among: actions.knownPeers),
             subtitle: subtitle(neighbor),
             diameter: 32,
-            showsFavoriteStar: resolved?.isFavorite == true
+            showsFavoriteStar: resolved?.isFavorite == true,
+            avatarOpacity: isStale ? 0.5 : 1
         )
-        // A neighbor the router has not heard in days is still in its
-        // table, but the table is remembering rather than reporting, and
-        // the row should read that way at a glance.
-        .foregroundStyle(
-            neighbor.lastHeard(isOlderThan: Self.staleAge)
-                ? AnyShapeStyle(.secondary)
-                : AnyShapeStyle(.primary)
-        )
+        .foregroundStyle(isStale ? AnyShapeStyle(.secondary) : AnyShapeStyle(.primary))
     }
 
     /// The signal and age on one line, the regions and position on a second
