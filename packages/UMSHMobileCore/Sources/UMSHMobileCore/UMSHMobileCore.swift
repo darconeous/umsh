@@ -1342,6 +1342,16 @@ public protocol MobileMeshSessionProtocol: AnyObject, Sendable {
     func applyChatArchiveResult(requestId: UInt32, kind: MobileChatArchiveResultKind, payload: Data) throws
 
     /**
+     * Ask a device across the mesh to announce itself now
+     * (`CMD_ANNOUNCE`).
+     *
+     * The device answers once the announcement is queued for
+     * transmission; nothing about it is configuration, so nothing is
+     * saved afterwards.
+     */
+    func beginManagementAnnounce(peerAddress: String, request: MobileAnnouncementRecord) throws  -> UInt64
+
+    /**
      * Read a named set of properties across the mesh.
      *
      * The caller names what it wants, in as many exchanges as the
@@ -1864,6 +1874,25 @@ open func applyChatArchiveResult(requestId: UInt32, kind: MobileChatArchiveResul
         FfiConverterData.lower(payload),uniffiCallStatus
     )
 }
+}
+
+    /**
+     * Ask a device across the mesh to announce itself now
+     * (`CMD_ANNOUNCE`).
+     *
+     * The device answers once the announcement is queued for
+     * transmission; nothing about it is configuration, so nothing is
+     * saved afterwards.
+     */
+open func beginManagementAnnounce(peerAddress: String, request: MobileAnnouncementRecord)throws  -> UInt64  {
+    return try  FfiConverterUInt64.lift(try rustCallWithError(FfiConverterTypeMobileMeshError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobilemeshsession_begin_management_announce(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(peerAddress),
+        FfiConverterTypeMobileAnnouncementRecord_lower(request),uniffiCallStatus
+    )
+})
 }
 
     /**
@@ -3291,6 +3320,19 @@ public protocol MobileUlcpSessionProtocol: AnyObject, Sendable {
     func abandonRawTransmits(transactionIds: Data)  -> UlcpSessionUpdateRecord
 
     /**
+     * Ask the radio to announce itself now (`CMD_ANNOUNCE`): an
+     * advertisement or a beacon, as a broadcast or on one of the radio's
+     * own channels.
+     *
+     * Live behavior rather than configuration, so nothing is saved and
+     * nothing is cached. The radio answers once the announcement is
+     * queued for transmission; channel access and the duty limit decide
+     * later whether it reaches the air, exactly as for a scheduled
+     * announcement.
+     */
+    func announce(request: MobileAnnouncementRecord) throws  -> UlcpSessionUpdateRecord
+
+    /**
      * Which relationship this session represents.
      */
     func attachMode()  -> UlcpAttachMode
@@ -3799,6 +3841,27 @@ open func abandonRawTransmits(transactionIds: Data) -> UlcpSessionUpdateRecord  
     uniffi_umsh_mobile_core_fn_method_mobileulcpsession_abandon_raw_transmits(
             self.uniffiCloneHandle(),
         FfiConverterData.lower(transactionIds),uniffiCallStatus
+    )
+})
+}
+
+    /**
+     * Ask the radio to announce itself now (`CMD_ANNOUNCE`): an
+     * advertisement or a beacon, as a broadcast or on one of the radio's
+     * own channels.
+     *
+     * Live behavior rather than configuration, so nothing is saved and
+     * nothing is cached. The radio answers once the announcement is
+     * queued for transmission; channel access and the duty limit decide
+     * later whether it reaches the air, exactly as for a scheduled
+     * announcement.
+     */
+open func announce(request: MobileAnnouncementRecord)throws  -> UlcpSessionUpdateRecord  {
+    return try  FfiConverterTypeUlcpSessionUpdateRecord_lift(try rustCallWithError(FfiConverterTypeMobileError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileulcpsession_announce(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeMobileAnnouncementRecord_lower(request),uniffiCallStatus
     )
 })
 }
@@ -4734,6 +4797,98 @@ public func FfiConverterTypeHostPeerKeyEntryRecord_lift(_ buf: RustBuffer) throw
 #endif
 public func FfiConverterTypeHostPeerKeyEntryRecord_lower(_ value: HostPeerKeyEntryRecord) -> RustBuffer {
     return FfiConverterTypeHostPeerKeyEntryRecord.lower(value)
+}
+
+
+/**
+ * One `CMD_ANNOUNCE` request. Every field but the kind is optional and
+ * takes the command's default when absent.
+ */
+public struct MobileAnnouncementRecord: Equatable, Hashable {
+    public var kind: MobileAnnouncementKind
+    /**
+     * Flood budget, 0 to 15. Zero reaches only the radio's own
+     * neighbors.
+     */
+    public var floodHops: UInt8
+    /**
+     * Whether the source address is the full public key. `None` takes
+     * the kind's default: an advertisement carries one, a beacon the
+     * hint.
+     */
+    public var fullSource: Bool?
+    /**
+     * The 16-octet channel identifier to send on, or `None` for a
+     * broadcast.
+     */
+    public var channelIdentifier: Data?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(kind: MobileAnnouncementKind,
+        /**
+         * Flood budget, 0 to 15. Zero reaches only the radio's own
+         * neighbors.
+         */floodHops: UInt8,
+        /**
+         * Whether the source address is the full public key. `None` takes
+         * the kind's default: an advertisement carries one, a beacon the
+         * hint.
+         */fullSource: Bool?,
+        /**
+         * The 16-octet channel identifier to send on, or `None` for a
+         * broadcast.
+         */channelIdentifier: Data?) {
+        self.kind = kind
+        self.floodHops = floodHops
+        self.fullSource = fullSource
+        self.channelIdentifier = channelIdentifier
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileAnnouncementRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileAnnouncementRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileAnnouncementRecord {
+        return
+            try MobileAnnouncementRecord(
+                kind: FfiConverterTypeMobileAnnouncementKind.read(from: &buf),
+                floodHops: FfiConverterUInt8.read(from: &buf),
+                fullSource: FfiConverterOptionBool.read(from: &buf),
+                channelIdentifier: FfiConverterOptionData.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileAnnouncementRecord, into buf: inout [UInt8]) {
+        FfiConverterTypeMobileAnnouncementKind.write(value.kind, into: &buf)
+        FfiConverterUInt8.write(value.floodHops, into: &buf)
+        FfiConverterOptionBool.write(value.fullSource, into: &buf)
+        FfiConverterOptionData.write(value.channelIdentifier, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileAnnouncementRecord_lift(_ buf: RustBuffer) throws -> MobileAnnouncementRecord {
+    return try FfiConverterTypeMobileAnnouncementRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileAnnouncementRecord_lower(_ value: MobileAnnouncementRecord) -> RustBuffer {
+    return FfiConverterTypeMobileAnnouncementRecord.lower(value)
 }
 
 
@@ -12197,6 +12352,81 @@ public func FfiConverterTypeIdentitySignatureState_lower(_ value: IdentitySignat
 
 
 
+/**
+ * What an on-demand announcement carries.
+ */
+
+public enum MobileAnnouncementKind: Equatable, Hashable {
+
+    /**
+     * The radio's signed node identity.
+     */
+    case advertisement
+    /**
+     * No payload; a beacon publishes a path rather than an identity.
+     */
+    case beacon
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileAnnouncementKind: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileAnnouncementKind: FfiConverterRustBuffer {
+    typealias SwiftType = MobileAnnouncementKind
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileAnnouncementKind {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .advertisement
+
+        case 2: return .beacon
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: MobileAnnouncementKind, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .advertisement:
+            writeInt(&buf, Int32(1))
+
+
+        case .beacon:
+            writeInt(&buf, Int32(2))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileAnnouncementKind_lift(_ buf: RustBuffer) throws -> MobileAnnouncementKind {
+    return try FfiConverterTypeMobileAnnouncementKind.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileAnnouncementKind_lower(_ value: MobileAnnouncementKind) -> RustBuffer {
+    return FfiConverterTypeMobileAnnouncementKind.lower(value)
+}
+
+
+
 
 public enum MobileChatArchiveResultKind: Equatable, Hashable {
 
@@ -16393,10 +16623,11 @@ public func channelConversationAddress(key: Data)throws  -> String  {
 /**
  * Derive the full sixteen-octet channel identifier for a key.
  *
- * The two-octet identifier is its prefix and is what travels on the wire;
+ * The two-octet `channel_id` is its prefix and is what travels on the wire;
  * this is the width at which two channels can be told apart, which is what
- * naming one to a device takes—`PROP_HOST_MUTED_CHANNELS` is where that
- * matters today.
+ * naming one to a device takes. It is what the channel-key tables report
+ * for each key they hold, what `PROP_HOST_MUTED_CHANNELS` carries, and
+ * what `CMD_ANNOUNCE` names a channel by.
  */
 public func channelIdentifier(key: Data)throws  -> Data  {
     return try  FfiConverterData.lift(try rustCallWithError(FfiConverterTypeMobileError_lift) {
@@ -16422,10 +16653,12 @@ public func decodeNodeIdentity(address: String, payload: Data)throws  -> NodeIde
 })
 }
 /**
- * Derive the two-octet channel identifier for a key.
+ * Derive the two-octet wire `channel_id` for a key—what the `CHANNEL`
+ * field carries, and what a receive filter matches against.
  *
- * Used to match a locally held key against the identifiers a device reports,
- * which never include key material.
+ * Two keys can derive the same one, so this is for display and filtering
+ * rather than for naming a channel; [`channel_identifier`] is what names
+ * one.
  */
 public func deriveChannelId(key: Data)throws  -> Data  {
     return try  FfiConverterData.lift(try rustCallWithError(FfiConverterTypeMobileError_lift) {
@@ -16861,6 +17094,18 @@ public func regionCodeFromString(text: String)throws  -> Data  {
 })
 }
 /**
+ * Encode a `CMD_ANNOUNCE` request with the shared ULCP codec.
+ */
+public func ulcpAnnounce(transactionId: UInt8, request: MobileAnnouncementRecord)throws  -> Data  {
+    return try  FfiConverterData.lift(try rustCallWithError(FfiConverterTypeMobileError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_func_ulcp_announce(
+        FfiConverterUInt8.lower(transactionId),
+        FfiConverterTypeMobileAnnouncementRecord_lower(request),uniffiCallStatus
+    )
+})
+}
+/**
  * The four properties a device is identified by, asked for together.
  *
  * Capabilities first, so a device that declines the batch teaches the
@@ -17226,13 +17471,13 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_func_channel_conversation_address() != 37) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_func_channel_identifier() != 29847) {
+    if (uniffi_umsh_mobile_core_checksum_func_channel_identifier() != 21731) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_func_decode_node_identity() != 44653) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_func_derive_channel_id() != 22191) {
+    if (uniffi_umsh_mobile_core_checksum_func_derive_channel_id() != 23209) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_func_derive_channel_tint() != 23669) {
@@ -17320,6 +17565,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_func_region_code_from_string() != 51957) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_func_ulcp_announce() != 10935) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_func_ulcp_card_properties() != 10189) {
@@ -17416,6 +17664,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_apply_chat_archive_result() != 29458) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_begin_management_announce() != 57918) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_begin_management_fetch() != 3066) {
@@ -17587,6 +17838,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_abandon_raw_transmits() != 18682) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_announce() != 57409) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_attach_mode() != 2107) {

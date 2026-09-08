@@ -23,12 +23,13 @@ Id | Mnemonic                                                     | Dir         
 14 | [`CMD_RESTORE`](ulcp-saved-state.md#cmd-restore)             | Host->Device | `CAP_SAVE`
 15 | [`CMD_FACTORY_RESET`](ulcp-saved-state.md#cmd-factory-reset) | Host->Device | —
 16 | [`CMD_REBOOT`](ulcp-core.md#cmd-reboot)                      | Host->Device | `CAP_REBOOT`
+19 | [`CMD_ANNOUNCE`](ulcp-device.md#cmd-announce)                | Host->Device | `CAP_ADVERT`
 21 | [`CMD_PROP_MULTI_GET`](ulcp-core.md#cmd-prop-multi-get)      | Host->Device | `CAP_CMD_MULTI`
 22 | [`CMD_PROP_MULTI_SET`](ulcp-core.md#cmd-prop-multi-set)      | Host->Device | `CAP_CMD_MULTI`
 23 | [`CMD_PROP_ARE`](ulcp-core.md#cmd-prop-are)                  | Device->Host | `CAP_CMD_MULTI`
 24 | [`CMD_SESSION_RESET`](ulcp-core.md#cmd-session-reset)        | Device->Host | —
 
-Command identifiers are 7-bit; 17–20 and 25–127 are unassigned.
+Command identifiers are 7-bit; 17–18, 20, and 25–127 are unassigned.
 
 ## Properties and Streams
 
@@ -188,8 +189,8 @@ Id | Name                      | Id | Name
 4  | `STATUS_INVALID_STATE`    | 20 | `STATUS_ITEM_NOT_FOUND`
 5  | `STATUS_INVALID_COMMAND`  | 21 | `STATUS_CURSOR_INVALID`
 7  | `STATUS_INTERNAL_ERROR`   | 22 | `STATUS_NOT_PERMITTED`
-9  | `STATUS_PARSE_ERROR`      | 32 | `STATUS_DUTY_LIMIT`
-10 | `STATUS_IN_PROGRESS`      |    |
+9  | `STATUS_PARSE_ERROR`      | 23 | `STATUS_CHANNEL_NOT_FOUND`
+10 | `STATUS_IN_PROGRESS`      | 32 | `STATUS_DUTY_LIMIT`
 11 | `STATUS_NOMEM`            |    |
 
 ## Reset Codes

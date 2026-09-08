@@ -642,6 +642,20 @@ final class AdministrativeDeviceSession: NSObject, @unchecked Sendable {
         }
     }
 
+    /// Ask the attached device to announce itself now.
+    ///
+    /// Answered, unlike the resets below: the device says whether it took
+    /// the announcement, and a device without `CAP_ADVERT` says it cannot.
+    func announce(_ request: MobileAnnouncementRecord) async throws {
+        Self.logger.notice("action: user asked the device to announce itself")
+        let event = try await performManagement { session in
+            try session.announce(request: request)
+        }
+        if let status = event.statusCode, status != 0 {
+            throw RemoteManagementError.refused(status: status)
+        }
+    }
+
     /// Forget every host paired with the attached device—the bond count
     /// written to zero.
     ///

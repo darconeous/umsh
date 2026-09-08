@@ -397,6 +397,7 @@ final class AdminFlowController {
                 return state
             },
             reset: { _, scope in try await session.reset(scope: scope) },
+            announce: { _, request in try await session.announce(request) },
             clearBluetoothBonds: { _ in try await session.clearBluetoothBonds() },
             phoneNodeKey: { [key = phoneNodeKey] in key },
             loadCard: { _ in nil },

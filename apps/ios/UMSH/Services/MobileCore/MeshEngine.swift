@@ -150,6 +150,10 @@ protocol MeshEngine: Actor {
     func inspectChannelName(_ name: String) throws -> MeshChannelPreview
     func generateChannelKey() -> Data
     func deriveChannelID(key: Data) throws -> Data
+    /// The full sixteen-octet channel identifier, which is what a radio
+    /// reports for each channel key it holds. The two-octet identifier is
+    /// its prefix and can collide; this is the width that names a channel.
+    func channelIdentifier(key: Data) throws -> Data
     /// The address the mesh facade keys this channel's chat records by.
     /// Derived rather than stored, so it can never disagree with the records
     /// it is matched against.

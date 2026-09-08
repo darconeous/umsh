@@ -107,6 +107,14 @@ actor RustMeshEngine: MeshEngine {
         }
     }
 
+    func channelIdentifier(key: Data) throws -> Data {
+        do {
+            return try UMSHMobileCore.channelIdentifier(key: key)
+        } catch {
+            throw MeshEngineError.coreFailure
+        }
+    }
+
     func channelConversationAddress(key: Data) throws -> String {
         do {
             return try UMSHMobileCore.channelConversationAddress(key: key)

@@ -25,13 +25,13 @@ use umsh::ulcp::{
 use umsh_core::{MicSize, NodeHint, PacketBuilder, PacketHeader, PacketType};
 use umsh_crypto::software::{SoftwareAes, SoftwareIdentity, SoftwareSha256};
 use umsh_crypto::{CryptoEngine, NodeIdentity as _, PairwiseKeys};
-use umsh_ulcp::Status;
 use umsh_ulcp::ids::{cap, prop};
 use umsh_ulcp::items::{Filter, PeerKeyEntry};
 use umsh_ulcp::meta::{BufferedRxMeta, RX_FLAG_ACKED, RX_FLAG_BUFFERED};
+use umsh_ulcp::{Announcement, AnnouncementKind, Status};
 use umsh_ulcp_device::{
-    Effect, IdentitySource, IpConfig, RadioRxInfo, RadioSettings, SNAPSHOT_MAX, SessionConfig,
-    TxOutcome, WifiConfig,
+    AnnounceRequest, Effect, IdentitySource, IpConfig, RadioRxInfo, RadioSettings, SNAPSHOT_MAX,
+    SessionConfig, TxOutcome, WifiConfig,
 };
 
 type Session = umsh_ulcp_device::Session<SoftwareAes, SoftwareSha256>;
@@ -121,6 +121,8 @@ struct SimDevice {
     log: Vec<String>,
     /// The stored networks a Wi-Fi driver would hold, credential and all.
     networks: Vec<Vec<u8>>,
+    /// Announcements the host asked for, in the order they were queued.
+    announcements: Vec<AnnounceRequest>,
 }
 
 impl SimDevice {
@@ -142,6 +144,7 @@ impl SimDevice {
             epoch: None,
             log: Vec::new(),
             networks: Vec::new(),
+            announcements: Vec::new(),
         }))
     }
 
@@ -210,6 +213,13 @@ impl SimDevice {
             // the way up. Nothing is emitted—on hardware the reboot
             // drops the link before anything could be.
             Some(Effect::Reboot) => self.boot(),
+            // The node behind this session is simulated, so an
+            // announcement is queued and nothing reaches the air; the
+            // status reports the queuing, the way it does on a board.
+            Some(Effect::Announce { tid, request }) => {
+                self.announcements.push(request);
+                self.session.respond_announce(tid, Ok(()), &mut emit);
+            }
             Some(Effect::StartTransmit) => {
                 self.air.push(self.session.tx_data().to_vec());
                 self.session
@@ -949,6 +959,56 @@ async fn advertisement_policy_is_two_independent_schedules_that_persist() {
     assert_eq!(policy.advert_interval_s, 0);
     assert_eq!(policy.beacon_interval_s, 1800);
     assert!(!policy.startup_beacon);
+}
+
+/// An on-demand announcement reaches the node with the host's options
+/// intact, and a channel is named by exactly the identifier the device
+/// reported when the key went in.
+#[tokio::test]
+async fn an_on_demand_announcement_carries_the_options_the_host_chose() {
+    let sim = SimDevice::new();
+    let mut radio = attached_host(&sim).await;
+
+    // The bare request is an advertisement to the device's neighbors.
+    assert!(radio.announce(&Announcement::default()).await.unwrap());
+    // A beacon across the mesh, with the source form the host wants
+    // rather than the kind's default.
+    let mut beacon = Announcement::new(AnnouncementKind::Beacon);
+    beacon.flood_hops = 5;
+    beacon.full_source = true;
+    assert!(radio.announce(&beacon).await.unwrap());
+
+    // A channel the device does not hold is refused by name, not by
+    // shape: the identifier is well-formed, the channel is simply not
+    // provisioned.
+    let mut multicast = Announcement::default();
+    multicast.channel = Some([0xEE; 16]);
+    let refusal = radio.announce(&multicast).await.unwrap_err();
+    assert!(
+        matches!(refusal, UlcpError::Status(Status::CHANNEL_NOT_FOUND)),
+        "unprovisioned channel: {refusal:?}"
+    );
+
+    // Provision one, and the reported form is what the command takes.
+    let identifier = radio
+        .insert_prop_item(prop::DEV_CHANNEL_KEYS, &[0x51; 32])
+        .await
+        .unwrap();
+    assert_eq!(identifier.len(), 16, "channel keys report the identifier");
+    multicast.channel = Some(identifier.clone().try_into().unwrap());
+    assert!(radio.announce(&multicast).await.unwrap());
+
+    let queued = std::mem::take(&mut sim.lock().unwrap().announcements);
+    assert_eq!(queued.len(), 3, "only the refused request queued nothing");
+    assert_eq!(queued[0].kind, AnnouncementKind::Advertisement);
+    assert_eq!(queued[0].flood_hops, 0);
+    assert!(queued[0].full_source);
+    assert!(queued[0].channel_key.is_none());
+    assert_eq!(queued[1].kind, AnnouncementKind::Beacon);
+    assert_eq!(queued[1].flood_hops, 5);
+    assert!(queued[1].full_source);
+    // The device resolves the identifier to the key its node needs.
+    assert_eq!(queued[2].channel_key, Some([0x51; 32]));
 }
 
 /// Every positioning property folds back into one snapshot, and a

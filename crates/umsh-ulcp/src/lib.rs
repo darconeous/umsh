@@ -20,6 +20,7 @@
 
 pub mod airtime;
 pub mod alert;
+pub mod announce;
 pub mod battery;
 pub mod ble;
 pub mod describe;
@@ -41,6 +42,7 @@ pub mod status;
 pub mod wifi;
 
 pub use alert::AlertState;
+pub use announce::{AnnounceError, Announcement, AnnouncementKind};
 pub use battery::{BatteryChargeState, BatteryError, BatteryStatus};
 pub use describe::{
     FrameDescription, PROPERTIES, PropertyType, capability_name, property_name, property_type,

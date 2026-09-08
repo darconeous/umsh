@@ -126,6 +126,13 @@ actor FakeMeshEngine: MeshEngine {
         return Data([key.reduce(0, ^), key.first ?? 0])
     }
 
+    func channelIdentifier(key: Data) throws -> Data {
+        // The two-octet identifier is the prefix of the full one, as it is
+        // in the real derivation; the rest comes from the key so two keys
+        // sharing a prefix still tell apart.
+        try deriveChannelID(key: key) + key.suffix(14)
+    }
+
     func channelConversationAddress(key: Data) throws -> String {
         guard key.count == 32 else { throw MeshEngineError.coreFailure }
         return "ch:" + key.prefix(16).map { String(format: "%02x", $0) }.joined()

@@ -481,6 +481,12 @@ final class AppRuntime {
                     scope: scope
                 )
             },
+            announce: { address, request in
+                try await self.radioConnection.announceRemoteDevice(
+                    peerAddress: address,
+                    request: request
+                )
+            },
             clearBluetoothBonds: { address in
                 try await self.radioConnection.clearRemoteBluetoothBonds(
                     peerAddress: address
@@ -599,6 +605,9 @@ final class AppRuntime {
                 // use for the second.
                 throw RemoteManagementError.unavailable
             }
+        }
+        management.announce = { _, request in
+            try await self.radioConnection.announce(request)
         }
         // Clearing bonds severs this very link—the bond it arrived on is
         // one of the bonds forgotten—so it goes over the local path
@@ -2068,12 +2077,13 @@ final class AppRuntime {
               coordinator.lastReconciledDeviceChannels != identifiers
         else { return }
 
-        // The device reports identifiers only, so naming them means deriving
-        // an identifier from each key this phone holds and matching.
+        // The device reports identifiers only—the full sixteen octets, since
+        // the two-octet one can collide—so naming them means deriving that
+        // identifier from each key this phone holds and matching.
         var identified: Set<Data> = []
         for channel in channels {
             guard let key = try? await channelKeyVault.loadKey(channelID: channel.id),
-                  let derived = try? await meshEngine.deriveChannelID(key: key)
+                  let derived = try? await meshEngine.channelIdentifier(key: key)
             else { continue }
             let onDevice = identifiers.contains(derived)
             if onDevice { identified.insert(derived) }

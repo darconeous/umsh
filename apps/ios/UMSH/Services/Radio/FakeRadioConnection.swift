@@ -381,8 +381,9 @@ actor FakeRadioConnection: RadioConnection {
         guard var provisioning = snapshot.provisioning,
               provisioning.supportsDeviceIdentity
         else { return }
-        // The device reports identifiers, never keys.
-        let identifier = (try? deriveChannelId(key: channelKey)) ?? Data(channelKey.prefix(2))
+        // The device reports identifiers, never keys—the full sixteen
+        // octets, as a real device lists them.
+        let identifier = (try? channelIdentifier(key: channelKey)) ?? Data(channelKey.prefix(16))
         var identifiers = provisioning.devChannelIDs ?? []
         try mutate(&identifiers, identifier)
         provisioning.devChannelIDs = identifiers
@@ -509,6 +510,16 @@ actor FakeRadioConnection: RadioConnection {
     }
 
     func resetRemoteDevice(peerAddress: String, scope: MobileMeshResetScope) async throws {
+        try await answerAsIfOverTheAir()
+    }
+
+    func announceRemoteDevice(
+        peerAddress: String,
+        request: MobileAnnouncementRecord
+    ) async throws {
+        // Nothing here has a radio to put a frame on the air with, so the
+        // fixture answers the way a device does: the announcement was
+        // taken.
         try await answerAsIfOverTheAir()
     }
 
@@ -1003,6 +1014,10 @@ actor FakeRadioConnection: RadioConnection {
         // the radio is away. Nothing staged is erased—that is the whole
         // difference between this and the factory reset above.
         publish(.disconnected)
+    }
+
+    func announce(_ request: MobileAnnouncementRecord) async throws {
+        try await answerAsIfOverTheAir()
     }
 
     func clearBluetoothBonds() async throws {

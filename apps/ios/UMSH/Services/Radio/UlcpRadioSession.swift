@@ -820,6 +820,19 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
         }
     }
 
+    func announce(_ request: MobileAnnouncementRecord) async throws {
+        Self.logger.notice(
+            "action: user asked the radio to announce itself (\(String(describing: request.kind)))"
+        )
+        // Answered, so it runs as a management exchange: what the radio
+        // says—busy, a channel it does not hold—reaches the screen that
+        // asked, the way it does over the mesh.
+        let event = try await performLocalManagement { session in
+            try session.announce(request: request)
+        }
+        try Self.requireSuccess(event.statusCode)
+    }
+
     func setTime(epochSeconds: UInt32?) async throws {
         try await withCheckedThrowingContinuation { (result: CheckedContinuation<Void, any Error>) in
             sessionQueue.async { [self] in
@@ -1007,6 +1020,16 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
         if answer.value == nil {
             throw RemoteManagementError.refused(status: answer.statusCode ?? 0)
         }
+    }
+
+    func announceRemoteDevice(
+        peerAddress: String,
+        request: MobileAnnouncementRecord
+    ) async throws {
+        let event = try await performManagement { session in
+            try session.beginManagementAnnounce(peerAddress: peerAddress, request: request)
+        }
+        try Self.requireSuccess(event.statusCode)
     }
 
     func saveRemoteDevice(peerAddress: String) async throws {

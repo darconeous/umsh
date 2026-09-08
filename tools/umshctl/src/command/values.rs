@@ -9,8 +9,10 @@ use std::fmt;
 use std::str::FromStr;
 
 use umsh::core::{ChannelKey, MicSize, PublicKey, RegionCode, RouterHint};
-use umsh::crypto::{ChannelNameError, MAX_CHANNEL_NAME_LEN};
+use umsh::crypto::software::{SoftwareAes, SoftwareSha256};
+use umsh::crypto::{ChannelNameError, CryptoEngine, MAX_CHANNEL_NAME_LEN};
 use umsh::node::Channel;
+use umsh::ulcp_wire::items;
 use umsh::ulcp_wire::items::Filter;
 
 pub fn parse_key32(text: &str) -> Result<[u8; 32], String> {
@@ -164,6 +166,35 @@ impl fmt::Display for FilterArg {
             Filter::ChannelId(id) => write!(f, "channel-id:{}", crate::output::hex(&id)),
             Filter::PktType(pkt_type) => write!(f, "pkt-type:{pkt_type}"),
         }
+    }
+}
+
+/// A channel named the way a management interface names one: by its full
+/// channel identifier.
+///
+/// Written either as the 32 hex digits the device itself lists, or as the
+/// channel key (base58 or hex), which the identifier is derived from
+/// here. Two keys can share the two-byte wire identifier, so the short
+/// form is not accepted—there would be no saying which channel it meant.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ChannelIdentifierArg(pub [u8; items::CHANNEL_IDENTIFIER_LEN]);
+
+impl FromStr for ChannelIdentifierArg {
+    type Err = String;
+
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        let text = text.trim();
+        if text.len() == 2 * items::CHANNEL_IDENTIFIER_LEN {
+            return parse_hex::<{ items::CHANNEL_IDENTIFIER_LEN }>(text).map(Self);
+        }
+        let key = parse_key32(text).map_err(|_| {
+            format!(
+                "expected a {}-character channel identifier or a 32-byte channel key, got {text:?}",
+                2 * items::CHANNEL_IDENTIFIER_LEN
+            )
+        })?;
+        let engine = CryptoEngine::new(SoftwareAes, SoftwareSha256);
+        Ok(Self(engine.derive_channel_tag(&ChannelKey(key)).0))
     }
 }
 

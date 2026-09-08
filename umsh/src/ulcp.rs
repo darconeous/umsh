@@ -27,6 +27,7 @@ use umsh_hal::{CadPolicy, Radio, RxBuffered, RxInfo, RxOrigin, Snr, TxError, TxO
 use umsh_ulcp::Status;
 use umsh_ulcp::airtime::lora_airtime_ms;
 use umsh_ulcp::alert::AlertState;
+use umsh_ulcp::announce::Announcement;
 use umsh_ulcp::battery::BatteryStatus;
 use umsh_ulcp::frame::{
     self, Cmd, Frame, MultiEntries, SessionResetReason, StreamPayload, TID_UNSOLICITED,
@@ -335,7 +336,7 @@ pub struct DeviceSync {
     pub filters: Option<Vec<items::Filter>>,
     /// Derived channel identifiers of `PROP_HOST_CHANNEL_KEYS`
     /// (`CAP_HOST_KEYS`).
-    pub host_channel_ids: Option<Vec<[u8; items::CHANNEL_ID_LEN]>>,
+    pub host_channel_ids: Option<Vec<[u8; items::CHANNEL_IDENTIFIER_LEN]>>,
     /// Provisioned peer public keys of `PROP_HOST_PEER_KEYS`
     /// (`CAP_HOST_KEYS`).
     pub host_peer_keys: Option<Vec<[u8; items::PUBLIC_KEY_LEN]>>,
@@ -1958,8 +1959,8 @@ where
     }
 
     /// Insert one item into a multi-value property via
-    /// `CMD_PROP_INSERT`, returning the inserted item's digest form
-    /// from the correlated `CMD_PROP_INSERTED`.
+    /// `CMD_PROP_INSERT`, returning the reported form of the inserted
+    /// item from the correlated `CMD_PROP_INSERTED`.
     ///
     /// `item` is in the property's item form with no length prefix.
     /// A duplicate fails with `STATUS_ALREADY` unless the property
@@ -1976,8 +1977,8 @@ where
     }
 
     /// Remove one item from a multi-value property via
-    /// `CMD_PROP_REMOVE`, returning the removed item's digest form from
-    /// the correlated `CMD_PROP_REMOVED`.
+    /// `CMD_PROP_REMOVE`, returning the reported form of the removed
+    /// item from the correlated `CMD_PROP_REMOVED`.
     ///
     /// `selector` is the property's documented remove selector. A
     /// missing item fails with `STATUS_ITEM_NOT_FOUND`.
@@ -2124,6 +2125,29 @@ where
         let len = frame::reboot(&mut buf, TID_UNSOLICITED)
             .map_err(|_| UlcpError::Protocol("frame encode"))?;
         self.send(&buf[..len]).await?;
+        Ok(true)
+    }
+
+    /// Announce the device now (`CMD_ANNOUNCE`; requires `CAP_ADVERT`):
+    /// send an advertisement or a beacon, as a broadcast or on one of the
+    /// device's own channels.
+    ///
+    /// `Ok(false)` means the device does not advertise `CAP_ADVERT` and
+    /// nothing was sent. Otherwise the device answers once the
+    /// announcement is queued for transmission—channel access and the
+    /// duty limit decide later whether it reaches the air, exactly as for
+    /// a scheduled announcement.
+    pub async fn announce(&mut self, request: &Announcement) -> Result<bool, UlcpError> {
+        if !self.capabilities().await?.contains(&cap::ADVERT) {
+            return Ok(false);
+        }
+        let tid = self.alloc_tid();
+        let mut buf = [0u8; 48];
+        let len = frame::announce(&mut buf, tid, request)
+            .map_err(|_| UlcpError::Protocol("frame encode"))?;
+        self.send(&buf[..len]).await?;
+        self.finish_prop_transaction(tid, prop::LAST_STATUS, PropResponsePolicy::StatusOnly)
+            .await?;
         Ok(true)
     }
 
@@ -2316,13 +2340,13 @@ where
         };
         let (host_channel_ids, host_peer_keys) = if has(cap::HOST_KEYS) {
             (
-                Some(decode_fixed_list::<{ items::CHANNEL_ID_LEN }>(
+                Some(decode_fixed_list::<{ items::CHANNEL_IDENTIFIER_LEN }>(
                     &self.get_prop(prop::HOST_CHANNEL_KEYS).await?,
-                    "malformed PROP_HOST_CHANNEL_KEYS digest",
+                    "malformed PROP_HOST_CHANNEL_KEYS listing",
                 )?),
                 Some(decode_fixed_list::<{ items::PUBLIC_KEY_LEN }>(
                     &self.get_prop(prop::HOST_PEER_KEYS).await?,
-                    "malformed PROP_HOST_PEER_KEYS digest",
+                    "malformed PROP_HOST_PEER_KEYS listing",
                 )?),
             )
         } else {
@@ -2434,17 +2458,17 @@ where
         // shedding an unknown channel needs the whole-table form. That
         // table is bounded and small enough to send.
         let engine = CryptoEngine::new(SoftwareAes, SoftwareSha256);
-        let desired_ids: Vec<[u8; items::CHANNEL_ID_LEN]> = desired
+        let desired_ids: Vec<[u8; items::CHANNEL_IDENTIFIER_LEN]> = desired
             .channel_keys
             .iter()
-            .map(|key| engine.derive_channel_id(&ChannelKey(*key)).0)
+            .map(|key| engine.derive_channel_tag(&ChannelKey(*key)).0)
             .collect();
         let current_ids = if report.host_replaced {
             Vec::new()
         } else {
-            decode_fixed_list::<{ items::CHANNEL_ID_LEN }>(
+            decode_fixed_list::<{ items::CHANNEL_IDENTIFIER_LEN }>(
                 &self.get_prop(prop::HOST_CHANNEL_KEYS).await?,
-                "malformed PROP_HOST_CHANNEL_KEYS digest",
+                "malformed PROP_HOST_CHANNEL_KEYS listing",
             )?
         };
         if current_ids.iter().any(|id| !desired_ids.contains(id)) {
@@ -3491,7 +3515,9 @@ mod tests {
                     // The fake device has no durable state to erase, so a
                     // factory reset is acknowledged like the rest; the
                     // reboot it implies is out of this harness's scope.
-                    Cmd::Save | Cmd::Clear | Cmd::FactoryReset => {
+                    // An announcement is acknowledged the same way: the
+                    // status reports the queuing, never the airing.
+                    Cmd::Save | Cmd::Clear | Cmd::FactoryReset | Cmd::Announce => {
                         let len = frame::last_status(&mut buf, tid, Status::OK).unwrap();
                         replies.push(buf[..len].to_vec());
                     }

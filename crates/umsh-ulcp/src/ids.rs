@@ -611,10 +611,11 @@ pub mod cap {
     /// properties exist and the wall clock has a source that can set
     /// itself. Requires `CAP_TIME`.
     pub const GNSS: u32 = 45;
-    /// `CAP_ADVERT`—the device announces itself on a schedule of its own
+    /// `CAP_ADVERT`—the device announces itself, on a schedule of its own
     /// (`PROP_ADVERT_INTERVAL`, `PROP_BEACON_INTERVAL`,
-    /// `PROP_STARTUP_BEACON`). Requires `CAP_DEV_IDENTITY`, since what an
-    /// advertisement carries is the device identity.
+    /// `PROP_STARTUP_BEACON`) and on demand (`CMD_ANNOUNCE`). Requires
+    /// `CAP_DEV_IDENTITY`, since what an advertisement carries is the
+    /// device identity.
     pub const ADVERT: u32 = 46;
     /// `CAP_ILLUMINANCE`—an ambient light sensor is fitted, so
     /// `PROP_ILLUMINANCE` reads a measurement rather than nothing.
@@ -762,3 +763,9 @@ pub const DEFAULT_ADVERT_INTERVAL_S: u32 = 4 * 60 * 60;
 
 /// Default `PROP_BEACON_INTERVAL`, in seconds.
 pub const DEFAULT_BEACON_INTERVAL_S: u32 = 60 * 60;
+
+/// Largest flood budget a `CMD_ANNOUNCE` request may ask for.
+///
+/// `FHOPS_REM` is a nibble, so this is what the field can hold rather
+/// than a policy of its own.
+pub const MAX_ANNOUNCE_FLOOD_HOPS: u8 = 15;

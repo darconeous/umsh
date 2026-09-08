@@ -926,7 +926,7 @@ fn render_host(set: &PropSet, ctx: &Context) -> Vec<Line> {
     if let Some(filters) = filters(set) {
         lines.push(("filters".into(), filter_list(&filters)));
     }
-    if let Some(ids) = digest_items(set, prop::HOST_CHANNEL_KEYS, 2) {
+    if let Some(ids) = reported_items(set, prop::HOST_CHANNEL_KEYS, items::CHANNEL_IDENTIFIER_LEN) {
         let display = match ids.is_empty() {
             true => "none".to_string(),
             false => ids.iter().map(|id| hex(id)).collect::<Vec<_>>().join(", "),
@@ -936,7 +936,7 @@ fn render_host(set: &PropSet, ctx: &Context) -> Vec<Line> {
             format!("{} (ids: {display})", ids.len()),
         ));
     }
-    if let Some(peers) = digest_items(set, prop::HOST_PEER_KEYS, 32) {
+    if let Some(peers) = reported_items(set, prop::HOST_PEER_KEYS, items::PUBLIC_KEY_LEN) {
         let display = match peers.is_empty() {
             true => "none".to_string(),
             false => peers
@@ -1019,10 +1019,10 @@ fn filter_list(filters: &[items::Filter]) -> String {
         .join(", ")
 }
 
-/// Split a digest table of fixed-width items. A table whose length is
+/// Split a reported table of fixed-width items. A table whose length is
 /// not a multiple of the item width is not one this can read, and saying
 /// so beats printing a plausible-looking prefix.
-fn digest_items(set: &PropSet, key: u32, width: usize) -> Option<Vec<&[u8]>> {
+fn reported_items(set: &PropSet, key: u32, width: usize) -> Option<Vec<&[u8]>> {
     let value = set.bytes(key)?;
     if !value.len().is_multiple_of(width) {
         return None;

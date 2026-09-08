@@ -58,7 +58,7 @@ uniffi::setup_scaffolding!();
 ///
 /// Increment this when a binding-visible operation, record, or error contract
 /// changes incompatibly. It is independent of the UMSH wire version.
-pub const MOBILE_API_VERSION: u16 = 44;
+pub const MOBILE_API_VERSION: u16 = 45;
 
 /// Stable error categories consumed by platform adapters.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Error)]
@@ -415,10 +415,12 @@ pub fn generate_channel_key() -> Vec<u8> {
     bytes
 }
 
-/// Derive the two-octet channel identifier for a key.
+/// Derive the two-octet wire `channel_id` for a key—what the `CHANNEL`
+/// field carries, and what a receive filter matches against.
 ///
-/// Used to match a locally held key against the identifiers a device reports,
-/// which never include key material.
+/// Two keys can derive the same one, so this is for display and filtering
+/// rather than for naming a channel; [`channel_identifier`] is what names
+/// one.
 #[uniffi::export]
 pub fn derive_channel_id(key: Vec<u8>) -> Result<Vec<u8>, MobileError> {
     let channel = umsh_node::Channel::private(channel_key_from_bytes(&key)?, "");
@@ -427,10 +429,11 @@ pub fn derive_channel_id(key: Vec<u8>) -> Result<Vec<u8>, MobileError> {
 
 /// Derive the full sixteen-octet channel identifier for a key.
 ///
-/// The two-octet identifier is its prefix and is what travels on the wire;
+/// The two-octet `channel_id` is its prefix and is what travels on the wire;
 /// this is the width at which two channels can be told apart, which is what
-/// naming one to a device takes—`PROP_HOST_MUTED_CHANNELS` is where that
-/// matters today.
+/// naming one to a device takes. It is what the channel-key tables report
+/// for each key they hold, what `PROP_HOST_MUTED_CHANNELS` carries, and
+/// what `CMD_ANNOUNCE` names a channel by.
 #[uniffi::export]
 pub fn channel_identifier(key: Vec<u8>) -> Result<Vec<u8>, MobileError> {
     use umsh_crypto::software::{SoftwareAes, SoftwareSha256};

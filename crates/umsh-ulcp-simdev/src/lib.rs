@@ -29,7 +29,7 @@ use umsh_ulcp::wifi::{
     Association, Link, LinkReason, LinkState, NetworkEntry, ScanResult, SecurityMode,
 };
 use umsh_ulcp::{Status, hdlc, items};
-use umsh_ulcp_device::{Effect, IdentitySource, SNAPSHOT_MAX, Session, TxOutcome};
+use umsh_ulcp_device::{AnnounceRequest, Effect, IdentitySource, SNAPSHOT_MAX, Session, TxOutcome};
 
 pub use umsh_ulcp_device::{
     AlertConfig, BatteryFields, DutyLedger, GnssConfig, IpConfig, RadioRxInfo, RadioSettings,
@@ -75,6 +75,10 @@ pub struct SimulatedDevice {
     fix_step: u32,
     /// What stands where a Wi-Fi driver and an IP stack would.
     network: SimulatedNetwork,
+    /// Every `CMD_ANNOUNCE` the device has taken, oldest first. There is
+    /// no node here to put one on the air, so the record is the whole of
+    /// what a test can observe.
+    announcements: Vec<AnnounceRequest>,
 }
 
 /// The access points the simulated receiver can hear.
@@ -176,6 +180,7 @@ impl SimulatedDevice {
             epoch: None,
             fix_step: 0,
             network: SimulatedNetwork::default(),
+            announcements: Vec::new(),
         }
     }
 
@@ -235,6 +240,13 @@ impl SimulatedDevice {
     /// frames on drains and discards.
     pub fn take_transmitted(&mut self) -> Vec<Vec<u8>> {
         std::mem::take(&mut self.air)
+    }
+
+    /// Every `CMD_ANNOUNCE` the device has taken since the last drain, in
+    /// order. Nothing reaches the air—there is no node here—so this is
+    /// where a test reads what was asked for.
+    pub fn take_announcements(&mut self) -> Vec<AnnounceRequest> {
+        std::mem::take(&mut self.announcements)
     }
 
     /// Put a canned radio frame through the real device receive path.
@@ -410,6 +422,14 @@ impl SimulatedDevice {
                 // as a board's does on the way up.
                 self.session
                     .set_ble_bond_count(self.bond_count, &mut |_| {});
+            }
+            Some(Effect::Announce { tid, request }) => {
+                // Recorded rather than transmitted: this device has no
+                // node (`mac_node` is clear), so nothing reaches `air`.
+                // What a board would answer is the same either way—the
+                // request was taken.
+                self.announcements.push(request);
+                self.session.respond_announce(tid, Ok(()), &mut emit);
             }
             Some(Effect::ReadTime { tid }) => {
                 self.session.respond_time(tid, self.epoch, &mut emit);
@@ -696,6 +716,7 @@ impl SimulatedDevice {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use umsh_ulcp::announce::{Announcement, AnnouncementKind};
     use umsh_ulcp::{Frame, PropPayload, frame, ids::prop};
 
     fn test_config() -> SessionConfig {
@@ -818,6 +839,44 @@ mod tests {
 
         // The caller's clock keeps running; the device's does not.
         assert_eq!(read_uptime(&mut sim, 7_000), 2);
+    }
+
+    /// An announcement is recorded rather than aired—there is no node
+    /// here—and the status says it was taken, exactly as a board's would.
+    #[test]
+    fn an_announcement_is_taken_and_recorded() {
+        let mut sim = SimulatedDevice::new(test_config());
+        attach(&mut sim);
+
+        let status_of = |responses: Vec<Vec<u8>>| -> u32 {
+            assert_eq!(responses.len(), 1);
+            let response = Frame::parse(&responses[0]).unwrap();
+            let payload = PropPayload::parse(response.payload).unwrap();
+            assert_eq!(payload.key, prop::LAST_STATUS);
+            u32::from(payload.value[0])
+        };
+
+        let mut request = [0; 64];
+        let len = frame::announce(&mut request, 3, &Announcement::default()).unwrap();
+        assert_eq!(status_of(exchange(&mut sim, &request[..len])), Status::OK.0);
+        let taken = sim.take_announcements();
+        assert_eq!(taken.len(), 1);
+        assert_eq!(taken[0].kind, AnnouncementKind::Advertisement);
+        assert!(taken[0].channel_key.is_none());
+        assert!(sim.take_announcements().is_empty(), "taking drains");
+
+        // A channel the device does not hold is refused by name, and
+        // nothing is recorded for it.
+        let multicast = Announcement {
+            channel: Some([0xEE; items::CHANNEL_IDENTIFIER_LEN]),
+            ..Announcement::default()
+        };
+        let len = frame::announce(&mut request, 4, &multicast).unwrap();
+        assert_eq!(
+            status_of(exchange(&mut sim, &request[..len])),
+            Status::CHANNEL_NOT_FOUND.0
+        );
+        assert!(sim.take_announcements().is_empty());
     }
 
     #[test]

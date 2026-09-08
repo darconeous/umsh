@@ -937,6 +937,7 @@ async fn apply_effect<A, S, const TXQ: usize, M, const RX: usize, const TX: usiz
         | Some(Effect::ProvisionIdentity { .. })
         | Some(Effect::FactoryReset)
         | Some(Effect::Reboot)
+        | Some(Effect::Announce { .. })
         | None => {}
     }
 }
@@ -1302,6 +1303,30 @@ async fn serve_frame<A, S, const TXQ: usize, M, const RX: usize, const TX: usize
                 session.respond_network_table(tid, key, items, &mut |frame: &[u8]| {
                     emitter.push(frame)
                 });
+                emitter.flush(sink).await;
+            }
+            Some(Effect::Announce { tid, request }) => {
+                // The node behind the session is what announces, so a
+                // build without one has nothing to do this with. Where
+                // there is a node, the answer is whether the trigger
+                // queue took the request—it is short by design, and a
+                // full one means an announcement is already pending.
+                #[cfg(feature = "device-node")]
+                let result = {
+                    use crate::device_node::{BeaconTrigger, request_beacon};
+                    if request_beacon(BeaconTrigger::Host(request)) {
+                        Ok(())
+                    } else {
+                        Err(Status::BUSY)
+                    }
+                };
+                #[cfg(not(feature = "device-node"))]
+                let result = {
+                    let _ = request;
+                    Err(Status::UNIMPLEMENTED)
+                };
+                env.trace(format_args!("CMD_ANNOUNCE: queued={}", result.is_ok()));
+                session.respond_announce(tid, result, &mut |frame: &[u8]| emitter.push(frame));
                 emitter.flush(sink).await;
             }
             Some(Effect::FactoryReset) => {

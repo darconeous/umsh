@@ -56,6 +56,10 @@ struct DeviceManagementBackend {
     /// doing the thing and saying nothing, so success here means the
     /// command was delivered, not that the device has finished.
     var reset: (String, MobileMeshResetScope) async throws -> Void
+    /// Ask the device to announce itself now. Answered, so returning means
+    /// the device said it had the announcement queued; when it actually
+    /// goes out is up to channel access and the device's duty limit.
+    var announce: (String, MobileAnnouncementRecord) async throws -> Void
     /// Forget every host paired with the device: the bond count written to
     /// zero. Unlike the resets above this is answered, so returning means
     /// the device said it did it. It stands apart from the ordinary Apply
@@ -798,6 +802,25 @@ final class ManageDeviceModel {
     func restart() async {
         await run { [self] in
             try await management.reset(address, .reboot)
+        }
+    }
+
+    /// Ask the device to announce itself now, outside either schedule.
+    ///
+    /// The source form and the channel stay at the command's defaults:
+    /// what this screen offers is the choice between the two kinds of
+    /// announcement and how far each travels.
+    func announce(_ kind: MobileAnnouncementKind, floodHops: UInt8) async {
+        await run { [self] in
+            try await management.announce(
+                address,
+                MobileAnnouncementRecord(
+                    kind: kind,
+                    floodHops: floodHops,
+                    fullSource: nil,
+                    channelIdentifier: nil
+                )
+            )
         }
     }
 

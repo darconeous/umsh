@@ -56,12 +56,12 @@ Code | Name               | Requires           | Grants
 42   | `CAP_ALERT`        | —                  | Some means of making the device physically conspicuous on demand, and `PROP_ALERT`
 44   | `CAP_TIME`         | —                  | A wall clock: `PROP_TIME`, `PROP_TZ_OFFSET`
 45   | `CAP_GNSS`         | `CAP_TIME`         | A GNSS receiver: `PROP_GNSS_ENABLED`, `PROP_GNSS_LOCATION`, `PROP_GNSS_ALTITUDE`, `PROP_GNSS_FIX`, `PROP_GNSS_PRECISION`, `PROP_GNSS_SATELLITES`, `PROP_GNSS_IDENT_UPDATE`, `PROP_GNSS_IDENT_PRECISION`, `PROP_GNSS_TIME_TRUST`
-46   | `CAP_ADVERT`       | `CAP_DEV_IDENTITY` | Announcing itself on a schedule of its own: `PROP_ADVERT_INTERVAL`, `PROP_BEACON_INTERVAL`, `PROP_STARTUP_BEACON`
+46   | `CAP_ADVERT`       | `CAP_DEV_IDENTITY` | Announcing itself: on a schedule of its own (`PROP_ADVERT_INTERVAL`, `PROP_BEACON_INTERVAL`, `PROP_STARTUP_BEACON`) and on demand (`CMD_ANNOUNCE`)
 47   | `CAP_ILLUMINANCE`  | —                  | An ambient light sensor and `PROP_ILLUMINANCE`
 
-`CAP_ADVERT` requires `CAP_DEV_IDENTITY` because what a scheduled
-advertisement carries *is* the device identity, and a beacon's source
-address names it.
+`CAP_ADVERT` requires `CAP_DEV_IDENTITY` because what an advertisement
+carries *is* the device identity, and a beacon's source address names
+it.
 
 `CAP_TIME` states that the device keeps a wall clock and nothing else. It
 says nothing about where the time comes from, how accurate it is, or how
@@ -72,6 +72,90 @@ currently know what time it is is a normal state, reported by the empty
 `CAP_GNSS` requires `CAP_TIME` because a receiver is, among other things,
 a clock: a device advertising one without the other would be claiming a
 time source for a clock it does not have.
+
+## Commands
+
+### CMD 19: (Host -> Device) `CMD_ANNOUNCE` {#cmd-announce}
+
+~~~
+ 0                   1
+ 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-------------+
+|1 0| RES | TID |  CMD_ANNOUNCE |   OPTIONS   |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-------------+
+~~~
+Figure: Structure of `CMD_ANNOUNCE`
+
+Announce the device now, outside either schedule. What the device sends is
+an [advertisement or a beacon](beacons.md)—the same two announcements
+`PROP_ADVERT_INTERVAL` and `PROP_BEACON_INTERVAL` emit unasked—as a
+broadcast or as multicast on one of the device's own channels.
+
+`OPTIONS` is a sequence of entries in the
+[`CMD_PROP_MULTI_SET` entry form](ulcp-core.md#cmd-prop-multi-set):
+`LENGTH` (PUI) | `OPTION` (PUI) | `VALUE`. An empty payload is a
+well-formed request carrying every default.
+
+Option | Name                   | Value                                    | Default
+-------|------------------------|------------------------------------------|--------
+1      | `ANNOUNCE_KIND`        | UINT8: 0 advertisement, 1 beacon         | 0
+2      | `ANNOUNCE_FLOOD_HOPS`  | UINT8, 0–15                              | 0
+3      | `ANNOUNCE_FULL_SOURCE` | BOOL                                     | 1 for an advertisement, 0 for a beacon
+4      | `ANNOUNCE_CHANNEL`     | 16 octets: the full channel identifier   | absent: broadcast
+
+`ANNOUNCE_KIND`
+: An advertisement carries the device's signed
+  [node identity](node-identity.md); a beacon carries no payload at all.
+
+`ANNOUNCE_FLOOD_HOPS`
+: The flood budget the frame goes out with (`FHOPS_REM`, see
+  [Packet Structure](packet-structure.md)). Zero sends no flood-hop field,
+  reaching only the nodes that hear the device directly. A frame carrying
+  a budget also carries the [Trace
+  Route](packet-options.md#trace-route-option-2) and [Trace
+  Signal](packet-options.md#trace-signal-option-10) options, so what
+  arrives at a distant node is a usable path back; a beacon carries both
+  at any budget, a path being what a beacon publishes.
+
+`ANNOUNCE_FULL_SOURCE`
+: Whether `SRC` is the 32-byte public key rather than the 3-byte hint. An
+  advertisement's detached signature is only checkable against the full
+  key, hence its default; a beacon has nothing to check and defaults to
+  the hint. A host may override either way.
+
+`ANNOUNCE_CHANNEL`
+: Send as multicast on the device channel whose full
+  [channel identifier](packet-types.md#channel-identifier-derivation) this
+  is—the form that names a channel unambiguously, since two keys can
+  share a 2-byte `channel_id`. It is what `PROP_DEV_CHANNEL_KEYS` reports
+  for each key the device holds, so a host names a channel with exactly
+  what it read back. Absent, the announcement is a broadcast. A multicast
+  announcement uses the channel's encrypted mode.
+
+An option the device does not recognize, a repeated option, or a value of
+the wrong length or out of range is `STATUS_INVALID_ARGUMENT`. A device
+**MUST NOT** silently ignore an unknown option: the host asked for
+something specific, and a broadcast sent in place of an ignored multicast
+request would be the wrong frame on the air. A malformed entry list is
+`STATUS_PARSE_ERROR`.
+
+The device answers with `CMD_PROP_IS` of `PROP_LAST_STATUS` carrying the
+command's TID:
+
+* `STATUS_OK` once the announcement is **queued for transmission**. This
+  command reports queuing, not airing: channel access and the
+  [duty limit](ulcp-radio.md#prop-phy-duty-limit) decide later whether the
+  frame reaches the air, exactly as for a scheduled announcement.
+* `STATUS_BUSY` when an announcement is already pending and this one could
+  not be queued behind it.
+* `STATUS_CHANNEL_NOT_FOUND` when `ANNOUNCE_CHANNEL` names a channel the
+  device holds no key for.
+* `STATUS_UNIMPLEMENTED` on a device without `CAP_ADVERT`, or one with no
+  node behind the session to announce.
+
+This command is available on devices advertising `CAP_ADVERT`. It carries
+no tethered-host state, so an administrator may issue it over the
+[Node Management](app-node-management.md) binding.
 
 ## Properties
 
@@ -210,7 +294,7 @@ requirements as all key provisioning (see [Provisioning Security](ulcp-core.md#p
 * Asynchronous Updates: No
 * Required: `CAP_DEV_IDENTITY`
 * Item Form: 32 octets (the channel key)
-* Digest Form: 2 octets (the derived channel identifier)
+* Reported Form: 16 octets (the derived channel identifier)
 * Remove Selector: the 32-octet channel key
 * Post-Reset Value: Empty, or restored from saved state
 
@@ -220,12 +304,14 @@ the **device identity**—channels the radio's own node participates in
 independent of the host domain: they survive host replacement and are
 distinct from `PROP_HOST_CHANNEL_KEYS`.
 
-For each key the device derives the 2-byte
+For each key the device derives the
 [channel identifier](packet-types.md#channel-identifier-derivation) and the
 channel's `K_enc`/`K_mic`
-(see [Multicast Packet Keys](security.md#multicast-packet-keys)). The
-digest form reported for each entry is that derived channel identifier;
-the key itself is never read back.
+(see [Multicast Packet Keys](security.md#multicast-packet-keys)). Each
+entry is reported as its full 16-octet channel identifier, which is what
+names one of these channels to a management interface—two keys can
+derive the same 2-byte `channel_id`, and `CMD_ANNOUNCE` must not be left
+to guess which was meant. The key itself is never read back.
 
 Device channel keys do **not** create implicit host receive filters:
 frames on these channels are consumed by the device node and reach the
@@ -720,6 +806,11 @@ gap between two unsolicited announcements.
 Scheduled sends are subject to the same duty accounting and channel
 access as any other transmission: a send the device cannot make when it
 falls due is skipped, not queued.
+
+The schedule is not the only way an announcement goes out.
+[`CMD_ANNOUNCE`](#cmd-announce) sends one now, with a reach and a source
+form the host chooses; the two are independent, and neither disturbs the
+other's timing.
 
 ### PROP 81: `PROP_BEACON_INTERVAL` {#prop-beacon-interval}
 

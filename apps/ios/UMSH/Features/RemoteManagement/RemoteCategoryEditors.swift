@@ -405,6 +405,22 @@ struct RemoteIdentityEditor: View {
     @State private var showsPlacePicker = false
     @State private var isReadingPhone = false
     @State private var phoneUnavailable = false
+    @State private var announcementReach = AnnouncementReach.nearby
+
+    /// How far an on-demand announcement is asked to travel. Two choices
+    /// rather than a hop count: what an operator is deciding is whether
+    /// the neighbors need to hear it or the whole mesh does.
+    private enum AnnouncementReach: Hashable {
+        case nearby
+        case mesh
+
+        var floodHops: UInt8 {
+            switch self {
+            case .nearby: 0
+            case .mesh: 5
+            }
+        }
+    }
 
     private var reading: RemoteCategoryReading? { model.readings[.identity] }
     private var problems: [UInt32: String] { model.writeRefusals[.identity] ?? [:] }
@@ -499,8 +515,38 @@ struct RemoteIdentityEditor: View {
                     } else {
                         RemoteReadOnlyToggle("Beacon at startup", isOn: nil)
                     }
+
+                    Picker("Reach", selection: $announcementReach) {
+                        Text("Nearby").tag(AnnouncementReach.nearby)
+                        Text("Across the mesh").tag(AnnouncementReach.mesh)
+                    }
+                    .pickerStyle(.segmented)
+                    Button {
+                        Task { await model.announce(.advertisement, floodHops: announcementReach.floodHops) }
+                    } label: {
+                        Label(
+                            "Send Advertisement",
+                            systemImage: "antenna.radiowaves.left.and.right"
+                        )
+                    }
+                    .disabled(model.isBusy)
+                    Button {
+                        Task { await model.announce(.beacon, floodHops: announcementReach.floodHops) }
+                    } label: {
+                        Label("Send Beacon", systemImage: "dot.radiowaves.left.and.right")
+                    }
+                    .disabled(model.isBusy)
                 } header: {
                     Text("Announcements")
+                } footer: {
+                    Text(
+                        """
+                        An advertisement carries the device's signed identity; \
+                        a beacon carries nothing and publishes a path back to it. \
+                        Either is queued at the device and goes out when its \
+                        duty limit allows.
+                        """
+                    )
                 }
             }
             RemoteProblemSection(model: model)

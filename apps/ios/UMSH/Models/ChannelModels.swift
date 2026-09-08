@@ -132,11 +132,18 @@ struct ChannelSummary: Identifiable, Hashable, Sendable {
 /// name, because the key was never on this phone. The device reports only
 /// derived identifiers, so this is all that can be shown.
 struct UnknownDeviceChannel: Identifiable, Hashable, Sendable {
+    /// The full sixteen-octet identifier the radio reports.
     let identifier: Data
 
     var id: String { identifierHex }
     var identifierHex: String {
         identifier.map { String(format: "%02x", $0) }.joined()
+    }
+    /// The leading two octets—the `channel_id` frames on the air carry,
+    /// and the width a row has room for. The full identifier is what the
+    /// explanation shows.
+    var wireIDHex: String {
+        identifier.prefix(2).map { String(format: "%02x", $0) }.joined()
     }
 }
 

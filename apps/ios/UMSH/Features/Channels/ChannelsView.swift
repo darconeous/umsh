@@ -57,7 +57,7 @@ struct ChannelsView: View {
                         Button {
                             explainedUnknown = entry
                         } label: {
-                            LabeledContent("Channel \(entry.identifierHex)") {
+                            LabeledContent("Channel \(entry.wireIDHex)…") {
                                 Text("On radio")
                                     .foregroundStyle(.secondary)
                             }
@@ -240,7 +240,11 @@ struct ChannelRow: View {
                     joinedAt: .now
                 ),
             ],
-            unknownDeviceChannels: [UnknownDeviceChannel(identifier: Data([0x3f, 0xa1]))],
+            unknownDeviceChannels: [
+                UnknownDeviceChannel(
+                    identifier: Data([0x3f, 0xa1] + [UInt8](repeating: 0x5c, count: 14))
+                ),
+            ],
             radioSnapshot: .previewReady,
             actions: .unavailable
         )

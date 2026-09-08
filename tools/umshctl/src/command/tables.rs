@@ -1,14 +1,15 @@
 //! `dev-channel` / `dev-peer` / `dev-admin`: the device identity's own
 //! key tables.
 //!
-//! The digest form differs by table (a 2-byte channel id versus the
-//! 32-byte peer key itself), so listings and mutation reports print
-//! whatever digest the device quotes—a channel id as hex, a key as
+//! What a device reports differs by table (a channel identifier versus
+//! the 32-byte peer key itself), so listings and mutation reports print
+//! whatever the device quotes—a channel identifier as hex, a key as
 //! the base58 address it is everywhere else.
 
 use anyhow::{Result, bail};
 
 use umsh::ulcp_wire::ids::prop;
+use umsh::ulcp_wire::items;
 
 use super::persist;
 use super::values::KeyArg;
@@ -17,7 +18,7 @@ use crate::output::{address, hex};
 
 #[derive(Debug, clap::Subcommand)]
 pub enum TableOp {
-    /// List the entries the device holds, in digest form.
+    /// List the entries the device holds, as it reports them.
     List,
     /// Add an entry.
     Add {
@@ -31,14 +32,14 @@ pub enum TableOp {
     },
 }
 
-/// How the device's quoted digest for `prop` reads back to the user.
-/// The channel table quotes a two-byte identifier, which has no address
-/// form; every other table quotes the public key itself.
-fn digest_text(prop: u32, digest: &[u8]) -> String {
+/// How what the device reports for `prop` reads back to the user. The
+/// channel table reports a channel identifier, which has no address form;
+/// every other table reports the public key itself.
+fn item_text(prop: u32, item: &[u8]) -> String {
     if prop == prop::DEV_CHANNEL_KEYS {
-        hex(digest)
+        hex(item)
     } else {
-        address(digest)
+        address(item)
     }
 }
 
@@ -48,29 +49,30 @@ pub async fn run(app: &mut App, key: u32, noun: &str, op: Option<TableOp>) -> Re
     match op.unwrap_or(TableOp::List) {
         TableOp::List => {
             let value = device.get_prop(key).await?;
-            let digest_len = if key == prop::DEV_CHANNEL_KEYS { 2 } else { 32 };
+            let item_len = if key == prop::DEV_CHANNEL_KEYS {
+                items::CHANNEL_IDENTIFIER_LEN
+            } else {
+                items::PUBLIC_KEY_LEN
+            };
             if value.is_empty() {
                 println!("no device {noun}s provisioned");
-            } else if !value.len().is_multiple_of(digest_len) {
+            } else if !value.len().is_multiple_of(item_len) {
                 bail!("malformed device {noun} listing");
             } else {
-                for digest in value.chunks(digest_len) {
-                    println!("{}", digest_text(key, digest));
+                for item in value.chunks(item_len) {
+                    println!("{}", item_text(key, item));
                 }
             }
             Ok(())
         }
         TableOp::Add { key: item } => {
-            let digest = device.insert_prop_item(key, &item.0).await?;
-            println!("device {noun} added (digest {})", digest_text(key, &digest));
+            let reported = device.insert_prop_item(key, &item.0).await?;
+            println!("device {noun} added ({})", item_text(key, &reported));
             persist(device, no_save).await
         }
         TableOp::Remove { key: item } => {
-            let digest = device.remove_prop_item(key, &item.0).await?;
-            println!(
-                "device {noun} removed (digest {})",
-                digest_text(key, &digest)
-            );
+            let reported = device.remove_prop_item(key, &item.0).await?;
+            println!("device {noun} removed ({})", item_text(key, &reported));
             persist(device, no_save).await
         }
     }

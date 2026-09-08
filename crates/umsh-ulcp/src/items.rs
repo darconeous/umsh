@@ -1,10 +1,10 @@
 //! Item codecs for the full protocol's multi-value properties.
 //!
 //! Each multi-value property defines an **item form** (what the host
-//! writes) and a **digest form** (what the device reports). The two differ
-//! exactly where the item form carries symmetric key material: digest
-//! forms never contain secrets. See "Multi-Value Properties" in the full
-//! ULCP spec.
+//! writes) and a **reported form** (what the device reports). The two
+//! differ exactly where the item form carries symmetric key material:
+//! what a device reports never contains secrets. See "Multi-Value
+//! Properties" in the ULCP spec.
 //!
 //! Whole-table values concatenate items: fixed-size items back to back
 //! (see [`fixed_items`]), or PUI-length-prefixed items for properties
@@ -21,8 +21,16 @@ pub const PUBLIC_KEY_LEN: usize = 32;
 /// Length of a channel key item (`PROP_HOST_CHANNEL_KEYS`,
 /// `PROP_DEV_CHANNEL_KEYS`).
 pub const CHANNEL_KEY_LEN: usize = 32;
-/// Length of a derived channel identifier (the digest form of a channel
-/// key).
+/// Length of the full channel identifier, which is what
+/// `PROP_HOST_CHANNEL_KEYS` and `PROP_DEV_CHANNEL_KEYS` report for each
+/// key they hold, and what `ANNOUNCE_CHANNEL` names a channel by.
+///
+/// Two channel keys can derive the same two-byte wire `channel_id`, so
+/// naming a channel to a management interface takes the whole
+/// identifier.
+pub const CHANNEL_IDENTIFIER_LEN: usize = 16;
+/// Length of the wire `channel_id`—the `CHANNEL` field's two bytes, and
+/// what a channel receive filter matches against.
 pub const CHANNEL_ID_LEN: usize = 2;
 /// Length of a routing-domain region code (`PROP_MAC_REPEATER_DEFAULT_REGION`,
 /// the Region Code packet option, and the region codes carried in
@@ -48,8 +56,8 @@ pub enum ItemError {
 }
 
 /// One `PROP_HOST_PEER_KEYS` entry in item form: the peer's public key
-/// and the pairwise keys derived by the host. **Secret-bearing**—the
-/// digest form is [`Self::public_key`] alone.
+/// and the pairwise keys derived by the host. **Secret-bearing**—what a
+/// device reports is [`Self::public_key`] alone.
 ///
 /// Inserting an entry whose public key matches an existing entry
 /// replaces that entry's key material (the spec's exception to the
@@ -90,7 +98,7 @@ impl PeerKeyEntry {
         Ok(entry)
     }
 
-    /// The entry's digest form (and remove selector): the public key,
+    /// The entry's reported form (and remove selector): the public key,
     /// never the pairwise keys.
     pub fn digest(&self) -> &[u8; PUBLIC_KEY_LEN] {
         &self.public_key
@@ -115,8 +123,8 @@ pub const FILTER_CHANNEL_ID: u8 = 1;
 /// `FILTER_TYPE` for a 1-octet FCF packet-type filter.
 pub const FILTER_PKT_TYPE: u8 = 2;
 
-/// One `PROP_HOST_RX_FILTERS` entry. Item and digest forms are
-/// identical; the remove selector is the full item.
+/// One `PROP_HOST_RX_FILTERS` entry. A device reports these exactly as
+/// they were written; the remove selector is the full item.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Filter {
     /// Frames whose destination hint equals the value.
@@ -275,7 +283,7 @@ mod tests {
         assert_eq!(entry.encode(&mut buf).unwrap(), PeerKeyEntry::WIRE_LEN);
         assert_eq!(PeerKeyEntry::decode(&buf).unwrap(), entry);
 
-        // The digest form and remove selector carry only the public key.
+        // The reported form and remove selector carry only the public key.
         assert_eq!(entry.digest(), &[0x11; 32]);
         // Debug output must not leak key material.
         let debug = std::format!("{entry:?}");

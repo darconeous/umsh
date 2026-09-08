@@ -13,11 +13,15 @@
 use anyhow::{Result, bail};
 
 use umsh::ulcp::AdvertPolicy;
-use umsh::ulcp_wire::ids::{MAX_AUTO_ANNOUNCE_INTERVAL_S, MIN_AUTO_ANNOUNCE_INTERVAL_S};
+use umsh::ulcp_wire::announce::{Announcement, AnnouncementKind};
+use umsh::ulcp_wire::ids::{
+    MAX_ANNOUNCE_FLOOD_HOPS, MAX_AUTO_ANNOUNCE_INTERVAL_S, MIN_AUTO_ANNOUNCE_INTERVAL_S,
+};
 
+use super::values::ChannelIdentifierArg;
 use super::{format_duration, persist};
 use crate::App;
-use crate::output::{field, subfield};
+use crate::output::{field, hex, subfield};
 
 #[derive(Debug, clap::Subcommand)]
 pub enum AdvertOp {
@@ -38,6 +42,40 @@ pub enum AdvertOp {
         #[command(subcommand)]
         op: ToggleOp,
     },
+    /// Announce the device now, outside either schedule.
+    Send {
+        /// Send an empty beacon rather than a signed advertisement.
+        #[arg(long)]
+        beacon: bool,
+        /// Flood budget, 0 to 15. The default reaches only the nodes
+        /// that hear the device directly.
+        #[arg(long, value_name = "HOPS", default_value_t = 0, value_parser = flood_hops)]
+        hops: u8,
+        /// Carry the full public key as the source address. An
+        /// advertisement does by default; a beacon carries the hint.
+        #[arg(long, conflicts_with = "hint_source")]
+        full_source: bool,
+        /// Carry the 3-byte source hint instead of the full key.
+        #[arg(long, conflicts_with = "full_source")]
+        hint_source: bool,
+        /// Send as multicast on one of the device's own channels, named
+        /// by its channel identifier or its key. Default: a broadcast.
+        #[arg(long, value_name = "IDENTIFIER|KEY")]
+        channel: Option<ChannelIdentifierArg>,
+    },
+}
+
+/// A flood budget the wire can carry: `FHOPS_REM` is a nibble.
+fn flood_hops(text: &str) -> Result<u8, String> {
+    let hops: u8 = text
+        .parse()
+        .map_err(|_| format!("expected 0-{MAX_ANNOUNCE_FLOOD_HOPS} hops, got `{text}`"))?;
+    if hops > MAX_ANNOUNCE_FLOOD_HOPS {
+        return Err(format!(
+            "the largest flood budget a frame can carry is {MAX_ANNOUNCE_FLOOD_HOPS}"
+        ));
+    }
+    Ok(hops)
 }
 
 /// An interval, where "off" and zero are the same thing on the wire.
@@ -108,8 +146,62 @@ pub async fn run(app: &mut App, op: Option<AdvertOp>) -> Result<()> {
             let enabled = device.set_startup_beacon(op.enabled()).await?;
             println!("startup beacon {}", if enabled { "on" } else { "off" });
         }
+        AdvertOp::Send {
+            beacon,
+            hops,
+            full_source,
+            hint_source,
+            channel,
+        } => {
+            let kind = match beacon {
+                true => AnnouncementKind::Beacon,
+                false => AnnouncementKind::Advertisement,
+            };
+            let mut request = Announcement::new(kind);
+            request.flood_hops = hops;
+            if full_source {
+                request.full_source = true;
+            }
+            if hint_source {
+                request.full_source = false;
+            }
+            request.channel = channel.map(|channel| channel.0);
+            if !device.announce(&request).await? {
+                bail!("device does not advertise CAP_ADVERT");
+            }
+            println!("{} queued ({})", noun(kind), reach(&request));
+            // Nothing here is configuration, so there is nothing to save.
+            return Ok(());
+        }
     }
     persist(device, no_save).await
+}
+
+fn noun(kind: AnnouncementKind) -> &'static str {
+    match kind {
+        AnnouncementKind::Advertisement => "advertisement",
+        AnnouncementKind::Beacon => "beacon",
+    }
+}
+
+/// How far the request asks to travel and who it says it is from—the
+/// two things an operator would otherwise have to re-derive from the
+/// flags they just typed.
+fn reach(request: &Announcement) -> String {
+    let mut parts = Vec::new();
+    parts.push(match request.flood_hops {
+        0 => "neighbors only".to_string(),
+        hops => format!("up to {hops} flood hops"),
+    });
+    parts.push(match request.channel {
+        Some(id) => format!("on channel {}", hex(&id)),
+        None => "broadcast".to_string(),
+    });
+    parts.push(match request.full_source {
+        true => "full source".to_string(),
+        false => "source hint".to_string(),
+    });
+    parts.join(", ")
 }
 
 fn report(policy: &AdvertPolicy) {

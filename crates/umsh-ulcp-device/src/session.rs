@@ -13,6 +13,7 @@ use umsh_crypto::{AesProvider, CryptoEngine, PairwiseKeys, Sha256Provider};
 use umsh_ulcp::Status;
 use umsh_ulcp::airtime::lora_airtime_ms;
 use umsh_ulcp::alert::AlertState;
+use umsh_ulcp::announce::{Announcement, AnnouncementKind};
 use umsh_ulcp::battery::{self, BatteryStatus};
 use umsh_ulcp::ble::BleLinkState;
 use umsh_ulcp::frame::{
@@ -464,6 +465,28 @@ pub enum Effect {
     /// every access point in the building would be spending a device's
     /// memory on a host's screen.
     ReadNetworkTable { tid: u8, key: u32 },
+    /// `CMD_ANNOUNCE`: put an advertisement or a beacon on the air now.
+    /// Complete with [`Session::respond_announce`] once it is queued for
+    /// transmission—not once it has been sent, which channel access and
+    /// the duty ledger decide later.
+    Announce { tid: u8, request: AnnounceRequest },
+}
+
+/// A validated `CMD_ANNOUNCE` request (see [`Effect::Announce`]).
+///
+/// The channel option arrives as an identifier and leaves as the
+/// provisioned key it named: the session is where the device's channel
+/// keys live, and the node behind it addresses a channel by key.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AnnounceRequest {
+    /// Whether to send the signed node identity or a bare beacon.
+    pub kind: AnnouncementKind,
+    /// The flood budget. Zero reaches only direct neighbors.
+    pub flood_hops: u8,
+    /// Whether `SRC` carries the full public key rather than the hint.
+    pub full_source: bool,
+    /// The device channel to send on, or `None` for a broadcast.
+    pub channel_key: Option<[u8; items::CHANNEL_KEY_LEN]>,
 }
 
 /// A staged `PROP_DEV_PRIVATE_KEY` provisioning request (see
@@ -1175,18 +1198,27 @@ pub const MAX_PEER_KEYS: usize = 8;
 /// `PROP_HOST_MUTED_CHANNELS`. The on-wire `CHANNEL` field carries its
 /// first two octets; the rest is what tells apart two channels whose
 /// keys derive the same on-wire identifier.
-pub const CHANNEL_TAG_LEN: usize = 16;
+pub const CHANNEL_TAG_LEN: usize = items::CHANNEL_IDENTIFIER_LEN;
 
 /// One provisioned host channel key with its derived channel
-/// identifier (the digest form, and an implicit receive filter).
+/// identifier—what the device reports for the key, and an implicit
+/// receive filter through the identifier's first two octets.
 #[derive(Clone, Copy)]
 struct ChannelKeyEntry {
     key: [u8; items::CHANNEL_KEY_LEN],
-    id: [u8; items::CHANNEL_ID_LEN],
+    id: [u8; items::CHANNEL_IDENTIFIER_LEN],
+}
+
+impl ChannelKeyEntry {
+    /// The two-octet `channel_id` the `CHANNEL` field carries, which the
+    /// identifier begins with.
+    fn channel_id(&self) -> [u8; items::CHANNEL_ID_LEN] {
+        [self.id[0], self.id[1]]
+    }
 }
 
 /// `PROP_HOST_CHANNEL_KEYS`: an unordered set of channel keys. The
-/// remove selector is the key; the digest form is the derived channel
+/// remove selector is the key; the device reports the derived channel
 /// identifier.
 #[derive(Clone, Copy, Default)]
 struct ChannelKeyTable {
@@ -1214,8 +1246,11 @@ impl ChannelKeyTable {
     }
 
     /// Remove by channel key, returning the removed entry's derived
-    /// identifier (the digest form).
-    fn remove(&mut self, key: &[u8; items::CHANNEL_KEY_LEN]) -> Result<[u8; 2], Status> {
+    /// identifier—what the device reports for it.
+    fn remove(
+        &mut self,
+        key: &[u8; items::CHANNEL_KEY_LEN],
+    ) -> Result<[u8; items::CHANNEL_IDENTIFIER_LEN], Status> {
         let Some(index) = self.iter().position(|existing| existing.key == *key) else {
             return Err(Status::ITEM_NOT_FOUND);
         };
@@ -1805,7 +1840,7 @@ impl HostDomain {
             && self
                 .channel_keys
                 .iter()
-                .any(|entry| channel == Some(entry.id))
+                .any(|entry| channel == Some(entry.channel_id()))
         {
             return true;
         }
@@ -2395,7 +2430,7 @@ impl SavedState {
                 self.dev_channel_keys
                     .insert(ChannelKeyEntry {
                         key,
-                        id: [0; items::CHANNEL_ID_LEN],
+                        id: [0; items::CHANNEL_IDENTIFIER_LEN],
                     })
                     .map_err(invalid)?;
             }
@@ -2502,7 +2537,7 @@ impl SavedState {
     ) {
         let table = &mut self.dev_channel_keys;
         for entry in table.entries[..table.len].iter_mut().flatten() {
-            entry.id = engine.derive_channel_id(&ChannelKey(entry.key)).0;
+            entry.id = engine.derive_channel_tag(&ChannelKey(entry.key)).0;
         }
     }
 }
@@ -3474,6 +3509,38 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                 }
                 Some(Effect::Reboot)
             }
+            // Announce now. The options are validated here, including
+            // resolving a named channel to the key the node addresses it
+            // by; whether the announcement can be queued at all is the
+            // platform's answer, since the node lives behind it.
+            Some(Cmd::Announce) => {
+                let request = match Announcement::parse(received.payload) {
+                    Ok(request) => request,
+                    Err(error) => {
+                        self.complete(tid, error.status(), emit);
+                        return None;
+                    }
+                };
+                let channel_key = match request.channel {
+                    None => None,
+                    Some(identifier) => match self.channel_key_for(&identifier) {
+                        Some(key) => Some(key),
+                        None => {
+                            self.complete(tid, Status::CHANNEL_NOT_FOUND, emit);
+                            return None;
+                        }
+                    },
+                };
+                Some(Effect::Announce {
+                    tid,
+                    request: AnnounceRequest {
+                        kind: request.kind,
+                        flood_hops: request.flood_hops,
+                        full_source: request.full_source,
+                        channel_key,
+                    },
+                })
+            }
             // Several properties in one exchange. Both commands are
             // served entry by entry through the ordinary single-property
             // paths, so a value that needs a platform round trip defers
@@ -3655,7 +3722,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                     .host
                     .channel_keys
                     .iter()
-                    .find(|candidate| candidate.id == channel.0)
+                    .find(|candidate| candidate.channel_id() == channel.0)
                     .map(|candidate| candidate.key)
                 else {
                     return SecureRx::Plain;
@@ -3700,7 +3767,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                     .host
                     .channel_keys
                     .iter()
-                    .find(|candidate| candidate.id == channel.0)
+                    .find(|candidate| candidate.channel_id() == channel.0)
                     .map(|candidate| candidate.key)
                 else {
                     return SecureRx::Plain;
@@ -4889,6 +4956,28 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             }
             Err(()) => self.complete(tid, Status::INTERNAL_ERROR, emit),
         }
+    }
+
+    /// Complete a deferred `CMD_ANNOUNCE`.
+    ///
+    /// `Ok(())` is an announcement queued for transmission, which is all
+    /// this command ever reports: channel access and the duty ledger
+    /// decide later whether it reaches the air, exactly as they do for a
+    /// scheduled announcement. `Err(status)` is a platform that could not
+    /// take it—`STATUS_BUSY` where one is already pending, or
+    /// `STATUS_UNIMPLEMENTED` where there is no node behind the session
+    /// to announce.
+    pub fn respond_announce(
+        &mut self,
+        tid: u8,
+        result: Result<(), Status>,
+        emit: &mut impl FnMut(&[u8]),
+    ) {
+        let status = match result {
+            Ok(()) => Status::OK,
+            Err(status) => status,
+        };
+        self.complete(tid, status, emit);
     }
 
     /// The number of Bluetooth bonds the platform is holding, as reported
@@ -6241,10 +6330,8 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
 
     /// Whether a channel the host holds the key for is muted.
     ///
-    /// The full identifier is derived here rather than stored beside the
-    /// two-octet one: it is wanted only for frames arriving while the
-    /// host is detached and only while a mute table has anything in it,
-    /// which is far too rare to spend sixteen octets an entry on.
+    /// The identifier is derived from the key rather than looked up: the
+    /// caller has a key in hand and need not have it in a table.
     fn channel_muted(&self, channel_key: &[u8; items::CHANNEL_KEY_LEN]) -> bool {
         if self.host.muted_channels.len == 0 {
             return false;
@@ -6253,13 +6340,27 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         self.host.muted_channels.contains(&tag.0)
     }
 
-    /// Derive a channel key's identifier (its digest form and implicit
-    /// receive filter).
+    /// Derive a channel key's identifier—what the device reports for the
+    /// key, and, in its first two octets, an implicit receive filter.
     fn channel_entry(&self, key: &[u8; items::CHANNEL_KEY_LEN]) -> ChannelKeyEntry {
         ChannelKeyEntry {
             key: *key,
-            id: self.engine.derive_channel_id(&ChannelKey(*key)).0,
+            id: self.engine.derive_channel_tag(&ChannelKey(*key)).0,
         }
+    }
+
+    /// The device channel key an identifier names, if the device holds
+    /// one. This is the reverse of what `PROP_DEV_CHANNEL_KEYS` reports,
+    /// so a host can name a channel with exactly what it read back.
+    fn channel_key_for(
+        &self,
+        identifier: &[u8; items::CHANNEL_IDENTIFIER_LEN],
+    ) -> Option<[u8; items::CHANNEL_KEY_LEN]> {
+        self.device
+            .channel_keys
+            .iter()
+            .find(|entry| &entry.id == identifier)
+            .map(|entry| entry.key)
     }
 
     /// Refuse key-bearing writes over a transport that does not meet
@@ -7311,6 +7412,7 @@ fn validate_announce_interval(value: &[u8]) -> Result<u32, Status> {
 mod tests {
     use super::*;
     use umsh_crypto::software::{SoftwareAes, SoftwareSha256};
+    use umsh_ulcp::frame::FrameWriter;
 
     type TestSession = Session<SoftwareAes, SoftwareSha256>;
 
@@ -8055,6 +8157,123 @@ mod tests {
         assert_eq!(status_key, prop::LAST_STATUS);
         assert_eq!(pui::decode(&value).unwrap().0, Status::UNIMPLEMENTED.0);
         assert!(!capabilities(&mut fixed).contains(&cap::REBOOT));
+    }
+
+    /// `CMD_ANNOUNCE` with nothing in it is the whole command's default:
+    /// an advertisement to the neighbors that can hear the device.
+    #[test]
+    fn an_empty_announce_defers_a_neighbor_advertisement() {
+        let mut session = test_session();
+        let mut buf = [0u8; 8];
+        let len = frame::announce(&mut buf, 3, &Announcement::default()).unwrap();
+        let (emitted, effect) = dispatch(&mut session, &buf[..len], 0);
+        assert_eq!(
+            effect,
+            Some(Effect::Announce {
+                tid: 3,
+                request: AnnounceRequest {
+                    kind: AnnouncementKind::Advertisement,
+                    flood_hops: 0,
+                    full_source: true,
+                    channel_key: None,
+                },
+            })
+        );
+        assert!(emitted.is_empty(), "the platform answers, not the session");
+        assert!(capabilities(&mut session).contains(&cap::ADVERT));
+
+        // Queued, not aired: what the command reports is that the node
+        // took it.
+        session.respond_announce(3, Ok(()), &mut |bytes: &[u8]| {
+            expect_status(bytes, 3, Status::OK)
+        });
+    }
+
+    /// Every option reaches the platform, and a channel arrives as the
+    /// key the node addresses it by rather than as the identifier the
+    /// host named it with.
+    #[test]
+    fn announce_options_reach_the_platform_with_the_channel_resolved() {
+        let mut session = test_session();
+        let dev_channel = [0x66u8; 32];
+        insert_item(&mut session, prop::DEV_CHANNEL_KEYS, &dev_channel);
+
+        let request = Announcement {
+            kind: AnnouncementKind::Beacon,
+            flood_hops: 5,
+            full_source: true,
+            channel: Some(channel_identifier(&dev_channel)),
+        };
+        let mut buf = [0u8; 64];
+        let len = frame::announce(&mut buf, 4, &request).unwrap();
+        let (emitted, effect) = dispatch(&mut session, &buf[..len], 0);
+        assert_eq!(
+            effect,
+            Some(Effect::Announce {
+                tid: 4,
+                request: AnnounceRequest {
+                    kind: AnnouncementKind::Beacon,
+                    flood_hops: 5,
+                    full_source: true,
+                    channel_key: Some(dev_channel),
+                },
+            })
+        );
+        assert!(emitted.is_empty());
+    }
+
+    /// A channel the device does not hold the key for is a distinct
+    /// answer from a malformed request: the value was well formed and the
+    /// channel has merely to be provisioned first.
+    #[test]
+    fn announce_refuses_a_channel_the_device_does_not_hold() {
+        let mut session = test_session();
+        let request = Announcement {
+            channel: Some(channel_identifier(&[0x77; 32])),
+            ..Announcement::default()
+        };
+        let mut buf = [0u8; 64];
+        let len = frame::announce(&mut buf, 5, &request).unwrap();
+        let (emitted, effect) = dispatch(&mut session, &buf[..len], 0);
+        assert_eq!(effect, None);
+        expect_status(&emitted[0], 5, Status::CHANNEL_NOT_FOUND);
+    }
+
+    /// An option the device cannot honor is refused rather than dropped:
+    /// a broadcast sent in place of an ignored multicast request would be
+    /// the wrong thing on the air.
+    #[test]
+    fn announce_refuses_options_it_cannot_honor() {
+        let mut session = test_session();
+        let mut buf = [0u8; 32];
+
+        let mut writer = FrameWriter::new(&mut buf, 5, Cmd::Announce).unwrap();
+        writer.write_entry(99, &[0]).unwrap();
+        let len = writer.finish();
+        let (emitted, effect) = dispatch(&mut session, &buf[..len], 0);
+        assert_eq!(effect, None);
+        expect_status(&emitted[0], 5, Status::INVALID_ARGUMENT);
+
+        // A truncated entry list is a parse failure, not a bad value.
+        let mut writer = FrameWriter::new(&mut buf, 6, Cmd::Announce).unwrap();
+        writer.write_bytes(&[4, 2, 1]).unwrap();
+        let len = writer.finish();
+        let (emitted, effect) = dispatch(&mut session, &buf[..len], 0);
+        assert_eq!(effect, None);
+        expect_status(&emitted[0], 6, Status::PARSE_ERROR);
+    }
+
+    /// The platform's refusals are the command's other answers: a full
+    /// trigger queue is `STATUS_BUSY`, and no node behind the session is
+    /// `STATUS_UNIMPLEMENTED`.
+    #[test]
+    fn announce_quotes_what_the_platform_could_not_do() {
+        let mut session = test_session();
+        for (tid, status) in [(1u8, Status::BUSY), (2, Status::UNIMPLEMENTED)] {
+            session.respond_announce(tid, Err(status), &mut |bytes: &[u8]| {
+                expect_status(bytes, tid, status)
+            });
+        }
     }
 
     /// Forgetting every host is the count written to zero, and it waits
@@ -11599,13 +11818,30 @@ mod tests {
 
     // ─── CAP_HOST_KEYS gate ──────────────────────────────────────────
 
-    /// Insert a channel key, returning its derived identifier digest.
-    fn install_channel_key(session: &mut TestSession, key: &[u8; 32]) -> [u8; 2] {
+    /// The full channel identifier a key derives—what the channel-key
+    /// tables report for it.
+    fn channel_identifier(key: &[u8; 32]) -> [u8; items::CHANNEL_IDENTIFIER_LEN] {
+        test_engine().derive_channel_tag(&ChannelKey(*key)).0
+    }
+
+    /// The two-octet `channel_id` a key derives—what the `CHANNEL` field
+    /// on the air carries.
+    fn wire_channel_id(key: &[u8; 32]) -> [u8; items::CHANNEL_ID_LEN] {
+        test_engine().derive_channel_id(&ChannelKey(*key)).0
+    }
+
+    /// Insert a channel key, returning the identifier the device reports.
+    fn install_channel_key(
+        session: &mut TestSession,
+        key: &[u8; 32],
+    ) -> [u8; items::CHANNEL_IDENTIFIER_LEN] {
         let (emitted, effect) = insert_item(session, prop::HOST_CHANNEL_KEYS, key);
         assert!(effect.is_none());
-        let (prop_key, digest) = parse_table_notice(&emitted[0], Cmd::PropInserted, 5);
+        let (prop_key, reported) = parse_table_notice(&emitted[0], Cmd::PropInserted, 5);
         assert_eq!(prop_key, prop::HOST_CHANNEL_KEYS);
-        digest.try_into().expect("channel digest is 2 bytes")
+        reported
+            .try_into()
+            .expect("a channel key is reported as its full identifier")
     }
 
     fn peer_entry(seed: u8) -> [u8; 96] {
@@ -11617,23 +11853,26 @@ mod tests {
     }
 
     #[test]
-    fn channel_key_lifecycle_and_digest_is_derived_id() {
+    fn channel_key_lifecycle_and_reported_form_is_the_identifier() {
         let mut session = test_session();
         let key = [0x42; 32];
-        let expected_id = test_engine().derive_channel_id(&ChannelKey(key)).0;
+        let expected_id = channel_identifier(&key);
 
-        let digest = install_channel_key(&mut session, &key);
-        assert_eq!(digest, expected_id);
+        let reported = install_channel_key(&mut session, &key);
+        assert_eq!(reported, expected_id);
         assert_eq!(get(&mut session, prop::HOST_CHANNEL_KEYS), expected_id);
+        // The wire `channel_id` is the identifier's first two octets, so
+        // the reported form names the channel a receive filter matches.
+        assert_eq!(expected_id[..2], wire_channel_id(&key));
 
         // Duplicate channel key fails with ALREADY.
         let (emitted, _) = insert_item(&mut session, prop::HOST_CHANNEL_KEYS, &key);
         expect_status(&emitted[0], 5, Status::ALREADY);
 
-        // Remove selector is the key; the digest reported is the id.
+        // Remove selector is the key; what is reported is the identifier.
         let (emitted, _) = remove_item(&mut session, prop::HOST_CHANNEL_KEYS, &key);
-        let (_, digest) = parse_table_notice(&emitted[0], Cmd::PropRemoved, 6);
-        assert_eq!(digest, expected_id);
+        let (_, reported) = parse_table_notice(&emitted[0], Cmd::PropRemoved, 6);
+        assert_eq!(reported, expected_id);
         assert!(get(&mut session, prop::HOST_CHANNEL_KEYS).is_empty());
 
         let (emitted, _) = remove_item(&mut session, prop::HOST_CHANNEL_KEYS, &key);
@@ -11711,11 +11950,12 @@ mod tests {
         let (emitted, _) = set(&mut session, prop::HOST_CHANNEL_KEYS, &table);
         let (_, key, value) = parse_prop_is(&emitted[0]);
         assert_eq!(key, prop::HOST_CHANNEL_KEYS);
-        assert_eq!(value.len(), 4, "two unique channels, 2-byte ids");
+        let reported = 2 * items::CHANNEL_IDENTIFIER_LEN;
+        assert_eq!(value.len(), reported, "two unique channels, one id each");
 
         let (emitted, _) = set(&mut session, prop::HOST_CHANNEL_KEYS, &table[..40]);
         expect_status(&emitted[0], 2, Status::INVALID_ARGUMENT);
-        assert_eq!(get(&mut session, prop::HOST_CHANNEL_KEYS).len(), 4);
+        assert_eq!(get(&mut session, prop::HOST_CHANNEL_KEYS).len(), reported);
 
         // Peers: a repeated public key replaces the earlier entry.
         let mut peers = Vec::new();
@@ -11725,7 +11965,7 @@ mod tests {
         peers.extend_from_slice(&updated);
         let (emitted, _) = set(&mut session, prop::HOST_PEER_KEYS, &peers);
         let (_, _, value) = parse_prop_is(&emitted[0]);
-        assert_eq!(value, peer_entry(0x01)[..32], "one entry, digest form");
+        assert_eq!(value, peer_entry(0x01)[..32], "one entry, reported form");
 
         // Empty set clears; oversized set fails atomically.
         let (emitted, _) = set(&mut session, prop::HOST_PEER_KEYS, &[]);
@@ -11774,7 +12014,8 @@ mod tests {
         // Only a channel key is provisioned: filtering becomes
         // configured (compatibility rule) and the derived id matches
         // multicast and blind unicast on that channel.
-        let id = install_channel_key(&mut session, &[0x42; 32]);
+        install_channel_key(&mut session, &[0x42; 32]);
+        let id = wire_channel_id(&[0x42; 32]);
         assert!(delivered(&mut session, &multicast_on(id)));
         assert!(delivered(&mut session, &blind_unicast_on(id)));
         let other = [id[0] ^ 0xFF, id[1]];
@@ -12546,7 +12787,7 @@ mod tests {
         for seed in 0..MAX_CHANNEL_KEYS as u8 {
             let _ = session.device.channel_keys.insert(ChannelKeyEntry {
                 key: [seed; items::CHANNEL_KEY_LEN],
-                id: [seed, seed],
+                id: [seed; items::CHANNEL_IDENTIFIER_LEN],
             });
         }
         for seed in 0..MAX_DEV_PEERS as u8 {
@@ -13393,22 +13634,22 @@ mod tests {
     fn dev_channel_keys_and_peers_lifecycle() {
         let mut session = test_session();
         let dev_channel = [0x66u8; 32];
-        let expected_id = test_engine().derive_channel_id(&ChannelKey(dev_channel)).0;
+        let expected_id = channel_identifier(&dev_channel);
 
-        // Channel keys report the derived identifier as their digest;
-        // the key itself is never read back.
+        // Channel keys are reported as their derived identifier; the key
+        // itself is never read back.
         let (emitted, _) = insert_item(&mut session, prop::DEV_CHANNEL_KEYS, &dev_channel);
-        let (_, digest) = parse_table_notice(&emitted[0], Cmd::PropInserted, 5);
-        assert_eq!(digest, expected_id);
+        let (_, reported) = parse_table_notice(&emitted[0], Cmd::PropInserted, 5);
+        assert_eq!(reported, expected_id);
         assert_eq!(get(&mut session, prop::DEV_CHANNEL_KEYS), expected_id);
         let (emitted, _) = insert_item(&mut session, prop::DEV_CHANNEL_KEYS, &dev_channel);
         expect_status(&emitted[0], 5, Status::ALREADY);
 
-        // Peers: digest form is the item itself; duplicates collapse
+        // Peers are reported as the item itself; duplicates collapse
         // on whole-table set and fail an insert.
         let (emitted, _) = insert_item(&mut session, prop::DEV_PEERS, &[0xD0; 32]);
-        let (_, digest) = parse_table_notice(&emitted[0], Cmd::PropInserted, 5);
-        assert_eq!(digest, [0xD0; 32]);
+        let (_, reported) = parse_table_notice(&emitted[0], Cmd::PropInserted, 5);
+        assert_eq!(reported, [0xD0; 32]);
         let (emitted, _) = insert_item(&mut session, prop::DEV_PEERS, &[0xD0; 32]);
         expect_status(&emitted[0], 5, Status::ALREADY);
         let mut two = Vec::new();
@@ -13606,7 +13847,7 @@ mod tests {
     fn snapshot_carries_device_tables_but_never_the_identity() {
         let mut session = test_session();
         let dev_channel = [0x66u8; 32];
-        let dev_id = test_engine().derive_channel_id(&ChannelKey(dev_channel)).0;
+        let dev_id = channel_identifier(&dev_channel);
         insert_item(&mut session, prop::DEV_CHANNEL_KEYS, &dev_channel);
         insert_item(&mut session, prop::DEV_PEERS, &[0xD0; 32]);
         let public_key = provision_identity(&mut session, 7, &[0x11; 32]);

@@ -6,14 +6,17 @@ use std::{
 use umsh_core::RegionCode;
 use umsh_node::location::{MAX_PRECISION, NodeLocation};
 use umsh_ulcp::{
-    AlertState, BatteryChargeState, BatteryStatus, Cmd, Frame, StreamPayload, frame,
+    AlertState, BatteryChargeState, BatteryStatus, Cmd, Frame, StreamPayload,
+    announce::{Announcement, AnnouncementKind},
+    frame,
     gatt::{self, MAX_FRAME, Reassembler},
     gnss::{FixKind, GnssSnapshot},
     hdlc,
     host::{PropertyNotification, PropertyNotificationError, TidAllocator},
     ids::{
-        INTERFACE_TYPE, MAX_AUTO_ANNOUNCE_INTERVAL_S, MIN_AUTO_ANNOUNCE_INTERVAL_S,
-        PROTOCOL_MAJOR_VERSION, PROTOCOL_MINOR_VERSION, cap, prop, saved,
+        INTERFACE_TYPE, MAX_ANNOUNCE_FLOOD_HOPS, MAX_AUTO_ANNOUNCE_INTERVAL_S,
+        MIN_AUTO_ANNOUNCE_INTERVAL_S, PROTOCOL_MAJOR_VERSION, PROTOCOL_MINOR_VERSION, cap, prop,
+        saved,
     },
     ip,
     items::{self, Filter},
@@ -639,8 +642,9 @@ pub struct UlcpPropertyPushRecord {
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
 pub struct UlcpLocalManagementEventRecord {
     pub answers: Vec<MobileMeshManagementAnswerRecord>,
-    /// The `CMD_SAVE` outcome, on a save. `None` on fetches, on writes,
-    /// and on a save the device has no `CAP_SAVE` to answer.
+    /// The outcome of the one command the operation ran—`CMD_SAVE` on a
+    /// save, `CMD_ANNOUNCE` on an announcement. `None` on fetches, on
+    /// writes, and on a save the device has no `CAP_SAVE` to answer.
     pub status_code: Option<u32>,
 }
 
@@ -801,6 +805,10 @@ enum ExpectedResponse {
     ManagementItem(u32),
     /// The `CMD_SAVE` issued by a local management save.
     ManagementSave,
+    /// The `CMD_ANNOUNCE` issued by a local management announcement.
+    /// Answered by a status and nothing else: what the device reports is
+    /// that the announcement is queued, and nothing about it is cached.
+    ManagementAnnounce,
 }
 
 impl ExpectedResponse {
@@ -813,6 +821,7 @@ impl ExpectedResponse {
                 | Self::ManagementSet(_)
                 | Self::ManagementItem(_)
                 | Self::ManagementSave
+                | Self::ManagementAnnounce
         )
     }
 }
@@ -854,7 +863,9 @@ struct LocalManagement {
     /// gets when it does both in one operation.
     item_queue: VecDeque<(u32, UlcpItemMutation, Vec<u8>)>,
     answers: Vec<MobileMeshManagementAnswerRecord>,
-    save_status: Option<u32>,
+    /// The status of the one command this operation ran, when it ran
+    /// one: a `CMD_SAVE` or a `CMD_ANNOUNCE`.
+    command_status: Option<u32>,
 }
 
 struct UlcpSessionState {
@@ -1139,6 +1150,39 @@ impl MobileUlcpSession {
             .insert(tid, ExpectedResponse::Property(prop::ALERT));
         let frame = ulcp_prop_set(tid, prop::ALERT, value)?;
         Ok(session.update(vec![frame]))
+    }
+
+    /// Ask the radio to announce itself now (`CMD_ANNOUNCE`): an
+    /// advertisement or a beacon, as a broadcast or on one of the radio's
+    /// own channels.
+    ///
+    /// Live behavior rather than configuration, so nothing is saved and
+    /// nothing is cached. It runs as a local management operation, so
+    /// the radio's answer—queued, busy, or a channel it does not hold—
+    /// lands on the completion event as the command's status, the way a
+    /// save's does. The radio answers once the announcement is queued for
+    /// transmission; channel access and the duty limit decide later
+    /// whether it reaches the air, exactly as for a scheduled
+    /// announcement.
+    pub fn announce(
+        &self,
+        request: MobileAnnouncementRecord,
+    ) -> Result<UlcpSessionUpdateRecord, MobileError> {
+        let mut state = self.inner.lock().expect("ULCP session mutex poisoned");
+        state.begin_local_management()?;
+        if !state.has_capability(cap::ADVERT)? {
+            return Err(MobileError::UnsupportedCapability);
+        }
+        // Encoded before anything is put in flight: a request the device
+        // would refuse (a flood budget the frame cannot carry) is refused
+        // here instead, and must not leave the session waiting on it.
+        let tid = state.allocate_tid();
+        let frame = ulcp_announce(tid, request)?;
+        state.management = Some(LocalManagement::default());
+        state
+            .expected
+            .insert(tid, ExpectedResponse::ManagementAnnounce);
+        Ok(state.update(vec![frame]))
     }
 
     /// Set—or clear—the device's wall clock (`PROP_TIME`).
@@ -1479,7 +1523,7 @@ impl MobileUlcpSession {
         &self,
         channel_key: Vec<u8>,
     ) -> Result<UlcpSessionUpdateRecord, MobileError> {
-        let id = dev_channel_id(&channel_key)?;
+        let id = dev_channel_identifier(&channel_key)?;
         let mut state = self.inner.lock().expect("ULCP session mutex poisoned");
         state.begin_device_domain_operation(cap::DEV_IDENTITY)?;
         let tid = state.allocate_tid();
@@ -1502,7 +1546,7 @@ impl MobileUlcpSession {
         &self,
         channel_key: Vec<u8>,
     ) -> Result<UlcpSessionUpdateRecord, MobileError> {
-        let id = dev_channel_id(&channel_key)?;
+        let id = dev_channel_identifier(&channel_key)?;
         let mut state = self.inner.lock().expect("ULCP session mutex poisoned");
         state.begin_device_domain_operation(cap::DEV_IDENTITY)?;
         let tid = state.allocate_tid();
@@ -1537,7 +1581,7 @@ impl MobileUlcpSession {
         let mut desired = VecDeque::with_capacity(keys.len());
         let mut desired_ids = Vec::with_capacity(keys.len());
         for key in keys {
-            desired_ids.push(dev_channel_id(&key)?);
+            desired_ids.push(dev_channel_identifier(&key)?);
             desired.push_back(key);
         }
 
@@ -1555,7 +1599,7 @@ impl MobileUlcpSession {
             .map(|entry| entry.value.clone())
             .unwrap_or_default();
         let current_ids: Vec<Vec<u8>> = current
-            .chunks(items::CHANNEL_ID_LEN)
+            .chunks(items::CHANNEL_IDENTIFIER_LEN)
             .map(<[u8]>::to_vec)
             .collect();
 
@@ -1576,7 +1620,7 @@ impl MobileUlcpSession {
         desired.retain(|key| {
             !current_ids
                 .iter()
-                .any(|id| dev_channel_id(key).is_ok_and(|derived| &derived == id))
+                .any(|id| dev_channel_identifier(key).is_ok_and(|derived| &derived == id))
         });
         match state.next_host_channel_insert(desired) {
             Some(frame) => Ok(state.update(vec![frame])),
@@ -2570,7 +2614,9 @@ impl MobileUlcpSession {
                 }
                 state.continue_local_management(&mut outbound)?;
             }
-            ExpectedResponse::ManagementSave => {
+            // Both are answered by a status and nothing else, and both
+            // are the whole of the operation that issued them.
+            ExpectedResponse::ManagementSave | ExpectedResponse::ManagementAnnounce => {
                 if response.property_id != prop::LAST_STATUS
                     || response.command != Cmd::PropIs as u8
                 {
@@ -2578,7 +2624,7 @@ impl MobileUlcpSession {
                 }
                 let status_code = inspect_ulcp_status(response.value.clone())?;
                 if let Some(op) = state.management.as_mut() {
-                    op.save_status = Some(status_code);
+                    op.command_status = Some(status_code);
                 }
                 state.continue_local_management(&mut outbound)?;
             }
@@ -2974,7 +3020,7 @@ impl UlcpSessionState {
         } else {
             self.management_event = Some(UlcpLocalManagementEventRecord {
                 answers: op.answers,
-                status_code: op.save_status,
+                status_code: op.command_status,
             });
             self.refresh_attached_snapshot(None)?;
         }
@@ -2989,7 +3035,7 @@ impl UlcpSessionState {
         let frame = ulcp_prop_insert(tid, prop::HOST_CHANNEL_KEYS, &key).ok()?;
         self.expected
             .insert(tid, ExpectedResponse::HostChannelInsert(remaining));
-        if let Ok(id) = dev_channel_id(&key) {
+        if let Ok(id) = dev_channel_identifier(&key) {
             self.push_host_channel_id(&id);
         }
         Some(frame)
@@ -3107,7 +3153,11 @@ impl UlcpSessionState {
 
     fn push_host_channel_id(&mut self, id: &[u8]) {
         let entry = self.host_channel_entry();
-        if !entry.value.chunks(items::CHANNEL_ID_LEN).any(|c| c == id) {
+        if !entry
+            .value
+            .chunks(items::CHANNEL_IDENTIFIER_LEN)
+            .any(|c| c == id)
+        {
             entry.value.extend_from_slice(id);
         }
     }
@@ -3151,7 +3201,7 @@ impl UlcpSessionState {
             });
         let mut value = Vec::with_capacity(entry.value.len() + id.len());
         let mut found = false;
-        for chunk in entry.value.chunks(items::CHANNEL_ID_LEN) {
+        for chunk in entry.value.chunks(items::CHANNEL_IDENTIFIER_LEN) {
             if chunk == id {
                 found = true;
                 if !present {
@@ -3576,7 +3626,7 @@ pub fn inspect_ulcp_sync(
     let host_channel_count = expected.read(
         host_keys,
         prop::HOST_CHANNEL_KEYS,
-        decode_fixed_count::<{ items::CHANNEL_ID_LEN }>,
+        decode_fixed_count::<{ items::CHANNEL_IDENTIFIER_LEN }>,
     );
     let host_peer_count = expected.read(
         host_keys,
@@ -3593,7 +3643,7 @@ pub fn inspect_ulcp_sync(
     let dev_channel_ids = expected.read(
         dev_identity,
         prop::DEV_CHANNEL_KEYS,
-        decode_fixed_list::<{ items::CHANNEL_ID_LEN }>,
+        decode_fixed_list::<{ items::CHANNEL_IDENTIFIER_LEN }>,
     );
     let manageable = has(cap::ADMIN);
     let dev_admin_keys = expected.read(
@@ -5977,12 +6027,13 @@ pub fn ulcp_supported_bandwidths_hz() -> Vec<u32> {
     umsh_ulcp::profiles::SUPPORTED_BANDWIDTHS_HZ.to_vec()
 }
 
-/// Derive the identifier a device will echo for a channel key.
-fn dev_channel_id(channel_key: &[u8]) -> Result<Vec<u8>, MobileError> {
+/// Derive the identifier a device will report for a channel key: the
+/// full sixteen octets, which is what tells two channels apart.
+fn dev_channel_identifier(channel_key: &[u8]) -> Result<Vec<u8>, MobileError> {
     let bytes: [u8; items::CHANNEL_KEY_LEN] = channel_key
         .try_into()
         .map_err(|_| MobileError::InvalidChannelKeyLength)?;
-    Ok(crate::derive_channel_id(bytes.to_vec())?)
+    crate::channel_identifier(bytes.to_vec())
 }
 
 /// Encode a `CMD_SAVE` request with the shared ULCP codec.
@@ -6009,6 +6060,76 @@ pub fn ulcp_reboot(transaction_id: u8) -> Result<Vec<u8>, MobileError> {
     let mut output = [0; 2];
     let length =
         frame::reboot(&mut output, transaction_id).map_err(|_| MobileError::InvalidUlcpFrame)?;
+    Ok(output[..length].to_vec())
+}
+
+/// What an on-demand announcement carries.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
+pub enum MobileAnnouncementKind {
+    /// The radio's signed node identity.
+    Advertisement,
+    /// No payload; a beacon publishes a path rather than an identity.
+    Beacon,
+}
+
+impl From<MobileAnnouncementKind> for AnnouncementKind {
+    fn from(kind: MobileAnnouncementKind) -> Self {
+        match kind {
+            MobileAnnouncementKind::Advertisement => Self::Advertisement,
+            MobileAnnouncementKind::Beacon => Self::Beacon,
+        }
+    }
+}
+
+/// One `CMD_ANNOUNCE` request. Every field but the kind is optional and
+/// takes the command's default when absent.
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct MobileAnnouncementRecord {
+    pub kind: MobileAnnouncementKind,
+    /// Flood budget, 0 to 15. Zero reaches only the radio's own
+    /// neighbors.
+    pub flood_hops: u8,
+    /// Whether the source address is the full public key. `None` takes
+    /// the kind's default: an advertisement carries one, a beacon the
+    /// hint.
+    pub full_source: Option<bool>,
+    /// The 16-octet channel identifier to send on, or `None` for a
+    /// broadcast.
+    pub channel_identifier: Option<Vec<u8>>,
+}
+
+impl MobileAnnouncementRecord {
+    pub(crate) fn to_announcement(&self) -> Result<Announcement, MobileError> {
+        let mut request = Announcement::new(self.kind.into());
+        if self.flood_hops > MAX_ANNOUNCE_FLOOD_HOPS {
+            return Err(MobileError::InvalidUlcpFrame);
+        }
+        request.flood_hops = self.flood_hops;
+        if let Some(full_source) = self.full_source {
+            request.full_source = full_source;
+        }
+        request.channel = match &self.channel_identifier {
+            None => None,
+            Some(identifier) => Some(
+                identifier
+                    .as_slice()
+                    .try_into()
+                    .map_err(|_| MobileError::InvalidUlcpFrame)?,
+            ),
+        };
+        Ok(request)
+    }
+}
+
+/// Encode a `CMD_ANNOUNCE` request with the shared ULCP codec.
+#[uniffi::export]
+pub fn ulcp_announce(
+    transaction_id: u8,
+    request: MobileAnnouncementRecord,
+) -> Result<Vec<u8>, MobileError> {
+    let mut output = [0; 48];
+    let length = frame::announce(&mut output, transaction_id, &request.to_announcement()?)
+        .map_err(|_| MobileError::InvalidUlcpFrame)?;
     Ok(output[..length].to_vec())
 }
 
@@ -6592,6 +6713,58 @@ mod tests {
     }
 
     #[test]
+    fn announce_records_encode_through_the_shared_codec() {
+        // The kind's defaults cost nothing on the wire.
+        let bare = MobileAnnouncementRecord {
+            kind: MobileAnnouncementKind::Advertisement,
+            flood_hops: 0,
+            full_source: None,
+            channel_identifier: None,
+        };
+        let encoded = ulcp_announce(3, bare).unwrap();
+        let parsed = Frame::parse(&encoded).unwrap();
+        assert_eq!(parsed.header.tid(), 3);
+        assert_eq!(parsed.command(), Some(Cmd::Announce));
+        assert!(parsed.payload.is_empty());
+
+        let full = MobileAnnouncementRecord {
+            kind: MobileAnnouncementKind::Beacon,
+            flood_hops: 5,
+            full_source: Some(true),
+            channel_identifier: Some(vec![0xC3; items::CHANNEL_IDENTIFIER_LEN]),
+        };
+        let encoded = ulcp_announce(4, full).unwrap();
+        let parsed = Frame::parse(&encoded).unwrap();
+        let decoded = Announcement::parse(parsed.payload).unwrap();
+        assert_eq!(decoded.kind, AnnouncementKind::Beacon);
+        assert_eq!(decoded.flood_hops, 5);
+        assert!(decoded.full_source);
+        assert_eq!(decoded.channel, Some([0xC3; items::CHANNEL_IDENTIFIER_LEN]));
+
+        // Values a device would refuse are refused here instead.
+        let bad_hops = MobileAnnouncementRecord {
+            kind: MobileAnnouncementKind::Advertisement,
+            flood_hops: 16,
+            full_source: None,
+            channel_identifier: None,
+        };
+        assert_eq!(
+            ulcp_announce(5, bad_hops),
+            Err(MobileError::InvalidUlcpFrame)
+        );
+        let short_channel = MobileAnnouncementRecord {
+            kind: MobileAnnouncementKind::Advertisement,
+            flood_hops: 0,
+            full_source: None,
+            channel_identifier: Some(vec![0xC3; 2]),
+        };
+        assert_eq!(
+            ulcp_announce(6, short_channel),
+            Err(MobileError::InvalidUlcpFrame)
+        );
+    }
+
+    #[test]
     fn exported_transport_rejects_invalid_bounds_and_segments() {
         assert_eq!(
             ulcp_gatt_segments(vec![0; MAX_FRAME + 1], 20),
@@ -6712,7 +6885,7 @@ mod tests {
     }
 
     #[test]
-    fn full_inspection_reports_only_digest_counts() {
+    fn full_inspection_reports_only_counts_for_key_tables() {
         let capabilities = (cap::HOST_FILTER..=cap::BATTERY)
             .map(|capability| capability as u8)
             .collect::<Vec<_>>();
@@ -6729,7 +6902,10 @@ mod tests {
             response(prop::PHY_TX_POWER, &[22]),
             response(prop::SAVED, &[1]),
             response(prop::HOST_RX_FILTERS, &[]),
-            response(prop::HOST_CHANNEL_KEYS, &[1, 2, 3, 4]),
+            response(
+                prop::HOST_CHANNEL_KEYS,
+                &[1; 2 * items::CHANNEL_IDENTIFIER_LEN],
+            ),
             response(prop::HOST_PEER_KEYS, &[7; 32]),
             response(prop::HOST_RX_QUEUE_COUNT, &3u16.to_le_bytes()),
             response(prop::HOST_RX_QUEUE_DROPPED, &4u32.to_le_bytes()),
@@ -6746,7 +6922,7 @@ mod tests {
         assert_eq!(sync.host_peer_count, Some(1));
         assert_eq!(sync.auto_ack, Some(true));
         // The device-identity peer list is the one key table read back
-        // losslessly rather than as a digest count.
+        // in full rather than as a count.
         assert!(sync.supports_device_identity);
         assert_eq!(sync.dev_peer_keys, Some(vec![vec![7; 32], vec![7; 32]]));
     }
@@ -8187,8 +8363,8 @@ mod tests {
         // The wire carries the key; the device answers with the derived
         // identifier, because a channel key is never read back.
         let key = vec![0xB7; 32];
-        let id = crate::derive_channel_id(key.clone()).unwrap();
-        assert_eq!(id.len(), items::CHANNEL_ID_LEN);
+        let id = crate::channel_identifier(key.clone()).unwrap();
+        assert_eq!(id.len(), items::CHANNEL_IDENTIFIER_LEN);
 
         let insert = session.insert_device_channel_key(key.clone()).unwrap();
         let request = Frame::parse(&insert.outbound_frames[0]).unwrap();
@@ -8234,7 +8410,7 @@ mod tests {
         attach_commissionable(&session, Some(vec![0xAA; 32]), vec![0xAA; 32]);
 
         let key = vec![0xC7; 32];
-        let id = crate::derive_channel_id(key.clone()).unwrap();
+        let id = crate::channel_identifier(key.clone()).unwrap();
 
         let insert = session.insert_device_channel_key(key.clone()).unwrap();
         let request = Frame::parse(&insert.outbound_frames[0]).unwrap();
@@ -8315,7 +8491,7 @@ mod tests {
             .consume(inserted_response(
                 request.header.tid(),
                 prop::HOST_CHANNEL_KEYS,
-                &crate::derive_channel_id(first).unwrap(),
+                &crate::channel_identifier(first).unwrap(),
             ))
             .unwrap();
         assert_eq!(confirmed.outbound_frames.len(), 1);
@@ -8324,7 +8500,7 @@ mod tests {
             .consume(inserted_response(
                 request.header.tid(),
                 prop::HOST_CHANNEL_KEYS,
-                &crate::derive_channel_id(second).unwrap(),
+                &crate::channel_identifier(second).unwrap(),
             ))
             .unwrap();
         assert!(done.outbound_frames.is_empty());
@@ -8347,7 +8523,7 @@ mod tests {
             .consume(inserted_response(
                 request.header.tid(),
                 prop::HOST_CHANNEL_KEYS,
-                &crate::derive_channel_id(key.clone()).unwrap(),
+                &crate::channel_identifier(key.clone()).unwrap(),
             ))
             .unwrap();
 
@@ -8373,7 +8549,7 @@ mod tests {
             .consume(inserted_response(
                 request.header.tid(),
                 prop::HOST_CHANNEL_KEYS,
-                &crate::derive_channel_id(stranger).unwrap(),
+                &crate::channel_identifier(stranger).unwrap(),
             ))
             .unwrap();
 
@@ -8390,7 +8566,7 @@ mod tests {
             .consume(property_response(
                 request.header.tid(),
                 prop::HOST_CHANNEL_KEYS,
-                &crate::derive_channel_id(mine).unwrap(),
+                &crate::channel_identifier(mine).unwrap(),
             ))
             .unwrap();
         assert_eq!(host_channel_count(&done), Some(1));
@@ -11208,6 +11384,62 @@ mod tests {
         let event = done.management_event.expect("the save answered");
         assert!(event.answers.is_empty());
         assert_eq!(event.status_code, Some(0));
+    }
+
+    /// An announcement runs as a management operation, so the radio's
+    /// answer lands on the completion event as the command's status: a
+    /// refusal reaches the screen that asked, the way it does over the
+    /// mesh.
+    #[test]
+    fn local_announce_reports_the_device_status() {
+        let session = MobileUlcpSession::new();
+        attach_advertising(&session);
+
+        let request = MobileAnnouncementRecord {
+            kind: MobileAnnouncementKind::Beacon,
+            flood_hops: 5,
+            full_source: None,
+            channel_identifier: Some(vec![0xEE; items::CHANNEL_IDENTIFIER_LEN]),
+        };
+        let update = session.announce(request).unwrap();
+        assert_eq!(update.outbound_frames.len(), 1);
+        let parsed = Frame::parse(&update.outbound_frames[0]).unwrap();
+        assert_eq!(parsed.command(), Some(Cmd::Announce));
+        assert!(
+            session.begin_save().is_err(),
+            "one local operation at a time, this one included"
+        );
+
+        let done = session
+            .consume(property_response(
+                parsed.header.tid(),
+                prop::LAST_STATUS,
+                &[umsh_ulcp::Status::CHANNEL_NOT_FOUND.0 as u8],
+            ))
+            .unwrap();
+        let event = done.management_event.expect("the announcement answered");
+        assert!(event.answers.is_empty());
+        assert_eq!(
+            event.status_code,
+            Some(umsh_ulcp::Status::CHANNEL_NOT_FOUND.0)
+        );
+
+        // A request the device would refuse never leaves, and leaves
+        // nothing in flight behind it.
+        let bad = MobileAnnouncementRecord {
+            kind: MobileAnnouncementKind::Advertisement,
+            flood_hops: 16,
+            full_source: None,
+            channel_identifier: None,
+        };
+        assert_eq!(
+            session.announce(bad).unwrap_err(),
+            MobileError::InvalidUlcpFrame
+        );
+        assert!(
+            session.begin_save().is_ok(),
+            "the refused request left nothing in flight"
+        );
     }
 
     #[test]

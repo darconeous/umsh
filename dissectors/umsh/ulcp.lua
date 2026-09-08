@@ -20,6 +20,7 @@ local COMMANDS = {
   [14] = "CMD_RESTORE",
   [15] = "CMD_FACTORY_RESET",
   [16] = "CMD_REBOOT",
+  [19] = "CMD_ANNOUNCE",
   [21] = "CMD_PROP_MULTI_GET",
   [22] = "CMD_PROP_MULTI_SET",
   [23] = "CMD_PROP_ARE",
@@ -34,7 +35,7 @@ M.COMMANDS = COMMANDS
 M.COMMAND_TO_DEVICE = {
   [0] = true, [1] = true, [2] = true, [3] = true, [4] = true, [5] = true,
   [9] = true, [11] = true, [12] = true, [13] = true, [14] = true,
-  [15] = true, [16] = true,
+  [15] = true, [16] = true, [19] = true,
   [21] = true, [22] = true,
 }
 M.COMMAND_TO_HOST = {
@@ -57,6 +58,17 @@ local KEYED_COMMANDS = {
 
 -- Commands whose payload is a list of length-prefixed key-and-value entries.
 local ENTRY_LIST_COMMANDS = {[22] = true, [23] = true}
+
+-- CMD_ANNOUNCE options. Same entry grammar as a multi-set, but the keys
+-- are the command's own rather than property identifiers.
+local ANNOUNCE_OPTIONS = {
+  [1] = "ANNOUNCE_KIND",
+  [2] = "ANNOUNCE_FLOOD_HOPS",
+  [3] = "ANNOUNCE_FULL_SOURCE",
+  [4] = "ANNOUNCE_CHANNEL",
+}
+
+local ANNOUNCE_KINDS = {[0] = "advertisement", [1] = "beacon"}
 
 local PROPERTIES = {
   [0] = "PROP_LAST_STATUS",
@@ -182,6 +194,8 @@ f.property = ProtoField.uint32("umsh.ulcp.property", "Property", base.DEC, PROPE
 f.property_value = ProtoField.bytes("umsh.ulcp.property_value", "Property Value")
 f.entry = ProtoField.bytes("umsh.ulcp.entry", "Entry")
 f.entry_length = ProtoField.uint32("umsh.ulcp.entry_length", "Entry Length", base.DEC)
+f.announce_option = ProtoField.uint32(
+  "umsh.ulcp.announce_option", "Announce Option", base.DEC, ANNOUNCE_OPTIONS)
 f.stream = ProtoField.uint32("umsh.ulcp.stream", "Stream", base.DEC, STREAMS)
 f.data_length = ProtoField.uint16("umsh.ulcp.data_length", "Data Length", base.DEC)
 f.stream_data = ProtoField.bytes("umsh.ulcp.stream_data", "Stream Data")
@@ -325,6 +339,71 @@ local function dissect_frame(buf, pinfo, tree, direction)
       info = info .. " " .. table.concat(names, ", ")
     elseif count == 0 and not stopped then
       add_malformed(root, string.format("%s carries no entries", command_name))
+    end
+  elseif command == 19 then
+    -- CMD_ANNOUNCE: the multi-set entry grammar carrying the command's
+    -- own options. An empty list is a valid request with every default,
+    -- so it is never flagged.
+    local pos, count, summary, stopped = 2, 0, {}, false
+    while pos < buf:len() do
+      local entry_len, consumed = decode_pui(buf, pos)
+      if not entry_len then
+        add_malformed(root, "truncated or malformed option length")
+        stopped = true
+        break
+      end
+      local body = pos + consumed
+      if body + entry_len > buf:len() then
+        add_malformed(root:add(f.entry_length, buf(pos, consumed), entry_len),
+                      "option length exceeds frame")
+        stopped = true
+        break
+      end
+
+      count = count + 1
+      local entry = root:add(f.entry, buf(pos, consumed + entry_len))
+      entry:add(f.entry_length, buf(pos, consumed), entry_len)
+
+      local key, key_consumed = decode_pui(buf, body)
+      if not key or key_consumed > entry_len then
+        entry:set_text(string.format("Option %d (%d bytes)", count, entry_len))
+        add_malformed(entry, "truncated or malformed option key")
+      else
+        local name = ANNOUNCE_OPTIONS[key] or string.format("ANNOUNCE_%d", key)
+        entry:add(f.announce_option, buf(body, key_consumed), key)
+        local value_len = entry_len - key_consumed
+        local value_offset = body + key_consumed
+        local rendered
+        if value_len > 0 then
+          entry:add(f.property_value, buf(value_offset, value_len))
+          if value_len == 1 then
+            local byte = buf(value_offset, 1):uint()
+            if key == 1 then
+              rendered = ANNOUNCE_KINDS[byte] or string.format("kind %d", byte)
+            elseif key == 3 then
+              rendered = byte ~= 0 and "full source" or "source hint"
+            else
+              rendered = string.format("%d", byte)
+            end
+          else
+            -- Wider values (a channel identifier) are shown by the
+            -- Property Value line beneath; naming the width here keeps
+            -- the label the same shape as a multi-set entry's.
+            rendered = string.format("%d octets", value_len)
+          end
+        end
+        entry:set_text(rendered and string.format("Option %d: %s = %s", count, name, rendered)
+                       or string.format("Option %d: %s", count, name))
+        summary[#summary + 1] = rendered and (name .. "=" .. rendered) or name
+      end
+      pos = body + entry_len
+    end
+    if #summary > 0 then
+      info = info .. " " .. table.concat(summary, ", ")
+    elseif count == 0 and not stopped then
+      -- Every option at its default: an advertisement to the device's
+      -- own neighbors.
+      info = info .. " (defaults)"
     end
   elseif command == 9 or command == 10 then
     local stream, consumed = decode_pui(buf, 2)

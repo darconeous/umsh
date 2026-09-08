@@ -158,9 +158,10 @@ This chapter defines the commands that operate on the protocol itself—
 resets, liveness, and the property grammar. The remaining commands are
 defined with the subsystem they act on: `CMD_STR_SEND` and `CMD_STR_RECV`
 in [Frame Transport](ulcp-transport.md), `CMD_QUEUE_DRAIN` in
-[Tethered Host Services](ulcp-host.md), and the four state-management
-commands in [Saved State](ulcp-saved-state.md). The complete numeric
-allocation is in the [Command and Property Index](ulcp-index.md).
+[Tethered Host Services](ulcp-host.md), `CMD_ANNOUNCE` in
+[Device Identity](ulcp-device.md), and the four state-management commands
+in [Saved State](ulcp-saved-state.md). The complete numeric allocation is
+in the [Command and Property Index](ulcp-index.md).
 
 Id | Mnemonic             | Dir          | Description
 ---|----------------------|--------------|-------------
@@ -174,14 +175,15 @@ Id | Mnemonic             | Dir          | Description
 7  | `CMD_PROP_INSERTED`  | Device->Host | Item-inserted notification
 8  | `CMD_PROP_REMOVED`   | Device->Host | Item-removed notification
 16 | `CMD_REBOOT`         | Host->Device | Restart the device's hardware
+19 | `CMD_ANNOUNCE`       | Host->Device | Announce the device now
 21 | `CMD_PROP_MULTI_GET` | Host->Device | Get several property values
 22 | `CMD_PROP_MULTI_SET` | Host->Device | Set several property values in order
 23 | `CMD_PROP_ARE`       | Device->Host | Multiple property value notification
 24 | `CMD_SESSION_RESET`  | Device->Host | Session state was discarded
 
-The multi-property commands (21–23) are gated by `CAP_CMD_MULTI` and
-`CMD_REBOOT` by `CAP_REBOOT` (see [Capabilities](#capabilities));
-everything else is unconditional.
+The multi-property commands (21–23) are gated by `CAP_CMD_MULTI`,
+`CMD_REBOOT` by `CAP_REBOOT`, and `CMD_ANNOUNCE` by `CAP_ADVERT` (see
+[Capabilities](#capabilities)); everything else is unconditional.
 
 ### CMD 0: (Host -> Device) `CMD_NOP` {#cmd-noop}
 
@@ -612,10 +614,12 @@ The host writes items (`CMD_PROP_SET`, `CMD_PROP_INSERT`) in the
 property's **item form**. When the device reports items (`CMD_PROP_IS`,
 `CMD_PROP_INSERTED`, `CMD_PROP_REMOVED`), it reports them exactly as
 written—except where the item form contains symmetric key material. Such
-a property documents what is reported instead: the entry with its key
-material omitted, or a short derived **digest form** (a channel key is
-reported as its derived channel identifier), so that secrets can never be
-read back (see [Provisioning Security](ulcp-core.md#provisioning-security)).
+a property documents its **reported form** instead: the entry with its
+key material omitted, or a value derived from it (a channel key is
+reported as its derived [channel
+identifier](packet-types.md#channel-identifier-derivation)), so that
+secrets can never be read back (see [Provisioning
+Security](ulcp-core.md#provisioning-security)).
 
 The commands valid on a mutable multi-value property are:
 
@@ -1011,7 +1015,7 @@ but never the host's private key. The rules:
   write-only.** `CMD_PROP_GET` and all device-emitted notifications report
   key-bearing properties without their secrets
   (see [Multi-Value Properties](ulcp-core.md#multi-value-properties)): peer public keys without `K_ENC`/`K_MIC`,
-  derived channel identifiers (the digest form) instead of channel keys,
+  derived channel identifiers instead of channel keys,
   and never the device private key. This holds for **both** identities'
   key tables. These read-backs let the host verify *what* is provisioned
   after a reconnect without any secret ever crossing the link a second
@@ -1062,6 +1066,7 @@ Id | Name
 20 | `STATUS_ITEM_NOT_FOUND`
 21 | `STATUS_CURSOR_INVALID`
 22 | `STATUS_NOT_PERMITTED`
+23 | `STATUS_CHANNEL_NOT_FOUND`
 32 | `STATUS_DUTY_LIMIT`
 
 `STATUS_OK`
@@ -1135,6 +1140,15 @@ Id | Name
   reserved to the tethered host. Distinct from `STATUS_PROP_NOT_FOUND`
   and `STATUS_INVALID_COMMAND`: the operation would be accepted from a
   binding with the standing to ask.
+
+`STATUS_CHANNEL_NOT_FOUND`
+: The request names a channel by its [channel
+  identifier](packet-types.md#channel-identifier-derivation) and the
+  device holds no channel key that derives it. Distinct from
+  `STATUS_ITEM_NOT_FOUND`, which concerns an item of the property being
+  written, and from `STATUS_INVALID_ARGUMENT`: the value is well formed,
+  and the channel has only to be provisioned first
+  (`PROP_DEV_CHANNEL_KEYS`).
 
 `STATUS_CCA_FAILURE`
 : The packet was not sent due to a CCA failure. This status code is only
@@ -1263,7 +1277,8 @@ Code | Name                      | Requires                             | Define
 
 A device **MUST NOT** advertise a capability without also advertising the
 capabilities it requires. Apart from the multi-property commands, which
-`CAP_CMD_MULTI` gates, and `CMD_REBOOT`, which `CAP_REBOOT` gates, the
+`CAP_CMD_MULTI` gates, `CMD_REBOOT`, which `CAP_REBOOT` gates, and
+`CMD_ANNOUNCE`, which `CAP_ADVERT` gates, the
 commands and status codes defined in this chapter are unconditional and
 need no capability; a device that defines no
 mutable multi-value properties simply has nothing to apply

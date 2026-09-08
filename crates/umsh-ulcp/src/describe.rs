@@ -490,6 +490,21 @@ impl fmt::Display for FrameDescription<'_> {
                     "{command:?} tid={tid} ({count} entries, {value_bytes} value bytes)"
                 )
             }
+            Cmd::Announce => match crate::announce::Announcement::parse(frame.payload) {
+                Ok(request) => write!(
+                    out,
+                    "{command:?} tid={tid} {:?} hops={} full_source={} {}",
+                    request.kind,
+                    request.flood_hops,
+                    request.full_source,
+                    if request.channel.is_some() {
+                        "multicast"
+                    } else {
+                        "broadcast"
+                    }
+                ),
+                Err(_) => write!(out, "{command:?} tid={tid} (malformed payload)"),
+            },
             Cmd::SessionReset => match crate::frame::parse_session_reset(frame.payload) {
                 Ok(reason) => write!(out, "{command:?} tid={tid} {reason:?}"),
                 Err(_) => write!(out, "{command:?} tid={tid} (malformed payload)"),

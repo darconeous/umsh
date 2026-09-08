@@ -113,6 +113,11 @@ pub enum Cmd {
     // zero, and the pairing window is `PROP_BLE_PAIRING`. A property can
     // be read back and can publish itself moving, which a command that
     // only acts can never do.
+    /// Announce the device now (host to device): send an advertisement or
+    /// a beacon, as a broadcast or on one of the device's own channels.
+    /// The payload is an option list; see [`crate::announce`]. Requires
+    /// `CAP_ADVERT`.
+    Announce = 19,
     /// Get several property values (host to device). Requires
     /// `CAP_CMD_MULTI`.
     PropMultiGet = 21,
@@ -150,6 +155,7 @@ impl Cmd {
             14 => Some(Self::Restore),
             15 => Some(Self::FactoryReset),
             16 => Some(Self::Reboot),
+            19 => Some(Self::Announce),
             21 => Some(Self::PropMultiGet),
             22 => Some(Self::PropMultiSet),
             23 => Some(Self::PropAre),
@@ -613,6 +619,18 @@ pub fn reboot(buf: &mut [u8], tid: u8) -> Result<usize, WriteError> {
     Ok(FrameWriter::new(buf, tid, Cmd::Reboot)?.finish())
 }
 
+/// Encode a `CMD_ANNOUNCE` frame: the options that differ from their
+/// defaults, in the multi-property entry form.
+pub fn announce(
+    buf: &mut [u8],
+    tid: u8,
+    request: &crate::announce::Announcement,
+) -> Result<usize, WriteError> {
+    let mut writer = FrameWriter::new(buf, tid, Cmd::Announce)?;
+    request.write(&mut writer)?;
+    Ok(writer.finish())
+}
+
 /// Encode a `CMD_RESTORE` frame (no payload).
 pub fn restore(buf: &mut [u8], tid: u8) -> Result<usize, WriteError> {
     Ok(FrameWriter::new(buf, tid, Cmd::Restore)?.finish())
@@ -890,11 +908,11 @@ mod tests {
 
     #[test]
     fn every_assigned_command_round_trips() {
-        for id in (0..=16u8).chain(21..=24) {
+        for id in (0..=16u8).chain([19]).chain(21..=24) {
             let cmd = Cmd::from_u8(id).unwrap_or_else(|| panic!("command {id} unassigned"));
             assert_eq!(cmd as u8, id);
         }
-        for id in (17..=20u8).chain(25..=127) {
+        for id in (17..=18u8).chain([20]).chain(25..=127) {
             assert_eq!(Cmd::from_u8(id), None, "command {id} should be unassigned");
         }
     }

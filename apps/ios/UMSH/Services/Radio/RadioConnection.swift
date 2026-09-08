@@ -56,6 +56,11 @@ protocol RadioConnection: AnyObject, Sendable {
     /// down and the app's binding to it is deliberately kept, because what
     /// comes back is the same radio.
     func reboot() async throws
+    /// Ask the radio to announce itself now (`CMD_ANNOUNCE`)—an
+    /// advertisement or a beacon, outside either schedule. The radio
+    /// answers once it has the announcement queued; channel access and
+    /// its duty limit decide when it actually goes out.
+    func announce(_ request: MobileAnnouncementRecord) async throws
     /// Forget every host paired with the radio, along with its pairing PIN
     ///—`PROP_BLE_BOND_COUNT` written to zero. The radio answers before
     /// it acts on the link, then drops this phone with the rest and opens
@@ -256,6 +261,12 @@ protocol RadioConnection: AnyObject, Sendable {
     func resetRemoteDevice(
         peerAddress: String,
         scope: MobileMeshResetScope
+    ) async throws
+    /// Ask a device across the mesh to announce itself now. Answered, so
+    /// returning means the device said the announcement was queued.
+    func announceRemoteDevice(
+        peerAddress: String,
+        request: MobileAnnouncementRecord
     ) async throws
     /// Clear a device's Bluetooth bonds across the mesh—the same write
     /// of `PROP_BLE_BOND_COUNT`. Unlike the resets above this is answered,

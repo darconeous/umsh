@@ -61,12 +61,15 @@ use umsh_hal::{CounterStore, EmbassyClock, NoKeyValueStore};
 use umsh_mac::{MacCounters, MacHandle, OperatingPolicy, RepeaterConfig, SendOptions};
 use umsh_node::location::NodeLocation;
 use umsh_node::{
-    Host, LocalNode, NodeCapabilities, NodeIdentityProfile, NodeRole, default_respond_policy,
-    never_respond_policy,
+    Channel as NodeChannel, Host, LocalNode, NodeCapabilities, NodeIdentityProfile, NodeRole,
+    default_respond_policy, never_respond_policy,
 };
 use umsh_sync::AsyncRefCell;
+use umsh_ulcp::announce::AnnouncementKind;
 use umsh_ulcp::stats::{Counter, Mirror, StatsLedger};
-use umsh_ulcp_device::{MAX_CHANNEL_KEYS, MAX_DEV_ADMINS, MAX_DEV_PEERS, MAX_DEVICE_NAME_LEN};
+use umsh_ulcp_device::{
+    AnnounceRequest, MAX_CHANNEL_KEYS, MAX_DEV_ADMINS, MAX_DEV_PEERS, MAX_DEVICE_NAME_LEN,
+};
 
 use crate::driver::DevDomainSnapshot;
 use crate::duty_gate::DutyGatedRadio;
@@ -643,6 +646,10 @@ pub enum BeaconTrigger {
     /// Emit a beacon—a broadcast with no payload at all—which
     /// announces a path back to the device rather than who it is.
     Beacon,
+    /// `CMD_ANNOUNCE`: announce exactly what the host asked for. The
+    /// kind, flood budget, source form, and channel all come from the
+    /// request rather than from a policy of this layer's.
+    Host(AnnounceRequest),
 }
 
 /// Beacon requests into the node. On a boot that skipped node bring-up
@@ -651,11 +658,15 @@ pub enum BeaconTrigger {
 /// caller.
 pub static BEACON_TRIGGER: Channel<NodeMutex, BeaconTrigger, 2> = Channel::new();
 
-/// Fire-and-forget beacon request. A full queue means a beacon (or
-/// advertisement) is already pending, so dropping the extra request loses
-/// nothing—bursts of Advertisement Requests coalesce here.
-pub fn request_beacon(trigger: BeaconTrigger) {
-    let _ = BEACON_TRIGGER.try_send(trigger);
+/// Fire-and-forget beacon request, reporting whether the queue took it.
+///
+/// A full queue means a beacon (or advertisement) is already pending, so
+/// dropping the extra request loses nothing—bursts of Advertisement
+/// Requests coalesce here. A host that asked for one by name is told
+/// (`STATUS_BUSY`); the button slots ignore the answer, having nowhere to
+/// report it.
+pub fn request_beacon(trigger: BeaconTrigger) -> bool {
+    BEACON_TRIGGER.try_send(trigger).is_ok()
 }
 
 /// Flood-hop budget on an unsolicited beacon.
@@ -803,51 +814,159 @@ pub async fn beacon_loop<CS: CounterStore + 'static>(
                 // node learns nothing from a bare packet, and until the
                 // node is reachable by discovery the button is the only
                 // way to introduce it. Costs airtime a beacon does not.
-                if send_advertisement(&node, &identity, None, AdvertReach::Mesh).await {
+                if send_advertisement(&node, &identity, None, AnnounceShape::INTRODUCTION).await {
                     (hooks.beacon_confirm)();
                 }
             }
             BeaconTrigger::Advertise { nonce } => {
-                let accepted = send_advertisement(&node, &identity, nonce, AdvertReach::Mesh).await;
+                let accepted =
+                    send_advertisement(&node, &identity, nonce, AnnounceShape::INTRODUCTION).await;
                 debug_log(format_args!(
                     "node advert: nonce={nonce:?} accepted={accepted}"
                 ));
             }
             BeaconTrigger::AutoAdvertise => {
                 let accepted =
-                    send_advertisement(&node, &identity, None, AdvertReach::Neighbours).await;
+                    send_advertisement(&node, &identity, None, AnnounceShape::SCHEDULED_ADVERT)
+                        .await;
                 debug_log(format_args!("node advert: scheduled accepted={accepted}"));
             }
             BeaconTrigger::Beacon => {
-                let accepted = send_beacon(&node).await;
+                let accepted = send_beacon(&node, AnnounceShape::SCHEDULED_BEACON).await;
                 debug_log(format_args!("node beacon: accepted={accepted}"));
+            }
+            BeaconTrigger::Host(request) => {
+                let shape = AnnounceShape::from(request);
+                let accepted = match request.kind {
+                    AnnouncementKind::Advertisement => {
+                        send_advertisement(&node, &identity, None, shape).await
+                    }
+                    AnnouncementKind::Beacon => send_beacon(&node, shape).await,
+                };
+                debug_log(format_args!(
+                    "node announce: hops={} full_source={} multicast={} accepted={accepted}",
+                    shape.flood_hops,
+                    shape.full_source,
+                    shape.channel_key.is_some()
+                ));
             }
         }
     }
 }
 
-/// How far a scheduled or solicited advertisement is allowed to travel.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum AdvertReach {
-    /// Flood across the mesh under the default budget.
-    Mesh,
-    /// Direct neighbours only—no flood hops, no source route.
-    Neighbours,
+/// What one announcement looks like on the air.
+///
+/// The schedule, the button, and a host's `CMD_ANNOUNCE` all reduce to
+/// this, so there is one place that turns "how far, and as whom" into
+/// [`SendOptions`].
+#[derive(Clone, Copy)]
+struct AnnounceShape {
+    /// Flood budget. Zero reaches direct neighbours only.
+    flood_hops: u8,
+    /// Whether `SRC` carries the full public key rather than the hint.
+    full_source: bool,
+    /// Whether Trace Route and Trace Signal ride along. They are read as
+    /// one list, so they travel together or not at all.
+    trace: bool,
+    /// The channel to send on, or `None` for a broadcast.
+    channel_key: Option<ChannelKey>,
 }
 
-/// Broadcast an empty beacon: no payload, so nothing identifies the sender
+impl AnnounceShape {
+    /// The button's introduction: across the mesh, carrying the full key
+    /// and a trace to come back along.
+    const INTRODUCTION: Self = Self {
+        flood_hops: BEACON_FLOOD_HOPS,
+        full_source: true,
+        trace: true,
+        channel_key: None,
+    };
+    /// A scheduled advertisement. No flood budget and no trace: it is
+    /// already the largest packet this node originates, it is a standing
+    /// statement rather than an introduction, and the path back to it is
+    /// what the beacon interval is for.
+    const SCHEDULED_ADVERT: Self = Self {
+        flood_hops: 0,
+        full_source: true,
+        trace: false,
+        channel_key: None,
+    };
+    /// An unsolicited beacon, which exists to publish a path and so has
+    /// to travel far enough for there to be a path worth publishing.
+    const SCHEDULED_BEACON: Self = Self {
+        flood_hops: BEACON_FLOOD_HOPS,
+        full_source: false,
+        trace: true,
+        channel_key: None,
+    };
+
+    fn options(&self) -> SendOptions {
+        let options = SendOptions::default();
+        let options = if self.flood_hops == 0 {
+            options.no_flood()
+        } else {
+            options.with_flood_hops(self.flood_hops)
+        };
+        let options = if self.full_source {
+            options.with_full_source()
+        } else {
+            options
+        };
+        if self.trace {
+            options.with_trace_route().with_trace_signal()
+        } else {
+            options
+        }
+    }
+}
+
+impl From<AnnounceRequest> for AnnounceShape {
+    fn from(request: AnnounceRequest) -> Self {
+        Self {
+            flood_hops: request.flood_hops,
+            full_source: request.full_source,
+            // A beacon's whole content is the trace it collects. An
+            // advertisement carries one only where there are repeaters to
+            // fill it in—a frame with no flood budget gets none anyway.
+            trace: match request.kind {
+                AnnouncementKind::Beacon => true,
+                AnnouncementKind::Advertisement => request.flood_hops > 0,
+            },
+            channel_key: request.channel_key.map(ChannelKey),
+        }
+    }
+}
+
+/// Send an announcement, as a broadcast or on one of the node's channels.
+///
+/// A channel key the node is not bound to is dropped with a note: the
+/// command answered "queued" when it was validated, and de-provisioning
+/// the channel in between is not something a status can still report.
+async fn transmit_announcement<CS: CounterStore + 'static>(
+    node: &DeviceNode<CS>,
+    payload: &[u8],
+    shape: AnnounceShape,
+) -> bool {
+    use umsh_node::Transport as _;
+    let options = shape.options();
+    let Some(key) = shape.channel_key else {
+        return node.send_all(payload, &options).await.is_ok();
+    };
+    let Some(bound) = node.bound_channel(&NodeChannel::private(key, "")) else {
+        debug_log(format_args!("node announce: channel no longer joined"));
+        return false;
+    };
+    bound.send_all(payload, &options).await.is_ok()
+}
+
+/// Send an empty beacon: no payload, so nothing identifies the sender
 /// beyond its source address, and the whole packet is the trace the
 /// options collect on the way out.
-async fn send_beacon<CS: CounterStore + 'static>(node: &DeviceNode<CS>) -> bool {
-    use umsh_node::Transport as _;
-    // Trace route to learn the path, trace signal to learn what that path
-    // costs—the pair is what makes a beacon worth more than the fact
-    // that the sender is alive.
-    let options = SendOptions::default()
-        .with_flood_hops(BEACON_FLOOD_HOPS)
-        .with_trace_route()
-        .with_trace_signal();
-    node.send_all(&[], &options).await.is_ok()
+async fn send_beacon<CS: CounterStore + 'static>(
+    node: &DeviceNode<CS>,
+    shape: AnnounceShape,
+) -> bool {
+    transmit_announcement(node, &[], shape).await
 }
 
 /// Build, sign, and broadcast a solicited advertisement: the node
@@ -858,10 +977,9 @@ async fn send_advertisement<CS: CounterStore + 'static>(
     node: &DeviceNode<CS>,
     identity: &SoftwareIdentity,
     nonce: Option<u32>,
-    reach: AdvertReach,
+    shape: AnnounceShape,
 ) -> bool {
     use umsh_crypto::NodeIdentity as _;
-    use umsh_node::Transport as _;
     // The node's own profile is the canonical statement of what this node
     // is—kept current by `dev_sync_loop` and `identity_profile_loop`—
     // so build the payload from it rather than assembling a second,
@@ -889,24 +1007,14 @@ async fn send_advertisement<CS: CounterStore + 'static>(
     };
     buf[len..len + SIGNATURE_LEN].copy_from_slice(&signature);
     len += SIGNATURE_LEN;
-    // Full source, not a hint: the bundle's detached signature is only
-    // checkable against the sender's public key, and a broadcast carries no
-    // MIC to authenticate it otherwise. A hint-only advertisement is
+    // Every shape this node originates carries the full source rather
+    // than a hint: the bundle's detached signature is only checkable
+    // against the sender's public key, and a broadcast carries no MIC to
+    // authenticate it otherwise. A hint-only advertisement is
     // unverifiable by anyone who does not already hold the key, which is
-    // exactly the audience an advertisement is for.
-    let options = SendOptions::default().with_full_source();
-    let options = match reach {
-        // Trace route for the same reason a beacon carries one, and trace
-        // signal for the same reason again: the two are read as one list,
-        // and a route with no signal beside it cannot be ranked against
-        // the next one to arrive.
-        AdvertReach::Mesh => options.with_trace_route().with_trace_signal(),
-        // No flood budget and no trace: a scheduled advertisement is
-        // already the largest packet this node originates, and the path
-        // back to it is what the beacon interval is for.
-        AdvertReach::Neighbours => options.no_flood(),
-    };
-    node.send_all(&buf[..len], &options).await.is_ok()
+    // exactly the audience an advertisement is for—so a host that asks
+    // for one gets what it asked for and nothing here second-guesses it.
+    transmit_announcement(node, &buf[..len], shape).await
 }
 
 /// Emits the device's unsolicited announcements: one beacon at bring-up

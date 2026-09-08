@@ -25,6 +25,7 @@ impl Status {
     pub const ITEM_NOT_FOUND: Self = Self(20);
     pub const CURSOR_INVALID: Self = Self(21);
     pub const NOT_PERMITTED: Self = Self(22);
+    pub const CHANNEL_NOT_FOUND: Self = Self(23);
     pub const DUTY_LIMIT: Self = Self(32);
 
     pub const RESET_POWER_ON: Self = Self(112);
@@ -61,6 +62,7 @@ impl Status {
             Self::ITEM_NOT_FOUND => "ITEM_NOT_FOUND",
             Self::CURSOR_INVALID => "CURSOR_INVALID",
             Self::NOT_PERMITTED => "NOT_PERMITTED",
+            Self::CHANNEL_NOT_FOUND => "CHANNEL_NOT_FOUND",
             Self::DUTY_LIMIT => "DUTY_LIMIT",
             Self::RESET_POWER_ON => "RESET_POWER_ON",
             Self::RESET_EXTERNAL => "RESET_EXTERNAL",

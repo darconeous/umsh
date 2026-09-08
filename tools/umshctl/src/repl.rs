@@ -499,6 +499,19 @@ mod tests {
     }
 
     #[test]
+    fn completion_offers_an_announcements_options() {
+        let helper = ReplHelper;
+        let ctx_history = rustyline::history::DefaultHistory::new();
+        let ctx = Context::new(&ctx_history);
+
+        let (_, pairs) = helper.complete("advert send --", 14, &ctx).unwrap();
+        let names: Vec<&str> = pairs.iter().map(|pair| pair.display.as_str()).collect();
+        assert!(names.contains(&"--beacon"), "{names:?}");
+        assert!(names.contains(&"--hops"), "{names:?}");
+        assert!(names.contains(&"--channel"), "{names:?}");
+    }
+
+    #[test]
     fn completion_offers_a_flags_possible_values() {
         let helper = ReplHelper;
         let ctx_history = rustyline::history::DefaultHistory::new();

@@ -1029,6 +1029,30 @@ local empty_get = dissect_payload("08 0001 FF 8015")
 check("empty key list is flagged",
       has(empty_get, "EXPERT: CMD_PROP_MULTI_GET carries no property keys"), true)
 
+-- CMD_ANNOUNCE over the same binding: the multi-set entry grammar
+-- carrying the command's own options. An administrator can ask a node to
+-- introduce itself.
+local announce = dissect_payload(
+  "08 1234 FF 8013 020101 020205 1104 AABBCCDDEEFF00112233445566778899")
+check("announce decodes", has(announce, "Command: CMD_ANNOUNCE (19)"), true)
+check("kind option",  has(announce, "Option 1: ANNOUNCE_KIND = beacon"), true)
+check("hops option",  has(announce, "Option 2: ANNOUNCE_FLOOD_HOPS = 5"), true)
+check("channel option",
+      has(announce, "Option 3: ANNOUNCE_CHANNEL = 16 octets"), true)
+check("the channel identifier itself is carried",
+      has(announce, "Property Value: AABBCCDDEEFF00112233445566778899"), true)
+check("a well-formed announce has no violations", #announce.violations, 0)
+
+-- No options at all is the command's default, not an empty list to
+-- complain about.
+local bare = dissect_payload("08 1234 FF 8013")
+check("a bare announce decodes", has(bare, "Command: CMD_ANNOUNCE (19)"), true)
+check("a bare announce has no violations", #bare.violations, 0)
+
+-- Device→Host is the wrong way for it.
+local wrong_way = dissect_payload("09 1234 FF 8013")
+check("CMD_ANNOUNCE in a response is flagged", #wrong_way.violations, 1)
+
 -- Both directions ride unicast only.
 local mcast = dissect_payload("09 1234 FF 800605", 4)
 check("a response must not be multicast", #mcast.violations, 1)

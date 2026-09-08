@@ -217,16 +217,19 @@ A configured host key acts as an implicit destination-hint receive filter
 * Asynchronous Updates: No
 * Required: `CAP_HOST_KEYS`
 * Item Form: 32 octets (the channel key)
-* Digest Form: 2 octets (the derived channel identifier)
+* Reported Form: 16 octets (the derived channel identifier)
 * Remove Selector: the 32-octet channel key
 * Post-Reset Value: Empty
 
 The set of [channel keys](multicast-channels.md#channel-keys) provisioned
-for the **host identity**. For each key the device derives the channel
-identifier and the channel `K_enc`/`K_mic`; the digest form is the derived
-channel identifier, and the key itself is never read back.
+for the **host identity**. For each key the device derives the
+[channel identifier](packet-types.md#channel-identifier-derivation) and
+the channel `K_enc`/`K_mic`. Each entry is reported as its full 16-octet
+channel identifier, which is the width at which two channels can be told
+apart; the key itself is never read back.
 
-Each derived channel identifier acts as an implicit channel receive filter
+The identifier's leading 2 octets are the `channel_id` the `CHANNEL` field
+carries, and they act as an implicit channel receive filter
 (see [Receive Filtering](ulcp-host.md#receive-filtering)). Host channel keys serve two assistance
 purposes:
 
@@ -253,7 +256,7 @@ channels; see [Provisioning Security](ulcp-core.md#provisioning-security).
 * Asynchronous Updates: No
 * Required: `CAP_HOST_KEYS`
 * Item Form: Structure, 96 octets
-* Digest Form: 32 octets (the peer's public key)
+* Reported Form: 32 octets (the peer's public key)
 * Remove Selector: the 32-octet peer public key
 * Post-Reset Value: Empty
 
@@ -280,8 +283,8 @@ entry whose `PEER_PUBLIC_KEY` matches an existing entry replaces that
 entry. Replacement updates only the stored key material: the peer's replay
 baseline (see [Acknowledgement Delegation](ulcp-host.md#ack-delegation)) and any frames already queued from that
 peer are unaffected, since both are keyed by the peer's identity rather
-than by the key values. The digest form is the peer public key alone:
-`K_ENC` and `K_MIC` are never read back.
+than by the key values. An entry is reported as its peer public key
+alone: `K_ENC` and `K_MIC` are never read back.
 
 Provisioned peer keys let the device authenticate inbound unicast and blind
 unicast from those specific peers and acknowledge it on the host's behalf

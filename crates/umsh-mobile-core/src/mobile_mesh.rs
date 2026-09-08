@@ -52,7 +52,7 @@ use crate::mobile_chat::{
     MobileChatPresence, MobileChatRegardingRef, MobileChatRxMetadataRecord,
     MobileChatSenderResolutionRecord, MobileChatState,
 };
-use crate::ulcp::{UlcpPropertyFrameRecord, UlcpSyncRecord};
+use crate::ulcp::{MobileAnnouncementRecord, UlcpPropertyFrameRecord, UlcpSyncRecord};
 use crate::{MobileCounterStore, MobileError, MobileIdentity};
 
 const MAX_FRAME_SIZE: usize = 256;
@@ -1454,6 +1454,30 @@ impl MobileMeshSession {
             ManagementRequest::One {
                 frame,
                 shape: ReplyShape::Acknowledgment,
+            },
+        )
+    }
+
+    /// Ask a device across the mesh to announce itself now
+    /// (`CMD_ANNOUNCE`).
+    ///
+    /// The device answers once the announcement is queued for
+    /// transmission; nothing about it is configuration, so nothing is
+    /// saved afterwards.
+    pub fn begin_management_announce(
+        &self,
+        peer_address: String,
+        request: MobileAnnouncementRecord,
+    ) -> Result<u64, MobileMeshError> {
+        let announcement = request
+            .to_announcement()
+            .map_err(|_| MobileMeshError::InvalidRequest)?;
+        let frame = encode_management(|buf| frame::announce(buf, 0, &announcement))?;
+        self.begin_management(
+            peer_address,
+            ManagementRequest::One {
+                frame,
+                shape: ReplyShape::Status,
             },
         )
     }
