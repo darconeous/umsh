@@ -1,4 +1,4 @@
-//! Which repeaters the radio has heard forwarding, and how well.
+//! Which repeaters this node has heard forwarding, and how well.
 //!
 //! Route learning records the way to a *peer*; this records the last
 //! reception from a neighboring *repeater*. A repeater prepends its router
@@ -11,6 +11,10 @@
 //! air. That is what a
 //! [Peer Repeaters Response](../../docs/protocol/src/mac-commands.md) reports
 //! about the hops it names.
+//!
+//! A neighbor need not be on the air at all: a host attached over a
+//! point-to-point link forwards like any other repeater and is recorded like
+//! one, with no measurement, since no radio was between it and this node.
 
 use umsh_core::RouterHint;
 use umsh_hal::Snr;
@@ -28,10 +32,10 @@ pub struct TransmitterObservation {
     /// All a trace route reveals about the hop that forwarded a frame, and
     /// so all this table can key on.
     pub hint: RouterHint,
-    /// Received signal strength of the most recent reception, in dBm.
-    pub rssi_dbm: i16,
-    /// Signal-to-noise ratio of the most recent reception.
-    pub snr: Snr,
+    /// RSSI in dBm and SNR of the most recent reception, when a radio
+    /// measured it. `None` for a neighbor reached over a link with no radio
+    /// in it.
+    pub rssi_snr: Option<(i16, Snr)>,
     /// When that reception was, on the monotonic clock.
     pub last_seen_ms: u64,
 }
@@ -54,17 +58,15 @@ impl TransmitterObservations {
     /// Only the latest reception is kept: a peer-repeater entry reports the
     /// most recent measurement, and an average across a moving neighbor
     /// would describe a link that no longer exists.
-    pub fn observe(&mut self, hint: RouterHint, rssi_dbm: i16, snr: Snr, now_ms: u64) {
+    pub fn observe(&mut self, hint: RouterHint, rssi_snr: Option<(i16, Snr)>, now_ms: u64) {
         if let Some(entry) = self.entries.iter_mut().find(|entry| entry.hint == hint) {
-            entry.rssi_dbm = rssi_dbm;
-            entry.snr = snr;
+            entry.rssi_snr = rssi_snr;
             entry.last_seen_ms = now_ms;
             return;
         }
         let observation = TransmitterObservation {
             hint,
-            rssi_dbm,
-            snr,
+            rssi_snr,
             last_seen_ms: now_ms,
         };
         if self.entries.push(observation).is_ok() {
@@ -108,33 +110,38 @@ mod tests {
         RouterHint([seed, seed])
     }
 
+    fn measured(rssi_dbm: i16, snr_db: i8) -> Option<(i16, Snr)> {
+        Some((rssi_dbm, Snr::from_decibels(snr_db)))
+    }
+
     #[test]
     fn a_repeat_reception_replaces_what_was_known_rather_than_adding_to_it() {
         let mut table = TransmitterObservations::new();
-        table.observe(hint(1), -100, Snr::from_decibels(-9), 1_000);
-        table.observe(hint(1), -70, Snr::from_decibels(6), 2_000);
+        table.observe(hint(1), measured(-100, -9), 1_000);
+        table.observe(hint(1), measured(-70, 6), 2_000);
         assert_eq!(table.len(), 1);
         let entry = table.get(&hint(1)).unwrap();
-        assert_eq!(entry.rssi_dbm, -70);
-        assert_eq!(entry.snr, Snr::from_decibels(6));
+        assert_eq!(entry.rssi_snr, measured(-70, 6));
         assert_eq!(entry.last_seen_ms, 2_000);
+
+        // A neighbor that moved onto a link with no radio in it is still
+        // the same neighbor, now without a reading.
+        table.observe(hint(1), None, 3_000);
+        let entry = table.get(&hint(1)).unwrap();
+        assert_eq!(entry.rssi_snr, None);
+        assert_eq!(entry.last_seen_ms, 3_000);
     }
 
     #[test]
     fn a_full_table_drops_the_least_recently_heard_transmitter() {
         let mut table = TransmitterObservations::new();
         for seed in 0..MAX_TRANSMITTER_OBSERVATIONS as u8 {
-            table.observe(
-                hint(seed),
-                -90,
-                Snr::from_decibels(0),
-                1_000 + u64::from(seed),
-            );
+            table.observe(hint(seed), measured(-90, 0), 1_000 + u64::from(seed));
         }
         // Refresh the oldest so a plain insertion-order eviction would pick
         // the wrong one.
-        table.observe(hint(0), -80, Snr::from_decibels(1), 9_000);
-        table.observe(hint(200), -95, Snr::from_decibels(-2), 10_000);
+        table.observe(hint(0), measured(-80, 1), 9_000);
+        table.observe(hint(200), measured(-95, -2), 10_000);
 
         assert_eq!(table.len(), MAX_TRANSMITTER_OBSERVATIONS);
         assert!(table.get(&hint(200)).is_some());

@@ -835,6 +835,7 @@ pub struct RxMetadata {
     lqi: Option<NonZeroU8>,
     received_at_ms: Option<u64>,
     buffered_age_s: u32,
+    origin: umsh_hal::RxOrigin,
 }
 
 impl RxMetadata {
@@ -850,6 +851,7 @@ impl RxMetadata {
             lqi,
             received_at_ms,
             buffered_age_s: 0,
+            origin: umsh_hal::RxOrigin::Air,
         }
     }
 
@@ -858,6 +860,18 @@ impl RxMetadata {
     pub fn with_buffered_age_s(mut self, buffered_age_s: u32) -> Self {
         self.buffered_age_s = buffered_age_s;
         self
+    }
+
+    /// The same observations tagged with where the frame came from.
+    pub fn with_origin(mut self, origin: umsh_hal::RxOrigin) -> Self {
+        self.origin = origin;
+        self
+    }
+
+    /// Where the frame came from: off the air, a copy of a transmission
+    /// from the antenna this stack shares, or an attached host's link.
+    pub fn origin(&self) -> umsh_hal::RxOrigin {
+        self.origin
     }
 
     pub fn rssi(&self) -> Option<i16> {

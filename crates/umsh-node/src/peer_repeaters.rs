@@ -226,11 +226,13 @@ pub fn merge<'a>(
         if observation.is_some() {
             claimed.push(router_hint);
         }
+        // The newer reception's figures, falling back to the older one's
+        // when the newer had no radio in it to measure.
         let rssi_snr = match observation {
             Some(entry) if entry.last_seen_ms >= record.last_identity_ms => {
-                Some((entry.rssi_dbm, entry.snr))
+                entry.rssi_snr.or(record.rssi_snr)
             }
-            Some(entry) => record.rssi_snr.or(Some((entry.rssi_dbm, entry.snr))),
+            Some(entry) => record.rssi_snr.or(entry.rssi_snr),
             None => record.rssi_snr,
         };
         let last_heard_ms = observation
@@ -261,8 +263,8 @@ pub fn merge<'a>(
                 name: None,
                 location: None,
                 regions: Vec::new(),
-                rssi_dbm: Some(observation.rssi_dbm),
-                snr: Some(observation.snr),
+                rssi_dbm: observation.rssi_snr.map(|(rssi, _)| rssi),
+                snr: observation.rssi_snr.map(|(_, snr)| snr),
                 last_heard_min: minutes_since(Some(observation.last_seen_ms), now_ms),
             },
         ));
@@ -307,10 +309,27 @@ mod tests {
     fn observation(hint: RouterHint, last_seen_ms: u64) -> umsh_mac::TransmitterObservation {
         umsh_mac::TransmitterObservation {
             hint,
-            rssi_dbm: -95,
-            snr: Snr::from_decibels(2),
+            rssi_snr: Some((-95, Snr::from_decibels(2))),
             last_seen_ms,
         }
+    }
+
+    /// A neighbor heard forwarding over a link no radio measured is listed
+    /// like any other, with the signal fields simply absent.
+    #[test]
+    fn an_unmeasured_neighbor_is_listed_without_a_signal() {
+        let table = PeerRepeaterTable::new();
+        let observations = [umsh_mac::TransmitterObservation {
+            hint: RouterHint([0x11, 0x22]),
+            rssi_snr: None,
+            last_seen_ms: 60_000,
+        }];
+        let merged = merge(&table, observations.iter(), 120_000);
+        assert_eq!(merged.len(), 1);
+        assert_eq!(merged[0].hint, [0x11, 0x22]);
+        assert_eq!(merged[0].rssi_dbm, None);
+        assert_eq!(merged[0].snr, None);
+        assert_eq!(merged[0].last_heard_min, Some(1));
     }
 
     #[test]

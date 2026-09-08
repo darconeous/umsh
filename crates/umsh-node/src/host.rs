@@ -390,17 +390,20 @@ fn dispatch_payload_callbacks<M: MacBackend>(
 ) {
     if packet.payload_type() == PayloadType::NodeIdentity {
         if let Ok(identity) = NodeIdentityPayload::from_bytes(packet.payload()) {
-            // Only an advertisement heard off its owner's own transmitter
-            // places the owner in this node's repeater neighborhood: one
-            // that arrived forwarded says nothing about whether the owner
-            // is in range, one replayed from a device's queue was heard
-            // minutes ago, and one with no measurement never crossed a
-            // radio at all. Recorded before the callback so an observer
+            // Only an advertisement heard from its owner directly places
+            // the owner in this node's repeater neighborhood: one that
+            // arrived forwarded says nothing about whether the owner is a
+            // neighbor, one replayed from a device's queue was heard
+            // minutes ago, and a copy of what this stack's own antenna
+            // just sent came from nobody else. A host attached over a
+            // point-to-point link is a neighbor with no radio between it
+            // and this node, so its advertisement counts and carries no
+            // measurement. Recorded before the callback so an observer
             // that asks for the peer-repeater listing from inside it sees
             // this identity in it.
             let heard_directly = packet.hop_count() == Some(1)
                 && packet.rx().buffered_age_s() == 0
-                && packet.rssi().is_some();
+                && packet.rx().origin() != umsh_hal::RxOrigin::LocalTx;
             if heard_directly {
                 node.observe_peer_identity(
                     from,

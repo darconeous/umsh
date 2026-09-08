@@ -549,7 +549,8 @@ fn rx_metadata(rx: &RxInfo, received_at_ms: u64) -> crate::send::RxMetadata {
         crate::send::RxMetadata::new(Some(rx.rssi), Some(rx.snr), rx.lqi, Some(received_at_ms))
     } else {
         crate::send::RxMetadata::new(None, None, None, Some(received_at_ms))
-    };
+    }
+    .with_origin(rx.origin);
     match rx.buffered {
         Some(buffered) => meta.with_buffered_age_s(buffered.age_s),
         None => meta,
@@ -4720,7 +4721,7 @@ impl<
     }
 
     /// Record which repeater was heard forwarding, and how well, from any
-    /// frame off the air.
+    /// frame a neighbor transmitted.
     ///
     /// Distinct from route learning, which records the way to a *peer*: this
     /// is the transmitter, whoever it was talking to. A frame forwarded past
@@ -4734,9 +4735,11 @@ impl<
     /// been heard: the source address names nobody here. A repeater that
     /// only originates is introduced by its identity advertisement instead.
     fn note_transmitter_observation(&mut self, frame: &[u8], rx: &RxInfo) {
-        // Only a real reception carries measurements; a loopback or a
-        // backhauled frame would record a link that has no radio in it.
-        if !rx.origin.is_measured() {
+        // A copy of what the antenna beside this stack just sent is not a
+        // neighbor's transmission. A frame handed across an attached host's
+        // link is: that host is a neighbor on a point-to-point link, one
+        // with no radio in it to measure.
+        if rx.origin == RxOrigin::LocalTx {
             return;
         }
         // A frame replayed from a device's inbound queue was heard minutes
@@ -4757,8 +4760,9 @@ impl<
             return;
         };
         let now_ms = self.clock.now_ms();
+        let rssi_snr = rx.origin.is_measured().then_some((rx.rssi, rx.snr));
         self.transmitter_observations
-            .observe(hint, rx.rssi, rx.snr, now_ms);
+            .observe(hint, rssi_snr, now_ms);
     }
 
     fn learn_route_for_peer(

@@ -2820,6 +2820,68 @@ fn receive_one_observes_the_repeater_named_first_in_the_trace_route() {
     assert_eq!(observed, [RouterHint([0x01, 0x02])]);
 }
 
+/// A host attached over a point-to-point link is a neighbor like any other,
+/// one no radio measured; a copy of what this stack's own antenna just sent
+/// is not a neighbor at all.
+#[test]
+fn receive_one_observes_a_backhaul_neighbor_unmeasured_and_never_its_own_antenna() {
+    let mut mac = make_mac();
+    let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
+    let remote = DummyIdentity::new([0xAB; 32]);
+    let peer_id = mac.add_peer(*remote.public_key()).unwrap();
+    let keys = PairwiseKeys {
+        k_enc: [1; 32],
+        k_mic: [2; 32],
+    };
+    mac.install_pairwise_keys(local_id, peer_id, keys.clone())
+        .unwrap();
+    let dst_hint = mac
+        .identity(local_id)
+        .unwrap()
+        .identity()
+        .public_key()
+        .hint();
+
+    mac.radio_mut().rx_origin = RxOrigin::Backhaul;
+    mac.radio_mut().queue_received_unicast_with_route(
+        &remote,
+        &keys,
+        &dst_hint,
+        b"hello",
+        false,
+        7,
+        None,
+        Some(&[RouterHint([0x01, 0x02])]),
+        None,
+    );
+    assert!(block_on(mac.receive_one(|_, _| {})).unwrap());
+    let entry = *mac
+        .transmitter_observations()
+        .get(&RouterHint([0x01, 0x02]))
+        .expect("the backhaul neighbor is recorded");
+    assert_eq!(entry.rssi_snr, None, "nothing measured the link");
+
+    mac.radio_mut().rx_origin = RxOrigin::LocalTx;
+    mac.radio_mut().queue_received_unicast_with_route(
+        &remote,
+        &keys,
+        &dst_hint,
+        b"again",
+        false,
+        8,
+        None,
+        Some(&[RouterHint([0x03, 0x04])]),
+        None,
+    );
+    let _ = block_on(mac.receive_one(|_, _| {}));
+    assert!(
+        mac.transmitter_observations()
+            .get(&RouterHint([0x03, 0x04]))
+            .is_none(),
+        "a copy of this antenna's own transmission names no neighbor"
+    );
+}
+
 /// A frame that arrives with no trace hint came off its originator, and an
 /// originator is not a repeater merely for having been heard.
 #[test]

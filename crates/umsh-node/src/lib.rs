@@ -923,8 +923,7 @@ mod tests {
             let last_seen_ms = state.now_ms;
             state.observations.push(umsh_mac::TransmitterObservation {
                 hint,
-                rssi_dbm,
-                snr,
+                rssi_snr: Some((rssi_dbm, snr)),
                 last_seen_ms,
             });
         }
