@@ -929,12 +929,17 @@ struct PeerDetailView: View {
         case .source:
             route.hints.isEmpty
                 ? "Direct (empty source route)"
-                : "Source route · \(route.hints.count) router\(route.hints.count == 1 ? "" : "s")"
+                : "Source route · \(Self.hopsText(route.hopCount ?? UInt8(route.hints.count + 1)))"
         case .flood:
-            // The distance in hops, not the raw flood-hop accumulator, so it
-            // agrees with the hop count a ping reply shows for the same path.
-            route.hopCount.map { "Flood · \($0) hop\($0 == 1 ? "" : "s")" } ?? "Flood"
+            route.hopCount.map { "Flood · \(Self.hopsText($0))" } ?? "Flood"
         }
+    }
+
+    /// A route's distance in hops, the same number a ping reply's hop count
+    /// shows for the path: one transmission per leg, so one more than the
+    /// repeaters a source route names or the flood hops a flood route spent.
+    private static func hopsText(_ hops: UInt8) -> String {
+        "\(hops) hop\(hops == 1 ? "" : "s")"
     }
 
     private func loadRoute() async {
