@@ -155,15 +155,14 @@ struct PeerRepeatersScreen: View {
         )
     }
 
-    /// The signal and age on one line, the regions and position on the next.
-    /// Lines with nothing to say are left out rather than shown as dashes.
-    private func subtitle(_ neighbor: PeerRepeaterNeighbor) -> String? {
+    /// The signal and age on one line, the regions and position on a second
+    /// only when there are any: nothing is shown as a dash.
+    private func subtitle(_ neighbor: PeerRepeaterNeighbor) -> String {
         var lines: [String] = []
 
-        var heard: [String] = []
-        if let signal = Self.signalText(neighbor) { heard.append(signal) }
+        var heard: [String] = [Self.signalText(neighbor)]
         if let age = Self.heardText(neighbor) { heard.append(age) }
-        if !heard.isEmpty { lines.append(heard.joined(separator: " · ")) }
+        lines.append(heard.joined(separator: " · "))
 
         var detail: [String] = []
         if !neighbor.regionCodes.isEmpty {
@@ -191,7 +190,7 @@ struct PeerRepeatersScreen: View {
         }
         if !detail.isEmpty { lines.append(detail.joined(separator: " · ")) }
 
-        return lines.isEmpty ? nil : lines.joined(separator: "\n")
+        return lines.joined(separator: "\n")
     }
 
     /// How far the neighbor is from the repeater being asked, which is the
@@ -222,13 +221,17 @@ struct PeerRepeatersScreen: View {
 
     /// `−72 dBm, 6.5 dB`. Quarter-decibel steps on the wire, unlike the
     /// centibels a ping reply carries, so this is its own conversion.
-    private static func signalText(_ neighbor: PeerRepeaterNeighbor) -> String? {
+    ///
+    /// A neighbor with no signal at all was never heard over the air: the
+    /// repeater knows it through a backhaul, and the row says so rather than
+    /// leaving a gap where the figures would be.
+    private static func signalText(_ neighbor: PeerRepeaterNeighbor) -> String {
         var parts: [String] = []
         if let rssi = neighbor.rssiDBm { parts.append("\(rssi) dBm") }
         if let snr = neighbor.snrQuarterDB {
             parts.append(String(format: "%.1f dB", Double(snr) / 4))
         }
-        return parts.isEmpty ? nil : parts.joined(separator: ", ")
+        return parts.isEmpty ? "Bridged" : parts.joined(separator: ", ")
     }
 
     /// When the router last heard the node, as an age on this phone's clock.

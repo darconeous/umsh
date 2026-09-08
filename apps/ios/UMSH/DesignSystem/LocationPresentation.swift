@@ -93,7 +93,7 @@ enum LocationPresentation {
     /// Each node is somewhere in its cell, so the distance between the two
     /// centers is off by up to half a cell at either end. When the centers
     /// are closer than that slack, the real figure is unknown beyond an upper
-    /// bound, and the text says so: "< 1.2 km" rather than a number the grid
+    /// bound, and the text says so: "<1.2 km" rather than a number the grid
     /// cannot support. Farther apart, the center distance stands.
     static func separationText(
         centerMeters: Double,
@@ -102,21 +102,30 @@ enum LocationPresentation {
     ) -> String {
         let slack = (cellMeters ?? 0) / 2 + (otherCellMeters ?? 0) / 2
         if centerMeters < slack {
-            return "< \(distanceText(meters: centerMeters + slack))"
+            return "<\(distanceText(meters: centerMeters + slack))"
         }
         return distanceText(meters: centerMeters)
     }
 
-    /// A distance as a person would say it on the road: "3.6 km", "850 m".
-    /// One style for every place the app states how far apart two nodes are.
+    /// A distance between nodes: "0.3 mi", "3.6 km", "60 mi".
+    ///
+    /// Always in the locale's road unit, never meters or feet: a short
+    /// distance in meters reads as an altitude next to the other figures on
+    /// a node row. Tenths below five, whole units from there. One style for
+    /// every place the app states how far apart two nodes are.
     static func distanceText(meters: Double) -> String {
-        Measurement(value: meters, unit: UnitLength.meters)
-            .formatted(
-                .measurement(
-                    width: .abbreviated,
-                    usage: .road,
-                    numberFormatStyle: .number.precision(.fractionLength(0...1))
-                )
+        let unit: UnitLength = switch Locale.current.measurementSystem {
+        case .us, .uk: .miles
+        default: .kilometers
+        }
+        let distance = Measurement(value: meters, unit: UnitLength.meters).converted(to: unit)
+        let digits = distance.value < 5 ? 1 : 0
+        return distance.formatted(
+            .measurement(
+                width: .abbreviated,
+                usage: .asProvided,
+                numberFormatStyle: .number.precision(.fractionLength(digits))
             )
+        )
     }
 }
