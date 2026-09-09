@@ -20,6 +20,29 @@ over the UMSH mesh network.
 </div>
 <div class="faq-item">
 
+### Why another protocol when Meshtastic and MeshCore already exist?
+
+UMSH started as an exploration of how to improve on MeshCore’s security and
+protocol design. It borrows many good ideas from MeshCore, including public-key
+identities, source routing, and regions. But some improvements require changing
+the packet format and cryptography, which would break compatibility with
+existing devices.
+
+Starting fresh makes it possible to design those pieces together: authenticated
+encryption, replay protection without depending on clocks, optional forward
+secrecy, and private messages that can also conceal who is talking to whom. UMSH
+also separates message content from packet forwarding, so new applications can
+use the network without every repeater needing to understand them.
+
+That freedom is the reason for another protocol. UMSH can experiment with changes
+that are difficult to make in an established network, and the ideas are free for
+other projects to adopt. The tradeoff is maturity: UMSH is still a technology
+preview, and Meshtastic and MeshCore have substantially more deployment
+experience behind them.
+
+</div>
+<div class="faq-item">
+
 ### Is it ready to use?
 
 It is ready to use, test, and experiment with—but not yet to deploy
