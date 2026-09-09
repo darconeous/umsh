@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-5f0d90f9.js";
+            window.path_to_searchindex_js = "searchindex-a36d942b.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-438957a9.js"></script>
+        <script src="toc-fed4626c.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -184,7 +184,7 @@ one host replaces another (see
 <p>Commissioning a repeater is exactly this: writing device-domain state and
 saving it. It is also the reason a host that is merely <em>administering</em> a
 device writes nothing in the
-<a href="ulcp-host.html">host domain</a> — see
+<a href="ulcp-host.html">host domain</a>—see
 <a href="ulcp.html#attach-relationships">Two Kinds of Attach</a>.</p>
 <h2 id="device-identity"><a class="header" href="#device-identity">The Device Identity</a></h2>
 <p>The device hosts a node belonging to the device itself, used for in-band
@@ -200,13 +200,13 @@ processing any host command; <code>PROP_DEV_KEY</code> therefore never reports a
 empty value on a running device. Provisioning an identity is not a
 commissioning step: a factory-fresh radio is already a node, and
 <a href="ulcp-device.html#prop-dev-private-key"><code>PROP_DEV_PRIVATE_KEY</code></a> exists to install
-a <em>particular</em> identity — restoring a known repeater onto replacement
-hardware — not to bring one into being.</p>
+a <em>particular</em> identity—restoring a known repeater onto replacement
+hardware—not to bring one into being.</p>
 <p>The corollary is that a radio holds a throwaway identity from first
 power-on until a specific one is installed. This is safe because it never
 reaches the air: <code>PROP_PHY_ENABLED</code> is false post-reset, and a radio with
 nothing saved boots with the PHY disabled. It is not safe automatically on
-the restore path — see <a href="ulcp-saved-state.html#cmd-restore"><code>CMD_RESTORE</code></a>.</p>
+the restore path—see <a href="ulcp-saved-state.html#cmd-restore"><code>CMD_RESTORE</code></a>.</p>
 <p>Because the device holds this identity’s private key, it performs its own
 key agreement and needs only peer <em>public</em> keys (see <a href="ulcp-device.html#prop-dev-peers"><code>PROP_DEV_PEERS</code></a>).
 That is the opposite of the host identity, for which the device holds no
@@ -223,32 +223,112 @@ private key and every pairwise key must be provisioned explicitly (see
 <tr><td>38</td><td><code>CAP_DEV_NAME</code></td><td>—</td><td><code>PROP_DEV_NAME</code></td></tr>
 <tr><td>39</td><td><code>CAP_BATTERY</code></td><td>—</td><td>Battery-powered operation and <code>PROP_BATTERY</code></td></tr>
 <tr><td>40</td><td><code>CAP_REPEATER</code></td><td><code>CAP_DEV_IDENTITY</code></td><td>Autonomous repeater forwarding by the device identity: <code>PROP_MAC_REPEATER_ENABLED</code>, <code>PROP_MAC_REPEATER_REGIONS</code>, <code>PROP_MAC_REPEATER_DEFAULT_REGION</code>, <code>PROP_MAC_REPEATER_MIN_RSSI</code>, <code>PROP_MAC_REPEATER_MIN_SNR</code></td></tr>
-<tr><td>41</td><td><code>CAP_IDENT</code></td><td><code>CAP_DEV_IDENTITY</code></td><td><code>PROP_IDENT</code>, <code>PROP_IDENT_ROLE</code>, <code>PROP_IDENT_MOBILE</code>, <code>PROP_IDENT_LOCATION</code>, <code>PROP_IDENT_ALTITUDE</code> — serving and configuring the device identity’s advertised node identity</td></tr>
+<tr><td>41</td><td><code>CAP_IDENT</code></td><td><code>CAP_DEV_IDENTITY</code></td><td><code>PROP_IDENT</code>, <code>PROP_IDENT_ROLE</code>, <code>PROP_IDENT_MOBILE</code>, <code>PROP_IDENT_LOCATION</code>, <code>PROP_IDENT_ALTITUDE</code>—serving and configuring the device identity’s advertised node identity</td></tr>
 <tr><td>42</td><td><code>CAP_ALERT</code></td><td>—</td><td>Some means of making the device physically conspicuous on demand, and <code>PROP_ALERT</code></td></tr>
 <tr><td>44</td><td><code>CAP_TIME</code></td><td>—</td><td>A wall clock: <code>PROP_TIME</code>, <code>PROP_TZ_OFFSET</code></td></tr>
 <tr><td>45</td><td><code>CAP_GNSS</code></td><td><code>CAP_TIME</code></td><td>A GNSS receiver: <code>PROP_GNSS_ENABLED</code>, <code>PROP_GNSS_LOCATION</code>, <code>PROP_GNSS_ALTITUDE</code>, <code>PROP_GNSS_FIX</code>, <code>PROP_GNSS_PRECISION</code>, <code>PROP_GNSS_SATELLITES</code>, <code>PROP_GNSS_IDENT_UPDATE</code>, <code>PROP_GNSS_IDENT_PRECISION</code>, <code>PROP_GNSS_TIME_TRUST</code></td></tr>
-<tr><td>46</td><td><code>CAP_ADVERT</code></td><td><code>CAP_DEV_IDENTITY</code></td><td>Announcing itself on a schedule of its own: <code>PROP_ADVERT_INTERVAL</code>, <code>PROP_BEACON_INTERVAL</code>, <code>PROP_STARTUP_BEACON</code></td></tr>
+<tr><td>46</td><td><code>CAP_ADVERT</code></td><td><code>CAP_DEV_IDENTITY</code></td><td>Announcing itself: on a schedule of its own (<code>PROP_ADVERT_INTERVAL</code>, <code>PROP_BEACON_INTERVAL</code>, <code>PROP_STARTUP_BEACON</code>) and on demand (<code>CMD_ANNOUNCE</code>)</td></tr>
 <tr><td>47</td><td><code>CAP_ILLUMINANCE</code></td><td>—</td><td>An ambient light sensor and <code>PROP_ILLUMINANCE</code></td></tr>
 </tbody>
 </table>
 </div>
-<p><code>CAP_ADVERT</code> requires <code>CAP_DEV_IDENTITY</code> because what a scheduled
-advertisement carries <em>is</em> the device identity, and a beacon’s source
-address names it.</p>
+<p><code>CAP_ADVERT</code> requires <code>CAP_DEV_IDENTITY</code> because what an advertisement
+carries <em>is</em> the device identity, and a beacon’s source address names
+it.</p>
 <p><code>CAP_TIME</code> states that the device keeps a wall clock and nothing else. It
 says nothing about where the time comes from, how accurate it is, or how
-much of a power cycle it survives — a device that has one and does not
+much of a power cycle it survives—a device that has one and does not
 currently know what time it is is a normal state, reported by the empty
 <a href="ulcp-device.html#prop-time"><code>PROP_TIME</code></a>.</p>
 <p><code>CAP_GNSS</code> requires <code>CAP_TIME</code> because a receiver is, among other things,
 a clock: a device advertising one without the other would be claiming a
 time source for a clock it does not have.</p>
+<h2 id="commands"><a class="header" href="#commands">Commands</a></h2>
+<h3 id="cmd-announce"><a class="header" href="#cmd-announce">CMD 19: (Host -&gt; Device) <code>CMD_ANNOUNCE</code></a></h3>
+<pre><code> 0                   1
+ 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-------------+
+|1 0| RES | TID |  CMD_ANNOUNCE |   OPTIONS   |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-------------+
+</code></pre>
+<p>Figure: Structure of <code>CMD_ANNOUNCE</code></p>
+<p>Announce the device now, outside either schedule. What the device sends is
+an <a href="beacons.html">advertisement or a beacon</a>—the same two announcements
+<code>PROP_ADVERT_INTERVAL</code> and <code>PROP_BEACON_INTERVAL</code> emit unasked—as a
+broadcast or as multicast on one of the device’s own channels.</p>
+<p><code>OPTIONS</code> is a sequence of entries in the
+<a href="ulcp-core.html#cmd-prop-multi-set"><code>CMD_PROP_MULTI_SET</code> entry form</a>:
+<code>LENGTH</code> (PUI) | <code>OPTION</code> (PUI) | <code>VALUE</code>. An empty payload is a
+well-formed request carrying every default.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Option</th><th>Name</th><th>Value</th><th>Default</th></tr>
+</thead>
+<tbody>
+<tr><td>1</td><td><code>ANNOUNCE_KIND</code></td><td>UINT8: 0 advertisement, 1 beacon</td><td>0</td></tr>
+<tr><td>2</td><td><code>ANNOUNCE_FLOOD_HOPS</code></td><td>UINT8, 0–15</td><td>0</td></tr>
+<tr><td>3</td><td><code>ANNOUNCE_FULL_SOURCE</code></td><td>BOOL</td><td>1 for an advertisement, 0 for a beacon</td></tr>
+<tr><td>4</td><td><code>ANNOUNCE_CHANNEL</code></td><td>16 octets: the full channel identifier</td><td>absent: broadcast</td></tr>
+</tbody>
+</table>
+</div>
+<dl>
+<dt id="announce_kind"><a class="header" href="#announce_kind"><code>ANNOUNCE_KIND</code></a></dt>
+<dd>An advertisement carries the device’s signed
+<a href="node-identity.html">node identity</a>; a beacon carries no payload at all.</dd>
+<dt id="announce_flood_hops"><a class="header" href="#announce_flood_hops"><code>ANNOUNCE_FLOOD_HOPS</code></a></dt>
+<dd>The flood budget the frame goes out with (<code>FHOPS_REM</code>, see
+<a href="packet-structure.html">Packet Structure</a>). Zero sends no flood-hop field,
+reaching only the nodes that hear the device directly. A frame carrying
+a budget also carries the <a href="packet-options.html#trace-route-option-2">Trace
+Route</a> and <a href="packet-options.html#trace-signal-option-10">Trace
+Signal</a> options, so what
+arrives at a distant node is a usable path back; a beacon carries both
+at any budget, a path being what a beacon publishes.</dd>
+<dt id="announce_full_source"><a class="header" href="#announce_full_source"><code>ANNOUNCE_FULL_SOURCE</code></a></dt>
+<dd>Whether <code>SRC</code> is the 32-byte public key rather than the 3-byte hint. An
+advertisement’s detached signature is only checkable against the full
+key, hence its default; a beacon has nothing to check and defaults to
+the hint. A host may override either way.</dd>
+<dt id="announce_channel"><a class="header" href="#announce_channel"><code>ANNOUNCE_CHANNEL</code></a></dt>
+<dd>Send as multicast on the device channel whose full
+<a href="packet-types.html#channel-identifier-derivation">channel identifier</a> this
+is—the form that names a channel unambiguously, since two keys can
+share a 2-byte <code>channel_id</code>. It is what <code>PROP_DEV_CHANNEL_KEYS</code> reports
+for each key the device holds, so a host names a channel with exactly
+what it read back. Absent, the announcement is a broadcast. A multicast
+announcement uses the channel’s encrypted mode.</dd>
+</dl>
+<p>An option the device does not recognize, a repeated option, or a value of
+the wrong length or out of range is <code>STATUS_INVALID_ARGUMENT</code>. A device
+<strong>MUST NOT</strong> silently ignore an unknown option: the host asked for
+something specific, and a broadcast sent in place of an ignored multicast
+request would be the wrong frame on the air. A malformed entry list is
+<code>STATUS_PARSE_ERROR</code>.</p>
+<p>The device answers with <code>CMD_PROP_IS</code> of <code>PROP_LAST_STATUS</code> carrying the
+command’s TID:</p>
+<ul>
+<li><code>STATUS_OK</code> once the announcement is <strong>queued for transmission</strong>. This
+command reports queuing, not airing: channel access and the
+<a href="ulcp-radio.html#prop-phy-duty-limit">duty limit</a> decide later whether the
+frame reaches the air, exactly as for a scheduled announcement.</li>
+<li><code>STATUS_BUSY</code> when an announcement is already pending and this one could
+not be queued behind it.</li>
+<li><code>STATUS_CHANNEL_NOT_FOUND</code> when <code>ANNOUNCE_CHANNEL</code> names a channel the
+device holds no key for.</li>
+<li><code>STATUS_UNIMPLEMENTED</code> on a device without <code>CAP_ADVERT</code>, or one with no
+node behind the session to announce.</li>
+</ul>
+<p>This command is available on devices advertising <code>CAP_ADVERT</code>. It carries
+no tethered-host state, so an administrator may issue it over the
+<a href="app-node-management.html">Node Management</a> binding.</p>
 <h2 id="properties"><a class="header" href="#properties">Properties</a></h2>
 <p>The device domain occupies property identifiers 64–95. Identifiers 70–95
 are the device-behavior range: 70–78 are the repeater policy and
 advertised node identity settings, 79 is the locate alert, 80–87 are what
-the device announces about itself — 80–82 the advertisement schedule,
-83–84 the advertised position, 85–87 reserved — 88–93 are positioning (88
+the device announces about itself—80–82 the advertisement schedule,
+83–84 the advertised position, 85–87 reserved—88–93 are positioning (88
 the receiver switch, 89–93 the fix telemetry), and 94–95 are
 environmental sensing: 94 illuminance, 95 reserved.</p>
 <p>The advertised position at 83–84 and the fix telemetry at 89–90 are
@@ -257,8 +337,8 @@ sees; the advertised position is what the identity claims, which a device
 without a receiver still has.</p>
 <p>A single-octet identifier is the scarce resource, so the positioning
 range holds the properties a host reads and the device announces
-continually. The positioning <strong>configuration</strong> — which is written during
-commissioning and rarely again — lives at 4868–4870 in the extended
+continually. The positioning <strong>configuration</strong>—which is written during
+commissioning and rarely again—lives at 4868–4870 in the extended
 device range, alongside the wall clock at 4866–4867.</p>
 <div class="table-wrapper">
 <table>
@@ -318,8 +398,8 @@ device range, alongside the wall clock at 4866–4867.</p>
 response when the private key is installed or generated (see
 <a href="ulcp-device.html#prop-dev-private-key"><code>PROP_DEV_PRIVATE_KEY</code></a>).</p>
 <p>An empty value means the device has no device identity. A conforming device does
-not report one in normal operation — an identity is generated at first
-boot if none is stored — so hosts <strong>SHOULD</strong> treat an empty value as a
+not report one in normal operation—an identity is generated at first
+boot if none is stored—so hosts <strong>SHOULD</strong> treat an empty value as a
 fault to surface rather than as an invitation to provision one.</p>
 <p>Frames addressed to the device identity are processed by the device itself.
 They are additionally delivered or queued to the host only if they
@@ -336,15 +416,15 @@ independently match the host’s receive filtering (see <a href="ulcp-host.html#
 exists already (see <a href="ulcp-device.html#device-identity">The Device Identity</a>), so both forms <strong>replace</strong> one:</p>
 <ul>
 <li>Setting a 32-octet value installs it as the device identity’s Ed25519
-private key. This is the recovery path — moving a known repeater’s
-identity onto replacement hardware — not a commissioning step.</li>
+private key. This is the recovery path—moving a known repeater’s
+identity onto replacement hardware—not a commissioning step.</li>
 <li>Setting an <strong>empty</strong> value commands the device to generate a fresh private
 key entirely on-device from its cryptographically secure random number
 generator. On-device generation is <strong>RECOMMENDED</strong> over installation,
 since a generated key never exists anywhere but the radio.</li>
 </ul>
 <p>In both cases, success is reported by emitting <code>CMD_PROP_IS</code> for
-<strong><code>PROP_DEV_KEY</code></strong> — carrying the resulting <em>public</em> key — with the
+<strong><code>PROP_DEV_KEY</code></strong>—carrying the resulting <em>public</em> key—with the
 command’s TID. The private key itself is never emitted. Success <strong>MUST NOT</strong>
 be reported before the new identity is in effect and durably stored.
 Replacing an existing device identity is permitted; implementations
@@ -356,7 +436,7 @@ identity is configured (use <code>PROP_DEV_KEY</code> for that).</p>
 <p>The device identity is <strong>not</strong> part of the saved snapshot (see
 <a href="ulcp-saved-state.html#saved-state">Saved State</a>): it is durably persisted as soon as it is installed or
 generated, and it is changed only by another set of this property or by
-<code>CMD_CLEAR</code>. <code>CMD_RESTORE</code> never reverts it — though it does read the
+<code>CMD_CLEAR</code>. <code>CMD_RESTORE</code> never reverts it—though it does read the
 identity a snapshot was taken under, and refuses to enable the PHY when
 it does not match (see <a href="ulcp-saved-state.html#cmd-restore"><code>CMD_RESTORE</code></a>).</p>
 <p>Replacing the identity takes effect for the property surface immediately
@@ -373,21 +453,23 @@ requirements as all key provisioning (see <a href="ulcp-core.html#provisioning-s
 <li>Asynchronous Updates: No</li>
 <li>Required: <code>CAP_DEV_IDENTITY</code></li>
 <li>Item Form: 32 octets (the channel key)</li>
-<li>Digest Form: 2 octets (the derived channel identifier)</li>
+<li>Reported Form: 16 octets (the derived channel identifier)</li>
 <li>Remove Selector: the 32-octet channel key</li>
 <li>Post-Reset Value: Empty, or restored from saved state</li>
 </ul>
 <p>The set of <a href="multicast-channels.html#channel-keys">channel keys</a> belonging to
-the <strong>device identity</strong> — channels the radio’s own node participates in
+the <strong>device identity</strong>—channels the radio’s own node participates in
 (for example, a site-infrastructure management channel). These are
 independent of the host domain: they survive host replacement and are
 distinct from <code>PROP_HOST_CHANNEL_KEYS</code>.</p>
-<p>For each key the device derives the 2-byte
+<p>For each key the device derives the
 <a href="packet-types.html#channel-identifier-derivation">channel identifier</a> and the
 channel’s <code>K_enc</code>/<code>K_mic</code>
-(see <a href="security.html#multicast-packet-keys">Multicast Packet Keys</a>). The
-digest form reported for each entry is that derived channel identifier;
-the key itself is never read back.</p>
+(see <a href="security.html#multicast-packet-keys">Multicast Packet Keys</a>). Each
+entry is reported as its full 16-octet channel identifier, which is what
+names one of these channels to a management interface—two keys can
+derive the same 2-byte <code>channel_id</code>, and <code>CMD_ANNOUNCE</code> must not be left
+to guess which was meant. The key itself is never read back.</p>
 <p>Device channel keys do <strong>not</strong> create implicit host receive filters:
 frames on these channels are consumed by the device node and reach the
 host only through the host’s own filtering.</p>
@@ -405,7 +487,7 @@ host only through the host’s own filtering.</p>
 device node recognizes and may communicate with securely. Because the device
 holds the device identity’s private key, it performs its own key agreement
 (<a href="security.html#unicast-key-agreement">Unicast Key Agreement</a>) for these
-peers — no symmetric keys are provisioned, and the entries contain no
+peers—no symmetric keys are provisioned, and the entries contain no
 secret material.</p>
 <p>How the device node uses this list (management access control, secure
 diagnostics, and so on) is application behavior outside the scope of this
@@ -467,7 +549,7 @@ malformed.</p>
 configuration; an individual snapshot carries those it can currently
 substantiate. A field is absent either because the implementation never
 reports that measurement, or because the value is not derivable in the
-device’s present state — a level estimated from resting terminal voltage is
+device’s present state—a level estimated from resting terminal voltage is
 not obtainable while the pack is charging, and a charger that reports no
 completion signal offers no moment at which to recalibrate one. An
 implementation <strong>MUST NOT</strong> report a value it knows to be unreliable in place
@@ -480,7 +562,7 @@ NOT</strong> carry a value forward from an earlier snapshot in its place.</p>
 <p>The value returned by <code>CMD_PROP_GET</code> reflects a measurement performed when
 the request is serviced, not a previously cached reading; concurrent
 requests <strong>MAY</strong> share one measurement. How each field is produced is
-platform-defined — in particular, the level estimate is not necessarily
+platform-defined—in particular, the level estimate is not necessarily
 derived from the voltage measurement, and a platform with a fuel gauge may
 report a level without reporting a voltage at all.</p>
 <p>The fields:</p>
@@ -559,12 +641,12 @@ host-delivery mode) and of the host identity, which never forwards.</p>
 <code>CMD_SAVE</code> arms an unattended repeater across power cycles, and it
 survives a change of host.</p>
 <p>Asynchronous because a device <strong>MAY</strong> offer forwarding as a control the
-operator can reach — the menu on a device with a screen is where a user
+operator can reach—the menu on a device with a screen is where a user
 decides whether to spend their battery carrying other people’s traffic.
 A device that flips it locally <strong>MUST</strong> publish the new value like any
 other transition the host did not command.</p>
-<p>Flood-contention tuning — the forwarding delay window, deferral count,
-and similar timing parameters — is not exposed; a repeater applies its
+<p>Flood-contention tuning—the forwarding delay window, deferral count,
+and similar timing parameters—is not exposed; a repeater applies its
 local defaults.</p>
 <h3 id="prop-ident"><a class="header" href="#prop-ident">PROP 71: <code>PROP_IDENT</code></a></h3>
 <ul>
@@ -574,8 +656,8 @@ local defaults.</p>
 <li>Value Type: Signed node-identity payload</li>
 </ul>
 <p>The device identity’s complete signed <a href="node-identity.html">node
-identity</a>: the canonical payload encoding — role,
-capabilities, and the descriptive options the device advertises —
+identity</a>: the canonical payload encoding—role,
+capabilities, and the descriptive options the device advertises—
 followed by its 64-octet detached EdDSA signature over that encoding.</p>
 <p>This is the same statement the device makes over the air, in its
 standalone framing. A device <strong>MUST</strong> build it from the same values it
@@ -598,7 +680,7 @@ event.</p>
 </ul>
 <p>The <code>ROLE</code> byte the device identity advertises (see <a href="node-identity.html#node-primary-role">Node
 Primary Role</a>).</p>
-<p>An <strong>empty</strong> value — the factory default — means the device derives the
+<p>An <strong>empty</strong> value—the factory default—means the device derives the
 role from what it is actually doing: <code>Repeater</code> while
 <code>PROP_MAC_REPEATER_ENABLED</code> is set, <code>Tracker</code> otherwise. Any other value
 is advertised verbatim.</p>
@@ -606,7 +688,7 @@ is advertised verbatim.</p>
 reported through the repeater capability bit; the role is how the device
 presents itself, which is the operator’s choice. Deriving it by default
 keeps the common cases right without a configuration step, and setting
-it explicitly expresses the ones derivation cannot reach — a repeater
+it explicitly expresses the ones derivation cannot reach—a repeater
 that is also mobile, a fixed node that is not a repeater.</p>
 <p><strong>Tethering does not appear here, or anywhere in a node identity.</strong>
 Whether some host is currently attached over the local control link is a
@@ -673,7 +755,7 @@ decision, governed by <code>PROP_MAC_REPEATER_DEFAULT_REGION</code>.</p>
 <p>The region code the device inserts into a flood packet that carries none,
 as permitted at the region-policy step of the <a href="repeater-operation.html#forwarding-procedure">forwarding
 procedure</a>. An <strong>empty</strong>
-value — the factory default — means the device never tags: untagged
+value—the factory default—means the device never tags: untagged
 packets are forwarded untagged. Any other value <strong>MUST</strong> be exactly two
 octets; a device rejects other lengths with <code>STATUS_INVALID_ARGUMENT</code>.</p>
 <p>Tagging is opt-in because it is a claim about where the packet is, not
@@ -695,7 +777,7 @@ with its codes unchanged, and a second code is never added.</p>
 <li>Post-Reset Value: Empty, or restored from saved state</li>
 </ul>
 <p>The weakest signal the device will flood-forward, in dBm. An <strong>empty</strong>
-value — the factory default — imposes no threshold. Any other value
+value—the factory default—imposes no threshold. Any other value
 <strong>MUST</strong> be exactly two octets.</p>
 <p>The threshold is the repeater’s half of step 7 of the <a href="repeater-operation.html#forwarding-procedure">forwarding
 procedure</a>: where the packet
@@ -713,7 +795,7 @@ the strength of the route, not the link.</p>
 <li>Post-Reset Value: Empty, or restored from saved state</li>
 </ul>
 <p>The lowest signal-to-noise ratio the device will flood-forward, in whole
-dB. An <strong>empty</strong> value — the factory default — imposes no threshold. Any
+dB. An <strong>empty</strong> value—the factory default—imposes no threshold. Any
 other value <strong>MUST</strong> be exactly one octet.</p>
 <p>The threshold is the repeater’s half of step 8 of the <a href="repeater-operation.html#forwarding-procedure">forwarding
 procedure</a>, combined with any
@@ -742,7 +824,7 @@ beacons are governed by the <a href="#prop-advert-interval">advertisement
 policy</a>, and the device’s participation in
 forwarding by <code>PROP_MAC_REPEATER_ENABLED</code>; neither is changed by this
 property. A device that is not discoverable still advertises on its own
-schedule if it has one — declining to answer strangers and declining to
+schedule if it has one—declining to answer strangers and declining to
 speak are different decisions.</p>
 <h3 id="prop-alert"><a class="header" href="#prop-alert">PROP 79: <code>PROP_ALERT</code></a></h3>
 <ul>
@@ -793,7 +875,7 @@ so clearing the alert leaves the device as quiet as it was before.</p>
 <ol>
 <li>The host writes <code>ALERT_NONE</code>.</li>
 <li>Local user input cancels it. A device with any user input at all
-<strong>MUST</strong> offer a way to cancel an alert from the device itself —
+<strong>MUST</strong> offer a way to cancel an alert from the device itself—
 whoever finds the radio is rarely holding the phone that set it off.
 The input that cancels performs none of its other functions, so that
 fumbling for a beeping radio cannot change its configuration; a
@@ -812,7 +894,7 @@ deadline, which is how a host holds an alert open for a longer search.</li>
 <li>Value Type: UINT32</li>
 <li>Post-Reset Value: 14400 (four hours), or restored from saved state</li>
 </ul>
-<p>Seconds between unsolicited <a href="beacons.html">advertisements</a> — broadcasts
+<p>Seconds between unsolicited <a href="beacons.html">advertisements</a>—broadcasts
 carrying the device’s signed <a href="node-identity.html">node identity</a>. Zero
 sends none.</p>
 <p>An automatic advertisement is sent with no flood hops and no source
@@ -828,8 +910,8 @@ fraction as much.</p>
 in full-key form (§<a href="node-identity.html">Node Identity</a>).</p>
 <p>A device <strong>MUST</strong> reject a non-zero interval outside 1200 seconds
 (twenty minutes) to 86400 seconds (twenty-four hours) with
-<code>STATUS_INVALID_ARGUMENT</code>. Neither bound is an airtime control — the
-<a href="ulcp-radio.html#prop-phy-duty-limit">duty limit</a> is that — but the two
+<code>STATUS_INVALID_ARGUMENT</code>. Neither bound is an airtime control—the
+<a href="ulcp-radio.html#prop-phy-duty-limit">duty limit</a> is that—but the two
 ends fail differently. Below the floor a device spends the mesh’s
 airtime restating what it already said; above the ceiling the schedule
 has stopped being one, and zero says so more plainly.</p>
@@ -840,6 +922,10 @@ gap between two unsolicited announcements.</p>
 <p>Scheduled sends are subject to the same duty accounting and channel
 access as any other transmission: a send the device cannot make when it
 falls due is skipped, not queued.</p>
+<p>The schedule is not the only way an announcement goes out.
+<a href="#cmd-announce"><code>CMD_ANNOUNCE</code></a> sends one now, with a reach and a source
+form the host chooses; the two are independent, and neither disturbs the
+other’s timing.</p>
 <h3 id="prop-beacon-interval"><a class="header" href="#prop-beacon-interval">PROP 81: <code>PROP_BEACON_INTERVAL</code></a></h3>
 <ul>
 <li>Type: Single-Value, Read-Write</li>
@@ -848,7 +934,7 @@ falls due is skipped, not queued.</p>
 <li>Value Type: UINT32</li>
 <li>Post-Reset Value: 3600 (one hour), or restored from saved state</li>
 </ul>
-<p>Seconds between unsolicited <a href="beacons.html">beacons</a> — broadcasts with no
+<p>Seconds between unsolicited <a href="beacons.html">beacons</a>—broadcasts with no
 payload at all. Zero sends none.</p>
 <p>A beacon is sent with a flood budget and both the <a href="packet-options.html#trace-route-option-2">Trace
 Route</a> and <a href="packet-options.html#trace-signal-option-10">Trace
@@ -911,7 +997,7 @@ a written value.</p>
 <p>A write is refused with <code>STATUS_INVALID_STATE</code> while
 <a href="ulcp-device.html#prop-gnss-ident-update"><code>PROP_GNSS_IDENT_UPDATE</code></a> is set.
 The device is maintaining the value from its own fixes, and a written
-position would survive only until the next one — a setting that silently
+position would survive only until the next one—a setting that silently
 reverts is worse than one that refuses. A host that means to place the
 node clears auto-update first.</p>
 <p>Devices <strong>SHOULD</strong> announce this property when it changes. Unlike
@@ -927,14 +1013,14 @@ clamping precision, so announcing it costs what it is worth.</p>
 <li>Post-Reset Value: Empty, or restored from saved state</li>
 </ul>
 <p>The altitude the device identity carries, in meters above the WGS-84
-ellipsoid — the same units and reference as the node identity’s altitude
+ellipsoid—the same units and reference as the node identity’s altitude
 option. Writable and refused under exactly the conditions described for
 <a href="ulcp-device.html#prop-ident-location"><code>PROP_IDENT_LOCATION</code></a>.</p>
 <p>The value is a two’s-complement signed integer, little-endian, in the
 fewest octets that hold it: an altitude of 100 m occupies one octet, 200 m
 two, and the range extends to four. Most nodes are within a byte of sea
 level, and this property is read over a link where a byte is worth
-saving. Negative values are ordinary — a node below the ellipsoid, which
+saving. Negative values are ordinary—a node below the ellipsoid, which
 much of the world’s dry land is.</p>
 <p>A device <strong>MUST</strong> accept any length from one through four and sign-extend
 it, so a host that pads to a fixed width is understood. A device
@@ -953,7 +1039,7 @@ from saved state</li>
 </ul>
 <p>Whether the GNSS receiver is powered.</p>
 <p>Asynchronous because a device <strong>MAY</strong> offer the receiver as a control the
-operator can reach — a button, a menu entry — and a switch someone can
+operator can reach—a button, a menu entry—and a switch someone can
 flip is a value that moves without the host asking. A device that flips
 it locally <strong>MUST</strong> publish the new value like any other transition the
 host did not command.</p>
@@ -964,8 +1050,8 @@ the largest continuous load there is, and a property that only stopped
 <p>The post-reset value is the device’s to choose, and it <strong>SHOULD</strong> be
 false: a device that has never been told to care where it is should not
 be spending a battery finding out. A device whose purpose is to know
-where it is — a fixed outdoor node with a panel rather than a pocket
-tracker on a cell — <strong>MAY</strong> default it true instead, and <strong>SHOULD</strong>
+where it is—a fixed outdoor node with a panel rather than a pocket
+tracker on a cell—<strong>MAY</strong> default it true instead, and <strong>SHOULD</strong>
 document that it does. Either way the value is only a starting point:
 saved state overrides it in both directions, and a host that wants a
 particular state sets it rather than assuming one.</p>
@@ -976,7 +1062,7 @@ whole point of having acquired it.</p>
 real-time-clock domain is the <em>only</em> clock the board has: that domain
 <strong>MAY</strong> remain powered while this property is false, and the device
 <strong>MAY</strong> briefly power the receiver at boot to read the time back out of
-it. That is a clock operation, not a positioning one — position data
+it. That is a clock operation, not a positioning one—position data
 observed during it is discarded, and it is governed by
 <a href="ulcp-device.html#prop-gnss-time-trust"><code>PROP_GNSS_TIME_TRUST</code></a> rather than
 by this property.</p>
@@ -989,7 +1075,7 @@ by this property.</p>
 <li>Post-Reset Value: Empty</li>
 </ul>
 <p>The position of the most recent fix, in the <a href="node-identity.html#variable-precision-location-format">variable-precision
-location</a> encoding — the same nibble-interleaved
+location</a> encoding—the same nibble-interleaved
 grid code node identities carry, so a host never has to convert between
 two position formats.</p>
 <p>An <strong>empty</strong> value means no fix has been obtained since the receiver was
@@ -1005,8 +1091,8 @@ position, never a different one.</p>
 that wants a position <strong>MUST</strong> be prepared to read one. A receiver
 produces a fix about once a second, and at fine precision the readings
 of a receiver standing perfectly still still differ from each other, so
-a device that published every change would transmit continuously — and
-wake its host every time — on behalf of a host that may not be looking.
+a device that published every change would transmit continuously—and
+wake its host every time—on behalf of a host that may not be looking.
 No threshold rescues this: the one that would be quiet enough to be
 worth having is coarse enough that the announcements it does send are
 too late to be the point.</p>
@@ -1029,7 +1115,7 @@ what the identity advertises and is writable for exactly that reason.</p>
 <p>Altitude of the most recent fix, in meters, in the same units and
 reference as the node identity’s altitude option, so the two are directly
 interchangeable.</p>
-<p>Empty when there is no three-dimensional fix — including while the
+<p>Empty when there is no three-dimensional fix—including while the
 receiver holds a two-dimensional one, which has a position but no
 altitude. Read-only for the same reason as
 <a href="ulcp-device.html#prop-gnss-location"><code>PROP_GNSS_LOCATION</code></a>.</p>
@@ -1049,7 +1135,7 @@ altitude. Read-only for the same reason as
 </thead>
 <tbody>
 <tr><td>0</td><td>No fix</td></tr>
-<tr><td>1</td><td>Two-dimensional fix — position without altitude</td></tr>
+<tr><td>1</td><td>Two-dimensional fix—position without altitude</td></tr>
 <tr><td>2</td><td>Three-dimensional fix</td></tr>
 </tbody>
 </table>
@@ -1057,7 +1143,7 @@ altitude. Read-only for the same reason as
 <p>Unlike the three properties that describe a position, this one is never
 empty: a device that is not fixed <strong>knows</strong> it is not fixed, so it reports
 0. A receiver that is switched off reports 0 for the same reason. This is
-the distinction the whole positioning surface rests on — zero for the
+the distinction the whole positioning surface rests on—zero for the
 facts the device is sure of, empty for the position it does not have.</p>
 <p>This is the positioning property a device <strong>SHOULD</strong> announce, and the
 reason it is the exception to
@@ -1119,7 +1205,7 @@ unsigned 32-bit range still reaches past direct sunlight.</p>
 stored state, so a device samples on each get rather than answering from
 a cache. It follows that nothing about it is saved or reset: <code>CMD_RST</code>
 leaves it alone because there is nothing to leave.</p>
-<p>An <strong>empty</strong> value means the device has no reading — the sensor did not
+<p>An <strong>empty</strong> value means the device has no reading—the sensor did not
 answer, or is unavailable for as long as some other part of the device
 holds the hardware it shares. This is the same “we do not know” that
 <a href="ulcp-device.html#prop-time"><code>PROP_TIME</code></a> reports for an unset clock, and
@@ -1127,8 +1213,8 @@ is not an error: a host that asked for the light level and got no answer
 has learned what it needed to.</p>
 <p>A sensor that saturates reports its <strong>clamped maximum</strong> rather than an
 extrapolation past the point where it stopped responding to light. The
-alternative — a number derived from a transfer function outside the range
-it was fitted in — is indistinguishable at the host from a real reading.</p>
+alternative—a number derived from a transfer function outside the range
+it was fitted in—is indistinguishable at the host from a real reading.</p>
 <h3 id="prop-time"><a class="header" href="#prop-time">PROP 4866: <code>PROP_TIME</code></a></h3>
 <ul>
 <li>Type: Single-Value, Read-Write</li>
@@ -1152,15 +1238,15 @@ plausible-looking wrong time is worse than a blank space: an operator
 reads a displayed clock as a fact about the device, and a device with a
 screen is exactly the device somebody will trust.</p>
 <p>Setting the property sets the clock. Setting the <strong>empty</strong> value returns
-the device to not knowing — the operator’s way of saying that whatever
+the device to not knowing—the operator’s way of saying that whatever
 the device believes is wrong. A host-supplied time outranks every
 receiver-derived one, including while
 <a href="ulcp-device.html#prop-gnss-time-trust"><code>PROP_GNSS_TIME_TRUST</code></a> is clear:
 the operator is the more authoritative source by definition.</p>
 <p>The clock is <strong>not</strong> part of the saved snapshot. An epoch written to
 flash accumulates unbounded error while the device is off, so a clock is
-restored from a real time source — a receiver, a battery-backed
-real-time clock, or a host — or not at all. <code>CMD_RST</code> does not clear it;
+restored from a real time source—a receiver, a battery-backed
+real-time clock, or a host—or not at all. <code>CMD_RST</code> does not clear it;
 only an empty write does.</p>
 <p>Devices announce this asynchronously. The transition from not knowing to
 knowing is the one worth announcing; a routine re-synchronization that
@@ -1225,7 +1311,7 @@ the device is maintaining, and a node that moves afterward advertises
 where it was. Clearing the location is the way to stop advertising a
 position; a host that wants no stale claim writes an empty value.</p>
 <p>Note that the <a href="node-identity.html#unix-timestamp-option-3">Unix Timestamp</a>
-option dates the identity payload, not the position — a node that has
+option dates the identity payload, not the position—a node that has
 been stationary for a day still stamps each payload with the moment it
 was built.</p>
 <h3 id="prop-gnss-ident-precision"><a class="header" href="#prop-gnss-ident-precision">PROP 4869: <code>PROP_GNSS_IDENT_PRECISION</code></a></h3>
@@ -1241,7 +1327,7 @@ location</a> the advertised position is clamped
 to, 1 (coarsest) through 7 (finest).</p>
 <p>The default of 5 is a cell of roughly 38 × 19 m at the equator: fine
 enough to place a node on a street, coarse enough not to place it in a
-room. That trade — not the receiver’s accuracy — is what this property
+room. That trade—not the receiver’s accuracy—is what this property
 exists to control, which is why it is separate from
 <a href="ulcp-device.html#prop-gnss-precision"><code>PROP_GNSS_PRECISION</code></a>.</p>
 <p>0 is rejected with <code>STATUS_INVALID_ARGUMENT</code> rather than read as
@@ -1264,7 +1350,7 @@ staged and enabled last.</p>
 <p>On by default: the sky is normally the best clock a device of this class
 has, and a node that sets itself needs no operator at all.</p>
 <p>When clear, <strong>no</strong> receiver-derived time touches
-<a href="ulcp-device.html#prop-time"><code>PROP_TIME</code></a> — not a fix’s time, and not a
+<a href="ulcp-device.html#prop-time"><code>PROP_TIME</code></a>—not a fix’s time, and not a
 read of the receiver’s own real-time clock at boot. This is the opt-out
 for a receiver whose time cannot be trusted: a jammed or spoofed sky can
 carry a plausible and badly wrong time, and a clock silently reset to it
@@ -1272,7 +1358,7 @@ is worse than a clock that has stopped, because everything downstream
 will believe it.</p>
 <p>Position reporting is unaffected. The two are separable, and an operator
 who distrusts the time may still want to know where the device thinks it
-is — including in order to notice that it is wrong.</p>
+is—including in order to notice that it is wrong.</p>
 <p>Every transition to <code>ALERT_NONE</code> that the host did not command <strong>MUST</strong>
 be reported with an unsolicited <code>CMD_PROP_IS</code>.</p>
 <p>The deadline is the only bound. In particular, the alert is <strong>not</strong>
@@ -1282,7 +1368,7 @@ useful. It is likewise unaffected by <code>CMD_RST</code>, which resets session
 state and not the physical behavior of the device.</p>
 <p>The property is live device-domain state. It is never included in a saved
 snapshot, is not changed by <code>CMD_RESTORE</code>, and is <code>ALERT_NONE</code> after
-every reset — a device that loses power mid-alert comes back quiet.</p>
+every reset—a device that loses power mid-alert comes back quiet.</p>
 
                     </main>
 

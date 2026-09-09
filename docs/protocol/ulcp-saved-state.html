@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-5f0d90f9.js";
+            window.path_to_searchindex_js = "searchindex-a36d942b.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-438957a9.js"></script>
+        <script src="toc-fed4626c.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -197,14 +197,14 @@ persisted succeeds trivially.</p>
 <h2 id="saved-state"><a class="header" href="#saved-state">Saved State</a></h2>
 <p>A device advertising <code>CAP_SAVE</code> can snapshot its provisioning to
 non-volatile storage so that it can operate autonomously across power
-cycles — the radio can be powered on in the morning with no phone present,
+cycles—the radio can be powered on in the morning with no phone present,
 restore its configuration, enable the PHY, and resume queueing and
 acknowledging on the host’s behalf.</p>
 <ul>
 <li>
 <p><a href="ulcp-saved-state.html#cmd-save"><code>CMD_SAVE</code></a> atomically writes the current <strong>device
-domain</strong> configuration — including the RF configuration and the current
-value of <code>PROP_PHY_ENABLED</code> — to non-volatile storage, replacing any
+domain</strong> configuration—including the RF configuration and the current
+value of <code>PROP_PHY_ENABLED</code>—to non-volatile storage, replacing any
 previous snapshot.</p>
 <p>The host domain is <strong>never</strong> part of a snapshot (see <a href="ulcp-core.html#host-domain">Host Domain</a>): a
 radio’s autonomy is its own configuration, and whichever host it is
@@ -213,7 +213,7 @@ attach. Dynamic read-only state, including queue contents and
 <code>PROP_BATTERY</code>, is likewise never saved. The device identity keypair is
 excluded for a different reason: it is independently persisted the
 moment it is installed or generated (see <a href="ulcp-device.html#prop-dev-private-key"><code>PROP_DEV_PRIVATE_KEY</code></a>) and is
-changed only by explicit provisioning or <code>CMD_CLEAR</code> — neither
+changed only by explicit provisioning or <code>CMD_CLEAR</code>—neither
 <code>CMD_RESTORE</code> nor a reboot can revert the device identity to an earlier
 key.</p>
 <p>Traffic statistics (<code>PROP_STAT_*</code>) are also excluded. They are live
@@ -225,13 +225,26 @@ nothing can bound, so restoring one would be restoring a confidently
 incorrect clock. A device recovers the time from a real source or
 reports that it does not know it. Its time <em>zone</em> is ordinary
 configuration and is saved.</p>
+<p>What a network link is currently doing is excluded on the statistics’
+reasoning. <a href="ulcp-wifi.html#prop-wifi-scanning"><code>PROP_WIFI_SCANNING</code></a>,
+<a href="ulcp-wifi.html#prop-wifi-scan-results"><code>PROP_WIFI_SCAN_RESULTS</code></a>,
+<a href="ulcp-wifi.html#prop-wifi-link"><code>PROP_WIFI_LINK</code></a>,
+<a href="ulcp-wifi.html#prop-wifi-rssi"><code>PROP_WIFI_RSSI</code></a>,
+<a href="ulcp-wifi.html#prop-wifi-ap-state"><code>PROP_WIFI_AP_STATE</code></a>,
+<a href="ulcp-wifi.html#prop-wifi-ap-clients"><code>PROP_WIFI_AP_CLIENTS</code></a>, and every
+<a href="ulcp-ip.html">IP</a> property but the two configurations and
+<a href="ulcp-ip.html#prop-ip-dns"><code>PROP_IP_DNS</code></a> describe what the device found
+in front of it, not what its operator asked for. A restored lease or a
+restored association would be a claim about a network the device may
+not be near. The Wi-Fi configuration that produces them, credentials
+included, is saved, which is what lets a device rejoin unattended.</p>
 </li>
 <li>
 <p>At boot, if a snapshot exists, the device <strong>MUST</strong> restore it and resume
 operation accordingly <em>before</em> processing any host command: the RF
 configuration is applied and the PHY is re-enabled if it was enabled
 when saved, so a repeater is forwarding before anything else happens.
-Host-domain behavior — filtering, queueing, acknowledgement delegation —
+Host-domain behavior—filtering, queueing, acknowledgement delegation—
 does <em>not</em> resume, because there is no host domain until a host provides
 one. If no snapshot exists, all properties take their documented
 post-reset values.</p>
@@ -239,7 +252,7 @@ post-reset values.</p>
 <li>
 <p><a href="ulcp-saved-state.html#cmd-restore"><code>CMD_RESTORE</code></a> reverts the device domain to the
 snapshot on demand, letting the host abort uncommitted configuration
-changes — without rebooting the hardware or dropping the ULCP link.
+changes—without rebooting the hardware or dropping the ULCP link.
 It is observable either as a protocol reset (<code>STATUS_RESET_RESTORED</code>) or
 as a series of property-update publications; hosts handle both.</p>
 </li>
@@ -251,7 +264,7 @@ factory reset. Transport-level state such as BLE bonds is not affected.</p>
 </li>
 <li>
 <p><a href="ulcp-saved-state.html#prop-saved"><code>PROP_SAVED</code></a> reports the state of the stored
-snapshot, which is not simply whether one exists — see
+snapshot, which is not simply whether one exists—see
 <a href="ulcp-saved-state.html#snapshot-integrity">Snapshot Integrity</a>.</p>
 </li>
 </ul>
@@ -264,7 +277,7 @@ keep.</p>
 <p>Two consequences deserve emphasis:</p>
 <ul>
 <li><strong>Post-reset values come from the snapshot.</strong> <code>CMD_RST</code> reverts
-properties to their post-reset values, as always — but on a device with a
+properties to their post-reset values, as always—but on a device with a
 snapshot, the post-reset value of every saved property is its saved
 value, not its documented default. This applies to the device domain
 only; the host domain has no saved value and always returns to its
@@ -275,7 +288,7 @@ that was provisioned for autonomous operation; such a host still works
 if it explicitly sets the properties it cares about.</li>
 <li><strong>Queue contents and replay baselines are not saved.</strong> Frames queued
 before a power loss are gone afterward, even if they were acknowledged
-on the host’s behalf — the sender believes them delivered. Likewise the
+on the host’s behalf—the sender believes them delivered. Likewise the
 per-peer frame-counter baselines used by acknowledgement delegation
 restart (see <a href="security.html#counter-resynchronization">Counter Resynchronization</a>).
 These share the host domain’s lifetime, which is why re-provisioning
@@ -360,11 +373,11 @@ state such as BLE bonds and <code>PROP_BLE_PAIRING_PIN</code> is also unaffected
 <code>CMD_CLEAR</code> followed by <code>CMD_RST</code> restores factory protocol behavior.</p>
 <p>Because a device identity always exists (see <a href="ulcp-device.html#device-identity">The Device Identity</a>), the
 <code>CMD_RST</code> that completes the sequence <strong>MUST</strong> generate and persist a new
-one rather than leave the device with none — the same thing a factory-fresh
+one rather than leave the device with none—the same thing a factory-fresh
 power-on does, and for the same reason. <code>PROP_DEV_KEY</code> therefore reports a
 <em>different</em> key after the sequence, never an empty one.</p>
 <p>The previous identity is gone from the moment <code>CMD_RST</code> completes, but
-anything the device built around it — a running device node, in particular —
+anything the device built around it—a running device node, in particular—
 <strong>MUST NOT</strong> continue to originate traffic under it, even where that state
 survives until the next boot.</p>
 <p>The command payload SHOULD be empty and MUST be ignored. The response is a
@@ -392,8 +405,8 @@ preserved;</li>
 restore has nothing to revert it to. The inbound queue contents,
 per-peer replay baselines, filters and delegation policy all survive
 unconditionally;</li>
-<li>independently persisted state outside the snapshot — the device
-identity keypair and <code>PROP_BLE_PAIRING_PIN</code> — is not affected; and</li>
+<li>independently persisted state outside the snapshot—the device
+identity keypair and <code>PROP_BLE_PAIRING_PIN</code>—is not affected; and</li>
 <li>the saved snapshot itself is not modified.</li>
 </ul>
 <p><strong>A restore never enables the PHY under an identity the snapshot was not
@@ -419,7 +432,7 @@ forms differ only in reporting and in session-state handling, never in
 the resulting configuration or retained data:</p>
 <ul>
 <li>
-<p><strong>Reset form</strong> — the device additionally resets its protocol session
+<p><strong>Reset form</strong>—the device additionally resets its protocol session
 state (transaction bookkeeping and session-scoped properties), as on
 attach. As with <code>CMD_RST</code>, the TID is ignored; completion is signaled
 by an unsolicited <code>CMD_PROP_IS</code> for <code>PROP_LAST_STATUS</code> carrying the
@@ -430,7 +443,7 @@ properties (such as <code>PROP_HOST_RX_QUEUE_COUNT</code>) reflect live state an
 are re-fetched.</p>
 </li>
 <li>
-<p><strong>Update form</strong> — the device applies the revert in place, emitting an
+<p><strong>Update form</strong>—the device applies the revert in place, emitting an
 unsolicited <code>CMD_PROP_IS</code> (with key material omitted, where applicable) for
 <strong>every property whose value changed</strong>, and then reports completion
 with <code>CMD_PROP_IS</code> for <code>PROP_LAST_STATUS</code> carrying <code>STATUS_OK</code> and the
@@ -440,13 +453,13 @@ command’s TID. Session state is not reset in this form.</p>
 <p>A host <strong>MUST</strong> handle both forms: it treats <code>STATUS_RESET_RESTORED</code> as
 full reversion to saved values, applies any unsolicited property updates,
 and recognizes completion by either the reset notification or the
-matching-TID <code>STATUS_OK</code>. This is not an extra burden in practice — hosts
+matching-TID <code>STATUS_OK</code>. This is not an extra burden in practice—hosts
 must already tolerate unsolicited <code>CMD_PROP_IS</code> value changes at any time
 (see <a href="ulcp-core.html#attach-sync">Attach, Detach, and Synchronization</a>). A host that does not know the snapshot’s contents
 (for example, because a previous session saved it) re-fetches the
 properties it depends on, exactly as in the post-attach procedure.</p>
-<p>If an error occurs — in particular <code>STATUS_INVALID_STATE</code> when no snapshot
-exists (see <code>PROP_SAVED</code>) — the value of the emitted <code>PROP_LAST_STATUS</code>
+<p>If an error occurs—in particular <code>STATUS_INVALID_STATE</code> when no snapshot
+exists (see <code>PROP_SAVED</code>)—the value of the emitted <code>PROP_LAST_STATUS</code>
 will be set accordingly, no state is modified, and no reset code is
 emitted.</p>
 <h3 id="cmd-factory-reset"><a class="header" href="#cmd-factory-reset">CMD 15: (Host -&gt; Device) <code>CMD_FACTORY_RESET</code></a></h3>
@@ -458,11 +471,11 @@ emitted.</p>
 </code></pre>
 <p>Figure: Structure of <code>CMD_FACTORY_RESET</code></p>
 <p>Return the radio to a blank factory state. Commands the device to erase
-<strong>every</strong> piece of mutable state it holds — both the persisted state
+<strong>every</strong> piece of mutable state it holds—both the persisted state
 <code>CMD_CLEAR</code> erases (the saved snapshot, all persisted provisioning, and
 the device identity private key) <strong>and</strong> the transport-level state
 <code>CMD_CLEAR</code> deliberately preserves: all BLE bonds and the configured
-<code>PROP_BLE_PAIRING_PIN</code> — and then reboot. After the reboot the radio is
+<code>PROP_BLE_PAIRING_PIN</code>—and then reboot. After the reboot the radio is
 indistinguishable from one that has never been provisioned or paired.</p>
 <p>This differs from <code>CMD_CLEAR</code> + <code>CMD_RST</code> in two ways: it also clears
 transport-level pairing state (bonds and PIN), and it performs a hardware
@@ -495,8 +508,8 @@ should also discard its own pairing to the radio.</p>
 <li>Required: <code>CAP_SAVE</code></li>
 <li>Value Type: UINT8</li>
 </ul>
-<p>Whether a saved snapshot is in effect (see <a href="ulcp-saved-state.html#saved-state">Saved State</a>) — that is,
-whether the device is armed for autonomous operation across a power cycle —
+<p>Whether a saved snapshot is in effect (see <a href="ulcp-saved-state.html#saved-state">Saved State</a>)—that is,
+whether the device is armed for autonomous operation across a power cycle—
 and, when the answer is qualified, how:</p>
 <div class="table-wrapper">
 <table>

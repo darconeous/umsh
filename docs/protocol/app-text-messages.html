@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-5f0d90f9.js";
+            window.path_to_searchindex_js = "searchindex-a36d942b.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-438957a9.js"></script>
+        <script src="toc-fed4626c.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -180,13 +180,13 @@
 This section is an early work in progress and this protocol may change significantly.</p>
 </blockquote>
 <p>The text message protocol carries human-readable text between nodes (unicast) or from a node to a channel (multicast).</p>
-<p>The payload consists of a CoAP-style option list terminated by a <code>0xFF</code> byte, followed by the message body. All options are non-critical — unrecognized options are ignored and the remainder of the message is displayed normally.</p>
+<p>The payload consists of a CoAP-style option list terminated by a <code>0xFF</code> byte, followed by the message body. All options are non-critical—unrecognized options are ignored and the remainder of the message is displayed normally.</p>
 <h2 id="message-options"><a class="header" href="#message-options">Message Options</a></h2>
 <p>Every recognized option is a singleton unless a specification explicitly declares otherwise. How a receiver treats a duplicated recognized option depends on the option’s role:</p>
 <ul>
-<li>An option that carries identity, sequencing, or reference semantics — Message Type, Message Sequence, Regarding, Editing, and extension options in the same role such as Sender Sequence — makes the message invalid when repeated, even if the repeated values are identical. The message MUST be dropped.</li>
-<li>A presentation option — Sender Handle, Background Color, Text Color — keeps the first occurrence when repeated; later occurrences are ignored and MAY be reported diagnostically.</li>
-<li>Duplicates of a zero-length flag option — Sequence Reset, Channel Group Resend — are idempotent.</li>
+<li>An option that carries identity, sequencing, or reference semantics—Message Type, Message Sequence, Regarding, Editing, and extension options in the same role such as Sender Sequence—makes the message invalid when repeated, even if the repeated values are identical. The message MUST be dropped.</li>
+<li>A presentation option—Sender Handle, Background Color, Text Color—keeps the first occurrence when repeated; later occurrences are ignored and MAY be reported diagnostically.</li>
+<li>Duplicates of a zero-length flag option—Sequence Reset, Channel Group Resend—are idempotent.</li>
 </ul>
 <p>Repeated unrecognized options remain ignorable.</p>
 <div class="table-wrapper">
@@ -225,7 +225,7 @@ This section is an early work in progress and this protocol may change significa
 </div>
 <p>If absent or empty, the message type defaults to 0 (basic text).</p>
 <p>The presence of the <code>Regarding</code> option changes the semantics a bit: A <strong>reply</strong> is a type 0 message with a <code>Regarding</code> option specifying which message is being replied to. A <strong>reaction</strong> is a type 1 message with a <code>Regarding</code> option specifying which message is being reacted to; the body is a single Unicode emoji or a short text token such as <code>+1</code>, <code>-1</code>, <code>!</code>, or <code>?</code>. Implementations may differentiate reactions from plain status text by the presence of the Regarding option.</p>
-<p>Reaction bodies SHOULD be short text tokens rather than emoji: <code>&lt;3</code>, <code>+1</code>, <code>-1</code>, <code>ha</code>, <code>!</code>, and <code>?</code> cover the common reactions in one or two bytes. Receivers SHOULD accept the equivalent spellings — <code>♥</code> for <code>&lt;3</code>, <code>haha</code> or <code>lol</code> for <code>ha</code>, <code>!!</code> for <code>!</code>, letter case being insignificant — as well as the emoji themselves, and SHOULD render a reaction as a single glyph, taking the first one when a body carries more.</p>
+<p>Reaction bodies SHOULD be short text tokens rather than emoji: <code>&lt;3</code>, <code>+1</code>, <code>-1</code>, <code>ha</code>, <code>!</code>, and <code>?</code> cover the common reactions in one or two bytes. Receivers SHOULD accept the equivalent spellings—<code>♥</code> for <code>&lt;3</code>, <code>haha</code> or <code>lol</code> for <code>ha</code>, <code>!!</code> for <code>!</code>, letter case being insignificant—as well as the emoji themselves, and SHOULD render a reaction as a single glyph, taking the first one when a body carries more.</p>
 <p>There are five canonical reactions:</p>
 <div class="table-wrapper">
 <table>
@@ -303,21 +303,21 @@ This section is an early work in progress and this protocol may change significa
 <li>Automatic repair is bounded: a receiver SHOULD NOT automatically request more than 8 missing messages from a single observed gap, and SHOULD apply per-peer and overall rate limits to all generated resend requests.</li>
 <li>A forward delta greater than the receiver’s automatic-repair bound, an ambiguous delta, the first message observed from a sender, and the first message after a Sequence Reset all establish a new baseline. Receivers MUST NOT generate automatic resend requests to backfill across a baseline.</li>
 <li>Repair of a channel-group conversation requires addressing a blind unicast to the original sender, which requires that sender’s full public key. A member holding only the source hint cannot construct the request and simply renders the loss.</li>
-<li>In a channel-group conversation every member observes the same loss at nearly the same moment. Receivers MUST delay each automatic group repair request by an independently randomized interval, and MUST cancel a pending request when the missing message — or a Message Unavailable naming it — arrives on the channel before the request is sent.</li>
+<li>In a channel-group conversation every member observes the same loss at nearly the same moment. Receivers MUST delay each automatic group repair request by an independently randomized interval, and MUST cancel a pending request when the missing message—or a Message Unavailable naming it—arrives on the channel before the request is sent.</li>
 <li>Room conversations are unicast; room repair requests are sent directly to the room without group jitter, and responses repair only the requester.</li>
 </ul>
-<p>A repaired message occupies its position in <strong>sequence order</strong> within the sender’s stream, not the position at which it happened to arrive. A receiver MAY reserve that ordered position when the gap is first observed — rendering a pending-gap placeholder there while a repair is outstanding — and fill the same position in place when the message arrives, rather than appending it at the end of the transcript. A message that fills a reserved position after later messages are already displayed MAY be marked as having arrived late. A gap whose repair is ultimately exhausted, expired, or disclaimed by the sender MAY be presented as an unavailable position rather than silently removed.</p>
-<p>When a message is delivered in fragments, a receiver SHOULD raise any user-facing notification once the final fragment is received, or once a bounded latency (on the order of thirty seconds) has elapsed since the first fragment — whichever comes first — so a stalled reassembly still notifies without waiting for the full reassembly lifetime.</p>
+<p>A repaired message occupies its position in <strong>sequence order</strong> within the sender’s stream, not the position at which it happened to arrive. A receiver MAY reserve that ordered position when the gap is first observed—rendering a pending-gap placeholder there while a repair is outstanding—and fill the same position in place when the message arrives, rather than appending it at the end of the transcript. A message that fills a reserved position after later messages are already displayed MAY be marked as having arrived late. A gap whose repair is ultimately exhausted, expired, or disclaimed by the sender MAY be presented as an unavailable position rather than silently removed.</p>
+<p>When a message is delivered in fragments, a receiver SHOULD raise any user-facing notification once the final fragment is received, or once a bounded latency (on the order of thirty seconds) has elapsed since the first fragment—whichever comes first—so a stalled reassembly still notifies without waiting for the full reassembly lifetime.</p>
 <h3 id="sequence-reset"><a class="header" href="#sequence-reset">Sequence Reset</a></h3>
-<p>A 0-byte flag option that signals the sender has reset its message ID counter for the current conversation — for example, after losing that conversation’s persistent sequence state. Receivers SHOULD discard cached message context for this sender in this conversation, including pending fragment reassembly state. State for the same sender in other conversations is unaffected.</p>
+<p>A 0-byte flag option that signals the sender has reset its message ID counter for the current conversation—for example, after losing that conversation’s persistent sequence state. Receivers SHOULD discard cached message context for this sender in this conversation, including pending fragment reassembly state. State for the same sender in other conversations is unaffected.</p>
 <p>The Sequence Reset option SHOULD accompany a Message Sequence option bearing the sender’s new starting ID. In the absence of a Message Sequence option, receivers SHOULD treat the next message from that sender as starting a fresh sequence.</p>
 <p>Reset announcement is lazy and scoped to the affected conversation: the sender includes the flag on the next message it actually sends in that conversation. Senders do not transmit standalone reset messages preemptively to conversations they are not otherwise sending to.</p>
 <h3 id="regarding"><a class="header" href="#regarding">Regarding</a></h3>
 <p>References a previously sent message for the purposes of replies and reactions.</p>
 <p>The option length depends on the conversation, not on how the MAC packet is addressed:</p>
 <ul>
-<li><strong>One-to-one conversation</strong> (unicast, or a blind-unicast conversation with a single logical destination): 1 byte — the Message ID of the referenced message.</li>
-<li><strong>Channel-group conversation</strong> (delivered by multicast to the channel): 4 bytes — the 1-byte Message ID followed by the first 3 bytes of the source public key of the original sender.</li>
+<li><strong>One-to-one conversation</strong> (unicast, or a blind-unicast conversation with a single logical destination): 1 byte—the Message ID of the referenced message.</li>
+<li><strong>Channel-group conversation</strong> (delivered by multicast to the channel): 4 bytes—the 1-byte Message ID followed by the first 3 bytes of the source public key of the original sender.</li>
 </ul>
 <p>The source prefix is necessary in multicast channels to disambiguate messages from different senders that may share the same Message ID. This means a message cannot be referenced if it is more than 255 messages old in that sender’s sequence, or if the user has since reset their sequence ID.</p>
 <p>In chat rooms, the room assigns canonical Message IDs across all senders (see <a href="app-chat-rooms.html#room-update">Chat Rooms</a>), so the 1-byte form is used and no source prefix is needed.</p>
@@ -326,8 +326,8 @@ This section is an early work in progress and this protocol may change significa
 <p>An edit with a zero-length body signals deletion of the original message.</p>
 <p>For as long as a client retains sequence history for an edited or deleted message, it SHOULD retain the stable original-message identity or a tombstone so that references can still be resolved. A client MAY retain prior revision content, including deleted content, for edit-history display; this is a local storage and privacy policy rather than a protocol requirement.</p>
 <p>Edit messages carry their own Message IDs. References in subsequent Editing or Regarding options MUST use the original message’s ID, not the edit’s ID.</p>
-<p>Once a message has been edited or deleted, its superseded content MUST NOT be retransmitted: a resend request naming the original Message ID is answered with the current content re-issued under that ID, or with Message Unavailable — never with the pre-edit bytes. This obligation is durable; it survives restarts of the sending node. Retaining superseded content locally for the sender’s own review remains permitted, per the retention note above.</p>
-<p>A receiver holding an unrepaired gap at an edited message’s original ID MAY treat an arriving edit that references it as satisfying that gap — the edit already carries the position’s current content — and cancel the pending repair rather than requesting content the sender is no longer willing to send.</p>
+<p>Once a message has been edited or deleted, its superseded content MUST NOT be retransmitted: a resend request naming the original Message ID is answered with the current content re-issued under that ID, or with Message Unavailable—never with the pre-edit bytes. This obligation is durable; it survives restarts of the sending node. Retaining superseded content locally for the sender’s own review remains permitted, per the retention note above.</p>
+<p>A receiver holding an unrepaired gap at an edited message’s original ID MAY treat an arriving edit that references it as satisfying that gap—the edit already carries the position’s current content—and cancel the pending repair rather than requesting content the sender is no longer willing to send.</p>
 <p>How edits are presented to users is implementation-defined. Implementations typically display only the most recent edit, with some indication that edits exist, and an optional mechanism to view edit history.</p>
 <h3 id="background-color"><a class="header" href="#background-color">Background Color</a></h3>
 <p>Three bytes (red, green, blue) specifying a suggested background color for the text bubble. Receivers may ignore this option. If supported, implementations should ensure adequate contrast with the text color.</p>

@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-5f0d90f9.js";
+            window.path_to_searchindex_js = "searchindex-a36d942b.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-438957a9.js"></script>
+        <script src="toc-fed4626c.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -178,28 +178,28 @@
 <p>UMSH reuses a small set of encoding patterns across both the MAC layer and application-layer protocols. This chapter collects them in one place so that individual protocol sections can reference them without repeating the details.</p>
 <h2 id="byte-order"><a class="header" href="#byte-order">Byte Order</a></h2>
 <p>Multi-byte numeric fields are transmitted in <strong>big-endian</strong> (most-significant byte first), also known as <strong>network byte order</strong>. This is the standard convention for protocol specifications and is straightforward to interpret in packet diagrams. Modern hardware can convert between byte orders at effectively zero cost, so this choice imposes no practical performance penalty.</p>
-<p>Non-numeric multi-byte data — such as SHA-256 hashes, Ed25519 public keys, and EdDSA signatures — is transmitted in its most common byte-wise representation, independent of any underlying endianness of the represented value.</p>
+<p>Non-numeric multi-byte data—such as SHA-256 hashes, Ed25519 public keys, and EdDSA signatures—is transmitted in its most common byte-wise representation, independent of any underlying endianness of the represented value.</p>
 <h2 id="coap-style-option-encoding"><a class="header" href="#coap-style-option-encoding">CoAP-Style Option Encoding</a></h2>
 <p>UMSH uses the delta-length option encoding defined in CoAP (RFC 7252 §3.1) wherever a set of typed key-value fields needs to be carried compactly. This allows the protocols to be flexible and adapt to future needs while retaining backward compatibility.</p>
 <p>Each option is encoded as a delta from the previous option’s number, a length, and a value. The sequence is terminated by a <code>0xFF</code> end-of-options marker when a PAYLOAD follows the options block; packets with no payload omit the marker.</p>
 <p>This encoding appears in:</p>
 <ul>
-<li><strong>MAC-layer packet options</strong> — routing, signal-quality thresholds, callsigns (see <a href="packet-options.html">Packet Options</a>)</li>
-<li><strong>Text message options</strong> — message type, sender handle, fragmentation, colors (see <a href="app-text-messages.html">Text Messages</a>)</li>
-<li><strong>Chat room payloads</strong> — room info responses, login parameters (see <a href="app-chat-rooms.html">Chat Rooms</a>)</li>
-<li><strong>Node identity metadata</strong> — name, location, altitude, timestamp, supported regions (see <a href="node-identity.html">Node Identity</a>)</li>
+<li><strong>MAC-layer packet options</strong>—routing, signal-quality thresholds, callsigns (see <a href="packet-options.html">Packet Options</a>)</li>
+<li><strong>Text message options</strong>—message type, sender handle, fragmentation, colors (see <a href="app-text-messages.html">Text Messages</a>)</li>
+<li><strong>Chat room payloads</strong>—room info responses, login parameters (see <a href="app-chat-rooms.html">Chat Rooms</a>)</li>
+<li><strong>Node identity metadata</strong>—name, location, altitude, timestamp, supported regions (see <a href="node-identity.html">Node Identity</a>)</li>
 </ul>
-<p>The full encoding rules — nibble interpretation, extended bytes, and the end marker — are defined in <a href="packet-structure.html#option-encoding">Packet Structure</a>. Application-layer uses follow the same wire format.</p>
+<p>The full encoding rules—nibble interpretation, extended bytes, and the end marker—are defined in <a href="packet-structure.html#option-encoding">Packet Structure</a>. Application-layer uses follow the same wire format.</p>
 <h2 id="arnceham-64-text-encoding"><a class="header" href="#arnceham-64-text-encoding">ARNCE/HAM-64 Text Encoding</a></h2>
 <p><a href="https://github.com/arngll/arnce-spec/blob/main/n6drc-arnce.md#introduction">ARNCE</a> (Amateur Radio Numeric Callsign Encoding), also known as HAM-64, is a compact encoding for short alphanumeric strings. It packs up to 12 characters into 2, 4, 6, or 8 bytes, making it well suited for identifiers that must fit in constrained fields.</p>
 <p>UMSH uses ARNCE/HAM-64 for:</p>
 <ul>
-<li><strong>Operator callsign</strong> (packet option 4) — identifies the originating operator under amateur radio rules</li>
-<li><strong>Station callsign</strong> (packet option 7) — identifies the transmitting station, updated by repeaters during forwarding</li>
-<li><strong>Region codes</strong> (packet option 11) — short codes of one to three letters or digits encoded as 2-byte ARNCE values (e.g. SJC → <code>0x7853</code>)</li>
+<li><strong>Operator callsign</strong> (packet option 4)—identifies the originating operator under amateur radio rules</li>
+<li><strong>Station callsign</strong> (packet option 7)—identifies the transmitting station, updated by repeaters during forwarding</li>
+<li><strong>Region codes</strong> (packet option 11)—short codes of one to three letters or digits encoded as 2-byte ARNCE values (e.g. SJC → <code>0x7853</code>)</li>
 </ul>
 <h2 id="utf-8-strings"><a class="header" href="#utf-8-strings">UTF-8 Strings</a></h2>
-<p>All human-readable text in UMSH — message bodies, node names, sender handles, room descriptions — is encoded as UTF-8. String length is determined by context:</p>
+<p>All human-readable text in UMSH—message bodies, node names, sender handles, room descriptions—is encoded as UTF-8. String length is determined by context:</p>
 <ul>
 <li>Inside a CoAP-style option, the option’s length field defines the string boundary.</li>
 <li>As trailing data after a <code>0xFF</code> marker, the string extends to the end of the payload (or to the start of a trailing signature).</li>

@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-5f0d90f9.js";
+            window.path_to_searchindex_js = "searchindex-a36d942b.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-438957a9.js"></script>
+        <script src="toc-fed4626c.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -237,7 +237,7 @@ as OR, and the shortest one decides.</li>
 path it travels, and a plain broadcast carries no frame counter for a lower
 layer to recognize the repeat by; the <a href="#identity-request-options">NONCE</a> is
 what names the solicitation. A responder suppresses a request matching one it
-has already answered — same sender, same NONCE — for at least as long as it
+has already answered—same sender, same NONCE—for at least as long as it
 may hold the reply. A request carrying no NONCE cannot be distinguished from a
 repeat of itself; a requester that wants a further answer inside that window
 asks with a fresh NONCE.</li>
@@ -251,7 +251,7 @@ answer; such a request is therefore confined to the requester’s own
 neighborhood:</p>
 <ul>
 <li>The FHOPS byte must either be absent or set to 0x00. A request that is flood
-routed — FHOPS present with either nibble nonzero — MUST NOT be answered.</li>
+routed—FHOPS present with either nibble nonzero—MUST NOT be answered.</li>
 <li>The response MUST NOT carry a FHOPS field (the FCF flood hop count flag is
 clear). The invariant is that the reply travels exactly as far as the question
 did and no further: a request that crossed one hop is answered across that one
@@ -267,6 +267,17 @@ no flood budget for a repeater to spend. Such a request therefore carries a
 it sends the response as a source route built from the trace the request arrived
 with. Repeaters prepend when forwarding, so the accumulated trace already reads
 as the path back and is used as-is, without reversal.</p>
+<p>The response carries a Trace Route option of its own, and a <a href="packet-options.html#trace-signal-option-10">Trace
+Signal</a> where the request carried one.
+The trace on the request is what taught the responder a path home, and it taught
+the requester nothing: a broadcast solicitation leaves no route behind at the
+requester, and the response reaches it with its own Route option consumed and its
+<code>FHOPS_ACC</code> counting only the tail of the path. Without a trace on the response
+the requester ends the exchange holding no route to the node it just identified.
+This is the general rule for a response to a traced packet (<a href="beacons.html#path-discovery">Path
+Discovery</a>) rather than an exception to the advice
+against tracing a source-routed packet: the path a response is steered down is
+the requester’s own trace, not a route either side already held.</p>
 <p>A repeater consumes its own hint while forwarding, not while receiving, so a
 request whose Route option still names a repeater is one that repeater drops.
 Asking a named router to identify itself therefore means steering the request to
@@ -383,6 +394,7 @@ Non-filter options (such as NONCE) do not participate in this matching.</p>
 type that requests an ACK.</p>
 <h2 id="peer-repeaters-request-10"><a class="header" href="#peer-repeaters-request-10">Peer Repeaters Request (10)</a></h2>
 <p>Asks the destination—typically a repeater—for its list of known peer repeaters.</p>
+<p>The list is the responder’s repeater neighborhood: the repeaters it has heard from their own transmitters. A repeater enters it in one of two ways. Forwarding a frame the responder receives is one—a repeater prepends its router hint to the frame’s <a href="packet-options.html#trace-route-option-2">Trace Route</a>, so the first hint names the repeater whose transmission was just heard. Advertising is the other—a <a href="node-identity.html">node identity</a> claiming the repeater role or capability, heard directly rather than forwarded. Frames heard from nodes that are not repeaters, and identities that arrived through a repeater, put nothing in the list. A neighbor need not be on the air: a repeater reached over a point-to-point link, such as an attached host, is listed the same way and simply carries no signal measurements.</p>
 <p>The command-specific payload is a CoAP-style option list, using the delta-length encoding defined in <a href="packet-options.html#attribute-encoding">Packet Options</a>:</p>
 <div class="table-wrapper">
 <table>

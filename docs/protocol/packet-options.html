@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-5f0d90f9.js";
+            window.path_to_searchindex_js = "searchindex-a36d942b.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-438957a9.js"></script>
+        <script src="toc-fed4626c.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -329,7 +329,7 @@
 <h3 id="ack-mic-option-8"><a class="header" href="#ack-mic-option-8">Ack MIC (option 8)</a></h3>
 <p>This option represents a piggy-backed MAC ack that, when received, behaves as if it was an ack for the referenced packet, instead of sending both a MAC ack and an application-level response in two separate packets.</p>
 <ul>
-<li>Type: 4-byte ack MIC — the first 4 bytes of the acknowledged packet’s on-wire MIC (see <a href="security.html#ack-tag-construction">Ack Tag Construction</a>).</li>
+<li>Type: 4-byte ack MIC—the first 4 bytes of the acknowledged packet’s on-wire MIC (see <a href="security.html#ack-tag-construction">Ack Tag Construction</a>).</li>
 </ul>
 <p>The option carries only the correlation handle, not a keyed ack tag: the packet carrying the option is itself authenticated to the original sender, so its own MIC already proves the acknowledgement is genuine. The <code>ack_mic</code> value simply identifies which outstanding request the reply acknowledges.</p>
 <p>Because the option sits in the plaintext options block, forwarders read it under the same terms as a standalone MAC ack, including for <a href="repeater-operation.html#ack-cancellation">ack cancellation</a>.</p>
@@ -355,7 +355,7 @@
 <li>Because this option is dynamic, repeaters may insert it while flood-forwarding a packet that currently has no region code.</li>
 <li>A repeater must never rewrite an existing region code and must never add a second region code to a packet that already has one or more region-code options.</li>
 <li>Region insertion is a local policy decision. When no explicit local policy exists, a reasonable default is the IATA code of the closest regional commercial airport.</li>
-<li>Region insertion applies only during flood forwarding. An untagged source-routed packet is first tagged by the repeater that flood-forwards it — the one that receives it with an already-empty source route — not by the repeater that emptied the route.</li>
+<li>Region insertion applies only during flood forwarding. An untagged source-routed packet is first tagged by the repeater that flood-forwards it—the one that receives it with an already-empty source route—not by the repeater that emptied the route.</li>
 </ul>
 <h4 id="region-code-encoding"><a class="header" href="#region-code-encoding">Region Code Encoding</a></h4>
 <p>Region codes are 2-byte identifiers derived by one of two methods, depending on the type of region. Both ignore ASCII case—ARNCE/HAM-16 encodes <code>A</code>–<code>Z</code> and <code>a</code>–<code>z</code> alike, and the hash folds <code>A</code>–<code>Z</code> to lowercase <code>a</code>–<code>z</code> before it is taken, altering no other character. Strings that differ only in ASCII case therefore derive the same code and name the same region.</p>

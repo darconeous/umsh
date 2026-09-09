@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-5f0d90f9.js";
+            window.path_to_searchindex_js = "searchindex-a36d942b.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-438957a9.js"></script>
+        <script src="toc-fed4626c.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -237,20 +237,20 @@
 </code></pre>
 <p>Where:</p>
 <ul>
-<li><code>FHOPS_REM</code> (high nibble) = hops remaining — the number of additional flood hops remaining. Decremented by each flood-forwarding repeater. When zero, no further flood forwarding is allowed.</li>
-<li><code>FHOPS_ACC</code> (low nibble) = hops accumulated — the number of flood hops already traversed. Incremented by each flood-forwarding repeater.</li>
+<li><code>FHOPS_REM</code> (high nibble) = hops remaining—the number of additional flood hops remaining. Decremented by each flood-forwarding repeater. When zero, no further flood forwarding is allowed.</li>
+<li><code>FHOPS_ACC</code> (low nibble) = hops accumulated—the number of flood hops already traversed. Incremented by each flood-forwarding repeater.</li>
 </ul>
 <blockquote class="blockquote-tag blockquote-tag-important">
 <p class="blockquote-tag-title"><svg viewbox="0 0 16 16" width="18" height="18"><path d="M0 1.75C0 .784.784 0 1.75 0h12.5C15.216 0 16 .784 16 1.75v9.5A1.75 1.75 0 0 1 14.25 13H8.06l-2.573 2.573A1.458 1.458 0 0 1 3 14.543V13H1.75A1.75 1.75 0 0 1 0 11.25Zm1.75-.25a.25.25 0 0 0-.25.25v9.5c0 .138.112.25.25.25h2a.75.75 0 0 1 .75.75v2.19l2.72-2.72a.749.749 0 0 1 .53-.22h6.5a.25.25 0 0 0 .25-.25v-9.5a.25.25 0 0 0-.25-.25Zm7 2.25v2.5a.75.75 0 0 1-1.5 0v-2.5a.75.75 0 0 1 1.5 0ZM9 9a1 1 0 1 1-2 0 1 1 0 0 1 2 0Z"></path></svg>Important</p>
 <p><code>FHOPS</code> counts <strong>flood</strong> hops only. A repeater that forwards a packet because
 it matched a <a href="packet-options.html#source-route-option-3">source-route</a> hint
-MUST leave the byte untouched — including the repeater that removes the last
+MUST leave the byte untouched—including the repeater that removes the last
 remaining hint. Emptying the route makes the packet floodable, but the first
 flood hop is performed by the <em>next</em> repeater, which sees an empty route and
 pays for it there.</p>
 </blockquote>
-<p>The sum <code>FHOPS_REM + FHOPS_ACC</code> is constant across forwarding hops and usually equals the original flood hop limit set by the sender. An exception to this rule is <a href="routing-overview.html#bridging">bridging</a>, which can decrease <code>FHOPS_REM</code> unilaterally. The maximum flood radius is 15 hops; longer paths can be achieved by combining source routing with flooding (see <a href="repeater-operation.html#routing-implications">Routing Implications</a>).</p>
-<p><code>FHOPS_ACC</code> enables the destination to determine how many flood hops the packet traversed, which is used for <a href="packet-types.html#mac-ack-packet">MAC ack routing</a> when no trace route is available.</p>
+<p>The sum <code>FHOPS_REM + FHOPS_ACC</code> is constant across forwarding hops and usually equals the original flood hop limit set by the sender. An exception to this rule is <a href="routing-overview.html#bridging">bridging</a>, which can decrease <code>FHOPS_REM</code> unilaterally. The maximum flood radius is 15 flood hops, which is a path of sixteen hops when no source route is involved; longer paths can be achieved by combining source routing with flooding (see <a href="repeater-operation.html#routing-implications">Routing Implications</a>).</p>
+<p><code>FHOPS_ACC</code> enables the destination to determine how many flood hops the packet traversed—one less than the hops it took, unless a source route carried it part of the way—which is used for <a href="packet-types.html#mac-ack-packet">MAC ack routing</a> when no trace route is available.</p>
 <h3 id="options-field"><a class="header" href="#options-field">Options Field</a></h3>
 <p>Options use the same delta-length encoding as CoAP (RFC 7252 §3.1). Each option is encoded as a delta from the previous option’s number, a length, and a value. The sequence is terminated by a <code>0xFF</code> byte if a payload is present.</p>
 <h4 id="option-encoding"><a class="header" href="#option-encoding">Option Encoding</a></h4>
@@ -282,11 +282,11 @@ pays for it there.</p>
 <tr><td style="text-align: right">0–12</td><td>Literal value</td></tr>
 <tr><td style="text-align: right">13</td><td>One extended byte follows; value = byte + 13</td></tr>
 <tr><td style="text-align: right">14</td><td>Two extended bytes follow; value = uint16 (big-endian) + 269</td></tr>
-<tr><td style="text-align: right">15</td><td>Reserved — used only in the delta field to indicate the <code>0xFF</code> end-of-options marker</td></tr>
+<tr><td style="text-align: right">15</td><td>Reserved—used only in the delta field to indicate the <code>0xFF</code> end-of-options marker</td></tr>
 </tbody>
 </table>
 </div>
-<p>The value 15 is legal only as part of the <code>0xFF</code> end-of-options marker, where <em>both</em> nibbles are 15. Any other appearance of nibble value 15 — a delta nibble of 15 whose length nibble is not 15, or a length nibble of 15 in an ordinary option record — is malformed, and the packet MUST be dropped.</p>
+<p>The value 15 is legal only as part of the <code>0xFF</code> end-of-options marker, where <em>both</em> nibbles are 15. Any other appearance of nibble value 15—a delta nibble of 15 whose length nibble is not 15, or a length nibble of 15 in an ordinary option record—is malformed, and the packet MUST be dropped.</p>
 <p>The option delta is the difference between this option’s number and the previous option’s number (or zero for the first option). Options must appear in order of increasing option number. Multiple options with the same number are permitted (delta = 0).</p>
 <h4 id="end-of-options-marker"><a class="header" href="#end-of-options-marker">End-of-Options Marker</a></h4>
 <p>The byte <code>0xFF</code> (delta nibble = 15, length nibble = 15) separates the options block from a following variable-length payload.</p>
@@ -299,7 +299,7 @@ pays for it there.</p>
 </ol>
 <p>Senders SHOULD omit <code>0xFF</code> when there is no payload. Receivers MUST accept a <code>0xFF</code> in any position where the marker is syntactically valid (i.e., immediately after the last option record), regardless of if payload bytes follow.</p>
 <h4 id="example"><a class="header" href="#example">Example</a></h4>
-<p>Two options — option 3 (1-byte value) followed by option 9 (2-byte value):</p>
+<p>Two options—option 3 (1-byte value) followed by option 9 (2-byte value):</p>
 <pre><code class="language-text">+------+-------+  +------+-------+-------+  +------+
 | 0x31 |  val  |  | 0x62 |  val  |  val  |  | 0xFF |
 +------+-------+  +------+-------+-------+  +------+

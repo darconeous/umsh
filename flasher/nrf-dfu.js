@@ -3,7 +3,7 @@
  *
  * Adapted from `lib/dfu.js` in meshcore-dev/flasher.meshcore.io:
  *
- *   MIT License — Copyright (c) 2025 Rastislav Vysoky
+ *   MIT License—Copyright (c) 2025 Rastislav Vysoky
  *
  *   Permission is hereby granted, free of charge, to any person obtaining a
  *   copy of this software and associated documentation files (the "Software"),
@@ -20,7 +20,7 @@
  *
  * That implementation is itself a port of `dfu/dfu_transport_serial.py` from
  * adafruit-nrfutil (BSD-3-Clause, Copyright (c) 2015 Nordic Semiconductor),
- * which is where the framing and the nRF52840 flash timings come from — see
+ * which is where the framing and the nRF52840 flash timings come from—see
  * `vendor/adafruit-nrfutil/LICENSE`. `make flash-<board>-serial` drives the
  * same protocol from the command line.
  *
@@ -252,7 +252,7 @@ export class NrfDfu {
 
   async #awaitAck(what) {
     // The reply is one SLIP frame. Reassemble across chunk boundaries, and
-    // discard anything before the opening delimiter — a bootloader that has
+    // discard anything before the opening delimiter—a bootloader that has
     // just been reset can have stray bytes in flight.
     const buffer = [];
     let start = -1;
@@ -271,7 +271,7 @@ export class NrfDfu {
           }
           if (what === "first-data") {
             throw new DfuRejectedError(
-              "the radio refused this firmware — it looks like it was built for a different board. Nothing was written.",
+              "the radio refused this firmware—it looks like it was built for a different board. Nothing was written.",
             );
           }
           throw new DfuTimeoutError(`the radio stopped answering partway through (${what} packet).`);
@@ -303,7 +303,7 @@ export class NrfDfu {
       // acknowledgement sequence rather than by reporting an error code.
       throw new DfuRejectedError(
         what === "init"
-          ? "the radio refused this firmware — it looks like it was built for a different board. Nothing was written."
+          ? "the radio refused this firmware—it looks like it was built for a different board. Nothing was written."
           : `the radio rejected the ${what} packet.`,
       );
     }

@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-5f0d90f9.js";
+            window.path_to_searchindex_js = "searchindex-a36d942b.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-438957a9.js"></script>
+        <script src="toc-fed4626c.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -184,8 +184,8 @@ mesh itself, using the same command grammar, property model, and numeric
 registries that <a href="ulcp.html">ULCP</a> defines for the local link. <strong>Node
 Management Request</strong> (payload type 8) and <strong>Node Management Response</strong>
 (payload type 9) payloads carry ordinary ULCP frames between an
-<strong>administrator</strong> — a node listed in the device’s
-<a href="#prop-dev-admins">administrator list</a> — and the <strong>device</strong>, in unicast
+<strong>administrator</strong>—a node listed in the device’s
+<a href="#prop-dev-admins">administrator list</a>—and the <strong>device</strong>, in unicast
 packets exchanged with the <a href="ulcp-device.html#device-identity">device identity</a>.
 Support is optional and advertised through <a href="#capabilities"><code>CAP_ADMIN</code></a>.</p>
 <p>Administering a device over the mesh reaches the
@@ -200,7 +200,7 @@ kind exists.</p>
 <p>The binding relies on exactly what the MAC layer guarantees for secure
 unicast: the source of every accepted packet is authenticated, payloads are
 confidential, and replay protection accepts a given frame at most once. It
-assumes nothing more — not delivery, and not ordering. The payload format
+assumes nothing more—not delivery, and not ordering. The payload format
 adds what the ULCP grammar needs on such a transport:</p>
 <ul>
 <li>a <strong>token</strong> correlates responses with requests across long and variable
@@ -225,7 +225,7 @@ the payload type byte:</p>
   2 B    variable   1 B    variable
 </code></pre>
 <p>Direction lives entirely in the payload type. A device drops a Response
-payload — it never solicits anything — and an administrator that receives
+payload—it never solicits anything—and an administrator that receives
 a Response matching no outstanding exchange of its own discards it, both
 with accounting.</p>
 <p>Node Management payloads travel only in unicast and blind unicast packets:
@@ -267,7 +267,7 @@ unrecognized critical option treats the exchange as failed.</p>
 <p>The <code>0xFF</code> end-of-options marker is always present, since the frame
 follows.</p>
 <h3 id="frame"><a class="header" href="#frame">Frame</a></h3>
-<p>Exactly one ULCP frame, extending to the end of the payload — the payload
+<p>Exactly one ULCP frame, extending to the end of the payload—the payload
 bounds it, so it carries no length prefix. The embedded frame uses the
 exact <a href="ulcp-core.html#frame-format">frame format</a> of the local bindings, so
 a device dispatches it through the same machinery that serves its local
@@ -277,18 +277,18 @@ parsed is answered with a <code>CMD_PROP_IS</code> of <code>PROP_LAST_STATUS</co
 <code>STATUS_PARSE_ERROR</code>.</p>
 <p>The payload, envelope included, must fit a single UMSH frame; there is no
 fragmentation. The unassigned option numbers are this format’s growth
-space: a future need — carrying a request larger than one frame, say — is
+space: a future need—carrying a request larger than one frame, say—is
 met by assigning a critical option, and existing devices already reject
 what they do not recognize.</p>
 <h2 id="exchanges"><a class="header" href="#exchanges">Exchanges</a></h2>
 <p>Every interaction is an <strong>exchange</strong>: one request payload from an
 administrator, one response payload from the device. The device sends
-nothing over this binding except in response to a request — <code>CMD_PROP_IS</code>
+nothing over this binding except in response to a request—<code>CMD_PROP_IS</code>
 in its unsolicited role, and <code>CMD_PROP_INSERTED</code> and <code>CMD_PROP_REMOVED</code> as
 spontaneous notifications, do not occur here. State an administrator cares
 about is read, not pushed.</p>
 <p>The Response echoes the token and carries one frame: exactly
-the frame the device would emit in reply on a local binding — a
+the frame the device would emit in reply on a local binding—a
 <code>CMD_PROP_IS</code>, <code>CMD_PROP_INSERTED</code>, <code>CMD_PROP_REMOVED</code>, or <code>CMD_PROP_ARE</code>
 on success, or a <code>CMD_PROP_IS</code> of <code>PROP_LAST_STATUS</code> reporting the error.
 A request frame carrying a Device→Host command is answered
@@ -301,7 +301,7 @@ commands, whose semantics this binding leaves untouched:
 <a href="ulcp-core.html#cmd-prop-multi-get"><code>CMD_PROP_MULTI_GET</code></a> reads several
 properties, continuing past per-property failures, and
 <a href="ulcp-core.html#cmd-prop-multi-set"><code>CMD_PROP_MULTI_SET</code></a> applies writes
-strictly in order, stopping at the first failure — which is how an
+strictly in order, stopping at the first failure—which is how an
 administrator expresses writes whose effects depend on sequence.
 <code>CAP_ADMIN</code> requires <code>CAP_CMD_MULTI</code>, so an administrator may rely on
 both.</p>
@@ -313,8 +313,8 @@ examines the last entry it did receive: an error means the sequence
 stopped on that failure; a success means it stopped for space, and the
 administrator reissues the remainder as a new exchange.</p>
 <h3 id="resets"><a class="header" href="#resets">Resets</a></h3>
-<p>Commands that initiate a reset — <code>CMD_RST</code>, <code>CMD_RESTORE</code> in its reset
-form, <a href="ulcp-core.html#cmd-reboot"><code>CMD_REBOOT</code></a>, and <code>CMD_FACTORY_RESET</code> —
+<p>Commands that initiate a reset—<code>CMD_RST</code>, <code>CMD_RESTORE</code> in its reset
+form, <a href="ulcp-core.html#cmd-reboot"><code>CMD_REBOOT</code></a>, and <code>CMD_FACTORY_RESET</code>—
 are answered by <strong>no</strong> response payload. Delivery of such a command is
 confirmed by requesting a MAC acknowledgment, and its completion by a
 later exchange reading <code>PROP_LAST_STATUS</code> for the reset code.</p>
@@ -325,7 +325,7 @@ the node it is most worth sending to is the one nobody can walk to.</p>
 <h3 id="at-most-once"><a class="header" href="#at-most-once">Retries and At-Most-Once Processing</a></h3>
 <p>The MAC layer’s replay protection means a device never receives the same
 request frame twice; what it can receive twice is the same request <em>sent</em>
-twice — an administrator retransmitting because no response arrived,
+twice—an administrator retransmitting because no response arrived,
 though the request may in fact have been executed. The device therefore
 retains, per administrator, the token and the complete response of the
 most recent exchange. A request whose token matches the retained token is
@@ -339,24 +339,24 @@ behavior; the retained response makes this safe whether the request or
 only its response was lost. An administrator MUST NOT have more than one
 exchange outstanding with a given device.</p>
 <p>Retained entries do not survive a reset. A reset command retransmitted
-after it has already acted is therefore executed again — with the same
+after it has already acted is therefore executed again—with the same
 result.</p>
 <h2 id="cursors"><a class="header" href="#cursors">Reading Large Values</a></h2>
 <p>A read whose response does not fit one payload is completed across
 several exchanges. This applies to both read requests: a <code>CMD_PROP_GET</code>
 whose value does not fit, and a <code>CMD_PROP_MULTI_GET</code> whose entry list
 does not fit. The response frame is well-formed but its trailing content
-— the value of the <code>CMD_PROP_IS</code>, or the entry list of the
-<code>CMD_PROP_ARE</code> — is a leading fragment, accompanied by a <strong>CURSOR</strong>
+—the value of the <code>CMD_PROP_IS</code>, or the entry list of the
+<code>CMD_PROP_ARE</code>—is a leading fragment, accompanied by a <strong>CURSOR</strong>
 option: an opaque continuation handle, one to eight octets, chosen
-entirely by the device. The administrator continues with a new exchange —
-fresh token — whose request carries the returned cursor verbatim
+entirely by the device. The administrator continues with a new exchange—
+fresh token—whose request carries the returned cursor verbatim
 alongside a repeat of the request being continued. Each response carries
 the cursor to present in the <em>next</em> request; a response without one ends
 the read, its fragment being the last. Fragment sizes are the device’s
 choice, made to fill each frame; there is no fixed block size and no
 position numbering.</p>
-<p>A request carrying a CURSOR option MUST be the read being continued — the
+<p>A request carrying a CURSOR option MUST be the read being continued—the
 same <code>CMD_PROP_GET</code> or <code>CMD_PROP_MULTI_GET</code> that began it. A cursor on
 any other request is answered <code>STATUS_INVALID_ARGUMENT</code>.</p>
 <p>The contract:</p>
@@ -373,13 +373,13 @@ equivalent one; a retransmitted continuation is in any case answered
 from the retained response (see
 <a href="#at-most-once">Retries and At-Most-Once Processing</a>).</li>
 <li>Cursors are untrusted input. The device validates every cursor it
-receives and answers one it cannot honor — it does not parse, it was
+receives and answers one it cannot honor—it does not parse, it was
 issued for a different request, or the underlying data has changed out
-from under the position — with
+from under the position—with
 <code>STATUS_CURSOR_INVALID</code> (see <a href="ulcp-core.html#status-codes">Status Codes</a>);
 the administrator restarts from a cursor-less request. A practical
 cursor encodes the position together with a generation of the
-underlying data — a table revision, a boot count — so that every change
+underlying data—a table revision, a boot count—so that every change
 that invalidates positions is detected rather than served wrong.</li>
 <li>A response MAY carry an empty fragment with a cursor equal to the one
 presented, meaning nothing further is available yet; this suits data
@@ -397,25 +397,32 @@ and the source’s public key is listed in
 <a href="#prop-dev-admins"><code>PROP_DEV_ADMINS</code></a>. Everything else it drops, with
 accounting and without a response: an unlisted sender learns nothing about
 whether the device is manageable.</p>
-<p>Administrators reach the device domain and the device-scoped protocol
-state — including <code>PROP_CAPS</code>, so capability discovery works exactly as on
-the local link. Out of reach are:</p>
+<p>Administrators read everything: <code>CMD_PROP_GET</code> is never refused for lack
+of standing, and a property the device does not serve fails exactly as it
+would on the local link. <code>PROP_CAPS</code> in particular is readable, so
+capability discovery works exactly as on the local link.</p>
+<p>Writes are narrower. A device answers <code>STATUS_NOT_PERMITTED</code>—the
+operation exists, and the binding is what refused it—to:</p>
 <ul>
-<li><strong>session state</strong> and the <strong>host domain</strong>
-(see <a href="ulcp-core.html#state-classes">State Classes</a>): a request naming such
-a property is answered as an unrecognized property,
-<code>STATUS_PROP_NOT_FOUND</code>;</li>
-<li><code>CMD_STR_SEND</code> and <code>CMD_QUEUE_DRAIN</code>, answered as unrecognized
-commands, <code>STATUS_INVALID_COMMAND</code>;</li>
-<li><a href="ulcp-device.html#prop-dev-private-key"><code>PROP_DEV_PRIVATE_KEY</code></a>, answered
-<code>STATUS_PROP_NOT_FOUND</code>: a device identity cannot be installed over the
-mesh.</li>
+<li><code>CMD_PROP_SET</code>, <code>CMD_PROP_INSERT</code>, and <code>CMD_PROP_REMOVE</code> naming
+<strong>session state</strong> or the <strong>host domain</strong>
+(see <a href="ulcp-core.html#state-classes">State Classes</a>): that state belongs
+to the tethered host, and an administrator is not one. The exception is
+<a href="ulcp-host.html#prop-mac-backhaul"><code>PROP_MAC_BACKHAUL</code></a>: which side of the
+radio multiplexer the tethered host sits on is worth flipping from
+across the mesh, so an administrator may write it, though the host’s
+next attach still resets it;</li>
+<li><code>CMD_STR_SEND</code> and <code>CMD_QUEUE_DRAIN</code>: the raw PHY stream and the
+receive queue are likewise the tethered host’s;</li>
+<li>writes to
+<a href="ulcp-device.html#prop-dev-private-key"><code>PROP_DEV_PRIVATE_KEY</code></a>: a device
+identity cannot be installed over the mesh.</li>
 </ul>
 <p>For everything else this binding meets the transport requirement of
 <a href="ulcp-core.html#provisioning-security">Provisioning Security</a>: every
 executed request already arrives authenticated and encrypted from a listed
-administrator, so device-domain key material — channel keys, peer entries
-— may be provisioned remotely. The read-back rules are unchanged:
+administrator, so device-domain key material—channel keys, peer entries
+—may be provisioned remotely. The read-back rules are unchanged:
 key-bearing properties report their digest forms, never secrets.</p>
 <h3 id="prop-dev-admins"><a class="header" href="#prop-dev-admins">PROP 4865: <code>PROP_DEV_ADMINS</code></a></h3>
 <ul>
@@ -434,7 +441,7 @@ default. The property is device-domain state: it participates in the
 <a href="ulcp-saved-state.html#saved-state">saved snapshot</a> like any other
 device-domain property, which is how a commissioned repeater stays
 manageable across a power cycle. It is writable over the local bindings
-and over this one — a listed administrator may add or remove
+and over this one—a listed administrator may add or remove
 administrators, itself included.</p>
 <h2 id="capabilities"><a class="header" href="#capabilities">Capabilities</a></h2>
 <div class="table-wrapper">

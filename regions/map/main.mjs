@@ -1,7 +1,7 @@
 /**
  * The region map: a debugger for the compiled geographic database.
  *
- * The page opens an actual `.regiondb` — the same file a phone downloads —
+ * The page opens an actual `.regiondb`—the same file a phone downloads—
  * and answers a click with the same code the runtime runs, from
  * `regiondb.mjs`. A viewer that could disagree with the runtime would be
  * worse than no viewer, because it would be believed. The shared conformance
@@ -130,7 +130,7 @@ function renderMetadata() {
         .map(
           ([name, license, attribution, url]) =>
             `<li>${url ? `<a href="${escape(url)}" rel="noreferrer">${escape(name)}</a>` : escape(name)}
-             — ${escape(license ?? "license unstated")}${attribution ? `, ${escape(attribution)}` : ""}</li>`,
+             —${escape(license ?? "license unstated")}${attribution ? `, ${escape(attribution)}` : ""}</li>`,
         )
         .join("")}
     </ul>`;
@@ -154,8 +154,8 @@ function refreshRegions() {
   const north = bounds.getNorth();
 
   const features = [];
-  // MapLibre reports unwrapped bounds across the antimeridian — panning
-  // west past Fiji yields west < -180, never west > east — so both edges
+  // MapLibre reports unwrapped bounds across the antimeridian—panning
+  // west past Fiji yields west < -180, never west > east—so both edges
   // are wrapped onto the storage domain first, and a viewport that
   // straddles the seam becomes two query bands. Geometry is stored split
   // at the antimeridian, and MapLibre renders each piece on every world
@@ -196,7 +196,7 @@ function refreshRegions() {
   }
   setStatus(
     dense
-      ? `${features.length} parts in view — fills hidden for legibility, outlines still exact.`
+      ? `${features.length} parts in view—fills hidden for legibility, outlines still exact.`
       : "",
   );
 }
@@ -239,7 +239,7 @@ function runLookup(latitude, longitude) {
     .setLngLat([longitude, latitude])
     .addTo(state.map);
 
-  // A four-column table cannot live honestly in a panel-width card — it
+  // A four-column table cannot live honestly in a panel-width card—it
   // wraps its own tokens. Each match is a two-line row instead, showing
   // what a person actually configures a radio with: the region string,
   // with the namespace beneath in small text as provenance. A region is

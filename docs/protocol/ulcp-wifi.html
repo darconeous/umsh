@@ -1,0 +1,1192 @@
+<!DOCTYPE HTML>
+<html lang="en" class="light sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Wi-Fi - UMSH Protocol Specification</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="favicon-de23e50b.svg">
+        <link rel="shortcut icon" href="favicon-8114d1fc.png">
+        <link rel="stylesheet" href="css/variables-8adf115d.css">
+        <link rel="stylesheet" href="css/general-2459343d.css">
+        <link rel="stylesheet" href="css/chrome-ae938929.css">
+        <link rel="stylesheet" href="css/print-9e4910d8.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="fonts/fonts-9644e21d.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" id="mdbook-highlight-css" href="highlight-493f70e1.css">
+        <link rel="stylesheet" id="mdbook-tomorrow-night-css" href="tomorrow-night-4c0ae647.css">
+        <link rel="stylesheet" id="mdbook-ayu-highlight-css" href="ayu-highlight-3fdfc3ac.css">
+
+        <!-- Custom theme stylesheets -->
+
+
+        <!-- Provide site root and default themes to javascript -->
+        <script>
+            const path_to_root = "";
+            const default_light_theme = "light";
+            const default_dark_theme = "ayu";
+            window.path_to_searchindex_js = "searchindex-a36d942b.js";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="toc-fed4626c.js"></script>
+    </head>
+    <body>
+    <div id="mdbook-help-container">
+        <div id="mdbook-help-popup">
+            <h2 class="mdbook-help-title">Keyboard shortcuts</h2>
+            <div>
+                <p>Press <kbd>←</kbd> or <kbd>→</kbd> to navigate between chapters</p>
+                <p>Press <kbd>S</kbd> or <kbd>/</kbd> to search in the book</p>
+                <p>Press <kbd>?</kbd> to show this help</p>
+                <p>Press <kbd>Esc</kbd> to hide this help</p>
+            </div>
+        </div>
+    </div>
+    <div id="mdbook-body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                let theme = localStorage.getItem('mdbook-theme');
+                let sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            const default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? default_dark_theme : default_light_theme;
+            let theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('light')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="mdbook-sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            let sidebar = null;
+            const sidebar_toggle = document.getElementById("mdbook-sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+                sidebar_toggle.checked = false;
+            }
+            if (sidebar === 'visible') {
+                sidebar_toggle.checked = true;
+            } else {
+                html.classList.remove('sidebar-visible');
+            }
+        </script>
+
+        <nav id="mdbook-sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="toc.html"></iframe>
+            </noscript>
+            <div id="mdbook-sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="mdbook-page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="mdbook-menu-bar-hover-placeholder"></div>
+                <div id="mdbook-menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="mdbook-sidebar-toggle" class="icon-button" for="mdbook-sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="mdbook-sidebar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M0 96C0 78.3 14.3 64 32 64H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32C14.3 128 0 113.7 0 96zM0 256c0-17.7 14.3-32 32-32H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32c-17.7 0-32-14.3-32-32zM448 416c0 17.7-14.3 32-32 32H32c-17.7 0-32-14.3-32-32s14.3-32 32-32H416c17.7 0 32 14.3 32 32z"/></svg></span>
+                        </label>
+                        <button id="mdbook-theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="mdbook-theme-list">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M371.3 367.1c27.3-3.9 51.9-19.4 67.2-42.9L600.2 74.1c12.6-19.5 9.4-45.3-7.6-61.2S549.7-4.4 531.1 9.6L294.4 187.2c-24 18-38.2 46.1-38.4 76.1L371.3 367.1zm-19.6 25.4l-116-104.4C175.9 290.3 128 339.6 128 400c0 3.9 .2 7.8 .6 11.6c1.8 17.5-10.2 36.4-27.8 36.4H96c-17.7 0-32 14.3-32 32s14.3 32 32 32H240c61.9 0 112-50.1 112-112c0-2.5-.1-5-.2-7.5z"/></svg></span>
+                        </button>
+                        <ul id="mdbook-theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-default_theme">Auto</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-ayu">Ayu</button></li>
+                        </ul>
+                        <button id="mdbook-search-toggle" class="icon-button" type="button" title="Search (`/`)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="/ s" aria-controls="mdbook-searchbar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M416 208c0 45.9-14.9 88.3-40 122.7L502.6 457.4c12.5 12.5 12.5 32.8 0 45.3s-32.8 12.5-45.3 0L330.7 376c-34.4 25.2-76.8 40-122.7 40C93.1 416 0 322.9 0 208S93.1 0 208 0S416 93.1 416 208zM208 352c79.5 0 144-64.5 144-144s-64.5-144-144-144S64 128.5 64 208s64.5 144 144 144z"/></svg></span>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">UMSH Protocol Specification</h1>
+
+                    <div class="right-buttons">
+                        <a href="print.html" title="Print this book" aria-label="Print this book">
+                            <span class=fa-svg id="print-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M128 0C92.7 0 64 28.7 64 64v96h64V64H354.7L384 93.3V160h64V93.3c0-17-6.7-33.3-18.7-45.3L400 18.7C388 6.7 371.7 0 354.7 0H128zM384 352v32 64H128V384 368 352H384zm64 32h32c17.7 0 32-14.3 32-32V256c0-35.3-28.7-64-64-64H64c-35.3 0-64 28.7-64 64v96c0 17.7 14.3 32 32 32H64v64c0 35.3 28.7 64 64 64H384c35.3 0 64-28.7 64-64V384zm-16-88c-13.3 0-24-10.7-24-24s10.7-24 24-24s24 10.7 24 24s-10.7 24-24 24z"/></svg></span>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="mdbook-search-wrapper" class="hidden">
+                    <form id="mdbook-searchbar-outer" class="searchbar-outer">
+                        <div class="search-wrapper">
+                            <input type="search" id="mdbook-searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="mdbook-searchresults-outer" aria-describedby="searchresults-header">
+                            <div class="spinner-wrapper">
+                                <span class=fa-svg id="fa-spin"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M304 48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zm0 416c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM48 304c26.5 0 48-21.5 48-48s-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48zm464-48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM142.9 437c18.7-18.7 18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zm0-294.2c18.7-18.7 18.7-49.1 0-67.9S93.7 56.2 75 75s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zM369.1 437c18.7 18.7 49.1 18.7 67.9 0s18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9z"/></svg></span>
+                            </div>
+                        </div>
+                    </form>
+                    <div id="mdbook-searchresults-outer" class="searchresults-outer hidden">
+                        <div id="mdbook-searchresults-header" class="searchresults-header"></div>
+                        <ul id="mdbook-searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('mdbook-sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('mdbook-sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#mdbook-sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="mdbook-content" class="content">
+                    <main>
+                        <h1 id="ulcp-wi-fi"><a class="header" href="#ulcp-wi-fi">ULCP: Wi-Fi</a></h1>
+<p>Wi-Fi control is the subsystem the host uses to configure and observe a
+device’s 802.11 hardware. It covers three functions, each its own
+capability, because the hardware that has one does not always have the
+others:</p>
+<ul>
+<li><strong>Scanning</strong>, listening for access points and reporting what was
+heard. Every Wi-Fi receiver can do this, including ones that can do
+nothing else.</li>
+<li><strong>The station</strong>, joining a network the device is given and staying on
+it.</li>
+<li><strong>The access point</strong>, offering a network of the device’s own for
+other stations to join.</li>
+</ul>
+<p>This chapter specifies the interface, not what the connection carries.
+Addressing is <a href="ulcp-ip.html">IP Connectivity</a>; a bridge tunnel, a time
+source, or a binding a client could attach through is a capability of
+its own.</p>
+<p>Everything here is <a href="ulcp-core.html#device-domain">device-domain</a> state.
+The configuration properties, the two switches, the network table, the
+selection, and the access point’s network, are part of a <a href="ulcp-saved-state.html#saved-state">saved
+snapshot</a> and survive a change of
+host. The rest is live: what a scan found, what the link is doing, who
+is on the access point. Live state is never saved, and <code>CMD_RST</code>
+reaches it only through the configuration it reverts, so each live
+property’s post-reset value is declared as whatever the fact is at the
+time.</p>
+<p>A device with a station and a network selected tries to be on that
+network whenever it is enabled, with no host present and none ever
+required. That is why nothing here is a command: a device on Wi-Fi is
+infrastructure, and infrastructure that needs a phone to get back on
+the network after a power cut is not.</p>
+<h2 id="capabilities"><a class="header" href="#capabilities">Capabilities</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Code</th><th>Name</th><th>Requires</th><th>Grants</th></tr>
+</thead>
+<tbody>
+<tr><td>53</td><td><code>CAP_WIFI_SCAN</code></td><td>—</td><td>A Wi-Fi receiver the device can scan with: <code>PROP_WIFI_SCANNING</code>, <code>PROP_WIFI_SCAN_RESULTS</code></td></tr>
+<tr><td>54</td><td><code>CAP_WIFI</code></td><td><code>CAP_WIFI_SCAN</code></td><td>A Wi-Fi station the device can enable and join networks with: <code>PROP_WIFI_ENABLED</code>, <code>PROP_WIFI_NETWORKS</code>, <code>PROP_WIFI_NETWORK</code>, <code>PROP_WIFI_LINK</code></td></tr>
+<tr><td>57</td><td><code>CAP_WIFI_AP</code></td><td><code>CAP_WIFI_SCAN</code></td><td>An access point the device can bring up: <code>PROP_WIFI_AP_ENABLED</code>, <code>PROP_WIFI_AP_CONFIG</code>, <code>PROP_WIFI_AP_STATE</code>, <code>PROP_WIFI_AP_CLIENTS</code></td></tr>
+</tbody>
+</table>
+</div>
+<p>Three capabilities on one base, and everything else discovered by
+asking. The scan is the base because it is what every Wi-Fi radio can
+do: a station that can join can always scan, and so can a radio that
+can beacon, so both requiring <code>CAP_WIFI_SCAN</code> is a fact about hardware
+rather than a policy, and the rule that a device
+<a href="ulcp-conformance.html#optional-subsystems">advertises</a> what its
+capabilities require does the rest.</p>
+<p>The station and the access point do not require each other. Nearly
+every chip does both, but they are different functions with different
+state, and a device that has one and not the other is describable. A
+device advertising any of the three <strong>MUST</strong> serve every property it
+grants.</p>
+<p>The two remaining station properties, <code>PROP_WIFI_RSSI</code> and
+<code>PROP_WIFI_MAC</code>, report things a stack may not expose, and a device
+that only scans has neither. A device that cannot answer them answers
+<code>STATUS_PROP_NOT_FOUND</code>, in the same exchange the host was already
+making, for the reason the <a href="ulcp-ble.html#capabilities">BLE binding</a>
+gives: a refusal is a complete answer, and a second capability buys a
+host nothing it cannot learn in the reply it is already waiting for.</p>
+<p>None of the three requires <code>CAP_SAVE</code>. Without it the configuration is
+volatile and the device knows no networks after a power cycle, which is
+a worse device but a conforming one.</p>
+<h2 id="properties"><a class="header" href="#properties">Properties</a></h2>
+<p>Allocated from the extended device and transport configuration range:
+the station and its scan in a block of sixteen after the BLE
+transport’s, the access point in a block after
+<a href="ulcp-ip.html#properties">IP Connectivity</a>, so that neither the station
+nor the stack has to move to make room.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Id</th><th>Mnemonic</th><th>Commands</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td>4880</td><td><code>PROP_WIFI_ENABLED</code></td><td>Get, Set, Is</td><td>Whether the station is up</td></tr>
+<tr><td>4881</td><td><code>PROP_WIFI_NETWORKS</code></td><td>Get, Set, Insert, Remove</td><td>Known networks and their credentials</td></tr>
+<tr><td>4882</td><td><code>PROP_WIFI_NETWORK</code></td><td>Get, Set, Is</td><td>The selected network, or empty</td></tr>
+<tr><td>4883</td><td><code>PROP_WIFI_SCANNING</code></td><td>Get, Set, Is</td><td>Whether a scan is in progress</td></tr>
+<tr><td>4884</td><td><code>PROP_WIFI_SCAN_RESULTS</code></td><td>Get, Is, Inserted</td><td>What the current or last scan has found</td></tr>
+<tr><td>4885</td><td><code>PROP_WIFI_LINK</code></td><td>Get, Is</td><td>Link state, failure reason, and association</td></tr>
+<tr><td>4886</td><td><code>PROP_WIFI_RSSI</code></td><td>Get</td><td>Signal of the current association</td></tr>
+<tr><td>4887</td><td><code>PROP_WIFI_MAC</code></td><td>Get</td><td>The station’s MAC address</td></tr>
+<tr><td>4912</td><td><code>PROP_WIFI_AP_ENABLED</code></td><td>Get, Set, Is</td><td>Whether the access point is up</td></tr>
+<tr><td>4913</td><td><code>PROP_WIFI_AP_CONFIG</code></td><td>Get, Set</td><td>The network the device offers</td></tr>
+<tr><td>4914</td><td><code>PROP_WIFI_AP_STATE</code></td><td>Get, Is</td><td>Whether it is beaconing, and where</td></tr>
+<tr><td>4915</td><td><code>PROP_WIFI_AP_CLIENTS</code></td><td>Get, Is, Inserted, Removed</td><td>Who is on it</td></tr>
+</tbody>
+</table>
+</div>
+<p>4888 through 4895 are reserved for the station, and 4916 through 4927
+for the access point.</p>
+<h3 id="prop-wifi-enabled"><a class="header" href="#prop-wifi-enabled">PROP 4880: <code>PROP_WIFI_ENABLED</code></a></h3>
+<ul>
+<li>Type: Single-Value, Read-Write</li>
+<li>Asynchronous Updates: Yes</li>
+<li>Required: <code>CAP_WIFI</code></li>
+<li>Value Type: BOOL</li>
+<li>Post-Reset Value: 0 (false), or restored from saved state</li>
+</ul>
+<p>Whether the station is up. Cleared, the device <strong>MUST</strong> drop any
+association, abandon any scan in progress, and put the station into the
+lowest power state the platform offers. This is <code>PROP_GNSS_ENABLED</code>’s
+promise rather than <code>PROP_BLE_ENABLED</code>’s: on a battery-powered node a
+Wi-Fi radio that is merely idle is still the largest load on the board,
+and a property that only stopped reporting would solve nothing.</p>
+<p>Set again, the device comes back up and, if a network is selected,
+starts joining it. The known-network table and the selection are
+configuration and are not disturbed in either direction, so turning the
+station off and on is not a way to forget anything.</p>
+<p>Off by default, for the reason <code>PROP_GNSS_ENABLED</code> is: a device that
+has never been given a network has nothing to spend the power on. Saved
+state overrides the default, which is how a commissioned device comes
+up connected.</p>
+<p>Asynchronous because a device with a screen <strong>MAY</strong> offer the switch on
+it, and a switch someone can flip is a value that moves without the
+host asking.</p>
+<p>A write of <code>1</code> answers <code>STATUS_INVALID_STATE</code> on a platform that cannot
+run the station alongside another radio it currently has on, the
+device’s own access point included. The device <strong>MUST NOT</strong> take the
+other radio down to honor the write; the host turns that one off first.
+A platform that coexists, which is most of them, answers the write like
+any other.</p>
+<h3 id="prop-wifi-networks"><a class="header" href="#prop-wifi-networks">PROP 4881: <code>PROP_WIFI_NETWORKS</code></a></h3>
+<ul>
+<li>Type: Multiple-Value, Read-Write</li>
+<li>Has Item Length Prefix: Yes</li>
+<li>Asynchronous Updates: No</li>
+<li>Required: <code>CAP_WIFI</code></li>
+<li>Item Form: structure below</li>
+<li>Reported Form: the item with its credential omitted</li>
+<li>Remove Selector: the SSID</li>
+<li>Post-Reset Value: Empty, or restored from saved state</li>
+</ul>
+<p>The networks the device knows. Each item:</p>
+<pre><code>+-------+----------+----------+----------+------------------+
+| FLAGS | SECURITY | SSID_LEN |   SSID   |  CREDENTIAL ...  |
++-------+----------+----------+----------+------------------+
+   1 B      1 B        1 B      1-32 B    security-defined
+</code></pre>
+<p>Figure: Known-network item format</p>
+<p><strong>FLAGS</strong> bit 0 set means the network hides its SSID and the device
+probes for it by name rather than waiting to hear it. Bit 1 set means
+the credential is a raw 32-octet pairwise master key rather than a
+passphrase, which is valid only for the modes that derive one; a host
+that holds the key need never hand the device the passphrase, and a
+device never has to run the derivation. Bits 2 through 7 are reserved
+and <strong>MUST</strong> be zero.</p>
+<p><strong>SECURITY</strong> is one mode:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Value</th><th>Name</th><th>Credential</th></tr>
+</thead>
+<tbody>
+<tr><td>0</td><td><code>WIFI_SEC_OPEN</code></td><td>none</td></tr>
+<tr><td>1</td><td><code>WIFI_SEC_OWE</code></td><td>none</td></tr>
+<tr><td>2</td><td><code>WIFI_SEC_WPA2</code></td><td>passphrase of 8-63 octets, or a key</td></tr>
+<tr><td>3</td><td><code>WIFI_SEC_WPA3</code></td><td>password of 1-128 octets</td></tr>
+<tr><td>4</td><td><code>WIFI_SEC_WPA</code></td><td>passphrase of 8-63 octets, or a key</td></tr>
+<tr><td>5</td><td><code>WIFI_SEC_WEP</code></td><td>none defined</td></tr>
+<tr><td>6</td><td><code>WIFI_SEC_WPA2_ENT</code></td><td>none defined</td></tr>
+<tr><td>7</td><td><code>WIFI_SEC_WPA3_ENT</code></td><td>none defined</td></tr>
+<tr><td>8</td><td><code>WIFI_SEC_WPA3_ENT_192</code></td><td>none defined</td></tr>
+</tbody>
+</table>
+</div>
+<p>Values 9 through 15 are reserved. Sixteen is the ceiling because
+<a href="#prop-wifi-scan-results"><code>PROP_WIFI_SCAN_RESULTS</code></a> reports these as a
+16-bit set.</p>
+<p><code>WIFI_SEC_OPEN</code> is no security at all. <code>WIFI_SEC_OWE</code> is Enhanced Open:
+encrypted against anyone listening, authenticated against nobody, with
+no credential, and the only credential-free mode permitted on 6 GHz.
+An OWE entry names the network as the operator sees it. Where that is a
+plain OWE network the device joins it; where it is the visible half of
+an OWE transition deployment, the device follows the transition element
+to the hidden companion BSS and joins that. <code>PROP_WIFI_LINK</code> then
+reports the companion’s BSSID and frequency, which is all it ever
+reports of any association, while <code>PROP_WIFI_NETWORK</code> goes on naming
+the visible network the operator selected. The entry never names the
+companion, because the operator never saw it.</p>
+<p><code>WIFI_SEC_WPA2</code> is WPA2-Personal and covers the WPA/WPA2 mixed networks
+that negotiate CCMP; <code>WIFI_SEC_WPA</code> is the TKIP-only remainder, which a
+device <strong>MAY</strong> decline to join. <code>WIFI_SEC_WPA3</code> is WPA3-Personal, SAE,
+whose password is not a WPA2 passphrase: SAE puts no bounds on it, so
+the 8 to 63 rule does not apply, and the table admits up to 128 octets,
+which is where the more generous stacks stop. A device whose stack
+holds a shorter limit refuses a longer password with
+<code>STATUS_UNIMPLEMENTED</code>, since the entry is well-formed and the device
+is what cannot hold it. A password shared with a transition network’s
+WPA2 side is 8 to 63 octets by that side’s rule, which is the host’s to
+know.</p>
+<p>The remaining four exist so that scan results can say what they heard.
+WEP is not worth a credential form, and the three enterprise modes are
+a provisioning surface this chapter does not open; they are numbered so
+that opening it later renumbers nothing.</p>
+<p>A passphrase or password is the UTF-8 encoding of what the operator
+typed, with no terminator and no U+0000, and its length bounds count
+octets. The device <strong>MUST</strong> derive keys from exactly those octets: the
+PBKDF2 of 802.11 Annex J for <code>WIFI_SEC_WPA2</code> and <code>WIFI_SEC_WPA</code>, and
+SAE over the octets directly. An ASCII passphrase therefore yields what
+every router yields, and a non-ASCII one yields what a router that
+accepted UTF-8 yielded. In both cases the host’s job is to hand over
+the same octets the router’s operator entered, and the device’s is not
+to reinterpret them. A raw key, <code>FLAGS</code> bit 1, is exactly 32 octets and
+skips the derivation.</p>
+<p>An insert is refused with <code>STATUS_INVALID_ARGUMENT</code> when it is not
+well-formed: an empty SSID, a mode with no credential form, a
+credential of the wrong length or kind for its mode, a reserved mode, a
+reserved flag bit set. The SSID is never empty because an empty
+<code>PROP_WIFI_NETWORK</code> means no selection, so an entry with no name could
+be stored and never chosen; a hidden network has a real name, and it is
+only the advertisement that is blank. An insert is refused with
+<code>STATUS_UNIMPLEMENTED</code> when it is well-formed and this device cannot do
+it: a WPA3 entry on a chip without SAE, or a WPA entry on a device that
+declines TKIP. The two are different answers because a host acts on
+them differently. The first is a bug in the host, and the second is a
+reason to pick the next mode the network offers.</p>
+<p>The security mode is exact. It is the mode the device uses, not a
+ceiling it negotiates down from. An entry marked <code>WIFI_SEC_WPA3</code> joins
+a WPA2/WPA3 transition network with SAE and fails against a WPA2-only
+one; an entry marked <code>WIFI_SEC_WPA2</code> joins either with PSK; an entry
+marked <code>WIFI_SEC_OWE</code> never falls back to open. A device <strong>MUST NOT</strong>
+negotiate a mode other than the one the entry names, so a host that
+takes the mode out of a scan result gets exactly the network it saw,
+and an evil twin advertising a weaker one gets nothing. Where the
+passphrase is the same across a transition network’s modes, which it
+usually is, the host writes the strongest one the device accepts.</p>
+<p>Items are keyed by SSID: the table holds at most one entry per network,
+and an insert whose SSID matches an existing entry <strong>replaces</strong> it and
+reports the item as inserted. That is the path for a wrong passphrase,
+a changed one, or a mode upgrade, and it never needs a remove. The
+SSID is octets, not text, and a device compares it bytewise. A
+whole-table <code>CMD_PROP_SET</code> carrying two entries with the same SSID is
+refused with <code>STATUS_INVALID_ARGUMENT</code> before anything changes, under
+<a href="ulcp-core.html#mutation-atomicity">Mutation Atomicity</a>: the value is an
+unordered set, so neither entry has standing to win, and a host that
+wrote both did not mean either.</p>
+<p>The credential is write-only, under the rules of <a href="ulcp-core.html#provisioning-security">Provisioning
+Security</a>. The reported form is the
+item through its SSID, and neither <code>CMD_PROP_GET</code> nor any notification
+ever carries a passphrase. This is why replacing an entry is the only
+way to change its credential: a host cannot read one back to compare
+it. Writes that carry a credential are subject to the same transport
+requirement as key material.</p>
+<p>A device bounds the table and refuses an insert past its capacity with
+<code>STATUS_NOMEM</code>. Four entries is enough for anything a device of this
+class does, and a device <strong>SHOULD</strong> hold at least that many. The bound
+<strong>MUST</strong> also keep the complete reported table, every entry in its
+redacted form, inside one frame on every transport the device exposes,
+so that a <code>CMD_PROP_GET</code> always answers in one piece. At under forty
+octets per reported entry that constrains nothing a device would want.</p>
+<p>Removing the selected network, whether by <code>CMD_PROP_REMOVE</code> or a
+whole-table <code>CMD_PROP_SET</code> that omits it, clears the selection: the
+device drops the association, publishes <code>PROP_WIFI_NETWORK</code> as empty,
+and publishes the link going down. Replacing the selected network’s
+entry drops any association it holds and starts a fresh join with the
+new entry at once, because a host that has just corrected a passphrase
+should not wait out a backoff to learn whether it worked.</p>
+<p>The table is part of the saved snapshot, credentials included, which is
+what lets the device rejoin unattended. <code>CMD_CLEAR</code> erases the
+persisted copy with everything else and, as with everything else,
+leaves the live table alone: the device stays on its network until the
+<code>CMD_RST</code> that completes a factory reset reverts the table to its
+now-empty post-reset value. A device advertising <code>CAP_SAVE</code> stores it
+as it stores key material.</p>
+<h3 id="prop-wifi-network"><a class="header" href="#prop-wifi-network">PROP 4882: <code>PROP_WIFI_NETWORK</code></a></h3>
+<ul>
+<li>Type: Single-Value, Read-Write</li>
+<li>Asynchronous Updates: Yes</li>
+<li>Required: <code>CAP_WIFI</code></li>
+<li>Value Type: 1 to 32 octets (an SSID), or empty</li>
+<li>Post-Reset Value: Empty, or restored from saved state</li>
+</ul>
+<p>The network the device is on, or is to be on: the SSID of one entry in
+<a href="#prop-wifi-networks"><code>PROP_WIFI_NETWORKS</code></a>. This is “connect” and
+“disconnect” both.</p>
+<p>Writing an SSID selects that network. If the station is enabled, the
+device drops any current association and starts joining the new one; if
+it is not, the selection waits for it, so a whole configuration can be
+staged and the station enabled last. Writing the SSID that is already
+selected changes nothing and disturbs nothing, like any other property
+written with its own value.</p>
+<p>An SSID not in the table is refused with <code>STATUS_ITEM_NOT_FOUND</code>: the
+credential lives in the table, and the selection only names it. A host
+acts on that differently from <code>STATUS_INVALID_ARGUMENT</code>, one being
+“insert it first” and the other a bug.</p>
+<p>Writing the <strong>empty</strong> value deselects. The device leaves the network
+and associates with nothing until something is selected again. This is
+a stable state, not a moment: the station stays up, scans on request,
+and joins nothing, which is what a phone with Wi-Fi on and no network
+in range is doing. A device <strong>MUST NOT</strong> select a network on its own,
+because a disconnect the device undoes by itself is not one.</p>
+<p>The device <strong>MUST</strong> publish the property when it changes it: a removal
+from the table that empties the selection, or a picker on the device’s
+own screen.</p>
+<p>The selection is the network the device will spend its unattended life
+trying to reach, so it is saved with the table. A device restored from
+a snapshot comes up joining what it was joining.</p>
+<h3 id="prop-wifi-scanning"><a class="header" href="#prop-wifi-scanning">PROP 4883: <code>PROP_WIFI_SCANNING</code></a></h3>
+<ul>
+<li>Type: Single-Value, Read-Write</li>
+<li>Asynchronous Updates: Yes</li>
+<li>Required: <code>CAP_WIFI_SCAN</code></li>
+<li>Value Type: BOOL</li>
+<li>Post-Reset Value: whether a scan is running</li>
+</ul>
+<p>Whether a scan is in progress. Writing <code>1</code> starts one; the device
+answers with <code>1</code>, reports each access point as it is heard through
+<a href="#prop-wifi-scan-results"><code>PROP_WIFI_SCAN_RESULTS</code></a>, and publishes <code>0</code>
+when the scan completes. Writing <code>0</code> abandons a scan in progress and
+leaves in the results whatever had been found by then.</p>
+<p>The frames of a scan <strong>MUST</strong> go out in this order, so that a host can
+never misattribute one:</p>
+<ol>
+<li><code>CMD_PROP_IS</code> for <code>PROP_WIFI_SCAN_RESULTS</code> carrying the empty value:
+the previous results are gone.</li>
+<li><code>CMD_PROP_IS</code> for this property carrying <code>1</code>, as the reply to the
+host’s write or unsolicited when the device started the scan itself.</li>
+<li>One <code>CMD_PROP_INSERTED</code> per access point heard, in the order heard.</li>
+<li><code>CMD_PROP_IS</code> for this property carrying <code>0</code>, after the last of them.</li>
+</ol>
+<p>The clear goes first so that every insert lands in a table the host
+knows to be empty, and the completion goes last so that a host seeing
+<code>0</code> holds the whole list without reading it.</p>
+<p>This is a <a href="ulcp-ble.html#prop-ble-pairing">pairing window</a>’s shape
+exactly: a state the host can enter, that ends by itself, and that a
+device with a screen can enter without the host. A device <strong>MUST</strong>
+bound a scan’s duration; a few seconds is what the hardware takes.</p>
+<p>On a device with a station, a write of <code>1</code> answers
+<code>STATUS_INVALID_STATE</code> while the station is disabled, and <strong>MAY</strong>
+answer <code>STATUS_BUSY</code> while a join is in the middle of its handshake,
+which resolves by itself. On a device without one there is nothing to
+enable: the receiver is powered for the scan’s duration and put back to
+sleep after, which is the right power shape for a tracker that scans a
+few times an hour. Writing <code>1</code> during a scan succeeds and answers <code>1</code>;
+there is nothing to restart. A write of <code>0</code> always succeeds.</p>
+<p>A device <strong>MAY</strong> scan while associated, at the cost of the
+association’s traffic while it is off-channel. Whether the scan is
+active or passive, and on which channels, is the device’s business,
+except that a device with a station <strong>MUST</strong> probe by name for a hidden
+network in its table so that it can appear.</p>
+<p>A scan the device starts from its own menu is reported the same way,
+inserts and all. An attached host pays twenty-odd small frames once per
+scan, which is nothing against the scan itself, and a picker that
+appears as networks are heard is the difference between a list that
+fills in and a spinner.</p>
+<h3 id="prop-wifi-scan-results"><a class="header" href="#prop-wifi-scan-results">PROP 4884: <code>PROP_WIFI_SCAN_RESULTS</code></a></h3>
+<ul>
+<li>Type: Multiple-Value, Read-Only</li>
+<li>Has Item Length Prefix: Yes</li>
+<li>Asynchronous Updates: Yes (<code>Is</code>, <code>Inserted</code>)</li>
+<li>Required: <code>CAP_WIFI_SCAN</code></li>
+<li>Post-Reset Value: what the receiver has found; empty after a power-on</li>
+</ul>
+<p>What the scan in progress has found so far, or what the last one found.
+Each item:</p>
+<pre><code>+-------+-----------+------+--------+-----------+
+| MODES | FREQUENCY | RSSI | BSSID  |  SSID ... |
++-------+-----------+------+--------+-----------+
+  2 B     2 B, MHz    1 B     6 B      0-32 B
+</code></pre>
+<p>Figure: Scan result item format</p>
+<p><strong>MODES</strong> is a 16-bit little-endian set of the security modes the
+access point offers, bit <em>n</em> standing for mode <em>n</em> of the enumeration
+above. <strong>No bits at all</strong> means the device did not determine them: a
+receiver that reads beacon headers for their addresses has no reason to
+parse the security elements, and no real access point offers nothing,
+so the empty set is free to mean that.</p>
+<p>A WPA2/WPA3 transition network sets both bits. An OWE transition
+network is two BSSs, a visible open one and a hidden OWE companion that
+the open one’s transition element names by BSSID and SSID; the device
+reads the element and reports the <strong>visible</strong> BSS with both the open
+and the OWE bit set, so the host sees one network offering two modes
+and picks between them like any other. The companion is reported as
+itself, under the SSID the element gave it, and nothing depends on it.
+A set rather than a single strongest value, because which of the
+offered modes the host should write depends on what the device can do,
+and the scan result is not the place to guess: the host writes the
+strongest bit it likes and steps down on <code>STATUS_UNIMPLEMENTED</code>.</p>
+<p><strong>FREQUENCY</strong> is the center frequency of the access point’s <strong>primary</strong>
+20 MHz channel, in megahertz, little-endian. A frequency rather than a
+channel number because a channel number is ambiguous across bands and a
+frequency is not, and the number follows from the frequency in one line
+wherever a display wants it. The width of the operating channel is not
+reported: the device negotiates it at association, and nothing about it
+is needed to join.</p>
+<p><strong>RSSI</strong> is a signed dBm. <strong>SSID</strong> is the remainder of the item, and
+empty means no name was reported, because the network hides it or
+because the scanner does not read names; the BSSID is what
+distinguishes one nameless entry from the next. A device with a station
+always reads names, so on such a device empty means hidden. A picker
+treats the two alike in any case, since neither can be chosen by name.</p>
+<p>One item per access point, keyed by BSSID, and never the device’s own:
+a device that is also an access point <strong>MUST NOT</strong> report itself. The
+device reports what it heard and nothing it inferred. Which of several
+access points make up one network is a question the host answers by
+grouping on SSID, and a host that wants the list a phone shows
+coalesces, keeps the strongest per name, and sorts. A host that wants
+to see every radio in the building has that too. Hidden networks need
+no special case, since an access point with no name still has an
+address.</p>
+<p>The device reports each access point with <code>CMD_PROP_INSERTED</code> as it is
+heard, and hearing one again is another <code>CMD_PROP_INSERTED</code> under the
+same BSSID, which <strong>replaces</strong> the host’s entry. Replacement by key is
+what makes the inserts idempotent, and idempotence is what makes it
+safe for a host to read the table mid-scan and follow the inserts from
+there: an item that arrives in both the reply and a notification is the
+same item twice.</p>
+<p>The device retains a bounded table and reports an unbounded scan. Every
+access point heard is inserted; the device keeps the strongest of them
+up to its bound, evicting the weakest as stronger ones arrive, and
+<strong>never</strong> reports an eviction. The bound <strong>MUST</strong> be chosen so that the
+whole retained value fits in one frame on every transport the device
+exposes; on BLE that is the 512-octet reassembled frame, into which
+twenty or so typical items fit. The inserts are one item each and never
+approach it.</p>
+<p>This is the one place the property model bends on purpose. A host that
+followed the inserts holds a superset of what a <code>CMD_PROP_GET</code> returns:
+everything the scan heard, against the strongest twenty the device
+kept. It is harmless because nothing in the host’s copy is invented,
+every item in it was heard, and the two are reconciled by the clear at
+the next scan. The alternative, a <code>CMD_PROP_REMOVED</code> per eviction,
+would spend frames telling the host to stop showing an access point it
+can see, in order to keep two views identical that nobody needs to
+compare. Where removals do describe something a host wants, as they do
+for <a href="#prop-wifi-ap-clients">access point clients</a>, they are sent.</p>
+<p><code>CMD_PROP_GET</code> returns the retained table strongest first. Inserts
+arrive in the order the access points were heard, which is the order
+the host receives them in and has no other meaning.</p>
+<p>Delivering results as they are found is a promise about delivery, not
+about pace. Most stacks hand back a scan only when it finishes; a
+device gets progressive results by scanning a channel at a time, which
+the usual scan interfaces allow and which costs a little total duration
+for first results in a fraction of a second. A device that cannot do
+that emits every insert at the end and conforms.</p>
+<p>The value is cleared, and the empty value published with
+<code>CMD_PROP_IS</code>, when a scan starts and when the station is disabled. A
+list of what was in the air somewhere the device may no longer be is
+worse than an empty one.</p>
+<h3 id="prop-wifi-link"><a class="header" href="#prop-wifi-link">PROP 4885: <code>PROP_WIFI_LINK</code></a></h3>
+<ul>
+<li>Type: Single-Value, Read-Only</li>
+<li>Asynchronous Updates: Yes</li>
+<li>Required: <code>CAP_WIFI</code></li>
+<li>Value Type: structure below</li>
+<li>Post-Reset Value: what the station is doing</li>
+</ul>
+<pre><code>+-------+--------+--------+-----------+
+| STATE | REASON | BSSID  | FREQUENCY |
++-------+--------+--------+-----------+
+  1 B     1 B      6 B      2 B, MHz
+                 (present only when STATE is WIFI_LINK_UP)
+</code></pre>
+<p>Figure: Link state format</p>
+<p><strong>STATE</strong>:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Value</th><th>Name</th><th>Meaning</th></tr>
+</thead>
+<tbody>
+<tr><td>0</td><td><code>WIFI_LINK_DOWN</code></td><td>Not trying: the station is off, or nothing is selected</td></tr>
+<tr><td>1</td><td><code>WIFI_LINK_CONNECTING</code></td><td>A network is selected and the device is not on it yet, or not any more</td></tr>
+<tr><td>2</td><td><code>WIFI_LINK_UP</code></td><td>Associated</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>REASON</strong> says why the device is in <code>WIFI_LINK_CONNECTING</code> rather than
+<code>WIFI_LINK_UP</code>, and is <code>0</code> in the other two states:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Value</th><th>Name</th><th>Meaning</th></tr>
+</thead>
+<tbody>
+<tr><td>0</td><td><code>WIFI_REASON_NONE</code></td><td>No attempt has failed yet</td></tr>
+<tr><td>1</td><td><code>WIFI_REASON_NOT_FOUND</code></td><td>The network was not heard and did not answer a probe</td></tr>
+<tr><td>2</td><td><code>WIFI_REASON_AUTH</code></td><td>The network rejected the credential</td></tr>
+<tr><td>3</td><td><code>WIFI_REASON_REJECTED</code></td><td>The network refused the association for another reason</td></tr>
+<tr><td>4</td><td><code>WIFI_REASON_LOST</code></td><td>The association was up and dropped</td></tr>
+<tr><td>5</td><td><code>WIFI_REASON_OTHER</code></td><td>Something the device has no name for</td></tr>
+</tbody>
+</table>
+</div>
+<p><code>WIFI_LINK_UP</code> is an 802.11 statement: the station is authenticated and
+associated. Whether the device has an address on the link it is now on
+is a different layer’s fact and belongs to the <a href="ulcp-ip.html#prop-ipv4-state">family state
+properties</a>, which report it.</p>
+<p><code>WIFI_LINK_CONNECTING</code> is the whole of trying, including the waits
+between attempts. While the station is enabled and a network is
+selected, the device <strong>MUST</strong> retry indefinitely with backoff and
+<strong>MUST NOT</strong> give up: a wrong passphrase is a device that retries a few
+times an hour until someone fixes it, which costs nothing and is what
+unattended infrastructure should do. <code>WIFI_LINK_DOWN</code> is reserved for
+the two states in which the device is not trying at all, so that a host
+reading <code>DOWN</code> knows the fix is configuration and a host reading
+<code>CONNECTING</code> knows the fix is in the reason.</p>
+<p>The device <strong>MUST</strong> publish the property on every change of state and
+on every change of reason, and on nothing else. Retrying and failing
+the same way again is not a transition and is not published, so a
+device with a wrong passphrase reports <code>WIFI_REASON_AUTH</code> once, not
+every attempt.</p>
+<p>When <code>WIFI_LINK_UP</code>, the value carries the association: which access
+point, and the center frequency of its primary channel in megahertz, as
+in a scan result. A roam to another access point of the same network is
+a change of value and is published.</p>
+<p>Live state: <strong>NOT</strong> part of the saved snapshot, and <code>CMD_RST</code> reaches
+it only as a consequence of reverting the configuration it follows.</p>
+<h3 id="prop-wifi-rssi"><a class="header" href="#prop-wifi-rssi">PROP 4886: <code>PROP_WIFI_RSSI</code></a></h3>
+<ul>
+<li>Type: Single-Value, Read-Only</li>
+<li>Asynchronous Updates: No</li>
+<li>Required: <code>CAP_WIFI</code></li>
+<li>Value Type: INT8 in dBm, or empty</li>
+<li>Post-Reset Value: the current measurement; empty when the link is not up</li>
+</ul>
+<p>The received signal strength of the current association, measured when
+the property is read. Empty when the link is not up.</p>
+<p>Kept out of <code>PROP_WIFI_LINK</code> for the reason <code>PROP_GNSS_LOCATION</code> is
+kept quiet: a measurement that changes on every beacon has no business
+in a property that is published on every change.
+<a href="ulcp-radio.html#prop-phy-rssi"><code>PROP_PHY_RSSI</code></a> is the same split on the
+LoRa side.</p>
+<h3 id="prop-wifi-mac"><a class="header" href="#prop-wifi-mac">PROP 4887: <code>PROP_WIFI_MAC</code></a></h3>
+<ul>
+<li>Type: Single-Value, Constant</li>
+<li>Asynchronous Updates: No</li>
+<li>Required: <code>CAP_WIFI</code></li>
+<li>Value Type: 6 octets</li>
+</ul>
+<p>The station’s MAC address, as it appears to the access point. Constant
+because a router’s allow list is keyed on it, and a device that
+randomized it would be reporting an address nobody can use.</p>
+<h3 id="prop-wifi-ap-enabled"><a class="header" href="#prop-wifi-ap-enabled">PROP 4912: <code>PROP_WIFI_AP_ENABLED</code></a></h3>
+<ul>
+<li>Type: Single-Value, Read-Write</li>
+<li>Asynchronous Updates: Yes</li>
+<li>Required: <code>CAP_WIFI_AP</code></li>
+<li>Value Type: BOOL</li>
+<li>Post-Reset Value: 0 (false), or restored from saved state</li>
+</ul>
+<p>Whether the access point is up. Set, the device beacons the configured
+network, accepts stations onto it, and serves them addresses; cleared,
+it <strong>MUST</strong> disassociate every client, stop beaconing, and release
+whatever the access point held of the radio. The configuration is
+untouched in both directions.</p>
+<p>Off by default, and a write of <code>1</code> while
+<a href="#prop-wifi-ap-config"><code>PROP_WIFI_AP_CONFIG</code></a> is empty answers
+<code>STATUS_INVALID_STATE</code>. Together those two rules mean there is no
+factory network: no default name a stranger can look up, no default
+passphrase, and no open network a device falls back to because nobody
+configured one. A device that has never been given a network to offer
+offers nothing.</p>
+<p>A write of <code>1</code> answers <code>STATUS_INVALID_STATE</code> on a platform that cannot
+run the access point alongside a radio it currently has on, the station
+included, and the device <strong>MUST NOT</strong> take the other down to honor the
+write. A platform that runs both, which is most of them, answers the
+write like any other.</p>
+<p>Asynchronous for the reason every switch here is: a device with a
+screen <strong>MAY</strong> offer it, and the device takes the access point down by
+itself when its configuration is cleared.</p>
+<h3 id="prop-wifi-ap-config"><a class="header" href="#prop-wifi-ap-config">PROP 4913: <code>PROP_WIFI_AP_CONFIG</code></a></h3>
+<ul>
+<li>Type: Single-Value, Read-Write</li>
+<li>Asynchronous Updates: No</li>
+<li>Required: <code>CAP_WIFI_AP</code></li>
+<li>Value Type: structure below, or empty</li>
+<li>Reported Form: the structure with its credential omitted</li>
+<li>Post-Reset Value: Empty, or restored from saved state</li>
+</ul>
+<pre><code>+-------+----------+-------------+-----------+---------+--------+----------+--------+----------------+
+| FLAGS | SECURITY | MAX_CLIENTS | FREQUENCY | ADDRESS | PREFIX | SSID_LEN |  SSID  | CREDENTIAL ... |
++-------+----------+-------------+-----------+---------+--------+----------+--------+----------------+
+   1 B      1 B         1 B        2 B, MHz     4 B       1 B       1 B      1-32 B  security-defined
+</code></pre>
+<p>Figure: Access point configuration format</p>
+<p><strong>FLAGS</strong>, <strong>SECURITY</strong>, <strong>SSID_LEN</strong>, <strong>SSID</strong>, and <strong>CREDENTIAL</strong> are
+as in a <a href="#prop-wifi-networks"><code>PROP_WIFI_NETWORKS</code></a> item, with the same
+encodings, the same well-formedness rules, and <code>STATUS_INVALID_ARGUMENT</code>
+for the same faults. The modes an access point may offer are
+<code>WIFI_SEC_OPEN</code>, <code>WIFI_SEC_OWE</code>, <code>WIFI_SEC_WPA2</code>, and <code>WIFI_SEC_WPA3</code>;
+any other is refused with <code>STATUS_INVALID_ARGUMENT</code>, because no
+credential form for offering it is defined here, and a device without
+SAE refuses <code>WIFI_SEC_WPA3</code> with <code>STATUS_UNIMPLEMENTED</code> as it does in
+the table. A hidden network beacons without its name and answers probes
+for it; the flag is a courtesy to neighbors’ pickers and not a secret,
+since the name is in every association.</p>
+<p><strong>MAX_CLIENTS</strong> is how many stations the device admits at once, or <code>0</code>
+for the device’s own limit. A device bounds it to what its stack can
+hold and to what keeps
+<a href="#prop-wifi-ap-clients"><code>PROP_WIFI_AP_CLIENTS</code></a> in one frame, and
+clamps a larger write to that bound rather than refusing it, reporting
+the clamped value: the host asked for “many”, and the device’s most is
+the honest answer.</p>
+<p><strong>FREQUENCY</strong> is the center frequency of the primary channel the access
+point is to use, in megahertz, or <code>0</code> for the device’s choice. It is a
+preference, not a promise. A frequency the device may not use under its
+regulatory configuration is refused with <code>STATUS_INVALID_ARGUMENT</code>, and
+one it may use is what the access point beacons on <strong>while the station
+is not associated</strong>. On hardware where the access point and the station
+share one radio, and therefore one channel, the access point sits on
+the station’s channel while the station is up, whatever this field
+says, and moves when the station roams.
+<a href="#prop-wifi-ap-state"><code>PROP_WIFI_AP_STATE</code></a> reports where the access
+point actually is.</p>
+<p><strong>ADDRESS</strong> and <strong>PREFIX</strong> are the device’s own IPv4 address on the
+network it offers and the prefix of that network, or all-zero and <code>0</code>
+for the device’s default, which <strong>SHOULD</strong> be <code>192.168.4.1/24</code> since
+that is what a phone joining an embedded device has come to expect. The
+device serves DHCP on this subnet, handing out addresses within the
+prefix other than its own, and answers as the gateway and resolver a
+lease names, whether or not it can forward anything. The prefix is 8 to
+30. An address that is not a usable unicast address in the sense
+<a href="ulcp-ip.html#prop-ipv4-state"><code>PROP_IPV4_STATE</code></a> defines, or one that
+lies within the subnet the station holds, is refused with
+<code>STATUS_INVALID_ARGUMENT</code>. IPv6 on the offered network is link-local
+only, which needs no configuration and is not reported.</p>
+<p>This is where the access point’s addressing lives, and not in the
+<a href="ulcp-ip.html">IP Connectivity</a> properties, which describe the interface
+the device joins a network with and only that. Those properties
+configure how a device gets onto someone else’s network; the access
+point’s subnet is not a configuration the network hands the device but
+one the device imposes, it never changes without a write here, and a
+fixed address in the same structure as the network it belongs to is the
+shape every embedded access point already has.</p>
+<p>The credential is write-only under <a href="ulcp-core.html#provisioning-security">Provisioning
+Security</a>, and the reported form
+stops at the SSID. This is a passphrase the operator hands to other
+people, which makes a case for reading it back, and the case loses. The
+reader is a party that could write any passphrase it liked, so reading
+one back leaks nothing but the ability to rotate it without disturbing
+clients; a device with a screen <strong>MAY</strong> show it or a QR code for it;
+and one rule for every credential on the device is worth more than that
+convenience. It follows that every write of a secured configuration
+carries its credential, since there is nothing to leave in place.</p>
+<p>A write takes effect at once. While the access point is up, the device
+disassociates every client, brings the network up again under the new
+configuration, and publishes the client list going empty; a client that
+knows the new credential rejoins on its own. Writing the <strong>empty</strong>
+value clears the configuration and is refused with
+<code>STATUS_INVALID_STATE</code> while the access point is enabled, so that no
+write here ever takes the network down as a side effect. The host
+disables it first.</p>
+<p>Saved with the switch, credential included, so that a device
+commissioned to offer a network offers it at every boot.</p>
+<h3 id="prop-wifi-ap-state"><a class="header" href="#prop-wifi-ap-state">PROP 4914: <code>PROP_WIFI_AP_STATE</code></a></h3>
+<ul>
+<li>Type: Single-Value, Read-Only</li>
+<li>Asynchronous Updates: Yes</li>
+<li>Required: <code>CAP_WIFI_AP</code></li>
+<li>Value Type: structure below</li>
+<li>Post-Reset Value: what the access point is doing</li>
+</ul>
+<pre><code>+-------+-----------+
+| STATE | FREQUENCY |
++-------+-----------+
+  1 B     2 B, MHz
+        (present only when STATE is WIFI_AP_UP)
+</code></pre>
+<p>Figure: Access point state format</p>
+<p><strong>STATE</strong>:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Value</th><th>Name</th><th>Meaning</th></tr>
+</thead>
+<tbody>
+<tr><td>0</td><td><code>WIFI_AP_DOWN</code></td><td>Not beaconing: disabled, unconfigured, or refused the radio</td></tr>
+<tr><td>1</td><td><code>WIFI_AP_UP</code></td><td>Beaconing and accepting stations</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>FREQUENCY</strong> is the center frequency of the primary channel the access
+point is beaconing on, which is the configured one while the station is
+not associated and the station’s while it is. This is the field the
+property exists for: the configuration says what was asked, and only
+the state says where the network actually is, which a host that wants
+to tell a person which channel to expect has no other way to learn.</p>
+<p>The device <strong>MUST</strong> publish it on every change of state and every
+change of frequency, so that a station roam which drags the access
+point to a new channel is reported, and on nothing else. Two states and
+no reason, because every way of being down is readable from the two
+configuration properties and the station’s link, and a reason octet
+would only quote them.</p>
+<h3 id="prop-wifi-ap-clients"><a class="header" href="#prop-wifi-ap-clients">PROP 4915: <code>PROP_WIFI_AP_CLIENTS</code></a></h3>
+<ul>
+<li>Type: Multiple-Value, Read-Only</li>
+<li>Has Item Length Prefix: Yes</li>
+<li>Asynchronous Updates: Yes (<code>Is</code>, <code>Inserted</code>, <code>Removed</code>)</li>
+<li>Required: <code>CAP_WIFI_AP</code></li>
+<li>Remove Selector: the MAC</li>
+<li>Post-Reset Value: the stations currently associated; empty when the access point is down</li>
+</ul>
+<p>The stations on the device’s network. Each item:</p>
+<pre><code>+-------+------+---------+
+|  MAC  | RSSI | ADDRESS |
++-------+------+---------+
+   6 B    1 B     4 B
+</code></pre>
+<p>Figure: Access point client item format</p>
+<p><strong>MAC</strong> is the client’s, and the key. <strong>RSSI</strong> is a signed dBm as the
+device last heard the client. <strong>ADDRESS</strong> is the IPv4 address the
+device’s DHCP server leased it, or all-zero until it has one, which is
+what lets a host reach a client it can see.</p>
+<p>The device publishes <code>CMD_PROP_INSERTED</code> when a station associates and
+again, under the same MAC, when its address is leased or changes, which
+replaces the host’s entry as a scan result does; <code>CMD_PROP_REMOVED</code>
+with the MAC when a station leaves or is dropped; and <code>CMD_PROP_IS</code>
+with the empty value when the access point goes down. RSSI is reported
+as it stood at the last of those and is not published on its own, under
+the rule that keeps a beacon-rate measurement out of every published
+property here.</p>
+<p>This is the one multi-value property in this chapter that emits
+<code>CMD_PROP_REMOVED</code>, and the difference from
+<a href="#prop-wifi-scan-results"><code>PROP_WIFI_SCAN_RESULTS</code></a> is not a matter of
+taste. The scan table withholds removals because they would describe an
+eviction from a bounded view of an unbounded list, telling the host to
+stop showing something real. A client leaving is a fact about the world
+that the host wants, the list is bounded by <code>MAX_CLIENTS</code> to something
+small, and the device’s view and the host’s are meant to be the same
+view, so the ordinary property model applies without amendment. The
+bound <strong>MUST</strong> keep the whole list in one frame, which at eleven octets
+an item constrains nothing.</p>
+<h2 id="sharing-the-radio"><a class="header" href="#sharing-the-radio">Sharing the Radio</a></h2>
+<p><strong>One radio, one channel.</strong> Where the access point and the station are
+two interfaces on one transceiver, the transceiver is on one channel.
+While the station is associated the access point is on the station’s
+channel; when the station roams, the access point moves with it and its
+clients drop and rejoin, which is a few seconds of disruption the
+device did not choose and cannot avoid, and which
+<a href="#prop-wifi-ap-state"><code>PROP_WIFI_AP_STATE</code></a> reports as a frequency
+change. A host that needs the access point to stay put keeps the
+station off, or on a network with one access point.</p>
+<p><strong>A scan is a gap.</strong> Scanning takes the transceiver off channel. Every
+client of the access point loses its beacons for the duration, which
+most stations tolerate and some do not, and an association loses its
+traffic. On a device whose Wi-Fi receiver is its LoRa transceiver, a
+scan is also a gap in mesh reception lasting as long as the scan does,
+during which nothing on the air is heard and nothing is forwarded. The
+host asked for that, and it is not free: a repeater’s operator scanning
+on a schedule is spending the mesh’s reliability. A device <strong>MAY</strong>
+answer <code>STATUS_BUSY</code> to a scan request rather than abandon a
+transmission in progress or drop the clients it is serving.</p>
+<p><strong>Enable in either order.</strong> The two switches are independent, and a
+platform that cannot run both refuses the second <code>1</code> with
+<code>STATUS_INVALID_STATE</code> and leaves the first alone. Nothing about the
+station’s table, selection, or link changes when the access point comes
+up or goes down, and nothing about the access point’s configuration
+changes with the station’s.</p>
+<p><strong>Forwarding is not specified.</strong> Whether a client of the access point
+can reach the network the station is on, and how, is a policy about
+what the device does with its two interfaces. A device that forwards
+nothing is a conforming access point, and a useful one to a phone that
+only wants to reach the device.</p>
+<p><strong>Regulatory.</strong> The channel set follows the platform’s regulatory
+configuration, with one asymmetry: a station on the wrong channel is a
+receiver that hears nothing, and an access point on the wrong channel
+is a transmitter beaconing where it may not. A device advertising
+<code>CAP_WIFI_AP</code> therefore <strong>MUST</strong> refuse a <code>FREQUENCY</code> outside its
+regulatory configuration, and <strong>MUST</strong> choose within it when the field
+is <code>0</code>.</p>
+<h2 id="host-procedures"><a class="header" href="#host-procedures">Host Procedures</a></h2>
+<p>The flows a host runs, in terms of the properties above. None of them
+needs anything the property grammar does not already provide.</p>
+<p><strong>Turn on.</strong> Write <code>PROP_WIFI_ENABLED</code> to <code>1</code>. If a network is
+selected, <code>PROP_WIFI_LINK</code> publishes <code>CONNECTING</code> and then <code>UP</code> or a
+reason.</p>
+<p><strong>Scan.</strong> Write <code>PROP_WIFI_SCANNING</code> to <code>1</code>; clear the list on the
+<code>CMD_PROP_IS</code> that follows; add or replace an entry per
+<code>CMD_PROP_INSERTED</code>, grouping by SSID for display; stop the spinner on
+the unsolicited <code>0</code>. A host on a binding that carries no notifications
+polls <code>PROP_WIFI_SCANNING</code> and reads <code>PROP_WIFI_SCAN_RESULTS</code> once it
+reads <code>0</code>. A host presenting a picker marks each network already in
+<code>PROP_WIFI_NETWORKS</code> by matching SSIDs, since the reported table form
+carries them.</p>
+<p><strong>Join a new network.</strong> Insert an entry in <code>PROP_WIFI_NETWORKS</code> with
+the SSID from the scan result, the strongest mode in its offered set,
+and the passphrase from the operator; on <code>STATUS_UNIMPLEMENTED</code>, insert
+again with the next mode down. Then write the SSID to
+<code>PROP_WIFI_NETWORK</code>. Two writes rather than one because the credential
+has one home and the selection only names it. There is no safe
+one-frame shortcut: a whole-table <code>CMD_PROP_SET</code> replaces every entry,
+and since credentials cannot be read back, a host can only write a
+whole table it holds every credential for. That is the first host
+commissioning a fresh device, and nobody after it.</p>
+<p><strong>Fix a wrong passphrase.</strong> <code>PROP_WIFI_LINK</code> reads <code>CONNECTING</code> with
+<code>WIFI_REASON_AUTH</code>. Insert the entry again with the corrected
+credential; the device tries it immediately and the link reports the
+outcome.</p>
+<p><strong>Switch networks.</strong> Write the other SSID to <code>PROP_WIFI_NETWORK</code>.</p>
+<p><strong>Reconnect.</strong> There is no such flow. The device is already retrying,
+and a host that wants a fresh start with the same credentials has the
+honest two-step: deselect, then select, each of which is a real state.</p>
+<p><strong>Disconnect.</strong> Write <code>PROP_WIFI_NETWORK</code> empty. The device leaves and
+stays off the network with the station still up.</p>
+<p><strong>Forget.</strong> Remove the entry from <code>PROP_WIFI_NETWORKS</code>. If it was
+selected the selection empties and the link drops, both published.</p>
+<p><strong>Turn off.</strong> Write <code>PROP_WIFI_ENABLED</code> to <code>0</code>. Nothing is forgotten.</p>
+<p><strong>Locate.</strong> On a device with <code>CAP_WIFI_SCAN</code> and no station, run the
+scan flow and hand the BSSIDs and signal levels to whatever resolves
+them into a position. The item format is what a geolocation resolver
+consumes, and a phone passes the list straight through. What the device
+does with its own scan, resolving on board or sending access points
+over the air, is application and is not here.</p>
+<p><strong>Offer a network.</strong> Write <code>PROP_WIFI_AP_CONFIG</code> with the SSID, mode,
+and credential, then <code>PROP_WIFI_AP_ENABLED</code> to <code>1</code>. Watch
+<code>PROP_WIFI_AP_STATE</code> for the channel it landed on and
+<code>PROP_WIFI_AP_CLIENTS</code> for who arrives.</p>
+<p><strong>Commission for unattended use.</strong> Do any of the above, then
+<code>CMD_SAVE</code>. The station comes up and rejoins, and the access point
+comes up, at every boot after that.</p>
+<p><strong>Synchronize on attach.</strong> Read <code>PROP_WIFI_ENABLED</code>,
+<code>PROP_WIFI_NETWORK</code>, <code>PROP_WIFI_LINK</code>, and, where the device has one,
+<code>PROP_WIFI_AP_ENABLED</code> and <code>PROP_WIFI_AP_STATE</code>, in one
+<code>CMD_PROP_MULTI_GET</code> where available. The tables are read only when the
+host needs to show them.</p>
+<h3 id="what-survives-what"><a class="header" href="#what-survives-what">What Survives What</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Property</th><th>Saved</th><th><code>CMD_RST</code></th><th>Detach</th><th>Station off</th></tr>
+</thead>
+<tbody>
+<tr><td><code>PROP_WIFI_ENABLED</code></td><td>yes</td><td>reverts</td><td>kept</td><td>—</td></tr>
+<tr><td><code>PROP_WIFI_NETWORKS</code></td><td>yes</td><td>reverts</td><td>kept</td><td>kept</td></tr>
+<tr><td><code>PROP_WIFI_NETWORK</code></td><td>yes</td><td>reverts</td><td>kept</td><td>kept</td></tr>
+<tr><td><code>PROP_WIFI_SCANNING</code></td><td>no</td><td>follows</td><td>kept</td><td>abandoned</td></tr>
+<tr><td><code>PROP_WIFI_SCAN_RESULTS</code></td><td>no</td><td>follows</td><td>kept</td><td>cleared</td></tr>
+<tr><td><code>PROP_WIFI_LINK</code></td><td>no</td><td>follows</td><td>kept</td><td><code>DOWN</code></td></tr>
+<tr><td><code>PROP_WIFI_RSSI</code></td><td>no</td><td>follows</td><td>kept</td><td>empty</td></tr>
+<tr><td><code>PROP_WIFI_MAC</code></td><td>—</td><td>—</td><td>—</td><td>—</td></tr>
+<tr><td><code>PROP_WIFI_AP_ENABLED</code></td><td>yes</td><td>reverts</td><td>kept</td><td>—</td></tr>
+<tr><td><code>PROP_WIFI_AP_CONFIG</code></td><td>yes</td><td>reverts</td><td>kept</td><td>—</td></tr>
+<tr><td><code>PROP_WIFI_AP_STATE</code></td><td>no</td><td>follows</td><td>kept</td><td>—</td></tr>
+<tr><td><code>PROP_WIFI_AP_CLIENTS</code></td><td>no</td><td>follows</td><td>kept</td><td>—</td></tr>
+</tbody>
+</table>
+</div>
+<p>“Reverts” means to the post-reset value, which on a device with a
+snapshot is the saved one. “Follows” means the live state ends up
+wherever the reverted configuration puts it, and nowhere else. A
+<code>CMD_RST</code> on a device whose live configuration already matches its
+snapshot leaves a running scan running, an association up, and an
+access point beaconing; one that reverts the selection or its
+credential drops the association and joins the restored entry; and one
+on a device with no snapshot takes the station and the access point
+down and everything live with them.</p>
+<p><code>CMD_RESTORE</code> is the same column: in either of its forms it reverts the
+configuration properties to the snapshot and the live state follows.
+Detach touches nothing, because the station and the access point are
+device-domain and run unattended, and a scan that was in progress when
+the host left completes and leaves its results for the next one.</p>
+<h3 id="over-node-management"><a class="header" href="#over-node-management">Over the Node Management Binding</a></h3>
+<p>Every property here is device-domain, so a listed administrator over
+the mesh may read all of them and write the configuration ones, under
+the same rule that lets channel keys be provisioned remotely: the
+<a href="app-node-management.html">binding</a> already delivers each request
+authenticated and encrypted, so an administrator may provision a
+credential.</p>
+<p>Reading is the redacted form and nothing else, here as on the local
+link. The network table and the access point’s configuration read back
+without their credentials, and no binding exists over which a
+credential can be read.</p>
+<p>That binding carries no unsolicited notifications, so a scan is the
+polled flow above, and an administrator that wants the client list
+reads it while <code>PROP_WIFI_AP_STATE</code> says there is one to read. Scan
+results are the one large read, and the binding’s cursors carry them.</p>
+<p>An administrator who disables the station a bridge tunnel rides on has
+done the same thing as one who writes <code>PROP_MAC_BACKHAUL</code>, and warrants
+the same warning in the same place.</p>
+<h3 id="on-ble"><a class="header" href="#on-ble">On BLE</a></h3>
+<p>The frame-size concerns are a <code>CMD_PROP_GET</code> of the scan results, of
+the network table, and of the client list, and all three are bounded
+above so that they fit. The inserts that deliver scanned access points
+live are one item each. The largest credential write, a 32-octet SSID
+with a 128-octet SAE password, is under two hundred octets with
+framing. Everything else is a few.</p>
+<h2 id="wifi-security"><a class="header" href="#wifi-security">Security Considerations</a></h2>
+<ul>
+<li>A passphrase crosses the link once, inbound, over a transport that
+meets the provisioning requirement, and is never reported. A later
+host on the same device cannot extract an earlier host’s Wi-Fi
+credentials any more than its channel keys.</li>
+<li>The security mode is exact. A device joins with the mode the entry
+names and no other, whatever the network in front of it advertises,
+so a downgrade has to be written by the host rather than offered by
+the air.</li>
+<li>Scan results are what the device heard, and an SSID is what its
+sender chose to call itself. A host displays them as untrusted
+strings.</li>
+<li>A scan result list is a location fingerprint of wherever the device
+is standing, precise to a building, which is exactly why a tracker
+wants one. It is readable only by an admitted party, like everything
+else here, and a device that resolves positions on board treats what
+it learned the way it treats a fix.</li>
+<li>An access point is the one thing here that announces the device to
+everyone in range. Its SSID and its MAC are in every beacon, a hidden
+network is hidden from pickers and not from anyone listening, and the
+name it beacons <strong>MUST NOT</strong> carry the device’s mesh identity or any
+part of its address. There is no factory network: the access point
+offers nothing until a host configures it, and its passphrase is
+write-only like every other credential.</li>
+<li><code>PROP_WIFI_MAC</code> and the SSIDs in the table are identifying. They are
+no more so than <code>PROP_DEV_NAME</code>, and they are readable only by a
+party that has already been admitted.</li>
+<li>A device on Wi-Fi is a device on a LAN, and a device with an access
+point is a device hosting one. This chapter gives it an address and
+nothing that listens on one. Any service the device later offers over
+the interface, a ULCP binding over TCP above all, carries the full
+authority of an attached host and needs an admission ceremony of its
+own before it exists; the serial transports’ physical-possession
+argument does not extend to a network port, and it extends least of
+all to a network the device invited the client onto. Whether knowing
+the access point’s passphrase is itself such a ceremony is a decision
+for the binding that would rely on it.</li>
+</ul>
+<h2 id="wifi-not-specified"><a class="header" href="#wifi-not-specified">Not Specified</a></h2>
+<p>Deliberately absent, with the reason:</p>
+<ul>
+<li><strong>Anything on the access point’s network.</strong> Forwarding between the
+offered network and the station’s, a captive portal, a provisioning
+flow, or a binding a client could attach through: each is a thing the
+device does with the network rather than the network itself, and the
+last needs the admission ceremony above before it can exist.</li>
+<li><strong>Enterprise authentication.</strong> Certificates and identities are a
+provisioning surface an order of magnitude larger than a passphrase.
+The three enterprise modes have numbers so that scan results can name
+them and a host can explain why a network is unavailable; the
+credential forms come with the capability that opens them.</li>
+<li><strong>Negotiation details.</strong> Management frame protection, SAE
+hash-to-element, transition-disable: the device does what the mode
+requires and the host never sees them. WPS and Easy Connect are
+provisioning methods rather than modes.</li>
+<li><strong>Auto-join across the table.</strong> There is none. The device joins the
+network it was told to and no other, because a device that picks
+networks by itself is a device whose behavior depends on what is in
+the air around it, which is the wrong property for a repeater on a
+wall.</li>
+<li><strong>Regulatory country.</strong> The channel set follows the platform’s
+regulatory configuration, which may later be tied to the device’s
+region; nothing here decides how that configuration is set. What is
+decided is that an access point stays inside it.</li>
+<li><strong>Power-save mode, PHY rate, band preference.</strong> The device’s
+business. A property that exposes them is easy to add and hard to
+remove.</li>
+<li><strong>A reconnect request.</strong> The one genuinely command-shaped act in the
+vicinity is deliberately not disguised as a property: a property
+write with a side effect when written with the value it already holds
+is a command in a costume, and it breaks the moment a host replays
+its configuration. It is also unnecessary, since the device retries
+on its own and replacing the selected entry restarts the join at
+once.</li>
+</ul>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="ulcp-host.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                            </a>
+
+                            <a rel="next prefetch" href="ulcp-ip.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="ulcp-host.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                    </a>
+
+                    <a rel="next prefetch" href="ulcp-ip.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                    </a>
+            </nav>
+
+        </div>
+
+        <template id=fa-eye><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M288 32c-80.8 0-145.5 36.8-192.6 80.6C48.6 156 17.3 208 2.5 243.7c-3.3 7.9-3.3 16.7 0 24.6C17.3 304 48.6 356 95.4 399.4C142.5 443.2 207.2 480 288 480s145.5-36.8 192.6-80.6c46.8-43.5 78.1-95.4 93-131.1c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C433.5 68.8 368.8 32 288 32zM432 256c0 79.5-64.5 144-144 144s-144-64.5-144-144s64.5-144 144-144s144 64.5 144 144zM288 192c0 35.3-28.7 64-64 64c-11.5 0-22.3-3-31.6-8.4c-.2 2.8-.4 5.5-.4 8.4c0 53 43 96 96 96s96-43 96-96s-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6z"/></svg></span></template>
+        <template id=fa-eye-slash><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M38.8 5.1C28.4-3.1 13.3-1.2 5.1 9.2S-1.2 34.7 9.2 42.9l592 464c10.4 8.2 25.5 6.3 33.7-4.1s6.3-25.5-4.1-33.7L525.6 386.7c39.6-40.6 66.4-86.1 79.9-118.4c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C465.5 68.8 400.8 32 320 32c-68.2 0-125 26.3-169.3 60.8L38.8 5.1zM223.1 149.5C248.6 126.2 282.7 112 320 112c79.5 0 144 64.5 144 144c0 24.9-6.3 48.3-17.4 68.7L408 294.5c5.2-11.8 8-24.8 8-38.5c0-53-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6c0 10.2-2.4 19.8-6.6 28.3l-90.3-70.8zm223.1 298L373 389.9c-16.4 6.5-34.3 10.1-53 10.1c-79.5 0-144-64.5-144-144c0-6.9 .5-13.6 1.4-20.2L83.1 161.5C60.3 191.2 44 220.8 34.5 243.7c-3.3 7.9-3.3 16.7 0 24.6c14.9 35.7 46.2 87.7 93 131.1C174.5 443.2 239.2 480 320 480c47.8 0 89.9-12.9 126.2-32.5z"/></svg></span></template>
+        <template id=fa-copy><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M502.6 70.63l-61.25-61.25C435.4 3.371 427.2 0 418.7 0H255.1c-35.35 0-64 28.66-64 64l.0195 256C192 355.4 220.7 384 256 384h192c35.2 0 64-28.8 64-64V93.25C512 84.77 508.6 76.63 502.6 70.63zM464 320c0 8.836-7.164 16-16 16H255.1c-8.838 0-16-7.164-16-16L239.1 64.13c0-8.836 7.164-16 16-16h128L384 96c0 17.67 14.33 32 32 32h47.1V320zM272 448c0 8.836-7.164 16-16 16H63.1c-8.838 0-16-7.164-16-16L47.98 192.1c0-8.836 7.164-16 16-16H160V128H63.99c-35.35 0-64 28.65-64 64l.0098 256C.002 483.3 28.66 512 64 512h192c35.2 0 64-28.8 64-64v-32h-47.1L272 448z"/></svg></span></template>
+        <template id=fa-play><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M73 39c-14.8-9.1-33.4-9.4-48.5-.9S0 62.6 0 80V432c0 17.4 9.4 33.4 24.5 41.9s33.7 8.1 48.5-.9L361 297c14.3-8.7 23-24.2 23-41s-8.7-32.2-23-41L73 39z"/></svg></span></template>
+        <template id=fa-clock-rotate-left><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M75 75L41 41C25.9 25.9 0 36.6 0 57.9V168c0 13.3 10.7 24 24 24H134.1c21.4 0 32.1-25.9 17-41l-30.8-30.8C155 85.5 203 64 256 64c106 0 192 86 192 192s-86 192-192 192c-40.8 0-78.6-12.7-109.7-34.4c-14.5-10.1-34.4-6.6-44.6 7.9s-6.6 34.4 7.9 44.6C151.2 495 201.7 512 256 512c141.4 0 256-114.6 256-256S397.4 0 256 0C185.3 0 121.3 28.7 75 75zm181 53c-13.3 0-24 10.7-24 24V256c0 6.4 2.5 12.5 7 17l72 72c9.4 9.4 24.6 9.4 33.9 0s9.4-24.6 0-33.9l-65-65V152c0-13.3-10.7-24-24-24z"/></svg></span></template>
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="elasticlunr-ef4e11c1.min.js"></script>
+        <script src="mark-09e88c2c.min.js"></script>
+        <script src="searcher-c2a407aa.js"></script>
+
+        <script src="clipboard-1626706a.min.js"></script>
+        <script src="highlight-abc7f01d.js"></script>
+        <script src="book-a0b12cfe.js"></script>
+
+        <!-- Custom JS scripts -->
+
+
+
+    </div>
+    </body>
+</html>

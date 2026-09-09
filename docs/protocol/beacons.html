@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-5f0d90f9.js";
+            window.path_to_searchindex_js = "searchindex-a36d942b.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-438957a9.js"></script>
+        <script src="toc-fed4626c.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -194,7 +194,7 @@ the quality of each hop as well as its identity, which is what
 distinguishes a path that merely works from one worth using.</p>
 <h2 id="advertisements"><a class="header" href="#advertisements">Advertisements</a></h2>
 <p>An <strong>advertisement</strong> is a broadcast or multicast packet whose payload is a
-<a href="node-identity.html">node identity</a> payload — a beacon that additionally
+<a href="node-identity.html">node identity</a> payload—a beacon that additionally
 identifies and describes its sender. Advertisements are sent unsolicited,
 announcing presence, name, role, and capabilities. To obtain a specific
 node’s identity, use the <a href="mac-commands.html#identity-request-1">Identity Request</a>
@@ -213,8 +213,8 @@ the mesh on every period spends airtime out of proportion to what a
 distant listener learns; a node that wants to be findable further away
 publishes a path with a beacon instead.</p>
 <p>A configured period is a minimum rather than an exact cadence. A node
-SHOULD scatter each period by a random fraction of it — a quarter is a
-reasonable choice — and that scatter MUST only delay an announcement,
+SHOULD scatter each period by a random fraction of it—a quarter is a
+reasonable choice—and that scatter MUST only delay an announcement,
 never bring it forward, so the configured value remains a floor on how
 often the node transmits unasked. Nodes commissioned alike and powered on
 together otherwise stay in step for as long as they run, colliding every
@@ -241,10 +241,10 @@ these periods are the advertisement-policy properties.</p>
 <p><strong>Return path</strong>: Node B can now send unicast packets to Node A using the learned source route. If the packet was ack-requested, Node B’s MAC ack also traverses the mesh, allowing Node A to confirm reachability.</p>
 </li>
 <li>
-<p><strong>Bidirectional establishment</strong>: The trace Node A sent taught Node B a path back, and nothing else. A node responding to a packet that carried a trace-route option SHOULD carry one on its response, whatever form that response takes — MAC ack, beacon, or application payload. Where the response is a MAC ack, that ack is the whole of what Node A receives, so an ack without a trace leaves Node A holding no route to Node B at all.</p>
+<p><strong>Bidirectional establishment</strong>: The trace Node A sent taught Node B a path back, and nothing else. A node responding to a packet that carried a trace-route option SHOULD carry one on its response, whatever form that response takes—MAC ack, beacon, or application payload. Where the response is a MAC ack, that ack is the whole of what Node A receives, so an ack without a trace leaves Node A holding no route to Node B at all.</p>
 </li>
 </ol>
-<p>A sender decides whether to originate the option from what it already knows about the destination. One that holds no path — no source route, and no evidence the destination is a direct neighbor — SHOULD include a trace route: the packet is going to flood regardless, and the trace is what turns that flood into a path. A sender following a source route SHOULD NOT, since that path is already known and re-recording it on every packet is the <a href="#potential-improvement-proactive-route-refresh">proactive refresh</a> this specification does not define.</p>
+<p>A sender decides whether to originate the option from what it already knows about the destination. One that holds no path—no source route, and no evidence the destination is a direct neighbor—SHOULD include a trace route: the packet is going to flood regardless, and the trace is what turns that flood into a path. A sender following a source route SHOULD NOT, since that path is already known and re-recording it on every packet is the <a href="#potential-improvement-proactive-route-refresh">proactive refresh</a> this specification does not define. That applies to a path the sender holds, which is what makes the re-recording redundant. A response steered down the trace its own request accumulated—the <a href="mac-commands.html#identity-request-1">Identity Request</a> answered from a source route built out of the trace, for one—is following the requester’s path rather than one either side had, and the response rule above governs: the requester holds nothing until the response records something.</p>
 <p>A packet carrying neither flood hops nor a source route SHOULD NOT carry a trace route at all, whatever the sender knows. No repeater may forward such a packet, so the option can only arrive as empty as it left, and its arrival already proves what an empty trace would have said.</p>
 <p>Because router hints are only two bytes, different repeaters may share the same hint, which may result in redundant (but harmless) forwarding along a source route.</p>
 <h2 id="route-learning"><a class="header" href="#route-learning">Route Learning</a></h2>
@@ -254,15 +254,15 @@ these periods are the advertisement-policy properties.</p>
 <p><strong>Trace route</strong>: if the packet contains a trace-route option, the node caches that trace route as a source route for future packets back to the sender. Because the trace route is accumulated most-recent first, it already describes the return path from the receiver back toward the original sender. This is the primary mechanism for learning precise multi-hop paths.</p>
 </li>
 <li>
-<p><strong>Flood hop count</strong>: if the packet contains a flood hop count, the node caches the sender’s <code>FHOPS_ACC</code> value together with any region-code options that arrived on the packet. When no source route is available, these cached flood parameters can be reused for flood responses — scoping the flood to approximately the right radius and regional domain rather than flooding the entire network.</p>
+<p><strong>Flood hop count</strong>: if the packet contains a flood hop count, the node caches the sender’s <code>FHOPS_ACC</code> value together with any region-code options that arrived on the packet. When no source route is available, these cached flood parameters can be reused for flood responses—scoping the flood to approximately the right radius and regional domain rather than flooding the entire network.</p>
 </li>
 <li>
 <p><strong>Neither</strong>: a packet that arrives carrying no flood hop count and no source route was one that no repeater had permission to forward, so it reached the receiver off the sender’s own transmitter. The node SHOULD cache the sender as a direct neighbor. This is the same conclusion an empty trace route supports, drawn from the packet’s structure rather than from an option, which is what lets an unforwardable packet leave the trace route off.</p>
 </li>
 </ul>
 <p>A MAC ack is such a packet. It names no source, but its <a href="security.html#ack-tag-construction">ack trailer</a> correlates it to an outstanding request and so to the peer that sent it, and whatever routing evidence it carries updates that peer’s routing state like any other packet’s would.</p>
-<p>A packet that arrives carrying a source-route option — including one whose hints are all consumed — spends flood hops only after the route runs out, so its <code>FHOPS_ACC</code> counts the tail of the path rather than its length. Such a packet SHOULD NOT be used to derive a flood-distance estimate.</p>
-<p>This routing state applies to all subsequent communication with the sender — replies, acknowledgments, and new messages alike. A node MAY replace a cached route when a newer packet provides a fresher trace route, and SHOULD discard cached routes that have proven unreachable.</p>
+<p>A packet that arrives carrying a source-route option—including one whose hints are all consumed—spends flood hops only after the route runs out, so its <code>FHOPS_ACC</code> counts the tail of the path rather than its length. Such a packet SHOULD NOT be used to derive a flood-distance estimate.</p>
+<p>This routing state applies to all subsequent communication with the sender—replies, acknowledgments, and new messages alike. A node MAY replace a cached route when a newer packet provides a fresher trace route, and SHOULD discard cached routes that have proven unreachable.</p>
 <p>In practice, “proven unreachable” usually means that an ack-requested packet sent using the cached source route exhausted its retry budget without end-to-end success. In that case, the sender should stop trusting the stale route and return to route-discovery behavior:</p>
 <ul>
 <li>discard or demote the cached source route</li>
@@ -279,7 +279,7 @@ these periods are the advertisement-policy properties.</p>
 <li><strong>Flood distance</strong>: the cached <code>FHOPS_ACC</code> is the radius at which the destination was last heard.</li>
 <li><strong>Direct link</strong>: no forwarding hop is needed at all.</li>
 </ul>
-<p>The margin — one hop is a reasonable default — keeps delivery self-healing when the path has grown by a hop since it was learned, without paying for a mesh-wide flood on every packet. A route that has failed outright is repaired through the route-retry behavior above, which floods at the sender’s full budget rather than the narrowed one.</p>
+<p>The margin—one hop is a reasonable default—keeps delivery self-healing when the path has grown by a hop since it was learned, without paying for a mesh-wide flood on every packet. A route that has failed outright is repaired through the route-retry behavior above, which floods at the sender’s full budget rather than the narrowed one.</p>
 <h2 id="potential-improvement-proactive-route-refresh"><a class="header" href="#potential-improvement-proactive-route-refresh">Potential Improvement: Proactive Route Refresh</a></h2>
 <p>The recovery behavior above is reactive: a node continues using a cached source route until that route appears to have failed. In mobile scenarios, this may mean the sender does not attempt to discover a fresher route until after packets have already stopped flowing end-to-end.</p>
 <p>One possible future improvement would be to allow a sender to occasionally perform a low-rate exploratory route refresh even when there is no strong indication of failure. This behavior is <strong>not part of the current specified protocol behavior</strong> and has <strong>not been validated with real-world measurements</strong>. It is described here only as a possible future optimization.</p>
@@ -287,7 +287,7 @@ these periods are the advertisement-policy properties.</p>
 <ul>
 <li>only perform exploratory refresh when the sender is believed to be mobile or moving</li>
 <li>use a normal cached source route, but also include a trace-route option</li>
-<li>allow only a small flood budget, capped at no more than <code>source_route_hops + 1</code></li>
+<li>allow only a small flood budget, capped at one flood hop more than the source route has hints</li>
 <li>perform this no more than occasionally, for example no more than once every <code>N</code> successful transmissions and no more than once every <code>T</code> minutes, whichever is longer</li>
 </ul>
 <p>The intent would be to probe for a slightly better or fresher route without incurring the cost of a full rediscovery flood. A small tail flood could help discover alternate final hops or nearby replacement repeaters when the old route is only partially stale.</p>

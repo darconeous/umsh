@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-5f0d90f9.js";
+            window.path_to_searchindex_js = "searchindex-a36d942b.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-438957a9.js"></script>
+        <script src="toc-fed4626c.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -199,7 +199,7 @@ segments which are nowhere near each other.</p>
 <ul>
 <li>Each participant fronts a ULCP device of its own, attached as a
 tethered host in <a href="#radio-attachment">backhaul mode</a>. The host is
-therefore not on the shared medium at all — it is a point-to-point
+therefore not on the shared medium at all—it is a point-to-point
 neighbor of the device’s own node.</li>
 <li>The server’s <strong>interfaces</strong> are its own radio, when it has one, plus
 one interface per connected client, plus any
@@ -211,13 +211,13 @@ makes no forwarding decisions and holds no mesh state.</li>
 </ul>
 <p>The bridge has no identity on the mesh. It appears in no route, answers
 to no address, and originates no traffic. The nodes that carry bridged
-traffic are the ones behind the participants’ radios — and, where a
+traffic are the ones behind the participants’ radios—and, where a
 <a href="#host-interfaces">host interface</a> is offered, the host on the far side
-of it — each holding its own identity.</p>
+of it—each holding its own identity.</p>
 <h3 id="a-crossing-is-two-repeater-hops"><a class="header" href="#a-crossing-is-two-repeater-hops">A Crossing Is Two Repeater Hops</a></h3>
 <p>Because every participant is a point-to-point neighbor of its device’s
 node, the node’s <a href="repeater-operation.html">repeater</a> is the bridge’s
-forwarding policy — hop accounting, duplicate suppression, region and
+forwarding policy—hop accounting, duplicate suppression, region and
 signal policy, all applied to bridged traffic exactly as to anything
 else the node hears.</p>
 <p>A packet crosses in four steps:</p>
@@ -229,7 +229,7 @@ duplicate check, flood hop accounting, trace prepend with a real
 signal measurement, and a transmission on that same segment.</li>
 <li>That transmission is delivered to the attached host, which writes it
 to the tunnel. What crosses is the ingress node’s <em>output</em>, already
-rewritten — not the frame as it was first heard.</li>
+rewritten—not the frame as it was first heard.</li>
 <li>The server copies it to its other interfaces.</li>
 <li>Each receiving participant hands the frame to its own device’s node,
 which receives it as a packet carrying no measurements and forwards
@@ -275,8 +275,8 @@ allows one client to be revoked without re-keying the rest.</p>
 <p>A deployment <strong>MAY</strong> use an Ed25519 node identity as its certificate key,
 each side pinning the peer’s public key rather than a certificate. The
 pinned key <strong>MUST</strong> then be held against the TLS 1.3 <code>CertificateVerify</code>
-signature — proof that the peer possesses the identity, independent of
-anything the certificate claims — rather than against the certificate’s
+signature—proof that the peer possesses the identity, independent of
+anything the certificate claims—rather than against the certificate’s
 contents. This gives every tunnel credential a UMSH address, so a
 participant’s credential can later serve as a mesh-addressable identity
 for management without re-keying.</p>
@@ -296,7 +296,7 @@ else; an empty frame is a <a href="#keepalive">keepalive</a>. Because the payloa
 exactly the ULCP stream structure, a participant relays bytes without
 parsing them:</p>
 <ul>
-<li><strong>Client to server</strong>: something the client’s node transmitted — the
+<li><strong>Client to server</strong>: something the client’s node transmitted—the
 body of the <a href="ulcp-transport.html#cmd-str-recv"><code>CMD_STR_RECV</code></a> that
 delivered it, written unmodified, <code>RX_FLAG_SELF_TX</code> and all.</li>
 <li><strong>Server to client</strong>: a frame to hand to the client’s node, passed as
@@ -307,15 +307,15 @@ the body of a <a href="ulcp-transport.html#cmd-str-send"><code>CMD_STR_SEND</cod
 <em>received</em>, and a transmit request needs metadata of its own. The
 participant that hands a frame to its device therefore <strong>MUST</strong> replace
 the accompanying metadata with transmit metadata, and <strong>SHOULD</strong> do so
-only at that point, so that the received metadata — including any
-<a href="ulcp-transport.html#buffered-metadata">buffered-frame</a> age — remains
+only at that point, so that the received metadata—including any
+<a href="ulcp-transport.html#buffered-metadata">buffered-frame</a> age—remains
 available to the staleness rule below for as long as the frame is in
 flight.</p>
 <p>A frame that is malformed, or larger than the receiving participant is
 prepared to transmit, is discarded.</p>
 <h3 id="keepalive"><a class="header" href="#keepalive">Keepalive and Reconnection</a></h3>
 <p>A participant writes a bare flag octet (<code>0x7E</code>) whenever it has sent
-nothing for a keepalive interval — 10 seconds is a reasonable default —
+nothing for a keepalive interval—10 seconds is a reasonable default—
 and closes the connection once it has received nothing for an idle
 timeout, by default 30 seconds. The two directions are independent.</p>
 <p>Empty frames are the idle fill of HDLC-Lite and a conforming decoder
@@ -335,8 +335,8 @@ queued frames when a connection is re-established rather than flushing
 them into the new session.</p>
 <p>Staleness is enforced by the sender, and no age accompanies a frame on
 the wire. A participant <strong>SHOULD</strong> discard a frame rather than write it
-once the frame is older than a configured limit — ten seconds is a
-reasonable default — counting any device-side queueing reported through
+once the frame is older than a configured limit—ten seconds is a
+reasonable default—counting any device-side queueing reported through
 <a href="ulcp-transport.html#buffered-metadata">buffered-frame metadata</a>. A frame
 that old describes a mesh that has moved on.</p>
 <h2 id="radio-attachment"><a class="header" href="#radio-attachment">Radio Attachment</a></h2>
@@ -353,7 +353,7 @@ the whole of what makes a crossing safe.</p>
 <p>A participant <strong>SHOULD</strong> also set
 <a href="ulcp-host.html#prop-mac-promiscuous"><code>PROP_MAC_PROMISCUOUS</code></a> to true. In
 backhaul mode this widens what the host is delivered from those of the
-node’s transmissions that pass its receive filtering to all of them —
+node’s transmissions that pass its receive filtering to all of them—
 which for a device with a provisioned host domain is the difference
 between carrying the node’s repeats and silently dropping them. A device
 with no host domain provisioned filters nothing, so this is a safeguard
@@ -375,7 +375,7 @@ are observed rather than silent, and bridged transmissions <strong>MUST NOT</str
 set <code>TX_FLAG_NODUTY</code>: the device’s duty-cycle enforcement is the backstop
 against a bridge that would otherwise consume a segment’s airtime budget.</p>
 <p>A backhauled hand-off crosses a wire. It contends for no channel, spends
-no airtime, and is not charged against the duty limit — the airtime is
+no airtime, and is not charged against the duty limit—the airtime is
 spent later, and accounted to the node, if the node decides to transmit.
 What a hand-off can meet is a node whose receive queue is full, which is
 reported as <code>STATUS_CCA_FAILURE</code> for want of a better code. A participant
@@ -409,8 +409,8 @@ two of <a href="#a-crossing-is-two-repeater-hops">§ A Crossing Is Two Repeater 
 since no repeater stands between the host and the medium. What makes
 this safe is unchanged: a host’s frames reach the air only where a
 participant’s node transmits them, and that node applies the whole
-forwarding procedure — duplicate suppression, hop accounting, region and
-signal policy, duty enforcement — to them as to anything else it hears.</p>
+forwarding procedure—duplicate suppression, hop accounting, region and
+signal policy, duty enforcement—to them as to anything else it hears.</p>
 <p>Frames delivered to a host <strong>MUST</strong> carry no signal measurements. The
 measurement that accompanied such a frame across the tunnel describes a
 reception on another segment by another radio, and reporting it here
@@ -468,7 +468,7 @@ every device behind it.</p>
 <p>When a clamp of <em>n</em> is configured, the server rewrites <code>FHOPS_REM</code> to <em>n</em>
 for any frame whose <code>FHOPS_REM</code> exceeds it. The
 <a href="packet-structure.html#flood-hop-count">flood hop count</a> is dynamic routing
-metadata excluded from the MIC, so the packet remains authentic — this is
+metadata excluded from the MIC, so the packet remains authentic—this is
 the same field a repeater decrements. The server <strong>MUST NOT</strong> alter
 <code>FHOPS_ACC</code>, which is a record of hops already taken; <strong>MUST NOT</strong> add
 the field to a frame that carries none, since a sender that omitted it
@@ -483,7 +483,7 @@ addressed to the participants’ own nodes unaffected.</p>
 <p>Acknowledgements cross as ordinary traffic. A destination’s
 <a href="packet-types.html#mac-ack-packet">MAC ack</a> is transmitted by its node,
 reaches that node’s attached host, crosses the tunnel, and is forwarded
-back toward the originator by the repeaters along the way — two hops for
+back toward the originator by the repeaters along the way—two hops for
 the crossing, as for anything else.</p>
 <p>The round trip therefore costs four flood hops of the sender’s budget:
 two out and two back. A sender whose budget does not cover the round trip
@@ -495,9 +495,9 @@ cannot repair that: the restored flood is clamped the same way.</p>
 <p>Source-routed hops spend nothing from <code>FHOPS</code>, so explicit routes cross
 bridges at any depth. Ack-requesting traffic that crosses a bridge
 <strong>SHOULD</strong> either carry a
-<a href="packet-options.html#trace-route-option-2">trace-route option</a> — the
+<a href="packet-options.html#trace-route-option-2">trace-route option</a>—the
 participants’ nodes record themselves in it, which is what makes the
-reversed trace routable — or be sent along a known source route.</p>
+reversed trace routable—or be sent along a known source route.</p>
 <h2 id="operational-guidance"><a class="header" href="#operational-guidance">Operational Guidance</a></h2>
 <ul>
 <li><strong>Budget for two hops.</strong> Traffic expected to cross a bridge needs a
@@ -522,7 +522,7 @@ spending its segment’s airtime on other people’s traffic.</li>
 the shared secret or pinned credential is the sole admission control.
 UMSH frames are already end-to-end authenticated and encrypted at the
 MAC layer, so the tunnel’s confidentiality mainly shields routing
-metadata — hints, options, traffic volume — from path observers.</p>
+metadata—hints, options, traffic volume—from path observers.</p>
 <p>Using a node identity as a tunnel credential does not let the two
 protocols’ signatures be confused for one another: the TLS 1.3
 <code>CertificateVerify</code> payload is domain-separated by a fixed 64-octet

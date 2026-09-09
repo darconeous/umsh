@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-5f0d90f9.js";
+            window.path_to_searchindex_js = "searchindex-a36d942b.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-438957a9.js"></script>
+        <script src="toc-fed4626c.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -182,7 +182,7 @@
 <p>This appendix defines a portable, passphrase-protected artifact for backing
 up and restoring a node identity, together with the secret material and local
 knowledge that make a restored identity immediately useful. It is produced
-and consumed by host implementations — phones, tablets, and desktops. A
+and consumed by host implementations—phones, tablets, and desktops. A
 ULCP device never generates, stores, or parses an export artifact, and a
 device’s own identity is never exported through this format.</p>
 <p>The artifact is a single binary object with two layers:</p>
@@ -318,7 +318,7 @@ is the restored identity’s address.</p>
 <p>The advertisement, when present, is the node’s most recent
 <a href="beacons.html#advertisements">advertisement</a> in canonical wire form. The
 importer <strong>SHOULD</strong> verify its signature against the derived public key and
-discard it — without failing the restore — if verification fails.</p>
+discard it—without failing the restore—if verification fails.</p>
 <h3 id="counter-section"><a class="header" href="#counter-section">Counter Section</a></h3>
 <div class="table-wrapper">
 <table>
@@ -393,7 +393,7 @@ re-established through the normal
 producing application (for example <code>ios.notifications.previews</code>). Contents
 are application-defined and restored best-effort; importers <strong>MUST</strong> ignore
 entries they do not understand. This section <strong>MUST NOT</strong> contain key
-material or any other secret — secrets belong only in the sections defined
+material or any other secret—secrets belong only in the sections defined
 above.</p>
 <h2 id="restore-procedure"><a class="header" href="#restore-procedure">Restore Procedure</a></h2>
 <ol>
@@ -428,7 +428,7 @@ restore generation before the identity sends any authenticated traffic.</p>
 <p>The advance rule skips at least one full block of 2²⁴ counter values beyond
 the recorded floor. This dominates any plausible transmission volume between
 export and restore on a LoRa-class link, and bounds the identity to roughly
-250 restores across its lifetime — a deliberate trade of counter space for
+250 restores across its lifetime—a deliberate trade of counter space for
 safety against a stale floor.</p>
 <p>Restoring an identity does not revoke the source: the exporting device, and
 every other copy of the artifact, still holds a working private key. The

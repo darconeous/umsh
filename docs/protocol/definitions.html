@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-5f0d90f9.js";
+            window.path_to_searchindex_js = "searchindex-a36d942b.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-438957a9.js"></script>
+        <script src="toc-fed4626c.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -192,7 +192,7 @@
 <dt id="blind-unicast"><a class="header" href="#blind-unicast"><strong>Blind Unicast</strong></a></dt>
 <dd>A packet type that carries a unicast payload addressed to a specific destination while concealing both the sender and destination identities from observers who do not possess the channel key. The destination hint and source address are encrypted using the channel key; the payload is protected end-to-end using keys derived from both the channel key and the pairwise shared secret. See <a href="packet-types.html#blind-unicast-packet">Frame Types</a>.</dd>
 <dt id="bridge"><a class="header" href="#bridge"><strong>Bridge</strong></a></dt>
-<dd>An arrangement that carries UMSH packets between two different media or channels — for example, from a local LoRa radio to an internet backhaul and back to a distant LoRa radio. Bridges are protocol-transparent: a repeater at each end forwards the packet as it would any other, so a crossing consumes source-route hints, spends two flood hops, and records both repeaters in a trace. The inbound repeater’s forwarding is observable on the medium the packet arrived from.</dd>
+<dd>An arrangement that carries UMSH packets between two different media or channels—for example, from a local LoRa radio to an internet backhaul and back to a distant LoRa radio. Bridges are protocol-transparent: a repeater at each end forwards the packet as it would any other, so a crossing consumes source-route hints, spends two flood hops, and records both repeaters in a trace. The inbound repeater’s forwarding is observable on the medium the packet arrived from.</dd>
 <dt id="broadcast"><a class="header" href="#broadcast"><strong>Broadcast</strong></a></dt>
 <dd>A packet intended for all nodes in range. Broadcast packets carry no destination hint and are not encrypted or authenticated at the MAC layer. See <a href="packet-types.html">Frame Types</a>.</dd>
 <dt id="cad-channel-activity-detection"><a class="header" href="#cad-channel-activity-detection"><strong>CAD (Channel Activity Detection)</strong></a></dt>
@@ -213,6 +213,8 @@
 <dd>The family of signature algorithms that includes Ed25519. Used in UMSH for payload signatures, most notably for node identity broadcasts.</dd>
 <dt id="ephemeral-key"><a class="header" href="#ephemeral-key"><strong>Ephemeral Key</strong></a></dt>
 <dd>A temporary Ed25519 keypair generated for a single PFS session. Unlike a long-term identity keypair, ephemeral keys are never written to persistent storage and are explicitly erased when the session ends, ensuring that compromise of long-term keys cannot retroactively decrypt traffic protected by them. See <a href="security.html#perfect-forward-secrecy-sessions">Security &amp; Cryptography</a>.</dd>
+<dt id="flood-hop"><a class="header" href="#flood-hop"><strong>Flood Hop</strong></a></dt>
+<dd>A hop spent from <code>FHOPS_REM</code>: a transmission made with <code>FHOPS_REM &gt; 0</code> and no source-route hint left to follow, which is what permits the repeaters that hear it to flood-forward the packet. The final transmission of a flood-routed packet is made with <code>FHOPS_REM = 0</code> and is a hop but not a flood hop, and a source-routed hop is not a flood hop either. A path’s hop count is its source-routed hops plus its flood hops plus one, so it is one more than <code>FHOPS_ACC</code> if and only if no source route was involved. See <a href="packet-structure.html#flood-hop-count">Flood Hop Count</a>.</dd>
 <dt id="flood-routing"><a class="header" href="#flood-routing"><strong>Flood Routing</strong></a></dt>
 <dd>A routing strategy where a packet is forwarded by every eligible repeater within the flood radius, subject to duplicate suppression. Requires no topology state at repeaters. Bounded by the flood hop count field (<code>FHOPS</code>). See <a href="repeater-operation.html">Repeater Operation</a>.</dd>
 <dt id="frame"><a class="header" href="#frame"><strong>Frame</strong></a></dt>
@@ -220,8 +222,8 @@
 <dt id="frame-counter"><a class="header" href="#frame-counter"><strong>Frame Counter</strong></a></dt>
 <dd>A monotonically increasing 4-byte value included in every authenticated packet. The receiver tracks recently seen counter values and rejects packets with counters it has already processed, providing replay protection without requiring synchronized clocks. The counter must be persisted across reboots to prevent reuse. See <a href="security.html#frame-counter">Security &amp; Cryptography</a>.</dd>
 <dt id="hop"><a class="header" href="#hop"><strong>Hop</strong></a></dt>
-<dd>One leg of a packet’s path through the network — the transmission from one node to an adjacent node within radio range. A packet that travels through two repeaters before reaching its destination has traversed three hops.
-The protocol differentiates between source-routed hops and flood-routed hops.</dd>
+<dd>One leg of a packet’s path through the network—the transmission from one node to an adjacent node within radio range. A packet that travels through two repeaters before reaching its destination has traversed three hops. A zero-hop message is a message sent to yourself that is never sent over the radio.
+A hop taken by a repeater matching a source-route hint is a source-routed hop and spends no <code>FHOPS</code> budget; a hop spent from <code>FHOPS_REM</code> is a <a href="#flood-hop">flood hop</a>. Between them the two counts leave exactly one transmission uncounted, so a path always has one more hop than the two counts together.</dd>
 <dt id="hkdf-hmac-based-key-derivation-function"><a class="header" href="#hkdf-hmac-based-key-derivation-function"><strong>HKDF (HMAC-based Key Derivation Function)</strong></a></dt>
 <dd>A key derivation function standardized in RFC 5869, composed of two steps: Extract (combining a secret and optional salt into a pseudorandom key) and Expand (stretching that key to the required output length). UMSH uses HKDF-SHA256 with domain-separated labels to derive encryption keys, authentication keys, and channel identifiers from shared secrets and channel keys.</dd>
 <dt id="iot-internet-of-things"><a class="header" href="#iot-internet-of-things"><strong>IoT (Internet of Things)</strong></a></dt>
@@ -235,7 +237,7 @@ The protocol differentiates between source-routed hops and flood-routed hops.</d
 <dt id="mac-layer-medium-access-control"><a class="header" href="#mac-layer-medium-access-control"><strong>MAC Layer (Medium Access Control)</strong></a></dt>
 <dd>The sublayer of the data link layer responsible for addressing, packet framing, and channel access. In UMSH, the MAC layer handles packet types, addressing, routing options, and cryptography. Application-layer protocols are carried in the payload and are defined separately.</dd>
 <dt id="mac-ack"><a class="header" href="#mac-ack"><strong>MAC Ack</strong></a></dt>
-<dd>A packet type generated by the final destination of a unicast packet (UNAR or BUAR) to confirm receipt. The MAC Ack carries an <em>ack MIC</em> — the first 4 bytes of the original packet’s MIC, a public handle that lets the sender and any forwarding repeater correlate the ack with the original packet — and a keyed 4-byte <em>ack tag</em> derived from the original packet’s MIC and the pairwise encryption key, which allows the original sender to verify the acknowledgement. It carries no destination hint. Repeaters do not generate MAC Acks; they forward them like any other packet. See <a href="packet-types.html#mac-ack-packet">Frame Types</a>.</dd>
+<dd>A packet type generated by the final destination of a unicast packet (UNAR or BUAR) to confirm receipt. The MAC Ack carries an <em>ack MIC</em>—the first 4 bytes of the original packet’s MIC, a public handle that lets the sender and any forwarding repeater correlate the ack with the original packet—and a keyed 4-byte <em>ack tag</em> derived from the original packet’s MIC and the pairwise encryption key, which allows the original sender to verify the acknowledgement. It carries no destination hint. Repeaters do not generate MAC Acks; they forward them like any other packet. See <a href="packet-types.html#mac-ack-packet">Frame Types</a>.</dd>
 <dt id="mesh"><a class="header" href="#mesh"><strong>Mesh</strong></a></dt>
 <dd>A network topology where nodes can relay packets on behalf of other nodes, enabling communication beyond direct radio range. UMSH is designed for LoRa mesh networks where repeaters and bridges are used to extend coverage.</dd>
 <dt id="mic-message-integrity-code"><a class="header" href="#mic-message-integrity-code"><strong>MIC (Message Integrity Code)</strong></a></dt>

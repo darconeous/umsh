@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-5f0d90f9.js";
+            window.path_to_searchindex_js = "searchindex-a36d942b.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-438957a9.js"></script>
+        <script src="toc-fed4626c.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -191,8 +191,8 @@ flow control. The framing mechanism depends on the underlying transport:</p>
 exactly as used by Spinel.</li>
 <li>BLE uses the GATT frame transport defined in
 <a href="ulcp-ble.html">ULCP over BLE</a>.</li>
-<li>A reliable, in-order byte stream standing in for a serial link — a TCP
-connection to a bridged port, say — uses the same HDLC-Lite framing.</li>
+<li>A reliable, in-order byte stream standing in for a serial link—a TCP
+connection to a bridged port, say—uses the same HDLC-Lite framing.</li>
 </ul>
 <p>In this chapter, the <strong>device</strong> is the side that owns the transceiver and
 the <strong>host</strong> is the side that attaches to it over the local link (see
@@ -294,13 +294,14 @@ require. The exact composition of a command payload is determined by the
 specific command identifier being used and <strong>MUST</strong> be empty if the command has
 no arguments.</p>
 <h2 id="commands"><a class="header" href="#commands">Commands</a></h2>
-<p>This chapter defines the commands that operate on the protocol itself —
+<p>This chapter defines the commands that operate on the protocol itself—
 resets, liveness, and the property grammar. The remaining commands are
 defined with the subsystem they act on: <code>CMD_STR_SEND</code> and <code>CMD_STR_RECV</code>
 in <a href="ulcp-transport.html">Frame Transport</a>, <code>CMD_QUEUE_DRAIN</code> in
-<a href="ulcp-host.html">Tethered Host Services</a>, and the four state-management
-commands in <a href="ulcp-saved-state.html">Saved State</a>. The complete numeric
-allocation is in the <a href="ulcp-index.html">Command and Property Index</a>.</p>
+<a href="ulcp-host.html">Tethered Host Services</a>, <code>CMD_ANNOUNCE</code> in
+<a href="ulcp-device.html">Device Identity</a>, and the four state-management commands
+in <a href="ulcp-saved-state.html">Saved State</a>. The complete numeric allocation is
+in the <a href="ulcp-index.html">Command and Property Index</a>.</p>
 <div class="table-wrapper">
 <table>
 <thead>
@@ -317,15 +318,17 @@ allocation is in the <a href="ulcp-index.html">Command and Property Index</a>.</
 <tr><td>7</td><td><code>CMD_PROP_INSERTED</code></td><td>Device-&gt;Host</td><td>Item-inserted notification</td></tr>
 <tr><td>8</td><td><code>CMD_PROP_REMOVED</code></td><td>Device-&gt;Host</td><td>Item-removed notification</td></tr>
 <tr><td>16</td><td><code>CMD_REBOOT</code></td><td>Host-&gt;Device</td><td>Restart the device’s hardware</td></tr>
+<tr><td>19</td><td><code>CMD_ANNOUNCE</code></td><td>Host-&gt;Device</td><td>Announce the device now</td></tr>
 <tr><td>21</td><td><code>CMD_PROP_MULTI_GET</code></td><td>Host-&gt;Device</td><td>Get several property values</td></tr>
 <tr><td>22</td><td><code>CMD_PROP_MULTI_SET</code></td><td>Host-&gt;Device</td><td>Set several property values in order</td></tr>
 <tr><td>23</td><td><code>CMD_PROP_ARE</code></td><td>Device-&gt;Host</td><td>Multiple property value notification</td></tr>
+<tr><td>24</td><td><code>CMD_SESSION_RESET</code></td><td>Device-&gt;Host</td><td>Session state was discarded</td></tr>
 </tbody>
 </table>
 </div>
-<p>The multi-property commands (21–23) are gated by <code>CAP_CMD_MULTI</code> and
-<code>CMD_REBOOT</code> by <code>CAP_REBOOT</code> (see <a href="#capabilities">Capabilities</a>);
-everything else is unconditional.</p>
+<p>The multi-property commands (21–23) are gated by <code>CAP_CMD_MULTI</code>,
+<code>CMD_REBOOT</code> by <code>CAP_REBOOT</code>, and <code>CMD_ANNOUNCE</code> by <code>CAP_ADVERT</code> (see
+<a href="#capabilities">Capabilities</a>); everything else is unconditional.</p>
 <h3 id="cmd-noop"><a class="header" href="#cmd-noop">CMD 0: (Host -&gt; Device) <code>CMD_NOP</code></a></h3>
 <pre><code> 0                   1
  0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5
@@ -391,7 +394,7 @@ accordingly to the status code for the error.</p>
 <p>The value reported by that <code>CMD_PROP_IS</code> need not be the value written: a
 device that adjusts a write to what it can honor reports the result, and
 that result is the property’s value. A write fails only by way of
-<code>PROP_LAST_STATUS</code> — a differing value is a successful write, not a
+<code>PROP_LAST_STATUS</code>—a differing value is a successful write, not a
 rejected one.</p>
 <h3 id="cmd-prop-insert"><a class="header" href="#cmd-prop-insert">CMD 4: (Host -&gt; Device) <code>CMD_PROP_INSERT</code></a></h3>
 <pre><code>  0                   1                   2                   3
@@ -471,7 +474,7 @@ the current value of the given property.</p>
 of zero when the device adds an item to a multi-value property for its own
 reasons.</p>
 <p>The payload is the property identifier followed by the inserted item as
-the device reports it (see <a href="ulcp-core.html#multi-value-properties">Multi-Value Properties</a>) — never in a
+the device reports it (see <a href="ulcp-core.html#multi-value-properties">Multi-Value Properties</a>)—never in a
 form containing key material.</p>
 <h3 id="cmd-prop-removed"><a class="header" href="#cmd-prop-removed">CMD 8: (Device -&gt; Host) <code>CMD_PROP_REMOVED</code></a></h3>
 <pre><code>  0                   1                   2                   3
@@ -505,7 +508,7 @@ comes back configured as it was.</p>
 its post-reset values with the device still running, and from
 <a href="ulcp-saved-state.html#cmd-factory-reset"><code>CMD_FACTORY_RESET</code></a>, which erases
 that state before restarting. Between the three, this is the one that
-changes nothing — it is how a host clears a condition the protocol cannot
+changes nothing—it is how a host clears a condition the protocol cannot
 name.</p>
 <p>The command payload SHOULD be empty and MUST be ignored. A device that
 restarts sends <strong>no</strong> response: the reboot drops the transport link, and
@@ -513,7 +516,7 @@ the TID is therefore irrelevant. A host treats the ensuing disconnect (and
 the device’s subsequent reappearance announcing <code>STATUS_RESET_POWER_ON</code>)
 as completion, and MUST NOT wait for a <code>PROP_LAST_STATUS</code>.</p>
 <p>This command is only available on devices advertising <code>CAP_REBOOT</code>.
-A device without it answers <code>STATUS_UNIMPLEMENTED</code> — which is the only
+A device without it answers <code>STATUS_UNIMPLEMENTED</code>—which is the only
 response this command ever produces, and the only thing that distinguishes
 a device that declined from one that is already restarting.</p>
 <h3 id="cmd-prop-multi-get"><a class="header" href="#cmd-prop-multi-get">CMD 21: (Host -&gt; Device) <code>CMD_PROP_MULTI_GET</code></a></h3>
@@ -547,7 +550,7 @@ On any other device it is an unrecognized command,
 <p>Figure: Structure of <code>CMD_PROP_MULTI_SET</code></p>
 <p>Set several property values in order. The payload is a sequence of
 entries, each the combined length of its key and value encoded as a
-packed unsigned integer, followed by that many octets — the property
+packed unsigned integer, followed by that many octets—the property
 identifier as a packed unsigned integer, then the value:</p>
 <pre><code>+--------------+---------------------------+--------------------+
 | LENGTH (PUI) | PROP_KEY (PUI, 1-3 bytes) | VALUE (remainder)  |
@@ -560,9 +563,9 @@ that fails. <a href="#mutation-atomicity">Mutation Atomicity</a> applies to each
 entry alone: the sequence is not a transaction, and a failure partway
 leaves the earlier entries applied.</p>
 <p>The reply is a single <a href="#cmd-prop-are"><code>CMD_PROP_ARE</code></a> containing, for
-each applied entry in order, the property and its reported value —
+each applied entry in order, the property and its reported value—
 exactly what the <code>CMD_PROP_IS</code> answering a lone <code>CMD_PROP_SET</code> would
-carry — and, for the failing entry, a <code>PROP_LAST_STATUS</code> entry carrying
+carry—and, for the failing entry, a <code>PROP_LAST_STATUS</code> entry carrying
 the error, after which the reply ends. Entries past the failure are not
 executed and contribute nothing; a reply whose every entry is a success
 covers the entire request.</p>
@@ -580,13 +583,66 @@ On any other device it is an unrecognized command,
 <p>Multiple property value notification. The payload is a sequence of
 entries in the same encoding as <code>CMD_PROP_MULTI_SET</code>: a combined
 key-and-value length as a packed unsigned integer, the property
-identifier, and the value as the device reports it — under the same
+identifier, and the value as the device reports it—under the same
 reporting rules as <code>CMD_PROP_IS</code>, so key material never appears (see
 <a href="#multi-value-properties">Multi-Value Properties</a>).</p>
 <p>The device emits this command only in response to <code>CMD_PROP_MULTI_GET</code>
 or <code>CMD_PROP_MULTI_SET</code>, with the TID of that command. It <strong>MUST NOT</strong>
 be emitted unsolicited: asynchronous updates use <code>CMD_PROP_IS</code> and its
 companions, one property at a time.</p>
+<h3 id="cmd-session-reset"><a class="header" href="#cmd-session-reset">CMD 24: (Device -&gt; Host) <code>CMD_SESSION_RESET</code></a></h3>
+<pre><code>  0                   1                   2
+ 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|1 0| RES | TID |      CMD      |     REASON
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+</code></pre>
+<p>Figure: Structure of <code>CMD_SESSION_RESET</code></p>
+<p>The device has discarded <a href="#state-classes">session state</a>, so every
+session-scoped property is back at its documented default under a host
+that did not ask for it. The TID <strong>MUST</strong> be zero: the frame is always
+unsolicited.</p>
+<p><strong>REASON</strong> is a packed unsigned integer. It is diagnostic—a host’s
+obligation is the same for every value:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Value</th><th>Meaning</th></tr>
+</thead>
+<tbody>
+<tr><td>0</td><td>A host attached</td></tr>
+<tr><td>1</td><td><code>CMD_RST</code></td></tr>
+<tr><td>2</td><td><code>CMD_RESTORE</code> in its reset form</td></tr>
+</tbody>
+</table>
+</div>
+<p>Unassigned values are reserved. A host <strong>MUST</strong> treat an unrecognized
+reason as a session reset it does not have a name for, never as a parse
+failure.</p>
+<p>A device <strong>MUST</strong> emit this command whenever it discards session state
+while a host is attached, and <strong>MUST NOT</strong> emit it when no host is
+attached: a detach discards session state with nobody to tell.</p>
+<p>The frame <strong>MUST</strong> be emitted before any frame belonging to the new
+session, so a host can tell which session anything it receives came
+from. The completion of the command that caused the discard belongs to
+the exchange that requested it and <strong>MAY</strong> precede the notice; a
+<code>CMD_RST</code> is answered by its <code>STATUS_RESET_SOFTWARE</code> and then the
+notice. Where a session is instead created by the host’s own first
+frame, nothing has been answered yet and the notice comes first.</p>
+<p>The command <strong>MUST NOT</strong> be emitted over the administrative binding. It
+concerns the local tethered session; an administrator over the mesh is
+not party to it, and the binding carries only what was asked for.</p>
+<p>A host <strong>MUST</strong> tolerate the frame at any time while attached. On
+receiving it, a host <strong>MUST</strong> re-establish anything it holds in session
+state and <strong>SHOULD</strong> otherwise resynchronize as it would on a fresh
+attach (see <a href="#attach-sync">Attach, Detach, and Synchronization</a>).</p>
+<p>This is deliberately not a <a href="#reset-codes">reset code</a>, and <strong>MUST NOT</strong>
+disturb <code>PROP_LAST_STATUS</code>. The two report different losses:
+<code>STATUS_RESET_POWER_ON</code> means the host domain went with the session and
+must be reprovisioned in full, whereas a session reset means only session
+state went. A reboot implies a session reset, so recording the narrower
+fact over the broader one would lose the distinction that governs
+recovery.</p>
 <h2 id="properties-and-streams"><a class="header" href="#properties-and-streams">Properties and Streams</a></h2>
 <p>A <strong>property</strong> is a piece of device state with a value the host can read
 and, where the property allows it, write. A <strong>stream</strong> is a packet-like
@@ -598,6 +654,10 @@ space and are carried by their own commands (see
 <p>The properties marked as supporting <code>Is</code> means that the property may be
 emitted asynchronously. All properties that support <code>Get</code> or <code>Set</code> will emit
 an <code>Is</code> to respond with the current/new value of that property.</p>
+<p>A multi-value property marked as supporting <code>Inserted</code> or <code>Removed</code> may
+likewise emit those asynchronously, reporting one item the device added
+or dropped for its own reasons rather than the whole value. A host that
+tolerates an unsolicited <code>Is</code> must tolerate these as well.</p>
 </blockquote>
 <h3 id="multi-value-properties"><a class="header" href="#multi-value-properties">Multi-Value Properties</a></h3>
 <p>A <strong>multi-value property</strong> holds an unordered set of items rather than a
@@ -606,23 +666,25 @@ filter tables of the device and host domains are mutable ones.</p>
 <p>The host writes items (<code>CMD_PROP_SET</code>, <code>CMD_PROP_INSERT</code>) in the
 property’s <strong>item form</strong>. When the device reports items (<code>CMD_PROP_IS</code>,
 <code>CMD_PROP_INSERTED</code>, <code>CMD_PROP_REMOVED</code>), it reports them exactly as
-written — except where the item form contains symmetric key material. Such
-a property documents what is reported instead: the entry with its key
-material omitted, or a short derived <strong>digest form</strong> (a channel key is
-reported as its derived channel identifier), so that secrets can never be
-read back (see <a href="ulcp-core.html#provisioning-security">Provisioning Security</a>).</p>
+written—except where the item form contains symmetric key material. Such
+a property documents its <strong>reported form</strong> instead: the entry with its
+key material omitted, or a value derived from it (a channel key is
+reported as its derived <a href="packet-types.html#channel-identifier-derivation">channel
+identifier</a>), so that
+secrets can never be read back (see <a href="ulcp-core.html#provisioning-security">Provisioning
+Security</a>).</p>
 <p>The commands valid on a mutable multi-value property are:</p>
 <ul>
-<li><code>CMD_PROP_GET</code> — the device replies with <code>CMD_PROP_IS</code> whose value is the
+<li><code>CMD_PROP_GET</code>—the device replies with <code>CMD_PROP_IS</code> whose value is the
 concatenation of all items as reported. If the property is documented
 as having an item length prefix, each item is preceded by its length in
 octets encoded as a packed unsigned integer; properties whose reported
 items are fixed-size omit the prefix.</li>
-<li><code>CMD_PROP_SET</code> — replaces the entire contents with the items encoded in
+<li><code>CMD_PROP_SET</code>—replaces the entire contents with the items encoded in
 the value, each in item form (with the same length-prefix rule). Setting
 an empty value clears the property. Success is reported with a
 <code>CMD_PROP_IS</code> carrying the new complete value as reported.</li>
-<li><code>CMD_PROP_INSERT</code> / <code>CMD_PROP_REMOVE</code> — add or remove one item, as
+<li><code>CMD_PROP_INSERT</code> / <code>CMD_PROP_REMOVE</code>—add or remove one item, as
 defined above.</li>
 </ul>
 <p>Hosts manipulating large tables <strong>SHOULD</strong> prefer <code>Insert</code>/<code>Remove</code> over
@@ -638,9 +700,9 @@ without applying any of it.</li>
 <li>Whole-table replacement is atomic: no observer of device behavior (frame
 filtering, acknowledgement decisions) sees a mixture of the old and new
 contents.</li>
-<li>Operations that include durable writes — <code>CMD_SAVE</code>, <code>CMD_CLEAR</code>,
+<li>Operations that include durable writes—<code>CMD_SAVE</code>, <code>CMD_CLEAR</code>,
 installing or generating the device identity, and setting
-<code>PROP_BLE_PAIRING_PIN</code> — <strong>MUST NOT</strong> report success before the durable
+<code>PROP_BLE_PAIRING_PIN</code>—<strong>MUST NOT</strong> report success before the durable
 write has completed.</li>
 <li>On any failure, the prior live and durable state remains unchanged, and
 the device <strong>MUST NOT</strong> emit <code>CMD_PROP_IS</code>, <code>CMD_PROP_INSERTED</code>, or
@@ -651,7 +713,7 @@ policy. It involves no durable write, so it cannot fail partway.</li>
 </ul>
 <p>Atomicity is per operation, not per sequence. Establishing a host domain
 is several property writes, and an interruption between them leaves a
-mixture of old and new — bounded by the fact that a host-key change resets
+mixture of old and new—bounded by the fact that a host-key change resets
 the domain first and a reboot empties it. A host repairs this the same way
 it provisions in the first place: by writing everything again.</p>
 <h2 id="core-properties"><a class="header" href="#core-properties">Core Properties</a></h2>
@@ -767,8 +829,8 @@ this describes the thing it runs on, and the two change independently: the
 same firmware release covers several models, and a model outlives every
 release built for it.</p>
 <p>Firmware built for one specific board <strong>SHOULD</strong> implement this. A device
-whose hardware has no fixed identity — a simulator, or an implementation that
-runs on whatever it is compiled for — <strong>SHOULD</strong> omit the property rather than
+whose hardware has no fixed identity—a simulator, or an implementation that
+runs on whatever it is compiled for—<strong>SHOULD</strong> omit the property rather than
 return an empty or invented string. A host <strong>MUST</strong> treat a refused get as
 “this device does not name its hardware” and continue.</p>
 <p>The value <strong>SHOULD</strong> name the product as its vendor does, so that a host can
@@ -829,7 +891,7 @@ operation.</p>
 host is attached:</p>
 <ul>
 <li>the device identity keypair (independently persisted; never part of
-the saved snapshot — see <a href="ulcp-saved-state.html#saved-state">Saved State</a>)</li>
+the saved snapshot—see <a href="ulcp-saved-state.html#saved-state">Saved State</a>)</li>
 <li>the device identity’s channel keys (<a href="ulcp-device.html#prop-dev-channel-keys"><code>PROP_DEV_CHANNEL_KEYS</code></a>) and peer
 list (<a href="ulcp-device.html#prop-dev-peers"><code>PROP_DEV_PEERS</code></a>)</li>
 <li>the RF configuration (<code>PROP_PHY_*</code>), including <code>PROP_PHY_ENABLED</code>, and
@@ -861,13 +923,13 @@ snapshot, and at power-on every host-domain property takes its documented
 default.</p>
 <p>It emphatically does survive a <em>disconnect</em>. A detached radio keeps
 filtering, queueing and acknowledging on behalf of its host for as long as
-it stays powered — that is the entire value of the host domain, and
+it stays powered—that is the entire value of the host domain, and
 nothing about the host going out of range changes what the host wants
 done.</p>
 <p>The two together give the host a simple rule with no detection in it: a
 host <strong>MUST</strong> establish its complete host domain on every tethered
 attach, writing every part of it rather than reasoning about what the
-device already holds. Key material cannot be compared anyway — the key
+device already holds. Key material cannot be compared anyway—the key
 tables never read it back (see <a href="ulcp-core.html#provisioning-security">Provisioning Security</a>), so a
 peer’s pairwise keys can be replaced without changing anything the host
 can observe. Where the device is already provisioned as asked, the rewrite
@@ -902,12 +964,12 @@ use are listed in the
 <h2 id="attach-sync"><a class="header" href="#attach-sync">Attach, Detach, and Synchronization</a></h2>
 <p>How attach and detach are detected is defined by the transport binding:</p>
 <ul>
-<li><strong>BLE</strong> — enabling/disabling notifications on Frame Out, as specified in
+<li><strong>BLE</strong>—enabling/disabling notifications on Frame Out, as specified in
 <a href="ulcp-ble.html#attach-semantics">ULCP over BLE</a>.</li>
-<li><strong>USB-CDC</strong> — assertion and deassertion of DTR on the ULCP
+<li><strong>USB-CDC</strong>—assertion and deassertion of DTR on the ULCP
 interface.</li>
-<li><strong>TCP</strong> — establishment and closure of the connection.</li>
-<li><strong>Bare UART</strong> — implementation-defined. A device with no way to detect
+<li><strong>TCP</strong>—establishment and closure of the connection.</li>
+<li><strong>Bare UART</strong>—implementation-defined. A device with no way to detect
 host presence MAY treat the host as permanently attached, in which case
 it never enters detached operation and offline assistance
 (<a href="ulcp-host.html#inbound-queueing">Inbound Queueing</a>, <a href="ulcp-host.html#ack-delegation">Acknowledgement Delegation</a>) is unavailable on that
@@ -916,8 +978,10 @@ transport.</li>
 <p>On attach, the device <strong>MUST</strong> reset session state (see <a href="ulcp-core.html#state-classes">State Classes</a>) and
 <strong>MUST NOT</strong> modify the device or host domains in any way. In particular,
 the PHY is not disabled and no property outside session state changes
-value. The device <strong>MUST NOT</strong> emit any frame before attach, and emits no
-unsolicited notification as a result of the attach itself.</p>
+value. The device <strong>MUST NOT</strong> emit any frame before attach; the first
+frame of the session is the <a href="#cmd-session-reset"><code>CMD_SESSION_RESET</code></a>
+announcing the session state the attach discarded, with reason <code>0</code>, and
+the attach itself produces no other unsolicited notification.</p>
 <p>Because attach no longer implies any known default state, the host
 synchronizes by <em>fetching</em>, not by assuming. The following post-attach
 procedure is <strong>RECOMMENDED</strong>:</p>
@@ -927,7 +991,7 @@ procedure is <strong>RECOMMENDED</strong>:</p>
 reset since the last host command, so any state that is not restored
 from saved state (notably queue contents) has been lost.</li>
 <li><code>CMD_PROP_GET</code> for <code>PROP_HOST_KEY</code>. An empty value is the ordinary
-case after a power cycle — the host domain does not survive one — and
+case after a power cycle—the host domain does not survive one—and
 the host simply provisions. A value matching the host’s own identity
 means its provisioning is still live from before the disconnect. Any
 <em>other</em> value means another host has taken the radio over since this
@@ -952,6 +1016,9 @@ while attached, updating its view of the affected property accordingly:
 device state can change for reasons the host did not initiate, and
 publication of the new authoritative value is how the protocol reports
 that.</p>
+<p>The same applies to <a href="#cmd-session-reset"><code>CMD_SESSION_RESET</code></a>, which
+reports the one change no property notification can: the session itself
+starting over. A host that receives one runs this procedure again.</p>
 <p>On detach, the device discards session state, keeps operating with the
 current device- and host-domain state, and begins detached operation:
 accepted frames are queued rather than delivered, and acknowledgement
@@ -959,24 +1026,24 @@ delegation (if enabled) becomes active.</p>
 <h2 id="provisioning-security"><a class="header" href="#provisioning-security">Provisioning Security</a></h2>
 <p>Provisioning moves real key material onto the device, within the limits of the
 <a href="ulcp.html#security-boundary">security boundary</a>: channel keys and
-per-peer symmetric keys — and the device identity’s own private key —
+per-peer symmetric keys—and the device identity’s own private key—
 but never the host’s private key. The rules:</p>
 <ul>
 <li><strong>All symmetric key material, and the device identity private key, is
 write-only.</strong> <code>CMD_PROP_GET</code> and all device-emitted notifications report
 key-bearing properties without their secrets
 (see <a href="ulcp-core.html#multi-value-properties">Multi-Value Properties</a>): peer public keys without <code>K_ENC</code>/<code>K_MIC</code>,
-derived channel identifiers (the digest form) instead of channel keys,
+derived channel identifiers instead of channel keys,
 and never the device private key. This holds for <strong>both</strong> identities’
 key tables. These read-backs let the host verify <em>what</em> is provisioned
 after a reconnect without any secret ever crossing the link a second
-time —
+time—
 which matters because more than one host may be able to attach over the
 radio’s lifetime (transport bonds are possession credentials, not
 identity credentials), and a later host must not be able to extract an
 earlier host’s keys.</li>
-<li>Commands that carry key material — <code>CMD_PROP_SET</code> and <code>CMD_PROP_INSERT</code>
-for the key tables, and any set of <code>PROP_DEV_PRIVATE_KEY</code> — <strong>MUST NOT</strong>
+<li>Commands that carry key material—<code>CMD_PROP_SET</code> and <code>CMD_PROP_INSERT</code>
+for the key tables, and any set of <code>PROP_DEV_PRIVATE_KEY</code>—<strong>MUST NOT</strong>
 be carried over a transport that does not meet the requirements of the
 transport’s security binding: physical possession for serial transports,
 or an encrypted bonded LESC link as specified in
@@ -1018,6 +1085,8 @@ and the <code>TID</code> of command it is referring to.</p>
 <tr><td>19</td><td><code>STATUS_ALREADY</code></td></tr>
 <tr><td>20</td><td><code>STATUS_ITEM_NOT_FOUND</code></td></tr>
 <tr><td>21</td><td><code>STATUS_CURSOR_INVALID</code></td></tr>
+<tr><td>22</td><td><code>STATUS_NOT_PERMITTED</code></td></tr>
+<tr><td>23</td><td><code>STATUS_CHANNEL_NOT_FOUND</code></td></tr>
 <tr><td>32</td><td><code>STATUS_DUTY_LIMIT</code></td></tr>
 </tbody>
 </table>
@@ -1060,13 +1129,33 @@ differs from <code>STATUS_INVALID_STATE</code> in that it will resolve spontaneo
 to <code>CMD_PROP_INSERT</code> is already present in the property.</dd>
 <dt id="status_item_not_found"><a class="header" href="#status_item_not_found"><code>STATUS_ITEM_NOT_FOUND</code></a></dt>
 <dd>The item or selector passed to <code>CMD_PROP_REMOVE</code> does not match any item
-in the property.</dd>
+in the property; or the value written by a <code>CMD_PROP_SET</code> names an item
+of another property that does not exist, as a write of
+<a href="ulcp-wifi.html#prop-wifi-network"><code>PROP_WIFI_NETWORK</code></a> names an entry of
+the known-network table. It is distinct from <code>STATUS_INVALID_ARGUMENT</code>
+because a host acts on it differently: the value is well-formed and the
+item it names has merely to be created first.</dd>
 <dt id="status_cursor_invalid"><a class="header" href="#status_cursor_invalid"><code>STATUS_CURSOR_INVALID</code></a></dt>
 <dd>The cursor presented in a <a href="app-node-management.html#cursors">Node Management</a>
-continuation is not one the device can honor — it does not parse, it was
+continuation is not one the device can honor—it does not parse, it was
 issued for a different request, or the underlying data has changed so
 that the position is meaningless. The administrator restarts the read
 from an initial, cursor-less request.</dd>
+<dt id="status_not_permitted"><a class="header" href="#status_not_permitted"><code>STATUS_NOT_PERMITTED</code></a></dt>
+<dd>The property or command exists, but the binding the request arrived
+over is not allowed to perform it—in particular, a <a href="app-node-management.html#authorization">Node
+Management</a> write to a property
+reserved to the tethered host. Distinct from <code>STATUS_PROP_NOT_FOUND</code>
+and <code>STATUS_INVALID_COMMAND</code>: the operation would be accepted from a
+binding with the standing to ask.</dd>
+<dt id="status_channel_not_found"><a class="header" href="#status_channel_not_found"><code>STATUS_CHANNEL_NOT_FOUND</code></a></dt>
+<dd>The request names a channel by its <a href="packet-types.html#channel-identifier-derivation">channel
+identifier</a> and the
+device holds no channel key that derives it. Distinct from
+<code>STATUS_ITEM_NOT_FOUND</code>, which concerns an item of the property being
+written, and from <code>STATUS_INVALID_ARGUMENT</code>: the value is well formed,
+and the channel has only to be provisioned first
+(<code>PROP_DEV_CHANNEL_KEYS</code>).</dd>
 <dt id="status_cca_failure"><a class="header" href="#status_cca_failure"><code>STATUS_CCA_FAILURE</code></a></dt>
 <dd>The packet was not sent due to a CCA failure. This status code is only
 emitted when sending data to a packet stream with a TID other than zero.</dd>
@@ -1114,6 +1203,11 @@ reset codes generally indicate some sort of software bug or hardware
 failure.</p>
 <p>Unexpected or unrequested resets are always an indication of a problem, no
 matter what the code value is.</p>
+<p>A session reset is not one of these. Discarding session state costs the
+host what it established there and nothing more, so it is announced by
+<a href="#cmd-session-reset"><code>CMD_SESSION_RESET</code></a> and leaves <code>PROP_LAST_STATUS</code>
+alone. Every reset code above implies a session reset; none of them is
+implied by one.</p>
 <dl>
 <dt id="status_reset_power_on"><a class="header" href="#status_reset_power_on"><code>STATUS_RESET_POWER_ON</code></a></dt>
 <dd>Cold power-on start.</dd>
@@ -1174,13 +1268,20 @@ grants:</p>
 <tr><td>49</td><td><code>CAP_CMD_MULTI</code></td><td>—</td><td><a href="ulcp-core.html#cmd-prop-multi-get">Framing and Common Semantics</a></td></tr>
 <tr><td>50</td><td><code>CAP_BLE</code></td><td>—</td><td><a href="ulcp-ble.html#capabilities">BLE Binding</a></td></tr>
 <tr><td>51</td><td><code>CAP_REBOOT</code></td><td>—</td><td><a href="ulcp-core.html#cmd-reboot">Framing and Common Semantics</a></td></tr>
+<tr><td>52</td><td><code>CAP_STATS</code></td><td>—</td><td><a href="ulcp-radio.html#capabilities">Radio Control</a></td></tr>
+<tr><td>53</td><td><code>CAP_WIFI_SCAN</code></td><td>—</td><td><a href="ulcp-wifi.html#capabilities">Wi-Fi</a></td></tr>
+<tr><td>54</td><td><code>CAP_WIFI</code></td><td><code>CAP_WIFI_SCAN</code></td><td><a href="ulcp-wifi.html#capabilities">Wi-Fi</a></td></tr>
+<tr><td>55</td><td><code>CAP_IPV4</code></td><td>—</td><td><a href="ulcp-ip.html#capabilities">IP Connectivity</a></td></tr>
+<tr><td>56</td><td><code>CAP_IPV6</code></td><td>—</td><td><a href="ulcp-ip.html#capabilities">IP Connectivity</a></td></tr>
+<tr><td>57</td><td><code>CAP_WIFI_AP</code></td><td><code>CAP_WIFI_SCAN</code></td><td><a href="ulcp-wifi.html#capabilities">Wi-Fi</a></td></tr>
 <tr><td>515</td><td><code>CAP_PHY_LORA</code></td><td>—</td><td><a href="ulcp-radio.html#capabilities">Radio Control</a></td></tr>
 </tbody>
 </table>
 </div>
 <p>A device <strong>MUST NOT</strong> advertise a capability without also advertising the
 capabilities it requires. Apart from the multi-property commands, which
-<code>CAP_CMD_MULTI</code> gates, and <code>CMD_REBOOT</code>, which <code>CAP_REBOOT</code> gates, the
+<code>CAP_CMD_MULTI</code> gates, <code>CMD_REBOOT</code>, which <code>CAP_REBOOT</code> gates, and
+<code>CMD_ANNOUNCE</code>, which <code>CAP_ADVERT</code> gates, the
 commands and status codes defined in this chapter are unconditional and
 need no capability; a device that defines no
 mutable multi-value properties simply has nothing to apply

@@ -3,7 +3,7 @@
  *
  * `make release-mirror` copies the newest release's `manifest.json` to
  * `/firmware/manifest.json` and mirrors the artifacts a browser can actually
- * fetch — the nRF52 DFU packages and the merged ESP32 image — alongside it.
+ * fetch—the nRF52 DFU packages and the merged ESP32 image—alongside it.
  * GitHub's release assets send no CORS headers, so a file's `url` is only ever
  * a download link for the user; `path` is the same-origin copy we may fetch.
  * A file with a null `path` (the UF2s) is download-only.
@@ -70,7 +70,7 @@ export async function sha256Hex(bytes) {
  * Download a manifest file and prove it is the one the manifest describes.
  *
  * Verification happens here, before the bytes are handed to a flashing
- * routine — never after, when a corrupted image would already be on the board.
+ * routine—never after, when a corrupted image would already be on the board.
  */
 export async function fetchArtifact(file, { onProgress = () => {} } = {}) {
   if (!file?.path) {

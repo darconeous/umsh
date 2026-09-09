@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-5f0d90f9.js";
+            window.path_to_searchindex_js = "searchindex-a36d942b.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-438957a9.js"></script>
+        <script src="toc-fed4626c.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -181,9 +181,9 @@ Semantics</a>) onto Bluetooth Low Energy. It
 covers the <strong>tethered</strong> case only: one host device driving its own
 companion radio over a BLE connection, exactly as it would over UART or
 USB-CDC.</p>
-<p>Using BLE as a shared local bearer — nearby devices exchanging UMSH
+<p>Using BLE as a shared local bearer—nearby devices exchanging UMSH
 frames over BLE as peers, or reaching the UMSH network through a
-BLE-LoRa bridge — is a separate bearer design and is out of scope here.
+BLE-LoRa bridge—is a separate bearer design and is out of scope here.
 See <a href="ulcp.html#ble-as-a-local-bearer">BLE As A Local Bearer</a>
 for the design space. This chapter reserves identifier space for that
 future work (see <a href="ulcp-ble.html#uuid-allocation">UUID Allocation</a>) but does not specify it.</p>
@@ -292,7 +292,7 @@ send.</p>
 <p>The scheme is correct at any ATT_MTU, including the 23-octet minimum.
 Clients <strong>SHOULD</strong> negotiate the largest ATT_MTU they support before
 attaching; servers <strong>SHOULD</strong> support an ATT_MTU of at least 247.
-Larger MTUs only reduce segment count — they never change frame
+Larger MTUs only reduce segment count—they never change frame
 semantics.</p>
 <h2 id="ulcp-gatt-service"><a class="header" href="#ulcp-gatt-service">ULCP GATT Service</a></h2>
 <p>The ULCP GATT Service carries ULCP frames
@@ -327,8 +327,8 @@ purposes.</p>
 connection meeting the security requirements in <a href="ulcp-ble.html#ble-security">Security</a>.
 Connection alone does not attach.</p>
 <p>On attach, the device <strong>MUST</strong> silently reset its protocol <strong>session
-state</strong> — transaction correlation, reassembly, and session-scoped
-properties — and <strong>MUST NOT</strong> modify any other state: device and host
+state</strong>—transaction correlation, reassembly, and session-scoped
+properties—and <strong>MUST NOT</strong> modify any other state: device and host
 provisioning, the RF configuration, and the PHY enable state are
 unaffected, and the radio keeps operating through the attach (see
 <a href="ulcp-core.html#attach-sync">Attach, Detach, and
@@ -338,8 +338,8 @@ state by fetching it. The device <strong>MUST NOT</strong> emit any frame before
 <p>A host <strong>detaches</strong> by disabling notifications or by disconnecting.
 Partially reassembled frames are discarded on detach.</p>
 <p>The device supports one attached host at a time, across all transports it
-exposes. If a new host attaches — over BLE or over another transport
-such as USB — the device <strong>MUST</strong> detach any previously attached host and
+exposes. If a new host attaches—over BLE or over another transport
+such as USB—the device <strong>MUST</strong> detach any previously attached host and
 reset the session for the new one. A device <strong>MAY</strong> instead reject new
 connections while a host is attached.</p>
 <h3 id="connection-parameters"><a class="header" href="#connection-parameters">Connection Parameters</a></h3>
@@ -385,14 +385,13 @@ is powered, which is what every device did before the capability
 existed; it does not mean the device has no BLE.</p>
 <p><code>CAP_BLE</code> is the only capability this binding defines, and everything
 else about a transport is discovered by asking for it. A device that
-manages its own bonds answers <code>PROP_BLE_BOND_COUNT</code> and the two bond
-commands; one whose bonds are reachable only by a gesture at the device
-itself answers <code>STATUS_PROP_NOT_FOUND</code> to the property and
-<code>STATUS_UNIMPLEMENTED</code> to the commands.</p>
+manages its own bonds answers <code>PROP_BLE_BOND_COUNT</code> and
+<code>PROP_BLE_PAIRING</code>; one whose bonds are reachable only by a gesture at
+the device itself answers <code>STATUS_PROP_NOT_FOUND</code> to both.</p>
 <p>This is deliberate. A capability is worth a code when a host would
 otherwise have to guess, and here it would not: the refusal is a
 complete answer, arrives in the same exchange the host was already
-making, and is a case the host must handle regardless — any property may
+making, and is a case the host must handle regardless—any property may
 be refused by firmware older than the host that asks. Splitting the
 transport into finer capabilities would buy a host nothing it cannot
 learn in the reply it is already waiting for, at the cost of a second
@@ -415,14 +414,14 @@ pairing again.</p>
 controller down behind this and <strong>MAY</strong> leave the whole stack running;
 what the property promises is reachability, which is what an operator
 turning it off is asking about. Claiming the radio is off would be a
-claim most platforms cannot honor — a vendor stack that cannot be torn
-down at runtime is common — and a property that lies in the direction
+claim most platforms cannot honor—a vendor stack that cannot be torn
+down at runtime is common—and a property that lies in the direction
 of “more private than it is” is the wrong one to guess at.</p>
 <p>Asynchronous for the same reason <code>PROP_GNSS_ENABLED</code> is: a device
 <strong>MAY</strong> offer this as a control the operator can reach, and a switch
 someone can flip is a value that moves without the host asking. A
 device that flips it locally <strong>MUST</strong> publish the new value like any
-other transition the host did not command — which, when it is being
+other transition the host did not command—which, when it is being
 cleared, is the last thing the attached host hears.</p>
 <p>The post-reset value is true. A device unreachable by default is a
 device that cannot be configured by the host that would make it
@@ -454,9 +453,9 @@ or walking away is a transition nobody asked for, and one that a
 watching administrator would otherwise have to poll for.</p>
 <p>Connected and attached are separate values because they are separate
 facts. A central can hold the device’s connection without ever
-subscribing to the ULCP notification characteristic — a stalled pairing,
+subscribing to the ULCP notification characteristic—a stalled pairing,
 an operating system reconnecting a bond in the background, or a host
-that simply occupies the slot — and a device with one peripheral
+that simply occupies the slot—and a device with one peripheral
 connection is unreachable by anyone else while that lasts. Reporting
 that as “nobody is here” would describe a device that is in fact
 unavailable.</p>
@@ -472,10 +471,10 @@ to.</p>
 <p>It says what the transport is doing, never with whom. Identifying the
 connected host would leak the same association the
 <a href="#prop-ble-bond-count">bond count</a> withholds.</p>
-<h2 id="bond-management-commands"><a class="header" href="#bond-management-commands">Bond Management Commands</a></h2>
+<h2 id="bond-management-properties"><a class="header" href="#bond-management-properties">Bond Management</a></h2>
 <h3 id="prop-ble-bond-count"><a class="header" href="#prop-ble-bond-count">PROP 4872: <code>PROP_BLE_BOND_COUNT</code></a></h3>
 <ul>
-<li>Type: Single-Value, Read-Only</li>
+<li>Type: Single-Value, Read-Write</li>
 <li>Asynchronous Updates: Yes</li>
 <li>Required: <code>CAP_BLE</code></li>
 <li>Value Type: UINT8</li>
@@ -483,11 +482,11 @@ connected host would leak the same association the
 </ul>
 <p>How many hosts are currently bonded. A device <strong>MUST</strong> report the count
 its durable bond store holds, and <strong>MUST</strong> publish the new value when it
-changes — enrollment and eviction both happen without the host asking,
+changes—enrollment and eviction both happen without the host asking,
 so a host that was not told would have to poll.</p>
 <p>A device that does not manage its own bonds answers
-<code>STATUS_PROP_NOT_FOUND</code>, which is how a host learns that the two bond
-commands below will refuse it as well.</p>
+<code>STATUS_PROP_NOT_FOUND</code>, which is how a host learns that neither half of
+bond management is available to it.</p>
 <p>The count is live transport state, not configuration: it is <strong>NOT</strong> part
 of the saved snapshot, and <code>CMD_RST</code> <strong>MUST NOT</strong> change it. A protocol
 reset returns protocol state to its post-reset values, and a bond is
@@ -496,36 +495,43 @@ neither protocol state nor something a reset deletes.</p>
 its bonded hosts to whoever asked would leak the association the pairing
 ceremony exists to protect, and the count is what an operator deciding
 whether to clear bonds actually needs.</p>
-<h3 id="cmd-ble-clear-bonds"><a class="header" href="#cmd-ble-clear-bonds">CMD 17: (Host -&gt; Device) <code>CMD_BLE_CLEAR_BONDS</code></a></h3>
-<pre><code> 0                   1
- 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5
-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-|1 0| RES | TID |CMD_BLE_CLEAR_B|
-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-</code></pre>
-<p>Figure: Structure of <code>CMD_BLE_CLEAR_BONDS</code></p>
-<p>Delete every stored bond, the pairing PIN, and the pairing failure
-lockout, then enter pairing mode.</p>
-<p>The device <strong>MUST NOT</strong> report success before the deletion is durable,
-and <strong>MUST</strong> drop the deleted bonds from any live in-memory bond table
-as well as from durable storage — a bond forgotten on flash but still
-held in RAM would keep working until the next boot. It <strong>MUST</strong> then
-enter pairing mode: a device that has forgotten every host it trusts and
-is not accepting new ones is reachable by nothing.</p>
-<p>The device answers <code>PROP_LAST_STATUS</code>: <code>STATUS_OK</code> once the deletion is
-durable, <code>STATUS_UNIMPLEMENTED</code> on a device that does not manage its own
-bonds and <code>STATUS_UNIMPLEMENTED</code> without <code>CAP_BLE</code>. Sent over
-BLE, that answer is the last thing the sender hears, because the bond
-that carried it is among the bonds deleted; the reply <strong>MUST</strong> be
-emitted before the connection is dropped.</p>
+<h4 id="clearing-bonds"><a class="header" href="#clearing-bonds">Writing Zero: Forgetting Every Host</a></h4>
+<p>Writing <code>0</code> deletes every stored bond, the pairing PIN, and the pairing
+failure lockout, then enters pairing mode.</p>
+<p>Zero is the only value a host may write, and any other <strong>MUST</strong> be
+answered <code>STATUS_INVALID_ARGUMENT</code>. Bonds are enrolled one pairing
+ceremony at a time and evicted by the device, so no other count names a
+state a device could be put into: a host asking for three bonds is not
+describing anything the device could do.</p>
+<p>The device <strong>MUST NOT</strong> answer before the deletion is durable, and
+<strong>MUST</strong> drop the deleted bonds from any live in-memory bond table as
+well as from durable storage—a bond forgotten on flash but still held
+in RAM would keep working until the next boot. It <strong>MUST</strong> then enter
+pairing mode: a device that has forgotten every host it trusts and is
+not accepting new ones is reachable by nothing.</p>
+<p>The write is answered like any other, with the property’s value: a
+<code>CMD_PROP_IS</code> carrying <code>0</code> once the deletion is durable. Sent over BLE,
+that answer is the last thing the sender hears, because the bond that
+carried it is among the bonds deleted; the reply <strong>MUST</strong> be emitted
+before the connection is dropped.</p>
 <p>Clearing the PIN alongside the bonds is deliberate. A PIN outliving the
 hosts it was set for would leave a device that has forgotten everyone
 still demanding a secret the operator may no longer have, recoverable
 only by a local wipe.</p>
-<p>The command is an ordinary command rather than reset-class: what it did
-is the whole of what it reports, and a caller that heard nothing could
-not tell a device that had cleared its bonds from one that never
-received the request.</p>
+<p><a href="#prop-ble-enabled"><code>PROP_BLE_ENABLED</code></a> does not gate this write, which
+is where it parts company with
+<a href="#prop-ble-pairing"><code>PROP_BLE_PAIRING</code></a>. Bonds are durable state rather
+than reachability: a device with the transport turned off still holds
+them and still counts them, and deleting them is exactly as meaningful
+there as it is with a host connected. The pairing mode the deletion
+leaves behind is then a window onto a transport that is down, which
+<a href="#prop-ble-pairing"><code>PROP_BLE_PAIRING</code></a> reports as closed like any
+other.</p>
+<p>Forgetting every host is a write rather than a command, and rather than
+a reset-class one, because the count is already the state it changes. A
+command would have had to be answered by a status saying what the
+property could say by quoting itself, and a host reading the count back
+is asking the same question the answer already contains.</p>
 <h3 id="prop-ble-pairing"><a class="header" href="#prop-ble-pairing">PROP 4874: <code>PROP_BLE_PAIRING</code></a></h3>
 <ul>
 <li>Type: Single-Value, Read-Write</li>
@@ -537,15 +543,15 @@ received the request.</p>
 <p>Whether <a href="#pairing-mode">pairing mode</a> is active. Writing <code>1</code> opens a
 window, so an unbonded host may pair without a physical gesture at the
 device; writing <code>0</code> closes one. The window is a property rather than a
-command because it is a state with more ways out than in — the write, a
-timeout, a completed bond — and only a property can be closed again,
+command because it is a state with more ways out than in—the write, a
+timeout, a completed bond—and only a property can be closed again,
 read back, and reported moving on its own.</p>
 <p>The device <strong>MUST</strong> publish the new value on any transition the writer
 did not just command: expiry and a new bond both close the window with
 no host asking, and a physical gesture at the device opens one.</p>
 <p>A write of <code>1</code> answers <code>STATUS_INVALID_STATE</code> when no window can open:
 the device is locked out after repeated pairing failures, or Bluetooth
-is off (<a href="#prop-ble-enabled"><code>PROP_BLE_ENABLED</code></a> is <code>0</code>) — nothing can
+is off (<a href="#prop-ble-enabled"><code>PROP_BLE_ENABLED</code></a> is <code>0</code>)—nothing can
 pair through a transport that is down, and a device <strong>MUST NOT</strong> report
 a window nothing can walk through. A full bond store is <strong>NOT</strong> a
 refusal: enrollment at capacity evicts rather than refuses (see
@@ -595,9 +601,9 @@ automatically at power-on for a short window (15–30 seconds
 <strong>RECOMMENDED</strong>).</li>
 <li>Once the device holds one or more bonds, it <strong>MUST NOT</strong> enter pairing
 mode automatically. Entering pairing mode then requires either a
-deliberate physical gesture distinct from normal power-on — for
+deliberate physical gesture distinct from normal power-on—for
 example, holding the user button through power-on until the device
-signals that pairing mode is active — or a write of <code>1</code> to
+signals that pairing mode is active—or a write of <code>1</code> to
 <a href="#prop-ble-pairing"><code>PROP_BLE_PAIRING</code></a> from an authorized session.</li>
 </ul>
 <p>Pairing mode <strong>MUST</strong> end when any of the following occurs:</p>
@@ -609,7 +615,7 @@ signals that pairing mode is active — or a write of <code>1</code> to
 <p>The device <strong>SHOULD</strong> give a perceptible indication (LED pattern, tone,
 or display) while pairing mode is active.</p>
 <p>A physical-presence-gated ceremony reduces the pairing trust decision
-to possession of the device — the same property that protects the
+to possession of the device—the same property that protects the
 serial transports. A command from an already-authorized session is the
 same decision made by someone who has already passed that ceremony: an
 attached host holds a bond, and a mesh administrator is listed in
@@ -630,8 +636,8 @@ decision.</li>
 <li>Devices with a pairing PIN configured (see <a href="ulcp-ble.html#pairing-pin">Pairing PIN Configuration</a>) use LESC
 Passkey Entry with the configured PIN as a static passkey. New bonds
 still <strong>MUST</strong> be accepted only while in pairing mode. The device
-<strong>MUST</strong> count consecutive passkey authentication failures — pairing
-attempts that fail the LESC confirm-value or DHKey check — since
+<strong>MUST</strong> count consecutive passkey authentication failures—pairing
+attempts that fail the LESC confirm-value or DHKey check—since
 power-on; the counter resets on a successful pairing or a power
 cycle. Rejections that never reach passkey authentication
 (legacy-pairing attempts, pairing refused outside pairing mode,
@@ -690,9 +696,9 @@ BLE.</p>
 <li>Devices <strong>MUST</strong> provide a local mechanism to delete stored bonds. The
 mechanism is implementation-specific. Deletion <strong>MUST NOT</strong> be
 invocable over an unauthenticated path; a device that manages its own
-bonds additionally accepts
-<a href="#cmd-ble-clear-bonds"><code>CMD_BLE_CLEAR_BONDS</code></a>, whose authorization is
-the session’s own (see <a href="#administrative-authorization">Administrative
+bonds additionally accepts a write of zero to
+<a href="#clearing-bonds"><code>PROP_BLE_BOND_COUNT</code></a>, whose authorization is the
+session’s own (see <a href="#administrative-authorization">Administrative
 Authorization</a>).</li>
 <li>Devices <strong>MAY</strong> limit the number of stored bonds. A full bond store
 <strong>MUST NOT</strong> cause pairing to be refused: when a new bond is enrolled
@@ -713,11 +719,12 @@ which the device can only be recovered by a local wipe, while enrollment
 already requires physical presence and the eviction victim is by
 construction the bond that has gone longest without connecting.</p>
 <p>Removing one specific bond while retaining the others is not expressible
-through this protocol. <code>CMD_BLE_CLEAR_BONDS</code> forgets every host at once,
-which is the operation an operator reaching for it wants: the case that
-motivates it is a device whose paired hosts are no longer trusted or no
-longer known, and enumerating bonds so one could be named would mean
-reporting which hosts a device has met.</p>
+through this protocol, which is also why zero is the only count a host
+may write. The count <a href="#clearing-bonds">written to zero</a> forgets every
+host at once, and that is the operation an operator reaching for it
+wants: the case that motivates it is a device whose paired hosts are no
+longer trusted or no longer known, and enumerating bonds so one could be
+named would mean reporting which hosts a device has met.</p>
 <h3 id="administrative-authorization"><a class="header" href="#administrative-authorization">Administrative Authorization</a></h3>
 <p>Any retained secure bond may administer the device. There is no
 per-host privilege distinction: a host that has completed the pairing
@@ -727,7 +734,7 @@ for as long as its bond is retained.</p>
 authority</strong>. The serial transports have no cryptographic admission step
 at all, so a host that can open the port is attached; this is the
 <code>MUST</code> in <a href="ulcp-ble.html#pairing-requirements">Pairing Requirements</a> read the other
-way — BLE is required to reach the barrier that physical possession
+way—BLE is required to reach the barrier that physical possession
 already provides, not to exceed it.</p>
 <p>The consequences worth stating plainly:</p>
 <ul>

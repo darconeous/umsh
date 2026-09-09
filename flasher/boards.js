@@ -40,7 +40,7 @@ export function isEsp(board) {
  * is behind an `isNrf` branch and they need no entry.
  *
  * `hardware.toml`'s `dfu_entry` strings serve the developer docs and mention
- * things like the 1200-baud touch — which is not an instruction a user can
+ * things like the 1200-baud touch—which is not an instruction a user can
  * follow, it is the trick the Flash button performs for them. These are the
  * human versions, and only of the part a human can do.
  */
@@ -61,13 +61,13 @@ export function updateModeFor(board) {
  * Extra cautions the wizard shows before flashing.
  *
  * These are about the act of flashing from a browser, which is why they live
- * here rather than in `hardware.toml`'s `quirks` — those serve the developer
+ * here rather than in `hardware.toml`'s `quirks`—those serve the developer
  * docs and say different things.
  */
 const WARNINGS = {
   t1000e: [
     // Flashing only ever writes the application area, so an interrupted
-    // update is an inconvenience, not damage — say so, and teach the way out.
+    // update is an inconvenience, not damage—say so, and teach the way out.
     `If an update gets interrupted, nothing is lost—the tracker just sits without working firmware until it gets a complete one. Put it back in update mode by hand (${UPDATE_MODE.t1000e}) and click Flash radio again.`,
   ],
   "sensecap-solar": [
@@ -80,7 +80,7 @@ const WARNINGS = {
     // The Supreme is sold with three different radios behind one product
     // name, and only the SX1262 has a driver here. A board with the wrong
     // one flashes cleanly and then never reaches the mesh, which is the
-    // worst shape a failure can take — so say it before the flash, not after.
+    // worst shape a failure can take—so say it before the flash, not after.
     "This firmware is for the SX1262 version. The LR1121 version takes the same image and will run it, but its radio will not work.",
     "If this board previously ran different firmware, flashing clears whatever settings that firmware had stored on it.",
   ],

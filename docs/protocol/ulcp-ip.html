@@ -1,0 +1,678 @@
+<!DOCTYPE HTML>
+<html lang="en" class="light sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>IP Connectivity - UMSH Protocol Specification</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="favicon-de23e50b.svg">
+        <link rel="shortcut icon" href="favicon-8114d1fc.png">
+        <link rel="stylesheet" href="css/variables-8adf115d.css">
+        <link rel="stylesheet" href="css/general-2459343d.css">
+        <link rel="stylesheet" href="css/chrome-ae938929.css">
+        <link rel="stylesheet" href="css/print-9e4910d8.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="fonts/fonts-9644e21d.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" id="mdbook-highlight-css" href="highlight-493f70e1.css">
+        <link rel="stylesheet" id="mdbook-tomorrow-night-css" href="tomorrow-night-4c0ae647.css">
+        <link rel="stylesheet" id="mdbook-ayu-highlight-css" href="ayu-highlight-3fdfc3ac.css">
+
+        <!-- Custom theme stylesheets -->
+
+
+        <!-- Provide site root and default themes to javascript -->
+        <script>
+            const path_to_root = "";
+            const default_light_theme = "light";
+            const default_dark_theme = "ayu";
+            window.path_to_searchindex_js = "searchindex-a36d942b.js";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="toc-fed4626c.js"></script>
+    </head>
+    <body>
+    <div id="mdbook-help-container">
+        <div id="mdbook-help-popup">
+            <h2 class="mdbook-help-title">Keyboard shortcuts</h2>
+            <div>
+                <p>Press <kbd>←</kbd> or <kbd>→</kbd> to navigate between chapters</p>
+                <p>Press <kbd>S</kbd> or <kbd>/</kbd> to search in the book</p>
+                <p>Press <kbd>?</kbd> to show this help</p>
+                <p>Press <kbd>Esc</kbd> to hide this help</p>
+            </div>
+        </div>
+    </div>
+    <div id="mdbook-body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                let theme = localStorage.getItem('mdbook-theme');
+                let sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            const default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? default_dark_theme : default_light_theme;
+            let theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('light')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="mdbook-sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            let sidebar = null;
+            const sidebar_toggle = document.getElementById("mdbook-sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+                sidebar_toggle.checked = false;
+            }
+            if (sidebar === 'visible') {
+                sidebar_toggle.checked = true;
+            } else {
+                html.classList.remove('sidebar-visible');
+            }
+        </script>
+
+        <nav id="mdbook-sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="toc.html"></iframe>
+            </noscript>
+            <div id="mdbook-sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="mdbook-page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="mdbook-menu-bar-hover-placeholder"></div>
+                <div id="mdbook-menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="mdbook-sidebar-toggle" class="icon-button" for="mdbook-sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="mdbook-sidebar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M0 96C0 78.3 14.3 64 32 64H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32C14.3 128 0 113.7 0 96zM0 256c0-17.7 14.3-32 32-32H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32c-17.7 0-32-14.3-32-32zM448 416c0 17.7-14.3 32-32 32H32c-17.7 0-32-14.3-32-32s14.3-32 32-32H416c17.7 0 32 14.3 32 32z"/></svg></span>
+                        </label>
+                        <button id="mdbook-theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="mdbook-theme-list">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M371.3 367.1c27.3-3.9 51.9-19.4 67.2-42.9L600.2 74.1c12.6-19.5 9.4-45.3-7.6-61.2S549.7-4.4 531.1 9.6L294.4 187.2c-24 18-38.2 46.1-38.4 76.1L371.3 367.1zm-19.6 25.4l-116-104.4C175.9 290.3 128 339.6 128 400c0 3.9 .2 7.8 .6 11.6c1.8 17.5-10.2 36.4-27.8 36.4H96c-17.7 0-32 14.3-32 32s14.3 32 32 32H240c61.9 0 112-50.1 112-112c0-2.5-.1-5-.2-7.5z"/></svg></span>
+                        </button>
+                        <ul id="mdbook-theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-default_theme">Auto</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-ayu">Ayu</button></li>
+                        </ul>
+                        <button id="mdbook-search-toggle" class="icon-button" type="button" title="Search (`/`)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="/ s" aria-controls="mdbook-searchbar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M416 208c0 45.9-14.9 88.3-40 122.7L502.6 457.4c12.5 12.5 12.5 32.8 0 45.3s-32.8 12.5-45.3 0L330.7 376c-34.4 25.2-76.8 40-122.7 40C93.1 416 0 322.9 0 208S93.1 0 208 0S416 93.1 416 208zM208 352c79.5 0 144-64.5 144-144s-64.5-144-144-144S64 128.5 64 208s64.5 144 144 144z"/></svg></span>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">UMSH Protocol Specification</h1>
+
+                    <div class="right-buttons">
+                        <a href="print.html" title="Print this book" aria-label="Print this book">
+                            <span class=fa-svg id="print-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M128 0C92.7 0 64 28.7 64 64v96h64V64H354.7L384 93.3V160h64V93.3c0-17-6.7-33.3-18.7-45.3L400 18.7C388 6.7 371.7 0 354.7 0H128zM384 352v32 64H128V384 368 352H384zm64 32h32c17.7 0 32-14.3 32-32V256c0-35.3-28.7-64-64-64H64c-35.3 0-64 28.7-64 64v96c0 17.7 14.3 32 32 32H64v64c0 35.3 28.7 64 64 64H384c35.3 0 64-28.7 64-64V384zm-16-88c-13.3 0-24-10.7-24-24s10.7-24 24-24s24 10.7 24 24s-10.7 24-24 24z"/></svg></span>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="mdbook-search-wrapper" class="hidden">
+                    <form id="mdbook-searchbar-outer" class="searchbar-outer">
+                        <div class="search-wrapper">
+                            <input type="search" id="mdbook-searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="mdbook-searchresults-outer" aria-describedby="searchresults-header">
+                            <div class="spinner-wrapper">
+                                <span class=fa-svg id="fa-spin"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M304 48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zm0 416c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM48 304c26.5 0 48-21.5 48-48s-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48zm464-48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM142.9 437c18.7-18.7 18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zm0-294.2c18.7-18.7 18.7-49.1 0-67.9S93.7 56.2 75 75s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zM369.1 437c18.7 18.7 49.1 18.7 67.9 0s18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9z"/></svg></span>
+                            </div>
+                        </div>
+                    </form>
+                    <div id="mdbook-searchresults-outer" class="searchresults-outer hidden">
+                        <div id="mdbook-searchresults-header" class="searchresults-header"></div>
+                        <ul id="mdbook-searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('mdbook-sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('mdbook-sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#mdbook-sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="mdbook-content" class="content">
+                    <main>
+                        <h1 id="ulcp-ip-connectivity"><a class="header" href="#ulcp-ip-connectivity">ULCP: IP Connectivity</a></h1>
+<p>The layer above a link: whether the device can reach anything, what it
+is reachable at, and how to configure the cases the network does not
+configure for it.</p>
+<p>Address configuration is not a property of Wi-Fi. A wired link, should
+one ever appear, needs exactly these properties, and a device’s IP
+stack is one thing whichever link carries it. Everything here is
+therefore named <code>IP</code> rather than after a link, and nothing in it knows
+what the link is.</p>
+<p>Nothing about what the device reaches belongs here. A bridge tunnel or
+a time source reports its own state under its own capability.</p>
+<p>These properties describe one interface: the one the device uses to
+join a network, which is the station’s on a device whose only link is
+<a href="ulcp-wifi.html">Wi-Fi</a>. A device’s own <a href="ulcp-wifi.html#prop-wifi-ap-config">access
+point</a> is a second interface and is
+deliberately not described here, because its addressing is a subnet the
+device imposes rather than one a network hands it, and it lives in that
+access point’s own configuration. A device with a second link of the
+joining kind is a future revision, and these properties are shaped so
+that an interface selector could be added without renaming them.</p>
+<p>The two configuration properties and the configured resolver list are
+<a href="ulcp-core.html#device-domain">device-domain</a> state and part of a <a href="ulcp-saved-state.html#saved-state">saved
+snapshot</a>. The five that report what
+the stack currently holds are live: never saved, and reached by
+<code>CMD_RST</code> only through the configuration they follow.</p>
+<h2 id="capabilities"><a class="header" href="#capabilities">Capabilities</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Code</th><th>Name</th><th>Requires</th><th>Grants</th></tr>
+</thead>
+<tbody>
+<tr><td>55</td><td><code>CAP_IPV4</code></td><td>—</td><td>An IPv4 stack on the device’s link: <code>PROP_IPV4_STATE</code>, <code>PROP_IPV4_CONFIG</code>, <code>PROP_IPV4_ADDRESS</code>, and the shared <code>PROP_IP_DNS</code> and <code>PROP_IP_RESOLVERS</code></td></tr>
+<tr><td>56</td><td><code>CAP_IPV6</code></td><td>—</td><td>An IPv6 stack on the device’s link: <code>PROP_IPV6_STATE</code>, <code>PROP_IPV6_CONFIG</code>, <code>PROP_IPV6_ADDRESSES</code>, and the same two shared properties</td></tr>
+</tbody>
+</table>
+</div>
+<p>One capability per family, because the families are peers. The <a href="ulcp-ble.html#capabilities">BLE
+binding</a> argues for a single capability on
+the grounds that a refusal is a complete answer about an <em>extra</em>, and
+neither family is an extra to the other: a device that speaks only IPv4
+is ordinary today, and a device that speaks only IPv6 is an ordinary
+device on an IPv6-only network tomorrow. Making either the floor would
+encode which one is normal, which is a fact about the year rather than
+about the protocol.</p>
+<p>A device with both advertises both, and a host that sees either knows
+the two shared properties are there. The seam stops at the family: DHCP
+versus static, advertisements versus DHCPv6, are methods within a
+family, and a device that lacks one refuses the write with
+<code>STATUS_UNIMPLEMENTED</code> as that argument intends.</p>
+<p>Neither capability formally requires a link capability, on purpose. A
+capability’s requirements are concrete codes, and naming <code>CAP_WIFI</code>
+here would make a wired device either lie about having Wi-Fi or invent
+a second pair of IP capabilities. The precondition is stated instead: a
+device advertising either has a stack on one link, and describes that
+link through whatever link capability it also advertises. A device that
+advertises an IP capability and no link capability has a link it offers
+no control over, which is a legal shape for a device with a fixed wired
+port; its family states simply never report <code>IP_NO_LINK</code> for a reason
+the host can act on.</p>
+<h2 id="properties"><a class="header" href="#properties">Properties</a></h2>
+<p>Allocated in the block after the <a href="ulcp-wifi.html#properties">Wi-Fi station’s</a>.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Id</th><th>Mnemonic</th><th>Commands</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td>4896</td><td><code>PROP_IPV4_STATE</code></td><td>Get, Is</td><td>IPv4 readiness</td></tr>
+<tr><td>4897</td><td><code>PROP_IPV4_CONFIG</code></td><td>Get, Set</td><td>How IPv4 is configured</td></tr>
+<tr><td>4898</td><td><code>PROP_IPV4_ADDRESS</code></td><td>Get, Is</td><td>The IPv4 address, prefix, and gateway in effect</td></tr>
+<tr><td>4899</td><td><code>PROP_IPV6_STATE</code></td><td>Get, Is</td><td>IPv6 readiness</td></tr>
+<tr><td>4900</td><td><code>PROP_IPV6_CONFIG</code></td><td>Get, Set</td><td>How IPv6 is configured</td></tr>
+<tr><td>4901</td><td><code>PROP_IPV6_ADDRESSES</code></td><td>Get, Is</td><td>The IPv6 addresses and default routers in effect</td></tr>
+<tr><td>4902</td><td><code>PROP_IP_DNS</code></td><td>Get, Set, Insert, Remove</td><td>Configured resolvers, or empty to use what the network provides</td></tr>
+<tr><td>4903</td><td><code>PROP_IP_RESOLVERS</code></td><td>Get, Is</td><td>The resolvers in use</td></tr>
+</tbody>
+</table>
+</div>
+<p>4904 through 4911 are reserved for this subsystem.</p>
+<h3 id="prop-ipv4-state"><a class="header" href="#prop-ipv4-state">PROP 4896: <code>PROP_IPV4_STATE</code></a></h3>
+<ul>
+<li>Type: Single-Value, Read-Only</li>
+<li>Asynchronous Updates: Yes</li>
+<li>Required: <code>CAP_IPV4</code></li>
+<li>Value Type: UINT8</li>
+<li>Post-Reset Value: what the family is doing</li>
+</ul>
+<p>One octet, from the enumeration both family states share:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Value</th><th>Name</th><th>Meaning</th></tr>
+</thead>
+<tbody>
+<tr><td>0</td><td><code>IP_DISABLED</code></td><td>The family is configured off</td></tr>
+<tr><td>1</td><td><code>IP_NO_LINK</code></td><td>The link is down, so there is nothing to address</td></tr>
+<tr><td>2</td><td><code>IP_WAITING</code></td><td>The link is up and the family has no usable address yet</td></tr>
+<tr><td>3</td><td><code>IP_READY</code></td><td>The family holds a usable address</td></tr>
+<tr><td>4</td><td><code>IP_CONFLICT</code></td><td>The configured static address is held by something else</td></tr>
+</tbody>
+</table>
+</div>
+<p>A <strong>usable</strong> address is a unicast host address that is not link-local:
+for IPv4 anything outside <code>169.254/16</code> that is neither multicast,
+broadcast, loopback, nor unspecified, and for IPv6 anything outside
+<code>fe80::/10</code> under the same exclusions. A self-assigned <code>169.254</code>
+address reaches only the link, exactly as <code>fe80::</code> does, and a device
+that fell back to one is a device whose DHCP failed, which
+<code>IP_WAITING</code> says and <code>IP_READY</code> would hide. A device with only an IPv6
+link-local address is <code>IP_WAITING</code>, because it is waiting for exactly
+the advertisement that would give it a usable one. This is the boundary
+readiness is defined on, and the same boundary the static configuration
+is validated against.</p>
+<p>This is the property a host watches for its family. It changes when a
+lease is obtained or lost, when a router starts or stops advertising,
+and when the link comes and goes, which is a few times in a session
+rather than a few times a minute. The device <strong>MUST</strong> publish it on any
+change and on nothing else. The address and resolver properties publish
+their own changes, since those can move while the state stands still.</p>
+<p><code>IP_WAITING</code> is this layer’s
+<a href="ulcp-wifi.html#prop-wifi-link"><code>WIFI_LINK_CONNECTING</code></a>: the device is
+doing what its configuration says and the network has not answered. It
+carries no reason, because the reasons are the network’s, a DHCP server
+that does not answer or a router that does not advertise, and the fix
+is on the network.</p>
+<p><code>IP_CONFLICT</code> is the exception that earns its own value. A static
+address that duplicate-address detection or an ARP probe finds already
+in use is a fault in the configuration this protocol wrote, the fix is
+a different address, and a host that could not tell it from an ordinary
+wait would tell the operator to check the router. The device keeps
+probing while in <code>IP_CONFLICT</code> and moves to <code>IP_READY</code> if the other
+holder goes away. Under <code>IP_METHOD_AUTO</code> a conflict is the stack’s to
+resolve, by declining the lease and asking again, and the family stays
+<code>IP_WAITING</code>.</p>
+<p><code>IP_NO_LINK</code> is separate so that a host can tell “the station is not
+associated” from “the station is associated and nobody is handing out
+addresses” without reading <code>PROP_WIFI_LINK</code> as well.</p>
+<p><code>IP_READY</code> means an address, not a route. Whether the family also has a
+default route is in the address property, the gateway field for IPv4
+and the router items for IPv6, and a device on an isolated network that
+hands out addresses and no gateway is ready by this definition, which
+is the honest one.</p>
+<h3 id="prop-ipv4-config"><a class="header" href="#prop-ipv4-config">PROP 4897: <code>PROP_IPV4_CONFIG</code></a></h3>
+<ul>
+<li>Type: Single-Value, Read-Write</li>
+<li>Asynchronous Updates: No</li>
+<li>Required: <code>CAP_IPV4</code></li>
+<li>Value Type: structure below</li>
+<li>Post-Reset Value: <code>IP_METHOD_AUTO</code>, or restored from saved state</li>
+</ul>
+<pre><code>+--------+---------+--------+---------+
+| METHOD | ADDRESS | PREFIX | GATEWAY |
++--------+---------+--------+---------+
+   1 B      4 B       1 B      4 B
+         (present only when METHOD is IP_METHOD_STATIC)
+</code></pre>
+<p>Figure: IPv4 configuration format</p>
+<p><strong>METHOD</strong>:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Value</th><th>Name</th><th>Meaning</th></tr>
+</thead>
+<tbody>
+<tr><td>0</td><td><code>IP_METHOD_DISABLED</code></td><td>The family is not used on the link</td></tr>
+<tr><td>1</td><td><code>IP_METHOD_AUTO</code></td><td>DHCP</td></tr>
+<tr><td>2</td><td><code>IP_METHOD_STATIC</code></td><td>The address, prefix, and gateway that follow</td></tr>
+</tbody>
+</table>
+</div>
+<p>The default is <code>IP_METHOD_AUTO</code>, so that a device with nothing
+configured is on the network the moment it is associated; this
+subsystem exists for the cases where that is not enough.</p>
+<p>A <strong>PREFIX</strong> above 32, a static form of the wrong length, or a static
+address that is not usable in the sense
+<a href="#prop-ipv4-state"><code>PROP_IPV4_STATE</code></a> defines, <code>169.254/16</code> included,
+is refused with <code>STATUS_INVALID_ARGUMENT</code>. A <strong>GATEWAY</strong> is either
+all-zero or a unicast address that is not multicast, broadcast,
+loopback, or link-local, and anything else is refused the same way; the
+IPv6 form relaxes the last exclusion, since a router names itself by
+its link-local address and a static IPv6 gateway is usually exactly
+that. All-zero means no default route, which is what a device on a
+network with no way out should be told.</p>
+<p>A write takes effect at once. On a device that is <code>IP_READY</code> under the
+old configuration, the old address is released and the new one applied,
+and <code>PROP_IPV4_STATE</code> reports the transitions like any other. A write
+while the link is down is accepted and waits for it, so that a static
+configuration can be staged before the link is enabled.</p>
+<h3 id="prop-ipv4-address"><a class="header" href="#prop-ipv4-address">PROP 4898: <code>PROP_IPV4_ADDRESS</code></a></h3>
+<ul>
+<li>Type: Single-Value, Read-Only</li>
+<li>Asynchronous Updates: Yes</li>
+<li>Required: <code>CAP_IPV4</code></li>
+<li>Value Type: 4-octet address, 1-octet prefix, 4-octet gateway; or empty</li>
+<li>Post-Reset Value: the address in effect; empty when the family is not <code>IP_READY</code></li>
+</ul>
+<p>The IPv4 address the interface holds, its prefix length, and the
+default gateway, all-zero when there is none. Whatever the method:
+under <code>IP_METHOD_AUTO</code> this is what the lease said, and under
+<code>IP_METHOD_STATIC</code> it is what was written, once the device holds it.</p>
+<p>The device <strong>MUST</strong> publish it whenever the reported value changes.
+Mostly that is when <code>PROP_IPV4_STATE</code> moves, but not only then: a lease
+renewal can keep the address and change the gateway, and a host that
+read the value once and watched only the state would carry the old
+gateway forever. A renewal that changes nothing publishes nothing.</p>
+<h3 id="prop-ipv6-state"><a class="header" href="#prop-ipv6-state">PROP 4899: <code>PROP_IPV6_STATE</code></a></h3>
+<ul>
+<li>Type: Single-Value, Read-Only</li>
+<li>Asynchronous Updates: Yes</li>
+<li>Required: <code>CAP_IPV6</code></li>
+<li>Value Type: UINT8</li>
+<li>Post-Reset Value: what the family is doing</li>
+</ul>
+<p>IPv6 readiness, from the enumeration
+<a href="#prop-ipv4-state"><code>PROP_IPV4_STATE</code></a> defines, with the same
+publication rule and the same meaning for every value. The one
+family-specific note is the link-local boundary: a device holding only
+an <code>fe80::</code> address is <code>IP_WAITING</code>, because it is waiting for exactly
+the advertisement that would give it a usable one.</p>
+<p>Two properties rather than two octets in one, because the capabilities
+are two. A device without <code>CAP_IPV6</code> would otherwise carry an octet
+describing a family it does not have, and a property granted by “either
+capability” is a property with two homes. One octet per family costs a
+second notification when a link drop takes both families down, which is
+one small frame at a moment the host is already being told things.</p>
+<h3 id="prop-ipv6-config"><a class="header" href="#prop-ipv6-config">PROP 4900: <code>PROP_IPV6_CONFIG</code></a></h3>
+<ul>
+<li>Type: Single-Value, Read-Write</li>
+<li>Asynchronous Updates: No</li>
+<li>Required: <code>CAP_IPV6</code></li>
+<li>Value Type: as <a href="#prop-ipv4-config"><code>PROP_IPV4_CONFIG</code></a> with 16-octet addresses</li>
+<li>Post-Reset Value: <code>IP_METHOD_AUTO</code>, or restored from saved state</li>
+</ul>
+<p>The same structure and the same methods, with 16-octet addresses and a
+prefix of at most 128. A static address that is not usable in the sense
+<a href="#prop-ipv6-state"><code>PROP_IPV6_STATE</code></a> defines, link-local, multicast,
+loopback, or unspecified, is refused with <code>STATUS_INVALID_ARGUMENT</code>; a
+static address that is usable but already held on the link is accepted
+and reported as <code>IP_CONFLICT</code>.</p>
+<p><code>IP_METHOD_AUTO</code> means router advertisements, and DHCPv6 where the
+router asks for it. Which of those produced an address is not reported,
+because a host has nothing to do with the difference.</p>
+<p>A device <strong>MUST</strong> hold a stable address and <strong>MUST</strong> report only stable
+addresses. It <strong>MAY</strong> additionally use temporary addresses for the
+traffic it originates, which is the arrangement RFC 8981 describes for
+a host that is reached at one address and reaches out from others, and
+those are never reported: they exist to rotate, and a reported address
+is one somebody wrote down.</p>
+<h3 id="prop-ipv6-addresses"><a class="header" href="#prop-ipv6-addresses">PROP 4901: <code>PROP_IPV6_ADDRESSES</code></a></h3>
+<ul>
+<li>Type: Multiple-Value, Read-Only</li>
+<li>Has Item Length Prefix: Yes</li>
+<li>Asynchronous Updates: Yes</li>
+<li>Required: <code>CAP_IPV6</code></li>
+<li>Post-Reset Value: what is in effect; empty when the family is not <code>IP_READY</code></li>
+</ul>
+<p>The usable IPv6 addresses the device holds, and the default routers it
+has selected. Each item is a kind octet and a kind-defined body:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Kind</th><th>Name</th><th>Body</th></tr>
+</thead>
+<tbody>
+<tr><td>0</td><td><code>IPV6_ADDRESS</code></td><td>16-octet address, 1-octet prefix length</td></tr>
+<tr><td>1</td><td><code>IPV6_ROUTER</code></td><td>16-octet router address</td></tr>
+</tbody>
+</table>
+</div>
+<p>A set rather than one address, because an IPv6 interface normally holds
+several, a global one and a unique-local one from separate prefixes,
+say, and which of them the device uses as a source depends on where the
+packet is going. There is no one answer to “the device’s address”, only
+“the addresses the device is reachable at”, which is what a host
+displaying or dialing it needs. Stable addresses only, per the
+configuration above. The link-local address is not among them, for the
+reason it does not make the family ready.</p>
+<p>The router items are the stack’s default router list, every router it
+currently retains from those advertising, and none when there is none.
+A list rather than one, because a stack keeps several and may send to
+different destinations through different ones, so no single router
+describes the routing.</p>
+<p>The prefix length is the one the address’s assignment carried: the
+advertised prefix an autoconfigured address was formed from, or the
+prefix written for a static one. An address assigned by DHCPv6 reports
+128, and 128 means the assignment carried none rather than that the
+link is a <code>/128</code>: DHCPv6 assigns addresses, not prefixes, and the
+on-link prefixes a router advertises alongside are routing state that
+is not encoded here.</p>
+<p>A device bounds the set to what its stack holds, which for an embedded
+stack is a few addresses and a few routers, and the bound <strong>MUST</strong> keep
+the complete value inside one frame on every transport the device
+exposes. Which entries a stack keeps once a network offers more than it
+can hold is the stack’s business.</p>
+<p>The device <strong>MUST</strong> publish it whenever the reported set changes: a
+prefix renumbered, a router replaced or expired, an address added or
+withdrawn. Router and prefix lifetimes are independent of one another
+and of the state, so this property moves while <code>PROP_IPV6_STATE</code> stands
+still, and a host that only watched the state would not learn.</p>
+<h3 id="prop-ip-dns"><a class="header" href="#prop-ip-dns">PROP 4902: <code>PROP_IP_DNS</code></a></h3>
+<ul>
+<li>Type: Multiple-Value, Read-Write</li>
+<li>Has Item Length Prefix: Yes</li>
+<li>Asynchronous Updates: No</li>
+<li>Required: <code>CAP_IPV4</code> or <code>CAP_IPV6</code></li>
+<li>Item Form: a 4-octet IPv4 or 16-octet IPv6 resolver address</li>
+<li>Remove Selector: the address</li>
+<li>Post-Reset Value: Empty, or restored from saved state</li>
+</ul>
+<p>The resolvers the device is to use. <strong>Empty</strong>, the default, means the
+ones the network provided, by DHCP or router advertisement. Non-empty,
+these <strong>replace</strong> the network’s rather than join them, because a host
+that configured resolvers meant those, and a merged set would be
+neither what it wrote nor what the network offered.</p>
+<p>An item of any other length, or one that is not a unicast address,
+unspecified, multicast, broadcast, or loopback, is refused with
+<code>STATUS_INVALID_ARGUMENT</code>. An IPv6 resolver <strong>MAY</strong> be link-local, as
+one advertised by a home router commonly is, and an IPv4 one <strong>MUST
+NOT</strong> be. A device bounds the set, <strong>SHOULD</strong> hold at least two, and
+refuses past its capacity with <code>STATUS_NOMEM</code>.</p>
+<p>The set is unordered, as every multi-value property is, and a device
+asks whichever it likes first.</p>
+<p>Static addressing without this is a device that cannot resolve a name,
+which is why the two are written together.</p>
+<h3 id="prop-ip-resolvers"><a class="header" href="#prop-ip-resolvers">PROP 4903: <code>PROP_IP_RESOLVERS</code></a></h3>
+<ul>
+<li>Type: Multiple-Value, Read-Only</li>
+<li>Has Item Length Prefix: Yes</li>
+<li>Asynchronous Updates: Yes</li>
+<li>Required: <code>CAP_IPV4</code> or <code>CAP_IPV6</code></li>
+<li>Item Form: as <a href="#prop-ip-dns"><code>PROP_IP_DNS</code></a></li>
+<li>Post-Reset Value: the resolvers in use; empty when there are none</li>
+</ul>
+<p>What the device is resolving with right now: the configured set when
+<code>PROP_IP_DNS</code> is non-empty, otherwise what the network handed it, and
+empty when neither has given it anything.</p>
+<p>The device <strong>MUST</strong> publish it whenever the set changes, for the same
+reason the addresses are published: a router advertisement carries
+resolvers with lifetimes of their own and can add one, replace one, or
+withdraw one with a zero lifetime, all without the family leaving
+<code>IP_READY</code>. Bounded as
+<a href="#prop-ipv6-addresses"><code>PROP_IPV6_ADDRESSES</code></a> is, to what the stack
+holds and to one frame; a stack that keeps two or three resolvers is
+the norm, and a network offering more than that is offering more than
+the device will ask.</p>
+<p>Chiefly a diagnostic, and the one that distinguishes “the device is on
+the network and cannot resolve the server’s name” from every other way
+a tunnel fails to come up.</p>
+<h2 id="alongside-the-link"><a class="header" href="#alongside-the-link">Alongside the Link</a></h2>
+<p>On a device whose link is Wi-Fi, the two subsystems meet at exactly one
+property on each side: <a href="ulcp-wifi.html#prop-wifi-link"><code>PROP_WIFI_LINK</code></a>
+says whether there is a link, and the two family states say what each
+family has made of it. The address and resolver properties are read
+after one of those has moved and followed thereafter, since each
+publishes its own changes.</p>
+<p><strong>The stack follows the link.</strong> While the link is anything but up,
+every enabled family is <code>IP_NO_LINK</code> and both address properties are
+empty. When the link comes up, each enabled family goes to
+<code>IP_WAITING</code> and then, as the network answers, to <code>IP_READY</code>; a static
+family skips the wait except for the duplicate-address check, which
+ends in <code>IP_READY</code> or <code>IP_CONFLICT</code>. When the link drops, everything
+goes back to <code>IP_NO_LINK</code> and the addresses empty with it, learned
+resolvers included. A roam to another access point of the same network
+is the same link and does not disturb the stack: a device <strong>MUST NOT</strong>
+release its addresses over a roam.</p>
+<p><strong>Publication order</strong> is link first, then stack, in both directions. On
+the way up, <code>PROP_WIFI_LINK</code> carrying <code>WIFI_LINK_UP</code>, then each
+family’s state for each transition as it happens; on the way down,
+<code>PROP_WIFI_LINK</code> leaving <code>WIFI_LINK_UP</code>, then each family’s state
+carrying <code>IP_NO_LINK</code>. A host that sees <code>IP_READY</code> reads the addresses
+it wants and keeps them current from their own notifications; one that
+sees <code>IP_WAITING</code> persist while the link is up knows the problem is the
+network and not the radio; and one that sees <code>IP_CONFLICT</code> knows it is
+the configuration.</p>
+<p><strong>Disabling the link</strong> reports <code>IP_NO_LINK</code>, not <code>IP_DISABLED</code>. The
+second is the family’s own switch, written in its configuration, and a
+host that turned the radio off did not turn IPv6 off.</p>
+<p><strong>Configuration is staged in any order.</strong> These configuration
+properties are writable while the link is down and while the radio is
+disabled, and they are ordinary <code>CMD_PROP_SET</code> targets, so a static
+commissioning is one <code>CMD_PROP_MULTI_SET</code> where <code>CAP_CMD_MULTI</code> is
+present: <code>PROP_IPV4_CONFIG</code>, <code>PROP_IP_DNS</code>, <code>PROP_WIFI_NETWORK</code>,
+<code>PROP_WIFI_ENABLED</code>, in that order, then <code>CMD_SAVE</code>. The network insert
+still stands apart, being an insert.</p>
+<p><strong>Synchronizing on attach</strong> adds the family states to the link’s read:
+<code>PROP_WIFI_ENABLED</code>, <code>PROP_WIFI_NETWORK</code>, <code>PROP_WIFI_LINK</code>,
+<code>PROP_IPV4_STATE</code>, and <code>PROP_IPV6_STATE</code>, in one
+<code>CMD_PROP_MULTI_GET</code>, where a family the device lacks comes back as the
+<code>STATUS_PROP_NOT_FOUND</code> entry the multi-get already provides for.
+Between them a host knows whether the device is configured, associated,
+and addressed without a second round trip.</p>
+<p><strong>Reconfiguring a live device</strong> is a write and a watch. The device
+applies the new configuration at once, the family leaves <code>IP_READY</code> and
+arrives wherever the new configuration leads, <code>IP_READY</code> again by way of
+<code>IP_WAITING</code>, <code>IP_CONFLICT</code> for a static address somebody else holds, or
+<code>IP_DISABLED</code>, and a host that changed a static address learns the old
+one is gone by the same notification everyone else does.</p>
+<p><strong>The host name</strong> the device presents to DHCP, and to DHCPv6 where it
+runs, <strong>SHOULD</strong> be derived from <code>PROP_DEV_NAME</code>, folded to a valid
+label, so that the device can be found on a router’s client list under
+the name its operator gave it.</p>
+<p><strong>What survives what.</strong> The three configuration properties are saved
+and revert with <code>CMD_RST</code>; the five live ones follow, in the sense the
+Wi-Fi chapter’s <a href="ulcp-wifi.html#what-survives-what">table</a> defines.
+<code>CMD_RST</code> on a device whose snapshot matches its live IP configuration
+leaves a lease in place; one that reverts a static address releases and
+re-applies, with the transitions published.</p>
+<p><strong>Over the node management binding,</strong> all eight are device-domain: an
+administrator may read every one and write the three configuration
+properties, the other five being read-only for everybody. That binding
+carries no unsolicited notifications, so the read-then-follow flow does
+not apply across the mesh: an administrator that wants a current view of
+addresses or resolvers reads them again, and the family states tell it
+when that is likely to be worth doing. An administrator who writes a
+static address that is wrong for the network has stranded a bridge just
+as surely as one who disabled the link, and the same warning belongs in
+the same place.</p>
+<h2 id="ip-security"><a class="header" href="#ip-security">Security Considerations</a></h2>
+<p>The IP stack trusts its network the way every client does. A rogue DHCP
+server or router advertisement on the LAN can hand the device a bad
+address, a bad route, or a resolver that lies. Nothing at this layer
+defends against that, and nothing needs to, because what rides on the
+address authenticates its far end itself: the bridge tunnel pins a key,
+and a redirected tunnel fails to open rather than opening to the wrong
+party.</p>
+<h2 id="ip-not-specified"><a class="header" href="#ip-not-specified">Not Specified</a></h2>
+<ul>
+<li><strong>A reachability test.</strong> Command-shaped, and unnecessary: a bridge
+client reports whether its tunnel is up, and that is the reachability
+anyone cares about.</li>
+<li><strong>A DHCP renew request.</strong> The same argument. A lease is the stack’s
+to manage, and a host that could force a renewal could not observe
+anything by it that the address property does not already publish.</li>
+<li><strong>Time from the network.</strong> It belongs to the time capability, which
+would gain a trust switch shaped like <code>PROP_GNSS_TIME_TRUST</code> if it
+takes SNTP.</li>
+<li><strong>A second interface.</strong> A selector for a later revision. The device’s
+own access point is not one of these interfaces; see
+<a href="ulcp-wifi.html#prop-wifi-ap-config"><code>PROP_WIFI_AP_CONFIG</code></a>.</li>
+<li><strong>mDNS.</strong> Letting a phone find the device by name is a service the
+device offers rather than a property of its stack, and it waits for
+whatever first needs it.</li>
+</ul>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="ulcp-wifi.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                            </a>
+
+                            <a rel="next prefetch" href="ulcp-conformance.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="ulcp-wifi.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                    </a>
+
+                    <a rel="next prefetch" href="ulcp-conformance.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                    </a>
+            </nav>
+
+        </div>
+
+        <template id=fa-eye><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M288 32c-80.8 0-145.5 36.8-192.6 80.6C48.6 156 17.3 208 2.5 243.7c-3.3 7.9-3.3 16.7 0 24.6C17.3 304 48.6 356 95.4 399.4C142.5 443.2 207.2 480 288 480s145.5-36.8 192.6-80.6c46.8-43.5 78.1-95.4 93-131.1c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C433.5 68.8 368.8 32 288 32zM432 256c0 79.5-64.5 144-144 144s-144-64.5-144-144s64.5-144 144-144s144 64.5 144 144zM288 192c0 35.3-28.7 64-64 64c-11.5 0-22.3-3-31.6-8.4c-.2 2.8-.4 5.5-.4 8.4c0 53 43 96 96 96s96-43 96-96s-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6z"/></svg></span></template>
+        <template id=fa-eye-slash><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M38.8 5.1C28.4-3.1 13.3-1.2 5.1 9.2S-1.2 34.7 9.2 42.9l592 464c10.4 8.2 25.5 6.3 33.7-4.1s6.3-25.5-4.1-33.7L525.6 386.7c39.6-40.6 66.4-86.1 79.9-118.4c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C465.5 68.8 400.8 32 320 32c-68.2 0-125 26.3-169.3 60.8L38.8 5.1zM223.1 149.5C248.6 126.2 282.7 112 320 112c79.5 0 144 64.5 144 144c0 24.9-6.3 48.3-17.4 68.7L408 294.5c5.2-11.8 8-24.8 8-38.5c0-53-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6c0 10.2-2.4 19.8-6.6 28.3l-90.3-70.8zm223.1 298L373 389.9c-16.4 6.5-34.3 10.1-53 10.1c-79.5 0-144-64.5-144-144c0-6.9 .5-13.6 1.4-20.2L83.1 161.5C60.3 191.2 44 220.8 34.5 243.7c-3.3 7.9-3.3 16.7 0 24.6c14.9 35.7 46.2 87.7 93 131.1C174.5 443.2 239.2 480 320 480c47.8 0 89.9-12.9 126.2-32.5z"/></svg></span></template>
+        <template id=fa-copy><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M502.6 70.63l-61.25-61.25C435.4 3.371 427.2 0 418.7 0H255.1c-35.35 0-64 28.66-64 64l.0195 256C192 355.4 220.7 384 256 384h192c35.2 0 64-28.8 64-64V93.25C512 84.77 508.6 76.63 502.6 70.63zM464 320c0 8.836-7.164 16-16 16H255.1c-8.838 0-16-7.164-16-16L239.1 64.13c0-8.836 7.164-16 16-16h128L384 96c0 17.67 14.33 32 32 32h47.1V320zM272 448c0 8.836-7.164 16-16 16H63.1c-8.838 0-16-7.164-16-16L47.98 192.1c0-8.836 7.164-16 16-16H160V128H63.99c-35.35 0-64 28.65-64 64l.0098 256C.002 483.3 28.66 512 64 512h192c35.2 0 64-28.8 64-64v-32h-47.1L272 448z"/></svg></span></template>
+        <template id=fa-play><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M73 39c-14.8-9.1-33.4-9.4-48.5-.9S0 62.6 0 80V432c0 17.4 9.4 33.4 24.5 41.9s33.7 8.1 48.5-.9L361 297c14.3-8.7 23-24.2 23-41s-8.7-32.2-23-41L73 39z"/></svg></span></template>
+        <template id=fa-clock-rotate-left><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M75 75L41 41C25.9 25.9 0 36.6 0 57.9V168c0 13.3 10.7 24 24 24H134.1c21.4 0 32.1-25.9 17-41l-30.8-30.8C155 85.5 203 64 256 64c106 0 192 86 192 192s-86 192-192 192c-40.8 0-78.6-12.7-109.7-34.4c-14.5-10.1-34.4-6.6-44.6 7.9s-6.6 34.4 7.9 44.6C151.2 495 201.7 512 256 512c141.4 0 256-114.6 256-256S397.4 0 256 0C185.3 0 121.3 28.7 75 75zm181 53c-13.3 0-24 10.7-24 24V256c0 6.4 2.5 12.5 7 17l72 72c9.4 9.4 24.6 9.4 33.9 0s9.4-24.6 0-33.9l-65-65V152c0-13.3-10.7-24-24-24z"/></svg></span></template>
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="elasticlunr-ef4e11c1.min.js"></script>
+        <script src="mark-09e88c2c.min.js"></script>
+        <script src="searcher-c2a407aa.js"></script>
+
+        <script src="clipboard-1626706a.min.js"></script>
+        <script src="highlight-abc7f01d.js"></script>
+        <script src="book-a0b12cfe.js"></script>
+
+        <!-- Custom JS scripts -->
+
+
+
+    </div>
+    </body>
+</html>

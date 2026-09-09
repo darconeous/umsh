@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-5f0d90f9.js";
+            window.path_to_searchindex_js = "searchindex-a36d942b.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-438957a9.js"></script>
+        <script src="toc-fed4626c.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -178,8 +178,8 @@
 <p>A device is most useful to a phone when it can keep working while the
 phone is asleep or out of range. The services in this chapter are what
 that means concretely: the device learns which traffic is relevant to its
-host, holds that traffic while the host is away, and — for peers the host
-has explicitly provisioned — acknowledges it so that senders’ retransmission
+host, holds that traffic while the host is away, and—for peers the host
+has explicitly provisioned—acknowledges it so that senders’ retransmission
 logic is satisfied.</p>
 <p>Everything here is <strong>assistance</strong>, tightly scoped. The host still owns the
 UMSH MAC and its own private keys; the device is helping its host, not
@@ -190,8 +190,8 @@ attached host. Of the identity keypair itself, the device holds only the
 32-byte public key; the host’s private key <strong>MUST NOT</strong> be transferred to
 the device, and this protocol provides no mechanism for doing so (see
 <a href="ulcp.html#security-boundary">Security Boundary</a>). The device may
-additionally hold host-domain state derived or delegated by the host —
-channel keys, per-peer symmetric keys, filters, and queued traffic — as
+additionally hold host-domain state derived or delegated by the host—
+channel keys, per-peer symmetric keys, filters, and queued traffic—as
 defined in this chapter.</p>
 <p>Because the device never holds the host’s private key, it cannot perform
 ECDH on the host’s behalf. All pairwise key material the device uses for
@@ -203,17 +203,17 @@ which is volatile across a power cycle and wiped wholesale when a
 different host identity takes over the device.</p>
 <h3 id="host-replacement"><a class="header" href="#host-replacement">Host Replacement</a></h3>
 <p>The host domain is keyed by <code>PROP_HOST_KEY</code>. Setting <code>PROP_HOST_KEY</code> to a
-value <strong>different</strong> from its current value — including setting it to empty
-— <strong>MUST</strong> atomically reset the entire host domain to defaults: the key
-tables and filter table are cleared, <code>PROP_HOST_AUTO_ACK</code> reverts to
-false, and the inbound queue is discarded. Because the host domain is
-never persisted, this is a live-state operation with no durable component:
+value <strong>different</strong> from its current value—including setting it to empty
+—<strong>MUST</strong> atomically reset the entire host domain to defaults: the key
+tables, filter table, and mute tables are cleared, <code>PROP_HOST_AUTO_ACK</code>
+reverts to false, and the inbound queue is discarded. Because the host
+domain is never persisted, this is a live-state operation with no durable component:
 a power cycle cannot resurrect a previous host’s provisioning regardless.</p>
 <p>Setting <code>PROP_HOST_KEY</code> to its current value is idempotent and has no side
 effects.</p>
 <p>This rule is what makes re-pairing safe: when a companion radio is paired
 with a different phone, the new host configures its own identity and the
-previous host’s keys, filters, and queued traffic cease to exist — while
+previous host’s keys, filters, and queued traffic cease to exist—while
 the device domain (the radio’s own identity, channels, and settings) is
 untouched.</p>
 <h2 id="capabilities"><a class="header" href="#capabilities">Capabilities</a></h2>
@@ -224,7 +224,7 @@ untouched.</p>
 </thead>
 <tbody>
 <tr><td>32</td><td><code>CAP_HOST_FILTER</code></td><td>—</td><td><code>PROP_HOST_KEY</code>, <code>PROP_MAC_PROMISCUOUS</code>, <code>PROP_HOST_RX_FILTERS</code>, and the receive-filtering behavior</td></tr>
-<tr><td>33</td><td><code>CAP_HOST_RX_QUEUE</code></td><td><code>CAP_HOST_FILTER</code></td><td>The inbound queue, its properties, <code>CMD_QUEUE_DRAIN</code>, and the buffered-frame metadata</td></tr>
+<tr><td>33</td><td><code>CAP_HOST_RX_QUEUE</code></td><td><code>CAP_HOST_FILTER</code></td><td>The inbound queue, its properties, <code>CMD_QUEUE_DRAIN</code>, the buffered-frame metadata, and the mute tables</td></tr>
 <tr><td>34</td><td><code>CAP_HOST_KEYS</code></td><td><code>CAP_HOST_FILTER</code></td><td><code>PROP_HOST_CHANNEL_KEYS</code> and <code>PROP_HOST_PEER_KEYS</code></td></tr>
 <tr><td>35</td><td><code>CAP_HOST_AUTO_ACK</code></td><td><code>CAP_HOST_KEYS</code>, <code>CAP_HOST_RX_QUEUE</code></td><td><code>PROP_HOST_AUTO_ACK</code> and acknowledgement delegation</td></tr>
 <tr><td>48</td><td><code>CAP_MAC_BACKHAUL</code></td><td><code>CAP_REPEATER</code></td><td><code>PROP_MAC_BACKHAUL</code> and the point-to-point link to the device’s node</td></tr>
@@ -298,6 +298,8 @@ provisioned, and are the protocol’s session-scoped properties.</p>
 <tr><td>101</td><td><code>PROP_HOST_RX_QUEUE_COUNT</code></td><td>Get</td><td>Frames currently queued</td></tr>
 <tr><td>102</td><td><code>PROP_HOST_RX_QUEUE_CAPACITY</code></td><td>Get, Set</td><td>Queue capacity in frames</td></tr>
 <tr><td>103</td><td><code>PROP_HOST_RX_QUEUE_DROPPED</code></td><td>Get</td><td>Frames dropped from the queue</td></tr>
+<tr><td>104</td><td><code>PROP_HOST_MUTED_CHANNELS</code></td><td>Get, Set, Insert, Remove</td><td>Channels whose queued frames raise no cue</td></tr>
+<tr><td>105</td><td><code>PROP_HOST_MUTED_PEERS</code></td><td>Get, Set, Insert, Remove</td><td>Peers whose queued frames raise no cue</td></tr>
 </tbody>
 </table>
 </div>
@@ -374,15 +376,18 @@ empty at every power-on, whatever the radio was doing before.</p>
 <li>Asynchronous Updates: No</li>
 <li>Required: <code>CAP_HOST_KEYS</code></li>
 <li>Item Form: 32 octets (the channel key)</li>
-<li>Digest Form: 2 octets (the derived channel identifier)</li>
+<li>Reported Form: 16 octets (the derived channel identifier)</li>
 <li>Remove Selector: the 32-octet channel key</li>
 <li>Post-Reset Value: Empty</li>
 </ul>
 <p>The set of <a href="multicast-channels.html#channel-keys">channel keys</a> provisioned
-for the <strong>host identity</strong>. For each key the device derives the channel
-identifier and the channel <code>K_enc</code>/<code>K_mic</code>; the digest form is the derived
-channel identifier, and the key itself is never read back.</p>
-<p>Each derived channel identifier acts as an implicit channel receive filter
+for the <strong>host identity</strong>. For each key the device derives the
+<a href="packet-types.html#channel-identifier-derivation">channel identifier</a> and
+the channel <code>K_enc</code>/<code>K_mic</code>. Each entry is reported as its full 16-octet
+channel identifier, which is the width at which two channels can be told
+apart; the key itself is never read back.</p>
+<p>The identifier’s leading 2 octets are the <code>channel_id</code> the <code>CHANNEL</code> field
+carries, and they act as an implicit channel receive filter
 (see <a href="ulcp-host.html#receive-filtering">Receive Filtering</a>). Host channel keys serve two assistance
 purposes:</p>
 <ul>
@@ -408,7 +413,7 @@ channels; see <a href="ulcp-core.html#provisioning-security">Provisioning Securi
 <li>Asynchronous Updates: No</li>
 <li>Required: <code>CAP_HOST_KEYS</code></li>
 <li>Item Form: Structure, 96 octets</li>
-<li>Digest Form: 32 octets (the peer’s public key)</li>
+<li>Reported Form: 32 octets (the peer’s public key)</li>
 <li>Remove Selector: the 32-octet peer public key</li>
 <li>Post-Reset Value: Empty</li>
 </ul>
@@ -424,15 +429,15 @@ peers of the host identity. The item form is:</p>
 <code>K_MIC</code> are the stable pairwise keys for the (host, peer) pair, derived by
 the <strong>host</strong> as described in
 <a href="security.html#hkdf-inputs-for-unicast">HKDF Inputs for Unicast</a>. The device
-never derives these itself — it cannot, because it does not hold the host’s
+never derives these itself—it cannot, because it does not hold the host’s
 private key.</p>
 <p>As an exception to the usual <code>CMD_PROP_INSERT</code> duplicate rule, inserting an
 entry whose <code>PEER_PUBLIC_KEY</code> matches an existing entry replaces that
 entry. Replacement updates only the stored key material: the peer’s replay
 baseline (see <a href="ulcp-host.html#ack-delegation">Acknowledgement Delegation</a>) and any frames already queued from that
 peer are unaffected, since both are keyed by the peer’s identity rather
-than by the key values. The digest form is the peer public key alone:
-<code>K_ENC</code> and <code>K_MIC</code> are never read back.</p>
+than by the key values. An entry is reported as its peer public key
+alone: <code>K_ENC</code> and <code>K_MIC</code> are never read back.</p>
 <p>Provisioned peer keys let the device authenticate inbound unicast and blind
 unicast from those specific peers and acknowledge it on the host’s behalf
 (see <a href="ulcp-host.html#ack-delegation">Acknowledgement Delegation</a>). They grant no capability regarding any other peer,
@@ -515,14 +520,64 @@ adjustment fail values they cannot honor with <code>STATUS_INVALID_ARGUMENT</cod
 <li>Units: frames</li>
 <li>Post-Reset Value: 0</li>
 </ul>
-<p>The cumulative number of frames discarded from the inbound queue — evicted
+<p>The cumulative number of frames discarded from the inbound queue—evicted
 by the circular queue-full policy or otherwise not retained (see
-<a href="ulcp-host.html#inbound-queueing">Inbound Queueing</a>) — since the device last reset. A non-zero increase
+<a href="ulcp-host.html#inbound-queueing">Inbound Queueing</a>)—since the device last reset. A non-zero increase
 across a detached interval tells the host that its view of that interval
 is incomplete. The counter wraps modulo 2^32.</p>
+<h3 id="prop-host-muted-channels"><a class="header" href="#prop-host-muted-channels">PROP 104: <code>PROP_HOST_MUTED_CHANNELS</code></a></h3>
+<ul>
+<li>Type: Multiple-Value, Read-Write</li>
+<li>Has Item Length Prefix: No</li>
+<li>Asynchronous Updates: No</li>
+<li>Required: <code>CAP_HOST_RX_QUEUE</code></li>
+<li>Item Form: 16 octets (the full
+<a href="packet-types.html#channel-identifier-derivation">channel identifier</a>)</li>
+<li>Remove Selector: the item</li>
+<li>Post-Reset Value: Empty</li>
+</ul>
+<p>The channels whose queued frames raise no
+<a href="ulcp-host.html#receipt-cues">receipt cue</a>. A frame matches when the
+provisioned channel key that authenticated it derives a listed identifier;
+the match is made after verification, against the full identifier, never
+against the 2-octet on-wire one, so an identifier collision cannot mute a
+channel the host did not name.</p>
+<h3 id="prop-host-muted-peers"><a class="header" href="#prop-host-muted-peers">PROP 105: <code>PROP_HOST_MUTED_PEERS</code></a></h3>
+<ul>
+<li>Type: Multiple-Value, Read-Write</li>
+<li>Has Item Length Prefix: No</li>
+<li>Asynchronous Updates: No</li>
+<li>Required: <code>CAP_HOST_RX_QUEUE</code></li>
+<li>Item Form: 32 octets (a peer public key)</li>
+<li>Remove Selector: the item</li>
+<li>Post-Reset Value: Empty</li>
+</ul>
+<p>The peers whose queued frames raise no
+<a href="ulcp-host.html#receipt-cues">receipt cue</a>. A frame matches when its resolved
+source is a listed key. Items are full public keys rather than 3-byte
+hints: hints collide, and the detached receive path resolves the full key
+already.</p>
+<h2 id="receipt-cues"><a class="header" href="#receipt-cues">Receipt Cues</a></h2>
+<p>A device may indicate locally that it took a frame in for a host that is
+not attached—a sound, a light, a count on a panel. What form the
+indication takes, and whether a device makes one at all, is a property of
+the board rather than of the protocol.</p>
+<p><code>PROP_HOST_MUTED_CHANNELS</code> and <code>PROP_HOST_MUTED_PEERS</code> name sources whose
+frames are taken in without one. They govern the indication and nothing
+else: a frame from a muted source is filtered, queued, acknowledged, and
+drained exactly as any other, and counts toward
+<code>PROP_HOST_RX_QUEUE_COUNT</code> and <code>PROP_HOST_RX_QUEUE_DROPPED</code> the same way.
+Indications that describe the queue as a whole rather than one arrival—a
+queued count, a “something is waiting” light—still follow every frame,
+because they describe what a drain will deliver.</p>
+<p>The tables are not validated against the key tables. An entry naming a
+source the device holds no key for is simply inert, as an entry in
+<code>PROP_HOST_RX_FILTERS</code> is independent of the key tables. A frame accepted
+by an explicit filter alone has no resolved source and therefore matches
+no entry.</p>
 <h2 id="receive-filtering"><a class="header" href="#receive-filtering">Receive Filtering</a></h2>
 <p>Receive filtering determines which successfully received frames are
-<strong>accepted</strong> for the host — delivered live when the host is attached, or
+<strong>accepted</strong> for the host—delivered live when the host is attached, or
 queued when it is not.</p>
 <p>The device evaluates each received frame against the union of:</p>
 <ul>
@@ -549,29 +604,50 @@ MIC, and a repeater’s onward copy of a host frame keeps the host’s MIC while
 its destination hint names the remote peer. The device therefore records the
 leading 4 MIC bytes of each frame it transmits on the host’s behalf and
 implicitly accepts any received frame whose trailer opens with a recorded
-value — for a MAC Ack this matches the returning acknowledgement, and for
+value—for a MAC Ack this matches the returning acknowledgement, and for
 other packet types it matches the host’s own send being carried onward, which
 the host’s forwarding-confirmation machinery must overhear to stop
-retransmitting. These records evict lazily, so multiple echoes of one send —
+retransmitting. These records evict lazily, so multiple echoes of one send—
 acks arriving over different return routes, repeats from different
-repeaters — are all delivered. A MAC Ack whose <code>ack_mic</code> matches no recorded
+repeaters—are all delivered. A MAC Ack whose <code>ack_mic</code> matches no recorded
 frame is still accepted if an explicit <code>FILTER_PKT_TYPE</code> entry selects it.</p>
-<p>Broadcast packets — payload-carrying broadcasts and beacons alike — are
+<p>Broadcast packets—payload-carrying broadcasts and beacons alike—are
 implicitly accepted <strong>for live delivery</strong>: a broadcast is addressed to
 every node, the host included. The rule is live-only. While the host is
 detached, a broadcast is queued only when an explicit filter selects it
 (e.g., a <code>FILTER_PKT_TYPE</code> entry with value 0), so ambient broadcast
 traffic cannot displace queued unicast frames.</p>
+<p>Directed traffic that asks for no acknowledgement follows the same shape.
+A <code>UNIC</code> or <code>BUNI</code> frame accepted only by an implicit filter is delivered
+live but <strong>MUST NOT</strong> be queued; queueing it requires an explicit
+<code>FILTER_PKT_TYPE</code> entry selecting that packet type. Its sender is not
+waiting on the device—nothing about it will be repeated or given up on—
+so the frame is a request whose asker has moved on by the time a drain
+runs, while the queue slot it takes is one an ack-requesting frame needed.
+The rule is stated as a default the host must override rather than one it
+can refuse, because filters only widen: an entry for <code>UNAR</code> would add to
+what the implicit destination-hint filter already admits, never narrow it.</p>
 <p>Device-domain state never creates implicit host filters: frames for the
 device identity or its channels reach the host only if the host’s own
 filtering matches them.</p>
 <p><strong>Compatibility rule:</strong> when no host key is configured, no host channel
 keys are provisioned, and the explicit filter table is empty, filtering is
 considered unconfigured and <strong>every</strong> successfully received frame is
-accepted. This is exactly how a device with no host services at all
-behaves, so a host using the radio as a plain frame pipe observes no
-difference on a filtering device in its factory state. As soon as any
-filter (implicit or explicit) exists, only matching frames are accepted.</p>
+accepted <strong>for live delivery</strong>. This is exactly how a device with no host
+services at all behaves, so a host using the radio as a plain frame pipe
+observes no difference on a filtering device in its factory state. As soon
+as any filter (implicit or explicit) exists, only matching frames are
+accepted.</p>
+<p>Like the broadcast rule, this one is live-only. A device with filtering
+unconfigured queues nothing while detached: the host domain does not
+survive a power cycle, so every device passes through this state on the
+way from power-on to its host’s first write, and a device that queued
+here would fill its queue with whatever was in earshot—its own
+transmissions included—on nobody’s behalf.</p>
+<p>A device <strong>MUST NOT</strong> queue a frame it transmitted itself. The copy a
+device delivers of its own transmission (<code>RX_FLAG_SELF_TX</code>) lets an
+attached host’s MAC observe its frame reaching the air; replayed from the
+queue it describes a transmission the host completed long before.</p>
 <p>Promiscuous mode (see <a href="ulcp-host.html#prop-mac-promiscuous"><code>PROP_MAC_PROMISCUOUS</code></a>) bypasses filtering for live
 delivery only.</p>
 <h2 id="inbound-queueing"><a class="header" href="#inbound-queueing">Inbound Queueing</a></h2>
@@ -590,7 +666,7 @@ a drain (<code>RX_FLAG_BUFFERED</code> distinguishes them). A host that wants to
 process the backlog first drains promptly after attaching and MAY defer
 its processing of interleaved live deliveries; <code>RX_AGE</code> in the
 buffered-frame metadata gives coarse (one-second) relative timing but is
-not sufficient to reconstruct a strict total order — and UMSH itself does
+not sufficient to reconstruct a strict total order—and UMSH itself does
 not guarantee in-order delivery in any case.</p>
 <p>The queue is <strong>circular</strong>: when a new frame is accepted and the queue is
 full, the oldest queued frame is discarded and the new frame is appended.
@@ -598,7 +674,7 @@ The queue therefore always holds the most recent accepted traffic. Every
 frame discarded by this eviction increments
 <code>PROP_HOST_RX_QUEUE_DROPPED</code>.</p>
 <p>Eviction can discard a frame that was already acknowledged on the host’s
-behalf — the sender believes it delivered, but the host will never
+behalf—the sender believes it delivered, but the host will never
 receive it. This is the same best-effort custody semantic that applies to
 power loss (see <a href="ulcp-host.html#ack-delegation">Acknowledgement Delegation</a> and <a href="ulcp-saved-state.html#saved-state">Saved State</a>): a delegated ack
 asserts volatile custody, not guaranteed delivery.</p>
@@ -611,7 +687,7 @@ additional queue slot; it is coalesced with the existing entry. A
 <a href="packet-options.html#route-retry-option-6">Route Retry</a> form of a queued
 frame is the same logical packet (same MIC and frame counter) and
 coalesces with it. Coalescing a duplicate is separate from acknowledging
-it — a coalesced duplicate may still have its ack retransmitted under the
+it—a coalesced duplicate may still have its ack retransmitted under the
 duplicate-acknowledgement window (see <a href="ulcp-host.html#ack-delegation">Acknowledgement Delegation</a>). For frames the
 device cannot authenticate (no provisioned keys), no protocol-defined
 duplicate detection applies and each received frame occupies its own
@@ -627,7 +703,7 @@ if all of the following hold:</p>
 where the device also holds the frame’s channel key.</li>
 <li>The frame is addressed to the host identity: its (possibly decrypted)
 destination hint matches <code>PROP_HOST_KEY</code>, and its source resolves to
-an entry in <code>PROP_HOST_PEER_KEYS</code> — by full public key when the <code>S</code>
+an entry in <code>PROP_HOST_PEER_KEYS</code>—by full public key when the <code>S</code>
 flag is set, or by unique 3-byte prefix match otherwise.</li>
 <li>The frame authenticates: its MIC verifies under the pairwise <code>K_MIC</code>
 for <code>UNAR</code>, or under the combined
@@ -646,8 +722,8 @@ the oldest entry when full; a frame that nevertheless cannot be stored
 the sender keeps retrying until the host returns.</li>
 </ol>
 <p><strong>Duplicates.</strong> An authenticated frame that replay detection identifies as
-a previously accepted frame — typically a retransmission whose original
-ack was lost — is not queued again, but the device <strong>MAY</strong> retransmit its
+a previously accepted frame—typically a retransmission whose original
+ack was lost—is not queued again, but the device <strong>MAY</strong> retransmit its
 acknowledgement under the core
 <a href="security.html#duplicate-acknowledgement-window">duplicate-acknowledgement window</a>:
 only when the frame authenticates and its counter is no more than 8 behind
@@ -681,15 +757,34 @@ first 4 bytes of the acknowledged frame’s MIC and the 4-byte <code>ack tag</co
 computed as specified in
 <a href="security.html#ack-tag-construction">Ack Tag Construction</a>, using the
 provisioned pairwise keys (combined with the channel keys for <code>BUAR</code>). The
-ack carries no destination hint. If the original frame carried a flood hop
-count, the ack’s <code>FHOPS_REM</code> is initialized from the original frame’s
-<code>FHOPS_ACC</code>.</p>
+ack carries no destination hint. It is routed from what the acknowledged
+frame itself teaches, the way a host MAC routes an ack from the route that
+frame just taught it (see <a href="beacons.html#route-learning">Route Learning</a>); the
+device holds no other routing state for the host’s peers:</p>
+<ul>
+<li>A frame carrying a trace-route option is acknowledged down that trace as
+the ack’s source route; the trace is accumulated most-recent first, so it
+already reads in return order. An empty trace is a direct neighbor and
+gets a direct ack.</li>
+<li>A frame carrying no trace but a flood hop count gets <code>FHOPS_REM</code>
+initialized from its <code>FHOPS_ACC</code>, with any region-code options replayed.</li>
+<li>A frame carrying a source-route option and no trace—including an
+emptied option, which the last repeater keeps for provenance—spent flood
+hops only past the route’s end, so its <code>FHOPS_ACC</code> is not a distance. The
+ack floods at a default budget of 5 flood hops, or at <code>FHOPS_ACC</code> if that
+is larger.</li>
+<li>A frame with neither option and no flood hop count was heard off the
+sender’s own transmitter and is acknowledged directly.</li>
+</ul>
+<p>An ack a repeater may carry mirrors the frame’s trace-route request, so the
+sender learns the return path from the only frame an ack-only exchange gives
+it.</p>
 <p>Delegated ack transmissions use the device’s normal transmit path and are
 subject to the configured duty-cycle limit; the device <strong>MUST NOT</strong> exceed the
 limit to send an ack. An ack that cannot be sent leaves the queued frame
 marked unacknowledged.</p>
-<p>Frames that are accepted but fail any of conditions 2–5 — no peer key, no
-channel key, authentication impossible to evaluate — are still queued
+<p>Frames that are accepted but fail any of conditions 2–5—no peer key, no
+channel key, authentication impossible to evaluate—are still queued
 (subject to filtering); they are simply not acknowledged. The host
 performs its own verification after draining and may ack late if the
 application finds that useful.</p>
@@ -706,7 +801,7 @@ not governed by this section.</p>
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                             </a>
 
-                            <a rel="next prefetch" href="ulcp-conformance.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="ulcp-wifi.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                             </a>
 
@@ -720,7 +815,7 @@ not governed by this section.</p>
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                     </a>
 
-                    <a rel="next prefetch" href="ulcp-conformance.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="ulcp-wifi.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                     </a>
             </nav>

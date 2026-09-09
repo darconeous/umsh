@@ -21,7 +21,7 @@ Each directory carries the upstream `LICENSE` verbatim alongside the code.
 tarball), renamed for clarity. It is a self-contained ES module exporting
 `ESPLoader` and `Transport`; the flash stubs for every supported chip are inlined
 in it, so nothing is fetched at runtime. It was checked before committing for
-`eval`, `new Function`, dynamic `import()`, and `fetch`/`XMLHttpRequest` — it uses
+`eval`, `new Function`, dynamic `import()`, and `fetch`/`XMLHttpRequest`—it uses
 none of them, which is what lets the page keep a CSP with no `unsafe-eval` and
 `connect-src 'self'`.
 
@@ -63,7 +63,7 @@ text is in `vendor/meshcore-flasher/LICENSE`.
 
 That implementation is in turn a port of `dfu/dfu_transport_serial.py` from
 [adafruit-nrfutil](https://github.com/adafruit/Adafruit_nRF52_nrfutil),
-BSD-3-Clause, Copyright (c) 2015 Nordic Semiconductor — the tool the Makefile's
+BSD-3-Clause, Copyright (c) 2015 Nordic Semiconductor—the tool the Makefile's
 `flash-*-serial` targets shell out to, and the origin of the protocol constants
 (SLIP/HCI framing, packet types, and the nRF52840 flash timing figures). Its
 license text is in `vendor/adafruit-nrfutil/LICENSE`.
@@ -72,6 +72,6 @@ No code was taken from [meshtastic/web-flasher](https://github.com/meshtastic/we
 it is GPL-3.0, which is incompatible with this repository's licensing.
 
 `../serial.js` is adapted from `tools/ulcp-web-debugger/www/transports/serial.js`
-in this repository — same project, no third-party licensing involved. It is a
+in this repository—same project, no third-party licensing involved. It is a
 copy rather than an import so that the published site never depends on the
 unpublished debugger tree.

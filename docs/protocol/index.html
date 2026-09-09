@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-5f0d90f9.js";
+            window.path_to_searchindex_js = "searchindex-a36d942b.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-438957a9.js"></script>
+        <script src="toc-fed4626c.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -176,7 +176,7 @@
                     <main>
                         <h1 id="introduction"><a class="header" href="#introduction">Introduction</a></h1>
 <p>UMSH is an experimental LoRa-oriented mesh protocol that grew out of a simple question: what would a cryptographically addressed LoRa mesh look like if designed from the ground up with strong security and clean architecture? Inspired by MeshCore, UMSH started as a thought experiment addressing what its author saw as <a href="meshcore-comparison.html#cryptography">critical shortcomings</a>—shortcomings that would practically require backward-incompatible changes to properly fix. What began as a toy protocol has since developed into this comprehensive specification.</p>
-<p>Few, if any, of the ideas presented here are new or exotic. Many come directly from MeshCore — cryptographic addressing, source routing, regions, and more. The key contribution here is a clean, extensible design with stronger cryptography and clear layer separation.</p>
+<p>Few, if any, of the ideas presented here are new or exotic. Many come directly from MeshCore—cryptographic addressing, source routing, regions, and more. The key contribution here is a clean, extensible design with stronger cryptography and clear layer separation.</p>
 <p>This specification was written with MeshCore V2 in mind, but the ideas are free for anyone to adopt. Meshtastic has discussed the possibility of a breaking v3 revision, and some of these ideas may be relevant there as well. Point-by-point protocol comparisons with <a href="meshcore-comparison.html">MeshCore</a>, <a href="meshtastic-comparison.html">Meshtastic</a>, and <a href="reticulum-comparison.html">Reticulum</a> are available in the appendices.</p>
 <p>The project repository, reference implementation, and supporting tooling are available on <a href="https://github.com/darconeous/umsh">GitHub</a>.</p>
 <h2 id="overview"><a class="header" href="#overview">Overview</a></h2>
@@ -207,7 +207,7 @@ higher-layer content.</p>
 <p><strong>Robustness.</strong> Prefer constructions that fail gracefully over ones that fail catastrophically. A slightly less efficient design that degrades safely under adverse conditions is better than an efficient one that breaks badly.</p>
 <p><strong>Tolerance of loss and disorder.</strong> Assume packets will be dropped, duplicated, and delivered out of order. No operation should require synchronized state between two nodes that cannot recover from a missed message.</p>
 <p><strong>Brevity.</strong> Every byte costs airtime. Mandatory fields should be as small as correctness allows; optional fields should be absent when not needed.</p>
-<p><strong>Practicality.</strong> A protocol must be operable, not just correct. Prefer designs that make real networks easier to understand and debug — readable packet traces, attributable traffic, and identifiable nodes are operational requirements, not luxuries. Theoretical minimalism that makes a protocol difficult to deploy or troubleshoot is a real cost.</p>
+<p><strong>Practicality.</strong> A protocol must be operable, not just correct. Prefer designs that make real networks easier to understand and debug—readable packet traces, attributable traffic, and identifiable nodes are operational requirements, not luxuries. Theoretical minimalism that makes a protocol difficult to deploy or troubleshoot is a real cost.</p>
 <p><strong>Layer separation.</strong> The MAC layer routes and delivers opaque payloads. It must not depend on payload content, and payload protocols must not depend on MAC-layer internals.</p>
 <p><strong>Minimal mandatory state.</strong> Basic operation should require only a node’s own keypair and its configured channel keys. Path tables, clock synchronization, and session state are optional enhancements, not prerequisites.</p>
 <p><strong>Graceful extensibility.</strong> The protocol must be able to evolve without requiring coordinated upgrades across a deployed network. New features should be deployable incrementally, with older nodes degrading gracefully rather than failing.</p>
@@ -216,50 +216,50 @@ higher-layer content.</p>
 <p>Regarding layer separation… There is a case to be made that having the payload type be non-opaque could be a benefit to the mesh as a whole, because you could then do things like prioritize text chat messages over other types of messages at the repeater level. This would help to ensure that there is a minimum-level of text service always available, even if there is lots of other traffic present. I am not yet convinced this is a good idea yet, but it is worth thinking about.</p>
 </blockquote>
 <h2 id="use-cases"><a class="header" href="#use-cases">Use Cases</a></h2>
-<p>UMSH is designed for deployments where LoRa’s range and low power consumption are valuable and where the constraints of LoRa — low data rates, small frame sizes, shared channel — make protocol efficiency and cryptographic robustness important.</p>
+<p>UMSH is designed for deployments where LoRa’s range and low power consumption are valuable and where the constraints of LoRa—low data rates, small frame sizes, shared channel—make protocol efficiency and cryptographic robustness important.</p>
 <p><strong>Intended use cases include:</strong></p>
 <ul>
-<li><strong>Off-grid text communication</strong> — chat, direct messaging, and group channels between people in areas without cellular coverage: hiking, expeditions, disaster response, rural communities.</li>
-<li><strong>Emergency and disaster communications</strong> — resilient mesh networking that operates without any fixed infrastructure and degrades gracefully as nodes go offline.</li>
-<li><strong>IoT and sensor telemetry</strong> — authenticated sensor readings from battery-powered field devices, where per-packet overhead directly affects battery life and where tampered readings could have real consequences.</li>
-<li><strong>Amateur radio mesh networking</strong> — the protocol defines explicit amateur-radio-compliant modes with callsign fields and mandatory unencrypted operation, supporting legal use on amateur frequencies.</li>
-<li><strong>Privacy-sensitive communication</strong> — blind unicast and encrypted multicast allow metadata concealment (sender and recipient identity) for contexts where traffic analysis is a concern.</li>
-<li><strong>Embedded and constrained deployments</strong> — compact encoding (1-byte FCF, compact address hints, minimal per-packet overhead), single-frame design, and no mandatory runtime state (no path tables, no clock synchronization) make UMSH suitable for bare-metal microcontrollers with minimal RAM and no operating system.</li>
+<li><strong>Off-grid text communication</strong>—chat, direct messaging, and group channels between people in areas without cellular coverage: hiking, expeditions, disaster response, rural communities.</li>
+<li><strong>Emergency and disaster communications</strong>—resilient mesh networking that operates without any fixed infrastructure and degrades gracefully as nodes go offline.</li>
+<li><strong>IoT and sensor telemetry</strong>—authenticated sensor readings from battery-powered field devices, where per-packet overhead directly affects battery life and where tampered readings could have real consequences.</li>
+<li><strong>Amateur radio mesh networking</strong>—the protocol defines explicit amateur-radio-compliant modes with callsign fields and mandatory unencrypted operation, supporting legal use on amateur frequencies.</li>
+<li><strong>Privacy-sensitive communication</strong>—blind unicast and encrypted multicast allow metadata concealment (sender and recipient identity) for contexts where traffic analysis is a concern.</li>
+<li><strong>Embedded and constrained deployments</strong>—compact encoding (1-byte FCF, compact address hints, minimal per-packet overhead), single-frame design, and no mandatory runtime state (no path tables, no clock synchronization) make UMSH suitable for bare-metal microcontrollers with minimal RAM and no operating system.</li>
 </ul>
 <p><strong>UMSH is not designed for:</strong></p>
 <ul>
-<li>High-bandwidth applications — LoRa data rates (typically 0.3–27 kbps) make real-time voice, video, or large file transfer impractical.</li>
-<li>Applications requiring low latency — multi-hop flood delivery adds variable latency that makes UMSH unsuitable for interactive or time-sensitive protocols.</li>
+<li>High-bandwidth applications—LoRa data rates (typically 0.3–27 kbps) make real-time voice, video, or large file transfer impractical.</li>
+<li>Applications requiring low latency—multi-hop flood delivery adds variable latency that makes UMSH unsuitable for interactive or time-sensitive protocols.</li>
 </ul>
 <h2 id="key-concepts"><a class="header" href="#key-concepts">Key Concepts</a></h2>
 <h3 id="nodes"><a class="header" href="#nodes">Nodes</a></h3>
 <p>A <strong>node</strong> is a logical endpoint on the network, identified by a 32-byte
 Ed25519 public key. That public key is the node’s long-term network
-identity — it serves as both its address and its cryptographic credential.
+identity—it serves as both its address and its cryptographic credential.
 A single physical device may host multiple nodes (e.g., a repeater node
 and a chat node), each with its own keypair.</p>
 <p>A node’s public key must be known to communicate with it directly. Public
 keys can be learned through several mechanisms:</p>
 <ul>
-<li><strong>Beacons and advertisements</strong> — nodes periodically broadcast their
+<li><strong>Beacons and advertisements</strong>—nodes periodically broadcast their
 presence, optionally including identity information (see <a href="node-identity.html">Node Identity</a>)</li>
-<li><strong>QR codes and URIs</strong> — public keys can be shared out-of-band via
+<li><strong>QR codes and URIs</strong>—public keys can be shared out-of-band via
 <code>umsh:n:</code> URIs (see <a href="uri-formats.html">URI Formats</a>)</li>
-<li><strong>First-contact packets</strong> — a sender can set the <a href="packet-structure.html#frame-control-field"><code>S</code> flag</a> to include
+<li><strong>First-contact packets</strong>—a sender can set the <a href="packet-structure.html#frame-control-field"><code>S</code> flag</a> to include
 its full public key in any packet, allowing the receiver to learn it directly from the wire</li>
 </ul>
 <p>Once a node’s public key is known, it can be cached and subsequent packets
-can use a compact source hint instead of the full key — saving 29 bytes per
+can use a compact source hint instead of the full key—saving 29 bytes per
 packet in unicast (3-byte hint vs 32-byte key).</p>
 <h4 id="node-metadata"><a class="header" href="#node-metadata">Node Metadata</a></h4>
-<p>Nodes may also advertise additional metadata — such as a human-readable name,
-role, capabilities, and location — via the <a href="node-identity.html">Node Identity</a>
+<p>Nodes may also advertise additional metadata—such as a human-readable name,
+role, capabilities, and location—via the <a href="node-identity.html">Node Identity</a>
 payload. Metadata can also be contained in QR codes and URIs. This metadata
 is carried at the application layer and is not required by the MAC layer.</p>
 <h3 id="unicast"><a class="header" href="#unicast">Unicast</a></h3>
 <p>Unicast packets are addressed to a destination node and may be authenticated or encrypted using per-destination cryptographic material derived from sender/recipient key agreement (see <a href="packet-types.html">Frame Types</a> and <a href="security.html">Security &amp; Cryptography</a>).</p>
 <h3 id="channels"><a class="header" href="#channels">Channels</a></h3>
-<p>A channel is a shared symmetric key that serves two roles: <strong>multicast</strong> group communication and <strong>blind unicast</strong> metadata concealment. All nodes configured with a given channel key are members and can send and receive multicast packets addressed to it. Blind unicast uses the channel key to hide sender and destination addresses on the wire, while protecting the payload with <a href="security.html#blind-unicast-payload-keys">combined keys</a> that require both the channel key and the pairwise shared secret — only the intended recipient can read it. See <a href="multicast-channels.html">Channels</a> for channel types, membership models, and default channels.</p>
+<p>A channel is a shared symmetric key that serves two roles: <strong>multicast</strong> group communication and <strong>blind unicast</strong> metadata concealment. All nodes configured with a given channel key are members and can send and receive multicast packets addressed to it. Blind unicast uses the channel key to hide sender and destination addresses on the wire, while protecting the payload with <a href="security.html#blind-unicast-payload-keys">combined keys</a> that require both the channel key and the pairwise shared secret—only the intended recipient can read it. See <a href="multicast-channels.html">Channels</a> for channel types, membership models, and default channels.</p>
 <h3 id="perfect-forward-secrecy"><a class="header" href="#perfect-forward-secrecy">Perfect Forward Secrecy</a></h3>
 <p>UMSH supports <a href="security.html#perfect-forward-secrecy-sessions">perfect forward secrecy</a>, not as a core part of the underlying protocol but instead via ephemeral node addresses. Either node can initiate a PFS session, after which both parties communicate using ephemeral node addresses whose private keys are never stored durably and are erased at session end. Compromise of long-term keys cannot retroactively expose traffic protected by a completed PFS session.</p>
 

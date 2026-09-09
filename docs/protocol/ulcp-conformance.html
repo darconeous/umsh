@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-5f0d90f9.js";
+            window.path_to_searchindex_js = "searchindex-a36d942b.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-438957a9.js"></script>
+        <script src="toc-fed4626c.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -219,8 +219,8 @@ rules. <code>CMD_QUEUE_DRAIN</code>, <code>CMD_SAVE</code>, and <code>CMD_RESTOR
 subsystems’ capabilities and <strong>MUST</strong> fail with <code>STATUS_UNIMPLEMENTED</code>
 when the capability is not advertised, as <strong>MUST</strong>
 <a href="ulcp-core.html#cmd-reboot"><code>CMD_REBOOT</code></a> without <code>CAP_REBOOT</code> and
-<a href="ulcp-ble.html#cmd-ble-clear-bonds"><code>CMD_BLE_CLEAR_BONDS</code></a> on a device
-that does not manage its own bonds; <code>CMD_CLEAR</code> and <code>CMD_FACTORY_RESET</code>
+<a href="ulcp-device.html#cmd-announce"><code>CMD_ANNOUNCE</code></a> without <code>CAP_ADVERT</code>;
+<code>CMD_CLEAR</code> and <code>CMD_FACTORY_RESET</code>
 are available regardless of capabilities (see
 <a href="ulcp-saved-state.html">Saved State</a>).</p>
 <h2 id="properties"><a class="header" href="#properties">Properties</a></h2>
@@ -274,6 +274,8 @@ requires.</p>
 <tr><td><a href="ulcp-device.html">Device Domain</a></td><td><code>CAP_DEV_IDENTITY</code>, <code>CAP_DEV_NAME</code>, <code>CAP_BATTERY</code>, <code>CAP_REPEATER</code>, <code>CAP_IDENT</code>, <code>CAP_ALERT</code>, <code>CAP_TIME</code>, <code>CAP_GNSS</code>, <code>CAP_ADVERT</code>, <code>CAP_ILLUMINANCE</code></td></tr>
 <tr><td><a href="ulcp-saved-state.html">Saved State</a></td><td><code>CAP_SAVE</code></td></tr>
 <tr><td><a href="ulcp-host.html">Tethered Host Services</a></td><td><code>CAP_HOST_FILTER</code>, <code>CAP_HOST_KEYS</code>, <code>CAP_HOST_RX_QUEUE</code>, <code>CAP_HOST_AUTO_ACK</code>, <code>CAP_MAC_BACKHAUL</code></td></tr>
+<tr><td><a href="ulcp-wifi.html">Wi-Fi</a></td><td><code>CAP_WIFI_SCAN</code>, <code>CAP_WIFI</code>, <code>CAP_WIFI_AP</code></td></tr>
+<tr><td><a href="ulcp-ip.html">IP Connectivity</a></td><td><code>CAP_IPV4</code>, <code>CAP_IPV6</code></td></tr>
 </tbody>
 </table>
 </div>
@@ -291,13 +293,13 @@ authoritative value is how the protocol reports it.</li>
 <strong>MUST NOT</strong> treat one that differs from what it wrote as an error. A
 write is refused by a <code>PROP_LAST_STATUS</code> carrying the failure and by
 nothing else; anything a device reports as a property value is what that
-property is, whether or not it is what was asked for — see
+property is, whether or not it is what was asked for—see
 <a href="ulcp-radio.html#prop-phy-tx-power"><code>PROP_PHY_TX_POWER</code></a>, which a device
 clamps to what its radio can reach. A host that shows the value to a user
 shows the reported one.</li>
 <li><strong>MUST NOT</strong> treat a failed capability-gated property read as a failed
 attach. A device advertising a capability implements its properties, so
-a refusal is a device fault — but what is unknown is the setting, not the
+a refusal is a device fault—but what is unknown is the setting, not the
 device. A host finishes the rest of the read, presents the affected
 setting as unavailable rather than as a default, and omits it from what
 it writes.</li>
@@ -309,7 +311,7 @@ fetches or explicitly sets what it depends on.</li>
 on every tethered attach, if it uses host services at all, rather than
 reasoning about what the device already holds.</li>
 <li><strong>MUST NOT</strong> write host-domain properties when it is merely
-administering a device rather than being that device’s host — see
+administering a device rather than being that device’s host—see
 <a href="ulcp.html#attach-relationships">Two Kinds of Attach</a>.</li>
 <li><strong>SHOULD</strong> follow the post-attach procedure in
 <a href="ulcp-core.html#attach-sync">Attach, Detach, and Synchronization</a>.</li>
@@ -337,7 +339,7 @@ it can do.</p>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="ulcp-host.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="ulcp-ip.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                             </a>
 
@@ -351,7 +353,7 @@ it can do.</p>
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="ulcp-host.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="ulcp-ip.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                     </a>
 

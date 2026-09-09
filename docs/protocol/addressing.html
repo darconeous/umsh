@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-5f0d90f9.js";
+            window.path_to_searchindex_js = "searchindex-a36d942b.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-438957a9.js"></script>
+        <script src="toc-fed4626c.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -175,10 +175,10 @@
                 <div id="mdbook-content" class="content">
                     <main>
                         <h1 id="addressing"><a class="header" href="#addressing">Addressing</a></h1>
-<p>UMSH nodes are identified by their 32-byte Ed25519 public keys. Including a full 32-byte address in every packet would be expensive in the constrained LoRa frame budget, so UMSH defines several compact <strong>hint</strong> representations — short prefixes of a public key that allow receivers to quickly identify likely matches without the full key. Hints are not cryptographically authoritative; they serve only as cheap prefilters to avoid unnecessary work.</p>
+<p>UMSH nodes are identified by their 32-byte Ed25519 public keys. Including a full 32-byte address in every packet would be expensive in the constrained LoRa frame budget, so UMSH defines several compact <strong>hint</strong> representations—short prefixes of a public key that allow receivers to quickly identify likely matches without the full key. Hints are not cryptographically authoritative; they serve only as cheap prefilters to avoid unnecessary work.</p>
 <p>The sections below describe the three addressing forms used across the protocol: node hints, router hints, and source addresses.</p>
 <h2 id="presentation"><a class="header" href="#presentation">Presentation</a></h2>
-<p>UMSH addresses are canonically encoded and displayed using <a href="https://bitcoinwiki.org/wiki/base58">base 58</a>. Addresses may also be rendered using base 16 as 64 hexadecimal digits — lowercase preferred, either case accepted when parsing — but the preferred encoding is base58. The two forms are unambiguously distinguished by length.</p>
+<p>UMSH addresses are canonically encoded and displayed using <a href="https://bitcoinwiki.org/wiki/base58">base 58</a>. Addresses may also be rendered using base 16 as 64 hexadecimal digits—lowercase preferred, either case accepted when parsing—but the preferred encoding is base58. The two forms are unambiguously distinguished by length.</p>
 <p>The base58 encoding is fixed-length: a 32-byte address always renders as exactly 44 digits, left-padded with <code>1</code> (the base58 zero digit) when its numeric value would otherwise encode shorter.</p>
 <h2 id="node-hint"><a class="header" href="#node-hint">Node Hint</a></h2>
 <p>A <strong>node hint</strong> is defined as:</p>

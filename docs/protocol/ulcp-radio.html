@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-5f0d90f9.js";
+            window.path_to_searchindex_js = "searchindex-a36d942b.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-438957a9.js"></script>
+        <script src="toc-fed4626c.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -179,8 +179,8 @@
 physical transceiver: frequency, modulation, transmit power, and the
 transmit duty-cycle budget. Every ULCP device implements it.</p>
 <p>The interface is deliberately not LoRa-specific in shape where that can be
-avoided. The properties that any radio has — enable, frequency, transmit
-power, RSSI, MTU — are unconditional; the LoRa modulation parameters are
+avoided. The properties that any radio has—enable, frequency, transmit
+power, RSSI, MTU—are unconditional; the LoRa modulation parameters are
 gated behind <code>CAP_PHY_LORA</code>, and duty-cycle accounting behind
 <code>CAP_PHY_DUTY_LIMIT</code>. Traffic counters are exposed by <code>CAP_STATS</code>.</p>
 <p>The RF configuration is <a href="ulcp-core.html#device-domain">device-domain</a> state:
@@ -424,10 +424,12 @@ attached host’s identity are not included. Requires <code>CAP_STATS</code> and
 forwarding decision; successful physical transmissions are counted separately
 by <code>PROP_STAT_TX_PACKETS</code>. Requires <code>CAP_STATS</code> and <code>CAP_REPEATER</code>.</p>
 <h3 id="prop-stat-forward-dropped"><a class="header" href="#prop-stat-forward-dropped">PROP 4839: <code>PROP_STAT_FORWARD_DROPPED</code></a></h3>
-<p>Packets that were eligible for forwarding but were rejected by the configured
-flood budget, minimum RSSI, minimum SNR, or region policy. Duplicates,
-self-addressed packets, and packets received while forwarding is disabled are
-not included. Requires <code>CAP_STATS</code> and <code>CAP_REPEATER</code>.</p>
+<p>Packets that were eligible for forwarding but were rejected by this repeater’s
+configured minimum RSSI, minimum SNR, or region policy. Exhausted flood budgets
+and packet-imposed signal thresholds are normal packet behavior, not
+administrator policy, and are not included. Duplicates, self-addressed packets,
+and packets received while forwarding is disabled are also excluded. Requires
+<code>CAP_STATS</code> and <code>CAP_REPEATER</code>.</p>
 <h3 id="prop-stat-forward-cancelled"><a class="header" href="#prop-stat-forward-cancelled">PROP 4840: <code>PROP_STAT_FORWARD_CANCELLED</code></a></h3>
 <p>Queued forwards cancelled because the destination’s acknowledgement was
 overheard before transmission. Requires <code>CAP_STATS</code> and <code>CAP_REPEATER</code>.</p>

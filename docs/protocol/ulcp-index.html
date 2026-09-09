@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-5f0d90f9.js";
+            window.path_to_searchindex_js = "searchindex-a36d942b.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-438957a9.js"></script>
+        <script src="toc-fed4626c.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -200,14 +200,15 @@
 <tr><td>14</td><td><a href="ulcp-saved-state.html#cmd-restore"><code>CMD_RESTORE</code></a></td><td>Host-&gt;Device</td><td><code>CAP_SAVE</code></td></tr>
 <tr><td>15</td><td><a href="ulcp-saved-state.html#cmd-factory-reset"><code>CMD_FACTORY_RESET</code></a></td><td>Host-&gt;Device</td><td>—</td></tr>
 <tr><td>16</td><td><a href="ulcp-core.html#cmd-reboot"><code>CMD_REBOOT</code></a></td><td>Host-&gt;Device</td><td><code>CAP_REBOOT</code></td></tr>
-<tr><td>17</td><td><a href="ulcp-ble.html#cmd-ble-clear-bonds"><code>CMD_BLE_CLEAR_BONDS</code></a></td><td>Host-&gt;Device</td><td><code>CAP_BLE</code></td></tr>
+<tr><td>19</td><td><a href="ulcp-device.html#cmd-announce"><code>CMD_ANNOUNCE</code></a></td><td>Host-&gt;Device</td><td><code>CAP_ADVERT</code></td></tr>
 <tr><td>21</td><td><a href="ulcp-core.html#cmd-prop-multi-get"><code>CMD_PROP_MULTI_GET</code></a></td><td>Host-&gt;Device</td><td><code>CAP_CMD_MULTI</code></td></tr>
 <tr><td>22</td><td><a href="ulcp-core.html#cmd-prop-multi-set"><code>CMD_PROP_MULTI_SET</code></a></td><td>Host-&gt;Device</td><td><code>CAP_CMD_MULTI</code></td></tr>
 <tr><td>23</td><td><a href="ulcp-core.html#cmd-prop-are"><code>CMD_PROP_ARE</code></a></td><td>Device-&gt;Host</td><td><code>CAP_CMD_MULTI</code></td></tr>
+<tr><td>24</td><td><a href="ulcp-core.html#cmd-session-reset"><code>CMD_SESSION_RESET</code></a></td><td>Device-&gt;Host</td><td>—</td></tr>
 </tbody>
 </table>
 </div>
-<p>Command identifiers are 7-bit; 18–20 and 24–127 are unassigned.</p>
+<p>Command identifiers are 7-bit; 17–18, 20, and 25–127 are unassigned.</p>
 <h2 id="properties-and-streams"><a class="header" href="#properties-and-streams">Properties and Streams</a></h2>
 <p>Identifiers are allocated by state class; see
 <a href="ulcp-core.html#property-allocation">Property Allocation</a>.</p>
@@ -272,6 +273,8 @@
 <tr><td>101</td><td><a href="ulcp-host.html#prop-host-rx-queue-count"><code>PROP_HOST_RX_QUEUE_COUNT</code></a></td><td>Get</td><td><code>CAP_HOST_RX_QUEUE</code></td></tr>
 <tr><td>102</td><td><a href="ulcp-host.html#prop-host-rx-queue-capacity"><code>PROP_HOST_RX_QUEUE_CAPACITY</code></a></td><td>Get, Set</td><td><code>CAP_HOST_RX_QUEUE</code></td></tr>
 <tr><td>103</td><td><a href="ulcp-host.html#prop-host-rx-queue-dropped"><code>PROP_HOST_RX_QUEUE_DROPPED</code></a></td><td>Get</td><td><code>CAP_HOST_RX_QUEUE</code></td></tr>
+<tr><td>104</td><td><a href="ulcp-host.html#prop-host-muted-channels"><code>PROP_HOST_MUTED_CHANNELS</code></a></td><td>Get, Set, Insert, Remove</td><td><code>CAP_HOST_RX_QUEUE</code></td></tr>
+<tr><td>105</td><td><a href="ulcp-host.html#prop-host-muted-peers"><code>PROP_HOST_MUTED_PEERS</code></a></td><td>Get, Set, Insert, Remove</td><td><code>CAP_HOST_RX_QUEUE</code></td></tr>
 <tr><td>113</td><td><a href="ulcp-transport.html#str-radio-raw"><code>STR_PHY_RAW</code></a></td><td>Send, Recv</td><td>—</td></tr>
 <tr><td>4820</td><td><a href="ulcp-radio.html#prop-phy-duty-now"><code>PROP_PHY_DUTY_NOW</code></a></td><td>Get</td><td><code>CAP_PHY_DUTY_LIMIT</code></td></tr>
 <tr><td>4822</td><td><a href="ulcp-radio.html#prop-phy-duty-limit"><code>PROP_PHY_DUTY_LIMIT</code></a></td><td>Get, Set</td><td><code>CAP_PHY_DUTY_LIMIT</code></td></tr>
@@ -292,9 +295,29 @@
 <tr><td>4869</td><td><a href="ulcp-device.html#prop-gnss-ident-precision"><code>PROP_GNSS_IDENT_PRECISION</code></a></td><td>Get, Set</td><td><code>CAP_GNSS</code></td></tr>
 <tr><td>4870</td><td><a href="ulcp-device.html#prop-gnss-time-trust"><code>PROP_GNSS_TIME_TRUST</code></a></td><td>Get, Set</td><td><code>CAP_GNSS</code></td></tr>
 <tr><td>4871</td><td><a href="ulcp-ble.html#prop-ble-enabled"><code>PROP_BLE_ENABLED</code></a></td><td>Get, Set, Is</td><td><code>CAP_BLE</code></td></tr>
-<tr><td>4872</td><td><a href="ulcp-ble.html#prop-ble-bond-count"><code>PROP_BLE_BOND_COUNT</code></a></td><td>Get, Is</td><td><code>CAP_BLE</code></td></tr>
+<tr><td>4872</td><td><a href="ulcp-ble.html#prop-ble-bond-count"><code>PROP_BLE_BOND_COUNT</code></a></td><td>Get, Set, Is</td><td><code>CAP_BLE</code></td></tr>
 <tr><td>4873</td><td><a href="ulcp-ble.html#prop-ble-link"><code>PROP_BLE_LINK</code></a></td><td>Get, Is</td><td><code>CAP_BLE</code></td></tr>
 <tr><td>4874</td><td><a href="ulcp-ble.html#prop-ble-pairing"><code>PROP_BLE_PAIRING</code></a></td><td>Get, Set, Is</td><td><code>CAP_BLE</code></td></tr>
+<tr><td>4880</td><td><a href="ulcp-wifi.html#prop-wifi-enabled"><code>PROP_WIFI_ENABLED</code></a></td><td>Get, Set, Is</td><td><code>CAP_WIFI</code></td></tr>
+<tr><td>4881</td><td><a href="ulcp-wifi.html#prop-wifi-networks"><code>PROP_WIFI_NETWORKS</code></a></td><td>Get, Set, Insert, Remove</td><td><code>CAP_WIFI</code></td></tr>
+<tr><td>4882</td><td><a href="ulcp-wifi.html#prop-wifi-network"><code>PROP_WIFI_NETWORK</code></a></td><td>Get, Set, Is</td><td><code>CAP_WIFI</code></td></tr>
+<tr><td>4883</td><td><a href="ulcp-wifi.html#prop-wifi-scanning"><code>PROP_WIFI_SCANNING</code></a></td><td>Get, Set, Is</td><td><code>CAP_WIFI_SCAN</code></td></tr>
+<tr><td>4884</td><td><a href="ulcp-wifi.html#prop-wifi-scan-results"><code>PROP_WIFI_SCAN_RESULTS</code></a></td><td>Get, Is, Inserted</td><td><code>CAP_WIFI_SCAN</code></td></tr>
+<tr><td>4885</td><td><a href="ulcp-wifi.html#prop-wifi-link"><code>PROP_WIFI_LINK</code></a></td><td>Get, Is</td><td><code>CAP_WIFI</code></td></tr>
+<tr><td>4886</td><td><a href="ulcp-wifi.html#prop-wifi-rssi"><code>PROP_WIFI_RSSI</code></a></td><td>Get</td><td><code>CAP_WIFI</code></td></tr>
+<tr><td>4887</td><td><a href="ulcp-wifi.html#prop-wifi-mac"><code>PROP_WIFI_MAC</code></a></td><td>Get</td><td><code>CAP_WIFI</code></td></tr>
+<tr><td>4896</td><td><a href="ulcp-ip.html#prop-ipv4-state"><code>PROP_IPV4_STATE</code></a></td><td>Get, Is</td><td><code>CAP_IPV4</code></td></tr>
+<tr><td>4897</td><td><a href="ulcp-ip.html#prop-ipv4-config"><code>PROP_IPV4_CONFIG</code></a></td><td>Get, Set</td><td><code>CAP_IPV4</code></td></tr>
+<tr><td>4898</td><td><a href="ulcp-ip.html#prop-ipv4-address"><code>PROP_IPV4_ADDRESS</code></a></td><td>Get, Is</td><td><code>CAP_IPV4</code></td></tr>
+<tr><td>4899</td><td><a href="ulcp-ip.html#prop-ipv6-state"><code>PROP_IPV6_STATE</code></a></td><td>Get, Is</td><td><code>CAP_IPV6</code></td></tr>
+<tr><td>4900</td><td><a href="ulcp-ip.html#prop-ipv6-config"><code>PROP_IPV6_CONFIG</code></a></td><td>Get, Set</td><td><code>CAP_IPV6</code></td></tr>
+<tr><td>4901</td><td><a href="ulcp-ip.html#prop-ipv6-addresses"><code>PROP_IPV6_ADDRESSES</code></a></td><td>Get, Is</td><td><code>CAP_IPV6</code></td></tr>
+<tr><td>4902</td><td><a href="ulcp-ip.html#prop-ip-dns"><code>PROP_IP_DNS</code></a></td><td>Get, Set, Insert, Remove</td><td><code>CAP_IPV4</code> or <code>CAP_IPV6</code></td></tr>
+<tr><td>4903</td><td><a href="ulcp-ip.html#prop-ip-resolvers"><code>PROP_IP_RESOLVERS</code></a></td><td>Get, Is</td><td><code>CAP_IPV4</code> or <code>CAP_IPV6</code></td></tr>
+<tr><td>4912</td><td><a href="ulcp-wifi.html#prop-wifi-ap-enabled"><code>PROP_WIFI_AP_ENABLED</code></a></td><td>Get, Set, Is</td><td><code>CAP_WIFI_AP</code></td></tr>
+<tr><td>4913</td><td><a href="ulcp-wifi.html#prop-wifi-ap-config"><code>PROP_WIFI_AP_CONFIG</code></a></td><td>Get, Set</td><td><code>CAP_WIFI_AP</code></td></tr>
+<tr><td>4914</td><td><a href="ulcp-wifi.html#prop-wifi-ap-state"><code>PROP_WIFI_AP_STATE</code></a></td><td>Get, Is</td><td><code>CAP_WIFI_AP</code></td></tr>
+<tr><td>4915</td><td><a href="ulcp-wifi.html#prop-wifi-ap-clients"><code>PROP_WIFI_AP_CLIENTS</code></a></td><td>Get, Is, Inserted, Removed</td><td><code>CAP_WIFI_AP</code></td></tr>
 </tbody>
 </table>
 </div>
@@ -330,6 +353,11 @@ is in <a href="ulcp-core.html#capabilities">Capabilities</a>.</p>
 <tr><td>50</td><td><code>CAP_BLE</code></td><td><a href="ulcp-ble.html#capabilities">BLE Binding</a></td></tr>
 <tr><td>51</td><td><code>CAP_REBOOT</code></td><td><a href="ulcp-core.html#cmd-reboot">Framing and Common Semantics</a></td></tr>
 <tr><td>52</td><td><code>CAP_STATS</code></td><td><a href="ulcp-radio.html#capabilities">Radio Control</a></td></tr>
+<tr><td>53</td><td><code>CAP_WIFI_SCAN</code></td><td><a href="ulcp-wifi.html#capabilities">Wi-Fi</a></td></tr>
+<tr><td>54</td><td><code>CAP_WIFI</code></td><td><a href="ulcp-wifi.html#capabilities">Wi-Fi</a></td></tr>
+<tr><td>55</td><td><code>CAP_IPV4</code></td><td><a href="ulcp-ip.html#capabilities">IP Connectivity</a></td></tr>
+<tr><td>56</td><td><code>CAP_IPV6</code></td><td><a href="ulcp-ip.html#capabilities">IP Connectivity</a></td></tr>
+<tr><td>57</td><td><code>CAP_WIFI_AP</code></td><td><a href="ulcp-wifi.html#capabilities">Wi-Fi</a></td></tr>
 <tr><td>515</td><td><code>CAP_PHY_LORA</code></td><td><a href="ulcp-radio.html#capabilities">Radio Control</a></td></tr>
 </tbody>
 </table>
@@ -348,9 +376,9 @@ is in <a href="ulcp-core.html#capabilities">Capabilities</a>.</p>
 <tr><td>3</td><td><code>STATUS_INVALID_ARGUMENT</code></td><td>19</td><td><code>STATUS_ALREADY</code></td></tr>
 <tr><td>4</td><td><code>STATUS_INVALID_STATE</code></td><td>20</td><td><code>STATUS_ITEM_NOT_FOUND</code></td></tr>
 <tr><td>5</td><td><code>STATUS_INVALID_COMMAND</code></td><td>21</td><td><code>STATUS_CURSOR_INVALID</code></td></tr>
-<tr><td>7</td><td><code>STATUS_INTERNAL_ERROR</code></td><td>32</td><td><code>STATUS_DUTY_LIMIT</code></td></tr>
-<tr><td>9</td><td><code>STATUS_PARSE_ERROR</code></td><td></td><td></td></tr>
-<tr><td>10</td><td><code>STATUS_IN_PROGRESS</code></td><td></td><td></td></tr>
+<tr><td>7</td><td><code>STATUS_INTERNAL_ERROR</code></td><td>22</td><td><code>STATUS_NOT_PERMITTED</code></td></tr>
+<tr><td>9</td><td><code>STATUS_PARSE_ERROR</code></td><td>23</td><td><code>STATUS_CHANNEL_NOT_FOUND</code></td></tr>
+<tr><td>10</td><td><code>STATUS_IN_PROGRESS</code></td><td>32</td><td><code>STATUS_DUTY_LIMIT</code></td></tr>
 <tr><td>11</td><td><code>STATUS_NOMEM</code></td><td></td><td></td></tr>
 </tbody>
 </table>
@@ -387,6 +415,14 @@ reserved for them.</p>
 <tr><td>Fix quality</td><td>0 none, 1 two-dimensional, 2 three-dimensional</td><td><a href="ulcp-device.html#prop-gnss-fix"><code>PROP_GNSS_FIX</code></a></td></tr>
 <tr><td>Transmit flags</td><td>bit 0 <code>TX_FLAG_NOCCA</code>, bit 1 <code>TX_FLAG_NODUTY</code></td><td><a href="ulcp-transport.html#str-radio-raw"><code>STR_PHY_RAW</code></a></td></tr>
 <tr><td>Receive flags</td><td>bit 0 <code>RX_FLAG_BUFFERED</code>, bit 1 <code>RX_FLAG_ACKED</code>, bit 2 <code>RX_FLAG_SELF_TX</code></td><td><a href="ulcp-transport.html#buffered-metadata">Extended Recv Metadata</a></td></tr>
+<tr><td>Session reset reasons</td><td>0 attached, 1 <code>CMD_RST</code>, 2 <code>CMD_RESTORE</code></td><td><a href="ulcp-core.html#cmd-session-reset"><code>CMD_SESSION_RESET</code></a></td></tr>
+<tr><td>Wi-Fi security modes</td><td>0 <code>WIFI_SEC_OPEN</code>, 1 <code>WIFI_SEC_OWE</code>, 2 <code>WIFI_SEC_WPA2</code>, 3 <code>WIFI_SEC_WPA3</code>, 4 <code>WIFI_SEC_WPA</code>, 5 <code>WIFI_SEC_WEP</code>, 6 <code>WIFI_SEC_WPA2_ENT</code>, 7 <code>WIFI_SEC_WPA3_ENT</code>, 8 <code>WIFI_SEC_WPA3_ENT_192</code></td><td><a href="ulcp-wifi.html#prop-wifi-networks"><code>PROP_WIFI_NETWORKS</code></a></td></tr>
+<tr><td>Wi-Fi link states</td><td>0 <code>WIFI_LINK_DOWN</code>, 1 <code>WIFI_LINK_CONNECTING</code>, 2 <code>WIFI_LINK_UP</code></td><td><a href="ulcp-wifi.html#prop-wifi-link"><code>PROP_WIFI_LINK</code></a></td></tr>
+<tr><td>Wi-Fi link reasons</td><td>0 <code>WIFI_REASON_NONE</code>, 1 <code>WIFI_REASON_NOT_FOUND</code>, 2 <code>WIFI_REASON_AUTH</code>, 3 <code>WIFI_REASON_REJECTED</code>, 4 <code>WIFI_REASON_LOST</code>, 5 <code>WIFI_REASON_OTHER</code></td><td><a href="ulcp-wifi.html#prop-wifi-link"><code>PROP_WIFI_LINK</code></a></td></tr>
+<tr><td>Access point states</td><td>0 <code>WIFI_AP_DOWN</code>, 1 <code>WIFI_AP_UP</code></td><td><a href="ulcp-wifi.html#prop-wifi-ap-state"><code>PROP_WIFI_AP_STATE</code></a></td></tr>
+<tr><td>IP family states</td><td>0 <code>IP_DISABLED</code>, 1 <code>IP_NO_LINK</code>, 2 <code>IP_WAITING</code>, 3 <code>IP_READY</code>, 4 <code>IP_CONFLICT</code></td><td><a href="ulcp-ip.html#prop-ipv4-state"><code>PROP_IPV4_STATE</code></a></td></tr>
+<tr><td>IP configuration methods</td><td>0 <code>IP_METHOD_DISABLED</code>, 1 <code>IP_METHOD_AUTO</code>, 2 <code>IP_METHOD_STATIC</code></td><td><a href="ulcp-ip.html#prop-ipv4-config"><code>PROP_IPV4_CONFIG</code></a></td></tr>
+<tr><td>IPv6 address item kinds</td><td>0 <code>IPV6_ADDRESS</code>, 1 <code>IPV6_ROUTER</code></td><td><a href="ulcp-ip.html#prop-ipv6-addresses"><code>PROP_IPV6_ADDRESSES</code></a></td></tr>
 </tbody>
 </table>
 </div>

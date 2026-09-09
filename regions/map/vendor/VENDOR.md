@@ -33,14 +33,14 @@ the real fixture rather than assumed:
     no such module: rtree
 
 The SQLite project's own WebAssembly distribution includes R-tree, and opens
-the same fixture cleanly. Anything replacing it must be checked the same way —
+the same fixture cleanly. Anything replacing it must be checked the same way—
 a build without R-tree is not a candidate, whatever else it offers.
 
 ## Content-Security-Policy notes
 
 `sqlite3.mjs` fetches `sqlite3.wasm` from its own directory, so `connect-src
 'self'` is sufficient; nothing reaches another origin. Instantiating
-WebAssembly does require `wasm-unsafe-eval` in a strict policy — that is the
+WebAssembly does require `wasm-unsafe-eval` in a strict policy—that is the
 standard directive for running WASM at all and does not permit `eval` of
 JavaScript.
 
@@ -56,7 +56,7 @@ discovering later. `maplibre-gl-worker.mjs` contains
 reached after an attempted dynamic `import()` of a blob URL. That is
 MapLibre's mechanism for loading worker-side plugins registered through
 `addProtocol` and the RTL-text plugin. The viewer registers neither, so the
-path is unreachable in this page — but it is present in shipped code, and a
+path is unreachable in this page—but it is present in shipped code, and a
 policy tight enough to forbid it would break the library the moment anyone
 did register one. The map page therefore does not claim the flasher's
 `script-src 'self'` with nothing else; see the note below.
@@ -67,5 +67,5 @@ did register one. The map page therefore does not claim the flasher's
   `eval` of JavaScript.
 - `worker-src 'self' blob:`, because MapLibre starts its worker from a blob.
 - No `connect-src` beyond `'self'`: the basemap, the database, and the WASM
-  payload all come from this origin. That is the property worth protecting —
+  payload all come from this origin. That is the property worth protecting—
   opening the map tells no third party where you are looking.

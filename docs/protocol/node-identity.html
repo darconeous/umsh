@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-5f0d90f9.js";
+            window.path_to_searchindex_js = "searchindex-a36d942b.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-438957a9.js"></script>
+        <script src="toc-fed4626c.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -175,7 +175,7 @@
                 <div id="mdbook-content" class="content">
                     <main>
                         <h1 id="node-identity"><a class="header" href="#node-identity">Node Identity</a></h1>
-<p>The node identity payload is an application-layer structure carried inside the UMSH payload. Its contents — including the timestamp option below — are not interpreted or required by the MAC layer. The MAC layer itself is timestamp-free (see <a href="security.html#frame-counter">Frame Counter</a>).</p>
+<p>The node identity payload is an application-layer structure carried inside the UMSH payload. Its contents—including the timestamp option below—are not interpreted or required by the MAC layer. The MAC layer itself is timestamp-free (see <a href="security.html#frame-counter">Frame Counter</a>).</p>
 <h2 id="structure"><a class="header" href="#structure">Structure</a></h2>
 <pre><code class="language-text">+------+------+---------+------+-----------+
 | ROLE | CAPS | OPTIONS | 0xFF | SIGNATURE |
@@ -184,25 +184,25 @@
 </code></pre>
 <p>Fields:</p>
 <ul>
-<li><code>ROLE</code> (1 byte) — the node’s <a href="#node-primary-role">primary role</a>.</li>
-<li><code>CAPS</code> (1 byte) — the node’s <a href="#capability-bitmap">capability bitmap</a>.</li>
-<li><code>OPTIONS</code> (variable, optional) — a CoAP-style option list of <a href="#node-identity-options">node identity options</a>, using the same delta-length encoding as <a href="packet-options.html#attribute-encoding">packet options</a>.</li>
-<li><code>0xFF</code> (1 byte, optional) — options-terminator marker. Present only when a signature follows.</li>
-<li><code>SIGNATURE</code> (64 bytes, optional) — EdDSA signature covering <code>ROLE</code> through the <code>0xFF</code> terminator, inclusive.</li>
+<li><code>ROLE</code> (1 byte)—the node’s <a href="#node-primary-role">primary role</a>.</li>
+<li><code>CAPS</code> (1 byte)—the node’s <a href="#capability-bitmap">capability bitmap</a>.</li>
+<li><code>OPTIONS</code> (variable, optional)—a CoAP-style option list of <a href="#node-identity-options">node identity options</a>, using the same delta-length encoding as <a href="packet-options.html#attribute-encoding">packet options</a>.</li>
+<li><code>0xFF</code> (1 byte, optional)—options-terminator marker. Present only when a signature follows.</li>
+<li><code>SIGNATURE</code> (64 bytes, optional)—EdDSA signature covering <code>ROLE</code> through the <code>0xFF</code> terminator, inclusive.</li>
 </ul>
 <p>The smallest node identity payload is two bytes: role and capability bitmap, with no options or signature.</p>
 <h2 id="node-primary-role"><a class="header" href="#node-primary-role">Node Primary Role</a></h2>
 <p>Defined values:</p>
 <ul>
-<li><code>0</code> — Unspecified</li>
-<li><code>1</code> — Repeater</li>
-<li><code>2</code> — Chat</li>
-<li><code>3</code> — Tracker</li>
-<li><code>4</code> — Sensor</li>
-<li><code>5</code> — Bridge</li>
-<li><code>6</code> — Chat Room</li>
-<li><code>7</code> — Temporary Session</li>
-<li>all other values — Reserved</li>
+<li><code>0</code>—Unspecified</li>
+<li><code>1</code>—Repeater</li>
+<li><code>2</code>—Chat</li>
+<li><code>3</code>—Tracker</li>
+<li><code>4</code>—Sensor</li>
+<li><code>5</code>—Bridge</li>
+<li><code>6</code>—Chat Room</li>
+<li><code>7</code>—Temporary Session</li>
+<li>all other values—Reserved</li>
 </ul>
 <h2 id="capability-bitmap"><a class="header" href="#capability-bitmap">Capability Bitmap</a></h2>
 <p>A single byte describing optional feature support, orthogonal to the primary role:</p>
@@ -212,13 +212,13 @@
 +---+---+---+---+---+---+---+---+
 </code></pre>
 <ul>
-<li>bit 0 (<code>REP</code>) — Repeater</li>
-<li>bit 1 (<code>MOB</code>) — Mobile/Handheld (As opposed to “fixed”)</li>
-<li>bit 2 (<code>TXT</code>) — Text Messages</li>
-<li>bit 3 (<code>TLM</code>) — Public Telemetry</li>
-<li>bit 4 (<code>CHR</code>) — Chat Room</li>
-<li>bit 5 (<code>CoA</code>) — CoAP</li>
-<li>bits 6–7 — RESERVED (set to zero; ignore on read)</li>
+<li>bit 0 (<code>REP</code>)—Repeater</li>
+<li>bit 1 (<code>MOB</code>)—Mobile/Handheld (As opposed to “fixed”)</li>
+<li>bit 2 (<code>TXT</code>)—Text Messages</li>
+<li>bit 3 (<code>TLM</code>)—Public Telemetry</li>
+<li>bit 4 (<code>CHR</code>)—Chat Room</li>
+<li>bit 5 (<code>CoA</code>)—CoAP</li>
+<li>bits 6–7—RESERVED (set to zero; ignore on read)</li>
 </ul>
 <p>A node may advertise multiple capabilities independently of its primary role. For example, a node with role <strong>Chat</strong> may also set the <code>REP</code> bit to advertise repeater duty.</p>
 <h2 id="node-identity-options"><a class="header" href="#node-identity-options">Node Identity Options</a></h2>
@@ -245,13 +245,13 @@
 <h3 id="altitude-in-meters-option-2"><a class="header" href="#altitude-in-meters-option-2">Altitude in Meters (option 2)</a></h3>
 <p>The node’s altitude above mean sea level in meters, encoded as a minimal big-endian signed integer (leading <code>0x00</code> and <code>0xFF</code> sign-extension bytes omitted, provided the sign bit of the remaining value is unambiguous). Max length: 4 bytes.</p>
 <h3 id="unix-timestamp-option-3"><a class="header" href="#unix-timestamp-option-3">Unix Timestamp (option 3)</a></h3>
-<p>Seconds since the Unix epoch indicating when this identity payload was generated. Lets a consumer judge how fresh the identity is — most useful when the identity stands alone (e.g. in a QR code), where a stale capture could otherwise be presented indefinitely. Not used by the MAC layer. Encoded as a minimal big-endian unsigned integer (leading zero bytes omitted). Max length: 4 bytes.</p>
+<p>Seconds since the Unix epoch indicating when this identity payload was generated. Lets a consumer judge how fresh the identity is—most useful when the identity stands alone (e.g. in a QR code), where a stale capture could otherwise be presented indefinitely. Not used by the MAC layer. Encoded as a minimal big-endian unsigned integer (leading zero bytes omitted). Max length: 4 bytes.</p>
 <h3 id="supported-regions-option-4"><a class="header" href="#supported-regions-option-4">Supported Regions (option 4)</a></h3>
 <p>For repeaters, the regions the node will flood-forward for, one option per region. Each entry carries the region’s string form—the short code for a region that has one, the region name otherwise—rather than its two-byte <a href="packet-options.html#region-code-encoding">region code</a>: the code is always derivable from the string, while a hash-derived code cannot be turned back into a name. A sender lists at most 10 regions, and the identity payload must still fit its enclosing packet, so a node whose full list does not fit omits regions; the option names regions the node forwards for without promising to name every one. A node that omits the option entirely makes no claim about its regional forwarding policy. Entries carry the capitalization the region was written with, and a receiver comparing them derives their codes, which ignores ASCII case. Max length: 24 bytes per entry, the <a href="packet-options.html#region-code-encoding">bound on region names</a>.</p>
 <h3 id="nonce-option-5"><a class="header" href="#nonce-option-5">Nonce (option 5)</a></h3>
 <p>Copied verbatim from the <a href="mac-commands.html#identity-request-1">Identity Request</a> that solicited this identity payload, letting the requester correlate the response to its request. Present only in responses whose request carried a NONCE option. Length: 4 bytes.</p>
 <h3 id="variable-precision-location-format"><a class="header" href="#variable-precision-location-format">Variable-Precision Location Format</a></h3>
-<p>The node location is encoded as a string of one or more bytes, where each byte narrows the position to a 16×16 sub-grid of the preceding byte’s cell. Additional bytes increase precision; trailing bytes may be omitted to give a coarser — and therefore more privacy-preserving — location.</p>
+<p>The node location is encoded as a string of one or more bytes, where each byte narrows the position to a 16×16 sub-grid of the preceding byte’s cell. Additional bytes increase precision; trailing bytes may be omitted to give a coarser—and therefore more privacy-preserving—location.</p>
 <h4 id="grid-subdivision"><a class="header" href="#grid-subdivision">Grid Subdivision</a></h4>
 <p>Each byte splits its parent cell into a 16×16 grid of children. Within each byte, the high nibble indexes along latitude and the low nibble indexes along longitude:</p>
 <pre><code class="language-text">  7   6   5   4   3   2   1   0
@@ -288,7 +288,7 @@
 <li><code>high_nibble = floor((LAT +  90) / 11.25)</code></li>
 <li><code>low_nibble  = floor((LON + 180) / 22.5)</code></li>
 </ul>
-<p>The same edge cases apply as in the direct form: <code>LON = +180°</code> wraps to nibble 0 naturally via the modulus, but <code>LAT = +90°</code> must be clamped to nibble <code>0xF</code> at every position — the modulus would otherwise wrap it to nibble 0.</p>
+<p>The same edge cases apply as in the direct form: <code>LON = +180°</code> wraps to nibble 0 naturally via the modulus, but <code>LAT = +90°</code> must be clamped to nibble <code>0xF</code> at every position—the modulus would otherwise wrap it to nibble 0.</p>
 <h5 id="worked-example"><a class="header" href="#worked-example">Worked Example</a></h5>
 <p>Encode <code>(LAT, LON) = (37.331°, −121.883°)</code> (San Jose, CA) at 3-byte precision.</p>
 <p>Direct form:</p>
@@ -332,7 +332,7 @@
 </div>
 <p>Longitude cells narrow with latitude, so cells are physically smaller in east-west extent away from the equator.</p>
 <blockquote>
-<p><strong>Comparison with float32:</strong> Two single-precision floats (8 bytes) give non-uniform resolution: ~85 cm latitude and ~1.7 m longitude worst-case near ±90°/±180°, improving to ~1 cm near 0°. At 7 bytes, this encoding achieves ~7.5 × 15 cm uniformly across the globe — better than the float32 worst case while using one fewer byte. At 8 bytes — beyond the 7-byte wire limit, considered here only for an apples-to-apples comparison against the 8 bytes two floats occupy — the cell shrinks to ~5 × 9 mm, better than float32 everywhere.</p>
+<p><strong>Comparison with float32:</strong> Two single-precision floats (8 bytes) give non-uniform resolution: ~85 cm latitude and ~1.7 m longitude worst-case near ±90°/±180°, improving to ~1 cm near 0°. At 7 bytes, this encoding achieves ~7.5 × 15 cm uniformly across the globe—better than the float32 worst case while using one fewer byte. At 8 bytes—beyond the 7-byte wire limit, considered here only for an apples-to-apples comparison against the 8 bytes two floats occupy—the cell shrinks to ~5 × 9 mm, better than float32 everywhere.</p>
 </blockquote>
 <h4 id="properties"><a class="header" href="#properties">Properties</a></h4>
 <ul>
@@ -349,23 +349,23 @@
 <h4 id="location-privacy"><a class="header" href="#location-privacy">Location Privacy</a></h4>
 <p>This section is non-normative implementation guidance for senders, with one exception noted below. Receivers cannot distinguish a diluted position from a true one, so nothing here affects the wire format or interoperability.</p>
 <p>Truncation is the first privacy tool: dropping bytes discloses only a cell. But a cell is a <em>set</em>, and an observer with context can shrink it. If a cell is mostly water and the tip of an isthmus barely pokes into it, reporting that cell effectively reports the isthmus tip, no matter how large the cell is. Truncation alone cannot defend against such priors, because the disclosed region is always aligned to the fixed cell lattice.</p>
-<p>The defense is to add a deliberate position offset before encoding, so that the feasible region becomes the reported cell dilated by the offset’s magnitude — spilling across cell boundaries and decoupling the disclosure from the lattice. Done naively, however, this mechanism leaks <em>more</em> than plain truncation. The recommended construction and the pitfalls it avoids follow.</p>
+<p>The defense is to add a deliberate position offset before encoding, so that the feasible region becomes the reported cell dilated by the offset’s magnitude—spilling across cell boundaries and decoupling the disclosure from the lattice. Done naively, however, this mechanism leaks <em>more</em> than plain truncation. The recommended construction and the pitfalls it avoids follow.</p>
 <h5 id="recommended-construction"><a class="header" href="#recommended-construction">Recommended Construction</a></h5>
 <ol>
 <li><strong>Offset in meters, not degrees.</strong> Draw a planar offset (east and north components in meters) and convert to degrees at the current latitude. An offset specified in degrees gives latitude-dependent, anisotropic protection.</li>
-<li><strong>Uniform distribution.</strong> Draw the offset uniformly, over either a disk of radius <code>R</code> (isotropic) or a box of half-width <code>R</code> (simplest: two independent uniform components taken directly from a keyed hash). A uniform offset makes every position within <code>R</code> of the report equally plausible. A peaked distribution such as a Gaussian defeats the purpose: its density gradient leaves the reported position the single most probable true position, so the report still points at the sender, just fuzzily. The cost of bounded support is that an observer knows the true position is certainly within <code>R</code> of the report — but every bounded distribution shares this, and unbounded tails trade it for occasionally reporting positions an absurd distance away.</li>
+<li><strong>Uniform distribution.</strong> Draw the offset uniformly, over either a disk of radius <code>R</code> (isotropic) or a box of half-width <code>R</code> (simplest: two independent uniform components taken directly from a keyed hash). A uniform offset makes every position within <code>R</code> of the report equally plausible. A peaked distribution such as a Gaussian defeats the purpose: its density gradient leaves the reported position the single most probable true position, so the report still points at the sender, just fuzzily. The cost of bounded support is that an observer knows the true position is certainly within <code>R</code> of the report—but every bounded distribution shares this, and unbounded tails trade it for occasionally reporting positions an absurd distance away.</li>
 <li><strong>Magnitude matched to the published precision.</strong> Choose <code>R</code> between roughly 0.5× and 2× the extent of the cell at the coarsest precision being protected. Much below that range the reported cell almost never differs from the true one and the offset is a placebo; much above it the reports are useless. Note that the offset and truncation are complementary: truncation coarsens in 16× steps, while <code>R</code> tunes ambiguity continuously between those steps.</li>
-<li><strong>Deterministic per place.</strong> Derive the offset from a keyed hash of a secret location-privacy key and the true position quantized to a coarse derivation cell (comparable in extent to <code>R</code>). The same place then always yields the same offset — across reports, reboots, and revisits — with no random-number state to persist and no re-draw event to observe or provoke.</li>
+<li><strong>Deterministic per place.</strong> Derive the offset from a keyed hash of a secret location-privacy key and the true position quantized to a coarse derivation cell (comparable in extent to <code>R</code>). The same place then always yields the same offset—across reports, reboots, and revisits—with no random-number state to persist and no re-draw event to observe or provoke.</li>
 <li><strong>Hysteresis at derivation boundaries.</strong> A device straddling a derivation-cell boundary must not flap between the two derived offsets: keep the current offset until the true position moves well inside a neighboring derivation cell. Flapping hands an observer two independent samples of nearly the same position, and the flapping pattern itself localizes the device to the boundary.</li>
 <li><strong>One diluted position feeds all encodings.</strong> Apply the offset once, to the underlying position, and derive every published precision by truncating that single result. If a coarse broadcast and a fine private message are diluted independently, comparing them yields two samples of the same position.</li>
 </ol>
 <h5 id="the-resampling-trap"><a class="header" href="#the-resampling-trap">The Resampling Trap</a></h5>
-<p>The offset MUST NOT be re-drawn per report. This is the one normative statement in this section, because the failure is worse than doing nothing: fresh noise per report combined with quantization is a dithering scheme. The expected value of the reported cell is a continuous, monotone function of the true position, so an observer averaging repeated reports recovers the position to a precision limited only by the number of samples — below the cell size, without bound. A stationary node adding fresh noise to every identity broadcast discloses <em>more</em> over time than one publishing its true cell.</p>
+<p>The offset MUST NOT be re-drawn per report. This is the one normative statement in this section, because the failure is worse than doing nothing: fresh noise per report combined with quantization is a dithering scheme. The expected value of the reported cell is a continuous, monotone function of the true position, so an observer averaging repeated reports recovers the position to a precision limited only by the number of samples—below the cell size, without bound. A stationary node adding fresh noise to every identity broadcast discloses <em>more</em> over time than one publishing its true cell.</p>
 <p>The intuition that quantization backstops the noise is exactly backwards: deterministic truncation has a hard resolution floor; truncation of freshly-noised input has a soft floor that averages away.</p>
 <h5 id="limits"><a class="header" href="#limits">Limits</a></h5>
 <ul>
 <li><strong>Mobile nodes.</strong> A fixed offset protects a stationary position well. If the device moves while the offset is held, the reported track is the true track translated by a constant vector, and matching the track’s shape against roads or coastlines recovers the offset exactly. For mobile nodes the mechanism obscures where a track is anchored, not its shape; treat it accordingly.</li>
-<li><strong>Ground-truth correlation burns the offset.</strong> Any single correlation between a reported position and the true one — a precise disclosure through another channel, a physical encounter — reveals the offset for as long as it is held. After such an event the privacy key (or derivation input) should be rotated.</li>
+<li><strong>Ground-truth correlation burns the offset.</strong> Any single correlation between a reported position and the true one—a precise disclosure through another channel, a physical encounter—reveals the offset for as long as it is held. After such an event the privacy key (or derivation input) should be rotated.</li>
 <li><strong>Radio-layer localization is out of scope.</strong> The mechanism launders only the advertised location field. Observers in RF range can localize a transmitter by which nodes hear it and at what signal strength, regardless of what its identity payload claims. The mechanism is meaningful against remote consumers of identity payloads, not against nearby receivers.</li>
 </ul>
 <h2 id="signature-usage"><a class="header" href="#signature-usage">Signature Usage</a></h2>

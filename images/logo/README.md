@@ -1,7 +1,7 @@
 # Website logo assets
 
 `umsh-logo-white.svg` and `umsh-logo-orange.svg` are generated from
-`docs/logo/umsh-logo-bw.svg` — the same single path with the fill baked in
+`docs/logo/umsh-logo-bw.svg`—the same single path with the fill baked in
 and Inkscape's editor metadata stripped. Regenerate them if the master
 changes; do not hand-edit the path data.
 

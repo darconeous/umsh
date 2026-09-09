@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-5f0d90f9.js";
+            window.path_to_searchindex_js = "searchindex-a36d942b.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-438957a9.js"></script>
+        <script src="toc-fed4626c.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -175,7 +175,7 @@
                 <div id="mdbook-content" class="content">
                     <main>
                         <h1 id="channel-access"><a class="header" href="#channel-access">Channel Access</a></h1>
-<p>This chapter describes how UMSH nodes contend for channel access before transmitting. These procedures apply to all transmissions — original packets, forwarded packets, and acknowledgments — unless otherwise specified.</p>
+<p>This chapter describes how UMSH nodes contend for channel access before transmitting. These procedures apply to all transmissions—original packets, forwarded packets, and acknowledgments—unless otherwise specified.</p>
 <h2 id="frame-duration"><a class="header" href="#frame-duration">Frame Duration</a></h2>
 <p><strong>T_frame</strong> is the maximum on-air duration of a LoRa frame at the configured channel settings (spreading factor, bandwidth, coding rate, and maximum payload size). T_frame is not a fixed protocol constant; implementations derive it from the channel configuration. All timing parameters in this chapter are expressed as multiples of T_frame.</p>
 <p>For reference, typical T_frame values for a maximum-length (255-byte) packet using common MeshCore-style channel settings:</p>
@@ -252,10 +252,10 @@ delay   = D_ack + W + uniform_random(0, W_jitter)
 </ul>
 <h2 id="ack-protection-interval"><a class="header" href="#ack-protection-interval">ACK Protection Interval</a></h2>
 <p>The final destination of an ack-requested packet transmits its ACK as soon as the packet ends, without performing CAD (see <a href="#immediate-ack-transmission">Immediate ACK Transmission</a>). CAD alone cannot protect that ACK from flood forwarders triggered by the end of the same reception: the contention delay <code>W + uniform_random(0, W_jitter)</code> may be arbitrarily small, CAD detects preamble energy and may miss an ACK already past its preamble, and a forwarder may not be able to hear the destination at all.</p>
-<p><code>D_ack</code> therefore provides deterministic separation. When the packet being flood-forwarded requests an ACK (UNAR or BUAR) and was received with no remaining source-route hops — the conditions under which its destination transmits an immediate ACK — the forwarder MUST delay by at least <code>D_ack</code> before transmitting, in addition to the computed contention delay. <code>D_ack</code> SHOULD cover the destination’s receive-to-transmit turnaround plus the on-air duration of a MAC Ack packet at the configured channel settings. The suggested default is <strong>0.25 × T_frame</strong>; implementations that compute the actual MAC Ack airtime MAY use a tighter bound.</p>
+<p><code>D_ack</code> therefore provides deterministic separation. When the packet being flood-forwarded requests an ACK (UNAR or BUAR) and was received with no remaining source-route hops—the conditions under which its destination transmits an immediate ACK—the forwarder MUST delay by at least <code>D_ack</code> before transmitting, in addition to the computed contention delay. <code>D_ack</code> SHOULD cover the destination’s receive-to-transmit turnaround plus the on-air duration of a MAC Ack packet at the configured channel settings. The suggested default is <strong>0.25 × T_frame</strong>; implementations that compute the actual MAC Ack airtime MAY use a tighter bound.</p>
 <p>A packet received with source-route hops still pending does not elicit an immediate ACK from its destination, so <code>D_ack</code> does not apply when forwarding it.</p>
 <h2 id="immediate-ack-transmission"><a class="header" href="#immediate-ack-transmission">Immediate ACK Transmission</a></h2>
-<p>When a node is the final destination of an ack-requested packet (UNAR or BUAR) and the packet has no remaining source route hops, the node SHOULD transmit the ACK immediately — without performing CAD — provided the radio is available for transmission. This is warranted because the channel is known to have been clear at the moment the received packet ended, and flood forwarders hold their transmissions back by the <a href="#ack-protection-interval">ACK protection interval</a> so the ACK gets first use of the channel.</p>
+<p>When a node is the final destination of an ack-requested packet (UNAR or BUAR) and the packet has no remaining source route hops, the node SHOULD transmit the ACK immediately—without performing CAD—provided the radio is available for transmission. This is warranted because the channel is known to have been clear at the moment the received packet ended, and flood forwarders hold their transmissions back by the <a href="#ack-protection-interval">ACK protection interval</a> so the ACK gets first use of the channel.</p>
 <p>If the radio is not immediately available for transmission, the node SHOULD perform normal CAD and backoff before transmitting the ACK.</p>
 
                     </main>

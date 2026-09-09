@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-5f0d90f9.js";
+            window.path_to_searchindex_js = "searchindex-a36d942b.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-438957a9.js"></script>
+        <script src="toc-fed4626c.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -177,12 +177,12 @@
                         <h1 id="limitations--open-items"><a class="header" href="#limitations--open-items">Limitations &amp; Open Items</a></h1>
 <h2 id="known-limitations"><a class="header" href="#known-limitations">Known Limitations</a></h2>
 <h3 id="no-mac-layer-fragmentation"><a class="header" href="#no-mac-layer-fragmentation">No MAC-Layer Fragmentation</a></h3>
-<p>UMSH intentionally does not define a fragmentation mechanism at the MAC layer. The MAC layer delegates fragmentation to higher-layer protocols carried in the payload (see <a href="introduction.html#layer-separation">Layer Separation</a>). LoRa payloads are typically limited to approximately 200–250 bytes, and UMSH header overhead (FCF, addresses, SECINFO, MIC) consumes a significant portion of this budget. Higher-layer protocols that require payloads larger than a single frame must provide their own segmentation — for example, CoAP block-wise transfer or 6LoWPAN fragmentation.</p>
+<p>UMSH intentionally does not define a fragmentation mechanism at the MAC layer. The MAC layer delegates fragmentation to higher-layer protocols carried in the payload (see <a href="introduction.html#layer-separation">Layer Separation</a>). LoRa payloads are typically limited to approximately 200–250 bytes, and UMSH header overhead (FCF, addresses, SECINFO, MIC) consumes a significant portion of this budget. Higher-layer protocols that require payloads larger than a single frame must provide their own segmentation—for example, CoAP block-wise transfer or 6LoWPAN fragmentation.</p>
 <h3 id="multicast-sender-authentication"><a class="header" href="#multicast-sender-authentication">Multicast Sender Authentication</a></h3>
 <p>Multicast channels use a shared symmetric key. Any node possessing the channel key can send packets with any claimed source address, and other channel members cannot cryptographically verify that the claimed sender actually produced the packet. When the <code>S</code> flag is set, the source public key is carried in the packet and can be used for application-level trust decisions, but the protocol-level MIC authenticates only channel membership, not individual sender identity.</p>
 <p>This is a fundamental property of symmetric-key multicast and is shared by other protocols with similar designs, including MeshCore.</p>
 <h2 id="known-hint-collision-properties"><a class="header" href="#known-hint-collision-properties">Known Hint Collision Properties</a></h2>
-<p>MeshCore originally used 1-byte hints for source, destination, and source-routing addresses, placing the birthday bound at just 16 nodes — far too low for practical networks. UMSH uses 3-byte hints for node addresses and 2-byte hints for router and trace-route addresses.</p>
+<p>MeshCore originally used 1-byte hints for source, destination, and source-routing addresses, placing the birthday bound at just 16 nodes—far too low for practical networks. UMSH uses 3-byte hints for node addresses and 2-byte hints for router and trace-route addresses.</p>
 <p>As a concrete example, consider a regional network of approximately 600 active nodes (roughly the scale of the Oregon MeshCore network, concentrated in the Portland area). The probability of at least one collision among all nodes for a given hint size:</p>
 <div class="table-wrapper">
 <table>
@@ -201,7 +201,7 @@
 <p>With 3-byte hints the collision probability drops to ~1% even in a 600-node regional network. The only remedy for a collision is for one node to generate a new identity (a new Ed25519 keypair), which for a chat node means all peers must re-learn the new public key. The 3-byte size makes this scenario rare.</p>
 <h3 id="router-hints-2-bytes"><a class="header" href="#router-hints-2-bytes">Router hints (2 bytes)</a></h3>
 <p>Router hints are used in source-route and trace-route options. A router hint collision causes an unintended repeater to forward the packet; MIC-based duplicate suppression ensures each repeater forwards a given packet at most once, so collisions add traffic but not loops or incorrect delivery.</p>
-<p>Source routing is an inherently local operation — only repeaters within radio range of the transmitting node can act on the hint. For a local population of ~50 repeaters:</p>
+<p>Source routing is an inherently local operation—only repeaters within radio range of the transmitting node can act on the hint. For a local population of ~50 repeaters:</p>
 <ul>
 <li>1-byte hints: ~46% collision probability</li>
 <li>2-byte hints: ~1.9% collision probability</li>
@@ -210,24 +210,24 @@
 <h2 id="open-issues"><a class="header" href="#open-issues">Open Issues</a></h2>
 <h3 id="intermediate-node-error-feedback"><a class="header" href="#intermediate-node-error-feedback">Intermediate Node Error Feedback</a></h3>
 <h4 id="problem"><a class="header" href="#problem">Problem</a></h4>
-<p>When a packet cannot be delivered — for example, because a bridge’s backhaul link is down, or because a source-routed path is broken — intermediate nodes have no reliable way to inform the original sender. The sender can only detect failure by waiting for a MAC ack that never arrives.</p>
+<p>When a packet cannot be delivered—for example, because a bridge’s backhaul link is down, or because a source-routed path is broken—intermediate nodes have no reliable way to inform the original sender. The sender can only detect failure by waiting for a MAC ack that never arrives.</p>
 <p>This timeout-based detection is slow and provides no diagnostic information: the sender cannot distinguish a slow destination from a broken path.</p>
 <p>Two independent gaps make this hard to address:</p>
 <ul>
 <li>
-<p><strong>Routing</strong>: an intermediate node needs a return path to send anything back. The sender’s 3-byte SRC hint provides a destination address, but that alone is not enough — the error packet needs to know how to get there. Flood routing is not an option: flooding an error response across the mesh in response to a delivery failure would be prohibitively expensive. A return path is only available if the original packet carried a trace route option, whose accumulated hops already describe the return path from the receiver back toward the original sender.</p>
+<p><strong>Routing</strong>: an intermediate node needs a return path to send anything back. The sender’s 3-byte SRC hint provides a destination address, but that alone is not enough—the error packet needs to know how to get there. Flood routing is not an option: flooding an error response across the mesh in response to a delivery failure would be prohibitively expensive. A return path is only available if the original packet carried a trace route option, whose accumulated hops already describe the return path from the receiver back toward the original sender.</p>
 </li>
 <li>
-<p><strong>Authentication</strong>: an intermediate node cannot send an authenticated reply without the sender’s full public key. Any error reply sent without it is unencrypted and unauthenticated. Only the final destination — which has the full source key and performs ECDH — can send a fully authenticated reply.</p>
+<p><strong>Authentication</strong>: an intermediate node cannot send an authenticated reply without the sender’s full public key. Any error reply sent without it is unencrypted and unauthenticated. Only the final destination—which has the full source key and performs ECDH—can send a fully authenticated reply.</p>
 </li>
 </ul>
 <p>Without a trace route, there is no viable return path and no error feedback is possible.</p>
 <h4 id="possible-approach-trace-route-return-path"><a class="header" href="#possible-approach-trace-route-return-path">Possible Approach: Trace-Route Return Path</a></h4>
 <p>If the original packet carries a trace route option, an intermediate node can use the accumulated hops directly as a source route back toward the original sender and emit an error packet along that path, addressed to the sender’s 3-byte SRC hint.</p>
 <p>This is opt-in by the sender: include a trace route to signal willingness to receive error feedback; omit it to suppress errors. No special flag or option is needed. If no trace route is present, the intermediate node has no viable return path and should remain silent.</p>
-<p>The on-wire format for such an error packet would likely be similar or identical to the Hop Signal mechanism described above — a compact notification carrying a signal type and a MIC reference — differing only in that it carries a source route and travels end-to-end rather than remaining local. Defining a single format that covers both cases would reduce protocol surface area.</p>
-<p>Any such error is unencrypted and unauthenticated. Senders MUST treat it as untrusted diagnostic information only — a forged error is equivalent in effect to a dropped packet, which is already in the threat model.</p>
-<p>This remains an open design question. No mechanism is specified in the current version of this protocol. The format and semantics of error reports — error codes, triggering conditions, encoding — have not yet been defined.</p>
+<p>The on-wire format for such an error packet would likely be similar or identical to the Hop Signal mechanism described above—a compact notification carrying a signal type and a MIC reference—differing only in that it carries a source route and travels end-to-end rather than remaining local. Defining a single format that covers both cases would reduce protocol surface area.</p>
+<p>Any such error is unencrypted and unauthenticated. Senders MUST treat it as untrusted diagnostic information only—a forged error is equivalent in effect to a dropped packet, which is already in the threat model.</p>
+<p>This remains an open design question. No mechanism is specified in the current version of this protocol. The format and semantics of error reports—error codes, triggering conditions, encoding—have not yet been defined.</p>
 
                     </main>
 
