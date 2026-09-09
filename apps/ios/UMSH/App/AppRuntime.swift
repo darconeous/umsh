@@ -64,7 +64,7 @@ final class AppRuntime {
     var identityError: IdentityVaultError?
     var isLoadingIdentity = true
     var peers: [PeerSummary] = []
-    /// Every neighbor a router has reported to this phone, with the router
+    /// Every neighbor a repeater has reported to this phone, with the repeater
     /// that said so—nodes the map can place that this phone may never have
     /// heard itself.
     var neighborReports: [PeerRepeaterNeighborReport] = []
@@ -386,7 +386,7 @@ final class AppRuntime {
             updateAlias: updateAlias,
             loadRoute: peerRoute,
             resetRoute: clearPeerRoute,
-            identifyRouter: identifyRouter(_:precededBy:),
+            identifyRepeater: identifyRepeater(_:precededBy:),
             cachedPeerRepeaters: cachedPeerRepeaters,
             loadPeerRepeaters: loadPeerRepeaters(_:cursor:),
             setFavorite: setPeerFavorite,
@@ -2150,7 +2150,7 @@ final class AppRuntime {
             try await radioConnection.requestNearbyIdentities(
                 roleFilter: roleFilter?.roleCode,
                 nodeHint: nil,
-                sourceRoute: vantage?.routers ?? []
+                sourceRoute: vantage?.repeaters ?? []
             )
             return true
         } catch {
@@ -2158,17 +2158,17 @@ final class AppRuntime {
         }
     }
 
-    /// Ask one router named by a route who it is.
+    /// Ask one repeater named by a route who it is.
     ///
     /// A repeater consumes its own hint while forwarding rather than while
     /// receiving, so a request whose route still names it is one it drops.
-    /// The ask is steered to the hop *before* it—`precedingRouters`, which
+    /// The ask is steered to the hop *before* it—`precedingRepeaters`, which
     /// is empty for a first hop, since that one is in direct range by
-    /// construction—and narrowed to the router's own two bytes, so it is
+    /// construction—and narrowed to the repeater's own two bytes, so it is
     /// the only node in that neighborhood that answers.
-    private func identifyRouter(
+    private func identifyRepeater(
         _ hint: MeshRouterHint,
-        precededBy precedingRouters: [MeshRouterHint]
+        precededBy precedingRepeaters: [MeshRouterHint]
     ) async -> Bool {
         guard radioSnapshot.linkState == .attached || radioSnapshot.linkState == .ready,
               radioSnapshot.hostState == .matchesCurrentIdentity
@@ -2177,7 +2177,7 @@ final class AppRuntime {
             try await radioConnection.requestNearbyIdentities(
                 roleFilter: nil,
                 nodeHint: hint.bytes,
-                sourceRoute: precedingRouters.map(\.bytes)
+                sourceRoute: precedingRepeaters.map(\.bytes)
             )
             return true
         } catch {
@@ -3093,7 +3093,7 @@ final class AppRuntime {
 
     // MARK: - Neighboring repeaters
 
-    /// What a router last said about its neighbors, from this phone's own
+    /// What a repeater last said about its neighbors, from this phone's own
     /// store. Nothing goes on the air.
     private func cachedPeerRepeaters(_ peer: PeerSummary) async -> PeerRepeaterListing? {
         guard let applicationStore, let localIdentity,
@@ -3105,8 +3105,8 @@ final class AppRuntime {
         return await listing(from: stored)
     }
 
-    /// Ask a router for one page of its neighbor listing and fold it into
-    /// what this phone holds about that router. The cursor is the caller's:
+    /// Ask a repeater for one page of its neighbor listing and fold it into
+    /// what this phone holds about that repeater. The cursor is the caller's:
     /// none asks for the top of the listing and replaces what was held, one
     /// asks for the page after it and adds to it. Never follows a cursor on
     /// its own.
@@ -3116,12 +3116,12 @@ final class AppRuntime {
     ) async -> PeerRepeatersPageResult {
         guard radioSnapshot.linkState == .attached || radioSnapshot.linkState == .ready else {
             return .unavailable(
-                reason: "Connect a configured companion radio to ask this router."
+                reason: "Connect a configured companion radio to ask this repeater."
             )
         }
         guard radioSnapshot.hostState == .matchesCurrentIdentity else {
             return .unavailable(
-                reason: "Set up this radio for the current phone identity before asking routers."
+                reason: "Set up this radio for the current phone identity before asking repeaters."
             )
         }
         let page: MobileMeshPeerRepeatersPageRecord
@@ -3136,7 +3136,7 @@ final class AppRuntime {
             return .failed
         }
 
-        // The page is authenticated unicast from the router, which is as
+        // The page is authenticated unicast from the repeater, which is as
         // good a hearing as a pong.
         let now = Date()
         await touchLastHeard(peer.identity.canonicalAddress)
@@ -3169,7 +3169,7 @@ final class AppRuntime {
         if let cached = await cachedPeerRepeaters(peer) {
             return .page(cached)
         }
-        // A router this phone holds no row for has nowhere to keep the
+        // A repeater this phone holds no row for has nowhere to keep the
         // listing; the page is still what it said.
         return .page(
             await listing(

@@ -568,7 +568,7 @@ struct PeerPingReply: Equatable, Sendable {
     /// phone's radio: a direct reply is one hop. `nil` when the reply came
     /// source-routed without a trace route—hops it took went unrecorded.
     let hopCount: UInt8?
-    /// Intermediate routers in source-to-destination order, already rendered
+    /// Intermediate repeaters in source-to-destination order, already rendered
     /// by the Rust core. The two endpoints are not included.
     let routeHints: [MeshRouterHint]
     let rssiDBm: Int16?
@@ -592,7 +592,7 @@ struct PeerRoute: Equatable, Sendable {
     }
 
     let kind: Kind
-    /// Routers named by a source route, in send order.
+    /// Repeaters named by a source route, in send order.
     let hints: [MeshRouterHint]
     /// Distance to the peer in hops, the same number a ping reply's hop
     /// count reports: one for a direct peer, repeaters plus one for a source
@@ -611,7 +611,7 @@ struct PeerRoute: Equatable, Sendable {
         kind: .unavailable, hints: [], hopCount: nil, floodHops: nil, floodRegions: []
     )
 
-    /// A source route naming no routers *is* a direct path: the MAC caches the
+    /// A source route naming no repeaters *is* a direct path: the MAC caches the
     /// empty trace a direct reply carried rather than a separate marker.
     var isDirect: Bool {
         kind == .direct || (kind == .source && hints.isEmpty)
@@ -643,27 +643,27 @@ struct SolicitVantage: Hashable, Sendable {
     ///
     /// Snapshotted when the vantage was chosen: the learned route may move
     /// while the sheet is open, and the ask should go where the user aimed it.
-    let routers: [Data]
-    /// The last router the ask passes through, when that is *not* the peer
+    let repeaters: [Data]
+    /// The last repeater the ask passes through, when that is *not* the peer
     /// itself. `nil` means the ask is aimed at the peer, which is what lets the
     /// copy say "at" rather than "near" without overclaiming.
-    let landingRouter: MeshRouterHint?
+    let landingRepeater: MeshRouterHint?
     /// What was known about the peer when the vantage was built. Carried so the
     /// copy can hedge exactly as much as the routing did: aiming at a peer whose
     /// role was never heard is a guess, and reads as one.
     let evidence: RepeaterEvidence
 
-    var landsAtPeer: Bool { landingRouter == nil }
+    var landsAtPeer: Bool { landingRepeater == nil }
 
     /// Derive the vantage for asking near `peer`, or `nil` when there is no
     /// honest way to steer an ask there.
     ///
     /// A cached route excludes its endpoints, so the route *to* a peer stops
-    /// at the last router before it. Landing *at* the peer means appending the
+    /// at the last repeater before it. Landing *at* the peer means appending the
     /// peer's own hint, which is only safe when we have positive evidence it
     /// repeats: the choice is asymmetric. Not appending when the peer does
     /// repeat lands the ask one hop short, which is still useful. Appending
-    /// when it does not kills the ask outright—the router before it looks
+    /// when it does not kills the ask outright—the repeater before it looks
     /// for a next hop that will never forward. So append only on evidence, and
     /// let the copy carry the uncertainty rather than the route.
     init?(peer: PeerSummary, route: PeerRoute?) {
@@ -675,23 +675,23 @@ struct SolicitVantage: Hashable, Sendable {
         case .source where !route.hints.isEmpty:
             let learned = route.hints
             if evidence == .yes {
-                routers = learned.map(\.bytes) + [peerHint]
-                landingRouter = nil
+                repeaters = learned.map(\.bytes) + [peerHint]
+                landingRepeater = nil
             } else {
-                routers = learned.map(\.bytes)
-                landingRouter = learned.last
+                repeaters = learned.map(\.bytes)
+                landingRepeater = learned.last
             }
         case .direct, .source:
-            // Heard directly, so the route names no routers. Asking *through*
+            // Heard directly, so the route names no repeaters. Asking *through*
             // this node is exactly how to reach what sits behind it—the
             // bench case worth having—but only if it forwards at all. When
             // we know it does not, a plain nearby ask already covers it.
             guard evidence != .no else { return nil }
-            routers = [peerHint]
-            landingRouter = nil
+            repeaters = [peerHint]
+            landingRepeater = nil
         case .flood, .unknown, .unavailable:
-            // A flood route counts routers, it does not name them, so there is
-            // nothing to steer with.
+            // A flood route counts its hops, it does not name the repeaters
+            // they crossed, so there is nothing to steer with.
             return nil
         }
 
@@ -724,17 +724,17 @@ enum RouterHintNaming {
     /// The sentence to append wherever a name came from `match`, since a
     /// two-byte hint can never prove which node forwarded a frame.
     static let ambiguityNote =
-        "Router names are matched by a two-byte hint and may not be the node shown."
+        "Repeater names are matched by a two-byte hint and may not be the node shown."
 }
 
-/// One repeater a router reported as its neighbor, from a Peer Repeaters
+/// One repeater a peer reported as its neighbor, from a Peer Repeaters
 /// Response.
 ///
-/// Everything past the hint is optional because the router reports only what
-/// it holds: an identity it heard supplies the name, position, and regions; a
+/// Everything past the hint is optional because the reporting node holds only
+/// so much: an identity it heard supplies the name, position, and regions; a
 /// reception supplies the signal; neither supplies the other.
 struct PeerRepeaterNeighbor: Hashable, Sendable {
-    /// Three bytes when the router's identity table named the node, two
+    /// Three bytes when the reporting node's identity table named the node, two
     /// when only a reception did—all a trace reveals about a transmitter.
     let hint: Data
     /// The hint as the core renders it, so it reads the same as a hint
@@ -852,16 +852,16 @@ struct PeerActions {
     var loadRoute: ((PeerSummary) async -> PeerRoute)? = nil
     /// Discard that route, reporting whether one was held.
     var resetRoute: ((PeerSummary) async -> Bool)? = nil
-    /// Ask one intermediate router on a route to identify itself, given its
-    /// hint and the routers ahead of it in send order.
+    /// Ask one intermediate repeater on a route to identify itself, given its
+    /// hint and the repeaters ahead of it in send order.
     ///
     /// A route names its hops by two bytes and nothing else, so the answer is
     /// the only way to know who is actually carrying the traffic.
-    var identifyRouter: ((MeshRouterHint, [MeshRouterHint]) async -> Bool)? = nil
-    /// What a router last said about its neighbors, from this phone's cache.
+    var identifyRepeater: ((MeshRouterHint, [MeshRouterHint]) async -> Bool)? = nil
+    /// What a repeater last said about its neighbors, from this phone's cache.
     /// Nothing goes on the air.
     var cachedPeerRepeaters: ((PeerSummary) async -> PeerRepeaterListing?)? = nil
-    /// Ask a router for one page of its neighbor listing—the first page
+    /// Ask a repeater for one page of its neighbor listing—the first page
     /// without a cursor, the page after a held one with it. Never follows a
     /// cursor on its own: every page is a tap, because every page costs the
     /// mesh airtime.

@@ -18,9 +18,9 @@ struct PeerDetailView: View {
         } ?? pushedPeer
     }
 
-    /// Whether to offer the router's own account of its neighborhood. See
+    /// Whether to offer the repeater's own account of its neighborhood. See
     /// the Actions section for why evidence short of a denial qualifies.
-    private var offersNeighboringRouters: Bool {
+    private var offersNeighboringRepeaters: Bool {
         actions.loadPeerRepeaters != nil && peer.repeaterEvidence != .no && !peer.isUlcpDevice
     }
 
@@ -92,12 +92,12 @@ struct PeerDetailView: View {
     @State private var route: PeerRoute?
     @State private var isResettingRoute = false
     @State private var routeWasAlreadyClear = false
-    /// A router named by one of this page's paths, pushed from its menu.
-    @State private var routerPendingDetail: PeerSummary?
-    /// Routers this page has asked to identify themselves, by hint. Kept for
+    /// A repeater named by one of this page's paths, pushed from its menu.
+    @State private var repeaterPendingDetail: PeerSummary?
+    /// Repeaters this page has asked to identify themselves, by hint. Kept for
     /// the life of the page only: the answer, when it comes, renames the row
     /// on its own.
-    @State private var askedRouters: Set<Data> = []
+    @State private var askedRepeaters: Set<Data> = []
     /// Opens Discover Peers aimed at this node. Nil when nothing above this
     /// view can present that sheet.
     @Environment(\.askNearbyIdentities) private var askNearbyIdentities
@@ -246,7 +246,7 @@ struct PeerDetailView: View {
             }
 
             if actions.startConversation != nil || actions.ping != nil
-                || actions.manageDevice != nil || offersNeighboringRouters {
+                || actions.manageDevice != nil || offersNeighboringRepeaters {
                 Section("Actions") {
                     HStack(spacing: 12) {
                         if actions.startConversation != nil {
@@ -324,7 +324,7 @@ struct PeerDetailView: View {
                     // stays offered: a hint someone's trace named is very
                     // likely a repeater, and hiding the ask there hides it
                     // where it is most wanted.
-                    if offersNeighboringRouters {
+                    if offersNeighboringRepeaters {
                         NavigationLink {
                             PeerRepeatersScreen(
                                 peer: peer,
@@ -456,11 +456,11 @@ struct PeerDetailView: View {
                 )
             }
         }
-        // A router named by one of this page's paths. Pushing this view onto
+        // A repeater named by one of this page's paths. Pushing this view onto
         // itself is safe: it re-resolves its peer by address every render.
-        .navigationDestination(item: $routerPendingDetail) { router in
+        .navigationDestination(item: $repeaterPendingDetail) { repeater in
             PeerDetailView(
-                peer: router,
+                peer: repeater,
                 radioSnapshot: $radioSnapshot,
                 conversations: $conversations,
                 actions: actions,
@@ -895,7 +895,7 @@ struct PeerDetailView: View {
         case .unknown:
             return "Nothing learned yet. Ping or message this node to teach this phone a path, then ask from here."
         case .flood:
-            return "A flooded route counts routers without naming them, so there is no path to steer down. Ping this node to learn one."
+            return "A flooded route counts hops without naming the repeaters it crossed, so there is no path to steer down. Ping this node to learn one."
         case .direct, .source:
             return "This node is in direct range and does not repeat, so asking nearby already reaches everything it could."
         }
@@ -960,7 +960,7 @@ struct PeerDetailView: View {
     }
 
     /// The route a ping reply travelled, one node per line. Intermediate
-    /// routers are identified only by a two-byte hint, so any name shown for
+    /// repeaters are identified only by a two-byte hint, so any name shown for
     /// one is a guess drawn from the nodes this phone already knows.
     ///
     /// Emitted as sibling rows rather than a stack inside one row, matching
@@ -981,7 +981,7 @@ struct PeerDetailView: View {
 
     /// One line per node, shared by the ping result and the cached route.
     ///
-    /// An intermediate router carries a menu, since a two-byte hint is the
+    /// An intermediate repeater carries a menu, since a two-byte hint is the
     /// most a route ever says about one and the node behind it can be asked.
     @ViewBuilder
     private func routeHopRows(_ hops: [RouteHop]) -> some View {
@@ -1005,7 +1005,7 @@ struct PeerDetailView: View {
                     // instead of a row. Left alone, the lift takes the list
                     // cell with its insets, which is what a row should do.
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .contextMenu { routerHopMenu(hop) }
+                    .contextMenu { repeaterHopMenu(hop) }
             }
         }
         if hops.contains(where: \.isNamedByHint) {
@@ -1028,8 +1028,8 @@ struct PeerDetailView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
-                if let hint = hop.hint, askedRouters.contains(hint.bytes) {
-                    // A router hint names one node, so the responder answers
+                if let hint = hop.hint, askedRepeaters.contains(hint.bytes) {
+                    // A repeater hint names one node, so the responder answers
                     // at once rather than holding its reply the way it does
                     // for an ask a crowd might answer. What is left is the
                     // round trip: several LoRa hops, each with its own
@@ -1043,26 +1043,26 @@ struct PeerDetailView: View {
         .accessibilityElement(children: .combine)
     }
 
-    /// What can be done about one router on a path. Empty for the endpoints
+    /// What can be done about one repeater on a path. Empty for the endpoints
     /// and for hops the reply only counted, which leaves those rows with no
     /// menu at all.
     @ViewBuilder
-    private func routerHopMenu(_ hop: RouteHop) -> some View {
+    private func repeaterHopMenu(_ hop: RouteHop) -> some View {
         if let hint = hop.hint {
             if let named = hop.named {
                 Button {
-                    routerPendingDetail = named
+                    repeaterPendingDetail = named
                 } label: {
                     Label("See node", systemImage: "person.crop.circle")
                 }
             }
-            if let identifyRouter = actions.identifyRouter {
+            if let identifyRepeater = actions.identifyRepeater {
                 Button {
                     Task {
                         // Marked only once the radio has it, so the caption
                         // never claims an ask that never went out.
-                        guard await identifyRouter(hint, hop.precedingRouters) else { return }
-                        askedRouters.insert(hint.bytes)
+                        guard await identifyRepeater(hint, hop.precedingRepeaters) else { return }
+                        askedRepeaters.insert(hint.bytes)
                         // The caption is a timed state, not a latched one, and
                         // this is how long a round trip is worth waiting on: a
                         // hint-filtered reply is sent immediately, so what is
@@ -1072,7 +1072,7 @@ struct PeerDetailView: View {
                         // a name would suppress the caption exactly when a
                         // named-by-guess row is asked to confirm itself.
                         try? await Task.sleep(for: .seconds(15))
-                        askedRouters.remove(hint.bytes)
+                        askedRepeaters.remove(hint.bytes)
                     }
                 } label: {
                     Label("Discover", systemImage: "wave.3.right")
@@ -1089,20 +1089,20 @@ struct PeerDetailView: View {
     }
 
     private func routeHops(for reply: PeerPingReply) -> [RouteHop] {
-        // Nothing to draw when the reply carried neither routers nor a hop
+        // Nothing to draw when the reply carried neither repeaters nor a hop
         // count: an empty list is not evidence of a direct path.
         guard !reply.routeHints.isEmpty || reply.hopCount != nil else { return [] }
         var hops = [originHop]
-        hops.append(contentsOf: routerHops(reply.routeHints))
+        hops.append(contentsOf: repeaterHops(reply.routeHints))
 
-        // A traced reply names every router it crossed; a flooded one only
+        // A traced reply names every repeater it crossed; a flooded one only
         // counts them. Stand in for the difference rather than letting a
         // counted-but-unnamed hop read as a direct link.
         let unnamed = reply.hopCount.map { Int($0) - 1 - reply.routeHints.count } ?? 0
         if unnamed > 0 {
             hops.append(
                 RouteHop(
-                    title: unnamed == 1 ? "One unnamed router" : "\(unnamed) unnamed routers",
+                    title: unnamed == 1 ? "One unnamed repeater" : "\(unnamed) unnamed repeaters",
                     detail: "Counted by the reply, but not identified",
                     symbolName: "questionmark.circle"
                 )
@@ -1116,7 +1116,7 @@ struct PeerDetailView: View {
     /// The same picture for the route the MAC has cached: what the *next*
     /// frame will do, rather than what the last reply did.
     private func cachedRouteHops(_ route: PeerRoute) -> [RouteHop] {
-        [originHop] + routerHops(route.hints) + [destinationHop(isDirect: route.isDirect)]
+        [originHop] + repeaterHops(route.hints) + [destinationHop(isDirect: route.isDirect)]
     }
 
     private var originHop: RouteHop {
@@ -1131,35 +1131,35 @@ struct PeerDetailView: View {
         RouteHop(
             title: displayedName,
             detail: isDirect
-                ? "\(peer.identity.hint.text) · direct, no routers"
+                ? "\(peer.identity.hint.text) · direct, one hop"
                 : peer.identity.hint.text,
             symbolName: "target"
         )
     }
 
-    /// Put what name we can to one router hint. A hint is 16 bits of a public
+    /// Put what name we can to one repeater hint. A hint is 16 bits of a public
     /// key, so it narrows the field rather than identifying a node: a single
     /// match is named, several matches are counted, and a match that only
     /// exists among repeater-capable nodes is preferred over a bare one.
-    private func routerHop(_ hint: MeshRouterHint, precededBy preceding: [MeshRouterHint]) -> RouteHop {
+    private func repeaterHop(_ hint: MeshRouterHint, precededBy preceding: [MeshRouterHint]) -> RouteHop {
         guard let named = RouterHintNaming.match(hint, among: actions.knownPeers) else {
             let candidates = actions.knownPeers.filter { hint.matches($0.identity) }
             let repeaters = candidates.filter(\.isLikelyRepeater)
             let detail: String
             switch (candidates.count, repeaters.count) {
             case (0, _):
-                detail = "Router · not a node this phone knows"
+                detail = "Repeater · not a node this phone knows"
             case let (_, matched) where matched > 1:
-                detail = "Router · matches \(matched) known repeaters"
+                detail = "Repeater · matches \(matched) known repeaters"
             case let (total, _):
-                detail = "Router · matches \(total) known nodes"
+                detail = "Repeater · matches \(total) known nodes"
             }
             return RouteHop(
                 title: hint.text,
                 detail: detail,
                 symbolName: "antenna.radiowaves.left.and.right",
                 hint: hint,
-                precedingRouters: preceding
+                precedingRepeaters: preceding
             )
         }
 
@@ -1172,14 +1172,14 @@ struct PeerDetailView: View {
             isNamedByHint: true,
             hint: hint,
             named: named,
-            precedingRouters: preceding
+            precedingRepeaters: preceding
         )
     }
 
-    /// The routers on a path, each told which ones come before it.
-    private func routerHops(_ hints: [MeshRouterHint]) -> [RouteHop] {
+    /// The repeaters on a path, each told which ones come before it.
+    private func repeaterHops(_ hints: [MeshRouterHint]) -> [RouteHop] {
         hints.enumerated().map { index, hint in
-            routerHop(hint, precededBy: Array(hints.prefix(index)))
+            repeaterHop(hint, precededBy: Array(hints.prefix(index)))
         }
     }
 
@@ -1193,19 +1193,19 @@ private struct RouteHop {
     let title: String
     let detail: String?
     let symbolName: String
-    /// Whether `title` is a name guessed from a router hint rather than a
+    /// Whether `title` is a name guessed from a repeater hint rather than a
     /// node this phone addressed directly.
     var isNamedByHint = false
     /// The hint this row was drawn from, when the row is an intermediate
-    /// router. Nil for the two endpoints and for hops that were only counted,
+    /// repeater. Nil for the two endpoints and for hops that were only counted,
     /// which is what scopes the row's menu to nodes there is something to ask.
     var hint: MeshRouterHint?
     /// The node the hint most plausibly names, if any—the same guess that
     /// produced `title`, kept rather than flattened into it.
     var named: PeerSummary?
-    /// The routers ahead of this one, in send order: the path an ask has to be
-    /// steered down to land one hop short, where this router can answer it.
-    var precedingRouters: [MeshRouterHint] = []
+    /// The repeaters ahead of this one, in send order: the path an ask has to be
+    /// steered down to land one hop short, where this repeater can answer it.
+    var precedingRepeaters: [MeshRouterHint] = []
 }
 
 /// An icon-and-text value for the trailing side of a `LabeledContent` row.

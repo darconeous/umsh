@@ -198,8 +198,8 @@ struct DiscoverPeersView: View {
     }
 
     private static func vantageLabel(_ vantage: SolicitVantage) -> String {
-        let hops = vantage.routers.count
-        return "Via \(hops) \(hops == 1 ? "router" : "routers") to \(vantage.peerName)"
+        let hops = vantage.repeaters.count
+        return "\(hops) \(hops == 1 ? "hop" : "hops") to \(vantage.peerName)"
     }
 
     private var askButtonTitle: String {
@@ -236,7 +236,7 @@ struct DiscoverPeersView: View {
         guard let vantage else { return nil }
         // Hops to the landing node, which is the route's last hint: one
         // transmission per hint.
-        let hops = vantage.routers.count == 1 ? "1 hop" : "\(vantage.routers.count) hops"
+        let hops = vantage.repeaters.count == 1 ? "1 hop" : "\(vantage.repeaters.count) hops"
         switch (vantage.landsAtPeer, vantage.evidence) {
         case (true, .yes):
             return "Sent \(hops) to \(vantage.peerName), which answers along with whatever else is in range of it—not of this phone."
@@ -245,9 +245,9 @@ struct DiscoverPeersView: View {
             // not forward, the ask simply goes unanswered.
             return "Sent \(hops) to \(vantage.peerName). This phone has never heard what \(vantage.peerName) is, so this only reaches anything if it forwards traffic; if it does not, nothing answers."
         case (false, _):
-            guard let landing = vantage.landingRouter else { return nil }
+            guard let landing = vantage.landingRepeater else { return nil }
             let name = RouterHintNaming.label(landing, among: peerActions.knownPeers)
-            return "This phone has no evidence \(vantage.peerName) repeats, so the ask stops at \(name), the last router on the way there, and is answered by whatever is in range of it. \(RouterHintNaming.ambiguityNote)"
+            return "This phone has no evidence \(vantage.peerName) repeats, so the ask stops at \(name), the last repeater on the way there, and is answered by whatever is in range of it. \(RouterHintNaming.ambiguityNote)"
         }
     }
 
