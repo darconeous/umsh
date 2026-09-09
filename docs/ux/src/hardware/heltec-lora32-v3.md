@@ -49,19 +49,21 @@ the action visible before it happens.
 
 ### Display attention
 
-The panel is emissive, so a lapse actually powers it down: dimmed at seven
-seconds as a warning, dark at ten. A pairing window holds it awake for its whole
-duration, because the OLED is the only place the pairing PIN is ever shown.
+The panel is emissive, so a lapse actually powers it down: it starts fading at
+twenty seconds as a warning, and is dark at thirty. A pairing window holds it
+awake for its whole duration, because the OLED is the only place the pairing PIN
+is ever shown.
 
 Battery samples and bond-count changes redraw the panel while it is lit but
 never light it—the battery is sampled on a timer, so treating a sample as
 attention would keep the display on forever. Button presses and BLE
 connection-state changes do wake it.
 
-A gesture that begins against a dark panel only relights it and is otherwise
-consumed. Waking happens on the press, and the panel is redrawn before it is
-switched on, so a stale frame is never visible. Waking always lands on the
-status page.
+A gesture that begins after the panel has started to fade only brings it back to
+full and is otherwise consumed—a press is how the user answers the fade, and
+answering it should not also move the menu. Waking happens on the press, and the
+panel is redrawn before it is switched on, so a stale frame is never visible.
+Waking always lands on the status page.
 
 ### Power off
 

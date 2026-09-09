@@ -648,10 +648,12 @@ static UI_WAKE: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 static UI_INPUT_CH: Channel<CriticalSectionRawMutex, UiInput, 8> = Channel::new();
 /// Result of a menu action, to be shown on the status page.
 static UI_NOTICE: Signal<CriticalSectionRawMutex, UiNotice> = Signal::new();
-/// Whether the panel is currently powered off. Published by the display
-/// task; read by the button task, which gates a gesture on the state at
-/// the press that began it.
-static SCREEN_OFF: AtomicBool = AtomicBool::new(false);
+/// Whether the panel has faded—dimming toward its floor, resting
+/// there, or powered off. Published by the display task; read by the
+/// button task, which gates a gesture on the state at the press that
+/// began it, so a press that answers the fade brings the panel back and
+/// goes no further.
+static SCREEN_FADED: AtomicBool = AtomicBool::new(false);
 /// The four-second power-off hold fired: button task → heartbeat task,
 /// which owns the shutdown sequence (deep sleep through its `Rtc`, or
 /// a PMIC power-off on `pmic-axp2101` boards).
@@ -3248,7 +3250,7 @@ async fn display_task(mut display: Display, #[cfg(not(feature = "pmic-axp2101"))
         // agreement.
         let now = Instant::now().as_millis();
         let mut transition = attention.set_hold(HoldReason::Pairing, pairing_window_open(), now);
-        SCREEN_OFF.store(attention.is_lapsed(), Ordering::Release);
+        SCREEN_FADED.store(attention.is_faded(), Ordering::Release);
 
         // A panel about to be powered on needs a frame drawn into it
         // first, whether or not an arm below asks for one.
@@ -3396,10 +3398,12 @@ async fn display_task(mut display: Display, #[cfg(not(feature = "pmic-axp2101"))
 /// hold released by the user goes back, and a continuing four-second
 /// hold powers the board off.
 ///
-/// A gesture that begins against a dark panel only relights it: the user
-/// cannot have meant to act on something they could not see. The
-/// power-off hold is the sole exception, since a device that has gone
-/// dark still has to be switchable-off.
+/// A gesture that begins once the panel has started to fade only brings
+/// it back to full: against a dark panel the user cannot have meant to
+/// act on something they could not see, and against a fading one the
+/// press is the answer to the fade's own question. The power-off hold is
+/// the sole exception, since a device that has gone dark still has to be
+/// switchable-off.
 #[embassy_executor::task]
 async fn button_task(mut button: Input<'static>) {
     const DEBOUNCE: Duration = Duration::from_millis(30);
@@ -3448,7 +3452,10 @@ async fn button_task(mut button: Input<'static>) {
                         // press, not on the resolved gesture, so the
                         // panel is already lit while the user is still
                         // deciding what the press will become.
-                        gate.set(GateReason::ScreenOff, SCREEN_OFF.load(Ordering::Acquire));
+                        gate.set(
+                            GateReason::ScreenFaded,
+                            SCREEN_FADED.load(Ordering::Acquire),
+                        );
                         gate.on_press();
                         UI_WAKE.signal(());
                     }

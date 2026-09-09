@@ -1235,14 +1235,18 @@ mod firmware {
     #[cfg(feature = "display-epd")]
     static BACKLIGHT_CHANGED: Signal<ThreadModeRawMutex, ()> = Signal::new();
 
-    /// Whether the emissive panel has lapsed dark.
+    /// Whether the emissive panel has faded—dimming toward its floor,
+    /// resting there, or lapsed dark.
     ///
     /// Published by the display task and read by the button task, which
-    /// latches it on the press edge so the press that lights the panel is
-    /// not also treated as navigation. Boards with a bistable panel never
-    /// set it: they have nothing to wake.
+    /// latches it on the press edge so the press that brings the panel
+    /// back is not also treated as navigation. It goes true at the *first*
+    /// step of the fall, not at the lapse: the fade is the device asking
+    /// whether anyone is still there, and a press has to be able to answer
+    /// it without also moving the menu. Boards with a bistable panel never
+    /// set it: they have nothing to restore.
     #[cfg(feature = "display-oled")]
-    static SCREEN_OFF: AtomicBool = AtomicBool::new(false);
+    static SCREEN_FADED: AtomicBool = AtomicBool::new(false);
     /// Asks the emissive panel to come back on. Distinct from
     /// [`UI_REFRESH`], which changes what is drawn but must never light a
     /// panel the user did not touch.
@@ -3816,11 +3820,14 @@ mod firmware {
                             // Read on the press edge, not at the last loop
                             // iteration: this task can park for a minute
                             // awaiting an edge, and both an alert starting
-                            // and the panel lapsing dark happen during
+                            // and the panel fading out happen during
                             // exactly such a park.
                             gate.set(GateReason::AlertActive, alert_active());
                             #[cfg(feature = "display-oled")]
-                            gate.set(GateReason::ScreenOff, SCREEN_OFF.load(Ordering::Acquire));
+                            gate.set(
+                                GateReason::ScreenFaded,
+                                SCREEN_FADED.load(Ordering::Acquire),
+                            );
                             gate.on_press();
                             // Wake on the press, not on the resolved
                             // gesture, so the panel is already lit while
@@ -3902,7 +3909,10 @@ mod firmware {
 
             gate.set(GateReason::AlertActive, alert_active());
             #[cfg(feature = "display-oled")]
-            gate.set(GateReason::ScreenOff, SCREEN_OFF.load(Ordering::Acquire));
+            gate.set(
+                GateReason::ScreenFaded,
+                SCREEN_FADED.load(Ordering::Acquire),
+            );
             gate.on_press();
             // Wake on the press, not on the release, so the panel is lit
             // while the user is still deciding how long to hold.
@@ -3942,8 +3952,8 @@ mod firmware {
     /// Nothing here is a chord: a pad key means one thing, so there is
     /// no recognizer and no timing to get wrong. [`Gate`] still decides
     /// what a press means, by the same alert-cancel and wake-the-panel
-    /// rules the button obeys—a press against a dark panel lights it
-    /// and goes no further, whichever control it arrived on.
+    /// rules the button obeys—a press against a faded panel brings it
+    /// back and goes no further, whichever control it arrived on.
     ///
     /// One key at a time: the task waits out the release of whichever
     /// key it acted on before looking at the others again, which is what
@@ -3985,7 +3995,10 @@ mod firmware {
 
             gate.set(GateReason::AlertActive, alert_active());
             #[cfg(feature = "display-oled")]
-            gate.set(GateReason::ScreenOff, SCREEN_OFF.load(Ordering::Acquire));
+            gate.set(
+                GateReason::ScreenFaded,
+                SCREEN_FADED.load(Ordering::Acquire),
+            );
             gate.on_press();
             #[cfg(feature = "display-oled")]
             UI_WAKE.signal(());
@@ -4143,7 +4156,7 @@ mod firmware {
             let now = Instant::now().as_millis();
             let pairing_hold = attention.set_hold(HoldReason::Pairing, pairing_window_open(), now);
             let alert_hold = attention.set_hold(HoldReason::Alert, alert_active(), now);
-            SCREEN_OFF.store(attention.is_lapsed(), Ordering::Release);
+            SCREEN_FADED.store(attention.is_faded(), Ordering::Release);
 
             let mut transition = pairing_hold.or(alert_hold);
             // A panel about to be powered on needs a frame drawn into it

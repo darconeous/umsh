@@ -88,18 +88,22 @@ A level returns on the first quiet sample after unplugging.
 
 ### Display attention
 
-The panel is emissive, so a lapse actually powers it down: dimmed at seven
-seconds as a warning, dark at ten. A pairing window holds it awake for its whole
-duration, because the OLED is the only place the pairing PIN is ever shown, and a
-running locate alert holds it awake for the same reason it holds the buzzer.
+The panel is emissive, so a lapse actually powers it down: it starts fading at
+twenty seconds as a warning, and is dark at thirty. A pairing window holds it
+awake for its whole duration, because the OLED is the only place the pairing PIN
+is ever shown, and a running locate alert holds it awake for the same reason it
+holds the buzzer.
 
-A press that begins against a dark panel only relights it and is otherwise
-consumed—on the pad as much as on the button, since the rule is about what the
-user could see, not about which control they reached for. Waking happens on the
-press, not on the resolved gesture, so the panel is already lit while the user
-is still deciding what a button press will become; the frame is redrawn before
-the panel is switched on, so a stale frame is never visible. Waking always lands
-on the status page.
+A press that begins after the panel has started to fade only brings it back to
+full and is otherwise consumed—on the pad as much as on the button, since the
+rule is about whether the device still had the user's attention, not about which
+control they reached for. That covers the fade as well as the dark: a screen on
+its way down is asking whether anyone is still there, and a press is how the
+user answers without also moving the menu. Waking happens on the press, not on
+the resolved gesture, so the panel is already lit while the user is still
+deciding what a button press will become; the frame is redrawn before the panel
+is switched on, so a stale frame is never visible. Waking always lands on the
+status page.
 
 Battery readings never light the panel—the battery is sampled on a timer, and
 treating a timed sample as attention would keep the display on forever. When the

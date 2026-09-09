@@ -50,14 +50,25 @@ has to stay readable for the whole window. An ordinary connected or attached
 state is not such a condition—a device that holds its display awake whenever a
 companion is connected has no display timeout at all.
 
-### Input against a lapsed display
+### Input against a fading or lapsed display
 
-A gesture that begins while the display is dark only brings it back. The user
-cannot have meant to act on something they could not see, so the whole gesture
-is consumed, not just its first press. Decide this at the press that starts the
-gesture rather than at the event that ends it: a double-click begun in the dark
-resolves after the panel is already lit, and judging it late would both wake the
-display and activate something.
+A gesture that begins after an emissive panel has started to fade only brings
+it back. The whole gesture is consumed, not just its first press.
+
+The rule starts at the **first step of the fade**, not at the dark. Against a
+dark panel the reason is that the user cannot have meant to act on something
+they could not see. Against a fading one it is that the fade is a question—is
+anyone still there?—and a press is the only way to answer it. A user who wants
+to keep reading has no other way to say so, and charging them a menu move for
+saying it turns the warning into a trap.
+
+A persistent panel has no such rule. Its lapse leaves a readable home page on
+the glass, so a press against it is a press against something the user can see,
+and it is delivered.
+
+Decide this at the press that starts the gesture rather than at the event that
+ends it: a double-click begun in the dark resolves after the panel is already
+lit, and judging it late would both wake the display and activate something.
 
 Wake on the press rather than the release, so the panel is legible while the
 user is still deciding what the press will become.

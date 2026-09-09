@@ -229,6 +229,22 @@ impl Attention {
         matches!(self.state, DisplayState::Lapsed)
     }
 
+    /// True once the panel has stopped being looked at: an emissive one
+    /// is falling toward its dim floor, resting on it, or already dark.
+    ///
+    /// This, and not [`is_lapsed`](Self::is_lapsed), is the condition
+    /// under which a press means *stay* rather than *act*. The fade is
+    /// the device asking whether anyone is still there, and the press is
+    /// the answer; taking it as navigation as well would move the menu
+    /// under someone who only meant to keep the screen. A user who wants
+    /// to hold the display open has no other way to say so.
+    ///
+    /// Persistent panels never dim, so for them this is exactly
+    /// [`is_lapsed`](Self::is_lapsed).
+    pub fn is_faded(&self) -> bool {
+        !matches!(self.state, DisplayState::Active)
+    }
+
     /// Whether the panel can show a redraw right now.
     ///
     /// False only for an emissive panel that has been powered off:
@@ -441,6 +457,25 @@ mod tests {
         assert_eq!(a.poll(30_000), Some(Transition::Lapsed));
         assert_eq!(a.state(), DisplayState::Lapsed);
         assert_eq!(a.next_deadline(), None);
+    }
+
+    /// A press is spent bringing the panel back from the first step of
+    /// the fall, not only from the dark—otherwise answering the fade
+    /// would also act on whatever the fade caught the user in the middle
+    /// of reading.
+    #[test]
+    fn the_panel_counts_as_faded_from_the_first_step_of_the_fall() {
+        let mut a = oled();
+        assert!(!a.is_faded());
+        assert_eq!(a.poll(20_000), Some(Transition::Dimming));
+        assert!(a.is_faded());
+        assert!(!a.is_lapsed(), "still lit, just on the way down");
+
+        assert_eq!(a.wake(21_000), Some(Transition::Woke));
+        assert!(!a.is_faded());
+
+        assert_eq!(a.poll(51_000), Some(Transition::Lapsed));
+        assert!(a.is_faded());
     }
 
     /// The whole point of the ramp: a fall the eye reads as a fade rather

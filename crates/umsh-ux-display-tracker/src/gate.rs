@@ -3,8 +3,10 @@
 //!
 //! Three conditions make a gesture unsafe to act on literally:
 //!
-//! - [`GateReason::ScreenOff`]—the user cannot see what they would be
-//!   acting on, so the press only brings the display back.
+//! - [`GateReason::ScreenFaded`]—the display has begun to fade, or has
+//!   gone dark, so the press only brings it back. A faded panel is the
+//!   device asking whether anyone is still there, and a press is how the
+//!   user says so without also acting on what is on screen.
 //! - [`GateReason::AlertActive`]—a locate alert is running, and
 //!   whoever just found the device meant to silence it, not to navigate
 //!   its menus.
@@ -20,10 +22,10 @@
 //! # Latching
 //!
 //! The decision is latched at the **press** that starts a gesture, not
-//! at the event that ends it. A double-click begun against a dark panel
+//! at the event that ends it. A double-click begun against a faded panel
 //! resolves several hundred milliseconds later, by which time the panel
-//! is lit again; without the latch it would both wake the display and
-//! select something. Feed [`Gate::on_press`] on each press edge and
+//! is back at full; without the latch it would both restore the display
+//! and select something. Feed [`Gate::on_press`] on each press edge and
 //! [`Gate::settle`] once the recognizer comes to rest, and the whole
 //! chord is judged by the conditions that held when it began.
 
@@ -32,8 +34,11 @@ use umsh_ux_tracker::button::ButtonEvent;
 /// A condition that changes what a gesture means.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GateReason {
-    /// An emissive panel has been powered off.
-    ScreenOff,
+    /// The display has stopped being looked at: an emissive panel is
+    /// falling toward its dim floor, resting on it, or powered off.
+    /// [`Attention::is_faded`](crate::attention::Attention::is_faded)
+    /// is the source.
+    ScreenFaded,
     /// A locate alert is running.
     AlertActive,
     /// A persistent panel has not finished drawing.
@@ -51,8 +56,8 @@ impl GateReason {
 pub enum Disposition {
     /// Hand it to the menu.
     Deliver,
-    /// Swallow it: the gesture began against a dark panel and has
-    /// already done its job by waking it.
+    /// Swallow it: the gesture began against a faded panel and has
+    /// already done its job by bringing it back to full.
     ConsumedByWake,
     /// Swallow it and cancel the running locate alert instead.
     CancelAlert,
@@ -129,7 +134,7 @@ impl Gate {
         let reasons = self.latched.unwrap_or(self.current);
         if reasons & GateReason::AlertActive.bit() != 0 {
             Disposition::CancelAlert
-        } else if reasons & GateReason::ScreenOff.bit() != 0 {
+        } else if reasons & GateReason::ScreenFaded.bit() != 0 {
             Disposition::ConsumedByWake
         } else if reasons & GateReason::Refreshing.bit() != 0 {
             Disposition::Discard
@@ -152,9 +157,9 @@ mod tests {
     }
 
     #[test]
-    fn a_gesture_begun_against_a_dark_panel_only_wakes_it() {
+    fn a_gesture_begun_against_a_faded_panel_only_brings_it_back() {
         let mut g = Gate::new();
-        g.set(GateReason::ScreenOff, true);
+        g.set(GateReason::ScreenFaded, true);
         g.on_press();
         assert_eq!(
             g.disposition(ButtonEvent::Single),
@@ -165,10 +170,11 @@ mod tests {
     #[test]
     fn the_whole_chord_is_judged_by_its_first_press() {
         let mut g = Gate::new();
-        g.set(GateReason::ScreenOff, true);
+        g.set(GateReason::ScreenFaded, true);
         g.on_press();
-        // The press woke the panel, so the condition clears mid-gesture.
-        g.set(GateReason::ScreenOff, false);
+        // The press brought the panel back, so the condition clears
+        // mid-gesture.
+        g.set(GateReason::ScreenFaded, false);
         g.on_press(); // second press of a double-click
         assert_eq!(
             g.disposition(ButtonEvent::Double),
@@ -179,13 +185,13 @@ mod tests {
     #[test]
     fn the_next_gesture_is_judged_afresh() {
         let mut g = Gate::new();
-        g.set(GateReason::ScreenOff, true);
+        g.set(GateReason::ScreenFaded, true);
         g.on_press();
         assert_eq!(
             g.disposition(ButtonEvent::Single),
             Disposition::ConsumedByWake
         );
-        g.set(GateReason::ScreenOff, false);
+        g.set(GateReason::ScreenFaded, false);
         g.settle(true);
 
         g.on_press();
@@ -195,11 +201,11 @@ mod tests {
     #[test]
     fn a_gesture_that_resolves_to_nothing_does_not_strand_the_latch() {
         let mut g = Gate::new();
-        g.set(GateReason::ScreenOff, true);
+        g.set(GateReason::ScreenFaded, true);
         g.on_press();
         // Held too long for a click, too short for a long-press: the
         // recognizer returns to rest without emitting anything.
-        g.set(GateReason::ScreenOff, false);
+        g.set(GateReason::ScreenFaded, false);
         g.settle(true);
 
         g.on_press();
@@ -209,9 +215,9 @@ mod tests {
     #[test]
     fn settle_while_a_chord_is_pending_keeps_the_latch() {
         let mut g = Gate::new();
-        g.set(GateReason::ScreenOff, true);
+        g.set(GateReason::ScreenFaded, true);
         g.on_press();
-        g.set(GateReason::ScreenOff, false);
+        g.set(GateReason::ScreenFaded, false);
         // Recognizer still waiting for a possible second click.
         g.settle(false);
         assert_eq!(
@@ -240,7 +246,7 @@ mod tests {
     fn power_off_always_passes_through() {
         let mut g = Gate::new();
         for reason in [
-            GateReason::ScreenOff,
+            GateReason::ScreenFaded,
             GateReason::AlertActive,
             GateReason::Refreshing,
         ] {
@@ -259,9 +265,9 @@ mod tests {
     }
 
     #[test]
-    fn cancelling_an_alert_outranks_a_dark_panel() {
+    fn cancelling_an_alert_outranks_a_faded_panel() {
         let mut g = Gate::new();
-        g.set(GateReason::ScreenOff, true);
+        g.set(GateReason::ScreenFaded, true);
         g.set(GateReason::AlertActive, true);
         g.on_press();
         assert_eq!(g.disposition(ButtonEvent::Single), Disposition::CancelAlert);
