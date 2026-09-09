@@ -1133,6 +1133,11 @@ mod firmware {
     static BLE_PAIRING_CHANGED: Signal<ThreadModeRawMutex, bool> = Signal::new();
     #[cfg(feature = "has-display")]
     static UI_INPUT_CH: Channel<ThreadModeRawMutex, UiInput, 8> = Channel::new();
+    /// Latched by navigation at the first press, including during init.
+    #[cfg(feature = "has-display")]
+    static BOOT_SPLASH_ACTIVE: AtomicBool = AtomicBool::new(true);
+    #[cfg(feature = "has-display")]
+    static UI_SPLASH_DISMISS: Signal<ThreadModeRawMutex, ()> = Signal::new();
     static UI_REFRESH: Signal<ThreadModeRawMutex, ()> = Signal::new();
     static UI_NOTICE: Signal<ThreadModeRawMutex, UiNotice> = Signal::new();
     #[cfg(feature = "has-display")]
@@ -3287,6 +3292,7 @@ mod firmware {
     #[cfg(feature = "has-display")]
     fn ui_status<'a>(name: &'a DeviceName, identity: &'a IdentityText) -> screen::StatusModel<'a> {
         screen::StatusModel {
+            firmware_version: env!("GIT_DESCRIBE"),
             device_name: core::str::from_utf8(name).unwrap_or(DEFAULT_DEVICE_NAME),
             settings: ui_settings(),
             identity: identity.model(),
@@ -3574,21 +3580,23 @@ mod firmware {
         mut busy: Input<'static>,
     ) {
         let mut model = UiModel::new(board_menu_items());
+        let mut shown = [0xff; display::BUF_SIZE];
+        let mut next = [0xff; display::BUF_SIZE];
+        let mut splash = umsh_ux_display_tracker::boot::BootSplash::new();
+        screen::render_splash(
+            &mut display::EpdFb(&mut next),
+            &screen::Layout::EPD_200X200,
+            env!("GIT_DESCRIBE"),
+        );
+        display::init(&mut spi, &mut cs, &mut dc, &mut rst, &mut busy).await;
+        display::render(&mut spi, &mut cs, &mut dc, &mut busy, &next).await;
+        shown.copy_from_slice(&next);
+        splash.shown(Instant::now().as_millis());
         let mut attention = Attention::new(
             DisplayKind::Persistent,
             AttentionConfig::PERSISTENT,
             Instant::now().as_millis(),
         );
-        let mut shown = [0xff; display::BUF_SIZE];
-        let mut next = [0xff; display::BUF_SIZE];
-        {
-            let name = device_name_snapshot().await;
-            let identity = IdentityText::current();
-            render_ui_frame(&mut next, &model, &ui_status(&name, &identity));
-        }
-        display::init(&mut spi, &mut cs, &mut dc, &mut rst, &mut busy).await;
-        display::render(&mut spi, &mut cs, &mut dc, &mut busy, &next).await;
-        shown.copy_from_slice(&next);
 
         // The panel borrows five peripherals mutably; a closure capturing
         // all of them would conflict with the `next` buffer it draws
@@ -3621,7 +3629,10 @@ mod firmware {
             let _ = attention.set_hold(HoldReason::Alert, alert_active(), now);
 
             let lapse = async {
-                match attention.next_deadline() {
+                if splash.is_active() && alert_active() {
+                    return;
+                }
+                match splash.next_deadline().or_else(|| attention.next_deadline()) {
                     Some(deadline) => Timer::at(Instant::from_millis(deadline)).await,
                     None => core::future::pending().await,
                 }
@@ -3638,7 +3649,7 @@ mod firmware {
                     select(battery_ui_changed(), clock_tick(attention.accepts_redraw())),
                 ),
                 DISPLAY_SHUTDOWN.wait(),
-                lapse,
+                select(UI_SPLASH_DISMISS.wait(), lapse),
             )
             .await
             {
@@ -3747,20 +3758,41 @@ mod firmware {
                     DISPLAY_SHUTDOWN_DONE.signal(());
                     core::future::pending::<()>().await;
                 }
-                Either4::Fourth(()) => {
-                    redraw = matches!(
-                        attention.poll(Instant::now().as_millis()),
-                        Some(Transition::Lapsed)
-                    ) && !model.is_home();
-                    if redraw {
-                        model.go_home();
+                Either4::Fourth(event) => {
+                    if matches!(event, Either::First(())) && splash.dismiss() {
+                        redraw = true;
+                    } else {
+                        redraw = matches!(
+                            attention.poll(Instant::now().as_millis()),
+                            Some(Transition::Lapsed)
+                        ) && !model.is_home();
+                        if redraw {
+                            model.go_home();
+                        }
                     }
                 }
             }
 
-            if redraw {
-                render_ui_frame(&mut next, &model, &ui_status(&name, &identity));
+            redraw |= splash.poll(Instant::now().as_millis());
+            if splash.is_active() && alert_active() {
+                splash.dismiss();
+                redraw = true;
+            }
+            if redraw && !splash.is_active() {
+                if alert_active() {
+                    render_message_frame(
+                        &mut next,
+                        &ui_status(&name, &identity),
+                        "Locate alert",
+                        "Press to stop",
+                    );
+                } else {
+                    render_ui_frame(&mut next, &model, &ui_status(&name, &identity));
+                }
                 push!();
+                if BOOT_SPLASH_ACTIVE.swap(false, Ordering::AcqRel) {
+                    let _ = attention.wake(Instant::now().as_millis());
+                }
             }
         }
     }
@@ -3823,6 +3855,10 @@ mod firmware {
                             // and the panel fading out happen during
                             // exactly such a park.
                             gate.set(GateReason::AlertActive, alert_active());
+                            gate.set(
+                                GateReason::BootSplash,
+                                BOOT_SPLASH_ACTIVE.load(Ordering::Acquire),
+                            );
                             #[cfg(feature = "display-oled")]
                             gate.set(
                                 GateReason::ScreenFaded,
@@ -3847,6 +3883,7 @@ mod firmware {
                     // Whoever found the radio meant to silence it, not to
                     // navigate its menus.
                     Disposition::CancelAlert => INPUT_CH.send(InEvent::CancelAlert).await,
+                    Disposition::DismissSplash => UI_SPLASH_DISMISS.signal(()),
                     Disposition::ConsumedByWake | Disposition::Discard => {}
                     Disposition::Deliver => {
                         let input = match event {
@@ -3913,6 +3950,10 @@ mod firmware {
                 GateReason::ScreenFaded,
                 SCREEN_FADED.load(Ordering::Acquire),
             );
+            gate.set(
+                GateReason::BootSplash,
+                BOOT_SPLASH_ACTIVE.load(Ordering::Acquire),
+            );
             gate.on_press();
             // Wake on the press, not on the release, so the panel is lit
             // while the user is still deciding how long to hold.
@@ -3931,6 +3972,7 @@ mod firmware {
                 // leave the screen.
                 Disposition::CancelAlert => INPUT_CH.send(InEvent::CancelAlert).await,
                 Disposition::ConsumedByWake | Disposition::Discard => {}
+                Disposition::DismissSplash => UI_SPLASH_DISMISS.signal(()),
                 Disposition::Deliver => match held {
                     ButtonEvent::VeryLong => SHUTDOWN_SIGNAL.signal(()),
                     _ => UI_INPUT_CH.send(UiInput::Back).await,
@@ -3999,6 +4041,10 @@ mod firmware {
                 GateReason::ScreenFaded,
                 SCREEN_FADED.load(Ordering::Acquire),
             );
+            gate.set(
+                GateReason::BootSplash,
+                BOOT_SPLASH_ACTIVE.load(Ordering::Acquire),
+            );
             gate.on_press();
             #[cfg(feature = "display-oled")]
             UI_WAKE.signal(());
@@ -4006,6 +4052,7 @@ mod firmware {
                 Disposition::CancelAlert => INPUT_CH.send(InEvent::CancelAlert).await,
                 Disposition::ConsumedByWake | Disposition::Discard => {}
                 Disposition::Deliver => UI_INPUT_CH.send(MEANING[index]).await,
+                Disposition::DismissSplash => UI_SPLASH_DISMISS.signal(()),
             }
             gate.settle(true);
 
@@ -4121,19 +4168,17 @@ mod firmware {
     #[embassy_executor::task]
     async fn oled_display_task(mut oled: display::Sh1106<'static>) {
         let mut model = UiModel::new(board_menu_items());
+        let mut fb = display::Sh1106Fb::new();
+        let mut splash = umsh_ux_display_tracker::boot::BootSplash::new();
+        oled.init().await;
+        screen::render_splash(&mut fb, &OLED_LAYOUT, env!("GIT_DESCRIBE"));
+        oled.flush(&fb).await;
+        splash.shown(Instant::now().as_millis());
         let mut attention = Attention::new(
             DisplayKind::Emissive,
             AttentionConfig::EMISSIVE,
             Instant::now().as_millis(),
         );
-        let mut fb = display::Sh1106Fb::new();
-        oled.init().await;
-        {
-            let name = device_name_snapshot().await;
-            let identity = IdentityText::current();
-            render_oled_frame(&mut fb, &model, &ui_status(&name, &identity));
-        }
-        oled.flush(&fb).await;
 
         loop {
             // The name changes rarely but every frame this pass might draw
@@ -4168,7 +4213,10 @@ mod firmware {
             let mut alert_frame = alert_hold.is_some();
 
             let lapse = async {
-                match attention.next_deadline() {
+                if splash.is_active() && alert_active() {
+                    return;
+                }
+                match splash.next_deadline().or_else(|| attention.next_deadline()) {
                     // A hold pins the panel awake, so there is no deadline
                     // to wait for—but a wake it just produced still has
                     // to be applied. Falling through to the arm below is
@@ -4195,7 +4243,7 @@ mod firmware {
                     UI_ALERT_CHANGED.wait(),
                 ),
                 DISPLAY_SHUTDOWN.wait(),
-                lapse,
+                select(UI_SPLASH_DISMISS.wait(), lapse),
             )
             .await
             {
@@ -4283,11 +4331,21 @@ mod firmware {
                     DISPLAY_SHUTDOWN_DONE.signal(());
                     core::future::pending::<()>().await;
                 }
-                Either4::Fourth(()) => {
-                    transition = attention.poll(Instant::now().as_millis()).or(transition);
+                Either4::Fourth(event) => {
+                    if matches!(event, Either::First(())) && splash.dismiss() {
+                        redraw = true;
+                    } else {
+                        transition = attention.poll(Instant::now().as_millis()).or(transition);
+                    }
                 }
             }
 
+            redraw |= splash.poll(Instant::now().as_millis());
+            if splash.is_active() && alert_active() {
+                splash.dismiss();
+                alert_frame = true;
+                redraw = true;
+            }
             match transition {
                 Some(Transition::Lapsed) => {
                     // Waking always lands on the status page rather than
@@ -4310,14 +4368,17 @@ mod firmware {
                 Some(Transition::Woke) | None => {}
             }
 
-            if redraw && attention.accepts_redraw() {
+            if redraw && !splash.is_active() && attention.accepts_redraw() {
                 let status = ui_status(&name, &identity);
-                if alert_frame {
+                if alert_frame || (BOOT_SPLASH_ACTIVE.load(Ordering::Acquire) && alert_active()) {
                     render_oled_message(&mut fb, &status, "Locate alert", "Press to stop");
                 } else {
                     render_oled_frame(&mut fb, &model, &status);
                 }
                 oled.flush(&fb).await;
+                if BOOT_SPLASH_ACTIVE.swap(false, Ordering::AcqRel) {
+                    let _ = attention.wake(Instant::now().as_millis());
+                }
             }
             // Ordered after the redraw so the panel never lights on a
             // stale frame.

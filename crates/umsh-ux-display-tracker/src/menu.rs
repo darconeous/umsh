@@ -23,8 +23,8 @@
 //! would make walking the list a way of asking questions.
 //!
 //! [`MenuItem::Status`] is the home item and is always enabled: it is
-//! where boot starts, where an activated item returns to, and where the
-//! display-attention lapse sends the user back to (see
+//! where boot lands after its splash, where an activated item returns to,
+//! and where the display-attention lapse sends the user back to (see
 //! [`crate::attention`]).
 
 /// One resolved navigation gesture.
@@ -143,7 +143,7 @@ pub enum MenuItem {
     Status,
     /// This device's own address, for another device to take down.
     Identity,
-    /// The settings that change something.
+    /// Device settings and firmware information.
     Settings,
 
     // ─── Settings ───
@@ -154,6 +154,8 @@ pub enum MenuItem {
     Gnss,
     /// The radio submenu.
     Radio,
+    /// The UMSH logo and this firmware's version.
+    About,
 
     // ─── Bluetooth ───
     BluetoothBack,
@@ -183,7 +185,7 @@ pub enum MenuItem {
 
 impl MenuItem {
     /// Every item, in navigation order.
-    pub const ALL: [MenuItem; 17] = [
+    pub const ALL: [MenuItem; 18] = [
         MenuItem::Status,
         MenuItem::Identity,
         MenuItem::Settings,
@@ -191,6 +193,7 @@ impl MenuItem {
         MenuItem::Bluetooth,
         MenuItem::Gnss,
         MenuItem::Radio,
+        MenuItem::About,
         MenuItem::BluetoothBack,
         MenuItem::BluetoothToggle,
         MenuItem::StartPairing,
@@ -215,9 +218,11 @@ impl MenuItem {
     pub const fn level(self) -> Level {
         match self {
             MenuItem::Status | MenuItem::Identity | MenuItem::Settings => Level::Top,
-            MenuItem::SettingsBack | MenuItem::Bluetooth | MenuItem::Gnss | MenuItem::Radio => {
-                Level::Settings
-            }
+            MenuItem::SettingsBack
+            | MenuItem::Bluetooth
+            | MenuItem::Gnss
+            | MenuItem::Radio
+            | MenuItem::About => Level::Settings,
             MenuItem::BluetoothBack
             | MenuItem::BluetoothToggle
             | MenuItem::StartPairing
@@ -234,7 +239,7 @@ impl MenuItem {
             // action; the cost of firing it by accident is one frame of
             // airtime.
             MenuItem::Status => EntryKind::Reading(Some(UiEffect::CheckIn)),
-            MenuItem::Identity | MenuItem::Stats => EntryKind::Reading(None),
+            MenuItem::Identity | MenuItem::Stats | MenuItem::About => EntryKind::Reading(None),
             MenuItem::Settings => EntryKind::Submenu(Level::Settings),
             MenuItem::Bluetooth => EntryKind::Submenu(Level::Bluetooth),
             MenuItem::Gnss => EntryKind::Submenu(Level::Gnss),
@@ -681,6 +686,51 @@ mod tests {
 
     fn full() -> UiModel {
         UiModel::new(MenuItems::all())
+    }
+
+    #[test]
+    fn about_stays_open_until_navigation_or_normal_attention_lapse() {
+        use crate::attention::{Attention, AttentionConfig, DisplayKind, Transition};
+        use crate::boot::BootSplash;
+        for kind in [DisplayKind::Emissive, DisplayKind::Persistent] {
+            let mut boot = BootSplash::new();
+            boot.shown(0);
+            assert!(boot.poll(2_000));
+            let mut ui = full();
+            walk_to(&mut ui, MenuItem::Settings);
+            ui.apply(UiInput::Select);
+            walk_to(&mut ui, MenuItem::About);
+            assert_eq!(ui.apply(UiInput::Select), None);
+            assert_eq!(ui.page(), Page::Detail(MenuItem::About));
+            assert!(!ui.is_home());
+            let mut attention = Attention::new(
+                kind,
+                match kind {
+                    DisplayKind::Emissive => AttentionConfig::EMISSIVE,
+                    DisplayKind::Persistent => AttentionConfig::PERSISTENT,
+                },
+                2_000,
+            );
+            assert_eq!(attention.poll(3_000), None);
+            assert_eq!(boot.next_deadline(), None);
+            assert_eq!(ui.page(), Page::Detail(MenuItem::About));
+            for input in [
+                UiInput::Forward,
+                UiInput::Backward,
+                UiInput::Select,
+                UiInput::Back,
+            ] {
+                let mut copy = ui;
+                assert_eq!(copy.apply(input), None);
+                assert_eq!(copy.page(), Page::Menu(MenuItem::About));
+            }
+            assert_eq!(attention.poll(32_000), Some(Transition::Lapsed));
+            ui.go_home();
+            assert!(ui.is_home());
+            assert_eq!(attention.wake(33_000), Some(Transition::Woke));
+            assert!(ui.is_home());
+            assert!(!boot.is_active());
+        }
     }
 
     /// Walk to `item` from wherever the model is, by Forward presses

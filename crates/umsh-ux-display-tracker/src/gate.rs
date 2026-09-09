@@ -1,7 +1,7 @@
 //! Input gating: when a button gesture means something other than what
 //! it would normally mean.
 //!
-//! Three conditions make a gesture unsafe to act on literally:
+//! These conditions make a gesture unsafe to act on literally:
 //!
 //! - [`GateReason::ScreenFaded`]—the display has begun to fade, or has
 //!   gone dark, so the press only brings it back. A faded panel is the
@@ -12,6 +12,8 @@
 //!   its menus.
 //! - [`GateReason::Refreshing`]—a persistent panel is mid-refresh, so
 //!   the visible selection and the acted-on selection could differ.
+//! - [`GateReason::BootSplash`]—navigation dismisses the boot splash
+//!   without acting on the menu that replaces it.
 //!
 //! One gesture always passes through regardless:
 //! [`ButtonEvent::VeryLong`], the power-off hold. It is deliberate
@@ -43,6 +45,8 @@ pub enum GateReason {
     AlertActive,
     /// A persistent panel has not finished drawing.
     Refreshing,
+    /// The boot splash or its replacement frame is being displayed.
+    BootSplash,
 }
 
 impl GateReason {
@@ -63,6 +67,8 @@ pub enum Disposition {
     CancelAlert,
     /// Swallow it: the panel could not show what was being acted on.
     Discard,
+    /// Consume navigation and request early dismissal of the boot splash.
+    DismissSplash,
 }
 
 /// Input gate.
@@ -136,6 +142,13 @@ impl Gate {
             Disposition::CancelAlert
         } else if reasons & GateReason::ScreenFaded.bit() != 0 {
             Disposition::ConsumedByWake
+        } else if reasons & GateReason::BootSplash.bit() != 0 {
+            match event {
+                ButtonEvent::Single | ButtonEvent::Double | ButtonEvent::Long => {
+                    Disposition::DismissSplash
+                }
+                _ => Disposition::Discard,
+            }
         } else if reasons & GateReason::Refreshing.bit() != 0 {
             Disposition::Discard
         } else {
@@ -249,6 +262,7 @@ mod tests {
             GateReason::ScreenFaded,
             GateReason::AlertActive,
             GateReason::Refreshing,
+            GateReason::BootSplash,
         ] {
             g.set(reason, true);
         }
@@ -278,5 +292,52 @@ mod tests {
         let mut g = Gate::new();
         g.set(GateReason::AlertActive, true);
         assert_eq!(g.disposition(ButtonEvent::Single), Disposition::CancelAlert);
+    }
+
+    #[test]
+    fn a_boot_gesture_cannot_act_on_the_status_that_replaces_it() {
+        use umsh_ux_tracker::button::{ButtonEdge, ButtonFsm};
+        let mut gate = Gate::new();
+        let mut fsm = ButtonFsm::new(crate::button_timings());
+        gate.set(GateReason::BootSplash, true);
+        gate.on_press();
+        fsm.on_edge(ButtonEdge::Press, 1_900);
+        fsm.on_edge(ButtonEdge::Release, 1_950);
+        // The two-second deadline expires before the second click.
+        gate.set(GateReason::BootSplash, false);
+        gate.on_press();
+        fsm.on_edge(ButtonEdge::Press, 2_100);
+        fsm.on_edge(ButtonEdge::Release, 2_150);
+        let event = fsm.poll(2_550).unwrap();
+        assert_eq!(event, ButtonEvent::Double);
+        assert_eq!(gate.disposition(event), Disposition::DismissSplash);
+        gate.settle(fsm.next_deadline().is_none());
+        gate.on_press();
+        assert_eq!(gate.disposition(ButtonEvent::Single), Disposition::Deliver);
+    }
+
+    #[test]
+    fn all_boot_navigation_dismisses_but_alert_cancellation_wins() {
+        for event in [ButtonEvent::Single, ButtonEvent::Double, ButtonEvent::Long] {
+            let mut gate = Gate::new();
+            gate.set(GateReason::BootSplash, true);
+            gate.on_press();
+            // Single also represents a D-pad press or a Back release.
+            assert_eq!(gate.disposition(event), Disposition::DismissSplash);
+            gate.settle(true);
+            gate.set(GateReason::AlertActive, true);
+            gate.on_press();
+            assert_eq!(gate.disposition(event), Disposition::CancelAlert);
+        }
+    }
+
+    #[test]
+    fn unsupported_boot_chords_do_not_dismiss_or_navigate() {
+        let mut gate = Gate::new();
+        gate.set(GateReason::BootSplash, true);
+        gate.on_press();
+        for event in [ButtonEvent::Triple, ButtonEvent::Quad] {
+            assert_eq!(gate.disposition(event), Disposition::Discard);
+        }
     }
 }

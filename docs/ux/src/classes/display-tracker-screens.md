@@ -21,7 +21,8 @@ With no phone present, a display tracker should let its user:
 - turn frame forwarding on and off;
 - check in on demand;
 - read the current position and altitude;
-- read what the radio has been doing; and
+- read what the radio has been doing;
+- read the firmware version; and
 - read recent channel text.
 
 Everything else—maps, history, contacts, composing text, bulk
@@ -49,6 +50,7 @@ Settings            names itself; Select enters
         Back                            <
         Forwarding      toggle          on / off
         Statistics      Select opens    >
+    About               Select opens    >
 ```
 
 The third column is what the row shows at its right edge; see
@@ -128,8 +130,9 @@ device whose entire input vocabulary is three gestures. Opening a reading page
 changes nothing either; any press dismisses it, back onto the entry it was
 opened from.
 
-**Status is home.** It is where boot lands, where a completed action returns,
-and where a display lapse sends the user back to. It is always enabled.
+**Status is home.** It is where boot lands after the splash, where a completed
+action returns, and where a display lapse sends the user back to. It is always
+enabled.
 
 **Back is the first entry of every submenu.** Entering a submenu highlights the
 entry *after* Back, so one Previous reaches the way out and Next walks the
@@ -220,9 +223,35 @@ looking at, and returning home would hide the evidence that the press worked.
 An action has no such state, so it returns to the home screen and reports what
 happened there as a transient notice.
 
+## Boot splash and About
+
+At startup, the first frame is the full-width UMSH logo with the firmware
+version centered below it. The logo preserves its proportions: 128×30 pixels
+on a 128×64 OLED and 200×47 pixels on a 200×200 e-paper display. The logo and
+version form one vertically centered group. Long development versions wrap
+over up to three lines; an unusually long version ends with `...` when needed.
+
+The splash remains visible for approximately two seconds after the initial
+display refresh completes, then gives way to Status. A navigation gesture
+dismisses it early and is consumed, including when the gesture starts during
+the splash and finishes after Status appears. Power-off remains available.
+An in-progress e-paper refresh completes before the replacement frame is
+drawn. Ordinary display wake does not replay the splash.
+
+**Settings > About** opens the same logo and version frame. About has no
+boot timer: any delivered navigation gesture dismisses it back to the
+About entry, and normal display attention still applies. OLED dims and turns
+off on lapse; e-paper returns to Status. The next wake starts at Status.
+Existing wake-before-navigation behavior, pairing and alert holds, and
+notice/alert/shutdown interruptions still apply.
+
+The splash and About contain only the logo and version. They are exceptions
+to the normal header, page-title, and gesture-hint rules.
+
 ## The header
 
-Every frame—menu, message, confirmation, and transient notice alike—carries
+Except for the splash and About, every frame—menu, message, confirmation,
+and transient notice alike—carries
 the same header: the device name, and glyphs for the states the user needs at a
 glance.
 

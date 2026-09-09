@@ -646,6 +646,9 @@ static QUEUED_FRAMES: AtomicU16 = AtomicU16::new(0);
 static UI_WAKE: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 /// Resolved menu gestures, button task → display task.
 static UI_INPUT_CH: Channel<CriticalSectionRawMutex, UiInput, 8> = Channel::new();
+/// Latched at the first press, including before display initialization.
+static BOOT_SPLASH_ACTIVE: AtomicBool = AtomicBool::new(true);
+static UI_SPLASH_DISMISS: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 /// Result of a menu action, to be shown on the status page.
 static UI_NOTICE: Signal<CriticalSectionRawMutex, UiNotice> = Signal::new();
 /// Whether the panel has faded—dimming toward its floor, resting
@@ -3085,6 +3088,7 @@ fn ui_status<'a>(name: &'a DeviceName, identity: &'a IdentityText) -> screen::St
         }
     };
     screen::StatusModel {
+        firmware_version: env!("GIT_DESCRIBE"),
         device_name: core::str::from_utf8(name).unwrap_or(DEFAULT_DEVICE_NAME),
         // Boards with no receiver report nothing on both positioning
         // switches rather than a guess—and neither is on their menu.
@@ -3220,17 +3224,20 @@ async fn clock_tick(awake: bool) {
 #[embassy_executor::task]
 async fn display_task(mut display: Display, #[cfg(not(feature = "pmic-axp2101"))] mut vext: Vext) {
     let mut model = UiModel::new(board_menu_items());
+    let _ = display.set_brightness(Brightness::NORMAL).await;
+    let mut splash = umsh_ux_display_tracker::boot::BootSplash::new();
+    screen::render_splash(
+        &mut display,
+        &screen::Layout::OLED_128X64,
+        env!("GIT_DESCRIBE"),
+    );
+    let _ = display.flush().await;
+    splash.shown(Instant::now().as_millis());
     let mut attention = Attention::new(
         DisplayKind::Emissive,
         AttentionConfig::EMISSIVE,
         Instant::now().as_millis(),
     );
-    let _ = display.set_brightness(Brightness::NORMAL).await;
-    {
-        let name = device_name_snapshot().await;
-        let identity = IdentityText::current();
-        render_frame(&mut display, &model, &ui_status(&name, &identity)).await;
-    }
 
     loop {
         // The name changes rarely but every frame this pass might draw
@@ -3257,7 +3264,7 @@ async fn display_task(mut display: Display, #[cfg(not(feature = "pmic-axp2101"))
         let mut redraw = transition.is_some();
 
         let lapse = async {
-            match attention.next_deadline() {
+            match splash.next_deadline().or_else(|| attention.next_deadline()) {
                 // A hold pins the panel awake, so there is no deadline to
                 // wait for—but a wake it just produced still has to be
                 // applied. Falling through to the arm below is what gets
@@ -3283,7 +3290,7 @@ async fn display_task(mut display: Display, #[cfg(not(feature = "pmic-axp2101"))
                 UI_WAKE.wait(),
             ),
             DISPLAY_SHUTDOWN.wait(),
-            lapse,
+            select(UI_SPLASH_DISMISS.wait(), lapse),
         )
         .await
         {
@@ -3353,11 +3360,16 @@ async fn display_task(mut display: Display, #[cfg(not(feature = "pmic-axp2101"))
                 DISPLAY_SHUTDOWN_DONE.signal(());
                 core::future::pending::<()>().await;
             }
-            Either4::Fourth(()) => {
-                transition = attention.poll(Instant::now().as_millis()).or(transition);
+            Either4::Fourth(event) => {
+                if matches!(event, Either::First(())) && splash.dismiss() {
+                    redraw = true;
+                } else {
+                    transition = attention.poll(Instant::now().as_millis()).or(transition);
+                }
             }
         }
 
+        redraw |= splash.poll(Instant::now().as_millis());
         match transition {
             Some(Transition::Lapsed) => {
                 // Waking always lands on the status page rather than on
@@ -3381,8 +3393,11 @@ async fn display_task(mut display: Display, #[cfg(not(feature = "pmic-axp2101"))
             Some(Transition::Woke) | None => {}
         }
 
-        if redraw && attention.accepts_redraw() {
+        if redraw && !splash.is_active() && attention.accepts_redraw() {
             render_frame(&mut display, &model, &ui_status(&name, &identity)).await;
+            if BOOT_SPLASH_ACTIVE.swap(false, Ordering::AcqRel) {
+                let _ = attention.wake(Instant::now().as_millis());
+            }
         }
         // Ordered after the redraw so the panel never lights on a stale
         // frame.
@@ -3456,6 +3471,10 @@ async fn button_task(mut button: Input<'static>) {
                             GateReason::ScreenFaded,
                             SCREEN_FADED.load(Ordering::Acquire),
                         );
+                        gate.set(
+                            GateReason::BootSplash,
+                            BOOT_SPLASH_ACTIVE.load(Ordering::Acquire),
+                        );
                         gate.on_press();
                         UI_WAKE.signal(());
                     }
@@ -3468,6 +3487,7 @@ async fn button_task(mut button: Input<'static>) {
         if let Some(event) = event {
             match gate.disposition(event) {
                 Disposition::ConsumedByWake | Disposition::CancelAlert | Disposition::Discard => {}
+                Disposition::DismissSplash => UI_SPLASH_DISMISS.signal(()),
                 Disposition::Deliver => {
                     let input = match event {
                         ButtonEvent::Single => Some(UiInput::Forward),
@@ -4335,6 +4355,8 @@ async fn main(spawner: Spawner) {
         display::reset(&mut oled_reset).await;
         if oled.init().await.is_ok() {
             spawner.spawn(display_task(oled, vext).unwrap());
+        } else {
+            BOOT_SPLASH_ACTIVE.store(false, Ordering::Release);
         }
     }
     // The SH1106's address is a population variable and there is no
@@ -4350,9 +4372,14 @@ async fn main(spawner: Spawner) {
                 let mut oled = display::new_display(i2c, addr);
                 if oled.init().await.is_ok() {
                     spawner.spawn(display_task(oled).unwrap());
+                } else {
+                    BOOT_SPLASH_ACTIVE.store(false, Ordering::Release);
                 }
             }
-            None => debug_log(format_args!("oled: no panel found")),
+            None => {
+                BOOT_SPLASH_ACTIVE.store(false, Ordering::Release);
+                debug_log(format_args!("oled: no panel found"));
+            }
         }
     }
 

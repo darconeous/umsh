@@ -17,9 +17,12 @@
 //!   that means for an emissive panel (power it off) versus a persistent
 //!   one (send the menu home).
 //! - [`gate`]—what a gesture means when the screen is dark, an alert
-//!   is running, or the panel is mid-refresh.
+//!   is running, the boot splash is visible, or the panel is mid-refresh.
+//! - [`boot`]—the boot splash's two seconds of visible time, independent
+//!   of the About page that shares its artwork.
 //! - [`screen`]—what a frame looks like: the rows, what they say, and
-//!   the battery indicator every frame carries. Behind the `screen`
+//!   the battery indicator ordinary frames carry. Boot and About share
+//!   a header-free logo and firmware version. Behind the `screen`
 //!   feature, since two boards in this family have no panel.
 //!
 //! Button gestures themselves come from
@@ -39,6 +42,7 @@
 //! layering.
 
 pub mod attention;
+pub mod boot;
 pub mod gate;
 pub mod menu;
 #[cfg(feature = "screen")]

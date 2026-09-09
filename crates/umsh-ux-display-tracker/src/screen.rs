@@ -7,11 +7,12 @@
 //! so a T-Echo and a Heltec V3 disagree about pixels and about nothing
 //! else.
 //!
-//! Every frame carries a header: the device name on the left and a
+//! Ordinary frames carry a header: the device name on the left and a
 //! battery indicator on the right. That includes the message frames
 //! ([`render_message`]) shown while pairing starts or the board shuts
 //! down—a panel that blanks its status to say "Clearing bonds..." is a
 //! panel the user has to wait on to learn anything.
+//! Boot and About deliberately share a header-free logo and version frame.
 //!
 //! # Coordinates and color
 //!
@@ -36,6 +37,7 @@
 
 use core::fmt::Write as _;
 
+use embedded_graphics::image::{Image, ImageRaw};
 use embedded_graphics::mono_font::ascii::{FONT_6X10, FONT_10X20};
 use embedded_graphics::mono_font::{MonoFont, MonoTextStyle, MonoTextStyleBuilder};
 use embedded_graphics::pixelcolor::BinaryColor;
@@ -380,6 +382,9 @@ impl StatsModel {
 #[derive(Clone, Copy, Debug)]
 pub struct StatusModel<'a> {
     pub device_name: &'a str,
+    /// The firmware identifier from the binary's build script, without
+    /// the stack-name prefix. Only About displays it.
+    pub firmware_version: &'a str,
     pub battery: BatteryIndicator,
     /// Pack voltage for the status page's diagnostic row. The header icon
     /// is the glanceable reading; this is the one to quote in a bug
@@ -468,11 +473,100 @@ impl ClockModel {
 
 // ─── Entry points ────────────────────────────────────────────────────────────
 
+const LOGO_OLED: &[u8; 480] = include_bytes!("../assets/umsh-128x30.raw");
+const LOGO_EPD: &[u8; 1175] = include_bytes!("../assets/umsh-200x47.raw");
+
+/// The same full-width logo and version for boot and Settings > About.
+/// No header, title, or navigation hints accompany this frame.
+pub fn render_splash<D>(target: &mut D, layout: &Layout, firmware_version: &str)
+where
+    D: DrawTarget<Color = BinaryColor>,
+{
+    let _ = target.clear(BinaryColor::Off);
+    let (bytes, width, height, gap): (&[u8], u32, u32, u32) = if layout.size.width >= 200 {
+        (LOGO_EPD, 200, 47, 8)
+    } else {
+        (LOGO_OLED, 128, 30, 4)
+    };
+    let columns = (layout.size.width / layout.font.character_size.width) as usize;
+    let lines = version_lines(firmware_version, columns);
+    let count = lines.iter().filter(|line| !line.is_empty()).count() as u32;
+    let pitch = layout.font.character_size.height;
+    let top = layout
+        .size
+        .height
+        .saturating_sub(height + gap + count * pitch)
+        / 2;
+    let logo = ImageRaw::<BinaryColor>::new(bytes, width);
+    let _ = Image::new(&logo, Point::new(0, top as i32)).draw(target);
+    let style = MonoTextStyle::new(layout.font, BinaryColor::On);
+    for (index, line) in lines.iter().filter(|line| !line.is_empty()).enumerate() {
+        let text_width = line.chars().count() as u32 * layout.font.character_size.width;
+        let x = layout.size.width.saturating_sub(text_width) / 2;
+        let y = top + height + gap + index as u32 * pitch;
+        let _ = Text::with_baseline(line, Point::new(x as i32, y as i32), style, Baseline::Top)
+            .draw(target);
+    }
+}
+
+/// Preserve the identifier across at most three lines. Hyphens remain
+/// on the preceding line, so joining the lines recovers the full string.
+fn version_lines(version: &str, columns: usize) -> [String<LINE>; 3] {
+    let columns = columns.clamp(3, LINE);
+    let mut remaining = if version.is_empty() {
+        "unknown"
+    } else {
+        version
+    };
+    let mut lines = core::array::from_fn(|_| String::new());
+    for (index, line) in lines.iter_mut().enumerate() {
+        let end = remaining
+            .char_indices()
+            .enumerate()
+            .find(|(column, (at, ch))| *column == columns || at + ch.len_utf8() > LINE)
+            .map(|(_, (at, _))| at);
+        let Some(mut end) = end else {
+            let _ = line.push_str(remaining);
+            break;
+        };
+        if index == 2 {
+            end = remaining
+                .char_indices()
+                .nth(columns - 3)
+                .map_or(remaining.len(), |(at, _)| at);
+            // Non-ASCII overrides can consume more bytes than columns.
+            for ch in remaining[..end].chars() {
+                if line.len() + ch.len_utf8() > LINE - 3 {
+                    break;
+                }
+                let _ = line.push(ch);
+            }
+            let _ = line.push_str("...");
+            break;
+        }
+        if let Some(hyphen) = remaining[..end].rfind('-') {
+            end = hyphen + 1;
+        }
+        // Keep each scratch line within its byte capacity as well as its
+        // pixel width, even for a non-ASCII build override.
+        while end > LINE || !remaining.is_char_boundary(end) {
+            end -= 1;
+        }
+        let _ = line.push_str(&remaining[..end]);
+        remaining = &remaining[end..];
+    }
+    lines
+}
+
 /// Draw the menu or the confirmation page.
 pub fn render_frame<D>(target: &mut D, layout: &Layout, model: &UiModel, status: &StatusModel<'_>)
 where
     D: DrawTarget<Color = BinaryColor>,
 {
+    if model.page() == Page::Detail(MenuItem::About) {
+        render_splash(target, layout, status.firmware_version);
+        return;
+    }
     let _ = target.clear(BinaryColor::Off);
     draw_header(target, layout, status);
 
@@ -1285,6 +1379,7 @@ const fn menu_label(item: MenuItem) -> &'static str {
         MenuItem::Status => "Status",
         MenuItem::Identity => "Identity",
         MenuItem::Settings => "Settings",
+        MenuItem::About => "About",
         MenuItem::SettingsBack
         | MenuItem::BluetoothBack
         | MenuItem::GnssBack
@@ -1518,6 +1613,7 @@ mod tests {
     fn demo_status() -> StatusModel<'static> {
         StatusModel {
             device_name: "umsh-tracker",
+            firmware_version: "fw-2026.09.02",
             battery: BatteryIndicator {
                 level_percent: Some(75),
                 charge: Some(ChargeClass::Discharging),
@@ -1548,6 +1644,156 @@ mod tests {
                 hint: "7bQ*",
                 address: "1BvYtT4nCJmqvKGpZbW8XdRfLhNs2eQaUxAyDzMr6HkP",
             }),
+        }
+    }
+
+    #[test]
+    fn splash_and_about_are_identical_and_independent_of_status() {
+        for layout in layouts() {
+            let mut status = demo_status();
+            let mut boot = TestPanel::new(layout.size);
+            render_splash(&mut boot, &layout, status.firmware_version);
+            let mut model = UiModel::new(MenuItems::all());
+            navigate_to(&mut model, MenuItem::About);
+            model.apply(UiInput::Select);
+            let mut about = TestPanel::new(layout.size);
+            render_frame(&mut about, &layout, &model, &status);
+            assert_eq!(boot.pixels, about.pixels);
+            status.device_name = "different name";
+            status.battery = BatteryIndicator::UNKNOWN;
+            status.clock = Some(ClockModel {
+                hour: 23,
+                minute: 59,
+            });
+            status.pairing = PairingState::Open { pin: Some(123456) };
+            render_frame(&mut about, &layout, &model, &status);
+            assert_eq!(
+                boot.pixels, about.pixels,
+                "About leaked ordinary header or status content"
+            );
+        }
+    }
+
+    #[test]
+    fn logo_pixels_fill_the_width_with_the_expected_bit_packing() {
+        for (layout, bytes, height, gap) in [
+            (Layout::OLED_128X64, LOGO_OLED.as_slice(), 30u32, 4u32),
+            (Layout::EPD_200X200, LOGO_EPD.as_slice(), 47u32, 8u32),
+        ] {
+            let width = layout.size.width;
+            assert_eq!(bytes.len(), (width * height / 8) as usize);
+            assert_eq!(height, (283 * width + 1209 / 2) / 1209);
+            let top = (layout.size.height - height - gap - layout.font.character_size.height) / 2;
+            let mut panel = TestPanel::new(layout.size);
+            render_splash(&mut panel, &layout, "unknown");
+            for y in 0..height {
+                for x in 0..width {
+                    let bit = (y * width + x) as usize;
+                    let foreground = bytes[bit / 8] & (0x80 >> (bit % 8)) != 0;
+                    assert_eq!(panel.lit(x, top + y), foreground);
+                }
+            }
+            for x in [0, width - 1] {
+                assert!(
+                    (0..height).any(|y| panel.lit(x, top + y)),
+                    "logo has a horizontal margin"
+                );
+            }
+            assert_eq!(
+                panel.lit_in(Rectangle::new(Point::zero(), Size::new(width, top))),
+                0
+            );
+        }
+    }
+
+    #[test]
+    fn version_wrapping_keeps_normal_identifiers_and_marks_truncation() {
+        for columns in [20, 21] {
+            for version in [
+                "fw-2026.09.02",
+                "fw-2026.09.02-25-g264667336",
+                "fw-2026.09.02-25-g264667336-dirty",
+                "unknown",
+            ] {
+                let lines = version_lines(version, columns);
+                let mut joined: String<96> = String::new();
+                for line in lines {
+                    assert!(line.chars().count() <= columns);
+                    joined.push_str(&line).unwrap();
+                }
+                assert_eq!(joined, version);
+            }
+            let lines = version_lines(
+                "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyz",
+                columns,
+            );
+            assert!(lines[2].ends_with("..."));
+            assert!(lines.iter().all(|line| line.chars().count() <= columns));
+        }
+        assert_eq!(version_lines("", 21)[0], "unknown");
+        let exactly_three = "123456789012345678901234567890123456789012345678901234567890123";
+        assert_eq!(
+            version_lines(exactly_three, 21)
+                .iter()
+                .map(|line| line.len())
+                .sum::<usize>(),
+            63
+        );
+    }
+
+    #[test]
+    fn splash_versions_fit_even_when_all_three_oled_lines_are_needed() {
+        for layout in layouts() {
+            for version in [
+                "fw-2026.09.02",
+                "fw-2026.09.02-25-g264667336-dirty",
+                "unknown",
+                "",
+                "123456789012345678901234567890123456789012345678901234567890123",
+                "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyz",
+                "éééééééééééééééééééééééééééééééééé",
+            ] {
+                // TestPanel rejects every out-of-bounds pixel.
+                let mut panel = TestPanel::new(layout.size);
+                render_splash(&mut panel, &layout, version);
+                assert!(panel.pixels.iter().any(|&byte| byte != 0));
+            }
+        }
+    }
+
+    #[test]
+    fn about_is_fully_highlighted_with_and_without_settings_overflow() {
+        let layout = Layout::OLED_128X64;
+        for items in [
+            MenuItems::all(),
+            MenuItems::all()
+                .without(MenuItem::GnssToggle)
+                .without(MenuItem::ShareLocation),
+        ] {
+            let mut model = UiModel::new(items);
+            navigate_to(&mut model, MenuItem::About);
+            let mut panel = TestPanel::new(layout.size);
+            render_frame(&mut panel, &layout, &model, &demo_status());
+            let rows = inverted_rows(&layout, &model, &demo_status());
+            assert_eq!(rows.len(), 1);
+            let row = rows[0];
+            assert!(row_fill(&panel, &layout, row) > 80);
+            // Check every glyph pixel of the label and its affordance,
+            // inverted against the filled selection band.
+            let mut expected = TestPanel::new(layout.size);
+            draw_row(&mut expected, &layout, row, "About               >");
+            for y in
+                layout.row_top(row)..layout.row_top(row) + layout.font.character_size.height as i32
+            {
+                for x in 0..layout.size.width {
+                    if expected.lit(x, y as u32) {
+                        assert!(
+                            !panel.lit(x, y as u32),
+                            "About was clipped or lost its arrow"
+                        );
+                    }
+                }
+            }
         }
     }
 
@@ -2365,7 +2611,7 @@ mod tests {
 
                 // ...and the page it opens, if it opens one, has no bar
                 // either—the list it was on is gone.
-                if matches!(item.kind(), EntryKind::Reading(_)) {
+                if matches!(item.kind(), EntryKind::Reading(_)) && item != MenuItem::About {
                     model.apply(UiInput::Select);
                     assert!(matches!(model.page(), Page::Detail(_)));
                     let rows = inverted_rows(&layout, &model, &demo_status());
@@ -2442,13 +2688,16 @@ mod tests {
         assert!(shows_row(&panel, &layout, status.identity.unwrap().hint));
     }
 
-    /// A settings level is a list: every entry it holds is on the panel at
-    /// once, not one at a time behind a gesture.
+    /// A settings level shows multiple entries together; overflowing
+    /// lists are covered separately, since not every entry fits at once.
     #[test]
     fn a_settings_level_draws_all_of_its_entries() {
         for layout in layouts() {
             let items = MenuItems::all();
             for level in [Level::Settings, Level::Bluetooth, Level::Gnss] {
+                if items.entries(level).count() > layout.rows - 1 {
+                    continue;
+                }
                 let selected = items.first_after_back(level);
                 let mut model = UiModel::new(items);
                 navigate_to(&mut model, selected);

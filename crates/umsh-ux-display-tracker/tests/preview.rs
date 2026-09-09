@@ -146,6 +146,7 @@ fn status(
     link: LinkState,
 ) -> StatusModel<'static> {
     StatusModel {
+        firmware_version: "fw-2026.09.02-25-g264667336-dirty",
         device_name: "umsh-a1b2c3",
         battery: BatteryIndicator {
             level_percent: level,
@@ -221,6 +222,18 @@ fn frames(layout: &Layout) -> Vec<Panel> {
         f(&mut p);
         out.push(p);
     };
+
+    // Boot uses exactly the same artwork as About, with enough version
+    // cases to inspect wrapping and the full-width logo at native sizes.
+    for version in [
+        "fw-2026.09.02",
+        "fw-2026.09.02-25-g264667336-dirty",
+        "unknown",
+        "123456789012345678901234567890123456789012345678901234567890123",
+        "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyz",
+    ] {
+        push(&|p| render_splash(p, layout, version));
+    }
 
     // The resting frame: nothing to report but the battery.
     push(&|p| {
