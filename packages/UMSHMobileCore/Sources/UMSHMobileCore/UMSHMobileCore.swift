@@ -3325,9 +3325,12 @@ public protocol MobileUlcpSessionProtocol: AnyObject, Sendable {
      * own channels.
      *
      * Live behavior rather than configuration, so nothing is saved and
-     * nothing is cached. The radio answers once the announcement is
-     * queued for transmission; channel access and the duty limit decide
-     * later whether it reaches the air, exactly as for a scheduled
+     * nothing is cached. It runs as a local management operation, so
+     * the radio's answer—queued, busy, or a channel it does not hold—
+     * lands on the completion event as the command's status, the way a
+     * save's does. The radio answers once the announcement is queued for
+     * transmission; channel access and the duty limit decide later
+     * whether it reaches the air, exactly as for a scheduled
      * announcement.
      */
     func announce(request: MobileAnnouncementRecord) throws  -> UlcpSessionUpdateRecord
@@ -3851,9 +3854,12 @@ open func abandonRawTransmits(transactionIds: Data) -> UlcpSessionUpdateRecord  
      * own channels.
      *
      * Live behavior rather than configuration, so nothing is saved and
-     * nothing is cached. The radio answers once the announcement is
-     * queued for transmission; channel access and the duty limit decide
-     * later whether it reaches the air, exactly as for a scheduled
+     * nothing is cached. It runs as a local management operation, so
+     * the radio's answer—queued, busy, or a channel it does not hold—
+     * lands on the completion event as the command's status, the way a
+     * save's does. The radio answers once the announcement is queued for
+     * transmission; channel access and the duty limit decide later
+     * whether it reaches the air, exactly as for a scheduled
      * announcement.
      */
 open func announce(request: MobileAnnouncementRecord)throws  -> UlcpSessionUpdateRecord  {
@@ -10102,8 +10108,9 @@ public func FfiConverterTypeUlcpItemMutationRecord_lower(_ value: UlcpItemMutati
 public struct UlcpLocalManagementEventRecord: Equatable, Hashable {
     public var answers: [MobileMeshManagementAnswerRecord]
     /**
-     * The `CMD_SAVE` outcome, on a save. `None` on fetches, on writes,
-     * and on a save the device has no `CAP_SAVE` to answer.
+     * The outcome of the one command the operation ran—`CMD_SAVE` on a
+     * save, `CMD_ANNOUNCE` on an announcement. `None` on fetches, on
+     * writes, and on a save the device has no `CAP_SAVE` to answer.
      */
     public var statusCode: UInt32?
 
@@ -10111,8 +10118,9 @@ public struct UlcpLocalManagementEventRecord: Equatable, Hashable {
     // declare one manually.
     public init(answers: [MobileMeshManagementAnswerRecord],
         /**
-         * The `CMD_SAVE` outcome, on a save. `None` on fetches, on writes,
-         * and on a save the device has no `CAP_SAVE` to answer.
+         * The outcome of the one command the operation ran—`CMD_SAVE` on a
+         * save, `CMD_ANNOUNCE` on an announcement. `None` on fetches, on
+         * writes, and on a save the device has no `CAP_SAVE` to answer.
          */statusCode: UInt32?) {
         self.answers = answers
         self.statusCode = statusCode
@@ -17840,7 +17848,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_abandon_raw_transmits() != 18682) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_announce() != 57409) {
+    if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_announce() != 59264) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_attach_mode() != 2107) {
