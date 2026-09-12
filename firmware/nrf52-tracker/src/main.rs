@@ -3271,6 +3271,7 @@ mod firmware {
     #[cfg(feature = "has-display")]
     fn ui_settings() -> screen::SettingsModel {
         screen::SettingsModel {
+            wifi: None,
             bluetooth: Some(BLE_ENABLED.load(Ordering::Acquire)),
             #[cfg(feature = "cap-gnss")]
             gnss: Some(umsh_ulcp_runtime::gnss::enabled()),
@@ -3293,6 +3294,7 @@ mod firmware {
     #[cfg(feature = "has-display")]
     fn ui_status<'a>(name: &'a DeviceName, identity: &'a IdentityText) -> screen::StatusModel<'a> {
         screen::StatusModel {
+            wifi: None,
             firmware_version: env!("GIT_DESCRIBE"),
             device_name: core::str::from_utf8(name).unwrap_or(DEFAULT_DEVICE_NAME),
             settings: ui_settings(),
@@ -3535,6 +3537,7 @@ mod firmware {
     #[cfg(feature = "has-display")]
     const fn ulcp_setting(id: ToggleId) -> driver::Setting {
         match id {
+            ToggleId::Wifi => driver::Setting::Wifi,
             ToggleId::Bluetooth => driver::Setting::Bluetooth,
             ToggleId::Gnss => driver::Setting::Gnss,
             ToggleId::ShareLocation => driver::Setting::ShareLocation,
@@ -3552,7 +3555,9 @@ mod firmware {
     #[cfg(feature = "has-display")]
     fn board_menu_items() -> MenuItems {
         #[allow(unused_mut)]
-        let mut items = MenuItems::all();
+        let mut items = MenuItems::all()
+            .without(umsh_ux_display_tracker::menu::MenuItem::WifiToggle)
+            .without(umsh_ux_display_tracker::menu::MenuItem::WifiNetworks);
         #[cfg(not(feature = "cap-gnss"))]
         {
             use umsh_ux_display_tracker::menu::MenuItem;
@@ -3685,6 +3690,9 @@ mod firmware {
                             push!();
                             redraw = false;
                             BLE_WIPE_REQUEST.signal(());
+                        }
+                        Some(UiEffect::SelectWifiNetwork(_)) => {
+                            model.set_notice(UiNotice::NetworkUnavailable)
                         }
                         Some(UiEffect::Toggle(id)) => {
                             // The switch is applied by the ULCP session, so
@@ -4261,6 +4269,9 @@ mod firmware {
                         }
                         Some(UiEffect::StartPairing) => PAIRING_MODE_REQUEST.signal(true),
                         Some(UiEffect::ClearBonds) => BLE_WIPE_REQUEST.signal(()),
+                        Some(UiEffect::SelectWifiNetwork(_)) => {
+                            model.set_notice(UiNotice::NetworkUnavailable)
+                        }
                         Some(UiEffect::Toggle(id)) => {
                             // The switch is applied by the ULCP session, so
                             // the property, an attached host and the saved

@@ -60,16 +60,18 @@ pub enum Level {
     Bluetooth,
     Gnss,
     Radio,
+    Wifi,
 }
 
 impl Level {
     /// Every level, outermost first.
-    pub const ALL: [Level; 5] = [
+    pub const ALL: [Level; 6] = [
         Level::Top,
         Level::Settings,
         Level::Bluetooth,
         Level::Gnss,
         Level::Radio,
+        Level::Wifi,
     ];
 
     /// The entry in the parent level that opens this one. `None` for the
@@ -81,6 +83,7 @@ impl Level {
             Level::Bluetooth => Some(MenuItem::Bluetooth),
             Level::Gnss => Some(MenuItem::Gnss),
             Level::Radio => Some(MenuItem::Radio),
+            Level::Wifi => Some(MenuItem::Wifi),
         }
     }
 
@@ -93,6 +96,7 @@ impl Level {
             Level::Bluetooth => Some(MenuItem::BluetoothBack),
             Level::Gnss => Some(MenuItem::GnssBack),
             Level::Radio => Some(MenuItem::RadioBack),
+            Level::Wifi => Some(MenuItem::WifiBack),
         }
     }
 }
@@ -104,6 +108,7 @@ impl Level {
 /// does is say which one the user asked for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ToggleId {
+    Wifi,
     Bluetooth,
     Gnss,
     ShareLocation,
@@ -113,6 +118,8 @@ pub enum ToggleId {
 /// What an entry does when it is selected.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EntryKind {
+    /// Pick a stored WiFi network without accepting credentials.
+    NetworkPicker,
     /// Has something to read. At the top level it reads in place, and
     /// Select does nothing or the one extra action the entry defines—
     /// home's check-in is the only one today. Below the top level it is
@@ -154,6 +161,8 @@ pub enum MenuItem {
     Gnss,
     /// The radio submenu.
     Radio,
+    /// The WiFi radio and saved networks.
+    Wifi,
     /// The UMSH logo and this firmware's version.
     About,
 
@@ -181,11 +190,15 @@ pub enum MenuItem {
     /// Radio activity since boot: frame counts, power, duty cycle. A
     /// page, not an action.
     Stats,
+    // ─── WiFi ───
+    WifiBack,
+    WifiToggle,
+    WifiNetworks,
 }
 
 impl MenuItem {
     /// Every item, in navigation order.
-    pub const ALL: [MenuItem; 18] = [
+    pub const ALL: [MenuItem; 22] = [
         MenuItem::Status,
         MenuItem::Identity,
         MenuItem::Settings,
@@ -193,6 +206,7 @@ impl MenuItem {
         MenuItem::Bluetooth,
         MenuItem::Gnss,
         MenuItem::Radio,
+        MenuItem::Wifi,
         MenuItem::About,
         MenuItem::BluetoothBack,
         MenuItem::BluetoothToggle,
@@ -204,6 +218,9 @@ impl MenuItem {
         MenuItem::RadioBack,
         MenuItem::Forwarding,
         MenuItem::Stats,
+        MenuItem::WifiBack,
+        MenuItem::WifiToggle,
+        MenuItem::WifiNetworks,
     ];
 
     const fn bit(self) -> u32 {
@@ -222,6 +239,7 @@ impl MenuItem {
             | MenuItem::Bluetooth
             | MenuItem::Gnss
             | MenuItem::Radio
+            | MenuItem::Wifi
             | MenuItem::About => Level::Settings,
             MenuItem::BluetoothBack
             | MenuItem::BluetoothToggle
@@ -229,6 +247,7 @@ impl MenuItem {
             | MenuItem::ClearBonds => Level::Bluetooth,
             MenuItem::GnssBack | MenuItem::GnssToggle | MenuItem::ShareLocation => Level::Gnss,
             MenuItem::RadioBack | MenuItem::Forwarding | MenuItem::Stats => Level::Radio,
+            MenuItem::WifiBack | MenuItem::WifiToggle | MenuItem::WifiNetworks => Level::Wifi,
         }
     }
 
@@ -244,9 +263,13 @@ impl MenuItem {
             MenuItem::Bluetooth => EntryKind::Submenu(Level::Bluetooth),
             MenuItem::Gnss => EntryKind::Submenu(Level::Gnss),
             MenuItem::Radio => EntryKind::Submenu(Level::Radio),
+            MenuItem::Wifi => EntryKind::Submenu(Level::Wifi),
+            MenuItem::WifiNetworks => EntryKind::NetworkPicker,
+            MenuItem::WifiToggle => EntryKind::Toggle(ToggleId::Wifi),
             MenuItem::SettingsBack
             | MenuItem::BluetoothBack
             | MenuItem::GnssBack
+            | MenuItem::WifiBack
             | MenuItem::RadioBack => EntryKind::Back,
             MenuItem::BluetoothToggle => EntryKind::Toggle(ToggleId::Bluetooth),
             MenuItem::GnssToggle => EntryKind::Toggle(ToggleId::Gnss),
@@ -269,6 +292,7 @@ impl MenuItem {
                 | MenuItem::SettingsBack
                 | MenuItem::BluetoothBack
                 | MenuItem::GnssBack
+                | MenuItem::WifiBack
                 | MenuItem::RadioBack
         )
     }
@@ -302,7 +326,7 @@ impl MenuItem {
             EntryKind::Action(effect) | EntryKind::Destructive(effect) => Some(effect),
             EntryKind::Reading(effect) => effect,
             EntryKind::Toggle(id) => Some(UiEffect::Toggle(id)),
-            EntryKind::Submenu(_) | EntryKind::Back => None,
+            EntryKind::Submenu(_) | EntryKind::Back | EntryKind::NetworkPicker => None,
         }
     }
 }
@@ -322,6 +346,7 @@ impl MenuItems {
                 | MenuItem::SettingsBack.bit()
                 | MenuItem::BluetoothBack.bit()
                 | MenuItem::GnssBack.bit()
+                | MenuItem::WifiBack.bit()
                 | MenuItem::RadioBack.bit(),
         )
     }
@@ -453,6 +478,10 @@ impl Default for MenuItems {
 /// The screen currently being shown.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Page {
+    /// `None` selects Back; names preserve intent if profiles change remotely.
+    WifiNetworks {
+        selected: Option<crate::wifi::NetworkName>,
+    },
     /// The menu, with `.0` highlighted. The item's own
     /// [`level`](MenuItem::level) is the list being shown.
     Menu(MenuItem),
@@ -471,6 +500,7 @@ pub enum Page {
 /// Something the firmware should do as a result of a selection.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum UiEffect {
+    SelectWifiNetwork(crate::wifi::NetworkName),
     CheckIn,
     StartPairing,
     ClearBonds,
@@ -482,6 +512,7 @@ pub enum UiEffect {
 /// A transient result message shown on the status page.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum UiNotice {
+    NetworkUnavailable,
     CheckInRequested,
     PairingStarted,
     PairingUnavailable,
@@ -527,6 +558,7 @@ impl UiModel {
     /// The list currently on screen.
     pub const fn level(&self) -> Level {
         match self.page {
+            Page::WifiNetworks { .. } => Level::Wifi,
             Page::Menu(item) | Page::Detail(item) => item.level(),
             Page::Confirm { item, .. } => item.level(),
         }
@@ -579,8 +611,60 @@ impl UiModel {
     }
 
     pub fn apply(&mut self, input: UiInput) -> Option<UiEffect> {
+        self.apply_with_wifi(input, &crate::wifi::WifiMenu::default())
+    }
+
+    /// A profile removed by another manager must never leave an invisible choice armed.
+    pub fn refresh_wifi(&mut self, wifi: &crate::wifi::WifiMenu) {
+        if let Page::WifiNetworks {
+            selected: Some(name),
+        } = self.page
+            && !wifi.networks().any(|known| known == name)
+        {
+            self.page = Page::WifiNetworks { selected: None };
+        }
+    }
+
+    pub fn apply_with_wifi(
+        &mut self,
+        input: UiInput,
+        wifi: &crate::wifi::WifiMenu,
+    ) -> Option<UiEffect> {
         self.notice = None;
         match (self.page, input) {
+            (Page::WifiNetworks { .. }, UiInput::Back)
+            | (Page::WifiNetworks { selected: None }, UiInput::Select) => {
+                self.page = Page::Menu(MenuItem::WifiNetworks);
+                None
+            }
+            (
+                Page::WifiNetworks {
+                    selected: Some(name),
+                },
+                UiInput::Select,
+            ) => {
+                if wifi.networks().any(|known| known == name) {
+                    Some(UiEffect::SelectWifiNetwork(name))
+                } else {
+                    self.set_notice(UiNotice::NetworkUnavailable);
+                    None
+                }
+            }
+            (Page::WifiNetworks { selected }, UiInput::Forward | UiInput::Backward) => {
+                let count = wifi.networks().count() + 1;
+                let index = selected
+                    .and_then(|name| wifi.networks().position(|known| known == name))
+                    .map_or(0, |index| index + 1);
+                let next = if input == UiInput::Forward {
+                    (index + 1) % count
+                } else {
+                    (index + count - 1) % count
+                };
+                self.page = Page::WifiNetworks {
+                    selected: next.checked_sub(1).and_then(|i| wifi.networks().nth(i)),
+                };
+                None
+            }
             (Page::Menu(item), UiInput::Forward) => {
                 self.page = Page::Menu(self.items.step(item, 1));
                 None
@@ -590,6 +674,10 @@ impl UiModel {
                 None
             }
             (Page::Menu(item), UiInput::Select) => match item.kind() {
+                EntryKind::NetworkPicker => {
+                    self.page = Page::WifiNetworks { selected: None };
+                    None
+                }
                 // At the top level the entry is already the whole screen,
                 // so it stays where it is and Select is free to carry its
                 // action—home's check-in is the only one.
@@ -683,6 +771,69 @@ impl UiModel {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn wifi_picker_uses_exact_saved_names_and_survives_profile_changes() {
+        use crate::wifi::{NetworkName, WifiMenu};
+        let first = NetworkName::new(b"A long shared network name one").unwrap();
+        let second = NetworkName::new(b"A long shared network name two").unwrap();
+        let mut wifi = WifiMenu {
+            networks: [Some(first), Some(second), None, None],
+            ..Default::default()
+        };
+        let mut ui = full();
+        walk_to(&mut ui, MenuItem::Settings);
+        ui.apply(UiInput::Select);
+        walk_to(&mut ui, MenuItem::Wifi);
+        ui.apply(UiInput::Select);
+        assert_eq!(
+            ui.apply(UiInput::Select),
+            Some(UiEffect::Toggle(ToggleId::Wifi))
+        );
+        walk_to(&mut ui, MenuItem::WifiNetworks);
+        ui.apply_with_wifi(UiInput::Select, &wifi);
+        assert_eq!(ui.page(), Page::WifiNetworks { selected: None });
+        ui.apply_with_wifi(UiInput::Backward, &wifi);
+        assert_eq!(
+            ui.apply_with_wifi(UiInput::Select, &wifi),
+            Some(UiEffect::SelectWifiNetwork(second))
+        );
+        wifi.networks.swap(0, 1);
+        assert_eq!(
+            ui.apply_with_wifi(UiInput::Select, &wifi),
+            Some(UiEffect::SelectWifiNetwork(second))
+        );
+        wifi.networks[0] = None;
+        assert_eq!(ui.apply_with_wifi(UiInput::Select, &wifi), None);
+        assert_eq!(ui.notice(), Some(UiNotice::NetworkUnavailable));
+        ui.page = Page::WifiNetworks {
+            selected: Some(second),
+        };
+        ui.refresh_wifi(&wifi);
+        assert_eq!(ui.page(), Page::WifiNetworks { selected: None });
+        ui.apply_with_wifi(UiInput::Select, &wifi);
+        assert_eq!(ui.page(), Page::Menu(MenuItem::WifiNetworks));
+    }
+
+    #[test]
+    fn wifi_picker_empty_and_capability_absent_are_safe() {
+        let mut ui = full();
+        ui.page = Page::WifiNetworks { selected: None };
+        for input in [UiInput::Forward, UiInput::Backward] {
+            assert_eq!(ui.apply(input), None);
+            assert_eq!(ui.page(), Page::WifiNetworks { selected: None });
+        }
+        ui.apply(UiInput::Select);
+        assert_eq!(ui.page(), Page::Menu(MenuItem::WifiNetworks));
+        let items = MenuItems::all()
+            .without(MenuItem::WifiToggle)
+            .without(MenuItem::WifiNetworks);
+        assert!(
+            !items
+                .entries(Level::Settings)
+                .any(|item| item == MenuItem::Wifi)
+        );
+    }
 
     fn full() -> UiModel {
         UiModel::new(MenuItems::all())

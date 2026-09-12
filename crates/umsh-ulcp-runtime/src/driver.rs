@@ -143,6 +143,8 @@ pub enum InEvent {
     /// the capability behind it, so a board may report the press
     /// unconditionally.
     Toggle(Setting),
+    #[cfg(feature = "wifi")]
+    SelectWifiNetwork(umsh_ulcp_device::net::SelectedNetwork),
     /// The hold-through-power-on ceremony fired: `PROP_BLE_ENABLED` must
     /// end up on, whatever it was. Not a toggle—the same gesture on a
     /// device already reachable would otherwise strand it—and ignored
@@ -158,6 +160,8 @@ pub enum InEvent {
 /// cannot perform one simply never sends it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Setting {
+    /// `PROP_WIFI_ENABLED`: station radio power.
+    Wifi,
     /// `PROP_BLE_ENABLED`: whether the device is reachable over
     /// Bluetooth.
     Bluetooth,
@@ -575,6 +579,10 @@ pub trait DeviceEnv {
     fn apply_network_config(&mut self, config: NetworkConfig<'_>) {
         let _ = config;
     }
+
+    /// Outcome of a saved-network selection made with the device's controls.
+    #[cfg(feature = "wifi")]
+    fn wifi_selection_result(&mut self, _result: Result<(), Status>) {}
     /// Apply bridge settings and the live device identity without blocking ULCP.
     #[cfg(feature = "bridge-client")]
     fn apply_bridge_config(
@@ -1620,6 +1628,7 @@ where
                 // device-domain mirror at the bottom of this loop, like
                 // every other write to it.
                 let flipped = match setting {
+                    Setting::Wifi => session.toggle_wifi(&mut |frame: &[u8]| emitter.push(frame)),
                     Setting::Bluetooth => {
                         session.toggle_ble(&mut |frame: &[u8]| emitter.push(frame))
                     }
@@ -1658,6 +1667,25 @@ where
                         if enabled { "ON" } else { "off" }
                     ));
                 }
+            }
+            #[cfg(feature = "wifi")]
+            Either4::First(InEvent::SelectWifiNetwork(network)) => {
+                let result = session
+                    .choose_wifi_network(network.as_bytes(), &mut |frame| emitter.push(frame));
+                emitter
+                    .flush(&mut ReplySink::Transport {
+                        destination: arbitration.destination(),
+                        out: rt.out,
+                    })
+                    .await;
+                if result.is_ok()
+                    && session.saved_status() != SavedStatus::None
+                    && let Some(len) = session.encode_snapshot(snapshot_buf)
+                    && env.persist_snapshot(&snapshot_buf[..len]).await.is_ok()
+                {
+                    session.note_snapshot_saved();
+                }
+                env.wifi_selection_result(result);
             }
             Either4::First(InEvent::ForceBluetoothOn) => {
                 if session

@@ -146,6 +146,7 @@ fn status(
     link: LinkState,
 ) -> StatusModel<'static> {
     StatusModel {
+        wifi: None,
         firmware_version: "fw-2026.09.02-25-g264667336-dirty",
         device_name: "umsh-a1b2c3",
         battery: BatteryIndicator {
@@ -173,6 +174,7 @@ fn status(
             minute: 30,
         }),
         settings: SettingsModel {
+            wifi: None,
             bluetooth: Some(true),
             gnss: Some(true),
             share_location: Some(false),
@@ -362,6 +364,59 @@ fn frames(layout: &Layout) -> Vec<Panel> {
             "Press to stop",
         )
     });
+
+    use umsh_ux_display_tracker::wifi::{NetworkName, WifiMenu, WifiState};
+    let mut wifi = WifiMenu {
+        enabled: true,
+        state: WifiState::Connected,
+        network: NetworkName::new(b"Home"),
+        networks: [
+            NetworkName::new(b"Home"),
+            NetworkName::new(b"Phone hotspot"),
+            NetworkName::new(b"A very long saved network name"),
+            NetworkName::new(b"Workshop"),
+        ],
+    };
+    for state in [
+        WifiState::Off,
+        WifiState::Disconnected,
+        WifiState::Connecting,
+        WifiState::Connected,
+    ] {
+        wifi.state = state;
+        wifi.enabled = state != WifiState::Off;
+        push(&|p| {
+            let mut s = status(
+                Some(72),
+                Some(ChargeClass::Charging),
+                PairingState::Closed,
+                LinkState::Advertising,
+            );
+            s.wifi = Some(wifi);
+            s.settings.wifi = Some(wifi.enabled);
+            render_frame(p, layout, &UiModel::new(MenuItems::all()), &s);
+        });
+    }
+    let mut m = UiModel::new(MenuItems::all());
+    navigate_to(&mut m, MenuItem::WifiToggle);
+    let mut s = status(
+        Some(72),
+        Some(ChargeClass::Charging),
+        PairingState::Closed,
+        LinkState::Advertising,
+    );
+    s.wifi = Some(wifi);
+    s.settings.wifi = Some(true);
+    push(&|p| render_frame(p, layout, &m, &s));
+    walk_to(&mut m, MenuItem::WifiNetworks);
+    m.apply_with_wifi(UiInput::Select, &wifi);
+    for _ in 0..5 {
+        push(&|p| render_frame(p, layout, &m, &s));
+        m.apply_with_wifi(UiInput::Forward, &wifi);
+    }
+    s.wifi = Some(WifiMenu::default());
+    m.refresh_wifi(&WifiMenu::default());
+    push(&|p| render_frame(p, layout, &m, &s));
 
     out
 }

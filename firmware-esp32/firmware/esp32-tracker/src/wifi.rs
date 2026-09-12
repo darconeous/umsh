@@ -20,6 +20,23 @@ use umsh_ulcp::{
 };
 use umsh_ulcp_device::NETWORK_TABLE_MAX;
 use umsh_ulcp_runtime::driver::{NetworkConfig, PublishEvent};
+use umsh_ux_display_tracker::wifi::{NetworkName, WifiMenu, WifiState};
+
+const _: () = assert!(
+    umsh_ulcp_device::known_networks::MAX_NETWORKS
+        <= umsh_ux_display_tracker::wifi::MAX_SAVED_NETWORKS
+);
+
+static UI: Mutex<CriticalSectionRawMutex, RefCell<WifiMenu>> = Mutex::new(RefCell::new(WifiMenu {
+    enabled: false,
+    state: WifiState::Off,
+    network: None,
+    networks: [None; 4],
+}));
+
+pub fn ui_snapshot() -> WifiMenu {
+    UI.lock(|cell| *cell.borrow())
+}
 
 pub const CONFIG: umsh_ulcp_device::net::WifiConfig = umsh_ulcp_device::net::WifiConfig {
     supported_modes: SecurityMode::Open.bit()
@@ -58,6 +75,25 @@ static RESOLVERS: Mutex<CriticalSectionRawMutex, RefCell<heapless::Vec<u8, 64>>>
     Mutex::new(RefCell::new(heapless::Vec::new()));
 
 pub fn apply(config: NetworkConfig<'_>) {
+    UI.lock(|cell| {
+        let mut ui = cell.borrow_mut();
+        ui.enabled = config.wifi_enabled;
+        ui.network = NetworkName::new(config.network);
+        ui.networks = [None; 4];
+        for (slot, entry) in ui.networks.iter_mut().zip(
+            config
+                .known_networks
+                .entries()
+                .filter_map(|raw| NetworkEntry::decode(raw).ok()),
+        ) {
+            *slot = NetworkName::new(entry.ssid);
+        }
+        if !ui.enabled {
+            ui.state = WifiState::Off;
+        } else if ui.state == WifiState::Off {
+            ui.state = WifiState::Disconnected;
+        }
+    });
     let mut entry = heapless::Vec::new();
     if let Some(selected) = config.known_networks.get(config.network) {
         let mut bytes = [0; umsh_ulcp::wifi::NETWORK_ENTRY_MAX_LEN];
@@ -148,6 +184,21 @@ pub async fn event() -> PublishEvent {
 }
 
 pub(super) async fn publish(event: PublishEvent) {
+    if let PublishEvent::WifiLink(link) = &event {
+        UI.lock(|cell| {
+            let mut ui = cell.borrow_mut();
+            ui.state = if !ui.enabled {
+                WifiState::Off
+            } else {
+                match link.state {
+                    LinkState::Up => WifiState::Connected,
+                    LinkState::Connecting => WifiState::Connecting,
+                    _ => WifiState::Disconnected,
+                }
+            };
+        });
+        super::UI_REFRESH.signal(());
+    }
     EVENTS.send((None, event)).await;
 }
 

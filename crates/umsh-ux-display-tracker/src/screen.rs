@@ -8,7 +8,7 @@
 //! else.
 //!
 //! Ordinary frames carry a header: the device name on the left and a
-//! battery indicator on the right. That includes the message frames
+//! battery and optional status widgets on the right. That includes the message frames
 //! ([`render_message`]) shown while pairing starts or the board shuts
 //! down—a panel that blanks its status to say "Clearing bonds..." is a
 //! panel the user has to wait on to learn anything.
@@ -49,6 +49,7 @@ use embedded_graphics::text::{Baseline, Text};
 use heapless::String;
 
 use crate::menu::{EntryKind, MenuItem, Page, ToggleId, UiEffect, UiModel, UiNotice};
+use crate::wifi::{NetworkName, WifiMenu, WifiState};
 use umsh_ux_tracker::battery::ChargeClass;
 
 /// Scratch buffer for a composed line. No panel in the class shows more
@@ -381,6 +382,7 @@ impl StatsModel {
 /// as a borrowed string rather than being fetched here.
 #[derive(Clone, Copy, Debug)]
 pub struct StatusModel<'a> {
+    pub wifi: Option<WifiMenu>,
     pub device_name: &'a str,
     /// The firmware identifier from the binary's build script, without
     /// the stack-name prefix. Only About displays it.
@@ -426,6 +428,7 @@ pub struct StatusModel<'a> {
 /// subsystem reports, and such a board does not enable the entry anyway.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct SettingsModel {
+    pub wifi: Option<bool>,
     pub bluetooth: Option<bool>,
     pub gnss: Option<bool>,
     pub share_location: Option<bool>,
@@ -572,6 +575,9 @@ where
 
     let mut line: String<LINE> = String::new();
     let content_end = match model.page() {
+        Page::WifiNetworks { selected } => {
+            draw_networks(target, layout, status.wifi.as_ref(), selected)
+        }
         // The top level is three pages the user walks between, each of
         // them the whole panel: the title names what is being read and
         // the rows below are the reading. Everything below the top is
@@ -628,6 +634,10 @@ where
     // built rather than picked from a table of literals.
     let mut menu_hints = [move_hint(layout.controls), ""];
     let hints: &[&str] = match model.page() {
+        Page::WifiNetworks { .. } => match layout.controls {
+            Controls::OneButton => &["1x: next", "2x: select"],
+            Controls::Dpad => &["up/dn: move", "OK: select"],
+        },
         Page::Menu(item) => match select_hint(layout.controls, item) {
             Some(hint) => {
                 menu_hints[1] = hint;
@@ -956,6 +966,24 @@ where
         .position(|item| item == selected)
         .unwrap_or(0);
 
+    draw_list(target, layout, count, index, |line, i, columns| {
+        if let Some(item) = items.entries(level).nth(i) {
+            write_entry(line, item, &status.settings, columns);
+        }
+    })
+}
+
+/// Static settings and dynamic saved networks share scrolling and clipping.
+fn draw_list<D>(
+    target: &mut D,
+    layout: &Layout,
+    count: usize,
+    index: usize,
+    mut label: impl FnMut(&mut String<LINE>, usize, usize),
+) -> usize
+where
+    D: DrawTarget<Color = BinaryColor>,
+{
     // Rows 1.. belong to the list; row 0 is the header.
     let available = layout.rows.saturating_sub(1);
     let overflows = count > available;
@@ -987,10 +1015,10 @@ where
     };
 
     let mut line: String<LINE> = String::new();
-    for (offset, item) in items.entries(level).skip(start).take(visible).enumerate() {
+    for (offset, i) in (start..count).take(visible).enumerate() {
         line.clear();
-        write_entry(&mut line, item, &status.settings, columns);
-        draw_row_selectable(target, layout, 1 + offset, &line, item == selected);
+        label(&mut line, i, columns);
+        draw_row_selectable(target, layout, 1 + offset, &line, i == index);
     }
 
     if !overflows {
@@ -1000,9 +1028,9 @@ where
     match layout.overflow {
         Overflow::ClipRow => {
             let after = start + visible;
-            if let Some(item) = items.entries(level).nth(after) {
+            if after < count {
                 line.clear();
-                write_entry(&mut line, item, &status.settings, columns);
+                label(&mut line, after, columns);
                 draw_clipped_row(target, layout, 1 + visible, &line);
             }
         }
@@ -1066,7 +1094,10 @@ fn write_entry(line: &mut String<LINE>, item: MenuItem, settings: &SettingsModel
 fn entry_affix(item: MenuItem, settings: &SettingsModel) -> &'static str {
     match item.kind() {
         EntryKind::Back => "<",
-        EntryKind::Submenu(_) | EntryKind::Reading(_) | EntryKind::Destructive(_) => ">",
+        EntryKind::Submenu(_)
+        | EntryKind::Reading(_)
+        | EntryKind::Destructive(_)
+        | EntryKind::NetworkPicker => ">",
         EntryKind::Toggle(_) => toggle_label(item, settings),
         EntryKind::Action(_) => "",
     }
@@ -1158,10 +1189,7 @@ fn draw_header<D>(target: &mut D, layout: &Layout, status: &StatusModel<'_>)
 where
     D: DrawTarget<Color = BinaryColor>,
 {
-    // The battery owns its corner: the name is cut to the room left over
-    // rather than being allowed to run under the indicator and off the
-    // panel. Blanking the zone afterwards keeps that true no matter what
-    // else the header grows.
+    // Widgets own their measured slots; the name uses the remaining width.
     //
     // The clock is deliberately *not* here. It fits, but only by taking
     // the room from the device name, and on the 200 px e-paper's
@@ -1170,13 +1198,162 @@ where
     // difference between identifying one and guessing. The clock lives on
     // the status page instead, where a row costs nothing that was being
     // read.
-    let zone = layout.battery_zone();
-    let room = (zone.top_left.x - layout.left).max(0) as u32;
+    let widgets = core::iter::once(StatusWidget::Battery(status.battery)).chain(
+        status
+            .wifi
+            .filter(|wifi| wifi.enabled)
+            .map(|wifi| StatusWidget::Wifi(wifi.state)),
+    );
+    let left = draw_status_widgets(target, layout, widgets);
+    let room = (left - layout.left).max(0) as u32;
     draw_row(target, layout, 0, clip(layout, status.device_name, room));
-    let _ = zone
-        .into_styled(PrimitiveStyle::with_fill(BinaryColor::Off))
-        .draw(target);
-    draw_battery_icon(target, zone.top_left, &layout.battery, &status.battery);
+}
+
+/// Independently sized header widgets, supplied in priority order from the right.
+/// Adding, removing, or reordering one does not require changing coordinates.
+#[derive(Clone, Copy, Debug)]
+pub enum StatusWidget {
+    Battery(BatteryIndicator),
+    Wifi(WifiState),
+}
+
+/// Draw as many widgets as fit and return the right edge available for the name.
+/// Lower-priority widgets are omitted rather than overlapping existing content.
+pub fn draw_status_widgets<D>(
+    target: &mut D,
+    layout: &Layout,
+    widgets: impl IntoIterator<Item = StatusWidget>,
+) -> i32
+where
+    D: DrawTarget<Color = BinaryColor>,
+{
+    let mut right = layout.size.width as i32 - layout.battery.margin as i32;
+    let scale = (layout.battery.body.height / 8).max(1);
+    for widget in widgets {
+        let size = match widget {
+            StatusWidget::Battery(_) => {
+                Size::new(layout.battery.zone_width(), layout.battery.body.height)
+            }
+            StatusWidget::Wifi(WifiState::Off) => continue,
+            StatusWidget::Wifi(_) => Size::new(11 * scale, 8 * scale),
+        };
+        let left = right - size.width as i32;
+        if left < layout.left {
+            continue;
+        }
+        let top = layout.top + (layout.font.character_size.height as i32 - size.height as i32) / 2;
+        let at = Point::new(left, top);
+        match widget {
+            StatusWidget::Battery(battery) => {
+                draw_battery_icon(target, at, &layout.battery, &battery)
+            }
+            StatusWidget::Wifi(state) => draw_wifi_icon(target, at, scale, state),
+        }
+        right = left - layout.battery.spacing as i32;
+    }
+    right
+}
+
+fn draw_wifi_icon<D>(target: &mut D, at: Point, scale: u32, state: WifiState)
+where
+    D: DrawTarget<Color = BinaryColor>,
+{
+    // Full fan when connected, a small fan while joining, crossed when disconnected.
+    let rows: [u16; 8] = match state {
+        WifiState::Connected => [
+            0b00111111100,
+            0b11000000011,
+            0,
+            0b00011111000,
+            0b00100000100,
+            0,
+            0b00000100000,
+            0,
+        ],
+        WifiState::Connecting => [0, 0, 0, 0b00011111000, 0b00100000100, 0, 0b00000100000, 0],
+        WifiState::Disconnected => [
+            0b00111111100,
+            0b11000000011,
+            0,
+            0b00001010000,
+            0b00000100000,
+            0b00001010000,
+            0,
+            0,
+        ],
+        WifiState::Off => [0; 8],
+    };
+    for (y, row) in rows.iter().enumerate() {
+        for x in 0..11 {
+            if row & (1 << (10 - x)) != 0 {
+                let _ = Rectangle::new(
+                    at + Point::new(x * scale as i32, y as i32 * scale as i32),
+                    Size::new(scale, scale),
+                )
+                .into_styled(PrimitiveStyle::with_fill(BinaryColor::On))
+                .draw(target);
+            }
+        }
+    }
+}
+
+fn draw_networks<D>(
+    target: &mut D,
+    layout: &Layout,
+    wifi: Option<&WifiMenu>,
+    selected: Option<NetworkName>,
+) -> usize
+where
+    D: DrawTarget<Color = BinaryColor>,
+{
+    let empty = WifiMenu::default();
+    let wifi = wifi.unwrap_or(&empty);
+    let count = wifi.networks().count() + 1;
+    let index = selected
+        .and_then(|name| wifi.networks().position(|known| known == name))
+        .map_or(0, |i| i + 1);
+    if count == 1 {
+        draw_title(target, layout, 1, "Saved networks");
+        draw_row_selectable(target, layout, 2, "Back", true);
+        draw_row(target, layout, 3, "No saved networks");
+        return 4;
+    }
+    draw_list(target, layout, count, index, |line, i, columns| {
+        if i == 0 {
+            write_entry(line, MenuItem::WifiBack, &SettingsModel::default(), columns);
+        } else if let Some(name) = wifi.networks().nth(i - 1) {
+            let _ = line.push_str(if wifi.network == Some(name) {
+                "* "
+            } else {
+                "  "
+            });
+            match core::str::from_utf8(name.as_bytes()) {
+                Ok(text) => {
+                    for c in text.chars() {
+                        if line.push(if c.is_control() { '?' } else { c }).is_err() {
+                            break;
+                        }
+                    }
+                }
+                Err(_) => {
+                    for &b in name.as_bytes() {
+                        if line
+                            .push(if b.is_ascii_graphic() || b == b' ' {
+                                b as char
+                            } else {
+                                '?'
+                            })
+                            .is_err()
+                        {
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        let end = truncate_chars(line, columns).len();
+        line.truncate(end);
+    })
 }
 
 /// Longest prefix of `text` that fits in `width` pixels.
@@ -1387,6 +1564,9 @@ const fn menu_label(item: MenuItem) -> &'static str {
         MenuItem::Bluetooth => "Bluetooth",
         MenuItem::Gnss => "GNSS",
         MenuItem::Radio => "Radio",
+        MenuItem::Wifi | MenuItem::WifiToggle => "WiFi",
+        MenuItem::WifiNetworks => "Saved networks",
+        MenuItem::WifiBack => "Back",
         MenuItem::BluetoothToggle => "Bluetooth",
         MenuItem::StartPairing => "Start pairing",
         MenuItem::ClearBonds => "Clear bonds",
@@ -1421,14 +1601,14 @@ const fn select_hint(controls: Controls, item: MenuItem) -> Option<&'static str>
         (_, EntryKind::Reading(None)) => None,
         (Controls::OneButton, kind) => Some(match kind {
             EntryKind::Reading(Some(UiEffect::CheckIn)) => "2x: check in",
-            EntryKind::Submenu(_) => "2x: open",
+            EntryKind::Submenu(_) | EntryKind::NetworkPicker => "2x: open",
             EntryKind::Back => "2x: back",
             EntryKind::Toggle(_) => "2x: toggle",
             _ => "2x: select",
         }),
         (Controls::Dpad, kind) => Some(match kind {
             EntryKind::Reading(Some(UiEffect::CheckIn)) => "OK: check in",
-            EntryKind::Submenu(_) => "OK: open",
+            EntryKind::Submenu(_) | EntryKind::NetworkPicker => "OK: open",
             EntryKind::Back => "OK: back",
             EntryKind::Toggle(_) => "OK: toggle",
             _ => "OK: select",
@@ -1443,6 +1623,7 @@ const fn select_hint(controls: Controls, item: MenuItem) -> Option<&'static str>
 fn toggle_label(item: MenuItem, settings: &SettingsModel) -> &'static str {
     let value = match item.kind() {
         EntryKind::Toggle(ToggleId::Bluetooth) => settings.bluetooth,
+        EntryKind::Toggle(ToggleId::Wifi) => settings.wifi,
         EntryKind::Toggle(ToggleId::Gnss) => settings.gnss,
         EntryKind::Toggle(ToggleId::ShareLocation) => settings.share_location,
         EntryKind::Toggle(ToggleId::Forwarding) => settings.forwarding,
@@ -1463,6 +1644,7 @@ const fn notice_label(notice: UiNotice) -> &'static str {
         UiNotice::BondsCleared => "bonds cleared",
         UiNotice::ClearFailed => "CLEAR FAILED",
         UiNotice::ToggleUnavailable => "not available",
+        UiNotice::NetworkUnavailable => "network unavailable",
     }
 }
 
@@ -1526,6 +1708,82 @@ fn write_battery(line: &mut String<LINE>, status: &StatusModel<'_>) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn saved_network_picker_fits_with_full_and_empty_profile_lists() {
+        let wifi = WifiMenu {
+            networks: [
+                NetworkName::new(b"Home"),
+                NetworkName::new(b"Phone hotspot"),
+                NetworkName::new(b"A very long saved network name"),
+                NetworkName::new(&[0xff; 32]),
+            ],
+            ..Default::default()
+        };
+        for layout in layouts() {
+            let mut ui = UiModel::new(MenuItems::all());
+            navigate_to(&mut ui, MenuItem::WifiNetworks);
+            ui.apply_with_wifi(UiInput::Select, &wifi);
+            let mut status = demo_status();
+            status.wifi = Some(wifi);
+            for _ in 0..5 {
+                // TestPanel rejects every pixel outside the display.
+                render_frame(&mut TestPanel::new(layout.size), &layout, &ui, &status);
+                ui.apply_with_wifi(UiInput::Forward, &wifi);
+            }
+            let empty = WifiMenu::default();
+            status.wifi = Some(empty);
+            ui.refresh_wifi(&empty);
+            render_frame(&mut TestPanel::new(layout.size), &layout, &ui, &status);
+        }
+    }
+
+    #[test]
+    fn wifi_widgets_preserve_the_battery_and_fit_both_panels() {
+        for layout in layouts() {
+            let mut status = demo_status();
+            status.device_name = "An extremely long name that fills the header";
+            status.battery.charge = Some(ChargeClass::Charging);
+            let ui = UiModel::new(MenuItems::all());
+            let mut plain = TestPanel::new(layout.size);
+            render_frame(&mut plain, &layout, &ui, &status);
+            let mut fans = heapless::Vec::<_, 4>::new();
+            for state in [
+                WifiState::Off,
+                WifiState::Disconnected,
+                WifiState::Connecting,
+                WifiState::Connected,
+            ] {
+                status.wifi = Some(WifiMenu {
+                    enabled: state != WifiState::Off,
+                    state,
+                    ..Default::default()
+                });
+                let mut panel = TestPanel::new(layout.size);
+                render_frame(&mut panel, &layout, &ui, &status);
+                let zone = layout.battery_zone();
+                for point in zone.points() {
+                    assert_eq!(
+                        panel.lit(point.x as u32, point.y as u32),
+                        plain.lit(point.x as u32, point.y as u32)
+                    );
+                }
+                if state == WifiState::Off {
+                    assert_eq!(panel.pixels, plain.pixels);
+                }
+                fans.push(panel.pixels).unwrap();
+            }
+            assert_ne!(fans[1], fans[2]);
+            assert_ne!(fans[2], fans[3]);
+            let mut panel = TestPanel::new(layout.size);
+            let left = draw_status_widgets(
+                &mut panel,
+                &layout,
+                core::iter::repeat_n(StatusWidget::Wifi(WifiState::Connected), 40),
+            );
+            assert!(left >= layout.left - layout.battery.spacing as i32);
+        }
+    }
+
     use super::*;
     use crate::menu::{Level, MenuItems, UiInput};
 
@@ -1612,6 +1870,7 @@ mod tests {
 
     fn demo_status() -> StatusModel<'static> {
         StatusModel {
+            wifi: None,
             device_name: "umsh-tracker",
             firmware_version: "fw-2026.09.02",
             battery: BatteryIndicator {
@@ -1635,6 +1894,7 @@ mod tests {
             // state every panel must render as no clock at all.
             clock: None,
             settings: SettingsModel {
+                wifi: None,
                 bluetooth: Some(true),
                 gnss: Some(false),
                 share_location: Some(false),
@@ -2725,6 +2985,7 @@ mod tests {
     #[test]
     fn a_toggle_reports_its_state_and_an_unknown_one_reports_nothing() {
         let settings = SettingsModel {
+            wifi: None,
             bluetooth: Some(true),
             gnss: Some(false),
             share_location: None,
@@ -2753,6 +3014,7 @@ mod tests {
     #[test]
     fn a_row_says_whether_select_acts_or_asks_again() {
         let settings = SettingsModel {
+            wifi: None,
             bluetooth: Some(true),
             gnss: Some(false),
             share_location: None,
@@ -2787,6 +3049,7 @@ mod tests {
     #[test]
     fn a_narrow_row_gives_way_at_the_label() {
         let settings = SettingsModel {
+            wifi: None,
             bluetooth: None,
             gnss: None,
             share_location: Some(false),

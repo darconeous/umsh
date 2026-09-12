@@ -47,6 +47,7 @@ pub mod gate;
 pub mod menu;
 #[cfg(feature = "screen")]
 pub mod screen;
+pub mod wifi;
 
 use core::time::Duration;
 use umsh_ux_tracker::button::ButtonTimings;

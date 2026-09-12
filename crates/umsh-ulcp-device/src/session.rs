@@ -4593,6 +4593,50 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         )
     }
 
+    /// Flip station power from the device's physical controls.
+    pub fn toggle_wifi(&mut self, emit: &mut impl FnMut(&[u8])) -> Option<bool> {
+        self.toggle_device_flag(
+            self.has_station(),
+            prop::WIFI_ENABLED,
+            |device| &mut device.wifi_enabled,
+            emit,
+        )
+    }
+
+    #[cfg(feature = "wifi")]
+    fn select_stored_network(&mut self, ssid: &[u8]) -> Result<(), Status> {
+        if !self.has_station() {
+            return Err(Status::PROP_NOT_FOUND);
+        }
+        if !ssid.is_empty() && self.device.wifi_networks.get(ssid).is_none() {
+            return Err(Status::ITEM_NOT_FOUND);
+        }
+        self.device
+            .wifi_network
+            .set(ssid)
+            .map_err(|_| Status::INVALID_ARGUMENT)?;
+        self.bump_dev_domain();
+        Ok(())
+    }
+
+    /// Select by exact SSID, rechecking that a remotely removed profile still exists.
+    /// This changes the selected network without powering the station on.
+    #[cfg(feature = "wifi")]
+    pub fn choose_wifi_network(
+        &mut self,
+        ssid: &[u8],
+        emit: &mut impl FnMut(&[u8]),
+    ) -> Result<(), Status> {
+        if ssid.is_empty() {
+            return Err(Status::ITEM_NOT_FOUND);
+        }
+        self.select_stored_network(ssid)?;
+        if self.attached {
+            self.announce_prop_is(prop::WIFI_NETWORK, ssid, emit);
+        }
+        Ok(())
+    }
+
     /// Force `PROP_BLE_ENABLED` on for a physical gesture at the device—
     /// the hold-through-power-on ceremony that must always end with a
     /// reachable radio, including one whose operator turned Bluetooth off
@@ -6176,14 +6220,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             }
             #[cfg(feature = "wifi")]
             prop::WIFI_NETWORK if self.has_station() => {
-                if !value.is_empty() && self.device.wifi_networks.get(value).is_none() {
-                    return Err(Status::ITEM_NOT_FOUND);
-                }
-                self.device
-                    .wifi_network
-                    .set(value)
-                    .map_err(|_| Status::INVALID_ARGUMENT)?;
-                self.bump_dev_domain();
+                self.select_stored_network(value)?;
                 Ok(false)
             }
             #[cfg(not(feature = "wifi"))]
@@ -15228,6 +15265,66 @@ mod tests {
         assert_eq!(
             restored.dns_resolvers().iter().collect::<Vec<_>>(),
             [[9, 9, 9, 9].as_slice()]
+        );
+    }
+
+    #[cfg(feature = "wifi")]
+    #[test]
+    fn local_wifi_controls_publish_persist_and_reject_unknown_networks() {
+        let mut session = test_session();
+        insert_item(
+            &mut session,
+            prop::WIFI_NETWORKS,
+            &network_item(b"Home", b"password1"),
+        );
+        insert_item(
+            &mut session,
+            prop::WIFI_NETWORKS,
+            &network_item(b"Away", b"password2"),
+        );
+        set(&mut session, prop::WIFI_ENABLED, &[0]);
+        let mut frames = Vec::new();
+        session
+            .choose_wifi_network(b"Away", &mut |b| frames.push(b.to_vec()))
+            .unwrap();
+        assert!(
+            !session.wifi_enabled(),
+            "selection must not change radio power"
+        );
+        assert_eq!(
+            parse_prop_is(&frames[0]),
+            (TID_UNSOLICITED, prop::WIFI_NETWORK, b"Away".to_vec())
+        );
+        assert_eq!(
+            session.choose_wifi_network(b"Unknown", &mut |_| {}),
+            Err(Status::ITEM_NOT_FOUND)
+        );
+        assert_eq!(session.selected_network(), b"Away");
+        assert_eq!(
+            session.toggle_wifi(&mut |b| frames.push(b.to_vec())),
+            Some(true)
+        );
+        assert_eq!(
+            parse_prop_is(frames.last().unwrap()),
+            (TID_UNSOLICITED, prop::WIFI_ENABLED, vec![1])
+        );
+        let mut snapshot = [0; SNAPSHOT_MAX];
+        let len = session.encode_snapshot(&mut snapshot).unwrap();
+        let mut restored: TestSession =
+            Session::new(test_config(), Status::RESET_POWER_ON, test_engine());
+        restored.restore_at_boot(&snapshot[..len]).unwrap();
+        assert!(restored.wifi_enabled());
+        assert_eq!(restored.selected_network(), b"Away");
+        remove_item(&mut session, prop::WIFI_NETWORKS, b"Away");
+        assert_eq!(
+            session.choose_wifi_network(b"Away", &mut |_| {}),
+            Err(Status::ITEM_NOT_FOUND)
+        );
+        session.config.wifi = None;
+        assert_eq!(session.toggle_wifi(&mut |_| {}), None);
+        assert_eq!(
+            session.choose_wifi_network(b"Home", &mut |_| {}),
+            Err(Status::PROP_NOT_FOUND)
         );
     }
 

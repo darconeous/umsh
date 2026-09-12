@@ -17,6 +17,7 @@ With no phone present, a display tracker should let its user:
 - read the device's own node address, and show it as a QR code when the panel
   can carry one;
 - turn Bluetooth on and off, and open a pairing window with its PIN visible;
+- turn WiFi on and off, and select an already configured network where supported;
 - turn the GNSS receiver on and off, and choose whether position is shared;
 - turn frame forwarding on and off;
 - check in on demand;
@@ -50,6 +51,10 @@ Settings            names itself; Select enters
         Back                            <
         Forwarding      toggle          on / off
         Statistics      Select opens    >
+    WiFi            Select enters       >
+        Back                            <
+        WiFi            toggle          on / off
+        Saved networks  Select opens    >
     About               Select opens    >
 ```
 
@@ -58,6 +63,22 @@ The third column is what the row shows at its right edge; see
 
 Each level is a wrapping list. Next and Previous walk it, and Select does
 whatever the highlighted entry defines.
+
+### WiFi
+
+WiFi appears only on boards with station support. The radio toggle changes
+power without forgetting credentials. Saved networks lists only configured
+profiles, with `*` marking the selected network. Select changes that choice;
+it does not turn the radio on. An empty list says `No saved networks` and
+retains Back. Adding a network or changing its password uses device management
+from a phone or computer.
+
+The header's status widgets occupy space from the right, ahead of the device
+name. Battery and charging retain their corner; WiFi appears beside them while
+enabled. A full fan means associated, a small fan means connecting, and a
+crossed fan means disconnected. Turning WiFi off removes its icon. The icon
+describes the WiFi link, not Internet or bridge availability. Widgets reserve
+their own width, and lower-priority widgets are omitted if they cannot fit.
 
 ### The right-hand column
 

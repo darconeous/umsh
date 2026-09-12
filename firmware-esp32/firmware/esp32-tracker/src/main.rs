@@ -163,7 +163,7 @@ use umsh_ux_display_tracker::attention::{
     Attention, AttentionConfig, DisplayKind, HoldReason, Transition,
 };
 use umsh_ux_display_tracker::gate::{Disposition, Gate, GateReason};
-#[cfg(not(feature = "gnss"))]
+#[cfg(any(not(feature = "gnss"), not(feature = "wifi")))]
 use umsh_ux_display_tracker::menu::MenuItem;
 use umsh_ux_display_tracker::menu::{MenuItems, ToggleId, UiEffect, UiInput, UiModel, UiNotice};
 use umsh_ux_display_tracker::screen;
@@ -1446,6 +1446,13 @@ impl DeviceEnv for BoardDeviceEnv {
     #[cfg(feature = "wifi")]
     fn apply_network_config(&mut self, config: driver::NetworkConfig<'_>) {
         wifi::apply(config);
+    }
+
+    #[cfg(feature = "wifi")]
+    fn wifi_selection_result(&mut self, result: Result<(), Status>) {
+        if result.is_err() {
+            UI_NOTICE.signal(UiNotice::NetworkUnavailable);
+        }
     }
 
     #[cfg(feature = "wifi")]
@@ -3130,21 +3137,27 @@ async fn device_task(
 /// bare gesture because the confirmation page in front of it is what
 /// makes it safe.
 fn board_menu_items() -> MenuItems {
-    #[cfg(feature = "gnss")]
-    {
-        MenuItems::all()
-    }
+    #[allow(unused_mut)]
+    let mut items = MenuItems::all();
     #[cfg(not(feature = "gnss"))]
     {
-        MenuItems::all()
+        items = items
             .without(MenuItem::GnssToggle)
-            .without(MenuItem::ShareLocation)
+            .without(MenuItem::ShareLocation);
     }
+    #[cfg(not(feature = "wifi"))]
+    {
+        items = items
+            .without(MenuItem::WifiToggle)
+            .without(MenuItem::WifiNetworks);
+    }
+    items
 }
 
 /// Which device-domain switch a menu toggle names.
 const fn ulcp_setting(id: ToggleId) -> Setting {
     match id {
+        ToggleId::Wifi => Setting::Wifi,
         ToggleId::Bluetooth => Setting::Bluetooth,
         ToggleId::Gnss => Setting::Gnss,
         ToggleId::ShareLocation => Setting::ShareLocation,
@@ -3196,6 +3209,10 @@ impl IdentityText {
 /// async and the model borrows it, so the display task snapshots it once
 /// per frame and lends it to this.
 fn ui_status<'a>(name: &'a DeviceName, identity: &'a IdentityText) -> screen::StatusModel<'a> {
+    #[cfg(feature = "wifi")]
+    let wifi = Some(wifi::ui_snapshot());
+    #[cfg(not(feature = "wifi"))]
+    let wifi: Option<umsh_ux_display_tracker::wifi::WifiMenu> = None;
     let mv = BATTERY_MV.load(Ordering::Acquire);
     // No charger telemetry reaches the MCU on the ADC boards, so their
     // indicator says nothing about charging rather than asserting the
@@ -3221,11 +3238,13 @@ fn ui_status<'a>(name: &'a DeviceName, identity: &'a IdentityText) -> screen::St
         }
     };
     screen::StatusModel {
+        wifi,
         firmware_version: env!("GIT_DESCRIBE"),
         device_name: core::str::from_utf8(name).unwrap_or(DEFAULT_DEVICE_NAME),
         // Boards with no receiver report nothing on both positioning
         // switches rather than a guess—and neither is on their menu.
         settings: screen::SettingsModel {
+            wifi: wifi.map(|wifi| wifi.enabled),
             bluetooth: Some(BLE_ENABLED.load(Ordering::Acquire)),
             #[cfg(not(feature = "gnss"))]
             gnss: None,
@@ -3461,7 +3480,26 @@ async fn display_task(mut display: Display, #[cfg(not(feature = "pmic-axp2101"))
                 let now = Instant::now().as_millis();
                 transition = attention.wake(now).or(transition);
                 redraw = true;
-                match model.apply(input) {
+                #[cfg(feature = "wifi")]
+                let effect = model.apply_with_wifi(input, &wifi::ui_snapshot());
+                #[cfg(not(feature = "wifi"))]
+                let effect = model.apply(input);
+                match effect {
+                    Some(UiEffect::SelectWifiNetwork(name)) => {
+                        #[cfg(feature = "wifi")]
+                        {
+                            let mut selected = umsh_ulcp_device::net::SelectedNetwork::default();
+                            if selected.set(name.as_bytes()).is_ok() {
+                                INPUT_CH.send(InEvent::SelectWifiNetwork(selected)).await;
+                                redraw = false;
+                            }
+                        }
+                        #[cfg(not(feature = "wifi"))]
+                        {
+                            let _ = name;
+                            model.set_notice(UiNotice::NetworkUnavailable);
+                        }
+                    }
                     Some(UiEffect::CheckIn) => {
                         device_node::request_beacon(device_node::BeaconTrigger::Button);
                         model.set_notice(UiNotice::CheckInRequested);
@@ -3557,7 +3595,11 @@ async fn display_task(mut display: Display, #[cfg(not(feature = "pmic-axp2101"))
         }
 
         if redraw && !splash.is_active() && attention.accepts_redraw() {
-            render_frame(&mut display, &model, &ui_status(&name, &identity)).await;
+            let status = ui_status(&name, &identity);
+            if let Some(wifi) = &status.wifi {
+                model.refresh_wifi(wifi);
+            }
+            render_frame(&mut display, &model, &status).await;
             if BOOT_SPLASH_ACTIVE.swap(false, Ordering::AcqRel) {
                 let _ = attention.wake(Instant::now().as_millis());
             }
