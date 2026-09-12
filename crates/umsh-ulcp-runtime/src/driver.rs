@@ -403,6 +403,8 @@ pub enum PublishEvent {
     /// `PROP_IPV6_STATE`. An address arrives when the network hands one
     /// over, which is exactly the transition a host waits on.
     IpState(u32, umsh_ulcp::ip::FamilyState),
+    #[cfg(feature = "bridge-client")]
+    BridgeLink(umsh_ulcp::bridge::Link),
     #[cfg(feature = "wifi")]
     NetworkTableChanged(u32, heapless::Vec<u8, NETWORK_TABLE_MAX>),
 }
@@ -572,6 +574,15 @@ pub trait DeviceEnv {
     /// see anything but the default.
     fn apply_network_config(&mut self, config: NetworkConfig<'_>) {
         let _ = config;
+    }
+    /// Apply bridge settings and the live device identity without blocking ULCP.
+    #[cfg(feature = "bridge-client")]
+    fn apply_bridge_config(
+        &mut self,
+        config: &umsh_ulcp_device::bridge::BridgeConfig,
+        identity: Option<[u8; 32]>,
+    ) {
+        let _ = (config, identity);
     }
     /// A `PROP_WIFI_SCANNING` write: start looking for access points, or
     /// abandon a scan in progress.
@@ -1066,6 +1077,8 @@ fn sync_dev_domain<A, S, const TXQ: usize, E>(
         resolvers: session.dns_resolvers(),
     });
     env.set_ble_enabled(snapshot.ble_enabled);
+    #[cfg(feature = "bridge-client")]
+    env.apply_bridge_config(session.bridge_config(), snapshot.dev_key);
     env.publish_dev_domain(snapshot);
 }
 
@@ -1816,6 +1829,8 @@ where
                     PublishEvent::IpState(key, state) => {
                         session.set_ip_state(key, state, emit);
                     }
+                    #[cfg(feature = "bridge-client")]
+                    PublishEvent::BridgeLink(link) => session.set_bridge_link(link, emit),
                     PublishEvent::IdentityFix(location, altitude_m) => {
                         // The session clamps, compares, and bumps the
                         // device-domain version if the advertised

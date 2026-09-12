@@ -251,6 +251,11 @@ struct ManageDeviceCategory: Identifiable {
             symbol: "network"
         ) { model, _ in AnyView(RemoteNetworkScreen(model: model)) },
         ManageDeviceCategory(
+            category: .bridge,
+            title: "Bridge",
+            symbol: "point.3.connected.trianglepath.dotted"
+        ) { model, _ in AnyView(RemoteBridgeScreen(model: model)) },
+        ManageDeviceCategory(
             category: .repeater,
             title: "Repeater",
             symbol: "arrow.triangle.branch"

@@ -175,6 +175,8 @@ use umsh_ux_tracker::button::{ButtonEdge, ButtonEvent, ButtonFsm};
 use transport_policy::{Transport, generation_checked};
 
 mod ble_store;
+#[cfg(feature = "bridge-client")]
+mod bridge;
 mod device_node;
 #[cfg(feature = "psram")]
 mod external;
@@ -431,6 +433,7 @@ fn session_config() -> SessionConfig {
         wifi: None,
         #[cfg(not(feature = "wifi"))]
         ip: None,
+        bridge_client: cfg!(feature = "bridge-client"),
         stats: Some(&STATS),
     }
 }
@@ -1432,6 +1435,14 @@ impl BoardDeviceEnv {
 }
 
 impl DeviceEnv for BoardDeviceEnv {
+    #[cfg(feature = "bridge-client")]
+    fn apply_bridge_config(
+        &mut self,
+        config: &umsh_ulcp_device::bridge::BridgeConfig,
+        identity: Option<[u8; 32]>,
+    ) {
+        bridge::apply(config, identity);
+    }
     #[cfg(feature = "wifi")]
     fn apply_network_config(&mut self, config: driver::NetworkConfig<'_>) {
         wifi::apply(config);
@@ -1594,7 +1605,15 @@ impl DeviceEnv for BoardDeviceEnv {
         };
         #[cfg(feature = "wifi")]
         {
-            match select(sensors, wifi::event()).await {
+            #[cfg(feature = "bridge-client")]
+            let events = async {
+                match select(wifi::event(), bridge::event()).await {
+                    Either::First(event) | Either::Second(event) => event,
+                }
+            };
+            #[cfg(not(feature = "bridge-client"))]
+            let events = wifi::event();
+            match select(sensors, events).await {
                 Either::First(event) | Either::Second(event) => event,
             }
         }
@@ -2638,7 +2657,21 @@ async fn radio_task(lora: board_radio::Radio) {
 /// completion routing plus RX fan-out to every client.
 #[embassy_executor::task]
 async fn radio_mux_task() {
-    radio_mux::radio_mux(&RADIO_CH, &MUX_CLIENTS, &radio_mux::MUX_MODE, Some(&STATS)).await
+    #[cfg(feature = "bridge-client")]
+    let attachment = Some(radio_mux::BridgeAttachment {
+        node: 1,
+        port: &bridge::PORT,
+    });
+    #[cfg(not(feature = "bridge-client"))]
+    let attachment = None;
+    radio_mux::radio_mux_with_bridge(
+        &RADIO_CH,
+        &MUX_CLIENTS,
+        &radio_mux::MUX_MODE,
+        Some(&STATS),
+        attachment,
+    )
+    .await
 }
 
 // ─── GNSS ────────────────────────────────────────────────────────────────
@@ -4260,10 +4293,21 @@ async fn main(spawner: Spawner) {
         pool_draw(b"wifi-ip", &mut bytes);
         u64::from_le_bytes(bytes)
     };
+    #[cfg(feature = "bridge-client")]
+    let bridge_seed = {
+        let mut seed = [0; 32];
+        pool_draw(b"bridge-tls", &mut seed);
+        seed
+    };
     drop(pool_draw);
     #[cfg(feature = "wifi")]
-    {
-        static RESOURCES: StaticCell<embassy_net::StackResources<1>> = StaticCell::new();
+    let network_stack = {
+        const SOCKETS: usize = if cfg!(feature = "bridge-client") {
+            3
+        } else {
+            1
+        };
+        static RESOURCES: StaticCell<embassy_net::StackResources<SOCKETS>> = StaticCell::new();
         let interface = wifi::interface();
         let mac = interface.mac_address();
         let (stack, runner) = embassy_net::new(
@@ -4275,6 +4319,15 @@ async fn main(spawner: Spawner) {
         spawner.spawn(ip::runner(runner).unwrap());
         spawner.spawn(wifi::task(peripherals.WIFI, stack).unwrap());
         wifi::publish(driver::PublishEvent::WifiMac(mac)).await;
+        stack
+    };
+    #[cfg(feature = "bridge-client")]
+    {
+        bridge::PORT.init(external::bridge_queues());
+        let seed = boot_identity_keys.as_ref().map(|keys| keys.0);
+        spawner.spawn(
+            bridge::task(network_stack, seed, bridge_seed, external::bridge_buffers()).unwrap(),
+        );
     }
 
     let boot_identity = boot_identity_keys.as_ref().map(|(_secret, public)| *public);

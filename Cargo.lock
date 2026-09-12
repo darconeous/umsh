@@ -24,6 +24,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "aes-gcm"
+version = "0.10.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "831010a0f742e1209b3bcea8fab6a8e149051ba6099432c8cb2cc117dec3ead1"
+dependencies = [
+ "aead",
+ "aes",
+ "cipher",
+ "ctr",
+ "ghash",
+ "subtle",
+]
+
+[[package]]
 name = "aes-siv"
 version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -957,6 +971,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9ed9a281f7bc9b7576e61468ba615a66a5c8cfdff42420a70aa82701a3b1e292"
 dependencies = [
  "block-buffer",
+ "const-oid",
  "crypto-common",
  "subtle",
 ]
@@ -988,6 +1003,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "415b6ec780d34dcf624666747194393603d0373b7141eef01d12ee58881507d9"
 dependencies = [
  "phf",
+]
+
+[[package]]
+name = "ecdsa"
+version = "0.16.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ee27f32b5c5292967d2d4a9d7f1e0b0aed2c15daded5a60300e4abb9d8020bca"
+dependencies = [
+ "der",
+ "digest",
+ "elliptic-curve",
+ "rfc6979",
+ "signature",
 ]
 
 [[package]]
@@ -1394,6 +1422,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9eb1aa714776b75c7e67e1da744b81a129b3ff919c8712b5e1b32252c1f07cc7"
 
 [[package]]
+name = "embedded-io-adapters"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c900a1c087f1f7d17cdc84a1290df91521cd90933efa76d68e568385d889f2f4"
+dependencies = [
+ "embedded-io 0.7.1",
+ "embedded-io-async 0.7.0",
+ "tokio",
+]
+
+[[package]]
 name = "embedded-io-async"
 version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1424,6 +1463,29 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1763775e2323b7d5f0aa6090657f5e21cfa02ede71f5dc40eead06d64dcd15cc"
 dependencies = [
  "embedded-storage",
+]
+
+[[package]]
+name = "embedded-tls"
+version = "0.19.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6ff3c16c9cedcab3ef5c79fd46349152adbb98f997b937cb1ead7655f5c07e43"
+dependencies = [
+ "aes-gcm",
+ "digest",
+ "ecdsa",
+ "embedded-io 0.7.1",
+ "embedded-io-async 0.7.0",
+ "generic-array",
+ "heapless 0.9.3",
+ "hkdf",
+ "hmac",
+ "p256",
+ "portable-atomic",
+ "rand_core 0.6.4",
+ "sha2",
+ "signature",
+ "typenum",
 ]
 
 [[package]]
@@ -2027,6 +2089,16 @@ dependencies = [
  "rand_core 0.10.0",
  "wasip2",
  "wasip3",
+]
+
+[[package]]
+name = "ghash"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f0d8a4362ccb29cb0b265253fb0a2728f592895ee6854fd9bc13f2ffda266ff1"
+dependencies = [
+ "opaque-debug",
+ "polyval",
 ]
 
 [[package]]
@@ -2747,13 +2819,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
 
 [[package]]
+name = "opaque-debug"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c08d65885ee38876c4f86fa503fb49d7b507c2b62552df7c70b2fce627e06381"
+
+[[package]]
 name = "p256"
 version = "0.13.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c9863ad85fa8f4460f9c48cb909d38a0d689dba1f6f6988a5e3e0d31071bcd4b"
 dependencies = [
+ "ecdsa",
  "elliptic-curve",
  "primeorder",
+ "sha2",
 ]
 
 [[package]]
@@ -2844,6 +2924,18 @@ name = "plain"
 version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b4596b6d070b27117e987119b4dac604f3c58cfb0b191112e24771b2faeac1a6"
+
+[[package]]
+name = "polyval"
+version = "0.6.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9d1fe60d06143b2430aa532c94cfe9e29783047f06c0d7fd359a9a51b729fa25"
+dependencies = [
+ "cfg-if",
+ "cpufeatures 0.2.17",
+ "opaque-debug",
+ "universal-hash",
+]
 
 [[package]]
 name = "portable-atomic"
@@ -3067,6 +3159,16 @@ name = "regex-syntax"
 version = "0.8.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dc897dd8d9e8bd1ed8cdad82b5966c3e0ecae09fb1907d58efaa013543185d0a"
+
+[[package]]
+name = "rfc6979"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f8dd2a808d456c4a54e300a23e9f5a67e122c3024119acbfd73e3bf664491cb2"
+dependencies = [
+ "hmac",
+ "subtle",
+]
 
 [[package]]
 name = "ring"
@@ -3428,6 +3530,10 @@ name = "signature"
 version = "2.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "77549399552de45a898a580c1b41d445bf730df867cc44e6c0233bbc4b8329de"
+dependencies = [
+ "digest",
+ "rand_core 0.6.4",
+]
 
 [[package]]
 name = "siphasher"
@@ -3937,8 +4043,12 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "embedded-io-adapters",
+ "embedded-tls",
  "libc",
  "rand 0.10.1",
+ "rand_chacha",
+ "rand_core 0.6.4",
  "rcgen",
  "rustls-pki-types",
  "serde",
@@ -3950,11 +4060,27 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "umsh",
+ "umsh-bridge-client",
  "umsh-core",
  "umsh-crypto",
  "umsh-hal",
  "umsh-ulcp",
  "umsh-ulcp-simdev",
+]
+
+[[package]]
+name = "umsh-bridge-client"
+version = "0.1.0"
+dependencies = [
+ "ed25519-dalek",
+ "embedded-io-async 0.7.0",
+ "embedded-tls",
+ "heapless 0.8.0",
+ "rand_chacha",
+ "rand_core 0.6.4",
+ "sha2",
+ "signature",
+ "umsh-ulcp",
 ]
 
 [[package]]
@@ -4296,6 +4422,7 @@ name = "umsh-ulcp-device"
 version = "0.1.0"
 dependencies = [
  "critical-section",
+ "ed25519-dalek",
  "embassy-sync 0.8.0",
  "heapless 0.8.0",
  "umsh-core",
@@ -4560,6 +4687,16 @@ dependencies = [
  "textwrap",
  "uniffi_meta",
  "weedle2",
+]
+
+[[package]]
+name = "universal-hash"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fc1de2c688dc15305988b563c3854064043356019f97a4b46276fe734c4f07ea"
+dependencies = [
+ "crypto-common",
+ "subtle",
 ]
 
 [[package]]

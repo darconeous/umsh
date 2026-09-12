@@ -365,6 +365,7 @@ final class ManageDeviceModel {
             supportsBle: decoded.supportsBle,
             supportsWifiScan: decoded.supportsWifiScan,
             supportsWifi: decoded.supportsWifi,
+            supportsBridgeClient: decoded.supportsBridgeClient,
             supportsIpv4: decoded.supportsIpv4,
             supportsIpv6: decoded.supportsIpv6,
             supportsReboot: decoded.supportsReboot,

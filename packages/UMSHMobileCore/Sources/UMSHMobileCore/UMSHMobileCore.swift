@@ -8549,6 +8549,60 @@ public func FfiConverterTypeUlcpBatteryRecord_lower(_ value: UlcpBatteryRecord) 
 }
 
 
+public struct UlcpBridgeLinkRecord: Equatable, Hashable {
+    public var state: UInt8
+    public var reason: UInt8
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(state: UInt8, reason: UInt8) {
+        self.state = state
+        self.reason = reason
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension UlcpBridgeLinkRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeUlcpBridgeLinkRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> UlcpBridgeLinkRecord {
+        return
+            try UlcpBridgeLinkRecord(
+                state: FfiConverterUInt8.read(from: &buf),
+                reason: FfiConverterUInt8.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: UlcpBridgeLinkRecord, into buf: inout [UInt8]) {
+        FfiConverterUInt8.write(value.state, into: &buf)
+        FfiConverterUInt8.write(value.reason, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeUlcpBridgeLinkRecord_lift(_ buf: RustBuffer) throws -> UlcpBridgeLinkRecord {
+    return try FfiConverterTypeUlcpBridgeLinkRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeUlcpBridgeLinkRecord_lower(_ value: UlcpBridgeLinkRecord) -> RustBuffer {
+    return FfiConverterTypeUlcpBridgeLinkRecord.lower(value)
+}
+
+
 /**
  * What a device is, as opposed to how it is configured.
  *
@@ -8599,6 +8653,7 @@ public struct UlcpDeviceCardRecord: Equatable, Hashable {
      * Whether it has a station to join them with.
      */
     public var supportsWifi: Bool
+    public var supportsBridgeClient: Bool
     public var supportsIpv4: Bool
     public var supportsIpv6: Bool
     /**
@@ -8638,7 +8693,7 @@ public struct UlcpDeviceCardRecord: Equatable, Hashable {
          */supportsWifiScan: Bool,
         /**
          * Whether it has a station to join them with.
-         */supportsWifi: Bool, supportsIpv4: Bool, supportsIpv6: Bool,
+         */supportsWifi: Bool, supportsBridgeClient: Bool, supportsIpv4: Bool, supportsIpv6: Bool,
         /**
          * Whether a Restart control is worth offering (`CAP_REBOOT`).
          */supportsReboot: Bool, supportsSave: Bool,
@@ -8665,6 +8720,7 @@ public struct UlcpDeviceCardRecord: Equatable, Hashable {
         self.supportsBle = supportsBle
         self.supportsWifiScan = supportsWifiScan
         self.supportsWifi = supportsWifi
+        self.supportsBridgeClient = supportsBridgeClient
         self.supportsIpv4 = supportsIpv4
         self.supportsIpv6 = supportsIpv6
         self.supportsReboot = supportsReboot
@@ -8706,6 +8762,7 @@ public struct FfiConverterTypeUlcpDeviceCardRecord: FfiConverterRustBuffer {
                 supportsBle: FfiConverterBool.read(from: &buf),
                 supportsWifiScan: FfiConverterBool.read(from: &buf),
                 supportsWifi: FfiConverterBool.read(from: &buf),
+                supportsBridgeClient: FfiConverterBool.read(from: &buf),
                 supportsIpv4: FfiConverterBool.read(from: &buf),
                 supportsIpv6: FfiConverterBool.read(from: &buf),
                 supportsReboot: FfiConverterBool.read(from: &buf),
@@ -8733,6 +8790,7 @@ public struct FfiConverterTypeUlcpDeviceCardRecord: FfiConverterRustBuffer {
         FfiConverterBool.write(value.supportsBle, into: &buf)
         FfiConverterBool.write(value.supportsWifiScan, into: &buf)
         FfiConverterBool.write(value.supportsWifi, into: &buf)
+        FfiConverterBool.write(value.supportsBridgeClient, into: &buf)
         FfiConverterBool.write(value.supportsIpv4, into: &buf)
         FfiConverterBool.write(value.supportsIpv6, into: &buf)
         FfiConverterBool.write(value.supportsReboot, into: &buf)
@@ -8931,6 +8989,12 @@ public func FfiConverterTypeUlcpDeviceConfigRecord_lower(_ value: UlcpDeviceConf
  * and can insist on the properties every device must answer.
  */
 public struct UlcpDevicePropertiesRecord: Equatable, Hashable {
+    public var bridgeEnabled: Bool?
+    public var bridgeHost: String?
+    public var bridgePort: UInt16?
+    public var bridgeServerKey: Data?
+    public var bridgeLink: UlcpBridgeLinkRecord?
+    public var devKey: Data?
     public var battery: UlcpBatteryRecord?
     public var phyEnabled: Bool?
     public var frequencyKhz: UInt32?
@@ -9093,7 +9157,7 @@ public struct UlcpDevicePropertiesRecord: Equatable, Hashable {
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(battery: UlcpBatteryRecord?, phyEnabled: Bool?, frequencyKhz: UInt32?, transmitPowerDbm: Int8?, bandwidthHz: UInt32?, spreadingFactor: UInt8?, codingRateDenom: UInt8?, dutyCycleNow: UInt16?, dutyCycleLimit: UInt16?, statTxPackets: UInt32?, statTxChannelBusy: UInt32?, statRxPackets: UInt32?, statRxBadCrc: UInt32?, statRxNonUmsh: UInt32?, statRxAccepted: UInt32?, statForwarded: UInt32?, statForwardDropped: UInt32?, statForwardCancelled: UInt32?, deviceName: String?,
+    public init(bridgeEnabled: Bool?, bridgeHost: String?, bridgePort: UInt16?, bridgeServerKey: Data?, bridgeLink: UlcpBridgeLinkRecord?, devKey: Data?, battery: UlcpBatteryRecord?, phyEnabled: Bool?, frequencyKhz: UInt32?, transmitPowerDbm: Int8?, bandwidthHz: UInt32?, spreadingFactor: UInt8?, codingRateDenom: UInt8?, dutyCycleNow: UInt16?, dutyCycleLimit: UInt16?, statTxPackets: UInt32?, statTxChannelBusy: UInt32?, statRxPackets: UInt32?, statRxBadCrc: UInt32?, statRxNonUmsh: UInt32?, statRxAccepted: UInt32?, statForwarded: UInt32?, statForwardDropped: UInt32?, statForwardCancelled: UInt32?, deviceName: String?,
         /**
          * `None` is the device deriving its own role, which reads the same
          * as never having been told.
@@ -9188,6 +9252,12 @@ public struct UlcpDevicePropertiesRecord: Equatable, Hashable {
          * clock was asked about; the inner epoch is absent on a device that
          * has not found the time.
          */time: UlcpTimeRecord?, tzOffsetMin: Int16?, repeaterEnabled: Bool?, repeaterRegions: [String]?, repeaterDefaultRegion: Data?, repeaterMinRssiDbm: Int16?, repeaterMinSnrDb: Int8?, devPeerKeys: [Data]?, devAdminKeys: [Data]?) {
+        self.bridgeEnabled = bridgeEnabled
+        self.bridgeHost = bridgeHost
+        self.bridgePort = bridgePort
+        self.bridgeServerKey = bridgeServerKey
+        self.bridgeLink = bridgeLink
+        self.devKey = devKey
         self.battery = battery
         self.phyEnabled = phyEnabled
         self.frequencyKhz = frequencyKhz
@@ -9271,6 +9341,12 @@ public struct FfiConverterTypeUlcpDevicePropertiesRecord: FfiConverterRustBuffer
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> UlcpDevicePropertiesRecord {
         return
             try UlcpDevicePropertiesRecord(
+                bridgeEnabled: FfiConverterOptionBool.read(from: &buf),
+                bridgeHost: FfiConverterOptionString.read(from: &buf),
+                bridgePort: FfiConverterOptionUInt16.read(from: &buf),
+                bridgeServerKey: FfiConverterOptionData.read(from: &buf),
+                bridgeLink: FfiConverterOptionTypeUlcpBridgeLinkRecord.read(from: &buf),
+                devKey: FfiConverterOptionData.read(from: &buf),
                 battery: FfiConverterOptionTypeUlcpBatteryRecord.read(from: &buf),
                 phyEnabled: FfiConverterOptionBool.read(from: &buf),
                 frequencyKhz: FfiConverterOptionUInt32.read(from: &buf),
@@ -9340,6 +9416,12 @@ public struct FfiConverterTypeUlcpDevicePropertiesRecord: FfiConverterRustBuffer
     }
 
     public static func write(_ value: UlcpDevicePropertiesRecord, into buf: inout [UInt8]) {
+        FfiConverterOptionBool.write(value.bridgeEnabled, into: &buf)
+        FfiConverterOptionString.write(value.bridgeHost, into: &buf)
+        FfiConverterOptionUInt16.write(value.bridgePort, into: &buf)
+        FfiConverterOptionData.write(value.bridgeServerKey, into: &buf)
+        FfiConverterOptionTypeUlcpBridgeLinkRecord.write(value.bridgeLink, into: &buf)
+        FfiConverterOptionData.write(value.devKey, into: &buf)
         FfiConverterOptionTypeUlcpBatteryRecord.write(value.battery, into: &buf)
         FfiConverterOptionBool.write(value.phyEnabled, into: &buf)
         FfiConverterOptionUInt32.write(value.frequencyKhz, into: &buf)
@@ -10219,6 +10301,12 @@ public struct UlcpManagedPropertyIds: Equatable, Hashable {
     public var bleLink: UInt32
     public var blePairing: UInt32
     public var wifiEnabled: UInt32
+    public var bridgeEnabled: UInt32
+    public var bridgeHost: UInt32
+    public var bridgePort: UInt32
+    public var bridgeServerKey: UInt32
+    public var bridgeLink: UInt32
+    public var devKey: UInt32
     public var wifiNetworks: UInt32
     public var wifiNetwork: UInt32
     public var wifiScanning: UInt32
@@ -10247,7 +10335,7 @@ public struct UlcpManagedPropertyIds: Equatable, Hashable {
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(caps: UInt32, deviceVersion: UInt32, deviceModel: UInt32, deviceName: UInt32, battery: UInt32, phyEnabled: UInt32, frequency: UInt32, transmitPower: UInt32, loraBandwidth: UInt32, loraSpreadingFactor: UInt32, loraCodingRate: UInt32, dutyCycleNow: UInt32, dutyCycleLimit: UInt32, statTxPackets: UInt32, statTxChannelBusy: UInt32, statRxPackets: UInt32, statRxBadCrc: UInt32, statRxNonUmsh: UInt32, statRxAccepted: UInt32, statForwarded: UInt32, statForwardDropped: UInt32, statForwardCancelled: UInt32, identRole: UInt32, identMobile: UInt32, identLocation: UInt32, identAltitude: UInt32, devDiscoverable: UInt32, gnssIdentUpdate: UInt32, gnssIdentPrecision: UInt32, uptime: UInt32, advertInterval: UInt32, beaconInterval: UInt32, startupBeacon: UInt32, gnssEnabled: UInt32, gnssTimeTrust: UInt32, bleEnabled: UInt32, bleBondCount: UInt32, bleLink: UInt32, blePairing: UInt32, wifiEnabled: UInt32, wifiNetworks: UInt32, wifiNetwork: UInt32, wifiScanning: UInt32, wifiScanResults: UInt32, wifiLink: UInt32, wifiRssi: UInt32, wifiMac: UInt32, ipv4State: UInt32, ipv4Config: UInt32, ipv4Address: UInt32, ipv6State: UInt32, ipv6Config: UInt32, ipv6Addresses: UInt32, ipDns: UInt32, ipResolvers: UInt32, time: UInt32, tzOffset: UInt32, alert: UInt32, repeaterEnabled: UInt32, repeaterRegions: UInt32, repeaterDefaultRegion: UInt32, repeaterMinRssi: UInt32, repeaterMinSnr: UInt32, devPeers: UInt32, devAdmins: UInt32) {
+    public init(caps: UInt32, deviceVersion: UInt32, deviceModel: UInt32, deviceName: UInt32, battery: UInt32, phyEnabled: UInt32, frequency: UInt32, transmitPower: UInt32, loraBandwidth: UInt32, loraSpreadingFactor: UInt32, loraCodingRate: UInt32, dutyCycleNow: UInt32, dutyCycleLimit: UInt32, statTxPackets: UInt32, statTxChannelBusy: UInt32, statRxPackets: UInt32, statRxBadCrc: UInt32, statRxNonUmsh: UInt32, statRxAccepted: UInt32, statForwarded: UInt32, statForwardDropped: UInt32, statForwardCancelled: UInt32, identRole: UInt32, identMobile: UInt32, identLocation: UInt32, identAltitude: UInt32, devDiscoverable: UInt32, gnssIdentUpdate: UInt32, gnssIdentPrecision: UInt32, uptime: UInt32, advertInterval: UInt32, beaconInterval: UInt32, startupBeacon: UInt32, gnssEnabled: UInt32, gnssTimeTrust: UInt32, bleEnabled: UInt32, bleBondCount: UInt32, bleLink: UInt32, blePairing: UInt32, wifiEnabled: UInt32, bridgeEnabled: UInt32, bridgeHost: UInt32, bridgePort: UInt32, bridgeServerKey: UInt32, bridgeLink: UInt32, devKey: UInt32, wifiNetworks: UInt32, wifiNetwork: UInt32, wifiScanning: UInt32, wifiScanResults: UInt32, wifiLink: UInt32, wifiRssi: UInt32, wifiMac: UInt32, ipv4State: UInt32, ipv4Config: UInt32, ipv4Address: UInt32, ipv6State: UInt32, ipv6Config: UInt32, ipv6Addresses: UInt32, ipDns: UInt32, ipResolvers: UInt32, time: UInt32, tzOffset: UInt32, alert: UInt32, repeaterEnabled: UInt32, repeaterRegions: UInt32, repeaterDefaultRegion: UInt32, repeaterMinRssi: UInt32, repeaterMinSnr: UInt32, devPeers: UInt32, devAdmins: UInt32) {
         self.caps = caps
         self.deviceVersion = deviceVersion
         self.deviceModel = deviceModel
@@ -10288,6 +10376,12 @@ public struct UlcpManagedPropertyIds: Equatable, Hashable {
         self.bleLink = bleLink
         self.blePairing = blePairing
         self.wifiEnabled = wifiEnabled
+        self.bridgeEnabled = bridgeEnabled
+        self.bridgeHost = bridgeHost
+        self.bridgePort = bridgePort
+        self.bridgeServerKey = bridgeServerKey
+        self.bridgeLink = bridgeLink
+        self.devKey = devKey
         self.wifiNetworks = wifiNetworks
         self.wifiNetwork = wifiNetwork
         self.wifiScanning = wifiScanning
@@ -10371,6 +10465,12 @@ public struct FfiConverterTypeUlcpManagedPropertyIds: FfiConverterRustBuffer {
                 bleLink: FfiConverterUInt32.read(from: &buf),
                 blePairing: FfiConverterUInt32.read(from: &buf),
                 wifiEnabled: FfiConverterUInt32.read(from: &buf),
+                bridgeEnabled: FfiConverterUInt32.read(from: &buf),
+                bridgeHost: FfiConverterUInt32.read(from: &buf),
+                bridgePort: FfiConverterUInt32.read(from: &buf),
+                bridgeServerKey: FfiConverterUInt32.read(from: &buf),
+                bridgeLink: FfiConverterUInt32.read(from: &buf),
+                devKey: FfiConverterUInt32.read(from: &buf),
                 wifiNetworks: FfiConverterUInt32.read(from: &buf),
                 wifiNetwork: FfiConverterUInt32.read(from: &buf),
                 wifiScanning: FfiConverterUInt32.read(from: &buf),
@@ -10440,6 +10540,12 @@ public struct FfiConverterTypeUlcpManagedPropertyIds: FfiConverterRustBuffer {
         FfiConverterUInt32.write(value.bleLink, into: &buf)
         FfiConverterUInt32.write(value.blePairing, into: &buf)
         FfiConverterUInt32.write(value.wifiEnabled, into: &buf)
+        FfiConverterUInt32.write(value.bridgeEnabled, into: &buf)
+        FfiConverterUInt32.write(value.bridgeHost, into: &buf)
+        FfiConverterUInt32.write(value.bridgePort, into: &buf)
+        FfiConverterUInt32.write(value.bridgeServerKey, into: &buf)
+        FfiConverterUInt32.write(value.bridgeLink, into: &buf)
+        FfiConverterUInt32.write(value.devKey, into: &buf)
         FfiConverterUInt32.write(value.wifiNetworks, into: &buf)
         FfiConverterUInt32.write(value.wifiNetwork, into: &buf)
         FfiConverterUInt32.write(value.wifiScanning, into: &buf)
@@ -14515,6 +14621,10 @@ public enum UlcpManageCategory: Equatable, Hashable {
      */
     case network
     /**
+     * The device's autonomous bridge tunnel.
+     */
+    case bridge
+    /**
      * The forwarding policy.
      */
     case repeater
@@ -14561,9 +14671,11 @@ public struct FfiConverterTypeUlcpManageCategory: FfiConverterRustBuffer {
 
         case 9: return .network
 
-        case 10: return .repeater
+        case 10: return .bridge
 
-        case 11: return .peerNodes
+        case 11: return .repeater
+
+        case 12: return .peerNodes
 
         default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -14609,12 +14721,16 @@ public struct FfiConverterTypeUlcpManageCategory: FfiConverterRustBuffer {
             writeInt(&buf, Int32(9))
 
 
-        case .repeater:
+        case .bridge:
             writeInt(&buf, Int32(10))
 
 
-        case .peerNodes:
+        case .repeater:
             writeInt(&buf, Int32(11))
+
+
+        case .peerNodes:
+            writeInt(&buf, Int32(12))
 
         }
     }
@@ -15308,6 +15424,30 @@ fileprivate struct FfiConverterOptionTypeUlcpBatteryRecord: FfiConverterRustBuff
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterTypeUlcpBatteryRecord.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeUlcpBridgeLinkRecord: FfiConverterRustBuffer {
+    typealias SwiftType = UlcpBridgeLinkRecord?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeUlcpBridgeLinkRecord.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeUlcpBridgeLinkRecord.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }
@@ -17114,6 +17254,17 @@ public func ulcpAnnounce(transactionId: UInt8, request: MobileAnnouncementRecord
 })
 }
 /**
+ * Decode a server identity in either canonical UMSH address representation.
+ */
+public func ulcpBridgeServerKey(input: String)throws  -> Data  {
+    return try  FfiConverterData.lift(try rustCallWithError(FfiConverterTypeMobileError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_func_ulcp_bridge_server_key(
+        FfiConverterString.lower(input),uniffiCallStatus
+    )
+})
+}
+/**
  * The four properties a device is identified by, asked for together.
  *
  * Capabilities first, so a device that declines the batch teaches the
@@ -17576,6 +17727,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_func_ulcp_announce() != 10935) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_func_ulcp_bridge_server_key() != 18738) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_func_ulcp_card_properties() != 10189) {

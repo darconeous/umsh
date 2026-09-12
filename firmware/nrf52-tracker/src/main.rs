@@ -512,6 +512,7 @@ mod firmware {
             // properties exists.
             wifi: None,
             ip: None,
+            bridge_client: false,
             stats: Some(&STATS),
         }
     }

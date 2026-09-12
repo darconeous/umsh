@@ -269,6 +269,8 @@ pub struct SessionConfig {
     /// link, and a device that gets its addresses over Ethernet or a
     /// modem has these properties and no Wi-Fi at all.
     pub ip: Option<net::IpConfig>,
+    /// Whether the platform runs an autonomous bridge client.
+    pub bridge_client: bool,
     /// Whether the platform can restart the hardware on command. When
     /// set, `CAP_REBOOT` is advertised and `CMD_REBOOT` reaches
     /// [`Effect::Reboot`]; otherwise the command answers
@@ -708,6 +710,8 @@ enum PropValue {
 /// attach and host replacement; `CMD_RST` restores its post-reset
 /// values.
 struct DeviceDomain {
+    #[cfg(feature = "bridge-client")]
+    bridge: crate::bridge::BridgeConfig,
     settings: RadioSettings,
     name: [u8; MAX_DEVICE_NAME_LEN],
     name_len: usize,
@@ -853,6 +857,8 @@ impl DeviceDomain {
             .duty
             .set_phy(settings.sf, settings.bw_hz, settings.cr_denom);
         Self {
+            #[cfg(feature = "bridge-client")]
+            bridge: Default::default(),
             settings,
             name,
             name_len,
@@ -2006,6 +2012,14 @@ const SAVED_SCHEMA: &[SavedProperty] = &[
     saved(prop::IPV4_CONFIG, ApplyPhase::Config, false),
     saved(prop::IPV6_CONFIG, ApplyPhase::Config, false),
     saved(prop::IP_DNS, ApplyPhase::Config, true),
+    #[cfg(feature = "bridge-client")]
+    saved(prop::BRIDGE_ENABLED, ApplyPhase::Enable, false),
+    #[cfg(feature = "bridge-client")]
+    saved(prop::BRIDGE_HOST, ApplyPhase::Config, false),
+    #[cfg(feature = "bridge-client")]
+    saved(prop::BRIDGE_PORT, ApplyPhase::Config, false),
+    #[cfg(feature = "bridge-client")]
+    saved(prop::BRIDGE_SERVER_KEY, ApplyPhase::Keys, false),
 ];
 
 /// [`SavedState::decode`] tracks which single-valued properties it has
@@ -2087,6 +2101,8 @@ impl SavedStatus {
 /// independently persisted device identity keypair.
 #[derive(Clone)]
 struct SavedState {
+    #[cfg(feature = "bridge-client")]
+    bridge: crate::bridge::BridgeConfig,
     settings: RadioSettings,
     duty_limit: u16,
     name: [u8; MAX_DEVICE_NAME_LEN],
@@ -2140,6 +2156,8 @@ impl SavedState {
         dev_key: Option<[u8; items::PUBLIC_KEY_LEN]>,
     ) -> Self {
         Self {
+            #[cfg(feature = "bridge-client")]
+            bridge: device.bridge.clone(),
             settings: device.settings,
             duty_limit,
             name: device.name,
@@ -2188,6 +2206,8 @@ impl SavedState {
         let name_len = config.default_device_name.len();
         name[..name_len].copy_from_slice(config.default_device_name.as_bytes());
         Self {
+            #[cfg(feature = "bridge-client")]
+            bridge: Default::default(),
             settings,
             duty_limit: config.default_duty_limit,
             name,
@@ -2346,6 +2366,22 @@ impl SavedState {
                     encoder.put(number, entry)?;
                 }
                 Ok(())
+            }
+            #[cfg(feature = "bridge-client")]
+            prop::BRIDGE_ENABLED
+            | prop::BRIDGE_HOST
+            | prop::BRIDGE_PORT
+            | prop::BRIDGE_SERVER_KEY => {
+                if u32::from(number) == prop::BRIDGE_SERVER_KEY && self.bridge.server_key.is_none()
+                {
+                    return Ok(());
+                }
+                let mut bytes = [0; umsh_ulcp::bridge::HOST_MAX + 1];
+                let len = self
+                    .bridge
+                    .encode(u32::from(number), &mut bytes)
+                    .ok_or(EncodeError::BufferTooSmall)?;
+                encoder.put(number, &bytes[..len])
             }
             prop::WIFI_ENABLED => encoder.put(number, &[self.wifi_enabled as u8]),
             // Empty is the default and the wire's way of saying "join
@@ -2545,6 +2581,13 @@ impl SavedState {
                 config.wifi.ok_or(SnapshotError::InvalidValue)?;
                 entry.validate().map_err(|_| SnapshotError::InvalidValue)?;
                 self.wifi_networks.insert(value).map_err(invalid)?;
+            }
+            #[cfg(feature = "bridge-client")]
+            prop::BRIDGE_ENABLED
+            | prop::BRIDGE_HOST
+            | prop::BRIDGE_PORT
+            | prop::BRIDGE_SERVER_KEY => {
+                self.bridge.set(u32::from(number), value).map_err(invalid)?;
             }
             prop::WIFI_ENABLED => self.wifi_enabled = parse_bool(value).map_err(invalid)?,
             prop::WIFI_NETWORK => self
@@ -2789,6 +2832,8 @@ pub struct Session<A: AesProvider, S: Sha256Provider, const TX: usize = 1> {
     wifi_credential_revision: u32,
     wifi_scanning: bool,
     wifi_link: wifi::Link,
+    #[cfg(feature = "bridge-client")]
+    bridge_link: umsh_ulcp::bridge::Link,
     /// `PROP_WIFI_RSSI`: empty until the station has a signal to report,
     /// which is what an unassociated station has.
     wifi_rssi_dbm: Option<i8>,
@@ -2961,6 +3006,8 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             wifi_credential_revision: 0,
             wifi_scanning: false,
             wifi_link: wifi::Link::default(),
+            #[cfg(feature = "bridge-client")]
+            bridge_link: Default::default(),
             wifi_rssi_dbm: None,
             wifi_mac: None,
             ipv4_state: ip::FamilyState::default(),
@@ -3276,6 +3323,16 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                     prop::IPV4_CONFIG => self.device.ipv4_config = saved.ipv4_config,
                     prop::IPV6_CONFIG => self.device.ipv6_config = saved.ipv6_config,
                     prop::IP_DNS => self.device.ip_dns = saved.ip_dns,
+                    #[cfg(feature = "bridge-client")]
+                    prop::BRIDGE_ENABLED => self.device.bridge.enabled = saved.bridge.enabled,
+                    #[cfg(feature = "bridge-client")]
+                    prop::BRIDGE_HOST => self.device.bridge.host = saved.bridge.host.clone(),
+                    #[cfg(feature = "bridge-client")]
+                    prop::BRIDGE_PORT => self.device.bridge.port = saved.bridge.port,
+                    #[cfg(feature = "bridge-client")]
+                    prop::BRIDGE_SERVER_KEY => {
+                        self.device.bridge.server_key = saved.bridge.server_key
+                    }
                     _ => unreachable!("SAVED_SCHEMA row without an apply arm"),
                 }
             }
@@ -5315,6 +5372,22 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         }
     }
 
+    #[cfg(feature = "bridge-client")]
+    pub fn bridge_config(&self) -> &crate::bridge::BridgeConfig {
+        &self.device.bridge
+    }
+
+    #[cfg(feature = "bridge-client")]
+    pub fn set_bridge_link(&mut self, link: umsh_ulcp::bridge::Link, emit: &mut impl FnMut(&[u8])) {
+        if !self.has_bridge() || link == self.bridge_link {
+            return;
+        }
+        self.bridge_link = link;
+        if self.attached {
+            self.announce_prop_is(prop::BRIDGE_LINK, &link.encode(), emit);
+        }
+    }
+
     /// The signal of the current association, as reported by
     /// `PROP_WIFI_RSSI`. `None` while there is nothing to measure.
     ///
@@ -5970,6 +6043,17 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             // button on the front of the device all land the same way.
             prop::BLE_ENABLED if self.config.ble => {
                 self.device.ble_enabled = parse_bool(value)?;
+                self.bump_dev_domain();
+                Ok(false)
+            }
+            #[cfg(feature = "bridge-client")]
+            prop::BRIDGE_ENABLED
+            | prop::BRIDGE_HOST
+            | prop::BRIDGE_PORT
+            | prop::BRIDGE_SERVER_KEY
+                if self.has_bridge() =>
+            {
+                self.device.bridge.set(key, value)?;
                 self.bump_dev_domain();
                 Ok(false)
             }
@@ -6669,6 +6753,13 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         self.config.wifi.is_some_and(|wifi| wifi.station)
     }
 
+    fn has_bridge(&self) -> bool {
+        cfg!(feature = "bridge-client")
+            && self.config.bridge_client
+            && self.config.mac_node
+            && self.config.ip.is_some_and(|ip| ip.v4 || ip.v6)
+    }
+
     /// Whether a property belongs to a family this device runs.
     ///
     /// The two shared properties belong to whichever family exists,
@@ -6688,6 +6779,9 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     }
 
     fn known_prop(&self, key: u32) -> bool {
+        if (prop::BRIDGE_ENABLED..=prop::BRIDGE_LINK).contains(&key) {
+            return self.has_bridge();
+        }
         if is_scan_property(key) {
             return self.has_wifi();
         }
@@ -6898,6 +6992,9 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                         len += pui::encode(cap::IPV6, &mut out[len..]).unwrap_or(0);
                     }
                 }
+                if self.has_bridge() {
+                    len += pui::encode(cap::BRIDGE_CLIENT, &mut out[len..]).unwrap_or(0);
+                }
                 len
             }
             prop::PHY_ENABLED => {
@@ -7045,6 +7142,17 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             prop::WIFI_NETWORKS if self.has_station() => {
                 self.device.wifi_networks.encode_reported(out).unwrap_or(0)
             }
+            #[cfg(feature = "bridge-client")]
+            prop::BRIDGE_ENABLED
+            | prop::BRIDGE_HOST
+            | prop::BRIDGE_PORT
+            | prop::BRIDGE_SERVER_KEY
+                if self.has_bridge() =>
+            {
+                self.device.bridge.encode(key, out).unwrap_or(0)
+            }
+            #[cfg(feature = "bridge-client")]
+            prop::BRIDGE_LINK if self.has_bridge() => put(out, &self.bridge_link.encode()),
             prop::WIFI_LINK if self.has_station() => self.wifi_link.encode(out).unwrap_or(0),
             // Empty until there is a signal to report, which is what an
             // unassociated station has.
@@ -7656,6 +7764,7 @@ mod tests {
             mac_node: true,
             wifi: Some(net::WifiConfig::STATION),
             ip: Some(net::IpConfig::DUAL),
+            bridge_client: false,
         }
     }
 
@@ -12858,8 +12967,8 @@ mod tests {
                 .iter()
                 .filter(|entry| entry.phase == ApplyPhase::Enable)
                 .count()
-                == 1,
-            "only the PHY enable belongs in the last phase"
+                == 1 + usize::from(cfg!(feature = "bridge-client")),
+            "PHY and bridge enablement follow their configuration"
         );
         // And the numeric order really would get it wrong.
         assert!(u32::from(enable.number) < prop::PHY_FREQ);
@@ -12963,6 +13072,23 @@ mod tests {
     #[test]
     fn snapshot_at_capacity_fits_the_buffer() {
         let mut session = provisioned_session();
+        #[cfg(feature = "bridge-client")]
+        {
+            let host = [
+                "a".repeat(63),
+                "b".repeat(63),
+                "c".repeat(63),
+                "d".repeat(61),
+            ]
+            .join(".");
+            session.device.bridge.host.push_str(&host).unwrap();
+            session.device.bridge.enabled = true;
+            session.device.bridge.server_key = Some(
+                ed25519_dalek::SigningKey::from_bytes(&[17; 32])
+                    .verifying_key()
+                    .to_bytes(),
+            );
+        }
         for seed in 0..MAX_CHANNEL_KEYS as u8 {
             let _ = session.device.channel_keys.insert(ChannelKeyEntry {
                 key: [seed; items::CHANNEL_KEY_LEN],
@@ -15103,5 +15229,101 @@ mod tests {
             restored.dns_resolvers().iter().collect::<Vec<_>>(),
             [[9, 9, 9, 9].as_slice()]
         );
+    }
+
+    #[cfg(feature = "bridge-client")]
+    #[test]
+    fn bridge_configuration_is_device_owned_and_persistent() {
+        let config = SessionConfig {
+            bridge_client: true,
+            ..test_config()
+        };
+        let mut session: TestSession = Session::new(config, Status::RESET_POWER_ON, test_engine());
+        session.attach(true);
+        assert_eq!(get(&mut session, prop::BRIDGE_ENABLED), [0]);
+        assert_eq!(get(&mut session, prop::BRIDGE_HOST), [0]);
+        assert_eq!(get(&mut session, prop::BRIDGE_PORT), 21837u16.to_le_bytes());
+        assert_eq!(get(&mut session, prop::BRIDGE_SERVER_KEY), []);
+        assert_eq!(get(&mut session, prop::BRIDGE_LINK), [0, 0]);
+        let pin = ed25519_dalek::SigningKey::from_bytes(&[37; 32])
+            .verifying_key()
+            .to_bytes();
+        set(&mut session, prop::BRIDGE_ENABLED, &[1]);
+        assert!(!session.bridge_config().configured());
+        set(&mut session, prop::BRIDGE_HOST, b"bridge.example\0");
+        set(&mut session, prop::BRIDGE_SERVER_KEY, &pin);
+        set(&mut session, prop::BRIDGE_PORT, &443u16.to_le_bytes());
+        assert!(session.bridge_config().configured());
+        for (id, bad) in [
+            (prop::BRIDGE_ENABLED, &[2][..]),
+            (prop::BRIDGE_PORT, &[0, 0]),
+            (prop::BRIDGE_HOST, b"https://bad\0"),
+            (prop::BRIDGE_SERVER_KEY, &[0; 32]),
+        ] {
+            let before = session.bridge_config().clone();
+            set(&mut session, id, bad);
+            assert_eq!(*session.bridge_config(), before);
+        }
+        let wanted = session.bridge_config().clone();
+        session.detach();
+        assert_eq!(*session.bridge_config(), wanted);
+        let mut bytes = [0; SNAPSHOT_MAX];
+        let len = session.encode_snapshot(&mut bytes).unwrap();
+        let mut restored: TestSession = Session::new(
+            SessionConfig {
+                bridge_client: true,
+                ..test_config()
+            },
+            Status::RESET_POWER_ON,
+            test_engine(),
+        );
+        restored.restore_at_boot(&bytes[..len]).unwrap();
+        assert_eq!(*restored.bridge_config(), wanted);
+        assert_eq!(restored.bridge_link.encode(), [0, 0]);
+        restored.attach(true);
+        set(&mut restored, prop::BRIDGE_ENABLED, &[0]);
+        restored.reset(Status::RESET_SOFTWARE, &mut |_| {});
+        assert_eq!(*restored.bridge_config(), wanted);
+        assert_eq!(get(&mut restored, prop::MAC_REPEATER_ENABLED), [0]);
+    }
+
+    #[cfg(feature = "bridge-client")]
+    #[test]
+    fn bridge_capability_requires_node_and_ip_and_link_is_read_only() {
+        for (enabled, node, ip) in [
+            (false, true, true),
+            (true, false, true),
+            (true, true, false),
+        ] {
+            let config = SessionConfig {
+                bridge_client: enabled,
+                mac_node: node,
+                ip: if ip { Some(net::IpConfig::DUAL) } else { None },
+                ..test_config()
+            };
+            let session: TestSession = Session::new(config, Status::RESET_POWER_ON, test_engine());
+            assert!(!session.has_bridge());
+            for id in prop::BRIDGE_ENABLED..=prop::BRIDGE_LINK {
+                assert!(!session.known_prop(id));
+            }
+        }
+        let mut session: TestSession = Session::new(
+            SessionConfig {
+                bridge_client: true,
+                ..test_config()
+            },
+            Status::RESET_POWER_ON,
+            test_engine(),
+        );
+        session.attach(true);
+        let mut pushes = Vec::new();
+        let link = umsh_ulcp::bridge::Link::new(
+            umsh_ulcp::bridge::State::Retrying,
+            umsh_ulcp::bridge::Reason::Authentication,
+        );
+        session.set_bridge_link(link, &mut |bytes| pushes.push(bytes.to_vec()));
+        assert_eq!(pushes.len(), 1);
+        set(&mut session, prop::BRIDGE_LINK, &[4, 0]);
+        assert_eq!(get(&mut session, prop::BRIDGE_LINK), link.encode());
     }
 }

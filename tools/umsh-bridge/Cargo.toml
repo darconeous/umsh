@@ -45,6 +45,11 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [dev-dependencies]
+umsh-bridge-client = { path = "../../crates/umsh-bridge-client" }
+embedded-tls = { version = "=0.19.0", default-features = false }
+embedded-io-adapters = { version = "0.7", features = ["tokio-1"] }
+rand_chacha = "0.3"
+rand_core = "0.6"
 tempfile = "3"
 umsh-hal = { path = "../../crates/umsh-hal", features = ["std"] }
 # `start_paused` runs the keepalive and staleness tests in virtual time.

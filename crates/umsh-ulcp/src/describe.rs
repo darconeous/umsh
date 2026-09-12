@@ -96,6 +96,11 @@ pub const fn property_name(key: u32) -> Option<&'static str> {
         prop::BLE_LINK => "PROP_BLE_LINK",
         prop::BLE_PAIRING => "PROP_BLE_PAIRING",
         prop::WIFI_ENABLED => "PROP_WIFI_ENABLED",
+        prop::BRIDGE_ENABLED => "PROP_BRIDGE_ENABLED",
+        prop::BRIDGE_HOST => "PROP_BRIDGE_HOST",
+        prop::BRIDGE_PORT => "PROP_BRIDGE_PORT",
+        prop::BRIDGE_SERVER_KEY => "PROP_BRIDGE_SERVER_KEY",
+        prop::BRIDGE_LINK => "PROP_BRIDGE_LINK",
         prop::WIFI_NETWORKS => "PROP_WIFI_NETWORKS",
         prop::WIFI_NETWORK => "PROP_WIFI_NETWORK",
         prop::WIFI_SCANNING => "PROP_WIFI_SCANNING",
@@ -224,6 +229,11 @@ pub const PROPERTIES: &[u32] = &[
     prop::WIFI_AP_CONFIG,
     prop::WIFI_AP_STATE,
     prop::WIFI_AP_CLIENTS,
+    prop::BRIDGE_ENABLED,
+    prop::BRIDGE_HOST,
+    prop::BRIDGE_PORT,
+    prop::BRIDGE_SERVER_KEY,
+    prop::BRIDGE_LINK,
 ];
 
 /// How a property's octets are meant to be read.
@@ -339,6 +349,10 @@ pub const fn property_type(key: u32) -> Option<PropertyType> {
         prop::GNSS_TIME_TRUST | prop::BLE_ENABLED | prop::BLE_PAIRING => Bool,
         prop::BLE_BOND_COUNT | prop::BLE_LINK => U8,
         prop::WIFI_ENABLED | prop::WIFI_SCANNING | prop::WIFI_AP_ENABLED => Bool,
+        prop::BRIDGE_ENABLED => Bool,
+        prop::BRIDGE_HOST => Text,
+        prop::BRIDGE_PORT => U16,
+        prop::BRIDGE_SERVER_KEY | prop::BRIDGE_LINK => Bytes,
         prop::IPV4_STATE | prop::IPV6_STATE => U8,
         prop::WIFI_RSSI => I8,
         // Structures and lists of them: network entries, scan results,
@@ -395,6 +409,7 @@ pub const fn capability_name(code: u32) -> Option<&'static str> {
         cap::IPV4 => "IPV4",
         cap::IPV6 => "IPV6",
         cap::WIFI_AP => "WIFI_AP",
+        cap::BRIDGE_CLIENT => "BRIDGE_CLIENT",
         _ => return None,
     })
 }
@@ -679,7 +694,7 @@ mod tests {
         assert_eq!(capability_name(cap::BLE), Some("BLE"));
         // One past the last allocated code: an unassigned capability has
         // no name to give, whatever a device claims by advertising it.
-        assert_eq!(capability_name(cap::WIFI_AP + 1), None);
+        assert_eq!(capability_name(cap::BRIDGE_CLIENT + 1), None);
     }
 
     /// The three tables answer for the same set of properties. A name

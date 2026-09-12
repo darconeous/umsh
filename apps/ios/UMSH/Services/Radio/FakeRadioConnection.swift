@@ -628,6 +628,13 @@ actor FakeRadioConnection: RadioConnection {
 
     private func store(_ write: MobileMeshPropertyWriteRecord) -> MobileMeshManagementAnswerRecord {
         managedDevice.values[write.propertyId] = write.value
+        let id = ulcpProperties
+        if [id.bridgeEnabled, id.bridgeHost, id.bridgePort, id.bridgeServerKey].contains(write.propertyId) {
+            let enabled = managedDevice.values[id.bridgeEnabled]?.first == 1
+            let host = managedDevice.values[id.bridgeHost] ?? Data()
+            let configured = host.count > 1 && managedDevice.values[id.bridgeServerKey]?.count == 32
+            managedDevice.values[id.bridgeLink] = Data([enabled ? (configured ? 4 : 1) : 0, 0])
+        }
         return MobileMeshManagementAnswerRecord(
             propertyId: write.propertyId,
             value: write.value,
@@ -1404,6 +1411,19 @@ struct FakeManagedDevice: Sendable {
         ]
         guard joinsNetworks else { return }
         for (property, value) in Self.stationValues { values[property] = value }
+        values[id.bridgeEnabled] = Data([0])
+        values[id.bridgeHost] = Data([0])
+        values[id.bridgePort] = UInt16(21837).littleEndianData
+        values[id.bridgeServerKey] = Data()
+        values[id.bridgeLink] = Data([0, 0])
+        // A real Ed25519 public key, so the identity codec and copy action
+        // follow the same path as a physical device (RFC 8032 test key).
+        values[id.devKey] = Data([
+            0xd7, 0x5a, 0x98, 0x01, 0x82, 0xb1, 0x0a, 0xb7,
+            0xd5, 0x4b, 0xfe, 0xd3, 0xc9, 0x64, 0x07, 0x3a,
+            0x0e, 0xe1, 0x72, 0xf3, 0xda, 0xa6, 0x23, 0x25,
+            0xaf, 0x02, 0x1a, 0x68, 0xf7, 0x07, 0x51, 0x1a,
+        ])
     }
 
     /// What a device with a station holds beyond the scan: the known
@@ -1600,7 +1620,7 @@ struct FakeManagedDevice: Sendable {
     /// by answering `PROP_BLE_BOND_COUNT` rather than by listing a code.
     private static let capabilities = Data([
         0x10, 0x24, 0x25, 0x26, 0x27, 0x28, 0x29, 0x2A, 0x2B, 0x2C, 0x2D, 0x2E, 0x31, 0x32,
-        0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x83, 0x04,
+        0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x3A, 0x83, 0x04,
     ])
 
     /// The same tracker with a receiver and no station: it lists Wi-Fi

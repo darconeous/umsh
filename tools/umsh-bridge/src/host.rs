@@ -93,6 +93,7 @@ fn session_config() -> SessionConfig {
         mac_node: false,
         wifi: None,
         ip: None,
+        bridge_client: false,
     }
 }
 

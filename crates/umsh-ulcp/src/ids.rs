@@ -12,6 +12,12 @@ pub const INTERFACE_TYPE: u32 = 8;
 
 /// Property identifiers.
 pub mod prop {
+    /// Autonomous bridge-client configuration and live connection status.
+    pub const BRIDGE_ENABLED: u32 = 4928;
+    pub const BRIDGE_HOST: u32 = 4929;
+    pub const BRIDGE_PORT: u32 = 4930;
+    pub const BRIDGE_SERVER_KEY: u32 = 4931;
+    pub const BRIDGE_LINK: u32 = 4932;
     /// Status of the last operation (`PROP_LAST_STATUS`).
     pub const LAST_STATUS: u32 = 0;
     /// Protocol major/minor version (`PROP_PROTOCOL_VERSION`).
@@ -695,6 +701,8 @@ pub mod cap {
     /// with different state, and a device that has one and not the
     /// other is describable.
     pub const WIFI_AP: u32 = 57;
+    /// Autonomous bridge client. Requires a node with repeater capability and IP.
+    pub const BRIDGE_CLIENT: u32 = 58;
 }
 
 /// Whether a property is writable by a mesh administrator.

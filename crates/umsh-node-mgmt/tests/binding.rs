@@ -93,6 +93,7 @@ impl<const PAYLOAD: usize> Device<PAYLOAD> {
             mac_node: true,
             wifi: None,
             ip: None,
+            bridge_client: false,
         };
         let mut session = Session::new(
             config,

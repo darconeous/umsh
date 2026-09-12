@@ -64,6 +64,12 @@ acknowledging on the host's behalf.
   restored association would be a claim about a network the device may
   not be near. The Wi-Fi configuration that produces them, credentials
   included, is saved, which is what lets a device rejoin unattended.
+
+  The [bridge client](ulcp-bridge.md) enable flag, host, port, and server
+  identity pin are saved as device configuration. Its live link state and
+  tunnel queues are excluded. The client authenticates using the independently
+  persisted device identity; saving bridge configuration does not copy its
+  private key into the snapshot.
 * At boot, if a snapshot exists, the device **MUST** restore it and resume
   operation accordingly *before* processing any host command: the RF
   configuration is applied and the PHY is re-enabled if it was enabled

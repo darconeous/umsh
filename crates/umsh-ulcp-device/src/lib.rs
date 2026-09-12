@@ -28,6 +28,8 @@
 //! ignored (frames transmit without a clear-channel check, matching
 //! the existing firmware radio path).
 
+#[cfg(feature = "bridge-client")]
+pub mod bridge;
 pub mod duty;
 pub mod net;
 pub mod session;

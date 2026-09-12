@@ -1,0 +1,20 @@
+[package]
+name = "umsh-bridge-client"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Embedded UMSH bridge tunnel and device-identity authentication"
+
+[dependencies]
+embedded-tls = { version = "=0.19.0", default-features = false }
+embedded-io-async = "0.7"
+ed25519-dalek = { workspace = true }
+heapless.workspace = true
+rand_core.workspace = true
+sha2.workspace = true
+signature = { version = "2", default-features = false }
+umsh-ulcp = { path = "../umsh-ulcp" }
+
+[dev-dependencies]
+rand_chacha = { version = "0.3", default-features = false }

@@ -96,6 +96,7 @@ fn session_config() -> SessionConfig {
         mac_node: true,
         wifi: Some(WifiConfig::STATION),
         ip: Some(IpConfig::DUAL),
+        bridge_client: false,
     }
 }
 

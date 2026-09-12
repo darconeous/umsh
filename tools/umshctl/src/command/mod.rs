@@ -5,6 +5,7 @@
 //! completion tree the REPL's tab handler walks.
 
 pub mod advert;
+pub mod bridge;
 pub mod capture;
 pub mod discover;
 pub mod duty;
@@ -100,6 +101,12 @@ pub enum Command {
     Repeater {
         #[command(subcommand)]
         op: Option<repeater::RepeaterOp>,
+    },
+
+    /// Configure the device's autonomous internet bridge client.
+    Bridge {
+        #[command(subcommand)]
+        op: Option<bridge::BridgeOp>,
     },
 
     /// Show or set the device's wall clock and time zone.
@@ -358,6 +365,7 @@ impl Command {
             Self::Phy { op } => phy::run(app, op).await,
             Self::Duty { op } => duty::run(app, op).await,
             Self::Repeater { op } => repeater::run(app, op).await,
+            Self::Bridge { op } => bridge::run(app, op).await,
             Self::Time { op } => time::run(app, op).await,
             Self::Gnss { op } => gnss::run(app, op).await,
             Self::Advert { op } => advert::run(app, op).await,

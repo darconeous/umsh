@@ -6,6 +6,11 @@ use esp_hal::psram::{Psram, PsramConfig, PsramMode};
 
 static EXTERNAL: EspHeap = EspHeap::empty();
 
+#[cfg(feature = "bridge-client")]
+pub fn used() -> usize {
+    EXTERNAL.used()
+}
+
 pub fn init(peripheral: esp_hal::peripherals::PSRAM<'static>) {
     let ram = Psram::new(
         peripheral,
@@ -53,6 +58,25 @@ pub fn snapshot() -> &'static mut [u8; umsh_ulcp_device::SNAPSHOT_MAX] {
     unsafe {
         let ptr = storage::<[u8; umsh_ulcp_device::SNAPSHOT_MAX]>();
         ptr.write_bytes(0, 1);
+        &mut *ptr
+    }
+}
+
+#[cfg(feature = "bridge-client")]
+pub fn bridge_buffers() -> &'static mut super::bridge::Buffers {
+    // Plain byte arrays; socket state, TLS atomics, and synchronization stay internal.
+    unsafe {
+        let ptr = storage::<super::bridge::Buffers>();
+        ptr.write_bytes(0, 1);
+        &mut *ptr
+    }
+}
+
+#[cfg(feature = "bridge-client")]
+pub fn bridge_queues() -> &'static mut super::bridge::Queues {
+    unsafe {
+        let ptr = storage::<super::bridge::Queues>();
+        ptr.write(super::bridge::Queues::new());
         &mut *ptr
     }
 }

@@ -23,6 +23,7 @@ pub mod alert;
 pub mod announce;
 pub mod battery;
 pub mod ble;
+pub mod bridge;
 pub mod describe;
 pub mod frame;
 pub mod gatt;

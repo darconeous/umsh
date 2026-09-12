@@ -14,13 +14,14 @@ repository.workspace = true
 # the AXP2101.
 
 [features]
+bridge-client = ["wifi", "psram", "dep:umsh-bridge-client", "dep:embedded-tls", "umsh-ulcp-runtime/bridge-client", "embassy-net/tcp", "embassy-net/dns"]
 wifi = ["esp-radio/wifi", "esp-radio/coex", "dep:embassy-net", "umsh-ulcp-runtime/wifi"]
 psram = []
 # Board identity. Exactly one is on; it selects the BSP module, the pin
 # and peripheral wiring, the radio's power and band limits, and the
 # static capacities the board's RAM budget allows. This block is kept
 # identical across the ESP32 device boards—only `default` differs.
-default = ["board-tbeam-supreme", "psram", "wifi"]
+default = ["board-tbeam-supreme", "psram", "wifi", "bridge-client"]
 board-heltec-v2 = ["chip-esp32", "radio-sx127x", "vext-gates-battery"]
 board-heltec-v3 = ["chip-esp32s3", "radio-sx126x"]
 board-tbeam-supreme = [
@@ -90,6 +91,8 @@ name = "firmware-tbeam-supreme"
 path = "../esp32-tracker/src/main.rs"
 
 [dependencies]
+umsh-bridge-client = { path = "../../../crates/umsh-bridge-client", optional = true }
+embedded-tls = { version = "=0.19.0", default-features = false, optional = true }
 embassy-net = { version = "0.8", default-features = false, optional = true, features = ["medium-ethernet", "proto-ipv4", "dhcpv4", "dhcpv4-hostname"] }
 umsh-bsp-esp32 = { path = "../../crates/umsh-bsp-esp32", features = ["esp32s3", "panic-handler"] }
 umsh-bsp-tbeam-supreme = { path = "../../crates/umsh-bsp-tbeam-supreme" }

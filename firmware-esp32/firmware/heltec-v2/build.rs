@@ -2,6 +2,8 @@
 // (No memory.x handling—the ESP32 linker script comes from esp-hal.)
 
 fn main() {
+    // The shared entry point also serves the bridge-capable T-Beam image.
+    println!("cargo:rustc-check-cfg=cfg(feature, values(\"bridge-client\"))");
     // `UMSH_FW_VERSION` wins when set: the release build passes the tag
     // explicitly, because creating a tag touches neither HEAD nor the
     // branch ref, so the `git describe` below would happily hand back a

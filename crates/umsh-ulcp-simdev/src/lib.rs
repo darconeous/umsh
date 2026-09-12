@@ -771,6 +771,7 @@ mod tests {
             mac_node: false,
             wifi: Some(WifiConfig::STATION),
             ip: Some(IpConfig::DUAL),
+            bridge_client: false,
         }
     }
 

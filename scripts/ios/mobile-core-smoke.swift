@@ -176,6 +176,25 @@ struct MobileCoreSmokeTest {
             // Expected structured Rust error.
         }
 
+        let bridgeIds = ulcpManagedPropertyIds()
+        var bridge = inspectUlcpProperties(responses: [])
+        bridge.bridgeEnabled = true
+        bridge.bridgeHost = "bridge.example"
+        bridge.bridgePort = 21837
+        bridge.bridgeServerKey = try ulcpBridgeServerKey(input: "9GtPJFPbuevpXgvgpnLjzwJBen5K86Y3pFRfsokwTPEt")
+        precondition(bridge.bridgeServerKey?.count == 32)
+        let bridgeWrites = try ulcpDirtyWrites(desired: bridge, dirtyPropertyIds: [
+            bridgeIds.bridgeEnabled, bridgeIds.bridgeHost, bridgeIds.bridgePort, bridgeIds.bridgeServerKey,
+        ])
+        precondition(bridgeWrites.count == 4)
+        precondition(bridgeWrites.last?.propertyId == bridgeIds.bridgeEnabled)
+        precondition(try! ulcpCategoryProperties(category: .bridge, capabilities: Data()).isEmpty)
+        bridge.bridgePort = 0
+        do {
+            _ = try ulcpDirtyWrites(desired: bridge, dirtyPropertyIds: [bridgeIds.bridgePort])
+            preconditionFailure("A zero bridge port was accepted")
+        } catch { /* The device's port constraint also applies before writing. */ }
+
         print("Swift successfully called umsh-mobile-core")
     }
 }

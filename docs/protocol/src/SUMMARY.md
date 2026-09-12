@@ -42,6 +42,7 @@
   - [Tethered Host Services](ulcp-host.md)
   - [Wi-Fi](ulcp-wifi.md)
   - [IP Connectivity](ulcp-ip.md)
+  - [Bridge Client](ulcp-bridge.md)
   - [Minimum Requirements](ulcp-conformance.md)
   - [Command and Property Index](ulcp-index.md)
   - [ULCP over BLE](ulcp-ble.md)

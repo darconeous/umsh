@@ -249,6 +249,28 @@ No participant provisions node logic for the bridge: there is no bridge
 identity to provision. A participant's device is configured as whatever
 node its owner intends it to be.
 
+## Integrated Clients
+
+A device may implement the client internally, configured through
+[Bridge Client](ulcp-bridge.md). Its internal backhaul connects directly to its
+own node, independently of any tethered host. The attachment delivers only
+the node's successful transmissions to the tunnel, including its self-transmit
+metadata. It hands tunnel input only to that node as an unmeasured backhaul
+reception. Overheard radio input and a tethered host's direct transmissions are
+not independently copied to the tunnel.
+
+This is the same two-repeater-hop crossing as an external participant. The
+internal client does not change the attached host's backhaul or promiscuous
+settings, does not enable the repeater, and does not bypass its forwarding
+policy. Its TLS authentication key is the device identity. The server authorizes
+the public identity exposed by `PROP_DEV_KEY`.
+
+The internal attachment uses the same `STR_PHY_RAW` wire representation as
+external clients: a **little-endian UINT16** packet length, packet bytes, then
+receive metadata. The integrated client preserves HDLC-Lite framing, TLS 1.3,
+and the `umsh-bridge/1` ALPN offer. Its eight-frame queues discard the oldest
+frame under pressure and expire queued frames after ten seconds. A connection
+boundary discards both queues and the partial HDLC decoder state.
 ## Host Interfaces {#host-interfaces}
 
 A server **MAY** offer **host interfaces**: interfaces whose far end is

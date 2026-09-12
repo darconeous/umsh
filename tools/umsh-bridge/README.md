@@ -26,6 +26,31 @@ bridge implements none of it and has no presence on the mesh.
 
 ## How it works
 
+### Integrated T-Beam client
+
+The T-Beam Supreme firmware includes an autonomous client, disabled by default.
+Configure Wi-Fi/IP first, authorize the identity reported by `umshctl identity`
+on the server, and configure the server's public identity pin:
+
+```sh
+umshctl -p /dev/cu.usbmodem101 bridge configure bridge.example --server-port 21837 --server-key SERVER_ADDRESS
+umshctl -p /dev/cu.usbmodem101 bridge on
+umshctl -p /dev/cu.usbmodem101 bridge show
+umshctl -p /dev/cu.usbmodem101 bridge off
+```
+
+`--server-port` selects the TCP endpoint; the existing global `--port`/`-p`
+selects the serial device. Mutations save configuration unless `--no-save` is
+specified. The iOS device-management **Bridge** screen offers the same settings
+and the device identity to copy into server configuration. Repeater enablement
+is independent; a leaf can use the bridge for its own traffic.
+
+The firmware uses the Cargo-managed `embedded-tls` 0.19 provider described in
+[the client crate](../../crates/umsh-bridge-client/README.md), including its
+ALPN behavior and diagnostic limitations. USB/BLE detach does not stop the client.
+
+### Server and external clients
+
 - Every participant holds its own **Ed25519 identity**, and each side is
   configured with the other's public key, written as the canonical UMSH address.
   The address is public: it can be exchanged over chat, email, or a QR code

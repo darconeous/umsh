@@ -3849,6 +3849,8 @@ pub enum UlcpManageCategory {
     Wifi,
     /// Addressing on whichever link the device has, per family.
     Network,
+    /// The device's autonomous bridge tunnel.
+    Bridge,
     /// The forwarding policy.
     Repeater,
     /// Who this device talks to, and who may manage it.
@@ -3904,6 +3906,12 @@ pub struct UlcpManagedPropertyIds {
     pub ble_link: u32,
     pub ble_pairing: u32,
     pub wifi_enabled: u32,
+    pub bridge_enabled: u32,
+    pub bridge_host: u32,
+    pub bridge_port: u32,
+    pub bridge_server_key: u32,
+    pub bridge_link: u32,
+    pub dev_key: u32,
     pub wifi_networks: u32,
     pub wifi_network: u32,
     pub wifi_scanning: u32,
@@ -3975,6 +3983,12 @@ pub fn ulcp_managed_property_ids() -> UlcpManagedPropertyIds {
         ble_link: prop::BLE_LINK,
         ble_pairing: prop::BLE_PAIRING,
         wifi_enabled: prop::WIFI_ENABLED,
+        bridge_enabled: prop::BRIDGE_ENABLED,
+        bridge_host: prop::BRIDGE_HOST,
+        bridge_port: prop::BRIDGE_PORT,
+        bridge_server_key: prop::BRIDGE_SERVER_KEY,
+        bridge_link: prop::BRIDGE_LINK,
+        dev_key: prop::DEV_KEY,
         wifi_networks: prop::WIFI_NETWORKS,
         wifi_network: prop::WIFI_NETWORK,
         wifi_scanning: prop::WIFI_SCANNING,
@@ -4182,6 +4196,18 @@ pub fn ulcp_category_properties(
                 &[prop::IP_DNS, prop::IP_RESOLVERS],
             );
         }
+        UlcpManageCategory::Bridge => when(
+            has(cap::BRIDGE_CLIENT),
+            &[
+                prop::BRIDGE_ENABLED,
+                prop::BRIDGE_HOST,
+                prop::BRIDGE_PORT,
+                prop::BRIDGE_SERVER_KEY,
+                prop::BRIDGE_LINK,
+                prop::DEV_KEY,
+                prop::MAC_REPEATER_ENABLED,
+            ],
+        ),
         UlcpManageCategory::Repeater => when(
             has(cap::REPEATER),
             &[
@@ -4237,6 +4263,7 @@ pub struct UlcpDeviceCardRecord {
     pub supports_wifi_scan: bool,
     /// Whether it has a station to join them with.
     pub supports_wifi: bool,
+    pub supports_bridge_client: bool,
     pub supports_ipv4: bool,
     pub supports_ipv6: bool,
     /// Whether a Restart control is worth offering (`CAP_REBOOT`).
@@ -4288,6 +4315,7 @@ pub fn inspect_ulcp_device_card(
         supports_ble: has(cap::BLE),
         supports_wifi_scan: has(cap::WIFI_SCAN),
         supports_wifi: has(cap::WIFI),
+        supports_bridge_client: has(cap::BRIDGE_CLIENT),
         supports_ipv4: has(cap::IPV4),
         supports_ipv6: has(cap::IPV6),
         supports_reboot: has(cap::REBOOT),
@@ -4378,6 +4406,38 @@ pub struct UlcpIpv6ItemRecord {
     pub prefix: u8,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct UlcpBridgeLinkRecord {
+    pub state: u8,
+    pub reason: u8,
+}
+
+fn decode_bridge_key(value: &[u8]) -> Result<Vec<u8>, MobileError> {
+    if value.is_empty() {
+        return Ok(Vec::new());
+    }
+    let bytes: [u8; 32] = value
+        .try_into()
+        .map_err(|_| MobileError::InvalidUlcpFrame)?;
+    if !umsh_crypto::is_valid_ed25519_public_key(&umsh_core::PublicKey(bytes)) {
+        return Err(MobileError::InvalidUlcpFrame);
+    }
+    Ok(bytes.to_vec())
+}
+
+/// Decode a server identity in either canonical UMSH address representation.
+#[uniffi::export]
+pub fn ulcp_bridge_server_key(input: String) -> Result<Vec<u8>, MobileError> {
+    if input.trim().is_empty() {
+        return Ok(Vec::new());
+    }
+    let key: umsh_core::PublicKey = input
+        .trim()
+        .parse()
+        .map_err(|_| MobileError::InvalidUlcpFrame)?;
+    decode_bridge_key(&key.0)
+}
+
 /// Everything the management screens show, all of it optional.
 ///
 /// A category read answers a handful of properties, so anything outside
@@ -4387,6 +4447,12 @@ pub struct UlcpIpv6ItemRecord {
 /// and can insist on the properties every device must answer.
 #[derive(Clone, Debug, Default, PartialEq, uniffi::Record)]
 pub struct UlcpDevicePropertiesRecord {
+    pub bridge_enabled: Option<bool>,
+    pub bridge_host: Option<String>,
+    pub bridge_port: Option<u16>,
+    pub bridge_server_key: Option<Vec<u8>>,
+    pub bridge_link: Option<UlcpBridgeLinkRecord>,
+    pub dev_key: Option<Vec<u8>>,
     pub battery: Option<UlcpBatteryRecord>,
     pub phy_enabled: Option<bool>,
     pub frequency_khz: Option<u32>,
@@ -4570,6 +4636,30 @@ pub fn inspect_ulcp_properties(
         .map(|bytes| NodeLocation::from_bytes(bytes).center());
 
     UlcpDevicePropertiesRecord {
+        bridge_enabled: optional_value(at, prop::BRIDGE_ENABLED, decode_bool),
+        bridge_host: optional_value(at, prop::BRIDGE_HOST, |value| {
+            let text = core::str::from_utf8(
+                value
+                    .strip_suffix(&[0])
+                    .ok_or(MobileError::InvalidUlcpFrame)?,
+            )
+            .map_err(|_| MobileError::InvalidUlcpFrame)?;
+            if !umsh_ulcp::bridge::valid_host(text) {
+                return Err(MobileError::InvalidUlcpFrame);
+            }
+            Ok(text.to_string())
+        }),
+        bridge_port: optional_value(at, prop::BRIDGE_PORT, decode_u16),
+        bridge_server_key: optional_value(at, prop::BRIDGE_SERVER_KEY, decode_bridge_key),
+        dev_key: optional_value(at, prop::DEV_KEY, decode_bridge_key),
+        bridge_link: optional_value(at, prop::BRIDGE_LINK, |value| {
+            let link =
+                umsh_ulcp::bridge::Link::decode(value).ok_or(MobileError::InvalidUlcpFrame)?;
+            Ok(UlcpBridgeLinkRecord {
+                state: link.state as u8,
+                reason: link.reason as u8,
+            })
+        }),
         battery: optional_value(at, prop::BATTERY, |value| {
             inspect_ulcp_battery(value.to_vec())
         }),
@@ -4821,6 +4911,26 @@ pub fn ulcp_dirty_writes(
             prop::BLE_ENABLED => vec![desired.ble_enabled.ok_or_else(missing)? as u8],
             prop::BLE_PAIRING => vec![desired.ble_pairing.ok_or_else(missing)? as u8],
             prop::WIFI_ENABLED => vec![desired.wifi_enabled.ok_or_else(missing)? as u8],
+            prop::BRIDGE_ENABLED => vec![desired.bridge_enabled.ok_or_else(missing)? as u8],
+            prop::BRIDGE_HOST => {
+                let host = desired.bridge_host.as_ref().ok_or_else(missing)?;
+                if !umsh_ulcp::bridge::valid_host(host) {
+                    return Err(missing());
+                }
+                let mut bytes = host.as_bytes().to_vec();
+                bytes.push(0);
+                bytes
+            }
+            prop::BRIDGE_PORT => {
+                let port = desired.bridge_port.ok_or_else(missing)?;
+                if port == 0 {
+                    return Err(missing());
+                }
+                port.to_le_bytes().to_vec()
+            }
+            prop::BRIDGE_SERVER_KEY => {
+                decode_bridge_key(desired.bridge_server_key.as_deref().ok_or_else(missing)?)?
+            }
             prop::WIFI_SCANNING => vec![desired.wifi_scanning.ok_or_else(missing)? as u8],
             // The empty value deselects, which is a state a host writes
             // deliberately, so an empty SSID here is a value and not a
@@ -4914,6 +5024,15 @@ pub fn ulcp_dirty_writes(
         values.push((prop::PHY_ENABLED, vec![ends_enabled as u8]));
     }
 
+    // A newly enabled client sees its endpoint and pin first. Disabling stays
+    // first, so an operator can stop a connection before changing its settings.
+    if let Some(index) = values
+        .iter()
+        .position(|(key, value)| *key == prop::BRIDGE_ENABLED && value == &[1])
+    {
+        let enable = values.remove(index);
+        values.push(enable);
+    }
     Ok(values
         .into_iter()
         .map(|(property_id, value)| MobileMeshPropertyWriteRecord { property_id, value })
@@ -5056,6 +5175,7 @@ fn validate_capability_dependencies(capabilities: &[u32]) -> Result<(), MobileEr
         // that can beacon: the requirement is a fact about hardware.
         || has(cap::WIFI) && !has(cap::WIFI_SCAN)
         || has(cap::WIFI_AP) && !has(cap::WIFI_SCAN)
+        || has(cap::BRIDGE_CLIENT) && (!has(cap::REPEATER) || !(has(cap::IPV4) || has(cap::IPV6)))
     {
         return Err(MobileError::InvalidUlcpFrame);
     }
@@ -10436,6 +10556,45 @@ mod tests {
         assert_eq!(
             inspect_ulcp_properties(vec![response(prop::IPV4_ADDRESS, &[])]).ipv4_address,
             None
+        );
+    }
+
+    #[test]
+    fn bridge_edits_are_validated_and_endpoint_precedes_enabling() {
+        let mut desired = UlcpDevicePropertiesRecord {
+            bridge_enabled: Some(true),
+            bridge_host: Some("bridge.example".into()),
+            bridge_port: Some(21837),
+            bridge_server_key: Some(vec![]),
+            ..Default::default()
+        };
+        let ids = vec![
+            prop::BRIDGE_ENABLED,
+            prop::BRIDGE_HOST,
+            prop::BRIDGE_PORT,
+            prop::BRIDGE_SERVER_KEY,
+        ];
+        let writes = ulcp_dirty_writes(desired.clone(), ids.clone()).unwrap();
+        assert_eq!(writes.last().unwrap().property_id, prop::BRIDGE_ENABLED);
+        assert_eq!(writes[0].value, b"bridge.example\0");
+        assert!(ulcp_dirty_writes(desired.clone(), vec![prop::BRIDGE_LINK]).is_err());
+        desired.bridge_port = Some(0);
+        assert!(ulcp_dirty_writes(desired.clone(), ids.clone()).is_err());
+        desired.bridge_port = Some(443);
+        desired.bridge_host = Some("https://bad".into());
+        assert!(ulcp_dirty_writes(desired, ids).is_err());
+        let actual = inspect_ulcp_properties(vec![
+            response(prop::BRIDGE_LINK, &[5, 4]),
+            response(prop::BRIDGE_HOST, b"bridge.example\0"),
+            response(prop::BRIDGE_ENABLED, &[1]),
+        ]);
+        assert_eq!(actual.bridge_link.unwrap().reason, 4);
+        assert_eq!(actual.bridge_host.as_deref(), Some("bridge.example"));
+        assert_eq!(actual.bridge_enabled, Some(true));
+        assert!(
+            ulcp_category_properties(UlcpManageCategory::Bridge, vec![])
+                .unwrap()
+                .is_empty()
         );
     }
 

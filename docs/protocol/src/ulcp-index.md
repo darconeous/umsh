@@ -138,6 +138,11 @@ Id   | Mnemonic                                                                 
 4913 | [`PROP_WIFI_AP_CONFIG`](ulcp-wifi.md#prop-wifi-ap-config)                             | Get, Set                   | `CAP_WIFI_AP`
 4914 | [`PROP_WIFI_AP_STATE`](ulcp-wifi.md#prop-wifi-ap-state)                               | Get, Is                    | `CAP_WIFI_AP`
 4915 | [`PROP_WIFI_AP_CLIENTS`](ulcp-wifi.md#prop-wifi-ap-clients)                           | Get, Is, Inserted, Removed | `CAP_WIFI_AP`
+4928 | [`PROP_BRIDGE_ENABLED`](ulcp-bridge.md#prop-bridge-enabled) | Get, Set | `CAP_BRIDGE_CLIENT`
+4929 | [`PROP_BRIDGE_HOST`](ulcp-bridge.md#prop-bridge-host) | Get, Set | `CAP_BRIDGE_CLIENT`
+4930 | [`PROP_BRIDGE_PORT`](ulcp-bridge.md#prop-bridge-port) | Get, Set | `CAP_BRIDGE_CLIENT`
+4931 | [`PROP_BRIDGE_SERVER_KEY`](ulcp-bridge.md#prop-bridge-server-key) | Get, Set | `CAP_BRIDGE_CLIENT`
+4932 | [`PROP_BRIDGE_LINK`](ulcp-bridge.md#prop-bridge-link) | Get, Is | `CAP_BRIDGE_CLIENT`
 
 ## Capabilities
 
@@ -174,6 +179,7 @@ Code | Name                      | Defined in
 55   | `CAP_IPV4`                | [IP Connectivity](ulcp-ip.md#capabilities)
 56   | `CAP_IPV6`                | [IP Connectivity](ulcp-ip.md#capabilities)
 57   | `CAP_WIFI_AP`             | [Wi-Fi](ulcp-wifi.md#capabilities)
+58   | `CAP_BRIDGE_CLIENT`       | [Bridge Client](ulcp-bridge.md#capabilities)
 515  | `CAP_PHY_LORA`            | [Radio Control](ulcp-radio.md#capabilities)
 
 ## Status Codes

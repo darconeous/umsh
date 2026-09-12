@@ -7,9 +7,11 @@ repository.workspace = true
 description = "Device-side session engine for the UMSH Local Control Protocol (ULCP)"
 
 [features]
+bridge-client = ["dep:ed25519-dalek"]
 wifi = []
 
 [dependencies]
+ed25519-dalek = { workspace = true, optional = true }
 umsh-ulcp = { path = "../umsh-ulcp" }
 umsh-core = { path = "../umsh-core", default-features = false, features = ["region-codec"] }
 umsh-crypto = { path = "../umsh-crypto", default-features = false }

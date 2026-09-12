@@ -475,6 +475,47 @@ mod tests {
     }
 
     #[test]
+    fn bridge_port_does_not_replace_the_serial_connection_port() {
+        use command::bridge::BridgeOp;
+        let args = parse(&[
+            "--port",
+            "/dev/test",
+            "--no-save",
+            "bridge",
+            "configure",
+            "bridge.example",
+            "--server-port",
+            "443",
+            "--server-key",
+            "9GtPJFPbuevpXgvgpnLjzwJBen5K86Y3pFRfsokwTPEt",
+        ])
+        .unwrap();
+        assert_eq!(args.port.as_deref(), Some("/dev/test"));
+        assert!(args.no_save);
+        assert!(matches!(
+            args.command,
+            Some(Command::Bridge {
+                op: Some(BridgeOp::Configure {
+                    bridge_port: 443,
+                    ..
+                })
+            })
+        ));
+        assert!(
+            parse(&[
+                "bridge",
+                "configure",
+                "bridge.example",
+                "--server-port",
+                "0",
+                "--server-key",
+                "9GtPJFPbuevpXgvgpnLjzwJBen5K86Y3pFRfsokwTPEt"
+            ])
+            .is_err()
+        );
+    }
+
+    #[test]
     fn connection_flags_work_before_or_after_the_command() {
         let before = parse(&["-p", "/dev/cu.usbmodem101", "info"]).unwrap();
         let after = parse(&["info", "-p", "/dev/cu.usbmodem101"]).unwrap();

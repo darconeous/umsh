@@ -91,6 +91,7 @@ pub fn web_sim_config() -> umsh_ulcp_simdev::SessionConfig {
         // a browser tab.
         wifi: Some(WifiConfig::STATION),
         ip: Some(IpConfig::DUAL),
+        bridge_client: false,
     }
 }
 
