@@ -11,7 +11,7 @@ umsh-core = { path = "../umsh-core" }
 umsh-crypto = { path = "../umsh-crypto", features = ["software-crypto"] }
 umsh-gnss = { path = "../umsh-gnss" }
 umsh-ulcp = { path = "../umsh-ulcp" }
-umsh-ulcp-device = { path = "../umsh-ulcp-device" }
+umsh-ulcp-device = { path = "../umsh-ulcp-device", features = ["wifi"] }
 # Host implementation of critical-section for the DutyLedger's blocking
 # mutex; firmware images provide theirs via nrf-mpsl.
 critical-section = { version = "1", features = ["std"] }

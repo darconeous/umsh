@@ -74,8 +74,8 @@ pub enum WifiError {
     BufferTooSmall,
 }
 
-/// The security mode of a network, exactly as used rather than as a
-/// ceiling negotiated down from.
+/// A station's minimum security requirement, or an advertised/AP mode.
+/// Numeric codes are not a security ranking; use [`Self::permits`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SecurityMode {
     /// `WIFI_SEC_OPEN`: no security at all.
@@ -104,6 +104,30 @@ pub enum SecurityMode {
 }
 
 impl SecurityMode {
+    /// Whether an authentication mode satisfies this station requirement
+    /// with the stored credential. A raw PMK cannot authenticate with SAE.
+    pub const fn permits(self, negotiated: Self, raw_key: bool) -> bool {
+        match (self, negotiated) {
+            (Self::Open, Self::Open | Self::Owe) | (Self::Owe, Self::Owe) => !raw_key,
+            (Self::Wpa, Self::Wpa | Self::Wpa2) | (Self::Wpa2, Self::Wpa2) => true,
+            (Self::Wpa | Self::Wpa2 | Self::Wpa3, Self::Wpa3) => !raw_key,
+            _ => false,
+        }
+    }
+
+    /// Strongest advertised mode supported by both the device and credential.
+    /// This preference order is explicit; wire codes are not a ranking.
+    pub fn strongest_compatible(
+        self,
+        advertised: u16,
+        supported: u16,
+        raw_key: bool,
+    ) -> Option<Self> {
+        [Self::Wpa3, Self::Wpa2, Self::Wpa, Self::Owe, Self::Open]
+            .into_iter()
+            .find(|mode| advertised & supported & mode.bit() != 0 && self.permits(*mode, raw_key))
+    }
+
     /// The wire code for this mode.
     pub const fn code(self) -> u8 {
         self as u8
@@ -755,6 +779,60 @@ mod tests {
     use super::*;
 
     const SSID: &[u8] = b"umsh-test";
+
+    #[test]
+    fn minimum_security_is_a_credential_compatible_relation() {
+        use SecurityMode::*;
+        for minimum in [Open, Owe, Wpa, Wpa2, Wpa3] {
+            for offered in [
+                Open, Owe, Wpa, Wpa2, Wpa3, Wep, Wpa2Ent, Wpa3Ent, Wpa3Ent192,
+            ] {
+                let passphrase = matches!(
+                    (minimum, offered),
+                    (Open, Open | Owe)
+                        | (Owe, Owe)
+                        | (Wpa, Wpa | Wpa2 | Wpa3)
+                        | (Wpa2, Wpa2 | Wpa3)
+                        | (Wpa3, Wpa3)
+                );
+                assert_eq!(minimum.permits(offered, false), passphrase);
+                let pmk = matches!((minimum, offered), (Wpa, Wpa | Wpa2) | (Wpa2, Wpa2));
+                assert_eq!(minimum.permits(offered, true), pmk);
+            }
+        }
+    }
+
+    #[test]
+    fn strongest_selection_supports_legacy_wpa_without_lowering_stronger_profiles() {
+        use SecurityMode::*;
+        let supported = Open.bit() | Wpa.bit() | Wpa2.bit() | Wpa3.bit();
+        assert_eq!(
+            Wpa.strongest_compatible(Wpa.bit(), supported, false),
+            Some(Wpa)
+        );
+        assert_eq!(
+            Wpa.strongest_compatible(supported, supported, false),
+            Some(Wpa3)
+        );
+        assert_eq!(
+            Wpa.strongest_compatible(supported, supported, true),
+            Some(Wpa2)
+        );
+        assert_eq!(
+            Wpa.strongest_compatible(Wpa.bit(), supported, true),
+            Some(Wpa)
+        );
+        assert_eq!(Wpa2.strongest_compatible(Wpa.bit(), supported, false), None);
+        assert_eq!(
+            Wpa3.strongest_compatible(Wpa.bit() | Wpa2.bit(), supported, false),
+            None
+        );
+        assert_eq!(
+            Wpa2.strongest_compatible(Wpa3.bit(), supported, false),
+            Some(Wpa3)
+        );
+        assert_eq!(Wpa2.strongest_compatible(Wpa3.bit(), supported, true), None);
+    }
 
     #[test]
     fn security_codes_round_trip_strictly() {

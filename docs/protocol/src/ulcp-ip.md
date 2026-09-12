@@ -66,6 +66,9 @@ the host can act on.
 
 Allocated in the block after the [Wi-Fi station's](ulcp-wifi.md#properties).
 
+All IPv4 and IPv6 addresses, including gateways and resolvers, are
+encoded as octets in network byte order (big-endian).
+
 Id   | Mnemonic              | Commands                 | Description
 -----|-----------------------|--------------------------|-------------
 4896 | `PROP_IPV4_STATE`     | Get, Is                  | IPv4 readiness

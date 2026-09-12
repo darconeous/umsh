@@ -46,7 +46,12 @@ use umsh_ulcp_device::{
 /// independently. This is the only place both are visible, so it is
 /// where a snapshot growing past what a record can carry is caught.
 const _: () = assert!(
-    SNAPSHOT_MAX <= proto::MAX_PAYLOAD,
+    SNAPSHOT_MAX
+        <= if cfg!(feature = "wifi") {
+            4096 - 19
+        } else {
+            proto::MAX_PAYLOAD
+        },
     "SNAPSHOT_MAX outgrew what a journal record can carry"
 );
 
@@ -320,6 +325,11 @@ pub struct NetworkConfig<'a> {
     /// `PROP_WIFI_ENABLED`: whether the station should be powered.
     /// Always false on a board without `CAP_WIFI`.
     pub wifi_enabled: bool,
+    #[cfg(feature = "wifi")]
+    pub known_networks: &'a umsh_ulcp_device::known_networks::KnownNetworks,
+    #[cfg(feature = "wifi")]
+    pub credential_revision: u32,
+    pub device_name: &'a [u8],
     /// `PROP_WIFI_NETWORK`: which stored network to use, empty for none.
     pub network: &'a [u8],
     /// `PROP_IPV4_CONFIG`: how IPv4 is configured.
@@ -393,6 +403,8 @@ pub enum PublishEvent {
     /// `PROP_IPV6_STATE`. An address arrives when the network hands one
     /// over, which is exactly the transition a host waits on.
     IpState(u32, umsh_ulcp::ip::FamilyState),
+    #[cfg(feature = "wifi")]
+    NetworkTableChanged(u32, heapless::Vec<u8, NETWORK_TABLE_MAX>),
 }
 
 /// Board couplings of the session driver. Everything the loop needs from
@@ -1043,6 +1055,11 @@ fn sync_dev_domain<A, S, const TXQ: usize, E>(
     // business nor the transport's, and arrive here for the same reason.
     env.apply_network_config(NetworkConfig {
         wifi_enabled: session.wifi_enabled(),
+        #[cfg(feature = "wifi")]
+        known_networks: session.known_networks(),
+        #[cfg(feature = "wifi")]
+        credential_revision: session.wifi_credential_revision(),
+        device_name: session.device_name().as_bytes(),
         network: session.selected_network(),
         v4: session.ipv4_config(),
         v6: session.ipv6_config(),
@@ -1390,6 +1407,33 @@ pub async fn run<A, S, const TXQ: usize, M, const RX: usize, const TX: usize, E>
     boot_snapshot: Option<&[u8]>,
     boot_identity: Option<[u8; 32]>,
     rt: DeviceRuntime<M, RX, TX>,
+    env: E,
+) -> !
+where
+    A: AesProvider,
+    S: Sha256Provider,
+    M: RawMutex,
+    E: DeviceEnv,
+{
+    let mut snapshot_buf = [0u8; SNAPSHOT_MAX];
+    run_with_storage(
+        &mut session,
+        &mut snapshot_buf,
+        boot_snapshot,
+        boot_identity,
+        rt,
+        env,
+    )
+    .await
+}
+
+/// Run with explicitly placed session and snapshot storage. No allocation occurs here.
+pub async fn run_with_storage<A, S, const TXQ: usize, M, const RX: usize, const TX: usize, E>(
+    session: &mut Session<A, S, TXQ>,
+    snapshot_buf: &mut [u8; SNAPSHOT_MAX],
+    boot_snapshot: Option<&[u8]>,
+    boot_identity: Option<[u8; 32]>,
+    rt: DeviceRuntime<M, RX, TX>,
     mut env: E,
 ) -> !
 where
@@ -1408,7 +1452,6 @@ where
     // (save/wipe). Held across their persist awaits, so as a
     // loop-lifetime local it costs one future slot instead of one
     // per arm.
-    let mut snapshot_buf = [0u8; SNAPSHOT_MAX];
 
     // The device identity is persisted independently of snapshots;
     // its post-reset value is whatever the identity journal holds.
@@ -1444,7 +1487,7 @@ where
                 ));
                 break;
             }
-            let Some(len) = env.older_snapshot(&mut snapshot_buf).await else {
+            let Some(len) = env.older_snapshot(snapshot_buf).await else {
                 env.trace(format_args!("proto-store boot-restore fallback=NONE"));
                 break;
             };
@@ -1591,7 +1634,7 @@ where
                     // manufacturing a snapshot from a button press would
                     // persist every other live-only value with it.
                     if session.saved_status() != SavedStatus::None
-                        && let Some(len) = session.encode_snapshot(&mut snapshot_buf)
+                        && let Some(len) = session.encode_snapshot(snapshot_buf)
                         && env.persist_snapshot(&snapshot_buf[..len]).await.is_ok()
                     {
                         session.note_snapshot_saved();
@@ -1618,7 +1661,7 @@ where
                     // own control for the property, and a radio rescued by
                     // it should stay rescued across the next reboot.
                     if session.saved_status() != SavedStatus::None
-                        && let Some(len) = session.encode_snapshot(&mut snapshot_buf)
+                        && let Some(len) = session.encode_snapshot(snapshot_buf)
                         && env.persist_snapshot(&snapshot_buf[..len]).await.is_ok()
                     {
                         session.note_snapshot_saved();
@@ -1635,11 +1678,11 @@ where
                         out: rt.out,
                     };
                     serve_frame(
-                        &mut session,
+                        session,
                         Exchange::Local(&frame_bytes),
                         &mut emitter,
                         &mut sink,
-                        &mut snapshot_buf,
+                        snapshot_buf,
                         &rt,
                         &mut env,
                     )
@@ -1658,14 +1701,14 @@ where
                 {
                     let mut sink = ReplySink::Admin { reply: &mut reply };
                     serve_frame(
-                        &mut session,
+                        session,
                         Exchange::Admin {
                             frame: &frame,
                             reply_budget,
                         },
                         &mut emitter,
                         &mut sink,
-                        &mut snapshot_buf,
+                        snapshot_buf,
                         &rt,
                         &mut env,
                     )
@@ -1765,6 +1808,10 @@ where
                     }
                     PublishEvent::WifiMac(mac) => {
                         session.set_wifi_mac(mac);
+                    }
+                    #[cfg(feature = "wifi")]
+                    PublishEvent::NetworkTableChanged(key, value) => {
+                        session.publish_network_table(key, &value, emit);
                     }
                     PublishEvent::IpState(key, state) => {
                         session.set_ip_state(key, state, emit);

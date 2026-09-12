@@ -185,7 +185,7 @@ struct RemoteWifiScreen: View {
                 VStack(alignment: .leading, spacing: 2) {
                     WifiNameLabel(ssid: network.ssid)
                     HStack(spacing: 6) {
-                        Text(wifiSecurityName(network.security))
+                        Text("Minimum: \(wifiSecurityName(network.security))")
                         if network.hidden { Text("Hidden") }
                     }
                     .font(.caption)
@@ -455,7 +455,7 @@ struct WifiJoinSheet: View {
                     } else {
                         LabeledContent("Network") { WifiNameLabel(ssid: target.ssid) }
                     }
-                    Picker("Security", selection: $security) {
+                    Picker("Minimum security", selection: $security) {
                         ForEach(choices, id: \.self) { mode in
                             Text(wifiSecurityName(mode)).tag(mode)
                         }
@@ -537,7 +537,7 @@ struct WifiJoinSheet: View {
         }
         isWorking = true
         defer { isWorking = false }
-        if let status = await model.joinNetwork(item: encoded) {
+        if let status = await model.joinNetwork(item: encoded, ssid: ssid) {
             problem = joinRefusalText(status)
             if ulcpStatusName(status: status).hasSuffix("UNIMPLEMENTED"),
                let weaker = nextWeakerChoice()
@@ -551,7 +551,6 @@ struct WifiJoinSheet: View {
             return
         }
         guard model.problem == nil else { return }
-        await model.selectNetwork(ssid: ssid)
         dismiss()
     }
 

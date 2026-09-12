@@ -34,6 +34,8 @@ pub mod session;
 
 pub use duty::{DutyExceeded, DutyLedger, DutyTracker};
 pub use net::{IpConfig, MAX_RESOLVERS, ResolverError, Resolvers, SelectedNetwork, WifiConfig};
+#[cfg(feature = "wifi")]
+pub mod known_networks;
 pub use session::{
     AlertConfig, AnnounceRequest, BatteryFields, Binding, CHANNEL_TAG_LEN, DEFAULT_IDENT_PRECISION,
     Effect, GnssConfig, IdentitySource, MAX_CHANNEL_KEYS, MAX_DEV_ADMINS, MAX_DEV_PEERS,

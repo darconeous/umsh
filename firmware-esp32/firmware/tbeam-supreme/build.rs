@@ -2,6 +2,11 @@
 // (No memory.x handling—the ESP32 linker script comes from esp-hal.)
 
 fn main() {
+    if std::env::var_os("CARGO_FEATURE_WIFI").is_some() {
+        let map =
+            std::path::PathBuf::from(std::env::var_os("OUT_DIR").unwrap()).join("firmware.map");
+        println!("cargo:rustc-link-arg=-Wl,-Map={}", map.display());
+    }
     // `UMSH_FW_VERSION` wins when set: the release build passes the tag
     // explicitly, because creating a tag touches neither HEAD nor the
     // branch ref, so the `git describe` below would happily hand back a

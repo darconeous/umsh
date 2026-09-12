@@ -826,6 +826,8 @@ struct DeviceDomain {
     /// Empty means none, which is a choice a host makes rather than an
     /// absence.
     wifi_network: net::SelectedNetwork,
+    #[cfg(feature = "wifi")]
+    wifi_networks: crate::known_networks::KnownNetworks,
     /// `PROP_IPV4_CONFIG` and `PROP_IPV6_CONFIG`: how each family is
     /// meant to get an address. Automatic on both, which is what a
     /// network is for.
@@ -878,6 +880,8 @@ impl DeviceDomain {
             ble_enabled: true,
             wifi_enabled: config.wifi.is_some_and(|wifi| wifi.default_enabled),
             wifi_network: net::SelectedNetwork::default(),
+            #[cfg(feature = "wifi")]
+            wifi_networks: Default::default(),
             ipv4_config: ip::V4Config::default(),
             ipv6_config: ip::V6Config::default(),
             ip_dns: net::Resolvers::default(),
@@ -1873,7 +1877,10 @@ impl HostDomain {
 /// room for three more before this has to grow, and it can only grow to
 /// `umsh_journal_store::proto::MAX_PAYLOAD`—2029—before the journal
 /// record format itself has to change.
+#[cfg(not(feature = "wifi"))]
 pub const SNAPSHOT_MAX: usize = 1792;
+#[cfg(feature = "wifi")]
+pub const SNAPSHOT_MAX: usize = 2560;
 
 /// Snapshot payload format discriminator.
 ///
@@ -1993,6 +2000,8 @@ const SAVED_SCHEMA: &[SavedProperty] = &[
     // driver made of either. The table those names index is the
     // platform's and persists with the platform.
     saved(prop::WIFI_ENABLED, ApplyPhase::Config, false),
+    #[cfg(feature = "wifi")]
+    saved(prop::WIFI_NETWORKS, ApplyPhase::Keys, true),
     saved(prop::WIFI_NETWORK, ApplyPhase::Config, false),
     saved(prop::IPV4_CONFIG, ApplyPhase::Config, false),
     saved(prop::IPV6_CONFIG, ApplyPhase::Config, false),
@@ -2116,6 +2125,8 @@ struct SavedState {
     ble_enabled: bool,
     wifi_enabled: bool,
     wifi_network: net::SelectedNetwork,
+    #[cfg(feature = "wifi")]
+    wifi_networks: crate::known_networks::KnownNetworks,
     ipv4_config: ip::V4Config,
     ipv6_config: ip::V6Config,
     ip_dns: net::Resolvers,
@@ -2158,6 +2169,8 @@ impl SavedState {
             ble_enabled: device.ble_enabled,
             wifi_enabled: device.wifi_enabled,
             wifi_network: device.wifi_network,
+            #[cfg(feature = "wifi")]
+            wifi_networks: device.wifi_networks.clone(),
             ipv4_config: device.ipv4_config,
             ipv6_config: device.ipv6_config,
             ip_dns: device.ip_dns,
@@ -2210,6 +2223,8 @@ impl SavedState {
             // `gnss_enabled` does.
             wifi_enabled: config.wifi.is_some_and(|wifi| wifi.default_enabled),
             wifi_network: net::SelectedNetwork::default(),
+            #[cfg(feature = "wifi")]
+            wifi_networks: Default::default(),
             ipv4_config: ip::V4Config::default(),
             ipv6_config: ip::V6Config::default(),
             ip_dns: net::Resolvers::default(),
@@ -2325,6 +2340,13 @@ impl SavedState {
             prop::GNSS_IDENT_PRECISION => encoder.put(number, &[self.gnss_ident_precision]),
             prop::GNSS_TIME_TRUST => encoder.put(number, &[self.gnss_time_trust as u8]),
             prop::BLE_ENABLED => encoder.put(number, &[self.ble_enabled as u8]),
+            #[cfg(feature = "wifi")]
+            prop::WIFI_NETWORKS => {
+                for entry in self.wifi_networks.entries() {
+                    encoder.put(number, entry)?;
+                }
+                Ok(())
+            }
             prop::WIFI_ENABLED => encoder.put(number, &[self.wifi_enabled as u8]),
             // Empty is the default and the wire's way of saying "join
             // nothing", so it is omitted rather than written.
@@ -2396,6 +2418,17 @@ impl SavedState {
                 seen |= bit;
             }
             state.absorb_option(config, number, value)?;
+        }
+        #[cfg(feature = "wifi")]
+        if !state.wifi_network.is_empty()
+            && state
+                .wifi_networks
+                .get(state.wifi_network.as_bytes())
+                .is_none()
+        {
+            // Legacy snapshots did not carry credentials. A name without
+            // its credential is not a usable selection.
+            state.wifi_network = Default::default();
         }
         Ok(state)
     }
@@ -2499,6 +2532,20 @@ impl SavedState {
             }
             prop::GNSS_TIME_TRUST => self.gnss_time_trust = parse_bool(value).map_err(invalid)?,
             prop::BLE_ENABLED => self.ble_enabled = parse_bool(value).map_err(invalid)?,
+            #[cfg(feature = "wifi")]
+            prop::WIFI_NETWORKS => {
+                let entry =
+                    wifi::NetworkEntry::decode(value).map_err(|_| SnapshotError::InvalidValue)?;
+                if self.wifi_networks.get(entry.ssid).is_some() {
+                    return Err(SnapshotError::InvalidValue);
+                }
+                // Preserve valid saved credentials across changes in driver
+                // capabilities. New writes still check hardware support;
+                // the platform must refuse unsupported profiles at use time.
+                config.wifi.ok_or(SnapshotError::InvalidValue)?;
+                entry.validate().map_err(|_| SnapshotError::InvalidValue)?;
+                self.wifi_networks.insert(value).map_err(invalid)?;
+            }
             prop::WIFI_ENABLED => self.wifi_enabled = parse_bool(value).map_err(invalid)?,
             prop::WIFI_NETWORK => self
                 .wifi_network
@@ -2738,6 +2785,8 @@ pub struct Session<A: AesProvider, S: Sha256Provider, const TX: usize = 1> {
     /// results. Both are the platform's, both can be large, and a
     /// session that mirrored them would be holding a copy of every
     /// access point in the building.
+    #[cfg(feature = "wifi")]
+    wifi_credential_revision: u32,
     wifi_scanning: bool,
     wifi_link: wifi::Link,
     /// `PROP_WIFI_RSSI`: empty until the station has a signal to report,
@@ -2908,6 +2957,8 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             ble_bond_count: 0,
             ble_link: BleLinkState::None,
             ble_pairing_open: false,
+            #[cfg(feature = "wifi")]
+            wifi_credential_revision: 0,
             wifi_scanning: false,
             wifi_link: wifi::Link::default(),
             wifi_rssi_dbm: None,
@@ -3219,6 +3270,8 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                     // configuration back when the driver serves the
                     // effects that follow the restore.
                     prop::WIFI_ENABLED => self.device.wifi_enabled = saved.wifi_enabled,
+                    #[cfg(feature = "wifi")]
+                    prop::WIFI_NETWORKS => self.device.wifi_networks = saved.wifi_networks.clone(),
                     prop::WIFI_NETWORK => self.device.wifi_network = saved.wifi_network,
                     prop::IPV4_CONFIG => self.device.ipv4_config = saved.ipv4_config,
                     prop::IPV6_CONFIG => self.device.ipv6_config = saved.ipv6_config,
@@ -4202,7 +4255,10 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         }
         // The stored networks, what a scan heard, and each family's
         // addresses all live where the driver lives.
-        if is_deferred_table(key) && self.known_prop(key) {
+        if is_deferred_table(key)
+            && self.known_prop(key)
+            && !(cfg!(feature = "wifi") && key == prop::WIFI_NETWORKS)
+        {
             return Some(Effect::ReadNetworkTable { tid, key });
         }
         let mut value = [0u8; PROP_BUF];
@@ -5320,6 +5376,32 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
 
     /// The stored network the station should use, as configured by
     /// `PROP_WIFI_NETWORK`. Empty means join nothing.
+    #[cfg(feature = "wifi")]
+    pub fn known_networks(&self) -> &crate::known_networks::KnownNetworks {
+        &self.device.wifi_networks
+    }
+
+    #[cfg(feature = "wifi")]
+    pub fn wifi_credential_revision(&self) -> u32 {
+        self.wifi_credential_revision
+    }
+
+    /// Publish an authoritative live network table after the platform updated it.
+    pub fn publish_network_table(&mut self, key: u32, value: &[u8], emit: &mut impl FnMut(&[u8])) {
+        if self.attached
+            && self.known_prop(key)
+            && matches!(
+                key,
+                prop::WIFI_SCAN_RESULTS
+                    | prop::IPV4_ADDRESS
+                    | prop::IPV6_ADDRESSES
+                    | prop::IP_RESOLVERS
+            )
+        {
+            self.announce_prop_is(key, value, emit);
+        }
+    }
+
     pub fn selected_network(&self) -> &[u8] {
         self.device.wifi_network.as_bytes()
     }
@@ -5436,7 +5518,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         }
         // Choosing a network defers because the table is the platform's:
         // only it can say whether this is a name it holds.
-        if key == prop::WIFI_NETWORK {
+        if key == prop::WIFI_NETWORK && !cfg!(feature = "wifi") {
             if !self.has_station() {
                 self.complete(tid, Status::PROP_NOT_FOUND, emit);
                 return None;
@@ -5574,6 +5656,8 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             self.send_prop_is(tid, key, value, emit);
             return Some(Effect::DeviceNameChanged);
         }
+        #[cfg(feature = "wifi")]
+        let previous_selection = self.device.wifi_network;
         let radio_affecting = match self.apply_prop_set(key, value) {
             Ok(radio_affecting) => radio_affecting,
             Err(status) => {
@@ -5581,6 +5665,13 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                 return None;
             }
         };
+        #[cfg(feature = "wifi")]
+        if key == prop::WIFI_NETWORKS && previous_selection != self.device.wifi_network {
+            let selection = self.device.wifi_network;
+            if self.attached {
+                self.announce_prop_is(prop::WIFI_NETWORK, selection.as_bytes(), emit);
+            }
+        }
         // Echo the authoritative value back from session state.
         let mut encoded = [0u8; PROP_BUF];
         if let PropValue::Encoded(len) = self.encode_prop(key, now_ms, &mut encoded) {
@@ -5904,13 +5995,20 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             // The one whole-set write on a multiple-value property the
             // chapters bless: a resolver list is edited as a list.
             prop::IP_DNS if self.has_ip_property(key) => {
-                self.device
-                    .ip_dns
-                    .replace(value)
-                    .map_err(|error| match error {
-                        net::ResolverError::TooMany => Status::NOMEM,
-                        _ => Status::INVALID_ARGUMENT,
-                    })?;
+                let mut resolvers = net::Resolvers::default();
+                resolvers.replace(value).map_err(|error| match error {
+                    net::ResolverError::TooMany => Status::NOMEM,
+                    _ => Status::INVALID_ARGUMENT,
+                })?;
+                if !resolvers.is_empty() && !self.config.ip.is_some_and(|ip| ip.manual_dns) {
+                    return Err(Status::UNIMPLEMENTED);
+                }
+                if resolvers.iter().any(|address| address.len() == 16)
+                    && !self.config.ip.is_some_and(|ip| ip.v6)
+                {
+                    return Err(Status::UNIMPLEMENTED);
+                }
+                self.device.ip_dns = resolvers;
                 self.bump_dev_domain();
                 Ok(false)
             }
@@ -5975,6 +6073,36 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             }
             // Written an entry at a time, because a credential can be
             // sent and never read back.
+            #[cfg(feature = "wifi")]
+            prop::WIFI_NETWORKS if self.has_station() => {
+                self.require_secure_link()?;
+                let config = self.config.wifi.ok_or(Status::PROP_NOT_FOUND)?;
+                let next = crate::known_networks::KnownNetworks::replacement(value, |entry| {
+                    config.validate_network(entry)
+                })?;
+                if next.get(self.device.wifi_network.as_bytes()).is_none() {
+                    self.device.wifi_network = Default::default();
+                }
+                if self.device.wifi_networks != next {
+                    self.wifi_credential_revision = self.wifi_credential_revision.wrapping_add(1);
+                    self.device.wifi_networks = next;
+                    self.bump_dev_domain();
+                }
+                Ok(false)
+            }
+            #[cfg(feature = "wifi")]
+            prop::WIFI_NETWORK if self.has_station() => {
+                if !value.is_empty() && self.device.wifi_networks.get(value).is_none() {
+                    return Err(Status::ITEM_NOT_FOUND);
+                }
+                self.device
+                    .wifi_network
+                    .set(value)
+                    .map_err(|_| Status::INVALID_ARGUMENT)?;
+                self.bump_dev_domain();
+                Ok(false)
+            }
+            #[cfg(not(feature = "wifi"))]
             prop::WIFI_NETWORKS if self.has_station() => Err(Status::INVALID_ARGUMENT),
             _ => Err(Status::PROP_NOT_FOUND),
         }
@@ -5997,6 +6125,42 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         // the driver that uses it, and the entry carries a credential the
         // session has no reason to hold on to.
         if key == prop::WIFI_NETWORKS {
+            #[cfg(feature = "wifi")]
+            {
+                let result = self.require_secure_link().and_then(|()| {
+                    let config = self
+                        .config
+                        .wifi
+                        .filter(|c| c.station)
+                        .ok_or(Status::PROP_NOT_FOUND)?;
+                    let entry =
+                        wifi::NetworkEntry::decode(item).map_err(|_| Status::INVALID_ARGUMENT)?;
+                    config.validate_network(&entry)?;
+                    let changed = self
+                        .device
+                        .wifi_networks
+                        .get(entry.ssid)
+                        .is_none_or(|old| old != entry);
+                    self.device.wifi_networks.insert(item)?;
+                    Ok(changed && entry.ssid == self.device.wifi_network.as_bytes())
+                });
+                match result {
+                    Ok(selected) => {
+                        if selected {
+                            self.wifi_credential_revision =
+                                self.wifi_credential_revision.wrapping_add(1);
+                        }
+                        self.bump_dev_domain();
+                        let entry = wifi::NetworkEntry::decode(item).unwrap();
+                        let mut reported = [0; 35];
+                        let len = entry.encode_reported(&mut reported).unwrap();
+                        self.send_prop_inserted(tid, key, &reported[..len], emit);
+                    }
+                    Err(status) => self.complete(tid, status, emit),
+                }
+                return None;
+            }
+            #[cfg(not(feature = "wifi"))]
             return self.stage_network_entry(tid, item, emit);
         }
         match key {
@@ -6141,6 +6305,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     /// driver, and staged rather than carried on the effect because
     /// [`Effect`] is `Copy` and this is up to a hundred octets of which
     /// most are a secret.
+    #[cfg(not(feature = "wifi"))]
     fn stage_network_entry(
         &mut self,
         tid: u8,
@@ -6193,6 +6358,16 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                 self.complete(tid, Status::INVALID_ARGUMENT, emit);
                 return None;
             }
+            #[cfg(feature = "wifi")]
+            {
+                let result = self.device.wifi_networks.remove(selector);
+                if result.is_ok() {
+                    self.bump_dev_domain();
+                }
+                self.respond_wifi_network_forgotten(tid, result, emit);
+                return None;
+            }
+            #[cfg(not(feature = "wifi"))]
             return Some(Effect::RemoveWifiNetwork { tid });
         }
         match key {
@@ -6865,6 +7040,10 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             }
             prop::WIFI_NETWORK if self.has_station() => {
                 put(out, self.device.wifi_network.as_bytes())
+            }
+            #[cfg(feature = "wifi")]
+            prop::WIFI_NETWORKS if self.has_station() => {
+                self.device.wifi_networks.encode_reported(out).unwrap_or(0)
             }
             prop::WIFI_LINK if self.has_station() => self.wifi_link.encode(out).unwrap_or(0),
             // Empty until there is a signal to report, which is what an
@@ -12808,6 +12987,20 @@ mod tests {
         session.device.name = [b'n'; MAX_DEVICE_NAME_LEN];
         session.device.name_len = MAX_DEVICE_NAME_LEN;
         session.set_boot_identity([0xEE; 32]);
+        #[cfg(feature = "wifi")]
+        for index in 0..4 {
+            let ssid = [b'a' + index; wifi::SSID_MAX_LEN];
+            let entry = wifi::NetworkEntry {
+                hidden: true,
+                raw_key: false,
+                security: wifi::SecurityMode::Wpa3,
+                ssid: &ssid,
+                credential: &[b'p'; wifi::SAE_PASSWORD_MAX_LEN],
+            };
+            let mut raw = [0; wifi::NETWORK_ENTRY_MAX_LEN];
+            let len = entry.encode(&mut raw).unwrap();
+            session.device.wifi_networks.insert(&raw[..len]).unwrap();
+        }
 
         let mut bytes = [0u8; SNAPSHOT_MAX];
         let len = session
@@ -14428,6 +14621,7 @@ mod tests {
     /// The table lives with the driver, so a read of it is a round trip
     /// and the answer never carries what a host wrote into it.
     #[test]
+    #[cfg(not(feature = "wifi"))]
     fn the_network_table_defers_and_answers_without_credentials() {
         let mut session = test_session();
         let mut buf = [0u8; 16];
@@ -14468,6 +14662,7 @@ mod tests {
     /// security binding, the entry is checked before the platform ever
     /// sees it, and the reply stops at the SSID.
     #[test]
+    #[cfg(not(feature = "wifi"))]
     fn storing_a_network_is_checked_staged_and_answered_without_the_secret() {
         let mut session = test_session();
         let item = network_item(b"Field Office", b"hunter2hunter2");
@@ -14529,6 +14724,7 @@ mod tests {
     /// Only the platform knows whether a name is one it holds, and the
     /// selection becomes device state only once it says so.
     #[test]
+    #[cfg(not(feature = "wifi"))]
     fn selecting_a_network_defers_and_a_refusal_leaves_the_choice_alone() {
         let mut session = test_session();
         let (emitted, effect) = set(&mut session, prop::WIFI_NETWORK, b"Field Office");
@@ -14562,6 +14758,7 @@ mod tests {
     /// Forgetting the network the station was told to use takes the
     /// selection with it: a name that names nothing is not a choice.
     #[test]
+    #[cfg(not(feature = "wifi"))]
     fn forgetting_the_selected_network_clears_the_selection() {
         let mut session = test_session();
         let (_, effect) = set(&mut session, prop::WIFI_NETWORK, b"Field Office");
@@ -14661,6 +14858,73 @@ mod tests {
         expect_status(&emitted[0], 2, Status::INVALID_ARGUMENT);
     }
 
+    #[test]
+    fn a_board_without_manual_dns_refuses_overrides_and_allows_clearing() {
+        let mut config = test_config();
+        config.ip.as_mut().unwrap().manual_dns = false;
+        let mut session: TestSession = Session::new(config, Status::RESET_POWER_ON, test_engine());
+        session.attach(true);
+        let (emitted, effect) = set(&mut session, prop::IP_DNS, &[4, 9, 9, 9, 9]);
+        expect_status(&emitted[0], 2, Status::UNIMPLEMENTED);
+        assert!(effect.is_none());
+        assert!(session.dns_resolvers().is_empty());
+        let (emitted, _) = set(&mut session, prop::IP_DNS, &[]);
+        assert!(parse_prop_is(&emitted[0]).2.is_empty());
+    }
+
+    #[cfg(feature = "wifi")]
+    #[test]
+    fn reduced_driver_capabilities_do_not_reject_the_whole_snapshot() {
+        let mut session = test_session();
+        insert_item(
+            &mut session,
+            prop::WIFI_NETWORKS,
+            &network_item(b"supported", b"password"),
+        );
+        insert_item(
+            &mut session,
+            prop::WIFI_NETWORKS,
+            &network_item(b"\xff", b"password"),
+        );
+        let raw = wifi::NetworkEntry {
+            hidden: false,
+            raw_key: true,
+            security: wifi::SecurityMode::Wpa2,
+            ssid: b"raw-pmk",
+            credential: &[0x42; 32],
+        };
+        let mut item = [0; wifi::NETWORK_ENTRY_MAX_LEN];
+        let len = raw.encode(&mut item).unwrap();
+        insert_item(&mut session, prop::WIFI_NETWORKS, &item[..len]);
+        set(&mut session, prop::WIFI_NETWORK, b"raw-pmk");
+        set(&mut session, prop::WIFI_ENABLED, &[1]);
+        set(&mut session, prop::IP_DNS, &[4, 9, 9, 9, 9]);
+        let mut bytes = [0; SNAPSHOT_MAX];
+        let len = session.encode_snapshot(&mut bytes).unwrap();
+
+        let mut config = test_config();
+        let wifi = config.wifi.as_mut().unwrap();
+        wifi.raw_keys = false;
+        wifi.binary_ssids = false;
+        config.ip.as_mut().unwrap().manual_dns = false;
+        let mut restored: TestSession = Session::new(config, Status::RESET_POWER_ON, test_engine());
+        restored.restore_at_boot(&bytes[..len]).unwrap();
+        assert!(restored.wifi_enabled());
+        assert_eq!(restored.selected_network(), b"raw-pmk");
+        assert!(restored.device.wifi_networks.get(b"supported").is_some());
+        assert!(restored.device.wifi_networks.get(b"raw-pmk").is_some());
+        assert!(restored.device.wifi_networks.get(b"\xff").is_some());
+        assert_eq!(
+            restored.dns_resolvers().iter().collect::<Vec<_>>(),
+            [[9, 9, 9, 9].as_slice()]
+        );
+        let selected = restored.device.wifi_networks.get(b"raw-pmk").unwrap();
+        assert_eq!(
+            restored.config.wifi.unwrap().validate_network(&selected),
+            Err(Status::UNIMPLEMENTED)
+        );
+    }
+
     /// The station's link, signal and address are the platform's to
     /// report, and only the two a host waits on are announced.
     #[test]
@@ -14708,14 +14972,118 @@ mod tests {
     /// The configuration survives a save and a restore; the table it
     /// names does not, because the table was never the session's.
     #[test]
+    #[cfg(feature = "wifi")]
+    fn owned_credentials_are_atomic_redacted_and_follow_snapshot_lifecycle() {
+        let mut session = test_session();
+        let first = network_item(b"Field Office", b"first-password");
+        let second = network_item(b"Field Office", b"second-password");
+        let (frames, effect) = insert_item(&mut session, prop::WIFI_NETWORKS, &first);
+        assert!(effect.is_none());
+        let (_, report) = parse_table_notice(&frames[0], Cmd::PropInserted, 5);
+        assert!(
+            wifi::NetworkEntry::decode(&report)
+                .unwrap()
+                .credential
+                .is_empty()
+        );
+        set(&mut session, prop::WIFI_NETWORK, b"Field Office");
+        let read = get(&mut session, prop::WIFI_NETWORKS);
+        assert!(
+            wifi::NetworkEntry::decode(&read[1..])
+                .unwrap()
+                .credential
+                .is_empty()
+        );
+        save(&mut session);
+
+        // A malformed second entry cannot partly replace the table.
+        let mut replacement = vec![second.len() as u8];
+        replacement.extend_from_slice(&second);
+        replacement.extend_from_slice(&[2, 0, 2]);
+        let (frames, _) = set(&mut session, prop::WIFI_NETWORKS, &replacement);
+        expect_status(&frames[0], 2, Status::INVALID_ARGUMENT);
+        assert_eq!(
+            session
+                .known_networks()
+                .get(b"Field Office")
+                .unwrap()
+                .credential,
+            b"first-password"
+        );
+        assert_eq!(session.selected_network(), b"Field Office");
+
+        insert_item(&mut session, prop::WIFI_NETWORKS, &second);
+        session.respond_save(2, Err(()), &mut |_| {});
+        restore(&mut session);
+        assert_eq!(
+            session
+                .known_networks()
+                .get(b"Field Office")
+                .unwrap()
+                .credential,
+            b"first-password"
+        );
+        // Clear removes only the baseline; the live association's credential
+        // is retained until reset, exactly like every other saved setting.
+        session.respond_clear(2, Ok(()), &mut |_| {});
+        assert!(session.known_networks().get(b"Field Office").is_some());
+        session.reset(Status::RESET_SOFTWARE, &mut |_| {});
+        assert!(session.known_networks().get(b"Field Office").is_none());
+        assert!(session.selected_network().is_empty());
+    }
+
+    #[test]
+    #[cfg(feature = "wifi")]
+    fn owned_table_replacement_and_removal_announce_cleared_selection() {
+        let mut session = test_session();
+        insert_item(
+            &mut session,
+            prop::WIFI_NETWORKS,
+            &network_item(b"X", b"password"),
+        );
+        set(&mut session, prop::WIFI_NETWORK, b"X");
+        let (frames, effect) = set(&mut session, prop::WIFI_NETWORKS, &[]);
+        assert!(effect.is_none());
+        assert_eq!(
+            parse_prop_is(&frames[0]),
+            (TID_UNSOLICITED, prop::WIFI_NETWORK, vec![])
+        );
+        let (frames, _) = set(&mut session, prop::WIFI_NETWORK, b"X");
+        expect_status(&frames[0], 2, Status::ITEM_NOT_FOUND);
+        insert_item(
+            &mut session,
+            prop::WIFI_NETWORKS,
+            &network_item(b"X", b"password"),
+        );
+        set(&mut session, prop::WIFI_NETWORK, b"X");
+        let (frames, effect) = remove_item(&mut session, prop::WIFI_NETWORKS, b"X");
+        assert!(effect.is_none());
+        assert_eq!(
+            parse_prop_is(&frames[0]),
+            (TID_UNSOLICITED, prop::WIFI_NETWORK, vec![])
+        );
+    }
+
+    #[test]
     fn wifi_and_ip_configuration_round_trip_through_a_snapshot() {
         let mut session = test_session();
         set(&mut session, prop::WIFI_ENABLED, &[1]);
-        let (_, effect) = set(&mut session, prop::WIFI_NETWORK, b"Field Office");
-        let Some(Effect::SelectWifiNetwork { tid }) = effect else {
-            panic!("expected a deferred selection");
-        };
-        session.respond_wifi_network(tid, Ok(()), &mut |_: &[u8]| {});
+        #[cfg(feature = "wifi")]
+        insert_item(
+            &mut session,
+            prop::WIFI_NETWORKS,
+            &network_item(b"Field Office", b"hunter2hunter2"),
+        );
+        #[cfg(feature = "wifi")]
+        set(&mut session, prop::WIFI_NETWORK, b"Field Office");
+        #[cfg(not(feature = "wifi"))]
+        {
+            let (_, effect) = set(&mut session, prop::WIFI_NETWORK, b"Field Office");
+            let Some(Effect::SelectWifiNetwork { tid }) = effect else {
+                panic!("expected a deferred selection");
+            };
+            session.respond_wifi_network(tid, Ok(()), &mut |_: &[u8]| {});
+        }
         let mut v6 = vec![ip::Method::Disabled.code()];
         v6.extend_from_slice(&[0; 33]);
         set(&mut session, prop::IPV6_CONFIG, &v6);

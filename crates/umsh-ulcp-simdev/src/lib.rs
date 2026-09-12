@@ -656,7 +656,19 @@ impl SimulatedDevice {
         let selected = self.session.selected_network().to_vec();
         let associated = self.session.wifi_enabled()
             && !selected.is_empty()
-            && self.network.position(&selected).is_some();
+            && self
+                .session
+                .known_networks()
+                .get(&selected)
+                .is_some_and(|entry| {
+                    // The office AP advertises WPA2/WPA3 transition mode.
+                    // Upgrading its offered mode set never changes the saved
+                    // minimum or allows a weaker authentication method.
+                    [SecurityMode::Wpa3, SecurityMode::Wpa2]
+                        .into_iter()
+                        .any(|mode| entry.security.permits(mode, entry.raw_key))
+                        || entry.security.permits(SecurityMode::Open, entry.raw_key)
+                });
         self.network.associated = associated;
         let link = match associated {
             true => Link {

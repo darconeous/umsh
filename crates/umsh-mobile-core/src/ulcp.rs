@@ -10412,6 +10412,26 @@ mod tests {
     }
 
     #[test]
+    fn ipv4_live_record_is_unprefixed_and_addresses_use_network_byte_order() {
+        // Literal ULCP wire bytes, independent of the producer's encoder:
+        // 172.20.10.2/28, router and learned resolver 172.20.10.1.
+        // Only the resolver table has item-length prefixes.
+        let properties = inspect_ulcp_properties(vec![
+            response(prop::IPV4_ADDRESS, &[172, 20, 10, 2, 28, 172, 20, 10, 1]),
+            response(prop::IP_RESOLVERS, &[4, 172, 20, 10, 1]),
+        ]);
+        assert_eq!(
+            properties.ipv4_address,
+            Some(UlcpIpv4AddressRecord {
+                address: vec![172, 20, 10, 2],
+                prefix: 28,
+                gateway: vec![172, 20, 10, 1],
+            }),
+        );
+        assert_eq!(properties.ip_resolvers, Some(vec![vec![172, 20, 10, 1]]));
+    }
+
+    #[test]
     fn an_empty_ipv4_address_reads_as_not_ready() {
         assert_eq!(
             inspect_ulcp_properties(vec![response(prop::IPV4_ADDRESS, &[])]).ipv4_address,

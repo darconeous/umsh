@@ -202,9 +202,8 @@ pub static NODE_CH: umsh_radio_loraphy::Channels<NodeMutex, 4, 2> =
 
 /// Latest-wins hand-off from the session driver to the sync loop. A
 /// `Signal` rather than a queue: intermediate table states are
-/// irrelevant, only convergence on the newest snapshot matters. On a boot
-/// that skipped node bring-up (a crash-report boot) a pending snapshot
-/// just sits here unconsumed.
+/// irrelevant, only convergence on the newest snapshot matters. A
+/// snapshot published before node startup waits for the sync loop.
 pub static DEV_SYNC: Signal<NodeMutex, DevDomainSnapshot> = Signal::new();
 
 /// Hand a snapshot to the sync loop, publishing the mirrors a reader can
@@ -652,10 +651,9 @@ pub enum BeaconTrigger {
     Host(AnnounceRequest),
 }
 
-/// Beacon requests into the node. On a boot that skipped node bring-up
-/// the queue is never drained and requests are dropped at the `try_send`
-/// in [`request_beacon`], leaving the slot inert rather than blocking the
-/// caller.
+/// Beacon requests into the node. A full queue drops an additional
+/// request at the `try_send` in [`request_beacon`] without blocking the
+/// caller, including while node startup is still in progress.
 pub static BEACON_TRIGGER: Channel<NodeMutex, BeaconTrigger, 2> = Channel::new();
 
 /// Fire-and-forget beacon request, reporting whether the queue took it.
@@ -1295,6 +1293,35 @@ pub struct DeviceNodeParts<CS: CounterStore + 'static> {
     pub node_key: [u8; 32],
 }
 
+// Keep construction out of the async poll frame. Inlining it there makes
+// the Xtensa compiler reserve MAC constructor temporaries alongside the
+// rest of bring-up (58,144 bytes in the WiFi image). Return only a reference
+// so no large value crosses this boundary; the arena remains internal RAM.
+#[inline(never)]
+fn initialize_mac<CS: CounterStore + 'static>(
+    arena: &'static mut DeviceNodeMacArena<CS>,
+    seed: [u8; 32],
+    t_frame_ms: u32,
+    counters: CS,
+    duty: &'static umsh_ulcp_device::DutyLedger,
+    hooks: NodeHooks,
+) -> &'static AsyncRefCell<DeviceNodeMac<CS>> {
+    arena.write(AsyncRefCell::new(DeviceNodeMac::new(
+        DutyGatedRadio::with_load_hook(
+            umsh_radio_loraphy::LoraphyRadio::new(&NODE_CH, t_frame_ms),
+            duty,
+            EmbassyClock,
+            hooks.note_external_load,
+        ),
+        CryptoEngine::new(SoftwareAes, SoftwareSha256),
+        EmbassyClock,
+        NodeRng::from_seed(seed),
+        counters,
+        RepeaterConfig::default(),
+        OperatingPolicy::default(),
+    )))
+}
+
 /// Construct the MAC around the device identity and wire up the node.
 /// Call at most once. The identity is never absent—boot generates and
 /// persists one when the journal is empty—so there is no
@@ -1313,29 +1340,7 @@ pub async fn bring_up<CS: CounterStore + 'static>(
     duty: &'static umsh_ulcp_device::DutyLedger,
     hooks: NodeHooks,
 ) -> DeviceNodeParts<CS> {
-    // The Mac is ~37 KiB. `MaybeUninit::write` lets the compiler
-    // construct it in place inside the arena, the same elision
-    // `StaticCell::init_with` leaned on before the arena became
-    // placeable; building it as a stack local transits the stack once
-    // per move in the chain—hardware-diagnosed on the nRF images as
-    // boot HardFaults (INVSTATE jumps to 0) and a smashed allocator when
-    // the temporaries blew through the stack budget. Keep the
-    // construction a single in-place expression.
-    let mac_cell: &'static AsyncRefCell<DeviceNodeMac<CS>> =
-        mac_arena.write(AsyncRefCell::new(DeviceNodeMac::new(
-            DutyGatedRadio::with_load_hook(
-                umsh_radio_loraphy::LoraphyRadio::new(&NODE_CH, t_frame_ms),
-                duty,
-                EmbassyClock,
-                hooks.note_external_load,
-            ),
-            CryptoEngine::new(SoftwareAes, SoftwareSha256),
-            EmbassyClock,
-            NodeRng::from_seed(node_seed),
-            counters,
-            RepeaterConfig::default(),
-            OperatingPolicy::default(),
-        )));
+    let mac_cell = initialize_mac(mac_arena, node_seed, t_frame_ms, counters, duty, hooks);
     debug_log(format_args!("node bring-up: mac cell ready"));
     let identity = SoftwareIdentity::from_secret_bytes(identity_secret);
     // Retained for the device-domain sync gate, which compares the

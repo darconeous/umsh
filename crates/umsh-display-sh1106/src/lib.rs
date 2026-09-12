@@ -68,6 +68,10 @@ pub const fn contrast_for(permille: u16) -> u8 {
 const CTRL_CMD: u8 = 0x00;
 /// Control byte introducing a data stream.
 const CTRL_DATA: u8 = 0x40;
+// Keep a transaction inside the ESP32 I2C FIFO, including control and
+// address bytes. A full 128-column write needs interrupt-driven refills
+// that can be delayed by radio startup, leaving a partial first frame.
+const DATA_CHUNK: usize = 16;
 
 /// Longest command run any sequence below sends in one transaction.
 const MAX_CMDS: usize = 17;
@@ -186,10 +190,12 @@ impl<I: I2c> Sh1106<I> {
             ])
             .await?;
 
-            let mut data = [0u8; 1 + WIDTH];
-            data[0] = CTRL_DATA;
-            data[1..].copy_from_slice(&fb.0[page * WIDTH..(page + 1) * WIDTH]);
-            self.i2c.write(self.addr, &data).await?;
+            for columns in fb.0[page * WIDTH..(page + 1) * WIDTH].chunks(DATA_CHUNK) {
+                let mut data = [0u8; 1 + DATA_CHUNK];
+                data[0] = CTRL_DATA;
+                data[1..=columns.len()].copy_from_slice(columns);
+                self.i2c.write(self.addr, &data[..=columns.len()]).await?;
+            }
         }
         Ok(())
     }

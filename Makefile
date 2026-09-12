@@ -302,6 +302,7 @@ dfu-zip-xiao-nrf52: build-xiao-nrf52
 ESP32_TARGET_DIR := firmware-esp32/target/xtensa-esp32-none-elf/release
 ESP32S3_TARGET_DIR := firmware-esp32/target/xtensa-esp32s3-none-elf/release
 ESPFLASH_PORT ?=
+ESP32_CARGO_FLAGS ?=
 ESPFLASH_PORT_ARG = $(if $(ESPFLASH_PORT),--port $(ESPFLASH_PORT),)
 # Shared UMSH partition table. Carries the 64 KB `umsh` data partition that
 # umsh_bsp_esp32::flash_store looks up by label at boot; without it the
@@ -383,7 +384,8 @@ flash-heltec-v3-console: espflash-check build-heltec-v3-console
 		$(ESP32S3_TARGET_DIR)/firmware-heltec-v3-console
 
 build-heltec-v3: esp-toolchain-check
-	$(ESP_ENV) cd firmware-esp32/firmware/heltec-v3 && cargo build --release
+	$(ESP_ENV) cd firmware-esp32/firmware/heltec-v3 && cargo build --release $(ESP32_CARGO_FLAGS)
+	$(ESP_ENV) python3 scripts/check_xtensa_stack.py $(ESP32S3_TARGET_DIR)/firmware-heltec-v3
 
 flash-heltec-v3: espflash-check build-heltec-v3
 	espflash flash --monitor $(ESPFLASH_PORT_ARG) $(ESPFLASH_PARTITIONS) \
@@ -397,7 +399,8 @@ flash-heltec-v2: espflash-check build-heltec-v2
 		$(ESP32_TARGET_DIR)/firmware-heltec-v2
 
 build-tbeam-supreme: esp-toolchain-check
-	$(ESP_ENV) cd firmware-esp32/firmware/tbeam-supreme && cargo build --release
+	$(ESP_ENV) cd firmware-esp32/firmware/tbeam-supreme && cargo build --release $(ESP32_CARGO_FLAGS)
+	$(ESP_ENV) python3 scripts/check_xtensa_stack.py $(ESP32S3_TARGET_DIR)/firmware-tbeam-supreme
 
 flash-tbeam-supreme: espflash-check build-tbeam-supreme
 	espflash flash --monitor $(ESPFLASH_PORT_ARG) $(ESPFLASH_PARTITIONS) \

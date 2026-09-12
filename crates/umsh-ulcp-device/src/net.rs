@@ -9,11 +9,9 @@
 //! it can hear, the lease it was handed. Those live where the driver
 //! lives, and the session reaches them through effects.
 //!
-//! The one piece that looks like configuration and is not is the network
-//! table. It carries credentials, the wire never gives one back, and a
-//! device that stores its own passphrases is a device whose Wi-Fi driver
-//! already has somewhere to put them. So the table is the platform's, and
-//! what the session keeps is the name of the entry to use.
+//! With the `wifi` feature, the session also owns the credential table
+//! and saves it in the same transaction as selection and enablement.
+//! Platforms without that feature retain the deferred table hooks.
 
 use umsh_ulcp::{ip, wifi};
 
@@ -34,25 +32,64 @@ pub struct WifiConfig {
     /// continuous load than the mesh radio it sits beside. A mains-powered
     /// bridge whose whole job is the connection says otherwise.
     pub default_enabled: bool,
+    /// Supported station requirements, as SecurityMode bits.
+    pub supported_modes: u16,
+    /// Maximum SAE password length this platform accepts.
+    pub max_sae_password: usize,
+    /// Whether the driver accepts a raw WPA/WPA2 PMK.
+    pub raw_keys: bool,
+    /// Whether arbitrary SSID bytes are supported, including embedded NULs.
+    pub binary_ssids: bool,
 }
 
 impl WifiConfig {
+    pub fn validate_network(
+        &self,
+        entry: &wifi::NetworkEntry<'_>,
+    ) -> Result<(), umsh_ulcp::Status> {
+        entry
+            .validate()
+            .map_err(|_| umsh_ulcp::Status::INVALID_ARGUMENT)?;
+        if self.supported_modes & entry.security.bit() == 0
+            || (entry.raw_key && !self.raw_keys)
+            || (!self.binary_ssids
+                && (entry.ssid.contains(&0) || core::str::from_utf8(entry.ssid).is_err()))
+            || (entry.security == wifi::SecurityMode::Wpa3
+                && entry.credential.len() > self.max_sae_password)
+        {
+            return Err(umsh_ulcp::Status::UNIMPLEMENTED);
+        }
+        Ok(())
+    }
+
     /// A station that stays off until asked.
     pub const STATION: Self = Self {
         station: true,
         default_enabled: false,
+        supported_modes: 0x1f,
+        max_sae_password: 128,
+        raw_keys: true,
+        binary_ssids: true,
     };
 
     /// A station that comes up on its own.
     pub const ALWAYS_ON: Self = Self {
         station: true,
         default_enabled: true,
+        supported_modes: 0x1f,
+        max_sae_password: 128,
+        raw_keys: true,
+        binary_ssids: true,
     };
 
     /// A receiver that can hear networks and join none of them.
     pub const SCAN_ONLY: Self = Self {
         station: false,
         default_enabled: false,
+        supported_modes: 0x1f,
+        max_sae_password: 128,
+        raw_keys: true,
+        binary_ssids: true,
     };
 }
 
@@ -65,14 +102,21 @@ impl WifiConfig {
 pub struct IpConfig {
     pub v4: bool,
     pub v6: bool,
+    /// Whether configured resolver overrides can actually be applied.
+    pub manual_dns: bool,
 }
 
 impl IpConfig {
     /// Both families, which is what a stack written this decade runs.
-    pub const DUAL: Self = Self { v4: true, v6: true };
+    pub const DUAL: Self = Self {
+        v4: true,
+        v6: true,
+        manual_dns: true,
+    };
     pub const V4_ONLY: Self = Self {
         v4: true,
         v6: false,
+        manual_dns: true,
     };
 }
 
@@ -215,6 +259,45 @@ impl SelectedNetwork {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn limited_driver_rejects_unsupported_profiles_without_rejecting_unicode() {
+        let config = WifiConfig {
+            raw_keys: false,
+            binary_ssids: false,
+            max_sae_password: 63,
+            ..WifiConfig::STATION
+        };
+        let mut entry = wifi::NetworkEntry {
+            hidden: false,
+            raw_key: false,
+            security: wifi::SecurityMode::Wpa2,
+            ssid: "Café".as_bytes(),
+            credential: b"password",
+        };
+        assert_eq!(config.validate_network(&entry), Ok(()));
+        for ssid in [b"\xff".as_slice(), b"a\0b"] {
+            entry.ssid = ssid;
+            assert_eq!(
+                config.validate_network(&entry),
+                Err(umsh_ulcp::Status::UNIMPLEMENTED)
+            );
+        }
+        entry.ssid = b"network";
+        entry.raw_key = true;
+        entry.credential = &[0x42; 32];
+        assert_eq!(
+            config.validate_network(&entry),
+            Err(umsh_ulcp::Status::UNIMPLEMENTED)
+        );
+        entry.raw_key = false;
+        entry.security = wifi::SecurityMode::Wpa3;
+        entry.credential = &[b'x'; 64];
+        assert_eq!(
+            config.validate_network(&entry),
+            Err(umsh_ulcp::Status::UNIMPLEMENTED)
+        );
+    }
 
     fn item(bytes: &[u8]) -> Vec<u8> {
         let mut out = Vec::new();

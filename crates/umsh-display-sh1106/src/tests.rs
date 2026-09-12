@@ -34,7 +34,8 @@ impl embedded_hal_async::i2c::Error for MockError {
     }
 }
 
-/// A bus where only the addresses in `present` acknowledge.
+/// A bus where only the addresses in `present` acknowledge and writes
+/// must fit a 32-byte hardware FIFO without an interrupt-driven refill.
 struct MockI2c {
     present: Vec<u8>,
     log: Vec<Txn>,
@@ -84,7 +85,7 @@ impl I2c for MockI2c {
         address: u8,
         operations: &mut [Operation<'_>],
     ) -> Result<(), Self::Error> {
-        for op in operations {
+        for op in operations.iter_mut() {
             match op {
                 Operation::Write(bytes) => self.log.push(Txn::Write {
                     addr: address,
@@ -92,6 +93,12 @@ impl I2c for MockI2c {
                 }),
                 Operation::Read(_) => self.log.push(Txn::Read { addr: address }),
             }
+        }
+        if operations
+            .iter()
+            .any(|op| matches!(op, Operation::Write(bytes) if bytes.len() + 1 > 32))
+        {
+            return Err(MockError);
         }
         if self.acks(address) {
             Ok(())
@@ -233,19 +240,21 @@ fn flush_walks_every_page_with_the_column_offset() {
     block_on(panel.flush(&fb)).unwrap();
     let writes = panel.release().writes();
 
-    // One address run plus one data run per page.
-    assert_eq!(writes.len(), HEIGHT / 8 * 2);
+    // One address run plus bounded data runs per page.
+    let transactions_per_page = 1 + WIDTH / DATA_CHUNK;
+    assert_eq!(writes.len(), HEIGHT / 8 * transactions_per_page);
 
     for page in 0..HEIGHT / 8 {
-        let addr = &writes[page * 2];
+        let addr = &writes[page * transactions_per_page];
         assert_eq!(
             addr,
             &[CTRL_CMD, 0xB0 | page as u8, 0x02, 0x10],
             "page {page} address run"
         );
-        let data = &writes[page * 2 + 1];
-        assert_eq!(data.len(), 1 + WIDTH);
-        assert_eq!(data[0], CTRL_DATA);
+        for data in &writes[page * transactions_per_page + 1..(page + 1) * transactions_per_page] {
+            assert!(data.len() + 1 <= 32, "write needs FIFO refills");
+            assert_eq!(data[0], CTRL_DATA);
+        }
     }
 }
 
@@ -255,7 +264,7 @@ fn flush_sends_the_buffer_in_page_major_order() {
     // Tag each page with its own index so a transposed flush is visible.
     for page in 0..HEIGHT / 8 {
         for col in 0..WIDTH {
-            fb.0[page * WIDTH + col] = page as u8;
+            fb.0[page * WIDTH + col] = (page * 31 + col) as u8;
         }
     }
 
@@ -263,13 +272,16 @@ fn flush_sends_the_buffer_in_page_major_order() {
     block_on(panel.flush(&fb)).unwrap();
     let writes = panel.release().writes();
 
-    for page in 0..HEIGHT / 8 {
-        let data = &writes[page * 2 + 1];
-        assert!(
-            data[1..].iter().all(|&b| b == page as u8),
-            "page {page} carried another page's bytes"
-        );
-    }
+    let transmitted: Vec<u8> = writes
+        .iter()
+        .filter(|bytes| bytes[0] == CTRL_DATA)
+        .flat_map(|bytes| bytes[1..].iter().copied())
+        .collect();
+    assert_eq!(
+        transmitted.as_slice(),
+        fb.0,
+        "page/column data shifted or truncated"
+    );
 }
 
 #[test]

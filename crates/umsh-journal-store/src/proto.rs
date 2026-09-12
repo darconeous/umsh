@@ -87,18 +87,27 @@ pub struct Stored {
 /// `write_committed_record` writes zeros there only after the body
 /// lands.
 pub fn encode_record(generation: u32, record: RecordRef<'_>) -> [u8; SLOT_SIZE] {
-    let mut bytes = [0xFFu8; SLOT_SIZE];
+    encode_record_sized::<SLOT_SIZE>(generation, record)
+}
+
+/// Encode a snapshot using either a legacy slot or one full flash page.
+pub fn encode_record_sized<const N: usize>(generation: u32, record: RecordRef<'_>) -> [u8; N] {
+    assert!(N == SLOT_SIZE || N == 4096);
+    let crc_offset = N - 8;
+    let commit_offset = N - 4;
+    let mut bytes = [0xFFu8; N];
     bytes[..4].copy_from_slice(&MAGIC);
     bytes[4..8].copy_from_slice(&generation.to_le_bytes());
     let (kind, payload): (u8, &[u8]) = match record {
         RecordRef::Snapshot(payload) => (KIND_SNAPSHOT, payload),
         RecordRef::Cleared => (KIND_CLEARED, &[]),
     };
+    assert!(payload.len() <= N - HEADER_LEN - 8);
     bytes[8] = kind;
     bytes[9..11].copy_from_slice(&(payload.len() as u16).to_le_bytes());
     bytes[HEADER_LEN..HEADER_LEN + payload.len()].copy_from_slice(payload);
-    let crc = record::crc32(&bytes[..CRC_OFFSET]);
-    bytes[CRC_OFFSET..COMMIT_OFFSET].copy_from_slice(&crc.to_le_bytes());
+    let crc = record::crc32(&bytes[..crc_offset]);
+    bytes[crc_offset..commit_offset].copy_from_slice(&crc.to_le_bytes());
     bytes
 }
 
@@ -142,19 +151,24 @@ impl Stored {
 /// through a scan costs a `MAX_PAYLOAD` copy per step, and on the
 /// embedded boot path those copies land on the one stack every task
 /// shares.
-pub fn probe_record(bytes: &[u8; SLOT_SIZE]) -> Option<u32> {
+pub fn probe_record(bytes: &[u8]) -> Option<u32> {
+    if bytes.len() != SLOT_SIZE && bytes.len() != 4096 {
+        return None;
+    }
+    let commit_offset = bytes.len() - 4;
+    let crc_offset = bytes.len() - 8;
     if bytes[..4] != MAGIC {
         return None;
     }
-    if bytes[COMMIT_OFFSET..] != [0; 4] {
+    if bytes[commit_offset..] != [0; 4] {
         return None;
     }
-    let crc = u32::from_le_bytes(bytes[CRC_OFFSET..COMMIT_OFFSET].try_into().ok()?);
-    if crc != record::crc32(&bytes[..CRC_OFFSET]) {
+    let crc = u32::from_le_bytes(bytes[crc_offset..commit_offset].try_into().ok()?);
+    if crc != record::crc32(&bytes[..crc_offset]) {
         return None;
     }
     let len = usize::from(u16::from_le_bytes(bytes[9..11].try_into().ok()?));
-    if len > MAX_PAYLOAD {
+    if len > bytes.len() - HEADER_LEN - 8 {
         return None;
     }
     match bytes[8] {
@@ -173,7 +187,7 @@ pub fn probe_record(bytes: &[u8; SLOT_SIZE]) -> Option<u32> {
 /// [`Stored::decode`] so the payload is copied exactly once, into
 /// whatever the caller is returning, instead of landing first in a
 /// `MAX_PAYLOAD` record on the way there.
-pub fn payload_bytes(bytes: &[u8; SLOT_SIZE]) -> Option<(u32, Option<&[u8]>)> {
+pub fn payload_bytes(bytes: &[u8]) -> Option<(u32, Option<&[u8]>)> {
     let generation = probe_record(bytes)?;
     let len = usize::from(u16::from_le_bytes(bytes[9..11].try_into().ok()?));
     let payload = match bytes[8] {

@@ -15,6 +15,7 @@ repository.workspace = true
 # heapless, and the pure protocol crates.
 
 [features]
+wifi = ["driver", "umsh-ulcp-device/wifi"]
 # `ble_security`, `transport_policy` and `log` are always compiled; they
 # need nothing beyond `embassy-sync`, which every consumer pulls anyway.
 # The heavier modules are gated so lightweight consumers—e.g. a BLE-only

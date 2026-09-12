@@ -5995,29 +5995,26 @@ mod firmware {
         // MeshCore-US default profile—the MAC scheduler only uses it as
         // a conservative bound.
         //
-        // The one exception is a crash reboot: skip one boot of the
-        // device node so the surviving boot stays reachable and prints
-        // the previous panic over USB.
+        // Report a previous panic independently of node startup. An
+        // unrelated crash must not suppress identity or mesh service.
         let (identity_secret, _public) = boot_identity_keys
             .as_ref()
             .expect("a device identity is generated at boot when none is stored");
-        if panic_report.is_none() {
-            let t_frame_ms = umsh_radio_loraphy::airtime_ms(
-                lora_phy::mod_params::SpreadingFactor::_7,
-                lora_phy::mod_params::Bandwidth::_62KHz,
-                umsh_radio_loraphy::MAX_PAYLOAD,
-            );
-            super::device_node::bring_up(
-                spawner,
-                identity_secret,
-                node_seed,
-                t_frame_ms,
-                node_counters,
-                &INPUT_CH,
-                admin_nonce,
-            )
-            .await;
-        }
+        let t_frame_ms = umsh_radio_loraphy::airtime_ms(
+            lora_phy::mod_params::SpreadingFactor::_7,
+            lora_phy::mod_params::Bandwidth::_62KHz,
+            umsh_radio_loraphy::MAX_PAYLOAD,
+        );
+        super::device_node::bring_up(
+            spawner,
+            identity_secret,
+            node_seed,
+            t_frame_ms,
+            node_counters,
+            &INPUT_CH,
+            admin_nonce,
+        )
+        .await;
         super::panic::breadcrumb_mark(8);
 
         // The touch button only asks for the e-paper backlight; a locate

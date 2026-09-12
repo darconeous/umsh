@@ -53,6 +53,10 @@
 
 #![no_std]
 #![no_main]
+#![cfg_attr(
+    all(feature = "wifi", feature = "ble-debug"),
+    feature(asm_experimental_arch)
+)]
 
 extern crate alloc;
 
@@ -133,6 +137,7 @@ use board::radio as board_radio;
 use board::vext::Vext;
 #[cfg(feature = "vext-gates-battery")]
 use board::vext::VextHandle as Vext;
+#[cfg(not(feature = "psram"))]
 use umsh_crypto::CryptoEngine;
 use umsh_crypto::pool::EntropyPool;
 use umsh_crypto::software::{SoftwareAes, SoftwareSha256};
@@ -171,6 +176,30 @@ use transport_policy::{Transport, generation_checked};
 
 mod ble_store;
 mod device_node;
+#[cfg(feature = "psram")]
+mod external;
+#[cfg(feature = "wifi")]
+mod ip;
+#[cfg(feature = "wifi")]
+mod wifi;
+#[cfg(all(feature = "wifi", feature = "ble-debug"))]
+mod wifi_memory;
+#[cfg(all(feature = "wifi", not(feature = "chip-esp32s3")))]
+compile_error!("WiFi requires an ESP32-S3 target");
+#[cfg(all(feature = "psram", not(feature = "board-tbeam-supreme")))]
+compile_error!("PSRAM wiring is only defined for T-Beam Supreme");
+
+#[cfg(feature = "wifi")]
+type SnapshotStore = umsh_ulcp_runtime::wifi_journal::WifiStore<
+    embassy_sync::blocking_mutex::raw::NoopRawMutex,
+    ble_store::JournalFlash,
+>;
+#[cfg(feature = "wifi")]
+type BootSnapshot = umsh_ulcp_runtime::wifi_journal::BootPayload;
+#[cfg(not(feature = "wifi"))]
+type SnapshotStore = ble_store::ProtoStore;
+#[cfg(not(feature = "wifi"))]
+type BootSnapshot = ble_store::BootPayload;
 
 use ble_store::{BleStore, ProtoStore, StoredBond, bond_identity_is_persistable, trouble_bond};
 
@@ -391,7 +420,16 @@ fn session_config() -> SessionConfig {
         // the capability is a promise about the property surface, and
         // claiming it before there is a station to serve it would be a
         // device answering for hardware it is not using.
+        #[cfg(feature = "wifi")]
+        wifi: Some(wifi::CONFIG),
+        #[cfg(feature = "wifi")]
+        ip: Some(umsh_ulcp_device::net::IpConfig {
+            manual_dns: false,
+            ..umsh_ulcp_device::net::IpConfig::V4_ONLY
+        }),
+        #[cfg(not(feature = "wifi"))]
         wifi: None,
+        #[cfg(not(feature = "wifi"))]
         ip: None,
         stats: Some(&STATS),
     }
@@ -1305,7 +1343,7 @@ fn classify_pairing_failure(error: &trouble_host::Error) -> PairingFailureClass 
 /// driver's no-op defaults—this board has no buzzer or battery-sag
 /// estimator to feed.
 struct BoardDeviceEnv {
-    proto_store: ProtoStore,
+    proto_store: SnapshotStore,
     identity_store: ProtoStore,
     identity_rng: IdentityRng,
     node_counters: &'static NodeCountersMutex,
@@ -1394,6 +1432,20 @@ impl BoardDeviceEnv {
 }
 
 impl DeviceEnv for BoardDeviceEnv {
+    #[cfg(feature = "wifi")]
+    fn apply_network_config(&mut self, config: driver::NetworkConfig<'_>) {
+        wifi::apply(config);
+    }
+
+    #[cfg(feature = "wifi")]
+    async fn set_wifi_scanning(&mut self, scanning: bool) -> Result<bool, Status> {
+        Ok(wifi::scan(scanning))
+    }
+
+    #[cfg(feature = "wifi")]
+    async fn read_network_table(&mut self, key: u32, out: &mut [u8]) -> Result<usize, Status> {
+        wifi::read_table(key, out)
+    }
     async fn persist_snapshot(&mut self, bytes: &[u8]) -> Result<(), ()> {
         self.proto_store.persist(bytes).await
     }
@@ -1407,6 +1459,10 @@ impl DeviceEnv for BoardDeviceEnv {
     }
 
     async fn sign_identity(&mut self, out: &mut [u8]) -> Option<usize> {
+        debug_log(format_args!(
+            "identity request: node key present={}",
+            device_node::node_key().is_some()
+        ));
         device_node::sign_identity_blob(out).await
     }
 
@@ -1521,19 +1577,29 @@ impl DeviceEnv for BoardDeviceEnv {
     /// [`sensor_event`](Self::sensor_event) keeps the sources that do
     /// vary by board behind their own features.
     async fn publish_event(&mut self) -> driver::PublishEvent {
-        match select4(
-            self.sensor_event(),
-            BLE_BOND_COUNT_CHANGED.wait(),
-            BLE_LINK_CHANGED.wait(),
-            BLE_PAIRING_CHANGED.wait(),
-        )
-        .await
+        let sensors = async {
+            match select4(
+                self.sensor_event(),
+                BLE_BOND_COUNT_CHANGED.wait(),
+                BLE_LINK_CHANGED.wait(),
+                BLE_PAIRING_CHANGED.wait(),
+            )
+            .await
+            {
+                Either4::First(event) => event,
+                Either4::Second(count) => driver::PublishEvent::BleBondCount(count),
+                Either4::Third(state) => driver::PublishEvent::BleLink(state),
+                Either4::Fourth(open) => driver::PublishEvent::BlePairing(open),
+            }
+        };
+        #[cfg(feature = "wifi")]
         {
-            Either4::First(event) => event,
-            Either4::Second(count) => driver::PublishEvent::BleBondCount(count),
-            Either4::Third(state) => driver::PublishEvent::BleLink(state),
-            Either4::Fourth(open) => driver::PublishEvent::BlePairing(open),
+            match select(sensors, wifi::event()).await {
+                Either::First(event) | Either::Second(event) => event,
+            }
         }
+        #[cfg(not(feature = "wifi"))]
+        sensors.await
     }
 
     async fn apply_pairing_pin(&mut self, pin: Option<u32>) -> bool {
@@ -2278,11 +2344,11 @@ async fn gatt_connection<C: Controller, P: PacketPool>(
     Ok(())
 }
 
-async fn ble_peripheral<'values, C: Controller>(
+async fn ble_peripheral<C: Controller>(
     stack: &Stack<'_, C, DefaultPacketPool>,
     store: &BleStoreMutex,
-    peripheral: &mut Peripheral<'values, C, DefaultPacketPool>,
-    server: &UlcpServer<'values>,
+    peripheral: &mut Peripheral<'_, C, DefaultPacketPool>,
+    server: &UlcpServer<'_>,
 ) -> ! {
     loop {
         if !advertising_permitted() {
@@ -2376,6 +2442,15 @@ async fn ble_app(
     // through `StaticCell::init_with`, never on the stack.
     static BLE_RESOURCES: StaticCell<BleResources> = StaticCell::new();
     let resources = BLE_RESOURCES.init_with(HostResources::new);
+    // The service macro allocates the large ULCP characteristics in
+    // one-shot StaticCells. Keep the attribute server for the supervisor's
+    // lifetime; rebuilding it on Bluetooth re-enable panics. Connections
+    // borrow it only during each controller cycle.
+    let server = UlcpServer::new_with_config(GapConfig::Peripheral(PeripheralConfig {
+        name: default_device_name(),
+        appearance: &appearance::computer::GENERIC_COMPUTER,
+    }))
+    .unwrap_or_else(|_| panic!("gatt server construction failed"));
     let store = BleStoreMutex::new(store);
     let mut bt = Some(bt);
     loop {
@@ -2435,7 +2510,7 @@ async fn ble_app(
             }
         }
         let controller: BleController = ExternalController::new(connector);
-        run_ble_stack(controller, resources, &store).await;
+        run_ble_stack(controller, resources, &store, &server).await;
         // Everything up to and including the connector has dropped by
         // here; the radio's ADC2 claim went with it.
         #[cfg(feature = "board-heltec-v2")]
@@ -2450,6 +2525,7 @@ async fn run_ble_stack(
     controller: BleController,
     resources: &mut BleResources,
     store: &BleStoreMutex,
+    server: &UlcpServer<'_>,
 ) {
     let initial = store.lock().await.snapshot().clone();
     debug_log(format_args!(
@@ -2496,12 +2572,6 @@ async fn run_ble_stack(
     }
     let runner = stack.runner();
     let mut peripheral = stack.peripheral();
-    let server = UlcpServer::new_with_config(GapConfig::Peripheral(PeripheralConfig {
-        name: default_device_name(),
-        appearance: &appearance::computer::GENERIC_COMPUTER,
-    }))
-    .unwrap_or_else(|_| panic!("gatt server construction failed"));
-
     select(
         join(
             ble_runner(runner),
@@ -2509,7 +2579,7 @@ async fn run_ble_stack(
                 pairing_timeout(&stack),
                 join(
                     pairing_config_task(&stack, store),
-                    ble_peripheral(&stack, store, &mut peripheral, &server),
+                    ble_peripheral(&stack, store, &mut peripheral, server),
                 ),
             ),
         ),
@@ -2934,6 +3004,22 @@ async fn wired_transport_task(
 
 // ─── ULCP session ────────────────────────────────────────────────────────
 
+/// Keep the large protocol storage out of the async task's initializer.
+/// Without PSRAM, constructing it as an async local can make LLVM copy
+/// the entire session through a stack temporary while spawning the task.
+#[cfg(all(feature = "wifi", not(feature = "psram")))]
+#[inline(never)]
+fn internal_session(boot_reason: Status) -> &'static mut Session {
+    static SESSION: StaticCell<Session> = StaticCell::new();
+    SESSION.init_with(|| {
+        Session::new(
+            session_config(),
+            boot_reason,
+            CryptoEngine::new(SoftwareAes, SoftwareSha256),
+        )
+    })
+}
+
 /// Owns the framing-free protocol session: hosts the shared ULCP driver
 /// (`umsh_ulcp_runtime::driver::run`)—host frames, radio
 /// receptions, transmit completions, and every session effect—over
@@ -2941,8 +3027,8 @@ async fn wired_transport_task(
 #[embassy_executor::task]
 async fn device_task(
     boot_reason: Status,
-    proto_store: ProtoStore,
-    boot_snapshot: Option<ble_store::BootPayload>,
+    proto_store: SnapshotStore,
+    boot_snapshot: Option<BootSnapshot>,
     identity_store: ProtoStore,
     boot_identity: Option<[u8; 32]>,
     identity_rng: IdentityRng,
@@ -2951,13 +3037,27 @@ async fn device_task(
 ) {
     // The retained hardware reset cause answers the first
     // PROP_LAST_STATUS query; attach itself never modifies it.
-    let session = Session::new(
+    #[cfg(not(any(feature = "psram", feature = "wifi")))]
+    let mut session = Session::new(
         session_config(),
         boot_reason,
         CryptoEngine::new(SoftwareAes, SoftwareSha256),
     );
-    driver::run(
+    #[cfg(not(any(feature = "psram", feature = "wifi")))]
+    let (session, snapshot_storage) = (&mut session, &mut [0; umsh_ulcp_device::SNAPSHOT_MAX]);
+    #[cfg(all(feature = "wifi", not(feature = "psram")))]
+    let (session, snapshot_storage) = {
+        static SNAPSHOT: StaticCell<[u8; umsh_ulcp_device::SNAPSHOT_MAX]> = StaticCell::new();
+        (
+            internal_session(boot_reason),
+            SNAPSHOT.init_with(|| [0; umsh_ulcp_device::SNAPSHOT_MAX]),
+        )
+    };
+    #[cfg(feature = "psram")]
+    let (session, snapshot_storage) = (external::session(boot_reason), external::snapshot());
+    driver::run_with_storage(
         session,
+        snapshot_storage,
         boot_snapshot.as_deref(),
         boot_identity,
         DeviceRuntime {
@@ -3224,6 +3324,7 @@ async fn clock_tick(awake: bool) {
 #[embassy_executor::task]
 async fn display_task(mut display: Display, #[cfg(not(feature = "pmic-axp2101"))] mut vext: Vext) {
     let mut model = UiModel::new(board_menu_items());
+    let _ = display.set_display_on(false).await;
     let _ = display.set_brightness(Brightness::NORMAL).await;
     let mut splash = umsh_ux_display_tracker::boot::BootSplash::new();
     screen::render_splash(
@@ -3231,8 +3332,37 @@ async fn display_task(mut display: Display, #[cfg(not(feature = "pmic-axp2101"))
         &screen::Layout::OLED_128X64,
         env!("GIT_DESCRIBE"),
     );
-    let _ = display.flush().await;
-    splash.shown(Instant::now().as_millis());
+    let mut shown = false;
+    for attempt in 1..=3 {
+        match display.flush().await {
+            Ok(()) => {
+                shown = true;
+                debug_log(format_args!(
+                    "oled: boot splash transferred (attempt {attempt})"
+                ));
+                break;
+            }
+            Err(error) => {
+                debug_log(format_args!("oled: boot splash transfer failed: {error:?}"));
+                Timer::after_millis(20).await;
+            }
+        }
+    }
+    if shown {
+        let _ = display.set_display_on(true).await;
+        splash.shown(Instant::now().as_millis());
+    } else {
+        // Never time a partially written frame as a successful splash.
+        splash.dismiss();
+        BOOT_SPLASH_ACTIVE.store(false, Ordering::Release);
+        render_frame(
+            &mut display,
+            &model,
+            &ui_status(&device_name_snapshot().await, &IdentityText::current()),
+        )
+        .await;
+        let _ = display.set_display_on(true).await;
+    }
     let mut attention = Attention::new(
         DisplayKind::Emissive,
         AttentionConfig::EMISSIVE,
@@ -3771,11 +3901,29 @@ async fn main(spawner: Spawner) {
     // timing is unchanged.
     let config = esp_hal::Config::default().with_cpu_clock(CpuClock::_80MHz);
     let peripherals = esp_hal::init(config);
+    #[cfg(all(feature = "wifi", feature = "ble-debug"))]
+    wifi_memory::init();
     // umsh-node and umsh-sync use `alloc`. The classic ESP32 has roughly
     // half the S3's data RAM and the BT controller takes a fixed bite out
     // of it before the application sees any, so its heap is smaller.
-    #[cfg(feature = "chip-esp32s3")]
+    #[cfg(all(feature = "chip-esp32s3", not(feature = "wifi")))]
     esp_alloc::heap_allocator!(size: 72 * 1024);
+    #[cfg(feature = "wifi")]
+    {
+        // Both regions are internal RAM. The bootloader's former arena
+        // becomes available before main, leaving the ordinary arena room
+        // for the executor and stack while retaining a 128 KiB heap.
+        // The Heltec keeps its session in internal RAM. Reserve another
+        // 16 KiB for nested calls and interrupts, then measure the smaller
+        // 112 KiB heap under WiFi/BLE load before qualifying this board.
+        #[cfg(feature = "board-heltec-v3")]
+        esp_alloc::heap_allocator!(size: 48 * 1024);
+        #[cfg(not(feature = "board-heltec-v3"))]
+        esp_alloc::heap_allocator!(size: 64 * 1024);
+        esp_alloc::heap_allocator!(#[esp_hal::ram(reclaimed)] size: 64 * 1024);
+    }
+    #[cfg(feature = "psram")]
+    external::init(peripherals.PSRAM);
     // The classic ESP32's `dram_seg` is only 128 KiB once esp-hal reserves
     // the BT controller's 64 KiB, and the static side of this image does
     // not fit alongside a heap of any useful size. `dram2_seg` is the
@@ -4043,7 +4191,7 @@ async fn main(spawner: Spawner) {
             .unwrap_or_else(|_| panic!("local irk persist failed"));
     }
     let (proto_store, boot_snapshot) =
-        ProtoStore::mount(shared, ble_store::proto_page0(&partition)).await;
+        SnapshotStore::mount(shared, ble_store::proto_page0(&partition)).await;
     let (mut identity_store, identity_payload) =
         ProtoStore::mount(shared, ble_store::identity_page0(&partition)).await;
     let node_counters = init_node_counters();
@@ -4106,7 +4254,28 @@ async fn main(spawner: Spawner) {
     let mut admin_nonce = [0u8; 2];
     pool_draw(b"admin-nonce", &mut admin_nonce);
     let admin_nonce = u16::from_be_bytes(admin_nonce);
+    #[cfg(feature = "wifi")]
+    let network_seed = {
+        let mut bytes = [0; 8];
+        pool_draw(b"wifi-ip", &mut bytes);
+        u64::from_le_bytes(bytes)
+    };
     drop(pool_draw);
+    #[cfg(feature = "wifi")]
+    {
+        static RESOURCES: StaticCell<embassy_net::StackResources<1>> = StaticCell::new();
+        let interface = wifi::interface();
+        let mac = interface.mac_address();
+        let (stack, runner) = embassy_net::new(
+            interface,
+            embassy_net::Config::default(),
+            RESOURCES.init_with(embassy_net::StackResources::new),
+            network_seed,
+        );
+        spawner.spawn(ip::runner(runner).unwrap());
+        spawner.spawn(wifi::task(peripherals.WIFI, stack).unwrap());
+        wifi::publish(driver::PublishEvent::WifiMac(mac)).await;
+    }
 
     let boot_identity = boot_identity_keys.as_ref().map(|(_secret, public)| *public);
 
@@ -4250,30 +4419,29 @@ async fn main(spawner: Spawner) {
     // The device identity always exists by this point, so the full
     // MAC/node stack always comes up on mux client B; whether it
     // transmits is a matter of configuration, not of whether a key was
-    // ever provisioned. After a crash reboot, skip one boot of the node
-    // so the surviving boot stays reachable and reports the panic.
+    // ever provisioned. A previous panic is reported independently; it
+    // must not suppress the identity or mesh service on the next boot.
     let (identity_secret, _public) = boot_identity_keys
         .as_ref()
         .expect("a device identity is generated at boot when none is stored");
-    if panic_report.is_none() {
-        let t_frame_ms = umsh_radio_loraphy::airtime_ms(
-            lora_phy::mod_params::SpreadingFactor::_7,
-            lora_phy::mod_params::Bandwidth::_62KHz,
-            umsh_radio_loraphy::MAX_PAYLOAD,
-        );
-        spawner.spawn(
-            device_node::bring_up(
-                spawner,
-                *identity_secret,
-                node_seed,
-                t_frame_ms,
-                node_counters,
-                &INPUT_CH,
-                admin_nonce,
-            )
-            .unwrap(),
-        );
-    }
+    debug_log(format_args!("node startup: spawning"));
+    let t_frame_ms = umsh_radio_loraphy::airtime_ms(
+        lora_phy::mod_params::SpreadingFactor::_7,
+        lora_phy::mod_params::Bandwidth::_62KHz,
+        umsh_radio_loraphy::MAX_PAYLOAD,
+    );
+    spawner.spawn(
+        device_node::bring_up(
+            spawner,
+            *identity_secret,
+            node_seed,
+            t_frame_ms,
+            node_counters,
+            &INPUT_CH,
+            admin_nonce,
+        )
+        .unwrap(),
+    );
 
     // ── Battery, button ──────────────────────────────────────────────────
     // The sampler was constructed above, before the radio controller;

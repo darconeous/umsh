@@ -6,6 +6,9 @@ license.workspace = true
 repository.workspace = true
 description = "Device-side session engine for the UMSH Local Control Protocol (ULCP)"
 
+[features]
+wifi = []
+
 [dependencies]
 umsh-ulcp = { path = "../umsh-ulcp" }
 umsh-core = { path = "../umsh-core", default-features = false, features = ["region-codec"] }

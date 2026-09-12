@@ -716,17 +716,26 @@ final class ManageDeviceModel {
         }
     }
 
-    /// Store a network on the device, with the credential the operator
-    /// typed, and answer with what the device made of it.
+    /// Store and select a network, then save both in one snapshot. Saving
+    /// before selection would leave Join working only until the next boot.
     ///
     /// Returns the refusal status where there was one, so the join sheet
     /// can offer a weaker security mode against `STATUS_UNIMPLEMENTED`
     /// rather than making the operator start again.
-    func joinNetwork(item: Data) async -> UInt32? {
+    func joinNetwork(item: Data, ssid: Data) async -> UInt32? {
         var refusal: UInt32?
         await run { [self] in
             do {
                 try await management.insertNetwork(address, item)
+                let answers = try await management.write(address, [
+                    MobileMeshPropertyWriteRecord(
+                        propertyId: ulcpProperties.wifiNetwork,
+                        value: ssid
+                    )
+                ])
+                if let refused = answers.first(where: { $0.value == nil }) {
+                    throw RemoteManagementError.refused(status: refused.statusCode ?? 0)
+                }
             } catch let error as RemoteManagementError {
                 guard case let .refused(status) = error else { throw error }
                 refusal = status
@@ -738,20 +747,6 @@ final class ManageDeviceModel {
             await refreshCategory(.wifi)
         }
         return refusal
-    }
-
-    /// Tell the device which stored network to use, or none.
-    ///
-    /// Written on its own rather than through Apply because the one caller
-    /// is the join sheet, where selecting the network just stored is the
-    /// second half of one act the operator already confirmed.
-    func selectNetwork(ssid: Data) async {
-        await write([
-            MobileMeshPropertyWriteRecord(
-                propertyId: ulcpProperties.wifiNetwork,
-                value: ssid
-            )
-        ])
     }
 
     /// Forget one network by name, and save.
