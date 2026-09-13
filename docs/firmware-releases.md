@@ -92,6 +92,7 @@ bringup harnesses, not products.
 | `xiao-nrf52` | nRF52840 | `.uf2`, `-dfu.zip` |
 | `heltec-v3` | ESP32-S3 | `.bin` (merged, written at `0x0`) |
 | `tbeam-supreme` | ESP32-S3 | `.bin` (merged, written at `0x0`) |
+| `t-lora-pager` | ESP32-S3 | `.bin` (merged, written at `0x0`; SX1262 only) |
 
 Named `umsh-<board>-<version>.<ext>`. Board ids match the `BOARDS` presets in
 `scripts/firmware_image.py`, the `make` target suffixes, and

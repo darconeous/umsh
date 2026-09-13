@@ -407,6 +407,7 @@ pub struct DeviceControl<M: RawMutex> {
     rssi_req: Signal<M, ()>,
     rssi_resp: Signal<M, Result<i16, ()>>,
     shutdown: AtomicBool,
+    shutdown_done: Signal<M, ()>,
 }
 
 impl<M: RawMutex> DeviceControl<M> {
@@ -416,6 +417,7 @@ impl<M: RawMutex> DeviceControl<M> {
             rssi_req: Signal::new(),
             rssi_resp: Signal::new(),
             shutdown: AtomicBool::new(false),
+            shutdown_done: Signal::new(),
         }
     }
 
@@ -439,6 +441,12 @@ impl<M: RawMutex> DeviceControl<M> {
             cr: CodingRate::_4_5,
             power_dbm: 0,
         });
+    }
+
+    /// Wait until the runner has stopped touching the radio and its bus.
+    /// Call after `shutdown`, before removing a switched radio supply.
+    pub async fn wait_shutdown(&self) {
+        self.shutdown_done.wait().await;
     }
 
     /// Apply new settings. The runner picks them up at its next await
@@ -651,6 +659,7 @@ where
             // for the same reason.
             if ctl.shutdown.load(Ordering::Acquire) {
                 let _ = lora.sleep(false).await;
+                ctl.shutdown_done.signal(());
                 loop {
                     core::future::pending::<()>().await;
                 }

@@ -1,6 +1,6 @@
 [package]
-name = "firmware-tbeam-supreme"
-description = "LILYGO T-Beam Supreme ULCP device firmware over native USB and BLE GATT, with GNSS and RTC"
+name = "firmware-t-lora-pager"
+description = "LILYGO T-LoRa Pager SX1262 ULCP device firmware over native USB and BLE GATT, with GNSS and RTC"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -9,9 +9,8 @@ repository.workspace = true
 # The full ULCP firmware on ESP32-S3—the shared session driver from
 # `umsh-ulcp-runtime` behind this board's transports (HDLC on the native
 # USB-Serial-JTAG port, UlcpService GATT on the esp-radio controller),
-# with the SX1262 behind the radio mux, the on-board device node, the
-# L76K GNSS pump, the PCF8563 wall clock, and everything powered through
-# the AXP2101.
+# with the SX1262 and ST7796 sharing SPI, GNSS, PCF85063 timekeeping,
+# BQ battery telemetry, and XL9555 power domains.
 
 [features]
 bridge-client = ["wifi", "psram", "dep:umsh-bridge-client", "dep:embedded-tls", "umsh-ulcp-runtime/bridge-client", "embassy-net/tcp", "embassy-net/dns"]
@@ -21,7 +20,7 @@ psram = []
 # and peripheral wiring, the radio's power and band limits, and the
 # static capacities the board's RAM budget allows. This block is kept
 # identical across the ESP32 device boards—only `default` differs.
-default = ["board-tbeam-supreme", "psram", "wifi", "bridge-client"]
+default = ["board-t-lora-pager", "psram", "wifi", "bridge-client"]
 board-heltec-v2 = ["chip-esp32", "radio-sx127x", "vext-gates-battery"]
 board-heltec-v3 = ["chip-esp32s3", "radio-sx126x"]
 board-t-lora-pager = ["chip-esp32s3", "radio-sx126x", "display-st7796", "wired-usb-serial-jtag", "gnss", "external-rtc"]
@@ -87,7 +86,7 @@ display-st7796 = []
 ble-debug = ["trouble-host/security-debug"]
 
 [[bin]]
-name = "firmware-tbeam-supreme"
+name = "firmware-t-lora-pager"
 # The protocol, security, transport-arbitration, and BLE implementation
 # live in the shared ESP32 tracker sources. Board differences are
 # selected by the capability + `board-tbeam-supreme` features above.
@@ -98,7 +97,7 @@ umsh-bridge-client = { path = "../../../crates/umsh-bridge-client", optional = t
 embedded-tls = { version = "=0.19.0", default-features = false, optional = true }
 embassy-net = { version = "0.8", default-features = false, optional = true, features = ["medium-ethernet", "proto-ipv4", "dhcpv4", "dhcpv4-hostname"] }
 umsh-bsp-esp32 = { path = "../../crates/umsh-bsp-esp32", features = ["esp32s3", "panic-handler"] }
-umsh-bsp-tbeam-supreme = { path = "../../crates/umsh-bsp-tbeam-supreme" }
+umsh-bsp-t-lora-pager = { path = "../../crates/umsh-bsp-t-lora-pager" }
 umsh-ulcp = { path = "../../../crates/umsh-ulcp", default-features = false }
 umsh-ulcp-device = { path = "../../../crates/umsh-ulcp-device", default-features = false }
 # Board-agnostic device runtime shared with the T-Echo/T-1000E images:
@@ -109,9 +108,9 @@ umsh-crypto = { path = "../../../crates/umsh-crypto", default-features = false, 
 umsh-gnss = { path = "../../../crates/umsh-gnss" }
 umsh-hal = { path = "../../../crates/umsh-hal", default-features = false, features = ["embassy"] }
 umsh-journal-store = { path = "../../../crates/umsh-journal-store" }
-umsh-pmic-axp2101 = { path = "../../../crates/umsh-pmic-axp2101" }
+umsh-pager-peripherals = { path = "../../../crates/umsh-pager-peripherals" }
+critical-section = "1"
 umsh-radio-loraphy = { path = "../../../crates/umsh-radio-loraphy", default-features = false }
-umsh-rtc-pcf8563 = { path = "../../../crates/umsh-rtc-pcf8563" }
 umsh-ux-tracker = { path = "../../../crates/umsh-ux-tracker" }
 umsh-ux-display-tracker = { path = "../../../crates/umsh-ux-display-tracker", features = ["screen"] }
 # The device node: a full on-board MAC/node stack for the device

@@ -3,8 +3,10 @@
 //! UX mechanism for display-tracker-class UMSH boards.
 //!
 //! This crate is the user-experience layer for boards whose physical UX
-//! is a small display plus a button—optionally with a D-pad—and no
-//! keyboard: T-Echo, Heltec LoRa32 V3, Wio Tracker L1, T-Beam Supreme.
+//! is a display plus navigation controls: T-Echo, Heltec LoRa32 V3,
+//! Wio Tracker L1, T-Beam Supreme, and T-LoRa Pager in tracker mode.
+//! The Pager uses its wheel, wheel press, and Backspace; this class
+//! does not provide text entry.
 //! They differ in panel technology and input richness, but a user who
 //! learns one should already know the others, so the interaction model
 //! lives here rather than in each firmware.

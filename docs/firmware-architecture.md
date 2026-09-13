@@ -40,6 +40,14 @@ but they no longer name build targets.
 | Wio Tracker L1 | nRF52840 | `wio-tracker-l1` | BLE, USB-CDC | 476/136 KiB (756/256) | bringup complete, hw validation open |
 | Heltec V3 | ESP32-S3 | `heltec-v3` | BLE, UART | 1298/216 KiB (3008/512) | hardware-accepted |
 | Heltec V2 | ESP32 | `heltec-v2` | BLE, UART | 1260/191 KiB (3008/see below) | bringup complete, hw validation open |
+| T-LoRa Pager SX1262 | ESP32-S3 | `t-lora-pager` | BLE, native USB, Wi-Fi | 4 MiB image layout; PSRAM | hardware qualification in progress |
+
+The Pager shares the ESP32 tracker entry point. Its BSP serializes ST7796
+display and SX1262 transactions on SPI2, while `umsh-pager-peripherals`
+provides host-testable input, battery, expander, display, and RTC drivers.
+Quadrature capture runs in a GPIO interrupt handler on both edges of both
+channels; rendering consumes completed navigation events. This stage uses
+the display-tracker menus, with no text composition.
 
 For the nRF52840 boards, figures are `text+data` against the application
 flash window and `data+bss` against SRAM, from a release build—the two

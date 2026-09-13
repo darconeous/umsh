@@ -248,7 +248,8 @@ happened there as a transient notice.
 
 At startup, the first frame is the full-width UMSH logo with the firmware
 version centered below it. The logo preserves its proportions: 128×30 pixels
-on a 128×64 OLED and 200×47 pixels on a 200×200 e-paper display. The logo and
+on a 128×64 OLED, 200×47 pixels on a 200×200 e-paper display, and 480×112
+pixels on the Pager's 480×222 LCD. The logo and
 version form one vertically centered group. Long development versions wrap
 over up to three lines; an unusually long version ends with `...` when needed.
 

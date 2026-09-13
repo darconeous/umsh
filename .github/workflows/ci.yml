@@ -293,6 +293,7 @@ jobs:
             build-heltec-v3-console,
             build-heltec-v2,
             build-tbeam-supreme,
+            build-t-lora-pager,
           ]
     steps:
       - uses: actions/checkout@v4

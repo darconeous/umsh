@@ -1,0 +1,16 @@
+[package]
+name = "umsh-pager-peripherals"
+description = "Portable peripheral drivers for the T-LoRa Pager tracker"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+embedded-hal = "1"
+embedded-hal-async.workspace = true
+embedded-graphics = { version = "0.8", default-features = false }
+umsh-gnss = { path = "../umsh-gnss", default-features = false }
+
+[dev-dependencies]
+embassy-futures = "0.1"

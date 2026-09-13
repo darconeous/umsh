@@ -446,6 +446,13 @@ fn preview() {
         return;
     };
     let dir = std::path::Path::new(&dir);
+    sheet(
+        &Layout::TFT_480X222,
+        1,
+        [235, 240, 255],
+        [8, 10, 14],
+        &dir.join("pager-480x222.bmp"),
+    );
     // Each panel rendered the way it actually looks: the OLEDs are lit
     // pixels on black, the e-paper is ink on white paper.
     sheet(

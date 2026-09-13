@@ -21,6 +21,7 @@ psram = []
 default = ["board-heltec-v2"]
 board-heltec-v2 = ["chip-esp32", "radio-sx127x", "vext-gates-battery"]
 board-heltec-v3 = ["chip-esp32s3", "radio-sx126x"]
+board-t-lora-pager = ["chip-esp32s3", "radio-sx126x", "display-st7796", "wired-usb-serial-jtag", "gnss", "external-rtc"]
 board-tbeam-supreme = [
     "chip-esp32s3",
     "radio-sx126x",
@@ -72,7 +73,9 @@ wired-usb-serial-jtag = []
 gnss = []
 # PCF8563 wall-clock RTC: time is restored at boot (TimeSource::
 # ExternalRtc) and written back on manual set and trusted GNSS time.
-rtc-pcf8563 = []
+rtc-pcf8563 = ["external-rtc"]
+external-rtc = []
+display-st7796 = []
 
 # Mirror of the nRF firmware's ble-debug: multiplex driver/BLE diagnostics as
 # ASCII lines onto the UART0 output stream (HDLC hosts resynchronize

@@ -88,7 +88,13 @@ Meshtastic display build flags use `LGFX_SCREEN_WIDTH=222`, `LGFX_SCREEN_HEIGHT=
 
 **Touch:** No touchscreen support is apparent in the Meshtastic `tlora-pager` variant. The variant has no touch-controller pins or touch driver flags. LilyGoLib initialization also initializes display, keyboard, rotary, haptic, GPS, LoRa, SD, NFC, RTC, sensor, audio codec, fuel gauge, and charger, but not a touch controller. Treat the screen as **non-touch** unless the schematic or a later hardware revision proves otherwise.
 
-### LoRa / radio SPI bus
+### Shared SPI bus and LoRa
+
+The display, SX1262, SD card, and NFC frontend share SCK=35, MOSI=34,
+and MISO=33. They need separate chip selects and one serialized bus, not
+independent SPI controllers. UMSH uses SPI2 with 16 MHz radio transactions
+and 40 MHz display transactions. Display transfers are bounded to four
+landscape rows, with the bus released between transactions.
 
 | Signal | ESP32-S3 GPIO | Notes |
 |---|---:|---|
@@ -372,6 +378,90 @@ Meshtastic generic power behavior:
 | Top expansion connector | Not fully specified by Meshtastic | LilyGoLib has nRF24 pins 44/9/43 and schematic likely has connector | Treat full connector pinout as unresolved pending schematic inspection. |
 | BHI260AP/RTC interrupt pins | LilyGoLib uses `SENSOR_INT` and `RTC_INT` symbols | Meshtastic variant lines inspected do not define numeric values | Verify in schematic or board package before using interrupts. |
 
+## UMSH display-tracker implementation
+
+The `firmware-t-lora-pager` image targets the **SX1262** version. It shares
+the ESP32 tracker runtime and enables PSRAM, Wi-Fi, and the bridge client in
+normal builds. Build with `make build-t-lora-pager`; upload with
+`make flash-t-lora-pager ESPFLASH_PORT=/dev/cu.usbmodem101` (substitute the
+actual port). The flash target uses native-USB bootloader entry and a watchdog
+reset after uploading, then exits. If the board remains
+in the ROM downloader, tap RESET with BOOT released.
+
+The 480×222 landscape screen uses the existing tracker menus. Turn the wheel
+to move, press it to select, and use keyboard **Backspace** to return or
+cancel. BOOT held for four seconds requests shutdown. Other keyboard keys
+have no navigation action; text composition, audio, haptics, SD, NFC, and
+expansion features are deferred. Backspace is TCA8418 raw FIFO key **30**,
+not the zero-based matrix index `0x1D`.
+
+Both edges of GPIO40 and GPIO41 interrupt the CPU. The ISR validates each
+quadrature transition and queues one event per complete detent; display
+rendering never samples A/B. Invalid transitions cancel an incomplete step,
+and reversals/bounce cancel without acceleration. The running image inhibits
+automatic light sleep so edge capture remains active while the screen is
+dark. Wheel press is debounced separately; held Select and Backspace do not
+repeat. Splash dismissal and screen wake consume navigation.
+
+The panel shares DMA-backed SPI2 with the radio. The monochrome framebuffer
+and last-transferred frame reside in PSRAM; synchronization objects, DMA
+descriptors, and transfer buffers stay in internal RAM. Only changed four-row
+stripes are transmitted, and history advances after a successful transfer.
+The controller's portrait offset becomes landscape Y=49.
+The internal heap is 112 KiB, leaving room for the nested startup
+calls as well as DMA state. The board's stack check requires another 32 KiB
+beyond its largest individual function frame; a smaller reserve missed an
+on-device startup stack overflow during bring-up.
+AW9364 brightness uses short pulses across its 16 levels, not PWM; keyboard
+illumination follows screen activity.
+
+The XL9555 leaves unused domains disabled. GNSS uses the runtime enable
+setting and UART1 RX=4/TX=12 at 38400 baud. PCF85063 retained time uses its
+own register layout, with oscillator-stop, invalid dates, and implausible
+epochs reported as unknown. The unused RTC clock output is disabled.
+
+Battery telemetry is sampled each second. The stock-cell charger profile is
+4.192 V / 704 mA; calibration and learned gauge capacity are retained. An
+absent gauge or invalid sample reports unknown, never a fabricated zero.
+Ten consecutive valid battery-only readings at or below 3.1 V request
+shutdown. The shutdown path stops radio activity, blanks the display, turns
+off peripheral domains, releases bus outputs, and enters deep sleep with
+BOOT or wheel press as wake sources. Pending journal writes are synchronous
+on the shared executor; frame counters are persisted before transmission.
+Deep sleep is not a proven battery disconnect, and residual current still
+needs measurement.
+
+The fitted 16 MB flash initially uses the existing 4 MB UMSH image layout,
+including the data partition at `0x300000`. Normal flashing retains its
+identity, settings, and bond journals. Additional flash is unused.
+
+### Qualification status
+
+The initial upload has run on an attached Pager: the user confirmed the
+screen, corrected wheel direction, Select, and Backspace, and USB ULCP returned the correct board model,
+capabilities, battery voltage/state of charge, and a plausible retained RTC
+time. GNSS can
+be enabled and reports acquisition status; a satellite fix is not yet
+confirmed. USB statistics show transmitted and received LoRa packets, and
+the identity key survived ordinary reflashing. Full radio interoperability
+and reception while continuously scrolling still need qualification.
+The user confirmed substantially faster scrolling with DMA and changed-stripe
+updates. The corrected memory budget boots successfully, and native-USB
+entry followed by the watchdog reset returns automatically to USB ULCP.
+
+Remaining hardware acceptance checks:
+
+- Confirm one step per detent under sustained load, nested menus, and
+  confirmation cancellation.
+- Confirm dim/wake consumption, splash timing, full panel edges, and backlight
+  levels on the physical display.
+- Exercise GNSS fixes and power cycling, RTC writeback/retention, USB removal,
+  charging transitions, and battery-only boot.
+- Exercise BLE pairing/reconnect, Wi-Fi association/DHCP/reconnect, bridge
+  traffic, and bidirectional LoRa traffic while continuously scrolling.
+- Check shutdown/wake from each button, measure sleeping current, and confirm
+  identity/settings/bond retention after ordinary reflashing.
+
 ## Minimal bring-up checklist for a new firmware port
 
 1. Start with the Meshtastic `tlora-pager` pinout, not T-Deck/T-Deck Pro.
@@ -380,7 +470,7 @@ Meshtastic generic power behavior:
 4. Bring up display as ST7796 on SPI2 with CS=38, DC=37, BL=42, logical size 222×480, offset X=49.
 5. Bring up keyboard through TCA8418 with interrupt GPIO6 and backlight GPIO46.
 6. Bring up rotary GPIO40/41 with press GPIO7.
-7. Bring up radio on its dedicated SPI bus: SCK=35, MISO=33, MOSI=34, CS=36, RST=47, IRQ=14, BUSY=48.
+7. Bring up radio on the shared SPI bus: SCK=35, MISO=33, MOSI=34, CS=36, RST=47, IRQ=14, BUSY=48. Keep display/SD/NFC chip selects inactive during radio transactions.
 8. Bring up GPS on RX=4, TX=12, PPS=13, 38400 baud.
 9. Bring up SD card only after confirming CS=21 and XL9555 SD enable/detect behavior.
 10. Implement conservative battery-voltage sleep behavior; do not rely on hardware cut-off unless confirmed.

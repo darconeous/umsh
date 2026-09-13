@@ -18,10 +18,11 @@
 	build-heltec-v3 flash-heltec-v3 \
 	build-heltec-v2 flash-heltec-v2 \
 	build-tbeam-supreme flash-tbeam-supreme \
+	build-t-lora-pager flash-t-lora-pager \
 	esp-toolchain-check espflash-check \
 	dfu-zip-techo dfu-zip-t1000e dfu-zip-sensecap-solar \
 	dfu-zip-wio-tracker-l1 dfu-zip-xiao-nrf52 \
-	merged-bin-heltec-v3 merged-bin-tbeam-supreme \
+	merged-bin-heltec-v3 merged-bin-tbeam-supreme merged-bin-t-lora-pager \
 	release-artifacts release-stage release-publish release-mirror \
 	ios-mobile-core ios-archive ios-upload \
 	install-umshctl install-umsh-bridge install-dissector install-extcap \
@@ -109,9 +110,9 @@ RELEASE_BOARDS_NRF52 = techo t1000e sensecap-solar wio-tracker-l1 xiao-nrf52
 
 # The Espressif boards, which ship a merged `.bin` instead: no UF2
 # bootloader, so no family id or app base, and a different artifact
-# entirely. Both are ESP32-S3, which `merged-bin-%` assumes. heltec-v2 is
+# entirely. These are ESP32-S3, which `merged-bin-%` assumes. heltec-v2 is
 # not here—it is a classic ESP32 and has no working image yet.
-RELEASE_BOARDS_ESP32 = heltec-v3 tbeam-supreme
+RELEASE_BOARDS_ESP32 = heltec-v3 tbeam-supreme t-lora-pager
 
 build-techo-console:
 	cd firmware/techo-console && cargo build --release
@@ -397,6 +398,14 @@ build-heltec-v2: esp-toolchain-check
 flash-heltec-v2: espflash-check build-heltec-v2
 	espflash flash --monitor $(ESPFLASH_PORT_ARG) $(ESPFLASH_PARTITIONS) \
 		$(ESP32_TARGET_DIR)/firmware-heltec-v2
+
+build-t-lora-pager: esp-toolchain-check
+	$(ESP_ENV) cd firmware-esp32/firmware/t-lora-pager && cargo build --release $(ESP32_CARGO_FLAGS)
+	$(ESP_ENV) python3 scripts/check_xtensa_stack.py $(ESP32S3_TARGET_DIR)/firmware-t-lora-pager --reserve 32768
+
+flash-t-lora-pager: espflash-check build-t-lora-pager
+	espflash flash --before usb-reset --after watchdog-reset $(ESPFLASH_PORT_ARG) $(ESPFLASH_PARTITIONS) \
+		$(ESP32S3_TARGET_DIR)/firmware-t-lora-pager
 
 build-tbeam-supreme: esp-toolchain-check
 	$(ESP_ENV) cd firmware-esp32/firmware/tbeam-supreme && cargo build --release $(ESP32_CARGO_FLAGS)

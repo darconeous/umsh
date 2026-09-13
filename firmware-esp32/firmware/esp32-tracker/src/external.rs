@@ -20,7 +20,7 @@ pub fn init(peripheral: esp_hal::peripherals::PSRAM<'static>) {
         },
     );
     let (base, size) = ram.raw_parts();
-    assert!(size >= 1024 * 1024, "T-Beam PSRAM initialization failed");
+    assert!(size >= 1024 * 1024, "board PSRAM initialization failed");
     // The controller is retained for the complete firmware lifetime.
     core::mem::forget(ram);
     unsafe {
@@ -77,6 +77,15 @@ pub fn bridge_queues() -> &'static mut super::bridge::Queues {
     unsafe {
         let ptr = storage::<super::bridge::Queues>();
         ptr.write(super::bridge::Queues::new());
+        &mut *ptr
+    }
+}
+
+#[cfg(feature = "board-t-lora-pager")]
+pub fn display_frame() -> &'static mut [u8; umsh_pager_peripherals::display::FRAME_BYTES] {
+    unsafe {
+        let ptr = storage::<[u8; umsh_pager_peripherals::display::FRAME_BYTES]>();
+        ptr.write_bytes(0, 1);
         &mut *ptr
     }
 }

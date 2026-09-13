@@ -1,0 +1,21 @@
+[package]
+name = "umsh-bsp-t-lora-pager"
+description = "LILYGO T-LoRa Pager SX1262 board support"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+esp-hal = { version = "1.1", default-features = false, features = ["esp32s3", "rt", "unstable"] }
+umsh-bsp-esp32 = { path = "../umsh-bsp-esp32", features = ["esp32s3"] }
+umsh-pager-peripherals = { path = "../../../crates/umsh-pager-peripherals" }
+umsh-gnss = { path = "../../../crates/umsh-gnss" }
+embassy-time = "0.5"
+embassy-sync = "0.8"
+embassy-futures = "0.1"
+embassy-embedded-hal = "0.6"
+embedded-hal = "1"
+critical-section = "1"
+embedded-graphics = "0.8"
+lora-phy = { version = "3.0.2-alpha", default-features = false }

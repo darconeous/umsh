@@ -259,16 +259,16 @@ quirks = [
 # flashing page and disables their flash button.
 
 [[boards]]
-id = "tlora-pager"
+id = "t-lora-pager"
 name = "T-LoRa Pager"
 vendor = "LilyGO"
-category = "messager"
-status = "planned"
-status_note = "Planned for future implementation."
+category = "companion"
+status = "partial"
+status_note = "Boot, screen, wheel capture, USB, battery reporting, and RTC exercised on hardware; full tracker qualification is in progress."
 blurb = """
-A keyboard-and-screen handheld—the first board that could run UMSH as a \
-standalone messaging device, with no phone involved at all. A wide landscape \
-display above a backlit thumb keyboard, and a rotary encoder for scrolling."""
+A display tracker with a wide landscape screen and a rotary encoder. \
+Turn the wheel to move, press it to select, and press Backspace to go back. \
+Text composition and standalone messaging are deferred."""
 mcu = "Espressif ESP32-S3"
 radio = "Semtech SX1262 (other radio modules are offered)"
 gnss = "Yes"
@@ -276,6 +276,17 @@ display = "ST7796 TFT, 480×222"
 battery = "1500 mAh Li-ion with fuel gauge"
 extras = "Backlit QWERTY keyboard, rotary encoder, haptics, SD card"
 vendor_url = "https://lilygo.cc/products/t-lora-pager"
+
+[boards.flash]
+make_target = "flash-t-lora-pager"
+methods = ["esp-serial"]
+chip = "ESP32-S3"
+dfu_entry = "Connect native USB. If automatic entry fails, hold BOOT, tap RESET, then release BOOT. Tap RESET with BOOT released if the board remains in download mode after flashing."
+quirks = [
+  "Only the SX1262 version is supported.",
+  "Builds require Espressif's Xtensa Rust toolchain, installed with <code>espup</code>.",
+  "The initial image uses the existing 4 MB UMSH layout; additional fitted flash is unused.",
+]
 
 [[boards]]
 id = "tdeck"
@@ -294,4 +305,3 @@ display = "2.8\" IPS, 320×240"
 battery = "LiPo via JST connector"
 extras = "QWERTY keyboard, trackball, speaker"
 vendor_url = "https://lilygo.cc/products/t-deck"
-

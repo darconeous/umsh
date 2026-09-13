@@ -52,12 +52,9 @@ use crate::menu::{EntryKind, MenuItem, Page, ToggleId, UiEffect, UiModel, UiNoti
 use crate::wifi::{NetworkName, WifiMenu, WifiState};
 use umsh_ux_tracker::battery::ChargeClass;
 
-/// Scratch buffer for a composed line. No panel in the class shows more
-/// than 21 characters—the 200 px e-paper manages only 19, since its
-/// font is proportionally much larger than the OLEDs'—so this is slack
-/// rather than a constraint. Rows are clipped to the panel on the way
-/// out regardless.
-const LINE: usize = 32;
+/// Scratch buffer for a composed line, including the Pager's 48 columns.
+/// Rows are clipped to the panel on the way out regardless.
+const LINE: usize = 64;
 
 // ─── Board geometry ──────────────────────────────────────────────────────────
 
@@ -163,6 +160,8 @@ pub enum Controls {
     /// labels Back. Up and down move, the center selects, and Back
     /// leaves the screen—no gesture means two things.
     Dpad,
+    /// Rotary wheel with center press and a keyboard Backspace key.
+    Rotary,
 }
 
 /// A board's panel and controls.
@@ -216,6 +215,18 @@ pub enum Overflow {
 }
 
 impl Layout {
+    /// Pager landscape TFT. Same menus, with room for longer labels.
+    pub const TFT_480X222: Self = Self {
+        font: &FONT_10X20,
+        left: 5,
+        top: 3,
+        row_pitch: 24,
+        rows: 9,
+        size: Size::new(480, 222),
+        battery: BatteryIconMetrics::EPD,
+        overflow: Overflow::ScrollBar,
+        controls: Controls::Rotary,
+    };
     /// 128×64 OLED: five rows of `FONT_6X10`. Shared by the Wio Tracker
     /// L1's SH1106 and the Heltec V3's SSD1306.
     pub const OLED_128X64: Self = Self {
@@ -478,6 +489,7 @@ impl ClockModel {
 
 const LOGO_OLED: &[u8; 480] = include_bytes!("../assets/umsh-128x30.raw");
 const LOGO_EPD: &[u8; 1175] = include_bytes!("../assets/umsh-200x47.raw");
+const LOGO_TFT: &[u8; 6720] = include_bytes!("../assets/umsh-480x112.raw");
 
 /// The same full-width logo and version for boot and Settings > About.
 /// No header, title, or navigation hints accompany this frame.
@@ -486,7 +498,9 @@ where
     D: DrawTarget<Color = BinaryColor>,
 {
     let _ = target.clear(BinaryColor::Off);
-    let (bytes, width, height, gap): (&[u8], u32, u32, u32) = if layout.size.width >= 200 {
+    let (bytes, width, height, gap): (&[u8], u32, u32, u32) = if layout.size.width >= 480 {
+        (LOGO_TFT, 480, 112, 8)
+    } else if layout.size.width >= 200 {
         (LOGO_EPD, 200, 47, 8)
     } else {
         (LOGO_OLED, 128, 30, 4)
@@ -637,6 +651,7 @@ where
         Page::WifiNetworks { .. } => match layout.controls {
             Controls::OneButton => &["1x: next", "2x: select"],
             Controls::Dpad => &["up/dn: move", "OK: select"],
+            Controls::Rotary => &["wheel: move", "press: select / Backspace: back"],
         },
         Page::Menu(item) => match select_hint(layout.controls, item) {
             Some(hint) => {
@@ -651,10 +666,12 @@ where
         Page::Detail(_) => match layout.controls {
             Controls::OneButton => &["2x: back"],
             Controls::Dpad => &["OK: back"],
+            Controls::Rotary => &["Backspace: back"],
         },
         Page::Confirm { .. } => match layout.controls {
             Controls::OneButton => &["1x/hold: toggle", "2x: confirm"],
             Controls::Dpad => &["up/dn: pick", "OK: confirm"],
+            Controls::Rotary => &["wheel: pick", "press: confirm / Backspace: cancel"],
         },
     };
     draw_hints(target, layout, content_end, hints);
@@ -1582,6 +1599,7 @@ const fn move_hint(controls: Controls) -> &'static str {
     match controls {
         Controls::OneButton => "1x: next",
         Controls::Dpad => "up/dn: move",
+        Controls::Rotary => "wheel: move / Backspace: back",
     }
 }
 
@@ -1598,6 +1616,7 @@ const fn select_hint(controls: Controls, item: MenuItem) -> Option<&'static str>
     match (controls, item.kind()) {
         (Controls::OneButton, _) if reading_opens => Some("2x: open"),
         (Controls::Dpad, _) if reading_opens => Some("OK: open"),
+        (Controls::Rotary, _) if reading_opens => Some("press: open"),
         (_, EntryKind::Reading(None)) => None,
         (Controls::OneButton, kind) => Some(match kind {
             EntryKind::Reading(Some(UiEffect::CheckIn)) => "2x: check in",
@@ -1612,6 +1631,13 @@ const fn select_hint(controls: Controls, item: MenuItem) -> Option<&'static str>
             EntryKind::Back => "OK: back",
             EntryKind::Toggle(_) => "OK: toggle",
             _ => "OK: select",
+        }),
+        (Controls::Rotary, kind) => Some(match kind {
+            EntryKind::Reading(Some(UiEffect::CheckIn)) => "press: check in",
+            EntryKind::Submenu(_) | EntryKind::NetworkPicker => "press: open",
+            EntryKind::Back => "press: back",
+            EntryKind::Toggle(_) => "press: toggle",
+            _ => "press: select",
         }),
     }
 }
@@ -1787,9 +1813,8 @@ mod tests {
     use super::*;
     use crate::menu::{Level, MenuItems, UiInput};
 
-    /// Widest panel in the class, bit-packed: 200 × 200 costs 5 kB, which
-    /// a test can keep several of without thinking about it.
-    const TEST_PANEL_BYTES: usize = 200 * 200 / 8;
+    /// Largest panel in the class, bit-packed (480 × 222).
+    const TEST_PANEL_BYTES: usize = 480 * 222 / 8;
 
     /// A plain bitmap `DrawTarget` so the tests can ask what actually
     /// landed on the glass rather than trusting the call sequence.
@@ -1939,6 +1964,7 @@ mod tests {
         for (layout, bytes, height, gap) in [
             (Layout::OLED_128X64, LOGO_OLED.as_slice(), 30u32, 4u32),
             (Layout::EPD_200X200, LOGO_EPD.as_slice(), 47u32, 8u32),
+            (Layout::TFT_480X222, LOGO_TFT.as_slice(), 112u32, 8u32),
         ] {
             let width = layout.size.width;
             assert_eq!(bytes.len(), (width * height / 8) as usize);
@@ -2057,8 +2083,12 @@ mod tests {
         }
     }
 
-    fn layouts() -> [Layout; 2] {
-        [Layout::OLED_128X64, Layout::EPD_200X200]
+    fn layouts() -> [Layout; 3] {
+        [
+            Layout::OLED_128X64,
+            Layout::EPD_200X200,
+            Layout::TFT_480X222,
+        ]
     }
 
     /// Walk to `item` within the level it lives in.
@@ -2553,9 +2583,8 @@ mod tests {
     /// it is drawn on, and has to fit the narrowest panel in the class.
     #[test]
     fn each_control_set_is_hinted_in_its_own_words() {
-        // 128 px of FONT_6X10.
-        let budget = (Layout::OLED_128X64.size.width / 6) as usize;
-        for controls in [Controls::OneButton, Controls::Dpad] {
+        for controls in [Controls::OneButton, Controls::Dpad, Controls::Rotary] {
+            let budget = if controls == Controls::Rotary { 48 } else { 21 };
             let clicks = controls == Controls::OneButton;
             let mut hints: heapless::Vec<&str, 24> = heapless::Vec::new();
             hints.push(move_hint(controls)).unwrap();
@@ -2577,7 +2606,7 @@ mod tests {
                     clicks,
                     "{controls:?} hint {hint:?} counts clicks"
                 );
-                assert!(hint.len() <= budget, "{hint:?} does not fit a 128px row");
+                assert!(hint.len() <= budget, "{hint:?} exceeds {budget} columns");
             }
         }
     }

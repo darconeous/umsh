@@ -94,6 +94,14 @@ a board still has when nothing is on the panel. The Back entry remains in every
 submenu—a user who has not found the button is not stuck—and the gesture hints
 name the controls the board actually has, so a pad device never says "2x".
 
+The T-LoRa Pager initially runs this display-tracker interface. Wheel rotation
+maps to Next and Previous, wheel press selects immediately after debounce,
+and keyboard Backspace is Back. Holding a key does not repeat navigation.
+Backspace leaves nested levels, closes detail pages, and cancels confirmations;
+at the top it returns to Status. BOOT held for four seconds powers down.
+An input used to dismiss the boot splash or wake a faded screen is consumed.
+The remaining keyboard keys do not enter text in this mode.
+
 The screens these intents drive, and what each one shows, are in
 [Display Tracker Screens](../classes/display-tracker-screens.md).
 

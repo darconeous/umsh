@@ -131,6 +131,7 @@ The Wireshark integration has its own targets, covered below.
 | Seeed XIAO nRF52840 + Wio-SX1262 | nRF52840 | `make flash-xiao-nrf52` |
 | Heltec WiFi LoRa 32 V3 | ESP32-S3 | `make flash-heltec-v3` |
 | LilyGO T-Beam Supreme (SX1262) | ESP32-S3 | `make flash-tbeam-supreme` |
+| LilyGO T-LoRa Pager (SX1262, bring-up) | ESP32-S3 | `make flash-t-lora-pager` |
 
 The two Espressif boards are the odd ones out: Xtensa chips need a Rust fork rustup does
 not carry, installed once per machine with `cargo install espup espflash && espup install`

@@ -61,6 +61,18 @@ MIRRORED_ROLES = frozenset({"dfu-zip", "merged-bin"})
 # whole flashing story. `uf2` boards inherit family/base/volume/model from
 # the BOARDS preset, keyed by the same id.
 RELEASE_BOARDS = {
+    "t-lora-pager": {
+        "chip": "esp32s3",
+        "elf": "firmware-t-lora-pager",
+        "name": "LILYGO T-LoRa Pager SX1262",
+        "flash_methods": ["esp-serial"],
+        "esp": {
+            "chip": "esp32s3",
+            "offset": "0x0",
+            "flash_size": "4MB",
+            "partition_table": "partitions-umsh.csv",
+        },
+    },
     "techo": {"chip": "nrf52840", "elf": "firmware-techo"},
     "t1000e": {"chip": "nrf52840", "elf": "firmware-t1000e"},
     "sensecap-solar": {"chip": "nrf52840", "elf": "firmware-sensecap-solar"},
