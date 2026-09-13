@@ -64,7 +64,7 @@ use core::fmt::Write as _;
 use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU16, AtomicU32, Ordering};
 
 use bt_hci::controller::ExternalController;
-#[cfg(any(feature = "pmic-axp2101", feature = "board-t-lora-pager"))]
+#[cfg(any(feature = "pmic-axp2101", feature = "board-tlora-pager"))]
 use embassy_embedded_hal::shared_bus::asynch::i2c::I2cDevice;
 use embassy_executor::Spawner;
 use embassy_futures::join::join;
@@ -76,16 +76,16 @@ use embassy_sync::once_lock::OnceLock;
 use embassy_sync::signal::Signal;
 use embassy_sync::watch::Watch;
 use embassy_time::{Delay, Duration, Instant, Timer, with_timeout};
-#[cfg(not(feature = "board-t-lora-pager"))]
+#[cfg(not(feature = "board-tlora-pager"))]
 use embedded_hal_bus::spi::ExclusiveDevice;
 use esp_hal::Async;
 use esp_hal::clock::CpuClock;
-#[cfg(not(feature = "board-t-lora-pager"))]
+#[cfg(not(feature = "board-tlora-pager"))]
 use esp_hal::gpio::WaitForOptions;
 use esp_hal::gpio::{Event, Input, InputConfig, Level, Output, OutputConfig, Pull};
 use esp_hal::i2c::master::{Config as I2cConfig, I2c};
 use esp_hal::interrupt::software::SoftwareInterruptControl;
-#[cfg(not(any(feature = "pmic-axp2101", feature = "board-t-lora-pager")))]
+#[cfg(not(any(feature = "pmic-axp2101", feature = "board-tlora-pager")))]
 use esp_hal::rtc_cntl::sleep::Ext0WakeupSource;
 use esp_hal::rtc_cntl::{Rtc, RwdtStage, SocResetReason};
 use esp_hal::spi::Mode;
@@ -112,14 +112,14 @@ use umsh_bsp_esp32::rng::EspCryptoRng;
 use umsh_bsp_heltec_lora32_v2 as board;
 #[cfg(feature = "board-heltec-v3")]
 use umsh_bsp_heltec_lora32_v3 as board;
-#[cfg(feature = "board-t-lora-pager")]
-use umsh_bsp_t_lora_pager as board;
 #[cfg(feature = "board-tbeam-supreme")]
 use umsh_bsp_tbeam_supreme as board;
+#[cfg(feature = "board-tlora-pager")]
+use umsh_bsp_tlora_pager as board;
 
-#[cfg(any(feature = "pmic-axp2101", feature = "board-t-lora-pager"))]
+#[cfg(any(feature = "pmic-axp2101", feature = "board-tlora-pager"))]
 use board::battery as board_battery;
-#[cfg(not(any(feature = "pmic-axp2101", feature = "board-t-lora-pager")))]
+#[cfg(not(any(feature = "pmic-axp2101", feature = "board-tlora-pager")))]
 use board::battery::BatterySampler;
 #[cfg(feature = "display-sh1106")]
 use board::display;
@@ -140,12 +140,12 @@ use board::radio as board_radio;
 // rather than an owned pin; the API surface is otherwise identical.
 // PMIC boards have no `Vext` at all—the panel's rail belongs to the
 // AXP2101 and drops in the shutdown path instead.
-#[cfg(feature = "board-t-lora-pager")]
+#[cfg(feature = "board-tlora-pager")]
 use board::I2cHandle as PmuI2cDevice;
 #[cfg(not(any(
     feature = "vext-gates-battery",
     feature = "pmic-axp2101",
-    feature = "board-t-lora-pager"
+    feature = "board-tlora-pager"
 )))]
 use board::vext::Vext;
 #[cfg(feature = "vext-gates-battery")]
@@ -154,7 +154,7 @@ use board::vext::VextHandle as Vext;
 use umsh_crypto::CryptoEngine;
 use umsh_crypto::pool::EntropyPool;
 use umsh_crypto::software::{SoftwareAes, SoftwareSha256};
-#[cfg(feature = "board-t-lora-pager")]
+#[cfg(feature = "board-tlora-pager")]
 use umsh_pager_peripherals::rtc::Pcf85063 as RtcChip;
 #[cfg(feature = "pmic-axp2101")]
 use umsh_pmic_axp2101::{Axp2101, ChargeDirection, ChargeState, IrqMask};
@@ -177,17 +177,17 @@ use umsh_ulcp_runtime::{radio_mux, transport_policy};
 use umsh_ux_display_tracker::attention::{
     Attention, AttentionConfig, DisplayKind, HoldReason, Transition,
 };
-#[cfg(not(feature = "board-t-lora-pager"))]
+#[cfg(not(feature = "board-tlora-pager"))]
 use umsh_ux_display_tracker::gate::{Disposition, Gate, GateReason};
 #[cfg(any(not(feature = "gnss"), not(feature = "wifi")))]
 use umsh_ux_display_tracker::menu::MenuItem;
 use umsh_ux_display_tracker::menu::{MenuItems, ToggleId, UiEffect, UiInput, UiModel, UiNotice};
 use umsh_ux_display_tracker::screen;
-#[cfg(any(feature = "pmic-axp2101", feature = "board-t-lora-pager"))]
+#[cfg(any(feature = "pmic-axp2101", feature = "board-tlora-pager"))]
 use umsh_ux_tracker::battery::ChargeClass;
-#[cfg(not(feature = "board-t-lora-pager"))]
+#[cfg(not(feature = "board-tlora-pager"))]
 use umsh_ux_tracker::battery::soc_from_ocv;
-#[cfg(not(feature = "board-t-lora-pager"))]
+#[cfg(not(feature = "board-tlora-pager"))]
 use umsh_ux_tracker::button::{ButtonEdge, ButtonEvent, ButtonFsm};
 
 use transport_policy::{Transport, generation_checked};
@@ -200,7 +200,7 @@ mod device_node;
 mod external;
 #[cfg(feature = "wifi")]
 mod ip;
-#[cfg(feature = "board-t-lora-pager")]
+#[cfg(feature = "board-tlora-pager")]
 mod pager;
 #[cfg(feature = "wifi")]
 mod wifi;
@@ -210,7 +210,7 @@ mod wifi_memory;
 compile_error!("WiFi requires an ESP32-S3 target");
 #[cfg(all(
     feature = "psram",
-    not(any(feature = "board-tbeam-supreme", feature = "board-t-lora-pager"))
+    not(any(feature = "board-tbeam-supreme", feature = "board-tlora-pager"))
 ))]
 compile_error!("PSRAM wiring is only defined for T-Beam Supreme and T-LoRa Pager");
 
@@ -237,7 +237,7 @@ esp_bootloader_esp_idf::esp_app_desc!();
 /// through light sleep and the feed is a timer wake), so the pair is
 /// 20 s feeds under a 30 s timeout there, against the Heltecs' 4 s LED
 /// blink under the original 8 s.
-#[cfg(not(any(feature = "pmic-axp2101", feature = "board-t-lora-pager")))]
+#[cfg(not(any(feature = "pmic-axp2101", feature = "board-tlora-pager")))]
 const WDT_TIMEOUT: esp_hal::time::Duration = esp_hal::time::Duration::from_secs(8);
 #[cfg(feature = "pmic-axp2101")]
 const WDT_TIMEOUT: esp_hal::time::Duration = esp_hal::time::Duration::from_secs(30);
@@ -288,9 +288,9 @@ const DEFAULT_DEVICE_NAME: &str = "UMSH Heltec V2";
 const DEFAULT_DEVICE_NAME: &str = "UMSH Heltec V3";
 #[cfg(feature = "board-tbeam-supreme")]
 const DEFAULT_DEVICE_NAME: &str = "UMSH T-Beam";
-#[cfg(feature = "board-t-lora-pager")]
+#[cfg(feature = "board-tlora-pager")]
 const DEFAULT_DEVICE_NAME: &str = "UMSH Pager";
-#[cfg(feature = "board-t-lora-pager")]
+#[cfg(feature = "board-tlora-pager")]
 const WDT_TIMEOUT: esp_hal::time::Duration = esp_hal::time::Duration::from_secs(8);
 
 /// `PROP_DEV_VERSION`: the stack name and the release version from the
@@ -400,7 +400,7 @@ fn session_config() -> SessionConfig {
         // charger-status signal (the charge LED is charger-driven), so
         // voltage and the OCV level estimate are reported and charge
         // state is not advertised.
-        #[cfg(not(any(feature = "pmic-axp2101", feature = "board-t-lora-pager")))]
+        #[cfg(not(any(feature = "pmic-axp2101", feature = "board-tlora-pager")))]
         battery: Some(BatteryFields {
             voltage: true,
             level: true,
@@ -409,7 +409,7 @@ fn session_config() -> SessionConfig {
         // The AXP2101 measures its own battery terminal, runs a fuel
         // gauge, and knows which way current is flowing—the first
         // ESP32 board that can advertise all three fields.
-        #[cfg(any(feature = "pmic-axp2101", feature = "board-t-lora-pager"))]
+        #[cfg(any(feature = "pmic-axp2101", feature = "board-tlora-pager"))]
         battery: Some(BatteryFields {
             voltage: true,
             level: true,
@@ -695,9 +695,9 @@ static ADC2_RADIO_UP: AtomicBool = AtomicBool::new(false);
 /// by milliseconds). Starts optimistic so the wired console exists
 /// from the first instruction of a USB-powered boot; the first reading
 /// corrects a battery boot.
-#[cfg(any(feature = "pmic-axp2101", feature = "board-t-lora-pager"))]
+#[cfg(any(feature = "pmic-axp2101", feature = "board-tlora-pager"))]
 static VBUS_PRESENT: AtomicBool = AtomicBool::new(true);
-#[cfg(any(feature = "pmic-axp2101", feature = "board-t-lora-pager"))]
+#[cfg(any(feature = "pmic-axp2101", feature = "board-tlora-pager"))]
 static VBUS_EDGE: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 
 /// OLED redraw trigger for content that changed without the user asking
@@ -749,26 +749,26 @@ static BLE_LINK: AtomicU8 = AtomicU8::new(BleLinkState::None.code());
 /// Last battery sample in millivolts (0 = never sampled). Display only.
 static BATTERY_MV: AtomicU16 = AtomicU16::new(0);
 /// Last battery level percent (0xFF = unknown). Display only.
-#[cfg(any(feature = "pmic-axp2101", feature = "board-t-lora-pager"))]
+#[cfg(any(feature = "pmic-axp2101", feature = "board-tlora-pager"))]
 static BATTERY_LEVEL: AtomicU8 = AtomicU8::new(0xFF);
 /// Last charge classification: 0 unknown, 1 discharging, 2 charging,
 /// 3 charged. Display only.
-#[cfg(any(feature = "pmic-axp2101", feature = "board-t-lora-pager"))]
+#[cfg(any(feature = "pmic-axp2101", feature = "board-tlora-pager"))]
 static BATTERY_CHARGE: AtomicU8 = AtomicU8::new(0);
 /// Battery request/reply pair between the session env and the sampler
 /// task, which owns the ADC (or the PMIC telemetry cadence).
 static BATTERY_REQUEST: Signal<CriticalSectionRawMutex, ()> = Signal::new();
-#[cfg(not(any(feature = "pmic-axp2101", feature = "board-t-lora-pager")))]
+#[cfg(not(any(feature = "pmic-axp2101", feature = "board-tlora-pager")))]
 static BATTERY_REPLY: Signal<CriticalSectionRawMutex, u16> = Signal::new();
-#[cfg(any(feature = "pmic-axp2101", feature = "board-t-lora-pager"))]
+#[cfg(any(feature = "pmic-axp2101", feature = "board-tlora-pager"))]
 static BATTERY_REPLY: Signal<CriticalSectionRawMutex, board_battery::Reading> = Signal::new();
 /// Readings worth announcing to a remote observer, for unsolicited
 /// `PROP_BATTERY` publication. A `Watch` rather than a `Signal`: the
 /// driver's select drops and re-creates the wait on every other
 /// iteration, and a receiver must not lose an update to that.
-#[cfg(not(any(feature = "pmic-axp2101", feature = "board-t-lora-pager")))]
+#[cfg(not(any(feature = "pmic-axp2101", feature = "board-tlora-pager")))]
 static BATTERY_ANNOUNCE: Watch<CriticalSectionRawMutex, u16, 1> = Watch::new();
-#[cfg(any(feature = "pmic-axp2101", feature = "board-t-lora-pager"))]
+#[cfg(any(feature = "pmic-axp2101", feature = "board-tlora-pager"))]
 static BATTERY_ANNOUNCE: Watch<CriticalSectionRawMutex, board_battery::Reading, 1> = Watch::new();
 
 #[cfg(feature = "ble-debug")]
@@ -900,7 +900,7 @@ async fn rtc_writeback(rtc: &'static RtcMutex, epoch: u32) {
 /// perpetually-discharging samples the clamp would never lift, so a fully
 /// recharged pack would keep reporting the level it bottomed out at until
 /// the next reboot.
-#[cfg(not(any(feature = "pmic-axp2101", feature = "board-t-lora-pager")))]
+#[cfg(not(any(feature = "pmic-axp2101", feature = "board-tlora-pager")))]
 const BATTERY_LEVEL_STEP: u8 = 5;
 
 /// Smallest level movement worth announcing, in percentage points.
@@ -910,7 +910,7 @@ const BATTERY_LEVEL_STEP: u8 = 5;
 /// prefers the PMIC's fuel gauge and falls back to the OCV table while
 /// the gauge is unlearned—which of the two should be primary
 /// long-term is a hardware-validation question.
-#[cfg(any(feature = "pmic-axp2101", feature = "board-t-lora-pager"))]
+#[cfg(any(feature = "pmic-axp2101", feature = "board-tlora-pager"))]
 const BATTERY_LEVEL_STEP: u8 = 5;
 
 /// Raised when the announced level moves, so the panel can redraw its
@@ -923,7 +923,7 @@ static BATTERY_UI_CHANGED: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 
 /// Owns the ADC divider. Samples on a slow cadence for the OLED and
 /// immediately on session request (`Effect::SampleBattery`).
-#[cfg(not(any(feature = "pmic-axp2101", feature = "board-t-lora-pager")))]
+#[cfg(not(any(feature = "pmic-axp2101", feature = "board-tlora-pager")))]
 #[embassy_executor::task]
 async fn battery_task(mut sampler: BatterySampler) {
     let announce = BATTERY_ANNOUNCE.sender();
@@ -985,7 +985,7 @@ async fn battery_task(mut sampler: BatterySampler) {
 /// request/reply round trip into [`battery_task`], the sole ADC owner.
 /// No charger-status signal exists on this board, so charge state is
 /// never reported (and `SessionConfig::battery` does not advertise it).
-#[cfg(not(any(feature = "pmic-axp2101", feature = "board-t-lora-pager")))]
+#[cfg(not(any(feature = "pmic-axp2101", feature = "board-tlora-pager")))]
 async fn sample_battery_snapshot() -> Result<umsh_ulcp::battery::BatteryStatus, ()> {
     BATTERY_REPLY.reset();
     BATTERY_REQUEST.signal(());
@@ -1001,7 +1001,7 @@ async fn sample_battery_snapshot() -> Result<umsh_ulcp::battery::BatteryStatus, 
 /// Shared by the on-demand read (`Effect::SampleBattery`) and the
 /// asynchronous publication (`DeviceEnv::battery_event`) so the two can
 /// never report the same reading differently.
-#[cfg(not(any(feature = "pmic-axp2101", feature = "board-t-lora-pager")))]
+#[cfg(not(any(feature = "pmic-axp2101", feature = "board-tlora-pager")))]
 fn battery_snapshot(mv: u16) -> umsh_ulcp::battery::BatteryStatus {
     umsh_ulcp::battery::BatteryStatus {
         voltage_mv: Some(mv),
@@ -1012,13 +1012,13 @@ fn battery_snapshot(mv: u16) -> umsh_ulcp::battery::BatteryStatus {
 
 /// The level a reading supports: the PMIC gauge when it has learned the
 /// pack, the OCV table while it has not, nothing without a cell.
-#[cfg(any(feature = "pmic-axp2101", feature = "board-t-lora-pager"))]
+#[cfg(any(feature = "pmic-axp2101", feature = "board-tlora-pager"))]
 fn battery_level(reading: &board_battery::Reading) -> Option<u8> {
-    #[cfg(feature = "board-t-lora-pager")]
+    #[cfg(feature = "board-tlora-pager")]
     {
         reading.percent
     }
-    #[cfg(not(feature = "board-t-lora-pager"))]
+    #[cfg(not(feature = "board-tlora-pager"))]
     {
         reading
             .percent
@@ -1040,7 +1040,7 @@ fn battery_charge_class(reading: &board_battery::Reading) -> Option<ChargeClass>
     }
 }
 
-#[cfg(feature = "board-t-lora-pager")]
+#[cfg(feature = "board-tlora-pager")]
 fn battery_charge_class(reading: &board_battery::Reading) -> Option<ChargeClass> {
     reading.charge.map(|charge| match charge {
         board_battery::Charge::Discharging => ChargeClass::Discharging,
@@ -1117,7 +1117,7 @@ async fn battery_task(pmic: &'static SharedPmic) {
 /// The platform battery source behind `Effect::SampleBattery`: a
 /// request/reply round trip into [`battery_task`], the sole owner of
 /// the telemetry cadence.
-#[cfg(any(feature = "pmic-axp2101", feature = "board-t-lora-pager"))]
+#[cfg(any(feature = "pmic-axp2101", feature = "board-tlora-pager"))]
 async fn sample_battery_snapshot() -> Result<umsh_ulcp::battery::BatteryStatus, ()> {
     BATTERY_REPLY.reset();
     BATTERY_REQUEST.signal(());
@@ -1133,7 +1133,7 @@ async fn sample_battery_snapshot() -> Result<umsh_ulcp::battery::BatteryStatus, 
 /// Shared by the on-demand read (`Effect::SampleBattery`) and the
 /// asynchronous publication so the two can never report the same
 /// reading differently.
-#[cfg(any(feature = "pmic-axp2101", feature = "board-t-lora-pager"))]
+#[cfg(any(feature = "pmic-axp2101", feature = "board-tlora-pager"))]
 fn battery_snapshot(reading: &board_battery::Reading) -> umsh_ulcp::battery::BatteryStatus {
     umsh_ulcp::battery::BatteryStatus {
         voltage_mv: reading.voltage_mv,
@@ -1396,9 +1396,9 @@ struct BoardDeviceEnv {
     node_counters: &'static NodeCountersMutex,
     /// Announce-worthy readings from [`battery_task`], for unsolicited
     /// `PROP_BATTERY` publication.
-    #[cfg(not(any(feature = "pmic-axp2101", feature = "board-t-lora-pager")))]
+    #[cfg(not(any(feature = "pmic-axp2101", feature = "board-tlora-pager")))]
     battery: embassy_sync::watch::DynReceiver<'static, u16>,
-    #[cfg(any(feature = "pmic-axp2101", feature = "board-t-lora-pager"))]
+    #[cfg(any(feature = "pmic-axp2101", feature = "board-tlora-pager"))]
     battery: embassy_sync::watch::DynReceiver<'static, board_battery::Reading>,
     /// Positioning changes worth publishing unasked. The runtime's GNSS
     /// sink owns the policy—a stationary receiver produces a fix a
@@ -1416,12 +1416,12 @@ struct BoardDeviceEnv {
 /// One battery reading as the session reports it, taking the reading by
 /// value so callers need not know that the PMIC boards carry a struct
 /// where the rest carry millivolts.
-#[cfg(not(any(feature = "pmic-axp2101", feature = "board-t-lora-pager")))]
+#[cfg(not(any(feature = "pmic-axp2101", feature = "board-tlora-pager")))]
 fn battery_reading_snapshot(mv: u16) -> umsh_ulcp::battery::BatteryStatus {
     battery_snapshot(mv)
 }
 
-#[cfg(any(feature = "pmic-axp2101", feature = "board-t-lora-pager"))]
+#[cfg(any(feature = "pmic-axp2101", feature = "board-tlora-pager"))]
 fn battery_reading_snapshot(reading: board_battery::Reading) -> umsh_ulcp::battery::BatteryStatus {
     battery_snapshot(&reading)
 }
@@ -1579,12 +1579,12 @@ impl DeviceEnv for BoardDeviceEnv {
     /// the on-demand read reduces it.
     #[cfg(not(feature = "gnss"))]
     async fn battery_event(&mut self) -> umsh_ulcp::battery::BatteryStatus {
-        #[cfg(not(any(feature = "pmic-axp2101", feature = "board-t-lora-pager")))]
+        #[cfg(not(any(feature = "pmic-axp2101", feature = "board-tlora-pager")))]
         {
             let mv = self.battery.changed().await;
             battery_snapshot(mv)
         }
-        #[cfg(any(feature = "pmic-axp2101", feature = "board-t-lora-pager"))]
+        #[cfg(any(feature = "pmic-axp2101", feature = "board-tlora-pager"))]
         {
             let reading = self.battery.changed().await;
             battery_snapshot(&reading)
@@ -2744,9 +2744,9 @@ async fn radio_mux_task() {
 type GnssRxPin = esp_hal::peripherals::GPIO9<'static>;
 #[cfg(feature = "board-tbeam-supreme")]
 type GnssTxPin = esp_hal::peripherals::GPIO8<'static>;
-#[cfg(feature = "board-t-lora-pager")]
+#[cfg(feature = "board-tlora-pager")]
 type GnssRxPin = esp_hal::peripherals::GPIO4<'static>;
-#[cfg(feature = "board-t-lora-pager")]
+#[cfg(feature = "board-tlora-pager")]
 type GnssTxPin = esp_hal::peripherals::GPIO12<'static>;
 
 #[cfg(feature = "gnss")]
@@ -3269,12 +3269,12 @@ fn ui_status<'a>(name: &'a DeviceName, identity: &'a IdentityText) -> screen::St
     // pack is discharging; the PMIC boards know which way current flows,
     // and unknown (no cell, or before the first sample) draws nothing
     // rather than a guess.
-    #[cfg(not(any(feature = "pmic-axp2101", feature = "board-t-lora-pager")))]
+    #[cfg(not(any(feature = "pmic-axp2101", feature = "board-tlora-pager")))]
     let battery = screen::BatteryIndicator {
         level_percent: (mv != 0).then(|| soc_from_ocv(mv)),
         charge: None,
     };
-    #[cfg(any(feature = "pmic-axp2101", feature = "board-t-lora-pager"))]
+    #[cfg(any(feature = "pmic-axp2101", feature = "board-tlora-pager"))]
     let battery = {
         let level = BATTERY_LEVEL.load(Ordering::Acquire);
         screen::BatteryIndicator {
@@ -3375,9 +3375,9 @@ fn ui_stats() -> screen::StatsModel {
     }
 }
 
-#[cfg(feature = "board-t-lora-pager")]
+#[cfg(feature = "board-tlora-pager")]
 const DISPLAY_LAYOUT: screen::Layout = screen::Layout::TFT_480X222;
-#[cfg(not(feature = "board-t-lora-pager"))]
+#[cfg(not(feature = "board-tlora-pager"))]
 const DISPLAY_LAYOUT: screen::Layout = screen::Layout::OLED_128X64;
 
 /// Render the current page. Best-effort—a display error just leaves the
@@ -3431,7 +3431,7 @@ async fn clock_tick(awake: bool) {
 #[embassy_executor::task]
 async fn display_task(
     mut display: Display,
-    #[cfg(not(any(feature = "pmic-axp2101", feature = "board-t-lora-pager")))] mut vext: Vext,
+    #[cfg(not(any(feature = "pmic-axp2101", feature = "board-tlora-pager")))] mut vext: Vext,
 ) {
     let mut model = UiModel::new(board_menu_items());
     let _ = display.set_display_on(false).await;
@@ -3610,7 +3610,7 @@ async fn display_task(
                 let _ = display.set_display_on(true).await;
                 Timer::after_millis(1_200).await;
                 let _ = display.set_display_on(false).await;
-                #[cfg(not(any(feature = "pmic-axp2101", feature = "board-t-lora-pager")))]
+                #[cfg(not(any(feature = "pmic-axp2101", feature = "board-tlora-pager")))]
                 vext.disable();
                 DISPLAY_SHUTDOWN_DONE.signal(());
                 core::future::pending::<()>().await;
@@ -3679,7 +3679,7 @@ async fn display_task(
 /// the sole exception, since a device that has gone dark still has to be
 /// switchable-off.
 #[embassy_executor::task]
-#[cfg(not(feature = "board-t-lora-pager"))]
+#[cfg(not(feature = "board-tlora-pager"))]
 async fn button_task(mut button: Input<'static>) {
     const DEBOUNCE: Duration = Duration::from_millis(30);
     let mut fsm = ButtonFsm::new(umsh_ux_display_tracker::button_timings());
@@ -3778,7 +3778,7 @@ async fn button_task(mut button: Input<'static>) {
 ///
 /// It also owns the shutdown sequence, because it owns the `Rtc` that
 /// deep sleep is entered through.
-#[cfg(not(any(feature = "pmic-axp2101", feature = "board-t-lora-pager")))]
+#[cfg(not(any(feature = "pmic-axp2101", feature = "board-tlora-pager")))]
 #[embassy_executor::task]
 async fn heartbeat_task(
     mut led: Output<'static>,
@@ -3836,7 +3836,7 @@ async fn heartbeat_task(
 ///
 /// Counter persistence needs nothing here: `MacHandle::next_event`
 /// flushes it as it goes, so there is no buffered state to lose.
-#[cfg(not(any(feature = "pmic-axp2101", feature = "board-t-lora-pager")))]
+#[cfg(not(any(feature = "pmic-axp2101", feature = "board-tlora-pager")))]
 async fn shutdown(
     led: &mut Output<'static>,
     rtc: &mut Rtc<'static>,
@@ -4031,7 +4031,7 @@ async fn main(spawner: Spawner) {
     // timing is unchanged.
     let config = esp_hal::Config::default().with_cpu_clock(CpuClock::_80MHz);
     let peripherals = esp_hal::init(config);
-    #[cfg(feature = "board-t-lora-pager")]
+    #[cfg(feature = "board-tlora-pager")]
     {
         // Keep the entire boot sequence awake, including expander reset delays
         // before encoder interrupts exist. The same hold keeps edge capture
@@ -4053,9 +4053,9 @@ async fn main(spawner: Spawner) {
         // The Heltec keeps its session internally; the Pager adds DMA state.
         // Both leave another 16 KiB for nested calls and interrupts. The
         // Pager's device-task construction overflowed with the 128 KiB heap.
-        #[cfg(any(feature = "board-heltec-v3", feature = "board-t-lora-pager"))]
+        #[cfg(any(feature = "board-heltec-v3", feature = "board-tlora-pager"))]
         esp_alloc::heap_allocator!(size: 48 * 1024);
-        #[cfg(not(any(feature = "board-heltec-v3", feature = "board-t-lora-pager")))]
+        #[cfg(not(any(feature = "board-heltec-v3", feature = "board-tlora-pager")))]
         esp_alloc::heap_allocator!(size: 64 * 1024);
         esp_alloc::heap_allocator!(#[esp_hal::ram(reclaimed)] size: 64 * 1024);
     }
@@ -4159,10 +4159,10 @@ async fn main(spawner: Spawner) {
         PMIC_CELL.init(Mutex::new(pmic))
     };
 
-    #[cfg(feature = "board-t-lora-pager")]
+    #[cfg(feature = "board-tlora-pager")]
     let (pmu_bus, expander) =
         pager::power_up(peripherals.I2C0, peripherals.GPIO3, peripherals.GPIO2).await;
-    #[cfg(feature = "board-t-lora-pager")]
+    #[cfg(feature = "board-tlora-pager")]
     {
         pager::init_encoder(peripherals.IO_MUX, peripherals.GPIO40, peripherals.GPIO41);
         spawner.spawn(
@@ -4184,7 +4184,7 @@ async fn main(spawner: Spawner) {
     #[cfg(feature = "external-rtc")]
     let wall_clock_rtc: Option<&'static RtcMutex> = {
         let mut rtc_chip = RtcChip::new(I2cDevice::new(pmu_bus));
-        #[cfg(feature = "board-t-lora-pager")]
+        #[cfg(feature = "board-tlora-pager")]
         if rtc_chip.init().await.is_err() {
             println!("rtc: clock output configuration failed");
         }
@@ -4229,7 +4229,7 @@ async fn main(spawner: Spawner) {
     // `Sleep` handle whose idle hook was installed above—LPWR has one
     // owner now. A PMIC board powers off through the PMIC instead and
     // has no use for the deep-sleep half.
-    #[cfg(not(any(feature = "pmic-axp2101", feature = "board-t-lora-pager")))]
+    #[cfg(not(any(feature = "pmic-axp2101", feature = "board-tlora-pager")))]
     spawner.spawn(heartbeat_task(led, rtc, sleep.deep_sleep).unwrap());
     #[cfg(feature = "pmic-axp2101")]
     let _ = sleep;
@@ -4501,7 +4501,7 @@ async fn main(spawner: Spawner) {
     .with_miso(peripherals.GPIO13)
     .into_async();
 
-    #[cfg(feature = "board-t-lora-pager")]
+    #[cfg(feature = "board-tlora-pager")]
     let pager_panel_cs = {
         // Every device on these wires must be deselected before radio traffic.
         let sd = Output::new(peripherals.GPIO21, Level::High, OutputConfig::default());
@@ -4509,7 +4509,7 @@ async fn main(spawner: Spawner) {
         core::mem::forget((sd, nfc));
         Output::new(peripherals.GPIO38, Level::High, OutputConfig::default())
     };
-    #[cfg(feature = "board-t-lora-pager")]
+    #[cfg(feature = "board-tlora-pager")]
     let pager_spi = pager::spi_bus(
         peripherals.SPI2,
         peripherals.DMA_CH0,
@@ -4524,9 +4524,9 @@ async fn main(spawner: Spawner) {
     let radio_cs = Output::new(peripherals.GPIO18, Level::High, OutputConfig::default());
     #[cfg(feature = "board-tbeam-supreme")]
     let radio_cs = Output::new(peripherals.GPIO10, Level::High, OutputConfig::default());
-    #[cfg(not(feature = "board-t-lora-pager"))]
+    #[cfg(not(feature = "board-tlora-pager"))]
     let radio_spi = ExclusiveDevice::new(spi, radio_cs, Delay).unwrap();
-    #[cfg(feature = "board-t-lora-pager")]
+    #[cfg(feature = "board-tlora-pager")]
     let radio_spi = board::SpiHandle::new(
         pager_spi,
         Output::new(peripherals.GPIO36, Level::High, OutputConfig::default()),
@@ -4542,9 +4542,9 @@ async fn main(spawner: Spawner) {
     #[cfg(feature = "board-tbeam-supreme")]
     let radio_reset = Output::new(peripherals.GPIO5, Level::High, OutputConfig::default());
 
-    #[cfg(feature = "board-t-lora-pager")]
+    #[cfg(feature = "board-tlora-pager")]
     let radio_reset = Output::new(peripherals.GPIO47, Level::High, OutputConfig::default());
-    #[cfg(feature = "board-t-lora-pager")]
+    #[cfg(feature = "board-tlora-pager")]
     let (radio_dio1, radio_busy) = (peripherals.GPIO14, peripherals.GPIO48);
 
     // SX126x: DIO1 carries the IRQs and BUSY gates every command.
@@ -4657,16 +4657,16 @@ async fn main(spawner: Spawner) {
     // ── Battery, button ──────────────────────────────────────────────────
     // The sampler was constructed above, before the radio controller;
     // on a PMIC board the telemetry comes off the PMU bus instead.
-    #[cfg(not(any(feature = "pmic-axp2101", feature = "board-t-lora-pager")))]
+    #[cfg(not(any(feature = "pmic-axp2101", feature = "board-tlora-pager")))]
     spawner.spawn(battery_task(sampler).unwrap());
     #[cfg(feature = "pmic-axp2101")]
     spawner.spawn(battery_task(pmic).unwrap());
-    #[cfg(not(feature = "board-t-lora-pager"))]
+    #[cfg(not(feature = "board-tlora-pager"))]
     let button = Input::new(
         peripherals.GPIO0,
         InputConfig::default().with_pull(Pull::Up),
     );
-    #[cfg(not(feature = "board-t-lora-pager"))]
+    #[cfg(not(feature = "board-tlora-pager"))]
     spawner.spawn(button_task(button).unwrap());
 
     // ── GNSS: UART1 to the receiver, powered by the pump ─────────────────
@@ -4688,7 +4688,7 @@ async fn main(spawner: Spawner) {
         );
     }
 
-    #[cfg(feature = "board-t-lora-pager")]
+    #[cfg(feature = "board-tlora-pager")]
     {
         spawner.spawn(
             gnss_task(

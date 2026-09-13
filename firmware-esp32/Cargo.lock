@@ -1553,57 +1553,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "firmware-t-lora-pager"
-version = "0.1.0"
-dependencies = [
- "bt-hci",
- "critical-section",
- "embassy-embedded-hal 0.6.0",
- "embassy-executor",
- "embassy-futures",
- "embassy-net",
- "embassy-sync 0.8.0",
- "embassy-time",
- "embedded-graphics",
- "embedded-hal-bus",
- "embedded-io-async 0.7.0",
- "embedded-tls",
- "esp-alloc",
- "esp-bootloader-esp-idf",
- "esp-hal",
- "esp-println",
- "esp-radio",
- "esp-rtos",
- "esp-storage",
- "heapless 0.8.0",
- "heapless 0.9.3",
- "lora-phy",
- "rand 0.10.2",
- "rand_chacha",
- "rand_core 0.6.4",
- "static_cell",
- "trouble-host",
- "umsh-bridge-client",
- "umsh-bsp-esp32",
- "umsh-bsp-t-lora-pager",
- "umsh-core",
- "umsh-crypto",
- "umsh-gnss",
- "umsh-hal",
- "umsh-journal-store",
- "umsh-mac",
- "umsh-node",
- "umsh-pager-peripherals",
- "umsh-radio-loraphy",
- "umsh-sync",
- "umsh-ulcp",
- "umsh-ulcp-device",
- "umsh-ulcp-runtime",
- "umsh-ux-display-tracker",
- "umsh-ux-tracker",
-]
-
-[[package]]
 name = "firmware-tbeam-supreme"
 version = "0.1.0"
 dependencies = [
@@ -1646,6 +1595,57 @@ dependencies = [
  "umsh-pmic-axp2101",
  "umsh-radio-loraphy",
  "umsh-rtc-pcf8563",
+ "umsh-sync",
+ "umsh-ulcp",
+ "umsh-ulcp-device",
+ "umsh-ulcp-runtime",
+ "umsh-ux-display-tracker",
+ "umsh-ux-tracker",
+]
+
+[[package]]
+name = "firmware-tlora-pager"
+version = "0.1.0"
+dependencies = [
+ "bt-hci",
+ "critical-section",
+ "embassy-embedded-hal 0.6.0",
+ "embassy-executor",
+ "embassy-futures",
+ "embassy-net",
+ "embassy-sync 0.8.0",
+ "embassy-time",
+ "embedded-graphics",
+ "embedded-hal-bus",
+ "embedded-io-async 0.7.0",
+ "embedded-tls",
+ "esp-alloc",
+ "esp-bootloader-esp-idf",
+ "esp-hal",
+ "esp-println",
+ "esp-radio",
+ "esp-rtos",
+ "esp-storage",
+ "heapless 0.8.0",
+ "heapless 0.9.3",
+ "lora-phy",
+ "rand 0.10.2",
+ "rand_chacha",
+ "rand_core 0.6.4",
+ "static_cell",
+ "trouble-host",
+ "umsh-bridge-client",
+ "umsh-bsp-esp32",
+ "umsh-bsp-tlora-pager",
+ "umsh-core",
+ "umsh-crypto",
+ "umsh-gnss",
+ "umsh-hal",
+ "umsh-journal-store",
+ "umsh-mac",
+ "umsh-node",
+ "umsh-pager-peripherals",
+ "umsh-radio-loraphy",
  "umsh-sync",
  "umsh-ulcp",
  "umsh-ulcp-device",
@@ -3022,24 +3022,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "umsh-bsp-t-lora-pager"
-version = "0.1.0"
-dependencies = [
- "critical-section",
- "embassy-embedded-hal 0.6.0",
- "embassy-futures",
- "embassy-sync 0.8.0",
- "embassy-time",
- "embedded-graphics",
- "embedded-hal 1.0.0",
- "esp-hal",
- "lora-phy",
- "umsh-bsp-esp32",
- "umsh-gnss",
- "umsh-pager-peripherals",
-]
-
-[[package]]
 name = "umsh-bsp-tbeam-supreme"
 version = "0.1.0"
 dependencies = [
@@ -3059,6 +3041,24 @@ dependencies = [
  "umsh-mac",
  "umsh-pmic-axp2101",
  "umsh-radio-loraphy",
+]
+
+[[package]]
+name = "umsh-bsp-tlora-pager"
+version = "0.1.0"
+dependencies = [
+ "critical-section",
+ "embassy-embedded-hal 0.6.0",
+ "embassy-futures",
+ "embassy-sync 0.8.0",
+ "embassy-time",
+ "embedded-graphics",
+ "embedded-hal 1.0.0",
+ "esp-hal",
+ "lora-phy",
+ "umsh-bsp-esp32",
+ "umsh-gnss",
+ "umsh-pager-peripherals",
 ]
 
 [[package]]

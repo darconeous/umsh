@@ -81,7 +81,7 @@ pub fn bridge_queues() -> &'static mut super::bridge::Queues {
     }
 }
 
-#[cfg(feature = "board-t-lora-pager")]
+#[cfg(feature = "board-tlora-pager")]
 pub fn display_frame() -> &'static mut [u8; umsh_pager_peripherals::display::FRAME_BYTES] {
     unsafe {
         let ptr = storage::<[u8; umsh_pager_peripherals::display::FRAME_BYTES]>();

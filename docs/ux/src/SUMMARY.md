@@ -40,7 +40,7 @@
 - [SenseCAP Solar Node P1](hardware/sensecap-solar-p1.md)
 - [Heltec WiFi LoRa 32 V3](hardware/heltec-lora32-v3.md)
 - [LilyGO T-Beam Supreme](hardware/t-beam-supreme.md)
-- [LilyGO T-LoRa Pager](hardware/t-lora-pager.md)
+- [LilyGO T-LoRa Pager](hardware/tlora-pager.md)
 - [LilyGO T-Deck](hardware/t-deck.md)
 
 # Porting a New Device

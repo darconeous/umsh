@@ -1,5 +1,5 @@
 [package]
-name = "firmware-t-lora-pager"
+name = "firmware-tlora-pager"
 description = "LILYGO T-LoRa Pager SX1262 ULCP device firmware over native USB and BLE GATT, with GNSS and RTC"
 version.workspace = true
 edition.workspace = true
@@ -20,10 +20,10 @@ psram = []
 # and peripheral wiring, the radio's power and band limits, and the
 # static capacities the board's RAM budget allows. This block is kept
 # identical across the ESP32 device boards—only `default` differs.
-default = ["board-t-lora-pager", "psram", "wifi", "bridge-client"]
+default = ["board-tlora-pager", "psram", "wifi", "bridge-client"]
 board-heltec-v2 = ["chip-esp32", "radio-sx127x", "vext-gates-battery"]
 board-heltec-v3 = ["chip-esp32s3", "radio-sx126x"]
-board-t-lora-pager = ["chip-esp32s3", "radio-sx126x", "display-st7796", "wired-usb-serial-jtag", "gnss", "external-rtc"]
+board-tlora-pager = ["chip-esp32s3", "radio-sx126x", "display-st7796", "wired-usb-serial-jtag", "gnss", "external-rtc"]
 board-tbeam-supreme = [
     "chip-esp32s3",
     "radio-sx126x",
@@ -86,7 +86,7 @@ display-st7796 = []
 ble-debug = ["trouble-host/security-debug"]
 
 [[bin]]
-name = "firmware-t-lora-pager"
+name = "firmware-tlora-pager"
 # The protocol, security, transport-arbitration, and BLE implementation
 # live in the shared ESP32 tracker sources. Board differences are
 # selected by the capability + `board-tbeam-supreme` features above.
@@ -97,7 +97,7 @@ umsh-bridge-client = { path = "../../../crates/umsh-bridge-client", optional = t
 embedded-tls = { version = "=0.19.0", default-features = false, optional = true }
 embassy-net = { version = "0.8", default-features = false, optional = true, features = ["medium-ethernet", "proto-ipv4", "dhcpv4", "dhcpv4-hostname"] }
 umsh-bsp-esp32 = { path = "../../crates/umsh-bsp-esp32", features = ["esp32s3", "panic-handler"] }
-umsh-bsp-t-lora-pager = { path = "../../crates/umsh-bsp-t-lora-pager" }
+umsh-bsp-tlora-pager = { path = "../../crates/umsh-bsp-tlora-pager" }
 umsh-ulcp = { path = "../../../crates/umsh-ulcp", default-features = false }
 umsh-ulcp-device = { path = "../../../crates/umsh-ulcp-device", default-features = false }
 # Board-agnostic device runtime shared with the T-Echo/T-1000E images:

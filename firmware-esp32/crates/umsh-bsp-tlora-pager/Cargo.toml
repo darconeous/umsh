@@ -1,5 +1,5 @@
 [package]
-name = "umsh-bsp-t-lora-pager"
+name = "umsh-bsp-tlora-pager"
 description = "LILYGO T-LoRa Pager SX1262 board support"
 version.workspace = true
 edition.workspace = true

@@ -380,10 +380,10 @@ Meshtastic generic power behavior:
 
 ## UMSH display-tracker implementation
 
-The `firmware-t-lora-pager` image targets the **SX1262** version. It shares
+The `firmware-tlora-pager` image targets the **SX1262** version. It shares
 the ESP32 tracker runtime and enables PSRAM, Wi-Fi, and the bridge client in
-normal builds. Build with `make build-t-lora-pager`; upload with
-`make flash-t-lora-pager ESPFLASH_PORT=/dev/cu.usbmodem101` (substitute the
+normal builds. Build with `make build-tlora-pager`; upload with
+`make flash-tlora-pager ESPFLASH_PORT=/dev/cu.usbmodem101` (substitute the
 actual port). The flash target uses native-USB bootloader entry and a watchdog
 reset after uploading, then exits. If the board remains
 in the ROM downloader, tap RESET with BOOT released.

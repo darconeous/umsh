@@ -259,7 +259,7 @@ quirks = [
 # flashing page and disables their flash button.
 
 [[boards]]
-id = "t-lora-pager"
+id = "tlora-pager"
 name = "T-LoRa Pager"
 vendor = "LilyGO"
 category = "companion"
@@ -278,7 +278,7 @@ extras = "Backlit QWERTY keyboard, rotary encoder, haptics, SD card"
 vendor_url = "https://lilygo.cc/products/t-lora-pager"
 
 [boards.flash]
-make_target = "flash-t-lora-pager"
+make_target = "flash-tlora-pager"
 methods = ["esp-serial"]
 chip = "ESP32-S3"
 dfu_entry = "Connect native USB. If automatic entry fails, hold BOOT, tap RESET, then release BOOT. Tap RESET with BOOT released if the board remains in download mode after flashing."
