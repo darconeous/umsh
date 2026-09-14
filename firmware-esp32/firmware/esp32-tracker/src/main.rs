@@ -3289,6 +3289,7 @@ fn ui_status<'a>(name: &'a DeviceName, identity: &'a IdentityText) -> screen::St
     };
     screen::StatusModel {
         wifi,
+        pairing_highlight: (Instant::now().as_millis() / screen::PAIRING_BLINK_MS) % 2 == 0,
         firmware_version: env!("GIT_DESCRIBE"),
         device_name: core::str::from_utf8(name).unwrap_or(DEFAULT_DEVICE_NAME),
         // Boards with no receiver report nothing on both positioning
@@ -3399,23 +3400,15 @@ async fn render_message(
     let _ = display.flush().await;
 }
 
-/// Completes at the next minute boundary, so the clock row can advance.
-///
-/// The display layer's standing rule is that panels redraw on events
-/// and never on a timer, because a timer on a panel nobody is watching
-/// is a battery drain that reports nothing. A clock is the one thing
-/// that has to move on its own, so this is the sanctioned exception—
-/// bounded to exactly the case that needs it: it never completes unless
-/// the panel is already awake *and* the device knows what time it is
-/// (a clockless board never sets the wall clock, so this pends forever
-/// there). A panel that was asleep catches up on its next event-driven
-/// redraw.
-async fn clock_tick(awake: bool) {
+/// Redraw an awake panel at the next clock or pairing animation boundary.
+/// A sleeping panel never arms a timer and catches up when woken.
+async fn display_tick(awake: bool, pairing_delay: Option<u64>) {
     if !awake {
         core::future::pending::<()>().await;
     }
-    match umsh_hal::wall_clock::millis_to_next_minute() {
-        Some(millis) => Timer::after_millis(u64::from(millis)).await,
+    let clock_delay = umsh_hal::wall_clock::millis_to_next_minute().map(u64::from);
+    match clock_delay.into_iter().chain(pairing_delay).min() {
+        Some(millis) => Timer::after_millis(millis).await,
         None => core::future::pending().await,
     }
 }
@@ -3520,7 +3513,18 @@ async fn display_task(
                 select3(
                     UI_REFRESH.wait(),
                     BATTERY_UI_CHANGED.wait(),
-                    clock_tick(attention.accepts_redraw()),
+                    display_tick(
+                        attention.accepts_redraw(),
+                        if splash.is_active() {
+                            None
+                        } else {
+                            screen::pairing_animation_delay_ms(
+                                &model,
+                                &ui_status(&name, &identity),
+                                Instant::now().as_millis(),
+                            )
+                        },
+                    ),
                 ),
                 UI_NOTICE.wait(),
                 UI_WAKE.wait(),

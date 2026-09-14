@@ -158,6 +158,7 @@ fn status(
         queued: None,
         bonds: 3,
         pairing,
+        pairing_highlight: true,
         stats: StatsModel {
             tx_frames: 128,
             rx_frames: 4_071,
@@ -446,6 +447,92 @@ fn preview() {
         return;
     };
     let dir = std::path::Path::new(&dir);
+    // A compact sheet devoted to header packing and Bluetooth states.
+    for (layout, filename, on, off) in [
+        (
+            Layout::OLED_128X64,
+            "status-icons-oled.bmp",
+            [235, 240, 255],
+            [8, 10, 14],
+        ),
+        (
+            Layout::EPD_200X200,
+            "status-icons-epaper.bmp",
+            [20, 20, 20],
+            [244, 242, 236],
+        ),
+    ] {
+        let scale = 3;
+        let gap = 8;
+        let height = layout.top as u32 + layout.font.character_size.height + 2;
+        let mut canvas = Canvas::new(
+            3 * layout.size.width * scale + 4 * gap,
+            2 * height * scale + 3 * gap,
+            [40, 42, 48],
+        );
+        for (index, (level, charge, link, pairing, highlight)) in [
+            (None, None, LinkState::Disabled, PairingState::Closed, false),
+            (
+                None,
+                None,
+                LinkState::Advertising,
+                PairingState::Closed,
+                false,
+            ),
+            (
+                None,
+                Some(ChargeClass::Charging),
+                LinkState::Connected,
+                PairingState::Closed,
+                false,
+            ),
+            (
+                Some(75),
+                None,
+                LinkState::Connected,
+                PairingState::Closed,
+                false,
+            ),
+            (
+                Some(75),
+                Some(ChargeClass::Charging),
+                LinkState::Connected,
+                PairingState::Open { pin: None },
+                true,
+            ),
+            (
+                Some(75),
+                Some(ChargeClass::Charging),
+                LinkState::Connected,
+                PairingState::Open { pin: None },
+                false,
+            ),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let mut s = status(level, charge, pairing, link);
+            s.pairing_highlight = highlight;
+            s.wifi = Some(umsh_ux_display_tracker::wifi::WifiMenu {
+                enabled: true,
+                state: umsh_ux_display_tracker::wifi::WifiState::Connected,
+                ..Default::default()
+            });
+            let mut panel = Panel::new(Size::new(layout.size.width, height));
+            render_frame(&mut panel, &layout, &UiModel::new(MenuItems::all()), &s);
+            canvas.blit(
+                &panel,
+                (
+                    gap + index as u32 % 3 * (layout.size.width * scale + gap),
+                    gap + index as u32 / 3 * (height * scale + gap),
+                ),
+                scale,
+                on,
+                off,
+            );
+        }
+        canvas.write_bmp(&dir.join(filename));
+    }
     sheet(
         &Layout::TFT_480X222,
         1,

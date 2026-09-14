@@ -3295,6 +3295,8 @@ mod firmware {
     fn ui_status<'a>(name: &'a DeviceName, identity: &'a IdentityText) -> screen::StatusModel<'a> {
         screen::StatusModel {
             wifi: None,
+            pairing_highlight: cfg!(feature = "display-epd")
+                || (Instant::now().as_millis() / screen::PAIRING_BLINK_MS) % 2 == 0,
             firmware_version: env!("GIT_DESCRIBE"),
             device_name: core::str::from_utf8(name).unwrap_or(DEFAULT_DEVICE_NAME),
             settings: ui_settings(),
@@ -3466,24 +3468,16 @@ mod firmware {
         .await
     }
 
-    /// Completes at the next minute boundary, so a clock row can advance.
-    ///
-    /// The display layer's standing rule is that panels redraw on events
-    /// and never on a timer, because a timer on a bistable panel is a
-    /// battery drain that reports nothing. A clock is the one thing that
-    /// has to move on its own, so this is the sanctioned exception—and
-    /// it is bounded to exactly the case that needs it. It never
-    /// completes unless the panel is already awake (`awake`) *and* the
-    /// device knows what time it is, so a sleeping panel is never woken
-    /// by it and a device with no clock never arms it at all. A panel
-    /// that was asleep catches up on its next event-driven redraw.
+    /// Redraw an awake panel at the next clock or pairing animation boundary.
+    /// E-paper passes no animation deadline; sleeping panels never arm a timer.
     #[cfg(feature = "has-display")]
-    async fn clock_tick(awake: bool) {
+    async fn display_tick(awake: bool, pairing_delay: Option<u64>) {
         if !awake {
             core::future::pending::<()>().await;
         }
-        match umsh_hal::wall_clock::millis_to_next_minute() {
-            Some(millis) => Timer::after_millis(u64::from(millis)).await,
+        let clock_delay = umsh_hal::wall_clock::millis_to_next_minute().map(u64::from);
+        match clock_delay.into_iter().chain(pairing_delay).min() {
+            Some(millis) => Timer::after_millis(millis).await,
             None => core::future::pending().await,
         }
     }
@@ -3652,7 +3646,10 @@ mod firmware {
                     UI_REFRESH.wait(),
                     UI_NOTICE.wait(),
                     UI_ALERT_CHANGED.wait(),
-                    select(battery_ui_changed(), clock_tick(attention.accepts_redraw())),
+                    select(
+                        battery_ui_changed(),
+                        display_tick(attention.accepts_redraw(), None),
+                    ),
                 ),
                 DISPLAY_SHUTDOWN.wait(),
                 select(UI_SPLASH_DISMISS.wait(), lapse),
@@ -4245,7 +4242,18 @@ mod firmware {
                     select3(
                         UI_REFRESH.wait(),
                         battery_ui_changed(),
-                        clock_tick(attention.accepts_redraw()),
+                        display_tick(
+                            attention.accepts_redraw(),
+                            if splash.is_active() {
+                                None
+                            } else {
+                                screen::pairing_animation_delay_ms(
+                                    &model,
+                                    &ui_status(&name, &identity),
+                                    Instant::now().as_millis(),
+                                )
+                            },
+                        ),
                     ),
                     UI_NOTICE.wait(),
                     UI_WAKE.wait(),

@@ -86,9 +86,8 @@ pub const fn battery_segments(level_percent: u8) -> u8 {
 
 /// Battery indicator geometry, in pixels.
 ///
-/// The bolt slot is reserved whether or not a bolt is drawn, so plugging
-/// in a charger never moves the battery body. On a partial-refresh panel
-/// that keeps the changed region down to the bolt itself.
+/// The body stays anchored to the right edge as charging changes. Header
+/// layout measures only the visible portion, so absent parts leave no gap.
 #[derive(Clone, Copy, Debug)]
 pub struct BatteryIconMetrics {
     /// Outline of the battery body, border included.
@@ -143,6 +142,16 @@ impl BatteryIconMetrics {
     /// Total width the indicator occupies, bolt slot included.
     pub const fn zone_width(&self) -> u32 {
         self.bolt_width + self.spacing + self.body.width + self.nub.width
+    }
+
+    /// Visible width, excluding absent battery and charging indicators.
+    pub const fn occupied_width(&self, indicator: BatteryIndicator) -> u32 {
+        match (indicator.level_percent.is_some(), indicator.shows_bolt()) {
+            (true, true) => self.zone_width(),
+            (true, false) => self.body.width + self.nub.width,
+            (false, true) => self.solo_bolt.width,
+            (false, false) => 0,
+        }
     }
 }
 
@@ -321,6 +330,22 @@ pub enum PairingState {
     Closed,
 }
 
+/// Duration of each normal/inverse phase of the OLED pairing indicator.
+pub const PAIRING_BLINK_MS: u64 = 500;
+
+/// Next animation boundary, only when a pairing icon is actually on screen.
+/// Firmware calls this only for awake emissive panels, outside the boot splash.
+pub fn pairing_animation_delay_ms(
+    model: &UiModel,
+    status: &StatusModel<'_>,
+    now_ms: u64,
+) -> Option<u64> {
+    (model.page() != Page::Detail(MenuItem::About)
+        && matches!(status.pairing, PairingState::Open { .. })
+        && bluetooth_widget(status).is_some())
+    .then_some(PAIRING_BLINK_MS - now_ms % PAIRING_BLINK_MS)
+}
+
 /// Charge level and charging state, as far as the board can tell.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct BatteryIndicator {
@@ -415,6 +440,9 @@ pub struct StatusModel<'a> {
     /// moment the capacity matters.
     pub bonds: u8,
     pub pairing: PairingState,
+    /// Pairing alternates normal and inverse Bluetooth on emissive panels.
+    /// Persistent panels hold this true for a steady inverse pairing marker.
+    pub pairing_highlight: bool,
     pub stats: StatsModel,
     /// The local time to show in the header, or `None` when the device
     /// does not know what time it is.
@@ -1215,12 +1243,14 @@ where
     // difference between identifying one and guessing. The clock lives on
     // the status page instead, where a row costs nothing that was being
     // read.
-    let widgets = core::iter::once(StatusWidget::Battery(status.battery)).chain(
-        status
-            .wifi
-            .filter(|wifi| wifi.enabled)
-            .map(|wifi| StatusWidget::Wifi(wifi.state)),
-    );
+    let widgets = core::iter::once(StatusWidget::Battery(status.battery))
+        .chain(
+            status
+                .wifi
+                .filter(|wifi| wifi.enabled)
+                .map(|wifi| StatusWidget::Wifi(wifi.state)),
+        )
+        .chain(bluetooth_widget(status));
     let left = draw_status_widgets(target, layout, widgets);
     let room = (left - layout.left).max(0) as u32;
     draw_row(target, layout, 0, clip(layout, status.device_name, room));
@@ -1232,6 +1262,20 @@ where
 pub enum StatusWidget {
     Battery(BatteryIndicator),
     Wifi(WifiState),
+    Bluetooth { connected: bool, highlighted: bool },
+}
+
+fn bluetooth_widget(status: &StatusModel<'_>) -> Option<StatusWidget> {
+    if status.settings.bluetooth != Some(true)
+        || matches!(status.link, LinkState::Disabled | LinkState::OffWired)
+    {
+        return None;
+    }
+    Some(StatusWidget::Bluetooth {
+        connected: matches!(status.link, LinkState::Connected | LinkState::Attached),
+        highlighted: matches!(status.pairing, PairingState::Open { .. })
+            && status.pairing_highlight,
+    })
 }
 
 /// Draw as many widgets as fit and return the right edge available for the name.
@@ -1248,11 +1292,16 @@ where
     let scale = (layout.battery.body.height / 8).max(1);
     for widget in widgets {
         let size = match widget {
-            StatusWidget::Battery(_) => {
-                Size::new(layout.battery.zone_width(), layout.battery.body.height)
+            StatusWidget::Battery(battery) => {
+                let width = layout.battery.occupied_width(battery);
+                if width == 0 {
+                    continue;
+                }
+                Size::new(width, layout.battery.body.height)
             }
             StatusWidget::Wifi(WifiState::Off) => continue,
             StatusWidget::Wifi(_) => Size::new(11 * scale, 8 * scale),
+            StatusWidget::Bluetooth { .. } => Size::new(9 * scale, 9 * scale),
         };
         let left = right - size.width as i32;
         if left < layout.left {
@@ -1262,13 +1311,54 @@ where
         let at = Point::new(left, top);
         match widget {
             StatusWidget::Battery(battery) => {
-                draw_battery_icon(target, at, &layout.battery, &battery)
+                // The reusable battery renderer anchors its ink to the right
+                // of the maximum zone; only its occupied width belongs here.
+                let origin = at - Point::new((layout.battery.zone_width() - size.width) as i32, 0);
+                draw_battery_icon(target, origin, &layout.battery, &battery)
             }
             StatusWidget::Wifi(state) => draw_wifi_icon(target, at, scale, state),
+            StatusWidget::Bluetooth {
+                connected,
+                highlighted,
+            } => draw_bluetooth_icon(target, at, scale, connected, highlighted),
         }
         right = left - layout.battery.spacing as i32;
     }
     right
+}
+
+fn draw_bluetooth_icon<D>(target: &mut D, at: Point, scale: u32, connected: bool, highlighted: bool)
+where
+    D: DrawTarget<Color = BinaryColor>,
+{
+    // The Bluetooth rune, with side dots for a connected host. Inverting
+    // during pairing keeps the symbol legible and the header stationary.
+    let rows: [u16; 9] = [
+        0b000010000,
+        0b000011000,
+        0b001010100,
+        0b000111000,
+        if connected { 0b100010001 } else { 0b000010000 },
+        0b000111000,
+        0b001010100,
+        0b000011000,
+        0b000010000,
+    ];
+    for (y, row) in rows.iter().enumerate() {
+        for x in 0..9 {
+            let on = (row & (1 << (8 - x)) != 0) ^ highlighted;
+            let _ = Rectangle::new(
+                at + Point::new(x * scale as i32, y as i32 * scale as i32),
+                Size::new(scale, scale),
+            )
+            .into_styled(PrimitiveStyle::with_fill(if on {
+                BinaryColor::On
+            } else {
+                BinaryColor::Off
+            }))
+            .draw(target);
+        }
+    }
 }
 
 fn draw_wifi_icon<D>(target: &mut D, at: Point, scale: u32, state: WifiState)
@@ -1813,6 +1903,161 @@ mod tests {
     use super::*;
     use crate::menu::{Level, MenuItems, UiInput};
 
+    #[test]
+    fn status_icons_pack_against_visible_battery_parts() {
+        for layout in layouts() {
+            let metrics = layout.battery;
+            let scale = (metrics.body.height / 8).max(1);
+            let edge = layout.size.width as i32 - metrics.margin as i32;
+            for (level, charge, width) in [
+                (None, None, 0),
+                (None, Some(ChargeClass::Discharging), 0),
+                (None, Some(ChargeClass::Charging), metrics.solo_bolt.width),
+                (Some(0), None, metrics.body.width + metrics.nub.width),
+                (Some(75), Some(ChargeClass::Charging), metrics.zone_width()),
+            ] {
+                let battery = BatteryIndicator {
+                    level_percent: level,
+                    charge,
+                };
+                let mut panel = TestPanel::new(layout.size);
+                let left = draw_status_widgets(
+                    &mut panel,
+                    &layout,
+                    [
+                        StatusWidget::Battery(battery),
+                        StatusWidget::Wifi(WifiState::Off),
+                        StatusWidget::Wifi(WifiState::Connected),
+                    ],
+                );
+                let gap = if width == 0 { 0 } else { metrics.spacing };
+                let wifi_left = edge - (width + gap + 11 * scale) as i32;
+                assert_eq!(left, wifi_left - metrics.spacing as i32);
+                let mut expected = TestPanel::new(layout.size);
+                draw_battery_icon(
+                    &mut expected,
+                    layout.battery_zone().top_left,
+                    &metrics,
+                    &battery,
+                );
+                draw_wifi_icon(
+                    &mut expected,
+                    Point::new(
+                        wifi_left,
+                        layout.top
+                            + (layout.font.character_size.height as i32 - (8 * scale) as i32) / 2,
+                    ),
+                    scale,
+                    WifiState::Connected,
+                );
+                assert_eq!(panel.pixels, expected.pixels);
+            }
+            let mut empty = TestPanel::new(layout.size);
+            assert_eq!(
+                draw_status_widgets(
+                    &mut empty,
+                    &layout,
+                    [
+                        StatusWidget::Battery(BatteryIndicator::UNKNOWN),
+                        StatusWidget::Wifi(WifiState::Off),
+                    ]
+                ),
+                edge
+            );
+            assert_eq!(empty.lit_in(Rectangle::new(Point::zero(), layout.size)), 0);
+        }
+    }
+
+    #[test]
+    fn bluetooth_shows_connection_and_pairing_without_moving_the_header() {
+        for layout in layouts() {
+            let mut status = demo_status();
+            status.battery = BatteryIndicator::UNKNOWN;
+            let mut normal = TestPanel::new(layout.size);
+            draw_header(&mut normal, &layout, &status);
+            status.link = LinkState::Connected;
+            let mut connected = TestPanel::new(layout.size);
+            draw_header(&mut connected, &layout, &status);
+            assert_ne!(normal.pixels, connected.pixels);
+            status.link = LinkState::Attached;
+            let mut attached = TestPanel::new(layout.size);
+            draw_header(&mut attached, &layout, &status);
+            assert_eq!(connected.pixels, attached.pixels);
+            status.pairing = PairingState::Open { pin: None };
+            let mut pairing = TestPanel::new(layout.size);
+            draw_header(&mut pairing, &layout, &status);
+            assert_ne!(pairing.pixels, connected.pixels);
+            status.pairing_highlight = false;
+            let mut phase_off = TestPanel::new(layout.size);
+            draw_header(&mut phase_off, &layout, &status);
+            assert_eq!(phase_off.pixels, connected.pixels);
+            // The pairing phases change only the icon, never the name.
+            let edge = layout.size.width as i32 - layout.battery.margin as i32;
+            let icon_width = 9 * (layout.battery.body.height / 8).max(1);
+            for point in Rectangle::new(
+                Point::zero(),
+                Size::new(
+                    (edge - icon_width as i32) as u32,
+                    layout.font.character_size.height,
+                ),
+            )
+            .points()
+            {
+                assert_eq!(
+                    pairing.lit(point.x as u32, point.y as u32),
+                    connected.lit(point.x as u32, point.y as u32)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn pairing_animation_stops_when_the_icon_is_absent() {
+        let mut status = demo_status();
+        let mut model = UiModel::new(MenuItems::all());
+        assert_eq!(pairing_animation_delay_ms(&model, &status, 0), None);
+        status.pairing = PairingState::Open { pin: None };
+        for (now, expected) in [(0, 500), (499, 1), (500, 500), (1234, 266)] {
+            assert_eq!(
+                pairing_animation_delay_ms(&model, &status, now),
+                Some(expected)
+            );
+        }
+        for link in [LinkState::Disabled, LinkState::OffWired] {
+            status.link = link;
+            assert!(bluetooth_widget(&status).is_none());
+            assert_eq!(pairing_animation_delay_ms(&model, &status, 0), None);
+        }
+        status.link = LinkState::Advertising;
+        for enabled in [None, Some(false)] {
+            status.settings.bluetooth = enabled;
+            assert!(bluetooth_widget(&status).is_none());
+            assert_eq!(pairing_animation_delay_ms(&model, &status, 0), None);
+        }
+        status.settings.bluetooth = Some(true);
+        status.pairing = PairingState::LockedOut;
+        assert_eq!(pairing_animation_delay_ms(&model, &status, 0), None);
+        status.pairing = PairingState::Open { pin: None };
+        while model.page() != Page::Menu(MenuItem::Settings) {
+            model.apply(UiInput::Forward);
+        }
+        model.apply(UiInput::Select);
+        while model.page() != Page::Menu(MenuItem::About) {
+            model.apply(UiInput::Forward);
+        }
+        model.apply(UiInput::Select);
+        assert_eq!(pairing_animation_delay_ms(&model, &status, 0), None);
+    }
+
+    /// Battery-only assertions must allow other header content to reclaim
+    /// absent battery parts. Remove that content when inspecting battery ink.
+    fn battery_test_status() -> StatusModel<'static> {
+        let mut status = demo_status();
+        status.device_name = "";
+        status.settings.bluetooth = None;
+        status
+    }
+
     /// Largest panel in the class, bit-packed (480 × 222).
     const TEST_PANEL_BYTES: usize = 480 * 222 / 8;
 
@@ -1907,6 +2152,7 @@ mod tests {
             queued: Some(2),
             bonds: 1,
             pairing: PairingState::Closed,
+            pairing_highlight: true,
             stats: StatsModel {
                 tx_frames: 12,
                 rx_frames: 340,
@@ -2377,7 +2623,7 @@ mod tests {
             // One level from each of the five bands, lowest first.
             for level in [5, 25, 50, 75, 100] {
                 let mut panel = TestPanel::new(layout.size);
-                let mut status = demo_status();
+                let mut status = battery_test_status();
                 status.battery.level_percent = Some(level);
                 render_frame(
                     &mut panel,
@@ -2393,13 +2639,13 @@ mod tests {
             // An empty body means a flat pack, and only that. "No
             // reading" is said by drawing no indicator at all.
             let mut flat = TestPanel::new(layout.size);
-            let mut status = demo_status();
+            let mut status = battery_test_status();
             status.battery.level_percent = Some(0);
             render_frame(&mut flat, &layout, &UiModel::new(MenuItems::all()), &status);
             assert!(flat.lit_in(zone) > 0, "a flat pack drew no body at all");
 
             let mut unknown = TestPanel::new(layout.size);
-            let mut status = demo_status();
+            let mut status = battery_test_status();
             status.battery = BatteryIndicator::UNKNOWN;
             render_frame(
                 &mut unknown,
@@ -2415,9 +2661,8 @@ mod tests {
         }
     }
 
-    /// The bolt has its own reserved column, so a charger going in must
-    /// not shift the body—on the e-paper that is the difference between
-    /// re-inking a bolt and re-inking the whole header.
+    /// Adding the bolt expands the occupied width to the left while the
+    /// battery body remains anchored to the right edge.
     #[test]
     fn charging_adds_a_bolt_without_moving_the_body() {
         for layout in layouts() {
@@ -2438,12 +2683,12 @@ mod tests {
             );
 
             let mut idle = TestPanel::new(layout.size);
-            let mut status = demo_status();
+            let mut status = battery_test_status();
             status.battery.charge = Some(ChargeClass::Discharging);
             render_frame(&mut idle, &layout, &UiModel::new(MenuItems::all()), &status);
 
             let mut charging = TestPanel::new(layout.size);
-            let mut status = demo_status();
+            let mut status = battery_test_status();
             status.battery.charge = Some(ChargeClass::Charging);
             render_frame(
                 &mut charging,
@@ -2513,7 +2758,7 @@ mod tests {
             Size::new(layout.battery.bolt_width, zone.size.height),
         );
         let mut panel = TestPanel::new(layout.size);
-        let mut status = demo_status();
+        let mut status = battery_test_status();
         status.battery.charge = None;
         render_frame(
             &mut panel,
@@ -2533,7 +2778,7 @@ mod tests {
             let mut panel = TestPanel::new(layout.size);
             let mut status = demo_status();
             status.device_name = "a-very-long-device-name-that-runs-off-the-panel";
-            status.battery = BatteryIndicator::UNKNOWN;
+            status.battery.charge = Some(ChargeClass::Charging);
             render_frame(
                 &mut panel,
                 &layout,
@@ -2541,7 +2786,7 @@ mod tests {
                 &status,
             );
 
-            // Whatever is in the zone is the empty body and nothing else.
+            // Whatever is in the zone is the battery and bolt, without text.
             let mut bare = TestPanel::new(layout.size);
             let mut short = status;
             short.device_name = "x";
@@ -3201,7 +3446,7 @@ mod tests {
         for layout in layouts() {
             let zone = layout.battery_zone();
             let mut charging = TestPanel::new(layout.size);
-            let mut status = demo_status();
+            let mut status = battery_test_status();
             status.battery = BatteryIndicator {
                 level_percent: None,
                 charge: Some(ChargeClass::Charging),
@@ -3213,13 +3458,12 @@ mod tests {
                 &status,
             );
 
-            // Something is in the zone, and it is not the outline: an
-            // unknown-level pack that is *not* charging draws the body,
-            // and the two must not look alike.
+            // A charging pack with no level draws only a bolt; an unknown
+            // pack with no charging indication draws nothing.
             assert!(charging.lit_in(zone) > 0, "charging drew nothing at all");
 
             let mut unknown = TestPanel::new(layout.size);
-            let mut status = demo_status();
+            let mut status = battery_test_status();
             status.battery = BatteryIndicator::UNKNOWN;
             render_frame(
                 &mut unknown,

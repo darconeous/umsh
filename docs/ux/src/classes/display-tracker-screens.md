@@ -77,8 +77,11 @@ The header's status widgets occupy space from the right, ahead of the device
 name. Battery and charging retain their corner; WiFi appears beside them while
 enabled. A full fan means associated, a small fan means connecting, and a
 crossed fan means disconnected. Turning WiFi off removes its icon. The icon
-describes the WiFi link, not Internet or bridge availability. Widgets reserve
-their own width, and lower-priority widgets are omitted if they cannot fit.
+describes the WiFi link, not Internet or bridge availability. Only visible
+indicators consume width: an absent battery body or charging bolt leaves no
+reserved slot, and the remaining icons shift right. Bluetooth sits to the left
+of WiFi, or beside the power indicators when WiFi is off. Lower-priority
+widgets are omitted if they cannot fit.
 
 ### The right-hand column
 
@@ -281,11 +284,11 @@ glance.
 |---|---|
 | Battery body | A charge level is known; see [battery rules](../interaction-model/status-and-feedback.md#battery-indication) |
 | Bolt or plug | The pack is on external power |
-| Bluetooth | The Bluetooth radio is enabled |
+| Bluetooth | Bluetooth is advertising or has a connected host |
 | Position | The GNSS receiver is enabled |
 
-The Bluetooth and position glyphs are present when the subsystem is on and
-absent when it is off. This looks like a contradiction of
+The Bluetooth glyph is absent when disabled or suppressed by a wired host;
+the position glyph is absent when the receiver is off. This looks like a contradiction of
 [show only what departs from nominal](../principles.md#show-only-what-departs-from-nominal),
 and is not: these are modes the user switches from this menu, and their off
 states are precisely what explains a phone that cannot find the device or a
@@ -297,8 +300,12 @@ searching versus holding a fix. That is an honest distinction and the one a
 user waiting on a position actually wants. A board that cannot draw two forms
 shows the one glyph for enabled and says the rest on the Status screen.
 
-Connection state is not a header glyph. Whether a host is attached is a line on
-Status, because it is a fact about a session rather than a mode the user set.
+The Bluetooth symbol gains side dots when a host is connected, including when
+its session is attached. During an open pairing window, emissive panels blink
+the symbol between normal and inverse colors every half second. E-paper holds
+the inverse symbol steady to avoid repeated refreshes. Inversion keeps the
+symbol legible and the surrounding header stationary; the pairing PIN remains
+steady. Status also reports the host's session state in text.
 
 ## Status
 
