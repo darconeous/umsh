@@ -1274,6 +1274,7 @@ Code | Name                      | Requires                             | Define
 56   | `CAP_IPV6`                | —                                    | [IP Connectivity](ulcp-ip.md#capabilities)
 57   | `CAP_WIFI_AP`             | `CAP_WIFI_SCAN`                      | [Wi-Fi](ulcp-wifi.md#capabilities)
 58   | `CAP_BRIDGE_CLIENT`       | `CAP_REPEATER`; IP family requirement in prose | [Bridge Client](ulcp-bridge.md#capabilities)
+59   | `CAP_DISPLAY_MOTION_WAKE` | — | [Device Services](ulcp-device.md#display-motion-wake)
 515  | `CAP_PHY_LORA`            | —                                    | [Radio Control](ulcp-radio.md#capabilities)
 
 A device **MUST NOT** advertise a capability without also advertising the

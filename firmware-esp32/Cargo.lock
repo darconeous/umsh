@@ -1616,6 +1616,7 @@ dependencies = [
  "embassy-sync 0.8.0",
  "embassy-time",
  "embedded-graphics",
+ "embedded-hal-async",
  "embedded-hal-bus",
  "embedded-io-async 0.7.0",
  "embedded-tls",
@@ -1634,6 +1635,7 @@ dependencies = [
  "rand_core 0.6.4",
  "static_cell",
  "trouble-host",
+ "umsh-bhi260",
  "umsh-bridge-client",
  "umsh-bsp-esp32",
  "umsh-bsp-tlora-pager",
@@ -1643,6 +1645,7 @@ dependencies = [
  "umsh-hal",
  "umsh-journal-store",
  "umsh-mac",
+ "umsh-motion",
  "umsh-node",
  "umsh-pager-peripherals",
  "umsh-radio-loraphy",
@@ -2955,6 +2958,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e87a2ed6b42ec5e28cc3b94c09982969e9227600b2e3dcbc1db927a84c06bd69"
 
 [[package]]
+name = "umsh-bhi260"
+version = "0.1.0"
+dependencies = [
+ "embedded-hal-async",
+]
+
+[[package]]
 name = "umsh-bridge-client"
 version = "0.1.0"
 dependencies = [
@@ -3155,6 +3165,13 @@ dependencies = [
  "umsh-crypto",
  "umsh-hal",
  "umsh-sync",
+]
+
+[[package]]
+name = "umsh-motion"
+version = "0.1.0"
+dependencies = [
+ "embassy-sync 0.8.0",
 ]
 
 [[package]]

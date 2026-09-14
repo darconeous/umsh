@@ -1,0 +1,16 @@
+[package]
+name = "umsh-motion"
+description = "Board-independent motion observations and display wake policy"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[features]
+service = ["dep:embassy-sync"]
+
+[dependencies]
+embassy-sync = { version = "0.8", optional = true }
+
+[dev-dependencies]
+critical-section = { version = "1", features = ["std"] }

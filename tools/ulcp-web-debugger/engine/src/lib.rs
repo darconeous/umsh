@@ -69,6 +69,7 @@ pub fn web_sim_config() -> umsh_ulcp_simdev::SessionConfig {
         // is switched off.
         time: Some(TimeConfig),
         gnss: Some(GnssConfig::DEFAULT),
+        display_motion_wake: false,
         illuminance: true,
         // The simulator has no radio at all, but it does have a
         // reachability switch the debugger can flip, which is the whole

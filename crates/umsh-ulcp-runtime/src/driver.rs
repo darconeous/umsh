@@ -167,6 +167,8 @@ pub enum Setting {
     Bluetooth,
     /// `PROP_GNSS_ENABLED`: whether the receiver is powered.
     Gnss,
+    /// Orientation-qualified display wake.
+    MotionWake,
     /// `PROP_GNSS_IDENT_UPDATE`: whether position goes out in what the
     /// device advertises.
     ShareLocation,
@@ -294,6 +296,7 @@ pub struct DevDomainSnapshot {
     /// the same path—the mirror is published whenever the device domain
     /// moves, which is exactly the set of moments this can change.
     pub gnss_enabled: bool,
+    pub display_motion_wake_enabled: bool,
     /// `PROP_GNSS_IDENT_UPDATE`: whether fixes refresh the advertised
     /// node identity's location.
     pub gnss_ident_update: bool,
@@ -1054,6 +1057,7 @@ fn sync_dev_domain<A, S, const TXQ: usize, E>(
         startup_beacon: session.startup_beacon(),
         tz_offset_min: session.tz_offset_min(),
         gnss_enabled: session.gnss_enabled(),
+        display_motion_wake_enabled: session.display_motion_wake_enabled(),
         gnss_ident_update: session.gnss_ident_update(),
         gnss_ident_precision: session.gnss_ident_precision(),
         gnss_time_trust: session.gnss_time_trust(),
@@ -1631,6 +1635,9 @@ where
                     Setting::Wifi => session.toggle_wifi(&mut |frame: &[u8]| emitter.push(frame)),
                     Setting::Bluetooth => {
                         session.toggle_ble(&mut |frame: &[u8]| emitter.push(frame))
+                    }
+                    Setting::MotionWake => {
+                        session.toggle_display_motion_wake(&mut |frame: &[u8]| emitter.push(frame))
                     }
                     Setting::Gnss => session.toggle_gnss(&mut |frame: &[u8]| emitter.push(frame)),
                     Setting::ShareLocation => {

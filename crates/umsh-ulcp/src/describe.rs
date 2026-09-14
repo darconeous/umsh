@@ -95,6 +95,7 @@ pub const fn property_name(key: u32) -> Option<&'static str> {
         prop::BLE_BOND_COUNT => "PROP_BLE_BOND_COUNT",
         prop::BLE_LINK => "PROP_BLE_LINK",
         prop::BLE_PAIRING => "PROP_BLE_PAIRING",
+        prop::DISPLAY_MOTION_WAKE_ENABLED => "PROP_DISPLAY_MOTION_WAKE_ENABLED",
         prop::WIFI_ENABLED => "PROP_WIFI_ENABLED",
         prop::BRIDGE_ENABLED => "PROP_BRIDGE_ENABLED",
         prop::BRIDGE_HOST => "PROP_BRIDGE_HOST",
@@ -209,6 +210,7 @@ pub const PROPERTIES: &[u32] = &[
     prop::BLE_BOND_COUNT,
     prop::BLE_LINK,
     prop::BLE_PAIRING,
+    prop::DISPLAY_MOTION_WAKE_ENABLED,
     prop::WIFI_ENABLED,
     prop::WIFI_NETWORKS,
     prop::WIFI_NETWORK,
@@ -321,7 +323,7 @@ pub const fn property_type(key: u32) -> Option<PropertyType> {
         prop::IDENT_LOCATION | prop::GNSS_LOCATION => Bytes,
         // A minimal-length signed integer, which is its own encoding.
         prop::IDENT_ALTITUDE => Bytes,
-        prop::GNSS_ENABLED => Bool,
+        prop::GNSS_ENABLED | prop::DISPLAY_MOTION_WAKE_ENABLED => Bool,
         prop::GNSS_ALTITUDE => I32,
         prop::GNSS_FIX => U8,
         prop::GNSS_PRECISION => U16,
@@ -398,6 +400,7 @@ pub const fn capability_name(code: u32) -> Option<&'static str> {
         cap::GNSS => "GNSS",
         cap::ADVERT => "ADVERT",
         cap::ILLUMINANCE => "ILLUMINANCE",
+        cap::DISPLAY_MOTION_WAKE => "DISPLAY_MOTION_WAKE",
         cap::MAC_BACKHAUL => "MAC_BACKHAUL",
         cap::ADMIN => "ADMIN",
         cap::CMD_MULTI => "CMD_MULTI",
@@ -557,6 +560,17 @@ mod tests {
             FrameDescription(&buf[..len]).to_string(),
             "PropGet tid=3 prop 60000 (0 value bytes)"
         );
+    }
+
+    #[test]
+    fn motion_wake_has_a_bool_property_and_capability_name() {
+        assert_eq!(
+            property_name(4875),
+            Some("PROP_DISPLAY_MOTION_WAKE_ENABLED")
+        );
+        assert_eq!(property_type(4875), Some(PropertyType::Bool));
+        assert!(PROPERTIES.contains(&4875));
+        assert_eq!(capability_name(59), Some("DISPLAY_MOTION_WAKE"));
     }
 
     #[test]

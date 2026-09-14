@@ -307,6 +307,17 @@ impl Attention {
         Some(Transition::Woke)
     }
 
+    /// A qualified motion episode only wakes a fully lapsed display. Motion
+    /// during active and dim states leaves the existing deadline untouched.
+    #[must_use]
+    pub fn wake_from_motion(&mut self, now_ms: u64) -> Option<Transition> {
+        if self.is_lapsed() {
+            self.wake(now_ms)
+        } else {
+            None
+        }
+    }
+
     /// Assert or release a hold.
     ///
     /// Asserting one also counts as activity, so an event like a pairing
@@ -457,6 +468,20 @@ mod tests {
         assert_eq!(a.poll(30_000), Some(Transition::Lapsed));
         assert_eq!(a.state(), DisplayState::Lapsed);
         assert_eq!(a.next_deadline(), None);
+    }
+
+    #[test]
+    fn motion_never_refreshes_active_or_dim_attention() {
+        let mut a = oled();
+        assert_eq!(a.wake_from_motion(19_000), None);
+        assert_eq!(a.next_deadline(), Some(20_000));
+        assert_eq!(a.poll(20_000), Some(Transition::Dimming));
+        assert_eq!(a.wake_from_motion(20_500), None);
+        ramp(&mut a, 29_999);
+        assert_eq!(a.next_deadline(), Some(30_000));
+        assert_eq!(a.poll(30_000), Some(Transition::Lapsed));
+        assert_eq!(a.wake_from_motion(31_000), Some(Transition::Woke));
+        assert_eq!(a.next_deadline(), Some(51_000));
     }
 
     /// A press is spent bringing the panel back from the first step of

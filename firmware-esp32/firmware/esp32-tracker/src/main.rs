@@ -434,6 +434,10 @@ fn session_config() -> SessionConfig {
         #[cfg(feature = "gnss")]
         gnss: Some(GnssConfig::DEFAULT),
         // No ambient light sensor.
+        display_motion_wake: cfg!(all(
+            feature = "board-tlora-pager",
+            not(feature = "motion-qualification")
+        )),
         illuminance: false,
         // The ESP32-S3 radio is always up on this board, but the
         // peripheral can be made unfindable: see `advertising_permitted`.
@@ -713,6 +717,19 @@ static QUEUED_FRAMES: AtomicU16 = AtomicU16::new(0);
 /// transition. Restarts the display-attention timeout and relights a
 /// panel that has gone dark.
 static UI_WAKE: Signal<CriticalSectionRawMutex, ()> = Signal::new();
+
+/// Motion has its own notification and never extends an active/dim timeout.
+async fn motion_wake() {
+    #[cfg(all(feature = "board-tlora-pager", not(feature = "motion-qualification")))]
+    loop {
+        let wake = pager::motion::SERVICE.display_wake.wait().await;
+        if pager::motion::SERVICE.accept(wake, Instant::now().as_millis()) {
+            return;
+        }
+    }
+    #[cfg(any(not(feature = "board-tlora-pager"), feature = "motion-qualification"))]
+    core::future::pending::<()>().await;
+}
 /// Resolved menu gestures, button task → display task.
 static UI_INPUT_CH: Channel<CriticalSectionRawMutex, UiInput, 8> = Channel::new();
 /// Latched at the first press, including before display initialization.
@@ -771,10 +788,28 @@ static BATTERY_ANNOUNCE: Watch<CriticalSectionRawMutex, u16, 1> = Watch::new();
 #[cfg(any(feature = "pmic-axp2101", feature = "board-tlora-pager"))]
 static BATTERY_ANNOUNCE: Watch<CriticalSectionRawMutex, board_battery::Reading, 1> = Watch::new();
 
+// Keep Pager diagnostics compact enough to preserve the required stack reserve.
+// Best-effort diagnostics may be truncated; sensing never depends on logging.
+#[cfg(all(feature = "ble-debug", feature = "board-tlora-pager"))]
+const DEBUG_LINE_CAPACITY: usize = if cfg!(feature = "motion-qualification") {
+    176
+} else {
+    64
+};
+#[cfg(all(feature = "ble-debug", not(feature = "board-tlora-pager")))]
+const DEBUG_LINE_CAPACITY: usize = 192;
 #[cfg(feature = "ble-debug")]
-type DebugLine = heapless::String<192>;
+type DebugLine = heapless::String<DEBUG_LINE_CAPACITY>;
+#[cfg(all(feature = "ble-debug", feature = "board-tlora-pager"))]
+const DEBUG_QUEUE_CAPACITY: usize = if cfg!(feature = "motion-qualification") {
+    2
+} else {
+    1
+};
+#[cfg(all(feature = "ble-debug", not(feature = "board-tlora-pager")))]
+const DEBUG_QUEUE_CAPACITY: usize = 32;
 #[cfg(feature = "ble-debug")]
-static DEBUG_CH: Channel<CriticalSectionRawMutex, DebugLine, 32> = Channel::new();
+static DEBUG_CH: Channel<CriticalSectionRawMutex, DebugLine, DEBUG_QUEUE_CAPACITY> = Channel::new();
 #[cfg(feature = "ble-debug")]
 static DEBUG_DROPPED: AtomicU32 = AtomicU32::new(0);
 
@@ -1773,6 +1808,11 @@ impl DeviceEnv for BoardDeviceEnv {
                 update_identity: snapshot.gnss_ident_update,
                 identity_precision: snapshot.gnss_ident_precision,
             },
+        );
+        #[cfg(all(feature = "board-tlora-pager", not(feature = "motion-qualification")))]
+        pager::motion::SERVICE.request(
+            umsh_motion::service::Consumer::Display,
+            snapshot.display_motion_wake_enabled,
         );
         device_node::publish_snapshot(snapshot);
         // Every switch the settings menu shows is read back out of the
@@ -3201,6 +3241,10 @@ fn board_menu_items() -> MenuItems {
             .without(MenuItem::WifiToggle)
             .without(MenuItem::WifiNetworks);
     }
+    #[cfg(any(not(feature = "board-tlora-pager"), feature = "motion-qualification"))]
+    {
+        items = items.without(MenuItem::MotionWake);
+    }
     items
 }
 
@@ -3210,6 +3254,7 @@ const fn ulcp_setting(id: ToggleId) -> Setting {
         ToggleId::Wifi => Setting::Wifi,
         ToggleId::Bluetooth => Setting::Bluetooth,
         ToggleId::Gnss => Setting::Gnss,
+        ToggleId::MotionWake => Setting::MotionWake,
         ToggleId::ShareLocation => Setting::ShareLocation,
         ToggleId::Forwarding => Setting::Forwarding,
     }
@@ -3295,6 +3340,10 @@ fn ui_status<'a>(name: &'a DeviceName, identity: &'a IdentityText) -> screen::St
         // Boards with no receiver report nothing on both positioning
         // switches rather than a guess—and neither is on their menu.
         settings: screen::SettingsModel {
+            #[cfg(all(feature = "board-tlora-pager", not(feature = "motion-qualification")))]
+            motion_wake: Some(pager::motion::SERVICE.control().display()),
+            #[cfg(any(not(feature = "board-tlora-pager"), feature = "motion-qualification"))]
+            motion_wake: None,
             wifi: wifi.map(|wifi| wifi.enabled),
             bluetooth: Some(BLE_ENABLED.load(Ordering::Acquire)),
             #[cfg(not(feature = "gnss"))]
@@ -3527,7 +3576,7 @@ async fn display_task(
                     ),
                 ),
                 UI_NOTICE.wait(),
-                UI_WAKE.wait(),
+                select(UI_WAKE.wait(), motion_wake()),
             ),
             DISPLAY_SHUTDOWN.wait(),
             select(UI_SPLASH_DISMISS.wait(), lapse),
@@ -3598,9 +3647,23 @@ async fn display_task(
                 // A wake on its own changes no content—a lit panel is
                 // already showing the truth, and the events that do
                 // change something raise `UI_REFRESH` alongside this.
-                Either3::Third(()) => {
+                Either3::Third(Either::First(())) => {
                     transition = attention.wake(Instant::now().as_millis()).or(transition);
                     redraw = transition.is_some();
+                }
+                Either3::Third(Either::Second(())) => {
+                    if attention.is_lapsed() {
+                        transition = attention
+                            .wake_from_motion(Instant::now().as_millis())
+                            .or(transition);
+                        redraw = transition.is_some();
+                        debug_log(format_args!("motion: display wake"));
+                    } else {
+                        debug_log(format_args!(
+                            "motion: consumed while {:?}",
+                            attention.state()
+                        ));
+                    }
                 }
             },
             Either4::Third(()) => {
@@ -4179,6 +4242,10 @@ async fn main(spawner: Spawner) {
             .unwrap(),
         );
         spawner.spawn(pager::battery_task(pmu_bus).unwrap());
+        #[cfg(feature = "motion-qualification")]
+        spawner.spawn(pager::motion_qualification::task(pmu_bus, peripherals.GPIO8).unwrap());
+        #[cfg(not(feature = "motion-qualification"))]
+        spawner.spawn(pager::motion::task(pmu_bus, peripherals.GPIO8).unwrap());
         spawner.spawn(pager::heartbeat_task(rtc, sleep.deep_sleep, expander, pmu_bus).unwrap());
     }
 

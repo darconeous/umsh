@@ -9,6 +9,14 @@ use umsh_pager_peripherals::{
     power::{Battery, Expander, LowBattery},
 };
 
+#[cfg(feature = "motion-qualification")]
+#[path = "pager_motion_qualification.rs"]
+pub mod motion_qualification;
+
+#[cfg(not(feature = "motion-qualification"))]
+#[path = "pager_motion.rs"]
+pub mod motion;
+
 static I2C_BUS: StaticCell<board::I2cBus> = StaticCell::new();
 static EXPANDER: StaticCell<board::SharedExpander> = StaticCell::new();
 static SPI_BUS: StaticCell<board::SpiBus> = StaticCell::new();
@@ -370,6 +378,13 @@ pub async fn heartbeat_task(
         {
             break;
         }
+    }
+    #[cfg(not(feature = "motion-qualification"))]
+    {
+        rtc.rwdt.feed();
+        motion::SERVICE.shutdown();
+        let _ = with_timeout(Duration::from_secs(7), motion::SERVICE.stopped.wait()).await;
+        rtc.rwdt.feed();
     }
     DEVICE_CTL.shutdown();
     DISPLAY_SHUTDOWN_DONE.reset();

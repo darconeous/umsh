@@ -118,6 +118,7 @@ Id   | Mnemonic                                                                 
 4872 | [`PROP_BLE_BOND_COUNT`](ulcp-ble.md#prop-ble-bond-count)                              | Get, Set, Is               | `CAP_BLE`
 4873 | [`PROP_BLE_LINK`](ulcp-ble.md#prop-ble-link)                                          | Get, Is                    | `CAP_BLE`
 4874 | [`PROP_BLE_PAIRING`](ulcp-ble.md#prop-ble-pairing)                                    | Get, Set, Is               | `CAP_BLE`
+4875 | [`PROP_DISPLAY_MOTION_WAKE_ENABLED`](ulcp-device.md#prop-display-motion-wake-enabled) | Get, Set, Is | `CAP_DISPLAY_MOTION_WAKE`
 4880 | [`PROP_WIFI_ENABLED`](ulcp-wifi.md#prop-wifi-enabled)                                 | Get, Set, Is               | `CAP_WIFI`
 4881 | [`PROP_WIFI_NETWORKS`](ulcp-wifi.md#prop-wifi-networks)                               | Get, Set, Insert, Remove   | `CAP_WIFI`
 4882 | [`PROP_WIFI_NETWORK`](ulcp-wifi.md#prop-wifi-network)                                 | Get, Set, Is               | `CAP_WIFI`
@@ -180,6 +181,7 @@ Code | Name                      | Defined in
 56   | `CAP_IPV6`                | [IP Connectivity](ulcp-ip.md#capabilities)
 57   | `CAP_WIFI_AP`             | [Wi-Fi](ulcp-wifi.md#capabilities)
 58   | `CAP_BRIDGE_CLIENT`       | [Bridge Client](ulcp-bridge.md#capabilities)
+59   | `CAP_DISPLAY_MOTION_WAKE` | [Device Services](ulcp-device.md#display-motion-wake)
 515  | `CAP_PHY_LORA`            | [Radio Control](ulcp-radio.md#capabilities)
 
 ## Status Codes

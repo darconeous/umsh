@@ -81,6 +81,7 @@ fn session_config() -> SessionConfig {
         alert: None,
         time: None,
         gnss: None,
+        display_motion_wake: false,
         illuminance: false,
         ble: false,
         ble_pairing: false,

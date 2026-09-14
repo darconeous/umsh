@@ -470,6 +470,7 @@ pub struct SettingsModel {
     pub wifi: Option<bool>,
     pub bluetooth: Option<bool>,
     pub gnss: Option<bool>,
+    pub motion_wake: Option<bool>,
     pub share_location: Option<bool>,
     pub forwarding: Option<bool>,
 }
@@ -1678,6 +1679,7 @@ const fn menu_label(item: MenuItem) -> &'static str {
         MenuItem::StartPairing => "Start pairing",
         MenuItem::ClearBonds => "Clear bonds",
         MenuItem::GnssToggle => "GNSS",
+        MenuItem::MotionWake => "Motion wake",
         MenuItem::ShareLocation => "Share location",
         MenuItem::Forwarding => "Forwarding",
         MenuItem::Stats => "Statistics",
@@ -1741,6 +1743,7 @@ fn toggle_label(item: MenuItem, settings: &SettingsModel) -> &'static str {
         EntryKind::Toggle(ToggleId::Bluetooth) => settings.bluetooth,
         EntryKind::Toggle(ToggleId::Wifi) => settings.wifi,
         EntryKind::Toggle(ToggleId::Gnss) => settings.gnss,
+        EntryKind::Toggle(ToggleId::MotionWake) => settings.motion_wake,
         EntryKind::Toggle(ToggleId::ShareLocation) => settings.share_location,
         EntryKind::Toggle(ToggleId::Forwarding) => settings.forwarding,
         _ => return "",
@@ -2165,6 +2168,7 @@ mod tests {
             // state every panel must render as no clock at all.
             clock: None,
             settings: SettingsModel {
+                motion_wake: None,
                 wifi: None,
                 bluetooth: Some(true),
                 gnss: Some(false),
@@ -3259,6 +3263,7 @@ mod tests {
     #[test]
     fn a_toggle_reports_its_state_and_an_unknown_one_reports_nothing() {
         let settings = SettingsModel {
+            motion_wake: None,
             wifi: None,
             bluetooth: Some(true),
             gnss: Some(false),
@@ -3288,6 +3293,7 @@ mod tests {
     #[test]
     fn a_row_says_whether_select_acts_or_asks_again() {
         let settings = SettingsModel {
+            motion_wake: None,
             wifi: None,
             bluetooth: Some(true),
             gnss: Some(false),
@@ -3323,6 +3329,7 @@ mod tests {
     #[test]
     fn a_narrow_row_gives_way_at_the_label() {
         let settings = SettingsModel {
+            motion_wake: None,
             wifi: None,
             bluetooth: None,
             gnss: None,

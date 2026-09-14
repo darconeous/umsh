@@ -55,6 +55,7 @@ Settings            names itself; Select enters
         Back                            <
         WiFi            toggle          on / off
         Saved networks  Select opens    >
+    Motion wake         toggle          on / off
     About               Select opens    >
 ```
 
@@ -63,6 +64,18 @@ The third column is what the row shows at its right edge; see
 
 Each level is a wrapping list. Next and Previous walk it, and Select does
 whatever the highlighted entry defines.
+
+### Motion wake
+
+Motion wake appears on the T-LoRa Pager and defaults on. A screen-up pickup can
+wake a fully dark display; movement does not extend its active or dim timeout.
+The wake range reaches 45° when the keyboard is lower than the screen, as when
+reading in your hands. Sideways and opposite-direction tilts retain a 30° limit.
+Small vibrations are filtered before waking; an exceptionally slow pickup may
+not create enough movement to qualify.
+Turning the setting off cancels pending automatic wakes. It uses the same local
+toggle persistence rules as the other switches. Other boards omit this entry
+until their sensor and mounting orientation are qualified.
 
 ### WiFi
 

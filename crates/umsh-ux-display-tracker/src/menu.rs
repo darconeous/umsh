@@ -111,6 +111,7 @@ pub enum ToggleId {
     Wifi,
     Bluetooth,
     Gnss,
+    MotionWake,
     ShareLocation,
     Forwarding,
 }
@@ -163,6 +164,8 @@ pub enum MenuItem {
     Radio,
     /// The WiFi radio and saved networks.
     Wifi,
+    /// Wake a dark display for screen-up movement.
+    MotionWake,
     /// The UMSH logo and this firmware's version.
     About,
 
@@ -198,7 +201,7 @@ pub enum MenuItem {
 
 impl MenuItem {
     /// Every item, in navigation order.
-    pub const ALL: [MenuItem; 22] = [
+    pub const ALL: [MenuItem; 23] = [
         MenuItem::Status,
         MenuItem::Identity,
         MenuItem::Settings,
@@ -207,6 +210,7 @@ impl MenuItem {
         MenuItem::Gnss,
         MenuItem::Radio,
         MenuItem::Wifi,
+        MenuItem::MotionWake,
         MenuItem::About,
         MenuItem::BluetoothBack,
         MenuItem::BluetoothToggle,
@@ -240,6 +244,7 @@ impl MenuItem {
             | MenuItem::Gnss
             | MenuItem::Radio
             | MenuItem::Wifi
+            | MenuItem::MotionWake
             | MenuItem::About => Level::Settings,
             MenuItem::BluetoothBack
             | MenuItem::BluetoothToggle
@@ -273,6 +278,7 @@ impl MenuItem {
             | MenuItem::RadioBack => EntryKind::Back,
             MenuItem::BluetoothToggle => EntryKind::Toggle(ToggleId::Bluetooth),
             MenuItem::GnssToggle => EntryKind::Toggle(ToggleId::Gnss),
+            MenuItem::MotionWake => EntryKind::Toggle(ToggleId::MotionWake),
             MenuItem::ShareLocation => EntryKind::Toggle(ToggleId::ShareLocation),
             MenuItem::Forwarding => EntryKind::Toggle(ToggleId::Forwarding),
             MenuItem::StartPairing => EntryKind::Action(UiEffect::StartPairing),

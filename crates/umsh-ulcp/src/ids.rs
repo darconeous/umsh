@@ -366,6 +366,9 @@ pub mod prop {
     /// of the saved snapshot, and untouched by `CMD_RST`.
     pub const BLE_PAIRING: u32 = 4874;
 
+    /// Saved orientation-qualified display wake, BOOL, default true.
+    pub const DISPLAY_MOTION_WAKE_ENABLED: u32 = 4875;
+
     /// Whether the Wi-Fi station is up (`PROP_WIFI_ENABLED`), BOOL,
     /// default 0. Requires `CAP_WIFI`.
     ///
@@ -703,6 +706,9 @@ pub mod cap {
     pub const WIFI_AP: u32 = 57;
     /// Autonomous bridge client. Requires a node with repeater capability and IP.
     pub const BRIDGE_CLIENT: u32 = 58;
+
+    /// Orientation-qualified display wake is supported.
+    pub const DISPLAY_MOTION_WAKE: u32 = 59;
 }
 
 /// Whether a property is writable by a mesh administrator.

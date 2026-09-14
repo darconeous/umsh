@@ -239,6 +239,8 @@ pub struct SessionConfig {
     /// `CAP_ILLUMINANCE` is advertised and `PROP_ILLUMINANCE` samples on
     /// every read; otherwise the property is unknown.
     pub illuminance: bool,
+    /// Orientation-qualified display wake; enabled by default when supported.
+    pub display_motion_wake: bool,
     /// Whether the device has a Bluetooth transport it can make
     /// unreachable on demand. When set, `CAP_BLE` is advertised and
     /// `PROP_BLE_ENABLED` and `PROP_BLE_LINK` exist; otherwise both
@@ -804,6 +806,7 @@ struct DeviceDomain {
     /// A board whose job is to know where it is says otherwise through
     /// [`GnssConfig::default_enabled`].
     gnss_enabled: bool,
+    display_motion_wake_enabled: bool,
     /// `PROP_GNSS_IDENT_UPDATE`: whether fixes refresh the advertised node
     /// identity's location. Off by default: broadcasting where you are is
     /// a decision, not a default.
@@ -880,6 +883,7 @@ impl DeviceDomain {
             startup_beacon: true,
             tz_offset_min: 0,
             gnss_enabled: config.gnss.is_some_and(|gnss| gnss.default_enabled),
+            display_motion_wake_enabled: config.display_motion_wake,
             gnss_ident_update: false,
             gnss_ident_precision: DEFAULT_IDENT_PRECISION,
             gnss_time_trust: true,
@@ -2001,6 +2005,7 @@ const SAVED_SCHEMA: &[SavedProperty] = &[
     saved(prop::GNSS_IDENT_PRECISION, ApplyPhase::Config, false),
     saved(prop::GNSS_TIME_TRUST, ApplyPhase::Config, false),
     saved(prop::BLE_ENABLED, ApplyPhase::Config, false),
+    saved(prop::DISPLAY_MOTION_WAKE_ENABLED, ApplyPhase::Config, false),
     // The station's configuration and none of its behavior: which
     // network to use, not the credential for it, and not what the
     // driver made of either. The table those names index is the
@@ -2135,6 +2140,7 @@ struct SavedState {
     startup_beacon: bool,
     tz_offset_min: i16,
     gnss_enabled: bool,
+    display_motion_wake_enabled: bool,
     gnss_ident_update: bool,
     gnss_ident_precision: u8,
     gnss_time_trust: bool,
@@ -2181,6 +2187,7 @@ impl SavedState {
             startup_beacon: device.startup_beacon,
             tz_offset_min: device.tz_offset_min,
             gnss_enabled: device.gnss_enabled,
+            display_motion_wake_enabled: device.display_motion_wake_enabled,
             gnss_ident_update: device.gnss_ident_update,
             gnss_ident_precision: device.gnss_ident_precision,
             gnss_time_trust: device.gnss_time_trust,
@@ -2235,6 +2242,7 @@ impl SavedState {
             // boots its receiver on has to see that here too, or a
             // snapshot saved while it was on would restore it off.
             gnss_enabled: config.gnss.is_some_and(|gnss| gnss.default_enabled),
+            display_motion_wake_enabled: config.display_motion_wake,
             gnss_ident_update: false,
             gnss_ident_precision: DEFAULT_IDENT_PRECISION,
             gnss_time_trust: true,
@@ -2348,6 +2356,9 @@ impl SavedState {
                 None => Ok(()),
             },
             prop::GNSS_ENABLED => encoder.put(number, &[self.gnss_enabled as u8]),
+            prop::DISPLAY_MOTION_WAKE_ENABLED => {
+                encoder.put(number, &[self.display_motion_wake_enabled as u8])
+            }
             prop::PHY_DUTY_LIMIT => encoder.put(number, &self.duty_limit.to_le_bytes()),
             prop::DEV_ADMINS => {
                 for public_key in self.dev_admins.iter() {
@@ -2553,6 +2564,9 @@ impl SavedState {
                 self.ident_altitude_m = validate_ident_altitude(value).map_err(invalid)?
             }
             prop::GNSS_ENABLED => self.gnss_enabled = parse_bool(value).map_err(invalid)?,
+            prop::DISPLAY_MOTION_WAKE_ENABLED => {
+                self.display_motion_wake_enabled = parse_bool(value).map_err(invalid)?
+            }
             prop::PHY_DUTY_LIMIT => self.duty_limit = parse_u16(value).map_err(invalid)?,
             prop::DEV_ADMINS => {
                 let public_key: [u8; items::PUBLIC_KEY_LEN] =
@@ -3300,6 +3314,9 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                     // the device is is a fact about the hardware, not a
                     // claim made under an identity.
                     prop::GNSS_ENABLED => self.device.gnss_enabled = saved.gnss_enabled,
+                    prop::DISPLAY_MOTION_WAKE_ENABLED => {
+                        self.device.display_motion_wake_enabled = saved.display_motion_wake_enabled
+                    }
                     prop::PHY_DUTY_LIMIT => self.config.duty.set_limit(saved.duty_limit),
                     prop::TZ_OFFSET => self.device.tz_offset_min = saved.tz_offset_min,
                     prop::GNSS_IDENT_UPDATE => {
@@ -4431,6 +4448,20 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     /// `PROP_TZ_OFFSET`: minutes east of UTC.
     pub fn tz_offset_min(&self) -> i16 {
         self.device.tz_offset_min
+    }
+
+    /// Display policy enable; false on unsupported boards.
+    pub fn display_motion_wake_enabled(&self) -> bool {
+        self.config.display_motion_wake && self.device.display_motion_wake_enabled
+    }
+
+    pub fn toggle_display_motion_wake(&mut self, emit: &mut impl FnMut(&[u8])) -> Option<bool> {
+        self.toggle_device_flag(
+            self.config.display_motion_wake,
+            prop::DISPLAY_MOTION_WAKE_ENABLED,
+            |device| &mut device.display_motion_wake_enabled,
+            emit,
+        )
     }
 
     /// `PROP_GNSS_ENABLED`: whether the receiver should be powered.
@@ -6064,6 +6095,14 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                 self.bump_dev_domain();
                 Ok(false)
             }
+            prop::DISPLAY_MOTION_WAKE_ENABLED => {
+                if !self.config.display_motion_wake {
+                    return Err(Status::UNIMPLEMENTED);
+                }
+                self.device.display_motion_wake_enabled = parse_bool(value)?;
+                self.bump_dev_domain();
+                Ok(false)
+            }
             prop::GNSS_ENABLED if self.config.gnss.is_some() => {
                 self.device.gnss_enabled = parse_bool(value)?;
                 self.bump_dev_domain();
@@ -6837,6 +6876,9 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         if key == prop::ALERT {
             return self.config.alert.is_some();
         }
+        if key == prop::DISPLAY_MOTION_WAKE_ENABLED {
+            return self.config.display_motion_wake;
+        }
         if key == prop::ILLUMINANCE {
             return self.config.illuminance;
         }
@@ -7000,6 +7042,9 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                 if self.config.gnss.is_some() {
                     len += pui::encode(cap::GNSS, &mut out[len..]).unwrap_or(0);
                 }
+                if self.config.display_motion_wake {
+                    len += pui::encode(cap::DISPLAY_MOTION_WAKE, &mut out[len..]).unwrap_or(0);
+                }
                 if self.config.illuminance {
                     len += pui::encode(cap::ILLUMINANCE, &mut out[len..]).unwrap_or(0);
                 }
@@ -7131,6 +7176,13 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             }
             prop::TZ_OFFSET if self.config.time.is_some() => {
                 put(out, &self.device.tz_offset_min.to_le_bytes())
+            }
+            prop::DISPLAY_MOTION_WAKE_ENABLED => {
+                if !self.config.display_motion_wake {
+                    return PropValue::Unimplemented;
+                }
+                out[0] = self.device.display_motion_wake_enabled as u8;
+                1
             }
             prop::GNSS_ENABLED if self.config.gnss.is_some() => {
                 out[0] = self.device.gnss_enabled as u8;
@@ -7794,6 +7846,7 @@ mod tests {
             alert: Some(AlertConfig::DEFAULT),
             time: Some(TimeConfig),
             gnss: Some(GnssConfig::DEFAULT),
+            display_motion_wake: false,
             illuminance: true,
             ble: true,
             ble_pairing: true,
@@ -7803,6 +7856,58 @@ mod tests {
             ip: Some(net::IpConfig::DUAL),
             bridge_client: false,
         }
+    }
+
+    #[test]
+    fn motion_wake_setting_capability_validation_and_persistence() {
+        let key = prop::DISPLAY_MOTION_WAKE_ENABLED;
+        let config = SessionConfig {
+            display_motion_wake: true,
+            ..test_config()
+        };
+        let mut session = Session::new(config, Status::RESET_POWER_ON, test_engine());
+        session.attach(true);
+        assert_eq!(get(&mut session, key), [1]);
+        let caps = get(&mut session, prop::CAPS);
+        assert!(caps.contains(&(cap::DISPLAY_MOTION_WAKE as u8)));
+        for bad in [&[][..], &[2], &[0, 1]] {
+            let (emitted, _) = set(&mut session, key, bad);
+            let (_, _, value) = parse_prop_is(&emitted[0]);
+            assert_eq!(pui::decode(&value).unwrap().0, Status::INVALID_ARGUMENT.0);
+        }
+        assert_eq!(get(&mut session, key), [1]);
+        let version = session.dev_domain_version();
+        let mut emitted = Vec::new();
+        assert_eq!(
+            session.toggle_display_motion_wake(&mut |b| emitted.push(b.to_vec())),
+            Some(false)
+        );
+        assert_ne!(session.dev_domain_version(), version);
+        assert_eq!(parse_prop_is(&emitted[0]), (TID_UNSOLICITED, key, vec![0]));
+        save(&mut session);
+        let mut bytes = [0; SNAPSHOT_MAX];
+        let len = session.encode_snapshot(&mut bytes).unwrap();
+        let mut booted: TestSession = Session::new(config, Status::RESET_POWER_ON, test_engine());
+        booted.restore_at_boot(&bytes[..len]).unwrap();
+        assert!(!booted.display_motion_wake_enabled());
+        let old = strip_snapshot_options(&bytes[..len], &[key]);
+        booted.restore_at_boot(&old).unwrap();
+        assert!(booted.display_motion_wake_enabled());
+        booted.reset(Status::RESET_SOFTWARE, &mut |_| {});
+        assert!(booted.display_motion_wake_enabled());
+        let mut unsupported = test_session();
+        let (emitted, _) = set(&mut unsupported, key, &[1]);
+        let (_, _, value) = parse_prop_is(&emitted[0]);
+        assert_eq!(pui::decode(&value).unwrap().0, Status::UNIMPLEMENTED.0);
+        let mut frame = [0; 16];
+        let len = frame::prop_get(&mut frame, 4, key).unwrap();
+        let (emitted, _) = dispatch(&mut unsupported, &frame[..len], 0);
+        expect_status(&emitted[0], 4, Status::UNIMPLEMENTED);
+        assert_eq!(
+            unsupported.toggle_display_motion_wake(&mut |_| panic!("unexpected notification")),
+            None
+        );
+        assert!(!get(&mut unsupported, prop::CAPS).contains(&(cap::DISPLAY_MOTION_WAKE as u8)));
     }
 
     /// A board with neither a clock nor a receiver, for the tests that

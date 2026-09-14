@@ -4038,6 +4038,14 @@ name = "umsh-app-ulcp-cli"
 version = "0.1.0"
 
 [[package]]
+name = "umsh-bhi260"
+version = "0.1.0"
+dependencies = [
+ "embassy-futures",
+ "embedded-hal-async",
+]
+
+[[package]]
 name = "umsh-bridge"
 version = "0.1.0"
 dependencies = [
@@ -4325,6 +4333,14 @@ dependencies = [
  "umsh-uri",
  "uniffi",
  "zeroize",
+]
+
+[[package]]
+name = "umsh-motion"
+version = "0.1.0"
+dependencies = [
+ "critical-section",
+ "embassy-sync 0.8.0",
 ]
 
 [[package]]

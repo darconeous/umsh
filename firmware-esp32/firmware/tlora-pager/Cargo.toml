@@ -13,6 +13,8 @@ repository.workspace = true
 # BQ battery telemetry, and XL9555 power domains.
 
 [features]
+# Explicit feasibility probe; normal images do not load or enable the sensor.
+motion-qualification = ["ble-debug"]
 bridge-client = ["wifi", "psram", "dep:umsh-bridge-client", "dep:embedded-tls", "umsh-ulcp-runtime/bridge-client", "embassy-net/tcp", "embassy-net/dns"]
 wifi = ["esp-radio/wifi", "esp-radio/coex", "dep:embassy-net", "umsh-ulcp-runtime/wifi"]
 psram = []
@@ -93,6 +95,9 @@ name = "firmware-tlora-pager"
 path = "../esp32-tracker/src/main.rs"
 
 [dependencies]
+umsh-motion = { path = "../../../crates/umsh-motion", features = ["service"] }
+embedded-hal-async = "1"
+umsh-bhi260 = { path = "../../../crates/umsh-bhi260" }
 umsh-bridge-client = { path = "../../../crates/umsh-bridge-client", optional = true }
 embedded-tls = { version = "=0.19.0", default-features = false, optional = true }
 embassy-net = { version = "0.8", default-features = false, optional = true, features = ["medium-ethernet", "proto-ipv4", "dhcpv4", "dhcpv4-hostname"] }

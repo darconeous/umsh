@@ -1,0 +1,13 @@
+[package]
+name = "umsh-bhi260"
+description = "Allocation-free asynchronous BHI260AP host interface"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+embedded-hal-async.workspace = true
+
+[dev-dependencies]
+embassy-futures = "0.1"

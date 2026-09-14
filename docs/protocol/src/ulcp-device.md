@@ -58,6 +58,7 @@ Code | Name               | Requires           | Grants
 45   | `CAP_GNSS`         | `CAP_TIME`         | A GNSS receiver: `PROP_GNSS_ENABLED`, `PROP_GNSS_LOCATION`, `PROP_GNSS_ALTITUDE`, `PROP_GNSS_FIX`, `PROP_GNSS_PRECISION`, `PROP_GNSS_SATELLITES`, `PROP_GNSS_IDENT_UPDATE`, `PROP_GNSS_IDENT_PRECISION`, `PROP_GNSS_TIME_TRUST`
 46   | `CAP_ADVERT`       | `CAP_DEV_IDENTITY` | Announcing itself: on a schedule of its own (`PROP_ADVERT_INTERVAL`, `PROP_BEACON_INTERVAL`, `PROP_STARTUP_BEACON`) and on demand (`CMD_ANNOUNCE`)
 47   | `CAP_ILLUMINANCE`  | —                  | An ambient light sensor and `PROP_ILLUMINANCE`
+59   | `CAP_DISPLAY_MOTION_WAKE` | — | Orientation-qualified display wake and `PROP_DISPLAY_MOTION_WAKE_ENABLED`
 
 `CAP_ADVERT` requires `CAP_DEV_IDENTITY` because what an advertisement
 carries *is* the device identity, and a beacon's source address names
@@ -1321,3 +1322,52 @@ state and not the physical behavior of the device.
 The property is live device-domain state. It is never included in a saved
 snapshot, is not changed by `CMD_RESTORE`, and is `ALERT_NONE` after
 every reset—a device that loses power mid-alert comes back quiet.
+
+## Display motion wake
+
+`CAP_DISPLAY_MOTION_WAKE` (59) means the device supports waking its display for
+movement qualified by screen-up orientation. It does not promise that the sensor
+is currently available. Sensor failures suppress automatic wake; normal device
+controls remain available.
+
+### PROP_DISPLAY_MOTION_WAKE_ENABLED
+
+Property 4875; BOOL; device domain; Get, Set, and unsolicited `CMD_PROP_IS`
+notification when changed. Requires `CAP_DISPLAY_MOTION_WAKE`. The default is
+true on supported platforms. Unsupported platforms omit the capability and
+answer Get and Set with `STATUS_UNIMPLEMENTED`. Malformed values use the normal
+BOOL validation and return `STATUS_INVALID_ARGUMENT`.
+
+This property enables the display's motion policy. It does not control global
+accelerometer power: another consumer may still need movement detection when
+this property is false. It is included in `CMD_SAVE`, restored with the device
+configuration, and has a platform default of true after clearing saved state.
+`CMD_RST` follows the existing saved-state restore rules. A saved snapshot
+missing the property uses the platform default. A local toggle updates an
+existing saved snapshot, following the other local switches; it does not create
+a snapshot when none exists.
+
+The display wakes only from its fully lapsed state. Movement while active or
+dim consumes the episode without refreshing the attention timeout. Disabling
+the property cancels pending motion wakes. Explicit shutdown retains the
+platform's existing button wake behavior.
+
+The Pager requires fresh movement followed by at least 200 ms of consistently
+screen-up acceleration. Its orientation range extends to 45 degrees from
+horizontal with the keyboard lower than the screen, and 30 degrees sideways or
+in the opposite direction. Combined tilts share an elliptical angular allowance.
+Verification uses a bounded one-second window. Rearming requires two seconds of
+sensor-reported stillness, or an outside orientation interval with exit thresholds
+of 55 degrees in the reading direction and 40 degrees otherwise, followed by
+fresh movement and screen-up verification. Sensor reporting latency
+can make the necessary physical pause longer. Flat, screen-up pocket movement
+cannot be distinguished from a pickup by orientation alone. This version adds
+no raw motion telemetry, threshold controls, or GPS automation properties.
+
+To suppress small vibrations, a native movement report must also be supported
+by a filtered acceleration-vector change of at least 0.12 g sustained for 80 ms
+within that verification window. The reference comes from its first three valid
+samples; small oscillations do not accumulate. This check belongs to the display
+policy and does not suppress native movement observations for other consumers.
+Exceptionally slow pickups, or pickups completed before verification begins,
+may not qualify. This does not identify every kind of bed or pocket movement.

@@ -175,6 +175,7 @@ fn status(
             minute: 30,
         }),
         settings: SettingsModel {
+            motion_wake: None,
             wifi: None,
             bluetooth: Some(true),
             gnss: Some(true),

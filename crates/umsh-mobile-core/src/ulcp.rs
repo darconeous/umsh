@@ -3900,6 +3900,7 @@ pub struct UlcpManagedPropertyIds {
     pub beacon_interval: u32,
     pub startup_beacon: u32,
     pub gnss_enabled: u32,
+    pub display_motion_wake_enabled: u32,
     pub gnss_time_trust: u32,
     pub ble_enabled: u32,
     pub ble_bond_count: u32,
@@ -3977,6 +3978,7 @@ pub fn ulcp_managed_property_ids() -> UlcpManagedPropertyIds {
         beacon_interval: prop::BEACON_INTERVAL,
         startup_beacon: prop::STARTUP_BEACON,
         gnss_enabled: prop::GNSS_ENABLED,
+        display_motion_wake_enabled: prop::DISPLAY_MOTION_WAKE_ENABLED,
         gnss_time_trust: prop::GNSS_TIME_TRUST,
         ble_enabled: prop::BLE_ENABLED,
         ble_bond_count: prop::BLE_BOND_COUNT,
@@ -4498,6 +4500,7 @@ pub struct UlcpDevicePropertiesRecord {
     pub beacon_interval_seconds: Option<u32>,
     pub startup_beacon: Option<bool>,
     pub gnss_enabled: Option<bool>,
+    pub display_motion_wake_enabled: Option<bool>,
     /// What the receiver currently sees. Read-only, and absent on a
     /// device with no receiver.
     pub gnss: Option<UlcpGnssRecord>,
@@ -4703,6 +4706,11 @@ pub fn inspect_ulcp_properties(
         beacon_interval_seconds: optional_value(at, prop::BEACON_INTERVAL, decode_u32),
         startup_beacon: optional_value(at, prop::STARTUP_BEACON, decode_bool),
         gnss_enabled: optional_value(at, prop::GNSS_ENABLED, decode_bool),
+        display_motion_wake_enabled: optional_value(
+            at,
+            prop::DISPLAY_MOTION_WAKE_ENABLED,
+            decode_bool,
+        ),
         gnss: gnss_readout(at),
         gnss_time_trust: optional_value(at, prop::GNSS_TIME_TRUST, decode_bool),
         ble_enabled: optional_value(at, prop::BLE_ENABLED, decode_bool),
@@ -4896,6 +4904,9 @@ pub fn ulcp_dirty_writes(
             },
             prop::DEV_DISCOVERABLE => vec![desired.dev_discoverable.ok_or_else(missing)? as u8],
             prop::GNSS_ENABLED => vec![desired.gnss_enabled.ok_or_else(missing)? as u8],
+            prop::DISPLAY_MOTION_WAKE_ENABLED => {
+                vec![desired.display_motion_wake_enabled.ok_or_else(missing)? as u8]
+            }
             prop::GNSS_IDENT_UPDATE => vec![desired.gnss_ident_update.ok_or_else(missing)? as u8],
             prop::GNSS_IDENT_PRECISION => {
                 let precision = desired.gnss_ident_precision.ok_or_else(missing)?;
@@ -10793,6 +10804,25 @@ mod tests {
             .unwrap();
 
         assert_eq!(vec![from_insert], from_table, "one item, two carriers");
+    }
+
+    #[test]
+    fn motion_wake_property_reads_and_writes_as_a_bool() {
+        let key = prop::DISPLAY_MOTION_WAKE_ENABLED;
+        assert_eq!(ulcp_managed_property_ids().display_motion_wake_enabled, key);
+        let value = inspect_ulcp_properties(vec![response(key, &[1])]);
+        assert_eq!(value.display_motion_wake_enabled, Some(true));
+        assert_eq!(
+            dirty(
+                UlcpDevicePropertiesRecord {
+                    display_motion_wake_enabled: Some(false),
+                    ..Default::default()
+                },
+                &[key]
+            )
+            .unwrap(),
+            vec![(key, vec![0])]
+        );
     }
 
     /// Bluetooth has one capability, so the screen asks for everything it

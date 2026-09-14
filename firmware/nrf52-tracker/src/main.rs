@@ -493,6 +493,7 @@ mod firmware {
             gnss: None,
             // The T-1000E is the one board here with an ambient light
             // sensor fitted.
+            display_motion_wake: false,
             illuminance: cfg!(feature = "cap-illuminance"),
             // Every board here is an nRF52840 running the SoftDevice
             // controller, and every one can be made unfindable: see
@@ -3271,6 +3272,7 @@ mod firmware {
     #[cfg(feature = "has-display")]
     fn ui_settings() -> screen::SettingsModel {
         screen::SettingsModel {
+            motion_wake: None,
             wifi: None,
             bluetooth: Some(BLE_ENABLED.load(Ordering::Acquire)),
             #[cfg(feature = "cap-gnss")]
@@ -3534,6 +3536,7 @@ mod firmware {
             ToggleId::Wifi => driver::Setting::Wifi,
             ToggleId::Bluetooth => driver::Setting::Bluetooth,
             ToggleId::Gnss => driver::Setting::Gnss,
+            ToggleId::MotionWake => driver::Setting::MotionWake,
             ToggleId::ShareLocation => driver::Setting::ShareLocation,
             ToggleId::Forwarding => driver::Setting::Forwarding,
         }
@@ -3550,6 +3553,7 @@ mod firmware {
     fn board_menu_items() -> MenuItems {
         #[allow(unused_mut)]
         let mut items = MenuItems::all()
+            .without(umsh_ux_display_tracker::menu::MenuItem::MotionWake)
             .without(umsh_ux_display_tracker::menu::MenuItem::WifiToggle)
             .without(umsh_ux_display_tracker::menu::MenuItem::WifiNetworks);
         #[cfg(not(feature = "cap-gnss"))]
