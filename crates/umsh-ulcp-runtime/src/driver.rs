@@ -466,6 +466,17 @@ pub trait DeviceEnv {
     async fn sample_battery(&mut self) -> Result<umsh_ulcp::battery::BatteryStatus, ()> {
         Err(())
     }
+    /// One acquisition for the requested optional battery properties.
+    async fn sample_battery_group(
+        &mut self,
+        fields: umsh_ulcp::battery_diagnostics::Fields,
+    ) -> umsh_ulcp::battery_diagnostics::Sample {
+        let mut sample = umsh_ulcp::battery_diagnostics::Sample::default();
+        if fields.contains(umsh_ulcp::ids::prop::BATTERY) {
+            sample.snapshot = self.sample_battery().await;
+        }
+        sample
+    }
     /// One fresh ambient light measurement in millilux
     /// (`Effect::SampleIlluminance`). Only emitted on a board whose
     /// `SessionConfig::illuminance` is set, so the default reports nothing.
@@ -954,6 +965,7 @@ async fn apply_effect<A, S, const TXQ: usize, M, const RX: usize, const TX: usiz
         Some(Effect::SampleRssi { .. })
         | Some(Effect::SignIdentity { .. })
         | Some(Effect::SampleBattery { .. })
+        | Some(Effect::SampleBatteryGroup { .. })
         | Some(Effect::SampleIlluminance { .. })
         | Some(Effect::ReadTime { .. })
         | Some(Effect::SampleGnss { .. })
@@ -1177,6 +1189,13 @@ async fn serve_frame<A, S, const TXQ: usize, M, const RX: usize, const TX: usize
                 // answer the deferred PROP_BATTERY get.
                 let sample = env.sample_battery().await;
                 session.respond_battery(tid, sample, &mut |frame: &[u8]| emitter.push(frame));
+                emitter.flush(sink).await;
+            }
+            Some(Effect::SampleBatteryGroup { tid, key, fields }) => {
+                let sample = env.sample_battery_group(fields).await;
+                session.respond_battery_group(tid, key, sample, &mut |frame: &[u8]| {
+                    emitter.push(frame)
+                });
                 emitter.flush(sink).await;
             }
             Some(Effect::SampleIlluminance { tid }) => {

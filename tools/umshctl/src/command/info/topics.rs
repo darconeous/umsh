@@ -115,7 +115,11 @@ pub const TOPICS: &[Topic] = &[
         name: "battery",
         prefix: "BATTERY",
         gate: |ctx| ctx.has(cap::BATTERY),
-        keys: |_| vec![prop::BATTERY],
+        keys: |_| {
+            std::iter::once(prop::BATTERY)
+                .chain(umsh::ulcp_wire::battery_diagnostics::KEYS)
+                .collect()
+        },
         render: render_battery,
         env: env_battery,
     },
@@ -503,10 +507,30 @@ fn env_stats(set: &PropSet, _ctx: &Context) -> Vec<Line> {
 // ─── battery ─────────────────────────────────────────────────────────
 
 fn render_battery(set: &PropSet, _ctx: &Context) -> Vec<Line> {
-    match battery_status(set) {
+    let mut lines = match battery_status(set) {
         Some(status) => vec![("battery".into(), battery_display(&status))],
         None => vec![("battery".into(), "not battery powered".into())],
+    };
+    for key in umsh::ulcp_wire::battery_diagnostics::KEYS {
+        let value = if let Some(bytes) = set.bytes(key) {
+            if bytes.is_empty() {
+                "unavailable".into()
+            } else {
+                crate::command::props::format_value(key, bytes)
+            }
+        } else if let Some(status) = set.refusal(key).filter(|s| *s != Status::PROP_NOT_FOUND) {
+            format!("error: {status:?}")
+        } else {
+            continue;
+        };
+        lines.push((
+            crate::command::props::spell(key)
+                .trim_start_matches("battery-")
+                .into(),
+            value,
+        ));
     }
+    lines
 }
 
 /// Kept exactly as it has always been spelled: scripts read these names,

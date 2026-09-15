@@ -135,6 +135,16 @@ pub fn format_value(key: u32, value: &[u8]) -> String {
         return "(empty)".to_string();
     }
     match property_type(key) {
+        Some(PropertyType::BatteryDiagnostic) => {
+            use umsh::ulcp_wire::battery_diagnostics::{self, Value};
+            match Value::decode(key, value) {
+                Ok(Some(value)) => match battery_diagnostics::unit(key) {
+                    Some(unit) => format!("{value} {unit}"),
+                    None => value.to_string(),
+                },
+                _ => malformed(value),
+            }
+        }
         Some(PropertyType::Bool) => match value[0] {
             0 => "off".to_string(),
             1 => "on".to_string(),
@@ -208,6 +218,7 @@ pub fn encode_value(key: u32, text: &str) -> Result<Vec<u8>> {
             other => bail!("{name} is on or off, not {other:?}"),
         },
         Some(PropertyType::U8) => Ok(vec![number::<u8>(&name, text)?]),
+        Some(PropertyType::BatteryDiagnostic) => bail!("{name} is read-only"),
         Some(PropertyType::I8) => Ok(vec![number::<i8>(&name, text)? as u8]),
         Some(PropertyType::U16) => Ok(number::<u16>(&name, text)?.to_le_bytes().to_vec()),
         Some(PropertyType::I16) => Ok(number::<i16>(&name, text)?.to_le_bytes().to_vec()),

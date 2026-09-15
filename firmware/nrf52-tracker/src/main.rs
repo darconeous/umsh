@@ -458,6 +458,7 @@ mod firmware {
             },
             default_duty_limit: umsh_ulcp::profiles::DEFAULT.duty_limit,
             duty: &DUTY_LEDGER,
+            battery_diagnostics: Default::default(),
             // Every board here is battery powered, and every one now has
             // a SAADC monitor reporting voltage, charge state, and the
             // rest-gated OCV level estimate.
@@ -3305,6 +3306,7 @@ mod firmware {
             identity: identity.model(),
             battery: ui_battery(),
             battery_mv: ui_battery_mv(),
+            battery_details: None,
             // A live host outranks discoverability: "somebody is talking
             // to me" is the fact worth a row, and advertising with nobody
             // there is the resting state the page no longer mentions.
@@ -3553,6 +3555,7 @@ mod firmware {
     fn board_menu_items() -> MenuItems {
         #[allow(unused_mut)]
         let mut items = MenuItems::all()
+            .without(umsh_ux_display_tracker::menu::MenuItem::Battery)
             .without(umsh_ux_display_tracker::menu::MenuItem::MotionWake)
             .without(umsh_ux_display_tracker::menu::MenuItem::WifiToggle)
             .without(umsh_ux_display_tracker::menu::MenuItem::WifiNetworks);

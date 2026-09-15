@@ -72,6 +72,7 @@ fn session_config() -> SessionConfig {
         // One leaked ledger per simulated device: sessions in parallel
         // tests must not share duty state.
         duty: Box::leak(Box::new(umsh_ulcp_device::DutyLedger::new())),
+        battery_diagnostics: Default::default(),
         // The simulator reports all three battery measurements.
         battery: Some(umsh_ulcp_device::BatteryFields {
             voltage: true,

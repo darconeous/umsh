@@ -72,6 +72,27 @@ The app turns it on itself once it has claimed the host, so there is nothing to
 do here; only a bare `umshctl` session needs `phy on` first, since it attaches
 administratively and claims nothing.
 
+## Battery diagnostics
+
+Manage Device → Power shows the optional ULCP battery diagnostics alongside
+charge, voltage, and charger state. This screen works for the companion radio,
+a nearby device in an administrative BLE session, and a device managed over the
+mesh. It shows current, remaining/full/design capacities, external power and
+battery presence, the gauge's charging-voltage request, readiness and smoothing,
+and raw gauge flags with their format identifier.
+
+Battery reads use one multi-get when supported. Devices without multi-get use
+individual reads. Unsupported diagnostic properties are hidden; a successful
+empty value displays **Unavailable**, while acquisition errors and malformed
+values remain visible. Current is positive while charging and negative while
+discharging. Diagnostics have their own read time, which ordinary battery
+notifications do not advance.
+
+Local management refreshes an unread or cached Power screen on opening. Tap
+Refresh for another reading; mesh reads remain manual, with no background
+diagnostic polling. The decoder and local/mesh request handling live in
+`umsh-mobile-core`, using the shared ULCP wire codecs.
+
 ## TestFlight
 
 ```sh

@@ -327,6 +327,39 @@ impl SimulatedDevice {
                     &mut emit,
                 );
             }
+            Some(Effect::SampleBatteryGroup {
+                tid,
+                key,
+                fields: _,
+            }) => {
+                use umsh_ulcp::battery_diagnostics::{KEYS, Sample, Value, VoltageRequest};
+                let mut sample = Sample::default();
+                sample.snapshot = Ok(BatteryStatus {
+                    voltage_mv: Some(4111),
+                    level_percent: Some(87),
+                    charge_state: Some(BatteryChargeState::Charging),
+                });
+                let values = [
+                    Value::Current(100),
+                    Value::Unsigned(1305),
+                    Value::Unsigned(1500),
+                    Value::Unsigned(1500),
+                    Value::Bool(true),
+                    Value::Bool(true),
+                    Value::Bool(false),
+                    Value::Bool(true),
+                    Value::Bool(false),
+                    Value::Voltage(VoltageRequest::Millivolts(4200)),
+                    Value::Format(1),
+                    Value::Unsigned(8),
+                    Value::Unsigned(0x26),
+                ];
+                for (key, value) in KEYS.into_iter().zip(values) {
+                    sample.set(key, Ok(Some(value)));
+                }
+                self.session
+                    .respond_battery_group(tid, key, sample, &mut emit);
+            }
             Some(Effect::SampleIlluminance { tid }) => {
                 // A stable simulated reading: ordinary office lighting.
                 self.session
@@ -752,6 +785,7 @@ mod tests {
             },
             default_duty_limit: 0xFFFF,
             duty: Box::leak(Box::new(DutyLedger::new())),
+            battery_diagnostics: Default::default(),
             battery: Some(BatteryFields {
                 voltage: true,
                 level: true,

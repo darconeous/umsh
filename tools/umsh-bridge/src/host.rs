@@ -77,6 +77,7 @@ fn session_config() -> SessionConfig {
         },
         default_duty_limit: 0xFFFF,
         duty: Box::leak(Box::new(DutyLedger::new())),
+        battery_diagnostics: Default::default(),
         battery: None,
         alert: None,
         time: None,

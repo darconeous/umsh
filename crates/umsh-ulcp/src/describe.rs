@@ -41,6 +41,20 @@ pub const fn property_name(key: u32) -> Option<&'static str> {
         prop::DEV_PEERS => "PROP_DEV_PEERS",
         prop::DEV_NAME => "PROP_DEV_NAME",
         prop::BATTERY => "PROP_BATTERY",
+        prop::BATTERY_CURRENT => "PROP_BATTERY_CURRENT",
+        prop::BATTERY_REMAINING_CAPACITY => "PROP_BATTERY_REMAINING_CAPACITY",
+        prop::BATTERY_FULL_CAPACITY => "PROP_BATTERY_FULL_CAPACITY",
+        prop::BATTERY_DESIGN_CAPACITY => "PROP_BATTERY_DESIGN_CAPACITY",
+        prop::BATTERY_EXT_POWER_PRESENT => "PROP_BATTERY_EXT_POWER_PRESENT",
+        prop::BATTERY_PRESENT => "PROP_BATTERY_PRESENT",
+        prop::BATTERY_GAUGE_FULL => "PROP_BATTERY_GAUGE_FULL",
+        prop::BATTERY_GAUGE_INITIALIZED => "PROP_BATTERY_GAUGE_INITIALIZED",
+        prop::BATTERY_GAUGE_SMOOTHING => "PROP_BATTERY_GAUGE_SMOOTHING",
+        prop::BATTERY_CHARGE_VOLTAGE_REQUEST => "PROP_BATTERY_CHARGE_VOLTAGE_REQUEST",
+        prop::BATTERY_GAUGE_FORMAT => "PROP_BATTERY_GAUGE_FORMAT",
+        prop::BATTERY_GAUGE_STATUS => "PROP_BATTERY_GAUGE_STATUS",
+        prop::BATTERY_GAUGE_OPERATION_STATUS => "PROP_BATTERY_GAUGE_OPERATION_STATUS",
+
         prop::MAC_REPEATER_ENABLED => "PROP_MAC_REPEATER_ENABLED",
         prop::IDENT => "PROP_IDENT",
         prop::IDENT_ROLE => "PROP_IDENT_ROLE",
@@ -156,6 +170,19 @@ pub const PROPERTIES: &[u32] = &[
     prop::DEV_PEERS,
     prop::DEV_NAME,
     prop::BATTERY,
+    prop::BATTERY_CURRENT,
+    prop::BATTERY_REMAINING_CAPACITY,
+    prop::BATTERY_FULL_CAPACITY,
+    prop::BATTERY_DESIGN_CAPACITY,
+    prop::BATTERY_EXT_POWER_PRESENT,
+    prop::BATTERY_PRESENT,
+    prop::BATTERY_GAUGE_FULL,
+    prop::BATTERY_GAUGE_INITIALIZED,
+    prop::BATTERY_GAUGE_SMOOTHING,
+    prop::BATTERY_CHARGE_VOLTAGE_REQUEST,
+    prop::BATTERY_GAUGE_FORMAT,
+    prop::BATTERY_GAUGE_STATUS,
+    prop::BATTERY_GAUGE_OPERATION_STATUS,
     prop::MAC_REPEATER_ENABLED,
     prop::IDENT,
     prop::IDENT_ROLE,
@@ -249,6 +276,8 @@ pub const PROPERTIES: &[u32] = &[
 /// Numerics are little-endian, as ULCP has them throughout.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PropertyType {
+    /// Optional battery scalar or tagged request, decoded by `battery_diagnostics::Value`.
+    BatteryDiagnostic,
     /// One octet, 0 or 1.
     Bool,
     U8,
@@ -274,6 +303,9 @@ pub enum PropertyType {
 /// caller knows it is looking at something this module has never heard
 /// of rather than something deliberately opaque.
 pub const fn property_type(key: u32) -> Option<PropertyType> {
+    if crate::battery_diagnostics::index(key).is_some() {
+        return Some(PropertyType::BatteryDiagnostic);
+    }
     use PropertyType::{Bool, Bytes, I8, I16, I32, Key32, Status, Text, U8, U16, U32};
     Some(match key {
         prop::LAST_STATUS => Status,
@@ -708,7 +740,7 @@ mod tests {
         assert_eq!(capability_name(cap::BLE), Some("BLE"));
         // One past the last allocated code: an unassigned capability has
         // no name to give, whatever a device claims by advertising it.
-        assert_eq!(capability_name(cap::BRIDGE_CLIENT + 1), None);
+        assert_eq!(capability_name(cap::DISPLAY_MOTION_WAKE + 1), None);
     }
 
     /// The three tables answer for the same set of properties. A name

@@ -179,7 +179,6 @@ use umsh_ux_display_tracker::attention::{
 };
 #[cfg(not(feature = "board-tlora-pager"))]
 use umsh_ux_display_tracker::gate::{Disposition, Gate, GateReason};
-#[cfg(any(not(feature = "gnss"), not(feature = "wifi")))]
 use umsh_ux_display_tracker::menu::MenuItem;
 use umsh_ux_display_tracker::menu::{MenuItems, ToggleId, UiEffect, UiInput, UiModel, UiNotice};
 use umsh_ux_display_tracker::screen;
@@ -396,6 +395,11 @@ fn session_config() -> SessionConfig {
         },
         default_duty_limit: umsh_ulcp::profiles::DEFAULT.duty_limit,
         duty: &DUTY_LEDGER,
+        battery_diagnostics: if cfg!(feature = "board-tlora-pager") {
+            umsh_ulcp::battery_diagnostics::Fields::DIAGNOSTICS
+        } else {
+            Default::default()
+        },
         // Battery-powered board with an ADC divider but no
         // charger-status signal (the charge LED is charger-driven), so
         // voltage and the OCV level estimate are reported and charge
@@ -1609,6 +1613,13 @@ impl DeviceEnv for BoardDeviceEnv {
     async fn sample_battery(&mut self) -> Result<umsh_ulcp::battery::BatteryStatus, ()> {
         sample_battery_snapshot().await
     }
+    #[cfg(feature = "board-tlora-pager")]
+    async fn sample_battery_group(
+        &mut self,
+        fields: umsh_ulcp::battery_diagnostics::Fields,
+    ) -> umsh_ulcp::battery_diagnostics::Sample {
+        pager::sample_battery_group(fields).await
+    }
 
     /// Publish the reading [`battery_task`] flagged, reduced the same way
     /// the on-demand read reduces it.
@@ -2804,6 +2815,7 @@ async fn gnss_task(
     let slot = core::cell::RefCell::new(GnssUartSlot {
         boot: Some((uart1, rx, tx)),
         open: None,
+        parked: None,
     });
     umsh_gnss::pump::run(
         GnssPort { slot: &slot },
@@ -2818,12 +2830,12 @@ async fn gnss_task(
     .await
 }
 
-/// The GNSS UART, existing only while the receiver is powered.
+/// The GNSS UART's active and sleep-compatible parked states.
 ///
 /// `UartRx` holds a `WakeLock` for its entire lifetime, so a UART that
 /// exists while the receiver is off is a light-sleep veto with nobody
 /// on the other end. The pump's `Power` edges own the driver's
-/// lifecycle instead: opened in `power_on`, dropped in `power_off`—
+/// lifecycle instead: opened in `power_on`, RX dropped in `power_off`—
 /// which also makes "GNSS enabled forbids sleep" true by construction,
 /// exactly the right policy while NMEA is streaming (a light-sleeping
 /// UART loses RX bytes).
@@ -2833,6 +2845,11 @@ struct GnssUartSlot {
     /// steal (see `open_port`).
     boot: Option<(esp_hal::peripherals::UART1<'static>, GnssRxPin, GnssTxPin)>,
     open: Option<Uart<'static, Async>>,
+    /// The pinned HAL suspends every UART before light sleep. After the
+    /// UART has been initialized, dropping its last clock guard leaves
+    /// that suspend's register-update handshake waiting on a stopped clock.
+    /// An idle, disconnected TX half retains the clocks but no WakeLock.
+    parked: Option<esp_hal::uart::UartTx<'static, esp_hal::Blocking>>,
 }
 
 #[cfg(feature = "gnss")]
@@ -2841,9 +2858,13 @@ impl GnssUartSlot {
         if self.open.is_some() {
             return;
         }
+        // Prevent sleep in the gap between retiring the parked clock owner
+        // and constructing the next RX driver (which takes its own lock).
+        let _transition = esp_hal::rtc_cntl::WakeLock::new();
+        drop(self.parked.take());
         let (uart1, rx, tx) = self.boot.take().unwrap_or_else(|| {
-            // SAFETY: the previous open's driver—the singletons' only
-            // consumer—was dropped by `power_off` before this runs,
+            // SAFETY: the previous RX driver was dropped by `park_port`,
+            // and its parked TX half was dropped immediately above,
             // and the slot (single-task, behind one `RefCell`) is the
             // sole place they are ever (re)constructed.
             unsafe {
@@ -2861,6 +2882,32 @@ impl GnssUartSlot {
                 .with_tx(tx)
                 .into_async(),
         );
+    }
+
+    fn park_port(&mut self) {
+        let Some(uart) = self.open.take() else {
+            return;
+        };
+        // The pump has canceled its pending read before reaching here.
+        // Leave async mode explicitly so its interrupt ownership flags and
+        // CPU interrupt are retired before any driver clock is released.
+        let (rx, tx) = uart
+            .into_blocking()
+            .with_rx(Level::High)
+            .with_tx(esp_hal::gpio::NoPin)
+            .split();
+        self.parked = Some(tx);
+        // Disconnecting the matrix leaves GPIO's output latch/pull state
+        // intact. Float both lines so they cannot feed the disabled rail.
+        // SAFETY: neither half is connected to these pins anymore, and
+        // this single-task slot is their only owner across GNSS cycles.
+        unsafe {
+            drop(Input::new(GnssRxPin::steal(), InputConfig::default()));
+            drop(Input::new(GnssTxPin::steal(), InputConfig::default()));
+        }
+        // Only RX holds the lifetime WakeLock. The parked TX never writes
+        // and has no physical output connection into the unpowered receiver.
+        drop(rx);
     }
 }
 
@@ -2909,9 +2956,9 @@ impl umsh_gnss::pump::Power for GnssPower<'_> {
 
     async fn power_off(&mut self) {
         self.inner.power_off().await;
-        // After the receiver, so no sentence is in flight when the
-        // driver (and its wake lock) goes away.
-        self.slot.borrow_mut().open = None;
+        // After the receiver, retire RX and its wake lock while preserving
+        // the clocks needed by the HAL's UART sleep handshake.
+        self.slot.borrow_mut().park_port();
     }
 }
 
@@ -2988,6 +3035,12 @@ async fn output_pump(tx: &mut WiredTx, panic_report: Option<heapless::String<128
         let outbound = OUT_CH.wired.receive().await;
         if SESSION_GEN.load(Ordering::Acquire) != outbound.generation {
             continue;
+        }
+        #[cfg(feature = "board-tlora-pager")]
+        if let Some(report) = pager::input::power_report() {
+            if wired_write_all(tx, report.as_bytes()).await {
+                pager::input::power_report_sent();
+            }
         }
         let mut wire = [0u8; WIRE_MAX];
         let Ok(len) = hdlc::encode_frame(&outbound.frame, &mut wire) else {
@@ -3229,6 +3282,10 @@ async fn device_task(
 fn board_menu_items() -> MenuItems {
     #[allow(unused_mut)]
     let mut items = MenuItems::all();
+    #[cfg(not(feature = "board-tlora-pager"))]
+    {
+        items = items.without(MenuItem::Battery);
+    }
     #[cfg(not(feature = "gnss"))]
     {
         items = items
@@ -3359,6 +3416,10 @@ fn ui_status<'a>(name: &'a DeviceName, identity: &'a IdentityText) -> screen::St
         identity: identity.model(),
         battery,
         battery_mv: (mv != 0).then_some(mv),
+        #[cfg(feature = "board-tlora-pager")]
+        battery_details: pager::battery_diagnostics(),
+        #[cfg(not(feature = "board-tlora-pager"))]
+        battery_details: None,
         queued: Some(QUEUED_FRAMES.load(Ordering::Acquire)),
         link: match BleLinkState::from_code(BLE_LINK.load(Ordering::Acquire)) {
             Some(BleLinkState::Attached) => screen::LinkState::Attached,
@@ -3475,6 +3536,8 @@ async fn display_task(
     mut display: Display,
     #[cfg(not(any(feature = "pmic-axp2101", feature = "board-tlora-pager")))] mut vext: Vext,
 ) {
+    #[cfg(feature = "board-tlora-pager")]
+    let pager_capture_epoch = pager::input::interactive().await;
     let mut model = UiModel::new(board_menu_items());
     let _ = display.set_display_on(false).await;
     let _ = display.set_brightness(Brightness::NORMAL).await;
@@ -3516,8 +3579,20 @@ async fn display_task(
         AttentionConfig::EMISSIVE,
         Instant::now().as_millis(),
     );
+    #[cfg(feature = "board-tlora-pager")]
+    pager::input::shown(pager_capture_epoch);
 
     loop {
+        #[cfg(feature = "board-tlora-pager")]
+        pager::BATTERY_DETAILS_ACTIVE.store(
+            matches!(
+                model.page(),
+                umsh_ux_display_tracker::menu::Page::Detail(
+                    MenuItem::BatteryCharge | MenuItem::BatteryCapacity | MenuItem::BatteryGauge
+                )
+            ),
+            Ordering::Release,
+        );
         // The name changes rarely but every frame this pass might draw
         // needs it, so it is snapshotted once and lent out; the rest of
         // the status is rebuilt at each draw. The identity is rendered
@@ -3671,7 +3746,11 @@ async fn display_task(
                     &mut display,
                     &ui_status(&name, &identity),
                     "Powering off",
-                    "hold to wake",
+                    if cfg!(feature = "board-tlora-pager") {
+                        ""
+                    } else {
+                        "hold to wake"
+                    },
                 )
                 .await;
                 let _ = display.set_display_on(true).await;
@@ -3692,12 +3771,26 @@ async fn display_task(
         }
 
         redraw |= splash.poll(Instant::now().as_millis());
+        #[cfg(feature = "board-tlora-pager")]
+        let pager_capture_epoch = if matches!(transition, Some(Transition::Woke)) {
+            Some(pager::input::interactive().await)
+        } else {
+            None
+        };
         match transition {
             Some(Transition::Lapsed) => {
                 // Waking always lands on the status page rather than on
                 // whatever was abandoned here.
                 model.go_home();
-                let _ = display.set_display_on(false).await;
+                #[cfg(feature = "board-tlora-pager")]
+                let before_display_off = pager::input::activity();
+                let off = display.set_display_on(false).await;
+                #[cfg(feature = "board-tlora-pager")]
+                if off.is_ok() {
+                    pager::input::dark(before_display_off);
+                }
+                #[cfg(not(feature = "board-tlora-pager"))]
+                let _ = off;
                 redraw = false;
             }
             // One step of the fall, not the whole of it: the policy sends
@@ -3729,7 +3822,13 @@ async fn display_task(
         // frame.
         if matches!(transition, Some(Transition::Woke)) {
             let _ = display.set_brightness(Brightness::NORMAL).await;
-            let _ = display.set_display_on(true).await;
+            let on = display.set_display_on(true).await;
+            #[cfg(feature = "board-tlora-pager")]
+            if on.is_ok() {
+                pager::input::shown(pager_capture_epoch.unwrap());
+            }
+            #[cfg(not(feature = "board-tlora-pager"))]
+            let _ = on;
         }
     }
 }
@@ -4099,12 +4198,7 @@ async fn main(spawner: Spawner) {
     let config = esp_hal::Config::default().with_cpu_clock(CpuClock::_80MHz);
     let peripherals = esp_hal::init(config);
     #[cfg(feature = "board-tlora-pager")]
-    {
-        // Keep the entire boot sequence awake, including expander reset delays
-        // before encoder interrupts exist. The same hold keeps edge capture
-        // live while the running display is dark; explicit deep sleep works.
-        core::mem::forget(esp_hal::rtc_cntl::WakeLock::new());
-    }
+    let pager_boot_guard = esp_hal::rtc_cntl::WakeLock::new();
     #[cfg(all(feature = "wifi", feature = "ble-debug"))]
     wifi_memory::init();
     // umsh-node and umsh-sync use `alloc`. The classic ESP32 has roughly
@@ -4227,19 +4321,26 @@ async fn main(spawner: Spawner) {
     };
 
     #[cfg(feature = "board-tlora-pager")]
-    let (pmu_bus, expander) =
-        pager::power_up(peripherals.I2C0, peripherals.GPIO3, peripherals.GPIO2).await;
+    let (pmu_bus, expander) = pager::power_up(
+        peripherals.I2C0,
+        peripherals.GPIO3,
+        peripherals.GPIO2,
+        &mut rtc,
+    )
+    .await;
     #[cfg(feature = "board-tlora-pager")]
     {
-        pager::init_encoder(peripherals.IO_MUX, peripherals.GPIO40, peripherals.GPIO41);
+        pager::input::init_encoder(peripherals.IO_MUX, peripherals.GPIO40, peripherals.GPIO41);
+        spawner.spawn(pager::input::coordinator().unwrap());
+        spawner.spawn(pager::input::navigation_task().unwrap());
+        let config = InputConfig::default().with_pull(Pull::Up);
         spawner.spawn(
-            pager::input_task(
-                peripherals.GPIO7,
-                peripherals.GPIO0,
-                peripherals.GPIO6,
-                pmu_bus,
-            )
-            .unwrap(),
+            pager::input::button_task(Input::new(peripherals.GPIO7, config), false).unwrap(),
+        );
+        spawner
+            .spawn(pager::input::button_task(Input::new(peripherals.GPIO0, config), true).unwrap());
+        spawner.spawn(
+            pager::input::keyboard_task(Input::new(peripherals.GPIO6, config), pmu_bus).unwrap(),
         );
         spawner.spawn(pager::battery_task(pmu_bus).unwrap());
         #[cfg(feature = "motion-qualification")]
@@ -4862,5 +4963,7 @@ async fn main(spawner: Spawner) {
     }
 
     // ── BLE app: runs the pairing lattice + GATT transport forever ───────
+    #[cfg(feature = "board-tlora-pager")]
+    drop(pager_boot_guard);
     ble_app(bt, pool, seed_store, ble_store_handle).await
 }

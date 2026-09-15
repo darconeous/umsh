@@ -5,6 +5,7 @@
 //! completion tree the REPL's tab handler walks.
 
 pub mod advert;
+pub mod battery;
 pub mod bridge;
 pub mod capture;
 pub mod discover;
@@ -38,6 +39,8 @@ pub enum Command {
     /// Report what the device says about itself, whole or by topic.
     /// Changes nothing.
     Info(info::InfoArgs),
+    /// Read battery diagnostics once, or monitor selected properties.
+    Battery(battery::BatteryArgs),
 
     /// Read properties by name or number.
     ///
@@ -333,6 +336,7 @@ impl Command {
     pub fn validate(&self) -> Result<()> {
         match self {
             Self::Capture(args) => args.validate(),
+            Self::Battery(args) => args.validate(),
             // A value the property cannot hold is a typing mistake, and
             // finding out after a BLE discovery pass and a handshake is
             // no way to learn it.
@@ -352,6 +356,7 @@ impl Command {
         }
         match self {
             Self::Info(args) => info::run(app.device()?, args).await,
+            Self::Battery(args) => battery::run(app.device()?, args).await,
             Self::Identity { op } => lifecycle::identity(app.device()?, op).await,
             Self::Name { name } => lifecycle::name(app, name).await,
             Self::Save => lifecycle::save(app.device()?).await,

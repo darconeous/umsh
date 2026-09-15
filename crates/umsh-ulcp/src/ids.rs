@@ -12,6 +12,21 @@ pub const INTERFACE_TYPE: u32 = 8;
 
 /// Property identifiers.
 pub mod prop {
+    /// Optional read-only battery diagnostics (no additional capability).
+    pub const BATTERY_CURRENT: u32 = 4944;
+    pub const BATTERY_REMAINING_CAPACITY: u32 = 4945;
+    pub const BATTERY_FULL_CAPACITY: u32 = 4946;
+    pub const BATTERY_DESIGN_CAPACITY: u32 = 4947;
+    pub const BATTERY_EXT_POWER_PRESENT: u32 = 4948;
+    pub const BATTERY_PRESENT: u32 = 4949;
+    pub const BATTERY_GAUGE_FULL: u32 = 4950;
+    pub const BATTERY_GAUGE_INITIALIZED: u32 = 4951;
+    pub const BATTERY_GAUGE_SMOOTHING: u32 = 4952;
+    pub const BATTERY_CHARGE_VOLTAGE_REQUEST: u32 = 4953;
+    pub const BATTERY_GAUGE_FORMAT: u32 = 4954;
+    pub const BATTERY_GAUGE_STATUS: u32 = 4955;
+    pub const BATTERY_GAUGE_OPERATION_STATUS: u32 = 4956;
+
     /// Autonomous bridge-client configuration and live connection status.
     pub const BRIDGE_ENABLED: u32 = 4928;
     pub const BRIDGE_HOST: u32 = 4929;

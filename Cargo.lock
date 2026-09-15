@@ -4380,6 +4380,7 @@ dependencies = [
  "embedded-hal 1.0.0",
  "embedded-hal-async",
  "umsh-gnss",
+ "umsh-ulcp",
 ]
 
 [[package]]
@@ -4548,6 +4549,7 @@ dependencies = [
  "libc",
  "rand 0.10.1",
  "rustyline",
+ "serde_json",
  "shlex",
  "tokio",
  "tokio-serial",

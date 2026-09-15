@@ -61,17 +61,19 @@ pub enum Level {
     Gnss,
     Radio,
     Wifi,
+    Battery,
 }
 
 impl Level {
     /// Every level, outermost first.
-    pub const ALL: [Level; 6] = [
+    pub const ALL: [Level; 7] = [
         Level::Top,
         Level::Settings,
         Level::Bluetooth,
         Level::Gnss,
         Level::Radio,
         Level::Wifi,
+        Level::Battery,
     ];
 
     /// The entry in the parent level that opens this one. `None` for the
@@ -84,6 +86,7 @@ impl Level {
             Level::Gnss => Some(MenuItem::Gnss),
             Level::Radio => Some(MenuItem::Radio),
             Level::Wifi => Some(MenuItem::Wifi),
+            Level::Battery => Some(MenuItem::Battery),
         }
     }
 
@@ -97,6 +100,7 @@ impl Level {
             Level::Gnss => Some(MenuItem::GnssBack),
             Level::Radio => Some(MenuItem::RadioBack),
             Level::Wifi => Some(MenuItem::WifiBack),
+            Level::Battery => Some(MenuItem::BatteryBack),
         }
     }
 }
@@ -164,6 +168,8 @@ pub enum MenuItem {
     Radio,
     /// The WiFi radio and saved networks.
     Wifi,
+    /// Live battery and fuel-gauge diagnostics.
+    Battery,
     /// Wake a dark display for screen-up movement.
     MotionWake,
     /// The UMSH logo and this firmware's version.
@@ -197,11 +203,16 @@ pub enum MenuItem {
     WifiBack,
     WifiToggle,
     WifiNetworks,
+    // ─── Battery ───
+    BatteryBack,
+    BatteryCharge,
+    BatteryCapacity,
+    BatteryGauge,
 }
 
 impl MenuItem {
     /// Every item, in navigation order.
-    pub const ALL: [MenuItem; 23] = [
+    pub const ALL: [MenuItem; 28] = [
         MenuItem::Status,
         MenuItem::Identity,
         MenuItem::Settings,
@@ -210,6 +221,7 @@ impl MenuItem {
         MenuItem::Gnss,
         MenuItem::Radio,
         MenuItem::Wifi,
+        MenuItem::Battery,
         MenuItem::MotionWake,
         MenuItem::About,
         MenuItem::BluetoothBack,
@@ -225,6 +237,10 @@ impl MenuItem {
         MenuItem::WifiBack,
         MenuItem::WifiToggle,
         MenuItem::WifiNetworks,
+        MenuItem::BatteryBack,
+        MenuItem::BatteryCharge,
+        MenuItem::BatteryCapacity,
+        MenuItem::BatteryGauge,
     ];
 
     const fn bit(self) -> u32 {
@@ -244,6 +260,7 @@ impl MenuItem {
             | MenuItem::Gnss
             | MenuItem::Radio
             | MenuItem::Wifi
+            | MenuItem::Battery
             | MenuItem::MotionWake
             | MenuItem::About => Level::Settings,
             MenuItem::BluetoothBack
@@ -253,6 +270,10 @@ impl MenuItem {
             MenuItem::GnssBack | MenuItem::GnssToggle | MenuItem::ShareLocation => Level::Gnss,
             MenuItem::RadioBack | MenuItem::Forwarding | MenuItem::Stats => Level::Radio,
             MenuItem::WifiBack | MenuItem::WifiToggle | MenuItem::WifiNetworks => Level::Wifi,
+            MenuItem::BatteryBack
+            | MenuItem::BatteryCharge
+            | MenuItem::BatteryCapacity
+            | MenuItem::BatteryGauge => Level::Battery,
         }
     }
 
@@ -263,18 +284,25 @@ impl MenuItem {
             // action; the cost of firing it by accident is one frame of
             // airtime.
             MenuItem::Status => EntryKind::Reading(Some(UiEffect::CheckIn)),
-            MenuItem::Identity | MenuItem::Stats | MenuItem::About => EntryKind::Reading(None),
+            MenuItem::Identity
+            | MenuItem::Stats
+            | MenuItem::About
+            | MenuItem::BatteryCharge
+            | MenuItem::BatteryCapacity
+            | MenuItem::BatteryGauge => EntryKind::Reading(None),
             MenuItem::Settings => EntryKind::Submenu(Level::Settings),
             MenuItem::Bluetooth => EntryKind::Submenu(Level::Bluetooth),
             MenuItem::Gnss => EntryKind::Submenu(Level::Gnss),
             MenuItem::Radio => EntryKind::Submenu(Level::Radio),
             MenuItem::Wifi => EntryKind::Submenu(Level::Wifi),
+            MenuItem::Battery => EntryKind::Submenu(Level::Battery),
             MenuItem::WifiNetworks => EntryKind::NetworkPicker,
             MenuItem::WifiToggle => EntryKind::Toggle(ToggleId::Wifi),
             MenuItem::SettingsBack
             | MenuItem::BluetoothBack
             | MenuItem::GnssBack
             | MenuItem::WifiBack
+            | MenuItem::BatteryBack
             | MenuItem::RadioBack => EntryKind::Back,
             MenuItem::BluetoothToggle => EntryKind::Toggle(ToggleId::Bluetooth),
             MenuItem::GnssToggle => EntryKind::Toggle(ToggleId::Gnss),
@@ -299,6 +327,7 @@ impl MenuItem {
                 | MenuItem::BluetoothBack
                 | MenuItem::GnssBack
                 | MenuItem::WifiBack
+                | MenuItem::BatteryBack
                 | MenuItem::RadioBack
         )
     }
@@ -353,6 +382,7 @@ impl MenuItems {
                 | MenuItem::BluetoothBack.bit()
                 | MenuItem::GnssBack.bit()
                 | MenuItem::WifiBack.bit()
+                | MenuItem::BatteryBack.bit()
                 | MenuItem::RadioBack.bit(),
         )
     }

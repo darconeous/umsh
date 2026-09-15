@@ -13,6 +13,9 @@ repository.workspace = true
 # BQ battery telemetry, and XL9555 power domains.
 
 [features]
+# Buffer a dark-screen battery-current window and report it on wired traffic.
+# Does not enable BLE debug or change radio/charger settings.
+input-qualification = []
 # Explicit feasibility probe; normal images do not load or enable the sensor.
 motion-qualification = ["ble-debug"]
 bridge-client = ["wifi", "psram", "dep:umsh-bridge-client", "dep:embedded-tls", "umsh-ulcp-runtime/bridge-client", "embassy-net/tcp", "embassy-net/dns"]

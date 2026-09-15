@@ -51,6 +51,7 @@ struct Device<const PAYLOAD: usize> {
     /// from the retained response. The at-most-once property is measured
     /// here.
     executed: u32,
+    battery_samples: u32,
     /// Requests refused before the engine saw them.
     unauthorized: u32,
 }
@@ -77,6 +78,9 @@ impl<const PAYLOAD: usize> Device<PAYLOAD> {
             },
             default_duty_limit: 0xFFFF,
             duty: Box::leak(Box::new(DutyLedger::new())),
+            battery_diagnostics: umsh_ulcp::battery_diagnostics::Fields::for_key(
+                prop::BATTERY_CURRENT,
+            ),
             battery: Some(BatteryFields {
                 voltage: true,
                 level: false,
@@ -109,6 +113,7 @@ impl<const PAYLOAD: usize> Device<PAYLOAD> {
             engine: DeviceEngine::new(0x5AA5),
             admins: Vec::new(),
             executed: 0,
+            battery_samples: 0,
             unauthorized: 0,
         }
     }
@@ -215,6 +220,24 @@ impl<const PAYLOAD: usize> Device<PAYLOAD> {
         );
         while let Some(effect) = pending.take() {
             match effect {
+                Effect::SampleBatteryGroup {
+                    tid,
+                    key,
+                    fields: _,
+                } => {
+                    use umsh_ulcp::battery_diagnostics::{Sample, Value};
+                    self.battery_samples += 1;
+                    let mut sample = Sample::default();
+                    sample.snapshot = Ok(umsh_ulcp::BatteryStatus::default());
+                    sample.set(
+                        prop::BATTERY_CURRENT,
+                        Ok(Some(Value::Current(-100 * self.battery_samples as i32))),
+                    );
+                    self.session
+                        .respond_battery_group(tid, key, sample, &mut |b: &[u8]| {
+                            emitted.push(b.to_vec())
+                        });
+                }
                 Effect::SampleBattery { tid } => self.session.respond_battery(
                     tid,
                     Ok(umsh_ulcp::BatteryStatus::default()),
@@ -597,6 +620,49 @@ fn a_retransmission_is_answered_without_executing_again() {
         .expect("a response");
     assert_eq!(again, first, "the retained response is repeated verbatim");
     assert_eq!(device.executed, 1, "the request did not run twice");
+}
+
+#[test]
+fn battery_multi_get_replays_one_sample_and_new_tokens_acquire_again() {
+    let mut device = managed();
+    let mut buf = [0; 64];
+    let keys = [
+        prop::BATTERY_CURRENT,
+        prop::BATTERY_FULL_CAPACITY,
+        prop::BATTERY_CURRENT,
+    ];
+    let len = frame::prop_multi_get(&mut buf, 0, &keys).unwrap();
+    let mut exchange = Exchange::<192>::new(&buf[..len], 3, 0).unwrap();
+    let mut wire = [0; PAYLOAD];
+    let Step::Send { len: wire_len } = exchange.poll(0, &mut wire) else {
+        panic!("request");
+    };
+    assert!(
+        device
+            .deliver(&STRANGER_KEY, &wire[..wire_len], 0)
+            .is_none()
+    );
+    assert_eq!(device.battery_samples, 0);
+    let first = device.deliver(&ADMIN_KEY, &wire[..wire_len], 0).unwrap();
+    assert_eq!(device.battery_samples, 1);
+    let retry = device
+        .deliver(&ADMIN_KEY, &wire[..wire_len], RETRY_MS)
+        .unwrap();
+    assert_eq!(first, retry);
+    assert_eq!(device.battery_samples, 1);
+    let next = converse(&mut device, &buf[..len], 4);
+    assert_eq!(device.battery_samples, 2);
+    let parsed = Frame::parse(&next.reply).unwrap();
+    let entries: Vec<_> = MultiEntries::new(parsed.payload)
+        .map(Result::unwrap)
+        .collect();
+    assert_eq!(entries[0].value, &[0x38, 0xff]);
+    assert_eq!(entries[1].key, prop::LAST_STATUS);
+    assert_eq!(
+        pui::decode(entries[1].value).unwrap().0,
+        Status::PROP_NOT_FOUND.0
+    );
+    assert_eq!(entries[2].value, entries[0].value);
 }
 
 /// The other face of at-most-once, and why a token may never be issued

@@ -319,15 +319,15 @@ There are two distinct questions:
 
 1. **Does firmware attempt to protect the battery?** Yes. Meshtastic’s generic power code tracks battery voltage and triggers a low-battery event after repeated low readings. The default Li-Ion open-circuit-voltage table bottoms out at 3100 mV. If a device has a battery, is not USB-powered, and reports below the bottom OCV entry for more than 10 readings, Meshtastic triggers `EVENT_LOW_BATTERY`, which leads toward sleep/shutdown behavior.
 
-2. **Is there a hardware low-battery disconnect that prevents all drain?** Not proven from the firmware alone. The presence of BQ25896 and BQ27220 gives charger/power-path and fuel-gauge functionality, but the reviewed firmware does not prove that the board has a dedicated battery-protection FET or a hard low-voltage disconnect that fully isolates the cell. Assume Meshtastic provides a **software low-voltage sleep mechanism**, not a guaranteed hardware cut-off, unless confirmed in the schematic or by measuring the board.
+2. **Can firmware disconnect the battery from the system?** Yes. Schematic sheet 1 routes the BQ25896 `SYS` output to the main and peripheral regulators. Its internal BATFET can disconnect the battery from SYS in shipping mode. Battery-connected circuitry still draws residual current; this is not a zero-current isolation of the cell. This hardware capability does not establish whether another firmware's low-battery path uses it.
 
 Practical porting implication: implement a conservative low-battery policy yourself. Do not rely on deep sleep alone as a complete Li-Ion protection mechanism unless the hardware schematic confirms cell protection.
 
 ### Power button / hard off
 
-No conventional PMU power-button pin is exposed in the Meshtastic `tlora-pager` variant. Inputs available for wake/control are the ESP32 boot button (`GPIO0`) and rotary press (`GPIO7`).
+The dedicated **Power Key** (S3 on schematic sheet 1) connects `PWR_KEY` to the BQ25896 **QON** input. It is distinct from the ESP32 boot button (`GPIO0`) and rotary press (`GPIO7`), which are software inputs and possible ESP32 deep-sleep wake sources.
 
-LilyGoLib’s sleep helper explicitly says the T-LoRa-Pager allows wake sources from the boot button and rotary button. It powers down/disables many peripherals before ESP32 deep sleep, but this is still an ESP32 sleep state, not necessarily a true battery disconnect.
+LilyGoLib’s sleep helper allows boot-button and rotary-button wake from ESP32 deep sleep. Full battery power-off instead requires BQ25896 `REG09.BATFET_DIS=1`. Clearing `BATFET_DLY` requests immediate disconnection. QON or a newly attached USB supply exits shipping mode; an existing USB supply can continue powering SYS. See the [BQ25896 datasheet, sections 9.2.10 and 9.4.10](https://www.ti.com/lit/ds/symlink/bq25896.pdf).
 
 ## External/top expansion connector
 
@@ -395,13 +395,34 @@ have no navigation action; text composition, audio, haptics, SD, NFC, and
 expansion features are deferred. Backspace is TCA8418 raw FIFO key **30**,
 not the zero-based matrix index `0x1D`.
 
-Both edges of GPIO40 and GPIO41 interrupt the CPU. The ISR validates each
-quadrature transition and queues one event per complete detent; display
-rendering never samples A/B. Invalid transitions cancel an incomplete step,
-and reversals/bounce cancel without acceleration. The running image inhibits
-automatic light sleep so edge capture remains active while the screen is
-dark. Wheel press is debounced separately; held Select and Backspace do not
-repeat. Splash dismissal and screen wake consume navigation.
+While the screen is visible or dimming, both edges of GPIO40 and GPIO41
+interrupt the CPU. The ISR validates each quadrature transition and queues
+one event per complete detent; display rendering never samples A/B. Invalid
+transitions cancel an incomplete step, and reversals/bounce cancel without
+acceleration.
+
+After successful display-off, the input coordinator transfers A/B from the
+ISR to wake-enabled level waits, each armed opposite its current level.
+Owned wake guards cover boot, interactive operation, and mode transitions;
+the dark-screen guard is released only after both wake waits have been polled
+and armed. Wheel activity restores interrupt capture before rendering and
+consumes the incomplete wake cycle through the next both-high detent. Later
+detents are queued until the display is ready. The wake path cannot recover
+edges that occurred during CPU wake latency; human-speed qualification is
+required.
+
+Wheel press and BOOT use independent wake-enabled level waits and 15 ms
+stable-level debounce deadlines. A gesture retains its initial wake/splash
+disposition through bounce and release. Held Select and Backspace do not
+repeat. BOOT retains its four-second shutdown hold and no short-press action.
+Keyboard IRQ handling drains the TCA8418 FIFO without idle polling. Three
+failed recovery attempts quarantine the keyboard until the next display wake;
+the wheel and BOOT remain independent. Full power-off is unchanged.
+
+Input wake handling permits automatic light sleep only with the screen fully
+dark. USB, active GNSS, and enabled wireless drivers may independently keep
+the CPU awake. LoRa IRQ and enabled motion IRQ already use wake-enabled level
+waits; CPU wake alone does not imply screen wake.
 
 The panel shares DMA-backed SPI2 with the radio. The monochrome framebuffer
 and last-transferred frame reside in PSRAM; synchronization objects, DMA
@@ -416,26 +437,111 @@ AW9364 brightness uses short pulses across its 16 levels, not PWM; keyboard
 illumination follows screen activity.
 
 The XL9555 leaves unused domains disabled. GNSS uses the runtime enable
-setting and UART1 RX=4/TX=12 at 38400 baud. PCF85063 retained time uses its
+setting and UART1 RX=4/TX=12 at 38400 baud. Disabling GNSS cancels RX, powers
+down the receiver, and leaves a disconnected, blocking UART TX half owning
+the UART clocks. RX's wake lock is released. The pinned HAL's light-sleep
+entry suspends every UART; releasing the initialized UART's last clock owner
+can stall its register-update handshake. Reopening GNSS replaces the parked
+TX owner under a temporary wake guard and restores interrupt-driven RX.
+PCF85063 retained time uses its
 own register layout, with oscillator-stop, invalid dates, and implausible
 epochs reported as unknown. The unused RTC clock output is disabled.
 
 Battery telemetry is sampled each second. The stock-cell charger profile is
-4.192 V / 704 mA; calibration and learned gauge capacity are retained. An
-absent gauge or invalid sample reports unknown, never a fabricated zero.
+4.192 V / 704 mA. Startup checks the BQ27220 design capacity: a value other
+than 1500 mAh updates both design and initial full capacity to 1500 mAh in one
+RAM transaction, then reinitializes and verifies the standard readings. When
+design is already correct, learned full capacity is retained. Calibration,
+other profile parameters, and OTP are untouched. The check runs every boot
+because gauge RAM can return to the 3000 mAh default after loss of gauge
+power, such as battery removal without another supply. Normal shipping-mode
+power-off does not remove gauge power: U16's BAT supply connects to VBAT at
+the battery connector, upstream of the BQ25896's switched SYS output, so the
+gauge retains RAM while the battery remains connected and supplies sufficient
+voltage.
+Configuration waits are bounded and feed the startup watchdog; exit and
+original-access-mode restoration are attempted on errors. The boot log reports
+corrected/retained capacities or a configuration failure. An absent gauge or
+invalid telemetry sample reports unknown, never a fabricated zero.
+
+Settings → Battery provides read-only Charge, Capacity, and Fuel gauge pages,
+refreshed once per second. They show voltage, signed current (positive into the
+cell), charge percentage, charger state, USB power, remaining/full/design
+capacity, the gauge's requested charging voltage, and its full/present/initialized/
+smoothing flags with raw status words. A charging-voltage request of `0xffff`
+is displayed as “maximum.” These reads do not provision or reset the gauge.
+To investigate a percentage jump, compare all three pages before and after the
+jump; charger completion and the gauge's full flag are separate observations.
+The same source serves the optional
+[ULCP battery diagnostics](../protocol/src/ulcp-device.md#battery-diagnostics).
+Reads select their required registers, retain per-property failures, and share
+one acquisition across a multi-get. Periodic UI/safety reads and host reads
+share a maximum of two acquisition passes per second; host requests do not
+advance the low-battery counter or extend display attention. Use
+`umshctl info battery` for a report or `umshctl battery --watch --json` for
+monitoring, with an explicit USB port or authorized remote-node selection.
 Ten consecutive valid battery-only readings at or below 3.1 V request
-shutdown. The shutdown path stops radio activity, blanks the display, turns
-off peripheral domains, releases bus outputs, and enters deep sleep with
-BOOT or wheel press as wake sources. Pending journal writes are synchronous
-on the shared executor; frame counters are persisted before transmission.
-Deep sleep is not a proven battery disconnect, and residual current still
-needs measurement.
+shutdown. The shutdown path stops radio and motion activity, blanks the
+display, turns off peripheral domains, stops charger measurements, and
+requests immediate BQ25896 battery disconnection. On battery, SYS falls and
+the wheel cannot wake the unpowered ESP32; the dedicated Power Key or newly
+attached USB restores power. Disconnect-command errors are logged and retried
+three times. If power remains (for example, with USB connected), the existing
+deep-sleep fallback releases bus outputs and retains BOOT and wheel wake.
+Startup reconnects the battery path before enabling charging, including when
+a USB-powered restart retained the disconnect bit. Pending journal writes are
+synchronous on the shared executor; frame counters are persisted before
+transmission. Residual power-off current still needs measurement.
 
 The fitted 16 MB flash initially uses the existing 4 MB UMSH image layout,
 including the data partition at `0x300000`. Normal flashing retains its
 identity, settings, and bond journals. Additional flash is unused.
 
+### Input sleep qualification
+
+Build the measurement image with
+`make build-tlora-pager ESP32_CARGO_FLAGS='--offline --features input-qualification'`
+and use the same flags with `flash-tlora-pager` to upload it. This feature does
+not enable BLE debugging or change radio, GNSS, or charger settings.
+
+The image uses existing periodic battery acquisitions to retain a fixed-size
+summary in RAM. With USB unplugged and the screen dark and armed, it allows
+30 seconds to settle, then collects at least 300 readings spanning at least
+five minutes. Reconnect USB, close other serial clients, and run
+`python3 scripts/pager_input_power.py /dev/cu.usbmodem101` (using the actual
+port). The helper sends read-only ULCP NOPs and captures the `pager input-power:`
+ASCII summary before the framed response; ordinary ULCP clients discard that
+ASCII text. It includes
+signed mean/minimum/maximum current, sample count, elapsed time, and the count
+of acquisitions preceded by no active wake lock. `complete=false` identifies
+an interrupted measurement. The unlocked count measures sleep eligibility,
+**not actual sleep residency**. A reset loses the retained measurement.
+
+Compare the same board/settings on battery before and after the change,
+with Bluetooth, Wi-Fi, motion wake, and GNSS disabled and LoRa reception
+enabled; repeat with LoRa disabled. Verify actual sleep with a current trace,
+then test slow/fast wheel turns in both directions, every starting phase,
+bounce, input during rendering and sleep entry, simultaneous inputs, held
+BOOT shutdown, USB insertion/removal, LoRa receive, and enabled motion wake.
+Record measured currents and qualification results before claiming a power
+target or complete hardware validation.
+
 ### Qualification status
+
+The sleep-compatible input policy has host coverage for transition races,
+shutdown precedence, wake consumption, every encoder starting phase, bounce,
+held presses, and keyboard FIFO behavior. The user confirmed that the input
+sleep/wake behavior works on the Pager. Sustained input stress testing and
+comparative current measurements remain pending.
+
+The GNSS-enabled-to-disabled sleep failure reported a watchdog reset. UART
+parking addresses the initialized-but-unclocked UART sleep handshake; its
+firmware build and stack check pass, as do 50 GNSS host tests. The corrected
+image boots and completes two GNSS on/off cycles over USB with identity and
+test settings retained. The user subsequently confirmed that the reported
+GNSS-off sleep reboot no longer occurred in the battery-only retest. This
+confirms the reported reproduction, not long-term sleep reliability or a
+measured power reduction.
 
 The initial upload has run on an attached Pager: the user confirmed the
 screen, corrected wheel direction, Select, and Backspace, and USB ULCP returned the correct board model,
@@ -448,6 +554,13 @@ and reception while continuously scrolling still need qualification.
 The user confirmed substantially faster scrolling with DMA and changed-stripe
 updates. The corrected memory budget boots successfully, and native-USB
 entry followed by the watchdog reset returns automatically to USB ULCP.
+The stock gauge-capacity correction was verified on the attached Pager:
+design/full readings changed from 3000/2872 mAh to 1500/1500 mAh, and a
+subsequent reboot logged retained capacity without entering configuration.
+RAM address selection needs the 10 ms settling delays used by LilyGo's
+driver; the shorter bus-free interval alone left the old values intact.
+Gauge-power-loss recovery and long-term capacity learning still need physical
+qualification.
 
 Remaining hardware acceptance checks:
 
@@ -459,8 +572,10 @@ Remaining hardware acceptance checks:
   charging transitions, and battery-only boot.
 - Exercise BLE pairing/reconnect, Wi-Fi association/DHCP/reconnect, bridge
   traffic, and bidirectional LoRa traffic while continuously scrolling.
-- Check shutdown/wake from each button, measure sleeping current, and confirm
-  identity/settings/bond retention after ordinary reflashing.
+- On battery, confirm shutdown drops the system rails, wheel/BOOT cannot
+  restart the device, and the dedicated Power Key restores power. Also check
+  USB-powered sleep, USB removal after shutdown, USB reconnection, residual
+  current, and identity/settings/bond retention after ordinary reflashing.
 
 ## Minimal bring-up checklist for a new firmware port
 

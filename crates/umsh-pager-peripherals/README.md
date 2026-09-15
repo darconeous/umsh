@@ -7,7 +7,10 @@ the register transactions and pure input/power policies without ESP32 hardware.
   The board calls the quadrature decoder from GPIO interrupts on both edges
   of both channels. Only the push button uses timed sampling.
 - `power`: XL9555 switched domains, BQ25896 charging, and BQ27220 telemetry.
-  Fuel-gauge calibration and learned capacity are never rewritten.
+- `gauge`: checks the stock 1500 mAh design capacity at startup. A mismatch
+  updates design and initial full capacity together in RAM, with readback and
+  bounded configuration/access-mode cleanup. An already-correct design leaves
+  learned full capacity alone. Calibration and OTP are never rewritten.
 - `rtc`: PCF85063A retained time, oscillator validity, and calendar conversion.
 - `display`: the ST7796 landscape window and a monochrome framebuffer,
   converted to RGB565 in four-row transfers.

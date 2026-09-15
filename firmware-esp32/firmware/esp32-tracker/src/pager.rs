@@ -8,6 +8,9 @@ use umsh_pager_peripherals::{
     input::{Debounce, KeyEvent, Keyboard, Quadrature},
     power::{Battery, Expander, LowBattery},
 };
+use umsh_ulcp::battery_diagnostics::{
+    Fields as BatteryFieldsRequested, Sample as BatterySample, Value as BatteryValue,
+};
 
 #[cfg(feature = "motion-qualification")]
 #[path = "pager_motion_qualification.rs"]
@@ -20,6 +23,63 @@ pub mod motion;
 static I2C_BUS: StaticCell<board::I2cBus> = StaticCell::new();
 static EXPANDER: StaticCell<board::SharedExpander> = StaticCell::new();
 static SPI_BUS: StaticCell<board::SpiBus> = StaticCell::new();
+static GROUP_REQUEST: Signal<CriticalSectionRawMutex, (u32, BatteryFieldsRequested)> =
+    Signal::new();
+static GROUP_REPLY: Signal<CriticalSectionRawMutex, (u32, BatterySample)> = Signal::new();
+static GROUP_LOCK: Mutex<CriticalSectionRawMutex, ()> = Mutex::new(());
+static GROUP_GENERATION: AtomicU32 = AtomicU32::new(0);
+
+pub async fn sample_battery_group(fields: BatteryFieldsRequested) -> BatterySample {
+    let _guard = GROUP_LOCK.lock().await;
+    let generation = GROUP_GENERATION.fetch_add(1, Ordering::Relaxed);
+    GROUP_REPLY.reset();
+    GROUP_REQUEST.signal((generation, fields));
+    with_timeout(Duration::from_secs(2), async {
+        loop {
+            let (returned, sample) = GROUP_REPLY.wait().await;
+            if returned == generation {
+                return sample;
+            }
+        }
+    })
+    .await
+    .unwrap_or_default()
+}
+
+fn screen_battery(sample: &BatterySample) -> Option<screen::BatteryDiagnostics> {
+    use umsh_ulcp::{battery_diagnostics::VoltageRequest, ids::prop};
+    let unsigned = |key| match sample.get(key).ok()?? {
+        BatteryValue::Unsigned(v) => u16::try_from(v).ok(),
+        _ => None,
+    };
+    Some(screen::BatteryDiagnostics {
+        current_ma: match sample.get(prop::BATTERY_CURRENT).ok()?? {
+            BatteryValue::Current(v) => i16::try_from(v).ok()?,
+            _ => return None,
+        },
+        remaining_mah: unsigned(prop::BATTERY_REMAINING_CAPACITY)?,
+        full_mah: unsigned(prop::BATTERY_FULL_CAPACITY)?,
+        design_mah: unsigned(prop::BATTERY_DESIGN_CAPACITY)?,
+        charging_mv: match sample.get(prop::BATTERY_CHARGE_VOLTAGE_REQUEST).ok()?? {
+            BatteryValue::Voltage(VoltageRequest::Maximum) => u16::MAX,
+            BatteryValue::Voltage(VoltageRequest::Millivolts(v)) => u16::try_from(v).ok()?,
+            _ => return None,
+        },
+        status: unsigned(prop::BATTERY_GAUGE_STATUS)?,
+        operation: unsigned(prop::BATTERY_GAUGE_OPERATION_STATUS)?,
+        usb: match sample.get(prop::BATTERY_EXT_POWER_PRESENT).ok()?? {
+            BatteryValue::Bool(v) => v,
+            _ => return None,
+        },
+    })
+}
+pub static BATTERY_DETAILS_ACTIVE: AtomicBool = AtomicBool::new(false);
+static BATTERY_DETAILS: critical_section::Mutex<RefCell<Option<screen::BatteryDiagnostics>>> =
+    critical_section::Mutex::new(RefCell::new(None));
+
+pub fn battery_diagnostics() -> Option<screen::BatteryDiagnostics> {
+    critical_section::with(|cs| *BATTERY_DETAILS.borrow(cs).borrow())
+}
 #[repr(C, align(4))]
 struct Stripe([u8; umsh_pager_peripherals::display::STRIPE_BYTES]);
 static STRIPE: StaticCell<Stripe> = StaticCell::new();
@@ -28,6 +88,7 @@ pub async fn power_up(
     i2c: peripherals::I2C0<'static>,
     sda: peripherals::GPIO3<'static>,
     scl: peripherals::GPIO2<'static>,
+    rtc: &mut Rtc<'static>,
 ) -> (&'static board::I2cBus, &'static board::SharedExpander) {
     let bus = I2C_BUS.init(Mutex::new(
         I2c::new(
@@ -51,6 +112,30 @@ pub async fn power_up(
         .init()
         .await
         .expect("Pager charger profile initialization");
+    // Configuration waits may outlast the normal startup watchdog window.
+    struct GaugeDelay<'a>(&'a mut Rtc<'static>);
+    impl embedded_hal_async::delay::DelayNs for GaugeDelay<'_> {
+        async fn delay_ns(&mut self, ns: u32) {
+            self.0.rwdt.feed();
+            Timer::after(Duration::from_nanos(u64::from(ns))).await;
+        }
+    }
+    match battery.ensure_stock_capacity(&mut GaugeDelay(rtc)).await {
+        Ok(config) => println!(
+            "pager: gauge capacity {}: design={} mAh full={} mAh",
+            if config.changed {
+                "corrected"
+            } else {
+                "retained"
+            },
+            config.design_mah,
+            config.full_mah,
+        ),
+        Err(error) => println!("pager: gauge capacity configuration failed: {error:?}"),
+    }
+    if let Ok(gauge) = battery.diagnostics().await {
+        println!("pager: gauge readings: {gauge:?}");
+    }
     if let Ok(reading) = battery.read().await {
         VBUS_PRESENT.store(reading.vbus, Ordering::Release);
     }
@@ -114,176 +199,8 @@ pub fn display(
     )
 }
 
-struct Encoder {
-    a: Input<'static>,
-    b: Input<'static>,
-    decoder: Quadrature,
-}
-static ENCODER: critical_section::Mutex<RefCell<Option<Encoder>>> =
-    critical_section::Mutex::new(RefCell::new(None));
-#[derive(Clone, Copy)]
-struct Navigation {
-    input: UiInput,
-    splash: bool,
-    faded: bool,
-}
-static NAVIGATION: Channel<CriticalSectionRawMutex, Navigation, 64> = Channel::new();
-static INPUT_OVERFLOW: AtomicBool = AtomicBool::new(false);
-
-#[inline(always)]
-fn capture(input: UiInput) {
-    let event = Navigation {
-        input,
-        splash: BOOT_SPLASH_ACTIVE.load(Ordering::Acquire),
-        faded: SCREEN_FADED.load(Ordering::Acquire),
-    };
-    if NAVIGATION.try_send(event).is_err() {
-        INPUT_OVERFLOW.store(true, Ordering::Release);
-    }
-}
-
-pub fn init_encoder(
-    io: peripherals::IO_MUX<'static>,
-    a: peripherals::GPIO40<'static>,
-    b: peripherals::GPIO41<'static>,
-) {
-    let mut io = Io::new(io);
-    io.set_interrupt_handler(encoder_interrupt);
-    let config = InputConfig::default().with_pull(Pull::Up);
-    let mut a = Input::new(a, config);
-    let mut b = Input::new(b, config);
-    critical_section::with(|cs| {
-        let decoder = Quadrature::new((u8::from(a.is_high()) << 1) | u8::from(b.is_high()));
-        a.clear_interrupt();
-        b.clear_interrupt();
-        a.listen(Event::AnyEdge);
-        b.listen(Event::AnyEdge);
-        ENCODER
-            .borrow_ref_mut(cs)
-            .replace(Encoder { a, b, decoder });
-    });
-}
-
-#[esp_hal::handler]
-#[ram]
-fn encoder_interrupt() {
-    critical_section::with(|cs| {
-        let mut encoder = ENCODER.borrow_ref_mut(cs);
-        let Some(e) = encoder.as_mut() else {
-            return;
-        };
-        if !(e.a.is_interrupt_set() || e.b.is_interrupt_set()) {
-            return;
-        }
-        e.a.clear_interrupt();
-        e.b.clear_interrupt();
-        let ab = (u8::from(e.a.is_high()) << 1) | u8::from(e.b.is_high());
-        match e.decoder.transition(ab) {
-            // Pager's physical forward rotation follows the negative A/B cycle.
-            1 => capture(UiInput::Backward),
-            -1 => capture(UiInput::Forward),
-            _ => {}
-        }
-    });
-}
-
-/// Button debounce samples do not decode the encoder. All A/B transitions are
-/// consumed in the ISR, including while this task awaits an I2C transaction.
-#[embassy_executor::task]
-pub async fn input_task(
-    press: peripherals::GPIO7<'static>,
-    boot: peripherals::GPIO0<'static>,
-    irq: peripherals::GPIO6<'static>,
-    bus: &'static board::I2cBus,
-) {
-    let config = InputConfig::default().with_pull(Pull::Up);
-    let press = Input::new(press, config);
-    let boot = Input::new(boot, config);
-    let irq = Input::new(irq, config);
-    let mut button = Debounce::new(press.is_low());
-    let mut power = Debounce::new(boot.is_low());
-    let mut power_since = None;
-    let mut keyboard = Keyboard::new(I2cDevice::new(bus));
-    let mut keyboard_ok = keyboard.init().await.is_ok();
-    let mut retry_at = Instant::now() + Duration::from_secs(1);
-    let mut press_gate = (false, false);
-    let mut was_pressed = press.is_low();
-    loop {
-        let now = Instant::now();
-        let raw_press = press.is_low();
-        if raw_press && !was_pressed {
-            press_gate = (
-                BOOT_SPLASH_ACTIVE.load(Ordering::Acquire),
-                SCREEN_FADED.load(Ordering::Acquire),
-            );
-            UI_WAKE.signal(());
-        }
-        was_pressed = raw_press;
-        if button.sample(raw_press, now.as_millis()) == Some(true) {
-            let event = Navigation {
-                input: UiInput::Select,
-                splash: press_gate.0,
-                faded: press_gate.1,
-            };
-            if NAVIGATION.try_send(event).is_err() {
-                INPUT_OVERFLOW.store(true, Ordering::Release);
-            }
-        }
-        match power.sample(boot.is_low(), now.as_millis()) {
-            Some(true) => power_since = Some(now),
-            Some(false) => power_since = None,
-            _ => {}
-        }
-        if power_since.is_some_and(|at| now.duration_since(at) >= Duration::from_secs(4)) {
-            power_since = None;
-            SHUTDOWN_REQUEST.signal(());
-        }
-        if !keyboard_ok && now >= retry_at {
-            keyboard_ok = keyboard.init().await.is_ok();
-            retry_at = now + Duration::from_secs(1);
-            if !keyboard_ok {
-                debug_log(format_args!("pager: keyboard unavailable"));
-            }
-        }
-        if keyboard_ok && irq.is_low() {
-            // Bounded drain keeps an IRQ storm from starving push-button handling.
-            for _ in 0..16 {
-                match keyboard.next().await {
-                    Ok(Some(KeyEvent::BackPress)) => capture(UiInput::Back),
-                    Ok(Some(KeyEvent::Overflow)) => {
-                        INPUT_OVERFLOW.store(true, Ordering::Release);
-                    }
-                    Ok(Some(_)) => {}
-                    Ok(None) => break,
-                    Err(_) => {
-                        keyboard_ok = false;
-                        retry_at = now + Duration::from_secs(1);
-                        break;
-                    }
-                }
-            }
-        }
-        if INPUT_OVERFLOW.swap(false, Ordering::AcqRel) {
-            NAVIGATION.clear();
-            UI_INPUT_CH.clear();
-            debug_log(format_args!(
-                "pager: input queue overflow; pending navigation discarded"
-            ));
-        }
-        while !UI_INPUT_CH.is_full() {
-            let Ok(event) = NAVIGATION.try_receive() else {
-                break;
-            };
-            UI_WAKE.signal(());
-            if event.splash {
-                UI_SPLASH_DISMISS.signal(());
-            } else if !event.faded {
-                let _ = UI_INPUT_CH.try_send(event.input);
-            }
-        }
-        Timer::after_millis(2).await;
-    }
-}
+#[path = "pager_input.rs"]
+pub mod input;
 
 #[embassy_executor::task]
 pub async fn battery_task(bus: &'static board::I2cBus) {
@@ -292,16 +209,87 @@ pub async fn battery_task(bus: &'static board::I2cBus) {
     let mut previous = None;
     let mut low = LowBattery::default();
     let mut next_tick = Instant::now();
+    let mut next_acquisition = Instant::now();
     loop {
-        let requested = matches!(
-            select(Timer::at(next_tick), BATTERY_REQUEST.wait()).await,
-            Either::Second(())
-        );
+        let event = select3(
+            Timer::at(next_tick),
+            BATTERY_REQUEST.wait(),
+            GROUP_REQUEST.wait(),
+        )
+        .await;
+        let requested = matches!(event, Either3::Second(()));
+        let group = match event {
+            Either3::Third(request) => Some(request),
+            _ => None,
+        };
         let periodic = Instant::now() >= next_tick;
         if periodic {
             next_tick = Instant::now() + Duration::from_secs(1);
         }
-        match battery.read().await {
+        let fields = group
+            .map(|(_, fields)| fields)
+            .unwrap_or(
+                BatteryFieldsRequested::SNAPSHOT.union(BatteryFieldsRequested::for_key(
+                    umsh_ulcp::ids::prop::BATTERY_EXT_POWER_PRESENT,
+                )),
+            )
+            .union(if periodic {
+                BatteryFieldsRequested::ALL
+            } else {
+                BatteryFieldsRequested::NONE
+            });
+        struct SampleDelay;
+        impl embedded_hal_async::delay::DelayNs for SampleDelay {
+            async fn delay_ns(&mut self, ns: u32) {
+                Timer::after(Duration::from_nanos(ns.into())).await;
+            }
+        }
+        // TI limits complete standard-command polling to twice per second.
+        // Host requests and the periodic UI/safety pass share this limit.
+        Timer::at(next_acquisition).await;
+        next_acquisition = Instant::now() + Duration::from_millis(500);
+        let input_locks = input::locks_active();
+        let sample = battery.sample(fields, &mut SampleDelay).await;
+        if periodic {
+            input::power_sample(
+                match sample.get(umsh_ulcp::ids::prop::BATTERY_CURRENT) {
+                    Ok(Some(BatteryValue::Current(v))) => Some(v),
+                    _ => None,
+                },
+                !matches!(
+                    sample.get(umsh_ulcp::ids::prop::BATTERY_EXT_POWER_PRESENT),
+                    Ok(Some(BatteryValue::Bool(false)))
+                ),
+                input_locks,
+            );
+        }
+        if let Some((generation, _)) = group {
+            GROUP_REPLY.signal((generation, sample));
+            // Host diagnostics do not wake the screen or advance its cadence.
+            if !periodic {
+                continue;
+            }
+        }
+        let reading = sample.snapshot.map(|snapshot| board_battery::Reading {
+            voltage_mv: snapshot.voltage_mv,
+            percent: snapshot.level_percent,
+            charge: snapshot.charge_state.map(|state| match state {
+                umsh_ulcp::battery::BatteryChargeState::Charging => board_battery::Charge::Charging,
+                umsh_ulcp::battery::BatteryChargeState::Discharging => {
+                    board_battery::Charge::Discharging
+                }
+                umsh_ulcp::battery::BatteryChargeState::Charged => board_battery::Charge::Charged,
+            }),
+            vbus: matches!(
+                sample.get(umsh_ulcp::ids::prop::BATTERY_EXT_POWER_PRESENT),
+                Ok(Some(BatteryValue::Bool(true)))
+            ),
+        });
+        if periodic {
+            let details = screen_battery(&sample);
+            critical_section::with(|cs| *BATTERY_DETAILS.borrow(cs).borrow_mut() = details);
+        }
+        match reading {
             Ok(reading) => {
                 BATTERY_MV.store(reading.voltage_mv.unwrap_or(0), Ordering::Release);
                 BATTERY_LEVEL.store(reading.percent.unwrap_or(0xff), Ordering::Release);
@@ -360,6 +348,11 @@ pub async fn battery_task(bus: &'static board::I2cBus) {
                 }
             }
         }
+        // Refresh diagnostics without waking the display or extending attention.
+        // Ordinary pages retain their existing announcement cadence.
+        if periodic && BATTERY_DETAILS_ACTIVE.load(Ordering::Acquire) {
+            BATTERY_UI_CHANGED.signal(());
+        }
     }
 }
 
@@ -379,6 +372,7 @@ pub async fn heartbeat_task(
             break;
         }
     }
+    input::shutdown().await;
     #[cfg(not(feature = "motion-qualification"))]
     {
         rtc.rwdt.feed();
@@ -392,12 +386,6 @@ pub async fn heartbeat_task(
     let _ = with_timeout(Duration::from_secs(2), DISPLAY_SHUTDOWN_DONE.wait()).await;
     // Journal writes are synchronous on this executor; no flash operation can
     // be suspended halfway here. MAC counters are persisted before transmission.
-    critical_section::with(|cs| {
-        if let Some(e) = ENCODER.borrow_ref_mut(cs).as_mut() {
-            e.a.unlisten();
-            e.b.unlisten();
-        }
-    });
     // Inputs are reborrowed only for the terminal shutdown path; never driven.
     let boot = Input::new(
         unsafe { peripherals::GPIO0::steal() },
@@ -417,7 +405,20 @@ pub async fn heartbeat_task(
     // runner leaves the watchdog armed so the device can recover by resetting.
     DEVICE_CTL.wait_shutdown().await;
     let _ = expander.lock().await.shutdown().await;
-    let _ = Battery::new(I2cDevice::new(bus)).sleep().await;
+    let mut battery = Battery::new(I2cDevice::new(bus));
+    let _ = battery.sleep().await;
+    // Final power command: on battery this cuts SYS, including the ESP32 and
+    // its GPIO wake circuitry. QON (the dedicated power key) restores power.
+    // USB can keep SYS alive, so retain the existing deep-sleep fallback below.
+    for attempt in 1..=3 {
+        rtc.rwdt.feed();
+        if battery.power_off().await.is_ok() {
+            break;
+        }
+        debug_log(format_args!(
+            "pager: battery disconnect failed (attempt {attempt}/3)"
+        ));
+    }
     // Terminal ownership transfer: no further await lets the peripheral tasks
     // run after their outputs are disconnected. Avoid back-power through SPI,
     // UART, or IRQ pull-ups after the switched domains go down.

@@ -796,6 +796,8 @@ enum ExpectedResponse {
     /// `Property`, a refusal is an answer to record, never a stage
     /// failure: the caller asked an open question about one property.
     ManagementGet(u32),
+    /// One battery acquisition, shared by all entries in this multi-get.
+    ManagementBatteryGet(Vec<u32>),
     /// A `CMD_PROP_SET` issued by a local management write, answered by
     /// the device's echo or a per-property refusal.
     ManagementSet(u32),
@@ -818,6 +820,7 @@ impl ExpectedResponse {
         matches!(
             self,
             Self::ManagementGet(_)
+                | Self::ManagementBatteryGet(_)
                 | Self::ManagementSet(_)
                 | Self::ManagementItem(_)
                 | Self::ManagementSave
@@ -856,6 +859,7 @@ pub enum UlcpItemMutation {
 #[derive(Debug, Default)]
 struct LocalManagement {
     fetch_queue: VecDeque<u32>,
+    battery_multi: bool,
     write_queue: VecDeque<(u32, Vec<u8>)>,
     /// Item mutations, drained after the writes. A table edit and a
     /// scalar write are different commands, so they cannot share a
@@ -1412,8 +1416,15 @@ impl MobileUlcpSession {
     ) -> Result<UlcpSessionUpdateRecord, MobileError> {
         let mut state = self.inner.lock().expect("ULCP session mutex poisoned");
         state.begin_local_management()?;
+        let battery_multi = property_ids.len() > 1
+            && property_ids.len() <= 14
+            && property_ids
+                .iter()
+                .all(|key| umsh_ulcp::battery_diagnostics::Fields::ALL.contains(*key))
+            && state.has_capability(cap::CMD_MULTI)?;
         state.management = Some(LocalManagement {
             fetch_queue: property_ids.into(),
+            battery_multi,
             ..LocalManagement::default()
         });
         let mut outbound = Vec::new();
@@ -2021,6 +2032,15 @@ impl MobileUlcpSession {
             state.start_refresh(&mut outbound)?;
             return Ok(state.update(outbound));
         }
+        {
+            let mut state = self.inner.lock().expect("ULCP session mutex poisoned");
+            if let Some(ExpectedResponse::ManagementBatteryGet(keys)) =
+                state.expected.get(&parsed.header.tid())
+            {
+                let keys = keys.clone();
+                return state.consume_battery_multi(parsed, &keys);
+            }
+        }
         let response = inspect_ulcp_property_frame(frame)?;
         let mut state = self.inner.lock().expect("ULCP session mutex poisoned");
         let mut outbound = Vec::new();
@@ -2526,6 +2546,9 @@ impl MobileUlcpSession {
                     )?);
                 }
             }
+            ExpectedResponse::ManagementBatteryGet(_) => {
+                return Err(MobileError::UlcpMismatchedResponse);
+            }
             ExpectedResponse::ManagementGet(property) => {
                 if response.property_id == prop::LAST_STATUS && property != prop::LAST_STATUS {
                     // A refusal is the device's whole answer about this
@@ -3006,6 +3029,19 @@ impl UlcpSessionState {
             });
             self.management = Some(op);
         } else if !op.fetch_queue.is_empty() {
+            if op.battery_multi {
+                let keys: Vec<_> = op.fetch_queue.drain(..).collect();
+                let tid = self.allocate_management_tid()?;
+                let mut bytes = vec![0; MAX_FRAME];
+                let used = frame::prop_multi_get(&mut bytes, tid, &keys)
+                    .map_err(|_| MobileError::InvalidUlcpFrame)?;
+                bytes.truncate(used);
+                self.expected
+                    .insert(tid, ExpectedResponse::ManagementBatteryGet(keys));
+                outbound.push(bytes);
+                self.management = Some(op);
+                return Ok(());
+            }
             let budget = usize::from(frame::TID_MAX).saturating_sub(self.expected.len());
             for _ in 0..budget {
                 let Some(property) = op.fetch_queue.pop_front() else {
@@ -3025,6 +3061,88 @@ impl UlcpSessionState {
             self.refresh_attached_snapshot(None)?;
         }
         Ok(())
+    }
+
+    /// Decode the whole response before accepting any entries. Statuses
+    /// occupy the position of the property they answer, including empty
+    /// successful readings. A short response re-asks its unreturned suffix.
+    fn consume_battery_multi(
+        &mut self,
+        response: Frame<'_>,
+        keys: &[u32],
+    ) -> Result<UlcpSessionUpdateRecord, MobileError> {
+        let entries: Vec<_> = match response.command() {
+            Some(Cmd::PropAre) => frame::MultiEntries::new(response.payload)
+                .collect::<Result<_, _>>()
+                .map_err(|_| MobileError::UlcpMalformedPayload)?,
+            Some(Cmd::PropIs) => {
+                let payload = frame::PropPayload::parse(response.payload)
+                    .map_err(|_| MobileError::UlcpMalformedPayload)?;
+                if payload.key != prop::LAST_STATUS {
+                    return Err(MobileError::UlcpMismatchedResponse);
+                }
+                vec![
+                    frame::MultiEntry {
+                        key: prop::LAST_STATUS,
+                        value: payload.value
+                    };
+                    keys.len()
+                ]
+            }
+            _ => return Err(MobileError::UlcpMismatchedResponse),
+        };
+        if entries.is_empty() || entries.len() > keys.len() {
+            return Err(MobileError::UlcpMismatchedResponse);
+        }
+        let answers = entries
+            .iter()
+            .zip(keys)
+            .map(|(entry, &key)| {
+                if entry.key == prop::LAST_STATUS {
+                    Ok(MobileMeshManagementAnswerRecord {
+                        property_id: key,
+                        value: None,
+                        status_code: Some(inspect_ulcp_status(entry.value.to_vec())?),
+                    })
+                } else if entry.key == key {
+                    Ok(MobileMeshManagementAnswerRecord {
+                        property_id: key,
+                        value: Some(entry.value.to_vec()),
+                        status_code: None,
+                    })
+                } else {
+                    Err(MobileError::UlcpMismatchedResponse)
+                }
+            })
+            .collect::<Result<Vec<_>, MobileError>>()?;
+        self.expected.remove(&response.header.tid());
+        // A device advertising MULTI but declining the command still has
+        // a usable single-property interface.
+        if response.command() == Some(Cmd::PropIs)
+            && answers[0].status_code == Some(umsh_ulcp::Status::UNIMPLEMENTED.0)
+        {
+            if let Some(op) = self.management.as_mut() {
+                op.battery_multi = false;
+                op.fetch_queue.extend(keys.iter().copied());
+            }
+        } else {
+            for answer in answers {
+                if let Some(value) = &answer.value {
+                    let property = ulcp_property_record(answer.property_id, value.clone());
+                    self.apply_property(&property)?;
+                    self.responses.insert(answer.property_id, property);
+                } else {
+                    self.responses.remove(&answer.property_id);
+                }
+                self.record_management_answer(answer);
+            }
+            if let Some(op) = self.management.as_mut() {
+                op.fetch_queue.extend(keys[entries.len()..].iter().copied());
+            }
+        }
+        let mut outbound = Vec::new();
+        self.continue_local_management(&mut outbound)?;
+        Ok(self.update(outbound))
     }
 
     /// Queue the next host channel-key insert, if any remain. The cached
@@ -3871,6 +3989,19 @@ pub struct UlcpManagedPropertyIds {
     pub device_model: u32,
     pub device_name: u32,
     pub battery: u32,
+    pub battery_current: u32,
+    pub battery_remaining_capacity: u32,
+    pub battery_full_capacity: u32,
+    pub battery_design_capacity: u32,
+    pub battery_ext_power_present: u32,
+    pub battery_present: u32,
+    pub battery_gauge_full: u32,
+    pub battery_gauge_initialized: u32,
+    pub battery_gauge_smoothing: u32,
+    pub battery_charge_voltage_request: u32,
+    pub battery_gauge_format: u32,
+    pub battery_gauge_status: u32,
+    pub battery_gauge_operation_status: u32,
     pub phy_enabled: u32,
     pub frequency: u32,
     pub transmit_power: u32,
@@ -3949,6 +4080,19 @@ pub fn ulcp_managed_property_ids() -> UlcpManagedPropertyIds {
         device_model: prop::DEV_MODEL,
         device_name: prop::DEV_NAME,
         battery: prop::BATTERY,
+        battery_current: prop::BATTERY_CURRENT,
+        battery_remaining_capacity: prop::BATTERY_REMAINING_CAPACITY,
+        battery_full_capacity: prop::BATTERY_FULL_CAPACITY,
+        battery_design_capacity: prop::BATTERY_DESIGN_CAPACITY,
+        battery_ext_power_present: prop::BATTERY_EXT_POWER_PRESENT,
+        battery_present: prop::BATTERY_PRESENT,
+        battery_gauge_full: prop::BATTERY_GAUGE_FULL,
+        battery_gauge_initialized: prop::BATTERY_GAUGE_INITIALIZED,
+        battery_gauge_smoothing: prop::BATTERY_GAUGE_SMOOTHING,
+        battery_charge_voltage_request: prop::BATTERY_CHARGE_VOLTAGE_REQUEST,
+        battery_gauge_format: prop::BATTERY_GAUGE_FORMAT,
+        battery_gauge_status: prop::BATTERY_GAUGE_STATUS,
+        battery_gauge_operation_status: prop::BATTERY_GAUGE_OPERATION_STATUS,
         phy_enabled: prop::PHY_ENABLED,
         frequency: prop::PHY_FREQ,
         transmit_power: prop::PHY_TX_POWER,
@@ -4054,7 +4198,11 @@ pub fn ulcp_category_properties(
     };
 
     match category {
-        UlcpManageCategory::Power => when(has(cap::BATTERY), &[prop::BATTERY]),
+        UlcpManageCategory::Power => {
+            when(has(cap::BATTERY), &[prop::BATTERY]);
+            // Diagnostics are discovered per property, with no additional capability.
+            when(has(cap::BATTERY), &umsh_ulcp::battery_diagnostics::KEYS);
+        }
         UlcpManageCategory::Radio => {
             when(
                 true,
@@ -4438,6 +4586,41 @@ pub fn ulcp_bridge_server_key(input: String) -> Result<Vec<u8>, MobileError> {
         .parse()
         .map_err(|_| MobileError::InvalidUlcpFrame)?;
     decode_bridge_key(&key.0)
+}
+
+/// A diagnostic decoded by the shared wire codec. Empty successful values
+/// are unavailable; malformed values fail inspection. Transport statuses
+/// remain with the individual management answer.
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Enum)]
+pub enum UlcpBatteryDiagnosticValue {
+    Unavailable,
+    Current { milliamps: i32 },
+    Unsigned { value: u32 },
+    Boolean { value: bool },
+    Voltage { millivolts: u32 },
+    Maximum,
+    GaugeFormat { value: u32 },
+}
+
+#[uniffi::export]
+pub fn inspect_ulcp_battery_diagnostic(
+    property_id: u32,
+    value: Vec<u8>,
+) -> Result<UlcpBatteryDiagnosticValue, MobileError> {
+    use umsh_ulcp::battery_diagnostics::{Value, VoltageRequest};
+    Ok(
+        match Value::decode(property_id, &value).map_err(|_| MobileError::InvalidUlcpFrame)? {
+            None => UlcpBatteryDiagnosticValue::Unavailable,
+            Some(Value::Current(milliamps)) => UlcpBatteryDiagnosticValue::Current { milliamps },
+            Some(Value::Unsigned(value)) => UlcpBatteryDiagnosticValue::Unsigned { value },
+            Some(Value::Bool(value)) => UlcpBatteryDiagnosticValue::Boolean { value },
+            Some(Value::Voltage(VoltageRequest::Millivolts(millivolts))) => {
+                UlcpBatteryDiagnosticValue::Voltage { millivolts }
+            }
+            Some(Value::Voltage(VoltageRequest::Maximum)) => UlcpBatteryDiagnosticValue::Maximum,
+            Some(Value::Format(value)) => UlcpBatteryDiagnosticValue::GaugeFormat { value },
+        },
+    )
 }
 
 /// Everything the management screens show, all of it optional.
@@ -10937,8 +11120,12 @@ mod tests {
         );
         assert_eq!(
             ulcp_category_properties(UlcpManageCategory::Power, caps).unwrap(),
-            vec![prop::BATTERY],
-            "one property is the whole of a power screen"
+            [
+                vec![prop::BATTERY],
+                umsh_ulcp::battery_diagnostics::KEYS.to_vec()
+            ]
+            .concat(),
+            "power reads the snapshot and discovers optional diagnostics together"
         );
     }
 
@@ -11417,6 +11604,225 @@ mod tests {
     }
 
     // ─── Local management operations ─────────────────────────────────
+
+    #[test]
+    fn battery_diagnostics_decode_compact_padded_empty_and_invalid_values() {
+        use UlcpBatteryDiagnosticValue as V;
+        for (key, bytes, expected) in [
+            (
+                prop::BATTERY_CURRENT,
+                vec![0x9c],
+                V::Current { milliamps: -100 },
+            ),
+            (
+                prop::BATTERY_CURRENT,
+                vec![0x38, 0xff],
+                V::Current { milliamps: -200 },
+            ),
+            (
+                prop::BATTERY_CURRENT,
+                vec![0x9c, 0xff, 0xff, 0xff],
+                V::Current { milliamps: -100 },
+            ),
+            (prop::BATTERY_CURRENT, vec![0], V::Current { milliamps: 0 }),
+            (
+                prop::BATTERY_DESIGN_CAPACITY,
+                vec![0xdc, 5],
+                V::Unsigned { value: 1500 },
+            ),
+            (
+                prop::BATTERY_REMAINING_CAPACITY,
+                vec![0, 0, 0, 0],
+                V::Unsigned { value: 0 },
+            ),
+            (prop::BATTERY_FULL_CAPACITY, vec![], V::Unavailable),
+            (
+                prop::BATTERY_EXT_POWER_PRESENT,
+                vec![0],
+                V::Boolean { value: false },
+            ),
+            (prop::BATTERY_PRESENT, vec![1], V::Boolean { value: true }),
+            (
+                prop::BATTERY_GAUGE_FULL,
+                vec![0],
+                V::Boolean { value: false },
+            ),
+            (
+                prop::BATTERY_GAUGE_INITIALIZED,
+                vec![1],
+                V::Boolean { value: true },
+            ),
+            (
+                prop::BATTERY_GAUGE_SMOOTHING,
+                vec![0],
+                V::Boolean { value: false },
+            ),
+            (
+                prop::BATTERY_CHARGE_VOLTAGE_REQUEST,
+                vec![0, 0x68, 0x10],
+                V::Voltage { millivolts: 4200 },
+            ),
+            (prop::BATTERY_CHARGE_VOLTAGE_REQUEST, vec![1], V::Maximum),
+            (
+                prop::BATTERY_GAUGE_FORMAT,
+                vec![99],
+                V::GaugeFormat { value: 99 },
+            ),
+            (
+                prop::BATTERY_GAUGE_STATUS,
+                vec![0x28, 0x40],
+                V::Unsigned { value: 0x4028 },
+            ),
+            (
+                prop::BATTERY_GAUGE_OPERATION_STATUS,
+                vec![0xa6],
+                V::Unsigned { value: 0xa6 },
+            ),
+        ] {
+            assert_eq!(
+                inspect_ulcp_battery_diagnostic(key, bytes).unwrap(),
+                expected
+            );
+        }
+        for (key, bytes) in [
+            (prop::BATTERY_CURRENT, vec![0; 5]),
+            (prop::BATTERY_PRESENT, vec![2]),
+            (prop::BATTERY_GAUGE_FORMAT, vec![0]),
+            (prop::BATTERY_CHARGE_VOLTAGE_REQUEST, vec![1, 0]),
+            (prop::BATTERY, vec![]),
+        ] {
+            assert!(inspect_ulcp_battery_diagnostic(key, bytes).is_err());
+        }
+        assert!(
+            ulcp_category_properties(UlcpManageCategory::Power, encoded_capabilities(&[]))
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    fn battery_multi_session() -> Arc<MobileUlcpSession> {
+        let session = MobileUlcpSession::new();
+        attach_commissionable(&session, Some(vec![0xAA; 32]), vec![0xAA; 32]);
+        {
+            let mut state = session.inner.lock().unwrap();
+            let response = state.responses.get_mut(&prop::CAPS).unwrap();
+            let mut caps = decode_capabilities(&response.value).unwrap();
+            caps.extend([cap::CMD_MULTI, cap::BATTERY]);
+            caps.sort_unstable();
+            caps.dedup();
+            response.value = encoded_capabilities(&caps);
+        }
+        session
+    }
+
+    #[test]
+    fn battery_diagnostics_local_multi_preserves_statuses_empty_and_snapshot() {
+        let session = battery_multi_session();
+        let keys = vec![
+            prop::BATTERY,
+            prop::BATTERY_CURRENT,
+            prop::BATTERY_FULL_CAPACITY,
+            prop::BATTERY_GAUGE_STATUS,
+            prop::BATTERY_DESIGN_CAPACITY,
+        ];
+        let start = session.begin_property_fetch(keys.clone()).unwrap();
+        assert_eq!(start.outbound_frames.len(), 1);
+        let request = Frame::parse(&start.outbound_frames[0]).unwrap();
+        assert_eq!(request.command(), Some(Cmd::PropMultiGet));
+        let mut bytes = [0; 100];
+        let mut response = frame::prop_are(&mut bytes, request.header.tid()).unwrap();
+        response.write_entry(prop::BATTERY, &[2, 95]).unwrap();
+        response
+            .write_entry(prop::BATTERY_CURRENT, &[0x9c])
+            .unwrap();
+        response
+            .write_entry(prop::BATTERY_FULL_CAPACITY, &[])
+            .unwrap();
+        response
+            .write_status_entry(umsh_ulcp::Status::FAILURE)
+            .unwrap();
+        response
+            .write_status_entry(umsh_ulcp::Status::PROP_NOT_FOUND)
+            .unwrap();
+        let used = response.finish();
+        let done = session.consume(bytes[..used].to_vec()).unwrap();
+        assert_eq!(done.snapshot.battery.unwrap().percentage, Some(95));
+        let answers = done.management_event.unwrap().answers;
+        assert_eq!(
+            answers.iter().map(|a| a.property_id).collect::<Vec<_>>(),
+            keys
+        );
+        assert_eq!(answers[1].value, Some(vec![0x9c]));
+        assert_eq!(answers[2].value, Some(vec![]));
+        assert_eq!(answers[3].status_code, Some(umsh_ulcp::Status::FAILURE.0));
+        assert_eq!(
+            answers[4].status_code,
+            Some(umsh_ulcp::Status::PROP_NOT_FOUND.0)
+        );
+        assert!(
+            session
+                .begin_property_fetch(vec![prop::BATTERY_CURRENT])
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn battery_diagnostics_multi_checks_order_and_retries_short_responses() {
+        let session = battery_multi_session();
+        let start = session
+            .begin_property_fetch(vec![prop::BATTERY_CURRENT, prop::BATTERY_PRESENT])
+            .unwrap();
+        let request = Frame::parse(&start.outbound_frames[0]).unwrap();
+        let mut bytes = [0; 40];
+        let mut bad = frame::prop_are(&mut bytes, request.header.tid()).unwrap();
+        bad.write_entry(prop::BATTERY_PRESENT, &[1]).unwrap();
+        let used = bad.finish();
+        assert!(session.consume(bytes[..used].to_vec()).is_err());
+        let mut short = frame::prop_are(&mut bytes, request.header.tid()).unwrap();
+        short.write_entry(prop::BATTERY_CURRENT, &[0]).unwrap();
+        let used = short.finish();
+        let more = session.consume(bytes[..used].to_vec()).unwrap();
+        assert!(more.management_event.is_none());
+        assert_eq!(more.outbound_frames.len(), 1);
+        let next = Frame::parse(&more.outbound_frames[0]).unwrap();
+        let mut response = frame::prop_are(&mut bytes, next.header.tid()).unwrap();
+        response.write_entry(prop::BATTERY_PRESENT, &[1]).unwrap();
+        let used = response.finish();
+        assert_eq!(
+            session
+                .consume(bytes[..used].to_vec())
+                .unwrap()
+                .management_event
+                .unwrap()
+                .answers
+                .len(),
+            2
+        );
+    }
+
+    #[test]
+    fn battery_diagnostics_multi_declined_falls_back_to_single_reads() {
+        let session = battery_multi_session();
+        let keys = vec![prop::BATTERY_CURRENT, prop::BATTERY_DESIGN_CAPACITY];
+        let start = session.begin_property_fetch(keys.clone()).unwrap();
+        let request = Frame::parse(&start.outbound_frames[0]).unwrap();
+        let fallback = session
+            .consume(property_response(
+                request.header.tid(),
+                prop::LAST_STATUS,
+                &[umsh_ulcp::Status::UNIMPLEMENTED.0 as u8],
+            ))
+            .unwrap();
+        assert_eq!(fallback.outbound_frames.len(), 2);
+        assert_eq!(
+            fallback
+                .outbound_frames
+                .iter()
+                .map(|f| property_request(f).1)
+                .collect::<Vec<_>>(),
+            keys
+        );
+    }
 
     /// A `CMD_PROP_SET` request, decoded.
     fn set_request(bytes: &[u8]) -> (u8, u32, Vec<u8>) {

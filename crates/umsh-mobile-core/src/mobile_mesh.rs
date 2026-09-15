@@ -2520,7 +2520,20 @@ impl FetchCrawl {
 
     /// The next request, or `None` when there is nothing left to ask.
     fn next_request(&mut self) -> Result<Option<Vec<u8>>, MobileMeshError> {
-        let batch = if self.multi { SYNC_BATCH } else { 1 };
+        // The compact battery group fits one response and shares one
+        // acquisition pass only when requested together.
+        let battery_group = self.pending.len() <= 14
+            && self
+                .pending
+                .iter()
+                .all(|key| umsh_ulcp::battery_diagnostics::Fields::ALL.contains(*key));
+        let batch = if !self.multi {
+            1
+        } else if battery_group {
+            14
+        } else {
+            SYNC_BATCH
+        };
         self.asked = self
             .pending
             .drain(..batch.min(self.pending.len()))
@@ -4533,6 +4546,34 @@ mod tests {
     /// Ask what the outstanding request was, without decoding the frame.
     fn asked(crawl: &FetchCrawl) -> Vec<u32> {
         crawl.asked.clone()
+    }
+
+    #[test]
+    fn battery_diagnostics_mesh_fetch_keeps_the_group_in_one_request() {
+        let keys = [
+            vec![prop::BATTERY],
+            umsh_ulcp::battery_diagnostics::KEYS.to_vec(),
+        ]
+        .concat();
+        let mut crawl = FetchCrawl::new(keys.clone(), true);
+        let request = crawl.next_request().unwrap().unwrap();
+        assert_eq!(
+            frame::Frame::parse(&request).unwrap().command(),
+            Some(frame::Cmd::PropMultiGet)
+        );
+        assert_eq!(asked(&crawl), keys);
+        assert!(crawl.pending.is_empty());
+        crawl.receive(&are_reply(&keys)).unwrap();
+        assert_eq!(crawl.answers.len(), 14);
+        assert!(crawl.next_request().unwrap().is_none());
+
+        let mut legacy = FetchCrawl::new(keys, false);
+        let request = legacy.next_request().unwrap().unwrap();
+        assert_eq!(
+            frame::Frame::parse(&request).unwrap().command(),
+            Some(frame::Cmd::PropGet)
+        );
+        assert_eq!(asked(&legacy), vec![prop::BATTERY]);
     }
 
     /// A list long enough to need more than one batch.

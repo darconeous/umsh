@@ -76,6 +76,45 @@ impl Debounce {
             None
         }
     }
+
+    pub fn observed(&self) -> bool {
+        self.observed
+    }
+
+    pub fn deadline(&self) -> Option<u64> {
+        (self.observed != self.stable).then_some(self.since.saturating_add(15))
+    }
+}
+
+/// A gesture begins at the first contact, and ends only after a stable
+/// release, even if a bouncing press never became a debounced press.
+#[derive(Default)]
+pub struct PressLatch {
+    active: bool,
+    release_at: Option<u64>,
+}
+impl PressLatch {
+    pub fn observe(&mut self, pressed: bool, now_ms: u64) -> bool {
+        if pressed {
+            self.release_at = None;
+            let began = !self.active;
+            self.active = true;
+            began
+        } else {
+            if self.active {
+                let at = *self.release_at.get_or_insert(now_ms.saturating_add(15));
+                if now_ms >= at {
+                    self.active = false;
+                    self.release_at = None;
+                }
+            }
+            false
+        }
+    }
+
+    pub fn deadline(&self) -> Option<u64> {
+        self.release_at
+    }
 }
 
 pub const KEYBOARD_ADDRESS: u8 = 0x34;

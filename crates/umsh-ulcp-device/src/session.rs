@@ -15,6 +15,9 @@ use umsh_ulcp::airtime::lora_airtime_ms;
 use umsh_ulcp::alert::AlertState;
 use umsh_ulcp::announce::{Announcement, AnnouncementKind};
 use umsh_ulcp::battery::{self, BatteryStatus};
+use umsh_ulcp::battery_diagnostics::{
+    self as diagnostics, Fields as DiagnosticFields, Sample as BatterySample,
+};
 use umsh_ulcp::ble::BleLinkState;
 use umsh_ulcp::frame::{
     self, Cmd, Frame, Header, MultiEntries, PropPayload, SessionResetReason, StreamPayload,
@@ -224,6 +227,8 @@ pub struct SessionConfig {
     /// `PROP_BATTERY` is unknown. `Some`: the capability is advertised
     /// and the fields say which measurements the platform reports.
     pub battery: Option<BatteryFields>,
+    /// Optional diagnostic properties implemented by this board; no new capability.
+    pub battery_diagnostics: DiagnosticFields,
     /// `None`: the board has no way to make itself conspicuous;
     /// `CAP_ALERT` is absent and `PROP_ALERT` is unknown. `Some`: the
     /// capability is advertised and the config carries the deadline.
@@ -345,6 +350,12 @@ pub enum Effect {
     /// measurement is reported; the session never caches readings, so
     /// every get samples.
     SampleBattery { tid: u8 },
+    /// Acquire the selected battery group once, then call `respond_battery_group`.
+    SampleBatteryGroup {
+        tid: u8,
+        key: u32,
+        fields: DiagnosticFields,
+    },
     /// Take an ambient light measurement and feed it back with
     /// [`Session::respond_illuminance`], quoting this `tid`. Emitted for a
     /// `PROP_ILLUMINANCE` get; like the battery, nothing is cached, so
@@ -2923,6 +2934,7 @@ pub const MULTI_MAX: usize = 300;
 /// length-prefixed entries, and holding them lets a value be handed
 /// straight to the ordinary single-property paths without a copy.
 struct MultiState {
+    battery_sample: Option<BatterySample>,
     tid: u8,
     /// Whether entries are writes (`CMD_PROP_MULTI_SET`) rather than
     /// bare keys (`CMD_PROP_MULTI_GET`).
@@ -2953,6 +2965,7 @@ impl MultiState {
         reply.push(header.to_byte()).ok()?;
         reply.push(Cmd::PropAre as u8).ok()?;
         Some(Self {
+            battery_sample: None,
             tid,
             writes,
             request,
@@ -3387,6 +3400,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     /// nobody left to tell, and carrying the debt across would fire it
     /// into the session that follows.
     pub fn detach(&mut self) {
+        self.multi = None;
         self.session = SessionState::default();
         self.session_reset_pending = None;
         self.attached = false;
@@ -3408,6 +3422,11 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     /// told. The single path every discard takes; see
     /// [`Session::take_session_reset_notice`] for how the debt is paid.
     fn discard_session_state(&mut self, reason: SessionResetReason) {
+        // A read's acquisition belongs to the discarded session. A multi-set
+        // can itself replace the host and must still finish its write response.
+        if self.multi.as_ref().is_some_and(|state| !state.writes) {
+            self.multi = None;
+        }
         self.session = SessionState::default();
         self.session_reset_pending = Some(reason);
     }
@@ -3503,6 +3522,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     /// Return to serving the local binding after an administrative
     /// exchange, deferred round trips included.
     pub fn end_admin_exchange(&mut self) {
+        self.multi = None;
         self.binding = Binding::Local;
     }
 
@@ -4265,6 +4285,27 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         now_ms: u64,
         emit: &mut impl FnMut(&[u8]),
     ) -> Option<Effect> {
+        if self.config.battery.is_some()
+            && !self.config.battery_diagnostics.is_empty()
+            && (key == prop::BATTERY || self.config.battery_diagnostics.contains(key))
+        {
+            if let Some(sample) = self.multi.as_ref().and_then(|state| state.battery_sample) {
+                self.emit_battery_group(tid, key, sample, emit);
+                return None;
+            }
+            let mut fields = DiagnosticFields::for_key(key);
+            if let Some(state) = &self.multi {
+                for candidate in frame::MultiGetKeys::new(&state.request).flatten() {
+                    fields = fields.union(DiagnosticFields::for_key(candidate));
+                }
+            }
+            fields = fields.intersection(
+                self.config
+                    .battery_diagnostics
+                    .union(DiagnosticFields::SNAPSHOT),
+            );
+            return Some(Effect::SampleBatteryGroup { tid, key, fields });
+        }
         // Reads are never gated by the admin binding: `admin_writable`
         // covers mutation only, and a get of a property the device does
         // not serve fails on its own terms.
@@ -4794,6 +4835,44 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                 }
             }
             Ok(_) | Err(()) => self.complete(tid, Status::FAILURE, emit),
+        }
+    }
+
+    /// Results are retained only by the active multi-get, never by TID or saved state.
+    pub fn respond_battery_group(
+        &mut self,
+        tid: u8,
+        key: u32,
+        sample: BatterySample,
+        emit: &mut impl FnMut(&[u8]),
+    ) {
+        if let Some(state) = &mut self.multi {
+            state.battery_sample = Some(sample);
+        }
+        self.emit_battery_group(tid, key, sample, emit);
+    }
+
+    fn emit_battery_group(
+        &mut self,
+        tid: u8,
+        key: u32,
+        sample: BatterySample,
+        emit: &mut impl FnMut(&[u8]),
+    ) {
+        if key == prop::BATTERY {
+            self.respond_battery(tid, sample.snapshot, emit);
+            return;
+        }
+        match sample.get(key) {
+            Ok(None) => self.send_prop_is(tid, key, &[], emit),
+            Ok(Some(value)) => {
+                let mut bytes = [0; 5];
+                match value.encode(key, &mut bytes) {
+                    Ok(len) => self.send_prop_is(tid, key, &bytes[..len], emit),
+                    Err(status) => self.complete(tid, status, emit),
+                }
+            }
+            Err(status) => self.complete(tid, status, emit),
         }
     }
 
@@ -6204,6 +6283,11 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             | prop::HOST_RX_QUEUE_DROPPED
             | prop::SAVED => Err(Status::INVALID_ARGUMENT),
             prop::BATTERY if self.config.battery.is_some() => Err(Status::INVALID_ARGUMENT),
+            key if self.config.battery.is_some()
+                && self.config.battery_diagnostics.contains(key) =>
+            {
+                Err(Status::INVALID_ARGUMENT)
+            }
             // Positioning telemetry reports what the receiver found and
             // is not writable. `PROP_GNSS_LOCATION` and
             // `PROP_GNSS_ALTITUDE` are the ones that could plausibly
@@ -6872,6 +6956,9 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         }
         if key == prop::BATTERY {
             return self.config.battery.is_some();
+        }
+        if diagnostics::index(key).is_some() {
+            return self.config.battery.is_some() && self.config.battery_diagnostics.contains(key);
         }
         if key == prop::ALERT {
             return self.config.alert.is_some();
@@ -7834,6 +7921,7 @@ mod tests {
             // Each test session gets its own leaked ledger so parallel
             // tests never share duty state.
             duty: Box::leak(Box::new(DutyLedger::new())),
+            battery_diagnostics: Default::default(),
             // Likewise for the traffic counters.
             stats: Some(Box::leak(Box::new(StatsLedger::new()))),
             // Mixed support matrix: voltage and charge state without a
@@ -10451,6 +10539,126 @@ mod tests {
         let mut out = Vec::new();
         session.respond_battery(6, Err(()), &mut |bytes: &[u8]| out.push(bytes.to_vec()));
         expect_status(&out[0], 6, Status::FAILURE);
+    }
+
+    #[test]
+    fn battery_diagnostics_multi_get_acquires_once_and_does_not_reuse_next_request() {
+        use diagnostics::Value;
+        let mut session = test_session();
+        session.config.battery_diagnostics = DiagnosticFields::DIAGNOSTICS;
+        let keys = [
+            prop::BATTERY_CURRENT,
+            prop::UPTIME,
+            prop::BATTERY,
+            prop::BATTERY_FULL_CAPACITY,
+            prop::BATTERY_CURRENT,
+            prop::BATTERY_EXT_POWER_PRESENT,
+        ];
+        let mut request = [0; 80];
+        let len = frame::prop_multi_get(&mut request, 0, &keys).unwrap();
+        let mut emitted = Vec::new();
+        let effect =
+            session.handle_frame(&request[..len], 0, &mut |b: &[u8]| emitted.push(b.to_vec()));
+        let Some(Effect::SampleBatteryGroup { tid, key, fields }) = effect else {
+            panic!("{effect:?}");
+        };
+        assert_eq!(tid, 0);
+        assert_eq!(key, prop::BATTERY_CURRENT);
+        for key in keys {
+            if key != prop::UPTIME {
+                assert!(fields.contains(key));
+            }
+        }
+        assert!(!fields.contains(prop::BATTERY_GAUGE_STATUS));
+        let mut sample = BatterySample::default();
+        sample.snapshot = Ok(BatteryStatus::default());
+        sample.set(prop::BATTERY_CURRENT, Ok(Some(Value::Current(-100))));
+        sample.set(prop::BATTERY_FULL_CAPACITY, Err(Status::FAILURE));
+        sample.set(prop::BATTERY_EXT_POWER_PRESENT, Ok(Some(Value::Bool(true))));
+        session.respond_battery_group(tid, key, sample, &mut |b: &[u8]| emitted.push(b.to_vec()));
+        assert!(
+            session
+                .resume_multi(0, &mut |b: &[u8]| emitted.push(b.to_vec()))
+                .is_none()
+        );
+        assert_eq!(emitted.len(), 1);
+        let frame = Frame::parse(&emitted[0]).unwrap();
+        let entries: Vec<_> = MultiEntries::new(frame.payload)
+            .map(Result::unwrap)
+            .collect();
+        assert_eq!(entries.len(), keys.len());
+        assert_eq!(entries[0].value, &[0x9c]);
+        assert_eq!(entries[4].value, &[0x9c]);
+        assert_eq!(entries[3].key, prop::LAST_STATUS);
+        assert_eq!(entries[5].value, &[1]);
+        assert!(session.multi.is_none());
+        assert!(matches!(
+            session.handle_frame(&request[..len], 1, &mut |_| {}),
+            Some(Effect::SampleBatteryGroup { .. })
+        ));
+    }
+
+    #[test]
+    fn battery_diagnostics_support_and_empty_values_are_independent() {
+        let mut session = test_session();
+        let mut request = [0; 32];
+        let len = frame::prop_get(&mut request, 1, prop::BATTERY_CURRENT).unwrap();
+        let (out, _) = dispatch(&mut session, &request[..len], 0);
+        expect_status(&out[0], 1, Status::PROP_NOT_FOUND);
+        session.config.battery_diagnostics = DiagnosticFields::for_key(prop::BATTERY_CURRENT);
+        let mut request = [0; 32];
+        let len = frame::prop_get(&mut request, 3, prop::BATTERY_CURRENT).unwrap();
+        assert!(matches!(
+            session.handle_frame(&request[..len], 0, &mut |_| {}),
+            Some(Effect::SampleBatteryGroup { .. })
+        ));
+        let mut sample = BatterySample::default();
+        sample.set(prop::BATTERY_CURRENT, Ok(None));
+        let mut emitted = Vec::new();
+        session.respond_battery_group(3, prop::BATTERY_CURRENT, sample, &mut |b: &[u8]| {
+            emitted.push(b.to_vec())
+        });
+        let (_, key, value) = parse_prop_is(&emitted[0]);
+        assert_eq!((key, value), (prop::BATTERY_CURRENT, vec![]));
+        let (out, _) = set(&mut session, prop::BATTERY_CURRENT, &[0]);
+        expect_status(&out[0], 2, Status::INVALID_ARGUMENT);
+        let len = frame::prop_get(&mut request, 1, prop::BATTERY_FULL_CAPACITY).unwrap();
+        let (out, _) = dispatch(&mut session, &request[..len], 0);
+        expect_status(&out[0], 1, Status::PROP_NOT_FOUND);
+    }
+
+    #[test]
+    fn battery_diagnostics_discard_acquisition_on_session_end() {
+        for boundary in 0..4 {
+            let mut session = test_session();
+            session.config.battery_diagnostics = DiagnosticFields::DIAGNOSTICS;
+            let mut bytes = [0; 32];
+            let len = frame::prop_multi_get(
+                &mut bytes,
+                0,
+                &[prop::BATTERY_CURRENT, prop::BATTERY_CURRENT],
+            )
+            .unwrap();
+            let effect = session.handle_frame(&bytes[..len], 0, &mut |_| {});
+            let Some(Effect::SampleBatteryGroup { tid, key, .. }) = effect else {
+                panic!("sample");
+            };
+            session.respond_battery_group(tid, key, BatterySample::default(), &mut |_| {});
+            assert!(session.multi.as_ref().unwrap().battery_sample.is_some());
+            match boundary {
+                0 => session.detach(),
+                1 => session.attach(true),
+                2 => {
+                    session.reset(Status::RESET_SOFTWARE, &mut |_| {});
+                }
+                _ => session.end_admin_exchange(),
+            }
+            assert!(session.multi.is_none());
+            assert!(matches!(
+                session.handle_frame(&bytes[..len], 1, &mut |_| {}),
+                Some(Effect::SampleBatteryGroup { .. })
+            ));
+        }
     }
 
     #[test]

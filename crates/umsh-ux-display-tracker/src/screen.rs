@@ -411,6 +411,19 @@ impl StatsModel {
     }
 }
 
+/// Read-only fuel-gauge telemetry for boards with a dedicated gauge.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BatteryDiagnostics {
+    pub current_ma: i16,
+    pub remaining_mah: u16,
+    pub full_mah: u16,
+    pub design_mah: u16,
+    pub charging_mv: u16,
+    pub status: u16,
+    pub operation: u16,
+    pub usb: bool,
+}
+
 /// Everything drawn that is not menu state.
 ///
 /// The firmware assembles this immediately before rendering—the device
@@ -428,6 +441,7 @@ pub struct StatusModel<'a> {
     /// is the glanceable reading; this is the one to quote in a bug
     /// report.
     pub battery_mv: Option<u16>,
+    pub battery_details: Option<BatteryDiagnostics>,
     pub link: LinkState,
     /// Frames held for a host that is not attached, or `None` on a board
     /// with no host-facing queue. Drawn only when there are any: an
@@ -649,6 +663,20 @@ where
         Page::Detail(MenuItem::Stats) => {
             draw_title(target, layout, 1, menu_label(MenuItem::Stats));
             draw_stats_page(target, layout, status, &mut line)
+        }
+        Page::Detail(
+            item @ (MenuItem::BatteryCharge | MenuItem::BatteryCapacity | MenuItem::BatteryGauge),
+        ) => {
+            draw_title(target, layout, 1, menu_label(item));
+            let mut row = 2;
+            for index in 0..6 {
+                battery_detail_line(&mut line, item, status, index);
+                if !line.is_empty() {
+                    draw_row(target, layout, row, &line);
+                    row += 1;
+                }
+            }
+            row
         }
         // No other entry opens a page yet. Naming it is still better than
         // a blank panel, and better than a list the Select just left.
@@ -897,6 +925,94 @@ where
 /// Enough to tell a working node from a deaf one without reaching for a
 /// capture—a node whose `rx` never moves is not hearing anybody, and one
 /// whose `tx` never moves is not being heard.
+/// Format one row at a time to keep the embedded rendering stack small.
+fn battery_detail_line(
+    line: &mut String<LINE>,
+    item: MenuItem,
+    status: &StatusModel<'_>,
+    row: usize,
+) {
+    line.clear();
+    let Some(gauge) = status.battery_details else {
+        if row == 0 {
+            let _ = line.push_str("Battery readings unavailable");
+        }
+        return;
+    };
+    let yes_no = |value: bool| if value { "yes" } else { "no" };
+    match (item, row) {
+        (MenuItem::BatteryCharge, 0) => match status.battery.level_percent {
+            Some(percent) => {
+                let _ = write!(line, "Charge: {percent}%");
+            }
+            None => {
+                let _ = line.push_str("Charge: unknown");
+            }
+        },
+        (MenuItem::BatteryCharge, 1) => match status.battery_mv {
+            Some(mv) => {
+                let _ = write!(line, "Voltage: {mv} mV");
+            }
+            None => {
+                let _ = line.push_str("Voltage: unknown");
+            }
+        },
+        (MenuItem::BatteryCharge, 2) => {
+            let _ = write!(line, "Current: {:+} mA", gauge.current_ma);
+        }
+        (MenuItem::BatteryCharge, 3) => {
+            let _ = line.push_str("+ charging / - discharging");
+        }
+        (MenuItem::BatteryCharge, 4) => {
+            let state = match status.battery.charge {
+                Some(ChargeClass::Charging) => "charging",
+                Some(ChargeClass::Charged) => "complete",
+                Some(ChargeClass::Discharging) => "discharging",
+                None => "idle / unknown",
+            };
+            let _ = write!(line, "Charger: {state}");
+        }
+        (MenuItem::BatteryCharge, 5) => {
+            let _ = write!(line, "USB power: {}", yes_no(gauge.usb));
+        }
+        (MenuItem::BatteryCapacity, 0) => {
+            let _ = write!(line, "Remaining: {} mAh", gauge.remaining_mah);
+        }
+        (MenuItem::BatteryCapacity, 1) => {
+            let _ = write!(line, "Full: {} mAh", gauge.full_mah);
+        }
+        (MenuItem::BatteryCapacity, 2) => {
+            let _ = write!(line, "Design: {} mAh", gauge.design_mah);
+        }
+        (MenuItem::BatteryCapacity, 3) => {
+            let _ = write!(line, "Initialized: {}", yes_no(gauge.operation & 0x20 != 0));
+        }
+        (MenuItem::BatteryGauge, 0) => {
+            if gauge.charging_mv == u16::MAX {
+                let _ = line.push_str("Charge request: maximum");
+            } else {
+                let _ = write!(line, "Charge request: {} mV", gauge.charging_mv);
+            }
+        }
+        (MenuItem::BatteryGauge, 1) => {
+            let _ = write!(line, "Gauge full: {}", yes_no(gauge.status & 0x200 != 0));
+        }
+        (MenuItem::BatteryGauge, 2) => {
+            let _ = write!(line, "Battery present: {}", yes_no(gauge.status & 8 != 0));
+        }
+        (MenuItem::BatteryGauge, 3) => {
+            let _ = write!(line, "Smoothing: {}", yes_no(gauge.operation & 0x40 != 0));
+        }
+        (MenuItem::BatteryGauge, 4) => {
+            let _ = write!(line, "Status: 0x{:04X}", gauge.status);
+        }
+        (MenuItem::BatteryGauge, 5) => {
+            let _ = write!(line, "Operation: 0x{:04X}", gauge.operation);
+        }
+        _ => {}
+    }
+}
+
 fn draw_stats_page<D>(
     target: &mut D,
     layout: &Layout,
@@ -1665,9 +1781,14 @@ const fn menu_label(item: MenuItem) -> &'static str {
         MenuItem::Identity => "Identity",
         MenuItem::Settings => "Settings",
         MenuItem::About => "About",
+        MenuItem::Battery => "Battery",
+        MenuItem::BatteryCharge => "Charge",
+        MenuItem::BatteryCapacity => "Capacity",
+        MenuItem::BatteryGauge => "Fuel gauge",
         MenuItem::SettingsBack
         | MenuItem::BluetoothBack
         | MenuItem::GnssBack
+        | MenuItem::BatteryBack
         | MenuItem::RadioBack => "Back",
         MenuItem::Bluetooth => "Bluetooth",
         MenuItem::Gnss => "GNSS",
@@ -2151,6 +2272,7 @@ mod tests {
                 charge: Some(ChargeClass::Discharging),
             },
             battery_mv: Some(3_950),
+            battery_details: None,
             link: LinkState::Advertising,
             queued: Some(2),
             bonds: 1,
@@ -2331,6 +2453,72 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn battery_details_show_raw_values_signs_flags_and_unknown_without_guessing() {
+        let mut status = demo_status();
+        status.battery_details = Some(BatteryDiagnostics {
+            current_ma: -237,
+            remaining_mah: 900,
+            full_mah: 1500,
+            design_mah: 1500,
+            charging_mv: 4200,
+            status: 0x0208,
+            operation: 0x0060,
+            usb: false,
+        });
+        let mut line = String::<LINE>::new();
+        for (item, row, expected) in [
+            (MenuItem::BatteryCharge, 2, "Current: -237 mA"),
+            (MenuItem::BatteryCapacity, 0, "Remaining: 900 mAh"),
+            (MenuItem::BatteryCapacity, 1, "Full: 1500 mAh"),
+            (MenuItem::BatteryCapacity, 2, "Design: 1500 mAh"),
+            (MenuItem::BatteryCapacity, 3, "Initialized: yes"),
+            (MenuItem::BatteryGauge, 0, "Charge request: 4200 mV"),
+            (MenuItem::BatteryGauge, 1, "Gauge full: yes"),
+            (MenuItem::BatteryGauge, 2, "Battery present: yes"),
+            (MenuItem::BatteryGauge, 3, "Smoothing: yes"),
+            (MenuItem::BatteryGauge, 4, "Status: 0x0208"),
+            (MenuItem::BatteryGauge, 5, "Operation: 0x0060"),
+        ] {
+            battery_detail_line(&mut line, item, &status, row);
+            assert_eq!(line.as_str(), expected);
+        }
+        let gauge = status.battery_details.as_mut().unwrap();
+        gauge.charging_mv = u16::MAX;
+        gauge.current_ma = 100;
+        battery_detail_line(&mut line, MenuItem::BatteryGauge, &status, 0);
+        assert_eq!(line.as_str(), "Charge request: maximum");
+        battery_detail_line(&mut line, MenuItem::BatteryCharge, &status, 2);
+        assert_eq!(line.as_str(), "Current: +100 mA");
+
+        let layout = Layout::TFT_480X222;
+        for item in [
+            MenuItem::BatteryCharge,
+            MenuItem::BatteryCapacity,
+            MenuItem::BatteryGauge,
+        ] {
+            let mut model = UiModel::new(MenuItems::all());
+            navigate_to(&mut model, item);
+            assert_eq!(model.apply(UiInput::Select), None);
+            assert_eq!(model.page(), Page::Detail(item));
+            let mut panel = TestPanel::new(layout.size);
+            render_frame(&mut panel, &layout, &model, &status);
+            assert!(
+                panel.lit_in(row_area(&layout, 8)) > 0,
+                "Backspace hint must fit"
+            );
+            model.apply(UiInput::Back);
+            assert_eq!(model.page(), Page::Menu(item));
+            model.apply(UiInput::Back);
+            assert_eq!(model.page(), Page::Menu(MenuItem::Battery));
+        }
+        status.battery_details = None;
+        battery_detail_line(&mut line, MenuItem::BatteryCharge, &status, 0);
+        assert_eq!(line.as_str(), "Battery readings unavailable");
+        battery_detail_line(&mut line, MenuItem::BatteryCharge, &status, 2);
+        assert!(line.is_empty());
     }
 
     fn layouts() -> [Layout; 3] {

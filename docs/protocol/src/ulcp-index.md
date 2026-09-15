@@ -144,6 +144,19 @@ Id   | Mnemonic                                                                 
 4930 | [`PROP_BRIDGE_PORT`](ulcp-bridge.md#prop-bridge-port) | Get, Set | `CAP_BRIDGE_CLIENT`
 4931 | [`PROP_BRIDGE_SERVER_KEY`](ulcp-bridge.md#prop-bridge-server-key) | Get, Set | `CAP_BRIDGE_CLIENT`
 4932 | [`PROP_BRIDGE_LINK`](ulcp-bridge.md#prop-bridge-link) | Get, Is | `CAP_BRIDGE_CLIENT`
+4944 | [`PROP_BATTERY_CURRENT`](ulcp-device.md#prop-battery-current) | Get, Is | Optional with `CAP_BATTERY`
+4945 | [`PROP_BATTERY_REMAINING_CAPACITY`](ulcp-device.md#prop-battery-remaining-capacity) | Get, Is | Optional with `CAP_BATTERY`
+4946 | [`PROP_BATTERY_FULL_CAPACITY`](ulcp-device.md#prop-battery-full-capacity) | Get, Is | Optional with `CAP_BATTERY`
+4947 | [`PROP_BATTERY_DESIGN_CAPACITY`](ulcp-device.md#prop-battery-design-capacity) | Get, Is | Optional with `CAP_BATTERY`
+4948 | [`PROP_BATTERY_EXT_POWER_PRESENT`](ulcp-device.md#prop-battery-ext-power-present) | Get, Is | Optional with `CAP_BATTERY`
+4949 | [`PROP_BATTERY_PRESENT`](ulcp-device.md#prop-battery-present) | Get, Is | Optional with `CAP_BATTERY`
+4950 | [`PROP_BATTERY_GAUGE_FULL`](ulcp-device.md#prop-battery-gauge-full) | Get, Is | Optional with `CAP_BATTERY`
+4951 | [`PROP_BATTERY_GAUGE_INITIALIZED`](ulcp-device.md#prop-battery-gauge-initialized) | Get, Is | Optional with `CAP_BATTERY`
+4952 | [`PROP_BATTERY_GAUGE_SMOOTHING`](ulcp-device.md#prop-battery-gauge-smoothing) | Get, Is | Optional with `CAP_BATTERY`
+4953 | [`PROP_BATTERY_CHARGE_VOLTAGE_REQUEST`](ulcp-device.md#prop-battery-charge-voltage-request) | Get, Is | Optional with `CAP_BATTERY`
+4954 | [`PROP_BATTERY_GAUGE_FORMAT`](ulcp-device.md#prop-battery-gauge-format) | Get, Is | Optional with `CAP_BATTERY`
+4955 | [`PROP_BATTERY_GAUGE_STATUS`](ulcp-device.md#prop-battery-gauge-status) | Get, Is | Optional with `CAP_BATTERY`
+4956 | [`PROP_BATTERY_GAUGE_OPERATION_STATUS`](ulcp-device.md#prop-battery-gauge-operation-status) | Get, Is | Optional with `CAP_BATTERY`
 
 ## Capabilities
 

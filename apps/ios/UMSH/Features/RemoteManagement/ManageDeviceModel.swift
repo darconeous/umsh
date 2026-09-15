@@ -145,6 +145,12 @@ struct RemoteCategoryReading {
     /// Properties the device refused, which is how it says it does not
     /// implement one its capabilities implied.
     var refused: Set<UInt32> = []
+    /// Keep individual error codes: an acquisition failure is not an
+    /// unsupported diagnostic and must remain visible and retryable.
+    var statuses: [UInt32: UInt32] = [:]
+    /// Battery pushes update the summary independently of explicit reads
+    /// of the diagnostics, so they must not make old diagnostics look fresh.
+    private(set) var batteryDiagnosticsAsOf: Date?
     /// When the values on screen were learned. `nil` means nothing has been
     /// read, so the fields have nothing to prefill from.
     private(set) var asOf: Date?
@@ -166,6 +172,12 @@ struct RemoteCategoryReading {
     /// Take in values the device reported, from a read or from a write's
     /// echoes, and redecode around them.
     mutating func absorb(_ reported: [UInt32: Data], at instant: Date, fromAir: Bool) {
+        if reported.keys.contains(where: {
+            (ulcpProperties.batteryCurrent...ulcpProperties.batteryGaugeOperationStatus)
+                .contains($0)
+        }) {
+            batteryDiagnosticsAsOf = instant
+        }
         values.merge(reported) { _, reported in reported }
         properties = inspectUlcpProperties(
             responses: values.map { ulcpPropertyRecord(propertyId: $0.key, value: $0.value) }
@@ -436,6 +448,11 @@ final class ManageDeviceModel {
             var reading = RemoteCategoryReading()
             reading.propertyIDs = properties
             reading.refused = Set(answers.filter { $0.value == nil }.map(\.propertyId))
+            reading.statuses = answers.reduce(into: [:]) { statuses, answer in
+                if answer.value == nil, let status = answer.statusCode {
+                    statuses[answer.propertyId] = status
+                }
+            }
             reading.absorb(reported, at: Date(), fromAir: true)
             readings[category] = reading
         }

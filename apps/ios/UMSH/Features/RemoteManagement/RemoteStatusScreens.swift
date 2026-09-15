@@ -6,6 +6,8 @@ import UMSHMobileCore
 struct RemotePowerScreen: View {
     let model: ManageDeviceModel
 
+    private var reading: RemoteCategoryReading? { model.readings[.power] }
+
     var body: some View {
         Form {
             Section {
@@ -34,9 +36,91 @@ struct RemotePowerScreen: View {
             } footer: {
                 RemoteReadingFooter(reading: model.readings[.power], isBusy: model.isBusy)
             }
+            diagnosticSection("Battery", fields: [
+                (ulcpProperties.batteryCurrent, "Current"),
+                (ulcpProperties.batteryRemainingCapacity, "Remaining capacity"),
+                (ulcpProperties.batteryFullCapacity, "Full capacity"),
+                (ulcpProperties.batteryDesignCapacity, "Design capacity"),
+                (ulcpProperties.batteryPresent, "Battery present"),
+            ], footer: "Positive current flows into the battery; negative current flows out. Full capacity is the gauge’s learned estimate; design capacity is its configured nominal capacity.")
+            diagnosticSection("Charging", fields: [
+                (ulcpProperties.batteryExtPowerPresent, "External power"),
+                (ulcpProperties.batteryChargeVoltageRequest, "Requested charge voltage"),
+                (ulcpProperties.batteryGaugeFull, "Gauge reports full"),
+            ], footer: "The requested voltage is the gauge’s recommendation. The charger may use a different voltage. The gauge’s full indication is separate from the charger’s state.")
+            diagnosticSection("Fuel gauge", fields: [
+                (ulcpProperties.batteryGaugeInitialized, "Initialized"),
+                (ulcpProperties.batteryGaugeSmoothing, "Smoothing"),
+                (ulcpProperties.batteryGaugeFormat, "Format"),
+                (ulcpProperties.batteryGaugeStatus, "Status flags"),
+                (ulcpProperties.batteryGaugeOperationStatus, "Operation flags"),
+            ], footer: "Initialized means the gauge is ready; it does not mean capacity learning is complete. Raw flags depend on the reported gauge format.")
+            if let instant = reading?.batteryDiagnosticsAsOf {
+                Section {
+                    LabeledContent("Diagnostics read") {
+                        Text(instant, style: .relative)
+                            .foregroundStyle(.secondary)
+                    }
+                    Text("Refresh to request new diagnostics.")
+                        .foregroundStyle(.secondary)
+                }
+            }
             RemoteProblemSection(model: model)
         }
         .remoteCategoryChrome(model: model, category: .power, title: "Power")
+    }
+
+    @ViewBuilder
+    private func diagnosticSection(
+        _ title: String, fields: [(UInt32, String)], footer: String
+    ) -> some View {
+        let visible = fields.filter { property, _ in
+            // Only PROP_NOT_FOUND means unsupported. Empty successes and
+            // temporary failures remain on screen and are fetched again.
+            reading?.statuses[property] != 13 &&
+                (reading?.values[property] != nil || reading?.statuses[property] != nil)
+        }
+        if !visible.isEmpty {
+            Section {
+                ForEach(visible, id: \.0) { property, label in
+                    LabeledContent(label, value: diagnosticText(property))
+                }
+            } header: {
+                Text(title)
+            } footer: {
+                Text(footer)
+            }
+        }
+    }
+
+    private func diagnosticText(_ property: UInt32) -> String {
+        if let status = reading?.statuses[property] {
+            return "Read failed (\(ulcpStatusName(status: status)))"
+        }
+        guard let bytes = reading?.values[property] else { return "Not read" }
+        guard let value = try? inspectUlcpBatteryDiagnostic(propertyId: property, value: bytes)
+        else { return "Invalid reading" }
+        switch value {
+        case .unavailable:
+            return "Unavailable"
+        case let .current(milliamps):
+            return "\(milliamps > 0 ? "+" : "")\(milliamps) mA"
+        case let .unsigned(value):
+            if property == ulcpProperties.batteryGaugeStatus ||
+                property == ulcpProperties.batteryGaugeOperationStatus {
+                return "0x" + String(value, radix: 16, uppercase: true)
+            }
+            return "\(value) mAh"
+        case let .boolean(value):
+            return value ? "Yes" : "No"
+        case let .voltage(millivolts):
+            return (Double(millivolts) / 1000)
+                .formatted(.number.precision(.fractionLength(3))) + " V"
+        case .maximum:
+            return "Maximum"
+        case let .gaugeFormat(value):
+            return value == 1 ? "BQ27220" : "Unknown (\(value))"
+        }
     }
 }
 

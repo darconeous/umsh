@@ -464,6 +464,11 @@ This command is available only on devices advertising `CAP_CMD_MULTI`.
 On any other device it is an unrecognized command,
 `STATUS_INVALID_COMMAND`.
 
+Battery diagnostics define a [shared acquisition group](ulcp-device.md#battery-diagnostics):
+when a device implements those properties, supported battery readings within
+one multi-get use one acquisition pass, including duplicate keys. This does
+not make other properties atomic or imply simultaneous hardware measurements.
+
 ### CMD 22: (Host -> Device) `CMD_PROP_MULTI_SET` {#cmd-prop-multi-set}
 
 ~~~

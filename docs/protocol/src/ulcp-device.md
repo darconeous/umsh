@@ -187,6 +187,19 @@ Id | Mnemonic                    | Commands                 | Description
 67 | `PROP_DEV_PEERS`            | Get, Set, Insert, Remove | Device identity peer list
 68 | `PROP_DEV_NAME`             | Get, Set                 | Human-readable device name
 69 | `PROP_BATTERY`              | Get, Is                  | Battery status snapshot
+4944 | `PROP_BATTERY_CURRENT` | Get, Is | Battery diagnostics
+4945 | `PROP_BATTERY_REMAINING_CAPACITY` | Get, Is | Battery diagnostics
+4946 | `PROP_BATTERY_FULL_CAPACITY` | Get, Is | Battery diagnostics
+4947 | `PROP_BATTERY_DESIGN_CAPACITY` | Get, Is | Battery diagnostics
+4948 | `PROP_BATTERY_EXT_POWER_PRESENT` | Get, Is | Battery diagnostics
+4949 | `PROP_BATTERY_PRESENT` | Get, Is | Battery diagnostics
+4950 | `PROP_BATTERY_GAUGE_FULL` | Get, Is | Battery diagnostics
+4951 | `PROP_BATTERY_GAUGE_INITIALIZED` | Get, Is | Battery diagnostics
+4952 | `PROP_BATTERY_GAUGE_SMOOTHING` | Get, Is | Battery diagnostics
+4953 | `PROP_BATTERY_CHARGE_VOLTAGE_REQUEST` | Get, Is | Battery diagnostics
+4954 | `PROP_BATTERY_GAUGE_FORMAT` | Get, Is | Battery diagnostics
+4955 | `PROP_BATTERY_GAUGE_STATUS` | Get, Is | Battery diagnostics
+4956 | `PROP_BATTERY_GAUGE_OPERATION_STATUS` | Get, Is | Battery diagnostics
 70 | `PROP_MAC_REPEATER_ENABLED` | Get, Set                 | Autonomous repeater forwarding enable
 71 | `PROP_IDENT`                | Get                      | Signed node identity of the device identity
 72 | `PROP_IDENT_ROLE`           | Get, Set                 | Advertised node role, or empty to derive it
@@ -458,6 +471,257 @@ saved snapshot and is not changed by `CMD_RESTORE`. A device **MAY** emit
 unsolicited `CMD_PROP_IS` updates when the reported snapshot changes. Such
 updates **SHOULD** be coalesced or rate-limited so that measurement noise
 does not produce excessive ULCP traffic.
+
+### Battery diagnostics {#battery-diagnostics}
+
+Properties 4944–4956 are optional extensions to `CAP_BATTERY`. No additional
+capability is allocated. A device may implement any subset, except that raw
+status properties require `PROP_BATTERY_GAUGE_FORMAT`. Clients discover support
+by reading the properties individually or with `CMD_PROP_MULTI_GET`.
+
+All are **single-value, read-only Device Domain properties**, with
+**no asynchronous updates**. Their values are acquired on request and are
+excluded from saved state. They do not change the gauge or charger.
+`PROP_BATTERY` retains its existing encoding and notification behavior.
+
+#### PROP 4944: `PROP_BATTERY_CURRENT` {#prop-battery-current}
+
+* Value Type: Minimal signed LE integer, 1–4 octets, mA, or empty
+
+Signed battery current: positive into the battery, negative out, zero is a valid reading.
+
+#### PROP 4945: `PROP_BATTERY_REMAINING_CAPACITY` {#prop-battery-remaining-capacity}
+
+* Value Type: Minimal unsigned LE integer, 1–4 octets, mAh, or empty
+
+Gauge's current remaining-capacity estimate.
+
+#### PROP 4946: `PROP_BATTERY_FULL_CAPACITY` {#prop-battery-full-capacity}
+
+* Value Type: Minimal unsigned LE integer, 1–4 octets, mAh, or empty
+
+Gauge's current estimate of capacity at full charge.
+
+#### PROP 4947: `PROP_BATTERY_DESIGN_CAPACITY` {#prop-battery-design-capacity}
+
+* Value Type: Minimal unsigned LE integer, 1–4 octets, mAh, or empty
+
+Design capacity configured in the gauge or board profile.
+
+#### PROP 4948: `PROP_BATTERY_EXT_POWER_PRESENT` {#prop-battery-ext-power-present}
+
+* Value Type: `BOOL`, or empty
+
+External power detected by the platform, such as USB/VBUS, a DC input, or solar input; this does not imply battery charging or identify the source.
+
+#### PROP 4949: `PROP_BATTERY_PRESENT` {#prop-battery-present}
+
+* Value Type: `BOOL`, or empty
+
+Battery detected by hardware.
+
+#### PROP 4950: `PROP_BATTERY_GAUGE_FULL` {#prop-battery-gauge-full}
+
+* Value Type: `BOOL`, or empty
+
+Gauge's full-charge indication, independent of charger completion.
+
+#### PROP 4951: `PROP_BATTERY_GAUGE_INITIALIZED` {#prop-battery-gauge-initialized}
+
+* Value Type: `BOOL`, or empty
+
+Gauge initialization has completed; this does not assert successful capacity learning or calibration.
+
+#### PROP 4952: `PROP_BATTERY_GAUGE_SMOOTHING` {#prop-battery-gauge-smoothing}
+
+* Value Type: `BOOL`, or empty
+
+Gauge is currently applying smoothing to its reported capacity.
+
+#### PROP 4953: `PROP_BATTERY_CHARGE_VOLTAGE_REQUEST` {#prop-battery-charge-voltage-request}
+
+* Value Type: Tagged voltage request, below, or empty
+
+Gauge's requested charging voltage, distinct from measured voltage and the charger's configured voltage limit.
+
+#### PROP 4954: `PROP_BATTERY_GAUGE_FORMAT` {#prop-battery-gauge-format}
+
+* Value Type: `PUI`, or empty
+
+Identifies the interpretation of the two raw status properties.
+
+#### PROP 4955: `PROP_BATTERY_GAUGE_STATUS` {#prop-battery-gauge-status}
+
+* Value Type: Minimal unsigned LE integer, 1–4 octets, or empty
+
+Raw gauge battery-status flags, interpreted using the format identifier.
+
+#### PROP 4956: `PROP_BATTERY_GAUGE_OPERATION_STATUS` {#prop-battery-gauge-operation-status}
+
+* Value Type: Minimal unsigned LE integer, 1–4 octets, or empty
+
+Raw gauge operation-status flags, interpreted using the format identifier.
+
+#### Compact value encodings
+
+Senders **MUST** use the fewest octets that represent each diagnostic integer value.
+The property value's existing length supplies the width; no additional width
+prefix or continuation bits are added to these signed or unsigned LE integers.
+This applies equally to individual reads and entries in a multi-get response.
+
+- **Signed current:** little-endian two's complement, with a signed 32-bit
+  range. Reuse the encoding of
+  [`PROP_IDENT_ALTITUDE`](ulcp-device.md#prop-ident-altitude),
+  requiring minimal output here. One octet covers −128 through 127; two cover
+  −32768 through 32767; three cover −8388608 through 8388607. Keep a sign octet
+  when removing it would change the value's sign.
+- **Unsigned capacities, voltage, and raw flags:** little-endian with an
+  unsigned 32-bit range. Remove high zero octets, retaining one octet for zero.
+  One octet covers 0–255, two 0–65535, and three 0–16777215. Bit 7 of the last
+  octet is ordinary data, not a sign or continuation bit.
+- **Booleans:** exactly one octet, `00` or `01`.
+- **Gauge format and voltage discriminator:** retain PUI encoding, using its
+  shortest form. Format 1 and either defined discriminator occupy one octet.
+
+Receivers accept integer widths of one through four octets, sign-extending
+current and zero-extending unsigned values, including padded representations.
+Senders must not emit that padding. More than four octets is malformed. An
+empty property value remains unavailable; numeric zero is `00`, never empty.
+False likewise represents an actual indication, never an unavailable reading.
+
+Examples below show value bytes in hexadecimal, in transmission order:
+
+| Value | Bytes | Octets |
+|---|---|---:|
+| Current −100 mA | `9C` | 1 |
+| Current −200 mA | `38 FF` | 2 |
+| Current −128 / −129 mA | `80` / `7F FF` | 1 / 2 |
+| Current 127 / 128 mA | `7F` / `80 00` | 1 / 2 |
+| Current 0 mA or capacity 0 mAh | `00` | 1 |
+| Capacity 200 mAh | `C8` | 1 |
+| Capacity 1500 mAh | `DC 05` | 2 |
+| Raw operation flags `0x00A6` | `A6` | 1 |
+
+Capacities are charge quantities in mAh, not energy in mWh. No host should
+replace the reported percentage with a ratio it calculates from capacities;
+it may display that ratio separately for diagnosis.
+
+The charge-voltage-request value begins with a PUI discriminator:
+
+| Code | Following bytes | Meaning |
+|---:|---|---|
+| 0 | Minimal unsigned LE integer, 1–4 octets, mV | A specific voltage request. |
+| 1 | None | Request the charger's maximum voltage. |
+
+For code 0, all remaining bytes encode the voltage: one through four are
+required, with the compact unsigned rules above. Code 0 without a voltage or
+with more than four voltage octets is malformed. Code 1 has no following bytes;
+any trailing bytes are malformed. A 4200 mV request is `00 68 10` (three octets
+total), and a maximum-voltage request is `01` (one octet).
+
+An empty property value means unavailable, as below. Unknown discriminators
+are malformed. This avoids exposing a hardware
+sentinel as an implausibly large voltage. Reading this property never applies
+the request to the charger.
+
+#### Support, availability, and errors
+
+Use existing ULCP status codes with explicit meanings:
+
+| Condition | Response to a diagnostic property read |
+|---|---|
+| This hardware/firmware does not implement the property | `STATUS_PROP_NOT_FOUND`. |
+| Field implemented, but no meaningful value in the observed state | Successful `CMD_PROP_IS` with an empty value. |
+| Acquisition attempted and failed, including an I2C error or timeout | `STATUS_FAILURE`. |
+| A valid measurement or indication exists | Successful `CMD_PROP_IS` containing the typed value. |
+
+For example, an initializing gauge may report `GAUGE_INITIALIZED=false`
+while its capacity estimate is empty. A detected battery removal is
+`BATTERY_PRESENT=false`; dependent measurements may then be empty. A missing
+presence detector is `STATUS_PROP_NOT_FOUND`, not false. A failed read must
+not masquerade as battery removal, initialization, or an empty successful
+measurement.
+
+There is no separate support-discovery table: clients can discover individual
+support with their first multi-get and omit `STATUS_PROP_NOT_FOUND` fields
+from subsequent polls. That result is fixed for a firmware/hardware
+configuration; rediscover after reconnecting or updating firmware.
+An empty value or acquisition failure does not mean unsupported and must not
+cause the client to drop that property from future polls.
+
+Within a multi-get, each result occupies its normal position. A failed gauge
+read need not suppress a successful external-power reading from the charger.
+Correlated fields that depend on the failed read all report failure.
+`PROP_BATTERY` retains its existing rules, including its own failure behavior;
+the diagnostic properties do not redefine its empty or omitted-field meanings.
+
+Mutations (`SET`, `INSERT`, `REMOVE`) return `STATUS_INVALID_ARGUMENT` for
+implemented properties and `STATUS_PROP_NOT_FOUND` for unsupported properties.
+Reads do not unseal, reset,
+calibrate, configure, or otherwise change the gauge or charger.
+
+#### Shared acquisition within a multi-get
+
+The battery read group contains `PROP_BATTERY` and properties
+4944–4956. A device implementing any diagnostic property follows these rules
+for the supported members of that group. Unsupported members retain their
+`STATUS_PROP_NOT_FOUND` results and require no acquisition:
+
+1. A single-property read acquires the requested live reading when serviced.
+2. A multi-get containing battery-group properties acquires all requested
+   live battery values in one pass when that group is serviced. All occurrences
+   of those properties, including duplicate keys, use that pass's results.
+3. Only the requested measurements and their dependencies need to be read.
+   Reading external-power presence alone must not require successful gauge communication.
+4. Semantic flags and raw status words come from the same register reads.
+   The device must not reread a status word separately for each derived flag.
+5. The sample is scoped to that request. It is discarded on completion,
+   cancellation, or session reset; an unrelated later read must not reuse it.
+   Concurrent requests may share an acquisition that is already in flight.
+
+This is a battery-group guarantee, not general multi-get atomicity. Registers
+are often read sequentially and may update internally during acquisition; one
+pass does not promise a hardware-latched, simultaneous sample. Board adapters
+should use available latching or bounded consistency checks where required by
+their gauge, and report failure if they cannot obtain a usable result.
+
+Metadata such as gauge format may come from the fixed board configuration.
+Read-only design capacity may be configured or learned inside the gauge; it
+must not be confused with a writable ULCP setting. Battery values are excluded
+from saved state, and save/restore does not roll telemetry back.
+
+Node Management retransmissions retain the existing at-most-once semantics:
+retrying an exchange returns its retained response, rather than taking a new
+sample. A new monitoring poll is a new exchange with a new token. Any cursor
+continuations read the retained response from that same acquisition.
+
+#### Raw gauge formats and the Pager mapping
+
+Format `1` is allocated to the TI BQ27220: `GAUGE_STATUS` contains
+BatteryStatus (`0x0A`) and `GAUGE_OPERATION_STATUS` contains OperationStatus
+(`0x3A`), each represented as a compact unsigned integer. A BQ27220 raw word
+therefore occupies one or two octets, with its high zero octet omitted.
+Format `0` is reserved;
+other formats need a documented allocation before a device emits them.
+Raw-register implementations must also implement `GAUGE_FORMAT`.
+
+Clients can show unknown format identifiers and raw words as numbers, while
+continuing to use the generic measurements and flags. They must not decode
+unknown raw formats as BQ27220 bits. Raw flag bits are opaque protocol data;
+reserved hardware bits are preserved rather than rejected by the ULCP codec.
+
+The Pager adapter uses current (`0x0C`), remaining (`0x10`), full (`0x12`),
+design (`0x3C`), and requested voltage (`0x30`). BatteryStatus supplies presence
+(bit 3) and full (bit 9); OperationStatus supplies initialized (bit 5) and
+smoothing (bit 6). Requested voltage `0xffff` maps to request code 1.
+These mappings follow the [BQ27220 technical reference manual,
+sections 2.7–2.10 and 2.23–2.28](https://www.ti.com/lit/ug/sluubd4/sluubd4.pdf).
+
+On the Pager, external-power presence maps to USB/VBUS detection by the BQ25896;
+charger state also comes from the BQ25896. Preserve the
+distinction between charger completion, gauge full, and 100% state of charge.
+Their disagreement is useful diagnostic information.
+
 
 ### PROP 70: `PROP_MAC_REPEATER_ENABLED` {#prop-mac-repeater-enabled}
 

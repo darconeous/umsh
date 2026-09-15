@@ -22,6 +22,7 @@ pub mod airtime;
 pub mod alert;
 pub mod announce;
 pub mod battery;
+pub mod battery_diagnostics;
 pub mod ble;
 pub mod bridge;
 pub mod describe;
@@ -40,6 +41,7 @@ pub mod reply;
 pub mod sint;
 pub mod stats;
 pub mod status;
+pub mod uint;
 pub mod wifi;
 
 pub use alert::AlertState;

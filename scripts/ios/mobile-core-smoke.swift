@@ -3,7 +3,7 @@ import Foundation
 @main
 struct MobileCoreSmokeTest {
     static func main() throws {
-        precondition(mobileApiVersion() == 45)
+        precondition(mobileApiVersion() == 46)
         precondition(ulcpMaxDevPeers() == 8)
 
         let hint = try renderNodeHint(bytes: Data([0xA1, 0xB2, 0x03]))
@@ -52,6 +52,24 @@ struct MobileCoreSmokeTest {
         precondition(battery.percentage == 82)
         precondition(battery.voltageMv == 3820)
         precondition(battery.chargeState == .charging)
+
+        let batteryIds = ulcpManagedPropertyIds()
+        let negativeCurrent = try inspectUlcpBatteryDiagnostic(
+            propertyId: batteryIds.batteryCurrent, value: Data([0x9c])
+        )
+        precondition(negativeCurrent == .current(milliamps: -100))
+        let capacity = try inspectUlcpBatteryDiagnostic(
+            propertyId: batteryIds.batteryDesignCapacity, value: Data([0xdc, 5])
+        )
+        precondition(capacity == .unsigned(value: 1500))
+        let unavailable = try inspectUlcpBatteryDiagnostic(
+            propertyId: batteryIds.batteryFullCapacity, value: Data()
+        )
+        precondition(unavailable == .unavailable)
+        let maximum = try inspectUlcpBatteryDiagnostic(
+            propertyId: batteryIds.batteryChargeVoltageRequest, value: Data([1])
+        )
+        precondition(maximum == .maximum)
 
         let inspectionProperties = try ulcpInspectionProperties(
             capabilities: Data([8])

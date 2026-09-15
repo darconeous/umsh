@@ -7,6 +7,8 @@ use std::{boxed::Box, collections::VecDeque, vec, vec::Vec};
 enum Op {
     Write(u8, Vec<u8>),
     Read(u8, Vec<u8>, Vec<u8>),
+    FailedWrite(u8, Vec<u8>),
+    FailedRead(u8, Vec<u8>),
 }
 struct Bus(VecDeque<Op>);
 impl ErrorType for Bus {
@@ -27,6 +29,16 @@ impl I2c for Bus {
                 assert_eq!(a, address);
                 assert_eq!(&reg, actual);
                 out.copy_from_slice(&value);
+            }
+            (Op::FailedWrite(a, expected), [Operation::Write(actual)]) => {
+                assert_eq!(a, address);
+                assert_eq!(&expected, actual);
+                return Err(ErrorKind::Bus);
+            }
+            (Op::FailedRead(a, expected), [Operation::Write(actual), Operation::Read(_)]) => {
+                assert_eq!(a, address);
+                assert_eq!(&expected, actual);
+                return Err(ErrorKind::Bus);
             }
             other => panic!("unexpected operation: {other:?}"),
         }
@@ -79,6 +91,38 @@ fn debounce_does_not_repeat_or_accept_bounce() {
     assert_eq!(b.sample(false, 5010), None);
     assert_eq!(b.sample(false, 5025), Some(false));
 }
+
+#[test]
+fn wake_press_keeps_its_gate_through_bounce_and_hold() {
+    let mut latch = PressLatch::default();
+    assert!(latch.observe(true, 1));
+    assert!(!latch.observe(false, 3));
+    assert_eq!(latch.deadline(), Some(18));
+    assert!(!latch.observe(true, 5));
+    assert_eq!(latch.deadline(), None);
+    assert!(!latch.observe(true, 5000));
+    assert!(!latch.observe(false, 5001));
+    assert!(!latch.observe(false, 5016));
+    assert!(latch.observe(true, 5017));
+}
+
+#[test]
+fn every_wake_phase_discards_the_incomplete_cycle_then_counts_normally() {
+    for cycle in [[3, 1, 0, 2, 3], [3, 2, 0, 1, 3]] {
+        for phase in 0..4 {
+            let mut q = Quadrature::new(cycle[phase]);
+            if phase != 0 {
+                for &ab in &cycle[phase + 1..] {
+                    assert_eq!(q.transition(ab), 0);
+                }
+            }
+            for &ab in &cycle[1..4] {
+                assert_eq!(q.transition(ab), 0);
+            }
+            assert_eq!(q.transition(3), if cycle[1] == 1 { 1 } else { -1 });
+        }
+    }
+}
 #[test]
 fn keyboard_backspace_uses_one_based_fifo_and_suppresses_repeat() {
     let mut kb = Keyboard::new(Bus(VecDeque::new()));
@@ -102,9 +146,324 @@ fn keyboard_fifo_overflow_discards_incomplete_gesture() {
     );
 }
 #[test]
+fn gauge_diagnostics_preserve_signed_current_capacities_and_voltage_sentinel() {
+    let words: [(u8, u16); 7] = [
+        (0x0c, (-237i16) as u16),
+        (0x10, 900),
+        (0x12, 1500),
+        (0x3c, 1500),
+        (0x30, 65535),
+        (0x0a, 0x0208),
+        (0x3a, 0x0060),
+    ];
+    let ops = words
+        .into_iter()
+        .map(|(reg, value)| Op::Read(0x55, vec![reg], value.to_le_bytes().to_vec()))
+        .collect();
+    let reading = embassy_futures::block_on(Battery::new(Bus(ops)).diagnostics()).unwrap();
+    assert_eq!(
+        reading,
+        GaugeDiagnostics {
+            current_ma: -237,
+            remaining_mah: 900,
+            full_mah: 1500,
+            design_mah: 1500,
+            charging_mv: u16::MAX,
+            status: 0x0208,
+            operation: 0x0060,
+        }
+    );
+}
+
+#[derive(Default)]
+struct GaugeDelay(Vec<u32>);
+impl embedded_hal_async::delay::DelayNs for GaugeDelay {
+    async fn delay_ns(&mut self, ns: u32) {
+        self.0.push(ns);
+    }
+}
+
+fn gauge_word(ops: &mut Vec<Op>, reg: u8, value: u16) {
+    ops.push(Op::Read(0x55, vec![reg], value.to_le_bytes().to_vec()));
+}
+
+#[test]
+fn battery_group_selects_dependencies_and_preserves_independent_failures() {
+    use umsh_ulcp::{
+        Status,
+        battery_diagnostics::{Fields, Value},
+        ids::prop,
+    };
+    let keys = [
+        prop::BATTERY_CURRENT,
+        prop::BATTERY_EXT_POWER_PRESENT,
+        prop::BATTERY_FULL_CAPACITY,
+        prop::BATTERY_PRESENT,
+        prop::BATTERY_GAUGE_FULL,
+        prop::BATTERY_GAUGE_STATUS,
+        prop::BATTERY_GAUGE_INITIALIZED,
+        prop::BATTERY_GAUGE_OPERATION_STATUS,
+    ];
+    let fields = keys.into_iter().fold(Fields::NONE, |fields, key| {
+        fields.union(Fields::for_key(key))
+    });
+    let mut ops = vec![Op::Read(0x6b, vec![0x11], vec![0x80])];
+    gauge_word(&mut ops, 0x0a, 0x208);
+    gauge_word(&mut ops, 0x3a, 0xa6);
+    ops.push(Op::FailedRead(0x55, vec![0x0c]));
+    gauge_word(&mut ops, 0x12, 1500);
+    let mut delay = GaugeDelay::default();
+    let sample =
+        embassy_futures::block_on(Battery::new(Bus(ops.into())).sample(fields, &mut delay));
+    assert_eq!(sample.get(prop::BATTERY_CURRENT), Err(Status::FAILURE));
+    assert_eq!(
+        sample.get(prop::BATTERY_FULL_CAPACITY),
+        Ok(Some(Value::Unsigned(1500)))
+    );
+    assert_eq!(
+        sample.get(prop::BATTERY_EXT_POWER_PRESENT),
+        Ok(Some(Value::Bool(true)))
+    );
+    assert_eq!(
+        sample.get(prop::BATTERY_GAUGE_FULL),
+        Ok(Some(Value::Bool(true)))
+    );
+    assert_eq!(
+        sample.get(prop::BATTERY_GAUGE_OPERATION_STATUS),
+        Ok(Some(Value::Unsigned(0xa6)))
+    );
+    assert!(delay.0.iter().all(|&delay| delay >= 100_000));
+}
+
+#[test]
+fn battery_group_external_power_does_not_touch_the_gauge() {
+    use umsh_ulcp::{
+        battery_diagnostics::{Fields, Value},
+        ids::prop,
+    };
+    let ops = vec![Op::Read(0x6b, vec![0x11], vec![0])];
+    let sample = embassy_futures::block_on(Battery::new(Bus(ops.into())).sample(
+        Fields::for_key(prop::BATTERY_EXT_POWER_PRESENT),
+        &mut GaugeDelay::default(),
+    ));
+    assert_eq!(
+        sample.get(prop::BATTERY_EXT_POWER_PRESENT),
+        Ok(Some(Value::Bool(false)))
+    );
+}
+
+#[test]
+fn battery_group_initializing_gauge_has_no_capacity_estimate() {
+    use umsh_ulcp::{
+        battery_diagnostics::{Fields, Value},
+        ids::prop,
+    };
+    let mut ops = Vec::new();
+    gauge_word(&mut ops, 0x0a, 8);
+    gauge_word(&mut ops, 0x3a, 6);
+    let sample = embassy_futures::block_on(
+        Battery::new(Bus(ops.into())).sample(
+            Fields::for_key(prop::BATTERY_FULL_CAPACITY)
+                .union(Fields::for_key(prop::BATTERY_GAUGE_INITIALIZED)),
+            &mut GaugeDelay::default(),
+        ),
+    );
+    assert_eq!(sample.get(prop::BATTERY_FULL_CAPACITY), Ok(None));
+    assert_eq!(
+        sample.get(prop::BATTERY_GAUGE_INITIALIZED),
+        Ok(Some(Value::Bool(false)))
+    );
+}
+
+fn gauge_command(ops: &mut Vec<Op>, command: u16) {
+    let [lo, hi] = command.to_le_bytes();
+    ops.push(Op::Write(0x55, vec![0, lo]));
+    ops.push(Op::Write(0x55, vec![1, hi]));
+}
+
+fn gauge_unseal(ops: &mut Vec<Op>) {
+    gauge_command(ops, 0x0414);
+    gauge_command(ops, 0x3672);
+    gauge_word(ops, 0x3a, 4);
+    gauge_word(ops, 0x3a, 4);
+}
+
+fn gauge_begin_update(ops: &mut Vec<Op>, security: u16) {
+    if security == 6 {
+        gauge_unseal(ops);
+    }
+    if security != 2 {
+        gauge_command(ops, 0xffff);
+        gauge_command(ops, 0xffff);
+        gauge_word(ops, 0x3a, 2);
+    }
+    gauge_command(ops, 0x0090);
+}
+
+fn gauge_finish_update(ops: &mut Vec<Op>, security: u16) {
+    gauge_command(ops, 0x0091);
+    gauge_word(ops, 0x3a, 2);
+    if security != 2 {
+        gauge_word(ops, 0x3a, 2);
+        gauge_command(ops, 0x0030);
+        gauge_word(ops, 0x3a, 6);
+        if security == 4 {
+            gauge_unseal(ops);
+        }
+    }
+}
+
+fn gauge_capacity_transfer(ops: &mut Vec<Op>, readback: [u8; 6]) {
+    // Independent wire fixture: RAM address 0x929D, two BE 1500 mAh
+    // parameters (0x05DC), checksum 0x0E, total command length eight.
+    for (reg, value) in [
+        (0x3e, 0x9d),
+        (0x3f, 0x92),
+        (0x40, 0x05),
+        (0x41, 0xdc),
+        (0x42, 0x05),
+        (0x43, 0xdc),
+        (0x60, 0x0e),
+        (0x61, 8),
+        (0x3e, 0x9d),
+        (0x3f, 0x92),
+    ] {
+        ops.push(Op::Write(0x55, vec![reg, value]));
+    }
+    ops.push(Op::Read(0x55, vec![0x3e], readback.to_vec()));
+}
+
+#[test]
+fn gauge_correct_profile_preserves_learned_full_capacity_without_writes() {
+    let mut ops = Vec::new();
+    gauge_word(&mut ops, 0x3a, 0x26);
+    gauge_word(&mut ops, 0x3c, 1500);
+    gauge_word(&mut ops, 0x12, 1372);
+    let result = embassy_futures::block_on(
+        Battery::new(Bus(ops.into())).ensure_stock_capacity(&mut GaugeDelay::default()),
+    )
+    .unwrap();
+    assert_eq!(
+        result,
+        crate::gauge::CapacityConfig {
+            changed: false,
+            design_mah: 1500,
+            full_mah: 1372,
+        }
+    );
+}
+
+#[test]
+fn gauge_repairs_default_capacity_and_restores_each_access_mode() {
+    for security in [2, 4, 6] {
+        let mut ops = Vec::new();
+        gauge_word(&mut ops, 0x3a, 0x20 | security);
+        gauge_word(&mut ops, 0x3c, 3000);
+        gauge_begin_update(&mut ops, security);
+        gauge_word(&mut ops, 0x3a, 0x402);
+        gauge_capacity_transfer(&mut ops, [0x9d, 0x92, 5, 0xdc, 5, 0xdc]);
+        gauge_finish_update(&mut ops, security);
+        gauge_word(&mut ops, 0x3c, 1500);
+        gauge_word(&mut ops, 0x12, 1500);
+        let mut delay = GaugeDelay::default();
+        let result = embassy_futures::block_on(
+            Battery::new(Bus(ops.into())).ensure_stock_capacity(&mut delay),
+        )
+        .unwrap();
+        assert!(result.changed);
+        assert_eq!((result.design_mah, result.full_mah), (1500, 1500));
+        assert!(
+            delay.0.windows(8).any(|window| window
+                == [
+                    100_000, 10_000_000, 100_000, 10_000_000, 100_000, 100_000, 100_000, 100_000
+                ]),
+            "RAM selection must settle before writing the four capacity bytes"
+        );
+        assert!(
+            delay.0.contains(&1_100_000_000),
+            "configuration settling delay"
+        );
+        assert!(
+            delay.0.contains(&2_000_000_000),
+            "standard-command readback settling delay"
+        );
+    }
+}
+
+#[test]
+fn gauge_failed_transfer_exits_configuration_and_reseals_without_commit() {
+    let mut ops = Vec::new();
+    gauge_word(&mut ops, 0x3a, 6);
+    gauge_word(&mut ops, 0x3c, 3000);
+    gauge_begin_update(&mut ops, 6);
+    gauge_word(&mut ops, 0x3a, 0x402);
+    ops.push(Op::Write(0x55, vec![0x3e, 0x9d]));
+    ops.push(Op::Write(0x55, vec![0x3f, 0x92]));
+    ops.push(Op::FailedWrite(0x55, vec![0x40, 5]));
+    gauge_finish_update(&mut ops, 6);
+    let result = embassy_futures::block_on(
+        Battery::new(Bus(ops.into())).ensure_stock_capacity(&mut GaugeDelay::default()),
+    );
+    assert_eq!(result, Err(crate::gauge::ConfigError::Bus(ErrorKind::Bus)));
+}
+
+#[test]
+fn gauge_rejected_checksum_is_detected_and_exits_configuration() {
+    let mut ops = Vec::new();
+    gauge_word(&mut ops, 0x3a, 2);
+    gauge_word(&mut ops, 0x3c, 3000);
+    gauge_begin_update(&mut ops, 2);
+    gauge_word(&mut ops, 0x3a, 0x402);
+    gauge_capacity_transfer(&mut ops, [0x9d, 0x92, 0x0b, 0xb8, 0x0b, 0xb8]);
+    gauge_finish_update(&mut ops, 2);
+    let result = embassy_futures::block_on(
+        Battery::new(Bus(ops.into())).ensure_stock_capacity(&mut GaugeDelay::default()),
+    );
+    assert_eq!(
+        result,
+        Err(crate::gauge::ConfigError::MemoryVerify([
+            0x9d, 0x92, 0x0b, 0xb8, 0x0b, 0xb8
+        ]))
+    );
+}
+
+#[test]
+fn gauge_configuration_timeout_is_bounded_and_cleans_up() {
+    let mut ops = Vec::new();
+    gauge_word(&mut ops, 0x3a, 4);
+    gauge_word(&mut ops, 0x3c, 3000);
+    gauge_begin_update(&mut ops, 4);
+    for _ in 0..6 {
+        gauge_word(&mut ops, 0x3a, 2);
+    }
+    gauge_finish_update(&mut ops, 4);
+    let result = embassy_futures::block_on(
+        Battery::new(Bus(ops.into())).ensure_stock_capacity(&mut GaugeDelay::default()),
+    );
+    assert_eq!(result, Err(crate::gauge::ConfigError::Timeout));
+}
+
+#[test]
+fn gauge_recovers_interrupted_configuration_before_reading_capacity() {
+    let mut ops = Vec::new();
+    gauge_word(&mut ops, 0x3a, 0x402);
+    gauge_command(&mut ops, 0x0091);
+    gauge_word(&mut ops, 0x3a, 2);
+    gauge_word(&mut ops, 0x3c, 1500);
+    gauge_word(&mut ops, 0x12, 1470);
+    let result = embassy_futures::block_on(
+        Battery::new(Bus(ops.into())).ensure_stock_capacity(&mut GaugeDelay::default()),
+    )
+    .unwrap();
+    assert!(!result.changed);
+    assert_eq!(result.full_mah, 1470);
+}
+
+#[test]
 fn charger_updates_preserve_unrelated_bits_without_reset_or_gauge_writes() {
     let ops = [
         (3, 0xff, 0xcf),
+        (9, 0x7c, 0x5c),
         (7, 0xff, 0xcf),
         (6, 3, 0x5b),
         (4, 0x80, 0x8b),
@@ -117,6 +476,26 @@ fn charger_updates_preserve_unrelated_bits_without_reset_or_gauge_writes() {
         expected.push(Op::Write(0x6b, vec![reg, new]));
     }
     embassy_futures::block_on(Battery::new(Bus(expected.into())).init()).unwrap();
+}
+
+#[test]
+fn power_off_disconnects_immediately_and_preserves_charger_policy() {
+    for (old, new) in [(0x5c, 0x74), (0x40, 0x60)] {
+        let expected = vec![
+            Op::Read(0x6b, vec![9], vec![old]),
+            Op::Write(0x6b, vec![9, new]),
+        ];
+        embassy_futures::block_on(Battery::new(Bus(expected.into())).power_off()).unwrap();
+    }
+}
+
+#[test]
+fn power_off_reports_failed_disconnect_for_retry() {
+    let expected = vec![
+        Op::Read(0x6b, vec![9], vec![0x44]),
+        Op::FailedWrite(0x6b, vec![9, 0x64]),
+    ];
+    assert!(embassy_futures::block_on(Battery::new(Bus(expected.into())).power_off()).is_err());
 }
 #[test]
 fn battery_unknown_is_not_zero_or_charged() {

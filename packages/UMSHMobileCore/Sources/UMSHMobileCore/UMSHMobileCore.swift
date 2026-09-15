@@ -9050,6 +9050,7 @@ public struct UlcpDevicePropertiesRecord: Equatable, Hashable {
     public var beaconIntervalSeconds: UInt32?
     public var startupBeacon: Bool?
     public var gnssEnabled: Bool?
+    public var displayMotionWakeEnabled: Bool?
     /**
      * What the receiver currently sees. Read-only, and absent on a
      * device with no receiver.
@@ -9178,7 +9179,7 @@ public struct UlcpDevicePropertiesRecord: Equatable, Hashable {
         /**
          * `PROP_UPTIME`: seconds since the device booted. Absent on a
          * device that does not report it.
-         */uptimeSeconds: UInt32?, advertIntervalSeconds: UInt32?, beaconIntervalSeconds: UInt32?, startupBeacon: Bool?, gnssEnabled: Bool?,
+         */uptimeSeconds: UInt32?, advertIntervalSeconds: UInt32?, beaconIntervalSeconds: UInt32?, startupBeacon: Bool?, gnssEnabled: Bool?, displayMotionWakeEnabled: Bool?,
         /**
          * What the receiver currently sees. Read-only, and absent on a
          * device with no receiver.
@@ -9292,6 +9293,7 @@ public struct UlcpDevicePropertiesRecord: Equatable, Hashable {
         self.beaconIntervalSeconds = beaconIntervalSeconds
         self.startupBeacon = startupBeacon
         self.gnssEnabled = gnssEnabled
+        self.displayMotionWakeEnabled = displayMotionWakeEnabled
         self.gnss = gnss
         self.gnssTimeTrust = gnssTimeTrust
         self.bleEnabled = bleEnabled
@@ -9381,6 +9383,7 @@ public struct FfiConverterTypeUlcpDevicePropertiesRecord: FfiConverterRustBuffer
                 beaconIntervalSeconds: FfiConverterOptionUInt32.read(from: &buf),
                 startupBeacon: FfiConverterOptionBool.read(from: &buf),
                 gnssEnabled: FfiConverterOptionBool.read(from: &buf),
+                displayMotionWakeEnabled: FfiConverterOptionBool.read(from: &buf),
                 gnss: FfiConverterOptionTypeUlcpGnssRecord.read(from: &buf),
                 gnssTimeTrust: FfiConverterOptionBool.read(from: &buf),
                 bleEnabled: FfiConverterOptionBool.read(from: &buf),
@@ -9456,6 +9459,7 @@ public struct FfiConverterTypeUlcpDevicePropertiesRecord: FfiConverterRustBuffer
         FfiConverterOptionUInt32.write(value.beaconIntervalSeconds, into: &buf)
         FfiConverterOptionBool.write(value.startupBeacon, into: &buf)
         FfiConverterOptionBool.write(value.gnssEnabled, into: &buf)
+        FfiConverterOptionBool.write(value.displayMotionWakeEnabled, into: &buf)
         FfiConverterOptionTypeUlcpGnssRecord.write(value.gnss, into: &buf)
         FfiConverterOptionBool.write(value.gnssTimeTrust, into: &buf)
         FfiConverterOptionBool.write(value.bleEnabled, into: &buf)
@@ -10266,6 +10270,19 @@ public struct UlcpManagedPropertyIds: Equatable, Hashable {
     public var deviceModel: UInt32
     public var deviceName: UInt32
     public var battery: UInt32
+    public var batteryCurrent: UInt32
+    public var batteryRemainingCapacity: UInt32
+    public var batteryFullCapacity: UInt32
+    public var batteryDesignCapacity: UInt32
+    public var batteryExtPowerPresent: UInt32
+    public var batteryPresent: UInt32
+    public var batteryGaugeFull: UInt32
+    public var batteryGaugeInitialized: UInt32
+    public var batteryGaugeSmoothing: UInt32
+    public var batteryChargeVoltageRequest: UInt32
+    public var batteryGaugeFormat: UInt32
+    public var batteryGaugeStatus: UInt32
+    public var batteryGaugeOperationStatus: UInt32
     public var phyEnabled: UInt32
     public var frequency: UInt32
     public var transmitPower: UInt32
@@ -10295,6 +10312,7 @@ public struct UlcpManagedPropertyIds: Equatable, Hashable {
     public var beaconInterval: UInt32
     public var startupBeacon: UInt32
     public var gnssEnabled: UInt32
+    public var displayMotionWakeEnabled: UInt32
     public var gnssTimeTrust: UInt32
     public var bleEnabled: UInt32
     public var bleBondCount: UInt32
@@ -10335,12 +10353,25 @@ public struct UlcpManagedPropertyIds: Equatable, Hashable {
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(caps: UInt32, deviceVersion: UInt32, deviceModel: UInt32, deviceName: UInt32, battery: UInt32, phyEnabled: UInt32, frequency: UInt32, transmitPower: UInt32, loraBandwidth: UInt32, loraSpreadingFactor: UInt32, loraCodingRate: UInt32, dutyCycleNow: UInt32, dutyCycleLimit: UInt32, statTxPackets: UInt32, statTxChannelBusy: UInt32, statRxPackets: UInt32, statRxBadCrc: UInt32, statRxNonUmsh: UInt32, statRxAccepted: UInt32, statForwarded: UInt32, statForwardDropped: UInt32, statForwardCancelled: UInt32, identRole: UInt32, identMobile: UInt32, identLocation: UInt32, identAltitude: UInt32, devDiscoverable: UInt32, gnssIdentUpdate: UInt32, gnssIdentPrecision: UInt32, uptime: UInt32, advertInterval: UInt32, beaconInterval: UInt32, startupBeacon: UInt32, gnssEnabled: UInt32, gnssTimeTrust: UInt32, bleEnabled: UInt32, bleBondCount: UInt32, bleLink: UInt32, blePairing: UInt32, wifiEnabled: UInt32, bridgeEnabled: UInt32, bridgeHost: UInt32, bridgePort: UInt32, bridgeServerKey: UInt32, bridgeLink: UInt32, devKey: UInt32, wifiNetworks: UInt32, wifiNetwork: UInt32, wifiScanning: UInt32, wifiScanResults: UInt32, wifiLink: UInt32, wifiRssi: UInt32, wifiMac: UInt32, ipv4State: UInt32, ipv4Config: UInt32, ipv4Address: UInt32, ipv6State: UInt32, ipv6Config: UInt32, ipv6Addresses: UInt32, ipDns: UInt32, ipResolvers: UInt32, time: UInt32, tzOffset: UInt32, alert: UInt32, repeaterEnabled: UInt32, repeaterRegions: UInt32, repeaterDefaultRegion: UInt32, repeaterMinRssi: UInt32, repeaterMinSnr: UInt32, devPeers: UInt32, devAdmins: UInt32) {
+    public init(caps: UInt32, deviceVersion: UInt32, deviceModel: UInt32, deviceName: UInt32, battery: UInt32, batteryCurrent: UInt32, batteryRemainingCapacity: UInt32, batteryFullCapacity: UInt32, batteryDesignCapacity: UInt32, batteryExtPowerPresent: UInt32, batteryPresent: UInt32, batteryGaugeFull: UInt32, batteryGaugeInitialized: UInt32, batteryGaugeSmoothing: UInt32, batteryChargeVoltageRequest: UInt32, batteryGaugeFormat: UInt32, batteryGaugeStatus: UInt32, batteryGaugeOperationStatus: UInt32, phyEnabled: UInt32, frequency: UInt32, transmitPower: UInt32, loraBandwidth: UInt32, loraSpreadingFactor: UInt32, loraCodingRate: UInt32, dutyCycleNow: UInt32, dutyCycleLimit: UInt32, statTxPackets: UInt32, statTxChannelBusy: UInt32, statRxPackets: UInt32, statRxBadCrc: UInt32, statRxNonUmsh: UInt32, statRxAccepted: UInt32, statForwarded: UInt32, statForwardDropped: UInt32, statForwardCancelled: UInt32, identRole: UInt32, identMobile: UInt32, identLocation: UInt32, identAltitude: UInt32, devDiscoverable: UInt32, gnssIdentUpdate: UInt32, gnssIdentPrecision: UInt32, uptime: UInt32, advertInterval: UInt32, beaconInterval: UInt32, startupBeacon: UInt32, gnssEnabled: UInt32, displayMotionWakeEnabled: UInt32, gnssTimeTrust: UInt32, bleEnabled: UInt32, bleBondCount: UInt32, bleLink: UInt32, blePairing: UInt32, wifiEnabled: UInt32, bridgeEnabled: UInt32, bridgeHost: UInt32, bridgePort: UInt32, bridgeServerKey: UInt32, bridgeLink: UInt32, devKey: UInt32, wifiNetworks: UInt32, wifiNetwork: UInt32, wifiScanning: UInt32, wifiScanResults: UInt32, wifiLink: UInt32, wifiRssi: UInt32, wifiMac: UInt32, ipv4State: UInt32, ipv4Config: UInt32, ipv4Address: UInt32, ipv6State: UInt32, ipv6Config: UInt32, ipv6Addresses: UInt32, ipDns: UInt32, ipResolvers: UInt32, time: UInt32, tzOffset: UInt32, alert: UInt32, repeaterEnabled: UInt32, repeaterRegions: UInt32, repeaterDefaultRegion: UInt32, repeaterMinRssi: UInt32, repeaterMinSnr: UInt32, devPeers: UInt32, devAdmins: UInt32) {
         self.caps = caps
         self.deviceVersion = deviceVersion
         self.deviceModel = deviceModel
         self.deviceName = deviceName
         self.battery = battery
+        self.batteryCurrent = batteryCurrent
+        self.batteryRemainingCapacity = batteryRemainingCapacity
+        self.batteryFullCapacity = batteryFullCapacity
+        self.batteryDesignCapacity = batteryDesignCapacity
+        self.batteryExtPowerPresent = batteryExtPowerPresent
+        self.batteryPresent = batteryPresent
+        self.batteryGaugeFull = batteryGaugeFull
+        self.batteryGaugeInitialized = batteryGaugeInitialized
+        self.batteryGaugeSmoothing = batteryGaugeSmoothing
+        self.batteryChargeVoltageRequest = batteryChargeVoltageRequest
+        self.batteryGaugeFormat = batteryGaugeFormat
+        self.batteryGaugeStatus = batteryGaugeStatus
+        self.batteryGaugeOperationStatus = batteryGaugeOperationStatus
         self.phyEnabled = phyEnabled
         self.frequency = frequency
         self.transmitPower = transmitPower
@@ -10370,6 +10401,7 @@ public struct UlcpManagedPropertyIds: Equatable, Hashable {
         self.beaconInterval = beaconInterval
         self.startupBeacon = startupBeacon
         self.gnssEnabled = gnssEnabled
+        self.displayMotionWakeEnabled = displayMotionWakeEnabled
         self.gnssTimeTrust = gnssTimeTrust
         self.bleEnabled = bleEnabled
         self.bleBondCount = bleBondCount
@@ -10430,6 +10462,19 @@ public struct FfiConverterTypeUlcpManagedPropertyIds: FfiConverterRustBuffer {
                 deviceModel: FfiConverterUInt32.read(from: &buf),
                 deviceName: FfiConverterUInt32.read(from: &buf),
                 battery: FfiConverterUInt32.read(from: &buf),
+                batteryCurrent: FfiConverterUInt32.read(from: &buf),
+                batteryRemainingCapacity: FfiConverterUInt32.read(from: &buf),
+                batteryFullCapacity: FfiConverterUInt32.read(from: &buf),
+                batteryDesignCapacity: FfiConverterUInt32.read(from: &buf),
+                batteryExtPowerPresent: FfiConverterUInt32.read(from: &buf),
+                batteryPresent: FfiConverterUInt32.read(from: &buf),
+                batteryGaugeFull: FfiConverterUInt32.read(from: &buf),
+                batteryGaugeInitialized: FfiConverterUInt32.read(from: &buf),
+                batteryGaugeSmoothing: FfiConverterUInt32.read(from: &buf),
+                batteryChargeVoltageRequest: FfiConverterUInt32.read(from: &buf),
+                batteryGaugeFormat: FfiConverterUInt32.read(from: &buf),
+                batteryGaugeStatus: FfiConverterUInt32.read(from: &buf),
+                batteryGaugeOperationStatus: FfiConverterUInt32.read(from: &buf),
                 phyEnabled: FfiConverterUInt32.read(from: &buf),
                 frequency: FfiConverterUInt32.read(from: &buf),
                 transmitPower: FfiConverterUInt32.read(from: &buf),
@@ -10459,6 +10504,7 @@ public struct FfiConverterTypeUlcpManagedPropertyIds: FfiConverterRustBuffer {
                 beaconInterval: FfiConverterUInt32.read(from: &buf),
                 startupBeacon: FfiConverterUInt32.read(from: &buf),
                 gnssEnabled: FfiConverterUInt32.read(from: &buf),
+                displayMotionWakeEnabled: FfiConverterUInt32.read(from: &buf),
                 gnssTimeTrust: FfiConverterUInt32.read(from: &buf),
                 bleEnabled: FfiConverterUInt32.read(from: &buf),
                 bleBondCount: FfiConverterUInt32.read(from: &buf),
@@ -10505,6 +10551,19 @@ public struct FfiConverterTypeUlcpManagedPropertyIds: FfiConverterRustBuffer {
         FfiConverterUInt32.write(value.deviceModel, into: &buf)
         FfiConverterUInt32.write(value.deviceName, into: &buf)
         FfiConverterUInt32.write(value.battery, into: &buf)
+        FfiConverterUInt32.write(value.batteryCurrent, into: &buf)
+        FfiConverterUInt32.write(value.batteryRemainingCapacity, into: &buf)
+        FfiConverterUInt32.write(value.batteryFullCapacity, into: &buf)
+        FfiConverterUInt32.write(value.batteryDesignCapacity, into: &buf)
+        FfiConverterUInt32.write(value.batteryExtPowerPresent, into: &buf)
+        FfiConverterUInt32.write(value.batteryPresent, into: &buf)
+        FfiConverterUInt32.write(value.batteryGaugeFull, into: &buf)
+        FfiConverterUInt32.write(value.batteryGaugeInitialized, into: &buf)
+        FfiConverterUInt32.write(value.batteryGaugeSmoothing, into: &buf)
+        FfiConverterUInt32.write(value.batteryChargeVoltageRequest, into: &buf)
+        FfiConverterUInt32.write(value.batteryGaugeFormat, into: &buf)
+        FfiConverterUInt32.write(value.batteryGaugeStatus, into: &buf)
+        FfiConverterUInt32.write(value.batteryGaugeOperationStatus, into: &buf)
         FfiConverterUInt32.write(value.phyEnabled, into: &buf)
         FfiConverterUInt32.write(value.frequency, into: &buf)
         FfiConverterUInt32.write(value.transmitPower, into: &buf)
@@ -10534,6 +10593,7 @@ public struct FfiConverterTypeUlcpManagedPropertyIds: FfiConverterRustBuffer {
         FfiConverterUInt32.write(value.beaconInterval, into: &buf)
         FfiConverterUInt32.write(value.startupBeacon, into: &buf)
         FfiConverterUInt32.write(value.gnssEnabled, into: &buf)
+        FfiConverterUInt32.write(value.displayMotionWakeEnabled, into: &buf)
         FfiConverterUInt32.write(value.gnssTimeTrust, into: &buf)
         FfiConverterUInt32.write(value.bleEnabled, into: &buf)
         FfiConverterUInt32.write(value.bleBondCount, into: &buf)
@@ -14225,6 +14285,127 @@ public func FfiConverterTypeUlcpAttachMode_lower(_ value: UlcpAttachMode) -> Rus
 
 
 /**
+ * A diagnostic decoded by the shared wire codec. Empty successful values
+ * are unavailable; malformed values fail inspection. Transport statuses
+ * remain with the individual management answer.
+ */
+
+public enum UlcpBatteryDiagnosticValue: Equatable, Hashable {
+
+    case unavailable
+    case current(milliamps: Int32
+    )
+    case unsigned(value: UInt32
+    )
+    case boolean(value: Bool
+    )
+    case voltage(millivolts: UInt32
+    )
+    case maximum
+    case gaugeFormat(value: UInt32
+    )
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension UlcpBatteryDiagnosticValue: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeUlcpBatteryDiagnosticValue: FfiConverterRustBuffer {
+    typealias SwiftType = UlcpBatteryDiagnosticValue
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> UlcpBatteryDiagnosticValue {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .unavailable
+
+        case 2: return .current(milliamps: try FfiConverterInt32.read(from: &buf)
+        )
+
+        case 3: return .unsigned(value: try FfiConverterUInt32.read(from: &buf)
+        )
+
+        case 4: return .boolean(value: try FfiConverterBool.read(from: &buf)
+        )
+
+        case 5: return .voltage(millivolts: try FfiConverterUInt32.read(from: &buf)
+        )
+
+        case 6: return .maximum
+
+        case 7: return .gaugeFormat(value: try FfiConverterUInt32.read(from: &buf)
+        )
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: UlcpBatteryDiagnosticValue, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .unavailable:
+            writeInt(&buf, Int32(1))
+
+
+        case let .current(milliamps):
+            writeInt(&buf, Int32(2))
+            FfiConverterInt32.write(milliamps, into: &buf)
+
+
+        case let .unsigned(value):
+            writeInt(&buf, Int32(3))
+            FfiConverterUInt32.write(value, into: &buf)
+
+
+        case let .boolean(value):
+            writeInt(&buf, Int32(4))
+            FfiConverterBool.write(value, into: &buf)
+
+
+        case let .voltage(millivolts):
+            writeInt(&buf, Int32(5))
+            FfiConverterUInt32.write(millivolts, into: &buf)
+
+
+        case .maximum:
+            writeInt(&buf, Int32(6))
+
+
+        case let .gaugeFormat(value):
+            writeInt(&buf, Int32(7))
+            FfiConverterUInt32.write(value, into: &buf)
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeUlcpBatteryDiagnosticValue_lift(_ buf: RustBuffer) throws -> UlcpBatteryDiagnosticValue {
+    return try FfiConverterTypeUlcpBatteryDiagnosticValue.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeUlcpBatteryDiagnosticValue_lower(_ value: UlcpBatteryDiagnosticValue) -> RustBuffer {
+    return FfiConverterTypeUlcpBatteryDiagnosticValue.lower(value)
+}
+
+
+
+/**
  * The charge state a device reports in `PROP_BATTERY`.
  */
 
@@ -17123,6 +17304,15 @@ public func inspectUlcpBattery(value: Data)throws  -> UlcpBatteryRecord  {
     )
 })
 }
+public func inspectUlcpBatteryDiagnostic(propertyId: UInt32, value: Data)throws  -> UlcpBatteryDiagnosticValue  {
+    return try  FfiConverterTypeUlcpBatteryDiagnosticValue_lift(try rustCallWithError(FfiConverterTypeMobileError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_func_inspect_ulcp_battery_diagnostic(
+        FfiConverterUInt32.lower(propertyId),
+        FfiConverterData.lower(value),uniffiCallStatus
+    )
+})
+}
 /**
  * Reduce the answers to a card read into what a device is.
  *
@@ -17700,6 +17890,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_func_inspect_ulcp_battery() != 22194) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_func_inspect_ulcp_battery_diagnostic() != 22193) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_func_inspect_ulcp_device_card() != 61975) {

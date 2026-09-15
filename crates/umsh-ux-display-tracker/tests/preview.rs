@@ -154,6 +154,7 @@ fn status(
             charge,
         },
         battery_mv: Some(3_950),
+        battery_details: None,
         link,
         queued: None,
         bonds: 3,
@@ -448,6 +449,48 @@ fn preview() {
         return;
     };
     let dir = std::path::Path::new(&dir);
+    // Live battery pages: a representative 60% reading, not a device capture.
+    let layout = Layout::TFT_480X222;
+    let mut canvas = Canvas::new(3 * 480 + 4 * 8, 222 + 2 * 8, [40, 42, 48]);
+    let mut battery_status = status(
+        Some(60),
+        Some(ChargeClass::Charging),
+        PairingState::Closed,
+        LinkState::Advertising,
+    );
+    battery_status.battery_mv = Some(4187);
+    battery_status.battery_details = Some(umsh_ux_display_tracker::screen::BatteryDiagnostics {
+        current_ma: 42,
+        remaining_mah: 900,
+        full_mah: 1500,
+        design_mah: 1500,
+        charging_mv: 4200,
+        status: 0x0008,
+        operation: 0x0060,
+        usb: true,
+    });
+    for (index, item) in [
+        MenuItem::BatteryCharge,
+        MenuItem::BatteryCapacity,
+        MenuItem::BatteryGauge,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let mut model = UiModel::new(MenuItems::all());
+        navigate_to(&mut model, item);
+        model.apply(UiInput::Select);
+        let mut panel = Panel::new(layout.size);
+        render_frame(&mut panel, &layout, &model, &battery_status);
+        canvas.blit(
+            &panel,
+            (8 + index as u32 * 488, 8),
+            1,
+            [235, 240, 255],
+            [8, 10, 14],
+        );
+    }
+    canvas.write_bmp(&dir.join("battery-pager.bmp"));
     // A compact sheet devoted to header packing and Bluetooth states.
     for (layout, filename, on, off) in [
         (

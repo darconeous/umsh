@@ -1799,6 +1799,36 @@ where
             .await
     }
 
+    /// Typed optional battery diagnostics. Each property retains not-found,
+    /// unavailable, failed, or valid state. Wire codecs are shared with firmware.
+    pub async fn battery_diagnostics(
+        &mut self,
+        keys: &[u32],
+    ) -> Result<Vec<Result<Option<umsh_ulcp::battery_diagnostics::Value>, Status>>, UlcpError> {
+        use umsh_ulcp::battery_diagnostics::{Value, index};
+        if keys.iter().any(|key| index(*key).is_none()) {
+            return Err(UlcpError::Protocol("not a battery diagnostic property"));
+        }
+        let values = if self.capabilities().await?.contains(&cap::CMD_MULTI) {
+            self.read_each(keys).await?
+        } else {
+            let mut values = Vec::new();
+            for &key in keys {
+                values.push(match self.get_prop(key).await {
+                    Ok(value) => Ok(value),
+                    Err(UlcpError::Status(status)) => Err(status),
+                    Err(error) => return Err(error),
+                });
+            }
+            values
+        };
+        Ok(keys
+            .iter()
+            .zip(values)
+            .map(|(&key, value)| value.and_then(|bytes| Value::decode(key, &bytes)))
+            .collect())
+    }
+
     /// Fetch an OPTIONAL string property, treating a refusal as absence.
     ///
     /// A device that does not implement the property answers with an
