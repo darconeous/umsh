@@ -1,6 +1,7 @@
 # ULCP I2C bus access proposal
 
-Status: implemented, 2026-09-16; hardware validation pending. This document
+Status: implemented and hardware-validated on the Pager, over USB and over the
+mesh, 2026-09-16. This document
 records the approved design; the normative definitions are in
 [ULCP I2C Bus Access](protocol/src/ulcp-i2c.md). Capability 60, commands
 25–27, properties 4960–4961, and status codes 24–26 are allocated.
@@ -171,11 +172,25 @@ protocol and mesh tests, Node Management binding tests, umshctl unit tests, and
 the dissector suite all pass; the Pager, Heltec V3, T-Beam Supreme, Heltec V2,
 and T-1000E images type-check.
 
-Hardware: not yet run. The checks to perform on the attached Pager are
-`umshctl i2c buses`, `umshctl i2c scan 0` (the six known peripherals),
-`umshctl i2c read 0 0x55 2 --reg 0x08` (the gauge's voltage register), a write
-to an unused address returning `NO_DEVICE` followed immediately by a good read,
-and the battery screen and keyboard staying responsive during a scan loop;
-then the same over radio with `--node KEY`, where an oversize read must return
-`NOMEM` rather than silence. If 255-octet operations show `FifoExceeded`, the
-advertised `MAX_DATA` drops to what the controller chunks cleanly.
+Hardware, on the attached Pager over USB: `i2c buses` and `i2c devices` report
+the table; `i2c scan 0` finds every chip the
+[hardware notes](hardware/lilygo-t-lora-pager-hardware.md) list, including the
+ES8311 codec and the DRV2605 haptic driver, which nothing in the firmware
+drives and which are now in the table so a scan is fully annotated;
+`i2c read 0 0x55 2 --reg 08` returns `4110`, the same 4161 mV the gauge driver
+reports through `battery`. A read of an absent address is `STATUS_NO_DEVICE`
+and the next transaction succeeds. Twenty-five consecutive scans left the clock
+correct and a battery multi-get answering in 298 ms, so the firmware's own bus
+users were not starved. A 254-octet read (the limit, since `MAX_DATA` bounds
+the sum and the register write takes one) came back whole: no `FifoExceeded` on
+the read path, and the write path shares the same chunking helper.
+
+Two results are worth keeping in mind. A *write* to an absent address is
+`STATUS_NACK`, not `STATUS_NO_DEVICE`: esp-hal estimates the reason from the
+transmit FIFO's read pointer, which has already advanced past the address octet
+by the time a write NACKs. The chapter says what that means for a host.
+
+Over the mesh, from a second radio with `--node`: the bus table, the same gauge
+register (4160 mV, one millivolt off the reading taken over USB a minute
+earlier), and a full annotated scan all came back, and a 200-octet read was
+refused with `STATUS_NOMEM` in words rather than going silent.

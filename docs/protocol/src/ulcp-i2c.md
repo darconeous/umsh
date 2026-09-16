@@ -157,6 +157,14 @@ carries no partial read data, but operations before the failing one
 have already acted on the wire: a `STATUS_NACK` on the third operation
 means the first two completed.
 
+Telling an unacknowledged address from an unacknowledged data octet is
+something a controller either reports or estimates, and some cannot do
+it at all for a transfer that begins with a write. Where the device
+cannot tell, it reports `STATUS_NACK`. A host therefore reads
+`STATUS_NO_DEVICE` as "nothing is there" but must not read
+`STATUS_NACK` as "something is there"; whether an address answers at
+all is [`CMD_I2C_SCAN`](#cmd-i2c-scan)'s question.
+
 A device performs the whole transaction under a deadline of its own
 choosing, and a transaction that does not complete within it is
 `STATUS_BUS_ERROR`, after which the device **MAY** attempt bus recovery.

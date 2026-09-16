@@ -49,9 +49,16 @@ pub const I2C_BUSES: &[BusInfo<'static>] = &[BusInfo {
     name: "I2C0 SDA GPIO3 SCL GPIO2",
 }];
 
-/// What the firmware's own drivers know to be on the bus, so a host can
-/// annotate a scan and think twice before writing to the charger.
+/// What is on the bus, so a host can annotate a scan and think twice
+/// before writing to the charger. The audio codec and the haptic driver
+/// are here because they answer a scan, not because anything in this
+/// firmware drives them.
 pub const I2C_DEVICES: &[DeviceInfo<'static>] = &[
+    DeviceInfo {
+        bus: 0,
+        addr: 0x18,
+        name: "ES8311 audio codec",
+    },
     DeviceInfo {
         bus: 0,
         addr: 0x20,
@@ -76,6 +83,11 @@ pub const I2C_DEVICES: &[DeviceInfo<'static>] = &[
         bus: 0,
         addr: GAUGE_ADDRESS,
         name: "BQ27220 battery gauge",
+    },
+    DeviceInfo {
+        bus: 0,
+        addr: 0x5A,
+        name: "DRV2605 haptic driver",
     },
     DeviceInfo {
         bus: 0,

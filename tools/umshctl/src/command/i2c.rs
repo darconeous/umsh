@@ -297,7 +297,10 @@ fn no_bus() -> anyhow::Error {
 fn explain(error: UlcpError) -> anyhow::Error {
     let words = match error {
         UlcpError::Status(Status::NO_DEVICE) => "no peripheral acknowledged the address",
-        UlcpError::Status(Status::NACK) => "the peripheral refused a data octet",
+        UlcpError::Status(Status::NACK) => {
+            "an octet was not acknowledged; on a controller that cannot tell the two apart \
+             this is also what an absent peripheral looks like, so check `i2c scan`"
+        }
         UlcpError::Status(Status::BUS_ERROR) => {
             "the bus failed (arbitration lost, timeout, or a stuck line)"
         }
