@@ -23,6 +23,8 @@ pub mod alert;
 pub mod announce;
 pub mod battery;
 pub mod battery_diagnostics;
+pub mod battery_gauge_config;
+pub mod battery_gauge_telemetry;
 pub mod ble;
 pub mod bridge;
 pub mod describe;

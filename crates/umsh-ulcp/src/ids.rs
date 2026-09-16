@@ -26,6 +26,10 @@ pub mod prop {
     pub const BATTERY_GAUGE_FORMAT: u32 = 4954;
     pub const BATTERY_GAUGE_STATUS: u32 = 4955;
     pub const BATTERY_GAUGE_OPERATION_STATUS: u32 = 4956;
+    /// Optional on-demand chip-specific configuration snapshot; never saved.
+    pub const BATTERY_GAUGE_CONFIG: u32 = 4957;
+    /// Optional chip-specific live standard-command readings; never saved.
+    pub const BATTERY_GAUGE_TELEMETRY: u32 = 4958;
 
     /// Autonomous bridge-client configuration and live connection status.
     pub const BRIDGE_ENABLED: u32 = 4928;

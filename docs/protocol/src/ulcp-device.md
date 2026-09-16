@@ -200,6 +200,8 @@ Id | Mnemonic                    | Commands                 | Description
 4954 | `PROP_BATTERY_GAUGE_FORMAT` | Get, Is | Battery diagnostics
 4955 | `PROP_BATTERY_GAUGE_STATUS` | Get, Is | Battery diagnostics
 4956 | `PROP_BATTERY_GAUGE_OPERATION_STATUS` | Get, Is | Battery diagnostics
+4957 | `PROP_BATTERY_GAUGE_CONFIG` | Get, Is | On-demand gauge configuration
+4958 | `PROP_BATTERY_GAUGE_TELEMETRY` | Get, Is | Live gauge counters and estimates
 70 | `PROP_MAC_REPEATER_ENABLED` | Get, Set                 | Autonomous repeater forwarding enable
 71 | `PROP_IDENT`                | Get                      | Signed node identity of the device identity
 72 | `PROP_IDENT_ROLE`           | Get, Set                 | Advertised node role, or empty to derive it
@@ -659,11 +661,13 @@ Mutations (`SET`, `INSERT`, `REMOVE`) return `STATUS_INVALID_ARGUMENT` for
 implemented properties and `STATUS_PROP_NOT_FOUND` for unsupported properties.
 Reads do not unseal, reset,
 calibrate, configure, or otherwise change the gauge or charger.
+This restriction applies to the scalar diagnostics (4944–4956); the separate
+[configuration snapshot](#prop-battery-gauge-config) permits temporary access unlocking.
 
 #### Shared acquisition within a multi-get
 
 The battery read group contains `PROP_BATTERY` and properties
-4944–4956. A device implementing any diagnostic property follows these rules
+4944–4958. A device implementing any diagnostic property follows these rules
 for the supported members of that group. Unsupported members retain their
 `STATUS_PROP_NOT_FOUND` results and require no acquisition:
 
@@ -722,6 +726,196 @@ charger state also comes from the BQ25896. Preserve the
 distinction between charger completion, gauge full, and 100% state of charge.
 Their disagreement is useful diagnostic information.
 
+
+### PROP 4957: `PROP_BATTERY_GAUGE_CONFIG` {#prop-battery-gauge-config}
+
+* Type: Single-Value, Read-Only
+* Asynchronous Updates: No
+* Required: Optional with `CAP_BATTERY`; no separate capability
+* Value Type: PUI format, PUI schema version, format-specific fields
+* Post-Reset Value: Acquired on demand; never saved
+
+A chip-specific inspection of the gauge's live configuration. Ordinary battery
+polling does not imply reading this property. Hosts should request it explicitly
+for diagnosis and omit it from routine monitoring. Unsupported devices return
+`STATUS_PROP_NOT_FOUND`; acquisition or access-restoration failures return
+`STATUS_FAILURE`, never a partial snapshot. Implemented mutations return
+`STATUS_INVALID_ARGUMENT`.
+
+An implementation may temporarily unlock gauge access to read configuration,
+but **MUST** restore its original access state before reporting success. It
+**MUST NOT** reset the gauge, enter a configuration-update mode, commit
+parameters, calibrate, or change learned capacity. Cleanup must finish even if
+the host disconnects or abandons the request. Other drivers must not interleave
+commands to the same gauge during inspection. Implementations bound hardware
+waits and validate returned memory addresses and checksums.
+The BQ27220 requires FULL_ACCESS for these RAM reads; merely unsealing it is
+insufficient. Entering FULL_ACCESS is distinct from entering CFGUPDATE.
+Before each security-key sequence, leave the gauge unaddressed for four seconds,
+including by ordinary telemetry polling, as described in
+[TI's security-mode timing guidance](https://e2e.ti.com/support/power-management-group/power-management/f/power-management-forum/1106900/faq-how-to-enter-unseal-or-full-access-modes-after-sealing-the-gauge).
+Other devices on the same bus can continue operating. This delay also applies
+to fallback keys and restoration of an originally unsealed state.
+
+The property participates in the battery acquisition group when requested,
+including duplicate-key reuse. Scalar status words describe their acquisition
+before temporary unlocking; they must not expose a transient access state as
+the steady state. Configuration fields are sequential reads, not an atomic
+hardware snapshot. Reading this property can take longer than scalar telemetry;
+hosts should allow a thirty-second device processing budget, plus transport time.
+A successful sealed-gauge inspection normally takes about nine seconds; ordinary
+scalar polling resumes after inspection and access restoration finish.
+
+Format **1**, version **1** describes the BQ27220 RAM parameter area identified
+by TI as CEDV Profile 1, plus shared configuration and calibration parameters.
+It does not select a profile. The battery-ID field is reported verbatim.
+Every field below appears exactly once, in order, without field IDs or lengths.
+Integer fields use shortest-form PUI. The two F4 fields instead use exactly four
+little-endian octets holding the chip's raw calibration bit pattern; hosts must
+not assume IEEE-754 encoding. These are converted from the gauge's big-endian
+memory representation. Unknown formats or versions must not be decoded using
+this layout. Truncation, extra fields, or values exceeding the indicated
+hardware width are malformed. Version 1 contains 48 fields and is at most 148
+octets, including the two header PUIs.
+
+Order | Field | RAM address | Hardware octets | Units / representation
+---|---|---|---|---
+1 | `battery_id` | `0x929A` | 1 | bits
+2 | `operation_config_a` | `0x9206` | 2 | bits
+3 | `operation_config_b` | `0x9208` | 2 | bits
+4 | `cedv_config` | `0x929B` | 2 | bits
+5 | `full_capacity` | `0x929D` | 2 | mAh
+6 | `design_capacity` | `0x929F` | 2 | mAh
+7 | `design_voltage` | `0x92A3` | 2 | mV
+8 | `termination_voltage_margin` | `0x92A5` | 2 | mV
+9 | `charging_voltage` | `0x91FD` | 2 | mV
+10 | `taper_current` | `0x9201` | 2 | mA
+11 | `discharge_detection` | `0x9228` | 2 | mA
+12 | `charge_detection` | `0x922A` | 2 | mA
+13 | `quit_current` | `0x922C` | 2 | mA
+14 | `battery_low` | `0x9251` | 2 | 0.01%
+15 | `learning_low_temp` | `0x925B` | 1 | raw
+16 | `overload_current` | `0x9264` | 2 | mA
+17 | `near_full` | `0x926B` | 2 | mAh
+18 | `reserve_capacity` | `0x926D` | 2 | mAh
+19 | `charge_efficiency` | `0x926F` | 1 | %
+20 | `discharge_efficiency` | `0x9270` | 1 | %
+21 | `fixed_edv0` | `0x92B4` | 2 | mV
+22 | `edv0_hold` | `0x92B6` | 1 | s
+23 | `fixed_edv1` | `0x92B7` | 2 | mV
+24 | `edv1_hold` | `0x92B9` | 1 | s
+25 | `fixed_edv2` | `0x92BA` | 2 | mV
+26 | `edv2_hold` | `0x92BC` | 1 | s
+27 | `emf` | `0x92A7` | 2 | raw
+28 | `c0` | `0x92A9` | 2 | raw
+29 | `r0` | `0x92AB` | 2 | raw
+30 | `t0` | `0x92AD` | 2 | raw
+31 | `r1` | `0x92AF` | 2 | raw
+32 | `tc` | `0x92B1` | 1 | raw
+33 | `c1` | `0x92B2` | 1 | raw
+34 | `age_factor` | `0x92B3` | 1 | raw
+35 | `flag_config_a` | `0x927F` | 2 | bits
+36 | `flag_config_b` | `0x9281` | 1 | bits
+37 | `full_set_voltage` | `0x9288` | 2 | mV
+38 | `full_clear_voltage` | `0x928A` | 2 | mV
+39 | `full_set_soc` | `0x928C` | 1 | %
+40 | `full_clear_soc` | `0x928D` | 1 | %
+41 | `smoothing_config` | `0x9271` | 1 | bits
+42 | `cc_gain` | `0x9184` | 4 | F4 bits
+43 | `cc_delta` | `0x9188` | 4 | F4 bits
+44 | `current_deadband` | `0x91DE` | 1 | mA
+45 | `cc_deadband` | `0x91DF` | 1 | 294 nV
+46 | `voltage_0_dod` | `0x92BD` | 2 | mV
+47 | `voltage_50_dod` | `0x92C7` | 2 | mV
+48 | `voltage_100_dod` | `0x92D1` | 2 | mV
+
+Addresses and hardware widths follow [TI SLUUBD4A, table 3-2](https://www.ti.com/lit/ug/sluubd4a/sluubd4a.pdf).
+Bitfields and `raw` values preserve the chip representation. In particular,
+the learning-temperature code is left raw; no temperature conversion is implied.
+Fixed EDV voltages must be interpreted alongside the compensation-enable bits
+and model coefficients. CEDV bit 8 is `FCC_LIMIT`, bit 4 selects independent
+charger learning, and bit 3 enables EDV compensation. Charge-termination voltage
+is a margin below the charging voltage, not an absolute cutoff.
+
+Qmax and taper-window timing are not included: this schema exposes only the
+parameters with identified RAM locations in the cited memory map. It does not
+invent an address or substitute design capacity for an independently read Qmax.
+
+### PROP 4958: `PROP_BATTERY_GAUGE_TELEMETRY` {#prop-battery-gauge-telemetry}
+
+* Type: Single-Value, Read-Only
+* Asynchronous Updates: No
+* Required: Optional with `CAP_BATTERY`; no separate capability
+* Value Type: PUI format, PUI schema version, format-specific readings
+* Post-Reset Value: Acquired on demand; never saved
+
+Live chip-specific readings for monitoring over USB or Node Management. Reading
+this property does not unlock, configure, calibrate, or reset the gauge. It uses
+the ordinary battery acquisition timeout and shares the request's acquisition
+with other battery properties, including repeated keys. It does not read
+`PROP_BATTERY_GAUGE_CONFIG` implicitly. Unsupported devices return
+`STATUS_PROP_NOT_FOUND`; a failed register read returns `STATUS_FAILURE` for
+this entire property, without suppressing other successful battery properties.
+Mutations return `STATUS_INVALID_ARGUMENT` when supported. No saved alias exists.
+
+#### Format 1, version 1: BQ27220 standard commands
+
+After format and version, a two-octet **little-endian width bitmap** precedes the
+14 readings in the order below. Bit `i` corresponds to zero-based field `i`:
+clear means one value octet, set means two. Bits 14–15 are reserved and zero.
+Each value uses unsigned little-endian or signed two's-complement little-endian
+encoding as specified below. Senders use the shortest width that preserves the
+value and sign; receivers accept either width. For example, −100 uses `9C`,
+whereas −200 uses `38 FF`. The bitmap supplies their lengths without a length
+octet per field. The complete value occupies **18–32 octets**, including format,
+version, and bitmap. Missing fields, reserved width bits, and trailing data are
+malformed; unknown formats or versions must not be interpreted using this layout.
+
+Index | Field | Register | Signed | Unit
+--- | --- | --- | --- | ---
+0 | `raw_coulomb_count` | `0x22` | Yes | mAh
+1 | `temperature` | `0x06` | No | 0.1 K
+2 | `internal_temperature` | `0x28` | No | 0.1 K
+3 | `average_current` | `0x14` | Yes | mA
+4 | `average_power` | `0x24` | Yes | mW
+5 | `time_to_empty` | `0x16` | No | minutes
+6 | `time_to_full` | `0x18` | No | minutes
+7 | `standby_current` | `0x1A` | Yes | mA
+8 | `standby_time_to_empty` | `0x1C` | No | minutes
+9 | `max_load_current` | `0x1E` | Yes | mA
+10 | `max_load_time_to_empty` | `0x20` | No | minutes
+11 | `cycle_count` | `0x2A` | No | cycles
+12 | `state_of_health` | `0x2E` | No | %
+13 | `charging_current` | `0x32` | No | mA requested
+
+These are raw standard-command readings, available while sealed. Read presence
+and initialization flags alongside them before treating them as battery estimates.
+The wire preserves all register bits, including sentinel values:
+
+* Time estimates of `65535` mean unavailable in the current charge/discharge
+  state; they are not 65,535 minutes. Requested charging current `65535` means
+  maximum requested current. Other fields retain their full numeric range.
+* `RawCoulombCount` is a signed 16-bit two's-complement count: for example,
+  register `0xFFEA` means −22 mAh and encodes in one value octet, `EA`.
+  It counts discharge upward and charge downward; the gauge clears
+  it when it recognizes full charge. It is neither remaining capacity nor a
+  lifetime charge counter. Do not assume continuity across gauge resets or the
+  full-charge event when integrating samples.
+* `Temperature` is the configured gauging source. `InternalTemperature` is the
+  IC's internal sensor, not necessarily cell temperature. Celsius is raw / 10 − 273.15.
+* Current and power are positive during charge and negative during discharge.
+  `ChargingCurrent` is a request, not measured current or charger configuration.
+* `CycleCount` uses the gauge's configured accumulated-discharge threshold.
+  `StateOfHealth` is its full/design-capacity ratio estimate, not independent
+  evidence of cell condition. Neither resets merely because this property is read.
+
+Register definitions follow [TI SLUUBD4A, standard commands](https://www.ti.com/lit/ug/sluubd4a/sluubd4a.pdf).
+Units in the table are TI's documented register units, not a promise of calibrated
+measurement accuracy. The Pager's observed `AveragePower` scale disagrees with
+the stated mW unit; see the [hardware qualification notes](https://github.com/darconeous/umsh/blob/main/docs/hardware/lilygo-t-lora-pager-hardware.md).
+`umshctl battery --gauge-telemetry --watch --json` includes these readings in
+normal monitoring, retains raw values, labels unavailable estimates, and adds
+Celsius conversions. `umshctl get battery-gauge-telemetry` reads this property alone.
 
 ### PROP 70: `PROP_MAC_REPEATER_ENABLED` {#prop-mac-repeater-enabled}
 

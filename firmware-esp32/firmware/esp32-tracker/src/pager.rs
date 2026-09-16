@@ -28,13 +28,25 @@ static GROUP_REQUEST: Signal<CriticalSectionRawMutex, (u32, BatteryFieldsRequest
 static GROUP_REPLY: Signal<CriticalSectionRawMutex, (u32, BatterySample)> = Signal::new();
 static GROUP_LOCK: Mutex<CriticalSectionRawMutex, ()> = Mutex::new(());
 static GROUP_GENERATION: AtomicU32 = AtomicU32::new(0);
+static GAUGE_REPORT: critical_section::Mutex<RefCell<Option<heapless::String<192>>>> =
+    critical_section::Mutex::new(RefCell::new(None));
+
+pub fn take_gauge_report() -> Option<heapless::String<192>> {
+    critical_section::with(|cs| GAUGE_REPORT.borrow(cs).borrow_mut().take())
+}
 
 pub async fn sample_battery_group(fields: BatteryFieldsRequested) -> BatterySample {
     let _guard = GROUP_LOCK.lock().await;
     let generation = GROUP_GENERATION.fetch_add(1, Ordering::Relaxed);
     GROUP_REPLY.reset();
     GROUP_REQUEST.signal((generation, fields));
-    with_timeout(Duration::from_secs(2), async {
+    let timeout = if fields.contains(umsh_ulcp::ids::prop::BATTERY_GAUGE_CONFIG) {
+        30
+    } else {
+        2
+    };
+    // Timeout only abandons the reply; the battery owner finishes access cleanup.
+    with_timeout(Duration::from_secs(timeout), async {
         loop {
             let (returned, sample) = GROUP_REPLY.wait().await;
             if returned == generation {
@@ -108,10 +120,19 @@ pub async fn power_up(
         .expect("Pager XL9555 power initialization");
     let mut battery = Battery::new(I2cDevice::new(bus));
     println!("pager: configuring battery telemetry");
-    battery
+    let charger = battery
         .init()
         .await
         .expect("Pager charger profile initialization");
+    // Retain the actual inherited and verified settings until the first USB
+    // response. This makes charge-termination migration diagnosable after boot.
+    let mut report = heapless::String::new();
+    let _ = write!(
+        report,
+        "pager charger-init: reg04..07 before={:02x?} after={:02x?}\r\n",
+        charger.before, charger.after
+    );
+    critical_section::with(|cs| *GAUGE_REPORT.borrow(cs).borrow_mut() = Some(report));
     // Configuration waits may outlast the normal startup watchdog window.
     struct GaugeDelay<'a>(&'a mut Rtc<'static>);
     impl embedded_hal_async::delay::DelayNs for GaugeDelay<'_> {
@@ -122,7 +143,7 @@ pub async fn power_up(
     }
     match battery.ensure_stock_capacity(&mut GaugeDelay(rtc)).await {
         Ok(config) => println!(
-            "pager: gauge capacity {}: design={} mAh full={} mAh",
+            "pager: gauge profile {}: design={} mAh full={} mAh taper={} mA",
             if config.changed {
                 "corrected"
             } else {
@@ -130,8 +151,9 @@ pub async fn power_up(
             },
             config.design_mah,
             config.full_mah,
+            config.taper_ma,
         ),
-        Err(error) => println!("pager: gauge capacity configuration failed: {error:?}"),
+        Err(error) => println!("pager: gauge profile configuration failed: {error:?}"),
     }
     if let Ok(gauge) = battery.diagnostics().await {
         println!("pager: gauge readings: {gauge:?}");
@@ -249,7 +271,20 @@ pub async fn battery_task(bus: &'static board::I2cBus) {
         Timer::at(next_acquisition).await;
         next_acquisition = Instant::now() + Duration::from_millis(500);
         let input_locks = input::locks_active();
-        let sample = battery.sample(fields, &mut SampleDelay).await;
+        let mut sample = battery.sample(fields, &mut SampleDelay).await;
+        if fields.contains(umsh_ulcp::ids::prop::BATTERY_GAUGE_CONFIG) {
+            sample.gauge_config = battery
+                .inspect_configuration(&mut SampleDelay)
+                .await
+                .map_err(|error| {
+                    let mut report = heapless::String::new();
+                    let _ = write!(report, "pager gauge-config: {error:?}\r\n");
+                    critical_section::with(|cs| {
+                        *GAUGE_REPORT.borrow(cs).borrow_mut() = Some(report)
+                    });
+                    umsh_ulcp::Status::FAILURE
+                });
+        }
         if periodic {
             input::power_sample(
                 match sample.get(umsh_ulcp::ids::prop::BATTERY_CURRENT) {

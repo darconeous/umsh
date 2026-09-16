@@ -54,6 +54,8 @@ pub const fn property_name(key: u32) -> Option<&'static str> {
         prop::BATTERY_GAUGE_FORMAT => "PROP_BATTERY_GAUGE_FORMAT",
         prop::BATTERY_GAUGE_STATUS => "PROP_BATTERY_GAUGE_STATUS",
         prop::BATTERY_GAUGE_OPERATION_STATUS => "PROP_BATTERY_GAUGE_OPERATION_STATUS",
+        prop::BATTERY_GAUGE_CONFIG => "PROP_BATTERY_GAUGE_CONFIG",
+        prop::BATTERY_GAUGE_TELEMETRY => "PROP_BATTERY_GAUGE_TELEMETRY",
 
         prop::MAC_REPEATER_ENABLED => "PROP_MAC_REPEATER_ENABLED",
         prop::IDENT => "PROP_IDENT",
@@ -183,6 +185,8 @@ pub const PROPERTIES: &[u32] = &[
     prop::BATTERY_GAUGE_FORMAT,
     prop::BATTERY_GAUGE_STATUS,
     prop::BATTERY_GAUGE_OPERATION_STATUS,
+    prop::BATTERY_GAUGE_CONFIG,
+    prop::BATTERY_GAUGE_TELEMETRY,
     prop::MAC_REPEATER_ENABLED,
     prop::IDENT,
     prop::IDENT_ROLE,
@@ -308,6 +312,7 @@ pub const fn property_type(key: u32) -> Option<PropertyType> {
     }
     use PropertyType::{Bool, Bytes, I8, I16, I32, Key32, Status, Text, U8, U16, U32};
     Some(match key {
+        prop::BATTERY_GAUGE_CONFIG | prop::BATTERY_GAUGE_TELEMETRY => Bytes,
         prop::LAST_STATUS => Status,
         // Major and minor, one octet each.
         prop::PROTOCOL_VERSION => Bytes,

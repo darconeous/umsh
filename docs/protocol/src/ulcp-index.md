@@ -157,6 +157,8 @@ Id   | Mnemonic                                                                 
 4954 | [`PROP_BATTERY_GAUGE_FORMAT`](ulcp-device.md#prop-battery-gauge-format) | Get, Is | Optional with `CAP_BATTERY`
 4955 | [`PROP_BATTERY_GAUGE_STATUS`](ulcp-device.md#prop-battery-gauge-status) | Get, Is | Optional with `CAP_BATTERY`
 4956 | [`PROP_BATTERY_GAUGE_OPERATION_STATUS`](ulcp-device.md#prop-battery-gauge-operation-status) | Get, Is | Optional with `CAP_BATTERY`
+4957 | [`PROP_BATTERY_GAUGE_CONFIG`](ulcp-device.md#prop-battery-gauge-config) | Get, Is | Optional with `CAP_BATTERY`; explicit configuration inspection
+4958 | [`PROP_BATTERY_GAUGE_TELEMETRY`](ulcp-device.md#prop-battery-gauge-telemetry) | Get, Is | Optional with `CAP_BATTERY`; live counters, temperatures, and estimates
 
 ## Capabilities
 

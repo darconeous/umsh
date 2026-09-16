@@ -397,6 +397,8 @@ fn session_config() -> SessionConfig {
         duty: &DUTY_LEDGER,
         battery_diagnostics: if cfg!(feature = "board-tlora-pager") {
             umsh_ulcp::battery_diagnostics::Fields::DIAGNOSTICS
+                .union(umsh_ulcp::battery_diagnostics::Fields::GAUGE_CONFIG)
+                .union(umsh_ulcp::battery_diagnostics::Fields::GAUGE_TELEMETRY)
         } else {
             Default::default()
         },
@@ -3037,6 +3039,10 @@ async fn output_pump(tx: &mut WiredTx, panic_report: Option<heapless::String<128
             continue;
         }
         #[cfg(feature = "board-tlora-pager")]
+        if let Some(report) = pager::take_gauge_report() {
+            let _ = wired_write_all(tx, report.as_bytes()).await;
+        }
+        #[cfg(feature = "board-tlora-pager")]
         if let Some(report) = pager::input::power_report() {
             if wired_write_all(tx, report.as_bytes()).await {
                 pager::input::power_report_sent();
@@ -4214,8 +4220,13 @@ async fn main(spawner: Spawner) {
         // The Heltec keeps its session internally; the Pager adds DMA state.
         // Both leave another 16 KiB for nested calls and interrupts. The
         // Pager's device-task construction overflowed with the 128 KiB heap.
-        #[cfg(any(feature = "board-heltec-v3", feature = "board-tlora-pager"))]
+        #[cfg(feature = "board-heltec-v3")]
         esp_alloc::heap_allocator!(size: 48 * 1024);
+        // Pager battery inspection adds retained acquisition state. Budget one
+        // KiB from its ordinary heap for task storage/stack, preserving the
+        // checked 32 KiB nested-call reserve (111 KiB total internal heap).
+        #[cfg(feature = "board-tlora-pager")]
+        esp_alloc::heap_allocator!(size: 47 * 1024);
         #[cfg(not(any(feature = "board-heltec-v3", feature = "board-tlora-pager")))]
         esp_alloc::heap_allocator!(size: 64 * 1024);
         esp_alloc::heap_allocator!(#[esp_hal::ram(reclaimed)] size: 64 * 1024);

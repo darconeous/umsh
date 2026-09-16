@@ -6,6 +6,15 @@ const CHARGER: u8 = 0x6b;
 const GAUGE: u8 = 0x55;
 const BATFET_DIS: u8 = 1 << 5;
 const BATFET_DLY: u8 = 1 << 3;
+// BQ25896 REG04..07: fast charge, termination, voltage, termination/watchdog.
+// 192 mA is the closest hardware setting to the requested 200 mA cutoff.
+// Gauge taper is 220 mA; its qualification window needs on-cell validation.
+const CHARGER_PROFILE: [(u8, u8, u8); 4] = [
+    (4, 0x7f, 11),      // 704 mA fast charge
+    (5, 0x0f, 2),       // 192 mA termination; preserve precharge current
+    (6, 0xfc, 22 << 2), // 4192 mV; preserve precharge/recharge thresholds
+    (7, 0xb0, 0x80),    // Enable termination, disable register watchdog
+];
 pub const KEYBOARD_RESET: u16 = 1 << 2;
 pub const RADIO_ENABLE: u16 = 1 << 3;
 pub const GPS_ENABLE: u16 = 1 << 4;
@@ -90,23 +99,66 @@ pub struct GaugeDiagnostics {
 pub struct Battery<I> {
     i2c: I,
 }
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ChargerSetup {
+    /// BQ25896 REG04..07 before configuration and verified before charge enable.
+    pub before: [u8; 4],
+    pub after: [u8; 4],
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum ChargerError<E> {
+    Bus(E),
+    Verify {
+        register: u8,
+        expected: u8,
+        actual: u8,
+    },
+}
+
 impl<I: I2c> Battery<I> {
     pub fn new(i2c: I) -> Self {
         Self { i2c }
     }
-    pub async fn init(&mut self) -> Result<(), I::Error> {
-        // Disable charge during profile changes and disable OTG. No global reset.
-        crate::update(&mut self.i2c, CHARGER, 3, 0x30, 0).await?;
-        // A USB-powered restart may retain the previous shutdown's BATFET_DIS.
-        // Reconnect the battery before enabling charging or unplugging USB.
-        crate::update(&mut self.i2c, CHARGER, 9, BATFET_DIS, 0).await?;
-        // Disable register watchdog; retain termination, safety timer, and JEITA.
-        crate::update(&mut self.i2c, CHARGER, 7, 0x30, 0).await?;
-        // 3840 + 22*16 = 4192 mV; 11*64 = 704 mA for the stock 1500 mAh cell.
-        crate::update(&mut self.i2c, CHARGER, 6, 0xfc, 22 << 2).await?;
-        crate::update(&mut self.i2c, CHARGER, 4, 0x7f, 11).await?;
-        crate::update(&mut self.i2c, CHARGER, 2, 0xc0, 0xc0).await?;
-        crate::update(&mut self.i2c, CHARGER, 3, 0x10, 0x10).await
+    pub async fn init(&mut self) -> Result<ChargerSetup, ChargerError<I::Error>> {
+        let before = self.charger_profile().await.map_err(ChargerError::Bus)?;
+        let after = async {
+            // Disable charge during profile changes and disable OTG. No global reset.
+            crate::update(&mut self.i2c, CHARGER, 3, 0x30, 0).await?;
+            // Reconnect the battery after a USB-powered restart from shipping mode.
+            crate::update(&mut self.i2c, CHARGER, 9, BATFET_DIS, 0).await?;
+            // Disable the watchdog first. Preserve safety timer, JEITA and STAT settings.
+            for (reg, mask, value) in CHARGER_PROFILE.into_iter().rev() {
+                crate::update(&mut self.i2c, CHARGER, reg, mask, value).await?;
+            }
+            crate::update(&mut self.i2c, CHARGER, 2, 0xc0, 0xc0).await?;
+            self.charger_profile().await
+        }
+        .await
+        .map_err(ChargerError::Bus)?;
+        // Never enable charging after a failed readback, even if writes ACKed.
+        for (i, (register, mask, expected)) in CHARGER_PROFILE.into_iter().enumerate() {
+            if after[i] & mask != expected {
+                return Err(ChargerError::Verify {
+                    register,
+                    expected,
+                    actual: after[i],
+                });
+            }
+        }
+        crate::update(&mut self.i2c, CHARGER, 3, 0x10, 0x10)
+            .await
+            .map_err(ChargerError::Bus)?;
+        Ok(ChargerSetup { before, after })
+    }
+
+    async fn charger_profile(&mut self) -> Result<[u8; 4], I::Error> {
+        let mut result = [0; 4];
+        for (i, (register, _, _)) in CHARGER_PROFILE.into_iter().enumerate() {
+            result[i] = crate::read(&mut self.i2c, CHARGER, register).await?;
+        }
+        Ok(result)
     }
     async fn word(&mut self, reg: u8) -> Result<u16, I::Error> {
         let mut bytes = [0; 2];
@@ -148,7 +200,8 @@ impl<I: I2c> Battery<I> {
         result
     }
 
-    /// Read requested registers once, retaining independent failures. No configuration writes.
+    /// Read requested scalar registers once, retaining independent failures.
+    /// The owner separately services explicit configuration inspection requests.
     pub async fn sample(
         &mut self,
         fields: umsh_ulcp::battery_diagnostics::Fields,
@@ -305,7 +358,28 @@ impl<I: I2c> Battery<I> {
                 .map_err(|_| Status::FAILURE);
             sample.set(key, value);
         }
+        if needed(prop::BATTERY_GAUGE_TELEMETRY) {
+            sample.gauge_telemetry = self.telemetry(delay).await.map_err(|_| Status::FAILURE);
+        }
         sample
+    }
+    /// Standard commands are readable while sealed. No security/configuration writes.
+    async fn telemetry(
+        &mut self,
+        delay: &mut impl DelayNs,
+    ) -> Result<umsh_ulcp::battery_gauge_telemetry::Telemetry, I::Error> {
+        use umsh_ulcp::battery_gauge_telemetry::{FIELDS, Telemetry};
+        let mut result = Telemetry::default();
+        for (i, field) in FIELDS.iter().enumerate() {
+            result.raw[i] = self.sample_word(delay, field.register).await?;
+        }
+        Ok(result)
+    }
+    pub async fn inspect_configuration(
+        &mut self,
+        delay: &mut impl DelayNs,
+    ) -> Result<umsh_ulcp::battery_gauge_config::Config, crate::gauge::ConfigError<I::Error>> {
+        crate::gauge::inspect_configuration(&mut self.i2c, delay).await
     }
     pub async fn ensure_stock_capacity(
         &mut self,

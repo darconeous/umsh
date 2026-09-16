@@ -429,7 +429,7 @@ and last-transferred frame reside in PSRAM; synchronization objects, DMA
 descriptors, and transfer buffers stay in internal RAM. Only changed four-row
 stripes are transmitted, and history advances after a successful transfer.
 The controller's portrait offset becomes landscape Y=49.
-The internal heap is 112 KiB, leaving room for the nested startup
+The internal heap is 111 KiB, leaving room for the nested startup
 calls as well as DMA state. The board's stack check requires another 32 KiB
 beyond its largest individual function frame; a smaller reserve missed an
 on-device startup stack overflow during bring-up.
@@ -447,11 +447,34 @@ PCF85063 retained time uses its
 own register layout, with oscillator-stop, invalid dates, and implausible
 epochs reported as unknown. The unused RTC clock output is disabled.
 
-Battery telemetry is sampled each second. The stock-cell charger profile is
-4.192 V / 704 mA. Startup checks the BQ27220 design capacity: a value other
-than 1500 mAh updates both design and initial full capacity to 1500 mAh in one
-RAM transaction, then reinitializes and verifies the standard readings. When
-design is already correct, learned full capacity is retained. Calibration,
+Battery telemetry is sampled each second. The selected charger profile is
+4.192 V / 704 mA, with charge termination explicitly enabled at **192 mA**
+(the nearest hardware setting to 200 mA). The BQ27220 taper threshold is
+**220 mA**. Full detection also requires voltage and accumulated-charge
+conditions across two taper windows; it is not an instantaneous 220 mA switch.
+The narrow margin above the charger cutoff requires charging-cycle qualification,
+including component tolerances. Startup
+preserves the precharge, recharge, safety-timer, and JEITA settings, disables
+the register watchdog, and verifies the current/voltage/termination profile
+before enabling charge. A failed readback leaves charging disabled. The
+inherited and verified REG04–07 values are retained in an internal
+`pager charger-init` diagnostic until the first USB response.
+See [BQ25896 REG05/REG07](https://www.ti.com/lit/ds/symlink/bq25896.pdf) and
+[BQ27220 taper qualification, section 4.9.47](https://www.ti.com/lit/ug/sluubd4a/sluubd4a.pdf).
+
+Startup checks the BQ27220 design capacity and taper current. The selected
+**1800 mAh** design capacity is a user estimate pending cell qualification;
+LilyGO's documented stock value is 1500 mAh. A mismatched design updates both
+design and initial full capacity to 1800 mAh in one RAM transaction. A mismatched
+taper setting updates only that parameter. Both are verified, and configuration
+mode is entered only when needed. When design already matches, learned full
+capacity is retained, including during a taper-only correction. Reading taper
+RAM requires temporary full access and security quiet periods, adding about
+nine seconds to a normal startup; the original access state is restored.
+This hard-coded profile is a temporary development override. The intended
+production behavior is to trust factory-programmed battery parameters rather
+than overwrite them at boot; the direct I2C management interface is separate work.
+Calibration,
 other profile parameters, and OTP are untouched. The check runs every boot
 because gauge RAM can return to the 3000 mAh default after loss of gauge
 power, such as battery removal without another supply. Normal shipping-mode
@@ -480,6 +503,48 @@ share a maximum of two acquisition passes per second; host requests do not
 advance the low-battery counter or extend display attention. Use
 `umshctl info battery` for a report or `umshctl battery --watch --json` for
 monitoring, with an explicit USB port or authorized remote-node selection.
+Use `umshctl battery --gauge-telemetry --watch --json` to monitor the BQ27220's
+raw coulomb count, configured and internal temperatures, average current/power,
+time-to-empty/full estimates (including standby and maximum-load estimates),
+cycle count, state of health, and requested charging current. The combined
+[`PROP_BATTERY_GAUGE_TELEMETRY`](../protocol/src/ulcp-device.md#prop-battery-gauge-telemetry)
+uses sealed standard-command reads, needs no unlock delay, and is acquired only
+when requested. It preserves sentinels and raw bits; the CLI labels unavailable
+times and supplies Celsius conversions. These additional reads do not run during
+ordinary background battery sampling. The gauge's raw coulomb count clears on
+gauge-recognized full charge; it is useful for examining the SOC discrepancy,
+but is not an uninterrupted lifetime counter.
+
+USB qualification on 2026-09-16: three consecutive full battery-group reads
+including telemetry completed in 36, 33, and 33 ms. Cycle count was 2; raw
+coulomb count was −22 mAh (register bits 65514, `0xFFEA`); configured and internal temperature were
+28.75 °C; state of health was 91%. The gauge remained initialized and sealed
+(`OperationStatus=0x00A6`), with design/FCC still 1500/1372 mAh and the full flag
+clear at 100% SOC. Saved settings and identity survived the automatic restart.
+The coulomb count is interpreted as signed two's complement; it is not a
+remaining-capacity estimate. JSON also preserves the original unsigned register bits.
+
+AveragePower scaling needs further qualification: raw readings 16/15/14
+accompanied average current 39/36/34 mA at 4132 mV, suggesting a factor of ten
+relative to the manual's stated mW unit. The property preserves register values
+and documents TI's unit; do not treat this field as a verified board-power
+measurement. No inferred scale correction is applied. Host tests cover compact
+encoding, standard-command-only reads, independent property failures, and
+Node Management replay; an actual over-radio telemetry exchange remains untested.
+
+Use `umshctl battery --gauge-config` to explicitly acquire the BQ27220 RAM
+configuration, or `umshctl get battery-gauge-config` to read it alone. JSON
+output includes every raw field and its units. The configuration property is
+excluded from ordinary battery polling and the Battery submenu. Inspection
+temporarily enters full access, validates memory-block addresses/checksums,
+and restores the original access state before returning; it never enters configuration-update mode,
+writes parameter data, or resets the gauge. The battery task finishes cleanup
+even if the USB/radio requester disconnects. Learned capacity is preserved.
+Security-key sequences require four seconds without addressing the gauge before
+each sequence. Explicit inspection therefore pauses ordinary gauge sampling for
+about nine seconds; other peripherals and input handling continue operating.
+The wire layout is documented under
+[`PROP_BATTERY_GAUGE_CONFIG`](../protocol/src/ulcp-device.md#prop-battery-gauge-config).
 Ten consecutive valid battery-only readings at or below 3.1 V request
 shutdown. The shutdown path stops radio and motion activity, blanks the
 display, turns off peripheral domains, stops charger measurements, and
@@ -561,6 +626,53 @@ RAM address selection needs the 10 ms settling delays used by LilyGo's
 driver; the shorter bus-free interval alone left the old values intact.
 Gauge-power-loss recovery and long-term capacity learning still need physical
 qualification.
+
+The configuration snapshot was read over USB on 2026-09-16 without changing
+the gauge parameters. It reported 1500 mAh design and 1372 mAh learned full
+capacity, CEDV configuration `0x102A` (`FCC_LIMIT=0`, smart-charger learning,
+EDV compensation enabled), a 100 mA taper current, and fixed EDV0/1/2 values
+of 3031/3385/3501 mV. The discharge coefficients matched the reference
+manual's ROM defaults. Thus a design-capacity ceiling does not explain this
+device's low learned capacity; the cell's discharge model still needs
+qualification. Charger initialization read REG04–07 as `[0B, 13, 5A, 8D]`
+before applying the termination fix, confirming the inherited **256 mA** cutoff
+was above the gauge's **100 mA** taper threshold. Readback after the change was
+`[0B, 10, 5A, 8D]`: **64 mA** cutoff, with fast-charge current, voltage, safety
+timer, and JEITA settings retained. The gauge returned to sealed state (`0x00A6`
+OperationStatus), and identity, saved settings, and learned capacity survived
+the diagnostic uploads and reads.
+With the corrected cutoff, USB monitoring observed current taper from 274 mA
+through the old cutoff and below 100 mA. After about 13 minutes, the gauge
+asserted full naturally at 91 mA (92 mA average) and 4190 mV, and
+`RawCoulombCount` changed from −58 mAh (register bits 65478) to zero. Six successive samples retained
+the full flag and zero counter. No gauge reset or parameter change was used;
+design/FCC remained 1500/1372 mAh. This verifies full-charge recognition, not
+the accuracy of learned capacity or the cell's discharge model. Charger
+termination at the final 64 mA cutoff was not observed in this test.
+
+The temporary 1800/220/192 profile was read back over USB on 2026-09-16:
+design/FCC 1800/1800 mAh, gauge taper 220 mA, and charger REG04–07
+`[0B, 12, 5A, 8D]` (704 mA fast charge, 192 mA termination, 4192 mV).
+Comparing all 48 gauge configuration fields with the prior snapshot showed
+only design capacity, full capacity, and taper current changed. The gauge
+was sealed afterward. Live signed telemetry decoded register 65532 as −4 mAh.
+The capacity migration reinitialized the gauge: FCC was seeded at 1800 mAh
+and cycle count changed from 2 to 0. A subsequent automatic hardware restart
+retained 1800/1800 mAh and the −4 mAh counter, with identical charger registers,
+identity, and the user's enabled BLE/Wi-Fi/GNSS settings. Host tests also verify
+that a matching profile never enters configuration mode and that a taper-only
+change preserves learned FCC. A USB `reboot` request did not demonstrate an MCU
+restart in this session; the restart qualification used the flash target's
+automatic watchdog reset instead.
+The cell was already charged, so a fresh full-detection/termination cycle with
+the narrower 220/192 mA margin remains unqualified. The earlier 100/64 mA
+test does not establish that the new pair leaves enough qualification time.
+
+Three consecutive explicit configuration requests, with one second between
+responses and subsequent requests, returned identical complete snapshots in
+9.3–9.8 seconds each after adding the security quiet periods. Ordinary scalar
+polling resumes afterward. The normal build passes the 32 KiB stack reserve;
+radio-management replay and duplicate-read behavior are covered by host tests.
 
 Remaining hardware acceptance checks:
 

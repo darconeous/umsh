@@ -13,7 +13,7 @@ use anyhow::{Result, bail};
 
 use umsh::ulcp::{FrameLink, UlcpDevice};
 use umsh::ulcp_wire::describe::{PropertyType, property_type};
-use umsh::ulcp_wire::ids::saved;
+use umsh::ulcp_wire::ids::{prop, saved};
 use umsh::ulcp_wire::{PROPERTIES, property_name};
 
 use super::values::{BytesArg, parse_key32, parse_u32};
@@ -128,6 +128,16 @@ pub fn spell(key: u32) -> String {
 /// than a scalar reads as hex, which is honest: the octets are the
 /// value, and a topic of `info` is where one gets interpreted.
 pub fn format_value(key: u32, value: &[u8]) -> String {
+    if key == prop::BATTERY_GAUGE_TELEMETRY {
+        return umsh::ulcp_wire::battery_gauge_telemetry::Telemetry::decode(value)
+            .map(|v| v.to_string())
+            .unwrap_or_else(|_| malformed(value));
+    }
+    if key == prop::BATTERY_GAUGE_CONFIG {
+        return umsh::ulcp_wire::battery_gauge_config::Config::decode(value)
+            .map(|v| v.to_string())
+            .unwrap_or_else(|_| malformed(value));
+    }
     if value.is_empty() {
         // Empty is a real value for a good many properties—no fix, no
         // threshold, no name—and reads better as a word than as the

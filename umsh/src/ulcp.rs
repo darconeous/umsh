@@ -1925,7 +1925,8 @@ where
         let len = frame::prop_multi_get(&mut buf, tid, keys)
             .map_err(|_| UlcpError::Protocol("frame encode"))?;
         self.send(&buf[..len]).await?;
-        self.finish_multi_transaction(tid).await
+        let timeout = self.property_timeout(keys.contains(&prop::BATTERY_GAUGE_CONFIG));
+        self.finish_multi_transaction(tid, timeout).await
     }
 
     /// Write several properties in order in one exchange via
@@ -1955,13 +1956,18 @@ where
         let len = frame::prop_multi_set(&mut buf, tid, &borrowed)
             .map_err(|_| UlcpError::Protocol("frame encode"))?;
         self.send(&buf[..len]).await?;
-        self.finish_multi_transaction(tid).await
+        self.finish_multi_transaction(tid, self.config.response_timeout)
+            .await
     }
 
     /// Await the `CMD_PROP_ARE` answering a multi-property command and
     /// split it into per-position outcomes.
-    async fn finish_multi_transaction(&mut self, tid: u8) -> Result<Vec<MultiValue>, UlcpError> {
-        let deadline = Instant::now() + self.config.response_timeout;
+    async fn finish_multi_transaction(
+        &mut self,
+        tid: u8,
+        timeout: Duration,
+    ) -> Result<Vec<MultiValue>, UlcpError> {
+        let deadline = Instant::now() + timeout;
         let response = self.wait_response(tid, deadline).await?;
         match response.kind {
             ResponseKind::Are => {}
@@ -2591,13 +2597,23 @@ where
             .map_err(|_| UlcpError::Protocol("malformed PROP_DEV_KEY"))
     }
 
+    fn property_timeout(&self, gauge_config: bool) -> Duration {
+        // Gauge access cleanup can outlast the ordinary telemetry deadline.
+        self.config.response_timeout
+            + if gauge_config {
+                Duration::from_secs(30)
+            } else {
+                Duration::ZERO
+            }
+    }
+
     async fn finish_prop_transaction(
         &mut self,
         tid: u8,
         key: u32,
         policy: PropResponsePolicy,
     ) -> Result<Vec<u8>, UlcpError> {
-        let deadline = Instant::now() + self.config.response_timeout;
+        let deadline = Instant::now() + self.property_timeout(key == prop::BATTERY_GAUGE_CONFIG);
         let response = self.wait_response(tid, deadline).await?;
         if response.kind != ResponseKind::Is {
             return Err(UlcpError::Protocol(

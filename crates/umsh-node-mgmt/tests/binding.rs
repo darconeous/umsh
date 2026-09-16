@@ -80,7 +80,9 @@ impl<const PAYLOAD: usize> Device<PAYLOAD> {
             duty: Box::leak(Box::new(DutyLedger::new())),
             battery_diagnostics: umsh_ulcp::battery_diagnostics::Fields::for_key(
                 prop::BATTERY_CURRENT,
-            ),
+            )
+            .union(umsh_ulcp::battery_diagnostics::Fields::GAUGE_CONFIG)
+            .union(umsh_ulcp::battery_diagnostics::Fields::GAUGE_TELEMETRY),
             battery: Some(BatteryFields {
                 voltage: true,
                 level: false,
@@ -229,6 +231,12 @@ impl<const PAYLOAD: usize> Device<PAYLOAD> {
                     self.battery_samples += 1;
                     let mut sample = Sample::default();
                     sample.snapshot = Ok(umsh_ulcp::BatteryStatus::default());
+                    let mut config = umsh_ulcp::battery_gauge_config::Config::default();
+                    config.set(4, self.battery_samples as u32).unwrap();
+                    sample.gauge_config = Ok(config);
+                    let mut telemetry = umsh_ulcp::battery_gauge_telemetry::Telemetry::default();
+                    telemetry.raw[11] = self.battery_samples as u16;
+                    sample.gauge_telemetry = Ok(telemetry);
                     sample.set(
                         prop::BATTERY_CURRENT,
                         Ok(Some(Value::Current(-100 * self.battery_samples as i32))),
@@ -624,45 +632,66 @@ fn a_retransmission_is_answered_without_executing_again() {
 
 #[test]
 fn battery_multi_get_replays_one_sample_and_new_tokens_acquire_again() {
-    let mut device = managed();
-    let mut buf = [0; 64];
-    let keys = [
-        prop::BATTERY_CURRENT,
-        prop::BATTERY_FULL_CAPACITY,
-        prop::BATTERY_CURRENT,
-    ];
-    let len = frame::prop_multi_get(&mut buf, 0, &keys).unwrap();
-    let mut exchange = Exchange::<192>::new(&buf[..len], 3, 0).unwrap();
-    let mut wire = [0; PAYLOAD];
-    let Step::Send { len: wire_len } = exchange.poll(0, &mut wire) else {
-        panic!("request");
-    };
-    assert!(
-        device
-            .deliver(&STRANGER_KEY, &wire[..wire_len], 0)
-            .is_none()
-    );
-    assert_eq!(device.battery_samples, 0);
-    let first = device.deliver(&ADMIN_KEY, &wire[..wire_len], 0).unwrap();
-    assert_eq!(device.battery_samples, 1);
-    let retry = device
-        .deliver(&ADMIN_KEY, &wire[..wire_len], RETRY_MS)
-        .unwrap();
-    assert_eq!(first, retry);
-    assert_eq!(device.battery_samples, 1);
-    let next = converse(&mut device, &buf[..len], 4);
-    assert_eq!(device.battery_samples, 2);
-    let parsed = Frame::parse(&next.reply).unwrap();
-    let entries: Vec<_> = MultiEntries::new(parsed.payload)
-        .map(Result::unwrap)
-        .collect();
-    assert_eq!(entries[0].value, &[0x38, 0xff]);
-    assert_eq!(entries[1].key, prop::LAST_STATUS);
-    assert_eq!(
-        pui::decode(entries[1].value).unwrap().0,
-        Status::PROP_NOT_FOUND.0
-    );
-    assert_eq!(entries[2].value, entries[0].value);
+    for extra in [prop::BATTERY_GAUGE_CONFIG, prop::BATTERY_GAUGE_TELEMETRY] {
+        let mut device = managed();
+        let mut buf = [0; 64];
+        let keys = [
+            prop::BATTERY_CURRENT,
+            prop::BATTERY_FULL_CAPACITY,
+            prop::BATTERY_CURRENT,
+            extra,
+            extra,
+        ];
+        let len = frame::prop_multi_get(&mut buf, 0, &keys).unwrap();
+        let mut exchange = Exchange::<192>::new(&buf[..len], 3, 0).unwrap();
+        let mut wire = [0; PAYLOAD];
+        let Step::Send { len: wire_len } = exchange.poll(0, &mut wire) else {
+            panic!("request");
+        };
+        assert!(
+            device
+                .deliver(&STRANGER_KEY, &wire[..wire_len], 0)
+                .is_none()
+        );
+        assert_eq!(device.battery_samples, 0);
+        let first = device.deliver(&ADMIN_KEY, &wire[..wire_len], 0).unwrap();
+        assert_eq!(device.battery_samples, 1);
+        let retry = device
+            .deliver(&ADMIN_KEY, &wire[..wire_len], RETRY_MS)
+            .unwrap();
+        assert_eq!(first, retry);
+        assert_eq!(device.battery_samples, 1);
+        let next = converse(&mut device, &buf[..len], 4);
+        assert_eq!(device.battery_samples, 2);
+        let parsed = Frame::parse(&next.reply).unwrap();
+        let entries: Vec<_> = MultiEntries::new(parsed.payload)
+            .map(Result::unwrap)
+            .collect();
+        assert_eq!(entries[0].value, &[0x38, 0xff]);
+        assert_eq!(entries[1].key, prop::LAST_STATUS);
+        assert_eq!(
+            pui::decode(entries[1].value).unwrap().0,
+            Status::PROP_NOT_FOUND.0
+        );
+        assert_eq!(entries[2].value, entries[0].value);
+        assert_eq!(entries[3].value, entries[4].value);
+        assert_eq!(entries.len(), 5);
+        if extra == prop::BATTERY_GAUGE_CONFIG {
+            assert_eq!(
+                umsh_ulcp::battery_gauge_config::Config::decode(entries[3].value)
+                    .unwrap()
+                    .value(4),
+                2
+            );
+        } else {
+            assert_eq!(
+                umsh_ulcp::battery_gauge_telemetry::Telemetry::decode(entries[3].value)
+                    .unwrap()
+                    .raw[11],
+                2
+            );
+        }
+    }
 }
 
 /// The other face of at-most-once, and why a token may never be issued

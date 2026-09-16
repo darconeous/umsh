@@ -4863,6 +4863,22 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             self.respond_battery(tid, sample.snapshot, emit);
             return;
         }
+        if key == prop::BATTERY_GAUGE_CONFIG {
+            let mut bytes = [0; umsh_ulcp::battery_gauge_config::MAX_ENCODED];
+            match sample.gauge_config.and_then(|v| v.encode(&mut bytes)) {
+                Ok(len) => self.send_prop_is(tid, key, &bytes[..len], emit),
+                Err(status) => self.complete(tid, status, emit),
+            }
+            return;
+        }
+        if key == prop::BATTERY_GAUGE_TELEMETRY {
+            let mut bytes = [0; umsh_ulcp::battery_gauge_telemetry::MAX_ENCODED];
+            match sample.gauge_telemetry.and_then(|v| v.encode(&mut bytes)) {
+                Ok(len) => self.send_prop_is(tid, key, &bytes[..len], emit),
+                Err(status) => self.complete(tid, status, emit),
+            }
+            return;
+        }
         match sample.get(key) {
             Ok(None) => self.send_prop_is(tid, key, &[], emit),
             Ok(Some(value)) => {
@@ -6957,7 +6973,12 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         if key == prop::BATTERY {
             return self.config.battery.is_some();
         }
-        if diagnostics::index(key).is_some() {
+        if diagnostics::index(key).is_some()
+            || matches!(
+                key,
+                prop::BATTERY_GAUGE_CONFIG | prop::BATTERY_GAUGE_TELEMETRY
+            )
+        {
             return self.config.battery.is_some() && self.config.battery_diagnostics.contains(key);
         }
         if key == prop::ALERT {
@@ -10539,6 +10560,102 @@ mod tests {
         let mut out = Vec::new();
         session.respond_battery(6, Err(()), &mut |bytes: &[u8]| out.push(bytes.to_vec()));
         expect_status(&out[0], 6, Status::FAILURE);
+    }
+
+    #[test]
+    fn gauge_configuration_is_explicit_read_only_and_shared_with_multi_get() {
+        use umsh_ulcp::battery_gauge_config::Config;
+        let mut session = test_session();
+        let key = prop::BATTERY_GAUGE_CONFIG;
+        let mut request = [0; 32];
+        let len = frame::prop_get(&mut request, 1, key).unwrap();
+        let (out, _) = dispatch(&mut session, &request[..len], 0);
+        expect_status(&out[0], 1, Status::PROP_NOT_FOUND);
+        assert!(!DiagnosticFields::ALL.contains(key));
+        session.config.battery_diagnostics = DiagnosticFields::GAUGE_CONFIG;
+        let (out, _) = set(&mut session, key, &[1]);
+        expect_status(&out[0], 2, Status::INVALID_ARGUMENT);
+        let len = frame::prop_multi_get(&mut request, 1, &[key, prop::BATTERY, key]).unwrap();
+        let Some(Effect::SampleBatteryGroup { tid, key, fields }) =
+            session.handle_frame(&request[..len], 0, &mut |_| {})
+        else {
+            panic!("missing acquisition")
+        };
+        assert!(fields.contains(prop::BATTERY));
+        assert!(fields.contains(key));
+        let mut sample = BatterySample::default();
+        sample.gauge_config = Ok(Config::default());
+        sample.snapshot = Ok(BatteryStatus::default());
+        let mut out = Vec::new();
+        session.respond_battery_group(tid, key, sample, &mut |b: &[u8]| out.push(b.to_vec()));
+        assert!(
+            session
+                .resume_multi(0, &mut |b: &[u8]| out.push(b.to_vec()))
+                .is_none()
+        );
+        assert_eq!(out.len(), 1);
+        let frame = Frame::parse(&out[0]).unwrap();
+        let entries: Vec<_> = MultiEntries::new(frame.payload)
+            .map(Result::unwrap)
+            .collect();
+        assert_eq!(entries.len(), 3);
+        assert_eq!(Config::decode(entries[0].value), Ok(Config::default()));
+        assert_eq!(entries[0].value, entries[2].value);
+        assert!(session.multi.is_none());
+    }
+
+    #[test]
+    fn gauge_telemetry_is_optional_read_only_and_shared_with_multi_get() {
+        use umsh_ulcp::battery_gauge_telemetry::Telemetry;
+        let mut session = test_session();
+        let key = prop::BATTERY_GAUGE_TELEMETRY;
+        let mut request = [0; 32];
+        let len = frame::prop_get(&mut request, 1, key).unwrap();
+        let (out, _) = dispatch(&mut session, &request[..len], 0);
+        expect_status(&out[0], 1, Status::PROP_NOT_FOUND);
+        assert!(!DiagnosticFields::ALL.contains(key));
+        session.config.battery_diagnostics = DiagnosticFields::GAUGE_TELEMETRY;
+        let (out, _) = set(&mut session, key, &[1]);
+        expect_status(&out[0], 2, Status::INVALID_ARGUMENT);
+        for succeeds in [true, false] {
+            let len = frame::prop_multi_get(&mut request, 1, &[key, prop::BATTERY, key]).unwrap();
+            let Some(Effect::SampleBatteryGroup { tid, key, fields }) =
+                session.handle_frame(&request[..len], 0, &mut |_| {})
+            else {
+                panic!("missing acquisition")
+            };
+            assert!(fields.contains(prop::BATTERY));
+            assert!(fields.contains(key));
+            assert!(!fields.contains(prop::BATTERY_GAUGE_CONFIG));
+            let mut telemetry = Telemetry::default();
+            telemetry.raw[11] = 42;
+            let mut sample = BatterySample::default();
+            if succeeds {
+                sample.gauge_telemetry = Ok(telemetry);
+            }
+            sample.snapshot = Ok(BatteryStatus::default());
+            let mut out = Vec::new();
+            session.respond_battery_group(tid, key, sample, &mut |b: &[u8]| out.push(b.to_vec()));
+            assert!(
+                session
+                    .resume_multi(0, &mut |b: &[u8]| out.push(b.to_vec()))
+                    .is_none()
+            );
+            assert_eq!(out.len(), 1);
+            let frame = Frame::parse(&out[0]).unwrap();
+            let entries: Vec<_> = MultiEntries::new(frame.payload)
+                .map(Result::unwrap)
+                .collect();
+            assert_eq!(entries.len(), 3);
+            assert_eq!(entries[1].key, prop::BATTERY);
+            if succeeds {
+                assert_eq!(Telemetry::decode(entries[0].value), Ok(telemetry));
+            } else {
+                assert_eq!(entries[0].key, prop::LAST_STATUS);
+                assert_eq!(pui::decode(entries[0].value).unwrap().0, Status::FAILURE.0);
+            }
+            assert_eq!(entries[0].value, entries[2].value);
+        }
     }
 
     #[test]

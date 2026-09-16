@@ -22,7 +22,13 @@ pub struct BatteryArgs {
     /// Emit one JSON object per poll, including units and per-property state.
     #[arg(long)]
     pub json: bool,
-    /// Properties to read; default is the complete battery group.
+    /// Also inspect chip-specific gauge configuration (temporarily unlocks gauge access).
+    #[arg(long)]
+    pub gauge_config: bool,
+    /// Also read live gauge counters, temperatures, current/power averages, and time estimates.
+    #[arg(long)]
+    pub gauge_telemetry: bool,
+    /// Properties to read; default is the scalar battery group (without gauge configuration).
     #[arg(long, value_delimiter = ',')]
     pub properties: Vec<PropArg>,
     /// Stop after this many polls (with --watch).
@@ -50,7 +56,11 @@ fn parse_interval(text: &str) -> Result<Duration, String> {
 impl BatteryArgs {
     pub fn validate(&self) -> Result<()> {
         for key in &self.properties {
-            if key.0 != prop::BATTERY && diagnostics::index(key.0).is_none() {
+            if key.0 != prop::BATTERY
+                && key.0 != prop::BATTERY_GAUGE_CONFIG
+                && key.0 != prop::BATTERY_GAUGE_TELEMETRY
+                && diagnostics::index(key.0).is_none()
+            {
                 bail!("{} is not a battery property", spell(key.0));
             }
         }
@@ -72,6 +82,52 @@ fn result_json(key: u32, result: &Result<Vec<u8>, Status>) -> Json {
             }
             Err(_) => json!({"state":"malformed"}),
         },
+        Ok(bytes) if key == prop::BATTERY_GAUGE_CONFIG => {
+            use umsh::ulcp_wire::battery_gauge_config::{Config, FIELDS};
+            match Config::decode(bytes) {
+                Ok(config) => {
+                    let fields: serde_json::Map<_, _> = FIELDS
+                        .iter()
+                        .zip(config.values())
+                        .map(|(field, value)| {
+                            (field.name.into(), json!({"value":value,"unit":field.unit}))
+                        })
+                        .collect();
+                    json!({"state":"available", "format":1, "version":1, "fields": fields,
+                        "fcc_limit":config.cedv_config() & 0x100 != 0,
+                        "independent_charger":config.cedv_config() & 0x10 != 0,
+                        "edv_compensation":config.cedv_config() & 8 != 0})
+                }
+                Err(status) => {
+                    json!({"state":"malformed_or_unsupported","status":status.0,"raw":bytes})
+                }
+            }
+        }
+        Ok(bytes) if key == prop::BATTERY_GAUGE_TELEMETRY => {
+            use umsh::ulcp_wire::battery_gauge_telemetry::{FIELDS, Telemetry};
+            match Telemetry::decode(bytes) {
+                Ok(sample) => {
+                    let fields: serde_json::Map<_, _> = FIELDS.iter().enumerate().map(|(i, field)| {
+                        let raw = sample.raw[i];
+                        let value = if field.unit == "min" && raw == u16::MAX {
+                            json!({"state":"unavailable","value":null,"raw":raw,"unit":field.unit})
+                        } else if field.register == 0x32 && raw == u16::MAX {
+                            json!({"state":"available","value":"maximum","raw":raw,"unit":field.unit})
+                        } else if field.unit == "0.1 K" {
+                            json!({"state":"available","value":sample.value(i),"raw":raw,"unit":field.unit,
+                                "celsius":(i32::from(raw) * 10 - 27315) as f64 / 100.0})
+                        } else {
+                            json!({"state":"available","value":sample.value(i),"raw":raw,"unit":field.unit})
+                        };
+                        (field.name.into(), value)
+                    }).collect();
+                    json!({"state":"available", "format":1, "version":1, "fields":fields})
+                }
+                Err(status) => {
+                    json!({"state":"malformed_or_unsupported","status":status.0,"raw":bytes})
+                }
+            }
+        }
         Ok(bytes) => match Value::decode(key, bytes) {
             Ok(None) => json!({"state":"unavailable","unit":unit}),
             Ok(Some(value)) => {
@@ -102,6 +158,12 @@ pub async fn run<L: FrameLink>(device: &mut UlcpDevice<L>, args: BatteryArgs) ->
     } else {
         args.properties.iter().map(|p| p.0).collect()
     };
+    if args.gauge_config {
+        keys.push(prop::BATTERY_GAUGE_CONFIG);
+    }
+    if args.gauge_telemetry {
+        keys.push(prop::BATTERY_GAUGE_TELEMETRY);
+    }
     keys.sort_unstable();
     keys.dedup();
     let mut backoff = interval;
@@ -218,6 +280,64 @@ pub async fn run<L: FrameLink>(device: &mut UlcpDevice<L>, args: BatteryArgs) ->
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn telemetry_json_distinguishes_counter_sentinels_sign_and_die_temperature() {
+        use umsh::ulcp_wire::battery_gauge_telemetry::{MAX_ENCODED, Telemetry};
+        let mut sample = Telemetry::default();
+        sample.raw[0] = 65535;
+        sample.raw[2] = 2981;
+        sample.raw[3] = (-100i16) as u16;
+        sample.raw[5] = 65535;
+        sample.raw[11] = 42;
+        sample.raw[13] = 65535;
+        let mut encoded = [0; MAX_ENCODED];
+        let len = sample.encode(&mut encoded).unwrap();
+        let json = result_json(prop::BATTERY_GAUGE_TELEMETRY, &Ok(encoded[..len].to_vec()));
+        assert_eq!(json["fields"]["raw_coulomb_count"]["value"], -1);
+        assert_eq!(json["fields"]["raw_coulomb_count"]["raw"], 65535);
+        assert!(
+            format_value(prop::BATTERY_GAUGE_TELEMETRY, &encoded[..len])
+                .contains("raw_coulomb_count: -1 mAh")
+        );
+        assert_eq!(json["fields"]["internal_temperature"]["celsius"], 24.95);
+        assert_eq!(json["fields"]["average_current"]["value"], -100);
+        assert_eq!(json["fields"]["time_to_empty"]["value"], Json::Null);
+        assert_eq!(json["fields"]["time_to_empty"]["raw"], 65535);
+        assert_eq!(json["fields"]["cycle_count"]["value"], 42);
+        assert_eq!(json["fields"]["charging_current"]["value"], "maximum");
+        assert!(
+            format_value(prop::BATTERY_GAUGE_TELEMETRY, &encoded[..len])
+                .contains("cycle_count: 42 cycles")
+        );
+        assert_eq!(
+            "battery-gauge-telemetry".parse::<PropArg>().unwrap().0,
+            prop::BATTERY_GAUGE_TELEMETRY
+        );
+        assert!(!diagnostics::KEYS.contains(&prop::BATTERY_GAUGE_TELEMETRY));
+    }
+    #[test]
+    fn gauge_configuration_json_preserves_raw_values_and_decodes_learning_bits() {
+        use umsh::ulcp_wire::battery_gauge_config::{Config, MAX_ENCODED};
+        let mut config = Config::default();
+        config.set(3, 0x102a).unwrap();
+        config.set(4, 1372).unwrap();
+        config.set(5, 1500).unwrap();
+        let mut encoded = [0; MAX_ENCODED];
+        let len = config.encode(&mut encoded).unwrap();
+        let json = result_json(prop::BATTERY_GAUGE_CONFIG, &Ok(encoded[..len].to_vec()));
+        assert_eq!(json["fields"]["full_capacity"]["value"], 1372);
+        assert_eq!(json["fields"]["design_capacity"]["unit"], "mAh");
+        assert_eq!(json["fcc_limit"], false);
+        assert_eq!(json["independent_charger"], false);
+        assert_eq!(json["edv_compensation"], true);
+        assert!(format_value(prop::BATTERY_GAUGE_CONFIG, &encoded[..len]).contains("1372 mAh"));
+        assert_eq!(
+            "battery-gauge-config".parse::<PropArg>().unwrap().0,
+            prop::BATTERY_GAUGE_CONFIG
+        );
+        assert!(!diagnostics::KEYS.contains(&prop::BATTERY_GAUGE_CONFIG));
+    }
+
     #[test]
     fn compact_values_and_availability_are_distinct() {
         assert_eq!(

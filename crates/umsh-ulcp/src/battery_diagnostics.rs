@@ -55,9 +55,17 @@ impl Fields {
     pub const SNAPSHOT: Self = Self(1);
     pub const DIAGNOSTICS: Self = Self(0x3ffe);
     pub const ALL: Self = Self(0x3fff);
+    /// Deliberately excluded from ALL/DIAGNOSTICS: requires explicit acquisition.
+    pub const GAUGE_CONFIG: Self = Self(0x4000);
+    /// Live chip-specific readings, acquired only when explicitly requested.
+    pub const GAUGE_TELEMETRY: Self = Self(0x8000);
     pub const fn for_key(key: u32) -> Self {
         if key == prop::BATTERY {
             Self::SNAPSHOT
+        } else if key == prop::BATTERY_GAUGE_CONFIG {
+            Self::GAUGE_CONFIG
+        } else if key == prop::BATTERY_GAUGE_TELEMETRY {
+            Self::GAUGE_TELEMETRY
         } else if let Some(index) = index(key) {
             Self(1 << (index + 1))
         } else {
@@ -164,12 +172,16 @@ impl Value {
 #[derive(Clone, Copy, Debug)]
 pub struct Sample {
     pub snapshot: Result<BatteryStatus, ()>,
+    pub gauge_config: Result<crate::battery_gauge_config::Config, Status>,
+    pub gauge_telemetry: Result<crate::battery_gauge_telemetry::Telemetry, Status>,
     values: [Result<Option<Value>, Status>; 13],
 }
 impl Default for Sample {
     fn default() -> Self {
         Self {
             snapshot: Err(()),
+            gauge_config: Err(Status::FAILURE),
+            gauge_telemetry: Err(Status::FAILURE),
             values: [Err(Status::FAILURE); 13],
         }
     }
