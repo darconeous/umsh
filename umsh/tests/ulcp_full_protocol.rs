@@ -1054,6 +1054,7 @@ async fn raw_bus_access_reads_writes_and_scans_the_simulated_peripheral() {
 
     let sim = SimDevice::new();
     let mut radio = attached_host(&sim).await;
+    sim.lock().unwrap().log.clear();
 
     let buses = radio.i2c_buses().await.unwrap().expect("CAP_I2C");
     assert_eq!(buses.len(), 1);
@@ -1128,6 +1129,52 @@ async fn raw_bus_access_reads_writes_and_scans_the_simulated_peripheral() {
     // Three transfers reached the bus (the refused ones never did), plus
     // two scans.
     assert_eq!(sim.lock().unwrap().i2c.executed(), 5);
+    let sim = sim.lock().unwrap();
+    assert_eq!(
+        sim.log
+            .iter()
+            .filter(|line| line.starts_with("host→device "))
+            .count(),
+        10,
+        "two explicit table queries, five transfers, and three scans; no preflight queries: {:?}",
+        sim.log
+    );
+}
+
+#[tokio::test]
+async fn raw_bus_access_without_i2c_uses_the_requested_commands_refusals() {
+    use umsh_ulcp::i2c::Op;
+
+    let sim = SimDevice::new();
+    let mut config = session_config();
+    config.i2c_buses = &[];
+    config.i2c_devices = &[];
+    sim.lock().unwrap().session = Session::new(config, Status::RESET_POWER_ON, engine());
+    let mut radio = attached_host(&sim).await;
+    sim.lock().unwrap().log.clear();
+
+    assert!(radio.i2c_buses().await.unwrap().is_none());
+    assert!(radio.i2c_devices().await.unwrap().is_none());
+    assert!(
+        radio
+            .i2c_transfer(0, 0x50, &[Op::Read(1)])
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(radio.i2c_scan(0, None).await.unwrap().is_none());
+
+    let sim = sim.lock().unwrap();
+    assert_eq!(sim.i2c.executed(), 0);
+    assert_eq!(
+        sim.log
+            .iter()
+            .filter(|line| line.starts_with("host→device "))
+            .count(),
+        4,
+        "unsupported operations must not add capability queries: {:?}",
+        sim.log
+    );
 }
 
 /// Every positioning property folds back into one snapshot, and a

@@ -225,6 +225,17 @@ mod firmware {
     use umsh_bsp_wio_tracker_l1::power as board_power;
     #[cfg(all(feature = "cap-battery-saadc", feature = "board-xiao-nrf52"))]
     use umsh_bsp_xiao_nrf52::power as board_power;
+    // Host I2C capability, selected once through each board BSP.
+    #[cfg(all(feature = "ulcp-i2c", feature = "board-sensecap-solar"))]
+    use umsh_bsp_sensecap_solar::i2c as board_i2c;
+    #[cfg(all(feature = "ulcp-i2c", feature = "board-t1000e"))]
+    use umsh_bsp_t1000e::i2c as board_i2c;
+    #[cfg(all(feature = "ulcp-i2c", feature = "board-techo"))]
+    use umsh_bsp_techo::i2c as board_i2c;
+    #[cfg(all(feature = "ulcp-i2c", feature = "board-wio-tracker-l1"))]
+    use umsh_bsp_wio_tracker_l1::i2c as board_i2c;
+    #[cfg(all(feature = "ulcp-i2c", feature = "board-xiao-nrf52"))]
+    use umsh_bsp_xiao_nrf52::i2c as board_i2c;
     // Board-selected GNSS power control. One board feature is active per
     // image, so this alias resolves to exactly one type and the pump's
     // task shim stays concrete—which is what `#[embassy_executor::task]`
@@ -316,19 +327,21 @@ mod firmware {
         RADIO       => nrf_sdc::mpsl::HighPrioInterruptHandler;
         TIMER0      => nrf_sdc::mpsl::HighPrioInterruptHandler;
         RTC0        => nrf_sdc::mpsl::HighPrioInterruptHandler;
-        // TWIM0/SPIM0 is the one peripheral this family uses two ways:
-        // SPIM0 → LR1110 on the T-1000E, TWIM0 → SH1106 OLED on the Wio
-        // Tracker L1. Both handlers cannot be bound at once—they claim
-        // the same peripheral—so the board picks.
-        TWISPI0     =>
-            #[cfg(not(feature = "display-oled"))]
+        // T-1000E keeps its radio on SPIM0; other boards use TWIM0
+        // for host I2C (and Wio's display, even without host access).
+        TWISPI0 =>
+            #[cfg(feature = "t1000e")]
             embassy_nrf::spim::InterruptHandler<peripherals::TWISPI0>,
-            #[cfg(feature = "display-oled")]
+            #[cfg(all(not(feature = "t1000e"), any(feature = "ulcp-i2c", feature = "display-oled")))]
             embassy_nrf::twim::InterruptHandler<peripherals::TWISPI0>;
-        // SPIM1 → SX1262 LoRa SPI bus. embassy-nrf names this peripheral
-        // TWISPI1 (it's the shared TWIM1/SPIM1 block on nRF52840).
-        TWISPI1     => embassy_nrf::spim::InterruptHandler<peripherals::TWISPI1>;
-        // SPIM2 → SSD1681 e-paper SPI bus. embassy-nrf names this interrupt SPI2.
+        // T-1000E's sensor bus and Wio's Grove bus use TWIM1.
+        // Other SX1262 boards retain their radio on SPIM1.
+        TWISPI1 =>
+            #[cfg(not(any(feature = "t1000e", feature = "board-wio-tracker-l1")))]
+            embassy_nrf::spim::InterruptHandler<peripherals::TWISPI1>,
+            #[cfg(all(feature = "ulcp-i2c", any(feature = "t1000e", feature = "board-wio-tracker-l1")))]
+            embassy_nrf::twim::InterruptHandler<peripherals::TWISPI1>;
+        // SPIM2 → T-Echo e-paper or Wio radio; frees TWIM1 for Wio Grove.
         SPI2        => embassy_nrf::spim::InterruptHandler<peripherals::SPI2>;
         SAADC       => embassy_nrf::saadc::InterruptHandler;
         // UARTE0 → the GNSS receiver, on every board that has one. Bound
@@ -516,10 +529,13 @@ mod firmware {
             ip: None,
             bridge_client: false,
             stats: Some(&STATS),
-            // The one I2C bus among these boards (the Wio Tracker's OLED)
-            // is owned outright by its display driver, so there is
-            // nothing a host could be handed.
+            #[cfg(feature = "ulcp-i2c")]
+            i2c_buses: board_i2c::BUSES,
+            #[cfg(feature = "ulcp-i2c")]
+            i2c_devices: board_i2c::DEVICES,
+            #[cfg(not(feature = "ulcp-i2c"))]
             i2c_buses: &[],
+            #[cfg(not(feature = "ulcp-i2c"))]
             i2c_devices: &[],
         }
     }
@@ -1592,6 +1608,8 @@ mod firmware {
         identity_store: ProtoStore,
         identity_rng: IdentityRng,
         node_counters: &'static NodeCountersMutex,
+        #[cfg(feature = "ulcp-i2c")]
+        i2c: board_i2c::Buses,
         /// Announce-worthy battery measurements from the BSP monitor, for
         /// unsolicited `PROP_BATTERY` publication. The monitor owns the
         /// cadence and the change policy; this only forwards.
@@ -1659,6 +1677,24 @@ mod firmware {
     }
 
     impl DeviceEnv for BoardDeviceEnv {
+        #[cfg(feature = "ulcp-i2c")]
+        async fn i2c_transfer(
+            &mut self,
+            request: umsh_ulcp::i2c::TransferRequest<'_>,
+            out: &mut [u8],
+        ) -> Result<usize, Status> {
+            self.i2c.transfer(request, out).await
+        }
+
+        #[cfg(feature = "ulcp-i2c")]
+        async fn i2c_scan(
+            &mut self,
+            request: umsh_ulcp::i2c::ScanRequest,
+            out: &mut [u8],
+        ) -> Result<usize, Status> {
+            self.i2c.scan(request, out).await
+        }
+
         async fn persist_snapshot(&mut self, bytes: &[u8]) -> Result<(), ()> {
             self.proto_store.persist(bytes).await
         }
@@ -3183,6 +3219,7 @@ mod firmware {
         boot_identity: Option<[u8; 32]>,
         identity_rng: IdentityRng,
         node_counters: &'static NodeCountersMutex,
+        #[cfg(feature = "ulcp-i2c")] i2c: board_i2c::Buses,
     ) {
         // The retained hardware reset cause answers the first
         // PROP_LAST_STATUS query; attach itself never modifies it.
@@ -3207,6 +3244,8 @@ mod firmware {
                 identity_store,
                 identity_rng,
                 node_counters,
+                #[cfg(feature = "ulcp-i2c")]
+                i2c,
                 // The driver is the only receiver; the slot count is
                 // sized for exactly that, so this cannot fail.
                 #[cfg(feature = "cap-battery-saadc")]
@@ -4184,7 +4223,7 @@ mod firmware {
     /// long as a locate alert runs.
     #[cfg(feature = "display-oled")]
     #[embassy_executor::task]
-    async fn oled_display_task(mut oled: display::Sh1106<'static>) {
+    async fn oled_display_task(mut oled: display::Sh1106<umsh_bsp_nrf52840::i2c::Handle>) {
         let mut model = UiModel::new(board_menu_items());
         let mut fb = display::Sh1106Fb::new();
         let mut splash = umsh_ux_display_tracker::boot::BootSplash::new();
@@ -4749,13 +4788,15 @@ mod firmware {
         drive_pin_low(Port::P1, 0); // piezo
 
         // OLED I²C (TWIM0):      SDA=P0.06, SCL=P0.05
-        // Radio SPI (TWISPI1):   SCK=P0.30, MISO=P0.03, MOSI=P0.28
+        // Radio SPI (SPIM2):     SCK=P0.30, MISO=P0.03, MOSI=P0.28
         // Radio control:         CS=P1.14, BUSY=P1.10, DIO1=P0.07
         //                        (RST, RXEN, LED, and piezo pinned above)
         // The display, radio, and battery tasks still own these pins;
         // direct PIN_CNF writes are deliberate here because every task is
         // about to lose its clock.
         for (port, pin) in [
+            (Port::P1, 12u8), // Grove SDA
+            (Port::P1, 11u8), // Grove SCL
             (Port::P0, 6u8),
             (Port::P0, 5u8),
             (Port::P0, 30u8),
@@ -5061,6 +5102,8 @@ mod firmware {
         // The display and touch tasks still own these pins; direct PIN_CNF
         // writes are deliberate here because every task is about to lose power.
         for (port, pin) in [
+            (Port::P0, 26u8), // I2C SDA
+            (Port::P0, 27u8), // I2C SCL
             (Port::P0, 31u8),
             (Port::P1, 7u8),
             (Port::P0, 29u8),
@@ -5672,14 +5715,14 @@ mod firmware {
         // ── SX1262 LoRa radio (Wio Tracker L1) ──────────────────────────────
         // The board the Solar P1 block above was itself ported from
         // (external RXEN, DIO2 internal RF switch, DIO3 1.8 V TCXO):
-        //   SPI TWISPI1 @16MHz: SCK=P0.30, MISO=P0.03, MOSI=P0.28, CS=P1.14
+        //   SPI SPIM2 @16MHz: SCK=P0.30, MISO=P0.03, MOSI=P0.28, CS=P1.14
         //   RST=P1.07, BUSY=P1.10, DIO1=P0.07, RXEN=P1.08 (rf_switch_rx)
         #[cfg(feature = "board-wio-tracker-l1")]
         {
             let mut cfg = SpimConfig::default();
             cfg.frequency = Frequency::M16;
             let radio_bus = Spim::new(
-                p.TWISPI1, Irqs, p.P0_30, // SCK
+                p.SPI2, Irqs, p.P0_30, // SCK
                 p.P0_03, // MISO
                 p.P0_28, // MOSI
                 cfg,
@@ -6005,6 +6048,84 @@ mod firmware {
 
         spawner.spawn(output_task(tx, wdt_report, panic_report).unwrap());
         spawner.spawn(usb_in_task(rx).unwrap());
+        // Shared buses are ready before the ULCP session starts. All nRF
+        // buses run at 100 kHz, including the existing OLED controller.
+        #[cfg(all(feature = "ulcp-i2c", feature = "t1000e"))]
+        {
+            static ACCEL_POWER: StaticCell<Output<'static>> = StaticCell::new();
+            ACCEL_POWER.init(Output::new(p.P1_07, Level::High, OutputDrive::Standard));
+            Timer::after_millis(10).await;
+        }
+        #[cfg(any(feature = "ulcp-i2c", feature = "display-oled"))]
+        let primary_i2c: &'static umsh_bsp_nrf52840::i2c::Bus = {
+            use embassy_nrf::twim::{Config as TwimConfig, Twim};
+            static BUS: StaticCell<umsh_bsp_nrf52840::i2c::Bus> = StaticCell::new();
+            static TX: StaticCell<[u8; 256]> = StaticCell::new();
+            #[cfg(feature = "board-techo")]
+            let controller = Twim::new(
+                p.TWISPI0,
+                Irqs,
+                p.P0_26,
+                p.P0_27,
+                TwimConfig::default(),
+                TX.init([0; 256]),
+            );
+            #[cfg(feature = "board-t1000e")]
+            let controller = Twim::new(
+                p.TWISPI1,
+                Irqs,
+                p.P0_26,
+                p.P0_27,
+                TwimConfig::default(),
+                TX.init([0; 256]),
+            );
+            #[cfg(feature = "board-sensecap-solar")]
+            let controller = Twim::new(
+                p.TWISPI0,
+                Irqs,
+                p.P0_09,
+                p.P0_10,
+                TwimConfig::default(),
+                TX.init([0; 256]),
+            );
+            #[cfg(feature = "board-wio-tracker-l1")]
+            let controller = Twim::new(
+                p.TWISPI0,
+                Irqs,
+                p.P0_06,
+                p.P0_05,
+                TwimConfig::default(),
+                TX.init([0; 256]),
+            );
+            #[cfg(feature = "board-xiao-nrf52")]
+            let controller = Twim::new(
+                p.TWISPI0,
+                Irqs,
+                p.P1_11,
+                p.P1_12,
+                TwimConfig::default(),
+                TX.init([0; 256]),
+            );
+            BUS.init(umsh_bsp_nrf52840::i2c::Bus::new(controller))
+        };
+        #[cfg(all(feature = "ulcp-i2c", feature = "board-wio-tracker-l1"))]
+        let host_i2c = {
+            static GROVE: StaticCell<board_i2c::Bus> = StaticCell::new();
+            static TX: StaticCell<[u8; 256]> = StaticCell::new();
+            let controller = embassy_nrf::twim::Twim::new(
+                p.TWISPI1,
+                Irqs,
+                p.P1_12,
+                p.P1_11,
+                embassy_nrf::twim::Config::default(),
+                TX.init([0; 256]),
+            );
+            let grove = GROVE.init(board_i2c::Bus::new(controller));
+            board_i2c::Buses::new([primary_i2c, grove], board_i2c::BUSES)
+        };
+        #[cfg(all(feature = "ulcp-i2c", not(feature = "board-wio-tracker-l1")))]
+        let host_i2c = board_i2c::Buses::new([primary_i2c], board_i2c::BUSES);
+
         spawner.spawn(
             device_task(
                 boot_reason,
@@ -6014,6 +6135,8 @@ mod firmware {
                 boot_identity,
                 identity_rng,
                 node_counters,
+                #[cfg(feature = "ulcp-i2c")]
+                host_i2c,
             )
             .unwrap(),
         );
@@ -6321,19 +6444,12 @@ mod firmware {
         // active-high divider gate on P0.04.
         #[cfg(feature = "board-wio-tracker-l1")]
         {
-            // TWIM EasyDMA reads from SRAM, so the driver needs a static
-            // scratch buffer; one frame page plus the control byte is the
-            // largest transfer it makes.
-            static TWIM_BUF: StaticCell<[u8; 256]> = StaticCell::new();
-            let i2c = embassy_nrf::twim::Twim::new(
-                p.TWISPI0,
-                Irqs,
-                p.P0_06, // SDA
-                p.P0_05, // SCL
-                embassy_nrf::twim::Config::default(),
-                TWIM_BUF.init([0; 256]),
+            spawner.spawn(
+                oled_display_task(display::Sh1106::new(umsh_bsp_nrf52840::i2c::Handle::new(
+                    primary_i2c,
+                )))
+                .unwrap(),
             );
-            spawner.spawn(oled_display_task(display::Sh1106::new(i2c)).unwrap());
 
             let mut buzzer_config = SimpleConfig::default();
             buzzer_config.prescaler = Prescaler::Div16;

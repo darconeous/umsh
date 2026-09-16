@@ -15,9 +15,13 @@ repository.workspace = true
 # See docs/firmware-architecture.md for the BSP / App / Binary triad.
 
 [features]
+i2c = []
+ulcp-i2c = ["i2c", "dep:umsh-ulcp", "dep:umsh-ulcp-runtime"]
 default = []
 
 [dependencies]
+umsh-ulcp = { path = "../umsh-ulcp", default-features = false, optional = true }
+umsh-ulcp-runtime = { path = "../umsh-ulcp-runtime", default-features = false, features = ["i2c"], optional = true }
 umsh-hal = { path = "../umsh-hal", default-features = false, features = ["embassy"] }
 # The chip-agnostic sequential-storage engine; `flash_store` only supplies
 # the NVMC backing and the storage region.
@@ -32,7 +36,7 @@ embassy-nrf = { version = "0.11", default-features = false, features = ["nrf5284
 embassy-usb = { version = "0.6", default-features = false }
 embassy-futures = { version = "0.1", default-features = false }
 embassy-sync = { version = "0.8", default-features = false }
-embassy-embedded-hal = { version = "0.3", default-features = false }
+embassy-embedded-hal = { version = "0.6", default-features = false }
 embassy-time = { version = "0.5", default-features = false }
 cortex-m = { version = "0.7" }
 embedded-storage = "0.3"

@@ -27,7 +27,7 @@
 //! firmware, following the pattern the other nRF52840 tracker boards
 //! use. All six switches are active-low with pull-ups.
 //!
-//! Not yet wired: the Grove expansion I²C bus and the QSPI external
+//! Host I²C includes the Grove expansion bus. Not yet wired: the QSPI external
 //! flash.
 //!
 //! See `docs/hardware/seeed-wio-tracker-l1-pro-hardware.md` for the
@@ -52,3 +52,6 @@ pub mod power;
 pub use platform::{WioMac, WioTrackerPlatform};
 #[cfg(all(target_os = "none", feature = "power"))]
 pub use power::PowerSignaler;
+
+#[cfg(all(target_os = "none", feature = "ulcp-i2c"))]
+pub mod i2c;

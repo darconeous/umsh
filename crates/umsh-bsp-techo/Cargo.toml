@@ -22,7 +22,7 @@ repository.workspace = true
 #
 # Out of scope for bringup (planned but not yet):
 #   * SX1262 LoRa radio
-#   * I²C peripherals (PCF8563 RTC, BME280)
+#   * native PCF8563 / BME280 drivers (raw access uses `ulcp-i2c`)
 #   * QSPI external flash
 #   * Buttons (user, touch, reset)
 #   * Plus-only back-panel peripherals (DRV2605, BHI260, buzzer)
@@ -30,6 +30,7 @@ repository.workspace = true
 # See docs/hardware/lilygo-techo-hardware.md.
 
 [features]
+ulcp-i2c = ["umsh-bsp-nrf52840/ulcp-i2c", "dep:umsh-ulcp", "dep:umsh-ulcp-device", "dep:embassy-nrf", "dep:embassy-sync", "dep:embassy-time"]
 default = ["display", "platform", "power", "battery", "gnss"]
 display = ["dep:embassy-nrf", "dep:embassy-time", "dep:embedded-graphics"]
 platform = [
@@ -55,6 +56,8 @@ battery = [
 ]
 
 [dependencies]
+umsh-ulcp = { path = "../umsh-ulcp", default-features = false, optional = true }
+umsh-ulcp-device = { path = "../umsh-ulcp-device", default-features = false, optional = true }
 umsh-bsp-nrf52840 = { path = "../umsh-bsp-nrf52840", default-features = false }
 umsh-hal          = { path = "../umsh-hal", default-features = false }
 umsh-gnss         = { path = "../umsh-gnss", default-features = false, features = ["pump"], optional = true }

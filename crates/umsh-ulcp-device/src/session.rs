@@ -517,6 +517,34 @@ pub const I2C_DATA_MAX: usize = 255;
 /// Largest operation count one `CMD_I2C_TRANSFER` may carry, whatever a
 /// bus advertises.
 pub const I2C_MAX_OPS: usize = 16;
+
+/// Check that both board tables can be encoded whole by the session.
+/// BSPs call this in a const initializer so long labels or additional
+/// peripherals cannot silently truncate the advertised inventory.
+pub const fn assert_i2c_tables_fit(buses: &[BusInfo<'_>], devices: &[DeviceInfo<'_>]) {
+    let mut len = 0;
+    let mut index = 0;
+    while index < buses.len() {
+        let bus = &buses[index];
+        assert!(bus.name.len() <= i2c::NAME_MAX_LEN, "I2C bus name too long");
+        len += bus.wire_len() + pui::encoded_len(bus.wire_len() as u32);
+        index += 1;
+    }
+    assert!(len <= PROP_BUF, "I2C bus table exceeds property buffer");
+    len = 0;
+    index = 0;
+    while index < devices.len() {
+        let device = &devices[index];
+        assert!(
+            device.name.len() <= i2c::NAME_MAX_LEN,
+            "I2C device name too long"
+        );
+        len += device.wire_len() + pui::encoded_len(device.wire_len() as u32);
+        index += 1;
+    }
+    assert!(len <= PROP_BUF, "I2C device table exceeds property buffer");
+}
+
 /// Room for the largest operation list within those limits: every data
 /// octet, plus a kind octet and a length of up to two octets per
 /// operation. A lone 255-octet write is 258 octets, so the data limit
@@ -16170,6 +16198,41 @@ mod tests {
         );
         session.attach(true);
         session
+    }
+
+    #[test]
+    fn i2c_table_validation_matches_the_property_encoder_capacity() {
+        let device = DeviceInfo {
+            bus: 0,
+            addr: 0x55,
+            name: "x",
+        };
+        // Each item needs four bytes, including its PUI length prefix.
+        let devices = [device; PROP_BUF / 4];
+        assert_i2c_tables_fit(TEST_I2C_BUSES, &devices);
+        let mut out = [0; PROP_BUF];
+        let mut len = 0;
+        for device in &devices {
+            len += device.encode(&mut out[len..]).unwrap();
+        }
+        assert_eq!(len, PROP_BUF);
+        let overflow = [device; PROP_BUF / 4 + 1];
+        assert!(std::panic::catch_unwind(|| assert_i2c_tables_fit(&[], &overflow)).is_err());
+
+        let bus = TEST_I2C_BUSES[0];
+        let overflow = [bus; PROP_BUF];
+        assert!(std::panic::catch_unwind(|| assert_i2c_tables_fit(&overflow, &[])).is_err());
+        let long_name = "x".repeat(i2c::NAME_MAX_LEN + 1);
+        let invalid = DeviceInfo {
+            name: &long_name,
+            ..device
+        };
+        assert!(std::panic::catch_unwind(|| assert_i2c_tables_fit(&[], &[invalid])).is_err());
+        let invalid = BusInfo {
+            name: &long_name,
+            ..bus
+        };
+        assert!(std::panic::catch_unwind(|| assert_i2c_tables_fit(&[invalid], &[])).is_err());
     }
 
     #[test]

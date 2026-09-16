@@ -22,15 +22,16 @@ repository.workspace = true
 #   * SAADC battery monitor (AIN7/P0.31 + active-high gate P0.04)
 #   * piezo buzzer (P1.00)
 #
-# Not yet wired: joystick / trackball, Grove expansion I²C, QSPI
-# external flash.
+# Raw host access includes the OLED and Grove I²C buses.
+# Not yet wired: joystick / trackball and QSPI external flash.
 #
 # See docs/firmware-plan-wio-tracker-l1.md and
 # docs/hardware/seeed-wio-tracker-l1-pro-hardware.md.
 
 [features]
+ulcp-i2c = ["umsh-bsp-nrf52840/ulcp-i2c", "dep:umsh-ulcp", "dep:umsh-ulcp-device", "dep:embassy-nrf"]
 default = ["display", "platform", "power", "battery", "buzzer", "gnss"]
-display = ["dep:embassy-nrf", "dep:embedded-graphics"]
+display = ["dep:embedded-hal-async", "umsh-bsp-nrf52840/i2c", "dep:embassy-nrf", "dep:embedded-graphics"]
 platform = ["dep:umsh-crypto", "dep:umsh-mac", "dep:umsh-radio-loraphy"]
 power = ["dep:cortex-m"]
 # SAADC battery monitor on AIN7/P0.31, divider gated by P0.04. Lives in
@@ -50,6 +51,9 @@ buzzer = ["dep:embassy-futures", "dep:embassy-nrf", "dep:umsh-ux-tracker"]
 gnss = ["dep:embassy-nrf", "dep:umsh-gnss"]
 
 [dependencies]
+embedded-hal-async = { version = "1", default-features = false, optional = true }
+umsh-ulcp = { path = "../umsh-ulcp", default-features = false, optional = true }
+umsh-ulcp-device = { path = "../umsh-ulcp-device", default-features = false, optional = true }
 umsh-bsp-nrf52840 = { path = "../umsh-bsp-nrf52840", default-features = false }
 umsh-hal          = { path = "../umsh-hal", default-features = false }
 umsh-gnss         = { path = "../umsh-gnss", default-features = false, features = ["pump"], optional = true }

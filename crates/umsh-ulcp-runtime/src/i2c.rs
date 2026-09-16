@@ -19,7 +19,7 @@ use embassy_time::{Duration, with_timeout};
 use embedded_hal_async::i2c::{Error as _, ErrorKind, I2c, NoAcknowledgeSource, Operation};
 use umsh_ulcp::Status;
 use umsh_ulcp::i2c::{Op, ScanRequest, TransferRequest, TransferShape};
-use umsh_ulcp_device::I2C_MAX_OPS;
+use umsh_ulcp_device::{I2C_DATA_MAX, I2C_MAX_OPS};
 
 /// Perform `request` on `bus`, writing the concatenated read data into
 /// `out` and returning its length.
@@ -27,20 +27,48 @@ use umsh_ulcp_device::I2C_MAX_OPS;
 /// The operations are handed to the HAL as one transaction, so the wire
 /// semantics—repeated START on a change of direction, no restart between
 /// consecutive operations of the same direction, one STOP—are the HAL's
-/// `transaction` contract. Each read operation is carved out of `out` in
-/// order, so the data lands where the reply wants it without a copy.
+/// `transaction` contract. Consecutive reads are coalesced before carving
+/// `out`. Write data is packed into scratch space so consecutive writes
+/// also reach the HAL as one operation, without an extra START/address.
 pub async fn transfer_with<I: I2c>(
     bus: &mut I,
     request: TransferRequest<'_>,
     out: &mut [u8],
 ) -> Result<usize, Status> {
+    let mut writes = [0u8; I2C_DATA_MAX];
+    let mut written = 0;
+    for op in request.ops() {
+        if let Op::Write(data) = op.map_err(|error| error.status())? {
+            let end = written + data.len();
+            writes
+                .get_mut(written..end)
+                .ok_or(Status::INVALID_ARGUMENT)?
+                .copy_from_slice(data);
+            written = end;
+        }
+    }
+    let mut write_rest = &writes[..written];
     let mut operations: heapless::Vec<Operation<'_>, I2C_MAX_OPS> = heapless::Vec::new();
     let mut rest = out;
     let mut read_len = 0usize;
-    for op in request.ops() {
+    let mut ops = request.ops().peekable();
+    while let Some(op) = ops.next() {
         let operation = match op.map_err(|error| error.status())? {
-            Op::Write(data) => Operation::Write(data),
-            Op::Read(len) => {
+            Op::Write(data) => {
+                let mut len = data.len();
+                while let Some(Ok(Op::Write(next))) = ops.peek() {
+                    len += next.len();
+                    ops.next();
+                }
+                let (head, tail) = write_rest.split_at(len);
+                write_rest = tail;
+                Operation::Write(head)
+            }
+            Op::Read(mut len) => {
+                while let Some(Ok(Op::Read(next))) = ops.peek() {
+                    len = len.checked_add(*next).ok_or(Status::NOMEM)?;
+                    ops.next();
+                }
                 if rest.len() < len {
                     return Err(Status::NOMEM);
                 }
@@ -337,6 +365,83 @@ mod tests {
         let len = block_on(transfer_with(&mut bus, request, &mut out)).unwrap();
         assert_eq!(&out[..len], &[0x34, 0x12, 0xEF, 0xBE, 0xAD]);
         assert_eq!(bus.transactions, 1);
+    }
+
+    #[test]
+    fn consecutive_reads_and_writes_are_merged_without_crossing_direction_changes() {
+        let cases = [
+            (
+                vec![Op::Read(2), Op::Read(2)],
+                vec![(true, vec![1, 2, 3, 4])],
+                vec![1, 2, 3, 4],
+            ),
+            (
+                vec![Op::Write(&[8]), Op::Write(&[9, 10])],
+                vec![(false, vec![8, 9, 10])],
+                vec![],
+            ),
+            (
+                vec![
+                    Op::Read(1),
+                    Op::Read(2),
+                    Op::Write(&[8]),
+                    Op::Write(&[9, 10]),
+                    Op::Read(2),
+                    Op::Read(1),
+                ],
+                vec![
+                    (true, vec![1, 2, 3]),
+                    (false, vec![8, 9, 10]),
+                    (true, vec![4, 5, 6]),
+                ],
+                vec![1, 2, 3, 4, 5, 6],
+            ),
+        ];
+        for (ops, expected, read) in cases {
+            let mut bus = Bus::default();
+            bus.expected.push_back(Expected {
+                addr: 0x55,
+                ops: expected,
+                result: Ok(()),
+            });
+            let payload = request(0, 0x55, &ops);
+            let request = TransferRequest::parse(&payload).unwrap();
+            let mut out = [0xFF; 8];
+            let len = block_on(transfer_with(&mut bus, request, &mut out)).unwrap();
+            assert_eq!(&out[..len], read);
+            assert!(out[len..].iter().all(|byte| *byte == 0xFF));
+            assert_eq!(bus.transactions, 1);
+        }
+    }
+
+    #[test]
+    fn merged_writes_fill_the_entire_transfer_limit() {
+        let first = [0xA5; 127];
+        let second = [0x5A; 128];
+        let expected = [first.as_slice(), second.as_slice()].concat();
+        let mut bus = Bus::default();
+        bus.expected.push_back(Expected {
+            addr: 0x55,
+            ops: vec![(false, expected)],
+            result: Ok(()),
+        });
+        let payload = request(0, 0x55, &[Op::Write(&first), Op::Write(&second)]);
+        let request = TransferRequest::parse(&payload).unwrap();
+        assert_eq!(block_on(transfer_with(&mut bus, request, &mut [])), Ok(0));
+        assert_eq!(bus.transactions, 1);
+    }
+
+    #[test]
+    fn merged_reads_check_the_combined_output_capacity_before_the_bus() {
+        let mut bus = Bus::default();
+        let payload = request(0, 0x55, &[Op::Read(2), Op::Read(3)]);
+        let request = TransferRequest::parse(&payload).unwrap();
+        let mut out = [0u8; 4];
+        assert_eq!(
+            block_on(transfer_with(&mut bus, request, &mut out)),
+            Err(Status::NOMEM)
+        );
+        assert_eq!(bus.transactions, 0);
     }
 
     #[test]

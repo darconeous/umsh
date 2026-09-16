@@ -41,9 +41,12 @@ repository.workspace = true
 #   * the retrofitted-K1 user button on P0.02 (see lib.rs)
 
 [features]
+ulcp-i2c = ["umsh-bsp-nrf52840/ulcp-i2c", "dep:umsh-ulcp", "dep:umsh-ulcp-device"]
 default = []
 
 [dependencies]
+umsh-ulcp = { path = "../umsh-ulcp", default-features = false, optional = true }
+umsh-ulcp-device = { path = "../umsh-ulcp-device", default-features = false, optional = true }
 umsh-bsp-nrf52840 = { path = "../umsh-bsp-nrf52840", default-features = false }
 umsh-hal          = { path = "../umsh-hal", default-features = false }
 

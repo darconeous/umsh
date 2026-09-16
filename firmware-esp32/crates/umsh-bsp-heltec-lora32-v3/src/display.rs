@@ -13,9 +13,7 @@
 //! abstraction on top.
 
 use embassy_time::Timer;
-use esp_hal::Async;
 use esp_hal::gpio::Output;
-use esp_hal::i2c::master::I2c;
 use ssd1306::mode::BufferedGraphicsModeAsync;
 use ssd1306::prelude::*;
 use ssd1306::{I2CDisplayInterface, Ssd1306Async};
@@ -73,7 +71,7 @@ pub const fn brightness_from_permille(permille: u16) -> Brightness {
 
 /// The concrete driver type for this board's OLED.
 pub type Display = Ssd1306Async<
-    I2CInterface<I2c<'static, Async>>,
+    I2CInterface<crate::I2cHandle>,
     DisplaySize128x64,
     BufferedGraphicsModeAsync<DisplaySize128x64>,
 >;
@@ -82,7 +80,7 @@ pub type Display = Ssd1306Async<
 /// SSD1306 driver at the board's fixed address, in buffered-graphics
 /// mode. The controller is NOT initialized yet: run [`reset`] and then
 /// `Display::init()` with `Vext` up.
-pub fn new_display(i2c: I2c<'static, Async>) -> Display {
+pub fn new_display(i2c: crate::I2cHandle) -> Display {
     Ssd1306Async::new(
         I2CDisplayInterface::new(i2c),
         DisplaySize128x64,

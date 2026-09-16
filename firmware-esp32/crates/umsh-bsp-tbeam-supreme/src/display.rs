@@ -21,14 +21,12 @@ use embedded_graphics::draw_target::DrawTarget;
 use embedded_graphics::geometry::{OriginDimensions, Size};
 use embedded_graphics::pixelcolor::BinaryColor;
 use embedded_graphics::prelude::Pixel;
-use esp_hal::Async;
-use esp_hal::i2c::master::I2c;
 use umsh_display_sh1106::{Sh1106, Sh1106Fb};
 
 pub use umsh_display_sh1106::probe;
 
-type Bus = I2c<'static, Async>;
-type BusError = esp_hal::i2c::master::Error;
+type Bus = crate::I2cHandle;
+type BusError = embassy_embedded_hal::shared_bus::I2cDeviceError<esp_hal::i2c::master::Error>;
 
 /// Panel brightness, in the two levels the display-attention policy
 /// uses. Mirrors the ssd1306 crate's type so the shared display task
@@ -54,9 +52,8 @@ pub const fn brightness_from_permille(permille: u16) -> Brightness {
 /// surface the shared tracker sources expect: draw into it, `flush` to
 /// push the frame.
 ///
-/// The bus is owned whole: the OLED is the only in-scope device on it.
-/// When the BME280 or magnetometer land, the `Bus` alias becomes a
-/// shared-bus device handle and nothing else changes.
+/// Each panel transaction locks the shared sensor bus, allowing host
+/// access between display updates.
 pub struct Display {
     panel: Sh1106<Bus>,
     fb: Sh1106Fb,

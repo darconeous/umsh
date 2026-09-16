@@ -46,3 +46,6 @@ pub use power::{PowerSignaler, SHUTDOWN_SIGNAL};
 //   pub mod power;          // P0.12 peripheral-rail switch.
 //   pub mod indicators;      // blue LED (P0.14, active-low).
 //   pub mod usb;            // USB-CDC plumbing on top of umsh-bsp-nrf52840.
+
+#[cfg(all(target_os = "none", feature = "ulcp-i2c"))]
+pub mod i2c;

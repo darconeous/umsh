@@ -811,8 +811,9 @@ Note the last two disagree on which of `D6`/`D7` is SDA. Neither is "correct":
 the nRF52840 TWIM peripheral can assign either function to either pin, `D6`/`D7`
 are unconnected on the radio carrier, and there is no board-level convention to
 appeal to. It only matters for matching whatever peripheral is physically wired.
-If UMSH ever grows I²C on this board it should pick one and document it, and it
-should expect third-party accessories built for either firmware to need a swap.
+UMSH exposes bus 0 on D6/P1.11 as SDA and D7/P1.12 as SCL at 100 kHz.
+This uses the otherwise unclaimed GNSS UART pads and leaves NFC unchanged.
+Third-party accessories wired for the opposite assignment need a swap.
 
 MeshCore also declares `PIN_LSM6DS3TR_C_POWER (15)` and the PDM microphone pins,
 inherited from the Sense variant. **The kit's XIAO nRF52840 has neither the IMU

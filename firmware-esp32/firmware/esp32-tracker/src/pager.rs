@@ -11,8 +11,6 @@ use umsh_pager_peripherals::{
 use umsh_ulcp::battery_diagnostics::{
     Fields as BatteryFieldsRequested, Sample as BatterySample, Value as BatteryValue,
 };
-use umsh_ulcp::i2c::{BusInfo, DeviceInfo, ScanRequest, TransferRequest};
-use umsh_ulcp_runtime::i2c::{self as bus_access, Reservation};
 
 #[cfg(feature = "motion-qualification")]
 #[path = "pager_motion_qualification.rs"]
@@ -32,128 +30,6 @@ static GROUP_LOCK: Mutex<CriticalSectionRawMutex, ()> = Mutex::new(());
 static GROUP_GENERATION: AtomicU32 = AtomicU32::new(0);
 static GAUGE_REPORT: critical_section::Mutex<RefCell<Option<heapless::String<192>>>> =
     critical_section::Mutex::new(RefCell::new(None));
-
-// ─── Raw bus access for the host ─────────────────────────────────────────
-
-/// The clock `power_up` configures the bus for.
-const BUS_SPEED_KHZ: u16 = 400;
-
-/// The bus a host may drive through `CMD_I2C_TRANSFER`: the one every
-/// peripheral on this board hangs off. The limits are the session's
-/// ceilings; esp-hal chunks long operations through its FIFO itself.
-pub const I2C_BUSES: &[BusInfo<'static>] = &[BusInfo {
-    bus: 0,
-    speed_khz: BUS_SPEED_KHZ,
-    max_data: umsh_ulcp_device::I2C_DATA_MAX as u16,
-    max_ops: umsh_ulcp_device::I2C_MAX_OPS as u8,
-    name: "I2C0 SDA GPIO3 SCL GPIO2",
-}];
-
-/// What is on the bus, so a host can annotate a scan and think twice
-/// before writing to the charger. The audio codec and the haptic driver
-/// are here because they answer a scan, not because anything in this
-/// firmware drives them.
-pub const I2C_DEVICES: &[DeviceInfo<'static>] = &[
-    DeviceInfo {
-        bus: 0,
-        addr: 0x18,
-        name: "ES8311 audio codec",
-    },
-    DeviceInfo {
-        bus: 0,
-        addr: 0x20,
-        name: "XL9555 I/O expander (power domains)",
-    },
-    DeviceInfo {
-        bus: 0,
-        addr: 0x28,
-        name: "BHI260AP motion sensor",
-    },
-    DeviceInfo {
-        bus: 0,
-        addr: 0x34,
-        name: "TCA8418 keyboard controller",
-    },
-    DeviceInfo {
-        bus: 0,
-        addr: 0x51,
-        name: "PCF85063 real-time clock",
-    },
-    DeviceInfo {
-        bus: 0,
-        addr: GAUGE_ADDRESS,
-        name: "BQ27220 battery gauge",
-    },
-    DeviceInfo {
-        bus: 0,
-        addr: 0x5A,
-        name: "DRV2605 haptic driver",
-    },
-    DeviceInfo {
-        bus: 0,
-        addr: 0x6B,
-        name: "BQ25896 charger",
-    },
-];
-
-const GAUGE_ADDRESS: u8 = 0x55;
-
-/// How long a host transfer waits for the bus before answering
-/// `STATUS_BUSY`. The battery, keyboard, motion, and RTC tasks hold it
-/// for one transaction at a time, so a wait this long means something
-/// is wrong rather than merely busy.
-const BUS_LOCK_TIMEOUT: Duration = Duration::from_secs(2);
-
-/// The gauge, while one of its multi-transaction procedures runs. The
-/// bus mutex is released between the procedure's transactions, and a
-/// host transfer landing in that gap would run inside an unsealed
-/// gauge; the guarded transfer refuses the address instead.
-static GAUGE_PROCEDURE: Reservation = Reservation::new();
-
-/// `DeviceEnv::i2c_transfer` for this board: the shared bus under a
-/// bounded wait, the gauge reservation, and a deadline scaled to the
-/// transfer. Dropping esp-hal's transaction future on the deadline
-/// resets the controller, which is what makes the deadline safe.
-pub async fn host_transfer(
-    bus: &'static board::I2cBus,
-    request: TransferRequest<'_>,
-    out: &mut [u8],
-) -> Result<usize, Status> {
-    if request.bus != I2C_BUSES[0].bus {
-        return Err(Status::ITEM_NOT_FOUND);
-    }
-    let deadline = bus_access::transfer_deadline(request.shape(), BUS_SPEED_KHZ);
-    bus_access::guarded_transfer(
-        bus,
-        &GAUGE_PROCEDURE,
-        BUS_LOCK_TIMEOUT,
-        deadline,
-        request,
-        out,
-    )
-    .await
-}
-
-/// `DeviceEnv::i2c_scan` for this board.
-pub async fn host_scan(
-    bus: &'static board::I2cBus,
-    request: ScanRequest,
-    out: &mut [u8],
-) -> Result<usize, Status> {
-    if request.bus != I2C_BUSES[0].bus {
-        return Err(Status::ITEM_NOT_FOUND);
-    }
-    let deadline = bus_access::scan_deadline(&request, BUS_SPEED_KHZ);
-    bus_access::guarded_scan(
-        bus,
-        &GAUGE_PROCEDURE,
-        BUS_LOCK_TIMEOUT,
-        deadline,
-        request,
-        out,
-    )
-    .await
-}
 
 pub fn take_gauge_report() -> Option<heapless::String<192>> {
     critical_section::with(|cs| GAUGE_REPORT.borrow(cs).borrow_mut().take())
@@ -258,7 +134,8 @@ pub async fn power_up(
     // Read the actual provisioned gauge profile; never enter CFGUPDATE or
     // overwrite capacity/taper/learning parameters. Restore access before proceeding.
     let config = {
-        let _held = GAUGE_PROCEDURE.hold(GAUGE_ADDRESS);
+        #[cfg(feature = "ulcp-i2c")]
+        let _held = board::i2c::GAUGE_PROCEDURE.hold(0x55);
         battery.inspect_configuration(&mut GaugeDelay(rtc)).await
     };
     let mut report = heapless::String::new();
@@ -406,7 +283,8 @@ pub async fn battery_task(bus: &'static board::I2cBus) {
         let mut sample = battery.sample(fields, &mut SampleDelay).await;
         if fields.contains(umsh_ulcp::ids::prop::BATTERY_GAUGE_CONFIG) {
             let inspected = {
-                let _held = GAUGE_PROCEDURE.hold(GAUGE_ADDRESS);
+                #[cfg(feature = "ulcp-i2c")]
+                let _held = board::i2c::GAUGE_PROCEDURE.hold(0x55);
                 battery.inspect_configuration(&mut SampleDelay).await
             };
             sample.gauge_config = inspected.map_err(|error| {

@@ -22,3 +22,6 @@ pub type SpiBus = Mutex<CriticalSectionRawMutex, SpiDma<'static, Async>>;
 pub type SpiHandle =
     SpiDeviceWithConfig<'static, CriticalSectionRawMutex, SpiDma<'static, Async>, Output<'static>>;
 pub type SharedExpander = Mutex<CriticalSectionRawMutex, battery::Expander<I2cHandle>>;
+
+#[cfg(feature = "ulcp-i2c")]
+pub mod i2c;

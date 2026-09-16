@@ -12,17 +12,20 @@ repository.workspace = true
 # with the SX1262 behind the radio mux and the on-board device node.
 
 [features]
+ulcp-i2c = ["umsh-ulcp-runtime/i2c", "umsh-bsp-heltec-lora32-v3/ulcp-i2c"]
 wifi = ["esp-radio/wifi", "esp-radio/coex", "dep:embassy-net", "umsh-ulcp-runtime/wifi"]
 psram = []
 # Board identity. Exactly one is on; it selects the BSP module, the pin
 # and peripheral wiring, the radio's power and band limits, and the
 # static capacities the board's RAM budget allows. This block is kept
-# identical across the ESP32 device boards—only `default` differs.
+# identical across the ESP32 device boards; `default` and BSP feature
+# forwarding select the image's board.
 default = ["board-heltec-v3"]
-board-heltec-v2 = ["chip-esp32", "radio-sx127x", "vext-gates-battery"]
-board-heltec-v3 = ["chip-esp32s3", "radio-sx126x"]
-board-tlora-pager = ["chip-esp32s3", "radio-sx126x", "display-st7796", "wired-usb-serial-jtag", "gnss", "external-rtc"]
+board-heltec-v2 = ["ulcp-i2c", "chip-esp32", "radio-sx127x", "vext-gates-battery"]
+board-heltec-v3 = ["ulcp-i2c", "chip-esp32s3", "radio-sx126x"]
+board-tlora-pager = ["ulcp-i2c", "chip-esp32s3", "radio-sx126x", "display-st7796", "wired-usb-serial-jtag", "gnss", "external-rtc"]
 board-tbeam-supreme = [
+    "ulcp-i2c",
     "chip-esp32s3",
     "radio-sx126x",
     "pmic-axp2101",
@@ -148,3 +151,5 @@ rand_chacha = { version = "0.3", default-features = false }
 rand_core = { version = "0.6", default-features = false }
 static_cell = "2"
 trouble-host = { version = "0.7", default-features = false, features = ["derive", "peripheral", "gatt", "security", "default-packet-pool", "default-packet-pool-mtu-255"] }
+
+embassy-embedded-hal = { version = "0.6", default-features = false }

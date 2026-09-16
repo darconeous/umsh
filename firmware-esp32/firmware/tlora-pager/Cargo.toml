@@ -13,6 +13,7 @@ repository.workspace = true
 # BQ battery telemetry, and XL9555 power domains.
 
 [features]
+ulcp-i2c = ["umsh-ulcp-runtime/i2c", "umsh-bsp-tlora-pager/ulcp-i2c"]
 # Buffer a dark-screen battery-current window and report it on wired traffic.
 # Does not enable BLE debug or change radio/charger settings.
 input-qualification = []
@@ -24,12 +25,14 @@ psram = []
 # Board identity. Exactly one is on; it selects the BSP module, the pin
 # and peripheral wiring, the radio's power and band limits, and the
 # static capacities the board's RAM budget allows. This block is kept
-# identical across the ESP32 device boards—only `default` differs.
+# identical across the ESP32 device boards; `default` and BSP feature
+# forwarding select the image's board.
 default = ["board-tlora-pager", "psram", "wifi", "bridge-client"]
-board-heltec-v2 = ["chip-esp32", "radio-sx127x", "vext-gates-battery"]
-board-heltec-v3 = ["chip-esp32s3", "radio-sx126x"]
-board-tlora-pager = ["chip-esp32s3", "radio-sx126x", "display-st7796", "wired-usb-serial-jtag", "gnss", "external-rtc"]
+board-heltec-v2 = ["ulcp-i2c", "chip-esp32", "radio-sx127x", "vext-gates-battery"]
+board-heltec-v3 = ["ulcp-i2c", "chip-esp32s3", "radio-sx126x"]
+board-tlora-pager = ["ulcp-i2c", "chip-esp32s3", "radio-sx126x", "display-st7796", "wired-usb-serial-jtag", "gnss", "external-rtc"]
 board-tbeam-supreme = [
+    "ulcp-i2c",
     "chip-esp32s3",
     "radio-sx126x",
     "pmic-axp2101",
@@ -110,9 +113,8 @@ umsh-ulcp = { path = "../../../crates/umsh-ulcp", default-features = false }
 umsh-ulcp-device = { path = "../../../crates/umsh-ulcp-device", default-features = false }
 # Board-agnostic device runtime shared with the T-Echo/T-1000E images:
 # session driver, radio mux, transport policy, pairing policy, counter
-# map, and—first on an ESP32 board—the GNSS positioning runtime. `i2c`
-# is the raw bus access a host gets through `CMD_I2C_TRANSFER`.
-umsh-ulcp-runtime = { path = "../../../crates/umsh-ulcp-runtime", features = ["device-node", "gnss", "i2c"] }
+# map, and the GNSS positioning runtime. Raw bus access is feature-gated above.
+umsh-ulcp-runtime = { path = "../../../crates/umsh-ulcp-runtime", features = ["device-node", "gnss"] }
 umsh-crypto = { path = "../../../crates/umsh-crypto", default-features = false, features = ["software-crypto"] }
 umsh-gnss = { path = "../../../crates/umsh-gnss" }
 umsh-hal = { path = "../../../crates/umsh-hal", default-features = false, features = ["embassy"] }

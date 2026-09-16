@@ -2216,10 +2216,10 @@ where
     /// The I2C buses a host may drive directly (`PROP_I2C_BUSES`;
     /// requires `CAP_I2C`), or `None` when the device has none.
     pub async fn i2c_buses(&mut self) -> Result<Option<Vec<I2cBus>>, UlcpError> {
-        if !self.capabilities().await?.contains(&cap::I2C) {
-            return Ok(None);
-        }
-        let value = self.get_prop(prop::I2C_BUSES).await?;
+        let value = match self.get_prop(prop::I2C_BUSES).await {
+            Err(UlcpError::Status(Status::PROP_NOT_FOUND)) => return Ok(None),
+            result => result?,
+        };
         let buses = i2c::buses(&value)
             .map(|bus| {
                 bus.map(|bus| I2cBus {
@@ -2240,10 +2240,10 @@ where
     /// device has no bus at all. Informational: what the firmware's own
     /// drivers talk to, not the result of a scan.
     pub async fn i2c_devices(&mut self) -> Result<Option<Vec<I2cPeripheral>>, UlcpError> {
-        if !self.capabilities().await?.contains(&cap::I2C) {
-            return Ok(None);
-        }
-        let value = self.get_prop(prop::I2C_DEVICES).await?;
+        let value = match self.get_prop(prop::I2C_DEVICES).await {
+            Err(UlcpError::Status(Status::PROP_NOT_FOUND)) => return Ok(None),
+            result => result?,
+        };
         let devices = i2c::devices(&value)
             .map(|device| {
                 device.map(|device| I2cPeripheral {
@@ -2262,7 +2262,8 @@ where
     /// in order, a repeated START on each change of direction, and one
     /// STOP at the end.
     ///
-    /// `Ok(None)` means the device has no bus and nothing was sent;
+    /// Sends the transfer directly, without a capability or device-table
+    /// query. `Ok(None)` means the device returned `STATUS_UNIMPLEMENTED`;
     /// `Ok(Some(data))` is the concatenated read data, empty for a
     /// write-only transfer. The device's refusals surface as statuses:
     /// `STATUS_NO_DEVICE` for an unacknowledged address, `STATUS_NACK`
@@ -2275,21 +2276,22 @@ where
         addr: u8,
         ops: &[i2c::Op<'_>],
     ) -> Result<Option<Vec<u8>>, UlcpError> {
-        if !self.capabilities().await?.contains(&cap::I2C) {
-            return Ok(None);
-        }
         let tid = self.alloc_tid();
         let mut buf = vec![0u8; 4 + ops.iter().map(|op| op.wire_len()).sum::<usize>()];
         let len = i2c::encode_transfer(&mut buf, tid, bus, addr, ops)
             .map_err(|_| UlcpError::Protocol("frame encode"))?;
         self.send(&buf[..len]).await?;
-        self.finish_i2c_transaction(tid).await.map(Some)
+        match self.finish_i2c_transaction(tid).await {
+            Err(UlcpError::Status(Status::UNIMPLEMENTED)) => Ok(None),
+            result => result.map(Some),
+        }
     }
 
     /// Probe a range of 7-bit addresses on `bus` (`CMD_I2C_SCAN`;
     /// requires `CAP_I2C`), `None` for the default 0x08 through 0x77.
     ///
-    /// `Ok(None)` means the device has no bus and nothing was sent;
+    /// Sends the scan directly, without a capability or device-table
+    /// query. `Ok(None)` means the device returned `STATUS_UNIMPLEMENTED`;
     /// `Ok(Some(addresses))` lists what acknowledged, ascending. A probe
     /// is a one-octet read, which some peripherals treat as a real
     /// read, and one that does not acknowledge reads goes unreported,
@@ -2299,15 +2301,15 @@ where
         bus: u8,
         range: Option<(u8, u8)>,
     ) -> Result<Option<Vec<u8>>, UlcpError> {
-        if !self.capabilities().await?.contains(&cap::I2C) {
-            return Ok(None);
-        }
         let tid = self.alloc_tid();
         let mut buf = [0u8; 8];
         let len = i2c::encode_scan(&mut buf, tid, bus, range)
             .map_err(|_| UlcpError::Protocol("frame encode"))?;
         self.send(&buf[..len]).await?;
-        self.finish_i2c_transaction(tid).await.map(Some)
+        match self.finish_i2c_transaction(tid).await {
+            Err(UlcpError::Status(Status::UNIMPLEMENTED)) => Ok(None),
+            result => result.map(Some),
+        }
     }
 
     /// Await the `CMD_I2C_RESULT` answering a transfer or a scan, or the

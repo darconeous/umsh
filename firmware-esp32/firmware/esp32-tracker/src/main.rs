@@ -64,7 +64,6 @@ use core::fmt::Write as _;
 use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU16, AtomicU32, Ordering};
 
 use bt_hci::controller::ExternalController;
-#[cfg(any(feature = "pmic-axp2101", feature = "board-tlora-pager"))]
 use embassy_embedded_hal::shared_bus::asynch::i2c::I2cDevice;
 use embassy_executor::Spawner;
 use embassy_futures::join::join;
@@ -473,17 +472,13 @@ fn session_config() -> SessionConfig {
         ip: None,
         bridge_client: cfg!(feature = "bridge-client"),
         stats: Some(&STATS),
-        // The Pager's shared bus is the one a host may drive: it sits
-        // behind a mutex every on-board driver already takes, so a
-        // host's transaction is one more client of it. The other boards'
-        // buses are owned by their PMIC or display drivers outright.
-        #[cfg(feature = "board-tlora-pager")]
-        i2c_buses: pager::I2C_BUSES,
-        #[cfg(feature = "board-tlora-pager")]
-        i2c_devices: pager::I2C_DEVICES,
-        #[cfg(not(feature = "board-tlora-pager"))]
+        #[cfg(feature = "ulcp-i2c")]
+        i2c_buses: board::i2c::BUSES,
+        #[cfg(feature = "ulcp-i2c")]
+        i2c_devices: board::i2c::DEVICES,
+        #[cfg(not(feature = "ulcp-i2c"))]
         i2c_buses: &[],
-        #[cfg(not(feature = "board-tlora-pager"))]
+        #[cfg(not(feature = "ulcp-i2c"))]
         i2c_devices: &[],
     }
 }
@@ -1447,10 +1442,9 @@ struct BoardDeviceEnv {
     identity_store: ProtoStore,
     identity_rng: IdentityRng,
     node_counters: &'static NodeCountersMutex,
-    /// The shared peripheral bus, for a host's raw `CMD_I2C_TRANSFER`
-    /// and `CMD_I2C_SCAN`; [`pager::host_transfer`] does the guarding.
-    #[cfg(feature = "board-tlora-pager")]
-    i2c: &'static board::I2cBus,
+    /// Host-drivable buses; the BSP guards and routes each request.
+    #[cfg(feature = "ulcp-i2c")]
+    i2c: board::i2c::Buses,
     /// Announce-worthy readings from [`battery_task`], for unsolicited
     /// `PROP_BATTERY` publication.
     #[cfg(not(any(feature = "pmic-axp2101", feature = "board-tlora-pager")))]
@@ -1639,22 +1633,22 @@ impl DeviceEnv for BoardDeviceEnv {
         pager::sample_battery_group(fields).await
     }
 
-    #[cfg(feature = "board-tlora-pager")]
+    #[cfg(feature = "ulcp-i2c")]
     async fn i2c_transfer(
         &mut self,
         request: umsh_ulcp::i2c::TransferRequest<'_>,
         out: &mut [u8],
     ) -> Result<usize, Status> {
-        pager::host_transfer(self.i2c, request, out).await
+        self.i2c.transfer(request, out).await
     }
 
-    #[cfg(feature = "board-tlora-pager")]
+    #[cfg(feature = "ulcp-i2c")]
     async fn i2c_scan(
         &mut self,
         request: umsh_ulcp::i2c::ScanRequest,
         out: &mut [u8],
     ) -> Result<usize, Status> {
-        pager::host_scan(self.i2c, request, out).await
+        self.i2c.scan(request, out).await
     }
 
     /// Publish the reading [`battery_task`] flagged, reduced the same way
@@ -3257,7 +3251,7 @@ async fn device_task(
     identity_rng: IdentityRng,
     node_counters: &'static NodeCountersMutex,
     #[cfg(feature = "external-rtc")] rtc: Option<&'static RtcMutex>,
-    #[cfg(feature = "board-tlora-pager")] i2c: &'static board::I2cBus,
+    #[cfg(feature = "ulcp-i2c")] i2c: board::i2c::Buses,
 ) {
     // The retained hardware reset cause answers the first
     // PROP_LAST_STATUS query; attach itself never modifies it.
@@ -3296,7 +3290,7 @@ async fn device_task(
             identity_store,
             identity_rng,
             node_counters,
-            #[cfg(feature = "board-tlora-pager")]
+            #[cfg(feature = "ulcp-i2c")]
             i2c,
             // The driver is the only receiver; the slot count is sized
             // for exactly that, so this cannot fail.
@@ -4830,6 +4824,56 @@ async fn main(spawner: Spawner) {
     #[cfg(feature = "wired-usb-serial-jtag")]
     spawner.spawn(wired_transport_task(peripherals.USB_DEVICE, panic_report.clone()).unwrap());
 
+    #[cfg(not(any(feature = "pmic-axp2101", feature = "board-tlora-pager")))]
+    vext.enable().await;
+
+    // Construct shared buses before the session can accept host requests.
+    #[cfg(feature = "board-heltec-v3")]
+    let i2c = I2c::new(
+        peripherals.I2C0,
+        I2cConfig::default().with_frequency(Rate::from_khz(400)),
+    )
+    .unwrap()
+    .with_sda(peripherals.GPIO17)
+    .with_scl(peripherals.GPIO18)
+    .into_async();
+    #[cfg(feature = "board-heltec-v2")]
+    let i2c = I2c::new(
+        peripherals.I2C0,
+        I2cConfig::default().with_frequency(Rate::from_khz(400)),
+    )
+    .unwrap()
+    .with_sda(peripherals.GPIO4)
+    .with_scl(peripherals.GPIO15)
+    .into_async();
+    #[cfg(feature = "board-tbeam-supreme")]
+    let i2c = I2c::new(
+        peripherals.I2C0,
+        I2cConfig::default().with_frequency(Rate::from_khz(400)),
+    )
+    .unwrap()
+    .with_sda(peripherals.GPIO17)
+    .with_scl(peripherals.GPIO18)
+    .into_async();
+
+    #[cfg(not(feature = "board-tlora-pager"))]
+    let display_bus: &'static board::I2cBus = {
+        static DISPLAY_BUS: StaticCell<board::I2cBus> = StaticCell::new();
+        DISPLAY_BUS.init(Mutex::new(i2c))
+    };
+    #[cfg(all(feature = "ulcp-i2c", feature = "board-tlora-pager"))]
+    let host_buses = board::i2c::Buses { bus: pmu_bus };
+    #[cfg(all(feature = "ulcp-i2c", feature = "pmic-axp2101"))]
+    let host_buses = board::i2c::Buses {
+        sensor: display_bus,
+        pmu: pmu_bus,
+    };
+    #[cfg(all(
+        feature = "ulcp-i2c",
+        not(any(feature = "pmic-axp2101", feature = "board-tlora-pager"))
+    ))]
+    let host_buses = board::i2c::Buses { bus: display_bus };
+
     // ── The ULCP session ─────────────────────────────────────────────────
     spawner.spawn(
         device_task(
@@ -4842,8 +4886,8 @@ async fn main(spawner: Spawner) {
             node_counters,
             #[cfg(feature = "external-rtc")]
             wall_clock_rtc,
-            #[cfg(feature = "board-tlora-pager")]
-            pmu_bus,
+            #[cfg(feature = "ulcp-i2c")]
+            host_buses,
         )
         .unwrap(),
     );
@@ -4949,38 +4993,9 @@ async fn main(spawner: Spawner) {
     #[cfg(feature = "board-heltec-v2")]
     let mut oled_reset = Output::new(peripherals.GPIO16, Level::High, OutputConfig::default());
 
-    #[cfg(feature = "board-heltec-v3")]
-    let i2c = I2c::new(
-        peripherals.I2C0,
-        I2cConfig::default().with_frequency(Rate::from_khz(400)),
-    )
-    .unwrap()
-    .with_sda(peripherals.GPIO17)
-    .with_scl(peripherals.GPIO18)
-    .into_async();
-    #[cfg(feature = "board-heltec-v2")]
-    let i2c = I2c::new(
-        peripherals.I2C0,
-        I2cConfig::default().with_frequency(Rate::from_khz(400)),
-    )
-    .unwrap()
-    .with_sda(peripherals.GPIO4)
-    .with_scl(peripherals.GPIO15)
-    .into_async();
-    #[cfg(feature = "board-tbeam-supreme")]
-    let i2c = I2c::new(
-        peripherals.I2C0,
-        I2cConfig::default().with_frequency(Rate::from_khz(400)),
-    )
-    .unwrap()
-    .with_sda(peripherals.GPIO17)
-    .with_scl(peripherals.GPIO18)
-    .into_async();
-
     #[cfg(not(any(feature = "display-sh1106", feature = "display-st7796")))]
     {
-        let mut oled = display::new_display(i2c);
-        vext.enable().await;
+        let mut oled = display::new_display(I2cDevice::new(display_bus));
         display::reset(&mut oled_reset).await;
         if oled.init().await.is_ok() {
             spawner.spawn(display_task(oled, vext).unwrap());
@@ -4994,7 +5009,7 @@ async fn main(spawner: Spawner) {
     // stopping the boot.
     #[cfg(feature = "display-sh1106")]
     {
-        let mut i2c = i2c;
+        let mut i2c = I2cDevice::new(display_bus);
         match display::probe(&mut i2c).await {
             Some(addr) => {
                 debug_log(format_args!("oled: sh1106 at 0x{addr:02x}"));

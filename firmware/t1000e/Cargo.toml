@@ -7,15 +7,16 @@ license.workspace = true
 repository.workspace = true
 
 [features]
+ulcp-i2c = ["umsh-ulcp-runtime/i2c", "umsh-bsp-t1000e/ulcp-i2c"]
 # See firmware/techo/Cargo.toml for the capability-feature
-# rationale; this block is kept identical across the device boards, only the
-# `default` differs. Default build = T-1000E.
+# rationale; this block is kept identical across the device boards, the
+# `default` and BSP capability forwarding differ. Default build = T-1000E.
 default = ["board-t1000e"]
-board-techo = ["display-epd", "button-nav", "system-off-techo", "led-active-low", "cap-battery-saadc", "cap-gnss"]
-board-t1000e = ["t1000e", "cap-battery-saadc", "cap-gnss", "gnss-holds-the-clock", "cap-illuminance"]
-board-sensecap-solar = ["cap-battery-saadc", "power-button", "cap-gnss"]
-board-wio-tracker-l1 = ["display-oled", "dpad-nav", "system-off-wio", "cap-battery-saadc", "cap-buzzer", "cap-gnss", "gnss-holds-the-clock"]
-board-xiao-nrf52 = ["cap-battery-saadc", "led-active-low", "boot-pairing-window"]
+board-techo = ["ulcp-i2c", "display-epd", "button-nav", "system-off-techo", "led-active-low", "cap-battery-saadc", "cap-gnss"]
+board-t1000e = ["ulcp-i2c", "t1000e", "cap-battery-saadc", "cap-gnss", "gnss-holds-the-clock", "cap-illuminance"]
+board-sensecap-solar = ["ulcp-i2c", "cap-battery-saadc", "power-button", "cap-gnss"]
+board-wio-tracker-l1 = ["ulcp-i2c", "display-oled", "dpad-nav", "system-off-wio", "cap-battery-saadc", "cap-buzzer", "cap-gnss", "gnss-holds-the-clock"]
+board-xiao-nrf52 = ["ulcp-i2c", "cap-battery-saadc", "led-active-low", "boot-pairing-window"]
 t1000e = []
 cap-battery-saadc = []
 # An ambient light sensor is fitted. Advertises `CAP_ILLUMINANCE` and

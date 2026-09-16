@@ -60,3 +60,6 @@ pub use radio::RF_SWITCH;
 //   pub mod inputs;          // Button (P0.06, active-high, DETECT-aware).
 //   pub mod indicators;      // LED (P0.24), buzzer (P0.25 + EN P1.05).
 //   pub mod battery;          // Battery ADC + charger-state pins.
+
+#[cfg(all(target_os = "none", feature = "ulcp-i2c"))]
+pub mod i2c;

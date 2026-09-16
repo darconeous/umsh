@@ -127,3 +127,17 @@ pub const UNUSED_RAILS: [Rail; 2] = [Rail::Aldo2, Rail::Bldo2];
 
 /// Every switched rail this board runs at 3.3 V.
 pub const RAIL_MILLIVOLTS: u16 = 3300;
+
+#[cfg(feature = "ulcp-i2c")]
+pub mod i2c;
+
+/// Shared controller and per-transaction device handle for display and host access.
+pub type I2cBus = embassy_sync::mutex::Mutex<
+    embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex,
+    esp_hal::i2c::master::I2c<'static, esp_hal::Async>,
+>;
+pub type I2cHandle = embassy_embedded_hal::shared_bus::asynch::i2c::I2cDevice<
+    'static,
+    embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex,
+    esp_hal::i2c::master::I2c<'static, esp_hal::Async>,
+>;

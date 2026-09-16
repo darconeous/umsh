@@ -7,6 +7,7 @@ license.workspace = true
 repository.workspace = true
 
 [features]
+ulcp-i2c = ["umsh-ulcp-runtime/i2c", "umsh-bsp-xiao-nrf52/ulcp-i2c"]
 # See firmware/techo/Cargo.toml for the capability-feature rationale; this
 # block is kept identical across the device boards, only the `default`
 # differs. Default build = Seeed XIAO nRF52840 + Wio-SX1262 Kit.
@@ -22,11 +23,11 @@ repository.workspace = true
 # both upstream firmwares define USE_LFXO), so this board does NOT take
 # `lfclk-rc`.
 default = ["board-xiao-nrf52"]
-board-techo = ["display-epd", "button-nav", "system-off-techo", "led-active-low", "cap-battery-saadc", "cap-gnss"]
-board-t1000e = ["t1000e", "cap-battery-saadc", "cap-gnss", "gnss-holds-the-clock", "cap-illuminance"]
-board-sensecap-solar = ["cap-battery-saadc", "power-button", "cap-gnss"]
-board-wio-tracker-l1 = ["display-oled", "dpad-nav", "system-off-wio", "cap-battery-saadc", "cap-buzzer", "cap-gnss", "gnss-holds-the-clock"]
-board-xiao-nrf52 = ["cap-battery-saadc", "led-active-low", "boot-pairing-window"]
+board-techo = ["ulcp-i2c", "display-epd", "button-nav", "system-off-techo", "led-active-low", "cap-battery-saadc", "cap-gnss"]
+board-t1000e = ["ulcp-i2c", "t1000e", "cap-battery-saadc", "cap-gnss", "gnss-holds-the-clock", "cap-illuminance"]
+board-sensecap-solar = ["ulcp-i2c", "cap-battery-saadc", "power-button", "cap-gnss"]
+board-wio-tracker-l1 = ["ulcp-i2c", "display-oled", "dpad-nav", "system-off-wio", "cap-battery-saadc", "cap-buzzer", "cap-gnss", "gnss-holds-the-clock"]
+board-xiao-nrf52 = ["ulcp-i2c", "cap-battery-saadc", "led-active-low", "boot-pairing-window"]
 t1000e = []
 cap-battery-saadc = []
 # An ambient light sensor is fitted. Advertises `CAP_ILLUMINANCE` and

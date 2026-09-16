@@ -332,7 +332,9 @@ async fn main(spawner: Spawner) {
     .with_sda(peripherals.GPIO17)
     .with_scl(peripherals.GPIO18)
     .into_async();
-    let mut display = display::new_display(i2c);
+    static DISPLAY_BUS: StaticCell<umsh_bsp_heltec_lora32_v3::I2cBus> = StaticCell::new();
+    let bus = DISPLAY_BUS.init(umsh_bsp_heltec_lora32_v3::I2cBus::new(i2c));
+    let mut display = display::new_display(umsh_bsp_heltec_lora32_v3::I2cHandle::new(bus));
 
     vext.enable().await;
     display::reset(&mut oled_reset).await;

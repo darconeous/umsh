@@ -45,3 +45,6 @@ pub use rng::Nrf52840Rng;
 //
 // Planned modules:
 //   pub mod usb;           // embassy-nrf USB driver wrapper.
+
+#[cfg(all(target_os = "none", feature = "i2c"))]
+pub mod i2c;

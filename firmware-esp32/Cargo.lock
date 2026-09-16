@@ -1435,6 +1435,7 @@ name = "firmware-heltec-v2"
 version = "0.1.0"
 dependencies = [
  "bt-hci",
+ "embassy-embedded-hal 0.6.0",
  "embassy-executor",
  "embassy-futures",
  "embassy-net",
@@ -1480,6 +1481,7 @@ name = "firmware-heltec-v3"
 version = "0.1.0"
 dependencies = [
  "bt-hci",
+ "embassy-embedded-hal 0.6.0",
  "embassy-executor",
  "embassy-futures",
  "embassy-net",
@@ -2998,6 +3000,7 @@ dependencies = [
 name = "umsh-bsp-heltec-lora32-v2"
 version = "0.1.0"
 dependencies = [
+ "embassy-embedded-hal 0.6.0",
  "embassy-sync 0.8.0",
  "embassy-time",
  "embedded-hal-async",
@@ -3011,12 +3014,16 @@ dependencies = [
  "umsh-hal",
  "umsh-mac",
  "umsh-radio-loraphy",
+ "umsh-ulcp",
+ "umsh-ulcp-device",
+ "umsh-ulcp-runtime",
 ]
 
 [[package]]
 name = "umsh-bsp-heltec-lora32-v3"
 version = "0.1.0"
 dependencies = [
+ "embassy-embedded-hal 0.6.0",
  "embassy-sync 0.8.0",
  "embassy-time",
  "embedded-hal-bus",
@@ -3029,6 +3036,9 @@ dependencies = [
  "umsh-hal",
  "umsh-mac",
  "umsh-radio-loraphy",
+ "umsh-ulcp",
+ "umsh-ulcp-device",
+ "umsh-ulcp-runtime",
 ]
 
 [[package]]
@@ -3051,6 +3061,9 @@ dependencies = [
  "umsh-mac",
  "umsh-pmic-axp2101",
  "umsh-radio-loraphy",
+ "umsh-ulcp",
+ "umsh-ulcp-device",
+ "umsh-ulcp-runtime",
 ]
 
 [[package]]
@@ -3069,6 +3082,9 @@ dependencies = [
  "umsh-bsp-esp32",
  "umsh-gnss",
  "umsh-pager-peripherals",
+ "umsh-ulcp",
+ "umsh-ulcp-device",
+ "umsh-ulcp-runtime",
 ]
 
 [[package]]

@@ -6,7 +6,13 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[features]
+ulcp-i2c = ["dep:umsh-ulcp", "dep:umsh-ulcp-device", "dep:umsh-ulcp-runtime"]
+
 [dependencies]
+umsh-ulcp = { path = "../../../crates/umsh-ulcp", default-features = false, optional = true }
+umsh-ulcp-device = { path = "../../../crates/umsh-ulcp-device", default-features = false, optional = true }
+umsh-ulcp-runtime = { path = "../../../crates/umsh-ulcp-runtime", default-features = false, features = ["i2c"], optional = true }
 esp-hal = { version = "1.1", default-features = false, features = ["esp32s3", "rt", "unstable"] }
 umsh-bsp-esp32 = { path = "../umsh-bsp-esp32", features = ["esp32s3"] }
 umsh-pager-peripherals = { path = "../../../crates/umsh-pager-peripherals" }

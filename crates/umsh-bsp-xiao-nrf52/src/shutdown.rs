@@ -121,6 +121,8 @@ fn enter_off(reason: ShutdownReason) -> ! {
     // pin matching its SENSE level at System OFF entry fires DETECT and
     // the chip wakes immediately. P0.28, P0.14 and P0.13 are left driving
     // intentionally.
+    tristate_pin(Port::P1, 11); // expansion SDA
+    tristate_pin(Port::P1, 12); // expansion SCL
     tristate_pin(Port::P1, 13); // radio SPI SCK
     tristate_pin(Port::P1, 14); // radio SPI MISO
     tristate_pin(Port::P1, 15); // radio SPI MOSI

@@ -20,11 +20,11 @@
 //!   Bit 0 = topmost pixel of page (lowest y), bit 7 = bottom.
 //!   1 = pixel on (white / lit), 0 = pixel off (black).
 
-use embassy_nrf::twim::Twim;
 use embedded_graphics::draw_target::DrawTarget;
 use embedded_graphics::geometry::{OriginDimensions, Point, Size};
 use embedded_graphics::pixelcolor::BinaryColor;
 use embedded_graphics::prelude::Pixel;
+use embedded_hal_async::i2c::I2c;
 
 pub const WIDTH: usize = 128;
 pub const HEIGHT: usize = 64;
@@ -57,10 +57,10 @@ pub const fn contrast_for(permille: u16) -> u8 {
 
 // ─── Low-level I²C driver ─────────────────────────────────────────────────
 
-pub struct Sh1106<'d>(Twim<'d>);
+pub struct Sh1106<I>(I);
 
-impl<'d> Sh1106<'d> {
-    pub fn new(i2c: Twim<'d>) -> Self {
+impl<I: I2c> Sh1106<I> {
+    pub fn new(i2c: I) -> Self {
         Self(i2c)
     }
 

@@ -81,3 +81,6 @@ pub use power::PowerSignaler;
 //   Phase 2: pub mod power—port the T1000-E battery monitor
 //            (SAADC AIN7/P0.31, gated divider P0.14) with calibrated
 //            slope/offset constants.
+
+#[cfg(all(target_os = "none", feature = "ulcp-i2c"))]
+pub mod i2c;

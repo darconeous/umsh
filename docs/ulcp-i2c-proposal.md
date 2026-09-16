@@ -1,7 +1,9 @@
 # ULCP I2C bus access proposal
 
-Status: implemented and hardware-validated on the Pager, over USB and over the
-mesh, 2026-09-16. This document
+Status: implemented on all nine device boards through the `ulcp-i2c`
+feature. The original Pager implementation was hardware-validated over USB
+and the mesh on 2026-09-16; the BSP migration, shared display buses, and newly
+enabled nRF buses still need bench verification. This document
 records the approved design; the normative definitions are in
 [ULCP I2C Bus Access](protocol/src/ulcp-i2c.md). Capability 60, commands
 25–27, properties 4960–4961, and status codes 24–26 are allocated.
@@ -19,9 +21,11 @@ a node nobody can walk to.
 - Every board with a shared bus keeps it behind an `embassy-sync` mutex
   (`Mutex<CriticalSectionRawMutex, I2c<'static, Async>>`) and hands each
   driver an `I2cDevice` handle. The Pager's battery, keyboard, motion, and RTC
-  tasks share one bus this way; the T-Beam Supreme's PMU bus is the same type.
-  The nRF boards' single bus (the Wio Tracker's OLED) is owned outright by its
-  display driver, and the T-1000E constructs no bus at all.
+  tasks share one bus this way; both T-Beam Supreme buses and the Heltec
+  display buses use the same arrangement.
+  The Wio OLED shares its controller the same way; the other nRF buses
+  are initialized for host access. The nRF shared handles use
+  `ThreadModeRawMutex`, matching their thread-mode executor.
 - The ULCP device runtime routes every board coupling through the
   [`DeviceEnv`](../crates/umsh-ulcp-runtime/src/driver.rs) trait, with
   commands becoming `Effect` variants the session stages and the driver
@@ -55,9 +59,8 @@ the subsystem.
 - `PROP_I2C_BUSES` (4960): `BUS | SPEED_KHZ (u16 LE) | MAX_DATA (u16 LE) |
   MAX_OPS | NAME (UTF-8)`. `MAX_DATA` bounds the sum of octets written and
   read in one transfer; `MAX_OPS` the operation count.
-- `PROP_I2C_DEVICES` (4961): `BUS | ADDR | NAME (UTF-8)`. What the firmware
-  was built knowing is on the bus, so a host can annotate a scan and warn
-  before writing to the charger.
+- `PROP_I2C_DEVICES` (4961): `BUS | ADDR | NAME (UTF-8)`. The firmware's
+  peripheral table, queried explicitly with `umshctl i2c devices`.
 
 ### Commands
 
@@ -121,18 +124,31 @@ a host's benefit.
    checked after the mutex is acquired, and a deadline on the transaction
    (`BUS_ERROR`). The result buffer is a static, not a stack local, because
    the device task's frame is shared across ESP32 images with little headroom.
-4. **Pager.** The one real hook. Bus 0 at 400 kHz with the session's ceilings
-   (255 octets, 16 operations); the six known peripherals listed. The battery
-   task publishes the gauge's address through a drop guard around
-   `ensure_stock_capacity` and `inspect_configuration`, the two
-   multi-transaction procedures in the firmware; every other board advertises
-   no bus. The T-Beam Supreme's PMU bus is the same type and can follow with
-   one table entry.
+4. **Board capability.** Each device image's board feature enables
+   `ulcp-i2c`, forwarding to the runtime and its BSP. The shared tracker uses
+   `board::i2c::{BUSES, DEVICES, Buses}`; the BSP owns bus selection, deadlines,
+   and procedure reservations. The Pager keeps its 400 kHz bus and eight
+   peripheral entries, with its gauge reservation held around configuration
+   inspection. The Heltec V2 and V3 expose their 400 kHz OLED bus, shared by
+   the display and host through per-transaction device handles. The T-Beam
+   Supreme exposes sensor/display bus 0 at 400 kHz and PMU/RTC bus 1 at
+   100 kHz. Sensor access checks ALDO1 and holds the PMU bus through the
+   transaction so a rail change cannot race the check. Display controllers
+   are constructed and their supplies enabled before the session starts.
+   Consecutive reads and writes are coalesced before reaching the HAL.
+   Writes use a bounded 255-byte scratch buffer so the nRF HAL never sees
+   adjacent operations with the same direction. BSPs
+   assert at compile time that both tables fit the session's property
+   buffer. The T-Beam's population labels are abbreviated to keep all eight
+   entries within its 272-byte capacity.
 5. **Host side.** The Tokio client gains `i2c_buses`, `i2c_devices`,
    `i2c_transfer`, and `i2c_scan`, all `Ok(None)` without the capability, with
    a longer wait for the reply than a property read. `umshctl i2c` offers
-   `buses`, `devices`, `scan`, `read`, `write`, and `xfer`, annotates scans from
-   the peripheral table, and warns before writing to a listed address. The
+   `buses`, `devices`, `scan`, `read`, `write`, and `xfer`. Scans print the
+   responding addresses; commands issue only the requested operation,
+   without capability preflights, peripheral-table lookups, or warnings
+   about listed addresses. Unsupported operations use the device's refusal
+   response. The
    simulated device carries a register file at 0x50; the dissector decodes the
    three commands and flags a result going the wrong way.
 
@@ -157,23 +173,96 @@ a host's benefit.
 
 ## Scope boundary
 
-One bus on one board. SMBus block transfers, 10-bit addressing, clock
-speed selection, and bus recovery commands are separate additions, as is a
-mobile client. The Wio Tracker's display bus stays owned by its driver; the
-T-Beam Supreme's PMU bus is a follow-up table entry. The spec makes the
+The configured buses on all nine device boards are exposed. A board
+whose only peripheral is its OLED still supports a real scan; the device
+table identifies that display before a host writes to it. The T-Beam sensor
+table names possible populations, including the SH1106/QMC6310N ambiguity
+at 0x3C; it is not a detected inventory. QMC6309 at 0x7C requires an explicit
+`--first 0x7c --last 0x7c`, outside the unchanged default scan range.
+
+SMBus block transfers, 10-bit addressing, clock speed selection, and bus
+recovery commands are separate additions, as is a mobile client. No protocol
+identifiers or wire formats change with the board capability refactor.
+
+The nRF device images expose the following buses, all at 100 kHz:
+
+| Board | ULCP bus | SDA / SCL | Known devices |
+|---|---|---|---|
+| T-Echo | 0 (TWIM0) | P0.26 / P0.27 | PCF8563 0x51, BME280 0x77; BHI260 0x28 and DRV2605 0x5A on Plus |
+| T-1000E | 0 (TWIM1) | P0.26 / P0.27 | QMA6100P, 0x12 or 0x13 by address strap |
+| SenseCAP Solar | 0 (TWIM0) | P0.09 / P0.10 | Grove expansion; no fixed device inventory |
+| Wio Tracker L1 | 0 (TWIM0) | P0.06 / P0.05 | SH1106 OLED 0x3D |
+| Wio Tracker L1 | 1 (TWIM1) | P1.12 / P1.11 | Grove expansion; no fixed device inventory |
+| XIAO nRF52 kit | 0 (TWIM0) | D6/P1.11 / D7/P1.12 | Expansion; no onboard I2C devices |
+
+T-Echo uses its existing peripheral power-up, which also powers the I2C
+pull-ups. T-1000E powers the accelerometer through P1.07 before exposing its
+bus and turns that rail off at shutdown. Both possible QMA6100P addresses
+are annotations, not a claim that two devices are fitted; they follow the
+[driver's address definitions](https://github.com/meshtastic/QMA6100P_Arduino_Library/blob/main/src/QMA6100P.h).
+Solar enables embassy-nrf's `nfc-pins-as-gpio` feature for the Grove pins;
+its initialization clears the NFC pin configuration in UICR and resets once
+if needed. XIAO uses the currently unused D6/D7 pads, leaving NFC alone;
+those pads are consequently unavailable for a future GNSS UART without
+changing this pin assignment. External expansion peripherals need suitable
+I2C pull-ups.
+
+Wio's radio moves from SPIM1 to SPIM2, keeping the same pins, to free TWIM1
+for Grove. Its OLED driver takes a shared bus handle in the device image;
+the console harness can still give it an owned controller. Shutdown paths
+park the newly claimed bus pins alongside the other peripheral signals.
+
+The spec makes the
 interleaving limitation explicit rather than promising a host an exclusive
 session, and documents the indeterminacy of a node-resetting write over the
 mesh rather than papering over it.
 
+## Known nRF recovery limitation
+
+Host I2C is enabled on the nRF boards before cancellation recovery is fixed,
+per the approved implementation scope. embassy-nrf 0.11 does not confirm
+EasyDMA shutdown before returning from some error paths or when its
+transaction future is dropped. The host deadlines therefore remain a known
+risk: a timed-out or errored operation can leave DMA active against buffers
+that have been released. This has not been hardware-qualified.
+
+The follow-up is a BSP recovery wrapper that resumes a suspended transfer,
+stops it, confirms STOPPED synchronously within a hard bound, and resets
+without returning if shutdown cannot be confirmed. The same treatment is
+needed on errors. No HAL fork or dependency patch is introduced here.
+
 ## Validation record
 
-Automated: wire-crate, session, runtime (with `i2c`), simulator, umbrella
-protocol and mesh tests, Node Management binding tests, umshctl unit tests, and
-the dissector suite all pass; the Pager, Heltec V3, T-Beam Supreme, Heltec V2,
-and T-1000E images type-check.
+Board capability refactor, 2026-09-16:
 
-Hardware, on the attached Pager over USB: `i2c buses` and `i2c devices` report
-the table; `i2c scan 0` finds every chip the
+- Wire-crate, session, and runtime tests pass with `i2c`, including
+  consecutive reads, consecutive writes, mixed operations, combined read
+  capacity, and table-size validation against the property encoder.
+- All four ESP32 device images type-check both with host I2C enabled and
+  with its board-feature forwarding temporarily removed. Heltec V2 uses
+  `ESP_HAL_CONFIG_MIN_CHIP_REVISION=100`. The Heltec V3 console harness also
+  type-checks with the shared display handle.
+- All five nRF device images type-check both with host I2C enabled and
+  with its board-feature forwarding temporarily removed. The Wio console
+  harness also type-checks with its owned display controller.
+- All five nRF device images link in release mode with host I2C enabled.
+- Pager, Heltec V3, and T-Beam Supreme release builds pass after write
+  coalescing, including their stack checks. Main-stack space / largest frame
+  / required reserve, in bytes: Pager 54,972 / 21,840 / 32,768;
+  Heltec V3 90,396 / 29,456 / 8,192; T-Beam 45,148 / 21,600 / 8,192.
+- The protocol book builds with `make docs`.
+- No boards were available for this refactor's hardware checks. Boot,
+  register reads, scan/display coexistence, and the T-Beam's population and
+  rail-off checks remain pending. The earlier Pager results below do not
+  qualify the revised images.
+
+Original implementation, automated: wire-crate, session, runtime (with
+`i2c`), simulator, umbrella protocol and mesh tests, Node Management binding
+tests, umshctl unit tests, and the dissector suite all pass; the Pager,
+Heltec V3, T-Beam Supreme, Heltec V2, and T-1000E images type-check.
+
+Original implementation, hardware on the Pager over USB: `i2c buses` and
+`i2c devices` report the table; `i2c scan 0` finds every chip the
 [hardware notes](hardware/lilygo-t-lora-pager-hardware.md) list, including the
 ES8311 codec and the DRV2605 haptic driver, which nothing in the firmware
 drives and which are now in the table so a scan is fully annotated;

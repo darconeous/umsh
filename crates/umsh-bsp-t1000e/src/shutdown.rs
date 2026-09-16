@@ -137,6 +137,9 @@ async fn enter_system_off() -> ! {
     //
     // The AG3335 GNSS is handled just below, and is the one peripheral here
     // that is deliberately not fully powered down.
+    drive_pin_low(Port::P1, 7); // accelerometer supply off
+    tristate_pin(Port::P0, 26); // I2C SDA
+    tristate_pin(Port::P0, 27); // I2C SCL
     tristate_pin(Port::P0, 24); // LED
     tristate_pin(Port::P0, 25); // Buzzer PWM
     tristate_pin(Port::P1, 5); // Buzzer enable

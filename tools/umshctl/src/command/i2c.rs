@@ -4,21 +4,19 @@
 //!
 //! What the firmware's own drivers would do to a gauge or a charger, done
 //! from the host instead: one transaction per command, with the device
-//! serializing it against its own traffic. The peripheral table is a
-//! courtesy, not a gate—a write to a listed address draws a warning and
-//! goes ahead, because the point of the tool is to reach exactly those
-//! chips.
+//! serializing it against its own traffic. Bus and peripheral tables are
+//! queried only by their explicit listing commands.
 
 use std::str::FromStr;
 
 use anyhow::{Result, anyhow, bail};
 
-use umsh::ulcp::{FrameLink, I2cPeripheral, UlcpDevice, UlcpError};
+use umsh::ulcp::{FrameLink, UlcpDevice, UlcpError};
 use umsh::ulcp_wire::Status;
 use umsh::ulcp_wire::i2c::{ADDRESS_MAX, Op, SCAN_DEFAULT_FIRST, SCAN_DEFAULT_LAST};
 
 use super::values::{BytesArg, parse_u32};
-use crate::output::{field, hex, subfield, warn};
+use crate::output::{field, hex, subfield};
 
 #[derive(Debug, clap::Subcommand)]
 pub enum I2cOp {
@@ -191,7 +189,6 @@ pub async fn run<L: FrameLink>(device: &mut UlcpDevice<L>, op: I2cOp) -> Result<
                     last.unwrap_or(SCAN_DEFAULT_LAST),
                 )),
             };
-            let known = known_peripherals(device).await?;
             let found = device
                 .i2c_scan(bus, range)
                 .await
@@ -201,15 +198,7 @@ pub async fn run<L: FrameLink>(device: &mut UlcpDevice<L>, op: I2cOp) -> Result<
                 println!("nothing acknowledged");
             }
             for addr in found {
-                let name = known
-                    .iter()
-                    .find(|p| p.bus == bus && p.addr == addr)
-                    .map_or("", |p| p.name.as_str());
-                if name.is_empty() {
-                    println!("0x{addr:02x}");
-                } else {
-                    println!("0x{addr:02x}  {name}");
-                }
+                println!("0x{addr:02x}");
             }
             Ok(())
         }
@@ -229,15 +218,11 @@ pub async fn run<L: FrameLink>(device: &mut UlcpDevice<L>, op: I2cOp) -> Result<
             Ok(())
         }
         I2cOp::Write { bus, addr, data } => {
-            warn_if_known(device, bus, addr).await?;
             transfer(device, bus, addr, &[Op::Write(&data.0)]).await?;
             println!("ok");
             Ok(())
         }
         I2cOp::Xfer { bus, addr, ops } => {
-            if ops.iter().any(|op| matches!(op, XferOp::Write(_))) {
-                warn_if_known(device, bus, addr).await?;
-            }
             let ops: Vec<Op<'_>> = ops.iter().map(XferOp::as_op).collect();
             let data = transfer(device, bus, addr, &ops).await?;
             if data.is_empty() {
@@ -263,33 +248,8 @@ async fn transfer<L: FrameLink>(
         .ok_or_else(no_bus)
 }
 
-/// The peripheral table, or nothing when the device has none to offer;
-/// a failed courtesy lookup never stops the command it decorates.
-async fn known_peripherals<L: FrameLink>(device: &mut UlcpDevice<L>) -> Result<Vec<I2cPeripheral>> {
-    match device.i2c_devices().await {
-        Ok(devices) => Ok(devices.unwrap_or_default()),
-        Err(UlcpError::Status(_)) => Ok(Vec::new()),
-        Err(error) => Err(error.into()),
-    }
-}
-
-async fn warn_if_known<L: FrameLink>(device: &mut UlcpDevice<L>, bus: u8, addr: u8) -> Result<()> {
-    if let Some(peripheral) = known_peripherals(device)
-        .await?
-        .into_iter()
-        .find(|p| p.bus == bus && p.addr == addr)
-    {
-        warn(format!(
-            "0x{addr:02x} on bus {bus} is the firmware's {}; its driver keeps using it \
-             between your commands",
-            peripheral.name
-        ));
-    }
-    Ok(())
-}
-
 fn no_bus() -> anyhow::Error {
-    anyhow!("this device offers no I2C bus (no CAP_I2C)")
+    anyhow!("this device does not support the requested I2C operation")
 }
 
 /// Put the bus-specific statuses into words; everything else keeps the

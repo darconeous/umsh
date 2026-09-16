@@ -119,6 +119,8 @@ async fn enter_off(reason: ShutdownReason) -> ! {
     // matching its SENSE level at System OFF entry fires DETECT and the chip
     // wakes immediately. P0.28 (radio reset) and P0.14 (divider gate) are
     // left driving intentionally; P1.01 and P1.07 are the wake sources.
+    tristate_pin(Port::P0, 9); // Grove SDA
+    tristate_pin(Port::P0, 10); // Grove SCL
     tristate_pin(Port::P1, 13); // radio SPI SCK
     tristate_pin(Port::P1, 14); // radio SPI MISO
     tristate_pin(Port::P1, 15); // radio SPI MOSI

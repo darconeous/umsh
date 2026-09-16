@@ -30,14 +30,18 @@ repository.workspace = true
 #
 #   * Quectel L76K GNSS power sequencing (P1.05 enable, P0.02 standby)—Phase 7
 #
+# Grove / expansion I²C (P0.09/P0.10) is exposed by `ulcp-i2c`.
+#
 # Out of scope for bringup (planned but not yet):
-#   * Grove / expansion I²C bus (P0.09/P0.10, NFC pins)
 #   * QSPI external flash (P25Q16H)—reserved, NV stays on internal NVMC
 
 [features]
+ulcp-i2c = ["umsh-bsp-nrf52840/ulcp-i2c", "dep:umsh-ulcp", "dep:umsh-ulcp-device"]
 default = []
 
 [dependencies]
+umsh-ulcp = { path = "../umsh-ulcp", default-features = false, optional = true }
+umsh-ulcp-device = { path = "../umsh-ulcp-device", default-features = false, optional = true }
 umsh-bsp-nrf52840 = { path = "../umsh-bsp-nrf52840", default-features = false }
 umsh-hal          = { path = "../umsh-hal", default-features = false }
 # Power sequencing for the on-board Quectel L76K, as a `umsh-gnss` Power

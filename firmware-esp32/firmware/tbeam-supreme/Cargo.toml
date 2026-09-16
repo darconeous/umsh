@@ -14,18 +14,21 @@ repository.workspace = true
 # the AXP2101.
 
 [features]
+ulcp-i2c = ["umsh-ulcp-runtime/i2c", "umsh-bsp-tbeam-supreme/ulcp-i2c"]
 bridge-client = ["wifi", "psram", "dep:umsh-bridge-client", "dep:embedded-tls", "umsh-ulcp-runtime/bridge-client", "embassy-net/tcp", "embassy-net/dns"]
 wifi = ["esp-radio/wifi", "esp-radio/coex", "dep:embassy-net", "umsh-ulcp-runtime/wifi"]
 psram = []
 # Board identity. Exactly one is on; it selects the BSP module, the pin
 # and peripheral wiring, the radio's power and band limits, and the
 # static capacities the board's RAM budget allows. This block is kept
-# identical across the ESP32 device boards—only `default` differs.
+# identical across the ESP32 device boards; `default` and BSP feature
+# forwarding select the image's board.
 default = ["board-tbeam-supreme", "psram", "wifi", "bridge-client"]
-board-heltec-v2 = ["chip-esp32", "radio-sx127x", "vext-gates-battery"]
-board-heltec-v3 = ["chip-esp32s3", "radio-sx126x"]
-board-tlora-pager = ["chip-esp32s3", "radio-sx126x", "display-st7796", "wired-usb-serial-jtag", "gnss", "external-rtc"]
+board-heltec-v2 = ["ulcp-i2c", "chip-esp32", "radio-sx127x", "vext-gates-battery"]
+board-heltec-v3 = ["ulcp-i2c", "chip-esp32s3", "radio-sx126x"]
+board-tlora-pager = ["ulcp-i2c", "chip-esp32s3", "radio-sx126x", "display-st7796", "wired-usb-serial-jtag", "gnss", "external-rtc"]
 board-tbeam-supreme = [
+    "ulcp-i2c",
     "chip-esp32s3",
     "radio-sx126x",
     "pmic-axp2101",

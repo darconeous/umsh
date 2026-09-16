@@ -79,9 +79,8 @@ Figure: Peripheral item format
 **BUS** is a bus from `PROP_I2C_BUSES`, **ADDR** the peripheral's 7-bit
 address, and **NAME** UTF-8 display text naming the part, at most 64
 octets. This is what the firmware was built knowing, not what a scan
-found: a host uses it to annotate a scan and to recognize an address
-whose peripheral the device depends on before writing to it. A device
-with `CAP_I2C` and no such knowledge reports an empty table.
+found. A host may query this table explicitly for peripheral information.
+A device with `CAP_I2C` and no such knowledge reports an empty table.
 
 A `CMD_PROP_SET`, `CMD_PROP_INSERT`, or `CMD_PROP_REMOVE` of either
 property is `STATUS_INVALID_ARGUMENT`.
@@ -289,5 +288,5 @@ Management the same access is granted to every listed administrator,
 who can already factory-reset the node and rewrite its identity; the
 bus adds the ability to damage the hardware's configuration rather than
 just the node's. An operator lists administrators accordingly.
-`PROP_I2C_DEVICES` tells a host which addresses the device itself
-depends on; a host tool warns before writing to one of them.
+`PROP_I2C_DEVICES` provides peripheral information on explicit request;
+scans and transfers do not require a preliminary query of this table.

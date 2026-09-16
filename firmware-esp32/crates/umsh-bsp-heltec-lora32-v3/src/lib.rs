@@ -68,3 +68,17 @@ pub const BATTERY_DIVIDER_RATIO_X10: u16 = 49;
 // CP2102 USB-UART bridge on UART0.
 pub const UART0_TX: u8 = 43;
 pub const UART0_RX: u8 = 44;
+
+#[cfg(feature = "ulcp-i2c")]
+pub mod i2c;
+
+/// Shared controller and per-transaction device handle for display and host access.
+pub type I2cBus = embassy_sync::mutex::Mutex<
+    embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex,
+    esp_hal::i2c::master::I2c<'static, esp_hal::Async>,
+>;
+pub type I2cHandle = embassy_embedded_hal::shared_bus::asynch::i2c::I2cDevice<
+    'static,
+    embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex,
+    esp_hal::i2c::master::I2c<'static, esp_hal::Async>,
+>;
