@@ -244,20 +244,10 @@ pub async fn power_up(
         .expect("Pager XL9555 power initialization");
     let mut battery = Battery::new(I2cDevice::new(bus));
     println!("pager: configuring battery telemetry");
-    let charger = battery
-        .init()
+    battery
+        .start_telemetry()
         .await
-        .expect("Pager charger profile initialization");
-    // Retain the actual inherited and verified settings until the first USB
-    // response. This makes charge-termination migration diagnosable after boot.
-    let mut report = heapless::String::new();
-    let _ = write!(
-        report,
-        "pager charger-init: reg04..07 before={:02x?} after={:02x?}\r\n",
-        charger.before, charger.after
-    );
-    critical_section::with(|cs| *GAUGE_REPORT.borrow(cs).borrow_mut() = Some(report));
-    // Configuration waits may outlast the normal startup watchdog window.
+        .expect("Pager battery telemetry initialization");
     struct GaugeDelay<'a>(&'a mut Rtc<'static>);
     impl embedded_hal_async::delay::DelayNs for GaugeDelay<'_> {
         async fn delay_ns(&mut self, ns: u32) {
@@ -265,31 +255,45 @@ pub async fn power_up(
             Timer::after(Duration::from_nanos(u64::from(ns))).await;
         }
     }
-    let capacity = {
+    // Read the actual provisioned gauge profile; never enter CFGUPDATE or
+    // overwrite capacity/taper/learning parameters. Restore access before proceeding.
+    let config = {
         let _held = GAUGE_PROCEDURE.hold(GAUGE_ADDRESS);
-        battery.ensure_stock_capacity(&mut GaugeDelay(rtc)).await
+        battery.inspect_configuration(&mut GaugeDelay(rtc)).await
     };
-    match capacity {
-        Ok(config) => println!(
-            "pager: gauge profile {}: design={} mAh full={} mAh taper={} mA",
-            if config.changed {
-                "corrected"
-            } else {
-                "retained"
-            },
-            config.design_mah,
-            config.full_mah,
-            config.taper_ma,
-        ),
-        Err(error) => println!("pager: gauge profile configuration failed: {error:?}"),
+    let mut report = heapless::String::new();
+    match config {
+        Ok(config) => {
+            let taper = config.taper_current_ma();
+            match battery.limit_termination(taper).await {
+                Ok(limit) => {
+                    let _ = write!(
+                        report,
+                        "pager termination: taper={taper} mA cutoff={}->{} mA watchdog_disabled={}\r\n",
+                        limit.before_ma, limit.after_ma, limit.watchdog_disabled
+                    );
+                }
+                Err(error) => {
+                    let _ = write!(
+                        report,
+                        "pager termination: FAILED taper={taper} mA {error:?}\r\n"
+                    );
+                }
+            }
+        }
+        Err(error) => {
+            let _ = write!(report, "pager termination: FAILED gauge read {error:?}\r\n");
+        }
     }
+    println!("{}", report.trim_end());
+    critical_section::with(|cs| *GAUGE_REPORT.borrow(cs).borrow_mut() = Some(report));
     if let Ok(gauge) = battery.diagnostics().await {
         println!("pager: gauge readings: {gauge:?}");
     }
     if let Ok(reading) = battery.read().await {
         VBUS_PRESENT.store(reading.vbus, Ordering::Release);
     }
-    println!("pager: I2C power domains and charger configured");
+    println!("pager: I2C power domains and battery telemetry ready");
     (bus, EXPANDER.init(Mutex::new(expander)))
 }
 

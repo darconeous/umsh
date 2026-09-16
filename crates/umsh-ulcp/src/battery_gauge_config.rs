@@ -97,6 +97,10 @@ impl Default for Config {
 }
 
 impl Config {
+    pub fn taper_current_ma(&self) -> u16 {
+        self.value(9) as u16
+    }
+
     pub fn value(&self, index: usize) -> u32 {
         let start = offset(index);
         self.data[start..start + FIELDS[index].width]

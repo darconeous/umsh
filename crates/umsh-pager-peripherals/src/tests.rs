@@ -329,6 +329,10 @@ fn inspection_block(ops: &mut Vec<Op>, address: u16, bad_checksum: bool) {
     if address == 0x929a {
         block[2..9].copy_from_slice(&[0, 0x10, 0x2a, 5, 0x5c, 5, 0xdc]);
     }
+    if address == 0x91fb {
+        // Taper current at 0x9201, BE 220 mA.
+        block[8..10].copy_from_slice(&[0, 220]);
+    }
     block[34] = !block[..34].iter().copied().fold(0u8, u8::wrapping_add);
     if bad_checksum {
         block[34] ^= 1;
@@ -391,6 +395,7 @@ fn inspection_reads_ram_preserves_access_and_never_writes_parameters() {
             [result.value(3), result.value(4), result.value(5)],
             [0x102a, 1372, 1500]
         );
+        assert_eq!(result.taper_current_ma(), 220);
     }
 }
 
@@ -447,296 +452,96 @@ fn inspection_does_not_exit_existing_configuration_mode() {
     );
 }
 
-fn gauge_taper_read(ops: &mut Vec<Op>, taper: u16) {
-    ops.push(Op::Write(0x55, vec![0x3e, 1]));
-    ops.push(Op::Write(0x55, vec![0x3f, 0x92]));
-    let mut block = vec![0; 36];
-    block[..2].copy_from_slice(&[1, 0x92]);
-    block[2..4].copy_from_slice(&taper.to_be_bytes());
-    block[34] = !block[..34].iter().copied().fold(0u8, u8::wrapping_add);
-    block[35] = 36;
-    ops.push(Op::Read(0x55, vec![0x3e], block));
-}
-
-fn gauge_access(ops: &mut Vec<Op>, security: u16, taper: u16) {
-    if security == 6 {
-        inspection_unseal(ops);
-    }
-    if security != 2 {
-        gauge_command(ops, 0xffff);
-        gauge_command(ops, 0xffff);
-        gauge_word(ops, 0x3a, 2);
-    }
-    gauge_taper_read(ops, taper);
-}
-
-fn gauge_begin_update(ops: &mut Vec<Op>, security: u16) {
-    gauge_access(ops, security, 220);
-    gauge_command(ops, 0x0090);
-}
-
-fn gauge_restore(ops: &mut Vec<Op>, security: u16) {
-    if security != 2 {
-        gauge_word(ops, 0x3a, 2);
-        gauge_command(ops, 0x0030);
-        gauge_word(ops, 0x3a, 6);
-        if security == 4 {
-            inspection_unseal(ops);
-        }
-    }
-}
-
-fn gauge_finish_update(ops: &mut Vec<Op>, security: u16) {
-    gauge_command(ops, 0x0091);
-    gauge_word(ops, 0x3a, 2);
-    gauge_restore(ops, security);
-}
-
-fn gauge_capacity_transfer(ops: &mut Vec<Op>, readback: [u8; 6]) {
-    // Independent wire fixture: RAM address 0x929D, two BE 1800 mAh
-    // parameters (0x0708), checksum 0xB2, total command length eight.
-    for (reg, value) in [
-        (0x3e, 0x9d),
-        (0x3f, 0x92),
-        (0x40, 0x07),
-        (0x41, 0x08),
-        (0x42, 0x07),
-        (0x43, 0x08),
-        (0x60, 0xb2),
-        (0x61, 8),
-        (0x3e, 0x9d),
-        (0x3f, 0x92),
+#[test]
+fn termination_margin_rounds_down_without_overflow_or_unrepresentable_minimum() {
+    use crate::power::termination_limit_code;
+    for (taper, expected) in [
+        (0, None),
+        (85, None),
+        (86, Some(0)),
+        (100, Some(0)),
+        (220, Some(1)),
+        (256, Some(2)),
+        (65535, Some(15)),
     ] {
-        ops.push(Op::Write(0x55, vec![reg, value]));
+        assert_eq!(termination_limit_code(taper), expected);
     }
-    ops.push(Op::Read(0x55, vec![0x3e], readback.to_vec()));
-}
-
-#[test]
-fn gauge_correct_profile_preserves_learned_full_capacity_without_parameter_writes() {
-    let mut ops = Vec::new();
-    gauge_word(&mut ops, 0x3a, 0x26);
-    gauge_word(&mut ops, 0x3c, 1800);
-    gauge_word(&mut ops, 0x12, 1372);
-    gauge_access(&mut ops, 6, 220);
-    gauge_restore(&mut ops, 6);
-    let result = embassy_futures::block_on(
-        Battery::new(Bus(ops.into())).ensure_stock_capacity(&mut GaugeDelay::default()),
-    )
-    .unwrap();
-    assert_eq!(
-        result,
-        crate::gauge::CapacityConfig {
-            changed: false,
-            design_mah: 1800,
-            full_mah: 1372,
-            taper_ma: 220,
-        }
-    );
-}
-
-#[test]
-fn gauge_repairs_default_capacity_and_restores_each_access_mode() {
-    for security in [2, 4, 6] {
-        let mut ops = Vec::new();
-        gauge_word(&mut ops, 0x3a, 0x20 | security);
-        gauge_word(&mut ops, 0x3c, 3000);
-        gauge_word(&mut ops, 0x12, 2872);
-        gauge_begin_update(&mut ops, security);
-        gauge_word(&mut ops, 0x3a, 0x402);
-        gauge_capacity_transfer(&mut ops, [0x9d, 0x92, 7, 8, 7, 8]);
-        gauge_finish_update(&mut ops, security);
-        gauge_word(&mut ops, 0x3c, 1800);
-        gauge_word(&mut ops, 0x12, 1800);
-        let mut delay = GaugeDelay::default();
-        let result = embassy_futures::block_on(
-            Battery::new(Bus(ops.into())).ensure_stock_capacity(&mut delay),
-        )
-        .unwrap();
-        assert!(result.changed);
-        assert_eq!((result.design_mah, result.full_mah), (1800, 1800));
-        assert!(
-            delay.0.windows(8).any(|window| window
-                == [
-                    100_000, 10_000_000, 100_000, 10_000_000, 100_000, 100_000, 100_000, 100_000
-                ]),
-            "RAM selection must settle before writing the four capacity bytes"
-        );
-        assert!(
-            delay.0.contains(&1_100_000_000),
-            "configuration settling delay"
-        );
-        assert!(
-            delay.0.contains(&2_000_000_000),
-            "standard-command readback settling delay"
-        );
+    for taper in 86..=u16::MAX {
+        let current = 64 * (u32::from(termination_limit_code(taper).unwrap()) + 1);
+        assert!(current * 4 <= u32::from(taper) * 3);
     }
 }
 
 #[test]
-fn gauge_taper_migration_preserves_learned_capacity_unless_design_changes() {
-    for design in [1500, 1800] {
-        for readback in [100, 220] {
-            let mut ops = Vec::new();
-            gauge_word(&mut ops, 0x3a, 0xa6);
-            gauge_word(&mut ops, 0x3c, design);
-            gauge_word(&mut ops, 0x12, 1372);
-            gauge_access(&mut ops, 6, 100);
-            gauge_command(&mut ops, 0x0090);
-            gauge_word(&mut ops, 0x3a, 0x402);
-            // Address 0x9201, BE 220 mA (0x00DC), checksum 0x90.
-            for (reg, value) in [
-                (0x3e, 1),
-                (0x3f, 0x92),
-                (0x40, 0),
-                (0x41, 0xdc),
-                (0x60, 0x90),
-                (0x61, 6),
-            ] {
-                ops.push(Op::Write(0x55, vec![reg, value]));
+fn termination_check_only_lowers_cutoff_and_disables_watchdog_with_verified_readback() {
+    for (old, after, taper) in [(0x12, 0x11, 220), (0xa0, 0xa0, 220), (0x13, 0x10, 100)] {
+        for watchdog in [0x8d, 0xbd] {
+            let mut ops = vec![
+                Op::Read(0x6b, vec![5], vec![old]),
+                Op::Read(0x6b, vec![7], vec![watchdog]),
+            ];
+            if watchdog != 0x8d {
+                ops.push(Op::Write(0x6b, vec![7, 0x8d]));
             }
-            gauge_taper_read(&mut ops, readback);
-            if readback == 220 && design != 1800 {
-                gauge_capacity_transfer(&mut ops, [0x9d, 0x92, 7, 8, 7, 8]);
+            ops.push(Op::Read(0x6b, vec![7], vec![0x8d]));
+            if old != after {
+                ops.push(Op::Write(0x6b, vec![5, after]));
             }
-            gauge_finish_update(&mut ops, 6);
-            let expected_full = if design == 1800 { 1372 } else { 1800 };
-            if readback == 220 {
-                gauge_word(&mut ops, 0x3c, 1800);
-                gauge_word(&mut ops, 0x12, expected_full);
-            }
-            let mut delay = GaugeDelay::default();
-            let result = embassy_futures::block_on(
-                Battery::new(Bus(ops.into())).ensure_stock_capacity(&mut delay),
-            );
-            if readback == 220 {
-                let result = result.unwrap();
-                assert!(result.changed);
-                assert_eq!((result.full_mah, result.taper_ma), (expected_full, 220));
-            } else {
-                assert_eq!(result, Err(crate::gauge::ConfigError::TaperVerify(100)));
-            }
-            assert_eq!(delay.0.iter().filter(|&&ns| ns == 4_000_000_000).count(), 2);
+            ops.push(Op::Read(0x6b, vec![5], vec![after]));
+            let result =
+                embassy_futures::block_on(Battery::new(Bus(ops.into())).limit_termination(taper))
+                    .unwrap();
+            assert_eq!(result.before_ma, 64 * (u16::from(old & 15) + 1));
+            assert_eq!(result.after_ma, 64 * (u16::from(after & 15) + 1));
+            assert_eq!(result.watchdog_disabled, watchdog != 0x8d);
         }
     }
 }
 
 #[test]
-fn gauge_failed_transfer_exits_configuration_and_reseals_without_commit() {
-    let mut ops = Vec::new();
-    gauge_word(&mut ops, 0x3a, 6);
-    gauge_word(&mut ops, 0x3c, 3000);
-    gauge_word(&mut ops, 0x12, 2872);
-    gauge_begin_update(&mut ops, 6);
-    gauge_word(&mut ops, 0x3a, 0x402);
-    ops.push(Op::Write(0x55, vec![0x3e, 0x9d]));
-    ops.push(Op::Write(0x55, vec![0x3f, 0x92]));
-    ops.push(Op::FailedWrite(0x55, vec![0x40, 7]));
-    gauge_finish_update(&mut ops, 6);
-    let result = embassy_futures::block_on(
-        Battery::new(Bus(ops.into())).ensure_stock_capacity(&mut GaugeDelay::default()),
-    );
-    assert_eq!(result, Err(crate::gauge::ConfigError::Bus(ErrorKind::Bus)));
-}
-
-#[test]
-fn gauge_rejected_checksum_is_detected_and_exits_configuration() {
-    let mut ops = Vec::new();
-    gauge_word(&mut ops, 0x3a, 2);
-    gauge_word(&mut ops, 0x3c, 3000);
-    gauge_word(&mut ops, 0x12, 2872);
-    gauge_begin_update(&mut ops, 2);
-    gauge_word(&mut ops, 0x3a, 0x402);
-    gauge_capacity_transfer(&mut ops, [0x9d, 0x92, 0x0b, 0xb8, 0x0b, 0xb8]);
-    gauge_finish_update(&mut ops, 2);
-    let result = embassy_futures::block_on(
-        Battery::new(Bus(ops.into())).ensure_stock_capacity(&mut GaugeDelay::default()),
-    );
-    assert_eq!(
-        result,
-        Err(crate::gauge::ConfigError::MemoryVerify([
-            0x9d, 0x92, 0x0b, 0xb8, 0x0b, 0xb8
-        ]))
-    );
-}
-
-#[test]
-fn gauge_configuration_timeout_is_bounded_and_cleans_up() {
-    let mut ops = Vec::new();
-    gauge_word(&mut ops, 0x3a, 4);
-    gauge_word(&mut ops, 0x3c, 3000);
-    gauge_word(&mut ops, 0x12, 2872);
-    gauge_begin_update(&mut ops, 4);
-    for _ in 0..6 {
-        gauge_word(&mut ops, 0x3a, 2);
+fn termination_check_reports_unusable_taper_and_failed_readback() {
+    use crate::power::TerminationError;
+    for taper in [0, 64, 85] {
+        assert_eq!(
+            embassy_futures::block_on(
+                Battery::new(Bus(Vec::new().into())).limit_termination(taper)
+            ),
+            Err(TerminationError::TaperTooLow(taper))
+        );
     }
-    gauge_finish_update(&mut ops, 4);
-    let result = embassy_futures::block_on(
-        Battery::new(Bus(ops.into())).ensure_stock_capacity(&mut GaugeDelay::default()),
-    );
-    assert_eq!(result, Err(crate::gauge::ConfigError::Timeout));
-}
-
-#[test]
-fn gauge_recovers_interrupted_configuration_before_reading_capacity() {
-    let mut ops = Vec::new();
-    gauge_word(&mut ops, 0x3a, 0x402);
-    gauge_command(&mut ops, 0x0091);
-    gauge_word(&mut ops, 0x3a, 2);
-    gauge_word(&mut ops, 0x3c, 1800);
-    gauge_word(&mut ops, 0x12, 1470);
-    gauge_access(&mut ops, 2, 220);
-    let result = embassy_futures::block_on(
-        Battery::new(Bus(ops.into())).ensure_stock_capacity(&mut GaugeDelay::default()),
-    )
-    .unwrap();
-    assert!(!result.changed);
-    assert_eq!(result.full_mah, 1470);
-}
-
-#[test]
-fn charger_updates_preserve_unrelated_bits_without_reset_or_gauge_writes() {
-    for failed in 0..=4 {
-        let before = [0x80, 0xa3, 3, 0x7f];
-        let mut after = [0x8b, 0xa2, 0x5b, 0xcf];
-        if failed < 4 {
-            // Simulate an ACKed write which did not take effect, one per field.
-            after[failed] = before[failed];
-        }
-        let ops = [
-            (3, 0xff, 0xcf),
-            (9, 0x7c, 0x5c),
-            (7, 0x7f, 0xcf),
-            (6, 3, 0x5b),
-            (5, 0xa3, 0xa2),
-            (4, 0x80, 0x8b),
-            (2, 0x1d, 0xdd),
+    for failed_register in [7, 5] {
+        let mut ops = vec![
+            Op::Read(0x6b, vec![5], vec![0x12]),
+            Op::Read(0x6b, vec![7], vec![0xbd]),
+            Op::Write(0x6b, vec![7, 0x8d]),
         ];
-        let mut expected = Vec::new();
-        for (i, value) in before.into_iter().enumerate() {
-            expected.push(Op::Read(0x6b, vec![4 + i as u8], vec![value]));
-        }
-        for (reg, old, new) in ops {
-            expected.push(Op::Read(0x6b, vec![reg], vec![old]));
-            expected.push(Op::Write(0x6b, vec![reg, new]));
-        }
-        for (i, value) in after.into_iter().enumerate() {
-            expected.push(Op::Read(0x6b, vec![4 + i as u8], vec![value]));
-        }
-        if failed == 4 {
-            expected.push(Op::Read(0x6b, vec![3], vec![0xcf]));
-            expected.push(Op::Write(0x6b, vec![3, 0xdf]));
-        }
-        let result = embassy_futures::block_on(Battery::new(Bus(expected.into())).init());
-        if failed == 4 {
-            assert_eq!(result, Ok(ChargerSetup { before, after }));
-            assert_eq!(64 * (1 + u16::from(after[1] & 15)), 192);
-            assert_eq!(3840 + 16 * u16::from(after[2] >> 2), 4192);
+        if failed_register == 7 {
+            ops.push(Op::Read(0x6b, vec![7], vec![0xbd]));
         } else {
-            assert!(
-                matches!(result, Err(ChargerError::Verify { register, .. }) if register == 4 + failed as u8)
-            );
+            ops.push(Op::Read(0x6b, vec![7], vec![0x8d]));
+            ops.push(Op::Write(0x6b, vec![5, 0x11]));
+            ops.push(Op::Read(0x6b, vec![5], vec![0x12]));
         }
+        let result =
+            embassy_futures::block_on(Battery::new(Bus(ops.into())).limit_termination(220));
+        assert!(
+            matches!(result, Err(TerminationError::Verify { register, .. }) if register == failed_register)
+        );
+    }
+}
+
+#[test]
+fn battery_startup_preserves_charge_policy_and_never_configures_gauge() {
+    // The strict bus accepts only BATFET reconnection and ADC control. Any
+    // access to charge-policy registers or gauge parameters fails this test.
+    for (old, connected) in [(0x7c, 0x5c), (0x40, 0x40)] {
+        let expected = vec![
+            Op::Read(0x6b, vec![9], vec![old]),
+            Op::Write(0x6b, vec![9, connected]),
+            Op::Read(0x6b, vec![2], vec![0x1d]),
+            Op::Write(0x6b, vec![2, 0xdd]),
+        ];
+        embassy_futures::block_on(Battery::new(Bus(expected.into())).start_telemetry()).unwrap();
     }
 }
 

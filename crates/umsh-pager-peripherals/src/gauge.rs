@@ -1,13 +1,8 @@
-//! Temporary Pager BQ27220 RAM profile override (TI SLUUBD4A, chapters 5–6).
-//! No OTP programming, calibration, or changes to charger policy.
-//! Production firmware should trust factory-programmed parameters instead.
+//! Read-only BQ27220 RAM inspection (TI SLUUBD4A, chapters 5–6).
+//! Battery parameters are provisioned externally; startup never rewrites them.
 use embedded_hal_async::{delay::DelayNs, i2c::I2c};
 
 const ADDRESS: u8 = 0x55;
-// Selected Pager profile; 1800 mAh is an estimate pending cell qualification.
-pub const STOCK_CAPACITY_MAH: u16 = 1800;
-pub const TAPER_CURRENT_MA: u16 = 220;
-const TAPER_ADDRESS: u16 = 0x9201;
 const CONFIG_UPDATE: u16 = 1 << 10;
 const SECURITY: u16 = 6;
 const FULL_ACCESS: u16 = 2;
@@ -28,20 +23,6 @@ pub enum ConfigError<E> {
         checksum: u8,
         calculated: u8,
     },
-    MemoryVerify([u8; 6]),
-    TaperVerify(u16),
-    CapacityVerify {
-        design_mah: u16,
-        full_mah: u16,
-    },
-}
-
-#[derive(Debug, PartialEq, Eq)]
-pub struct CapacityConfig {
-    pub changed: bool,
-    pub design_mah: u16,
-    pub full_mah: u16,
-    pub taper_ma: u16,
 }
 
 struct Gauge<'a, I, D> {
@@ -149,81 +130,6 @@ impl<I: I2c, D: DelayNs> Gauge<'_, I, D> {
         }
         Err(ConfigError::Timeout)
     }
-
-    async fn restore_access(&mut self, security: u16) -> Result<(), ConfigError<I::Error>> {
-        if self.word(0x3a).await? & SECURITY == security {
-            return Ok(());
-        }
-        self.command(0x0030).await?;
-        self.wait(SECURITY, SEALED).await?;
-        if security == UNSEALED {
-            self.inspection_unseal().await?;
-        }
-        Ok(())
-    }
-
-    async fn write_capacities(&mut self) -> Result<(), ConfigError<I::Error>> {
-        // Contiguous RAM parameters: FCC at 0x929D, design at 0x929F.
-        // Address is LE, parameter values are BE (unlike standard commands).
-        // One checksum commit updates the pair, so a failed partial transfer
-        // cannot leave a corrected design capacity beside the old default FCC.
-        let [hi, lo] = STOCK_CAPACITY_MAH.to_be_bytes();
-        let data = [0x9d, 0x92, hi, lo, hi, lo];
-        self.select_capacity_ram().await?;
-        for (offset, value) in data[2..].iter().copied().enumerate() {
-            self.byte(0x40 + offset as u8, value).await?;
-        }
-        let sum = data.into_iter().fold(0u8, u8::wrapping_add);
-        self.byte(0x60, !sum).await?;
-        self.byte(0x61, 8).await?; // address + four data bytes + checksum/length
-        self.delay.delay_ms(10).await;
-
-        self.select_capacity_ram().await?;
-        let mut actual = [0; 6];
-        self.read(0x3e, &mut actual).await?;
-        if actual != data {
-            return Err(ConfigError::MemoryVerify(actual));
-        }
-        Ok(())
-    }
-
-    async fn taper_current(&mut self) -> Result<u16, ConfigError<I::Error>> {
-        let data = self.configuration_block(TAPER_ADDRESS, 2).await?;
-        Ok(u16::from_be_bytes([data[0], data[1]]))
-    }
-
-    async fn write_taper(&mut self) -> Result<(), ConfigError<I::Error>> {
-        let [lo, hi] = TAPER_ADDRESS.to_le_bytes();
-        let [value_hi, value_lo] = TAPER_CURRENT_MA.to_be_bytes();
-        self.byte(0x3e, lo).await?;
-        self.delay.delay_ms(10).await;
-        self.byte(0x3f, hi).await?;
-        self.delay.delay_ms(10).await;
-        self.byte(0x40, value_hi).await?;
-        self.byte(0x41, value_lo).await?;
-        let sum = [lo, hi, value_hi, value_lo]
-            .into_iter()
-            .fold(0u8, u8::wrapping_add);
-        self.byte(0x60, !sum).await?;
-        self.byte(0x61, 6).await?;
-        self.delay.delay_ms(10).await;
-        let actual = self.taper_current().await?;
-        if actual != TAPER_CURRENT_MA {
-            return Err(ConfigError::TaperVerify(actual));
-        }
-        Ok(())
-    }
-
-    async fn select_capacity_ram(&mut self) -> Result<(), ConfigError<I::Error>> {
-        // Match LilyGo's address-selection settling time. The 100 us bus-free
-        // interval alone does not let the gauge populate its MAC buffer before
-        // we modify it; on hardware that caused the capacity write to be lost.
-        self.byte(0x3e, 0x9d).await?;
-        self.delay.delay_ms(10).await;
-        self.byte(0x3f, 0x92).await?;
-        self.delay.delay_ms(10).await;
-        Ok(())
-    }
 }
 
 /// Inspect the live RAM profile without entering configuration mode, committing
@@ -297,105 +203,3 @@ pub(crate) const CONFIG_BLOCKS: [(u16, usize); 8] = [
     (0x929a, 26),
     (0x92b4, 31),
 ];
-
-/// Called by the battery owner before normal sampling. Correct a mismatched
-/// capacity/taper profile; preserve learned FCC when design already matches.
-/// Inspect taper RAM on every boot, but only enter configuration mode on mismatch.
-/// Every wait is bounded. Once configuration entry is attempted, always try to
-/// leave it, including on I2C errors, and restore the original security mode.
-pub async fn ensure_stock_capacity<I: I2c>(
-    i2c: &mut I,
-    delay: &mut impl DelayNs,
-) -> Result<CapacityConfig, ConfigError<I::Error>> {
-    let mut gauge = Gauge { i2c, delay };
-    let operation = gauge.word(0x3a).await?;
-    let security = operation & SECURITY;
-    if !matches!(security, FULL_ACCESS | UNSEALED | SEALED) {
-        return Err(ConfigError::InvalidSecurity);
-    }
-    // Recover a configuration pass interrupted by an ESP32 reset.
-    if operation & CONFIG_UPDATE != 0 {
-        gauge.command(0x0091).await?;
-        gauge.wait(CONFIG_UPDATE, 0).await?;
-    }
-    let design = gauge.word(0x3c).await?;
-    let previous_full = gauge.word(0x12).await?;
-    let capacity_changed = design != STOCK_CAPACITY_MAH;
-
-    let mut entry_attempted = false;
-    let update = async {
-        if security == SEALED {
-            gauge.inspection_unseal().await?;
-        }
-        if security != FULL_ACCESS {
-            gauge.inspection_key(0xffff, 0xffff, FULL_ACCESS).await?;
-        }
-        let taper = gauge.taper_current().await?;
-        if design == STOCK_CAPACITY_MAH && taper == TAPER_CURRENT_MA {
-            return Ok(false);
-        }
-        entry_attempted = true;
-        gauge.command(0x0090).await?;
-        // TI specifies at least 1100 ms before using configuration mode.
-        gauge.delay.delay_ms(1100).await;
-        gauge.wait(CONFIG_UPDATE, CONFIG_UPDATE).await?;
-        if taper != TAPER_CURRENT_MA {
-            gauge.write_taper().await?;
-        }
-        if design != STOCK_CAPACITY_MAH {
-            gauge.write_capacities().await?;
-        }
-        Ok(true)
-    }
-    .await;
-
-    let exit = if entry_attempted {
-        async {
-            gauge.command(0x0091).await?;
-            gauge.wait(CONFIG_UPDATE, 0).await
-        }
-        .await
-    } else {
-        Ok(())
-    };
-    // Also attempt restoration after a failed exit, without hiding that error.
-    let restore = if security != FULL_ACCESS {
-        gauge.restore_access(security).await
-    } else {
-        Ok(())
-    };
-    exit?;
-    restore?;
-    let changed = update?;
-    if !changed {
-        return Ok(CapacityConfig {
-            changed: false,
-            design_mah: design,
-            full_mah: previous_full,
-            taper_ma: TAPER_CURRENT_MA,
-        });
-    }
-    // Standard readback, after reinitialization, is the final acceptance gate.
-    gauge.delay.delay_ms(2000).await;
-    let design = gauge.word(0x3c).await?;
-    let full = gauge.word(0x12).await?;
-    if design != STOCK_CAPACITY_MAH
-        || full
-            != if capacity_changed {
-                STOCK_CAPACITY_MAH
-            } else {
-                previous_full
-            }
-    {
-        return Err(ConfigError::CapacityVerify {
-            design_mah: design,
-            full_mah: full,
-        });
-    }
-    Ok(CapacityConfig {
-        changed: true,
-        design_mah: design,
-        full_mah: full,
-        taper_ma: TAPER_CURRENT_MA,
-    })
-}

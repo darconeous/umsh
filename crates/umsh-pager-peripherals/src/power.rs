@@ -6,15 +6,6 @@ const CHARGER: u8 = 0x6b;
 const GAUGE: u8 = 0x55;
 const BATFET_DIS: u8 = 1 << 5;
 const BATFET_DLY: u8 = 1 << 3;
-// BQ25896 REG04..07: fast charge, termination, voltage, termination/watchdog.
-// 192 mA is the closest hardware setting to the requested 200 mA cutoff.
-// Gauge taper is 220 mA; its qualification window needs on-cell validation.
-const CHARGER_PROFILE: [(u8, u8, u8); 4] = [
-    (4, 0x7f, 11),      // 704 mA fast charge
-    (5, 0x0f, 2),       // 192 mA termination; preserve precharge current
-    (6, 0xfc, 22 << 2), // 4192 mV; preserve precharge/recharge thresholds
-    (7, 0xb0, 0x80),    // Enable termination, disable register watchdog
-];
 pub const KEYBOARD_RESET: u16 = 1 << 2;
 pub const RADIO_ENABLE: u16 = 1 << 3;
 pub const GPS_ENABLE: u16 = 1 << 4;
@@ -100,16 +91,17 @@ pub struct Battery<I> {
     i2c: I,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct ChargerSetup {
-    /// BQ25896 REG04..07 before configuration and verified before charge enable.
-    pub before: [u8; 4],
-    pub after: [u8; 4],
+#[derive(Debug, PartialEq, Eq)]
+pub struct TerminationLimit {
+    pub before_ma: u16,
+    pub after_ma: u16,
+    pub watchdog_disabled: bool,
 }
 
 #[derive(Debug, PartialEq, Eq)]
-pub enum ChargerError<E> {
+pub enum TerminationError<E> {
     Bus(E),
+    TaperTooLow(u16),
     Verify {
         register: u8,
         expected: u8,
@@ -117,49 +109,67 @@ pub enum ChargerError<E> {
     },
 }
 
+// At least 25% nominal current margin, rounded down to the charger's 64 mA
+// steps. This provides headroom, not a guarantee of gauge taper-window timing.
+pub(crate) fn termination_limit_code(taper_ma: u16) -> Option<u8> {
+    let steps = ((u32::from(taper_ma) * 3 / 4) / 64).min(16);
+    steps.checked_sub(1).map(|value| value as u8)
+}
+
 impl<I: I2c> Battery<I> {
     pub fn new(i2c: I) -> Self {
         Self { i2c }
     }
-    pub async fn init(&mut self) -> Result<ChargerSetup, ChargerError<I::Error>> {
-        let before = self.charger_profile().await.map_err(ChargerError::Bus)?;
-        let after = async {
-            // Disable charge during profile changes and disable OTG. No global reset.
-            crate::update(&mut self.i2c, CHARGER, 3, 0x30, 0).await?;
-            // Reconnect the battery after a USB-powered restart from shipping mode.
-            crate::update(&mut self.i2c, CHARGER, 9, BATFET_DIS, 0).await?;
-            // Disable the watchdog first. Preserve safety timer, JEITA and STAT settings.
-            for (reg, mask, value) in CHARGER_PROFILE.into_iter().rev() {
-                crate::update(&mut self.i2c, CHARGER, reg, mask, value).await?;
+    /// Restore the battery power path and enable telemetry without changing
+    /// charge policy or touching the gauge's configuration/security state.
+    pub async fn start_telemetry(&mut self) -> Result<(), I::Error> {
+        // A USB-powered restart can retain shipping mode's battery disconnect.
+        crate::update(&mut self.i2c, CHARGER, 9, BATFET_DIS, 0).await?;
+        crate::update(&mut self.i2c, CHARGER, 2, 0xc0, 0xc0).await
+    }
+
+    /// Only lower an excessive cutoff; preserve a more conservative setting.
+    /// Do not change charge enable, voltage, fast/precharge current, or the gauge.
+    pub async fn limit_termination(
+        &mut self,
+        taper_ma: u16,
+    ) -> Result<TerminationLimit, TerminationError<I::Error>> {
+        let limit =
+            termination_limit_code(taper_ma).ok_or(TerminationError::TaperTooLow(taper_ma))?;
+        let before = crate::read(&mut self.i2c, CHARGER, 5)
+            .await
+            .map_err(TerminationError::Bus)?;
+        let watchdog = crate::read(&mut self.i2c, CHARGER, 7)
+            .await
+            .map_err(TerminationError::Bus)?;
+        // The firmware does not service this watchdog. Disable it so it cannot
+        // silently replace the checked cutoff with the chip's 256 mA default.
+        let after = (before & 0xf0) | (before & 15).min(limit);
+        for (register, old, expected) in [(7, watchdog, watchdog & !0x30), (5, before, after)] {
+            if old != expected {
+                self.i2c
+                    .write(CHARGER, &[register, expected])
+                    .await
+                    .map_err(TerminationError::Bus)?;
             }
-            crate::update(&mut self.i2c, CHARGER, 2, 0xc0, 0xc0).await?;
-            self.charger_profile().await
-        }
-        .await
-        .map_err(ChargerError::Bus)?;
-        // Never enable charging after a failed readback, even if writes ACKed.
-        for (i, (register, mask, expected)) in CHARGER_PROFILE.into_iter().enumerate() {
-            if after[i] & mask != expected {
-                return Err(ChargerError::Verify {
+            let actual = crate::read(&mut self.i2c, CHARGER, register)
+                .await
+                .map_err(TerminationError::Bus)?;
+            if actual != expected {
+                return Err(TerminationError::Verify {
                     register,
                     expected,
-                    actual: after[i],
+                    actual,
                 });
             }
         }
-        crate::update(&mut self.i2c, CHARGER, 3, 0x10, 0x10)
-            .await
-            .map_err(ChargerError::Bus)?;
-        Ok(ChargerSetup { before, after })
+        Ok(TerminationLimit {
+            before_ma: 64 * (u16::from(before & 15) + 1),
+            after_ma: 64 * (u16::from(after & 15) + 1),
+            watchdog_disabled: watchdog & 0x30 != 0,
+        })
     }
 
-    async fn charger_profile(&mut self) -> Result<[u8; 4], I::Error> {
-        let mut result = [0; 4];
-        for (i, (register, _, _)) in CHARGER_PROFILE.into_iter().enumerate() {
-            result[i] = crate::read(&mut self.i2c, CHARGER, register).await?;
-        }
-        Ok(result)
-    }
     async fn word(&mut self, reg: u8) -> Result<u16, I::Error> {
         let mut bytes = [0; 2];
         self.i2c.write_read(GAUGE, &[reg], &mut bytes).await?;
@@ -381,12 +391,7 @@ impl<I: I2c> Battery<I> {
     ) -> Result<umsh_ulcp::battery_gauge_config::Config, crate::gauge::ConfigError<I::Error>> {
         crate::gauge::inspect_configuration(&mut self.i2c, delay).await
     }
-    pub async fn ensure_stock_capacity(
-        &mut self,
-        delay: &mut impl DelayNs,
-    ) -> Result<crate::gauge::CapacityConfig, crate::gauge::ConfigError<I::Error>> {
-        crate::gauge::ensure_stock_capacity(&mut self.i2c, delay).await
-    }
+
     pub async fn sleep(&mut self) -> Result<(), I::Error> {
         crate::update(&mut self.i2c, CHARGER, 2, 0xc0, 0).await
     }

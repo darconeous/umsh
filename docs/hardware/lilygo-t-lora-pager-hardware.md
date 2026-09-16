@@ -447,45 +447,43 @@ PCF85063 retained time uses its
 own register layout, with oscillator-stop, invalid dates, and implausible
 epochs reported as unknown. The unused RTC clock output is disabled.
 
-Battery telemetry is sampled each second. The selected charger profile is
-4.192 V / 704 mA, with charge termination explicitly enabled at **192 mA**
-(the nearest hardware setting to 200 mA). The BQ27220 taper threshold is
-**220 mA**. Full detection also requires voltage and accumulated-charge
-conditions across two taper windows; it is not an instantaneous 220 mA switch.
-The narrow margin above the charger cutoff requires charging-cycle qualification,
-including component tolerances. Startup
-preserves the precharge, recharge, safety-timer, and JEITA settings, disables
-the register watchdog, and verifies the current/voltage/termination profile
-before enabling charge. A failed readback leaves charging disabled. The
-inherited and verified REG04–07 values are retained in an internal
-`pager charger-init` diagnostic until the first USB response.
-See [BQ25896 REG05/REG07](https://www.ti.com/lit/ds/symlink/bq25896.pdf) and
-[BQ27220 taper qualification, section 4.9.47](https://www.ti.com/lit/ug/sluubd4a/sluubd4a.pdf).
+Battery telemetry is sampled each second. Startup trusts the BQ27220's
+battery-backed configuration: it never enters configuration-update mode,
+rewrites capacity or taper parameters, resets the gauge, or corrects its
+learned capacity. It temporarily unlocks for a read-only configuration snapshot
+and restores the original access state. This takes about nine seconds with
+bounded waits that feed the startup watchdog.
 
-Startup checks the BQ27220 design capacity and taper current. The selected
-**1800 mAh** design capacity is a user estimate pending cell qualification;
-LilyGO's documented stock value is 1500 mAh. A mismatched design updates both
-design and initial full capacity to 1800 mAh in one RAM transaction. A mismatched
-taper setting updates only that parameter. Both are verified, and configuration
-mode is entered only when needed. When design already matches, learned full
-capacity is retained, including during a taper-only correction. Reading taper
-RAM requires temporary full access and security quiet periods, adding about
-nine seconds to a normal startup; the original access state is restored.
-This hard-coded profile is a temporary development override. The intended
-production behavior is to trust factory-programmed battery parameters rather
-than overwrite them at boot; the direct I2C management interface is separate work.
-Calibration,
-other profile parameters, and OTP are untouched. The check runs every boot
-because gauge RAM can return to the 3000 mAh default after loss of gauge
-power, such as battery removal without another supply. Normal shipping-mode
-power-off does not remove gauge power: U16's BAT supply connects to VBAT at
-the battery connector, upstream of the BQ25896's switched SYS output, so the
-gauge retains RAM while the battery remains connected and supplies sufficient
-voltage.
-Configuration waits are bounded and feed the startup watchdog; exit and
-original-access-mode restoration are attempted on errors. The boot log reports
-corrected/retained capacities or a configuration failure. An absent gauge or
-invalid telemetry sample reports unknown, never a fabricated zero.
+Startup checks the BQ25896 cutoff against the gauge's actual taper current.
+It permits at most **75% of the gauge threshold**, rounded down to the
+charger's 64 mA steps, and only lowers an excessive cutoff. An already-lower
+setting is preserved. A 220 mA threshold permits at most **128 mA** cutoff;
+a 100 mA threshold permits 64 mA. This nominal margin is intended to leave
+room for taper qualification and component tolerances, not to guarantee timing
+for every cell. The charger register watchdog is disabled so it cannot restore
+the 256 mA default cutoff; both registers are read back and verified. The check
+does not change charge enable, termination enable, OTG, fast/precharge current,
+voltage, safety timer, or JEITA policy. It also reconnects the battery power
+path after shipping mode and enables the ADC for telemetry.
+
+A gauge read failure or a threshold below 86 mA (no supported cutoff provides
+the margin) leaves charger policy untouched and reports the failure. Charger
+write/readback failures are also reported rather than claimed as a successful
+check. The result is logged and retained as `pager termination` until the first
+USB response. Raw I2C changes made later are not continuously overridden; the
+relationship is checked again at the next boot. An absent gauge or invalid
+telemetry sample reports unknown, never a fabricated zero.
+
+Parameters can be inspected and provisioned explicitly through the
+[ULCP I2C interface](../protocol/src/ulcp-i2c.md#cmd-i2c-transfer). The gauge's
+RAM is backed by the battery: normal shipping-mode power-off and ESP32 reset
+retain it because U16's BAT supply connects to VBAT at the battery connector,
+upstream of the BQ25896's switched SYS output. If the gauge loses power, it
+reloads its ROM/OTP profile, losing RAM overrides and learned state; firmware
+does not restore them. The BQ25896 uses volatile registers and returns to its
+defaults after charger power-on reset. No OTP programming is performed.
+See [BQ25896 sections 9.3.1 and 9.4.6](https://www.ti.com/lit/ds/symlink/bq25896.pdf)
+and [BQ27220 chapter 8](https://www.ti.com/lit/ug/sluubd4a/sluubd4a.pdf).
 
 Settings → Battery provides read-only Charge, Capacity, and Fuel gauge pages,
 refreshed once per second. They show voltage, signed current (positive into the
@@ -659,7 +657,7 @@ was sealed afterward. Live signed telemetry decoded register 65532 as −4 mAh.
 The capacity migration reinitialized the gauge: FCC was seeded at 1800 mAh
 and cycle count changed from 2 to 0. A subsequent automatic hardware restart
 retained 1800/1800 mAh and the −4 mAh counter, with identical charger registers,
-identity, and the user's enabled BLE/Wi-Fi/GNSS settings. Host tests also verify
+identity, and the user's enabled BLE/Wi-Fi/GNSS settings. The temporary override's tests verified
 that a matching profile never enters configuration mode and that a taper-only
 change preserves learned FCC. A USB `reboot` request did not demonstrate an MCU
 restart in this session; the restart qualification used the flash target's
@@ -667,6 +665,18 @@ automatic watchdog reset instead.
 The cell was already charged, so a fresh full-detection/termination cycle with
 the narrower 220/192 mA margin remains unqualified. The earlier 100/64 mA
 test does not establish that the new pair leaves enough qualification time.
+
+After removing the gauge overrides, the dynamic cutoff check was verified on
+2026-09-16. Boot read a 220 mA gauge taper and lowered charger termination
+from 192 to 128 mA. Raw I2C readback changed REG03–07 from
+`[1A, 0B, 12, 5A, 8D]` to `[1A, 0B, 11, 5A, 8D]`: only the cutoff changed.
+All 48 gauge configuration fields were identical before and after upload;
+design/FCC remained 1800/1800 mAh, raw coulomb count −4 mAh, and cycle count 0.
+The gauge was sealed, and identity/saved settings survived automatic restart.
+The 35 peripheral tests cover margin rounding, retaining lower cutoffs,
+unsupported thresholds, readback failures, and read-only gauge inspection.
+A fresh charging cycle is still needed to qualify full detection with the
+220/128 mA pair; the nominal margin alone does not establish taper-window timing.
 
 Three consecutive explicit configuration requests, with one second between
 responses and subsequent requests, returned identical complete snapshots in
