@@ -99,6 +99,8 @@ Subsystem | Capabilities
 [Tethered Host Services](ulcp-host.md) | `CAP_HOST_FILTER`, `CAP_HOST_KEYS`, `CAP_HOST_RX_QUEUE`, `CAP_HOST_AUTO_ACK`, `CAP_MAC_BACKHAUL`
 [Wi-Fi](ulcp-wifi.md) | `CAP_WIFI_SCAN`, `CAP_WIFI`, `CAP_WIFI_AP`
 [IP Connectivity](ulcp-ip.md) | `CAP_IPV4`, `CAP_IPV6`
+[Bridge Client](ulcp-bridge.md) | `CAP_BRIDGE_CLIENT`
+[I2C Bus Access](ulcp-i2c.md) | `CAP_I2C`
 
 A device advertising none of them is a transparent radio: it configures
 its PHY, transmits what it is given, and delivers everything it hears.

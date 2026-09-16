@@ -99,6 +99,50 @@ async fn a_read_larger_than_one_payload_is_continued_across_exchanges() {
     );
 }
 
+/// A raw bus transaction crosses the mesh like any other request, and a
+/// read the reply could not carry is refused up front rather than met
+/// with silence: over the air, silence is a lost packet.
+#[tokio::test(flavor = "current_thread")]
+async fn a_bus_transfer_crosses_the_mesh_and_an_oversize_read_is_refused() {
+    use umsh::ulcp_wire::i2c::{Op, encode_transfer};
+    use umsh::ulcp_wire::{Cmd, Frame, Status, pui};
+    use umsh_ulcp_simdev::SimulatedI2c;
+
+    mesh!("i2c", mesh);
+    let mut buf = [0u8; 64];
+    let len = encode_transfer(
+        &mut buf,
+        0,
+        0,
+        SimulatedI2c::ADDRESS,
+        &[
+            Op::Write(&[0x00, 0x11, 0x22]),
+            Op::Write(&[0x00]),
+            Op::Read(2),
+        ],
+    )
+    .unwrap();
+    let reply = mesh.reply(&buf[..len]).await;
+    let parsed = Frame::parse(&reply).unwrap();
+    assert_eq!(parsed.command(), Some(Cmd::I2cResult));
+    assert_eq!(parsed.payload, &[0x11, 0x22]);
+    assert_eq!(mesh.device.borrow().executed, 1);
+    assert_eq!(mesh.device.borrow().i2c.executed(), 1);
+
+    // One octet more than the payload can carry back.
+    let too_many = PAYLOAD - umsh::node_mgmt::envelope::OVERHEAD_MAX - 2 + 1;
+    let len =
+        encode_transfer(&mut buf, 0, 0, SimulatedI2c::ADDRESS, &[Op::Read(too_many)]).unwrap();
+    let reply = mesh.reply(&buf[..len]).await;
+    let status = pui::decode(&value_of(&reply)).unwrap().0;
+    assert_eq!(Status(status), Status::NOMEM);
+    assert_eq!(
+        mesh.device.borrow().i2c.executed(),
+        1,
+        "never reached the bus"
+    );
+}
+
 #[tokio::test(flavor = "current_thread")]
 async fn a_reset_is_answered_by_the_acknowledgment_and_nothing_else() {
     mesh!("reset", mesh);

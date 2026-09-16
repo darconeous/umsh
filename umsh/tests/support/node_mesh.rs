@@ -79,6 +79,9 @@ pub struct DeviceSide {
     pub admins: Vec<[u8; 32]>,
     pub executed: u32,
     pub unauthorized: u32,
+    /// The peripheral on the simulated bus, with its own count of what
+    /// actually reached it.
+    pub i2c: umsh_ulcp_simdev::SimulatedI2c,
 }
 
 impl DeviceSide {
@@ -112,6 +115,7 @@ impl DeviceSide {
             alert: Some(AlertConfig::DEFAULT),
             time: Some(TimeConfig),
             gnss: Some(GnssConfig::DEFAULT),
+            display_motion_wake: false,
             illuminance: true,
             // The simulated board is reachable over Bluetooth, so
             // `PROP_BLE_ENABLED` is one more property an administrator
@@ -124,6 +128,8 @@ impl DeviceSide {
             wifi: None,
             ip: None,
             bridge_client: false,
+            i2c_buses: umsh_ulcp_simdev::SIMULATED_I2C_BUSES,
+            i2c_devices: umsh_ulcp_simdev::SIMULATED_I2C_DEVICES,
         };
         let mut session = Session::new(
             config,
@@ -138,6 +144,7 @@ impl DeviceSide {
             admins: Vec::new(),
             executed: 0,
             unauthorized: 0,
+            i2c: Default::default(),
         }
     }
 
@@ -212,10 +219,29 @@ impl DeviceSide {
             &mut |bytes: &[u8]| emitted.push(bytes.to_vec()),
         );
         while let Some(effect) = pending.take() {
-            if let Effect::SaveSnapshot { tid } = effect {
-                self.session.respond_save(tid, Ok(()), &mut |bytes: &[u8]| {
-                    emitted.push(bytes.to_vec())
-                });
+            match effect {
+                Effect::SaveSnapshot { tid } => {
+                    self.session.respond_save(tid, Ok(()), &mut |bytes: &[u8]| {
+                        emitted.push(bytes.to_vec())
+                    });
+                }
+                Effect::I2cTransfer { tid } => {
+                    let request = self.session.i2c_request();
+                    let result = self.i2c.transact(request.addr, request);
+                    self.session.respond_i2c(
+                        tid,
+                        result.as_deref().map_err(|status| *status),
+                        &mut |bytes: &[u8]| emitted.push(bytes.to_vec()),
+                    );
+                }
+                Effect::I2cScan { tid } => {
+                    let found = self.i2c.scan(self.session.i2c_scan_request());
+                    self.session
+                        .respond_i2c(tid, Ok(&found), &mut |bytes: &[u8]| {
+                            emitted.push(bytes.to_vec())
+                        });
+                }
+                _ => {}
             }
             pending = self
                 .session

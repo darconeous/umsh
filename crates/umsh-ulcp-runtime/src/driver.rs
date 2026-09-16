@@ -36,10 +36,11 @@ use umsh_radio_loraphy::{
     bandwidth_from_hz, coding_rate_from_denom, spreading_factor_from_u8,
 };
 use umsh_ulcp::Status;
+use umsh_ulcp::i2c::{ScanRequest, TransferRequest};
 use umsh_ulcp_device::{
-    Effect, IdentitySource, MAX_CHANNEL_KEYS, MAX_DEV_ADMINS, MAX_DEV_PEERS, MAX_REPEATER_REGIONS,
-    NETWORK_TABLE_MAX, QueuedNotice, REGION_STRING_MAX_LEN, RadioRxInfo, Resolvers, SNAPSHOT_MAX,
-    SavedStatus, Session, TxOutcome, TxPower,
+    Effect, I2C_DATA_MAX, IdentitySource, MAX_CHANNEL_KEYS, MAX_DEV_ADMINS, MAX_DEV_PEERS,
+    MAX_REPEATER_REGIONS, NETWORK_TABLE_MAX, QueuedNotice, REGION_STRING_MAX_LEN, RadioRxInfo,
+    Resolvers, SNAPSHOT_MAX, SavedStatus, Session, TxOutcome, TxPower,
 };
 
 /// The session sizes its snapshots and the journal sizes its records
@@ -117,6 +118,16 @@ pub static ADMIN_REPLY: Channel<
     AdminFrame,
     1,
 > = Channel::new();
+
+/// Where a `CMD_I2C_TRANSFER`'s read data or a `CMD_I2C_SCAN`'s addresses
+/// land before the session frames them. A static for the same reason
+/// [`ADMIN_REPLY`] is one—there is one driver, serving one effect at a
+/// time—and because the alternative is a 255-octet local in a task frame
+/// every ESP32 image shares.
+static I2C_RESULT: embassy_sync::mutex::Mutex<
+    embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex,
+    [u8; I2C_DATA_MAX],
+> = embassy_sync::mutex::Mutex::new([0; I2C_DATA_MAX]);
 
 /// Framing-free receive path and connection edges into the driver.
 pub enum InEvent {
@@ -665,6 +676,39 @@ pub trait DeviceEnv {
         let _ = (key, out);
         Err(Status::UNIMPLEMENTED)
     }
+    /// `CMD_I2C_TRANSFER`: perform `request` on the bus it names, writing
+    /// the concatenated read data into `out` and returning its length.
+    /// `out` holds at least [`I2C_DATA_MAX`] octets, which bounds every
+    /// request the session lets through.
+    ///
+    /// The session has validated the structure, the bus, the per-bus
+    /// limits, and that the result fits the reply. What is the board's:
+    /// acquiring the bus within a bound of its own (`STATUS_BUSY` when
+    /// it cannot), a deadline on the transaction (`STATUS_BUS_ERROR`
+    /// when it passes), refusing a peripheral one of its own procedures
+    /// holds (`STATUS_BUSY`), and how the peripheral answered
+    /// (`STATUS_NO_DEVICE`, `STATUS_NACK`, `STATUS_BUS_ERROR`). With the
+    /// `i2c` feature, [`crate::i2c::transfer_with`] does the bus part
+    /// over any `embedded-hal-async` bus. Only reached on a board whose
+    /// `SessionConfig::i2c_buses` is non-empty.
+    async fn i2c_transfer(
+        &mut self,
+        request: TransferRequest<'_>,
+        out: &mut [u8],
+    ) -> Result<usize, Status> {
+        let _ = (request, out);
+        Err(Status::UNIMPLEMENTED)
+    }
+    /// `CMD_I2C_SCAN`: probe every address in `request`'s range on the
+    /// bus it names, writing the ones that acknowledged into `out` in
+    /// ascending order and returning how many. The same bounds and
+    /// statuses as [`i2c_transfer`](Self::i2c_transfer); a board that
+    /// holds a peripheral in the range answers `STATUS_BUSY` rather than
+    /// skipping it. [`crate::i2c::scan_with`] does the bus part.
+    async fn i2c_scan(&mut self, request: ScanRequest, out: &mut [u8]) -> Result<usize, Status> {
+        let _ = (request, out);
+        Err(Status::UNIMPLEMENTED)
+    }
     /// `CMD_FACTORY_RESET`: erase EVERY piece of persistent state the
     /// platform owns—saved snapshot, device identity, frame-counter
     /// boundaries, BLE bonds, pairing PIN, and any other journal—then
@@ -977,6 +1021,8 @@ async fn apply_effect<A, S, const TXQ: usize, M, const RX: usize, const TX: usiz
         | Some(Effect::InsertWifiNetwork { .. })
         | Some(Effect::RemoveWifiNetwork { .. })
         | Some(Effect::ReadNetworkTable { .. })
+        | Some(Effect::I2cTransfer { .. })
+        | Some(Effect::I2cScan { .. })
         | Some(Effect::DrainQueue)
         | Some(Effect::SaveSnapshot { .. })
         | Some(Effect::ClearSaved { .. })
@@ -1364,6 +1410,26 @@ async fn serve_frame<A, S, const TXQ: usize, M, const RX: usize, const TX: usize
                 session.respond_network_table(tid, key, items, &mut |frame: &[u8]| {
                     emitter.push(frame)
                 });
+                emitter.flush(sink).await;
+            }
+            Some(Effect::I2cTransfer { tid }) => {
+                // The result is staged in a static rather than on this
+                // frame: `device_task` is shared by every image and the
+                // smaller ESP32 boards have no stack headroom for a
+                // 255-octet local.
+                let mut out = I2C_RESULT.lock().await;
+                let result = env.i2c_transfer(session.i2c_request(), &mut out[..]).await;
+                env.trace(format_args!("CMD_I2C_TRANSFER: {result:?}"));
+                let data = result.map(|len| &out[..len]);
+                session.respond_i2c(tid, data, &mut |frame: &[u8]| emitter.push(frame));
+                emitter.flush(sink).await;
+            }
+            Some(Effect::I2cScan { tid }) => {
+                let mut out = I2C_RESULT.lock().await;
+                let result = env.i2c_scan(session.i2c_scan_request(), &mut out[..]).await;
+                env.trace(format_args!("CMD_I2C_SCAN: {result:?}"));
+                let data = result.map(|len| &out[..len]);
+                session.respond_i2c(tid, data, &mut |frame: &[u8]| emitter.push(frame));
                 emitter.flush(sink).await;
             }
             Some(Effect::Announce { tid, request }) => {

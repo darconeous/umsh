@@ -54,6 +54,8 @@ struct Device<const PAYLOAD: usize> {
     battery_samples: u32,
     /// Requests refused before the engine saw them.
     unauthorized: u32,
+    /// The peripheral on the simulated bus, counting what reached it.
+    i2c: umsh_ulcp_simdev::SimulatedI2c,
 }
 
 impl<const PAYLOAD: usize> Device<PAYLOAD> {
@@ -101,6 +103,8 @@ impl<const PAYLOAD: usize> Device<PAYLOAD> {
             wifi: None,
             ip: None,
             bridge_client: false,
+            i2c_buses: umsh_ulcp_simdev::SIMULATED_I2C_BUSES,
+            i2c_devices: umsh_ulcp_simdev::SIMULATED_I2C_DEVICES,
         };
         let mut session = Session::new(
             config,
@@ -117,6 +121,7 @@ impl<const PAYLOAD: usize> Device<PAYLOAD> {
             executed: 0,
             battery_samples: 0,
             unauthorized: 0,
+            i2c: Default::default(),
         }
     }
 
@@ -286,6 +291,22 @@ impl<const PAYLOAD: usize> Device<PAYLOAD> {
                         .respond_ble_pairing(tid, Ok(open), &mut |bytes: &[u8]| {
                             emitted.push(bytes.to_vec())
                         })
+                }
+                Effect::I2cTransfer { tid } => {
+                    let request = self.session.i2c_request();
+                    let result = self.i2c.transact(request.addr, request);
+                    self.session.respond_i2c(
+                        tid,
+                        result.as_deref().map_err(|status| *status),
+                        &mut |bytes: &[u8]| emitted.push(bytes.to_vec()),
+                    );
+                }
+                Effect::I2cScan { tid } => {
+                    let found = self.i2c.scan(self.session.i2c_scan_request());
+                    self.session
+                        .respond_i2c(tid, Ok(&found), &mut |bytes: &[u8]| {
+                            emitted.push(bytes.to_vec())
+                        });
                 }
                 // Radio and platform effects with no reply of their own.
                 _ => {}
@@ -628,6 +649,83 @@ fn a_retransmission_is_answered_without_executing_again() {
         .expect("a response");
     assert_eq!(again, first, "the retained response is repeated verbatim");
     assert_eq!(device.executed, 1, "the request did not run twice");
+}
+
+/// A raw bus write is the at-most-once property's hardest case: the
+/// register file would look the same after a second identical write, so
+/// the peripheral's own count of transactions is what says the
+/// retransmission never reached the bus.
+#[test]
+fn a_retransmitted_bus_write_is_answered_without_touching_the_bus_again() {
+    use umsh_ulcp::i2c::{Op, encode_transfer};
+    use umsh_ulcp_simdev::SimulatedI2c;
+
+    let mut device = managed();
+    let mut buf = [0u8; 64];
+    let len = encode_transfer(
+        &mut buf,
+        0,
+        0,
+        SimulatedI2c::ADDRESS,
+        &[Op::Write(&[0x04, 0x5A])],
+    )
+    .unwrap();
+
+    let mut exchange = Exchange::<192>::new(&buf[..len], 3, 0).expect("begin");
+    let mut wire = [0u8; PAYLOAD];
+    let Step::Send { len } = exchange.poll(0, &mut wire) else {
+        panic!("expected a request");
+    };
+    let request = wire[..len].to_vec();
+
+    let first = device.deliver(&ADMIN_KEY, &request, 0).expect("a response");
+    assert_eq!(device.executed, 1);
+    assert_eq!(device.i2c.executed(), 1);
+    assert_eq!(device.i2c.registers()[4], 0x5A);
+
+    let again = device
+        .deliver(&ADMIN_KEY, &request, RETRY_MS)
+        .expect("a response");
+    assert_eq!(again, first, "the retained response is repeated verbatim");
+    assert_eq!(device.executed, 1, "the request did not run twice");
+    assert_eq!(
+        device.i2c.executed(),
+        1,
+        "the retransmission never reached the bus"
+    );
+}
+
+/// A bus read whose result would not fit the binding's reply is refused
+/// before the bus is touched, and the refusal is what the administrator
+/// hears rather than silence or a frame the binding cannot carry. The
+/// device's reply budget is the payload ceiling less the binding's own
+/// framing, so this also pins that arithmetic against the session's
+/// pre-check.
+#[test]
+fn an_oversize_bus_read_is_refused_before_the_bus() {
+    use umsh_ulcp::i2c::{Op, encode_transfer};
+    use umsh_ulcp_simdev::SimulatedI2c;
+
+    let mut device = managed();
+    // The largest read a 180-octet payload can answer: the payload less
+    // the binding's own framing, less the two octets of frame around
+    // the data.
+    let fits = PAYLOAD - umsh_node_mgmt::envelope::OVERHEAD_MAX - 2;
+    let mut buf = [0u8; 64];
+    let len = encode_transfer(&mut buf, 0, 0, SimulatedI2c::ADDRESS, &[Op::Read(fits)]).unwrap();
+    let conversation = converse(&mut device, &buf[..len], 7);
+    assert!(matches!(conversation.outcome, Outcome::Replied { .. }));
+    let reply = Frame::parse(&conversation.reply).unwrap();
+    assert_eq!(reply.command(), Some(Cmd::I2cResult));
+    assert_eq!(reply.payload.len(), fits);
+    assert_eq!(device.i2c.executed(), 1);
+
+    let len =
+        encode_transfer(&mut buf, 0, 0, SimulatedI2c::ADDRESS, &[Op::Read(fits + 1)]).unwrap();
+    let conversation = converse(&mut device, &buf[..len], 8);
+    assert!(matches!(conversation.outcome, Outcome::Replied { .. }));
+    assert_eq!(status_of(&conversation.reply), Status::NOMEM);
+    assert_eq!(device.i2c.executed(), 1, "the refused read never ran");
 }
 
 #[test]

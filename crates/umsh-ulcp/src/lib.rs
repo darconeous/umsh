@@ -33,6 +33,7 @@ pub mod gatt;
 pub mod gnss;
 pub mod hdlc;
 pub mod host;
+pub mod i2c;
 pub mod ids;
 pub mod ip;
 pub mod items;

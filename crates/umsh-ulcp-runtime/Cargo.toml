@@ -82,6 +82,11 @@ device-node = [
 # single thread-mode executor whose BLE controller cannot tolerate the
 # critical sections the portable default would take in the radio path.
 node-thread-mode-mutex = []
+# The glue between a staged `CMD_I2C_TRANSFER`/`CMD_I2C_SCAN` and any
+# `embedded-hal-async` bus: operation carving, the probe loop, and the
+# mapping from HAL error kinds to ULCP statuses. The trait, not a HAL, so
+# the no-board rule holds; a board hands its own bus in.
+i2c = ["driver", "dep:embedded-hal-async"]
 
 [dependencies]
 umsh-ulcp = { path = "../umsh-ulcp", optional = true }
@@ -105,6 +110,7 @@ umsh-sync = { path = "../umsh-sync", default-features = false, optional = true }
 rand = { workspace = true, optional = true }
 rand_core = { workspace = true, optional = true }
 rand_chacha = { version = "0.3", default-features = false, optional = true }
+embedded-hal-async = { workspace = true, optional = true }
 
 [dev-dependencies]
 # Used only by the modules' host-run unit tests.

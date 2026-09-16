@@ -473,6 +473,18 @@ fn session_config() -> SessionConfig {
         ip: None,
         bridge_client: cfg!(feature = "bridge-client"),
         stats: Some(&STATS),
+        // The Pager's shared bus is the one a host may drive: it sits
+        // behind a mutex every on-board driver already takes, so a
+        // host's transaction is one more client of it. The other boards'
+        // buses are owned by their PMIC or display drivers outright.
+        #[cfg(feature = "board-tlora-pager")]
+        i2c_buses: pager::I2C_BUSES,
+        #[cfg(feature = "board-tlora-pager")]
+        i2c_devices: pager::I2C_DEVICES,
+        #[cfg(not(feature = "board-tlora-pager"))]
+        i2c_buses: &[],
+        #[cfg(not(feature = "board-tlora-pager"))]
+        i2c_devices: &[],
     }
 }
 
@@ -1435,6 +1447,10 @@ struct BoardDeviceEnv {
     identity_store: ProtoStore,
     identity_rng: IdentityRng,
     node_counters: &'static NodeCountersMutex,
+    /// The shared peripheral bus, for a host's raw `CMD_I2C_TRANSFER`
+    /// and `CMD_I2C_SCAN`; [`pager::host_transfer`] does the guarding.
+    #[cfg(feature = "board-tlora-pager")]
+    i2c: &'static board::I2cBus,
     /// Announce-worthy readings from [`battery_task`], for unsolicited
     /// `PROP_BATTERY` publication.
     #[cfg(not(any(feature = "pmic-axp2101", feature = "board-tlora-pager")))]
@@ -1621,6 +1637,24 @@ impl DeviceEnv for BoardDeviceEnv {
         fields: umsh_ulcp::battery_diagnostics::Fields,
     ) -> umsh_ulcp::battery_diagnostics::Sample {
         pager::sample_battery_group(fields).await
+    }
+
+    #[cfg(feature = "board-tlora-pager")]
+    async fn i2c_transfer(
+        &mut self,
+        request: umsh_ulcp::i2c::TransferRequest<'_>,
+        out: &mut [u8],
+    ) -> Result<usize, Status> {
+        pager::host_transfer(self.i2c, request, out).await
+    }
+
+    #[cfg(feature = "board-tlora-pager")]
+    async fn i2c_scan(
+        &mut self,
+        request: umsh_ulcp::i2c::ScanRequest,
+        out: &mut [u8],
+    ) -> Result<usize, Status> {
+        pager::host_scan(self.i2c, request, out).await
     }
 
     /// Publish the reading [`battery_task`] flagged, reduced the same way
@@ -3223,6 +3257,7 @@ async fn device_task(
     identity_rng: IdentityRng,
     node_counters: &'static NodeCountersMutex,
     #[cfg(feature = "external-rtc")] rtc: Option<&'static RtcMutex>,
+    #[cfg(feature = "board-tlora-pager")] i2c: &'static board::I2cBus,
 ) {
     // The retained hardware reset cause answers the first
     // PROP_LAST_STATUS query; attach itself never modifies it.
@@ -3261,6 +3296,8 @@ async fn device_task(
             identity_store,
             identity_rng,
             node_counters,
+            #[cfg(feature = "board-tlora-pager")]
+            i2c,
             // The driver is the only receiver; the slot count is sized
             // for exactly that, so this cannot fail.
             battery: BATTERY_ANNOUNCE
@@ -4805,6 +4842,8 @@ async fn main(spawner: Spawner) {
             node_counters,
             #[cfg(feature = "external-rtc")]
             wall_clock_rtc,
+            #[cfg(feature = "board-tlora-pager")]
+            pmu_bus,
         )
         .unwrap(),
     );

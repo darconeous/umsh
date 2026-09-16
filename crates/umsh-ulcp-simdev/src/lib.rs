@@ -23,6 +23,7 @@ use umsh_crypto::{
 };
 use umsh_ulcp::battery::{BatteryChargeState, BatteryStatus};
 use umsh_ulcp::gnss::{FixKind, GnssSnapshot};
+use umsh_ulcp::i2c::{BusInfo, DeviceInfo, ScanRequest, TransferRequest};
 use umsh_ulcp::ids::prop;
 use umsh_ulcp::ip::{FamilyState, V4Address, V6Item};
 use umsh_ulcp::wifi::{
@@ -79,6 +80,93 @@ pub struct SimulatedDevice {
     /// no node here to put one on the air, so the record is the whole of
     /// what a test can observe.
     announcements: Vec<AnnounceRequest>,
+    /// The one peripheral on the simulated bus.
+    i2c: SimulatedI2c,
+}
+
+/// The bus the simulated device advertises: one controller, one
+/// peripheral, so `CMD_I2C_TRANSFER` and `CMD_I2C_SCAN` have something to
+/// find.
+pub const SIMULATED_I2C_BUSES: &[BusInfo<'static>] = &[BusInfo {
+    bus: 0,
+    speed_khz: 400,
+    max_data: 255,
+    max_ops: 16,
+    name: "I2C0 (simulated)",
+}];
+
+/// What the simulated firmware knows to be on that bus.
+pub const SIMULATED_I2C_DEVICES: &[DeviceInfo<'static>] = &[DeviceInfo {
+    bus: 0,
+    addr: SimulatedI2c::ADDRESS,
+    name: "Register file (simulated)",
+}];
+
+/// A small register-file peripheral at one address: a write sets the
+/// register pointer and stores whatever follows, a read returns from the
+/// pointer onward, and both advance it. Enough to make a register read
+/// (`write pointer, read N`) mean something.
+#[derive(Debug, Default)]
+pub struct SimulatedI2c {
+    registers: [u8; 8],
+    pointer: u8,
+    /// Transactions performed, failures included. A test that checks a
+    /// retransmission was answered from a retained response rather than
+    /// executed again needs this: an unchanged register file would not
+    /// tell an idempotent second write from a suppressed one.
+    executed: u32,
+}
+
+impl SimulatedI2c {
+    /// The peripheral's 7-bit address.
+    pub const ADDRESS: u8 = 0x50;
+
+    /// Perform one transaction, returning the concatenated read data.
+    pub fn transact(&mut self, addr: u8, request: TransferRequest<'_>) -> Result<Vec<u8>, Status> {
+        self.executed += 1;
+        if addr != Self::ADDRESS {
+            return Err(Status::NO_DEVICE);
+        }
+        let mut out = Vec::new();
+        for op in request.ops() {
+            match op.map_err(|error| error.status())? {
+                umsh_ulcp::i2c::Op::Write(data) => {
+                    self.pointer = data[0];
+                    for byte in &data[1..] {
+                        self.registers[usize::from(self.pointer % 8)] = *byte;
+                        self.pointer = self.pointer.wrapping_add(1);
+                    }
+                }
+                umsh_ulcp::i2c::Op::Read(len) => {
+                    for _ in 0..len {
+                        out.push(self.registers[usize::from(self.pointer % 8)]);
+                        self.pointer = self.pointer.wrapping_add(1);
+                    }
+                }
+            }
+        }
+        Ok(out)
+    }
+
+    /// The addresses in a range that acknowledge.
+    pub fn scan(&mut self, request: ScanRequest) -> Vec<u8> {
+        self.executed += 1;
+        if request.covers(Self::ADDRESS) {
+            vec![Self::ADDRESS]
+        } else {
+            Vec::new()
+        }
+    }
+
+    /// Transactions performed so far, scans included.
+    pub fn executed(&self) -> u32 {
+        self.executed
+    }
+
+    /// The register file as it stands.
+    pub fn registers(&self) -> &[u8; 8] {
+        &self.registers
+    }
 }
 
 /// The access points the simulated receiver can hear.
@@ -181,6 +269,7 @@ impl SimulatedDevice {
             fix_step: 0,
             network: SimulatedNetwork::default(),
             announcements: Vec::new(),
+            i2c: SimulatedI2c::default(),
         }
     }
 
@@ -564,7 +653,25 @@ impl SimulatedDevice {
                 self.session
                     .respond_network_table(tid, key, Ok(&items), &mut emit);
             }
+            Some(Effect::I2cTransfer { tid }) => {
+                let request = self.session.i2c_request();
+                let result = self.i2c.transact(request.addr, request);
+                self.session.respond_i2c(
+                    tid,
+                    result.as_deref().map_err(|status| *status),
+                    &mut emit,
+                );
+            }
+            Some(Effect::I2cScan { tid }) => {
+                let found = self.i2c.scan(self.session.i2c_scan_request());
+                self.session.respond_i2c(tid, Ok(&found), &mut emit);
+            }
         }
+    }
+
+    /// The simulated bus peripheral, for checking what a transfer did.
+    pub fn i2c(&self) -> &SimulatedI2c {
+        &self.i2c
     }
 
     /// What the simulated access points offer, by name.
@@ -807,6 +914,8 @@ mod tests {
             wifi: Some(WifiConfig::STATION),
             ip: Some(IpConfig::DUAL),
             bridge_client: false,
+            i2c_buses: SIMULATED_I2C_BUSES,
+            i2c_devices: SIMULATED_I2C_DEVICES,
         }
     }
 

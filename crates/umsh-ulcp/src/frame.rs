@@ -133,6 +133,18 @@ pub enum Cmd {
     /// over the administrative binding. The payload is one
     /// [`SessionResetReason`].
     SessionReset = 24,
+    /// Perform one I2C transaction (host to device): a bus, a 7-bit
+    /// address, and an operation list with embedded-hal `transaction`
+    /// semantics. Answered by [`Cmd::I2cResult`]. See [`crate::i2c`].
+    /// Requires `CAP_I2C`.
+    I2cTransfer = 25,
+    /// The data an I2C transfer read, or the addresses a scan found
+    /// (device to host). Only ever a reply to [`Cmd::I2cTransfer`] or
+    /// [`Cmd::I2cScan`], with that command's TID; never unsolicited.
+    I2cResult = 26,
+    /// Probe a range of 7-bit addresses on one bus (host to device).
+    /// Answered by [`Cmd::I2cResult`]. Requires `CAP_I2C`.
+    I2cScan = 27,
 }
 
 impl Cmd {
@@ -160,6 +172,9 @@ impl Cmd {
             22 => Some(Self::PropMultiSet),
             23 => Some(Self::PropAre),
             24 => Some(Self::SessionReset),
+            25 => Some(Self::I2cTransfer),
+            26 => Some(Self::I2cResult),
+            27 => Some(Self::I2cScan),
             _ => None,
         }
     }
@@ -908,11 +923,11 @@ mod tests {
 
     #[test]
     fn every_assigned_command_round_trips() {
-        for id in (0..=16u8).chain([19]).chain(21..=24) {
+        for id in (0..=16u8).chain([19]).chain(21..=27) {
             let cmd = Cmd::from_u8(id).unwrap_or_else(|| panic!("command {id} unassigned"));
             assert_eq!(cmd as u8, id);
         }
-        for id in (17..=18u8).chain([20]).chain(25..=127) {
+        for id in (17..=18u8).chain([20]).chain(28..=127) {
             assert_eq!(Cmd::from_u8(id), None, "command {id} should be unassigned");
         }
     }

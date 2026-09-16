@@ -159,8 +159,9 @@ resets, liveness, and the property grammar. The remaining commands are
 defined with the subsystem they act on: `CMD_STR_SEND` and `CMD_STR_RECV`
 in [Frame Transport](ulcp-transport.md), `CMD_QUEUE_DRAIN` in
 [Tethered Host Services](ulcp-host.md), `CMD_ANNOUNCE` in
-[Device Identity](ulcp-device.md), and the four state-management commands
-in [Saved State](ulcp-saved-state.md). The complete numeric allocation is
+[Device Identity](ulcp-device.md), the four state-management commands
+in [Saved State](ulcp-saved-state.md), and the three bus-access commands
+in [I2C Bus Access](ulcp-i2c.md). The complete numeric allocation is
 in the [Command and Property Index](ulcp-index.md).
 
 Id | Mnemonic             | Dir          | Description
@@ -180,9 +181,13 @@ Id | Mnemonic             | Dir          | Description
 22 | `CMD_PROP_MULTI_SET` | Host->Device | Set several property values in order
 23 | `CMD_PROP_ARE`       | Device->Host | Multiple property value notification
 24 | `CMD_SESSION_RESET`  | Device->Host | Session state was discarded
+25 | `CMD_I2C_TRANSFER`   | Host->Device | One I2C transaction
+26 | `CMD_I2C_RESULT`     | Device->Host | Read data or scanned addresses
+27 | `CMD_I2C_SCAN`       | Host->Device | Probe a range of I2C addresses
 
 The multi-property commands (21–23) are gated by `CAP_CMD_MULTI`,
-`CMD_REBOOT` by `CAP_REBOOT`, and `CMD_ANNOUNCE` by `CAP_ADVERT` (see
+`CMD_REBOOT` by `CAP_REBOOT`, `CMD_ANNOUNCE` by `CAP_ADVERT`, and the
+bus-access commands (25–27) by `CAP_I2C` (see
 [Capabilities](#capabilities)); everything else is unconditional.
 
 ### CMD 0: (Host -> Device) `CMD_NOP` {#cmd-noop}
@@ -1072,6 +1077,9 @@ Id | Name
 21 | `STATUS_CURSOR_INVALID`
 22 | `STATUS_NOT_PERMITTED`
 23 | `STATUS_CHANNEL_NOT_FOUND`
+24 | `STATUS_NO_DEVICE`
+25 | `STATUS_NACK`
+26 | `STATUS_BUS_ERROR`
 32 | `STATUS_DUTY_LIMIT`
 
 `STATUS_OK`
@@ -1154,6 +1162,21 @@ Id | Name
   written, and from `STATUS_INVALID_ARGUMENT`: the value is well formed,
   and the channel has only to be provisioned first
   (`PROP_DEV_CHANNEL_KEYS`).
+
+`STATUS_NO_DEVICE`
+: An [I2C transfer](ulcp-i2c.md#cmd-i2c-transfer) was addressed to a
+  peripheral that did not acknowledge its address: nothing answered on
+  the bus. Distinct from `STATUS_ITEM_NOT_FOUND`, which is the bus
+  itself not being one the device offers.
+
+`STATUS_NACK`
+: The peripheral acknowledged its address but refused a data octet of
+  the transfer. Operations before the refused one have completed.
+
+`STATUS_BUS_ERROR`
+: The bus failed under the transaction: arbitration was lost, a bus
+  error or overrun occurred, a line stayed stuck, or the transaction
+  outlasted the device's deadline. The device may attempt bus recovery.
 
 `STATUS_CCA_FAILURE`
 : The packet was not sent due to a CCA failure. This status code is only
@@ -1280,12 +1303,14 @@ Code | Name                      | Requires                             | Define
 57   | `CAP_WIFI_AP`             | `CAP_WIFI_SCAN`                      | [Wi-Fi](ulcp-wifi.md#capabilities)
 58   | `CAP_BRIDGE_CLIENT`       | `CAP_REPEATER`; IP family requirement in prose | [Bridge Client](ulcp-bridge.md#capabilities)
 59   | `CAP_DISPLAY_MOTION_WAKE` | — | [Device Services](ulcp-device.md#display-motion-wake)
+60   | `CAP_I2C`                 | —                                    | [I2C Bus Access](ulcp-i2c.md#capabilities)
 515  | `CAP_PHY_LORA`            | —                                    | [Radio Control](ulcp-radio.md#capabilities)
 
 A device **MUST NOT** advertise a capability without also advertising the
 capabilities it requires. Apart from the multi-property commands, which
-`CAP_CMD_MULTI` gates, `CMD_REBOOT`, which `CAP_REBOOT` gates, and
-`CMD_ANNOUNCE`, which `CAP_ADVERT` gates, the
+`CAP_CMD_MULTI` gates, `CMD_REBOOT`, which `CAP_REBOOT` gates,
+`CMD_ANNOUNCE`, which `CAP_ADVERT` gates, and the bus-access commands,
+which `CAP_I2C` gates, the
 commands and status codes defined in this chapter are unconditional and
 need no capability; a device that defines no
 mutable multi-value properties simply has nothing to apply

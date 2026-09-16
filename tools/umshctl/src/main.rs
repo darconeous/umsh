@@ -775,6 +775,8 @@ mod tests {
             vec!["illuminance"],
             vec!["pin", "123456"],
             vec!["admin-key"],
+            vec!["i2c", "buses"],
+            vec!["i2c", "read", "0", "0x55", "2", "--reg", "08"],
         ] {
             assert!(!refused(&argv), "{argv:?} should work over the mesh");
         }

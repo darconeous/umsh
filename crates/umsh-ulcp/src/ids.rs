@@ -31,6 +31,15 @@ pub mod prop {
     /// Optional chip-specific live standard-command readings; never saved.
     pub const BATTERY_GAUGE_TELEMETRY: u32 = 4958;
 
+    /// The I2C buses a host may address with `CMD_I2C_TRANSFER` and
+    /// `CMD_I2C_SCAN` (`PROP_I2C_BUSES`), one item per bus with its speed,
+    /// per-transfer limits, and a display name. Requires `CAP_I2C`.
+    pub const I2C_BUSES: u32 = 4960;
+    /// The peripherals the firmware's own drivers know to be on those
+    /// buses (`PROP_I2C_DEVICES`), so a host can annotate a scan and warn
+    /// before writing to a power-management part. Requires `CAP_I2C`.
+    pub const I2C_DEVICES: u32 = 4961;
+
     /// Autonomous bridge-client configuration and live connection status.
     pub const BRIDGE_ENABLED: u32 = 4928;
     pub const BRIDGE_HOST: u32 = 4929;
@@ -728,6 +737,11 @@ pub mod cap {
 
     /// Orientation-qualified display wake is supported.
     pub const DISPLAY_MOTION_WAKE: u32 = 59;
+    /// `CAP_I2C`: the device lets a host issue raw I2C transactions on
+    /// the buses it lists (`PROP_I2C_BUSES`, `PROP_I2C_DEVICES`,
+    /// `CMD_I2C_TRANSFER`, `CMD_I2C_SCAN`, answered by `CMD_I2C_RESULT`).
+    /// Without it the commands answer `STATUS_UNIMPLEMENTED`.
+    pub const I2C: u32 = 60;
 }
 
 /// Whether a property is writable by a mesh administrator.

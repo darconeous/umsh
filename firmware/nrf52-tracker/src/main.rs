@@ -516,6 +516,11 @@ mod firmware {
             ip: None,
             bridge_client: false,
             stats: Some(&STATS),
+            // The one I2C bus among these boards (the Wio Tracker's OLED)
+            // is owned outright by its display driver, so there is
+            // nothing a host could be handed.
+            i2c_buses: &[],
+            i2c_devices: &[],
         }
     }
 

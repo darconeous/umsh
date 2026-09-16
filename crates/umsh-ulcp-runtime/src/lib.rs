@@ -39,6 +39,8 @@ pub mod driver;
 pub mod duty_gate;
 #[cfg(feature = "gnss")]
 pub mod gnss;
+#[cfg(feature = "i2c")]
+pub mod i2c;
 #[cfg(feature = "counters")]
 pub mod journal;
 #[cfg(feature = "counters")]
@@ -48,3 +50,9 @@ pub mod radio_mux;
 
 #[cfg(feature = "wifi")]
 pub mod wifi_journal;
+
+// The host tests' `embassy-time` driver. One per crate: a second
+// `time_driver_impl!` would be a duplicate symbol, so every module whose
+// tests touch a timer shares this one.
+#[cfg(test)]
+mod test_time;

@@ -110,8 +110,9 @@ umsh-ulcp = { path = "../../../crates/umsh-ulcp", default-features = false }
 umsh-ulcp-device = { path = "../../../crates/umsh-ulcp-device", default-features = false }
 # Board-agnostic device runtime shared with the T-Echo/T-1000E images:
 # session driver, radio mux, transport policy, pairing policy, counter
-# map, and—first on an ESP32 board—the GNSS positioning runtime.
-umsh-ulcp-runtime = { path = "../../../crates/umsh-ulcp-runtime", features = ["device-node", "gnss"] }
+# map, and—first on an ESP32 board—the GNSS positioning runtime. `i2c`
+# is the raw bus access a host gets through `CMD_I2C_TRANSFER`.
+umsh-ulcp-runtime = { path = "../../../crates/umsh-ulcp-runtime", features = ["device-node", "gnss", "i2c"] }
 umsh-crypto = { path = "../../../crates/umsh-crypto", default-features = false, features = ["software-crypto"] }
 umsh-gnss = { path = "../../../crates/umsh-gnss" }
 umsh-hal = { path = "../../../crates/umsh-hal", default-features = false, features = ["embassy"] }

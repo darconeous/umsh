@@ -26,6 +26,15 @@ impl Status {
     pub const CURSOR_INVALID: Self = Self(21);
     pub const NOT_PERMITTED: Self = Self(22);
     pub const CHANNEL_NOT_FOUND: Self = Self(23);
+    /// No peripheral acknowledged the address (`CMD_I2C_TRANSFER`,
+    /// `CMD_I2C_SCAN`). Distinct from `ITEM_NOT_FOUND`, which names a
+    /// bus the device does not list.
+    pub const NO_DEVICE: Self = Self(24);
+    /// The peripheral acknowledged its address but not a data octet.
+    pub const NACK: Self = Self(25);
+    /// Arbitration lost, a bus error, a timeout, or an overrun during
+    /// a bus transaction.
+    pub const BUS_ERROR: Self = Self(26);
     pub const DUTY_LIMIT: Self = Self(32);
 
     pub const RESET_POWER_ON: Self = Self(112);
@@ -63,6 +72,9 @@ impl Status {
             Self::CURSOR_INVALID => "CURSOR_INVALID",
             Self::NOT_PERMITTED => "NOT_PERMITTED",
             Self::CHANNEL_NOT_FOUND => "CHANNEL_NOT_FOUND",
+            Self::NO_DEVICE => "NO_DEVICE",
+            Self::NACK => "NACK",
+            Self::BUS_ERROR => "BUS_ERROR",
             Self::DUTY_LIMIT => "DUTY_LIMIT",
             Self::RESET_POWER_ON => "RESET_POWER_ON",
             Self::RESET_EXTERNAL => "RESET_EXTERNAL",

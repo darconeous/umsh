@@ -36,6 +36,7 @@ use umsh_ulcp::frame::{
 use umsh_ulcp::gnss::GnssSnapshot;
 use umsh_ulcp::hdlc;
 use umsh_ulcp::host::{PropertyNotification, PropertyNotificationKind, TidAllocator};
+use umsh_ulcp::i2c;
 use umsh_ulcp::ids::{self, cap, prop, stream};
 use umsh_ulcp::items;
 use umsh_ulcp::meta::{
@@ -191,6 +192,31 @@ struct Response {
 enum PropResponsePolicy {
     Value,
     StatusOnly,
+}
+
+/// One I2C bus a device lets a host drive, as `PROP_I2C_BUSES` lists it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct I2cBus {
+    pub bus: u8,
+    /// The clock the device drives the bus at.
+    pub speed_khz: u16,
+    /// The largest sum of write-data and read-length octets one transfer
+    /// may carry.
+    pub max_data: u16,
+    /// The largest operation count one transfer may carry.
+    pub max_ops: u8,
+    /// Display text: the controller and its pins, typically.
+    pub name: String,
+}
+
+/// One peripheral the firmware knows to be on a bus, as
+/// `PROP_I2C_DEVICES` lists it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct I2cPeripheral {
+    pub bus: u8,
+    /// The 7-bit address.
+    pub addr: u8,
+    pub name: String,
 }
 
 /// An unsolicited property notification (TID zero) retained for the
@@ -2187,6 +2213,122 @@ where
         Ok(true)
     }
 
+    /// The I2C buses a host may drive directly (`PROP_I2C_BUSES`;
+    /// requires `CAP_I2C`), or `None` when the device has none.
+    pub async fn i2c_buses(&mut self) -> Result<Option<Vec<I2cBus>>, UlcpError> {
+        if !self.capabilities().await?.contains(&cap::I2C) {
+            return Ok(None);
+        }
+        let value = self.get_prop(prop::I2C_BUSES).await?;
+        let buses = i2c::buses(&value)
+            .map(|bus| {
+                bus.map(|bus| I2cBus {
+                    bus: bus.bus,
+                    speed_khz: bus.speed_khz,
+                    max_data: bus.max_data,
+                    max_ops: bus.max_ops,
+                    name: bus.name.to_owned(),
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|_| UlcpError::Protocol("malformed PROP_I2C_BUSES item"))?;
+        Ok(Some(buses))
+    }
+
+    /// The peripherals the firmware knows to be on its buses
+    /// (`PROP_I2C_DEVICES`; requires `CAP_I2C`), or `None` when the
+    /// device has no bus at all. Informational: what the firmware's own
+    /// drivers talk to, not the result of a scan.
+    pub async fn i2c_devices(&mut self) -> Result<Option<Vec<I2cPeripheral>>, UlcpError> {
+        if !self.capabilities().await?.contains(&cap::I2C) {
+            return Ok(None);
+        }
+        let value = self.get_prop(prop::I2C_DEVICES).await?;
+        let devices = i2c::devices(&value)
+            .map(|device| {
+                device.map(|device| I2cPeripheral {
+                    bus: device.bus,
+                    addr: device.addr,
+                    name: device.name.to_owned(),
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|_| UlcpError::Protocol("malformed PROP_I2C_DEVICES item"))?;
+        Ok(Some(devices))
+    }
+
+    /// Perform one I2C transaction (`CMD_I2C_TRANSFER`; requires
+    /// `CAP_I2C`) on `bus` with the 7-bit address `addr`: the operations
+    /// in order, a repeated START on each change of direction, and one
+    /// STOP at the end.
+    ///
+    /// `Ok(None)` means the device has no bus and nothing was sent;
+    /// `Ok(Some(data))` is the concatenated read data, empty for a
+    /// write-only transfer. The device's refusals surface as statuses:
+    /// `STATUS_NO_DEVICE` for an unacknowledged address, `STATUS_NACK`
+    /// for a refused data octet, `STATUS_BUS_ERROR` for the bus itself,
+    /// `STATUS_BUSY` when the bus or the peripheral is held, and
+    /// `STATUS_NOMEM` when the read would not fit the binding's reply.
+    pub async fn i2c_transfer(
+        &mut self,
+        bus: u8,
+        addr: u8,
+        ops: &[i2c::Op<'_>],
+    ) -> Result<Option<Vec<u8>>, UlcpError> {
+        if !self.capabilities().await?.contains(&cap::I2C) {
+            return Ok(None);
+        }
+        let tid = self.alloc_tid();
+        let mut buf = vec![0u8; 4 + ops.iter().map(|op| op.wire_len()).sum::<usize>()];
+        let len = i2c::encode_transfer(&mut buf, tid, bus, addr, ops)
+            .map_err(|_| UlcpError::Protocol("frame encode"))?;
+        self.send(&buf[..len]).await?;
+        self.finish_i2c_transaction(tid).await.map(Some)
+    }
+
+    /// Probe a range of 7-bit addresses on `bus` (`CMD_I2C_SCAN`;
+    /// requires `CAP_I2C`), `None` for the default 0x08 through 0x77.
+    ///
+    /// `Ok(None)` means the device has no bus and nothing was sent;
+    /// `Ok(Some(addresses))` lists what acknowledged, ascending. A probe
+    /// is a one-octet read, which some peripherals treat as a real
+    /// read, and one that does not acknowledge reads goes unreported,
+    /// so the list is a hint rather than an inventory.
+    pub async fn i2c_scan(
+        &mut self,
+        bus: u8,
+        range: Option<(u8, u8)>,
+    ) -> Result<Option<Vec<u8>>, UlcpError> {
+        if !self.capabilities().await?.contains(&cap::I2C) {
+            return Ok(None);
+        }
+        let tid = self.alloc_tid();
+        let mut buf = [0u8; 8];
+        let len = i2c::encode_scan(&mut buf, tid, bus, range)
+            .map_err(|_| UlcpError::Protocol("frame encode"))?;
+        self.send(&buf[..len]).await?;
+        self.finish_i2c_transaction(tid).await.map(Some)
+    }
+
+    /// Await the `CMD_I2C_RESULT` answering a transfer or a scan, or the
+    /// status that refused it.
+    async fn finish_i2c_transaction(&mut self, tid: u8) -> Result<Vec<u8>, UlcpError> {
+        // A bus transaction waits on the device's own lock and deadline
+        // before it answers, which can outlast the ordinary property
+        // timeout.
+        let deadline = Instant::now() + self.config.response_timeout + Duration::from_secs(3);
+        let response = self.wait_response(tid, deadline).await?;
+        match response.kind {
+            ResponseKind::I2cResult => Ok(response.value),
+            ResponseKind::Is if response.key == prop::LAST_STATUS => {
+                Err(UlcpError::Status(decode_status(&response.value)))
+            }
+            _ => Err(UlcpError::Protocol(
+                "property response answering an I2C command",
+            )),
+        }
+    }
+
     /// Forget every Bluetooth bond, the pairing PIN, and the pairing
     /// lockout, then leave the device in a pairing window—the bond
     /// count written to zero (`PROP_BLE_BOND_COUNT`; requires `CAP_BLE`).
@@ -2728,6 +2870,23 @@ where
                     });
                 }
             }
+            // The answer to a transfer or a scan: bytes rather than a
+            // property, queued whole for the transaction waiting on the
+            // TID. Never unsolicited, so a TID-0 one is dropped.
+            Some(Cmd::I2cResult) => {
+                let tid = frame.header.tid();
+                if tid != TID_UNSOLICITED {
+                    if self.responses.len() >= RESPONSE_QUEUE_DEPTH {
+                        self.responses.pop_front();
+                    }
+                    self.responses.push_back(Response {
+                        tid,
+                        kind: ResponseKind::I2cResult,
+                        key: prop::LAST_STATUS,
+                        value: frame.payload.to_vec(),
+                    });
+                }
+            }
             // The device discarded session state. One we asked for is
             // absorbed—the caller who asked is already rebuilding the
             // session; anything else is surfaced as an error.
@@ -2790,10 +2949,10 @@ where
                 key: notification.key,
                 digest: notification.value.to_vec(),
             },
-            // Unreachable: `PropertyNotification` refuses the
-            // multi-property form, and this path only sees notifications
-            // it parsed.
-            ResponseKind::Are => return,
+            // Unreachable: `PropertyNotification` refuses the forms that
+            // carry no key, and this path only sees notifications it
+            // parsed.
+            ResponseKind::Are | ResponseKind::I2cResult => return,
         };
         if self.prop_events.len() >= PROP_EVENT_DEPTH {
             self.prop_events.pop_front();
@@ -3594,10 +3753,14 @@ mod tests {
                             replies.push(buf[..len].to_vec());
                         }
                     }
-                    // This device predates CAP_CMD_MULTI and CAP_REBOOT:
-                    // it answers commands it does not implement the way
-                    // any such device answers them.
-                    Cmd::PropMultiGet | Cmd::PropMultiSet | Cmd::Reboot => {
+                    // This device predates CAP_CMD_MULTI, CAP_REBOOT, and
+                    // CAP_I2C: it answers commands it does not implement
+                    // the way any such device answers them.
+                    Cmd::PropMultiGet
+                    | Cmd::PropMultiSet
+                    | Cmd::Reboot
+                    | Cmd::I2cTransfer
+                    | Cmd::I2cScan => {
                         let len = frame::last_status(&mut buf, tid, Status::UNIMPLEMENTED).unwrap();
                         replies.push(buf[..len].to_vec());
                     }
@@ -3606,7 +3769,8 @@ mod tests {
                     | Cmd::PropInserted
                     | Cmd::PropRemoved
                     | Cmd::PropAre
-                    | Cmd::SessionReset => {
+                    | Cmd::SessionReset
+                    | Cmd::I2cResult => {
                         panic!("host sent a device-only command")
                     }
                 }

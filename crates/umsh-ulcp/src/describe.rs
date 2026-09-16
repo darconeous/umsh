@@ -56,6 +56,8 @@ pub const fn property_name(key: u32) -> Option<&'static str> {
         prop::BATTERY_GAUGE_OPERATION_STATUS => "PROP_BATTERY_GAUGE_OPERATION_STATUS",
         prop::BATTERY_GAUGE_CONFIG => "PROP_BATTERY_GAUGE_CONFIG",
         prop::BATTERY_GAUGE_TELEMETRY => "PROP_BATTERY_GAUGE_TELEMETRY",
+        prop::I2C_BUSES => "PROP_I2C_BUSES",
+        prop::I2C_DEVICES => "PROP_I2C_DEVICES",
 
         prop::MAC_REPEATER_ENABLED => "PROP_MAC_REPEATER_ENABLED",
         prop::IDENT => "PROP_IDENT",
@@ -267,6 +269,8 @@ pub const PROPERTIES: &[u32] = &[
     prop::BRIDGE_PORT,
     prop::BRIDGE_SERVER_KEY,
     prop::BRIDGE_LINK,
+    prop::I2C_BUSES,
+    prop::I2C_DEVICES,
 ];
 
 /// How a property's octets are meant to be read.
@@ -313,6 +317,9 @@ pub const fn property_type(key: u32) -> Option<PropertyType> {
     use PropertyType::{Bool, Bytes, I8, I16, I32, Key32, Status, Text, U8, U16, U32};
     Some(match key {
         prop::BATTERY_GAUGE_CONFIG | prop::BATTERY_GAUGE_TELEMETRY => Bytes,
+        // Tables of bus and device items, decoded by `i2c::buses` and
+        // `i2c::devices`.
+        prop::I2C_BUSES | prop::I2C_DEVICES => Bytes,
         prop::LAST_STATUS => Status,
         // Major and minor, one octet each.
         prop::PROTOCOL_VERSION => Bytes,
@@ -450,6 +457,7 @@ pub const fn capability_name(code: u32) -> Option<&'static str> {
         cap::IPV6 => "IPV6",
         cap::WIFI_AP => "WIFI_AP",
         cap::BRIDGE_CLIENT => "BRIDGE_CLIENT",
+        cap::I2C => "I2C",
         _ => return None,
     })
 }
@@ -564,6 +572,32 @@ impl fmt::Display for FrameDescription<'_> {
                 Ok(reason) => write!(out, "{command:?} tid={tid} {reason:?}"),
                 Err(_) => write!(out, "{command:?} tid={tid} (malformed payload)"),
             },
+            Cmd::I2cTransfer => match crate::i2c::TransferRequest::parse(frame.payload) {
+                Ok(request) => {
+                    let shape = request.shape();
+                    write!(
+                        out,
+                        "{command:?} tid={tid} bus={} addr=0x{:02X} ({} ops, {} write bytes, {} read bytes)",
+                        request.bus,
+                        request.addr,
+                        shape.ops,
+                        shape.data_len - shape.read_len,
+                        shape.read_len
+                    )
+                }
+                Err(_) => write!(out, "{command:?} tid={tid} (malformed payload)"),
+            },
+            Cmd::I2cScan => match crate::i2c::ScanRequest::parse(frame.payload) {
+                Ok(request) => write!(
+                    out,
+                    "{command:?} tid={tid} bus={} 0x{:02X}..=0x{:02X}",
+                    request.bus, request.first, request.last
+                ),
+                Err(_) => write!(out, "{command:?} tid={tid} (malformed payload)"),
+            },
+            Cmd::I2cResult => {
+                write!(out, "{command:?} tid={tid} ({} bytes)", frame.payload.len())
+            }
             Cmd::StrSend | Cmd::StrRecv => match StreamPayload::parse(frame.payload) {
                 Ok(payload) => write!(
                     out,
@@ -745,7 +779,36 @@ mod tests {
         assert_eq!(capability_name(cap::BLE), Some("BLE"));
         // One past the last allocated code: an unassigned capability has
         // no name to give, whatever a device claims by advertising it.
-        assert_eq!(capability_name(cap::DISPLAY_MOTION_WAKE + 1), None);
+        assert_eq!(capability_name(cap::I2C + 1), None);
+    }
+
+    #[test]
+    fn describes_i2c_frames_without_dumping_data() {
+        use crate::i2c::{Op, encode_result, encode_scan, encode_transfer};
+        let mut buf = [0u8; 32];
+        let len =
+            encode_transfer(&mut buf, 4, 0, 0x55, &[Op::Write(&[0x08]), Op::Read(2)]).unwrap();
+        assert_eq!(
+            FrameDescription(&buf[..len]).to_string(),
+            "I2cTransfer tid=4 bus=0 addr=0x55 (2 ops, 1 write bytes, 2 read bytes)"
+        );
+        let len = encode_scan(&mut buf, 4, 1, None).unwrap();
+        assert_eq!(
+            FrameDescription(&buf[..len]).to_string(),
+            "I2cScan tid=4 bus=1 0x08..=0x77"
+        );
+        let len = encode_result(&mut buf, 4, &[0x12, 0x34]).unwrap();
+        assert_eq!(
+            FrameDescription(&buf[..len]).to_string(),
+            "I2cResult tid=4 (2 bytes)"
+        );
+        assert_eq!(
+            FrameDescription(&[buf[0], Cmd::I2cTransfer as u8, 0, 0x50]).to_string(),
+            "I2cTransfer tid=4 (malformed payload)"
+        );
+        assert_eq!(property_name(prop::I2C_BUSES), Some("PROP_I2C_BUSES"));
+        assert_eq!(property_type(prop::I2C_DEVICES), Some(PropertyType::Bytes));
+        assert_eq!(capability_name(cap::I2C), Some("I2C"));
     }
 
     /// The three tables answer for the same set of properties. A name

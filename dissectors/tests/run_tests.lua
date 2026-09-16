@@ -1001,6 +1001,61 @@ for _, case in ipairs({{"08", "request"}, {"09", "response"}}) do
         true)
 end
 
+-- Raw bus access rides the binding in both directions: a transfer with a
+-- register write followed by a read, and the result that answers it. The
+-- binding keeps the frame's own info line off the column, so that is
+-- checked through the frame dissector directly.
+local ulcp = require("ulcp")
+local function frame_info(frame_hex)
+  tree_log = {}
+  return ulcp.dissect_frame(new_range(from_hex(frame_hex)), new_pinfo(), record("Frame"),
+                            "Host → Device")
+end
+local xfer = dissect_payload("08 1234 FF 8019 0055 000108 0102")
+check("I2C transfer decodes",       has(xfer, "Command: CMD_I2C_TRANSFER (25)"), true)
+check("I2C transfer bus",           has(xfer, "I2C Bus: 0"), true)
+check("I2C transfer address",       has(xfer, "I2C Address: 0x55"), true)
+check("I2C transfer write op",      has(xfer, "Operation 1: write 1 octets"), true)
+check("I2C transfer write data",    has(xfer, "Data: 08"), true)
+check("I2C transfer read op",       has(xfer, "Operation 2: read 2 octets"), true)
+check("I2C transfer info line",
+      frame_info("8019 0055 000108 0102"),
+      "Host → Device CMD_I2C_TRANSFER TID=0 bus 0 addr 0x55 (2 ops, 1 written, 2 read)")
+check("clean I2C transfer has no violations", #xfer.violations, 0)
+
+local result = dissect_payload("09 1234 FF 801A 3412")
+check("I2C result decodes",         has(result, "Command: CMD_I2C_RESULT (26)"), true)
+check("I2C result data",            has(result, "I2C Result: 3412"), true)
+check("I2C result info line",
+      frame_info("801A 3412"), "Host → Device CMD_I2C_RESULT TID=0 (2 octets)")
+check("clean I2C result has no violations", #result.violations, 0)
+
+-- A scan of the default range names it; an explicit range is shown.
+local scan = dissect_payload("08 1234 FF 801B 00")
+check("I2C scan decodes",           has(scan, "Command: CMD_I2C_SCAN (27)"), true)
+check("I2C scan default range",
+      frame_info("801B 00"), "Host → Device CMD_I2C_SCAN TID=0 bus 0 0x08..0x77")
+local ranged = dissect_payload("08 1234 FF 801B 00 5057")
+check("I2C scan first address",     has(ranged, "First Address: 0x50"), true)
+check("I2C scan last address",      has(ranged, "Last Address: 0x57"), true)
+check("I2C scan explicit range",
+      frame_info("801B 00 5057"), "Host → Device CMD_I2C_SCAN TID=0 bus 0 0x50..0x57")
+
+-- A zero-length operation and an operation of unknown kind are flagged.
+local bad_op = dissect_payload("08 1234 FF 8019 0055 0100 0201")
+check("zero-length operation is malformed",
+      has(bad_op, "EXPERT: zero-length operation"), true)
+check("unknown operation kind is malformed",
+      has(bad_op, "EXPERT: unknown operation kind"), true)
+
+-- The result only ever answers; one in a request is going the wrong way.
+local wrong_way = dissect_payload("08 0001 FF 801A 00")
+check("CMD_I2C_RESULT in a request is flagged", #wrong_way.violations, 1)
+check("the wrong-way result is named",
+      wrong_way.violations[1] and
+        wrong_way.violations[1]:find("CMD_I2C_RESULT", 1, true) ~= nil,
+      true)
+
 -- On its own binding it is an ordinary frame, and the reason is named.
 local notice = dissect_payload("08 0001 FF 8018 01")
 check("the reason is decoded", has(notice, "Session Reset Reason: CMD_RST (1)"), true)

@@ -25,6 +25,9 @@ local COMMANDS = {
   [22] = "CMD_PROP_MULTI_SET",
   [23] = "CMD_PROP_ARE",
   [24] = "CMD_SESSION_RESET",
+  [25] = "CMD_I2C_TRANSFER",
+  [26] = "CMD_I2C_RESULT",
+  [27] = "CMD_I2C_SCAN",
 }
 
 M.COMMANDS = COMMANDS
@@ -36,10 +39,11 @@ M.COMMAND_TO_DEVICE = {
   [0] = true, [1] = true, [2] = true, [3] = true, [4] = true, [5] = true,
   [9] = true, [11] = true, [12] = true, [13] = true, [14] = true,
   [15] = true, [16] = true, [19] = true,
-  [21] = true, [22] = true,
+  [21] = true, [22] = true, [25] = true, [27] = true,
 }
 M.COMMAND_TO_HOST = {
   [6] = true, [7] = true, [8] = true, [10] = true, [23] = true, [24] = true,
+  [26] = true,
 }
 
 -- Commands that never ride the Node Management binding in either direction.
@@ -171,6 +175,8 @@ local PROPERTIES = {
   [4913] = "PROP_WIFI_AP_CONFIG",
   [4914] = "PROP_WIFI_AP_STATE",
   [4915] = "PROP_WIFI_AP_CLIENTS",
+  [4960] = "PROP_I2C_BUSES",
+  [4961] = "PROP_I2C_DEVICES",
 }
 
 local STREAMS = {[113] = "STR_PHY_RAW"}
@@ -182,6 +188,15 @@ local SESSION_RESET_REASONS = {
   [1] = "CMD_RST",
   [2] = "CMD_RESTORE",
 }
+
+-- CMD_I2C_TRANSFER operation kinds.
+local I2C_OP_KINDS = {
+  [0] = "write",
+  [1] = "read",
+}
+
+-- CMD_I2C_SCAN's default range when the request names none.
+local I2C_SCAN_DEFAULT_FIRST, I2C_SCAN_DEFAULT_LAST = 0x08, 0x77
 
 local proto = Proto("umsh.ulcp", "UMSH ULCP")
 local f = {}
@@ -214,6 +229,15 @@ f.tx_flags = ProtoField.uint8("umsh.ulcp.tx.flags", "TX Flags", base.HEX)
 f.session_reset_reason = ProtoField.uint32(
   "umsh.ulcp.session_reset_reason", "Session Reset Reason", base.DEC,
   SESSION_RESET_REASONS)
+f.i2c_bus = ProtoField.uint8("umsh.ulcp.i2c.bus", "I2C Bus", base.DEC)
+f.i2c_address = ProtoField.uint8("umsh.ulcp.i2c.address", "I2C Address", base.HEX)
+f.i2c_op = ProtoField.bytes("umsh.ulcp.i2c.op", "I2C Operation")
+f.i2c_op_kind = ProtoField.uint8("umsh.ulcp.i2c.op.kind", "Kind", base.DEC, I2C_OP_KINDS)
+f.i2c_op_length = ProtoField.uint32("umsh.ulcp.i2c.op.length", "Length", base.DEC)
+f.i2c_op_data = ProtoField.bytes("umsh.ulcp.i2c.op.data", "Data")
+f.i2c_first = ProtoField.uint8("umsh.ulcp.i2c.first", "First Address", base.HEX)
+f.i2c_last = ProtoField.uint8("umsh.ulcp.i2c.last", "Last Address", base.HEX)
+f.i2c_result = ProtoField.bytes("umsh.ulcp.i2c.result", "I2C Result")
 f.payload = ProtoField.bytes("umsh.ulcp.payload", "Payload")
 proto.fields = f
 
@@ -458,6 +482,85 @@ local function dissect_frame(buf, pinfo, tree, direction)
         end
       end
     end
+  elseif command == 25 then
+    -- CMD_I2C_TRANSFER: bus, 7-bit address, then the operation list. A
+    -- read operation carries only its length; a write carries its data.
+    if buf:len() < 4 then
+      add_malformed(root, "truncated I2C transfer")
+    else
+      local bus, addr = buf(2, 1):uint(), buf(3, 1):uint()
+      root:add(f.i2c_bus, buf(2, 1))
+      local addr_item = root:add(f.i2c_address, buf(3, 1))
+      if addr > 0x7f then
+        add_malformed(addr_item, "address is not 7-bit")
+      end
+      local pos, count, written, read, stopped = 4, 0, 0, 0, false
+      while pos < buf:len() do
+        local kind = buf(pos, 1):uint()
+        local len, consumed = decode_pui(buf, pos + 1)
+        if not len then
+          add_malformed(root, "truncated or malformed operation length")
+          stopped = true
+          break
+        end
+        local data_len = kind == 0 and len or 0
+        local total = 1 + consumed + data_len
+        if pos + total > buf:len() then
+          add_malformed(root, "operation data exceeds frame")
+          stopped = true
+          break
+        end
+        count = count + 1
+        local op = root:add(f.i2c_op, buf(pos, total))
+        op:add(f.i2c_op_kind, buf(pos, 1))
+        op:add(f.i2c_op_length, buf(pos + 1, consumed), len)
+        if kind == 0 then
+          written = written + len
+          if len > 0 then op:add(f.i2c_op_data, buf(pos + 1 + consumed, len)) end
+          op:set_text(string.format("Operation %d: write %d octets", count, len))
+        elseif kind == 1 then
+          read = read + len
+          op:set_text(string.format("Operation %d: read %d octets", count, len))
+        else
+          op:set_text(string.format("Operation %d: kind %d", count, kind))
+          add_malformed(op, "unknown operation kind")
+        end
+        if len == 0 then
+          add_malformed(op, "zero-length operation")
+        end
+        pos = pos + total
+      end
+      if count == 0 and not stopped then
+        add_malformed(root, "transfer carries no operations")
+      end
+      info = info .. string.format(" bus %d addr 0x%02x (%d ops, %d written, %d read)",
+                                   bus, addr, count, written, read)
+    end
+  elseif command == 27 then
+    -- CMD_I2C_SCAN: bus, optionally the first and last address to probe.
+    local len = buf:len() - 2
+    if len ~= 1 and len ~= 3 then
+      add_malformed(root, "scan carries a bus and optionally a range")
+      if len > 0 then root:add(f.payload, buf(2)) end
+    else
+      root:add(f.i2c_bus, buf(2, 1))
+      local first, last = I2C_SCAN_DEFAULT_FIRST, I2C_SCAN_DEFAULT_LAST
+      if len == 3 then
+        first, last = buf(3, 1):uint(), buf(4, 1):uint()
+        root:add(f.i2c_first, buf(3, 1))
+        local last_item = root:add(f.i2c_last, buf(4, 1))
+        if first > last or last > 0x7f then
+          add_malformed(last_item, "range is not ascending within 7 bits")
+        end
+      end
+      info = info .. string.format(" bus %d 0x%02x..0x%02x", buf(2, 1):uint(), first, last)
+    end
+  elseif command == 26 then
+    -- CMD_I2C_RESULT: read data or scanned addresses, shaped by the
+    -- request it answers, which this frame does not name.
+    local len = buf:len() - 2
+    if len > 0 then root:add(f.i2c_result, buf(2)) end
+    info = info .. string.format(" (%d octets)", len)
   elseif command == 24 then
     local reason, consumed = decode_pui(buf, 2)
     if not reason then

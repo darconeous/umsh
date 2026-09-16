@@ -43,6 +43,7 @@
   - [Wi-Fi](ulcp-wifi.md)
   - [IP Connectivity](ulcp-ip.md)
   - [Bridge Client](ulcp-bridge.md)
+  - [I2C Bus Access](ulcp-i2c.md)
   - [Minimum Requirements](ulcp-conformance.md)
   - [Command and Property Index](ulcp-index.md)
   - [ULCP over BLE](ulcp-ble.md)

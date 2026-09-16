@@ -96,6 +96,9 @@ fn session_config() -> SessionConfig {
         wifi: None,
         ip: None,
         bridge_client: false,
+        // A process has no bus to expose.
+        i2c_buses: &[],
+        i2c_devices: &[],
     }
 }
 

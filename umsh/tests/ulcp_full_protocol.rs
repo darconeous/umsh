@@ -79,6 +79,7 @@ fn session_config() -> SessionConfig {
             level: true,
             charge_state: true,
         }),
+        display_motion_wake: false,
         // A simulated device has nothing to flash or beep with, so it
         // does not advertise CAP_ALERT.
         alert: None,
@@ -98,6 +99,8 @@ fn session_config() -> SessionConfig {
         wifi: Some(WifiConfig::STATION),
         ip: Some(IpConfig::DUAL),
         bridge_client: false,
+        i2c_buses: umsh_ulcp_simdev::SIMULATED_I2C_BUSES,
+        i2c_devices: umsh_ulcp_simdev::SIMULATED_I2C_DEVICES,
     }
 }
 
@@ -125,6 +128,8 @@ struct SimDevice {
     networks: Vec<Vec<u8>>,
     /// Announcements the host asked for, in the order they were queued.
     announcements: Vec<AnnounceRequest>,
+    /// The one peripheral on the simulated bus.
+    i2c: umsh_ulcp_simdev::SimulatedI2c,
 }
 
 impl SimDevice {
@@ -147,6 +152,7 @@ impl SimDevice {
             log: Vec::new(),
             networks: Vec::new(),
             announcements: Vec::new(),
+            i2c: Default::default(),
         }))
     }
 
@@ -242,6 +248,18 @@ impl SimDevice {
                     }),
                     &mut emit,
                 );
+            }
+            // No diagnostic fields are configured here, so this is only
+            // reached for the plain snapshot: the same reading as above.
+            Some(Effect::SampleBatteryGroup { tid, key, .. }) => {
+                let mut sample = umsh_ulcp::battery_diagnostics::Sample::default();
+                sample.snapshot = Ok(umsh_ulcp::battery::BatteryStatus {
+                    voltage_mv: Some(4111),
+                    level_percent: Some(87),
+                    charge_state: Some(umsh_ulcp::battery::BatteryChargeState::Charging),
+                });
+                self.session
+                    .respond_battery_group(tid, key, sample, &mut emit);
             }
             Some(Effect::SampleIlluminance { tid }) => {
                 // A stable simulated reading: ordinary office lighting.
@@ -370,6 +388,19 @@ impl SimDevice {
                 }
                 self.session
                     .respond_network_table(tid, key, Ok(&encoded), &mut emit);
+            }
+            Some(Effect::I2cTransfer { tid }) => {
+                let request = self.session.i2c_request();
+                let result = self.i2c.transact(request.addr, request);
+                self.session.respond_i2c(
+                    tid,
+                    result.as_deref().map_err(|status| *status),
+                    &mut emit,
+                );
+            }
+            Some(Effect::I2cScan { tid }) => {
+                let found = self.i2c.scan(self.session.i2c_scan_request());
+                self.session.respond_i2c(tid, Ok(&found), &mut emit);
             }
             Some(Effect::ProvisionIdentity { tid }) => {
                 let result = match self.session.identity_request() {
@@ -1011,6 +1042,92 @@ async fn an_on_demand_announcement_carries_the_options_the_host_chose() {
     assert!(queued[1].full_source);
     // The device resolves the identifier to the key its node needs.
     assert_eq!(queued[2].channel_key, Some([0x51; 32]));
+}
+
+/// Raw bus access end to end: the tables, a register write and read
+/// back, the refusals the spec names, and a scan that finds the one
+/// peripheral there is.
+#[tokio::test]
+async fn raw_bus_access_reads_writes_and_scans_the_simulated_peripheral() {
+    use umsh_ulcp::i2c::Op;
+    use umsh_ulcp_simdev::SimulatedI2c;
+
+    let sim = SimDevice::new();
+    let mut radio = attached_host(&sim).await;
+
+    let buses = radio.i2c_buses().await.unwrap().expect("CAP_I2C");
+    assert_eq!(buses.len(), 1);
+    assert_eq!(buses[0].bus, 0);
+    assert_eq!(buses[0].speed_khz, 400);
+    assert_eq!((buses[0].max_data, buses[0].max_ops), (255, 16));
+    let devices = radio.i2c_devices().await.unwrap().expect("CAP_I2C");
+    assert_eq!(devices.len(), 1);
+    assert_eq!(devices[0].addr, SimulatedI2c::ADDRESS);
+
+    // Write two registers from pointer 2, then read them back with the
+    // usual pointer-write-then-read transaction.
+    let written = radio
+        .i2c_transfer(0, SimulatedI2c::ADDRESS, &[Op::Write(&[0x02, 0xAA, 0xBB])])
+        .await
+        .unwrap()
+        .expect("CAP_I2C");
+    assert!(written.is_empty(), "a write-only transfer reads nothing");
+    let read = radio
+        .i2c_transfer(0, SimulatedI2c::ADDRESS, &[Op::Write(&[0x02]), Op::Read(2)])
+        .await
+        .unwrap()
+        .expect("CAP_I2C");
+    assert_eq!(read, [0xAA, 0xBB]);
+    assert_eq!(&sim.lock().unwrap().i2c.registers()[2..4], &[0xAA, 0xBB]);
+
+    // Nobody at the next address; no such bus; an empty operation.
+    let refusal = radio
+        .i2c_transfer(0, SimulatedI2c::ADDRESS + 1, &[Op::Read(1)])
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(refusal, UlcpError::Status(Status::NO_DEVICE)),
+        "{refusal:?}"
+    );
+    let refusal = radio
+        .i2c_transfer(1, SimulatedI2c::ADDRESS, &[Op::Read(1)])
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(refusal, UlcpError::Status(Status::ITEM_NOT_FOUND)),
+        "{refusal:?}"
+    );
+    let refusal = radio
+        .i2c_transfer(0, SimulatedI2c::ADDRESS, &[Op::Read(0)])
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(refusal, UlcpError::Status(Status::INVALID_ARGUMENT)),
+        "{refusal:?}"
+    );
+
+    // The default scan finds the peripheral; a range that misses it
+    // finds nothing; a backwards range is refused.
+    assert_eq!(
+        radio.i2c_scan(0, None).await.unwrap().expect("CAP_I2C"),
+        [SimulatedI2c::ADDRESS]
+    );
+    assert!(
+        radio
+            .i2c_scan(0, Some((0x60, 0x70)))
+            .await
+            .unwrap()
+            .expect("CAP_I2C")
+            .is_empty()
+    );
+    let refusal = radio.i2c_scan(0, Some((0x20, 0x10))).await.unwrap_err();
+    assert!(
+        matches!(refusal, UlcpError::Status(Status::INVALID_ARGUMENT)),
+        "{refusal:?}"
+    );
+    // Three transfers reached the bus (the refused ones never did), plus
+    // two scans.
+    assert_eq!(sim.lock().unwrap().i2c.executed(), 5);
 }
 
 /// Every positioning property folds back into one snapshot, and a

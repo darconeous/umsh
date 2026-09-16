@@ -24,6 +24,7 @@ use umsh_ulcp::frame::{
     TID_UNSOLICITED,
 };
 use umsh_ulcp::gnss::{self, GnssSnapshot};
+use umsh_ulcp::i2c::{self, BusInfo, DeviceInfo, ScanRequest, TransferRequest};
 use umsh_ulcp::ids::{
     self, DEFAULT_ADVERT_INTERVAL_S, DEFAULT_BEACON_INTERVAL_S, MAX_AUTO_ANNOUNCE_INTERVAL_S,
     MIN_AUTO_ANNOUNCE_INTERVAL_S, admin_writable, cap, prop, stream,
@@ -309,6 +310,16 @@ pub struct SessionConfig {
     /// `CAP_MAC_BACKHAUL` are absent and the repeater and backhaul
     /// properties are unknown.
     pub mac_node: bool,
+    /// The I2C buses a host may drive directly, as `PROP_I2C_BUSES`
+    /// reports them. Empty: `CAP_I2C` is absent, the two I2C properties
+    /// are unknown, and `CMD_I2C_TRANSFER` and `CMD_I2C_SCAN` answer
+    /// `STATUS_UNIMPLEMENTED`. A bus's `max_data` and `max_ops` are
+    /// clamped to [`I2C_DATA_MAX`] and [`I2C_MAX_OPS`], which bound the
+    /// session's staging.
+    pub i2c_buses: &'static [BusInfo<'static>],
+    /// The peripherals the firmware's own drivers know to be on those
+    /// buses, as `PROP_I2C_DEVICES` reports them. Informational only.
+    pub i2c_devices: &'static [DeviceInfo<'static>],
 }
 
 /// Physical-radio outcome of the transmit started by
@@ -485,6 +496,54 @@ pub enum Effect {
     /// transmission—not once it has been sent, which channel access and
     /// the duty ledger decide later.
     Announce { tid: u8, request: AnnounceRequest },
+    /// `CMD_I2C_TRANSFER`: perform the transaction staged in
+    /// [`Session::i2c_request`] on the bus it names, then complete with
+    /// [`Session::respond_i2c`] carrying the concatenated read data. The
+    /// session has already validated the structure, the bus, the
+    /// per-bus limits, and that the result fits the reply; what is left
+    /// for the platform is the bus itself: acquiring it, the deadline,
+    /// and how the peripheral answered.
+    I2cTransfer { tid: u8 },
+    /// `CMD_I2C_SCAN`: probe the address range staged in
+    /// [`Session::i2c_scan_request`], then complete with
+    /// [`Session::respond_i2c`] carrying the ascending list of addresses
+    /// that acknowledged.
+    I2cScan { tid: u8 },
+}
+
+/// Largest sum of write-data and read-length octets one `CMD_I2C_TRANSFER`
+/// may carry, whatever a bus advertises.
+pub const I2C_DATA_MAX: usize = 255;
+/// Largest operation count one `CMD_I2C_TRANSFER` may carry, whatever a
+/// bus advertises.
+pub const I2C_MAX_OPS: usize = 16;
+/// Room for the largest operation list within those limits: every data
+/// octet, plus a kind octet and a length of up to two octets per
+/// operation. A lone 255-octet write is 258 octets, so the data limit
+/// alone would not do.
+const I2C_OPS_MAX: usize = I2C_DATA_MAX + 3 * I2C_MAX_OPS;
+
+/// The request a `CMD_I2C_TRANSFER` or `CMD_I2C_SCAN` has staged for the
+/// platform. Held the way a network entry is: [`Effect`] is `Copy` and
+/// small, and an operation list can be most of a frame.
+struct PendingI2c {
+    bus: u8,
+    addr: u8,
+    first: u8,
+    last: u8,
+    ops: HeaplessVec<u8, I2C_OPS_MAX>,
+}
+
+impl Default for PendingI2c {
+    fn default() -> Self {
+        Self {
+            bus: 0,
+            addr: 0,
+            first: 0,
+            last: 0,
+            ops: HeaplessVec::new(),
+        }
+    }
 }
 
 /// A validated `CMD_ANNOUNCE` request (see [`Effect::Announce`]).
@@ -2878,6 +2937,9 @@ pub struct Session<A: AesProvider, S: Sha256Provider, const TX: usize = 1> {
     /// A network entry, credential and all, staged for the platform by a
     /// `PROP_WIFI_NETWORKS` insert.
     pending_network_entry: PendingNetworkEntry,
+    /// The transaction or scan a `CMD_I2C_TRANSFER` or `CMD_I2C_SCAN`
+    /// has staged for the platform.
+    pending_i2c: PendingI2c,
     /// The most recent detached frame to enter the inbound queue,
     /// waiting for the driver to express it. Not state so much as a
     /// one-shot report: [`Session::take_queued_notice`] clears it, and a
@@ -3041,6 +3103,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             ipv6_state: ip::FamilyState::default(),
             pending_network: net::SelectedNetwork::default(),
             pending_network_entry: PendingNetworkEntry::default(),
+            pending_i2c: PendingI2c::default(),
             queued_notice: None,
             multi: None,
             binding: Binding::Local,
@@ -3688,6 +3751,27 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                     },
                 })
             }
+            // Raw bus access. Everything the session can check without
+            // a bus—structure, the bus name, the per-bus limits, and
+            // whether the answer will fit the reply—is checked here, so
+            // a request that reaches the platform is one that can only
+            // fail on the wire.
+            Some(Cmd::I2cTransfer) => {
+                match self.stage_i2c_transfer(received.payload, reply_budget) {
+                    Ok(()) => Some(Effect::I2cTransfer { tid }),
+                    Err(status) => {
+                        self.complete(tid, status, emit);
+                        None
+                    }
+                }
+            }
+            Some(Cmd::I2cScan) => match self.stage_i2c_scan(received.payload, reply_budget) {
+                Ok(()) => Some(Effect::I2cScan { tid }),
+                Err(status) => {
+                    self.complete(tid, status, emit);
+                    None
+                }
+            },
             // Several properties in one exchange. Both commands are
             // served entry by entry through the ordinary single-property
             // paths, so a value that needs a platform round trip defers
@@ -3706,7 +3790,8 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                 | Cmd::PropInserted
                 | Cmd::PropRemoved
                 | Cmd::PropAre
-                | Cmd::SessionReset,
+                | Cmd::SessionReset
+                | Cmd::I2cResult,
             ) => {
                 self.complete(tid, Status::INVALID_COMMAND, emit);
                 None
@@ -5263,6 +5348,131 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         self.complete(tid, status, emit);
     }
 
+    /// Whether this device exposes any I2C bus (`CAP_I2C`).
+    fn has_i2c(&self) -> bool {
+        !self.config.i2c_buses.is_empty()
+    }
+
+    /// The bus a request names, with its limits clamped to what the
+    /// session can stage.
+    fn i2c_bus(&self, bus: u8) -> Option<(usize, usize)> {
+        self.config
+            .i2c_buses
+            .iter()
+            .find(|info| info.bus == bus)
+            .map(|info| {
+                (
+                    usize::from(info.max_data).min(I2C_DATA_MAX),
+                    usize::from(info.max_ops).min(I2C_MAX_OPS),
+                )
+            })
+    }
+
+    /// Validate a `CMD_I2C_TRANSFER` payload and stage it for
+    /// [`Effect::I2cTransfer`], answering with the status the spec's
+    /// table names for whatever is wrong with it.
+    fn stage_i2c_transfer(&mut self, payload: &[u8], reply_budget: usize) -> Result<(), Status> {
+        if !self.has_i2c() {
+            return Err(Status::UNIMPLEMENTED);
+        }
+        let request = TransferRequest::parse(payload).map_err(i2c::I2cError::status)?;
+        let (max_data, max_ops) = self.i2c_bus(request.bus).ok_or(Status::ITEM_NOT_FOUND)?;
+        let shape = request.shape();
+        if shape.ops > max_ops || shape.data_len > max_data {
+            return Err(Status::INVALID_ARGUMENT);
+        }
+        // Checked before the bus is touched: a result that cannot be
+        // carried must not be a transaction that already happened.
+        if i2c::RESULT_OVERHEAD + shape.read_len > reply_budget {
+            return Err(Status::NOMEM);
+        }
+        let mut ops = HeaplessVec::new();
+        // Within the limits just checked, so this cannot fail; refusing
+        // rather than panicking keeps the invariant honest if the
+        // constants ever drift apart.
+        ops.extend_from_slice(request.encoded_ops())
+            .map_err(|_| Status::NOMEM)?;
+        self.pending_i2c = PendingI2c {
+            bus: request.bus,
+            addr: request.addr,
+            first: 0,
+            last: 0,
+            ops,
+        };
+        Ok(())
+    }
+
+    /// Validate a `CMD_I2C_SCAN` payload and stage it for
+    /// [`Effect::I2cScan`].
+    fn stage_i2c_scan(&mut self, payload: &[u8], reply_budget: usize) -> Result<(), Status> {
+        if !self.has_i2c() {
+            return Err(Status::UNIMPLEMENTED);
+        }
+        let request = ScanRequest::parse(payload).map_err(i2c::I2cError::status)?;
+        self.i2c_bus(request.bus).ok_or(Status::ITEM_NOT_FOUND)?;
+        // Every address in the range could answer, and the reply is
+        // never fragmented.
+        if i2c::RESULT_OVERHEAD + request.len() > reply_budget {
+            return Err(Status::NOMEM);
+        }
+        self.pending_i2c = PendingI2c {
+            bus: request.bus,
+            addr: 0,
+            first: request.first,
+            last: request.last,
+            ops: HeaplessVec::new(),
+        };
+        Ok(())
+    }
+
+    /// The transaction a `CMD_I2C_TRANSFER` has staged, read by the
+    /// platform when it serves [`Effect::I2cTransfer`]. Already
+    /// validated against the bus's limits.
+    pub fn i2c_request(&self) -> TransferRequest<'_> {
+        TransferRequest::from_parts(
+            self.pending_i2c.bus,
+            self.pending_i2c.addr,
+            &self.pending_i2c.ops,
+        )
+    }
+
+    /// The range a `CMD_I2C_SCAN` has staged, read by the platform when
+    /// it serves [`Effect::I2cScan`].
+    pub fn i2c_scan_request(&self) -> ScanRequest {
+        ScanRequest {
+            bus: self.pending_i2c.bus,
+            first: self.pending_i2c.first,
+            last: self.pending_i2c.last,
+        }
+    }
+
+    /// Complete a `CMD_I2C_TRANSFER` or `CMD_I2C_SCAN`. `Ok` carries the
+    /// concatenated read data, or the acknowledged addresses in
+    /// ascending order, and answers with `CMD_I2C_RESULT`; `Err` is the
+    /// status the bus produced (`STATUS_BUSY`, `STATUS_NO_DEVICE`,
+    /// `STATUS_NACK`, `STATUS_BUS_ERROR`, `STATUS_INVALID_STATE`).
+    pub fn respond_i2c(
+        &mut self,
+        tid: u8,
+        result: Result<&[u8], Status>,
+        emit: &mut impl FnMut(&[u8]),
+    ) {
+        match result {
+            Ok(data) => {
+                self.last_status = Status::OK;
+                if self.suppress_response(tid) {
+                    return;
+                }
+                let mut buf = [0u8; i2c::RESULT_OVERHEAD + I2C_DATA_MAX];
+                match i2c::encode_result(&mut buf, tid, data) {
+                    Ok(len) => emit(&buf[..len]),
+                    Err(_) => self.complete(tid, Status::NOMEM, emit),
+                }
+            }
+            Err(status) => self.complete(tid, status, emit),
+        }
+    }
+
     /// The number of Bluetooth bonds the platform is holding, as reported
     /// by `PROP_BLE_BOND_COUNT`. Bonding is the transport's business, so
     /// the session mirrors what it is told rather than counting anything.
@@ -6299,6 +6509,8 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             | prop::HOST_RX_QUEUE_DROPPED
             | prop::SAVED => Err(Status::INVALID_ARGUMENT),
             prop::BATTERY if self.config.battery.is_some() => Err(Status::INVALID_ARGUMENT),
+            // What the board is wired with is not the host's to change.
+            prop::I2C_BUSES | prop::I2C_DEVICES if self.has_i2c() => Err(Status::INVALID_ARGUMENT),
             key if self.config.battery.is_some()
                 && self.config.battery_diagnostics.contains(key) =>
             {
@@ -6970,6 +7182,9 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         if key == prop::DEV_MODEL {
             return self.config.dev_model.is_some();
         }
+        if matches!(key, prop::I2C_BUSES | prop::I2C_DEVICES) {
+            return self.has_i2c();
+        }
         if key == prop::BATTERY {
             return self.config.battery.is_some();
         }
@@ -7184,6 +7399,33 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                 }
                 if self.has_bridge() {
                     len += pui::encode(cap::BRIDGE_CLIENT, &mut out[len..]).unwrap_or(0);
+                }
+                if self.has_i2c() {
+                    len += pui::encode(cap::I2C, &mut out[len..]).unwrap_or(0);
+                }
+                len
+            }
+            // Tables of what the board is: constant for the life of the
+            // firmware, and encoded whole. An item that does not fit is
+            // a board that advertised more than a property can carry,
+            // so the table stops at the last item that did.
+            prop::I2C_BUSES if self.has_i2c() => {
+                let mut len = 0;
+                for bus in self.config.i2c_buses {
+                    match bus.encode(&mut out[len..]) {
+                        Ok(written) => len += written,
+                        Err(_) => break,
+                    }
+                }
+                len
+            }
+            prop::I2C_DEVICES if self.has_i2c() => {
+                let mut len = 0;
+                for device in self.config.i2c_devices {
+                    match device.encode(&mut out[len..]) {
+                        Ok(written) => len += written,
+                        Err(_) => break,
+                    }
                 }
                 len
             }
@@ -7964,8 +8206,41 @@ mod tests {
             wifi: Some(net::WifiConfig::STATION),
             ip: Some(net::IpConfig::DUAL),
             bridge_client: false,
+            i2c_buses: TEST_I2C_BUSES,
+            i2c_devices: TEST_I2C_DEVICES,
         }
     }
+
+    /// Two buses with different limits: a wide one at the session's
+    /// ceiling and a narrow one, so the per-bus clamp is observable.
+    const TEST_I2C_BUSES: &[BusInfo<'static>] = &[
+        BusInfo {
+            bus: 0,
+            speed_khz: 400,
+            max_data: 255,
+            max_ops: 16,
+            name: "I2C0 SDA GPIO3 SCL GPIO2",
+        },
+        BusInfo {
+            bus: 2,
+            speed_khz: 100,
+            max_data: 32,
+            max_ops: 4,
+            name: "PMU",
+        },
+    ];
+    const TEST_I2C_DEVICES: &[DeviceInfo<'static>] = &[
+        DeviceInfo {
+            bus: 0,
+            addr: 0x55,
+            name: "BQ27220",
+        },
+        DeviceInfo {
+            bus: 2,
+            addr: 0x34,
+            name: "AXP2101",
+        },
+    ];
 
     #[test]
     fn motion_wake_setting_capability_validation_and_persistence() {
@@ -8452,6 +8727,7 @@ mod tests {
                 cap::WIFI,
                 cap::IPV4,
                 cap::IPV6,
+                cap::I2C,
             ]
         );
     }
@@ -15852,5 +16128,430 @@ mod tests {
         assert_eq!(pushes.len(), 1);
         set(&mut session, prop::BRIDGE_LINK, &[4, 0]);
         assert_eq!(get(&mut session, prop::BRIDGE_LINK), link.encode());
+    }
+
+    // ─── Raw I2C bus access ──────────────────────────────────────────
+
+    use umsh_ulcp::i2c::Op;
+
+    fn transfer_frame(tid: u8, bus: u8, addr: u8, ops: &[Op<'_>]) -> Vec<u8> {
+        let mut buf = [0u8; 400];
+        let len = i2c::encode_transfer(&mut buf, tid, bus, addr, ops).unwrap();
+        buf[..len].to_vec()
+    }
+
+    fn scan_frame(tid: u8, bus: u8, range: Option<(u8, u8)>) -> Vec<u8> {
+        let mut buf = [0u8; 8];
+        let len = i2c::encode_scan(&mut buf, tid, bus, range).unwrap();
+        buf[..len].to_vec()
+    }
+
+    /// Dispatch a command expected to fail before any effect, and return
+    /// the status it was answered with.
+    fn refused(session: &mut TestSession, request: &[u8], tid: u8) -> Status {
+        let (emitted, effect) = dispatch(session, request, 0);
+        assert_eq!(effect, None, "a refused command defers nothing");
+        assert_eq!(emitted.len(), 1);
+        let (response_tid, key, value) = parse_prop_is(&emitted[0]);
+        assert_eq!(response_tid, tid);
+        assert_eq!(key, prop::LAST_STATUS);
+        Status(pui::decode(&value).unwrap().0)
+    }
+
+    fn i2c_less_session() -> TestSession {
+        let mut session: TestSession = Session::new(
+            SessionConfig {
+                i2c_buses: &[],
+                i2c_devices: &[],
+                ..test_config()
+            },
+            Status::RESET_POWER_ON,
+            test_engine(),
+        );
+        session.attach(true);
+        session
+    }
+
+    #[test]
+    fn i2c_is_a_capability_with_two_tables_behind_it() {
+        let mut session = test_session();
+        assert!(capabilities(&mut session).contains(&cap::I2C));
+        let table = get(&mut session, prop::I2C_BUSES);
+        let buses: Vec<BusInfo<'_>> = i2c::buses(&table).collect::<Result<_, _>>().unwrap();
+        assert_eq!(buses, TEST_I2C_BUSES);
+        let table = get(&mut session, prop::I2C_DEVICES);
+        let devices: Vec<DeviceInfo<'_>> = i2c::devices(&table).collect::<Result<_, _>>().unwrap();
+        assert_eq!(devices, TEST_I2C_DEVICES);
+
+        // Constant tables: every mutation is refused as an argument
+        // error, since the property exists and is simply not writable.
+        let (emitted, _) = set(&mut session, prop::I2C_BUSES, &[0]);
+        expect_status(&emitted[0], 2, Status::INVALID_ARGUMENT);
+        let mut buf = [0u8; 16];
+        let len = frame::prop_insert(&mut buf, 4, prop::I2C_DEVICES, &[0, 0x50]).unwrap();
+        let (emitted, _) = dispatch(&mut session, &buf[..len], 0);
+        expect_status(&emitted[0], 4, Status::INVALID_ARGUMENT);
+        let len = frame::prop_remove(&mut buf, 5, prop::I2C_DEVICES, &[0, 0x55]).unwrap();
+        let (emitted, _) = dispatch(&mut session, &buf[..len], 0);
+        expect_status(&emitted[0], 5, Status::INVALID_ARGUMENT);
+
+        // A board with no bus has neither the capability nor the
+        // properties, and the commands are unimplemented rather than
+        // refused on their arguments.
+        let mut fixed = i2c_less_session();
+        assert!(!capabilities(&mut fixed).contains(&cap::I2C));
+        let len = frame::prop_get(&mut buf, 6, prop::I2C_BUSES).unwrap();
+        let (emitted, _) = dispatch(&mut fixed, &buf[..len], 0);
+        expect_status(&emitted[0], 6, Status::PROP_NOT_FOUND);
+        let len = frame::prop_get(&mut buf, 6, prop::I2C_DEVICES).unwrap();
+        let (emitted, _) = dispatch(&mut fixed, &buf[..len], 0);
+        expect_status(&emitted[0], 6, Status::PROP_NOT_FOUND);
+        assert_eq!(
+            refused(&mut fixed, &transfer_frame(3, 0, 0x55, &[Op::Read(1)]), 3),
+            Status::UNIMPLEMENTED
+        );
+        assert_eq!(
+            refused(&mut fixed, &scan_frame(3, 0, None), 3),
+            Status::UNIMPLEMENTED
+        );
+    }
+
+    #[test]
+    fn a_transfer_is_staged_whole_and_answered_with_its_reads() {
+        let mut session = test_session();
+        let ops = [Op::Write(&[0x08]), Op::Read(2)];
+        let (emitted, effect) = dispatch(&mut session, &transfer_frame(3, 0, 0x55, &ops), 0);
+        assert_eq!(effect, Some(Effect::I2cTransfer { tid: 3 }));
+        assert!(emitted.is_empty(), "the platform answers, not the session");
+        let request = session.i2c_request();
+        assert_eq!((request.bus, request.addr), (0, 0x55));
+        let staged: Vec<Op<'_>> = request.ops().collect::<Result<_, _>>().unwrap();
+        assert_eq!(staged, ops);
+
+        let mut emitted = Vec::new();
+        session.respond_i2c(3, Ok(&[0x34, 0x12]), &mut |bytes: &[u8]| {
+            emitted.push(bytes.to_vec())
+        });
+        assert_eq!(emitted.len(), 1);
+        let reply = Frame::parse(&emitted[0]).unwrap();
+        assert_eq!(reply.command(), Some(Cmd::I2cResult));
+        assert_eq!(reply.header.tid(), 3);
+        assert_eq!(reply.payload, &[0x34, 0x12]);
+        assert_eq!(last_status_of(&mut session), Status::OK.0);
+
+        // A write-only transfer is answered by an empty result, and a
+        // failure by the status the bus produced.
+        let (_, effect) = dispatch(
+            &mut session,
+            &transfer_frame(4, 0, 0x55, &[Op::Write(&[0x00, 0x14, 0x04])]),
+            0,
+        );
+        assert_eq!(effect, Some(Effect::I2cTransfer { tid: 4 }));
+        let mut emitted = Vec::new();
+        session.respond_i2c(4, Ok(&[]), &mut |bytes: &[u8]| emitted.push(bytes.to_vec()));
+        let reply = Frame::parse(&emitted[0]).unwrap();
+        assert_eq!(reply.command(), Some(Cmd::I2cResult));
+        assert!(reply.payload.is_empty());
+        let mut emitted = Vec::new();
+        session.respond_i2c(4, Err(Status::NO_DEVICE), &mut |bytes: &[u8]| {
+            emitted.push(bytes.to_vec())
+        });
+        expect_status(&emitted[0], 4, Status::NO_DEVICE);
+        assert_eq!(last_status_of(&mut session), Status::NO_DEVICE.0);
+
+        // Fire-and-forget on the local binding is answered by nothing,
+        // success or failure.
+        let (_, effect) = dispatch(
+            &mut session,
+            &transfer_frame(TID_UNSOLICITED, 0, 0x55, &[Op::Read(1)]),
+            0,
+        );
+        assert_eq!(
+            effect,
+            Some(Effect::I2cTransfer {
+                tid: TID_UNSOLICITED
+            })
+        );
+        session.respond_i2c(TID_UNSOLICITED, Ok(&[1]), &mut |_: &[u8]| {
+            panic!("a fire-and-forget command is owed no reply")
+        });
+        session.respond_i2c(TID_UNSOLICITED, Err(Status::NACK), &mut |_: &[u8]| {
+            panic!("a fire-and-forget command is owed no reply")
+        });
+        assert_eq!(last_status_of(&mut session), Status::NACK.0);
+    }
+
+    #[test]
+    fn the_largest_requests_within_the_limits_are_staged() {
+        let mut session = test_session();
+        // One write carrying every data octet: 258 octets of operation
+        // list, which is what the staging buffer is sized for.
+        let data = [0xA5u8; I2C_DATA_MAX];
+        let (_, effect) = dispatch(
+            &mut session,
+            &transfer_frame(1, 0, 0x50, &[Op::Write(&data)]),
+            0,
+        );
+        assert_eq!(effect, Some(Effect::I2cTransfer { tid: 1 }));
+        let staged: Vec<Op<'_>> = session
+            .i2c_request()
+            .ops()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(staged, [Op::Write(&data)]);
+
+        // The most operations allowed, mixed, adding up to the data
+        // limit: fifteen one-octet writes and one read of the rest.
+        let byte = [0x01u8];
+        let mut ops: Vec<Op<'_>> = (0..I2C_MAX_OPS - 1).map(|_| Op::Write(&byte)).collect();
+        ops.push(Op::Read(I2C_DATA_MAX - (I2C_MAX_OPS - 1)));
+        let (_, effect) = dispatch(&mut session, &transfer_frame(2, 0, 0x50, &ops), 0);
+        assert_eq!(effect, Some(Effect::I2cTransfer { tid: 2 }));
+        let staged: Vec<Op<'_>> = session
+            .i2c_request()
+            .ops()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(staged, ops);
+        assert_eq!(session.i2c_request().shape().data_len, I2C_DATA_MAX);
+
+        // One octet over either limit is refused, on the bus that
+        // advertises the session's ceiling.
+        let over = [0u8; I2C_DATA_MAX + 1];
+        assert_eq!(
+            refused(
+                &mut session,
+                &transfer_frame(3, 0, 0x50, &[Op::Write(&over)]),
+                3
+            ),
+            Status::INVALID_ARGUMENT
+        );
+        let mut many: Vec<Op<'_>> = (0..I2C_MAX_OPS).map(|_| Op::Write(&byte)).collect();
+        many.push(Op::Read(1));
+        assert_eq!(
+            refused(&mut session, &transfer_frame(3, 0, 0x50, &many), 3),
+            Status::INVALID_ARGUMENT
+        );
+
+        // The narrow bus is held to its own advertised limits.
+        let wide = [0u8; 33];
+        assert_eq!(
+            refused(
+                &mut session,
+                &transfer_frame(3, 2, 0x34, &[Op::Write(&wide)]),
+                3
+            ),
+            Status::INVALID_ARGUMENT
+        );
+        let five: Vec<Op<'_>> = (0..5).map(|_| Op::Write(&byte)).collect();
+        assert_eq!(
+            refused(&mut session, &transfer_frame(3, 2, 0x34, &five), 3),
+            Status::INVALID_ARGUMENT
+        );
+        let (_, effect) = dispatch(&mut session, &transfer_frame(4, 2, 0x34, &five[..4]), 0);
+        assert_eq!(effect, Some(Effect::I2cTransfer { tid: 4 }));
+    }
+
+    #[test]
+    fn every_refusal_has_the_status_the_table_names() {
+        let mut session = test_session();
+        let read = [Op::Read(1)];
+        // The bus is looked up before anything else about the request
+        // is judged against it.
+        assert_eq!(
+            refused(&mut session, &transfer_frame(3, 1, 0x55, &read), 3),
+            Status::ITEM_NOT_FOUND
+        );
+        assert_eq!(
+            refused(&mut session, &scan_frame(3, 1, None), 3),
+            Status::ITEM_NOT_FOUND
+        );
+        // Structure before the bus: a truncated frame names no bus.
+        assert_eq!(
+            refused(&mut session, &[0x83, Cmd::I2cTransfer as u8, 0], 3),
+            Status::PARSE_ERROR
+        );
+        assert_eq!(
+            refused(
+                &mut session,
+                &[0x83, Cmd::I2cTransfer as u8, 0, 0x55, 0, 4, 1],
+                3
+            ),
+            Status::PARSE_ERROR
+        );
+        assert_eq!(
+            refused(&mut session, &[0x83, Cmd::I2cScan as u8, 0, 0x10], 3),
+            Status::PARSE_ERROR
+        );
+        // The protocol's own rules.
+        assert_eq!(
+            refused(&mut session, &transfer_frame(3, 0, 0x80, &read), 3),
+            Status::INVALID_ARGUMENT
+        );
+        assert_eq!(
+            refused(&mut session, &transfer_frame(3, 0, 0x55, &[]), 3),
+            Status::INVALID_ARGUMENT
+        );
+        assert_eq!(
+            refused(
+                &mut session,
+                &[0x83, Cmd::I2cTransfer as u8, 0, 0x55, 1, 0],
+                3
+            ),
+            Status::INVALID_ARGUMENT
+        );
+        assert_eq!(
+            refused(
+                &mut session,
+                &[0x83, Cmd::I2cTransfer as u8, 0, 0x55, 2, 1],
+                3
+            ),
+            Status::INVALID_ARGUMENT
+        );
+        assert_eq!(
+            refused(&mut session, &scan_frame(3, 0, Some((0x20, 0x10))), 3),
+            Status::INVALID_ARGUMENT
+        );
+        assert_eq!(
+            refused(&mut session, &scan_frame(3, 0, Some((0x10, 0x80))), 3),
+            Status::INVALID_ARGUMENT
+        );
+        // A result frame is the device's to send, not the host's.
+        assert_eq!(
+            refused(&mut session, &[0x83, Cmd::I2cResult as u8, 1, 2], 3),
+            Status::INVALID_COMMAND
+        );
+    }
+
+    #[test]
+    fn a_result_that_cannot_be_carried_is_refused_before_the_bus() {
+        let mut session = test_session();
+        // Two octets of frame around the payload: a budget of ten fits
+        // an eight-octet read and not a nine-octet one.
+        let request = transfer_frame(3, 0, 0x50, &[Op::Read(8)]);
+        let mut emitted = Vec::new();
+        let effect = session.handle_frame_budgeted(&request, 0, 10, &mut |bytes: &[u8]| {
+            emitted.push(bytes.to_vec())
+        });
+        assert_eq!(effect, Some(Effect::I2cTransfer { tid: 3 }));
+        assert!(emitted.is_empty());
+
+        let request = transfer_frame(3, 0, 0x50, &[Op::Read(9)]);
+        let mut emitted = Vec::new();
+        let effect = session.handle_frame_budgeted(&request, 0, 10, &mut |bytes: &[u8]| {
+            emitted.push(bytes.to_vec())
+        });
+        assert_eq!(effect, None);
+        expect_status(&emitted[0], 3, Status::NOMEM);
+
+        // Writes cost the reply nothing, so a large write still fits.
+        let data = [0u8; 200];
+        let request = transfer_frame(3, 0, 0x50, &[Op::Write(&data), Op::Read(8)]);
+        let mut emitted = Vec::new();
+        let effect = session.handle_frame_budgeted(&request, 0, 10, &mut |bytes: &[u8]| {
+            emitted.push(bytes.to_vec())
+        });
+        assert_eq!(effect, Some(Effect::I2cTransfer { tid: 3 }));
+
+        // A scan is budgeted for every address in its range answering.
+        let request = scan_frame(3, 0, Some((0x50, 0x57)));
+        let mut emitted = Vec::new();
+        let effect = session.handle_frame_budgeted(&request, 0, 10, &mut |bytes: &[u8]| {
+            emitted.push(bytes.to_vec())
+        });
+        assert_eq!(effect, Some(Effect::I2cScan { tid: 3 }));
+        let request = scan_frame(3, 0, Some((0x50, 0x58)));
+        let mut emitted = Vec::new();
+        let effect = session.handle_frame_budgeted(&request, 0, 10, &mut |bytes: &[u8]| {
+            emitted.push(bytes.to_vec())
+        });
+        assert_eq!(effect, None);
+        expect_status(&emitted[0], 3, Status::NOMEM);
+    }
+
+    #[test]
+    fn a_scan_is_staged_with_its_range_and_answered_with_addresses() {
+        let mut session = test_session();
+        let (emitted, effect) = dispatch(&mut session, &scan_frame(5, 2, None), 0);
+        assert_eq!(effect, Some(Effect::I2cScan { tid: 5 }));
+        assert!(emitted.is_empty());
+        assert_eq!(session.i2c_scan_request(), ScanRequest::new(2));
+
+        let (_, effect) = dispatch(&mut session, &scan_frame(6, 0, Some((0x50, 0x5F))), 0);
+        assert_eq!(effect, Some(Effect::I2cScan { tid: 6 }));
+        assert_eq!(
+            session.i2c_scan_request(),
+            ScanRequest {
+                bus: 0,
+                first: 0x50,
+                last: 0x5F,
+            }
+        );
+        let mut emitted = Vec::new();
+        session.respond_i2c(6, Ok(&[0x50, 0x55]), &mut |bytes: &[u8]| {
+            emitted.push(bytes.to_vec())
+        });
+        let reply = Frame::parse(&emitted[0]).unwrap();
+        assert_eq!(reply.command(), Some(Cmd::I2cResult));
+        assert_eq!(reply.header.tid(), 6);
+        assert_eq!(reply.payload, &[0x50, 0x55]);
+
+        let mut emitted = Vec::new();
+        session.respond_i2c(6, Err(Status::BUSY), &mut |bytes: &[u8]| {
+            emitted.push(bytes.to_vec())
+        });
+        expect_status(&emitted[0], 6, Status::BUSY);
+    }
+
+    /// Over the administrative binding the TID is zero and the answer is
+    /// still owed: the result frame carries TID zero like every other
+    /// response on that binding, and the reply budget is the binding's.
+    #[test]
+    fn an_admin_transfer_is_answered_on_a_zero_tid() {
+        let mut session = test_session();
+        let request = transfer_frame(TID_UNSOLICITED, 0, 0x55, &[Op::Write(&[0x08]), Op::Read(2)]);
+        let mut emitted = Vec::new();
+        let effect = session.handle_admin_frame(&request, 0, 164, &mut |bytes: &[u8]| {
+            emitted.push(bytes.to_vec())
+        });
+        assert_eq!(
+            effect,
+            Some(Effect::I2cTransfer {
+                tid: TID_UNSOLICITED
+            })
+        );
+        session.respond_i2c(TID_UNSOLICITED, Ok(&[0x34, 0x12]), &mut |bytes: &[u8]| {
+            emitted.push(bytes.to_vec())
+        });
+        session.end_admin_exchange();
+        assert_eq!(emitted.len(), 1);
+        let reply = Frame::parse(&emitted[0]).unwrap();
+        assert_eq!(reply.command(), Some(Cmd::I2cResult));
+        assert_eq!(reply.header.tid(), TID_UNSOLICITED);
+        assert_eq!(reply.payload, &[0x34, 0x12]);
+
+        // A read past the binding's budget is refused rather than
+        // answered with a frame the binding cannot carry.
+        let request = transfer_frame(TID_UNSOLICITED, 0, 0x55, &[Op::Read(163)]);
+        let mut emitted = Vec::new();
+        let effect = session.handle_admin_frame(&request, 0, 164, &mut |bytes: &[u8]| {
+            emitted.push(bytes.to_vec())
+        });
+        session.end_admin_exchange();
+        assert_eq!(effect, None);
+        expect_status(&emitted[0], TID_UNSOLICITED, Status::NOMEM);
+        // A failure on the bus is answered on the same zero TID.
+        let request = transfer_frame(TID_UNSOLICITED, 0, 0x55, &[Op::Read(1)]);
+        let mut emitted = Vec::new();
+        session.handle_admin_frame(&request, 0, 164, &mut |bytes: &[u8]| {
+            emitted.push(bytes.to_vec())
+        });
+        session.respond_i2c(
+            TID_UNSOLICITED,
+            Err(Status::BUS_ERROR),
+            &mut |bytes: &[u8]| emitted.push(bytes.to_vec()),
+        );
+        session.end_admin_exchange();
+        expect_status(&emitted[0], TID_UNSOLICITED, Status::BUS_ERROR);
     }
 }

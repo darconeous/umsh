@@ -21,8 +21,9 @@ side. The protocol itself is specified in the chapters that follow:
   commands, and properties: [Radio Control](ulcp-radio.md),
   [Frame Transport](ulcp-transport.md), [Device Domain](ulcp-device.md),
   [Saved State](ulcp-saved-state.md),
-  [Tethered Host Services](ulcp-host.md), [Wi-Fi](ulcp-wifi.md), and
-  [IP Connectivity](ulcp-ip.md)
+  [Tethered Host Services](ulcp-host.md), [Wi-Fi](ulcp-wifi.md),
+  [IP Connectivity](ulcp-ip.md), [Bridge Client](ulcp-bridge.md), and
+  [I2C Bus Access](ulcp-i2c.md)
 - [Minimum Requirements](ulcp-conformance.md) states what a device has to
   implement to be a ULCP device, and the
   [Command and Property Index](ulcp-index.md) locates every numeric
@@ -238,7 +239,7 @@ mechanism and its security consequences.
 
 ## Subsystems
 
-The interface divides into seven subsystems, each specified by its own
+The interface divides into nine subsystems, each specified by its own
 chapter and each discoverable through the capabilities it advertises.
 Only the first two are unconditional.
 
@@ -315,6 +316,20 @@ Addressing on whichever link the device has: DHCP or a static
 configuration per family, the addresses and routers in effect, and the
 resolvers. One capability per family, and nothing in it knows what the
 link is.
+
+### [Bridge Client](ulcp-bridge.md)
+
+The device's own node connected to an [internet bridge](internet-bridging.md)
+over IP: where to connect, which server key to trust, whether the client
+is enabled, and what state the connection is in.
+
+### [I2C Bus Access](ulcp-i2c.md)
+
+Raw transactions with the device's I2C peripherals, for bring-up and
+diagnosis: the buses and known peripherals the device names, one
+transaction per command with its read data in the reply, and a scan of
+who acknowledges. The device's own drivers keep the bus between
+commands.
 
 ## Suggested Capability Matrix
 

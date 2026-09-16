@@ -406,33 +406,6 @@ fn publish(announce: Announce) {
     ANNOUNCE.sender().send(announce);
 }
 
-/// A time driver for the host tests.
-///
-/// [`absorb`] offers every fix's instant to the wall clock, so a test
-/// that calls it links `embassy_time`'s driver hook—which on a device
-/// is the RTC and here is nothing at all. A monotonic counter is enough:
-/// no test in this module asserts on elapsed time.
-#[cfg(test)]
-mod test_driver {
-    use core::sync::atomic::{AtomicU64, Ordering};
-    use core::task::Waker;
-
-    struct Stub;
-
-    impl embassy_time_driver::Driver for Stub {
-        fn now(&self) -> u64 {
-            static TICKS: AtomicU64 = AtomicU64::new(0);
-            TICKS.fetch_add(1, Ordering::Relaxed)
-        }
-
-        fn schedule_wake(&self, _at: u64, _waker: &Waker) {
-            unimplemented!("these tests never wait on a timer");
-        }
-    }
-
-    embassy_time_driver::time_driver_impl!(static DRIVER: Stub = Stub);
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

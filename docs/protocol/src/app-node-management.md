@@ -128,8 +128,9 @@ about is read, not pushed.
 
 The Response echoes the token and carries one frame: exactly
 the frame the device would emit in reply on a local binding—a
-`CMD_PROP_IS`, `CMD_PROP_INSERTED`, `CMD_PROP_REMOVED`, or `CMD_PROP_ARE`
-on success, or a `CMD_PROP_IS` of `PROP_LAST_STATUS` reporting the error.
+`CMD_PROP_IS`, `CMD_PROP_INSERTED`, `CMD_PROP_REMOVED`, `CMD_PROP_ARE`,
+or [`CMD_I2C_RESULT`](ulcp-i2c.md#cmd-i2c-result) on success, or a
+`CMD_PROP_IS` of `PROP_LAST_STATUS` reporting the error.
 A request frame carrying a Device→Host command is answered
 `STATUS_INVALID_COMMAND`. Long-running operations report
 `STATUS_IN_PROGRESS` as on any binding; the administrator observes

@@ -28,8 +28,11 @@ Id | Mnemonic                                                     | Dir         
 22 | [`CMD_PROP_MULTI_SET`](ulcp-core.md#cmd-prop-multi-set)      | Host->Device | `CAP_CMD_MULTI`
 23 | [`CMD_PROP_ARE`](ulcp-core.md#cmd-prop-are)                  | Device->Host | `CAP_CMD_MULTI`
 24 | [`CMD_SESSION_RESET`](ulcp-core.md#cmd-session-reset)        | Device->Host | —
+25 | [`CMD_I2C_TRANSFER`](ulcp-i2c.md#cmd-i2c-transfer)           | Host->Device | `CAP_I2C`
+26 | [`CMD_I2C_RESULT`](ulcp-i2c.md#cmd-i2c-result)               | Device->Host | `CAP_I2C`
+27 | [`CMD_I2C_SCAN`](ulcp-i2c.md#cmd-i2c-scan)                   | Host->Device | `CAP_I2C`
 
-Command identifiers are 7-bit; 17–18, 20, and 25–127 are unassigned.
+Command identifiers are 7-bit; 17–18, 20, and 28–127 are unassigned.
 
 ## Properties and Streams
 
@@ -159,6 +162,8 @@ Id   | Mnemonic                                                                 
 4956 | [`PROP_BATTERY_GAUGE_OPERATION_STATUS`](ulcp-device.md#prop-battery-gauge-operation-status) | Get, Is | Optional with `CAP_BATTERY`
 4957 | [`PROP_BATTERY_GAUGE_CONFIG`](ulcp-device.md#prop-battery-gauge-config) | Get, Is | Optional with `CAP_BATTERY`; explicit configuration inspection
 4958 | [`PROP_BATTERY_GAUGE_TELEMETRY`](ulcp-device.md#prop-battery-gauge-telemetry) | Get, Is | Optional with `CAP_BATTERY`; live counters, temperatures, and estimates
+4960 | [`PROP_I2C_BUSES`](ulcp-i2c.md#prop-i2c-buses) | Get, Is | `CAP_I2C`
+4961 | [`PROP_I2C_DEVICES`](ulcp-i2c.md#prop-i2c-devices) | Get, Is | `CAP_I2C`
 
 ## Capabilities
 
@@ -197,6 +202,7 @@ Code | Name                      | Defined in
 57   | `CAP_WIFI_AP`             | [Wi-Fi](ulcp-wifi.md#capabilities)
 58   | `CAP_BRIDGE_CLIENT`       | [Bridge Client](ulcp-bridge.md#capabilities)
 59   | `CAP_DISPLAY_MOTION_WAKE` | [Device Services](ulcp-device.md#display-motion-wake)
+60   | `CAP_I2C`                 | [I2C Bus Access](ulcp-i2c.md#capabilities)
 515  | `CAP_PHY_LORA`            | [Radio Control](ulcp-radio.md#capabilities)
 
 ## Status Codes
@@ -205,16 +211,17 @@ Defined in [Status Codes](ulcp-core.md#status-codes).
 
 Id | Name                      | Id | Name
 ---|---------------------------|----|------
-0  | `STATUS_OK`               | 12 | `STATUS_BUSY`
-1  | `STATUS_FAILURE`          | 13 | `STATUS_PROP_NOT_FOUND`
-2  | `STATUS_UNIMPLEMENTED`    | 18 | `STATUS_CCA_FAILURE`
-3  | `STATUS_INVALID_ARGUMENT` | 19 | `STATUS_ALREADY`
-4  | `STATUS_INVALID_STATE`    | 20 | `STATUS_ITEM_NOT_FOUND`
-5  | `STATUS_INVALID_COMMAND`  | 21 | `STATUS_CURSOR_INVALID`
-7  | `STATUS_INTERNAL_ERROR`   | 22 | `STATUS_NOT_PERMITTED`
-9  | `STATUS_PARSE_ERROR`      | 23 | `STATUS_CHANNEL_NOT_FOUND`
-10 | `STATUS_IN_PROGRESS`      | 32 | `STATUS_DUTY_LIMIT`
-11 | `STATUS_NOMEM`            |    |
+0  | `STATUS_OK`               | 13 | `STATUS_PROP_NOT_FOUND`
+1  | `STATUS_FAILURE`          | 18 | `STATUS_CCA_FAILURE`
+2  | `STATUS_UNIMPLEMENTED`    | 19 | `STATUS_ALREADY`
+3  | `STATUS_INVALID_ARGUMENT` | 20 | `STATUS_ITEM_NOT_FOUND`
+4  | `STATUS_INVALID_STATE`    | 21 | `STATUS_CURSOR_INVALID`
+5  | `STATUS_INVALID_COMMAND`  | 22 | `STATUS_NOT_PERMITTED`
+7  | `STATUS_INTERNAL_ERROR`   | 23 | `STATUS_CHANNEL_NOT_FOUND`
+9  | `STATUS_PARSE_ERROR`      | 24 | `STATUS_NO_DEVICE`
+10 | `STATUS_IN_PROGRESS`      | 25 | `STATUS_NACK`
+11 | `STATUS_NOMEM`            | 26 | `STATUS_BUS_ERROR`
+12 | `STATUS_BUSY`             | 32 | `STATUS_DUTY_LIMIT`
 
 ## Reset Codes
 

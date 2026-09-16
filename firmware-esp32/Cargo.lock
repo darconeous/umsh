@@ -3274,6 +3274,7 @@ dependencies = [
  "embassy-futures",
  "embassy-sync 0.8.0",
  "embassy-time",
+ "embedded-hal-async",
  "heapless 0.8.0",
  "rand 0.10.2",
  "rand_chacha",

@@ -43,6 +43,10 @@ pub enum PropertyNotificationKind {
     /// [`PropertyNotification`] form—iterate it with
     /// [`crate::frame::MultiEntries`].
     Are,
+    /// `CMD_I2C_RESULT`: the read data of a transfer or the addresses a
+    /// scan found. Not a property at all—its payload is the bytes—but it
+    /// is a correlated response a host session waits on like one.
+    I2cResult,
 }
 
 impl PropertyNotificationKind {
@@ -52,6 +56,7 @@ impl PropertyNotificationKind {
             Cmd::PropInserted => Some(Self::Inserted),
             Cmd::PropRemoved => Some(Self::Removed),
             Cmd::PropAre => Some(Self::Are),
+            Cmd::I2cResult => Some(Self::I2cResult),
             _ => None,
         }
     }
@@ -63,12 +68,13 @@ impl PropertyNotificationKind {
             Self::Inserted => Cmd::PropInserted,
             Self::Removed => Cmd::PropRemoved,
             Self::Are => Cmd::PropAre,
+            Self::I2cResult => Cmd::I2cResult,
         }
     }
 
     /// Whether this notification carries one key and value.
     pub const fn is_single_property(self) -> bool {
-        !matches!(self, Self::Are)
+        !matches!(self, Self::Are | Self::I2cResult)
     }
 }
 

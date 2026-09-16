@@ -94,6 +94,10 @@ pub fn web_sim_config() -> umsh_ulcp_simdev::SessionConfig {
         wifi: Some(WifiConfig::STATION),
         ip: Some(IpConfig::DUAL),
         bridge_client: false,
+        // One simulated bus with one register-file peripheral, so the
+        // raw bus commands are explorable too.
+        i2c_buses: umsh_ulcp_simdev::SIMULATED_I2C_BUSES,
+        i2c_devices: umsh_ulcp_simdev::SIMULATED_I2C_DEVICES,
     }
 }
 

@@ -4029,6 +4029,7 @@ dependencies = [
  "umsh-text",
  "umsh-ulcp",
  "umsh-ulcp-device",
+ "umsh-ulcp-simdev",
  "umsh-uri",
  "uuid",
 ]
@@ -4369,6 +4370,7 @@ dependencies = [
  "umsh-node",
  "umsh-ulcp",
  "umsh-ulcp-device",
+ "umsh-ulcp-simdev",
 ]
 
 [[package]]
@@ -4467,6 +4469,7 @@ dependencies = [
  "embassy-sync 0.8.0",
  "embassy-time",
  "embassy-time-driver",
+ "embedded-hal-async",
  "heapless 0.8.0",
  "lora-phy",
  "rand 0.10.1",

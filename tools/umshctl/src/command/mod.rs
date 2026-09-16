@@ -11,6 +11,7 @@ pub mod capture;
 pub mod discover;
 pub mod duty;
 pub mod gnss;
+pub mod i2c;
 pub mod info;
 pub mod lifecycle;
 pub mod manage;
@@ -128,6 +129,12 @@ pub enum Command {
     Advert {
         #[command(subcommand)]
         op: Option<advert::AdvertOp>,
+    },
+
+    /// Drive the device's I2C buses directly: list, scan, read, write.
+    I2c {
+        #[command(subcommand)]
+        op: i2c::I2cOp,
     },
 
     /// Show or drive the locate alert: make the radio conspicuous so it
@@ -337,6 +344,7 @@ impl Command {
         match self {
             Self::Capture(args) => args.validate(),
             Self::Battery(args) => args.validate(),
+            Self::I2c { op } => op.validate(),
             // A value the property cannot hold is a typing mistake, and
             // finding out after a BLE discovery pass and a handshake is
             // no way to learn it.
@@ -374,6 +382,7 @@ impl Command {
             Self::Time { op } => time::run(app, op).await,
             Self::Gnss { op } => gnss::run(app, op).await,
             Self::Advert { op } => advert::run(app, op).await,
+            Self::I2c { op } => i2c::run(app.device()?, op).await,
             Self::DevChannel { op } => {
                 tables::run(app, prop::DEV_CHANNEL_KEYS, "channel", op).await
             }
