@@ -559,6 +559,7 @@ final class AppRuntime {
     var companionDeviceManagement: DeviceManagementBackend {
         var management = remoteDeviceManagement
         management.link = .companion
+        management.usesBluetooth = radioConnection is CoreBluetoothRadioConnection
         management.fetch = { _, properties, _, _ in
             try await self.radioConnection.fetchCompanionProperties(properties)
         }

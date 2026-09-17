@@ -21,7 +21,7 @@ struct RemoteBluetoothScreen: View {
     /// screen configures. On the mesh it is not: the device is reached
     /// through the radio in the operator's pocket, and its Bluetooth is
     /// just another setting.
-    private var overThisLink: Bool { model.link != .mesh }
+    private var overThisLink: Bool { model.usesBluetooth }
 
     var body: some View {
         Form {
@@ -40,7 +40,7 @@ struct RemoteBluetoothScreen: View {
                 Text(
                     overThisLink
                         ? "Turning Bluetooth off disconnects this phone. The device keeps its pairings, but you will need another way to reach it to turn Bluetooth back on."
-                        : "Turning Bluetooth off makes the device unreachable by phone. It keeps its pairings and stays on the mesh."
+                        : "Turning Bluetooth off prevents direct Bluetooth connections. The device keeps its pairings."
                 )
             }
 
@@ -120,7 +120,7 @@ struct RemoteBluetoothScreen: View {
     /// pairing window: a change that does both is confirmed for the harm
     /// it can do, not the door it opens.
     private var applyWarning: (title: String, message: String)? {
-        if edits.disablesBluetooth { return disableWarning }
+        if overThisLink, edits.disablesBluetooth { return disableWarning }
         if edits.opensPairing {
             return (
                 title: "Turn On Pairing Mode",

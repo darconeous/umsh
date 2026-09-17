@@ -28,6 +28,7 @@
 		10000000000000000000002D /* UMSH/Features/Peers/PeerDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20000000000000000000002D /* UMSH/Features/Peers/PeerDetailView.swift */; };
 		7A1F3C9E2B4D5E6F80A1B2C3 /* UMSH/Features/Peers/PeerRepeatersScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8B2E4D0F3C5E6F7A91B2C3D4 /* UMSH/Features/Peers/PeerRepeatersScreen.swift */; };
 		CAAEA04E581BF8293E1A6AC9 /* UMSH/Features/RemoteManagement/ManageDeviceModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = AFD8865E47822B5EEB0275A5 /* UMSH/Features/RemoteManagement/ManageDeviceModel.swift */; };
+		AEAC200AA19C431594F31C70 /* UMSH/Features/RemoteManagement/RemoteCategoryReading.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F4A419D271745C2B76984B9 /* UMSH/Features/RemoteManagement/RemoteCategoryReading.swift */; };
 		9AAAB66E0DA2111510FFC6C9 /* UMSH/Features/RemoteManagement/ManageDeviceScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = 486C2B63FFAA6F5C45337190 /* UMSH/Features/RemoteManagement/ManageDeviceScreen.swift */; };
 		16B86C03E19911F0FB509FE8 /* UMSH/Features/RemoteManagement/RemoteCategoryEditors.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B2115AE5EDA1EEEBE4A6027 /* UMSH/Features/RemoteManagement/RemoteCategoryEditors.swift */; };
 		8C84BE75B26BAD36700F2992 /* UMSH/Features/RemoteManagement/RemoteStatusScreens.swift in Sources */ = {isa = PBXBuildFile; fileRef = 33CDD82E26CE9A507BA4E207 /* UMSH/Features/RemoteManagement/RemoteStatusScreens.swift */; };
@@ -121,6 +122,7 @@
 		20000000000000000000002D /* UMSH/Features/Peers/PeerDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Features/Peers/PeerDetailView.swift; sourceTree = "<group>"; };
 		8B2E4D0F3C5E6F7A91B2C3D4 /* UMSH/Features/Peers/PeerRepeatersScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Features/Peers/PeerRepeatersScreen.swift; sourceTree = "<group>"; };
 		AFD8865E47822B5EEB0275A5 /* UMSH/Features/RemoteManagement/ManageDeviceModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Features/RemoteManagement/ManageDeviceModel.swift; sourceTree = "<group>"; };
+		8F4A419D271745C2B76984B9 /* UMSH/Features/RemoteManagement/RemoteCategoryReading.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Features/RemoteManagement/RemoteCategoryReading.swift; sourceTree = "<group>"; };
 		486C2B63FFAA6F5C45337190 /* UMSH/Features/RemoteManagement/ManageDeviceScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Features/RemoteManagement/ManageDeviceScreen.swift; sourceTree = "<group>"; };
 		5B2115AE5EDA1EEEBE4A6027 /* UMSH/Features/RemoteManagement/RemoteCategoryEditors.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Features/RemoteManagement/RemoteCategoryEditors.swift; sourceTree = "<group>"; };
 		33CDD82E26CE9A507BA4E207 /* UMSH/Features/RemoteManagement/RemoteStatusScreens.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Features/RemoteManagement/RemoteStatusScreens.swift; sourceTree = "<group>"; };
@@ -230,6 +232,7 @@
 				20000000000000000000002D /* UMSH/Features/Peers/PeerDetailView.swift */,
 				8B2E4D0F3C5E6F7A91B2C3D4 /* UMSH/Features/Peers/PeerRepeatersScreen.swift */,
 				AFD8865E47822B5EEB0275A5 /* UMSH/Features/RemoteManagement/ManageDeviceModel.swift */,
+				8F4A419D271745C2B76984B9 /* UMSH/Features/RemoteManagement/RemoteCategoryReading.swift */,
 				486C2B63FFAA6F5C45337190 /* UMSH/Features/RemoteManagement/ManageDeviceScreen.swift */,
 				5B2115AE5EDA1EEEBE4A6027 /* UMSH/Features/RemoteManagement/RemoteCategoryEditors.swift */,
 				33CDD82E26CE9A507BA4E207 /* UMSH/Features/RemoteManagement/RemoteStatusScreens.swift */,
@@ -428,6 +431,7 @@
 				10000000000000000000002D /* UMSH/Features/Peers/PeerDetailView.swift in Sources */,
 				7A1F3C9E2B4D5E6F80A1B2C3 /* UMSH/Features/Peers/PeerRepeatersScreen.swift in Sources */,
 				CAAEA04E581BF8293E1A6AC9 /* UMSH/Features/RemoteManagement/ManageDeviceModel.swift in Sources */,
+				AEAC200AA19C431594F31C70 /* UMSH/Features/RemoteManagement/RemoteCategoryReading.swift in Sources */,
 				9AAAB66E0DA2111510FFC6C9 /* UMSH/Features/RemoteManagement/ManageDeviceScreen.swift in Sources */,
 				16B86C03E19911F0FB509FE8 /* UMSH/Features/RemoteManagement/RemoteCategoryEditors.swift in Sources */,
 				8C84BE75B26BAD36700F2992 /* UMSH/Features/RemoteManagement/RemoteStatusScreens.swift in Sources */,

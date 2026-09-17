@@ -79,13 +79,9 @@ use embassy_time::{Delay, Duration, Instant, Timer, with_timeout};
 use embedded_hal_bus::spi::ExclusiveDevice;
 use esp_hal::Async;
 use esp_hal::clock::CpuClock;
-#[cfg(not(feature = "board-tlora-pager"))]
-use esp_hal::gpio::WaitForOptions;
 use esp_hal::gpio::{Event, Input, InputConfig, Level, Output, OutputConfig, Pull};
 use esp_hal::i2c::master::{Config as I2cConfig, I2c};
 use esp_hal::interrupt::software::SoftwareInterruptControl;
-#[cfg(not(any(feature = "pmic-axp2101", feature = "board-tlora-pager")))]
-use esp_hal::rtc_cntl::sleep::Ext0WakeupSource;
 use esp_hal::rtc_cntl::{Rtc, RwdtStage, SocResetReason};
 use esp_hal::spi::Mode;
 use esp_hal::spi::master::{Config as SpiConfig, Spi};
@@ -1203,15 +1199,8 @@ fn battery_snapshot(reading: &board_battery::Reading) -> umsh_ulcp::battery::Bat
 #[embassy_executor::task]
 async fn pmu_irq_task(pmic: &'static SharedPmic, mut irq: Input<'static>) {
     loop {
-        // Wake-enabled: the PMU IRQ (a level line) pulls the chip out
-        // of light sleep instead of forbidding it. `Wait` would hold a
-        // WakeLock for the whole park.
-        let _ = irq
-            .wait_for_with_options(
-                Event::LowLevel,
-                WaitForOptions::default().with_wake_enable(true),
-            )
-            .await;
+        // GPIO waits wake the chip from light sleep when the PMU asserts IRQ.
+        irq.wait_for(Event::LowLevel).await;
         let taken = match pmic.lock().await.take_irqs().await {
             Ok(taken) => taken,
             Err(_) => {
@@ -3900,24 +3889,14 @@ async fn button_task(mut button: Input<'static>) {
                     // Held: a release cannot be slept through anyway
                     // (the hold itself keeps deadlines short), but the
                     // level wake keeps the story uniform.
-                    let _ = button
-                        .wait_for_with_options(
-                            Event::HighLevel,
-                            WaitForOptions::default().with_wake_enable(true),
-                        )
-                        .await;
+                    button.wait_for(Event::HighLevel).await;
                     Timer::after(DEBOUNCE).await;
                     ButtonEdge::Release
                 } else {
                     // Idle park, often for the 60 s floor: wake-enabled
                     // so a press wakes the chip from light sleep
                     // instead of the wait pinning it awake.
-                    let _ = button
-                        .wait_for_with_options(
-                            Event::LowLevel,
-                            WaitForOptions::default().with_wake_enable(true),
-                        )
-                        .await;
+                    button.wait_for(Event::LowLevel).await;
                     Timer::after(DEBOUNCE).await;
                     ButtonEdge::Press
                 }
@@ -4056,11 +4035,10 @@ async fn shutdown(
     let _ = with_timeout(Duration::from_secs(2), DISPLAY_SHUTDOWN_DONE.wait()).await;
     led.set_low();
 
-    // GPIO0 is stolen rather than handed over: `button_task` holds an
-    // `Input` on it for the life of the board, and the wake source wants
-    // the bare pin. Both uses are read-only, nothing drives the pin, and
-    // `sleep_deep` never returns—so no other task observes the
-    // duplicate.
+    // `button_task` owns GPIO0 for the life of the board. Temporarily
+    // duplicate its input to await release; neither handle drives it.
+    // After the final await, arm low-power wake and enter deep sleep
+    // without letting another task change the pin configuration.
     {
         let button = Input::new(
             unsafe { esp_hal::peripherals::GPIO0::steal() },
@@ -4079,8 +4057,14 @@ async fn shutdown(
     }
 
     rtc.rwdt.disable();
-    let wake = Ext0WakeupSource::new(unsafe { esp_hal::peripherals::GPIO0::steal() }, Level::Low);
-    deep_sleep.deep_sleep(&[&wake]);
+    let mut wake = Input::new(
+        unsafe { esp_hal::peripherals::GPIO0::steal() },
+        InputConfig::default().with_pull(Pull::Up),
+    );
+    wake.apply_wakeup_config(&esp_hal::gpio::WakeupConfig::default().with_low_power_path(true))
+        .expect("GPIO0 supports low-power wake");
+    wake.listen(Event::LowLevel);
+    deep_sleep.deep_sleep();
 }
 
 /// The RWDT feed, with no LED behind it—this board's only LEDs belong
@@ -4251,19 +4235,17 @@ async fn main(spawner: Spawner) {
     {
         // Both regions are internal RAM. The bootloader's former arena
         // becomes available before main, leaving the ordinary arena room
-        // for the executor and stack while retaining a 128 KiB heap.
+        // for the executor and stack.
         // The Heltec keeps its session internally; the Pager adds DMA state.
-        // Both leave another 16 KiB for nested calls and interrupts. The
-        // Pager's device-task construction overflowed with the 128 KiB heap.
+        // Their smaller heaps leave room for nested calls and interrupts.
         #[cfg(feature = "board-heltec-v3")]
         esp_alloc::heap_allocator!(size: 48 * 1024);
-        // Pager battery inspection adds retained acquisition state. Budget one
-        // KiB from its ordinary heap for task storage/stack, preserving the
-        // checked 32 KiB nested-call reserve (111 KiB total internal heap).
+        // Leave room for the HAL's sleep code and retained task state while
+        // preserving the checked 32 KiB nested-call reserve (103 KiB heap).
         #[cfg(feature = "board-tlora-pager")]
-        esp_alloc::heap_allocator!(size: 47 * 1024);
+        esp_alloc::heap_allocator!(size: 39 * 1024);
         #[cfg(not(any(feature = "board-heltec-v3", feature = "board-tlora-pager")))]
-        esp_alloc::heap_allocator!(size: 64 * 1024);
+        esp_alloc::heap_allocator!(size: 56 * 1024);
         esp_alloc::heap_allocator!(#[esp_hal::ram(reclaimed)] size: 64 * 1024);
     }
     #[cfg(feature = "psram")]
@@ -4294,10 +4276,8 @@ async fn main(spawner: Spawner) {
     // (GPIO wake always armed) instead of spinning `waiti` at 80 MHz.
     // The gating is entirely lock-driven—esp-radio holds a lock from
     // BLE init to deinit, the wired-transport and UART drivers hold
-    // theirs for their lifetimes, and GPIO waits hold one unless the
-    // pin is wake-enabled—so a board whose locks never all clear
-    // simply falls back to WFI, and sleep arrives exactly when the
-    // holders learn to let go.
+    // theirs for their lifetimes, and GPIO level waits arm wake sources.
+    // A board whose locks never all clear simply falls back to WFI.
     let sleep = esp_rtos::sleep::configure(peripherals.LPWR);
     esp_rtos::start_with_idle_hook(
         timg0.timer0,

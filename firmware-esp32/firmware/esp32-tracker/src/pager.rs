@@ -500,10 +500,23 @@ pub async fn heartbeat_task(
         ));
     }
     rtc.rwdt.disable();
-    // On ESP32-S3 EXT1's low setting is ANY_LOW: either button wakes it.
-    let mut boot_pin = unsafe { peripherals::GPIO0::steal() };
-    let mut press_pin = unsafe { peripherals::GPIO7::steal() };
-    let mut pins: [&mut dyn esp_hal::gpio::RtcPin; 2] = [&mut boot_pin, &mut press_pin];
-    let wake = esp_hal::rtc_cntl::sleep::Ext1WakeupSource::new(&mut pins, Level::Low);
-    sleep.deep_sleep(&[&wake]);
+    // Both buttons keep their pull-ups and wake on a low level. The HAL
+    // selects the low-power path and holds the pads across deep sleep.
+    let wake_config = esp_hal::gpio::WakeupConfig::default().with_low_power_path(true);
+    let mut boot = Input::new(
+        unsafe { peripherals::GPIO0::steal() },
+        InputConfig::default().with_pull(Pull::Up),
+    );
+    let mut press = Input::new(
+        unsafe { peripherals::GPIO7::steal() },
+        InputConfig::default().with_pull(Pull::Up),
+    );
+    boot.apply_wakeup_config(&wake_config)
+        .expect("GPIO0 supports low-power wake");
+    press
+        .apply_wakeup_config(&wake_config)
+        .expect("GPIO7 supports low-power wake");
+    boot.listen(Event::LowLevel);
+    press.listen(Event::LowLevel);
+    sleep.deep_sleep();
 }

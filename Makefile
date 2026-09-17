@@ -407,9 +407,10 @@ flash-tlora-pager: espflash-check build-tlora-pager
 	espflash flash --before usb-reset --after watchdog-reset $(ESPFLASH_PORT_ARG) $(ESPFLASH_PARTITIONS) \
 		$(ESP32S3_TARGET_DIR)/firmware-tlora-pager
 
+# Main constructs the device task through a nested ~17 KiB frame.
 build-tbeam-supreme: esp-toolchain-check
 	$(ESP_ENV) cd firmware-esp32/firmware/tbeam-supreme && cargo build --release $(ESP32_CARGO_FLAGS)
-	$(ESP_ENV) python3 scripts/check_xtensa_stack.py $(ESP32S3_TARGET_DIR)/firmware-tbeam-supreme
+	$(ESP_ENV) python3 scripts/check_xtensa_stack.py $(ESP32S3_TARGET_DIR)/firmware-tbeam-supreme --reserve 20480
 
 flash-tbeam-supreme: espflash-check build-tbeam-supreme
 	espflash flash --monitor $(ESPFLASH_PORT_ARG) $(ESPFLASH_PARTITIONS) \

@@ -1,7 +1,7 @@
 //! ISR capture while interactive; wake-enabled level waits while dark.
 use super::*;
 use core::{future::Future, pin::pin, task::Poll};
-use esp_hal::{gpio::WaitForOptions, rtc_cntl::WakeLock};
+use esp_hal::rtc_cntl::WakeLock;
 use umsh_pager_peripherals::input::PressLatch;
 use umsh_pager_peripherals::input_power::{Gesture, InputPower, Mode};
 
@@ -239,12 +239,11 @@ pub async fn coordinator() {
                 Event::HighLevel
             }
         };
-        let options = WaitForOptions::default().with_wake_enable(true);
         let outcome = {
             let mut waits = pin!(select(
                 select(
-                    encoder.a.wait_for_with_options(event(ab & 2 != 0), options),
-                    encoder.b.wait_for_with_options(event(ab & 1 != 0), options),
+                    encoder.a.wait_for(event(ab & 2 != 0)),
+                    encoder.b.wait_for(event(ab & 1 != 0)),
                 ),
                 CHANGED.wait(),
             ));
@@ -272,13 +271,7 @@ pub async fn coordinator() {
             .await
         };
         match outcome {
-            Either::First(Either::First(Ok(())) | Either::Second(Ok(()))) => wake_display(),
-            Either::First(_) => {
-                debug_log(format_args!(
-                    "pager: encoder wake setup failed; retaining awake guard"
-                ));
-                wake_display();
-            }
+            Either::First(_) => wake_display(),
             Either::Second(()) => {}
         }
         restore(encoder, control(|c| c.policy.mode != Mode::Shutdown));
@@ -372,20 +365,7 @@ async fn run_button(pin: &mut Input<'static>, boot: bool) {
         } else {
             Event::LowLevel
         };
-        if let Either::First(Err(_)) = select(
-            pin.wait_for_with_options(level, WaitForOptions::default().with_wake_enable(true)),
-            timer,
-        )
-        .await
-        {
-            // Valid level configuration should never fail. Stay responsive
-            // to shutdown cancellation without entering an un-wakeable sleep.
-            let _guard = WakeLock::new();
-            debug_log(format_args!(
-                "pager: button wake setup failed (boot={boot})"
-            ));
-            core::future::pending::<()>().await;
-        }
+        select(pin.wait_for(level), timer).await;
     }
 }
 
@@ -406,16 +386,7 @@ async fn run_keyboard(irq: &mut Input<'static>, bus: &'static board::I2cBus) {
             // Idle waits have no timer. Only controller transactions and
             // asserted-IRQ drains are bounded by the acquisition timeout.
             if initialized && irq.is_high() {
-                if irq
-                    .wait_for_with_options(
-                        Event::LowLevel,
-                        WaitForOptions::default().with_wake_enable(true),
-                    )
-                    .await
-                    .is_err()
-                {
-                    break;
-                }
+                irq.wait_for(Event::LowLevel).await;
             }
             let result = with_timeout(Duration::from_millis(500), async {
                 if !initialized {

@@ -61,10 +61,11 @@ Add `ble-debug` (`--features=wifi,ble-debug`) for serial connection diagnostics,
 sampled heap minima, largest free allocation, and a main-stack watermark.
 These measurements do not replace sustained load and radio-task stack testing.
 The build targets reject individual Xtensa frames that exceed the available
-main stack minus an 8 KiB reserve; nested calls still require measurement.
+main stack minus a nested-call reserve: 20 KiB on T-Beam, 32 KiB on Pager,
+and 8 KiB on Heltec. These checks do not replace stack measurements under load.
 
 The Heltec V3 uses internal session storage and a 112 KiB internal heap. The
-T-Beam uses a 128 KiB internal heap and, with its default `psram` feature,
+T-Beam uses a 120 KiB internal heap and, with its default `psram` feature,
 explicit PSRAM storage for the protocol session and snapshot buffer. WiFi
 does not require PSRAM as a feature dependency. Neither WiFi nor PSRAM is
 enabled in the default Heltec build; WiFi is unsupported on the Heltec V2.

@@ -371,6 +371,7 @@ final class AdminFlowController {
         let session = session
         return DeviceManagementBackend(
             link: .administrative,
+            usesBluetooth: true,
             fetch: { _, properties, _, _ in
                 try await session.fetchProperties(properties)
             },

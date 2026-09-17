@@ -194,7 +194,7 @@ struct RemoteRadioEditor: View {
             hasEdits: !edits.dirty.isEmpty,
             // Power and the transmit limit change how far this device
             // reaches, not what it can hear, so they apply unwarned.
-            applyWarning: edits.strandsIfWrong
+            applyWarning: model.link == .mesh && edits.strandsIfWrong
                 ? (
                     title: "Change This Device's Radio",
                     message: """
@@ -638,6 +638,14 @@ struct RemoteIdentityEditor: View {
                     } label: {
                         Label("Choose on Map", systemImage: "mappin.and.ellipse")
                     }
+                    if !edits.latitude.isEmpty || !edits.longitude.isEmpty
+                        || !edits.altitudeText.isEmpty {
+                        Button("Clear Position", role: .destructive) {
+                            edits.latitude = ""
+                            edits.longitude = ""
+                            edits.altitudeText = ""
+                        }
+                    }
                 }
             }
             if model.card?.supportsGnss == true {
@@ -660,7 +668,7 @@ struct RemoteIdentityEditor: View {
                 // Only the read-only case needs saying: the rows have gone
                 // uneditable and the reason is not on screen.
                 if edits.isSelfPositioning {
-                    Text("Turn this off to place the device by hand.")
+                    Text("Turn this off and apply to place or clear the device's position.")
                 }
                 if phoneUnavailable {
                     Text("This phone could not find where it is.")
@@ -830,7 +838,9 @@ struct RemoteIdentityEditor: View {
 
         /// Whether the device is keeping its own advertised position, in
         /// which case a write here would be refused.
-        var isSelfPositioning: Bool { selfPositions.value == true }
+        var isSelfPositioning: Bool {
+            selfPositions.value == true || selfPositions.reported == true
+        }
 
         /// The grid a typed or picked position is encoded to: the device's
         /// own precision where it has one, and the local choice otherwise.

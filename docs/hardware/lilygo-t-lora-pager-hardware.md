@@ -429,7 +429,7 @@ and last-transferred frame reside in PSRAM; synchronization objects, DMA
 descriptors, and transfer buffers stay in internal RAM. Only changed four-row
 stripes are transmitted, and history advances after a successful transfer.
 The controller's portrait offset becomes landscape Y=49.
-The internal heap is 111 KiB, leaving room for the nested startup
+The internal heap is 103 KiB, leaving room for the nested startup
 calls as well as DMA state. The board's stack check requires another 32 KiB
 beyond its largest individual function frame; a smaller reserve missed an
 on-device startup stack overflow during bring-up.

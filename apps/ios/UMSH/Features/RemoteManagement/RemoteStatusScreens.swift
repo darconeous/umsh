@@ -373,7 +373,8 @@ struct RemoteTimeScreen: View {
     /// Uptime as of the last read, carried with the instant it was
     /// learned so the row can keep counting from there.
     private var uptime: (read: UInt32, asOf: Date)? {
-        guard let reading, let seconds = reading.properties.uptimeSeconds, let asOf = reading.asOf
+        guard let reading, let seconds = reading.properties.uptimeSeconds,
+              let asOf = reading.receivedAt[ulcpProperties.uptime]
         else { return nil }
         return (seconds, asOf)
     }
@@ -390,7 +391,8 @@ struct RemoteTimeScreen: View {
     /// The clock as of the last read, in the shape the companion screen
     /// already presents one.
     private var clock: RadioClock? {
-        guard let reading, let time = reading.properties.time, let asOf = reading.asOf
+        guard let reading, let time = reading.properties.time,
+              let asOf = reading.receivedAt[ulcpProperties.time]
         else { return nil }
         return RadioClock(
             date: time.epochSeconds.map { Date(timeIntervalSince1970: TimeInterval($0)) },
@@ -407,7 +409,7 @@ struct RemoteTimeScreen: View {
         desired.time = UlcpTimeRecord(
             epochSeconds: UInt32(clamping: Int(Date.now.timeIntervalSince1970))
         )
-        await model.apply(.time, desired: desired, dirty: [ulcpProperties.time])
+        await model.apply(.time, desired: desired, dirty: [ulcpProperties.time], save: false)
     }
 
     private func apply() async {
@@ -456,6 +458,7 @@ struct RemoteTimeScreen: View {
             // Only the dirty set is written; the rest of the record is
             // carried for completeness and never reaches the air.
             var desired = held
+            desired.time = nil
             desired.tzOffsetMin = tzOffset.value
             desired.gnssTimeTrust = timeTrust.value
             return desired
@@ -582,7 +585,8 @@ struct RemoteStatisticsScreen: View {
     }
 
     private var currentUptime: (read: UInt32, asOf: Date)? {
-        guard let reading, let seconds = stats.uptimeSeconds, let asOf = reading.asOf else {
+        guard let reading, let seconds = stats.uptimeSeconds,
+              let asOf = reading.receivedAt[ulcpProperties.uptime] else {
             return nil
         }
         return (seconds, asOf)

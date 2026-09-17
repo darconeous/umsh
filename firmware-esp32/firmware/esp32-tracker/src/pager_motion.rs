@@ -25,7 +25,6 @@ enum Fault {
     Range,
     TransferLimit,
     InterruptStuck,
-    Gpio,
     DrainLimit,
 }
 
@@ -380,18 +379,11 @@ async fn run<I: embedded_hal_async::i2c::I2c>(
                 None => core::future::pending::<()>().await,
             }
         };
-        match select3(
-            irq.wait_for_with_options(
-                Event::HighLevel,
-                esp_hal::gpio::WaitForOptions::default().with_wake_enable(true),
-            ),
+        select3(
+            irq.wait_for(Event::HighLevel),
             deadline,
             SERVICE.changed.wait(),
         )
-        .await
-        {
-            Either3::First(Err(_)) => return Err(Fault::Gpio),
-            _ => {}
-        }
+        .await;
     }
 }

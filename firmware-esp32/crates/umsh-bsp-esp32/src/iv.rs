@@ -1,27 +1,16 @@
 //! Wake-aware radio `InterfaceVariant`, shared by every ESP32 board.
 //!
-//! lora-phy's generic variants drive their pins through
-//! `embedded_hal_async::digital::Wait`, and esp-hal's implementation of
-//! that trait holds a [`WakeLock`](esp_hal::rtc_cntl::WakeLock) for the
-//! whole wait—which for a continuous-RX radio is essentially forever,
-//! pinning the scheduler out of light sleep. This variant is the same
-//! logic driven through esp-hal's `Input` directly, with the IRQ wait
-//! wake-enabled: the pin becomes a light-sleep wake source (level
-//! events only—exactly what an SX12xx IRQ line is) instead of a lock
-//! holder, and a frame arriving mid-sleep wakes the chip. The radio
-//! latches its IRQ and buffers the frame in its own FIFO, so the
-//! sub-millisecond wake latency loses nothing.
-//!
-//! The BUSY wait (SX126x only) keeps the plain locked wait: it spans
-//! one command's setup time, and a lock held for microseconds is
-//! correct, not a leak.
+//! GPIO level waits wake the chip through esp-hal's digital wake path.
+//! The radio latches its IRQ and buffers the frame in its own FIFO, so
+//! the sub-millisecond wake latency loses nothing. BUSY waits keep an
+//! explicit wake lock across one command's short setup interval.
 //!
 //! None of the boards this workspace supports put RF-switch control on
 //! host GPIOs (DIO2 does it internally on the SX126x boards; the V2's
 //! SX1276 module needs none), so the switch hooks are no-ops.
 
 use embedded_hal_async::delay::DelayNs;
-use esp_hal::gpio::{Event, Input, Output, WaitForOptions};
+use esp_hal::gpio::{Event, Input, Output};
 use lora_phy::mod_params::RadioError;
 use lora_phy::mod_traits::InterfaceVariant;
 
@@ -67,19 +56,15 @@ impl InterfaceVariant for EspInterfaceVariant {
 
     async fn wait_on_busy(&mut self) -> Result<(), RadioError> {
         if let Some(busy) = &mut self.busy {
+            let _guard = esp_hal::rtc_cntl::WakeLock::new();
             busy.wait_for(Event::LowLevel).await;
         }
         Ok(())
     }
 
     async fn await_irq(&mut self) -> Result<(), RadioError> {
-        self.irq
-            .wait_for_with_options(
-                Event::HighLevel,
-                WaitForOptions::default().with_wake_enable(true),
-            )
-            .await
-            .map_err(|_| RadioError::Irq)
+        self.irq.wait_for(Event::HighLevel).await;
+        Ok(())
     }
 
     async fn enable_rf_switch_rx(&mut self) -> Result<(), RadioError> {

@@ -312,7 +312,7 @@ struct RemoteWifiScreen: View {
     /// turning off the connection a bridge is riding on, and nothing on
     /// this phone can tell whether the device has another way home.
     private var applyWarning: (title: String, message: String)? {
-        guard edits.disablesWifi else { return nil }
+        guard model.link == .mesh, edits.disablesWifi else { return nil }
         return (
             title: "Turn Wi-Fi Off",
             message: """

@@ -267,20 +267,8 @@ pub async fn task(bus: &'static board::I2cBus, pin: peripherals::GPIO8<'static>)
                     None => core::future::pending::<()>().await,
                 }
             };
-            match select(
-                irq.wait_for_with_options(
-                    Event::HighLevel,
-                    esp_hal::gpio::WaitForOptions::default().with_wake_enable(true),
-                ),
-                deadline,
-            )
-            .await
-            {
-                Either::First(Ok(())) => irq_count += 1,
-                Either::First(Err(error)) => {
-                    debug_log(format_args!("bhi260: GPIO wait error {error:?}"));
-                    return Ok("GPIO wait failed");
-                }
+            match select(irq.wait_for(Event::HighLevel), deadline).await {
+                Either::First(()) => irq_count += 1,
                 Either::Second(()) => {}
             }
         }
