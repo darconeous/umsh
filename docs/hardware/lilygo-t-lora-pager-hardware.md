@@ -480,6 +480,24 @@ and last-transferred frame reside in PSRAM; synchronization objects, DMA
 descriptors, and transfer buffers stay in internal RAM. Only changed four-row
 stripes are transmitted, and history advances after a successful transfer.
 The controller's portrait offset becomes landscape Y=49.
+Immediately after HAL initialization, the keyboard backlight turns on and the
+display backlight follows after a 3 ms AW9364 reset. Both remain lit through
+power setup, panel reset, and logo drawing; retained or undefined panel pixels
+may be visible briefly. The display owner takes over the existing outputs
+without blanking them and sets normal brightness before panel initialization.
+After essential power and initial battery telemetry setup, startup deselects
+every shared-SPI peripheral, initializes the panel, and draws the boot logo
+before loading journals or bringing up networking and LoRa. The initialized,
+lit panel and its original splash deadline then pass to the display task;
+handoff neither blanks the panel nor restarts the two-second visible timer.
+Panel initialization waits 120 ms between software reset and sleep-out, then
+5 ms before configuration commands, reducing explicit waits to 125 ms.
+These follow [ST7796S sections 9.2.2 and 9.2.13](https://files.waveshare.com/wiki/common/ST7796S_Datasheet.pdf):
+reset from sleep-in requires 120 ms before sleep-out; after sleep-out, ordinary
+commands need 5 ms, while sleep-in needs 120 ms. This driver uses display
+on/off commands and does not send sleep-in. Cold-power-on and repeated warm
+reset display behavior still require qualification at the shorter timings.
+The startup serial log records the logo-visible time in milliseconds of uptime.
 The internal heap is 94 KiB, leaving room for audio DMA/task state and nested
 startup calls. The board's stack check requires another 32 KiB
 beyond its largest individual function frame; a smaller reserve missed an
@@ -501,11 +519,20 @@ epochs reported as unknown. The unused RTC clock output is disabled.
 Battery telemetry is sampled each second. Startup trusts the BQ27220's
 battery-backed configuration: it never enters configuration-update mode,
 rewrites capacity or taper parameters, resets the gauge, or corrects its
-learned capacity. It temporarily unlocks for a read-only configuration snapshot
-and restores the original access state. This takes about nine seconds with
-bounded waits that feed the startup watchdog.
+learned capacity. After power and initial telemetry setup, the battery task
+temporarily unlocks for a read-only configuration snapshot and restores the
+original access state. This takes about nine seconds in the background; the
+display, controls, and transports start without waiting for it, and the
+heartbeat continues servicing the watchdog. During inspection, the UI and
+ordinary battery queries use the initial reading. Detailed battery diagnostics
+return `BUSY` until inspection finishes, preserving the gauge's quiet periods.
+Shutdown waits for startup inspection to restore access before cutting power.
+On-device startup verification received USB replies at two to three seconds of uptime
+while battery diagnostics returned `BUSY`; normal diagnostics resumed at ten
+to eleven seconds without delaying transport availability.
 
-Startup checks the BQ25896 cutoff against the gauge's actual taper current.
+The background startup check compares the BQ25896 cutoff against the gauge's
+actual taper current. Existing charger settings remain in effect until it completes.
 It permits at most **75% of the gauge threshold**, rounded down to the
 charger's 64 mA steps, and only lowers an excessive cutoff. An already-lower
 setting is preserved. A 220 mA threshold permits at most **128 mA** cutoff;

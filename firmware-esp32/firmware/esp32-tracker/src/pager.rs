@@ -33,6 +33,15 @@ static GROUP_LOCK: Mutex<CriticalSectionRawMutex, ()> = Mutex::new(());
 static GROUP_GENERATION: AtomicU32 = AtomicU32::new(0);
 static GAUGE_REPORT: critical_section::Mutex<RefCell<Option<heapless::String<192>>>> =
     critical_section::Mutex::new(RefCell::new(None));
+// Shutdown must not remove power halfway through the startup security procedure.
+static BATTERY_STARTUP_DONE: Signal<CriticalSectionRawMutex, ()> = Signal::new();
+
+struct SampleDelay;
+impl embedded_hal_async::delay::DelayNs for SampleDelay {
+    async fn delay_ns(&mut self, ns: u32) {
+        Timer::after(Duration::from_nanos(ns.into())).await;
+    }
+}
 
 pub fn take_gauge_report() -> Option<heapless::String<192>> {
     critical_section::with(|cs| GAUGE_REPORT.borrow(cs).borrow_mut().take())
@@ -103,8 +112,11 @@ pub async fn power_up(
     i2c: peripherals::I2C0<'static>,
     sda: peripherals::GPIO3<'static>,
     scl: peripherals::GPIO2<'static>,
-    rtc: &mut Rtc<'static>,
-) -> (&'static board::I2cBus, &'static board::SharedExpander) {
+) -> (
+    &'static board::I2cBus,
+    &'static board::SharedExpander,
+    board_battery::Reading,
+) {
     let bus = I2C_BUS.init(Mutex::new(
         I2c::new(
             i2c,
@@ -127,19 +139,41 @@ pub async fn power_up(
         .start_telemetry()
         .await
         .expect("Pager battery telemetry initialization");
-    struct GaugeDelay<'a>(&'a mut Rtc<'static>);
-    impl embedded_hal_async::delay::DelayNs for GaugeDelay<'_> {
-        async fn delay_ns(&mut self, ns: u32) {
-            self.0.rwdt.feed();
-            Timer::after(Duration::from_nanos(u64::from(ns))).await;
-        }
+    let reading = battery.read().await.unwrap_or(board_battery::Reading {
+        voltage_mv: None,
+        percent: None,
+        charge: None,
+        vbus: VBUS_PRESENT.load(Ordering::Acquire),
+    });
+    publish_battery_reading(&reading);
+    println!("pager: I2C power domains and battery telemetry ready");
+    (bus, EXPANDER.init(Mutex::new(expander)), reading)
+}
+
+fn publish_battery_reading(reading: &board_battery::Reading) {
+    BATTERY_MV.store(reading.voltage_mv.unwrap_or(0), Ordering::Release);
+    BATTERY_LEVEL.store(reading.percent.unwrap_or(0xff), Ordering::Release);
+    BATTERY_CHARGE.store(
+        match reading.charge {
+            None => 0,
+            Some(board_battery::Charge::Discharging) => 1,
+            Some(board_battery::Charge::Charging) => 2,
+            Some(board_battery::Charge::Charged) => 3,
+        },
+        Ordering::Release,
+    );
+    if VBUS_PRESENT.swap(reading.vbus, Ordering::AcqRel) != reading.vbus {
+        VBUS_EDGE.signal(());
     }
+}
+
+async fn check_termination(battery: &mut Battery<board::I2cHandle>) {
     // Read the actual provisioned gauge profile; never enter CFGUPDATE or
     // overwrite capacity/taper/learning parameters. Restore access before proceeding.
     let config = {
         #[cfg(feature = "ulcp-i2c")]
         let _held = board::i2c::GAUGE_PROCEDURE.hold(0x55);
-        battery.inspect_configuration(&mut GaugeDelay(rtc)).await
+        battery.inspect_configuration(&mut SampleDelay).await
     };
     let mut report = heapless::String::new();
     match config {
@@ -167,14 +201,6 @@ pub async fn power_up(
     }
     println!("{}", report.trim_end());
     critical_section::with(|cs| *GAUGE_REPORT.borrow(cs).borrow_mut() = Some(report));
-    if let Ok(gauge) = battery.diagnostics().await {
-        println!("pager: gauge readings: {gauge:?}");
-    }
-    if let Ok(reading) = battery.read().await {
-        VBUS_PRESENT.store(reading.vbus, Ordering::Release);
-    }
-    println!("pager: I2C power domains and battery telemetry ready");
-    (bus, EXPANDER.init(Mutex::new(expander)))
 }
 
 pub fn spi_bus(
@@ -210,8 +236,7 @@ pub fn display(
     bus: &'static board::SpiBus,
     cs: Output<'static>,
     dc: peripherals::GPIO37<'static>,
-    bl: peripherals::GPIO42<'static>,
-    kb: peripherals::GPIO46<'static>,
+    lights: board::display::BootBacklights,
 ) -> Display {
     let spi = board::SpiHandle::new(
         bus,
@@ -223,8 +248,7 @@ pub fn display(
     Display::new(
         spi,
         Output::new(dc, Level::High, OutputConfig::default()),
-        Output::new(bl, Level::Low, OutputConfig::default()),
-        Output::new(kb, Level::Low, OutputConfig::default()),
+        lights,
         external::display_frame(),
         external::display_frame(),
         &mut STRIPE
@@ -237,8 +261,39 @@ pub fn display(
 pub mod input;
 
 #[embassy_executor::task]
-pub async fn battery_task(bus: &'static board::I2cBus) {
+pub async fn battery_task(bus: &'static board::I2cBus, initial: board_battery::Reading) {
     let mut battery = Battery::new(I2cDevice::new(bus));
+    {
+        // The sole battery owner performs the slow startup inspection while
+        // display, input, and transports start independently. Keep polling this
+        // same future: canceling/restarting it can leave the gauge unsealed.
+        let mut startup = core::pin::pin!(check_termination(&mut battery));
+        loop {
+            match select3(
+                startup.as_mut(),
+                BATTERY_REQUEST.wait(),
+                GROUP_REQUEST.wait(),
+            )
+            .await
+            {
+                Either3::First(()) => break,
+                Either3::Second(()) => BATTERY_REPLY.signal(initial),
+                Either3::Third((generation, _)) => {
+                    // Respond promptly without violating the gauge's quiet
+                    // periods. Scalar diagnostics must be retried after startup.
+                    let mut sample = BatterySample::default();
+                    sample.snapshot = Ok(battery_snapshot(&initial));
+                    sample.gauge_config = Err(umsh_ulcp::Status::BUSY);
+                    sample.gauge_telemetry = Err(umsh_ulcp::Status::BUSY);
+                    for key in umsh_ulcp::battery_diagnostics::KEYS {
+                        sample.set(key, Err(umsh_ulcp::Status::BUSY));
+                    }
+                    GROUP_REPLY.signal((generation, sample));
+                }
+            }
+        }
+    }
+    BATTERY_STARTUP_DONE.signal(());
     let announce = BATTERY_ANNOUNCE.sender();
     let mut previous = None;
     let mut low = LowBattery::default();
@@ -272,12 +327,6 @@ pub async fn battery_task(bus: &'static board::I2cBus) {
             } else {
                 BatteryFieldsRequested::NONE
             });
-        struct SampleDelay;
-        impl embedded_hal_async::delay::DelayNs for SampleDelay {
-            async fn delay_ns(&mut self, ns: u32) {
-                Timer::after(Duration::from_nanos(ns.into())).await;
-            }
-        }
         // TI limits complete standard-command polling to twice per second.
         // Host requests and the periodic UI/safety pass share this limit.
         Timer::at(next_acquisition).await;
@@ -338,20 +387,7 @@ pub async fn battery_task(bus: &'static board::I2cBus) {
         }
         match reading {
             Ok(reading) => {
-                BATTERY_MV.store(reading.voltage_mv.unwrap_or(0), Ordering::Release);
-                BATTERY_LEVEL.store(reading.percent.unwrap_or(0xff), Ordering::Release);
-                BATTERY_CHARGE.store(
-                    match reading.charge {
-                        None => 0,
-                        Some(board_battery::Charge::Discharging) => 1,
-                        Some(board_battery::Charge::Charging) => 2,
-                        Some(board_battery::Charge::Charged) => 3,
-                    },
-                    Ordering::Release,
-                );
-                if VBUS_PRESENT.swap(reading.vbus, Ordering::AcqRel) != reading.vbus {
-                    VBUS_EDGE.signal(());
-                }
+                publish_battery_reading(&reading);
                 if requested {
                     BATTERY_REPLY.signal(reading);
                 }
@@ -452,6 +488,14 @@ pub async fn heartbeat_task(
     // Do not race a radio SPI transfer when cutting its supply. A wedged
     // runner leaves the watchdog armed so the device can recover by resetting.
     DEVICE_CTL.wait_shutdown().await;
+    // A BOOT hold can now finish before startup inspection does. Let its
+    // access-state cleanup finish before touching the charger or cutting SYS.
+    while with_timeout(Duration::from_secs(2), BATTERY_STARTUP_DONE.wait())
+        .await
+        .is_err()
+    {
+        rtc.rwdt.feed();
+    }
     let _ = expander.lock().await.shutdown().await;
     let mut battery = Battery::new(I2cDevice::new(bus));
     let _ = battery.sleep().await;

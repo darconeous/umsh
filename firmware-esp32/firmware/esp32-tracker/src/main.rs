@@ -3559,6 +3559,41 @@ async fn display_tick(awake: bool, pairing_delay: Option<u64>) {
     }
 }
 
+/// Draw the boot-only artwork without needing journals, identity, or radio.
+/// Return its original visible deadline so later ownership handoff cannot
+/// blank the panel or restart the splash dwell.
+async fn show_boot_splash(display: &mut Display) -> umsh_ux_display_tracker::boot::BootSplash {
+    // Pager backlights provide immediate startup feedback, including while
+    // the panel resets and its first frame is being drawn.
+    #[cfg(not(feature = "board-tlora-pager"))]
+    let _ = display.set_display_on(false).await;
+    let _ = display.set_brightness(Brightness::NORMAL).await;
+    let mut splash = umsh_ux_display_tracker::boot::BootSplash::new();
+    screen::render_splash(display, &DISPLAY_LAYOUT, env!("GIT_DESCRIBE"));
+    for attempt in 1..=3 {
+        match display.flush().await {
+            Ok(()) => {
+                if display.set_display_on(true).await.is_ok() {
+                    let now = Instant::now().as_millis();
+                    splash.shown(now);
+                    println!("display: boot logo visible at {now} ms (attempt {attempt})");
+                    return splash;
+                }
+            }
+            Err(error) => {
+                debug_log(format_args!(
+                    "display: boot splash transfer failed: {error:?}"
+                ));
+            }
+        }
+        Timer::after_millis(20).await;
+    }
+    // Never time a partially written frame as a successful splash.
+    splash.dismiss();
+    BOOT_SPLASH_ACTIVE.store(false, Ordering::Release);
+    splash
+}
+
 /// Owns the OLED, the `Vext` rail that powers it (where one exists—
 /// on a PMIC board the panel's rail drops in the shutdown path
 /// instead), and the display attention policy.
@@ -3570,38 +3605,15 @@ async fn display_tick(awake: bool, pairing_delay: Option<u64>) {
 #[embassy_executor::task]
 async fn display_task(
     mut display: Display,
+    #[cfg(feature = "board-tlora-pager")] mut splash: umsh_ux_display_tracker::boot::BootSplash,
     #[cfg(not(any(feature = "pmic-axp2101", feature = "board-tlora-pager")))] mut vext: Vext,
 ) {
     #[cfg(feature = "board-tlora-pager")]
     let pager_capture_epoch = pager::input::interactive().await;
     let mut model = UiModel::new(board_menu_items());
-    let _ = display.set_display_on(false).await;
-    let _ = display.set_brightness(Brightness::NORMAL).await;
-    let mut splash = umsh_ux_display_tracker::boot::BootSplash::new();
-    screen::render_splash(&mut display, &DISPLAY_LAYOUT, env!("GIT_DESCRIBE"));
-    let mut shown = false;
-    for attempt in 1..=3 {
-        match display.flush().await {
-            Ok(()) => {
-                shown = true;
-                debug_log(format_args!(
-                    "oled: boot splash transferred (attempt {attempt})"
-                ));
-                break;
-            }
-            Err(error) => {
-                debug_log(format_args!("oled: boot splash transfer failed: {error:?}"));
-                Timer::after_millis(20).await;
-            }
-        }
-    }
-    if shown {
-        let _ = display.set_display_on(true).await;
-        splash.shown(Instant::now().as_millis());
-    } else {
-        // Never time a partially written frame as a successful splash.
-        splash.dismiss();
-        BOOT_SPLASH_ACTIVE.store(false, Ordering::Release);
+    #[cfg(not(feature = "board-tlora-pager"))]
+    let mut splash = show_boot_splash(&mut display).await;
+    if !splash.is_active() {
         render_frame(
             &mut display,
             &model,
@@ -4309,6 +4321,9 @@ async fn main(spawner: Spawner) {
     let config = esp_hal::Config::default().with_cpu_clock(CpuClock::_80MHz);
     let peripherals = esp_hal::init(config);
     #[cfg(feature = "board-tlora-pager")]
+    let pager_boot_lights =
+        board::display::BootBacklights::new(peripherals.GPIO42, peripherals.GPIO46);
+    #[cfg(feature = "board-tlora-pager")]
     let pager_boot_guard = esp_hal::rtc_cntl::WakeLock::new();
     #[cfg(all(feature = "wifi", feature = "ble-debug"))]
     wifi_memory::init();
@@ -4433,13 +4448,46 @@ async fn main(spawner: Spawner) {
     };
 
     #[cfg(feature = "board-tlora-pager")]
-    let (pmu_bus, expander) = pager::power_up(
-        peripherals.I2C0,
-        peripherals.GPIO3,
-        peripherals.GPIO2,
-        &mut rtc,
-    )
-    .await;
+    let (pmu_bus, expander, initial_battery) =
+        pager::power_up(peripherals.I2C0, peripherals.GPIO3, peripherals.GPIO2).await;
+    #[cfg(feature = "board-tlora-pager")]
+    let (pager_panel_cs, radio_cs) = {
+        // All four shared-SPI devices must be deselected before the first
+        // panel command, including the not-yet-initialized LoRa modem.
+        let sd = Output::new(peripherals.GPIO21, Level::High, OutputConfig::default());
+        let nfc = Output::new(peripherals.GPIO39, Level::High, OutputConfig::default());
+        core::mem::forget((sd, nfc));
+        (
+            Output::new(peripherals.GPIO38, Level::High, OutputConfig::default()),
+            Output::new(peripherals.GPIO36, Level::High, OutputConfig::default()),
+        )
+    };
+    #[cfg(feature = "board-tlora-pager")]
+    let pager_spi = pager::spi_bus(
+        peripherals.SPI2,
+        peripherals.DMA_CH0,
+        peripherals.GPIO35,
+        peripherals.GPIO34,
+        peripherals.GPIO33,
+    );
+    #[cfg(feature = "board-tlora-pager")]
+    let pager_boot_display = {
+        let mut panel = pager::display(
+            pager_spi,
+            pager_panel_cs,
+            peripherals.GPIO37,
+            pager_boot_lights,
+        );
+        if panel.init().await.is_ok() {
+            let splash = show_boot_splash(&mut panel).await;
+            Some((panel, splash))
+        } else {
+            let _ = panel.set_display_on(false).await;
+            BOOT_SPLASH_ACTIVE.store(false, Ordering::Release);
+            debug_log(format_args!("pager: display init failed"));
+            None
+        }
+    };
     #[cfg(feature = "board-tlora-pager")]
     {
         pager::input::init_encoder(peripherals.IO_MUX, peripherals.GPIO40, peripherals.GPIO41);
@@ -4454,7 +4502,7 @@ async fn main(spawner: Spawner) {
         spawner.spawn(
             pager::input::keyboard_task(Input::new(peripherals.GPIO6, config), pmu_bus).unwrap(),
         );
-        spawner.spawn(pager::battery_task(pmu_bus).unwrap());
+        spawner.spawn(pager::battery_task(pmu_bus, initial_battery).unwrap());
         pager::alert::spawn(
             spawner,
             pmu_bus,
@@ -4796,23 +4844,6 @@ async fn main(spawner: Spawner) {
     .with_miso(peripherals.GPIO13)
     .into_async();
 
-    #[cfg(feature = "board-tlora-pager")]
-    let pager_panel_cs = {
-        // Every device on these wires must be deselected before radio traffic.
-        let sd = Output::new(peripherals.GPIO21, Level::High, OutputConfig::default());
-        let nfc = Output::new(peripherals.GPIO39, Level::High, OutputConfig::default());
-        core::mem::forget((sd, nfc));
-        Output::new(peripherals.GPIO38, Level::High, OutputConfig::default())
-    };
-    #[cfg(feature = "board-tlora-pager")]
-    let pager_spi = pager::spi_bus(
-        peripherals.SPI2,
-        peripherals.DMA_CH0,
-        peripherals.GPIO35,
-        peripherals.GPIO34,
-        peripherals.GPIO33,
-    );
-
     #[cfg(feature = "board-heltec-v3")]
     let radio_cs = Output::new(peripherals.GPIO8, Level::High, OutputConfig::default());
     #[cfg(feature = "board-heltec-v2")]
@@ -4824,7 +4855,7 @@ async fn main(spawner: Spawner) {
     #[cfg(feature = "board-tlora-pager")]
     let radio_spi = board::SpiHandle::new(
         pager_spi,
-        Output::new(peripherals.GPIO36, Level::High, OutputConfig::default()),
+        radio_cs,
         SpiConfig::default()
             .with_frequency(Rate::from_mhz(16))
             .with_mode(Mode::_0),
@@ -5077,18 +5108,8 @@ async fn main(spawner: Spawner) {
             )
             .unwrap(),
         );
-        let mut panel = pager::display(
-            pager_spi,
-            pager_panel_cs,
-            peripherals.GPIO37,
-            peripherals.GPIO42,
-            peripherals.GPIO46,
-        );
-        if panel.init().await.is_ok() {
-            spawner.spawn(display_task(panel).unwrap());
-        } else {
-            BOOT_SPLASH_ACTIVE.store(false, Ordering::Release);
-            debug_log(format_args!("pager: display init failed"));
+        if let Some((panel, splash)) = pager_boot_display {
+            spawner.spawn(display_task(panel, splash).unwrap());
         }
     }
 

@@ -1893,15 +1893,14 @@ const fn notice_label(notice: UiNotice) -> &'static str {
 /// Advertising is what a tracker does whenever nobody is talking to it, so
 /// announcing it says only that the device is behaving normally. What
 /// earns a row is a host actually being on the other end, or advertising
-/// being suppressed—the case where a user looking for the device on a
-/// phone would otherwise be left wondering.
+/// being suppressed by a wired host. Explicitly disabling Bluetooth is
+/// already reflected in Settings and the absent Bluetooth icon.
 const fn link_label(link: LinkState) -> Option<&'static str> {
     match link {
         LinkState::Attached => Some("host attached"),
         LinkState::Connected => Some("host connected"),
         LinkState::OffWired => Some("off (wired)"),
-        LinkState::Disabled => Some("off"),
-        LinkState::Advertising => None,
+        LinkState::Disabled | LinkState::Advertising => None,
     }
 }
 

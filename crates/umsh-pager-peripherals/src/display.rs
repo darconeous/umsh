@@ -115,9 +115,13 @@ impl<S: SpiDevice<u8>, P: OutputPin> St7796<S, P> {
         delay: &mut impl DelayNs,
     ) -> Result<(), Error<S::Error, P::Error>> {
         self.command(0x01, &[]).await?;
-        delay.delay_ms(150).await;
-        self.command(0x11, &[]).await?;
+        // ST7796S §9.2.2: reset while asleep requires 120 ms before SLPOUT.
+        // Use that interval on both cold and warm boots; prior mode is unknown.
         delay.delay_ms(120).await;
+        self.command(0x11, &[]).await?;
+        // §9.2.13: new commands may follow SLPOUT after 5 ms. The separate
+        // 120 ms restriction applies to SLPIN, which this driver never sends.
+        delay.delay_ms(5).await;
         // Board-specific ST7796 settings from LilyGo's panel initialization.
         for (cmd, data) in [
             (0xf0, &[0xc3][..]),

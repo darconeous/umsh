@@ -3,6 +3,8 @@ use crate::SpiHandle;
 use embassy_time::{Delay, Timer};
 use embedded_graphics::{pixelcolor::BinaryColor, prelude::*};
 use esp_hal::gpio::Output;
+use esp_hal::gpio::{Level, OutputConfig};
+use esp_hal::peripherals::{GPIO42, GPIO46};
 use umsh_pager_peripherals::display::{
     FRAME_BYTES, Framebuffer, HEIGHT, STRIPE_BYTES, STRIPE_ROWS, St7796,
 };
@@ -21,6 +23,23 @@ impl Brightness {
 }
 pub const fn brightness_from_permille(p: u16) -> Brightness {
     Brightness(1 + ((if p > 1000 { 1000 } else { p }) * 7 / 1000) as u8)
+}
+/// Light the board before panel, heap, or async timer initialization.
+/// Ownership passes to the display without toggling either output.
+pub struct BootBacklights {
+    display: Output<'static>,
+    keyboard: Output<'static>,
+}
+impl BootBacklights {
+    pub fn new(display: GPIO42<'static>, keyboard: GPIO46<'static>) -> Self {
+        let keyboard = Output::new(keyboard, Level::High, OutputConfig::default());
+        let mut display = Output::new(display, Level::Low, OutputConfig::default());
+        // Establish AW9364 step 16 even after a warm reset. Async timers are
+        // not running yet; this is the only early-boot settling delay.
+        esp_hal::delay::Delay::new().delay_millis(3);
+        display.set_high();
+        Self { display, keyboard }
+    }
 }
 pub struct Display {
     panel: St7796<SpiHandle, Output<'static>>,
@@ -41,8 +60,7 @@ impl Display {
     pub fn new(
         spi: SpiHandle,
         dc: Output<'static>,
-        backlight: Output<'static>,
-        keyboard_light: Output<'static>,
+        lights: BootBacklights,
         fb: &'static mut [u8; FRAME_BYTES],
         sent: &'static mut [u8; FRAME_BYTES],
         stripe: &'static mut [u8; STRIPE_BYTES],
@@ -53,15 +71,16 @@ impl Display {
             sent: Framebuffer::new(sent),
             sent_valid: false,
             stripe,
-            backlight,
-            keyboard_light,
+            backlight: lights.display,
+            keyboard_light: lights.keyboard,
             brightness: 8,
-            physical_brightness: 0,
+            physical_brightness: 16,
             on: false,
         }
     }
     pub async fn init(&mut self) -> Result<(), Error> {
         self.sent_valid = false;
+        self.backlight(self.brightness).await;
         self.panel.init(&mut Delay).await
     }
     pub async fn flush(&mut self) -> Result<(), Error> {
