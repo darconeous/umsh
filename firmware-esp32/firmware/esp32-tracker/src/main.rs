@@ -474,11 +474,8 @@ fn session_config() -> SessionConfig {
         stats: Some(&STATS),
         #[cfg(feature = "ulcp-i2c")]
         i2c_buses: board::i2c::BUSES,
-        #[cfg(feature = "ulcp-i2c")]
-        i2c_devices: board::i2c::DEVICES,
         #[cfg(not(feature = "ulcp-i2c"))]
         i2c_buses: &[],
-        #[cfg(not(feature = "ulcp-i2c"))]
         i2c_devices: &[],
     }
 }
@@ -3226,11 +3223,11 @@ async fn wired_transport_task(
 /// the entire session through a stack temporary while spawning the task.
 #[cfg(all(feature = "wifi", not(feature = "psram")))]
 #[inline(never)]
-fn internal_session(boot_reason: Status) -> &'static mut Session {
+fn internal_session(config: SessionConfig, boot_reason: Status) -> &'static mut Session {
     static SESSION: StaticCell<Session> = StaticCell::new();
     SESSION.init_with(|| {
         Session::new(
-            session_config(),
+            config,
             boot_reason,
             CryptoEngine::new(SoftwareAes, SoftwareSha256),
         )
@@ -3255,9 +3252,15 @@ async fn device_task(
 ) {
     // The retained hardware reset cause answers the first
     // PROP_LAST_STATUS query; attach itself never modifies it.
+    let config = session_config();
+    #[cfg(feature = "ulcp-i2c")]
+    let config = SessionConfig {
+        i2c_devices: i2c.devices(),
+        ..config
+    };
     #[cfg(not(any(feature = "psram", feature = "wifi")))]
     let mut session = Session::new(
-        session_config(),
+        config,
         boot_reason,
         CryptoEngine::new(SoftwareAes, SoftwareSha256),
     );
@@ -3267,12 +3270,13 @@ async fn device_task(
     let (session, snapshot_storage) = {
         static SNAPSHOT: StaticCell<[u8; umsh_ulcp_device::SNAPSHOT_MAX]> = StaticCell::new();
         (
-            internal_session(boot_reason),
+            internal_session(config, boot_reason),
             SNAPSHOT.init_with(|| [0; umsh_ulcp_device::SNAPSHOT_MAX]),
         )
     };
     #[cfg(feature = "psram")]
-    let (session, snapshot_storage) = (external::session(boot_reason), external::snapshot());
+    let (session, snapshot_storage) =
+        (external::session(config, boot_reason), external::snapshot());
     driver::run_with_storage(
         session,
         snapshot_storage,
@@ -4861,12 +4865,43 @@ async fn main(spawner: Spawner) {
         static DISPLAY_BUS: StaticCell<board::I2cBus> = StaticCell::new();
         DISPLAY_BUS.init(Mutex::new(i2c))
     };
+    #[cfg(all(feature = "ulcp-i2c", feature = "board-tbeam-supreme"))]
+    let (boot_oled, i2c_inventory) = {
+        static INVENTORY: StaticCell<board::i2c::Inventory> = StaticCell::new();
+        let inventory = INVENTORY.init_with(board::i2c::Inventory::new);
+        let mut handle = I2cDevice::new(display_bus);
+        // Bound startup even if a peripheral holds SCL. This HAL stops
+        // the controller on cancellation; retain only completed probes.
+        if embassy_time::with_timeout(Duration::from_millis(500), inventory.discover(&mut handle))
+            .await
+            .is_err()
+        {
+            debug_log(format_args!("i2c: startup discovery timed out"));
+        }
+        let oled = if let Some(addr) = inventory.panel_address() {
+            let mut panel = display::new_display(handle, addr);
+            match embassy_time::with_timeout(Duration::from_millis(200), panel.init()).await {
+                Ok(Ok(())) => {
+                    debug_log(format_args!("oled: sh1106 at 0x{addr:02x}"));
+                    Some(panel)
+                }
+                _ => None,
+            }
+        } else {
+            None
+        };
+        // PMIC bring-up already validated the chip ID; the RTC boot read
+        // records presence even when its stored time is invalid.
+        inventory.finish(oled.is_some(), true, wall_clock_rtc.is_some());
+        (oled, &*inventory)
+    };
     #[cfg(all(feature = "ulcp-i2c", feature = "board-tlora-pager"))]
     let host_buses = board::i2c::Buses { bus: pmu_bus };
     #[cfg(all(feature = "ulcp-i2c", feature = "pmic-axp2101"))]
     let host_buses = board::i2c::Buses {
         sensor: display_bus,
         pmu: pmu_bus,
+        inventory: i2c_inventory,
     };
     #[cfg(all(
         feature = "ulcp-i2c",
@@ -5007,7 +5042,16 @@ async fn main(spawner: Spawner) {
     // reset pin—the rail is the reset, and it is already up. A panel
     // that does not answer leaves the board headless rather than
     // stopping the boot.
-    #[cfg(feature = "display-sh1106")]
+    #[cfg(all(feature = "display-sh1106", feature = "ulcp-i2c"))]
+    {
+        if let Some(oled) = boot_oled {
+            spawner.spawn(display_task(oled).unwrap());
+        } else {
+            BOOT_SPLASH_ACTIVE.store(false, Ordering::Release);
+            debug_log(format_args!("oled: no initialized panel"));
+        }
+    }
+    #[cfg(all(feature = "display-sh1106", not(feature = "ulcp-i2c")))]
     {
         let mut i2c = I2cDevice::new(display_bus);
         match display::probe(&mut i2c).await {

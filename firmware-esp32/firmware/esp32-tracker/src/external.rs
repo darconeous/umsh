@@ -40,13 +40,16 @@ unsafe fn storage<T>() -> *mut T {
     ptr
 }
 
-pub fn session(boot_reason: umsh_ulcp::Status) -> &'static mut super::Session {
+pub fn session(
+    config: umsh_ulcp_device::SessionConfig,
+    boot_reason: umsh_ulcp::Status,
+) -> &'static mut super::Session {
     // Audited Session holds owned plain arrays/tables and references to the
     // internal duty/stats ledgers; it contains no atomics or DMA buffers.
     unsafe {
         let ptr = storage::<super::Session>();
         ptr.write(super::Session::new(
-            super::session_config(),
+            config,
             boot_reason,
             umsh_crypto::CryptoEngine::new(super::SoftwareAes, super::SoftwareSha256),
         ));

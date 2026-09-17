@@ -48,3 +48,6 @@ pub use rng::Nrf52840Rng;
 
 #[cfg(all(target_os = "none", feature = "i2c"))]
 pub mod i2c;
+
+#[cfg(any(all(target_os = "none", feature = "i2c"), test))]
+mod i2c_stop;

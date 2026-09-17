@@ -63,7 +63,7 @@ most 64 octets.
 * Asynchronous Updates: No
 * Required: `CAP_I2C`
 * Item Form: structure below
-* Post-Reset Value: Unchanged
+* Post-Reset Value: Rebuilt from startup identification where supported
 
 The peripherals the device's own firmware knows to be on its buses. Each
 item:
@@ -78,8 +78,11 @@ Figure: Peripheral item format
 
 **BUS** is a bus from `PROP_I2C_BUSES`, **ADDR** the peripheral's 7-bit
 address, and **NAME** UTF-8 display text naming the part, at most 64
-octets. This is what the firmware was built knowing, not what a scan
-found. A host may query this table explicitly for peripheral information.
+octets. This is the firmware's cached peripheral inventory. A board may
+build it from startup identification and successful driver initialization;
+the result remains fixed until reboot. Other boards use a fixed table of
+known peripherals. Reading this property does not scan or probe the bus.
+A host may query this table explicitly for peripheral information.
 A device with `CAP_I2C` and no such knowledge reports an empty table.
 
 A `CMD_PROP_SET`, `CMD_PROP_INSERT`, or `CMD_PROP_REMOVE` of either

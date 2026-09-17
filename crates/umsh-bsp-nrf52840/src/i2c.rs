@@ -1,18 +1,21 @@
 //! Shared TWIM controllers and host access for nRF52840 boards.
 //!
-//! Known limitation: embassy-nrf 0.11 does not confirm DMA shutdown when
-//! a transaction is canceled or errors. Host access is enabled while that
-//! recovery fix remains pending; deadlines are not a cancellation-safety
+//! Error returns wait for the HAL's pending STOP before releasing the bus.
+//! Known limitation: cancellation of an unfinished embassy-nrf 0.11
+//! transaction still does not confirm DMA shutdown. Host access is enabled
+//! while that recovery fix remains pending; deadlines are not a cancellation-safety
 //! guarantee. See docs/ulcp-i2c-proposal.md for the qualification limits.
 
-use embassy_nrf::twim::Twim;
 use embassy_sync::{blocking_mutex::raw::ThreadModeRawMutex, mutex::Mutex};
 
-pub type Bus = Mutex<ThreadModeRawMutex, Twim<'static>>;
+mod controller;
+pub use controller::Controller;
+
+pub type Bus = Mutex<ThreadModeRawMutex, Controller>;
 pub type Handle = embassy_embedded_hal::shared_bus::asynch::i2c::I2cDevice<
     'static,
     ThreadModeRawMutex,
-    Twim<'static>,
+    Controller,
 >;
 
 #[cfg(feature = "ulcp-i2c")]

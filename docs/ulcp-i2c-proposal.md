@@ -126,7 +126,8 @@ a host's benefit.
    the device task's frame is shared across ESP32 images with little headroom.
 4. **Board capability.** Each device image's board feature enables
    `ulcp-i2c`, forwarding to the runtime and its BSP. The shared tracker uses
-   `board::i2c::{BUSES, DEVICES, Buses}`; the BSP owns bus selection, deadlines,
+   `board::i2c::{BUSES, Buses}` and `Buses::devices()` on ESP32;
+   the BSP owns bus selection, deadlines,
    and procedure reservations. The Pager keeps its 400 kHz bus and eight
    peripheral entries, with its gauge reservation held around configuration
    inspection. The Heltec V2 and V3 expose their 400 kHz OLED bus, shared by
@@ -139,8 +140,8 @@ a host's benefit.
    Writes use a bounded 255-byte scratch buffer so the nRF HAL never sees
    adjacent operations with the same direction. BSPs
    assert at compile time that both tables fit the session's property
-   buffer. The T-Beam's population labels are abbreviated to keep all eight
-   entries within its 272-byte capacity.
+   buffer. The T-Beam checks the maximum possible startup inventory against
+   the same 272-byte capacity.
 5. **Host side.** The Tokio client gains `i2c_buses`, `i2c_devices`,
    `i2c_transfer`, and `i2c_scan`, all `Ok(None)` without the capability, with
    a longer wait for the reply than a property read. `umshctl i2c` offers
@@ -175,9 +176,9 @@ a host's benefit.
 
 The configured buses on all nine device boards are exposed. A board
 whose only peripheral is its OLED still supports a real scan; the device
-table identifies that display before a host writes to it. The T-Beam sensor
-table names possible populations, including the SH1106/QMC6310N ambiguity
-at 0x3C; it is not a detected inventory. QMC6309 at 0x7C requires an explicit
+table names that display. The T-Beam identifies its sensor population and
+caches the observed inventory at startup, as described below. QMC6309 at
+0x7C requires an explicit
 `--first 0x7c --last 0x7c`, outside the unchanged default scan range.
 
 SMBus block transfers, 10-bit addressing, clock speed selection, and bus
@@ -217,21 +218,84 @@ interleaving limitation explicit rather than promising a host an exclusive
 session, and documents the indeterminacy of a node-resetting write over the
 mesh rather than papering over it.
 
+## T-Beam startup inventory
+
+The T-Beam constructs its inventory once after ALDO1 is enabled, before
+starting the ULCP session. Discovery checks only the six supported sensor
+addresses, with a 500 ms total deadline. Sensor identification reads
+chip-ID registers without configuring measurements:
+
+- BME280: register `0xD0` must return `0x60`, at `0x76` or `0x77`.
+  [Bosch datasheet](https://www.bosch-sensortec.com/media/boschsensortec/downloads/datasheets/bst-bme280-ds002.pdf)
+- QMC6310U/N: register `0x00` must return `0x80`, at `0x1C` or `0x3C`.
+  [QST datasheet](https://www.qstcorp.com/upload/pdf/202202/%EF%BC%88%E5%B7%B2%E4%BC%A0%EF%BC%8913-52-17%20QMC6310%20Datasheet%20Rev.C%281%29.pdf)
+- QMC6309: register `0x00` must return `0x90`, at `0x7C`.
+  [QST datasheet](https://www.qstcorp.com/upload/pdf/202512/7A7DE8DCC625401FBB333322DD87E567.pdf)
+
+The OLED address selection prefers `0x3D`. It checks the defined SH1106
+idle-status bits, then requires successful display initialization within
+200 ms before naming the entry. The resulting initialized driver is handed
+to the display task. At `0x3C`, a value of `0x80` could also mean a busy
+panel; without a panel at `0x3D`, this ambiguous result stays unknown and
+is not sent display initialization commands.
+[SH1106 datasheet, Read Status](https://www.pololu.com/file/0J1813/SH1106.pdf)
+
+The PMIC entry reuses the chip-ID validation in power bring-up; the RTC
+entry reuses the successful startup clock read, including an invalid or
+unset clock. Missing peripherals are omitted. A responding candidate with
+an unrecognized ID, ambiguous status, or failed panel initialization is
+labeled `Unknown I2C device`. A discovery timeout preserves completed
+observations. This is identification of the board's supported populations,
+not general identification of arbitrary expansion devices.
+
+### Protocol effect
+
+No identifiers, item encodings, or commands change. `PROP_I2C_DEVICES`
+is still read-only and fixed for the running firmware session, but its
+T-Beam value is rebuilt on each boot and can reflect hardware changes or
+startup failures. Reading the property only encodes the cached slice;
+`read`, `write`, `xfer`, and `scan` still perform no inventory query or
+identification. Other boards retain their existing tables.
+
 ## Known nRF recovery limitation
 
-Host I2C is enabled on the nRF boards before cancellation recovery is fixed,
-per the approved implementation scope. embassy-nrf 0.11 does not confirm
-EasyDMA shutdown before returning from some error paths or when its
-transaction future is dropped. The host deadlines therefore remain a known
-risk: a timed-out or errored operation can leave DMA active against buffers
-that have been released. This has not been hardware-qualified.
+The shared nRF controller waits for STOPPED after embassy-nrf 0.11's early
+error return. Without that wait, a scan can start its next address while
+the preceding NACK's STOP is still pending, causing a spurious bus error.
+The wrapper distinguishes a pending STOP from one the HAL already consumed,
+resumes a suspended operation before stopping it, and keeps the mutex and
+buffers borrowed throughout the bounded wait. An unconfirmed stop resets
+the device rather than returning those buffers. Display and host users
+share this wrapper; no HAL fork or dependency patch is introduced.
 
-The follow-up is a BSP recovery wrapper that resumes a suspended transfer,
-stops it, confirms STOPPED synchronously within a hard bound, and resets
-without returning if shutdown cannot be confirmed. The same treatment is
-needed on errors. No HAL fork or dependency patch is introduced here.
+Cancellation recovery remains deferred. Dropping an unfinished HAL future
+bypasses its return path and the wrapper's error completion. A host deadline
+can therefore still leave DMA active against released buffers. The follow-up
+is a cancellation guard that resumes a suspended transfer, stops it, confirms
+STOPPED synchronously within a hard bound, and resets without returning if
+shutdown cannot be confirmed. Hardware qualification remains pending.
 
 ## Validation record
+
+Startup inventory and nRF scan recovery, 2026-09-16:
+
+- Five T-Beam inventory tests pass, covering population/address variants,
+  absent and unknown devices, ambiguous OLED status, failed initialization,
+  interrupted discovery, and the encoded inventory size.
+- Four nRF STOP-completion tests pass, covering delayed completion,
+  completion already consumed by the HAL, suspended transfers, and the
+  bounded failure path.
+- All four ESP32 device images type-check with host I2C enabled. T-Beam
+  also type-checks with host I2C disabled, and Heltec V3 with Wi-Fi enabled.
+- T-Beam and Pager release builds and stack checks pass. Main-stack space
+  / largest frame / required reserve, in bytes: T-Beam 45,036 / 24,000 /
+  8,192; Pager 54,956 / 21,840 / 32,768.
+- All five nRF device images link in release mode with the shared
+  STOP-completion wrapper: Wio Tracker L1, T-Echo, T-1000E, SenseCAP Solar,
+  and XIAO nRF52.
+- Formatting checks and the protocol book build pass. No hardware was
+  available; startup identification and repeated nRF scans still need
+  hardware confirmation. Cancellation recovery remains deferred.
 
 Board capability refactor, 2026-09-16:
 

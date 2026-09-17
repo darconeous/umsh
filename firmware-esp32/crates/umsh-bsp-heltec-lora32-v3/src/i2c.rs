@@ -33,6 +33,10 @@ pub struct Buses {
 }
 
 impl Buses {
+    pub fn devices(&self) -> &'static [DeviceInfo<'static>] {
+        DEVICES
+    }
+
     fn select(&self, bus: u8) -> Result<(&'static I2cBus, u16), Status> {
         if bus != 0 {
             return Err(Status::ITEM_NOT_FOUND);

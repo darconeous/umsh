@@ -7,6 +7,9 @@ use umsh_ulcp::{
 };
 use umsh_ulcp_runtime::i2c::{self as bus_access, Reservation};
 
+pub mod inventory;
+pub use inventory::Inventory;
+
 pub const BUSES: &[BusInfo<'static>] = &[
     BusInfo {
         bus: 0,
@@ -24,52 +27,9 @@ pub const BUSES: &[BusInfo<'static>] = &[
     },
 ];
 
-pub const DEVICES: &[DeviceInfo<'static>] = &[
-    DeviceInfo {
-        bus: 0,
-        addr: 0x1C,
-        name: "QMC6310U magnetometer (population)",
-    },
-    DeviceInfo {
-        bus: 0,
-        addr: 0x3C,
-        name: "SH1106 OLED or QMC6310N magnetometer, by population",
-    },
-    DeviceInfo {
-        bus: 0,
-        addr: 0x3D,
-        name: "SH1106 OLED (alternate address)",
-    },
-    DeviceInfo {
-        bus: 0,
-        addr: 0x76,
-        name: "BME280 sensor (strap-selected)",
-    },
-    DeviceInfo {
-        bus: 0,
-        addr: 0x77,
-        name: "BME280 sensor (strap-selected)",
-    },
-    DeviceInfo {
-        bus: 0,
-        addr: 0x7C,
-        name: "QMC6309 magnetometer (population)",
-    },
-    DeviceInfo {
-        bus: 1,
-        addr: 0x34,
-        name: "AXP2101 PMIC",
-    },
-    DeviceInfo {
-        bus: 1,
-        addr: 0x51,
-        name: "PCF8563 real-time clock",
-    },
-];
-
 const BUS_LOCK_TIMEOUT: Duration = Duration::from_secs(2);
 
-const _: () = umsh_ulcp_device::assert_i2c_tables_fit(BUSES, DEVICES);
+const _: () = umsh_ulcp_device::assert_i2c_tables_fit(BUSES, &inventory::MAX_DEVICES);
 static RESERVED: Reservation = Reservation::new();
 
 /// The shared controllers handed to the ULCP driver.
@@ -77,9 +37,14 @@ static RESERVED: Reservation = Reservation::new();
 pub struct Buses {
     pub sensor: &'static I2cBus,
     pub pmu: &'static I2cBus,
+    pub inventory: &'static Inventory,
 }
 
 impl Buses {
+    pub fn devices(&self) -> &'static [DeviceInfo<'static>] {
+        self.inventory.devices()
+    }
+
     fn select(&self, bus: u8) -> Result<(&'static I2cBus, u16), Status> {
         match bus {
             0 => Ok((self.sensor, BUSES[0].speed_khz)),

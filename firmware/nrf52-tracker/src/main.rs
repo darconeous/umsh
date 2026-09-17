@@ -6058,7 +6058,8 @@ mod firmware {
         }
         #[cfg(any(feature = "ulcp-i2c", feature = "display-oled"))]
         let primary_i2c: &'static umsh_bsp_nrf52840::i2c::Bus = {
-            use embassy_nrf::twim::{Config as TwimConfig, Twim};
+            use embassy_nrf::twim::Config as TwimConfig;
+            use umsh_bsp_nrf52840::i2c::Controller as Twim;
             static BUS: StaticCell<umsh_bsp_nrf52840::i2c::Bus> = StaticCell::new();
             static TX: StaticCell<[u8; 256]> = StaticCell::new();
             #[cfg(feature = "board-techo")]
@@ -6112,7 +6113,7 @@ mod firmware {
         let host_i2c = {
             static GROVE: StaticCell<board_i2c::Bus> = StaticCell::new();
             static TX: StaticCell<[u8; 256]> = StaticCell::new();
-            let controller = embassy_nrf::twim::Twim::new(
+            let controller = umsh_bsp_nrf52840::i2c::Controller::new(
                 p.TWISPI1,
                 Irqs,
                 p.P1_12,

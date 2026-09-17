@@ -11,6 +11,9 @@
 //!   normally, 0x3D when a QMC6310N magnetometer occupies 0x3C
 //!   (hardware doc §2.4). [`probe`] resolves it—0x3D first, so a
 //!   magnetometer ACK cannot be mistaken for the panel.
+//!   With host I2C enabled, startup inventory additionally checks sensor
+//!   IDs and panel status, initializes the selected panel, and caches that
+//!   same address for `PROP_I2C_DEVICES` before the session starts.
 //! - There is no reset GPIO. The panel's reset is its ALDO1 rail; after
 //!   a rail cycle, re-init is the whole recovery path (§9.1).
 //! - The bus must not be probed before [`crate::power::bring_up`] has

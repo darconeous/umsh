@@ -4032,6 +4032,7 @@ dependencies = [
  "embassy-sync",
  "embassy-time",
  "embassy-usb",
+ "embedded-hal-async",
  "embedded-storage",
  "embedded-storage-async",
  "heapless 0.8.0",

@@ -2237,8 +2237,8 @@ where
 
     /// The peripherals the firmware knows to be on its buses
     /// (`PROP_I2C_DEVICES`; requires `CAP_I2C`), or `None` when the
-    /// device has no bus at all. Informational: what the firmware's own
-    /// drivers talk to, not the result of a scan.
+    /// device has no bus at all. Returns the firmware's cached inventory;
+    /// this query does not initiate identification or a scan.
     pub async fn i2c_devices(&mut self) -> Result<Option<Vec<I2cPeripheral>>, UlcpError> {
         let value = match self.get_prop(prop::I2C_DEVICES).await {
             Err(UlcpError::Status(Status::PROP_NOT_FOUND)) => return Ok(None),

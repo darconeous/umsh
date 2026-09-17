@@ -317,8 +317,9 @@ pub struct SessionConfig {
     /// clamped to [`I2C_DATA_MAX`] and [`I2C_MAX_OPS`], which bound the
     /// session's staging.
     pub i2c_buses: &'static [BusInfo<'static>],
-    /// The peripherals the firmware's own drivers know to be on those
-    /// buses, as `PROP_I2C_DEVICES` reports them. Informational only.
+    /// Cached peripheral inventory, populated from startup identification
+    /// or board knowledge before constructing the session. Reading
+    /// `PROP_I2C_DEVICES` only encodes this slice; it never probes a bus.
     pub i2c_devices: &'static [DeviceInfo<'static>],
 }
 
