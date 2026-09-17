@@ -391,9 +391,60 @@ in the ROM downloader, tap RESET with BOOT released.
 The 480×222 landscape screen uses the existing tracker menus. Turn the wheel
 to move, press it to select, and use keyboard **Backspace** to return or
 cancel. BOOT held for four seconds requests shutdown. Other keyboard keys
-have no navigation action; text composition, audio, haptics, SD, NFC, and
+have no navigation action outside locate alerts; text composition, media playback, SD, NFC, and
 expansion features are deferred. Backspace is TCA8418 raw FIFO key **30**,
 not the zero-based matrix index `0x1D`.
+
+### Locate alerts
+
+The Pager exposes `CAP_ALERT` and the existing `PROP_ALERT` interface over
+USB, BLE, and authorized radio management. Locate repeats every three seconds:
+the 600 ms two-tone warble, DRV2605 library-1 ERM effect 15 explicitly stopped
+at 600 ms, and an inverted white screen at AW9364 step 16. Between flashes the
+message uses white text on black at ordinary brightness. The display remains
+logically awake; flash intervals never park the input coordinator.
+
+A wheel press, keyboard key press, or BOOT press cancels without another UI
+action. Rotation is ignored. Holding BOOT for four seconds still shuts down.
+The session stops the alert after five minutes; re-arming renews that deadline
+without restarting the pattern. Disconnecting the initiating host does not
+stop it. Alert state is not saved, and boot makes no sound or vibration.
+After a wired session, removing USB power detaches that session and permits
+BLE advertising again when Bluetooth is enabled. Closing a serial client
+while USB remains powered does not produce this detach edge.
+
+ES8311 playback uses I2S0/DMA channel 1 with 16 kHz, 16-bit stereo frames
+carrying identical mono samples. PCM amplitude is approximately −12 dBFS with
+short note ramps and 0 dB codec digital gain. The shared SPI DMA remains
+on channel 0. Codec and haptic configuration procedures reserve their I2C
+addresses against raw host access, independently of the gauge reservation;
+steady-state playback does not reserve the devices for the whole alert.
+
+The V1.0 schematic routes the codec output directly to the headphone jack,
+whose switched contacts feed the speaker amplifier. Amplifier enable cannot
+mute headphones independently, and no headphone-detect signal reaches the
+processor. Locate audio can therefore play through plugged-in headphones;
+firmware cannot guarantee speaker-only output on this hardware.
+
+Cancellation disables physical outputs, puts the codec in its low-power state,
+and drops I2S/DMA and wake guards. Normal display inactivity can then return
+the CPU to light sleep. Peripheral errors disable the affected output for that
+activation; the remaining outputs continue. Shutdown takes precedence and
+prevents late peripheral re-enables.
+
+Bench checks confirmed speaker sound, vibration, flashing, press cancellation
+without navigation, and iOS BLE start/stop. DMA consumption measured 16,000
+stereo frames per second. Four cancellation checks over an established USB
+session observed both output enables off within 198–214 ms of sending clear.
+The 128 ms audio buffer avoids the underrun seen with the initial 40 ms buffer
+during display redraw. Identity and saved settings survived flashing.
+
+Remaining hardware qualification includes the final loud audio level, the
+uninterrupted five-minute timeout, authorized radio requests and concurrent
+radio traffic, BOOT shutdown during playback, and return to baseline idle
+power. Build and host-test success alone do not establish those checks.
+
+### Display and input power
 
 While the screen is visible or dimming, both edges of GPIO40 and GPIO41
 interrupt the CPU. The ISR validates each quadrature transition and queues
@@ -429,8 +480,8 @@ and last-transferred frame reside in PSRAM; synchronization objects, DMA
 descriptors, and transfer buffers stay in internal RAM. Only changed four-row
 stripes are transmitted, and history advances after a successful transfer.
 The controller's portrait offset becomes landscape Y=49.
-The internal heap is 103 KiB, leaving room for the nested startup
-calls as well as DMA state. The board's stack check requires another 32 KiB
+The internal heap is 94 KiB, leaving room for audio DMA/task state and nested
+startup calls. The board's stack check requires another 32 KiB
 beyond its largest individual function frame; a smaller reserve missed an
 on-device startup stack overflow during bring-up.
 AW9364 brightness uses short pulses across its 16 levels, not PWM; keyboard

@@ -8,11 +8,10 @@
 //! - **Wired transport**: HDLC-framed CRP on the board's serial port—
 //!   UART0 behind a CP2102 bridge on the Heltecs, the native
 //!   USB-Serial-JTAG peripheral where `wired-usb-serial-jtag` is on.
-//!   Neither has usable connection state, so wired attachment is lazy
-//!   and permanent: the first valid HDLC frame attaches, nothing ever
-//!   detaches it (serial hosts are assumed present once they speak),
-//!   and a board nobody serials into stays detached and autonomous.
-//!   Real attach/detach edges exist only on BLE.
+//!   Attachment is lazy: the first valid HDLC frame attaches. Native
+//!   USB detaches when VBUS disappears; UART bridges cannot detect
+//!   host disconnection. A board nobody serials into stays detached
+//!   and autonomous.
 //! - **BLE transport**: the `UlcpService` GATT shape over the
 //!   esp-radio controller, with the same pairing/bonding lattice the
 //!   Phase 4 spike hardware-proved (PIN on the OLED, lockout policy,
@@ -416,9 +415,9 @@ fn session_config() -> SessionConfig {
             level: true,
             charge_state: true,
         }),
-        // No locate alert. The boards' only conspicuous output is the
-        // OLED, and the permanent wired attach means a second host can
-        // be present while the alert runs—neither is worth the wiring.
+        #[cfg(feature = "board-tlora-pager")]
+        alert: Some(umsh_ulcp_device::AlertConfig::DEFAULT),
+        #[cfg(not(feature = "board-tlora-pager"))]
         alert: None,
         // No clock. A permanently-wired bench board reads the time from
         // the host it is wired to.
@@ -1516,6 +1515,10 @@ impl BoardDeviceEnv {
 }
 
 impl DeviceEnv for BoardDeviceEnv {
+    #[cfg(feature = "board-tlora-pager")]
+    fn set_alert(&mut self, state: umsh_ulcp::alert::AlertState) {
+        pager::alert::set(state.is_active());
+    }
     #[cfg(feature = "bridge-client")]
     fn apply_bridge_config(
         &mut self,
@@ -3077,12 +3080,10 @@ async fn output_pump(tx: &mut WiredTx, panic_report: Option<heapless::String<128
 }
 
 /// Owns the wired RX half and HDLC decoder, forwarding frames into
-/// `INPUT_CH`. Neither peripheral exposes usable connection state, so
-/// wired attachment is lazy and permanent: the first valid HDLC frame
-/// attaches the wired transport, and no wired detach ever fires—a
-/// serial host is assumed present for good once it has spoken. Detach
-/// semantics exist only for BLE, whose link genuinely drops; a board
-/// nobody serials into therefore stays detached and operates
+/// `INPUT_CH`. UART bridges cannot detect host disconnection, so their
+/// wired attachment persists after the first valid HDLC frame. Native
+/// USB instead uses the supervisor below to detach on VBUS loss. A board
+/// nobody serials into stays detached and operates
 /// autonomously (queueing and delegated acknowledgement). Displacement
 /// by a BLE attach is observed as a foreign `SESSION_GEN` bump, which
 /// re-arms the lazy attach, so a displaced serial host reclaims the
@@ -3200,7 +3201,12 @@ async fn wired_transport_task(
             },
         )
         .await;
-        // rx/tx drop here, releasing the peripheral's wake locks.
+        // Release the peripheral's wake locks before waiting for the
+        // runtime. Detach must precede any new USB attach after replug;
+        // the runtime ignores it if BLE already displaced this session.
+        drop(rx);
+        drop(tx);
+        INPUT_CH.send(InEvent::Detached(Transport::Usb)).await;
         debug_log(format_args!("wired transport: down (no VBUS)"));
     }
 }
@@ -3612,6 +3618,9 @@ async fn display_task(
     #[cfg(feature = "board-tlora-pager")]
     pager::input::shown(pager_capture_epoch);
 
+    #[cfg(feature = "board-tlora-pager")]
+    let mut was_alerting = false;
+
     loop {
         #[cfg(feature = "board-tlora-pager")]
         pager::BATTERY_DETAILS_ACTIVE.store(
@@ -3640,6 +3649,19 @@ async fn display_task(
         // agreement.
         let now = Instant::now().as_millis();
         let mut transition = attention.set_hold(HoldReason::Pairing, pairing_window_open(), now);
+        #[cfg(feature = "board-tlora-pager")]
+        {
+            let active = pager::alert::active();
+            transition = attention
+                .set_hold(HoldReason::Alert, active, now)
+                .or(transition);
+            if active && splash.dismiss() {
+                BOOT_SPLASH_ACTIVE.store(false, Ordering::Release);
+            }
+            if was_alerting && !active {
+                transition = attention.wake(now).or(transition);
+            }
+        }
         SCREEN_FADED.store(attention.is_faded(), Ordering::Release);
 
         // A panel about to be powered on needs a frame drawn into it
@@ -3680,7 +3702,17 @@ async fn display_task(
                         },
                     ),
                 ),
-                UI_NOTICE.wait(),
+                async {
+                    #[cfg(feature = "board-tlora-pager")]
+                    {
+                        match select(UI_NOTICE.wait(), pager::alert::DISPLAY_CHANGED.wait()).await {
+                            Either::First(notice) => Some(notice),
+                            Either::Second(()) => None,
+                        }
+                    }
+                    #[cfg(not(feature = "board-tlora-pager"))]
+                    Some(UI_NOTICE.wait().await)
+                },
                 select(UI_WAKE.wait(), motion_wake()),
             ),
             DISPLAY_SHUTDOWN.wait(),
@@ -3688,6 +3720,10 @@ async fn display_task(
         )
         .await
         {
+            // Do not skip the rest of this pass: it may own the alert's
+            // one-shot Woke transition and still need to light the panel.
+            #[cfg(feature = "board-tlora-pager")]
+            Either4::First(_) if pager::alert::active() => redraw = true,
             Either4::First(input) => {
                 let now = Instant::now().as_millis();
                 transition = attention.wake(now).or(transition);
@@ -3744,7 +3780,8 @@ async fn display_task(
                 // keeps a battery sample from waking a board left on a
                 // desk every minute.
                 Either3::First(_) => redraw = true,
-                Either3::Second(notice) => {
+                Either3::Second(None) => redraw = true,
+                Either3::Second(Some(notice)) => {
                     model.set_notice(notice);
                     transition = attention.wake(Instant::now().as_millis()).or(transition);
                     redraw = true;
@@ -3802,6 +3839,20 @@ async fn display_task(
 
         redraw |= splash.poll(Instant::now().as_millis());
         #[cfg(feature = "board-tlora-pager")]
+        {
+            let active = pager::alert::active();
+            let now = Instant::now().as_millis();
+            transition = attention
+                .set_hold(HoldReason::Alert, active, now)
+                .or(transition);
+            if active {
+                splash.dismiss();
+                BOOT_SPLASH_ACTIVE.store(false, Ordering::Release);
+            } else if was_alerting {
+                transition = attention.wake(now).or(transition);
+            }
+        }
+        #[cfg(feature = "board-tlora-pager")]
         let pager_capture_epoch = if matches!(transition, Some(Transition::Woke)) {
             Some(pager::input::interactive().await)
         } else {
@@ -3838,11 +3889,32 @@ async fn display_task(
             Some(Transition::Woke) | None => {}
         }
 
+        #[cfg(feature = "board-tlora-pager")]
+        {
+            redraw |= pager::alert::active() || was_alerting;
+        }
         if redraw && !splash.is_active() && attention.accepts_redraw() {
             let status = ui_status(&name, &identity);
             if let Some(wifi) = &status.wifi {
                 model.refresh_wifi(wifi);
             }
+            #[cfg(feature = "board-tlora-pager")]
+            if pager::alert::active() {
+                screen::render_message(
+                    &mut display,
+                    &DISPLAY_LAYOUT,
+                    &status,
+                    "Locate alert",
+                    "Press any key to stop.",
+                );
+                if pager::alert::bright() {
+                    display.invert();
+                }
+                let _ = display.flush().await;
+            } else {
+                render_frame(&mut display, &model, &status).await;
+            }
+            #[cfg(not(feature = "board-tlora-pager"))]
             render_frame(&mut display, &model, &status).await;
             if BOOT_SPLASH_ACTIVE.swap(false, Ordering::AcqRel) {
                 let _ = attention.wake(Instant::now().as_millis());
@@ -3859,6 +3931,20 @@ async fn display_task(
             }
             #[cfg(not(feature = "board-tlora-pager"))]
             let _ = on;
+        }
+        #[cfg(feature = "board-tlora-pager")]
+        {
+            let active = pager::alert::active();
+            if active || was_alerting {
+                let _ = display
+                    .set_brightness(if active && pager::alert::bright() {
+                        Brightness::ALERT
+                    } else {
+                        Brightness::NORMAL
+                    })
+                    .await;
+            }
+            was_alerting = active;
         }
     }
 }
@@ -4240,10 +4326,10 @@ async fn main(spawner: Spawner) {
         // Their smaller heaps leave room for nested calls and interrupts.
         #[cfg(feature = "board-heltec-v3")]
         esp_alloc::heap_allocator!(size: 48 * 1024);
-        // Leave room for the HAL's sleep code and retained task state while
-        // preserving the checked 32 KiB nested-call reserve (103 KiB heap).
+        // Leave room for sleep and audio DMA/task state while preserving the
+        // checked 32 KiB nested-call reserve (94 KiB total internal heap).
         #[cfg(feature = "board-tlora-pager")]
-        esp_alloc::heap_allocator!(size: 39 * 1024);
+        esp_alloc::heap_allocator!(size: 30 * 1024);
         #[cfg(not(any(feature = "board-heltec-v3", feature = "board-tlora-pager")))]
         esp_alloc::heap_allocator!(size: 56 * 1024);
         esp_alloc::heap_allocator!(#[esp_hal::ram(reclaimed)] size: 64 * 1024);
@@ -4369,6 +4455,17 @@ async fn main(spawner: Spawner) {
             pager::input::keyboard_task(Input::new(peripherals.GPIO6, config), pmu_bus).unwrap(),
         );
         spawner.spawn(pager::battery_task(pmu_bus).unwrap());
+        pager::alert::spawn(
+            spawner,
+            pmu_bus,
+            expander,
+            peripherals.I2S0,
+            peripherals.DMA_CH1,
+            peripherals.GPIO10,
+            peripherals.GPIO11,
+            peripherals.GPIO18,
+            peripherals.GPIO45,
+        );
         #[cfg(feature = "motion-qualification")]
         spawner.spawn(pager::motion_qualification::task(pmu_bus, peripherals.GPIO8).unwrap());
         #[cfg(not(feature = "motion-qualification"))]

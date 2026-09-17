@@ -22,9 +22,8 @@ pub const BUSES: &[BusInfo<'static>] = &[BusInfo {
 }];
 
 /// What is on the bus, so a host can annotate a scan and think twice
-/// before writing to the charger. The audio codec and the haptic driver
-/// are here because they answer a scan, not because anything in this
-/// firmware drives them.
+/// before writing to a firmware-owned peripheral. Audio and haptics are
+/// used by locate alerts; their setup/teardown procedures reserve the address.
 pub const DEVICES: &[DeviceInfo<'static>] = &[
     DeviceInfo {
         bus: 0,
@@ -83,6 +82,9 @@ const _: () = umsh_ulcp_device::assert_i2c_tables_fit(BUSES, DEVICES);
 /// host transfer landing in that gap would run inside an unsealed
 /// gauge; the guarded transfer refuses the address instead.
 pub static GAUGE_PROCEDURE: Reservation = Reservation::new();
+pub static CODEC_PROCEDURE: Reservation = Reservation::new();
+pub static HAPTIC_PROCEDURE: Reservation = Reservation::new();
+const PROCEDURES: [&Reservation; 3] = [&GAUGE_PROCEDURE, &CODEC_PROCEDURE, &HAPTIC_PROCEDURE];
 
 /// The shared controllers handed to the ULCP driver.
 #[derive(Clone, Copy)]
@@ -111,7 +113,7 @@ impl Buses {
 
         bus_access::guarded_transfer(
             bus,
-            &GAUGE_PROCEDURE,
+            &PROCEDURES,
             BUS_LOCK_TIMEOUT,
             bus_access::transfer_deadline(request.shape(), speed),
             request,
@@ -125,7 +127,7 @@ impl Buses {
 
         bus_access::guarded_scan(
             bus,
-            &GAUGE_PROCEDURE,
+            &PROCEDURES,
             BUS_LOCK_TIMEOUT,
             bus_access::scan_deadline(&request, speed),
             request,

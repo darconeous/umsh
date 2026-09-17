@@ -17,6 +17,7 @@ pub type Error = umsh_pager_peripherals::display::Error<
 pub struct Brightness(u8);
 impl Brightness {
     pub const NORMAL: Self = Self(8);
+    pub const ALERT: Self = Self(16);
 }
 pub const fn brightness_from_permille(p: u16) -> Brightness {
     Brightness(1 + ((if p > 1000 { 1000 } else { p }) * 7 / 1000) as u8)
@@ -34,6 +35,9 @@ pub struct Display {
     on: bool,
 }
 impl Display {
+    pub fn invert(&mut self) {
+        self.fb.invert();
+    }
     pub fn new(
         spi: SpiHandle,
         dc: Output<'static>,

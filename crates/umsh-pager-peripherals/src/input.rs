@@ -124,20 +124,19 @@ pub const BACKSPACE_EVENT: u8 = 30;
 pub enum KeyEvent {
     BackPress,
     BackRelease,
+    Press,
+    Release,
     Other,
     Overflow,
 }
 
 pub struct Keyboard<I> {
     i2c: I,
-    back_down: bool,
+    down: u64,
 }
 impl<I: I2c> Keyboard<I> {
     pub fn new(i2c: I) -> Self {
-        Self {
-            i2c,
-            back_down: false,
-        }
+        Self { i2c, down: 0 }
     }
     pub async fn init(&mut self) -> Result<(), I::Error> {
         // No auto-increment required: every register is addressed explicitly.
@@ -164,7 +163,7 @@ impl<I: I2c> Keyboard<I> {
         for _ in 0..10 {
             let _ = crate::read(&mut self.i2c, KEYBOARD_ADDRESS, 4).await?;
         }
-        self.back_down = false;
+        self.down = 0;
         self.i2c.write(KEYBOARD_ADDRESS, &[2, 0x1f]).await
     }
     pub async fn next(&mut self) -> Result<Option<KeyEvent>, I::Error> {
@@ -185,18 +184,26 @@ impl<I: I2c> Keyboard<I> {
         Ok(Some(self.decode(event)))
     }
     pub fn decode(&mut self, event: u8) -> KeyEvent {
-        if event & 0x7f != BACKSPACE_EVENT {
+        let key = event & 0x7f;
+        // The Pager configures a 4 x 10 matrix. Other FIFO codes are not keys.
+        if !(1..=40).contains(&key) {
             return KeyEvent::Other;
         }
         let pressed = event & 0x80 != 0;
-        if pressed == self.back_down {
+        let mask = 1u64 << key;
+        if pressed == (self.down & mask != 0) {
             return KeyEvent::Other;
         }
-        self.back_down = pressed;
         if pressed {
-            KeyEvent::BackPress
+            self.down |= mask;
         } else {
-            KeyEvent::BackRelease
+            self.down &= !mask;
+        }
+        match (key == BACKSPACE_EVENT, pressed) {
+            (true, true) => KeyEvent::BackPress,
+            (true, false) => KeyEvent::BackRelease,
+            (false, true) => KeyEvent::Press,
+            (false, false) => KeyEvent::Release,
         }
     }
 }

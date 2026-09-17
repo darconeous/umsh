@@ -126,7 +126,12 @@ fn every_wake_phase_discards_the_incomplete_cycle_then_counts_normally() {
 #[test]
 fn keyboard_backspace_uses_one_based_fifo_and_suppresses_repeat() {
     let mut kb = Keyboard::new(Bus(VecDeque::new()));
+    assert_eq!(kb.decode(0x9d), KeyEvent::Press);
     assert_eq!(kb.decode(0x9d), KeyEvent::Other);
+    assert_eq!(kb.decode(0x1d), KeyEvent::Release);
+    assert_eq!(kb.decode(0x1d), KeyEvent::Other);
+    assert_eq!(kb.decode(0x80), KeyEvent::Other);
+    assert_eq!(kb.decode(0xff), KeyEvent::Other);
     assert_eq!(kb.decode(0x9e), KeyEvent::BackPress);
     assert_eq!(kb.decode(0x9e), KeyEvent::Other);
     assert_eq!(kb.decode(0x1e), KeyEvent::BackRelease);
@@ -143,6 +148,21 @@ fn keyboard_fifo_overflow_discards_incomplete_gesture() {
     assert_eq!(
         embassy_futures::block_on(kb.next()).unwrap(),
         Some(KeyEvent::Overflow)
+    );
+}
+
+#[test]
+fn keyboard_irq_housekeeping_is_not_a_press() {
+    let mut kb = Keyboard::new(Bus(vec![
+        Op::Read(0x34, vec![2], vec![1]),
+        Op::Read(0x34, vec![4], vec![0]),
+        Op::Write(0x34, vec![2, 1]),
+        Op::Read(0x34, vec![3], vec![1]),
+    ]
+    .into()));
+    assert_eq!(
+        embassy_futures::block_on(kb.next()).unwrap(),
+        Some(KeyEvent::Other)
     );
 }
 #[test]
@@ -649,15 +669,28 @@ fn expander_initialization_and_shutdown_keep_unused_domains_off() {
         Op::Write(0x20, vec![2, 8, 1]),
         Op::Write(0x20, vec![2, 12, 1]),
         Op::Write(0x20, vec![2, 28, 1]),
+        Op::Write(0x20, vec![2, 31, 1]),
+        Op::Write(0x20, vec![2, 30, 1]),
         Op::Write(0x20, vec![2, 0, 0]),
     ];
     embassy_futures::block_on(async {
         let mut power = Expander::new(Bus(expected.into()));
         power.init(&mut Delay).await.unwrap();
         power.set(GPS_ENABLE, true).await.unwrap();
+        power
+            .set(HAPTIC_ENABLE | AMPLIFIER_ENABLE, true)
+            .await
+            .unwrap();
+        power.set(HAPTIC_ENABLE, false).await.unwrap();
         power.shutdown().await.unwrap();
         // A GNSS task resuming during shutdown must never re-enable its rail.
-        power.set(GPS_ENABLE | GPS_RESET, true).await.unwrap();
+        power
+            .set(
+                GPS_ENABLE | GPS_RESET | HAPTIC_ENABLE | AMPLIFIER_ENABLE,
+                true,
+            )
+            .await
+            .unwrap();
     });
 }
 #[test]
@@ -678,6 +711,14 @@ fn framebuffer_clipping_packing_and_last_stripe() {
     let len = fb.stripe(220, &mut bytes);
     assert_eq!(len, 1920);
     assert_eq!(&bytes[len - 2..len], &[255, 255]);
+    fb.invert();
+    fb.stripe(0, &mut bytes);
+    assert_eq!(&bytes[..4], &[0, 0, 255, 255]);
+    fb.stripe(220, &mut bytes);
+    assert_eq!(&bytes[len - 2..len], &[0, 0]);
+    fb.invert();
+    fb.stripe(0, &mut bytes);
+    assert_eq!(&bytes[..4], &[255, 255, 0, 0]);
 }
 
 #[test]

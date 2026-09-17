@@ -13,6 +13,11 @@ pub struct Framebuffer {
     bytes: &'static mut [u8; FRAME_BYTES],
 }
 impl Framebuffer {
+    pub fn invert(&mut self) {
+        for byte in self.bytes.iter_mut() {
+            *byte = !*byte;
+        }
+    }
     pub fn new(bytes: &'static mut [u8; FRAME_BYTES]) -> Self {
         bytes.fill(0);
         Self { bytes }

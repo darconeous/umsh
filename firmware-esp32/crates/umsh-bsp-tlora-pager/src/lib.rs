@@ -1,5 +1,6 @@
 //! T-LoRa Pager SX1262. One shared SPI bus; XL9555 powers peripherals.
 #![no_std]
+pub mod audio;
 pub mod display;
 pub mod gnss;
 pub mod radio;

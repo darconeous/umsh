@@ -9,6 +9,7 @@ pub enum Mode {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Gesture {
+    CancelAlert,
     Navigate,
     Wake,
     Splash,
@@ -23,6 +24,7 @@ pub struct InputPower {
     activity: u32,
     dark_activity: u32,
     waking: bool,
+    press: Option<Gesture>,
 }
 
 impl Default for InputPower {
@@ -41,6 +43,7 @@ impl InputPower {
             activity: 0,
             dark_activity: 0,
             waking: false,
+            press: None,
         }
     }
 
@@ -50,6 +53,24 @@ impl InputPower {
 
     pub fn note_activity(&mut self) {
         self.activity = self.activity.wrapping_add(1);
+    }
+
+    pub fn begin_press(&mut self, disposition: Gesture) {
+        self.press = Some(disposition);
+    }
+
+    pub fn alert_started(&mut self) {
+        if self.press.is_some() {
+            self.press = Some(Gesture::CancelAlert);
+        }
+    }
+
+    pub fn press_disposition(&self) -> Gesture {
+        self.press.unwrap_or(Gesture::Ignore)
+    }
+
+    pub fn release_press(&mut self) {
+        self.press = None;
     }
 
     /// A display-off operation may have yielded while an input arrived.
@@ -106,10 +127,12 @@ impl InputPower {
     }
 
     /// Latch at gesture start, not after debounce or display rendering.
-    pub fn gesture(&mut self, splash: bool, faded: bool) -> Gesture {
+    pub fn gesture(&mut self, splash: bool, faded: bool, alert: bool) -> Gesture {
         self.note_activity();
         if self.mode == Mode::Shutdown {
             Gesture::Ignore
+        } else if alert {
+            Gesture::CancelAlert
         } else if splash {
             Gesture::Splash
         } else if self.mode == Mode::Dark || (faded && !self.waking) {
@@ -180,6 +203,24 @@ mod tests {
     use super::*;
 
     #[test]
+    fn alert_preempts_splash_dark_and_a_pending_press() {
+        let mut p = InputPower::new();
+        assert!(p.dark(p.activity()));
+        assert_eq!(p.gesture(true, true, true), Gesture::CancelAlert);
+        p.wake();
+        p.shown(p.epoch);
+        p.begin_press(Gesture::Navigate);
+        p.alert_started();
+        // Even if the alert ends before debounce completes, never select.
+        assert_eq!(p.press_disposition(), Gesture::CancelAlert);
+        p.release_press();
+        assert_eq!(p.press_disposition(), Gesture::Ignore);
+        assert_eq!(p.gesture(false, false, false), Gesture::Navigate);
+        p.shutdown();
+        assert_eq!(p.gesture(true, true, true), Gesture::Ignore);
+    }
+
+    #[test]
     fn power_window_requires_five_minutes_and_keeps_signed_current() {
         let mut w = PowerWindow::new();
         for i in 0..300 {
@@ -221,9 +262,9 @@ mod tests {
         p.shown(0);
         assert!(p.dark(p.activity()));
         let stale = p.epoch;
-        assert_eq!(p.gesture(false, true), Gesture::Wake);
+        assert_eq!(p.gesture(false, true, false), Gesture::Wake);
         assert!(!p.arm(stale));
-        assert_eq!(p.gesture(false, true), Gesture::Navigate);
+        assert_eq!(p.gesture(false, true, false), Gesture::Navigate);
         assert!(!p.display_ready);
         p.shown(stale);
         assert!(!p.display_ready);
@@ -235,10 +276,10 @@ mod tests {
     fn dimming_consumes_a_gesture_without_allowing_sleep() {
         let mut p = InputPower::new();
         p.shown(0);
-        assert_eq!(p.gesture(false, true), Gesture::Wake);
+        assert_eq!(p.gesture(false, true, false), Gesture::Wake);
         assert_eq!(p.mode, Mode::Interactive);
         assert!(!p.arm(p.epoch));
-        assert_eq!(p.gesture(false, true), Gesture::Navigate);
+        assert_eq!(p.gesture(false, true, false), Gesture::Navigate);
     }
 
     #[test]
@@ -251,16 +292,16 @@ mod tests {
         assert!(!p.arm(epoch));
         p.shown(epoch);
         assert!(!p.display_ready);
-        assert_eq!(p.gesture(false, false), Gesture::Ignore);
+        assert_eq!(p.gesture(false, false, false), Gesture::Ignore);
         assert_eq!(p.mode, Mode::Shutdown);
     }
 
     #[test]
     fn splash_disposition_survives_a_later_display_change() {
         let mut p = InputPower::new();
-        let held = p.gesture(true, false);
+        let held = p.gesture(true, false, false);
         p.shown(0);
         assert_eq!(held, Gesture::Splash);
-        assert_eq!(p.gesture(false, false), Gesture::Navigate);
+        assert_eq!(p.gesture(false, false, false), Gesture::Navigate);
     }
 }

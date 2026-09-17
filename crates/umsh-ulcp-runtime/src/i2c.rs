@@ -140,8 +140,9 @@ pub const fn status_for(kind: ErrorKind) -> Status {
 /// gauge between them would land inside the procedure. A procedure
 /// publishes its peripheral's address here for its duration through
 /// [`hold`](Self::hold), and the guarded functions answer `STATUS_BUSY`
-/// to anything addressed to it, or to a scan whose range covers it. One
-/// address at a time is enough: a board runs one such procedure at a time.
+/// to anything addressed to it, or to a scan whose range covers it. Give each
+/// independently running procedure its own reservation and pass their array
+/// to guarded access. A single reservation must never have overlapping holds.
 pub struct Reservation(AtomicU8);
 
 impl Reservation {
@@ -184,6 +185,30 @@ pub struct Held<'a>(&'a Reservation);
 impl Drop for Held<'_> {
     fn drop(&mut self) {
         self.0.0.store(Reservation::NONE, Ordering::Release);
+    }
+}
+
+/// Independent board procedures may reserve different devices concurrently.
+pub trait Reservations {
+    fn holds(&self, addr: u8) -> bool;
+    fn covers(&self, range: &ScanRequest) -> bool;
+}
+
+impl Reservations for Reservation {
+    fn holds(&self, addr: u8) -> bool {
+        Reservation::holds(self, addr)
+    }
+    fn covers(&self, range: &ScanRequest) -> bool {
+        Reservation::covers(self, range)
+    }
+}
+
+impl<const N: usize> Reservations for [&Reservation; N] {
+    fn holds(&self, addr: u8) -> bool {
+        self.iter().any(|r| r.holds(addr))
+    }
+    fn covers(&self, range: &ScanRequest) -> bool {
+        self.iter().any(|r| r.covers(range))
     }
 }
 
@@ -230,7 +255,7 @@ pub const fn scan_deadline(request: &ScanRequest, speed_khz: u16) -> Duration {
 /// whose drop does not reset the controller is not one to use here.
 pub async fn guarded_transfer<M: RawMutex, I: I2c>(
     bus: &Mutex<M, I>,
-    reserved: &Reservation,
+    reserved: &impl Reservations,
     lock_timeout: Duration,
     deadline: Duration,
     request: TransferRequest<'_>,
@@ -252,7 +277,7 @@ pub async fn guarded_transfer<M: RawMutex, I: I2c>(
 /// the host learns to try again instead of drawing a wrong inventory.
 pub async fn guarded_scan<M: RawMutex, I: I2c>(
     bus: &Mutex<M, I>,
-    reserved: &Reservation,
+    reserved: &impl Reservations,
     lock_timeout: Duration,
     deadline: Duration,
     request: ScanRequest,
@@ -592,6 +617,38 @@ mod tests {
         }
     }
 
+    #[test]
+    fn independent_procedures_reserve_without_replacing_the_gauge() {
+        let bus: Mutex<NoopRawMutex, Bus> = Mutex::new(Bus::default());
+        let gauge = Reservation::new();
+        let codec = Reservation::new();
+        let haptic = Reservation::new();
+        let reservations = [&gauge, &codec, &haptic];
+        let _gauge = gauge.hold(0x55);
+        let codec_guard = codec.hold(0x18);
+        let _haptic = haptic.hold(0x5a);
+        for addr in [0x55, 0x18, 0x5a] {
+            let payload = request(0, addr, &[Op::Write(&[0])]);
+            let req = TransferRequest::parse(&payload).unwrap();
+            assert_eq!(
+                block_on(guarded_transfer(
+                    &bus,
+                    &reservations,
+                    NEVER,
+                    NEVER,
+                    req,
+                    &mut []
+                )),
+                Err(Status::BUSY)
+            );
+        }
+        drop(codec_guard);
+        assert!(!reservations.holds(0x18));
+        assert!(reservations.holds(0x55));
+        assert!(reservations.holds(0x5a));
+        assert!(!reservations.holds(0x34));
+    }
+
     /// The race the reservation exists for, in the order that defeats a
     /// check-before-lock implementation: the transfer is already parked
     /// on the bus mutex when the procedure publishes its reservation.
@@ -599,16 +656,24 @@ mod tests {
     fn a_transfer_parked_on_the_bus_sees_a_reservation_published_meanwhile() {
         let bus: Mutex<NoopRawMutex, Bus> = Mutex::new(Bus::default());
         let reserved = Reservation::new();
+        let codec = Reservation::new();
+        let _codec = codec.hold(0x18);
+        let reservations = [&reserved, &codec];
         let payload = request(0, 0x55, &[Op::Write(&[0x00]), Op::Read(2)]);
         let transfer = TransferRequest::parse(&payload).unwrap();
         let mut out = [0u8; 4];
 
-        // (1) Something else holds the bus, and nothing is reserved.
+        // (1) Something else holds the bus, while only the unrelated codec is reserved.
         let holder = block_on(bus.lock());
         let held = {
             // (2) The transfer starts and parks on the mutex.
             let mut fut = pin!(guarded_transfer(
-                &bus, &reserved, NEVER, NEVER, transfer, &mut out
+                &bus,
+                &reservations,
+                NEVER,
+                NEVER,
+                transfer,
+                &mut out
             ));
             assert!(poll_once(fut.as_mut()).is_pending(), "waiting for the bus");
             // (3) The procedure begins, then the bus frees up.
@@ -627,7 +692,12 @@ mod tests {
             result: Ok(()),
         });
         let len = block_on(guarded_transfer(
-            &bus, &reserved, NEVER, NEVER, transfer, &mut out,
+            &bus,
+            &reservations,
+            NEVER,
+            NEVER,
+            transfer,
+            &mut out,
         ))
         .unwrap();
         assert_eq!(&out[..len], &[0xAA, 0xBB]);
@@ -637,6 +707,9 @@ mod tests {
     fn a_scan_parked_on_the_bus_is_refused_whole_when_its_range_covers_the_reservation() {
         let bus: Mutex<NoopRawMutex, Bus> = Mutex::new(Bus::default());
         let reserved = Reservation::new();
+        let codec = Reservation::new();
+        let _codec = codec.hold(0x18);
+        let reservations = [&reserved, &codec];
         let scan = ScanRequest {
             bus: 0,
             first: 0x50,
@@ -646,7 +719,14 @@ mod tests {
 
         let holder = block_on(bus.lock());
         let held = {
-            let mut fut = pin!(guarded_scan(&bus, &reserved, NEVER, NEVER, scan, &mut out));
+            let mut fut = pin!(guarded_scan(
+                &bus,
+                &reservations,
+                NEVER,
+                NEVER,
+                scan,
+                &mut out
+            ));
             assert!(poll_once(fut.as_mut()).is_pending());
             let held = reserved.hold(0x55);
             drop(holder);
@@ -665,7 +745,15 @@ mod tests {
                 .expected
                 .push_back(successful_probe(addr));
         }
-        let len = block_on(guarded_scan(&bus, &reserved, NEVER, NEVER, scan, &mut out)).unwrap();
+        let len = block_on(guarded_scan(
+            &bus,
+            &reservations,
+            NEVER,
+            NEVER,
+            scan,
+            &mut out,
+        ))
+        .unwrap();
         assert_eq!(len, 8);
     }
 

@@ -25,6 +25,23 @@ static STOP_KEYBOARD: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 static STOPPED: AtomicU32 = AtomicU32::new(0);
 static STOP_PROGRESS: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 static NAVIGATION: Channel<CriticalSectionRawMutex, UiInput, 64> = Channel::new();
+static NAVIGATION_PENDING: AtomicBool = AtomicBool::new(false);
+
+pub fn discard_navigation() {
+    critical_section::with(|cs| {
+        NAVIGATION_PENDING.store(false, Ordering::Release);
+        NAVIGATION.clear();
+        UI_INPUT_CH.clear();
+        if let Some(e) = ENCODER.borrow_ref_mut(cs).as_mut() {
+            // A turn spanning an alert boundary is consumed in its entirety.
+            e.ab = e.levels();
+            e.decoder = Quadrature::new(e.ab);
+        }
+    });
+}
+pub fn alert_started() {
+    control(|c| c.policy.alert_started());
+}
 static INPUT_OVERFLOW: AtomicBool = AtomicBool::new(false);
 
 fn control<R>(f: impl FnOnce(&mut Control) -> R) -> R {
@@ -93,6 +110,7 @@ fn start_gesture() -> Gesture {
         let disposition = c.policy.gesture(
             BOOT_SPLASH_ACTIVE.load(Ordering::Acquire),
             SCREEN_FADED.load(Ordering::Acquire),
+            super::alert::active(),
         );
         if disposition == Gesture::Wake {
             hold(c);
@@ -107,7 +125,17 @@ fn start_gesture() -> Gesture {
 }
 
 fn finish_gesture(input: UiInput, disposition: Gesture) {
+    if disposition == Gesture::CancelAlert {
+        super::alert::cancel();
+        return;
+    }
+    if super::alert::active() {
+        // The alert arrived after this gesture began. Consume it too.
+        super::alert::cancel();
+        return;
+    }
     match disposition {
+        Gesture::CancelAlert => unreachable!(),
         Gesture::Navigate => {
             if NAVIGATION.try_send(input).is_err() {
                 INPUT_OVERFLOW.store(true, Ordering::Release);
@@ -189,6 +217,9 @@ fn encoder_interrupt() {
             -1 => UiInput::Forward,
             _ => return,
         };
+        if super::alert::active() {
+            return;
+        }
         finish_gesture(input, start_gesture());
     });
 }
@@ -282,6 +313,10 @@ pub async fn coordinator() {
 pub async fn navigation_task() {
     loop {
         let input = NAVIGATION.receive().await;
+        NAVIGATION_PENDING.store(true, Ordering::Release);
+        if super::alert::active() {
+            continue;
+        }
         loop {
             DISPLAY_READY.reset();
             if control(|c| c.policy.display_ready || c.policy.mode == Mode::Shutdown) {
@@ -300,8 +335,14 @@ pub async fn navigation_task() {
             ));
             continue;
         }
+        if super::alert::active() || !NAVIGATION_PENDING.swap(false, Ordering::AcqRel) {
+            continue;
+        }
         UI_WAKE.signal(());
-        UI_INPUT_CH.send(input).await;
+        // Do not suspend with an already-dequeued input across an alert edge.
+        if UI_INPUT_CH.try_send(input).is_err() {
+            INPUT_OVERFLOW.store(true, Ordering::Release);
+        }
     }
 }
 
@@ -316,7 +357,6 @@ pub async fn button_task(mut pin: Input<'static>, boot: bool) {
 
 async fn run_button(pin: &mut Input<'static>, boot: bool) {
     let mut debounce = Debounce::new(false);
-    let mut gate = Gesture::Ignore;
     let mut press_cycle = PressLatch::default();
     let mut shutdown_at = None;
     let mut debounce_guard = None;
@@ -327,13 +367,19 @@ async fn run_button(pin: &mut Input<'static>, boot: bool) {
             control(|c| c.policy.note_activity());
         }
         if press_cycle.observe(raw, now.as_millis()) && !boot {
-            gate = start_gesture();
+            let gate = start_gesture();
+            control(|c| c.policy.begin_press(gate));
         }
         if let Some(pressed) = debounce.sample(raw, now.as_millis()) {
             if boot {
                 shutdown_at = pressed.then_some(now + Duration::from_secs(4));
+                if pressed && super::alert::active() {
+                    super::alert::cancel();
+                }
             } else if pressed {
-                finish_gesture(UiInput::Select, gate);
+                finish_gesture(UiInput::Select, control(|c| c.policy.press_disposition()));
+            } else {
+                control(|c| c.policy.release_press());
             }
         }
         if shutdown_at.is_some_and(|at| now >= at) {
@@ -399,6 +445,7 @@ async fn run_keyboard(irq: &mut Input<'static>, bus: &'static board::I2cBus) {
                 for _ in 0..16 {
                     match keyboard.next().await.map_err(|_| ())? {
                         Some(KeyEvent::BackPress) => finish_gesture(UiInput::Back, start_gesture()),
+                        Some(KeyEvent::Press) if super::alert::active() => super::alert::cancel(),
                         Some(KeyEvent::Overflow) => debug_log(format_args!(
                             "pager: keyboard FIFO overflow; keyboard gestures discarded"
                         )),

@@ -12,6 +12,9 @@ use umsh_ulcp::battery_diagnostics::{
     Fields as BatteryFieldsRequested, Sample as BatterySample, Value as BatteryValue,
 };
 
+#[path = "pager_alert.rs"]
+pub mod alert;
+
 #[cfg(feature = "motion-qualification")]
 #[path = "pager_motion_qualification.rs"]
 pub mod motion_qualification;
@@ -416,6 +419,7 @@ pub async fn heartbeat_task(
             break;
         }
     }
+    alert::shutdown().await;
     input::shutdown().await;
     #[cfg(not(feature = "motion-qualification"))]
     {

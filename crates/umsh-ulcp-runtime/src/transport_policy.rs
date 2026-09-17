@@ -151,6 +151,27 @@ mod tests {
     }
 
     #[test]
+    fn usb_unplug_allows_ble_and_late_usb_detach_preserves_ble() {
+        let mut state = SessionArbitration::new(0);
+        state.attach(Transport::Usb);
+        assert!(!state.advertising_allowed());
+        assert!(state.detach(Transport::Usb));
+        assert!(state.advertising_allowed());
+        assert!(!state.accepts_frame(Transport::Usb));
+
+        state.attach(Transport::Ble);
+        let ble_generation = state.generation();
+        assert!(!state.detach(Transport::Usb));
+        assert!(state.accepts_frame(Transport::Ble));
+        assert!(state.advertising_allowed());
+        assert_eq!(state.generation(), ble_generation);
+
+        state.attach(Transport::Usb);
+        assert!(!state.advertising_allowed());
+        assert!(!state.accepts_frame(Transport::Ble));
+    }
+
+    #[test]
     fn no_session_has_no_output_destination_or_accepted_frames() {
         let state = SessionArbitration::new(7);
         assert_eq!(state.destination(), None);

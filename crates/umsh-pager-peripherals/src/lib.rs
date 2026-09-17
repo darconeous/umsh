@@ -3,6 +3,7 @@
 //! `docs/hardware/lilygo-t-lora-pager-hardware.md`.
 #![no_std]
 
+pub mod alert;
 pub mod display;
 pub mod gauge;
 pub mod input;
