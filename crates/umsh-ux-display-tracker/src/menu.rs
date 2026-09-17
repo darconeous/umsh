@@ -112,6 +112,7 @@ impl Level {
 /// does is say which one the user asked for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ToggleId {
+    Radio,
     Wifi,
     Bluetooth,
     Gnss,
@@ -194,6 +195,8 @@ pub enum MenuItem {
 
     // ─── Radio ───
     RadioBack,
+    /// Enable or disable LoRa transmission and reception.
+    RadioToggle,
     /// Whether other nodes' frames are relayed onward.
     Forwarding,
     /// Radio activity since boot: frame counts, power, duty cycle. A
@@ -212,7 +215,7 @@ pub enum MenuItem {
 
 impl MenuItem {
     /// Every item, in navigation order.
-    pub const ALL: [MenuItem; 28] = [
+    pub const ALL: [MenuItem; 29] = [
         MenuItem::Status,
         MenuItem::Identity,
         MenuItem::Settings,
@@ -232,6 +235,7 @@ impl MenuItem {
         MenuItem::GnssToggle,
         MenuItem::ShareLocation,
         MenuItem::RadioBack,
+        MenuItem::RadioToggle,
         MenuItem::Forwarding,
         MenuItem::Stats,
         MenuItem::WifiBack,
@@ -268,7 +272,10 @@ impl MenuItem {
             | MenuItem::StartPairing
             | MenuItem::ClearBonds => Level::Bluetooth,
             MenuItem::GnssBack | MenuItem::GnssToggle | MenuItem::ShareLocation => Level::Gnss,
-            MenuItem::RadioBack | MenuItem::Forwarding | MenuItem::Stats => Level::Radio,
+            MenuItem::RadioBack
+            | MenuItem::RadioToggle
+            | MenuItem::Forwarding
+            | MenuItem::Stats => Level::Radio,
             MenuItem::WifiBack | MenuItem::WifiToggle | MenuItem::WifiNetworks => Level::Wifi,
             MenuItem::BatteryBack
             | MenuItem::BatteryCharge
@@ -309,6 +316,7 @@ impl MenuItem {
             MenuItem::MotionWake => EntryKind::Toggle(ToggleId::MotionWake),
             MenuItem::ShareLocation => EntryKind::Toggle(ToggleId::ShareLocation),
             MenuItem::Forwarding => EntryKind::Toggle(ToggleId::Forwarding),
+            MenuItem::RadioToggle => EntryKind::Toggle(ToggleId::Radio),
             MenuItem::StartPairing => EntryKind::Action(UiEffect::StartPairing),
             MenuItem::ClearBonds => EntryKind::Destructive(UiEffect::ClearBonds),
         }
@@ -1074,6 +1082,12 @@ mod tests {
         ui.apply(UiInput::Select);
         walk_to(&mut ui, MenuItem::Radio);
         ui.apply(UiInput::Select);
+        assert_eq!(ui.page(), Page::Menu(MenuItem::RadioToggle));
+        assert_eq!(
+            ui.apply(UiInput::Select),
+            Some(UiEffect::Toggle(ToggleId::Radio))
+        );
+        assert_eq!(ui.page(), Page::Menu(MenuItem::RadioToggle));
         walk_to(&mut ui, MenuItem::Forwarding);
 
         assert_eq!(

@@ -475,6 +475,12 @@ dark. USB, active GNSS, and enabled wireless drivers may independently keep
 the CPU awake. LoRa IRQ and enabled motion IRQ already use wake-enabled level
 waits; CPU wake alone does not imply screen wake.
 
+Disabling LoRa through `PROP_PHY_ENABLED` or Settings → Radio → LoRa stops
+reception, clears pending radio IRQs, and puts the SX1262 into cold sleep.
+The disabled runner waits for configuration changes without polling the chip;
+re-enabling wakes it and restores its radio configuration before receiving.
+This controls the radio chip's operating mode, not a switched supply rail.
+
 The panel shares DMA-backed SPI2 with the radio. The monochrome framebuffer
 and last-transferred frame reside in PSRAM; synchronization objects, DMA
 descriptors, and transfer buffers stay in internal RAM. Only changed four-row

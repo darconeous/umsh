@@ -3344,6 +3344,7 @@ fn board_menu_items() -> MenuItems {
 /// Which device-domain switch a menu toggle names.
 const fn ulcp_setting(id: ToggleId) -> Setting {
     match id {
+        ToggleId::Radio => Setting::Radio,
         ToggleId::Wifi => Setting::Wifi,
         ToggleId::Bluetooth => Setting::Bluetooth,
         ToggleId::Gnss => Setting::Gnss,
@@ -3433,6 +3434,7 @@ fn ui_status<'a>(name: &'a DeviceName, identity: &'a IdentityText) -> screen::St
         // Boards with no receiver report nothing on both positioning
         // switches rather than a guess—and neither is on their menu.
         settings: screen::SettingsModel {
+            radio: device_node::radio_enabled(),
             #[cfg(all(feature = "board-tlora-pager", not(feature = "motion-qualification")))]
             motion_wake: Some(pager::motion::SERVICE.control().display()),
             #[cfg(any(not(feature = "board-tlora-pager"), feature = "motion-qualification"))]

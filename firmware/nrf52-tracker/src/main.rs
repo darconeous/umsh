@@ -3366,7 +3366,7 @@ mod firmware {
         }
     }
 
-    /// The four switches the settings menu offers, as they stand now.
+    /// The switches the settings menu offers, as they stand now.
     ///
     /// Each is `None` on a build that cannot answer, which the renderer
     /// draws as no state at all rather than as "off"—a switch labeled
@@ -3374,6 +3374,7 @@ mod firmware {
     #[cfg(feature = "has-display")]
     fn ui_settings() -> screen::SettingsModel {
         screen::SettingsModel {
+            radio: super::device_node::radio_enabled(),
             motion_wake: None,
             wifi: None,
             bluetooth: Some(BLE_ENABLED.load(Ordering::Acquire)),
@@ -3639,6 +3640,7 @@ mod firmware {
     #[cfg(feature = "has-display")]
     const fn ulcp_setting(id: ToggleId) -> driver::Setting {
         match id {
+            ToggleId::Radio => driver::Setting::Radio,
             ToggleId::Wifi => driver::Setting::Wifi,
             ToggleId::Bluetooth => driver::Setting::Bluetooth,
             ToggleId::Gnss => driver::Setting::Gnss,

@@ -4341,6 +4341,7 @@ dependencies = [
 name = "umsh-radio-loraphy"
 version = "0.1.0"
 dependencies = [
+ "critical-section",
  "embassy-futures",
  "embassy-sync",
  "embedded-hal-async",

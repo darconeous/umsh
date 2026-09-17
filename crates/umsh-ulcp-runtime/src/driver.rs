@@ -171,6 +171,8 @@ pub enum InEvent {
 /// cannot perform one simply never sends it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Setting {
+    /// `PROP_PHY_ENABLED`: LoRa transmission and reception.
+    Radio,
     /// `PROP_WIFI_ENABLED`: station radio power.
     Wifi,
     /// `PROP_BLE_ENABLED`: whether the device is reachable over
@@ -962,7 +964,10 @@ async fn apply_effect<A, S, const TXQ: usize, M, const RX: usize, const TX: usiz
             // with the device node, which not every driver consumer
             // builds.
             #[cfg(feature = "device-node")]
-            crate::device_node::set_tx_power_dbm(settings.tx_power_dbm);
+            {
+                crate::device_node::set_tx_power_dbm(settings.tx_power_dbm);
+                crate::device_node::set_radio_enabled(settings.enabled);
+            }
         }
         Some(Effect::StartTransmit) => {
             let mut data: heapless::Vec<u8, MAX_PAYLOAD> = heapless::Vec::new();
@@ -1622,6 +1627,11 @@ where
         }
     }
 
+    // A bare device has no restore effect. Publish its authoritative default
+    // too, so the local radio switch has a value before the first host write.
+    #[cfg(feature = "device-node")]
+    crate::device_node::set_radio_enabled(session.settings().enabled);
+
     // Publish the device domain once before any host interaction, on every
     // boot path rather than only after a successful restore.
     //
@@ -1713,10 +1723,16 @@ where
                 apply_effect(&session, effect, &rt, &mut env).await;
             }
             Either4::First(InEvent::Toggle(setting)) => {
-                // The switch itself reaches the platform through the
-                // device-domain mirror at the bottom of this loop, like
-                // every other write to it.
+                // PHY enable needs the same radio effect as a host write;
+                // other switches reach the platform through the domain mirror.
+                let mut effect = None;
                 let flipped = match setting {
+                    Setting::Radio => {
+                        let (enabled, radio_effect) =
+                            session.toggle_radio(&mut |frame: &[u8]| emitter.push(frame));
+                        effect = Some(radio_effect);
+                        Some(enabled)
+                    }
                     Setting::Wifi => session.toggle_wifi(&mut |frame: &[u8]| emitter.push(frame)),
                     Setting::Bluetooth => {
                         session.toggle_ble(&mut |frame: &[u8]| emitter.push(frame))
@@ -1742,6 +1758,7 @@ where
                     if setting == Setting::Gnss {
                         env.gnss_switched(enabled);
                     }
+                    apply_effect(&session, effect, &rt, &mut env).await;
                     // Keep an existing snapshot in step, so a switch the
                     // operator flipped is still flipped after a reboot.
                     // A device with nothing saved gets nothing saved:

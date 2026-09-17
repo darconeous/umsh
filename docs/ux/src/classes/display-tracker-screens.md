@@ -49,6 +49,7 @@ Settings            names itself; Select enters
         Share location  toggle          on / off
     Radio           Select enters       >
         Back                            <
+        LoRa            toggle          on / off
         Forwarding      toggle          on / off
         Statistics      Select opens    >
     WiFi            Select enters       >
@@ -424,6 +425,11 @@ reasonable. Turning GNSS off makes Share location moot but does not silently
 change it.
 
 ## Radio
+
+**LoRa** enables or disables LoRa transmission and reception using the same
+state as `PROP_PHY_ENABLED`. It preserves the frequency, modulation, transmit
+power, and Forwarding setting. Local changes update an existing saved
+configuration, like the other menu toggles.
 
 **Forwarding** turns relaying of other nodes' frames on and off. A device with
 forwarding on is acting as a repeater; the menu says what the device does, not

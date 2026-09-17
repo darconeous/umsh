@@ -604,7 +604,7 @@ pub fn coding_rate_from_denom(cr: u8) -> Option<CodingRate> {
 /// modulation parameters, frequency, and power come from an
 /// [`DeviceControl`] at runtime instead of being fixed at spawn.
 ///
-/// The radio starts idle (in standby) until the first enabled settings
+/// The radio sleeps until the first enabled settings
 /// arrive. While disabled, TX requests stay queued—the ULCP session
 /// rejects transmits with `STATUS_INVALID_STATE` before they reach
 /// this queue, so nothing accumulates in practice.
@@ -634,6 +634,7 @@ where
 
     let mut rx_buf = [0u8; MAX_PAYLOAD];
     let mut settings: Option<DeviceSettings> = None;
+    let mut sleeping = false;
 
     // Wait for new settings while idle, failing any RSSI request that
     // arrives meanwhile so the requester never hangs. The session gates
@@ -658,15 +659,25 @@ where
             // and an already-idle one leaves `wait_settings_while_idle`
             // for the same reason.
             if ctl.shutdown.load(Ordering::Acquire) {
-                let _ = lora.sleep(false).await;
-                ctl.shutdown_done.signal(());
+                if sleeping || sleep_radio(&mut lora).await.is_ok() {
+                    ctl.shutdown_done.signal(());
+                }
+                // A failed shutdown remains unacknowledged; the board's
+                // shutdown watchdog can recover rather than claiming success.
                 loop {
                     core::future::pending::<()>().await;
                 }
             }
             match settings {
                 Some(current) if current.enabled => break current,
-                _ => settings = Some(wait_settings_while_idle(ctl).await),
+                _ => {
+                    if !sleeping {
+                        sleeping = sleep_radio(&mut lora).await.is_ok();
+                    }
+                    // No periodic work while disabled. A failed sleep is
+                    // retried on the next configuration request.
+                    settings = Some(wait_settings_while_idle(ctl).await);
+                }
             }
         };
 
@@ -701,6 +712,9 @@ where
         };
 
         'rx: loop {
+            // prepare_for_rx wakes a sleeping modem and restores its complete
+            // configuration after the cold sleep, including TCXO/RF switches.
+            sleeping = false;
             if lora.prepare_for_rx(rx_mode, &mdltn, &rx_pkt).await.is_err() {
                 continue;
             }
@@ -800,6 +814,29 @@ where
             }
         }
     }
+}
+
+/// Stop reception before sleeping: SX126x SetSleep requires standby.
+/// Run to completion outside selects; do not cancel an SPI operation. The
+/// caller tracks successful sleep so later disabled requests never touch a
+/// sleeping chip's BUSY line. Bound transient-error recovery without polling.
+async fn sleep_radio<RK: RadioKind, DLY: embedded_hal_async::delay::DelayNs>(
+    lora: &mut LoRa<RK, DLY>,
+) -> Result<(), RadioError> {
+    let mut last_error = RadioError::InvalidRadioMode;
+    for _ in 0..3 {
+        let result = async {
+            lora.enter_standby().await?;
+            lora.clear_irq_status().await?;
+            lora.sleep(false).await
+        }
+        .await;
+        match result {
+            Ok(()) => return Ok(()),
+            Err(error) => last_error = error,
+        }
+    }
+    Err(last_error)
 }
 
 // ─── Parameter builders ───────────────────────────────────────────────────────

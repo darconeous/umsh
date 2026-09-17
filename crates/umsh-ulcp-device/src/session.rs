@@ -4723,6 +4723,18 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         self.clear_alert(emit)
     }
 
+    /// Flip `PROP_PHY_ENABLED` from the device's physical controls.
+    /// The caller must apply the returned radio effect as for a host write.
+    pub fn toggle_radio(&mut self, emit: &mut impl FnMut(&[u8])) -> (bool, Effect) {
+        self.toggle_device_flag(
+            true,
+            prop::PHY_ENABLED,
+            |device| &mut device.settings.enabled,
+            emit,
+        );
+        (self.device.settings.enabled, self.apply_radio())
+    }
+
     /// Flip `PROP_GNSS_ENABLED` from the device itself—a button on a
     /// board that offers the receiver as a user-facing switch.
     ///
@@ -9594,6 +9606,48 @@ mod tests {
             Some(false)
         );
         assert!(!session.gnss_enabled());
+    }
+
+    #[test]
+    fn local_radio_toggle_matches_host_write_and_persists_without_a_host() {
+        for attached in [false, true] {
+            let mut session = test_session();
+            let mut host = test_session();
+            if !attached {
+                session.detach();
+            }
+            let original = session.settings();
+            for enabled in [!original.enabled, original.enabled] {
+                let before = session.dev_domain_version();
+                let mut emitted = Vec::new();
+                let (actual, effect) =
+                    session.toggle_radio(&mut |frame| emitted.push(frame.to_vec()));
+                let (_, host_effect) = set(&mut host, prop::PHY_ENABLED, &[u8::from(enabled)]);
+                assert_eq!(actual, enabled);
+                assert_eq!(Some(effect), host_effect);
+                assert_eq!(
+                    session.settings(),
+                    RadioSettings {
+                        enabled,
+                        ..original
+                    }
+                );
+                assert_ne!(session.dev_domain_version(), before);
+                if attached {
+                    assert_eq!(emitted.len(), 1);
+                    assert_eq!(
+                        parse_prop_is(&emitted[0]),
+                        (TID_UNSOLICITED, prop::PHY_ENABLED, vec![u8::from(enabled)])
+                    );
+                } else {
+                    assert!(emitted.is_empty());
+                }
+                let mut bytes = [0; SNAPSHOT_MAX];
+                let len = session.encode_snapshot(&mut bytes).unwrap();
+                let saved = SavedState::decode(&test_config(), &bytes[..len]).unwrap();
+                assert_eq!(saved.settings, session.settings());
+            }
+        }
     }
 
     /// The other three switches a display board offers behave the same

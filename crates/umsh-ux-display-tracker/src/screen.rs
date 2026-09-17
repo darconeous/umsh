@@ -481,6 +481,7 @@ pub struct StatusModel<'a> {
 /// subsystem reports, and such a board does not enable the entry anyway.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct SettingsModel {
+    pub radio: Option<bool>,
     pub wifi: Option<bool>,
     pub bluetooth: Option<bool>,
     pub gnss: Option<bool>,
@@ -1793,6 +1794,7 @@ const fn menu_label(item: MenuItem) -> &'static str {
         MenuItem::Bluetooth => "Bluetooth",
         MenuItem::Gnss => "GNSS",
         MenuItem::Radio => "Radio",
+        MenuItem::RadioToggle => "LoRa",
         MenuItem::Wifi | MenuItem::WifiToggle => "WiFi",
         MenuItem::WifiNetworks => "Saved networks",
         MenuItem::WifiBack => "Back",
@@ -1861,6 +1863,7 @@ const fn select_hint(controls: Controls, item: MenuItem) -> Option<&'static str>
 /// why this returns an empty string rather than "off".
 fn toggle_label(item: MenuItem, settings: &SettingsModel) -> &'static str {
     let value = match item.kind() {
+        EntryKind::Toggle(ToggleId::Radio) => settings.radio,
         EntryKind::Toggle(ToggleId::Bluetooth) => settings.bluetooth,
         EntryKind::Toggle(ToggleId::Wifi) => settings.wifi,
         EntryKind::Toggle(ToggleId::Gnss) => settings.gnss,
@@ -2289,6 +2292,7 @@ mod tests {
             // state every panel must render as no clock at all.
             clock: None,
             settings: SettingsModel {
+                radio: Some(true),
                 motion_wake: None,
                 wifi: None,
                 bluetooth: Some(true),
@@ -3450,6 +3454,7 @@ mod tests {
     #[test]
     fn a_toggle_reports_its_state_and_an_unknown_one_reports_nothing() {
         let settings = SettingsModel {
+            radio: Some(true),
             motion_wake: None,
             wifi: None,
             bluetooth: Some(true),
@@ -3458,6 +3463,18 @@ mod tests {
             forwarding: Some(true),
         };
         let mut line: String<LINE> = String::new();
+
+        for (value, expected) in [
+            (Some(true), "LoRa          on"),
+            (Some(false), "LoRa         off"),
+            (None, "LoRa"),
+        ] {
+            let mut radio_settings = settings;
+            radio_settings.radio = value;
+            write_entry(&mut line, MenuItem::RadioToggle, &radio_settings, 16);
+            assert_eq!(line.as_str(), expected);
+            line.clear();
+        }
 
         write_entry(&mut line, MenuItem::BluetoothToggle, &settings, 16);
         assert_eq!(line.as_str(), "Bluetooth     on");
@@ -3480,6 +3497,7 @@ mod tests {
     #[test]
     fn a_row_says_whether_select_acts_or_asks_again() {
         let settings = SettingsModel {
+            radio: Some(true),
             motion_wake: None,
             wifi: None,
             bluetooth: Some(true),
@@ -3516,6 +3534,7 @@ mod tests {
     #[test]
     fn a_narrow_row_gives_way_at_the_label() {
         let settings = SettingsModel {
+            radio: None,
             motion_wake: None,
             wifi: None,
             bluetooth: None,

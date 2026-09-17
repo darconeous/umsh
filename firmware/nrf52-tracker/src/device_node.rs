@@ -18,8 +18,8 @@ use umsh_ulcp_runtime::device_node as node;
 #[allow(unused_imports)]
 pub use umsh_ulcp_runtime::device_node::{
     BeaconTrigger, NODE_CH, mac_counters, node_key, publish_snapshot, quiesce_for_reboot,
-    repeater_enabled, request_beacon, set_device_name, set_tx_power_dbm, sign_identity_blob,
-    tx_power_dbm,
+    radio_enabled, repeater_enabled, request_beacon, set_device_name, set_tx_power_dbm,
+    sign_identity_blob, tx_power_dbm,
 };
 
 /// The node's platform binding: everything generic resolved against this

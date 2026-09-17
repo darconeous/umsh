@@ -323,6 +323,21 @@ fn publish_mac_counters(counters: MacCounters) {
 /// setting occupies.
 static TX_POWER_DBM: AtomicU16 = AtomicU16::new(u16::MAX);
 
+// Unknown until the session first applies its radio configuration.
+static RADIO_ENABLED: AtomicU16 = AtomicU16::new(u16::MAX);
+
+/// The applied `PROP_PHY_ENABLED`, shared by host writes and local controls.
+pub fn radio_enabled() -> Option<bool> {
+    match RADIO_ENABLED.load(Ordering::Relaxed) {
+        u16::MAX => None,
+        value => Some(value != 0),
+    }
+}
+
+pub fn set_radio_enabled(enabled: bool) {
+    RADIO_ENABLED.store(u16::from(enabled), Ordering::Relaxed);
+}
+
 /// The applied `PROP_PHY_TX_POWER`, or `None` before the first
 /// `Effect::ApplyRadio`.
 pub fn tx_power_dbm() -> Option<i8> {
