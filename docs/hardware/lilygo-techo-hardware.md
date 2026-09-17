@@ -452,6 +452,20 @@ cycle. Note the asymmetry this creates: the RTC itself survives a rail
 collapse, but its I²C bus doesn't—the pull-ups are on `VDD_POWR`, so
 the RTC is unreachable (not dead) while the rail is down.
 
+The device firmware reads the retained calendar at boot, before starting
+the host session. A voltage-low flag, malformed date, or implausible year
+leaves the wall clock unset. Restoring the external RTC does not require
+GNSS to be enabled or trusted.
+
+Accepted GNSS clock updates are written back when `PROP_GNSS_TIME_TRUST`
+is enabled and the clock becomes known or changes by at least two seconds.
+Manual `PROP_TIME` writes also update the RTC. A dedicated task completes
+these writes outside the host event loop, and shutdown allows up to 500 ms
+for a final write before removing the I²C pull-ups. A stuck bus cannot
+block low-battery shutdown. Clearing `PROP_TIME` clears the
+running wall clock but leaves the retained calendar intact, so a later
+boot can restore it. RTC alarms and timed wakeups are not configured.
+
 The presence of a dedicated RTC interrupt line means firmware can potentially use the RTC for timed wakeups, depending on how the nRF GPIO sense and System OFF wake sources are configured.
 
 ## BME280 environmental sensor

@@ -332,7 +332,7 @@ mod firmware {
         TWISPI0 =>
             #[cfg(feature = "t1000e")]
             embassy_nrf::spim::InterruptHandler<peripherals::TWISPI0>,
-            #[cfg(all(not(feature = "t1000e"), any(feature = "ulcp-i2c", feature = "display-oled")))]
+            #[cfg(all(not(feature = "t1000e"), any(feature = "ulcp-i2c", feature = "display-oled", feature = "board-techo")))]
             embassy_nrf::twim::InterruptHandler<peripherals::TWISPI0>;
         // T-1000E's sensor bus and Wio's Grove bus use TWIM1.
         // Other SX1262 boards retain their radio on SPIM1.
@@ -1597,6 +1597,61 @@ mod firmware {
             .build(p, rng, mpsl, mem)
     }
 
+    // Only the worker touches the RTC after boot. Publishing a clock event
+    // must not put an I2C transfer inside the device loop's cancelable select.
+    #[cfg(feature = "board-techo")]
+    type RetainedRtc = umsh_rtc_pcf8563::Pcf8563<umsh_bsp_nrf52840::i2c::Handle>;
+    #[cfg(feature = "board-techo")]
+    static RTC_UPDATE: Signal<ThreadModeRawMutex, ()> = Signal::new();
+    #[cfg(feature = "board-techo")]
+    static RTC_SHUTDOWN: Signal<ThreadModeRawMutex, ()> = Signal::new();
+    #[cfg(feature = "board-techo")]
+    static RTC_SHUTDOWN_DONE: Signal<ThreadModeRawMutex, ()> = Signal::new();
+
+    #[cfg(feature = "board-techo")]
+    struct RtcFixSink;
+
+    #[cfg(feature = "board-techo")]
+    impl umsh_gnss::pump::Sink for RtcFixSink {
+        async fn fix(&mut self, fix: &umsh_gnss::Fix) {
+            let outcome = umsh_ulcp_runtime::gnss::absorb(fix, umsh_ulcp_runtime::gnss::policy());
+            if outcome.clock_changed {
+                // Use the policy result directly: the announcement watch
+                // can coalesce a time event with an identity update.
+                RTC_UPDATE.signal(());
+            }
+        }
+    }
+
+    #[cfg(feature = "board-techo")]
+    #[embassy_executor::task]
+    async fn rtc_task(bus: &'static umsh_bsp_nrf52840::i2c::Bus) {
+        loop {
+            let shutdown = matches!(
+                select(RTC_SHUTDOWN.wait(), RTC_UPDATE.wait()).await,
+                Either::First(())
+            );
+            {
+                // Sample after acquiring the bus so waiting behind a scan
+                // cannot write an old timestamp. A manual set/clear may
+                // also have superseded the GNSS event while we waited.
+                let mut controller = bus.lock().await;
+                let mut rtc = umsh_rtc_pcf8563::Pcf8563::new(&mut *controller);
+                // Clearing PROP_TIME leaves the retained clock alone,
+                // matching the other boards with a dedicated RTC.
+                if let Some(seconds) = umsh_hal::wall_clock::now() {
+                    if rtc.write(seconds).await.is_err() {
+                        debug_log(format_args!("rtc: writeback FAILED"));
+                    }
+                }
+            }
+            if shutdown {
+                RTC_SHUTDOWN_DONE.signal(());
+                return;
+            }
+        }
+    }
+
     /// Board environment for the shared ULCP driver
     /// (`umsh_ulcp_runtime::driver`): persistence, entropy, pairing,
     /// and indicator couplings. The former `cfg(feature = "t1000e")` forks
@@ -1785,6 +1840,8 @@ mod firmware {
             match epoch {
                 Some(seconds) => {
                     umsh_hal::wall_clock::set_manual(seconds);
+                    #[cfg(feature = "board-techo")]
+                    RTC_UPDATE.signal(());
                 }
                 None => umsh_hal::wall_clock::clear(),
             }
@@ -3510,6 +3567,9 @@ mod firmware {
             uart,
             control,
             enable,
+            #[cfg(feature = "board-techo")]
+            RtcFixSink,
+            #[cfg(not(feature = "board-techo"))]
             umsh_ulcp_runtime::gnss::FixSink,
             embassy_time::Delay,
         )
@@ -5056,6 +5116,21 @@ mod firmware {
         }
         Timer::after(Duration::from_millis(50)).await;
 
+        // Finish the RTC write before removing its I2C pull-ups. A stuck
+        // bus must not prevent low-battery shutdown. Timing out this wait
+        // does not cancel the worker or release its DMA buffers; no task
+        // runs again once the synchronous power-off sequence below starts.
+        #[cfg(feature = "board-techo")]
+        {
+            RTC_SHUTDOWN.signal(());
+            if matches!(
+                select(RTC_SHUTDOWN_DONE.wait(), Timer::after_millis(500)).await,
+                Either::Second(())
+            ) {
+                debug_log(format_args!("rtc: shutdown writeback timed out"));
+            }
+        }
+
         // Nothing below this point awaits, so the heartbeat task cannot run
         // again and take the status LED back.
         //
@@ -6056,7 +6131,11 @@ mod firmware {
             ACCEL_POWER.init(Output::new(p.P1_07, Level::High, OutputDrive::Standard));
             Timer::after_millis(10).await;
         }
-        #[cfg(any(feature = "ulcp-i2c", feature = "display-oled"))]
+        #[cfg(any(
+            feature = "ulcp-i2c",
+            feature = "display-oled",
+            feature = "board-techo"
+        ))]
         let primary_i2c: &'static umsh_bsp_nrf52840::i2c::Bus = {
             use embassy_nrf::twim::Config as TwimConfig;
             use umsh_bsp_nrf52840::i2c::Controller as Twim;
@@ -6109,6 +6188,26 @@ mod firmware {
             );
             BUS.init(umsh_bsp_nrf52840::i2c::Bus::new(controller))
         };
+        #[cfg(feature = "board-techo")]
+        {
+            // VDD_POWR is already up, restoring the shared bus pull-ups.
+            // Do not reset the RTC: its calendar survives System OFF.
+            let mut rtc = RetainedRtc::new(umsh_bsp_nrf52840::i2c::Handle::new(primary_i2c));
+            match rtc.read().await {
+                Ok(Some(seconds)) => {
+                    umsh_hal::wall_clock::apply(
+                        seconds,
+                        umsh_hal::wall_clock::TimeSource::ExternalRtc,
+                        false,
+                    );
+                    debug_log(format_args!("rtc: clock restored"));
+                }
+                Ok(None) => debug_log(format_args!("rtc: no stored time")),
+                Err(_) => debug_log(format_args!("rtc: not responding")),
+            }
+            // Even an unset RTC can receive its first valid time later.
+            spawner.spawn(rtc_task(primary_i2c).unwrap());
+        }
         #[cfg(all(feature = "ulcp-i2c", feature = "board-wio-tracker-l1"))]
         let host_i2c = {
             static GROVE: StaticCell<board_i2c::Bus> = StaticCell::new();

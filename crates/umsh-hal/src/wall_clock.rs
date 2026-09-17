@@ -479,6 +479,26 @@ mod tests {
     }
 
     #[test]
+    fn retained_time_restores_without_gnss_trust_but_corrections_require_it() {
+        let mut clock = WallClockState::UNKNOWN;
+        assert_eq!(
+            clock.apply(T0, UP, TimeSource::ExternalRtc, false),
+            Update::Set
+        );
+        assert_eq!(clock.now(UP + 60_000), Some(T0 + 60));
+        assert_eq!(
+            clock.apply(T0 + 90, UP + 60_000, TimeSource::GnssFix, false),
+            Update::Refused
+        );
+        assert_eq!(clock.now(UP + 60_000), Some(T0 + 60));
+        assert_eq!(
+            clock.apply(T0 + 90, UP + 60_000, TimeSource::GnssFix, true),
+            Update::Stepped { previous: T0 + 60 }
+        );
+        assert_eq!(clock.source(), Some(TimeSource::GnssFix));
+    }
+
+    #[test]
     fn only_real_movement_is_worth_announcing() {
         let mut clock = WallClockState::UNKNOWN;
         assert!(clock.apply(T0, UP, TimeSource::Manual, true).is_notable());

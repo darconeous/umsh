@@ -1665,6 +1665,7 @@ dependencies = [
  "umsh-mac",
  "umsh-node",
  "umsh-radio-loraphy",
+ "umsh-rtc-pcf8563",
  "umsh-sync",
  "umsh-ulcp",
  "umsh-ulcp-device",
