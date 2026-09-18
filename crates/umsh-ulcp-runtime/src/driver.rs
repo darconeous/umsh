@@ -43,19 +43,6 @@ use umsh_ulcp_device::{
     Resolvers, SNAPSHOT_MAX, SavedStatus, Session, TxOutcome, TxPower,
 };
 
-/// The session sizes its snapshots and the journal sizes its records
-/// independently. This is the only place both are visible, so it is
-/// where a snapshot growing past what a record can carry is caught.
-const _: () = assert!(
-    SNAPSHOT_MAX
-        <= if cfg!(feature = "wifi") {
-            4096 - 19
-        } else {
-            proto::MAX_PAYLOAD
-        },
-    "SNAPSHOT_MAX outgrew what a journal record can carry"
-);
-
 use crate::transport_policy::{SessionArbitration, Transport};
 
 /// Derive a device identity's public key and its persisted record from a
@@ -439,6 +426,11 @@ pub enum PublishEvent {
 #[allow(async_fn_in_trait)]
 pub trait DeviceEnv {
     /// Durably persist the encoded protocol snapshot (CMD_SAVE / host wipe).
+    ///
+    /// `bytes` is at most [`SNAPSHOT_MAX`] long. The session sizes its
+    /// snapshots and each journal store sizes its records independently,
+    /// and only the board knows which store it binds, so the board is
+    /// where the fit is asserted at compile time.
     async fn persist_snapshot(&mut self, bytes: &[u8]) -> Result<(), ()>;
     /// Tombstone the snapshot journal (CMD_CLEAR).
     async fn clear_snapshot(&mut self) -> Result<(), ()>;

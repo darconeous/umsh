@@ -786,6 +786,14 @@ mod firmware {
     /// bound to the MPSL-coordinated flash.
     type ProtoStore = umsh_ulcp_runtime::journal::ProtoStore<ThreadModeRawMutex, JournalFlash>;
 
+    /// The session sizes its snapshots and the journal sizes its records
+    /// independently. This is where the two meet, so it is where a
+    /// snapshot growing past what a record can carry is caught.
+    const _: () = assert!(
+        umsh_ulcp_device::SNAPSHOT_MAX <= ProtoStore::MAX_PAYLOAD,
+        "SNAPSHOT_MAX outgrew what a journal record can carry"
+    );
+
     #[cfg(feature = "t1000e")]
     fn mapped_ux_preferences() -> Option<umsh_ux_tracker::state::UserPreferences> {
         let mut newest: Option<(u32, u32)> = None;

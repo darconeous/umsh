@@ -39,8 +39,10 @@ pub fn decode_identity(payload: &[u8]) -> Option<([u8; 32], [u8; 32])> {
     ))
 }
 
-/// Two records per page; the snapshot payload is bounded by
-/// `umsh_ulcp_device::SNAPSHOT_MAX` (1792) with headroom.
+/// Two records per page. A journal may instead give each record a whole
+/// page (see [`encode_record_sized`]); a store's capacity is
+/// [`max_payload`] of whichever width it writes, and the firmware that
+/// binds a store to the session checks the snapshot fits it.
 pub const SLOT_SIZE: usize = 2048;
 pub const COMMIT_OFFSET: usize = SLOT_SIZE - 4;
 const CRC_OFFSET: usize = COMMIT_OFFSET - 4;
@@ -49,7 +51,13 @@ const KIND_SNAPSHOT: u8 = 0;
 const KIND_CLEARED: u8 = 1;
 const HEADER_LEN: usize = 4 + 4 + 1 + 2;
 /// Largest payload a record can carry.
-pub const MAX_PAYLOAD: usize = CRC_OFFSET - HEADER_LEN;
+pub const MAX_PAYLOAD: usize = max_payload(SLOT_SIZE);
+
+/// Largest payload a record of `slot_size` octets can carry: the slot
+/// less the header, the CRC, and the commit word.
+pub const fn max_payload(slot_size: usize) -> usize {
+    slot_size - HEADER_LEN - 8
+}
 
 /// What a journal record asserts about the saved protocol state.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -102,7 +110,7 @@ pub fn encode_record_sized<const N: usize>(generation: u32, record: RecordRef<'_
         RecordRef::Snapshot(payload) => (KIND_SNAPSHOT, payload),
         RecordRef::Cleared => (KIND_CLEARED, &[]),
     };
-    assert!(payload.len() <= N - HEADER_LEN - 8);
+    assert!(payload.len() <= max_payload(N));
     bytes[8] = kind;
     bytes[9..11].copy_from_slice(&(payload.len() as u16).to_le_bytes());
     bytes[HEADER_LEN..HEADER_LEN + payload.len()].copy_from_slice(payload);
@@ -168,7 +176,7 @@ pub fn probe_record(bytes: &[u8]) -> Option<u32> {
         return None;
     }
     let len = usize::from(u16::from_le_bytes(bytes[9..11].try_into().ok()?));
-    if len > bytes.len() - HEADER_LEN - 8 {
+    if len > max_payload(bytes.len()) {
         return None;
     }
     match bytes[8] {

@@ -9,7 +9,9 @@ use umsh_journal_store::{
 };
 
 pub const SLOT_SIZE: usize = PAGE_SIZE as usize;
-pub type BootPayload = heapless::Vec<u8, { SLOT_SIZE - 19 }>;
+/// Largest payload a full-page record carries.
+pub const MAX_PAYLOAD: usize = proto::max_payload(SLOT_SIZE);
+pub type BootPayload = heapless::Vec<u8, MAX_PAYLOAD>;
 
 pub struct WifiStore<M: RawMutex + 'static, F: JournalFlash + 'static> {
     flash: &'static SharedFlash<M, F>,
@@ -141,6 +143,9 @@ fn newest<F: JournalFlash>(
 }
 
 impl<M: RawMutex + 'static, F: JournalFlash + 'static> WifiStore<M, F> {
+    /// Largest payload this store persists: a full-page record's.
+    pub const MAX_PAYLOAD: usize = MAX_PAYLOAD;
+
     pub async fn mount(
         flash: &'static SharedFlash<M, F>,
         page0: u32,
@@ -180,7 +185,7 @@ impl<M: RawMutex + 'static, F: JournalFlash + 'static> WifiStore<M, F> {
     }
 
     pub async fn persist(&mut self, payload: &[u8]) -> Result<(), ()> {
-        if payload.len() > SLOT_SIZE - 19 {
+        if payload.len() > Self::MAX_PAYLOAD {
             return Err(());
         }
         self.write(proto::RecordRef::Snapshot(payload)).await

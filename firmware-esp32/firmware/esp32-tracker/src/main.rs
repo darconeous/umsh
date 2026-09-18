@@ -219,6 +219,14 @@ type SnapshotStore = ble_store::ProtoStore;
 #[cfg(not(feature = "wifi"))]
 type BootSnapshot = ble_store::BootPayload;
 
+/// The session sizes its snapshots and the journal sizes its records
+/// independently. This is where the two meet, so it is where a snapshot
+/// growing past what a record can carry is caught.
+const _: () = assert!(
+    umsh_ulcp_device::SNAPSHOT_MAX <= SnapshotStore::MAX_PAYLOAD,
+    "SNAPSHOT_MAX outgrew what a journal record can carry"
+);
+
 use ble_store::{BleStore, ProtoStore, StoredBond, bond_identity_is_persistable, trouble_bond};
 
 esp_bootloader_esp_idf::esp_app_desc!();

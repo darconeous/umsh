@@ -1983,9 +1983,10 @@ impl HostDomain {
 /// framing included (`snapshot_at_capacity_fits_the_buffer` pins it);
 /// the rest is headroom for properties not yet allocated. A persisted
 /// table of public keys costs about 272 octets at capacity, so there is
-/// room for three more before this has to grow, and it can only grow to
-/// `umsh_journal_store::proto::MAX_PAYLOAD`—2029—before the journal
-/// record format itself has to change.
+/// room for three more before this has to grow. The ceiling is the
+/// journal record of the store a firmware binds: 2029 octets in a
+/// half-page record, 4077 in the full-page record the Wi-Fi image
+/// writes. Each firmware asserts the fit where it binds its store.
 #[cfg(not(feature = "wifi"))]
 pub const SNAPSHOT_MAX: usize = 1792;
 #[cfg(feature = "wifi")]

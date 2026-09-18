@@ -138,6 +138,9 @@ pub struct ProtoStore<M: RawMutex + 'static, F: JournalFlash + 'static> {
 }
 
 impl<M: RawMutex + 'static, F: JournalFlash + 'static> ProtoStore<M, F> {
+    /// Largest payload this store persists: a half-page record's.
+    pub const MAX_PAYLOAD: usize = proto::MAX_PAYLOAD;
+
     pub async fn mount(
         shared: &'static SharedFlash<M, F>,
         page0: u32,
@@ -246,7 +249,7 @@ impl<M: RawMutex + 'static, F: JournalFlash + 'static> ProtoStore<M, F> {
     }
 
     pub async fn persist(&mut self, payload: &[u8]) -> Result<(), ()> {
-        if payload.len() > proto::MAX_PAYLOAD {
+        if payload.len() > Self::MAX_PAYLOAD {
             return Err(());
         }
         self.write(proto::RecordRef::Snapshot(payload)).await
