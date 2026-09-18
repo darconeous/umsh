@@ -354,6 +354,27 @@ first—third-party noise stays at warn—and `--log-filter` (or
 `UMSH_BRIDGE_LOG`) takes a full `tracing-subscriber` filter for per-module
 control, e.g. `umsh_bridge::hub=trace,info`.
 
+For a serial/BLE radio, trace output also includes ULCP request and response
+summaries with transaction IDs. A transmit `Io(Timeout)` means a command
+response did not arrive, not that the device returned CCA failure. The host
+reads `PROP_PHY_T_FRAME` before sending and waits up to the greater of three
+seconds or twice that frame airtime for confirmation. Older firmware falls
+back to an estimate from its live LoRa parameters (assuming UMSH's 32-symbol
+transmit preamble). A busy response is handled immediately by the existing
+bounded handoff retries. If the response never arrives, the radio session
+is reopened after the three-second reconnect delay.
+
+For an nRF52 USB radio, stop the bridge and run
+`python3 scripts/ulcp_usb_boundary_probe.py /dev/cu.usbmodemxiao_nrf521`
+(substitute its port). This read-only NOP probe tests HDLC lengths around
+64-byte USB packet boundaries and rejects unexpected session resets. It
+does not request RF transmissions. The September 9 XIAO firmware reproduced
+a timeout and false attachment on a 64-byte request; ignoring USB zero-length
+data packets instead of treating them as serial EOF passed 400 boundary
+exchanges on the same board. This exercises USB transport, not a sustained
+bridge traffic soak. Diagnostic `ble-debug` firmware also records USB
+suspend/resume, reset, and configuration events in its timestamped serial log.
+
 ## Running as a service
 
 ### systemd (Debian / Ubuntu)

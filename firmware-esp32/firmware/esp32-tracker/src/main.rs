@@ -360,12 +360,15 @@ struct UlcpService {
     frame_out: heapless09::Vec<u8, BLE_VALUE_MAX>,
 }
 
+const TX_PREAMBLE_SYMBOLS: u16 = 32;
+
 fn session_config() -> SessionConfig {
     SessionConfig {
         dev_version: DEV_VERSION,
         dev_model: Some(DEV_MODEL),
         default_device_name: default_device_name(),
         mtu: MAX_PAYLOAD as u16,
+        tx_preamble_symbols: TX_PREAMBLE_SYMBOLS,
         // Fixed at build time: LoRa::new(.., false, ..) below sets the
         // private-network word 0x12. `PROP_PHY_LORA_SW` is defined as
         // the 16-bit SX126x-style word whatever the silicon, so both
@@ -2774,7 +2777,7 @@ async fn radio_task(lora: board_radio::Radio) {
         &RADIO_CH,
         &DEVICE_CTL,
         8,
-        32,
+        TX_PREAMBLE_SYMBOLS,
         RxStrategy::Continuous,
         Some(&STATS),
     )

@@ -32,9 +32,41 @@ pub fn lora_airtime_ms(sf: u8, bw_hz: u32, cr_denom: u8, payload_bytes: usize) -
     ((total_sym * t_sym_us) / 1_000) as u32
 }
 
+/// Maximum-frame airtime bound for a LoRa PHY with an explicit header and CRC.
+/// Includes the actual transmit preamble and rounds up to whole milliseconds.
+/// Assumes LDRO for symbols longer than 16 ms; this is conservative for
+/// drivers that enable LDRO only for a subset of those configurations.
+/// Unlike the legacy scheduling estimate above, this is suitable for reporting
+/// `PROP_PHY_T_FRAME`. Callers supply validated PHY parameters.
+pub fn lora_airtime_ms_with_preamble(
+    sf: u8,
+    bw_hz: u32,
+    cr_denom: u8,
+    payload_bytes: usize,
+    preamble_symbols: u16,
+) -> u32 {
+    let sf = u64::from(sf.clamp(5, 12));
+    let bw = u64::from(bw_hz.max(1));
+    let ldro = u64::from((1u64 << sf) * 1_000 > 16 * bw);
+    let numerator = (8 * payload_bytes as u64 + 44).saturating_sub(4 * sf);
+    let payload_symbols =
+        8 + numerator.div_ceil(4 * (sf - 2 * ldro)) * u64::from(cr_denom.clamp(5, 8));
+    let quarter_symbols = 4 * (u64::from(preamble_symbols) + payload_symbols) + 17;
+    (quarter_symbols * (1u64 << sf) * 1_000).div_ceil(4 * bw) as u32
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn frame_duration_includes_preamble_and_rounds_up() {
+        // Standard explicit-header/CRC airtimes: 56.576 ms and 623.104 ms.
+        assert_eq!(lora_airtime_ms_with_preamble(7, 125_000, 5, 20, 8), 57);
+        assert_eq!(lora_airtime_ms_with_preamble(10, 500_000, 5, 255, 32), 624);
+        // SF12/BW125 requires low-data-rate optimization: 9,019.392 ms.
+        assert_eq!(lora_airtime_ms_with_preamble(12, 125_000, 5, 255, 8), 9020);
+    }
 
     #[test]
     fn plausible_magnitudes() {

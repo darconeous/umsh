@@ -38,6 +38,7 @@ pub fn web_sim_config() -> umsh_ulcp_simdev::SessionConfig {
         dev_model: None,
         default_device_name: "Browser simulated device",
         mtu: 255,
+        tx_preamble_symbols: 32,
         sync_word: profiles::DEFAULT.sync_word,
         min_tx_power_dbm: -9,
         max_tx_power_dbm: 22,
@@ -389,6 +390,16 @@ const PROPERTY_SPECS: &[PropertySpec] = &[
         false,
         "none",
         Some("octets"),
+        None,
+    ),
+    spec(
+        prop::PHY_T_FRAME,
+        "Radio",
+        "Maximum frame airtime at the current PHY settings",
+        true,
+        false,
+        "none",
+        Some("ms"),
         None,
     ),
     spec(
@@ -1732,6 +1743,10 @@ fn decode_property(key: u32, value: &[u8]) -> Option<DecodedValue> {
                 0 => ("uint32", "off".to_string()),
                 seconds => ("uint32", format!("every {seconds} s")),
             }
+        }
+        prop::PHY_T_FRAME if value.len() == 4 => {
+            let ms = u32::from_le_bytes(value.try_into().ok()?);
+            ("uint32", format!("{ms} ms"))
         }
         prop::PHY_TX_POWER | prop::PHY_RSSI if value.len() == 1 => {
             ("dbm", format!("{} dBm", value[0] as i8))

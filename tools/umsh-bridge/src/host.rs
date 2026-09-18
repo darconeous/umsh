@@ -62,6 +62,7 @@ fn session_config() -> SessionConfig {
         dev_model: None,
         default_device_name: "Bridged host interface",
         mtu: 255,
+        tx_preamble_symbols: 32,
         sync_word: profiles::DEFAULT.sync_word,
         min_tx_power_dbm: -9,
         max_tx_power_dbm: 22,

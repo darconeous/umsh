@@ -174,6 +174,21 @@ impl Device {
     /// Everything the spec asks of a bridge's attachment, in one place
     /// so a reconnection cannot forget any of it.
     async fn prepare(&mut self) -> Result<()> {
+        // Keep the request TID and matching response visible at -vv. In
+        // particular, a missing completion can be distinguished from a busy
+        // response, or a stalled PHY-property read before a transmission.
+        #[cfg(any(feature = "serial-radio", feature = "ble-radio"))]
+        match self {
+            #[cfg(feature = "serial-radio")]
+            Self::Serial(device) => device.set_frame_trace(Some(Box::new(|direction, frame| {
+                tracing::trace!(%direction, frame, "device ULCP");
+            }))),
+            #[cfg(feature = "ble-radio")]
+            Self::Ble(device) => device.set_frame_trace(Some(Box::new(|direction, frame| {
+                tracing::trace!(%direction, frame, "device ULCP");
+            }))),
+            Self::Udp(_) => {}
+        }
         let capabilities = self.capabilities().await?;
 
         if !capabilities.contains(&cap::MAC_BACKHAUL) {

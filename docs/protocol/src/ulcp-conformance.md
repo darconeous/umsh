@@ -63,6 +63,7 @@ Id  | Mnemonic                | Required
 37  | `PROP_PHY_TX_POWER`     | Always
 38  | `PROP_PHY_RSSI`         | Always
 42  | `PROP_PHY_MTU`          | Always
+44  | `PROP_PHY_T_FRAME`      | Always (new implementations)
 113 | `STR_PHY_RAW`           | Always
 
 `PROP_DEV_MODEL` (4) and `PROP_UPTIME` (6) are the two properties that are

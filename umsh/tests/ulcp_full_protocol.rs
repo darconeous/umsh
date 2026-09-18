@@ -55,6 +55,7 @@ fn session_config() -> SessionConfig {
         dev_model: Some("Simulated Board"),
         default_device_name: "Simulated Device",
         mtu: 255,
+        tx_preamble_symbols: 32,
         sync_word: 0x1424,
         min_tx_power_dbm: -9,
         max_tx_power_dbm: 22,

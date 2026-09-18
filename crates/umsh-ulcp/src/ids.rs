@@ -83,6 +83,9 @@ pub mod prop {
     pub const PHY_MTU: u32 = 42;
     /// LoRa sync word, SX126x-style 16-bit (`PROP_PHY_LORA_SW`).
     pub const PHY_LORA_SW: u32 = 43;
+    /// Maximum frame airtime in milliseconds at the current PHY settings
+    /// (`PROP_PHY_T_FRAME`). Read-only, includes the transmit preamble.
+    pub const PHY_T_FRAME: u32 = 44;
     /// Deliver all received frames, bypassing host receive filtering
     /// (`PROP_MAC_PROMISCUOUS`). Session-scoped.
     pub const MAC_PROMISCUOUS: u32 = 48;

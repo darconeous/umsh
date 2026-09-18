@@ -136,9 +136,9 @@ pub struct UlcpDeviceConfig {
     pub tx_power_dbm: i8,
     /// SX126x-style 16-bit sync word (`PROP_PHY_LORA_SW`).
     pub sync_word: u16,
-    /// How long to wait for the device to answer one command, excluding
-    /// airtime (transmit confirmations extend this by the frame
-    /// airtime).
+    /// How long to wait for the device to answer one command. Transmit
+    /// confirmations allow the largest of this, three seconds, and twice
+    /// the device's current maximum frame airtime.
     pub response_timeout: Duration,
 }
 
@@ -1157,7 +1157,8 @@ where
     /// synchronizes by fetching. Only the identity handshake runs here
     ///—retained `PROP_LAST_STATUS` (the reset cause, preserved for
     /// [`Self::boot_status`] and [`Self::sync`]), the protocol version
-    /// check, `PROP_DEV_VERSION`, and `PROP_PHY_MTU`. The PHY keeps
+    /// check, `PROP_DEV_VERSION`, `PROP_PHY_MTU`, and the current frame
+    /// airtime. The PHY keeps
     /// whatever configuration and enable state it had; queued frames
     /// and provisioning are untouched. Follow with [`Self::sync`],
     /// [`Self::provision`], and drain the queue when ready.
@@ -1292,13 +1293,7 @@ where
         if radio.max_frame_size == 0 {
             return Err(UlcpError::Protocol("device advertised zero MTU"));
         }
-        radio.t_frame_ms = lora_airtime_ms(
-            radio.config.spreading_factor,
-            radio.config.bandwidth_hz,
-            radio.config.coding_rate_denom,
-            radio.max_frame_size,
-        )
-        .max(1);
+        radio.refresh_t_frame().await?;
         Ok(radio)
     }
 
@@ -1804,14 +1799,59 @@ where
             .await?;
         self.set_prop(prop::PHY_ENABLED, &[1]).await?;
 
-        self.t_frame_ms = lora_airtime_ms(
-            config.spreading_factor,
-            config.bandwidth_hz,
-            config.coding_rate_denom,
-            self.max_frame_size,
-        )
-        .max(1);
+        self.refresh_t_frame().await?;
         Ok(())
+    }
+
+    /// Refresh the PHY-independent airtime bound. Older devices lack the
+    /// property, so read their live LoRa parameters rather than assuming the
+    /// host's constructor configuration still describes the radio.
+    pub async fn refresh_t_frame(&mut self) -> Result<u32, UlcpError> {
+        let duration = match self.get_prop(prop::PHY_T_FRAME).await {
+            Ok(value) => decode_u32(&value, "PROP_PHY_T_FRAME")?,
+            Err(UlcpError::Status(Status::PROP_NOT_FOUND | Status::UNIMPLEMENTED)) => {
+                let bw = self.get_prop(prop::PHY_LORA_BW).await?;
+                let sf = self.get_prop(prop::PHY_LORA_SF).await?;
+                let cr = self.get_prop(prop::PHY_LORA_CR).await?;
+                let mtu = self.get_prop(prop::PHY_MTU).await?;
+                let bw = decode_u32(&bw, "PROP_PHY_LORA_BW")?;
+                let [sf] = sf.as_slice() else {
+                    return Err(UlcpError::Protocol("malformed PROP_PHY_LORA_SF"));
+                };
+                let [cr] = cr.as_slice() else {
+                    return Err(UlcpError::Protocol("malformed PROP_PHY_LORA_CR"));
+                };
+                let [lo, hi] = mtu.as_slice() else {
+                    return Err(UlcpError::Protocol("malformed PROP_PHY_MTU"));
+                };
+                let mtu = u16::from_le_bytes([*lo, *hi]);
+                if bw == 0 || mtu == 0 || !(5..=12).contains(sf) || !(5..=8).contains(cr) {
+                    return Err(UlcpError::Protocol("invalid legacy PHY parameters"));
+                }
+                // Existing UMSH firmware uses a fixed 32-symbol TX preamble.
+                // This compatibility estimate is only needed before T_FRAME.
+                umsh_ulcp::airtime::lora_airtime_ms_with_preamble(
+                    *sf,
+                    bw,
+                    *cr,
+                    usize::from(mtu),
+                    32,
+                )
+            }
+            Err(error) => return Err(error),
+        };
+        if duration == 0 {
+            return Err(UlcpError::Protocol("zero PROP_PHY_T_FRAME"));
+        }
+        self.t_frame_ms = duration;
+        Ok(duration)
+    }
+
+    fn transmit_timeout(&self) -> Duration {
+        self.config
+            .response_timeout
+            .max(Duration::from_secs(3))
+            .max(Duration::from_millis(u64::from(self.t_frame_ms) * 2))
     }
 
     /// Fetch a property's raw value via `CMD_PROP_GET`.
@@ -3099,6 +3139,12 @@ where
         metadata: &[u8],
         cca_deadline: Option<Instant>,
     ) -> Result<(), TxError<UlcpError>> {
+        // The PHY may have changed through local controls or another admin
+        // since attachment. Remote management handles already have an explicit
+        // timing budget; avoid adding radio exchanges to those operations.
+        if self.mode != AttachMode::Remote {
+            self.refresh_t_frame().await.map_err(TxError::Io)?;
+        }
         loop {
             let tid = self.alloc_tid();
             let mut frame_buf = vec![0u8; data.len() + metadata.len() + 16];
@@ -3108,11 +3154,9 @@ where
                 .await
                 .map_err(TxError::Io)?;
 
-            // The confirmation arrives only after the frame is on the
-            // air (or definitively failed), so allow for airtime.
-            let deadline = Instant::now()
-                + self.config.response_timeout
-                + Duration::from_millis(u64::from(self.t_frame_ms) * 2);
+            // Direct RF sends confirm after airtime (or a definitive
+            // failure); backhaul sends confirm after the node handoff.
+            let deadline = Instant::now() + self.transmit_timeout();
             let response = self
                 .wait_response(tid, deadline)
                 .await
@@ -3259,7 +3303,8 @@ where
     /// Transmit one frame and await the device's confirmation.
     ///
     /// A confirmed transmit blocks the caller for up to
-    /// `response_timeout + 2 × t_frame_ms` while the frame goes out on air. This
+    /// `max(response_timeout, 3 seconds, 2 × t_frame_ms)` after refreshing the
+    /// device's frame duration, while the frame goes out on air. This
     /// is inherent to the half-duplex [`Radio::transmit`] contract and a real
     /// radio behaves the same way. Frames the device receives during this window
     /// are not lost—they are queued (see [`wait_response`](Self::wait_response)
@@ -3342,6 +3387,13 @@ where
 // same readings the per-property methods here apply—otherwise the only
 // way to understand a value is to spend a round trip fetching it alone,
 // which is the cost batching exists to avoid.
+
+fn decode_u32(value: &[u8], property: &'static str) -> Result<u32, UlcpError> {
+    let bytes = value
+        .try_into()
+        .map_err(|_| UlcpError::Protocol(property))?;
+    Ok(u32::from_le_bytes(bytes))
+}
 
 /// Decode a `PROP_LAST_STATUS` value. Anything malformed reads as
 /// `STATUS_FAILURE`, which is what a device unable to say why would mean.
@@ -3574,6 +3626,10 @@ mod tests {
                             prop::DEV_VERSION => b"fake-dev/0.1\0".to_vec(),
                             prop::DEV_MODEL => b"Fake Board\0".to_vec(),
                             prop::PHY_MTU => 255u16.to_le_bytes().to_vec(),
+                            prop::PHY_T_FRAME => props
+                                .get(&key)
+                                .cloned()
+                                .unwrap_or_else(|| 624u32.to_le_bytes().to_vec()),
                             _ => props.get(&key).cloned().unwrap_or_default(),
                         };
                         let len = frame::prop_is(&mut buf, tid, key, &value).unwrap();
@@ -3963,6 +4019,121 @@ mod tests {
         assert_eq!(radio.dev_model(), Some("Fake Board"));
         assert_eq!(radio.boot_status(), Status::RESET_POWER_ON);
         assert!(radio.t_frame_ms() > 0);
+    }
+
+    struct TimingLink {
+        duration: Result<Vec<u8>, Status>,
+        response: Option<Vec<u8>>,
+        sends: usize,
+    }
+
+    impl FrameLink for TimingLink {
+        async fn send_frame(&mut self, bytes: &[u8]) -> Result<(), UlcpError> {
+            let request = Frame::parse(bytes).unwrap();
+            let tid = request.header.tid();
+            let mut response = [0; 64];
+            let len = if request.command() == Some(Cmd::StrSend) {
+                self.sends += 1;
+                frame::last_status(&mut response, tid, Status::CCA_FAILURE).unwrap()
+            } else {
+                let key = PropPayload::parse(request.payload).unwrap().key;
+                let value = match key {
+                    prop::PHY_T_FRAME => self.duration.clone(),
+                    prop::PHY_LORA_BW => Ok(125_000u32.to_le_bytes().to_vec()),
+                    prop::PHY_LORA_SF => Ok(vec![12]),
+                    prop::PHY_LORA_CR => Ok(vec![5]),
+                    prop::PHY_MTU => Ok(255u16.to_le_bytes().to_vec()),
+                    _ => panic!("unexpected property {key}"),
+                };
+                match value {
+                    Ok(value) => frame::prop_is(&mut response, tid, key, &value).unwrap(),
+                    Err(status) => frame::last_status(&mut response, tid, status).unwrap(),
+                }
+            };
+            self.response = Some(response[..len].to_vec());
+            Ok(())
+        }
+
+        fn poll_recv_frame(
+            &mut self,
+            _: &mut core::task::Context<'_>,
+        ) -> core::task::Poll<Result<Vec<u8>, UlcpError>> {
+            self.response
+                .take()
+                .map_or(core::task::Poll::Pending, |reply| {
+                    core::task::Poll::Ready(Ok(reply))
+                })
+        }
+    }
+
+    fn timing_radio(duration: Result<Vec<u8>, Status>) -> UlcpDevice<TimingLink> {
+        UlcpDevice::bare(
+            TimingLink {
+                duration,
+                response: None,
+                sends: 0,
+            },
+            UlcpDeviceConfig::new(917_500, 500_000, 10, 5),
+        )
+    }
+
+    #[tokio::test]
+    async fn transmit_refreshes_device_timing_and_busy_returns_immediately() {
+        let mut radio = timing_radio(Ok(624u32.to_le_bytes().to_vec()));
+        let result = tokio::time::timeout(
+            Duration::from_millis(100),
+            radio.send_confirmed(&[1], &[], None),
+        )
+        .await
+        .unwrap();
+        assert!(matches!(result, Err(TxError::CadTimeout)));
+        assert_eq!(radio.t_frame_ms(), 624);
+        assert_eq!(radio.transmit_timeout(), Duration::from_secs(3));
+
+        radio.link.duration = Ok(5_000u32.to_le_bytes().to_vec());
+        let result = tokio::time::timeout(
+            Duration::from_millis(100),
+            radio.send_confirmed(&[1], &[], None),
+        )
+        .await
+        .unwrap();
+        assert!(matches!(result, Err(TxError::CadTimeout)));
+        assert_eq!(radio.t_frame_ms(), 5_000);
+        assert_eq!(radio.transmit_timeout(), Duration::from_secs(10));
+        assert_eq!(radio.link.sends, 2);
+        radio.config.response_timeout = Duration::from_secs(20);
+        assert_eq!(radio.transmit_timeout(), Duration::from_secs(20));
+        radio.t_frame_ms = u32::MAX;
+        assert_eq!(
+            radio.transmit_timeout(),
+            Duration::from_millis(u64::from(u32::MAX) * 2)
+        );
+    }
+
+    #[tokio::test]
+    async fn legacy_timing_uses_live_phy_instead_of_host_defaults() {
+        for status in [Status::PROP_NOT_FOUND, Status::UNIMPLEMENTED] {
+            let mut radio = timing_radio(Err(status));
+            assert_eq!(radio.refresh_t_frame().await.unwrap(), 9806);
+            assert_eq!(radio.transmit_timeout(), Duration::from_millis(19612));
+        }
+    }
+
+    #[tokio::test]
+    async fn malformed_or_failed_timing_does_not_transmit_with_a_guessed_deadline() {
+        for value in [
+            Ok(vec![]),
+            Ok(vec![1]),
+            Ok(0u32.to_le_bytes().to_vec()),
+            Err(Status::FAILURE),
+        ] {
+            let mut radio = timing_radio(value);
+            assert!(matches!(
+                radio.send_confirmed(&[1], &[], None).await,
+                Err(TxError::Io(_))
+            ));
+            assert_eq!(radio.link.sends, 0);
+        }
     }
 
     #[tokio::test]

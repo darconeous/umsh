@@ -445,12 +445,15 @@ mod firmware {
     #[cfg(feature = "board-xiao-nrf52")]
     const DEV_MODEL: &str = "Seeed XIAO nRF52840 + Wio-SX1262 Kit";
 
+    const TX_PREAMBLE_SYMBOLS: u16 = 32;
+
     fn session_config() -> SessionConfig {
         SessionConfig {
             dev_version: DEV_VERSION,
             dev_model: Some(DEV_MODEL),
             default_device_name: default_device_name(),
             mtu: MAX_PAYLOAD as u16,
+            tx_preamble_symbols: TX_PREAMBLE_SYMBOLS,
             // Fixed at build time: LoRa::new(.., false, ..) below sets the
             // private-network word 0x12 → SX126x registers 0x1424.
             sync_word: umsh_ulcp::profiles::DEFAULT.sync_word,
@@ -3162,7 +3165,7 @@ mod firmware {
             &RADIO_CH,
             &DEVICE_CTL,
             RX_PREAMBLE,
-            32,
+            TX_PREAMBLE_SYMBOLS,
             umsh_radio_loraphy::RxStrategy::Continuous,
             Some(&STATS),
         )
@@ -3181,6 +3184,26 @@ mod firmware {
             Some(&STATS),
         )
         .await
+    }
+
+    /// Record bus power transitions in diagnostic builds, separately from
+    /// the CDC port's DTR-driven attach/detach events.
+    #[cfg(feature = "ble-debug")]
+    struct UsbTrace;
+
+    #[cfg(feature = "ble-debug")]
+    impl embassy_usb::Handler for UsbTrace {
+        fn suspended(&mut self, suspended: bool) {
+            debug_log(format_args!("usb suspended={suspended}"));
+        }
+
+        fn reset(&mut self) {
+            debug_log(format_args!("usb bus reset"));
+        }
+
+        fn configured(&mut self, configured: bool) {
+            debug_log(format_args!("usb configured={configured}"));
+        }
     }
 
     /// Owns the USB `Sender`, HDLC-encodes frames, and writes USB packets.
@@ -6126,6 +6149,11 @@ mod firmware {
         );
 
         let class = CdcAcmClass::new(&mut builder, STATE.init(State::new()), 64);
+        #[cfg(feature = "ble-debug")]
+        {
+            static USB_TRACE: StaticCell<UsbTrace> = StaticCell::new();
+            builder.handler(USB_TRACE.init(UsbTrace));
+        }
         let mut usb = builder.build();
 
         let (tx, raw_rx, ctrl) = class.split_with_control();

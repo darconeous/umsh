@@ -196,6 +196,7 @@ fn scalar(key: u32, value: u32) -> String {
         prop::PHY_FREQ => format!("{value} kHz"),
         prop::PHY_LORA_BW => format!("{value} Hz"),
         prop::PHY_MTU => format!("{value} bytes"),
+        prop::PHY_T_FRAME => format!("{value} ms"),
         prop::UPTIME | prop::ADVERT_INTERVAL | prop::BEACON_INTERVAL => {
             format!("{value} s ({})", super::format_duration(value))
         }

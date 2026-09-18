@@ -329,6 +329,7 @@ fn radio_keys(ctx: &Context) -> Vec<u32> {
         prop::PHY_FREQ,
         prop::PHY_TX_POWER,
         prop::PHY_MTU,
+        prop::PHY_T_FRAME,
     ];
     if ctx.has(cap::PHY_LORA) {
         keys.extend([
@@ -376,6 +377,9 @@ fn render_radio(set: &PropSet, _ctx: &Context) -> Vec<Line> {
     }
     if let Some(mtu) = set.u16(prop::PHY_MTU) {
         lines.push(("mtu".into(), format!("{mtu} bytes")));
+    }
+    if let Some(ms) = set.u32(prop::PHY_T_FRAME) {
+        lines.push(("frame airtime".into(), format!("{ms} ms")));
     }
     if set.answered(prop::PHY_DUTY_NOW) || set.answered(prop::PHY_DUTY_LIMIT) {
         let now = set

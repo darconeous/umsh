@@ -36,6 +36,7 @@ Id   | Mnemonic              | Commands | Description
 41   | `PROP_PHY_LORA_CR`    | Get, Set | LoRa coding rate
 42   | `PROP_PHY_MTU`        | Get      | Max size of a frame
 43   | `PROP_PHY_LORA_SW`    | Get, Set | LoRa sync word (16-bit style)
+44   | `PROP_PHY_T_FRAME`    | Get      | Maximum frame airtime in milliseconds
 4820 | `PROP_PHY_DUTY_NOW`   | Get      | Current duty usage
 4822 | `PROP_PHY_DUTY_LIMIT` | Get, Set | Duty-cycle limit
 4832 | `PROP_STAT_TX_PACKETS` | Get, Set | Packets transmitted over the air
@@ -169,6 +170,36 @@ Maximum size of the `DATA` field that may be supplied to `STR_PHY_RAW`.
 * Post-Reset Value: Implementation-Specific, but 0x1424 is a good suggestion.
 
 Value is the 16-bit (SX126x-style) LoRa sync-word.
+
+### PROP 44: `PROP_PHY_T_FRAME` {#prop-phy-t-frame}
+
+* Type: Single-Value, Read-Only
+* Asynchronous Updates: No
+* Required: **REQUIRED** for new implementations; older devices may return `STATUS_PROP_NOT_FOUND`
+* Scope: NLI
+* Value Type: UINT32_LE
+* Units: milliseconds
+* Post-Reset Value: Derived from the post-reset PHY configuration
+
+An upper bound on the on-air duration of a frame with `PROP_PHY_MTU` data
+octets at the current PHY settings, rounded up to a whole millisecond.
+Implementations MAY round conservatively upward. The positive,
+nonzero value includes the transmit preamble, PHY header, coding overhead,
+and PHY CRC. It excludes channel-access waiting, retry delays, duty-cycle
+deferral, queueing, and host transport latency. It remains readable while
+the PHY is disabled and is recomputed from the current configuration.
+
+This is the PHY-independent `T_frame` used by [channel-access timing](channel-access.md).
+Hosts can use it without interpreting modulation-specific properties. A host
+SHOULD refresh it after PHY configuration changes and before choosing a
+transmit response deadline; `max(3000 ms, 2 × T_frame)` is a suggested budget.
+An explicit failure response, including `STATUS_CCA_FAILURE`, completes the
+request immediately rather than waiting for this deadline.
+
+Older LoRa devices can be supported by deriving an estimate from their live
+PHY parameters, with an implementation-specific assumption about the preamble
+when it is not exposed. Hosts MUST NOT substitute their desired or default
+configuration for the device's current configuration.
 
 ### PROP 4820: `PROP_PHY_DUTY_NOW` {#prop-phy-duty-now}
 

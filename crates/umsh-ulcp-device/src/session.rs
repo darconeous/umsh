@@ -202,6 +202,8 @@ pub struct SessionConfig {
     pub default_device_name: &'static str,
     /// `PROP_PHY_MTU`; must not exceed [`MAX_MTU`].
     pub mtu: u16,
+    /// Transmit preamble used by the radio runner, for `PROP_PHY_T_FRAME`.
+    pub tx_preamble_symbols: u16,
     /// The only sync word this firmware can use; `PROP_PHY_LORA_SW`
     /// sets must match it (v0 limitation).
     pub sync_word: u16,
@@ -6545,6 +6547,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             | prop::UPTIME
             | prop::PHY_RSSI
             | prop::PHY_MTU
+            | prop::PHY_T_FRAME
             | prop::PHY_DUTY_NOW
             | prop::DEV_KEY
             | prop::HOST_RX_QUEUE_COUNT
@@ -7303,6 +7306,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                 | prop::PHY_LORA_SF
                 | prop::PHY_LORA_CR
                 | prop::PHY_MTU
+                | prop::PHY_T_FRAME
                 | prop::PHY_LORA_SW
                 | prop::DEV_NAME
                 | prop::DEV_KEY
@@ -7495,6 +7499,17 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                 1
             }
             prop::PHY_MTU => put(out, &self.config.mtu.to_le_bytes()),
+            prop::PHY_T_FRAME => put(
+                out,
+                &umsh_ulcp::airtime::lora_airtime_ms_with_preamble(
+                    self.device.settings.sf,
+                    self.device.settings.bw_hz,
+                    self.device.settings.cr_denom,
+                    usize::from(self.config.mtu),
+                    self.config.tx_preamble_symbols,
+                )
+                .to_le_bytes(),
+            ),
             prop::PHY_LORA_SW => put(out, &self.config.sync_word.to_le_bytes()),
             prop::DEV_NAME => put(out, &self.device.name[..self.device.name_len]),
             prop::DEV_KEY => match &self.dev_key {
@@ -8209,6 +8224,7 @@ mod tests {
             dev_model: Some("Test Board"),
             default_device_name: "Test UMSH Device",
             mtu: 255,
+            tx_preamble_symbols: 32,
             sync_word: 0x1424,
             min_tx_power_dbm: -9,
             max_tx_power_dbm: 22,
@@ -8710,6 +8726,22 @@ mod tests {
         assert!(!settings.enabled);
         assert_eq!(settings.sf, 7);
         assert_eq!(get(&mut session, prop::PHY_ENABLED), [0]);
+    }
+
+    #[test]
+    fn t_frame_tracks_phy_and_mtu_and_is_read_only() {
+        let mut session = test_session();
+        set(&mut session, prop::PHY_LORA_BW, &500_000u32.to_le_bytes());
+        set(&mut session, prop::PHY_LORA_SF, &[10]);
+        set(&mut session, prop::PHY_LORA_CR, &[5]);
+        assert_eq!(get(&mut session, prop::PHY_T_FRAME), 624u32.to_le_bytes());
+        let (emitted, _) = set(&mut session, prop::PHY_T_FRAME, &1u32.to_le_bytes());
+        expect_status(&emitted[0], 2, Status::INVALID_ARGUMENT);
+        set(&mut session, prop::PHY_LORA_BW, &125_000u32.to_le_bytes());
+        set(&mut session, prop::PHY_LORA_SF, &[12]);
+        assert_eq!(get(&mut session, prop::PHY_T_FRAME), 9806u32.to_le_bytes());
+        session.config.mtu = 20;
+        assert_eq!(get(&mut session, prop::PHY_T_FRAME), 2106u32.to_le_bytes());
     }
 
     #[test]

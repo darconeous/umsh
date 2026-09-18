@@ -57,6 +57,7 @@ Id   | Mnemonic                                                                 
 41   | [`PROP_PHY_LORA_CR`](ulcp-radio.md#prop-phy-lora-cr)                                  | Get, Set                   | `CAP_PHY_LORA`
 42   | [`PROP_PHY_MTU`](ulcp-radio.md#prop-phy-mtu)                                          | Get                        | —
 43   | [`PROP_PHY_LORA_SW`](ulcp-radio.md#prop-phy-lora-sw)                                  | Get, Set                   | `CAP_PHY_LORA`
+44   | [`PROP_PHY_T_FRAME`](ulcp-radio.md#prop-phy-t-frame)                                  | Get                        | —
 48   | [`PROP_MAC_PROMISCUOUS`](ulcp-host.md#prop-mac-promiscuous)                           | Get, Set                   | `CAP_HOST_FILTER`
 49   | [`PROP_SAVED`](ulcp-saved-state.md#prop-saved)                                        | Get                        | `CAP_SAVE`
 50   | [`PROP_MAC_BACKHAUL`](ulcp-host.md#prop-mac-backhaul)                                 | Get, Set                   | `CAP_MAC_BACKHAUL`

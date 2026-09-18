@@ -91,6 +91,7 @@ local PROPERTIES = {
   [41] = "PROP_PHY_LORA_CR",
   [42] = "PROP_PHY_MTU",
   [43] = "PROP_PHY_LORA_SW",
+  [44] = "PROP_PHY_T_FRAME",
   [48] = "PROP_MAC_PROMISCUOUS",
   [49] = "PROP_SAVED",
   [50] = "PROP_MAC_BACKHAUL",

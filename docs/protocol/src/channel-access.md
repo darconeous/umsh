@@ -6,6 +6,9 @@ This chapter describes how UMSH nodes contend for channel access before transmit
 
 **T_frame** is the maximum on-air duration of a LoRa frame at the configured channel settings (spreading factor, bandwidth, coding rate, and maximum payload size). T_frame is not a fixed protocol constant; implementations derive it from the channel configuration. All timing parameters in this chapter are expressed as multiples of T_frame.
 
+ULCP hosts can read [`PROP_PHY_T_FRAME`](ulcp-radio.md#prop-phy-t-frame) from
+the device instead of calculating it from modulation-specific parameters.
+
 For reference, typical T_frame values for a maximum-length (255-byte) packet using common MeshCore-style channel settings:
 
 | Region | Settings | T_frame |

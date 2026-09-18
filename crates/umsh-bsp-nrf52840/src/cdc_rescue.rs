@@ -91,13 +91,18 @@ impl<'d, D: Driver<'d>> CdcAcmRescue<'d, D> {
     ///
     /// Returns `Ok(0)` when DTR drops at any other baud rate (port
     /// closed normally—caller should loop back to `wait_connection`).
+    /// Empty USB data packets are transfer terminators, not serial EOF,
+    /// and are skipped internally.
     /// Returns `Err` on USB endpoint errors.
     pub async fn read_packet(&mut self, buf: &mut [u8]) -> Result<usize, EndpointError> {
         loop {
             match select(self.rx.read_packet(buf), self.ctrl.control_changed()).await {
                 Either::First(result) => {
                     let n = result?;
-                    if n > 0 && self.escape.observe_slice(&buf[..n]) == RescueAction::TriggerDfu {
+                    if n == 0 {
+                        continue;
+                    }
+                    if self.escape.observe_slice(&buf[..n]) == RescueAction::TriggerDfu {
                         gpregret::enter_dfu_uf2();
                     }
                     return Ok(n);
