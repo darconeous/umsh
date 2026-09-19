@@ -522,17 +522,35 @@ PCF85063 retained time uses its
 own register layout, with oscillator-stop, invalid dates, and implausible
 epochs reported as unknown. The unused RTC clock output is disabled.
 
-Battery telemetry is sampled each second. Startup trusts the BQ27220's
+Idle battery sampling reads only voltage, SOC, gauge status, charger status,
+and external-power presence every 60 seconds. Visible Battery detail pages
+enable one-second scalar diagnostic updates; other detailed readings are
+acquired only on request. With USB absent, voltage at or below 3.5 V changes
+the snapshot interval to one second. Missing/failed voltage readings also
+use one-second retries. USB/charging status can consequently take up to a
+minute to update while idle; an explicit battery request reads fresh data.
+
+Every sampling pass reads OperationStatus first. If CFGUPDATE is set, it
+performs no further battery or charger I2C operations, retains the cached UI
+snapshot, returns `BUSY` for diagnostic requests, and clears pending low-voltage
+shutdown evidence. Periodic passes only recheck status at the applicable
+interval until the host exits CFGUPDATE. Raw I2C remains available.
+
+Startup trusts the BQ27220's
 battery-backed configuration: it never enters configuration-update mode,
 rewrites capacity or taper parameters, resets the gauge, or corrects its
 learned capacity. After power and initial telemetry setup, the battery task
-temporarily unlocks for a read-only configuration snapshot and restores the
-original access state. This takes about nine seconds in the background; the
+exits a retained CFGUPDATE with `EXIT_CFG_UPDATE` (`0x0092`, without
+reinitialization), establishes FULL_ACCESS, and reads the configuration.
+FULL_ACCESS is deliberately retained for host provisioning for the time being;
+it changes access permissions without suspending normal gauging. An unlock
+failure is logged rather than silently assumed successful. A sealed gauge
+still needs about nine seconds of background startup work; the
 display, controls, and transports start without waiting for it, and the
 heartbeat continues servicing the watchdog. During inspection, the UI and
 ordinary battery queries use the initial reading. Detailed battery diagnostics
 return `BUSY` until inspection finishes, preserving the gauge's quiet periods.
-Shutdown waits for startup inspection to restore access before cutting power.
+Shutdown waits for the startup access procedure to finish before cutting power.
 On-device startup verification received USB replies at two to three seconds of uptime
 while battery diagnostics returned `BUSY`; normal diagnostics resumed at ten
 to eleven seconds without delaying transport availability.
@@ -618,17 +636,22 @@ Use `umshctl battery --gauge-config` to explicitly acquire the BQ27220 RAM
 configuration, or `umshctl get battery-gauge-config` to read it alone. JSON
 output includes every raw field and its units. The configuration property is
 excluded from ordinary battery polling and the Battery submenu. Inspection
-temporarily enters full access, validates memory-block addresses/checksums,
-and restores the original access state before returning; it never enters configuration-update mode,
+validates memory-block addresses/checksums and preserves the current access
+state (normally FULL_ACCESS established at startup). If manually resealed,
+inspection temporarily unlocks and restores that original access state; it never enters configuration-update mode,
 writes parameter data, or resets the gauge. The battery task finishes cleanup
 even if the USB/radio requester disconnects. Learned capacity is preserved.
 Security-key sequences require four seconds without addressing the gauge before
-each sequence. Explicit inspection therefore pauses ordinary gauge sampling for
-about nine seconds; other peripherals and input handling continue operating.
+each sequence. An already FULL_ACCESS gauge needs no key sequence. Inspecting
+a manually resealed gauge pauses ordinary gauge sampling for about nine
+seconds; other peripherals and input handling continue operating.
 The wire layout is documented under
 [`PROP_BATTERY_GAUGE_CONFIG`](../protocol/src/ulcp-device.md#prop-battery-gauge-config).
-Ten consecutive valid battery-only readings at or below 3.1 V request
-shutdown. The shutdown path stops radio and motion activity, blanks the
+Ten elapsed seconds of valid battery-only readings at or below 3.1 V request
+shutdown. More frequent host reads do not shorten this duration. USB presence,
+recovered voltage, missing/failed readings, CFGUPDATE, or a gap exceeding 2.5
+seconds between low readings restart the confirmation period. The shutdown
+path stops radio and motion activity, blanks the
 display, turns off peripheral domains, stops charger measurements, and
 requests immediate BQ25896 battery disconnection. On battery, SYS falls and
 the wheel cannot wake the unpowered ESP32; the dedicated Power Key or newly
@@ -651,8 +674,10 @@ Build the measurement image with
 and use the same flags with `flash-tlora-pager` to upload it. This feature does
 not enable BLE debugging or change radio, GNSS, or charger settings.
 
-The image uses existing periodic battery acquisitions to retain a fixed-size
-summary in RAM. With USB unplugged and the screen dark and armed, it allows
+This qualification-only image explicitly retains one-second snapshots and
+current measurements to build a fixed-size summary in RAM. Production builds
+use the 60-second idle policy and do not measure current periodically. With
+USB unplugged and the screen dark and armed, the qualification image allows
 30 seconds to settle, then collects at least 300 readings spanning at least
 five minutes. Reconnect USB, close other serial clients, and run
 `python3 scripts/pager_input_power.py /dev/cu.usbmodem101` (using the actual

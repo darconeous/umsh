@@ -178,6 +178,13 @@ impl<I: I2c> Battery<I> {
         Ok(u16::from_le_bytes(bytes))
     }
     pub async fn read(&mut self) -> Result<Reading, I::Error> {
+        let operation = self.word(0x3a).await;
+        if operation
+            .as_ref()
+            .is_ok_and(|op| op & crate::gauge::CONFIG_UPDATE != 0)
+        {
+            return Ok(decode_reading(0, false, None));
+        }
         let status = crate::read(&mut self.i2c, CHARGER, 0x0b).await?;
         let vbus = crate::read(&mut self.i2c, CHARGER, 0x11).await? & 0x80 != 0;
         // A missing gauge must not suppress USB attach/detach detection.
@@ -185,7 +192,7 @@ impl<I: I2c> Battery<I> {
             self.word(8).await,
             self.word(0x0a).await,
             self.word(0x2c).await,
-            self.word(0x3a).await,
+            operation,
         ) {
             (Ok(mv), Ok(flags), Ok(soc), Ok(operation)) => Some((mv, flags, soc, operation)),
             _ => None,
@@ -213,18 +220,27 @@ impl<I: I2c> Battery<I> {
     }
 
     /// Read requested scalar registers once, retaining independent failures.
+    /// Always check OperationStatus first. A host CFGUPDATE owns the gauge:
+    /// return BUSY without any further reads or writes, including charger reads.
     /// The owner separately services explicit configuration inspection requests.
     pub async fn sample(
         &mut self,
         fields: umsh_ulcp::battery_diagnostics::Fields,
         delay: &mut impl DelayNs,
-    ) -> umsh_ulcp::battery_diagnostics::Sample {
+    ) -> Result<umsh_ulcp::battery_diagnostics::Sample, umsh_ulcp::Status> {
         use umsh_ulcp::{
             Status,
             battery::{BatteryChargeState, BatteryStatus},
             battery_diagnostics::{Sample, Value, VoltageRequest},
             ids::prop,
         };
+        let operation = self
+            .sample_word(delay, 0x3a)
+            .await
+            .map_err(|_| Status::FAILURE)?;
+        if operation & crate::gauge::CONFIG_UPDATE != 0 {
+            return Err(Status::BUSY);
+        }
         let mut sample = Sample::default();
         let snapshot = fields.contains(prop::BATTERY);
         let needed = |key| fields.contains(key);
@@ -238,12 +254,6 @@ impl<I: I2c> Battery<I> {
             || needed(prop::BATTERY_PRESENT)
             || needed(prop::BATTERY_GAUGE_FULL)
             || needed(prop::BATTERY_GAUGE_STATUS);
-        let operation_needed = snapshot
-            || capacities
-            || voltage_request
-            || needed(prop::BATTERY_GAUGE_INITIALIZED)
-            || needed(prop::BATTERY_GAUGE_SMOOTHING)
-            || needed(prop::BATTERY_GAUGE_OPERATION_STATUS);
         let charger = if snapshot {
             crate::read(&mut self.i2c, CHARGER, 0x0b).await.ok()
         } else {
@@ -262,11 +272,7 @@ impl<I: I2c> Battery<I> {
         } else {
             None
         };
-        let operation = if operation_needed {
-            self.sample_word(delay, 0x3a).await.ok()
-        } else {
-            None
-        };
+        let operation = Some(operation);
         if snapshot {
             let mv = self.sample_word(delay, 8).await.ok();
             let soc = self.sample_word(delay, 0x2c).await.ok();
@@ -373,7 +379,7 @@ impl<I: I2c> Battery<I> {
         if needed(prop::BATTERY_GAUGE_TELEMETRY) {
             sample.gauge_telemetry = self.telemetry(delay).await.map_err(|_| Status::FAILURE);
         }
-        sample
+        Ok(sample)
     }
     /// Standard commands are readable while sealed. No security/configuration writes.
     async fn telemetry(
@@ -392,6 +398,20 @@ impl<I: I2c> Battery<I> {
         delay: &mut impl DelayNs,
     ) -> Result<umsh_ulcp::battery_gauge_config::Config, crate::gauge::ConfigError<I::Error>> {
         crate::gauge::inspect_configuration(&mut self.i2c, delay).await
+    }
+
+    pub async fn enable_full_access(
+        &mut self,
+        delay: &mut impl DelayNs,
+    ) -> Result<(), crate::gauge::ConfigError<I::Error>> {
+        crate::gauge::enable_full_access(&mut self.i2c, delay).await
+    }
+
+    pub async fn exit_configuration_update(
+        &mut self,
+        delay: &mut impl DelayNs,
+    ) -> Result<(), crate::gauge::ConfigError<I::Error>> {
+        crate::gauge::exit_configuration_update(&mut self.i2c, delay).await
     }
 
     pub async fn sleep(&mut self) -> Result<(), I::Error> {
@@ -444,16 +464,45 @@ pub fn decode_reading(status: u8, vbus: bool, gauge: Option<(u16, u16, u16, u16)
 
 #[derive(Default)]
 pub struct LowBattery {
-    consecutive: u8,
+    since_ms: Option<u64>,
+    last_ms: u64,
 }
 impl LowBattery {
-    /// Called only on the one-second cadence, not on host-requested samples.
-    pub fn sample(&mut self, sample: Option<&Reading>) -> bool {
+    /// Require ten elapsed seconds of valid low readings. Frequent host reads
+    /// cannot accelerate shutdown; missing/error samples or a long acquisition
+    /// gap cannot be counted as evidence of continuously low voltage.
+    pub fn sample(&mut self, now_ms: u64, sample: Option<&Reading>) -> bool {
         if sample.is_some_and(|r| !r.vbus && r.voltage_mv.is_some_and(|mv| mv <= 3100)) {
-            self.consecutive = self.consecutive.saturating_add(1);
+            if self.since_ms.is_none() || now_ms.saturating_sub(self.last_ms) > 2500 {
+                self.since_ms = Some(now_ms);
+            }
+            self.last_ms = now_ms;
         } else {
-            self.consecutive = 0;
+            self.since_ms = None;
         }
-        self.consecutive >= 10
+        self.since_ms
+            .is_some_and(|since| now_ms.saturating_sub(since) >= 10_000)
+    }
+}
+
+/// Refresh a minimal snapshot once per minute normally. A visible diagnostics
+/// page, unknown voltage, or battery voltage near shutdown needs quicker reads.
+pub fn battery_poll_interval_ms(reading: Option<&Reading>, details_visible: bool) -> u64 {
+    if details_visible
+        || reading.is_none_or(|r| r.voltage_mv.is_none_or(|mv| !r.vbus && mv <= 3500))
+    {
+        1000
+    } else {
+        60_000
+    }
+}
+
+/// Periodic reads stay minimal unless a diagnostics page is actually visible.
+pub fn battery_poll_fields(details_visible: bool) -> umsh_ulcp::battery_diagnostics::Fields {
+    use umsh_ulcp::{battery_diagnostics::Fields, ids::prop};
+    if details_visible {
+        Fields::ALL
+    } else {
+        Fields::SNAPSHOT.union(Fields::for_key(prop::BATTERY_EXT_POWER_PRESENT))
     }
 }

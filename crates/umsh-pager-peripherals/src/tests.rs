@@ -227,14 +227,16 @@ fn battery_group_selects_dependencies_and_preserves_independent_failures() {
     let fields = keys.into_iter().fold(Fields::NONE, |fields, key| {
         fields.union(Fields::for_key(key))
     });
-    let mut ops = vec![Op::Read(0x6b, vec![0x11], vec![0x80])];
-    gauge_word(&mut ops, 0x0a, 0x208);
+    let mut ops = Vec::new();
     gauge_word(&mut ops, 0x3a, 0xa6);
+    ops.push(Op::Read(0x6b, vec![0x11], vec![0x80]));
+    gauge_word(&mut ops, 0x0a, 0x208);
     ops.push(Op::FailedRead(0x55, vec![0x0c]));
     gauge_word(&mut ops, 0x12, 1500);
     let mut delay = GaugeDelay::default();
     let sample =
-        embassy_futures::block_on(Battery::new(Bus(ops.into())).sample(fields, &mut delay));
+        embassy_futures::block_on(Battery::new(Bus(ops.into())).sample(fields, &mut delay))
+            .unwrap();
     assert_eq!(sample.get(prop::BATTERY_CURRENT), Err(Status::FAILURE));
     assert_eq!(
         sample.get(prop::BATTERY_FULL_CAPACITY),
@@ -256,16 +258,19 @@ fn battery_group_selects_dependencies_and_preserves_independent_failures() {
 }
 
 #[test]
-fn battery_group_external_power_does_not_touch_the_gauge() {
+fn battery_group_external_power_checks_configuration_before_reading_charger() {
     use umsh_ulcp::{
         battery_diagnostics::{Fields, Value},
         ids::prop,
     };
-    let ops = vec![Op::Read(0x6b, vec![0x11], vec![0])];
+    let mut ops = Vec::new();
+    gauge_word(&mut ops, 0x3a, 0x22);
+    ops.push(Op::Read(0x6b, vec![0x11], vec![0]));
     let sample = embassy_futures::block_on(Battery::new(Bus(ops.into())).sample(
         Fields::for_key(prop::BATTERY_EXT_POWER_PRESENT),
         &mut GaugeDelay::default(),
-    ));
+    ))
+    .unwrap();
     assert_eq!(
         sample.get(prop::BATTERY_EXT_POWER_PRESENT),
         Ok(Some(Value::Bool(false)))
@@ -280,7 +285,9 @@ fn live_gauge_telemetry_reads_only_standard_commands_and_fails_as_one_property()
     // Success and each possible read failure. No unlock or other writes, and
     // earlier scalar successes remain available if a telemetry read fails.
     for failed in 0..=FIELDS.len() {
-        let mut ops = vec![Op::Read(0x6b, vec![0x11], vec![0x80])];
+        let mut ops = Vec::new();
+        gauge_word(&mut ops, 0x3a, 0x22);
+        ops.push(Op::Read(0x6b, vec![0x11], vec![0x80]));
         for (i, field) in FIELDS.iter().enumerate() {
             if i == failed {
                 ops.push(Op::FailedRead(0x55, vec![field.register]));
@@ -292,7 +299,8 @@ fn live_gauge_telemetry_reads_only_standard_commands_and_fails_as_one_property()
         let sample = embassy_futures::block_on(Battery::new(Bus(ops.into())).sample(
             Fields::GAUGE_TELEMETRY.union(Fields::for_key(prop::BATTERY_EXT_POWER_PRESENT)),
             &mut delay,
-        ));
+        ))
+        .unwrap();
         assert_eq!(
             sample.get(prop::BATTERY_EXT_POWER_PRESENT),
             Ok(Some(umsh_ulcp::battery_diagnostics::Value::Bool(true)))
@@ -317,15 +325,16 @@ fn battery_group_initializing_gauge_has_no_capacity_estimate() {
         ids::prop,
     };
     let mut ops = Vec::new();
-    gauge_word(&mut ops, 0x0a, 8);
     gauge_word(&mut ops, 0x3a, 6);
+    gauge_word(&mut ops, 0x0a, 8);
     let sample = embassy_futures::block_on(
         Battery::new(Bus(ops.into())).sample(
             Fields::for_key(prop::BATTERY_FULL_CAPACITY)
                 .union(Fields::for_key(prop::BATTERY_GAUGE_INITIALIZED)),
             &mut GaugeDelay::default(),
         ),
-    );
+    )
+    .unwrap();
     assert_eq!(sample.get(prop::BATTERY_FULL_CAPACITY), Ok(None));
     assert_eq!(
         sample.get(prop::BATTERY_GAUGE_INITIALIZED),
@@ -365,6 +374,157 @@ fn inspection_unseal(ops: &mut Vec<Op>) {
     gauge_command(ops, 0x0414);
     gauge_command(ops, 0x3672);
     gauge_word(ops, 0x3a, 4);
+}
+
+#[test]
+fn full_access_startup_changes_only_security_and_leaves_gauging_running() {
+    for security in [2, 4, 6] {
+        let mut ops = Vec::new();
+        gauge_word(&mut ops, 0x3a, security | 0x20);
+        if security == 6 {
+            inspection_unseal(&mut ops);
+        }
+        if security != 2 {
+            gauge_command(&mut ops, 0xffff);
+            gauge_command(&mut ops, 0xffff);
+            gauge_word(&mut ops, 0x3a, 2 | 0x20);
+        }
+        let mut delay = GaugeDelay::default();
+        embassy_futures::block_on(crate::gauge::enable_full_access(
+            &mut Bus(ops.into()),
+            &mut delay,
+        ))
+        .unwrap();
+        assert_eq!(
+            delay.0.iter().filter(|&&ns| ns == 4_000_000_000).count(),
+            match security {
+                6 => 2,
+                4 => 1,
+                _ => 0,
+            }
+        );
+    }
+}
+
+#[test]
+fn full_access_preserves_host_configuration_and_reports_unlock_failure() {
+    for (operation, error) in [
+        (0x402, crate::gauge::ConfigError::ConfigurationBusy),
+        (0, crate::gauge::ConfigError::InvalidSecurity),
+    ] {
+        let mut ops = Vec::new();
+        gauge_word(&mut ops, 0x3a, operation);
+        assert_eq!(
+            embassy_futures::block_on(crate::gauge::enable_full_access(
+                &mut Bus(ops.into()),
+                &mut GaugeDelay::default(),
+            )),
+            Err(error)
+        );
+    }
+    let mut ops = Vec::new();
+    gauge_word(&mut ops, 0x3a, 4);
+    ops.push(Op::FailedWrite(0x55, vec![0, 0xff]));
+    assert_eq!(
+        embassy_futures::block_on(crate::gauge::enable_full_access(
+            &mut Bus(ops.into()),
+            &mut GaugeDelay::default(),
+        )),
+        Err(crate::gauge::ConfigError::Bus(ErrorKind::Bus))
+    );
+}
+
+#[test]
+fn startup_exits_configuration_without_reinitialization_and_bounds_wait() {
+    for active in [false, true] {
+        let mut ops = Vec::new();
+        gauge_word(&mut ops, 0x3a, if active { 0x422 } else { 0x22 });
+        if active {
+            gauge_command(&mut ops, 0x0092);
+            gauge_word(&mut ops, 0x3a, 0x422);
+            gauge_word(&mut ops, 0x3a, 0x22);
+        }
+        embassy_futures::block_on(crate::gauge::exit_configuration_update(
+            &mut Bus(ops.into()),
+            &mut GaugeDelay::default(),
+        ))
+        .unwrap();
+    }
+    let mut ops = Vec::new();
+    gauge_word(&mut ops, 0x3a, 0x422);
+    gauge_command(&mut ops, 0x0092);
+    for _ in 0..6 {
+        gauge_word(&mut ops, 0x3a, 0x422);
+    }
+    assert_eq!(
+        embassy_futures::block_on(crate::gauge::exit_configuration_update(
+            &mut Bus(ops.into()),
+            &mut GaugeDelay::default(),
+        )),
+        Err(crate::gauge::ConfigError::Timeout)
+    );
+}
+
+#[test]
+fn battery_sampling_stops_at_configuration_mode_or_status_read_failure() {
+    use umsh_ulcp::{Status, battery_diagnostics::Fields};
+    for fields in [
+        Fields::SNAPSHOT,
+        Fields::ALL,
+        Fields::GAUGE_CONFIG,
+        Fields::GAUGE_TELEMETRY,
+    ] {
+        for failed in [false, true] {
+            let mut ops = Vec::new();
+            if failed {
+                ops.push(Op::FailedRead(0x55, vec![0x3a]));
+            } else {
+                gauge_word(&mut ops, 0x3a, 0x422);
+            }
+            // No charger access, data-window access, or automatic exit allowed.
+            let result = embassy_futures::block_on(
+                Battery::new(Bus(ops.into())).sample(fields, &mut GaugeDelay::default()),
+            );
+            assert_eq!(
+                result.unwrap_err(),
+                if failed {
+                    Status::FAILURE
+                } else {
+                    Status::BUSY
+                }
+            );
+        }
+    }
+    let mut ops = Vec::new();
+    gauge_word(&mut ops, 0x3a, 0x422);
+    let reading = embassy_futures::block_on(Battery::new(Bus(ops.into())).read()).unwrap();
+    assert_eq!(reading.voltage_mv, None);
+}
+
+#[test]
+fn idle_snapshot_resumes_after_host_exits_configuration_without_extra_diagnostics() {
+    use umsh_ulcp::Status;
+    let mut ops = Vec::new();
+    gauge_word(&mut ops, 0x3a, 0x422);
+    gauge_word(&mut ops, 0x3a, 0x22);
+    ops.push(Op::Read(0x6b, vec![0x0b], vec![0]));
+    ops.push(Op::Read(0x6b, vec![0x11], vec![0]));
+    gauge_word(&mut ops, 0x0a, 8);
+    gauge_word(&mut ops, 8, 3800);
+    gauge_word(&mut ops, 0x2c, 60);
+    let mut battery = Battery::new(Bus(ops.into()));
+    let mut delay = GaugeDelay::default();
+    assert_eq!(
+        embassy_futures::block_on(battery.sample(battery_poll_fields(false), &mut delay))
+            .unwrap_err(),
+        Status::BUSY
+    );
+    let sample = embassy_futures::block_on(battery.sample(battery_poll_fields(false), &mut delay))
+        .unwrap()
+        .snapshot
+        .unwrap();
+    assert_eq!(sample.voltage_mv, Some(3800));
+    assert_eq!(sample.level_percent, Some(60));
 }
 
 #[test]
@@ -599,23 +759,54 @@ fn battery_unknown_is_not_zero_or_charged() {
     );
 }
 #[test]
-fn low_battery_needs_ten_consecutive_valid_unpowered_samples() {
+fn low_battery_uses_elapsed_time_and_rejects_invalid_or_stale_evidence() {
     let mut policy = LowBattery::default();
     let mut r = decode_reading(0, false, Some((3100, 8, 0, 0x20)));
-    for _ in 0..9 {
-        assert!(!policy.sample(Some(&r)));
+    // Frequent host reads must not turn ten samples into an early shutdown.
+    for now in (0..10_000).step_by(100) {
+        assert!(!policy.sample(now, Some(&r)));
     }
-    assert!(!policy.sample(None));
-    for _ in 0..9 {
-        assert!(!policy.sample(Some(&r)));
+    assert!(policy.sample(10_000, Some(&r)));
+    for interruption in [None, Some(3200), Some(0), Some(3100)] {
+        // Errors, recovered voltage, missing voltage, and USB all break the hold.
+        r.voltage_mv = interruption.filter(|v| *v != 0);
+        r.vbus = interruption == Some(3100);
+        assert!(!policy.sample(11_000, interruption.map(|_| &r)));
+        r.voltage_mv = Some(3100);
+        r.vbus = false;
+        for now in (12_000..22_000).step_by(1000) {
+            assert!(!policy.sample(now, Some(&r)));
+        }
+        assert!(policy.sample(22_000, Some(&r)));
     }
+    // A minute without observations is not ten seconds of confirmed low voltage.
+    assert!(!policy.sample(82_000, Some(&r)));
+    for now in (83_000..92_000).step_by(1000) {
+        assert!(!policy.sample(now, Some(&r)));
+    }
+    assert!(policy.sample(92_000, Some(&r)));
+}
+
+#[test]
+fn battery_polling_is_minimal_until_visible_low_or_unknown() {
+    use umsh_ulcp::{battery_diagnostics::Fields, ids::prop};
+    let mut r = decode_reading(0, false, Some((4000, 8, 75, 0x20)));
+    assert_eq!(battery_poll_interval_ms(Some(&r), false), 60_000);
+    assert_eq!(battery_poll_interval_ms(Some(&r), true), 1000);
+    // Hiding the Battery page immediately restores the idle interval.
+    assert_eq!(battery_poll_interval_ms(Some(&r), false), 60_000);
+    r.voltage_mv = Some(3500);
+    assert_eq!(battery_poll_interval_ms(Some(&r), false), 1000);
     r.vbus = true;
-    assert!(!policy.sample(Some(&r)));
-    r.vbus = false;
-    for _ in 0..9 {
-        assert!(!policy.sample(Some(&r)));
-    }
-    assert!(policy.sample(Some(&r)));
+    assert_eq!(battery_poll_interval_ms(Some(&r), false), 60_000);
+    r.voltage_mv = None;
+    assert_eq!(battery_poll_interval_ms(Some(&r), false), 1000);
+    assert_eq!(battery_poll_interval_ms(None, false), 1000);
+    assert_eq!(
+        battery_poll_fields(false),
+        Fields::SNAPSHOT.union(Fields::for_key(prop::BATTERY_EXT_POWER_PRESENT))
+    );
+    assert_eq!(battery_poll_fields(true), Fields::ALL);
 }
 #[test]
 fn rtc_calendar_and_invalid_oscillator() {

@@ -6,7 +6,7 @@ use esp_hal::peripherals;
 use esp_hal::ram;
 use umsh_pager_peripherals::{
     input::{Debounce, KeyEvent, Keyboard, Quadrature},
-    power::{Battery, Expander, LowBattery},
+    power::{Battery, Expander, LowBattery, battery_poll_fields, battery_poll_interval_ms},
 };
 use umsh_ulcp::battery_diagnostics::{
     Fields as BatteryFieldsRequested, Sample as BatterySample, Value as BatteryValue,
@@ -97,12 +97,19 @@ fn screen_battery(sample: &BatterySample) -> Option<screen::BatteryDiagnostics> 
         },
     })
 }
-pub static BATTERY_DETAILS_ACTIVE: AtomicBool = AtomicBool::new(false);
+static BATTERY_DETAILS_ACTIVE: AtomicBool = AtomicBool::new(false);
+static BATTERY_DETAILS_CHANGED: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 static BATTERY_DETAILS: critical_section::Mutex<RefCell<Option<screen::BatteryDiagnostics>>> =
     critical_section::Mutex::new(RefCell::new(None));
 
 pub fn battery_diagnostics() -> Option<screen::BatteryDiagnostics> {
     critical_section::with(|cs| *BATTERY_DETAILS.borrow(cs).borrow())
+}
+
+pub fn set_battery_details_visible(visible: bool) {
+    if BATTERY_DETAILS_ACTIVE.swap(visible, Ordering::AcqRel) != visible {
+        BATTERY_DETAILS_CHANGED.signal(());
+    }
 }
 #[repr(C, align(4))]
 struct Stripe([u8; umsh_pager_peripherals::display::STRIPE_BYTES]);
@@ -169,11 +176,20 @@ fn publish_battery_reading(reading: &board_battery::Reading) {
 
 async fn check_termination(battery: &mut Battery<board::I2cHandle>) {
     // Read the actual provisioned gauge profile; never enter CFGUPDATE or
-    // overwrite capacity/taper/learning parameters. Restore access before proceeding.
+    // overwrite capacity/taper/learning parameters. For now, leave FULL_ACCESS
+    // enabled so the host can provision RAM without another unlock procedure.
     let config = {
         #[cfg(feature = "ulcp-i2c")]
         let _held = board::i2c::GAUGE_PROCEDURE.hold(0x55);
-        battery.inspect_configuration(&mut SampleDelay).await
+        let access = async {
+            battery.exit_configuration_update(&mut SampleDelay).await?;
+            battery.enable_full_access(&mut SampleDelay).await
+        }
+        .await;
+        match access {
+            Ok(()) => battery.inspect_configuration(&mut SampleDelay).await,
+            Err(error) => Err(error),
+        }
     };
     let mut report = heapless::String::new();
     match config {
@@ -266,7 +282,7 @@ pub async fn battery_task(bus: &'static board::I2cBus, initial: board_battery::R
     {
         // The sole battery owner performs the slow startup inspection while
         // display, input, and transports start independently. Keep polling this
-        // same future: canceling/restarting it can leave the gauge unsealed.
+        // same future: canceling/restarting it can interrupt the key sequence.
         let mut startup = core::pin::pin!(check_termination(&mut battery));
         loop {
             match select3(
@@ -297,43 +313,93 @@ pub async fn battery_task(bus: &'static board::I2cBus, initial: board_battery::R
     let announce = BATTERY_ANNOUNCE.sender();
     let mut previous = None;
     let mut low = LowBattery::default();
-    let mut next_tick = Instant::now();
+    let mut last_periodic = None::<Instant>;
+    let mut last_reading = Some(initial);
     let mut next_acquisition = Instant::now();
     loop {
-        let event = select3(
+        let details_visible = BATTERY_DETAILS_ACTIVE.load(Ordering::Acquire);
+        let interval = Duration::from_millis(battery_poll_interval_ms(
+            last_reading.as_ref(),
+            details_visible,
+        ));
+        #[cfg(feature = "input-qualification")]
+        let interval = interval.min(Duration::from_secs(1));
+        let next_tick = last_periodic.map_or_else(Instant::now, |last| last + interval);
+        let event = select4(
             Timer::at(next_tick),
             BATTERY_REQUEST.wait(),
             GROUP_REQUEST.wait(),
+            BATTERY_DETAILS_CHANGED.wait(),
         )
         .await;
-        let requested = matches!(event, Either3::Second(()));
+        if matches!(event, Either4::Fourth(())) {
+            // Recompute the deadline when entering/leaving a visible detail
+            // page; do not wait out the old minute or perform a stale fast read.
+            continue;
+        }
+        let requested = matches!(event, Either4::Second(()));
         let group = match event {
-            Either3::Third(request) => Some(request),
+            Either4::Third(request) => Some(request),
             _ => None,
         };
         let periodic = Instant::now() >= next_tick;
-        if periodic {
-            next_tick = Instant::now() + Duration::from_secs(1);
-        }
         let fields = group
             .map(|(_, fields)| fields)
-            .unwrap_or(
-                BatteryFieldsRequested::SNAPSHOT.union(BatteryFieldsRequested::for_key(
-                    umsh_ulcp::ids::prop::BATTERY_EXT_POWER_PRESENT,
-                )),
-            )
+            .unwrap_or(battery_poll_fields(false))
             .union(if periodic {
-                BatteryFieldsRequested::ALL
+                battery_poll_fields(details_visible)
             } else {
                 BatteryFieldsRequested::NONE
             });
+        // A snapshot also needs the external-power bit for shutdown policy.
+        let fields = fields.union(if fields.contains(umsh_ulcp::ids::prop::BATTERY) {
+            BatteryFieldsRequested::for_key(umsh_ulcp::ids::prop::BATTERY_EXT_POWER_PRESENT)
+        } else {
+            BatteryFieldsRequested::NONE
+        });
+        // Qualification builds explicitly request current for their buffered
+        // measurements. Production idle snapshots do not read diagnostics.
+        #[cfg(feature = "input-qualification")]
+        let fields = fields.union(BatteryFieldsRequested::for_key(
+            umsh_ulcp::ids::prop::BATTERY_CURRENT,
+        ));
         // TI limits complete standard-command polling to twice per second.
         // Host requests and the periodic UI/safety pass share this limit.
         Timer::at(next_acquisition).await;
         next_acquisition = Instant::now() + Duration::from_millis(500);
         let input_locks = input::locks_active();
-        let mut sample = battery.sample(fields, &mut SampleDelay).await;
-        if fields.contains(umsh_ulcp::ids::prop::BATTERY_GAUGE_CONFIG) {
+        let result = battery.sample(fields, &mut SampleDelay).await;
+        let gauge_ready = result.is_ok();
+        let sampled_at = Instant::now();
+        if periodic {
+            last_periodic = Some(sampled_at);
+        }
+        let mut sample = match result {
+            Ok(sample) => sample,
+            Err(umsh_ulcp::Status::BUSY) => {
+                // CFGUPDATE belongs to the host until it exits (or we reboot).
+                // Keep the UI/snapshot cache, but don't treat it as fresh evidence
+                // of low voltage. Do no inspection or other peripheral work.
+                low.sample(sampled_at.as_millis(), None);
+                let cached = last_reading.unwrap_or(initial);
+                if requested {
+                    BATTERY_REPLY.signal(cached);
+                }
+                if let Some((generation, _)) = group {
+                    let mut reply = BatterySample::default();
+                    reply.snapshot = Ok(battery_snapshot(&cached));
+                    reply.gauge_config = Err(umsh_ulcp::Status::BUSY);
+                    reply.gauge_telemetry = Err(umsh_ulcp::Status::BUSY);
+                    for key in umsh_ulcp::battery_diagnostics::KEYS {
+                        reply.set(key, Err(umsh_ulcp::Status::BUSY));
+                    }
+                    GROUP_REPLY.signal((generation, reply));
+                }
+                continue;
+            }
+            Err(_) => BatterySample::default(),
+        };
+        if gauge_ready && fields.contains(umsh_ulcp::ids::prop::BATTERY_GAUGE_CONFIG) {
             let inspected = {
                 #[cfg(feature = "ulcp-i2c")]
                 let _held = board::i2c::GAUGE_PROCEDURE.hold(0x55);
@@ -361,8 +427,9 @@ pub async fn battery_task(bus: &'static board::I2cBus, initial: board_battery::R
         }
         if let Some((generation, _)) = group {
             GROUP_REPLY.signal((generation, sample));
-            // Host diagnostics do not wake the screen or advance its cadence.
-            if !periodic {
+            // A targeted diagnostic read must not invalidate the cached snapshot
+            // or the low-voltage evidence just because no snapshot was requested.
+            if !fields.contains(umsh_ulcp::ids::prop::BATTERY) {
                 continue;
             }
         }
@@ -381,12 +448,13 @@ pub async fn battery_task(bus: &'static board::I2cBus, initial: board_battery::R
                 Ok(Some(BatteryValue::Bool(true)))
             ),
         });
-        if periodic {
+        if periodic && details_visible {
             let details = screen_battery(&sample);
             critical_section::with(|cs| *BATTERY_DETAILS.borrow(cs).borrow_mut() = details);
         }
         match reading {
             Ok(reading) => {
+                last_reading = Some(reading);
                 publish_battery_reading(&reading);
                 if requested {
                     BATTERY_REPLY.signal(reading);
@@ -404,14 +472,13 @@ pub async fn battery_task(bus: &'static board::I2cBus, initial: board_battery::R
                     announce.send(reading);
                     BATTERY_UI_CHANGED.signal(());
                 }
-                if periodic && low.sample(Some(&reading)) {
+                if low.sample(sampled_at.as_millis(), Some(&reading)) {
                     SHUTDOWN_REQUEST.signal(());
                 }
             }
             Err(_) => {
-                if periodic {
-                    low.sample(None);
-                }
+                last_reading = None;
+                low.sample(sampled_at.as_millis(), None);
                 BATTERY_MV.store(0, Ordering::Release);
                 BATTERY_LEVEL.store(0xff, Ordering::Release);
                 BATTERY_CHARGE.store(0, Ordering::Release);
@@ -433,7 +500,7 @@ pub async fn battery_task(bus: &'static board::I2cBus, initial: board_battery::R
         }
         // Refresh diagnostics without waking the display or extending attention.
         // Ordinary pages retain their existing announcement cadence.
-        if periodic && BATTERY_DETAILS_ACTIVE.load(Ordering::Acquire) {
+        if periodic && details_visible {
             BATTERY_UI_CHANGED.signal(());
         }
     }

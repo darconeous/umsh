@@ -3648,14 +3648,18 @@ async fn display_task(
 
     loop {
         #[cfg(feature = "board-tlora-pager")]
-        pager::BATTERY_DETAILS_ACTIVE.store(
-            matches!(
-                model.page(),
-                umsh_ux_display_tracker::menu::Page::Detail(
-                    MenuItem::BatteryCharge | MenuItem::BatteryCapacity | MenuItem::BatteryGauge
-                )
-            ),
-            Ordering::Release,
+        pager::set_battery_details_visible(
+            attention.accepts_redraw()
+                && !splash.is_active()
+                && !pager::alert::active()
+                && matches!(
+                    model.page(),
+                    umsh_ux_display_tracker::menu::Page::Detail(
+                        MenuItem::BatteryCharge
+                            | MenuItem::BatteryCapacity
+                            | MenuItem::BatteryGauge
+                    )
+                ),
         );
         // The name changes rarely but every frame this pass might draw
         // needs it, so it is snapshotted once and lent out; the rest of

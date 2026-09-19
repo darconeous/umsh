@@ -1,9 +1,9 @@
-//! Read-only BQ27220 RAM inspection (TI SLUUBD4A, chapters 5–6).
+//! BQ27220 access control and read-only RAM inspection (TI SLUUBD4A, chapters 5–6).
 //! Battery parameters are provisioned externally; startup never rewrites them.
 use embedded_hal_async::{delay::DelayNs, i2c::I2c};
 
 const ADDRESS: u8 = 0x55;
-const CONFIG_UPDATE: u16 = 1 << 10;
+pub(crate) const CONFIG_UPDATE: u16 = 1 << 10;
 const SECURITY: u16 = 6;
 const FULL_ACCESS: u16 = 2;
 const UNSEALED: u16 = 4;
@@ -130,6 +130,42 @@ impl<I: I2c, D: DelayNs> Gauge<'_, I, D> {
         }
         Err(ConfigError::Timeout)
     }
+}
+
+/// Startup-only recovery of an unfinished host configuration session. Exit
+/// without reinitializing the gauge or modifying its battery parameters.
+pub async fn exit_configuration_update<I: I2c>(
+    i2c: &mut I,
+    delay: &mut impl DelayNs,
+) -> Result<(), ConfigError<I::Error>> {
+    let mut gauge = Gauge { i2c, delay };
+    if gauge.word(0x3a).await? & CONFIG_UPDATE != 0 {
+        gauge.command(0x0092).await?;
+        gauge.wait(CONFIG_UPDATE, 0).await?;
+    }
+    Ok(())
+}
+
+/// Leave the gauge in FULL_ACCESS for host provisioning. This changes only
+/// access permissions: it does not enter CFGUPDATE, reset gauging, or write RAM.
+/// The caller must suspend other gauge traffic throughout the key quiet periods
+/// and must not cancel this procedure. An existing host CFGUPDATE is untouched.
+pub async fn enable_full_access<I: I2c>(
+    i2c: &mut I,
+    delay: &mut impl DelayNs,
+) -> Result<(), ConfigError<I::Error>> {
+    let mut gauge = Gauge { i2c, delay };
+    let operation = gauge.word(0x3a).await?;
+    if operation & CONFIG_UPDATE != 0 {
+        return Err(ConfigError::ConfigurationBusy);
+    }
+    match operation & SECURITY {
+        FULL_ACCESS => return Ok(()),
+        SEALED => gauge.inspection_unseal().await?,
+        UNSEALED => {}
+        _ => return Err(ConfigError::InvalidSecurity),
+    }
+    gauge.inspection_key(0xffff, 0xffff, FULL_ACCESS).await
 }
 
 /// Inspect the live RAM profile without entering configuration mode, committing
