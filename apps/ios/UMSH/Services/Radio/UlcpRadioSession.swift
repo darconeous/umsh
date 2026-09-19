@@ -1775,6 +1775,25 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
                 snapshot.problemDescription = operationErrorMessage
             }
         }
+        // An answer the Rust session could not use: the device acted, and
+        // the two disagree about the reply's shape. Reported on the update
+        // that settles the operation, read-back included, so it is what
+        // the operation's waiter throws. Not a link fault—the session is
+        // still attached, and the snapshot now reflects what the device
+        // reported rather than what the app predicted.
+        let mismatch = update.mismatchedResponse
+        if let mismatch {
+            Self.logger.error(
+                """
+                ULCP answer not understood: \(mismatch.operation, privacy: .public) \
+                answered with property 0x\(String(mismatch.propertyId, radix: 16), privacy: .public) \
+                command \(mismatch.command, privacy: .public)
+                """
+            )
+            if devicePeerWaiter == nil {
+                snapshot.problemDescription = RadioConnectionError.unrecognizedAnswerDescription
+            }
+        }
 
         let shouldAutoEnable = update.snapshot.phase == .attached
             && update.snapshot.provisioning?.phyEnabled == false
@@ -2006,18 +2025,19 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
         }
 
         if !update.waitingForResponses, update.snapshot.phase == .attached {
+            let rejection = operationErrorMessage.map(RadioConnectionError.operationRejected)
+                ?? mismatch.map { _ in RadioConnectionError.unrecognizedAnswer }
             if refreshInProgress {
-                finishRefresh(
-                    throwing: operationErrorMessage.map(RadioConnectionError.operationRejected)
-                )
+                finishRefresh(throwing: rejection)
             }
             if configurationWaiter != nil {
-                finishConfiguration(
-                    throwing: operationErrorMessage.map(RadioConnectionError.operationRejected)
-                )
+                finishConfiguration(throwing: rejection)
             }
             if devicePeerWaiter != nil {
-                finishDevicePeerOperation(throwing: devicePeerOutcome(update.operationError))
+                finishDevicePeerOperation(
+                    throwing: devicePeerOutcome(update.operationError)
+                        ?? mismatch.map { _ -> any Error in DevicePeerError.unrecognizedAnswer }
+                )
             }
         }
 
@@ -2552,6 +2572,26 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
             Self.logger.notice(
                 """
                 ulcp: ignoring unhandled command \
+                \(UlcpFrameDiagnostic.structure(frame), privacy: .public)
+                """
+            )
+            return
+        } catch MobileError.UlcpUnexpectedFrame {
+            // A well-formed frame the session has no place for: an answer
+            // to a transaction nothing is waiting on, or a frame that
+            // arrived before the session began. Rust refuses it before
+            // touching any state, so ignoring it costs nothing—no waiter
+            // can be orphaned by a frame that matched no expectation—while
+            // it is at worst a late answer to something this session
+            // already gave up on (a raw transmit whose write failed, an
+            // exchange the watchdog stopped waiting for) or a device
+            // answering twice. Closing the link would turn a stray frame
+            // into a lost session, and reconnecting would not stop the
+            // device sending it. Frames that do not parse at all stay
+            // fatal below: those say the framing is broken.
+            Self.logger.notice(
+                """
+                ulcp: ignoring frame nothing is waiting on \
                 \(UlcpFrameDiagnostic.structure(frame), privacy: .public)
                 """
             )

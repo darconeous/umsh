@@ -10322,6 +10322,99 @@ public func FfiConverterTypeUlcpManagedPropertyIds_lower(_ value: UlcpManagedPro
 
 
 /**
+ * A correlated answer this session could not use.
+ *
+ * The frame parsed and answered a transaction still outstanding, so the
+ * device acted on the request; what failed is the request's prediction of
+ * the answer's form—another property, another command, or an echoed item
+ * that is not the one written. That is the two ends disagreeing about a
+ * property's shape (a table whose items changed width between firmware
+ * versions, say), not a broken transport: reconnecting cannot fix it, and
+ * the request has already been carried out. The operation fails, the
+ * session stays attached, and because the cache cannot be patched from a
+ * value this session does not understand, the property the operation
+ * touched is read back so the snapshot reflects the device rather than the
+ * prediction.
+ */
+public struct UlcpMismatchedResponseRecord: Equatable, Hashable {
+    /**
+     * The operation the answer belonged to, named the way
+     * [`UlcpOperationErrorRecord::operation`] names it.
+     */
+    public var operation: String
+    /**
+     * The property the answer carried.
+     */
+    public var propertyId: UInt32
+    /**
+     * The command the answer carried.
+     */
+    public var command: UInt8
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The operation the answer belonged to, named the way
+         * [`UlcpOperationErrorRecord::operation`] names it.
+         */operation: String,
+        /**
+         * The property the answer carried.
+         */propertyId: UInt32,
+        /**
+         * The command the answer carried.
+         */command: UInt8) {
+        self.operation = operation
+        self.propertyId = propertyId
+        self.command = command
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension UlcpMismatchedResponseRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeUlcpMismatchedResponseRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> UlcpMismatchedResponseRecord {
+        return
+            try UlcpMismatchedResponseRecord(
+                operation: FfiConverterString.read(from: &buf),
+                propertyId: FfiConverterUInt32.read(from: &buf),
+                command: FfiConverterUInt8.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: UlcpMismatchedResponseRecord, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.operation, into: &buf)
+        FfiConverterUInt32.write(value.propertyId, into: &buf)
+        FfiConverterUInt8.write(value.command, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeUlcpMismatchedResponseRecord_lift(_ buf: RustBuffer) throws -> UlcpMismatchedResponseRecord {
+    return try FfiConverterTypeUlcpMismatchedResponseRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeUlcpMismatchedResponseRecord_lower(_ value: UlcpMismatchedResponseRecord) -> RustBuffer {
+    return FfiConverterTypeUlcpMismatchedResponseRecord.lower(value)
+}
+
+
+/**
  * A correlated CRP operation completed with a non-OK `PROP_LAST_STATUS`.
  * This is an operation failure, never evidence that the transport framing is
  * corrupt or that the BLE connection should be closed.
@@ -11016,6 +11109,13 @@ public struct UlcpSessionUpdateRecord: Equatable, Hashable {
      */
     public var operationError: UlcpOperationErrorRecord?
     /**
+     * A correlated answer this session could not use, reported on the
+     * update that settles the operation it belonged to—after any read-back
+     * it triggered—so whoever is waiting on that operation finds it on the
+     * update that completes the operation. The session remains attached.
+     */
+    public var mismatchedResponse: UlcpMismatchedResponseRecord?
+    /**
      * Completion of the local management operation, when this update
      * carries one.
      */
@@ -11047,6 +11147,12 @@ public struct UlcpSessionUpdateRecord: Equatable, Hashable {
          * session has already recovered to a stable stage and remains usable.
          */operationError: UlcpOperationErrorRecord?,
         /**
+         * A correlated answer this session could not use, reported on the
+         * update that settles the operation it belonged to—after any read-back
+         * it triggered—so whoever is waiting on that operation finds it on the
+         * update that completes the operation. The session remains attached.
+         */mismatchedResponse: UlcpMismatchedResponseRecord?,
+        /**
          * Completion of the local management operation, when this update
          * carries one.
          */managementEvent: UlcpLocalManagementEventRecord?,
@@ -11063,6 +11169,7 @@ public struct UlcpSessionUpdateRecord: Equatable, Hashable {
         self.rawTransmitStartedTransactionId = rawTransmitStartedTransactionId
         self.rawTransmitResult = rawTransmitResult
         self.operationError = operationError
+        self.mismatchedResponse = mismatchedResponse
         self.managementEvent = managementEvent
         self.pushedProperties = pushedProperties
     }
@@ -11091,6 +11198,7 @@ public struct FfiConverterTypeUlcpSessionUpdateRecord: FfiConverterRustBuffer {
                 rawTransmitStartedTransactionId: FfiConverterOptionUInt8.read(from: &buf),
                 rawTransmitResult: FfiConverterOptionTypeUlcpRawTransmitResultRecord.read(from: &buf),
                 operationError: FfiConverterOptionTypeUlcpOperationErrorRecord.read(from: &buf),
+                mismatchedResponse: FfiConverterOptionTypeUlcpMismatchedResponseRecord.read(from: &buf),
                 managementEvent: FfiConverterOptionTypeUlcpLocalManagementEventRecord.read(from: &buf),
                 pushedProperties: FfiConverterSequenceTypeUlcpPropertyPushRecord.read(from: &buf)
         )
@@ -11105,6 +11213,7 @@ public struct FfiConverterTypeUlcpSessionUpdateRecord: FfiConverterRustBuffer {
         FfiConverterOptionUInt8.write(value.rawTransmitStartedTransactionId, into: &buf)
         FfiConverterOptionTypeUlcpRawTransmitResultRecord.write(value.rawTransmitResult, into: &buf)
         FfiConverterOptionTypeUlcpOperationErrorRecord.write(value.operationError, into: &buf)
+        FfiConverterOptionTypeUlcpMismatchedResponseRecord.write(value.mismatchedResponse, into: &buf)
         FfiConverterOptionTypeUlcpLocalManagementEventRecord.write(value.managementEvent, into: &buf)
         FfiConverterSequenceTypeUlcpPropertyPushRecord.write(value.pushedProperties, into: &buf)
     }
@@ -15214,6 +15323,30 @@ fileprivate struct FfiConverterOptionTypeUlcpLocalManagementEventRecord: FfiConv
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterTypeUlcpLocalManagementEventRecord.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeUlcpMismatchedResponseRecord: FfiConverterRustBuffer {
+    typealias SwiftType = UlcpMismatchedResponseRecord?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeUlcpMismatchedResponseRecord.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeUlcpMismatchedResponseRecord.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }

@@ -850,6 +850,16 @@ final class AdministrativeDeviceSession: NSObject, @unchecked Sendable {
                 \(UlcpFrameDiagnostic.structure(frame), privacy: .public)
                 """
             )
+        } catch MobileError.UlcpUnexpectedFrame {
+            // A frame nothing is waiting on, refused by Rust before any
+            // state changed: ignored for the reasons `linkDidReceive`
+            // gives in the tethered session.
+            Self.logger.notice(
+                """
+                administrative session: ignoring frame nothing is waiting on \
+                \(UlcpFrameDiagnostic.structure(frame), privacy: .public)
+                """
+            )
         } catch {
             fail(
                 "The device sent an invalid ULCP frame",
@@ -929,6 +939,19 @@ final class AdministrativeDeviceSession: NSObject, @unchecked Sendable {
             )
             snapshot.problemDescription = operationErrorMessage
         }
+        // An answer Rust could not use—see the tethered session. The device
+        // acted; the reply was not the form this app predicted.
+        let mismatch = update.mismatchedResponse
+        if let mismatch {
+            Self.logger.error(
+                """
+                ULCP answer not understood: \(mismatch.operation, privacy: .public) \
+                answered with property 0x\(String(mismatch.propertyId, radix: 16), privacy: .public) \
+                command \(mismatch.command, privacy: .public)
+                """
+            )
+            snapshot.problemDescription = RadioConnectionError.unrecognizedAnswerDescription
+        }
 
         if let event = update.managementEvent {
             finishManagement(with: event)
@@ -947,6 +970,7 @@ final class AdministrativeDeviceSession: NSObject, @unchecked Sendable {
 
         guard !update.waitingForResponses, update.snapshot.phase == .attached else { return }
         let rejection = operationErrorMessage.map(RadioConnectionError.operationRejected)
+            ?? mismatch.map { _ in RadioConnectionError.unrecognizedAnswer }
         // The attach is only complete once whatever this session's inspection
         // asks for has landed: a caller needs a device, not a link.
         finishAttach(throwing: rejection)

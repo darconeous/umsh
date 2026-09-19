@@ -172,6 +172,10 @@ enum ChannelActionOutcome: Equatable, Sendable {
     case radioUnavailable
     /// The radio has no device identity domain to join channels with.
     case unsupported
+    /// The radio answered the change in a form this app does not
+    /// understand, so what it did is not something this app can read: its
+    /// firmware and this app are out of step.
+    case unrecognizedAnswer
     case failed
 }
 

@@ -252,6 +252,8 @@ struct ChannelDetailView: View {
             deviceProblem = "The companion radio is not connected."
         case .unsupported:
             deviceProblem = "This radio does not have an identity of its own."
+        case .unrecognizedAnswer:
+            deviceProblem = "The radio answered in a form this app does not understand, so whether it made the change is unknown. Its firmware and this app may be out of step."
         case .failed, .phoneFull:
             deviceProblem = "The radio did not accept the change."
         }
