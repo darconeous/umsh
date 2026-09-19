@@ -639,6 +639,8 @@ struct PeerDetailView: View {
             devicePeerNotice = "Connect a companion radio set up for this phone to change what it stores."
         case .unsupported:
             devicePeerNotice = "This radio does not support storing peers on its device identity."
+        case .unrecognizedAnswer:
+            devicePeerNotice = "The radio answered in a form this app does not understand, so whether it made the change is unknown. Its firmware and this app may be out of step."
         case .failed:
             devicePeerNotice = "The radio rejected the change. Try again."
         }

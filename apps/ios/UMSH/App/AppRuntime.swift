@@ -1431,6 +1431,7 @@ final class AppRuntime {
             case .radioUnavailable: .radioUnavailable
             case .deviceFull: .deviceFull
             case .unsupported: .unsupported
+            case .unrecognizedAnswer: .unrecognizedAnswer
             case .failed: .failed
             }
         } catch {
@@ -1679,6 +1680,7 @@ final class AppRuntime {
             case .radioUnavailable: .radioUnavailable
             case .deviceFull: .deviceFull
             case .unsupported: .unsupported
+            case .unrecognizedAnswer: .unrecognizedAnswer
             case .failed: .failed
             }
         } catch {

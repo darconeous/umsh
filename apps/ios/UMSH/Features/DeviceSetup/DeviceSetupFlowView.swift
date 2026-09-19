@@ -484,6 +484,13 @@ final class AdminFlowController {
             The app was still reading from the device. Wait a moment and try \
             again; nothing was changed on it.
             """
+        case .operationRejected(let message)
+            where message == RadioConnectionError.unrecognizedAnswerDescription:
+            """
+            The device answered in a form this app does not understand, so it \
+            may or may not have kept these settings. Its firmware and this app \
+            may be out of step—connect to it again and check.
+            """
         default:
             """
             The device rejected these settings. Its previous configuration \

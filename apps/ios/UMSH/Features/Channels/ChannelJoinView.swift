@@ -204,7 +204,7 @@ struct ChannelJoinView: View {
             }
         case .phoneFull:
             problem = "This phone is already holding as many channels as it can. Leave one to make room."
-        case .none, .failed, .deviceFull, .radioUnavailable, .unsupported:
+        case .none, .failed, .deviceFull, .radioUnavailable, .unsupported, .unrecognizedAnswer:
             problem = "The channel could not be joined. Nothing was changed."
         }
     }

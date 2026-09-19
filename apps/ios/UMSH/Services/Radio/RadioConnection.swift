@@ -556,6 +556,26 @@ enum RadioConnectionError: Error, Equatable, Sendable {
     case operationTimedOut
 }
 
+extension RadioConnectionError {
+    /// Copy for a device that answered in a form this app could not read: an
+    /// echo of the wrong shape for the property, or about a property other
+    /// than the one asked. The device carried the request out—what failed is
+    /// this app's model of the reply—so the copy names a firmware/app
+    /// mismatch rather than a refusal, and does not promise that nothing
+    /// changed.
+    static let unrecognizedAnswerDescription = """
+        The radio answered in a form this app does not understand. Its \
+        firmware and this app may be out of step.
+        """
+
+    /// The rejection a waiter throws for such an answer. It wears
+    /// `operationRejected` because that is what the screens already read;
+    /// the description is what tells it apart from a refusal.
+    static var unrecognizedAnswer: RadioConnectionError {
+        .operationRejected(unrecognizedAnswerDescription)
+    }
+}
+
 /// Failures of managing a device across the mesh, shaped for the copy the
 /// remote-management screen shows.
 enum RemoteManagementError: Error, Equatable, Sendable {
@@ -587,6 +607,12 @@ enum DevicePeerError: Error, Equatable, Sendable {
     case deviceFull
     /// The radio does not advertise a device identity domain.
     case unsupported
+    /// The radio answered the change in a form this app could not read:
+    /// firmware reporting the table's items in a shape this app does not
+    /// know. The radio acted on the request; what it reports having done is
+    /// not something this app can check, so its table has been read back
+    /// and the snapshot shows whatever of it this app can read.
+    case unrecognizedAnswer
     /// Any other rejection, carrying the radio's status name.
     case failed(String)
 }

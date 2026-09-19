@@ -911,5 +911,9 @@ enum DevicePeerActionOutcome: Equatable, Sendable {
     case deviceFull
     case radioUnavailable
     case unsupported
+    /// The radio answered the change in a form this app does not
+    /// understand, so what it did is not something this app can read: its
+    /// firmware and this app are out of step.
+    case unrecognizedAnswer
     case failed
 }
