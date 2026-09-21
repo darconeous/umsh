@@ -258,14 +258,7 @@ final class AdminFlowController {
             // The published snapshot carries the same explanation, but which
             // of the two lands first is not ordered, so this path states the
             // reason itself rather than leaving a generic message to win.
-            await refuse(
-                (error as? RadioConnectionError) == .pairingRequired
-                    ? BluetoothErrorText.notPaired
-                    : """
-                        Could not set up that device. It may have moved out of \
-                        range, or it may not be a UMSH device.
-                        """
-            )
+            await refuse(RadioAccessories.message(for: error))
         }
     }
 

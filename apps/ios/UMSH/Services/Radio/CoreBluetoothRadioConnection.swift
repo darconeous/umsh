@@ -61,6 +61,9 @@ final class CoreBluetoothRadioConnection: UlcpRadioSession, RadioConnection, Ulc
     private typealias UUIDs = RadioGatt
 
     private var central: CBCentralManager?
+    private var accessoryInventory = RadioAccessoryInventory()
+    private var accessoryTask: Task<Void, Never>?
+    private var bluetoothWaiters: [UUID: CheckedContinuation<Void, any Error>] = [:]
     private let bluetoothQueue = DispatchQueue(
         label: "com.umsh.radio.core-bluetooth",
         qos: .userInitiated
@@ -137,7 +140,16 @@ final class CoreBluetoothRadioConnection: UlcpRadioSession, RadioConnection, Ulc
         // that caused it) only after this object exists. Gated on a saved
         // radio so a first launch does not prompt for Bluetooth permission
         // before onboarding reaches the radio step.
-        if rememberedPeripheralIdentifier != nil {
+        if RadioAccessories.usesSystemPicker {
+            accessoryTask = Task { [weak self] in
+                for await inventory in await RadioAccessories.shared.updates() {
+                    guard !Task.isCancelled else { break }
+                    self?.bluetoothQueue.async { [weak self] in
+                        self?.applyAccessoryInventory(inventory)
+                    }
+                }
+            }
+        } else if rememberedPeripheralIdentifier != nil {
             bluetoothQueue.async { [self] in
                 if central == nil {
                     central = CBCentralManager(
@@ -150,7 +162,71 @@ final class CoreBluetoothRadioConnection: UlcpRadioSession, RadioConnection, Ulc
         }
     }
 
+    deinit { accessoryTask?.cancel() }
+
+    private func applyAccessoryInventory(_ inventory: RadioAccessoryInventory) {
+        let previousSetupProblem = accessoryInventory.connectionBlockDescription
+        guard accessoryInventory.accept(inventory) else { return }
+        if !inventory.canScan, discoveryMode {
+            stopDiscoveryOnQueue()
+            discoveryRequested = true
+        }
+        if let id = rememberedPeripheralIdentifier, inventory.removedIDs.contains(id) {
+            forgetOnQueue()
+        }
+        yieldDiscoveryList()
+        guard inventory.canCreateCentral else {
+            if inventory.migrationID != nil, peripheral == nil {
+                publishDisconnected(problem: inventory.connectionBlockDescription)
+            }
+            return
+        }
+        if let previousSetupProblem, snapshot.problemDescription == previousSetupProblem {
+            // Setup can finish from an administrative list without selecting
+            // the companion. Do not leave its old setup banner behind.
+            snapshot.problemDescription = nil
+            publish(snapshot)
+        }
+        if let id = rememberedPeripheralIdentifier, inventory.authorizedIDs.contains(id) {
+            ensureCentral()
+            if autoConnectRequested, central?.state == .poweredOn { startAutomaticConnection() }
+        }
+        if discoveryRequested { startDiscoveryOnQueue() }
+    }
+
+    @discardableResult
+    private func ensureCentral() -> Bool {
+        guard !RadioAccessories.usesSystemPicker || accessoryInventory.canCreateCentral else { return false }
+        if central == nil {
+            central = CBCentralManager(delegate: self, queue: bluetoothQueue, options: Self.centralOptions)
+        }
+        return true
+    }
+
+    private func waitForBluetooth(_ inventory: RadioAccessoryInventory) async throws {
+        try await withCheckedThrowingContinuation { (waiter: CheckedContinuation<Void, any Error>) in
+            bluetoothQueue.async { [self] in
+                applyAccessoryInventory(inventory)
+                guard ensureCentral() else {
+                    waiter.resume(throwing: RadioConnectionError.bluetoothUnavailable)
+                    return
+                }
+                if central?.state == .poweredOn { waiter.resume(); return }
+                let token = UUID()
+                bluetoothWaiters[token] = waiter
+                bluetoothQueue.asyncAfter(deadline: .now() + 8) { [weak self] in
+                    self?.bluetoothWaiters.removeValue(forKey: token)?
+                        .resume(throwing: RadioConnectionError.bluetoothUnavailable)
+                }
+            }
+        }
+    }
+
     func connect() async throws {
+        if RadioAccessories.usesSystemPicker {
+            if let id = try await RadioAccessories.shared.addRadio() { try await selectRadio(id) }
+            return
+        }
         await withCheckedContinuation { result in
             bluetoothQueue.async { [self] in
                 Self.logger.notice("action: user pressed Connect (scan for first match)")
@@ -193,6 +269,7 @@ final class CoreBluetoothRadioConnection: UlcpRadioSession, RadioConnection, Ulc
                     continuation.onTermination = { [weak self] _ in
                         self?.bluetoothQueue.async { [weak self] in
                             self?.discoveryContinuations[id] = nil
+                            if self?.discoveryContinuations.isEmpty == true { self?.stopDiscoveryOnQueue() }
                         }
                     }
                 }
@@ -204,6 +281,11 @@ final class CoreBluetoothRadioConnection: UlcpRadioSession, RadioConnection, Ulc
     }
 
     func selectRadio(_ id: UUID) async throws {
+        if RadioAccessories.usesSystemPicker {
+            let inventory = try await RadioAccessories.shared.prepareSelection(id)
+            try await waitForBluetooth(inventory)
+        }
+        try Task.checkCancellation()
         try await withCheckedThrowingContinuation {
             (result: CheckedContinuation<Void, any Error>) in
             bluetoothQueue.async { [self] in
@@ -231,6 +313,7 @@ final class CoreBluetoothRadioConnection: UlcpRadioSession, RadioConnection, Ulc
         discovered.removeAll()
         nextDiscoveryOrder = 0
         yieldDiscoveryList()
+        guard !RadioAccessories.usesSystemPicker || accessoryInventory.canScan else { return }
         if central == nil {
             central = CBCentralManager(
                 delegate: self,
@@ -250,6 +333,7 @@ final class CoreBluetoothRadioConnection: UlcpRadioSession, RadioConnection, Ulc
 
     private func beginDiscoveryScan() {
         guard central?.state == .poweredOn else { return }
+        guard !RadioAccessories.usesSystemPicker || accessoryInventory.canScan else { return }
         discoveryRequested = false
         discoveryMode = true
         // Cancel a normal "connect to first match" scan; discovery now owns
@@ -259,7 +343,7 @@ final class CoreBluetoothRadioConnection: UlcpRadioSession, RadioConnection, Ulc
         // Duplicates are allowed so RSSI updates keep the list live and a radio
         // that momentarily drops out reappears rather than going stale.
         central?.scanForPeripherals(
-            withServices: [UUIDs.service],
+            withServices: RadioAccessories.usesSystemPicker ? nil : [UUIDs.service],
             options: [CBCentralManagerScanOptionAllowDuplicatesKey: true]
         )
         discoveryPruneGeneration = UUID()
@@ -270,6 +354,10 @@ final class CoreBluetoothRadioConnection: UlcpRadioSession, RadioConnection, Ulc
         _ id: UUID,
         completion: CheckedContinuation<Void, any Error>
     ) {
+        if RadioAccessories.usesSystemPicker && !accessoryInventory.permitsConnection(to: id) {
+            completion.resume(throwing: RadioConnectionError.pairingRequired)
+            return
+        }
         guard let central, central.state == .poweredOn else {
             completion.resume(throwing: RadioConnectionError.bluetoothUnavailable)
             return
@@ -343,6 +431,14 @@ final class CoreBluetoothRadioConnection: UlcpRadioSession, RadioConnection, Ulc
         advertisementData: [String: Any],
         rssi: NSNumber
     ) {
+        if RadioAccessories.usesSystemPicker {
+            guard accessoryInventory.authorizedIDs.contains(peripheral.identifier),
+                  (advertisementData[CBAdvertisementDataIsConnectable] as? NSNumber)?.boolValue == true else {
+                discovered.removeValue(forKey: peripheral.identifier)
+                yieldDiscoveryList()
+                return
+            }
+        }
         let advertisedName = advertisementData[CBAdvertisementDataLocalNameKey] as? String
         var entry = discovered[peripheral.identifier]
         if entry == nil {
@@ -367,6 +463,19 @@ final class CoreBluetoothRadioConnection: UlcpRadioSession, RadioConnection, Ulc
     }
 
     private func currentDiscoveryList() -> [DiscoveredRadio] {
+        if RadioAccessories.usesSystemPicker {
+            return accessoryInventory.availableRadios(
+                sightings: discovered.values.sorted { $0.discoveryOrder < $1.discoveryOrder }.map { entry in
+                    RadioAccessorySighting(
+                        radio: DiscoveredRadio(id: entry.peripheral.identifier, name: entry.name,
+                                               rssiDBm: entry.rssiDBm, isRemembered: true),
+                        lastSeen: entry.lastSeen.uptimeNanoseconds,
+                        canConnect: entry.peripheral.state == .disconnected
+                            && !AdminSessionRegistry.shared.contains(entry.peripheral.identifier)
+                    )
+                }, now: DispatchTime.now().uptimeNanoseconds
+            )
+        }
         let remembered = rememberedPeripheralIdentifier
         // The saved radio stays pinned to the top—it is what most people
         // opening this list are looking for—and everything else sits in the
@@ -409,11 +518,10 @@ final class CoreBluetoothRadioConnection: UlcpRadioSession, RadioConnection, Ulc
                   self.discoveryPruneGeneration == generation else { return }
             let now = DispatchTime.now().uptimeNanoseconds
             let staleNanos: UInt64 = 6 * 1_000_000_000
-            let before = self.discovered.count
             self.discovered = self.discovered.filter { _, entry in
                 now <= entry.lastSeen.uptimeNanoseconds &+ staleNanos
             }
-            if self.discovered.count != before { self.yieldDiscoveryList() }
+            self.yieldDiscoveryList()
             self.scheduleDiscoveryPrune(generation: generation)
         }
     }
@@ -468,6 +576,10 @@ final class CoreBluetoothRadioConnection: UlcpRadioSession, RadioConnection, Ulc
         }
         intentionalDisconnect = false
         autoConnectRequested = true
+        if RadioAccessories.usesSystemPicker && !accessoryInventory.canCreateCentral {
+            publishDisconnected(problem: accessoryInventory.connectionBlockDescription)
+            return
+        }
         if central == nil {
             central = CBCentralManager(
                 delegate: self,
@@ -494,6 +606,21 @@ final class CoreBluetoothRadioConnection: UlcpRadioSession, RadioConnection, Ulc
     }
 
     func forget() async {
+        if RadioAccessories.usesSystemPicker {
+            let id: UUID? = await withCheckedContinuation { result in
+                bluetoothQueue.async { [self] in result.resume(returning: rememberedPeripheralIdentifier) }
+            }
+            if let id {
+                do { try await RadioAccessories.shared.remove(id) }
+                catch {
+                    bluetoothQueue.async { [self] in
+                        snapshot.problemDescription = "The radio could not be removed. Try again in Choose a Radio."
+                        publish(snapshot)
+                    }
+                    return
+                }
+            }
+        }
         await withCheckedContinuation { result in
             bluetoothQueue.async { [self] in
                 Self.logger.notice("action: user pressed Forget")
@@ -634,6 +761,11 @@ final class CoreBluetoothRadioConnection: UlcpRadioSession, RadioConnection, Ulc
 
     private func startAutomaticConnection() {
         guard let central, central.state == .poweredOn, autoConnectRequested else { return }
+        if RadioAccessories.usesSystemPicker {
+            guard accessoryInventory.canCreateCentral,
+                  let id = rememberedPeripheralIdentifier,
+                  accessoryInventory.authorizedIDs.contains(id) else { return }
+        }
         autoConnectRequested = false
         guard let identifier = rememberedPeripheralIdentifier else {
             clearPeripheral()
@@ -686,13 +818,24 @@ final class CoreBluetoothRadioConnection: UlcpRadioSession, RadioConnection, Ulc
         bluetoothUnavailableGrace = nil
 
         if central.state == .poweredOn {
+            let waiters = bluetoothWaiters.values
+            bluetoothWaiters.removeAll()
+            for waiter in waiters { waiter.resume() }
+            if !discoveryMode && !discoveryRequested && !scanRequested {
+                // A restored central can carry a scan from a picker that did
+                // not survive process termination. Only a visible picker owns it.
+                central.stopScan()
+            }
             reconcileStandingConnectionOnPoweredOn()
             if restorationPendingResume {
                 resumeRestoredPeripheral()
-            } else if discoveryRequested {
-                beginDiscoveryScan()
             } else if autoConnectRequested {
                 startAutomaticConnection()
+            }
+            // Picker scanning and the companion's standing request can run
+            // together. Opening the picker must not consume its reconnect.
+            if discoveryRequested {
+                beginDiscoveryScan()
             } else if scanRequested {
                 startScanning()
             } else if snapshot.linkState == .unavailable {
@@ -705,6 +848,10 @@ final class CoreBluetoothRadioConnection: UlcpRadioSession, RadioConnection, Ulc
             return
         }
 
+        if discoveryMode {
+            stopDiscoveryOnQueue()
+            discoveryRequested = true
+        }
         let message: String
         switch central.state {
         case .unauthorized: message = "Bluetooth permission is denied"
@@ -777,10 +924,11 @@ final class CoreBluetoothRadioConnection: UlcpRadioSession, RadioConnection, Ulc
     /// one being discovered, one never attached—has only the cache.
     private func displayName(for peripheral: CBPeripheral?) -> String? {
         guard let peripheral else { return rememberedDeviceName }
+        let savedName = accessoryInventory.radios.first(where: { $0.id == peripheral.identifier })?.name
         guard peripheral.identifier == rememberedPeripheralIdentifier else {
-            return peripheral.name
+            return savedName ?? peripheral.name
         }
-        return rememberedDeviceName ?? peripheral.name
+        return rememberedDeviceName ?? savedName ?? peripheral.name
     }
 
     /// Auto-reconnect intent. Reading and writing this always goes through
@@ -863,6 +1011,15 @@ final class CoreBluetoothRadioConnection: UlcpRadioSession, RadioConnection, Ulc
         on central: CBCentralManager,
         reason: String
     ) {
+        guard !RadioAccessories.usesSystemPicker
+            || accessoryInventory.permitsConnection(to: target.identifier) else {
+            // An add-radio picker can temporarily defer a retry. Its dismissal
+            // publishes an inventory update that resumes the standing request.
+            if shouldAutoConnect, rememberedPeripheralIdentifier == target.identifier {
+                autoConnectRequested = true
+            }
+            return
+        }
         Self.logger.notice(
             """
             connect(\(target.identifier, privacy: .public)) \
@@ -1017,6 +1174,9 @@ final class CoreBluetoothRadioConnection: UlcpRadioSession, RadioConnection, Ulc
     func linkDidReportName(_ name: String) {
         guard name != rememberedDeviceName else { return }
         rememberedDeviceName = name
+        if RadioAccessories.usesSystemPicker, let id = peripheral?.identifier {
+            Task { await RadioAccessories.shared.rememberConfiguredName(name, for: id) }
+        }
     }
 
     func linkAbandonBinding() {
@@ -1064,7 +1224,9 @@ extension CoreBluetoothRadioConnection: CBCentralManagerDelegate {
         guard shouldAutoConnect else { return }
         guard let remembered = restored.first(where: {
             $0.identifier == rememberedPeripheralIdentifier
-        }) ?? restored.first else { return }
+        }) else { return }
+        guard !RadioAccessories.usesSystemPicker
+            || accessoryInventory.permitsConnection(to: remembered.identifier) else { return }
         Self.logger.info(
             "Restoring companion radio session for \(remembered.identifier, privacy: .public)"
         )
@@ -1084,6 +1246,8 @@ extension CoreBluetoothRadioConnection: CBCentralManagerDelegate {
     private func resumeRestoredPeripheral() {
         restorationPendingResume = false
         guard let central, let peripheral else { return }
+        guard !RadioAccessories.usesSystemPicker
+            || accessoryInventory.permitsConnection(to: peripheral.identifier) else { return }
         switch peripheral.state {
         case .connected:
             publish(
@@ -1391,4 +1555,3 @@ extension CoreBluetoothRadioConnection: CBPeripheralDelegate {
         }
     }
 }
-

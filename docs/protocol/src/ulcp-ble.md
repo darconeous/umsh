@@ -198,19 +198,21 @@ not dominate MAC-layer timing budgets.
 ## Advertising and Discovery {#ble-advertising}
 
 While BLE is enabled and transport arbitration permits it, a disconnected
-device **SHOULD** advertise as connectable and undirected, including the
-ULCP GATT Service UUID in its advertising data. Advertising **SHOULD**
+device **SHOULD** advertise as connectable and undirected. Advertising **SHOULD**
 suspend during a BLE connection or an attached wired session, then resume
-when permitted. Hosts discover the service rather than matching a name.
+when permitted. Hosts discover new devices by service UUID during pairing;
+bonded hosts reconnect using their retained peer identity.
 
-Outside [pairing mode](#pairing-mode), advertisements and scan responses
-**MUST NOT** contain a local name or any per-device identifier. The flags
-omit general and limited discoverability; the device remains connectable
+Outside [pairing mode](#pairing-mode), advertising data **MUST** contain only
+generic BLE flags, with no local name, service UUID, service data, manufacturer
+data, appearance or per-device identifier. Scan-response data **MUST** be empty.
+The flags omit general and limited discoverability; the device remains connectable
 so bonded hosts can reconnect. Previously installed scan-response data
-**MUST** be explicitly cleared when returning to this mode. The common
-ULCP service UUID identifies the service, not an individual device.
+**MUST** be explicitly cleared when returning to this mode. The advertising
+payload **MUST** also be replaced to remove the previously advertised service UUID.
 
-During pairing mode, the device declares general discoverability and
+During pairing mode, the device declares general discoverability,
+**MUST** include the ULCP GATT Service UUID in its advertising data, and
 **SHOULD** advertise the current `PROP_DEV_NAME`, shortening it without
 splitting a UTF-8 code point where needed. A rename
 during the window updates these payloads. Names, including existing

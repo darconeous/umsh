@@ -42,6 +42,8 @@ struct RadioToolbarItem: View {
 struct RadioProblemBanner: View {
     let snapshot: RadioSnapshot
     let action: () -> Void
+    let reconnectRadio: () async -> Void
+    @State private var accessories = RadioAccessories.shared
 
     var body: some View {
         if let problemDescription = snapshot.problemDescription {
@@ -56,8 +58,13 @@ struct RadioProblemBanner: View {
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
-                Button("Details", action: action)
-                    .buttonStyle(.bordered)
+                if RadioAccessories.usesSystemPicker, accessories.inventory.migrationID != nil {
+                    RadioAccessoryPickerButton(migrationOnly: true) { _ in await reconnectRadio() }
+                        .buttonStyle(.bordered)
+                } else {
+                    Button("Details", action: action)
+                        .buttonStyle(.bordered)
+                }
             }
             .padding(.horizontal)
             .padding(.vertical, 8)

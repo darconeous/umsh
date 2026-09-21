@@ -3282,63 +3282,68 @@ mod firmware {
             BLE_WIPE_WAITING_REPLY.store(false, Ordering::Release);
             let started = Instant::now();
             let initial = store.lock().await.snapshot().clone();
-            let Some(irk) = initial
-                .local_irk
-                .and_then(IdentityResolvingKey::from_le_bytes)
-            else {
-                ble_disabled_park("missing local IRK").await
-            };
-            PAIRING_PIN.store(initial.pin.unwrap_or(u32::MAX), Ordering::Release);
-            set_bond_count(initial.bonds.len() as u8);
-            {
-                let stack = trouble_host::new(
-                    Guarded::new(ble_controller::Borrowed(&controller), &BLE_CONTROLLER_STATE),
-                    &mut resources,
-                )
-                .set_random_address(ble_identity_address())
-                .enable_privacy(irk)
-                .set_rpa_timeout(Duration::from_secs(ble_privacy::RPA_TIMEOUT_SECS))
-                .set_io_capabilities(if initial.pin.is_some() {
-                    IoCapabilities::DisplayOnly
-                } else {
-                    IoCapabilities::NoInputNoOutput
-                })
-                .set_pairing_enabled(pairing_enabled(
-                    PAIRING_MODE.load(Ordering::Acquire),
-                    initial.pin.is_some(),
-                    PAIRING_LOCKED_OUT.load(Ordering::Acquire),
-                ))
-                .set_fixed_passkey(initial.pin)
-                .expect("valid persisted PIN")
-                .build();
-                for bond in &initial.bonds {
-                    if let Some(bond) = trouble_bond(bond) {
-                        if stack.add_bond_information(bond).is_err() {
-                            BLE_CONTROLLER_STATE.fail();
+            if initial.privacy_migration_pending {
+                debug_log(format_args!("BLE blocked: privacy migration not committed"));
+                BLE_CONTROLLER_STATE.fail();
+            } else {
+                let Some(irk) = initial
+                    .local_irk
+                    .and_then(IdentityResolvingKey::from_le_bytes)
+                else {
+                    ble_disabled_park("missing local IRK").await
+                };
+                PAIRING_PIN.store(initial.pin.unwrap_or(u32::MAX), Ordering::Release);
+                set_bond_count(initial.bonds.len() as u8);
+                {
+                    let stack = trouble_host::new(
+                        Guarded::new(ble_controller::Borrowed(&controller), &BLE_CONTROLLER_STATE),
+                        &mut resources,
+                    )
+                    .set_random_address(ble_identity_address())
+                    .enable_privacy(irk)
+                    .set_rpa_timeout(Duration::from_secs(ble_privacy::RPA_TIMEOUT_SECS))
+                    .set_io_capabilities(if initial.pin.is_some() {
+                        IoCapabilities::DisplayOnly
+                    } else {
+                        IoCapabilities::NoInputNoOutput
+                    })
+                    .set_pairing_enabled(pairing_enabled(
+                        PAIRING_MODE.load(Ordering::Acquire),
+                        initial.pin.is_some(),
+                        PAIRING_LOCKED_OUT.load(Ordering::Acquire),
+                    ))
+                    .set_fixed_passkey(initial.pin)
+                    .expect("valid persisted PIN")
+                    .build();
+                    for bond in &initial.bonds {
+                        if let Some(bond) = trouble_bond(bond) {
+                            if stack.add_bond_information(bond).is_err() {
+                                BLE_CONTROLLER_STATE.fail();
+                            }
                         }
                     }
+                    let runner = stack.runner();
+                    let mut peripheral = stack.peripheral();
+                    select3(
+                        async {
+                            ble_peripheral(&stack, &store, &mut peripheral, &server).await;
+                            while BLE_CONFIG_BUSY.load(Ordering::Acquire) != 0 {
+                                Timer::after_millis(10).await;
+                            }
+                        },
+                        join(
+                            ble_runner(runner),
+                            join(pairing_timeout(&stack), pairing_config_task(&stack, &store)),
+                        ),
+                        async {
+                            BLE_STACK_FAULT.wait().await;
+                            while BLE_CONFIG_BUSY.load(Ordering::Acquire) != 0 {
+                                Timer::after_millis(10).await;
+                            }
+                        },
+                    )
+                    .await;
                 }
-                let runner = stack.runner();
-                let mut peripheral = stack.peripheral();
-                select3(
-                    async {
-                        ble_peripheral(&stack, &store, &mut peripheral, &server).await;
-                        while BLE_CONFIG_BUSY.load(Ordering::Acquire) != 0 {
-                            Timer::after_millis(10).await;
-                        }
-                    },
-                    join(
-                        ble_runner(runner),
-                        join(pairing_timeout(&stack), pairing_config_task(&stack, &store)),
-                    ),
-                    async {
-                        BLE_STACK_FAULT.wait().await;
-                        while BLE_CONFIG_BUSY.load(Ordering::Acquire) != 0 {
-                            Timer::after_millis(10).await;
-                        }
-                    },
-                )
-                .await;
             }
             // This is the sole final-detach owner for both normal completion
             // and cancellation by a runner exit or a lifecycle transition.
@@ -6290,6 +6295,19 @@ mod firmware {
         #[cfg(not(feature = "no-ble"))]
         let (controller, ble_store) = {
             let mut ble_store = BleStore::mount(flash).await;
+            if ble_store.snapshot().privacy_migration_pending {
+                let replacement_irk = loop {
+                    let mut irk = [0; 16];
+                    rng.fill_bytes(&mut irk).await;
+                    if irk != [0; 16] && Some(irk) != ble_store.snapshot().local_irk {
+                        break irk;
+                    }
+                };
+                match ble_store.forget_hosts(replacement_irk).await {
+                    Ok(()) => debug_log(format_args!("BLE privacy migration complete; pair again")),
+                    Err(()) => debug_log(format_args!("BLE privacy migration failed; BLE blocked")),
+                }
+            }
             // Deliberate recovery image for hardware testing. This runs before the
             // Trouble host is constructed, so there is no live bond table to keep
             // in sync: the empty persisted snapshot becomes the host's initial
@@ -6333,7 +6351,9 @@ mod firmware {
                 p.PPI_CH17, p.PPI_CH18, p.PPI_CH20, p.PPI_CH21, p.PPI_CH22, p.PPI_CH23, p.PPI_CH24,
                 p.PPI_CH25, p.PPI_CH26, p.PPI_CH27, p.PPI_CH28, p.PPI_CH29,
             );
-            if ble_store.snapshot().local_irk.is_none() {
+            if !ble_store.snapshot().privacy_migration_pending
+                && ble_store.snapshot().local_irk.is_none()
+            {
                 let mut local_irk = [0u8; 16];
                 while local_irk == [0; 16] {
                     rng.fill_bytes(&mut local_irk).await;

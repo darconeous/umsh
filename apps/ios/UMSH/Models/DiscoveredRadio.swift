@@ -1,20 +1,18 @@
 import Foundation
 
-/// A companion radio seen during an explicit discovery scan, before the user
-/// has chosen one to attach. Unlike the auto-connect path, discovery never
-/// picks a radio on its own—every advertising radio in range is surfaced so
-/// the user can select the intended one (essential when several radios are on
-/// the bench at once).
+/// A saved accessory record or a radio sighting. Pickers display only recent
+/// connectable sightings; the authorization inventory also retains offline radios.
 struct DiscoveredRadio: Identifiable, Equatable, Sendable {
     /// The CoreBluetooth peripheral identifier, stable for this device.
     let id: UUID
-    /// Advertised local name, falling back to the cached peripheral name.
+    /// System accessory name, or the fallback scanner's advertised/cached name.
     let name: String?
     /// Advertised signal strength. CoreBluetooth reports `127` when the value
     /// is unavailable; `hasSignal` reflects that.
     let rssiDBm: Int
-    /// True when this is the currently saved companion radio.
+    /// True for a saved accessory or the fallback scanner's saved companion.
     let isRemembered: Bool
+    var requiresMigration: Bool = false
 
     /// CoreBluetooth uses `127` as the "RSSI unavailable" sentinel.
     var hasSignal: Bool { rssiDBm != 127 }

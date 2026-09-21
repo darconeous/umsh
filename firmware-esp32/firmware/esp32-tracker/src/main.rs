@@ -2934,6 +2934,11 @@ async fn run_ble_stack(
     server: &UlcpServer<'_>,
 ) {
     let initial = store.lock().await.snapshot().clone();
+    if initial.privacy_migration_pending {
+        debug_log(format_args!("BLE blocked: privacy migration not committed"));
+        BLE_CONTROLLER_STATE.fail();
+        return;
+    }
     let Some(irk) = initial
         .local_irk
         .and_then(IdentityResolvingKey::from_le_bytes)
@@ -4928,6 +4933,19 @@ async fn main(spawner: Spawner) {
     // restored (and the PHY re-applied) and the persisted device
     // identity installed before the first host command.
     let mut ble_store_handle = BleStore::mount(shared, &partition).await;
+    if ble_store_handle.snapshot().privacy_migration_pending {
+        let replacement_irk = loop {
+            let mut irk = [0; 16];
+            pool_draw(b"ble-privacy-migration", &mut irk);
+            if irk != [0; 16] && Some(irk) != ble_store_handle.snapshot().local_irk {
+                break irk;
+            }
+        };
+        match ble_store_handle.forget_hosts(replacement_irk).await {
+            Ok(()) => debug_log(format_args!("BLE privacy migration complete; pair again")),
+            Err(()) => debug_log(format_args!("BLE privacy migration failed; BLE blocked")),
+        }
+    }
 
     // The bond count, the pairing PIN, and the pairing window all come
     // off the journal, not the radio. A board that boots with
@@ -4947,7 +4965,9 @@ async fn main(spawner: Spawner) {
         Ordering::Release,
     );
     BLE_PAIRING_CHANGED.signal(pairing_window_open());
-    if ble_store_handle.snapshot().local_irk.is_none() {
+    if !ble_store_handle.snapshot().privacy_migration_pending
+        && ble_store_handle.snapshot().local_irk.is_none()
+    {
         let mut local_irk = [0u8; 16];
         while local_irk == [0; 16] {
             pool_draw(b"ble-local-irk", &mut local_irk);

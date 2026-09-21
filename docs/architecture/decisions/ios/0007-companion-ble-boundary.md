@@ -3,6 +3,10 @@
 - Status: Implemented; physical-radio validation pending
 - Phase: 0
 
+The discovery and permission sequence is updated by
+[ADR 0008](0008-accessory-setup.md) on iPhone. CoreBluetooth transport ownership
+and the Rust wire-state boundary described here remain in place.
+
 ## Decision
 
 Swift owns permission timing, service-filtered discovery, peripheral retention,

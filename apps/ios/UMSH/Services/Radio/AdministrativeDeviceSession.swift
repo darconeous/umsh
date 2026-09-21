@@ -111,6 +111,11 @@ final class AdministrativeDeviceSession: NSObject, @unchecked Sendable {
     )
     // No CBCentralManagerOptionRestoreIdentifierKey: see the type comment.
     private var central: CBCentralManager?
+    private var accessoryInventory = RadioAccessoryInventory()
+    private var accessoryTask: Task<Void, Never>?
+    private var bluetoothWaiters: [UUID: CheckedContinuation<Void, any Error>] = [:]
+    private var selectionGeneration = UUID()
+    private var lastCachedConfiguredName: String?
     private var peripheral: CBPeripheral?
     private var frameIn: CBCharacteristic?
     private var frameOut: CBCharacteristic?
@@ -163,16 +168,59 @@ final class AdministrativeDeviceSession: NSObject, @unchecked Sendable {
     private var propertyPushContinuations:
         [UUID: AsyncStream<UlcpPropertyPushRecord>.Continuation] = [:]
 
-    /// A flow abandoned without calling `disconnect()`—the sheet is
-    /// dismissed, the controller goes away—must not leave the device
-    /// connected or its registry claim standing. Both CoreBluetooth
-    /// delegates are weak, so this runs even mid-session.
+    override init() {
+        super.init()
+        if RadioAccessories.usesSystemPicker {
+            accessoryTask = Task { [weak self] in
+                for await inventory in await RadioAccessories.shared.updates() {
+                    guard !Task.isCancelled else { break }
+                    self?.queue.async { [weak self] in self?.applyAccessoryInventory(inventory) }
+                }
+            }
+        }
+    }
+
+    /// Abandoning the flow must release its connection and registry claim.
     deinit {
+        accessoryTask?.cancel()
         if let identifier = peripheral?.identifier {
             AdminSessionRegistry.shared.deregister(identifier)
         }
         if let peripheral, let central, peripheral.state != .disconnected {
             central.cancelPeripheralConnection(peripheral)
+        }
+    }
+
+    private func applyAccessoryInventory(_ inventory: RadioAccessoryInventory) {
+        guard accessoryInventory.accept(inventory) else { return }
+        if !inventory.canScan, discoveryActive {
+            stopDiscoveryOnQueue()
+            discoveryRequested = true
+        }
+        if let id = peripheral?.identifier, inventory.removedIDs.contains(id) {
+            fail("Access to this radio was removed in Settings.", error: RadioConnectionError.pairingRequired)
+        }
+        yieldDiscoveryList()
+        if inventory.canScan, discoveryRequested { startDiscoveryOnQueue() }
+    }
+
+    private func waitForBluetooth(_ inventory: RadioAccessoryInventory) async throws {
+        try await withCheckedThrowingContinuation { (waiter: CheckedContinuation<Void, any Error>) in
+            queue.async { [self] in
+                applyAccessoryInventory(inventory)
+                guard accessoryInventory.canCreateCentral else {
+                    waiter.resume(throwing: RadioConnectionError.bluetoothUnavailable)
+                    return
+                }
+                if central == nil { central = CBCentralManager(delegate: self, queue: queue) }
+                if central?.state == .poweredOn { waiter.resume(); return }
+                let token = UUID()
+                bluetoothWaiters[token] = waiter
+                queue.asyncAfter(deadline: .now() + 8) { [weak self] in
+                    self?.bluetoothWaiters.removeValue(forKey: token)?
+                        .resume(throwing: RadioConnectionError.bluetoothUnavailable)
+                }
+            }
         }
     }
 
@@ -232,6 +280,7 @@ final class AdministrativeDeviceSession: NSObject, @unchecked Sendable {
                     continuation.onTermination = { [weak self] _ in
                         self?.queue.async { [weak self] in
                             self?.discoveryContinuations[id] = nil
+                            if self?.discoveryContinuations.isEmpty == true { self?.stopDiscoveryOnQueue() }
                         }
                     }
                 }
@@ -256,6 +305,7 @@ final class AdministrativeDeviceSession: NSObject, @unchecked Sendable {
         discovered.removeAll()
         nextDiscoveryOrder = 0
         yieldDiscoveryList()
+        guard !RadioAccessories.usesSystemPicker || accessoryInventory.canScan else { return }
         guard let central else {
             central = CBCentralManager(delegate: self, queue: queue)
             return
@@ -266,12 +316,13 @@ final class AdministrativeDeviceSession: NSObject, @unchecked Sendable {
 
     private func beginDiscoveryScan() {
         guard let central, central.state == .poweredOn else { return }
+        guard !RadioAccessories.usesSystemPicker || accessoryInventory.canScan else { return }
         discoveryRequested = false
         discoveryActive = true
         // Duplicates keep RSSI live and let a device that briefly drops out
         // reappear instead of going stale.
         central.scanForPeripherals(
-            withServices: [RadioGatt.service],
+            withServices: RadioAccessories.usesSystemPicker ? nil : [RadioGatt.service],
             options: [CBCentralManagerScanOptionAllowDuplicatesKey: true]
         )
         discoveryPruneGeneration = UUID()
@@ -295,6 +346,14 @@ final class AdministrativeDeviceSession: NSObject, @unchecked Sendable {
         advertisementData: [String: Any],
         rssi: NSNumber
     ) {
+        if RadioAccessories.usesSystemPicker {
+            guard accessoryInventory.authorizedIDs.contains(peripheral.identifier),
+                  (advertisementData[CBAdvertisementDataIsConnectable] as? NSNumber)?.boolValue == true else {
+                discovered.removeValue(forKey: peripheral.identifier)
+                yieldDiscoveryList()
+                return
+            }
+        }
         let advertisedName = advertisementData[CBAdvertisementDataLocalNameKey] as? String
         var entry = discovered[peripheral.identifier]
         if entry == nil {
@@ -319,6 +378,20 @@ final class AdministrativeDeviceSession: NSObject, @unchecked Sendable {
     }
 
     private func currentDiscoveryList() -> [DiscoveredRadio] {
+        if RadioAccessories.usesSystemPicker {
+            return accessoryInventory.availableRadios(
+                sightings: discovered.values.sorted { $0.discoveryOrder < $1.discoveryOrder }.map { entry in
+                    RadioAccessorySighting(
+                        radio: DiscoveredRadio(id: entry.peripheral.identifier, name: entry.name,
+                                               rssiDBm: entry.rssiDBm, isRemembered: true),
+                        lastSeen: entry.lastSeen.uptimeNanoseconds,
+                        canConnect: entry.peripheral.state == .disconnected
+                            && !AdminSessionRegistry.shared.contains(entry.peripheral.identifier)
+                    )
+                }, now: DispatchTime.now().uptimeNanoseconds,
+                excluding: Set([companionIdentifier].compactMap { $0 })
+            )
+        }
         // Arrival order, and nothing else. Every other property of a
         // discovered device changes while the list is on screen—RSSI with
         // every advertisement, and the name when one finally arrives, since a
@@ -329,7 +402,7 @@ final class AdministrativeDeviceSession: NSObject, @unchecked Sendable {
         // unlike companion discovery: it cannot be set up from this list, and
         // a list that opens with an untappable row is worse than one that
         // does not.
-        discovered.values
+        return discovered.values
             .sorted { $0.discoveryOrder < $1.discoveryOrder }
             .map { entry in
                 DiscoveredRadio(
@@ -354,11 +427,10 @@ final class AdministrativeDeviceSession: NSObject, @unchecked Sendable {
                   self.discoveryPruneGeneration == generation else { return }
             let now = DispatchTime.now().uptimeNanoseconds
             let stale = Self.discoveryStaleSeconds * 1_000_000_000
-            let before = self.discovered.count
             self.discovered = self.discovered.filter { _, entry in
                 now <= entry.lastSeen.uptimeNanoseconds &+ stale
             }
-            if self.discovered.count != before { self.yieldDiscoveryList() }
+            self.yieldDiscoveryList()
             self.scheduleDiscoveryPrune(generation: generation)
         }
     }
@@ -383,9 +455,29 @@ final class AdministrativeDeviceSession: NSObject, @unchecked Sendable {
     /// `await`.
     @discardableResult
     func connect(_ id: UUID, lazyAttach: Bool = false) async throws -> UlcpSyncRecord? {
-        try await withCheckedThrowingContinuation {
+        let selection = UUID()
+        await withCheckedContinuation { result in
+            queue.async { [self] in
+                selectionGeneration = selection
+                result.resume()
+            }
+        }
+        if RadioAccessories.usesSystemPicker {
+            let inventory = try await RadioAccessories.shared.prepareSelection(id)
+            try await waitForBluetooth(inventory)
+        }
+        try Task.checkCancellation()
+        return try await withCheckedThrowingContinuation {
             (result: CheckedContinuation<UlcpSyncRecord?, any Error>) in
             queue.async { [self] in
+                guard selectionGeneration == selection else {
+                    result.resume(throwing: CancellationError())
+                    return
+                }
+                if RadioAccessories.usesSystemPicker && !accessoryInventory.permitsConnection(to: id) {
+                    result.resume(throwing: RadioConnectionError.pairingRequired)
+                    return
+                }
                 guard let central, central.state == .poweredOn else {
                     result.resume(throwing: RadioConnectionError.bluetoothUnavailable)
                     return
@@ -401,7 +493,8 @@ final class AdministrativeDeviceSession: NSObject, @unchecked Sendable {
                     : MobileUlcpSession.administrative()
                 // The advertised name is live; `CBPeripheral.name` is a cache
                 // iOS does not refresh when a device is renamed.
-                let advertisedName = discovered[id]?.name
+                let advertisedName = accessoryInventory.radios.first(where: { $0.id == id })?.name
+                    ?? discovered[id]?.name
                 let target = discovered[id]?.peripheral
                     ?? central.retrievePeripherals(withIdentifiers: [id]).first
                 guard let target else {
@@ -445,6 +538,10 @@ final class AdministrativeDeviceSession: NSObject, @unchecked Sendable {
         await withCheckedContinuation { result in
             queue.async { [self] in
                 Self.logger.notice("action: ended administrative session")
+                selectionGeneration = UUID()
+                let waiters = bluetoothWaiters.values
+                bluetoothWaiters.removeAll()
+                for waiter in waiters { waiter.resume(throwing: CancellationError()) }
                 stopDiscoveryOnQueue()
                 finishPendingOperations(throwing: RadioConnectionError.radioNotFound)
                 if let peripheral, let central, peripheral.state != .disconnected {
@@ -467,6 +564,7 @@ final class AdministrativeDeviceSession: NSObject, @unchecked Sendable {
         }
         peripheral?.delegate = nil
         peripheral = nil
+        lastCachedConfiguredName = nil
         frameIn = nil
         frameOut = nil
         reassembler.reset()
@@ -912,6 +1010,12 @@ final class AdministrativeDeviceSession: NSObject, @unchecked Sendable {
         }
         snapshot.identifier = peripheral.identifier
         snapshot.name = update.snapshot.deviceName ?? snapshot.name ?? peripheral.name
+        if RadioAccessories.usesSystemPicker, let name = update.snapshot.deviceName,
+           name != lastCachedConfiguredName {
+            lastCachedConfiguredName = name
+            let id = peripheral.identifier
+            Task { await RadioAccessories.shared.rememberConfiguredName(name, for: id) }
+        }
         if let deviceKey = update.snapshot.deviceKey {
             let identity = try UMSHMobileCore.inspectPublicIdentityBytes(publicKey: deviceKey)
             snapshot.deviceIdentity = MeshPublicIdentity(
@@ -1120,7 +1224,16 @@ final class AdministrativeDeviceSession: NSObject, @unchecked Sendable {
 
 extension AdministrativeDeviceSession: CBCentralManagerDelegate {
     func centralManagerDidUpdateState(_ central: CBCentralManager) {
+        if central.state == .poweredOn {
+            let waiters = bluetoothWaiters.values
+            bluetoothWaiters.removeAll()
+            for waiter in waiters { waiter.resume() }
+        }
         guard central.state == .poweredOn else {
+            if discoveryActive {
+                stopDiscoveryOnQueue()
+                discoveryRequested = true
+            }
             if attachWaiter != nil || peripheral != nil {
                 fail(
                     "Bluetooth is unavailable",

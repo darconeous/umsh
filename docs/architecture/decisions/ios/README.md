@@ -13,3 +13,4 @@ must be replaced or accepted after its listed evidence is collected.
 | [0005—Platform support](0005-platform-support.md) | Accepted for project creation |
 | [0006—Background support](0006-background-support.md) | Provisional, foreground-only claims |
 | [0007—Companion BLE boundary](0007-companion-ble-boundary.md) | Implemented; physical-radio validation pending |
+| [0008—Accessory setup and migration](0008-accessory-setup.md) | Implemented; physical iPhone qualification pending |

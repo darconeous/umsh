@@ -38,17 +38,19 @@ pub fn utf8_prefix_len(bytes: &[u8], limit: usize) -> usize {
     len
 }
 
-/// Names are an explicit enrollment disclosure, never a reconnect identifier.
+/// Names and service identity are disclosed only during deliberate pairing.
 pub fn advertisement(service_uuid_le: [u8; 16], name: &[u8], pairing: bool) -> AdvertisementData {
     let mut data = AdvertisementData {
         advertising: [0; 31],
-        advertising_len: 21,
+        advertising_len: 3,
         scan_response: [0; 31],
         scan_response_len: 0,
     };
-    data.advertising[..5].copy_from_slice(&[2, 1, if pairing { 6 } else { 4 }, 17, 7]);
-    data.advertising[5..21].copy_from_slice(&service_uuid_le);
+    data.advertising[..3].copy_from_slice(&[2, 1, if pairing { 6 } else { 4 }]);
     if pairing {
+        data.advertising[3..5].copy_from_slice(&[17, 7]);
+        data.advertising[5..21].copy_from_slice(&service_uuid_le);
+        data.advertising_len = 21;
         let len = utf8_prefix_len(name, 8);
         if len != 0 {
             data.advertising[21..23].copy_from_slice(&[(len + 1) as u8, 8]);
@@ -107,19 +109,36 @@ mod tests {
         assert_eq!(backoff.after_exit(10), 1_000);
     }
     #[test]
-    fn reconnect_is_nameless_and_not_discoverable() {
-        let d = advertisement([0xa5; 16], b"Alice's radio 1234", false);
-        assert_eq!(d.advertising_len, 21);
-        assert_eq!(&d.advertising[..5], &[2, 1, 4, 17, 7]);
-        assert_eq!(&d.advertising[5..21], &[0xa5; 16]);
-        assert_eq!(d.scan_response_len, 0);
-        assert_eq!(d.scan_response, [0; 31]);
+    fn reconnect_contains_only_generic_flags_regardless_of_service_or_name() {
+        for (uuid, name) in [
+            ([0xa5; 16], b"Alice's radio 1234".as_slice()),
+            ([0x5a; 16], b"Another radio".as_slice()),
+            ([0; 16], b"".as_slice()),
+        ] {
+            let d = advertisement(uuid, name, false);
+            assert_eq!(&d.advertising[..d.advertising_len], &[2, 1, 4]);
+            assert_eq!(&d.advertising[d.advertising_len..], &[0; 28]);
+            assert_eq!(d.scan_response_len, 0);
+            assert_eq!(d.scan_response, [0; 31]);
+        }
+    }
+    #[test]
+    fn pairing_advertises_service_even_without_a_usable_name() {
+        for name in [b"".as_slice(), &[0xff]] {
+            let d = advertisement([0xa5; 16], name, true);
+            assert_eq!(d.advertising_len, 21);
+            assert_eq!(&d.advertising[..5], &[2, 1, 6, 17, 7]);
+            assert_eq!(&d.advertising[5..21], &[0xa5; 16]);
+            assert_eq!(d.scan_response_len, 0);
+        }
     }
     #[test]
     fn pairing_names_obey_payload_and_utf8_limits() {
         let d = advertisement([0; 16], "1234567é radio".as_bytes(), true);
         assert_eq!(&d.advertising[21..d.advertising_len], b"\x08\x081234567");
         assert_eq!(d.advertising[2], 6);
+        assert_eq!(&d.advertising[3..5], &[17, 7]);
+        assert_eq!(&d.advertising[5..21], &[0; 16]);
         assert_eq!(d.scan_response[1], 9);
         let long = "é".repeat(20);
         let d = advertisement([0; 16], long.as_bytes(), true);
@@ -154,7 +173,7 @@ mod tests {
         assert_eq!(deadline.at(), Some(80000));
     }
     #[test]
-    fn every_pairing_exit_removes_public_names_without_resetting_security() {
+    fn every_pairing_exit_removes_name_and_service_without_resetting_security() {
         use crate::ble_security::PairingRuntime;
         let initial = PairingRuntime {
             pairing_mode: false,
@@ -181,11 +200,20 @@ mod tests {
             }
             deadline.close();
             let data = advertisement([1; 16], b"radio", state.pairing_mode);
-            assert_eq!(data.advertising_len, 21);
+            assert_eq!(&data.advertising[..data.advertising_len], &[2, 1, 4]);
+            assert_eq!(&data.advertising[3..], &[0; 28]);
             assert_eq!(data.scan_response_len, 0);
             assert_eq!(data.scan_response, [0; 31]);
             assert_eq!(deadline.at(), None);
             assert_eq!(state.failures, if exit == 2 { 0 } else { 2 });
+            // Reopening advertises the current name and the service again.
+            let reopened = advertisement([1; 16], b"renamed", true);
+            assert_eq!(&reopened.advertising[3..5], &[17, 7]);
+            assert_eq!(&reopened.advertising[5..21], &[1; 16]);
+            assert_eq!(
+                &reopened.scan_response[..reopened.scan_response_len],
+                b"\x08\x09renamed"
+            );
         }
     }
 }

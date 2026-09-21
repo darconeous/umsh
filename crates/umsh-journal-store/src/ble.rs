@@ -14,7 +14,9 @@ const MAGIC: [u8; 4] = *b"UBLS";
 // Version 1 may contain a bond captured at the first protected GATT edge,
 // before SMP identity-key distribution completed. Do not restore those
 // incomplete records.
-const VERSION: u8 = 4;
+// Version 5 marks the completed one-time privacy migration. Versions 3 and 4
+// are mounted for atomic replacement, never restored into a running BLE host.
+const VERSION: u8 = 5;
 const BOND_SIZE: usize = 44;
 const LOCAL_IRK_OFFSET: usize = 16;
 const BONDS_OFFSET: usize = 32;
@@ -104,6 +106,7 @@ pub struct Snapshot {
     pub bonds: heapless::Vec<StoredBond, MAX_BONDS>,
     pub device_name_hash: Option<[u8; 32]>,
     pub name_revision: u32,
+    pub privacy_migration_pending: bool,
 }
 
 impl Snapshot {
@@ -152,6 +155,7 @@ impl Snapshot {
             bonds: heapless::Vec::new(),
             device_name_hash: self.device_name_hash,
             name_revision: self.name_revision,
+            privacy_migration_pending: false,
         })
     }
 
@@ -163,13 +167,20 @@ impl Snapshot {
             bonds: heapless::Vec::new(),
             device_name_hash: None,
             name_revision: 0,
+            privacy_migration_pending: false,
         }
     }
 
     pub fn encode(&self) -> [u8; SLOT_SIZE] {
         let mut out = [0xff; SLOT_SIZE];
         out[..4].copy_from_slice(&MAGIC);
-        out[4] = VERSION;
+        // An unrelated write must not accidentally mark legacy security as
+        // migrated. Only the atomic forget_hosts replacement clears this bit.
+        out[4] = if self.privacy_migration_pending {
+            4
+        } else {
+            VERSION
+        };
         out[5] = self.bonds.len() as u8;
         out[6] = u8::from(self.pin.is_some());
         out[7] = u8::from(self.local_irk.is_some());
@@ -199,7 +210,7 @@ impl Snapshot {
     pub fn decode(bytes: &[u8; SLOT_SIZE]) -> Option<Self> {
         if bytes[COMMIT_OFFSET..] != [0, 0, 0, 0]
             || bytes[..4] != MAGIC
-            || !matches!(bytes[4], 3 | VERSION)
+            || !matches!(bytes[4], 3 | 4 | VERSION)
             || usize::from(bytes[5]) > MAX_BONDS
             || crc32(&bytes[..CRC_OFFSET])
                 != u32::from_le_bytes(bytes[CRC_OFFSET..COMMIT_OFFSET].try_into().ok()?)
@@ -233,7 +244,7 @@ impl Snapshot {
             let security_level = bytes[start + 40];
             if security_level > 2
                 || bytes[start + 41] > 1
-                || (bytes[4] == VERSION && bytes[start + 42] > 1)
+                || (bytes[4] >= 4 && bytes[start + 42] > 1)
             {
                 return None;
             }
@@ -245,12 +256,13 @@ impl Snapshot {
                     ltk: bytes[start + 24..start + 40].try_into().ok()?,
                     security_level,
                     is_bonded: bytes[start + 41] == 1,
-                    name_refresh_pending: bytes[4] == VERSION && bytes[start + 42] == 1,
+                    name_refresh_pending: bytes[4] >= 4 && bytes[start + 42] == 1,
                 })
                 .ok()?;
         }
         Some(Self {
             generation: u32::from_le_bytes(bytes[8..12].try_into().ok()?),
+            privacy_migration_pending: bytes[4] < VERSION,
             pin,
             local_irk,
             bonds,
@@ -369,6 +381,7 @@ mod tests {
             bonds: heapless::Vec::new(),
             device_name_hash: None,
             name_revision: 0,
+            privacy_migration_pending: false,
         };
         snapshot
             .bonds
@@ -399,9 +412,97 @@ mod tests {
         Snapshot::decode(&encoded).unwrap()
     }
 
+    fn legacy_record(version: u8) -> [u8; SLOT_SIZE] {
+        let mut old = sample();
+        old.observe_device_name([1; 32]);
+        old.observe_device_name([2; 32]);
+        let mut encoded = old.encode();
+        encoded[4] = version;
+        if version == 3 {
+            encoded[BONDS_OFFSET + 42..BONDS_OFFSET + 44].fill(0xff);
+            encoded[NAME_OFFSET..CRC_OFFSET].fill(0xff);
+        }
+        let crc = crc32(&encoded[..CRC_OFFSET]);
+        encoded[CRC_OFFSET..COMMIT_OFFSET].copy_from_slice(&crc.to_le_bytes());
+        encoded[COMMIT_OFFSET..].fill(0);
+        encoded
+    }
+
+    #[test]
+    fn privacy_migration_is_atomic_for_both_legacy_versions() {
+        for version in [3, 4] {
+            let old_bytes = legacy_record(version);
+            let old = Snapshot::decode(&old_bytes).unwrap();
+            assert!(old.privacy_migration_pending);
+            assert_eq!(old.pin, sample().pin);
+            assert_eq!(old.local_irk, sample().local_irk);
+            assert_eq!(old.bonds[0].ltk, sample().bonds[0].ltk);
+            assert!(old.forget_hosts([0; 16]).is_none());
+            assert!(old.forget_hosts(old.local_irk.unwrap()).is_none());
+
+            let mut next = old.forget_hosts([0x92; 16]).unwrap();
+            next.generation += 1;
+            assert!(!next.privacy_migration_pending);
+            assert!(next.bonds.is_empty());
+            assert_eq!(next.pin, None);
+            assert_eq!(next.local_irk, Some([0x92; 16]));
+            assert_eq!(next.device_name_hash, old.device_name_hash);
+            assert_eq!(next.name_revision, old.name_revision);
+            let encoded = next.encode();
+            assert_eq!(encoded[4], 5);
+            // Cut power at every body byte and every commit byte. The legacy
+            // authority stays marked unusable until the entire clear commits.
+            for written in 0..SLOT_SIZE {
+                let mut interrupted = [0xff; SLOT_SIZE];
+                interrupted[..written].copy_from_slice(&encoded[..written]);
+                if written > COMMIT_OFFSET {
+                    interrupted[COMMIT_OFFSET..written].fill(0);
+                }
+                assert_eq!(
+                    latest_snapshot([(PAGE0, &old_bytes), (PAGE1, &interrupted)]),
+                    Some((PAGE0, old.clone())),
+                    "version {version}, power cut after {written} bytes"
+                );
+            }
+            let mut committed = encoded;
+            committed[COMMIT_OFFSET..].fill(0);
+            assert_eq!(
+                latest_snapshot([(PAGE0, &old_bytes), (PAGE1, &committed)]),
+                Some((PAGE1, next.clone()))
+            );
+            // New bonds and PINs survive later boots without another cleanup.
+            let mut next = reboot(&next);
+            next.pin = Some(654_321);
+            upsert_bond(&mut next.bonds, bond(2));
+            assert_eq!(reboot(&reboot(&next)), next);
+            assert!(!next.privacy_migration_pending);
+        }
+    }
+
+    #[test]
+    fn unrelated_legacy_writes_cannot_complete_privacy_migration() {
+        for version in [3, 4] {
+            let mut old = Snapshot::decode(&legacy_record(version)).unwrap();
+            old.pin = Some(654_321);
+            old.observe_device_name([3; 32]);
+            assert_eq!(old.encode()[4], 4);
+            let restored = reboot(&old);
+            assert!(restored.privacy_migration_pending);
+            assert_eq!(restored, old);
+        }
+    }
+
+    #[test]
+    fn fresh_install_needs_no_privacy_migration() {
+        let mut fresh = Snapshot::empty();
+        fresh.local_irk = Some([0x92; 16]);
+        assert_eq!(fresh.encode()[4], 5);
+        assert!(!reboot(&fresh).privacy_migration_pending);
+    }
+
     #[test]
     fn version_three_preserves_security_without_inventing_a_rename() {
-        let old = sample();
+        let mut old = sample();
         let mut encoded = old.encode();
         encoded[4] = 3;
         encoded[BONDS_OFFSET + 42..BONDS_OFFSET + 44].fill(0xff);
@@ -409,6 +510,7 @@ mod tests {
         let crc = crc32(&encoded[..CRC_OFFSET]);
         encoded[CRC_OFFSET..COMMIT_OFFSET].copy_from_slice(&crc.to_le_bytes());
         encoded[COMMIT_OFFSET..].fill(0);
+        old.privacy_migration_pending = true;
         let mut restored = Snapshot::decode(&encoded).unwrap();
         assert_eq!(restored, old);
         assert!(restored.observe_device_name([1; 32]));

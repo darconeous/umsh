@@ -1,7 +1,6 @@
 import SwiftUI
 
-/// The live list of nearby UMSH devices, driven by the administrative
-/// session's own scan.
+/// Nearby radios currently advertising a connectable BLE session.
 ///
 /// This is not `RadioPickerView`: that one picks *this phone's* radio and
 /// its selection is a persistent binding. Here a selection is a foreground
@@ -16,7 +15,10 @@ struct DeviceScanView: View {
     var body: some View {
         List {
             Section {
-                if controller.devices.isEmpty {
+                if controller.devices.isEmpty && RadioAccessories.usesSystemPicker {
+                    Text("No available radios. Turn on a paired radio nearby, or add a radio with its pairing window open.")
+                        .foregroundStyle(.secondary)
+                } else if controller.devices.isEmpty {
                     HStack(spacing: 12) {
                         ProgressView()
                         VStack(alignment: .leading, spacing: 2) {
@@ -40,18 +42,26 @@ struct DeviceScanView: View {
                             )
                         }
                         .disabled(controller.isBusy || controller.isCompanion(device))
+                        .contextMenu {
+                            if RadioAccessories.usesSystemPicker {
+                                Button("Remove Radio", role: .destructive) {
+                                    Task {
+                                        do { try await RadioAccessories.shared.remove(device.id) }
+                                        catch { controller.problem = RadioAccessories.message(for: error) }
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             } header: {
-                Text("Nearby devices")
+                Text("Available devices")
             } footer: {
                 footer
             }
+            if RadioAccessories.usesSystemPicker { RadioAccessoryActions() }
         }
-        // Devices arrive and drop out on their own while this is open, and the
-        // scan replaces the whole list to say so. Keyed on the identities
-        // alone: a row whose signal strength is ticking should not restate
-        // itself as a movement.
+        // Animate membership changes, not name or fallback signal updates.
         .animation(UMSHAnimation.list, value: controller.devices.map(\.id))
         .navigationTitle("Choose a Device")
         .onAppear {
@@ -68,6 +78,7 @@ struct DeviceScanView: View {
             Task { await controller.stopDiscovery() }
         }
         .task {
+            guard !RadioAccessories.usesSystemPicker else { return }
             // A gentle nudge after a few quiet seconds, without failing the
             // scan—the device may simply be booting.
             try? await Task.sleep(nanoseconds: 4 * 1_000_000_000)
@@ -79,6 +90,8 @@ struct DeviceScanView: View {
     private var footer: some View {
         if let problem = controller.problem {
             Text(problem).foregroundStyle(.red)
+        } else if RadioAccessories.usesSystemPicker {
+            Text("Only paired radios advertising nearby appear here. Radios disappear after a few seconds without an advertisement. Manage this phone's companion radio from its own screen.")
         } else if controller.devices.contains(where: controller.isCompanion) {
             Text("This phone's own radio is listed but cannot be set up from here—use the companion radio screen for that. Devices drop out of the list a few seconds after they stop advertising.")
         } else {
@@ -130,8 +143,7 @@ private struct DeviceScanRow: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            SignalStrengthIcon(bars: device.signalBars, hasSignal: device.hasSignal)
-                .frame(width: 22)
+            SignalStrengthIcon(bars: device.signalBars, hasSignal: device.hasSignal).frame(width: 22)
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
                     Text(device.name ?? "Unnamed device")
@@ -145,7 +157,9 @@ private struct DeviceScanRow: View {
                             .foregroundStyle(.tint)
                     }
                 }
-                Text(device.hasSignal ? "\(device.rssiDBm) dBm" : "Signal unavailable")
+                Text(device.requiresMigration ? "Finish setup to reconnect"
+                     : device.hasSignal ? "\(device.rssiDBm) dBm"
+                     : "Available")
                     .font(.caption.monospaced())
                     .foregroundStyle(.secondary)
             }

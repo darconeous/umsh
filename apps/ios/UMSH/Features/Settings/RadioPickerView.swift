@@ -1,9 +1,7 @@
 import SwiftUI
 
-/// A live list of nearby companion radios. Discovery runs while the sheet is
-/// open and never auto-connects—the user taps the radio they want. This is
-/// the deliberate-selection counterpart to the auto-connect "first match"
-/// path, and is what makes a multi-radio test bench usable.
+/// Select an advertising companion or add one through the system picker.
+/// Platforms without AccessorySetupKit retain service-filtered discovery.
 struct RadioPickerView: View {
     let discoverRadios: () async -> AsyncStream<[DiscoveredRadio]>
     let selectRadio: (UUID) async throws -> Void
@@ -27,7 +25,7 @@ struct RadioPickerView: View {
     }
 }
 
-/// The scanning list itself, without the chrome that decides what selecting a
+/// The radio list itself, without the chrome that decides what selecting a
 /// radio means. Onboarding shows the same list as the picker sheet and follows
 /// a selection with its own step, so the search, the rows and the "nothing yet"
 /// state are stated once and each screen supplies its own title and way out.
@@ -46,7 +44,10 @@ struct RadioScanList: View {
     var body: some View {
         List {
             Section {
-                if radios.isEmpty {
+                if radios.isEmpty && RadioAccessories.usesSystemPicker {
+                    Text("No available radios. Turn on a paired radio nearby, or add a radio with its pairing window open.")
+                        .foregroundStyle(.secondary)
+                } else if radios.isEmpty {
                     HStack(spacing: 12) {
                         ProgressView()
                         VStack(alignment: .leading, spacing: 2) {
@@ -66,29 +67,42 @@ struct RadioScanList: View {
                             RadioPickerRow(radio: radio, isSelecting: selecting == radio.id)
                         }
                         .disabled(selecting != nil)
+                        .contextMenu {
+                            if RadioAccessories.usesSystemPicker {
+                                Button("Remove Radio", role: .destructive) {
+                                    Task {
+                                        do { try await RadioAccessories.shared.remove(radio.id) }
+                                        catch { problem = RadioAccessories.message(for: error) }
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             } header: {
-                Text("Nearby radios")
+                Text("Available radios")
             } footer: {
                 if let problem {
                     Text(problem).foregroundStyle(.red)
                 } else {
-                    Text("Discovery keeps running while this list is open. Radios that power off drop out after a few seconds.")
+                    Text(RadioAccessories.usesSystemPicker
+                         ? "Only paired radios advertising nearby appear here. Radios disappear after a few seconds without an advertisement."
+                         : "Discovery keeps running while this list is open. Radios that power off drop out after a few seconds.")
                 }
             }
+            if RadioAccessories.usesSystemPicker { RadioAccessoryActions() }
         }
-        // Radios arrive and drop out on their own while this is open, and the
-        // scan replaces the whole list to say so. Keyed on the identities
-        // alone: a row whose signal strength is ticking should not restate
-        // itself as a movement.
+        // Only membership changes animate; a rename or fallback RSSI update
+        // must not look like the row moved.
         .animation(UMSHAnimation.list, value: radios.map(\.id))
         .task {
             for await list in await discoverRadios() {
                 radios = list
             }
         }
+        .onDisappear { Task { await stopDiscovery() } }
         .task {
+            guard !RadioAccessories.usesSystemPicker else { return }
             // A gentle nudge after a few quiet seconds, without failing the
             // scan—the radio may simply be booting.
             try? await Task.sleep(nanoseconds: 4 * 1_000_000_000)
@@ -106,7 +120,7 @@ struct RadioScanList: View {
             onConnected()
         } catch {
             selecting = nil
-            problem = "Could not connect to that radio. It may have moved out of range."
+            problem = RadioAccessories.message(for: error)
         }
     }
 }
@@ -117,8 +131,7 @@ private struct RadioPickerRow: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            SignalStrengthIcon(bars: radio.signalBars, hasSignal: radio.hasSignal)
-                .frame(width: 22)
+            SignalStrengthIcon(bars: radio.signalBars, hasSignal: radio.hasSignal).frame(width: 22)
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
                     Text(radio.name ?? "Unnamed radio")
@@ -132,7 +145,9 @@ private struct RadioPickerRow: View {
                             .foregroundStyle(.tint)
                     }
                 }
-                Text(radio.hasSignal ? "\(radio.rssiDBm) dBm" : "Signal unavailable")
+                Text(radio.requiresMigration ? "Finish setup to reconnect"
+                     : radio.hasSignal ? "\(radio.rssiDBm) dBm"
+                     : "Available")
                     .font(.caption.monospaced())
                     .foregroundStyle(.secondary)
             }
@@ -142,6 +157,80 @@ private struct RadioPickerRow: View {
             }
         }
         .contentShape(Rectangle())
+    }
+}
+
+/// Shared by companion selection and administrative device selection. Apple
+/// owns discovery and authorization of new radios; these lists own selection
+/// among already authorized ones.
+struct RadioAccessoryActions: View {
+    @State private var accessories = RadioAccessories.shared
+    @State private var confirmsForget = false
+    @State private var removalProblem: String?
+
+    var body: some View {
+        Section {
+            RadioAccessoryPickerButton(
+                migrationOnly: accessories.inventory.migrationID != nil
+            )
+            if accessories.inventory.migrationID != nil {
+                Button("Forget Previous Radio…", role: .destructive) { confirmsForget = true }
+            }
+        } footer: {
+            Text(removalProblem ?? accessories.inventory.problem
+                 ?? "Keep the radio nearby and open its pairing window. iOS will ask you to allow access.")
+        }
+        .confirmationDialog("Forget the previous radio?", isPresented: $confirmsForget, titleVisibility: .visible) {
+            Button("Forget Previous Radio", role: .destructive) {
+                guard let id = accessories.inventory.migrationID else { return }
+                Task {
+                    do { try await accessories.remove(id) }
+                    catch { removalProblem = RadioAccessories.message(for: error) }
+                }
+            }
+        } message: {
+            Text("This abandons its saved app connection so you can add another radio. It does not reset the radio or remove the pairing from Bluetooth Settings.")
+        }
+    }
+}
+
+/// The same recovery action is available at the problem banner, radio details
+/// and saved-radio list. No screen sends the user hunting for another screen.
+struct RadioAccessoryPickerButton: View {
+    let migrationOnly: Bool
+    var onFinished: (UUID) async throws -> Void = { _ in }
+
+    @State private var accessories = RadioAccessories.shared
+    @State private var busy = false
+    @State private var problem: String?
+
+    var body: some View {
+        Button {
+            let migrating = migrationOnly
+            busy = true
+            Task {
+                defer { busy = false }
+                do {
+                    let id = try await (migrating ? accessories.finishSetup() : accessories.addRadio())
+                    if let id { try await onFinished(id) }
+                } catch {
+                    problem = RadioAccessories.message(for: error)
+                }
+            }
+        } label: {
+            if busy {
+                Label("Setting Up…", systemImage: "hourglass")
+            } else {
+                Label(migrationOnly ? "Finish Radio Setup" : "Add Another Radio…",
+                      systemImage: migrationOnly ? "checkmark.circle" : "plus.circle")
+            }
+        }
+        .disabled(busy || accessories.inventory.pickerActive)
+        .alert("Radio Setup", isPresented: Binding(
+            get: { problem != nil }, set: { if !$0 { problem = nil } }
+        )) {
+            Button("OK", role: .cancel) { problem = nil }
+        } message: { Text(problem ?? "") }
     }
 }
 
@@ -160,7 +249,7 @@ struct SignalStrengthIcon: View {
                 }
             }
         } else {
-            Image(systemName: "wifi.slash")
+            Image(systemName: "antenna.radiowaves.left.and.right")
                 .foregroundStyle(.secondary)
                 .font(.caption)
         }

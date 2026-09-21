@@ -127,7 +127,7 @@ struct AppRootView: View {
                     openedConversation: $openedConversation,
                     openedChannelConversation: $openedChannelConversation
                 )
-                    .appRadioToolbar(runtime.radioSnapshot) {
+                    .appRadioToolbar(runtime.radioSnapshot, reconnectRadio: runtime.reconnectRadio) {
                         showsRadioDetail = true
                     }
             }
@@ -167,7 +167,7 @@ struct AppRootView: View {
                     ),
                     discoverPeers: { openDiscovery(nil) }
                 )
-                    .appRadioToolbar(runtime.radioSnapshot) {
+                    .appRadioToolbar(runtime.radioSnapshot, reconnectRadio: runtime.reconnectRadio) {
                         showsRadioDetail = true
                     }
             }
@@ -205,7 +205,7 @@ struct AppRootView: View {
                     discoverPeers: { openDiscovery(nil) },
                     refreshPosition: runtime.refreshRadioPosition
                 )
-                    .appRadioToolbar(runtime.radioSnapshot) {
+                    .appRadioToolbar(runtime.radioSnapshot, reconnectRadio: runtime.reconnectRadio) {
                         showsRadioDetail = true
                     }
             }
@@ -271,7 +271,7 @@ struct AppRootView: View {
                     stagedDropTransmissions: runtime.stagedDropTransmissions,
                     stagedRemoteDevicesReachable: runtime.stagedRemoteDevicesReachable
                 )
-                    .appRadioToolbar(runtime.radioSnapshot) {
+                    .appRadioToolbar(runtime.radioSnapshot, reconnectRadio: runtime.reconnectRadio) {
                         showsRadioDetail = true
                     }
             }
@@ -557,6 +557,7 @@ private enum AppTab: Hashable {
 private extension View {
     func appRadioToolbar(
         _ snapshot: RadioSnapshot,
+        reconnectRadio: @escaping () async -> Void,
         action: @escaping () -> Void
     ) -> some View {
         toolbar {
@@ -575,7 +576,7 @@ private extension View {
             // arrival.
             Group {
                 if snapshot.problemDescription != nil {
-                    RadioProblemBanner(snapshot: snapshot, action: action)
+                    RadioProblemBanner(snapshot: snapshot, action: action, reconnectRadio: reconnectRadio)
                         .transition(.move(edge: .top).combined(with: .opacity))
                 }
             }

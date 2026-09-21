@@ -13,6 +13,65 @@ orientations for multitasking, and the UI is portrait-only. Signing is automatic
 against team `2ZEL2X74K7`; override `DEVELOPMENT_TEAM` locally if you build
 under a different account.
 
+## Radio setup and saved radios
+
+On iPhone, **Choose a Radio** and **Choose a Device** show authorized radios
+with recent connectable advertisements. Radios disappear after roughly six
+to eight seconds without an advertisement. Saved radios that are offline or
+already connected are hidden; their pairings are retained. **Add Another Radio…**
+opens Apple's picker. Open the radio's pairing window so the picker can match
+the ULCP service UUID and display its name.
+
+AccessorySetupKit manages authorization and the saved list. CoreBluetooth
+still owns connections, GATT traffic, the selected companion's pending
+connection request, background Bluetooth mode and state restoration. Opening
+either list starts a foreground scan without a service filter, so flags-only
+advertisements can qualify. The list admits only authorized identifiers.
+Scanning stops when the list closes or the app becomes inactive; it resumes
+with an empty sightings list if the open picker returns to the foreground.
+Administrative visits do not select a
+new companion or create background reconnect requests for every saved radio.
+
+An upgrade from an older app offers **Finish Radio Setup** directly in the
+radio problem banner, radio details and radio picker. This applies even
+when that radio already runs privacy firmware. Complete the system migration
+before connecting. Cancelling keeps the migration available for another
+attempt; it does not erase radio bonds. **Forget Previous Radio…** lets you
+abandon an unavailable legacy companion and add another radio. If
+the radio cannot be found, bring it nearby and open its pairing window. A
+firmware update that erased the bond still requires re-pairing; app migration
+cannot recreate erased security keys.
+
+Older apps remembered only the selected companion's Bluetooth identifier.
+Previously visited administrative radios and companions no longer saved by
+the app must be added through the system picker with pairing open. There is
+no supported inventory of all legacy CoreBluetooth bonds to import. This
+also applies if the app's saved preferences were erased.
+
+Removing an authorized accessory in Settings or through **Remove Radio** in
+the list removes its app entry and stops this app's connection to it. Removal
+while the app is closed is reconciled on next launch. Removing an unmigrated
+legacy entry merely abandons the saved identifier; it does not erase its
+phone-side bond. Neither action resets the radio or clears its other hosts.
+Offline radios remain saved and can be removed in Settings. The app remembers
+configured names learned through either authenticated connection type and
+updates them after subsequent reads and renames. These names take priority
+over cached Bluetooth or system accessory names. Until a name has been learned,
+the picker uses the advertised/cached name or the system label. This app-side
+cache does not rename the accessory in iOS Settings.
+
+The simulator retains its development transport, and iOS-on-Mac retains the
+CoreBluetooth discovery fallback. These environments do not exercise the
+iPhone system picker. The implementation uses iOS 18 APIs.
+
+Run `scripts/ios/verify-radio-accessories.sh` for host checks of migration,
+authorization, foreground availability, name selection, removal and stale-update
+handling. Physical iPhone qualification
+is pending, including migration of a flags-only advertiser, pairing ceremony,
+Settings removal, and locked-phone background reconnection. See
+[ADR 0008](../../docs/architecture/decisions/ios/0008-accessory-setup.md) for
+the lifecycle and qualification cases.
+
 ## Running against a real radio in the simulator
 
 The simulator has no Bluetooth, so a simulator build cannot reach a

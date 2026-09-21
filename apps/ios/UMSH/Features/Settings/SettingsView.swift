@@ -639,6 +639,7 @@ struct RadioDetailView: View {
     @State private var radioActionProblem: String?
     @State private var confirmsReboot = false
     @State private var showsRadioPicker = false
+    @State private var radioAccessories = RadioAccessories.shared
 
     var body: some View {
         List {
@@ -848,7 +849,9 @@ struct RadioDetailView: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("The app stops reconnecting to this radio and drops it from Bluetooth's standing connections. The radio keeps its own bond until you re-pair; add it again later with \"Find companion radio\".")
+            Text(RadioAccessories.usesSystemPicker
+                 ? "This removes the saved accessory and stops the app reconnecting. To add it again, open the radio's pairing window and choose Add Another Radio. It does not reset the radio or forget its other hosts."
+                 : "The app stops reconnecting to this radio and drops it from Bluetooth's standing connections. The radio keeps its own bond until you re-pair; add it again later with \"Find companion radio\".")
         }
         .confirmationDialog(
             "Restart this radio?",
@@ -975,6 +978,19 @@ struct RadioDetailView: View {
 
     @ViewBuilder
     private var connectionControl: some View {
+        if RadioAccessories.usesSystemPicker, radioAccessories.inventory.migrationID != nil {
+            RadioAccessoryPickerButton(migrationOnly: true) { _ in await reconnect() }
+            Text("Allow this saved radio in the iOS setup dialog, then the app will reconnect. Keep the radio nearby; open its pairing window if it cannot be found.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+            Button("Choose a Radio…") { showsRadioPicker = true }
+        } else {
+            ordinaryConnectionControl
+        }
+    }
+
+    @ViewBuilder
+    private var ordinaryConnectionControl: some View {
         switch snapshot.linkState {
         case .scanning, .connecting, .reconnecting, .pairing, .provisioning, .configuring,
              .disconnecting:
