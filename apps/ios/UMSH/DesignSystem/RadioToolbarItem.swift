@@ -43,6 +43,7 @@ struct RadioProblemBanner: View {
     let snapshot: RadioSnapshot
     let action: () -> Void
     let reconnectRadio: () async -> Void
+    let selectRadio: (UUID) async throws -> Void
     @State private var accessories = RadioAccessories.shared
 
     var body: some View {
@@ -60,6 +61,9 @@ struct RadioProblemBanner: View {
                 Spacer()
                 if RadioAccessories.usesSystemPicker, accessories.inventory.migrationID != nil {
                     RadioAccessoryPickerButton(migrationOnly: true) { _ in await reconnectRadio() }
+                        .buttonStyle(.bordered)
+                } else if RadioAccessories.usesSystemPicker, accessories.inventory.needsRadioSetup {
+                    RadioAccessoryPickerButton(migrationOnly: false, onFinished: selectRadio)
                         .buttonStyle(.bordered)
                 } else {
                     Button("Details", action: action)

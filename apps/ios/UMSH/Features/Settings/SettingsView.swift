@@ -901,6 +901,11 @@ struct RadioDetailView: View {
                 .font(.footnote)
                 .foregroundStyle(.secondary)
             Button("Choose a Radio…") { showsRadioPicker = true }
+        } else if RadioAccessories.usesSystemPicker, radioAccessories.inventory.needsRadioSetup {
+            RadioAccessoryPickerButton(migrationOnly: false, onFinished: selectRadio)
+            Text("Keep the radio nearby and open its pairing window. Allow access in the iOS setup dialog.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
         } else {
             ordinaryConnectionControl
         }

@@ -13,7 +13,12 @@ struct RadioAccessoryInventory: Sendable {
     var configuredNames: [UUID: String] = [:]
     var appIsActive = false
 
-    var canCreateCentral: Bool { ready && migrationID == nil && !pickerActive }
+    /// ASK grants access per accessory. Before the first authorization a
+    /// central can report poweredOff even when the phone's Bluetooth is on.
+    var needsRadioSetup: Bool { ready && migrationID == nil && authorizedIDs.isEmpty }
+    var canCreateCentral: Bool {
+        ready && migrationID == nil && !pickerActive && !authorizedIDs.isEmpty
+    }
     var canScan: Bool { canCreateCentral && appIsActive }
 
     /// Only a known legacy entry needs user setup. Activation and an already
@@ -23,6 +28,7 @@ struct RadioAccessoryInventory: Sendable {
         if !ready { return "Loading saved radios…" }
         if pickerActive { return "Complete or cancel the open radio setup dialog." }
         if migrationID != nil { return "This saved radio needs setup. Tap Finish Radio Setup to continue." }
+        if needsRadioSetup { return "Add a radio to enable access." }
         return nil
     }
 

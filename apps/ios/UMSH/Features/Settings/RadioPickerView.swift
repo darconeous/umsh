@@ -191,7 +191,8 @@ struct RadioAccessoryPickerButton: View {
             if busy {
                 Label("Setting Up…", systemImage: "hourglass")
             } else {
-                Label(migrationOnly ? "Finish Radio Setup" : "Add Another Radio…",
+                Label(migrationOnly ? "Finish Radio Setup"
+                      : accessories.inventory.needsRadioSetup ? "Add Radio…" : "Add Another Radio…",
                       systemImage: migrationOnly ? "checkmark.circle" : "plus.circle")
             }
         }

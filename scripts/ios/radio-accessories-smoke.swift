@@ -19,15 +19,23 @@ struct RadioAccessoriesSmokeTest {
         // has arrived. A fresh install needs no migration, but has no access.
         precondition(!RadioAccessoryInventory().canCreateCentral)
         precondition(RadioAccessoryInventory().connectionBlockDescription == "Loading saved radios…")
-        let fresh = reconcile([])
-        precondition(fresh.canCreateCentral && fresh.radios.isEmpty)
+        var fresh = reconcile([])
+        fresh.appIsActive = true
+        precondition(!fresh.canCreateCentral && !fresh.canScan && fresh.radios.isEmpty)
+        precondition(fresh.needsRadioSetup)
         precondition(!fresh.permitsConnection(to: first))
-        precondition(fresh.connectionBlockDescription == nil)
+        precondition(fresh.connectionBlockDescription == "Add a radio to enable access.")
+        fresh.pickerActive = true
+        precondition(!fresh.canCreateCentral && !fresh.canScan)
+        precondition(fresh.connectionBlockDescription == "Complete or cancel the open radio setup dialog.")
+        fresh.pickerActive = false // Cancelling addition must still offer setup.
+        precondition(fresh.needsRadioSetup && !fresh.canCreateCentral)
 
         // Old apps save one UUID. Firmware generation does not decide whether
         // this needs migration: absence from ASK and from managed history does.
         var legacy = reconcile([], legacy: first)
         precondition(legacy.migrationID == first && !legacy.canCreateCentral)
+        precondition(!legacy.needsRadioSetup, "A legacy radio must offer migration, not addition")
         precondition(legacy.radios.map(\.id) == [first])
         precondition(legacy.radios[0].requiresMigration)
         precondition(legacy.radios[0].name == "Legacy companion")
@@ -49,6 +57,7 @@ struct RadioAccessoriesSmokeTest {
         precondition(!migrated.canCreateCentral && !migrated.permitsConnection(to: first))
         migrated.pickerActive = false
         precondition(migrated.canCreateCentral && migrated.permitsConnection(to: first))
+        precondition(!migrated.needsRadioSetup && migrated.connectionBlockDescription == nil)
         precondition(migrated.migrationID == nil && migrated.radios.count == 1)
         precondition(!migrated.radios[0].requiresMigration)
 
@@ -78,7 +87,12 @@ struct RadioAccessoriesSmokeTest {
         // Explicitly abandoning an unmigrated entry allows adding another;
         // explicitly adding a formerly removed accessory restores access.
         let abandoned = reconcile([], [first], legacy: first)
-        precondition(abandoned.canCreateCentral && abandoned.migrationID == nil)
+        precondition(!abandoned.canCreateCentral && abandoned.migrationID == nil)
+        precondition(abandoned.needsRadioSetup)
+        let lastRemoved = reconcile([], [first], legacy: first)
+        precondition(lastRemoved.removedIDs == [first] && lastRemoved.needsRadioSetup)
+        precondition(!lastRemoved.canCreateCentral && !lastRemoved.canScan)
+        precondition(lastRemoved.connectionBlockDescription == "Add a radio to enable access.")
         let readded = reconcile([radio(first)], [first], legacy: first)
         precondition(readded.permitsConnection(to: first) && readded.removedIDs.isEmpty)
 
@@ -99,6 +113,7 @@ struct RadioAccessoriesSmokeTest {
         invalidated.ready = false
         precondition(queueInventory.accept(invalidated))
         precondition(!queueInventory.canCreateCentral && !queueInventory.permitsConnection(to: second))
+        precondition(!queueInventory.needsRadioSetup, "An unloaded inventory is not an empty authorization list")
 
         // Regression: ASK can publish the saved accessory and migrationComplete
         // without an ordinary picker dismissal. Previously the row appeared

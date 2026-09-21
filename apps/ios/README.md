@@ -185,6 +185,21 @@ diagnostic polling. The decoder and local/mesh request handling live in
 
 ## TestFlight
 
+AccessorySetupKit authorizes access per radio; the app does not depend on a
+Bluetooth permission toggle in its Settings page. Before the first radio is
+authorized, the app offers **Add Radio** and does not create a CoreBluetooth
+manager or scan. CoreBluetooth's unavailable state in this case does not mean
+the phone's Bluetooth is off. Open the radio's pairing window and complete the
+system setup dialog; existing legacy pairings use **Finish Radio Setup**.
+Accessory access is managed in **Settings → Privacy & Security → Accessories**.
+
+For release qualification, test a fresh installation with no authorized radios,
+canceled setup followed by successful setup, legacy migration, and removal of
+the last accessory. Verify that setup stays accessible, the empty authorization
+list never displays a Bluetooth-off warning, and successful setup connects to
+the selected radio. Separately test genuine Bluetooth-off behavior with an
+authorized radio. These cases require a physical iPhone.
+
 ```sh
 make ios-archive
 make ios-upload

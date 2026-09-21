@@ -181,7 +181,9 @@ final class CoreBluetoothRadioConnection: UlcpRadioSession, RadioConnection, Ulc
         }
         yieldDiscoveryList()
         guard inventory.canCreateCentral else {
-            if inventory.migrationID != nil, peripheral == nil {
+            if peripheral == nil {
+                bluetoothUnavailableGrace?.cancel()
+                bluetoothUnavailableGrace = nil
                 publishDisconnected(problem: inventory.connectionBlockDescription)
             }
             return
@@ -573,7 +575,9 @@ final class CoreBluetoothRadioConnection: UlcpRadioSession, RadioConnection, Ulc
             return
         }
         guard rememberedPeripheralIdentifier != nil else {
-            if userInitiated {
+            if RadioAccessories.usesSystemPicker, !accessoryInventory.canCreateCentral {
+                publishDisconnected(problem: accessoryInventory.connectionBlockDescription)
+            } else if userInitiated {
                 publishDisconnected(problem: "No saved companion radio is available to reconnect")
             } else {
                 publishDisconnected(problem: nil)
@@ -844,6 +848,14 @@ final class CoreBluetoothRadioConnection: UlcpRadioSession, RadioConnection, Ulc
         bluetoothUnavailableGrace?.cancel()
         bluetoothUnavailableGrace = nil
 
+        // ASK authorization, including an empty inventory after removal, takes
+        // precedence over the manager's state. It is not the phone's power switch.
+        if RadioAccessories.usesSystemPicker, !accessoryInventory.canCreateCentral,
+           peripheral == nil {
+            publishDisconnected(problem: accessoryInventory.connectionBlockDescription)
+            return
+        }
+
         if central.state == .poweredOn {
             let waiters = bluetoothWaiters.values
             bluetoothWaiters.removeAll()
@@ -905,6 +917,11 @@ final class CoreBluetoothRadioConnection: UlcpRadioSession, RadioConnection, Ulc
         let work = DispatchWorkItem { [weak self] in
             guard let self, let central = self.central,
                   central.state != .poweredOn else { return }
+            if RadioAccessories.usesSystemPicker, !self.accessoryInventory.canCreateCentral,
+               self.peripheral == nil {
+                self.publishDisconnected(problem: self.accessoryInventory.connectionBlockDescription)
+                return
+            }
             self.publishBluetoothUnavailable(message)
         }
         bluetoothUnavailableGrace = work
