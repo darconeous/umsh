@@ -3,6 +3,15 @@
 pub const ADVERTISING_INTERVAL_US: u64 = 1_022_500;
 pub const RPA_TIMEOUT_SECS: u64 = 900;
 
+/// Choose the window duration from the retained bond count when it opens.
+pub const fn pairing_window_ms(bond_count: u8) -> u64 {
+    if bond_count == 0 {
+        5 * 60 * 1000
+    } else {
+        2 * 60 * 1000
+    }
+}
+
 /// Avoid a tight controller rebuild loop while keeping retries short enough
 /// for background reconnection. A stable run resets consecutive-failure delay.
 #[derive(Default)]
@@ -164,13 +173,21 @@ mod tests {
     #[test]
     fn deadline_does_not_extend_when_stack_restarts() {
         let mut deadline = PairingDeadline::new();
-        deadline.open(1000, 30000);
-        assert!(!deadline.expired(30999));
-        assert!(deadline.expired(31000));
+        deadline.open(1000, pairing_window_ms(0));
+        assert_eq!(deadline.at(), Some(301_000));
+        assert!(!deadline.expired(300_999));
+        assert!(deadline.expired(301_000));
         deadline.close();
-        assert!(!deadline.expired(60000));
-        deadline.open(60000, 20000);
-        assert_eq!(deadline.at(), Some(80000));
+        assert!(!deadline.expired(600_000));
+        for bonds in 1..=4 {
+            deadline.open(600_000, pairing_window_ms(bonds));
+            assert_eq!(deadline.at(), Some(720_000));
+            assert!(!deadline.expired(719_999));
+            assert!(deadline.expired(720_000));
+        }
+        // Clearing all hosts gives the next window the initial setup duration.
+        deadline.open(800_000, pairing_window_ms(0));
+        assert_eq!(deadline.at(), Some(1_100_000));
     }
     #[test]
     fn every_pairing_exit_removes_name_and_service_without_resetting_security() {

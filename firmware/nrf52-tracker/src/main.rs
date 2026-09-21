@@ -1200,8 +1200,10 @@ mod firmware {
     async fn initialize_pairing_deadline() {
         PAIRING_DEADLINE.lock(|d| {
             if PAIRING_MODE.load(Ordering::Acquire) {
-                d.borrow_mut()
-                    .open(Instant::now().as_millis(), PAIRING_WINDOW_SECS * 1000);
+                d.borrow_mut().open(
+                    Instant::now().as_millis(),
+                    ble_privacy::pairing_window_ms(BLE_BOND_COUNT.load(Ordering::Acquire)),
+                );
             }
         });
     }
@@ -1541,8 +1543,10 @@ mod firmware {
         BLE_LED_MODE.store(u8::from(open), Ordering::Release);
         PAIRING_DEADLINE.lock(|d| {
             if open {
-                d.borrow_mut()
-                    .open(Instant::now().as_millis(), PAIRING_WINDOW_SECS * 1000);
+                d.borrow_mut().open(
+                    Instant::now().as_millis(),
+                    ble_privacy::pairing_window_ms(BLE_BOND_COUNT.load(Ordering::Acquire)),
+                );
             } else {
                 d.borrow_mut().close();
             }
@@ -2173,19 +2177,6 @@ mod firmware {
         BLE_STACK_FAULT.signal(());
         core::future::pending().await
     }
-
-    /// How long a pairing window stays open before it closes itself.
-    ///
-    /// Boards that can *ask* for a window—a menu entry, or a
-    /// hold-through-power-on gesture—get 30 s, because reopening one is
-    /// cheap. A `boot-pairing-window` board has neither, so its only
-    /// window is the automatic one at boot and it is deliberately shorter:
-    /// it is open on every single boot rather than on request, so the
-    /// exposure is recurring and the length is the only thing limiting it.
-    #[cfg(not(feature = "boot-pairing-window"))]
-    const PAIRING_WINDOW_SECS: u64 = 30;
-    #[cfg(feature = "boot-pairing-window")]
-    const PAIRING_WINDOW_SECS: u64 = 20;
 
     async fn pairing_timeout<C: Controller, P: PacketPool>(stack: &Stack<'_, C, P>) -> ! {
         loop {

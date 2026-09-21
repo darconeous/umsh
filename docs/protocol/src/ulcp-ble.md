@@ -507,14 +507,16 @@ requirement.
 Entering pairing mode:
 
 * While the device holds no bonds, it **SHOULD** enter pairing mode
-  automatically at power-on for a short window (15–30 seconds
-  **RECOMMENDED**).
+  automatically at power-on.
 * Once the device holds one or more bonds, it **MUST NOT** enter pairing
   mode automatically. Entering pairing mode then requires either a
   deliberate physical gesture distinct from normal power-on—for
   example, holding the user button through power-on until the device
   signals that pairing mode is active—or a write of `1` to
   [`PROP_BLE_PAIRING`](#prop-ble-pairing) from an authorized session.
+
+A timeout of five minutes with no bonds, or two minutes with one or more
+bonds, is **RECOMMENDED**, based on the bond count when the window opens.
 
 Pairing mode **MUST** end when any of the following occurs:
 

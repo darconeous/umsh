@@ -772,8 +772,10 @@ async fn next_local_irk(store: &BleStoreMutex) -> [u8; 16] {
 async fn initialize_pairing_deadline() {
     PAIRING_DEADLINE.lock(|d| {
         if PAIRING_MODE.load(Ordering::Acquire) {
-            d.borrow_mut()
-                .open(Instant::now().as_millis(), PAIRING_WINDOW_SECS * 1000);
+            d.borrow_mut().open(
+                Instant::now().as_millis(),
+                ble_privacy::pairing_window_ms(BLE_BOND_COUNT.load(Ordering::Acquire)),
+            );
         }
     });
 }
@@ -1421,8 +1423,10 @@ fn set_pairing_mode(open: bool) {
     let previous = PAIRING_MODE.swap(open, Ordering::AcqRel);
     PAIRING_DEADLINE.lock(|d| {
         if open {
-            d.borrow_mut()
-                .open(Instant::now().as_millis(), PAIRING_WINDOW_SECS * 1000);
+            d.borrow_mut().open(
+                Instant::now().as_millis(),
+                ble_privacy::pairing_window_ms(BLE_BOND_COUNT.load(Ordering::Acquire)),
+            );
         } else {
             d.borrow_mut().close();
         }
@@ -2000,7 +2004,6 @@ async fn ble_runner<C: Controller, P: PacketPool>(mut runner: Runner<'_, C, P>) 
     core::future::pending().await
 }
 
-const PAIRING_WINDOW_SECS: u64 = 30;
 async fn pairing_timeout<C: Controller, P: PacketPool>(stack: &Stack<'_, C, P>) -> ! {
     loop {
         let deadline = PAIRING_DEADLINE.lock(|d| d.borrow().at());

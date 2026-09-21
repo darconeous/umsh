@@ -58,7 +58,7 @@ lfclk-rc = []
 # Dedicated hardware power button + System OFF teardown / GPIO-DETECT wake
 # (Solar P1 PWR button on P1.01).
 power-button = []
-# Open a 20 s BLE pairing window on every boot, bonded or not, instead of
+# Open a BLE pairing window on every boot, bonded or not, instead of
 # only when there are no bonds. For boards with no button and no display,
 # where there is otherwise NO way to reach pairing mode again after the
 # first bond—a bonded node would be locked to its first host forever.

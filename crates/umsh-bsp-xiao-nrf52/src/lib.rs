@@ -81,7 +81,8 @@
 //! wipe over that host's own link could ever let a second one in.
 //!
 //! So the firmware for this board builds with `boot-pairing-window`: a
-//! **20-second BLE pairing window opens on every boot**, bonded or not.
+//! **BLE pairing window opens on every boot**, lasting five minutes with
+//! no bonds or two minutes with retained bonds.
 //! Pressing RESET is the physical-presence ceremony here, standing in for
 //! the button hold the other boards use. A configured PIN still gates the
 //! pairing itself and the repeated-failure lockout still applies, so the

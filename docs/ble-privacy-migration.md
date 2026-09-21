@@ -22,6 +22,11 @@ before BLE starts. Every previously paired phone needs to pair again:
    choose **Add Another Radio…** in the app, and pair again. Reopen the window if it
    expires while completing these steps.
 
+Pairing windows last five minutes when no bonds are retained, or two minutes
+when at least one bond is retained. The duration is selected when the window
+opens. Successful pairing or an encrypted reconnection by a bonded host closes
+the window early; internal BLE restarts do not extend it.
+
 The cleanup preserves non-BLE configuration, configured name, device identity
 and BLE enablement. It also runs while BLE is disabled without enabling it.
 New pairings and the replacement IRK survive normal restarts and subsequent
