@@ -667,6 +667,15 @@ The fitted 16 MB flash initially uses the existing 4 MB UMSH image layout,
 including the data partition at `0x300000`. Normal flashing retains its
 identity, settings, and bond journals. Additional flash is unused.
 
+### Proposed BQ27220 defaults for review
+
+The [BQ27220 default configuration proposal](t-lora-pager-bq27220-defaults.md)
+records the 2026-09-19 discharge-derived fixed-threshold profile: 10% EDV2,
+1500 mAh design capacity, and a 1610 mAh full-capacity seed. It includes the
+required DOD-at-EDV2 initialization, supporting targets, and pending validation.
+It is documentation for review, not implemented provisioning; the runtime
+behavior and historical qualification results in this reference remain as stated.
+
 ### Input sleep qualification
 
 Build the measurement image with
