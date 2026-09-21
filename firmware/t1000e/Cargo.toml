@@ -70,7 +70,7 @@ umsh-ulcp = { path = "../../crates/umsh-ulcp" }
 umsh-ulcp-device = { path = "../../crates/umsh-ulcp-device" }
 # Board-agnostic device runtime shared with the other nRF52840 tracker boards
 # (same main.rs) and the ESP32 port: leaf modules + the session driver.
-umsh-ulcp-runtime = { path = "../../crates/umsh-ulcp-runtime", features = ["device-node", "node-thread-mode-mutex", "gnss"] }
+umsh-ulcp-runtime = { path = "../../crates/umsh-ulcp-runtime", features = ["ble-host", "device-node", "node-thread-mode-mutex", "gnss"] }
 umsh-gnss = { path = "../../crates/umsh-gnss" }
 umsh-crypto = { path = "../../crates/umsh-crypto", default-features = false, features = ["software-crypto"] }
 umsh-hal = { path = "../../crates/umsh-hal", default-features = false }

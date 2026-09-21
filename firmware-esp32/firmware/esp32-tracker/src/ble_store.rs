@@ -293,11 +293,28 @@ impl BleStore {
         Ok(evicted)
     }
 
-    /// Move the bond matching `address_kind`/`address` to the MRU end and
-    /// persist it, if it isn't already there. Called on reconnect via an
-    /// existing bond, so the LRU order reflects actual use rather than only
-    /// pairing events—without this the list is insertion-ordered and
-    /// eviction takes the wrong bond.
+    pub async fn observe_device_name(&mut self, hash: [u8; 32]) -> Result<(), ()> {
+        let mut next = self.snapshot.clone();
+        if !next.observe_device_name(hash) {
+            return Ok(());
+        }
+        self.persist(next).await
+    }
+
+    pub async fn acknowledge_device_name(
+        &mut self,
+        bond: &StoredBond,
+        revision: u32,
+    ) -> Result<bool, ()> {
+        let mut next = self.snapshot.clone();
+        if !next.acknowledge_device_name(bond, revision) {
+            return Ok(false);
+        }
+        self.persist(next).await?;
+        Ok(true)
+    }
+
+    /// Persist LRU order on reconnect only when the stored order changes.
     pub async fn touch_bond(&mut self, address_kind: u8, address: [u8; 6]) -> Result<bool, ()> {
         let mut next = self.snapshot.clone();
         if !ble::touch_bond(&mut next.bonds, address_kind, address) {
@@ -307,12 +324,9 @@ impl BleStore {
         Ok(true)
     }
 
-    /// Drop every bond and the PIN, preserving the device's local IRK—
-    /// the device's security-wipe operation.
-    pub async fn clear_security(&mut self) -> Result<(), ()> {
-        let mut next = Snapshot::empty();
-        next.generation = self.snapshot.generation;
-        next.local_irk = self.snapshot.local_irk;
+    /// Atomically revoke every bond, clear the PIN, and replace the local IRK.
+    pub async fn forget_hosts(&mut self, irk: [u8; 16]) -> Result<(), ()> {
+        let next = self.snapshot.forget_hosts(irk).ok_or(())?;
         self.persist(next).await
     }
 }
@@ -346,6 +360,7 @@ pub fn stored_bond(bond: &BondInformation) -> StoredBond {
             SecurityLevel::EncryptedAuthenticated => 2,
         },
         is_bonded: bond.is_bonded,
+        name_refresh_pending: false,
     }
 }
 

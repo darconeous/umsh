@@ -197,29 +197,52 @@ not dominate MAC-layer timing budgets.
 
 ## Advertising and Discovery {#ble-advertising}
 
-While powered and not attached, the device **SHOULD** advertise as
-connectable and include the ULCP GATT Service UUID in its
-advertising data or scan response, so hosts can discover devices
-by service rather than by name. The advertised local name is
-implementation-specific unless the device advertises `CAP_DEV_NAME`. Such a device
-**SHOULD** use its current `PROP_DEV_NAME` as the advertised local name,
-shortening it without splitting a UTF-8 code point when the advertising or scan
-response payload cannot hold the complete value. A name changed while a BLE
-connection is active takes effect on the next advertising cycle; changing it
-does not require disconnecting the attached host.
+While BLE is enabled and transport arbitration permits it, a disconnected
+device **SHOULD** advertise as connectable and undirected, including the
+ULCP GATT Service UUID in its advertising data. Advertising **SHOULD**
+suspend during a BLE connection or an attached wired session, then resume
+when permitted. Hosts discover the service rather than matching a name.
 
-While a host is attached over another transport (for example, an open
-ULCP session over USB-CDC), the device **SHOULD** suspend
-advertising, and **SHOULD** resume it when that host detaches.
+Outside [pairing mode](#pairing-mode), advertisements and scan responses
+**MUST NOT** contain a local name or any per-device identifier. The flags
+omit general and limited discoverability; the device remains connectable
+so bonded hosts can reconnect. Previously installed scan-response data
+**MUST** be explicitly cleared when returning to this mode. The common
+ULCP service UUID identifies the service, not an individual device.
 
-Advertising content **MUST NOT** reveal whether the device holds bonds or
-identify previously bonded hosts. Devices **SHOULD** use resolvable
-private addresses.
+During pairing mode, the device declares general discoverability and
+**SHOULD** advertise the current `PROP_DEV_NAME`, shortening it without
+splitting a UTF-8 code point where needed. A rename
+during the window updates these payloads. Names, including existing
+hardware-derived default suffixes, are a deliberate disclosure during
+pairing. Ordinary renaming does not disconnect a connected host.
 
-Pairing mode (see [Pairing Mode](ulcp-ble.md#pairing-mode)) governs only the acceptance of
-pairing requests; it does not affect advertising. In particular, a
-bonded device continues to advertise outside pairing mode so that its
-bonded hosts can reconnect.
+Devices **SHOULD** use resolvable private addresses (RPAs) with a persisted
+local Identity Resolving Key (IRK). Devices using RPAs **MUST NOT** fall
+back to advertising a permanent address when privacy setup fails.
+Entering or leaving a named pairing window **SHOULD** refresh the
+advertising address, deferring the refresh until disconnection if a
+connection is active. Address refresh **MUST NOT** extend pairing
+deadlines or reset authentication failures or lockout.
+
+### Connected Device Names
+
+The GAP Device Name characteristic exposes the configured name only
+while pairing, or on an encrypted connection backed by a durable,
+retained bond. Other name reads **MUST** receive an ATT security error.
+This applies to direct and offset reads, reads by type, multiple-value
+reads and name equality probes. Authenticated ULCP `PROP_DEV_NAME`
+behavior is unchanged.
+
+The GAP value **SHOULD** reflect the current configured name. A name-value
+change is not a change to the service structure. Ordinary renaming
+**MUST NOT** require re-pairing.
+
+Address rotation does not make a device anonymous to a host that holds
+its IRK. It reduces tracking by observers without that key. A deliberate
+pairing disclosure and continuous observation around a transition can
+still correlate activity; advertising frequency is not an anonymity
+guarantee.
 
 ## Capabilities {#capabilities}
 
@@ -357,8 +380,11 @@ whether to clear bonds actually needs.
 
 #### Writing Zero: Forgetting Every Host {#clearing-bonds}
 
-Writing `0` deletes every stored bond, the pairing PIN, and the pairing
-failure lockout, then enters pairing mode.
+Writing `0` atomically persists an empty bond store, a cleared pairing PIN,
+and a fresh, nonzero local IRK different from the previous IRK. A failed
+commit leaves the previous security state intact. After success, it clears
+the pairing failure lockout and opens a pairing window. It does not enable
+BLE if BLE was disabled, or change non-BLE configuration or device identity.
 
 Zero is the only value a host may write, and any other **MUST** be
 answered `STATUS_INVALID_ARGUMENT`. Bonds are enrolled one pairing
@@ -377,7 +403,11 @@ The write is answered like any other, with the property's value: a
 `CMD_PROP_IS` carrying `0` once the deletion is durable. Sent over BLE,
 that answer is the last thing the sender hears, because the bond that
 carried it is among the bonds deleted; the reply **MUST** be emitted
-before the connection is dropped.
+before the connection is dropped. Queue insertion alone **MUST NOT** be
+treated as completed transmission. Failure to deliver the reply **MUST NOT**
+undo durable revocation. Further GATT access **MUST** be denied after
+commit, and the new IRK **MUST** be installed before further advertising
+or pairing.
 
 Clearing the PIN alongside the bonds is deliberate. A PIN outliving the
 hosts it was set for would leave a device that has forgotten everyone

@@ -2409,12 +2409,12 @@ dependencies = [
 [[package]]
 name = "lora-modulation"
 version = "0.1.5"
-source = "git+https://github.com/darconeous/lora-rs.git?rev=bddfba7a269fe16e295f4e6c62aaba8c4d34937a#bddfba7a269fe16e295f4e6c62aaba8c4d34937a"
+source = "git+https://github.com/darconeous/lora-rs.git?rev=28bb48ce72591348d3731123a70bfe9e080ad880#28bb48ce72591348d3731123a70bfe9e080ad880"
 
 [[package]]
 name = "lora-phy"
 version = "3.0.2-alpha"
-source = "git+https://github.com/darconeous/lora-rs.git?rev=bddfba7a269fe16e295f4e6c62aaba8c4d34937a#bddfba7a269fe16e295f4e6c62aaba8c4d34937a"
+source = "git+https://github.com/darconeous/lora-rs.git?rev=28bb48ce72591348d3731123a70bfe9e080ad880#28bb48ce72591348d3731123a70bfe9e080ad880"
 dependencies = [
  "document-features",
  "embedded-hal 1.0.0",
@@ -4409,17 +4409,20 @@ dependencies = [
 name = "umsh-ulcp-runtime"
 version = "0.1.0"
 dependencies = [
+ "bt-hci",
  "critical-section",
  "embassy-futures",
  "embassy-sync",
  "embassy-time",
  "embassy-time-driver",
  "embedded-hal-async",
+ "embedded-io 0.7.1",
  "heapless 0.8.0",
  "lora-phy",
  "rand 0.10.1",
  "rand_chacha",
  "rand_core 0.6.4",
+ "trouble-host",
  "umsh-core",
  "umsh-crypto",
  "umsh-gnss",

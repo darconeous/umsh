@@ -131,6 +131,13 @@ reason P0.05 must not be a System OFF wake source—a stuck-high level defeats
 a high-sense DETECT arm. USB insertion wakes the chip from System OFF through
 the native VBUS detector, which reports with its own `RESETREAS.VBUS` bit.
 
+While awake, the battery monitor samples once per second when charging or
+charge-complete, rechecking native VBUS each time. Cable removal therefore
+updates the cached charging indication on the next sample even if neither
+charger GPIO produces an edge. On battery power, the interval is five minutes
+normally and 30 seconds for a low or critical battery. GPIO edges and explicit
+battery-read requests can trigger an earlier sample.
+
 ### P1.03 charge-status polarity confirmed
 
 `CHARGE_STA` on P1.03 is active-low as Meshtastic documents: low = actively
@@ -590,6 +597,23 @@ Important caveats:
 - The diagnosis was end-to-end ping behavior only; there was **no RF measurement** (SDR capture, spectrum, SNR of the failing frames) to confirm what actually went wrong on air.
 
 Practical takeaway for now: prefer `StandbyRC` for the LR1110 on this board, and treat any "keep the oscillator warm" optimization as something that needs proper RF characterization before being trusted.
+
+### LR1110 idle sleep and wakeup
+
+The shared radio runner uses LR1110 cold sleep while waiting for boot
+settings and whenever LoRa is disabled. The `lora-rs` driver sends
+SetSleep without waiting for BUSY to fall afterward. Before the next
+command, `ensure_ready` issues a wake pulse for a sleeping or duty-cycled
+radio, then waits for readiness. This ordering allows the runner to use
+`LoRa::sleep` without a board-specific standby policy. Full T-1000E
+shutdown separately holds the LR1110 reset pin low.
+
+Host regression tests use the real LR1110 driver and a simulated
+sleeping BUSY line. Driver tests verify
+cold/warm sleep, wake ordering, error propagation and RX restoration.
+Firmware runner tests cover boot, repeated disable/re-enable, TX startup
+and shutdown. Physical beacon, bidirectional LoRa, and current
+measurements remain pending.
 
 ## Buzzer driver quirks
 

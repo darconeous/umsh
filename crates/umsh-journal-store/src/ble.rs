@@ -14,10 +14,11 @@ const MAGIC: [u8; 4] = *b"UBLS";
 // Version 1 may contain a bond captured at the first protected GATT edge,
 // before SMP identity-key distribution completed. Do not restore those
 // incomplete records.
-const VERSION: u8 = 3;
+const VERSION: u8 = 4;
 const BOND_SIZE: usize = 44;
 const LOCAL_IRK_OFFSET: usize = 16;
 const BONDS_OFFSET: usize = 32;
+const NAME_OFFSET: usize = BONDS_OFFSET + MAX_BONDS * BOND_SIZE;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct StoredBond {
@@ -27,6 +28,7 @@ pub struct StoredBond {
     pub ltk: [u8; 16],
     pub security_level: u8,
     pub is_bonded: bool,
+    pub name_refresh_pending: bool,
 }
 
 /// Outcome of [`upsert_bond`].
@@ -48,11 +50,13 @@ pub enum BondUpsert {
 /// the MRU end, evicting the current LRU entry first if the list is full.
 pub fn upsert_bond(
     bonds: &mut heapless::Vec<StoredBond, MAX_BONDS>,
-    bond: StoredBond,
+    mut bond: StoredBond,
 ) -> BondUpsert {
     if let Some(index) = bonds.iter().position(|existing| {
         existing.address_kind == bond.address_kind && existing.address == bond.address
     }) {
+        // Refreshing a retained bond must not consume a missed rename.
+        bond.name_refresh_pending = bonds[index].name_refresh_pending;
         if bonds[index] == bond && index == bonds.len() - 1 {
             return BondUpsert::Unchanged;
         }
@@ -98,15 +102,67 @@ pub struct Snapshot {
     pub pin: Option<u32>,
     pub local_irk: Option<[u8; 16]>,
     pub bonds: heapless::Vec<StoredBond, MAX_BONDS>,
+    pub device_name_hash: Option<[u8; 32]>,
+    pub name_revision: u32,
 }
 
 impl Snapshot {
+    /// Record a configured name and give every retained host its own refresh.
+    /// An older journal has no baseline; seed it without inventing a rename.
+    pub fn observe_device_name(&mut self, hash: [u8; 32]) -> bool {
+        if self.device_name_hash == Some(hash) {
+            return false;
+        }
+        if self.device_name_hash.is_some() {
+            self.name_revision = self.name_revision.wrapping_add(1);
+            for bond in &mut self.bonds {
+                bond.name_refresh_pending = true;
+            }
+        }
+        self.device_name_hash = Some(hash);
+        true
+    }
+
+    /// Clear only the confirmed host's pending bit. A confirmation for an old
+    /// name or a replaced bond must not acknowledge a subsequent change.
+    pub fn acknowledge_device_name(&mut self, confirmed: &StoredBond, revision: u32) -> bool {
+        if self.name_revision != revision {
+            return false;
+        }
+        let Some(bond) = self.bonds.iter_mut().find(|bond| *bond == confirmed) else {
+            return false;
+        };
+        if !bond.name_refresh_pending {
+            return false;
+        }
+        bond.name_refresh_pending = false;
+        true
+    }
+
+    /// Prepare one atomic revocation record without mutating the live snapshot.
+    /// A previously trusted peer must not be able to resolve the new IRK.
+    pub fn forget_hosts(&self, new_irk: [u8; 16]) -> Option<Self> {
+        if new_irk == [0; 16] || self.local_irk == Some(new_irk) {
+            return None;
+        }
+        Some(Self {
+            generation: self.generation,
+            pin: None,
+            local_irk: Some(new_irk),
+            bonds: heapless::Vec::new(),
+            device_name_hash: self.device_name_hash,
+            name_revision: self.name_revision,
+        })
+    }
+
     pub const fn empty() -> Self {
         Self {
             generation: 0,
             pin: None,
             local_irk: None,
             bonds: heapless::Vec::new(),
+            device_name_hash: None,
+            name_revision: 0,
         }
     }
 
@@ -129,7 +185,12 @@ impl Snapshot {
             out[start + 24..start + 40].copy_from_slice(&bond.ltk);
             out[start + 40] = bond.security_level;
             out[start + 41] = u8::from(bond.is_bonded);
+            out[start + 42] = u8::from(bond.name_refresh_pending);
         }
+        out[NAME_OFFSET] = u8::from(self.device_name_hash.is_some());
+        out[NAME_OFFSET + 1..NAME_OFFSET + 33]
+            .copy_from_slice(&self.device_name_hash.unwrap_or([0; 32]));
+        out[NAME_OFFSET + 33..NAME_OFFSET + 37].copy_from_slice(&self.name_revision.to_le_bytes());
         let crc = crc32(&out[..CRC_OFFSET]);
         out[CRC_OFFSET..COMMIT_OFFSET].copy_from_slice(&crc.to_le_bytes());
         out
@@ -138,7 +199,7 @@ impl Snapshot {
     pub fn decode(bytes: &[u8; SLOT_SIZE]) -> Option<Self> {
         if bytes[COMMIT_OFFSET..] != [0, 0, 0, 0]
             || bytes[..4] != MAGIC
-            || bytes[4] != VERSION
+            || !matches!(bytes[4], 3 | VERSION)
             || usize::from(bytes[5]) > MAX_BONDS
             || crc32(&bytes[..CRC_OFFSET])
                 != u32::from_le_bytes(bytes[CRC_OFFSET..COMMIT_OFFSET].try_into().ok()?)
@@ -170,7 +231,10 @@ impl Snapshot {
                 _ => return None,
             };
             let security_level = bytes[start + 40];
-            if security_level > 2 || bytes[start + 41] > 1 {
+            if security_level > 2
+                || bytes[start + 41] > 1
+                || (bytes[4] == VERSION && bytes[start + 42] > 1)
+            {
                 return None;
             }
             bonds
@@ -181,6 +245,7 @@ impl Snapshot {
                     ltk: bytes[start + 24..start + 40].try_into().ok()?,
                     security_level,
                     is_bonded: bytes[start + 41] == 1,
+                    name_refresh_pending: bytes[4] == VERSION && bytes[start + 42] == 1,
                 })
                 .ok()?;
         }
@@ -189,6 +254,20 @@ impl Snapshot {
             pin,
             local_irk,
             bonds,
+            device_name_hash: if bytes[4] == 3 {
+                None
+            } else {
+                match bytes[NAME_OFFSET] {
+                    0 => None,
+                    1 => Some(bytes[NAME_OFFSET + 1..NAME_OFFSET + 33].try_into().ok()?),
+                    _ => return None,
+                }
+            },
+            name_revision: if bytes[4] == 3 {
+                0
+            } else {
+                u32::from_le_bytes(bytes[NAME_OFFSET + 33..NAME_OFFSET + 37].try_into().ok()?)
+            },
         })
     }
 }
@@ -288,6 +367,8 @@ mod tests {
             pin: Some(123_456),
             local_irk: Some([9; 16]),
             bonds: heapless::Vec::new(),
+            device_name_hash: None,
+            name_revision: 0,
         };
         snapshot
             .bonds
@@ -298,6 +379,7 @@ mod tests {
                 ltk: [8; 16],
                 security_level: 2,
                 is_bonded: true,
+                name_refresh_pending: false,
             })
             .unwrap();
         snapshot
@@ -309,6 +391,123 @@ mod tests {
         let mut encoded = snapshot.encode();
         encoded[COMMIT_OFFSET..].fill(0);
         assert_eq!(Snapshot::decode(&encoded), Some(snapshot));
+    }
+
+    fn reboot(snapshot: &Snapshot) -> Snapshot {
+        let mut encoded = snapshot.encode();
+        encoded[COMMIT_OFFSET..].fill(0);
+        Snapshot::decode(&encoded).unwrap()
+    }
+
+    #[test]
+    fn version_three_preserves_security_without_inventing_a_rename() {
+        let old = sample();
+        let mut encoded = old.encode();
+        encoded[4] = 3;
+        encoded[BONDS_OFFSET + 42..BONDS_OFFSET + 44].fill(0xff);
+        encoded[NAME_OFFSET..CRC_OFFSET].fill(0xff);
+        let crc = crc32(&encoded[..CRC_OFFSET]);
+        encoded[CRC_OFFSET..COMMIT_OFFSET].copy_from_slice(&crc.to_le_bytes());
+        encoded[COMMIT_OFFSET..].fill(0);
+        let mut restored = Snapshot::decode(&encoded).unwrap();
+        assert_eq!(restored, old);
+        assert!(restored.observe_device_name([1; 32]));
+        assert!(!restored.bonds[0].name_refresh_pending);
+        assert!(!restored.observe_device_name([1; 32]));
+        assert_eq!(reboot(&restored), restored);
+    }
+
+    #[test]
+    fn missed_rename_survives_reboot_and_each_phone_confirms_independently() {
+        for first in [0, 1] {
+            let mut snapshot = Snapshot::empty();
+            snapshot.observe_device_name([1; 32]);
+            upsert_bond(&mut snapshot.bonds, bond(1));
+            upsert_bond(&mut snapshot.bonds, bond(2));
+            assert!(snapshot.bonds.iter().all(|b| !b.name_refresh_pending));
+            snapshot.observe_device_name([2; 32]);
+            let mut snapshot = reboot(&snapshot);
+            let confirmed = snapshot.bonds[first];
+            assert!(snapshot.acknowledge_device_name(&confirmed, snapshot.name_revision));
+            let mut snapshot = reboot(&snapshot);
+            assert!(!snapshot.bonds[first].name_refresh_pending);
+            assert!(snapshot.bonds[1 - first].name_refresh_pending);
+            // A normal reconnect and an LRU touch do not create another refresh.
+            assert!(!snapshot.observe_device_name([2; 32]));
+            let other = snapshot.bonds[1 - first];
+            assert!(snapshot.acknowledge_device_name(&other, snapshot.name_revision));
+            assert!(
+                reboot(&snapshot)
+                    .bonds
+                    .iter()
+                    .all(|b| !b.name_refresh_pending)
+            );
+        }
+    }
+
+    #[test]
+    fn stale_confirmation_and_bond_refresh_cannot_consume_new_rename() {
+        let mut snapshot = Snapshot::empty();
+        snapshot.observe_device_name([1; 32]);
+        upsert_bond(&mut snapshot.bonds, bond(1));
+        snapshot.observe_device_name([2; 32]);
+        let confirmed = snapshot.bonds[0];
+        let revision = snapshot.name_revision;
+        upsert_bond(&mut snapshot.bonds, bond(1));
+        assert!(snapshot.bonds[0].name_refresh_pending);
+        snapshot.observe_device_name([3; 32]);
+        snapshot.observe_device_name([2; 32]);
+        assert!(!snapshot.acknowledge_device_name(&confirmed, revision));
+        let mut replacement = bond(1);
+        replacement.ltk = [9; 16];
+        upsert_bond(&mut snapshot.bonds, replacement);
+        assert!(!snapshot.acknowledge_device_name(&confirmed, snapshot.name_revision));
+        assert!(snapshot.bonds[0].name_refresh_pending);
+        let cleared = snapshot.forget_hosts([4; 16]).unwrap();
+        assert!(cleared.bonds.is_empty());
+        assert_eq!(cleared.device_name_hash, snapshot.device_name_hash);
+    }
+
+    #[test]
+    fn eviction_and_fresh_pairing_do_not_inherit_another_phones_pending_name() {
+        let mut snapshot = Snapshot::empty();
+        snapshot.observe_device_name([1; 32]);
+        for id in 1..=4 {
+            upsert_bond(&mut snapshot.bonds, bond(id));
+        }
+        snapshot.observe_device_name([2; 32]);
+        let evicted = snapshot.bonds[0];
+        upsert_bond(&mut snapshot.bonds, bond(5));
+        assert!(!snapshot.acknowledge_device_name(&evicted, snapshot.name_revision));
+        let restored = reboot(&snapshot);
+        assert!(restored.bonds[..3].iter().all(|b| b.name_refresh_pending));
+        assert!(!restored.bonds[3].name_refresh_pending);
+    }
+
+    #[test]
+    fn interrupted_name_acknowledgement_retains_pending_refresh() {
+        let mut old = sample();
+        old.observe_device_name([1; 32]);
+        old.observe_device_name([2; 32]);
+        let confirmed = old.bonds[0];
+        let mut next = old.clone();
+        next.generation += 1;
+        assert!(next.acknowledge_device_name(&confirmed, next.name_revision));
+        let mut old_bytes = old.encode();
+        old_bytes[COMMIT_OFFSET..].fill(0);
+        let new_bytes = next.encode();
+        for written in 0..SLOT_SIZE {
+            let mut interrupted = [0xff; SLOT_SIZE];
+            interrupted[..written].copy_from_slice(&new_bytes[..written]);
+            if written > COMMIT_OFFSET {
+                interrupted[COMMIT_OFFSET..written].fill(0);
+            }
+            assert_eq!(
+                latest_snapshot([(PAGE0, &old_bytes), (PAGE1, &interrupted)]),
+                Some((PAGE0, old.clone()))
+            );
+        }
+        assert!(!reboot(&next).bonds[0].name_refresh_pending);
     }
 
     #[test]
@@ -342,15 +541,31 @@ mod tests {
     }
 
     #[test]
+    fn forget_hosts_rejects_zero_or_reused_irk_without_mutating_security() {
+        let old = sample();
+        let before = old.encode();
+        assert!(old.forget_hosts([0; 16]).is_none());
+        assert!(old.forget_hosts(old.local_irk.unwrap()).is_none());
+        let new = old.forget_hosts([0x92; 16]).unwrap();
+        assert_eq!(old.encode(), before);
+        assert_eq!(new.generation, old.generation);
+        assert!(new.bonds.is_empty());
+        assert_eq!(new.pin, None);
+        assert_eq!(new.local_irk, Some([0x92; 16]));
+    }
+
+    #[test]
     fn interrupted_new_record_never_replaces_committed_old_record() {
         let mut old = sample();
         old.generation = 7;
         let mut old_bytes = old.encode();
         old_bytes[COMMIT_OFFSET..].fill(0);
 
-        let mut new = sample();
+        let mut new = old.forget_hosts([0x92; 16]).unwrap();
         new.generation = 8;
-        new.pin = Some(654_321);
+        assert!(new.bonds.is_empty());
+        assert_eq!(new.pin, None);
+        assert_eq!(new.local_irk, Some([0x92; 16]));
         let encoded_new = new.encode();
 
         // Simulate power loss after every possible byte of the body write and
@@ -453,6 +668,7 @@ mod tests {
             ltk: [id; 16],
             security_level: 2,
             is_bonded: true,
+            name_refresh_pending: false,
         }
     }
 

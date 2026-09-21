@@ -196,11 +196,13 @@ pub async fn run_battery_monitor<I>(
     I: Binding<SaadcIrq, SaadcInterruptHandler> + Copy + 'static,
 {
     const CONSECUTIVE_NEEDED: u8 = 10;
-    /// Normal cadence. The cell discharges over days and the level
-    /// estimator quantizes to 5 %, so nothing is learned by sampling the
-    /// SAADC faster than this; the charge-state edges are interrupts and
-    /// do not wait for it.
+    /// Battery-only cadence. The cell discharges over days and the level
+    /// estimator quantizes to 5 %, so frequent SAADC sampling is unnecessary.
     const SAMPLE_INTERVAL: Duration = Duration::from_secs(300);
+    /// Recheck native VBUS promptly while externally powered, including after
+    /// charging completes. Charger GPIOs can miss cable removal, so their
+    /// interrupts alone cannot keep the cached charging indication current.
+    const POWERED_SAMPLE_INTERVAL: Duration = Duration::from_secs(1);
     /// Cadence while the cell is Low or Critical. The protective cutoff
     /// counts [`CONSECUTIVE_NEEDED`] consecutive critical samples, so its
     /// latency is a multiple of the interval in force—at the normal
@@ -305,15 +307,13 @@ pub async fn run_battery_monitor<I>(
             low_count = 0;
         }
 
-        // A cell already reading Low or Critical is watched closely; the
-        // cutoff's latency depends on it.
-        let interval = if matches!(
-            state,
-            BatteryState::BatteryLow | BatteryState::BatteryCritical
-        ) {
-            LOW_SAMPLE_INTERVAL
-        } else {
-            SAMPLE_INTERVAL
+        // A stale powered state gets one more fast sample after unplugging,
+        // then returns to the appropriate battery-only cadence. Preserve the
+        // Low/Critical interval because the cutoff counts those samples.
+        let interval = match state {
+            BatteryState::BatteryCharging | BatteryState::BatteryCharged => POWERED_SAMPLE_INTERVAL,
+            BatteryState::BatteryLow | BatteryState::BatteryCritical => LOW_SAMPLE_INTERVAL,
+            BatteryState::BatteryOnly => SAMPLE_INTERVAL,
         };
         // Wait for the next battery iteration. Light requests are serviced
         // inside this wait and do not end it: they have their own enable,

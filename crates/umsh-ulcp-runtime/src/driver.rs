@@ -185,6 +185,8 @@ pub type InputChannel<M> = Channel<M, InEvent, 8>;
 /// session generation that produced it so a displaced session's frames
 /// are dropped at the transport edge (`transport_policy::generation_checked`).
 pub struct OutFrame {
+    /// Final BLE reply: drain controller transmissions before replacing its IRK.
+    pub finish_ble_wipe: bool,
     pub generation: u32,
     pub frame: FrameBuf,
 }
@@ -568,14 +570,16 @@ pub trait DeviceEnv {
     async fn apply_pairing_pin(&mut self, pin: Option<u32>) -> bool;
     /// A `PROP_BLE_BOND_COUNT` write of zero: delete every stored bond,
     /// the pairing PIN, and the pairing lockout, then open a pairing
-    /// window. `true` once the deletion is durable.
+    /// window and replace the local IRK. `true` once revocation is durable.
+    /// When `reply_over_ble` is true, retain the current encrypted link only
+    /// to transmit the response marked `OutFrame::finish_ble_wipe`.
     ///
     /// Unlike the factory reset below, this runs with the board still up,
     /// so the live BLE stack has to be emptied alongside the journal—a
     /// bond forgotten on flash but still held in RAM would keep working
     /// until the next boot. Boards that do not manage their own bonds
     /// never see this and keep the default, which refuses.
-    async fn clear_ble_bonds(&mut self) -> bool {
+    async fn clear_ble_bonds(&mut self, _reply_over_ble: bool) -> bool {
         false
     }
     /// A `PROP_BLE_PAIRING` write: open (or renew) the pairing window, or
@@ -815,6 +819,7 @@ pub struct DeviceRuntime<M: RawMutex + 'static, const RX: usize, const TX: usize
 /// them to the active transport's output queue asynchronously. The
 /// session emits at most one frame per call; two slots give headroom.
 struct Emitter {
+    finish_ble_wipe: bool,
     bufs: [[u8; FRAME_OUT_MAX]; 2],
     lens: [usize; 2],
     count: usize,
@@ -823,6 +828,7 @@ struct Emitter {
 impl Emitter {
     const fn new() -> Self {
         Self {
+            finish_ble_wipe: false,
             bufs: [[0; FRAME_OUT_MAX]; 2],
             lens: [0; 2],
             count: 0,
@@ -871,6 +877,9 @@ impl Emitter {
                     }
                     out.for_transport(*transport)
                         .send(OutFrame {
+                            finish_ble_wipe: self.finish_ble_wipe
+                                && index + 1 == self.count
+                                && *transport == Transport::Ble,
                             generation: *generation,
                             frame: copy,
                         })
@@ -894,6 +903,7 @@ impl Emitter {
             }
         }
         self.count = 0;
+        self.finish_ble_wipe = false;
     }
 }
 
@@ -1342,16 +1352,21 @@ async fn serve_frame<A, S, const TXQ: usize, M, const RX: usize, const TX: usize
                 emitter.flush(sink).await;
             }
             Some(Effect::ClearBleBonds { tid }) => {
-                // The answer goes out before the bonds are gone from the
-                // live stack only in the sense that the flush below races
-                // the disconnect; the platform does the durable work
-                // first, so a host that hears zero has really been
-                // forgotten. Over Bluetooth this reply is the last thing
-                // the sender hears—dropping its bond drops its link.
+                // Commit revocation first, then mark the response for the BLE
+                // sender's controller-completion fence. Queue insertion does
+                // not authorize disconnecting before transmission completes.
                 env.trace(format_args!(
                     "PROP_BLE_BOND_COUNT <- 0: forgetting every host"
                 ));
-                let cleared = env.clear_ble_bonds().await;
+                let reply_over_ble = matches!(
+                    sink,
+                    ReplySink::Transport {
+                        destination: Some((Transport::Ble, _)),
+                        ..
+                    }
+                );
+                let cleared = env.clear_ble_bonds(reply_over_ble).await;
+                emitter.finish_ble_wipe = cleared && reply_over_ble;
                 session.respond_ble_bond_count(
                     tid,
                     cleared.then_some(()).ok_or(()),
@@ -2017,5 +2032,59 @@ where
                 })
                 .await;
         }
+    }
+}
+
+#[cfg(test)]
+mod ble_reply_tests {
+    use super::*;
+    use embassy_sync::blocking_mutex::raw::NoopRawMutex;
+
+    #[test]
+    fn only_last_ble_response_carries_revocation_fence() {
+        embassy_futures::block_on(async {
+            let out = TransportChannels::<NoopRawMutex>::new();
+            let mut sink = ReplySink::Transport {
+                destination: Some((Transport::Ble, 17)),
+                out: &out,
+            };
+            let mut emitter = Emitter::new();
+            emitter.push(b"prior");
+            emitter.push(b"clear response");
+            emitter.finish_ble_wipe = true;
+            emitter.flush(&mut sink).await;
+            let earlier = out.ble.try_receive().unwrap();
+            let final_reply = out.ble.try_receive().unwrap();
+            assert!(!earlier.finish_ble_wipe);
+            assert!(final_reply.finish_ble_wipe);
+            assert_eq!(final_reply.generation, 17);
+            assert_eq!(&final_reply.frame[..], b"clear response");
+            emitter.push(b"later");
+            emitter.flush(&mut sink).await;
+            assert!(!out.ble.try_receive().unwrap().finish_ble_wipe);
+        });
+    }
+    #[test]
+    fn wired_and_admin_responses_do_not_wait_for_ble_transmission() {
+        embassy_futures::block_on(async {
+            let out = TransportChannels::<NoopRawMutex>::new();
+            let mut emitter = Emitter::new();
+            emitter.push(b"clear response");
+            emitter.finish_ble_wipe = true;
+            emitter
+                .flush(&mut ReplySink::Transport {
+                    destination: Some((Transport::Usb, 1)),
+                    out: &out,
+                })
+                .await;
+            assert!(!out.wired.try_receive().unwrap().finish_ble_wipe);
+            assert!(out.ble.try_receive().is_err());
+            let mut reply = AdminFrame::new();
+            emitter.push(b"clear response");
+            emitter
+                .flush(&mut ReplySink::<NoopRawMutex>::Admin { reply: &mut reply })
+                .await;
+            assert_eq!(&reply[..], b"clear response");
+        });
     }
 }

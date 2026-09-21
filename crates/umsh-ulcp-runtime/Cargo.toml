@@ -15,6 +15,7 @@ repository.workspace = true
 # heapless, and the pure protocol crates.
 
 [features]
+ble-host = ["driver", "dep:trouble-host", "dep:bt-hci", "dep:embedded-io"]
 bridge-client = ["driver", "umsh-ulcp-device/bridge-client"]
 wifi = ["driver", "umsh-ulcp-device/wifi"]
 # `ble_security`, `transport_policy` and `log` are always compiled; they
@@ -89,6 +90,9 @@ node-thread-mode-mutex = []
 i2c = ["driver", "dep:embedded-hal-async"]
 
 [dependencies]
+trouble-host = { version = "0.7", default-features = false, features = ["peripheral", "gatt", "security", "default-packet-pool", "default-packet-pool-mtu-255"], optional = true }
+bt-hci = { version = "0.9", default-features = false, optional = true }
+embedded-io = { version = "0.7", default-features = false, optional = true }
 umsh-ulcp = { path = "../umsh-ulcp", optional = true }
 umsh-ulcp-device = { path = "../umsh-ulcp-device", optional = true }
 umsh-crypto = { path = "../umsh-crypto", default-features = false, features = ["software-crypto"], optional = true }

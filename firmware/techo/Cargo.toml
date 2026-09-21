@@ -120,7 +120,7 @@ umsh-ulcp = { path = "../../crates/umsh-ulcp" }
 umsh-ulcp-device = { path = "../../crates/umsh-ulcp-device" }
 # Board-agnostic device leaf modules (Phase 5 extraction, increment A):
 # transport arbitration, counter map, BLE pairing policy, radio mux.
-umsh-ulcp-runtime = { path = "../../crates/umsh-ulcp-runtime", features = ["device-node", "node-thread-mode-mutex", "gnss"] }
+umsh-ulcp-runtime = { path = "../../crates/umsh-ulcp-runtime", features = ["ble-host", "device-node", "node-thread-mode-mutex", "gnss"] }
 umsh-gnss = { path = "../../crates/umsh-gnss" }
 umsh-rtc-pcf8563 = { path = "../../crates/umsh-rtc-pcf8563" }
 umsh-crypto = { path = "../../crates/umsh-crypto", default-features = false, features = ["software-crypto"] }

@@ -22,6 +22,9 @@
 #![cfg_attr(not(test), no_std)]
 
 // Pure, dependency-free—always available.
+#[cfg(feature = "ble-host")]
+pub mod ble_controller;
+pub mod ble_privacy;
 pub mod ble_security;
 pub mod log;
 pub mod transport_policy;

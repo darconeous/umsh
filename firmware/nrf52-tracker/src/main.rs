@@ -144,6 +144,10 @@ mod firmware {
     #[cfg(any(feature = "t1000e", feature = "cap-buzzer"))]
     use embassy_nrf::pwm::{Prescaler, SimpleConfig, SimplePwm};
     use embassy_nrf::rng;
+    use umsh_ulcp_runtime::{
+        ble_controller::{self, ControllerState, Guarded, bt_hci},
+        ble_privacy,
+    };
     // The T-1000E is the one board whose converter is built in the BSP,
     // per measurement, because its battery and light channels want
     // different resolutions and oversampling. Every other board hands the
@@ -761,10 +765,28 @@ mod firmware {
             Ok(evicted)
         }
 
-        /// Moves the bond matching `address_kind`/`address` to the MRU end
-        /// and persists it, if it isn't already there. Called on reconnect
-        /// via an existing bond, so the LRU order reflects actual use
-        /// rather than only pairing/re-pairing events.
+        async fn observe_device_name(&mut self, hash: [u8; 32]) -> Result<(), ()> {
+            let mut next = self.snapshot.clone();
+            if !next.observe_device_name(hash) {
+                return Ok(());
+            }
+            self.persist(next).await
+        }
+
+        async fn acknowledge_device_name(
+            &mut self,
+            bond: &StoredBond,
+            revision: u32,
+        ) -> Result<bool, ()> {
+            let mut next = self.snapshot.clone();
+            if !next.acknowledge_device_name(bond, revision) {
+                return Ok(false);
+            }
+            self.persist(next).await?;
+            Ok(true)
+        }
+
+        /// Persist LRU order on reconnect only when the stored order changes.
         async fn touch_bond(&mut self, address_kind: u8, address: [u8; 6]) -> Result<bool, ()> {
             let mut next = self.snapshot.clone();
             if !ble_store::touch_bond(&mut next.bonds, address_kind, address) {
@@ -774,10 +796,8 @@ mod firmware {
             Ok(true)
         }
 
-        async fn clear_security(&mut self) -> Result<(), ()> {
-            let mut next = Snapshot::empty();
-            next.generation = self.snapshot.generation;
-            next.local_irk = self.snapshot.local_irk;
+        async fn forget_hosts(&mut self, irk: [u8; 16]) -> Result<(), ()> {
+            let next = self.snapshot.forget_hosts(irk).ok_or(())?;
             self.persist(next).await
         }
     }
@@ -906,6 +926,7 @@ mod firmware {
                 SecurityLevel::EncryptedAuthenticated => 2,
             },
             is_bonded: bond.is_bonded,
+            name_refresh_pending: false,
         }
     }
 
@@ -982,6 +1003,7 @@ mod firmware {
 
     type DeviceName = heapless::Vec<u8, { MAX_DEVICE_NAME_LEN }>;
     static DEVICE_NAME: Mutex<ThreadModeRawMutex, DeviceName> = Mutex::new(DeviceName::new());
+    static DEVICE_NAME_READY: AtomicBool = AtomicBool::new(false);
 
     /// Snapshot the live device name for the device node's
     /// advertisements. Falls back to the (FICR-suffixed) default until
@@ -997,25 +1019,6 @@ mod firmware {
         }
     }
     static DEVICE_NAME_CHANGED: Signal<ThreadModeRawMutex, ()> = Signal::new();
-
-    /// The GAP Device Name value that clients may hold a stale copy of.
-    ///
-    /// Set when the device is renamed and cleared once a Service Changed
-    /// indication has gone out. A rename that happens with no one connected
-    /// is therefore announced to the next client instead of being lost.
-    /// Known gap: a second bonded peer that is absent for the rename *and*
-    /// for the connection that consumes this flag keeps its cached name
-    /// until it reads the characteristic again. Closing that needs the
-    /// pending-indication state to live per bond, in the bond store.
-    static GATT_NAME_STALE: AtomicBool = AtomicBool::new(false);
-
-    /// Whether a device name has been published since boot.
-    ///
-    /// The first publication is the saved name being restored as the radio
-    /// configuration is applied, not a rename. Treating it as one would mark
-    /// the database stale on every power cycle and make every bonded peer
-    /// re-discover on its next connection.
-    static DEVICE_NAME_PUBLISHED: AtomicBool = AtomicBool::new(false);
 
     /// GAP's own bound on the Device Name value, which is shorter than the
     /// ULCP device-name limit.
@@ -1147,7 +1150,62 @@ mod firmware {
     static PAIRING_CONFIG_ACK: Signal<ThreadModeRawMutex, bool> = Signal::new();
     static PAIRING_MODE_REQUEST: Signal<ThreadModeRawMutex, bool> = Signal::new();
     static PAIRING_TIMER_RESET: Signal<ThreadModeRawMutex, ()> = Signal::new();
-    static BLE_WIPE_REQUEST: Signal<ThreadModeRawMutex, ()> = Signal::new();
+    static BLE_CONTROLLER_STATE: ControllerState = ControllerState::new();
+    static BLE_RESTART_PENDING: AtomicBool = AtomicBool::new(false);
+    static BLE_REKEY_PENDING: AtomicBool = AtomicBool::new(false);
+    static BLE_WIPE_WAITING_REPLY: AtomicBool = AtomicBool::new(false);
+    static BLE_STACK_FAULT: Signal<ThreadModeRawMutex, ()> = Signal::new();
+    static BLE_CONFIG_BUSY: AtomicU32 = AtomicU32::new(0);
+    static BLE_WIPE_REPLY_DEADLINE: Signal<ThreadModeRawMutex, Instant> = Signal::new();
+    static BLE_PRIVACY_RNG: Mutex<ThreadModeRawMutex, Option<IdentityRng>> = Mutex::new(None);
+    static PAIRING_DEADLINE: embassy_sync::blocking_mutex::Mutex<
+        ThreadModeRawMutex,
+        core::cell::RefCell<ble_privacy::PairingDeadline>,
+    > = embassy_sync::blocking_mutex::Mutex::new(core::cell::RefCell::new(
+        ble_privacy::PairingDeadline::new(),
+    ));
+
+    struct BleConfigGuard;
+    impl BleConfigGuard {
+        fn new() -> Self {
+            BLE_CONFIG_BUSY.fetch_add(1, Ordering::AcqRel);
+            Self
+        }
+    }
+    impl Drop for BleConfigGuard {
+        fn drop(&mut self) {
+            BLE_CONFIG_BUSY.fetch_sub(1, Ordering::AcqRel);
+        }
+    }
+
+    fn pairing_visibility_changed() {
+        BLE_RESTART_PENDING.store(true, Ordering::Release);
+        BLE_CONTROLLER_STATE.invalidate_advertising();
+        ADV_POLICY_CHANGED.signal(());
+    }
+
+    async fn next_local_irk(store: &BleStoreMutex) -> [u8; 16] {
+        let old = store.lock().await.snapshot().local_irk;
+        let mut rng = BLE_PRIVACY_RNG.lock().await;
+        let rng = rng.as_mut().expect("BLE privacy RNG initialized");
+        loop {
+            let mut irk = [0; 16];
+            rand_core::RngCore::fill_bytes(rng, &mut irk);
+            if irk != [0; 16] && Some(irk) != old {
+                return irk;
+            }
+        }
+    }
+
+    async fn initialize_pairing_deadline() {
+        PAIRING_DEADLINE.lock(|d| {
+            if PAIRING_MODE.load(Ordering::Acquire) {
+                d.borrow_mut()
+                    .open(Instant::now().as_millis(), PAIRING_WINDOW_SECS * 1000);
+            }
+        });
+    }
+    static BLE_WIPE_REQUEST: Signal<ThreadModeRawMutex, bool> = Signal::new();
     /// Outcomes for the two requests above, for a caller that has someone
     /// to answer. The menu fires and forgets; a ULCP command waits, and
     /// resets the signal first so it cannot read the menu's stale result.
@@ -1423,7 +1481,9 @@ mod firmware {
     /// the live-connection teardown and the status line cannot disagree
     /// about what it means to be reachable.
     fn advertising_permitted() -> bool {
-        ADV_ALLOWED.load(Ordering::Acquire) && BLE_ENABLED.load(Ordering::Acquire)
+        ADV_ALLOWED.load(Ordering::Acquire)
+            && BLE_ENABLED.load(Ordering::Acquire)
+            && !BLE_CONTROLLER_STATE.failed()
     }
 
     /// Whether a pairing window is genuinely open, for everything that
@@ -1451,7 +1511,7 @@ mod firmware {
                 "ble reachability {}",
                 if enabled { "ON" } else { "off" }
             ));
-            ADV_POLICY_CHANGED.signal(());
+            pairing_visibility_changed();
             UI_REFRESH.signal(());
             // `PROP_BLE_PAIRING` reports the window through this gate, so
             // flipping the transport can move the property too.
@@ -1477,11 +1537,20 @@ mod firmware {
     /// defines it, gated on `PROP_BLE_ENABLED`—so the session's mirror
     /// and the panel read the same fact.
     fn set_pairing_mode(open: bool) {
-        let was = pairing_window_open();
-        PAIRING_MODE.store(open, Ordering::Release);
-        let now = pairing_window_open();
-        if was != now {
-            BLE_PAIRING_CHANGED.signal(now);
+        let previous = PAIRING_MODE.swap(open, Ordering::AcqRel);
+        BLE_LED_MODE.store(u8::from(open), Ordering::Release);
+        PAIRING_DEADLINE.lock(|d| {
+            if open {
+                d.borrow_mut()
+                    .open(Instant::now().as_millis(), PAIRING_WINDOW_SECS * 1000);
+            } else {
+                d.borrow_mut().close();
+            }
+        });
+        PAIRING_TIMER_RESET.signal(());
+        if previous != open {
+            BLE_PAIRING_CHANGED.signal(pairing_window_open());
+            pairing_visibility_changed();
             UI_REFRESH.signal(());
         }
     }
@@ -1516,7 +1585,7 @@ mod firmware {
             pin_configured,
             PAIRING_LOCKED_OUT.load(Ordering::Acquire),
         );
-        stack.set_pairing_enabled(enabled);
+        stack.set_pairing_enabled(enabled && !BLE_REKEY_PENDING.load(Ordering::Acquire));
         debug_log(format_args!(
             "pairing gate enabled={} mode={} pin={} locked={} failures={} bonds={}/{}",
             enabled,
@@ -1538,16 +1607,10 @@ mod firmware {
     }
 
     fn publish_pairing_runtime(state: PairingRuntime) {
-        let window_was = pairing_window_open();
-        PAIRING_MODE.store(state.pairing_mode, Ordering::Release);
         PAIRING_FAILURES.store(state.failures, Ordering::Release);
         PAIRING_LOCKED_OUT.store(state.locked_out, Ordering::Release);
-        // A pairing success or a bonded reconnect closes the window with
-        // no host asking, which is exactly what `PROP_BLE_PAIRING`
-        // promises to announce.
-        let window_now = pairing_window_open();
-        if window_was != window_now {
-            BLE_PAIRING_CHANGED.signal(window_now);
+        if PAIRING_MODE.load(Ordering::Acquire) != state.pairing_mode {
+            set_pairing_mode(state.pairing_mode);
         }
         UI_REFRESH.signal(());
     }
@@ -1556,7 +1619,11 @@ mod firmware {
         store: &BleStoreMutex,
         bond: &BondInformation,
     ) -> Result<(usize, Option<StoredBond>), ()> {
+        let _busy = BleConfigGuard::new();
         let mut store = store.lock().await;
+        if BLE_REKEY_PENDING.load(Ordering::Acquire) {
+            return Err(());
+        }
         let evicted = store.add_bond(bond).await?;
         Ok((store.snapshot().bonds.len(), evicted))
     }
@@ -1911,12 +1978,12 @@ mod firmware {
             PAIRING_CONFIG_ACK.wait().await
         }
 
-        async fn clear_ble_bonds(&mut self) -> bool {
+        async fn clear_ble_bonds(&mut self, reply_over_ble: bool) -> bool {
             // The menu fires this signal too and never waits, so an
             // outcome may already be sitting in the ack; clear it before
             // asking or we would answer with the menu's.
             BLE_WIPE_ACK.reset();
-            BLE_WIPE_REQUEST.signal(());
+            BLE_WIPE_REQUEST.signal(reply_over_ble);
             BLE_WIPE_ACK.wait().await
         }
 
@@ -2003,14 +2070,12 @@ mod firmware {
         async fn publish_device_name(&mut self, name: &str) {
             let bytes = name.as_bytes();
             let mut current = DEVICE_NAME.lock().await;
-            if current.as_slice() == bytes {
+            let was_ready = DEVICE_NAME_READY.swap(true, Ordering::AcqRel);
+            if was_ready && current.as_slice() == bytes {
                 return;
             }
             current.clear();
             if current.extend_from_slice(bytes).is_ok() {
-                if DEVICE_NAME_PUBLISHED.swap(true, Ordering::AcqRel) {
-                    GATT_NAME_STALE.store(true, Ordering::Release);
-                }
                 DEVICE_NAME_CHANGED.signal(());
                 super::device_node::set_device_name(bytes);
             }
@@ -2098,12 +2163,15 @@ mod firmware {
     }
 
     async fn ble_runner<C: Controller, P: PacketPool>(mut runner: Runner<'_, C, P>) -> ! {
-        loop {
-            match runner.run().await {
-                Ok(()) => debug_log(format_args!("ble runner exited cleanly")),
-                Err(error) => debug_log(format_args!("ble runner error={error:?}")),
-            }
+        match runner.run().await {
+            Ok(()) => debug_log(format_args!("BLE runner stopped")),
+            Err(error) => debug_log(format_args!(
+                "BLE runner exited; requesting stack recovery: {error:?}"
+            )),
         }
+        BLE_CONTROLLER_STATE.runner_exited();
+        BLE_STACK_FAULT.signal(());
+        core::future::pending().await
     }
 
     /// How long a pairing window stays open before it closes itself.
@@ -2121,20 +2189,19 @@ mod firmware {
 
     async fn pairing_timeout<C: Controller, P: PacketPool>(stack: &Stack<'_, C, P>) -> ! {
         loop {
-            match select(
-                Timer::after_secs(PAIRING_WINDOW_SECS),
-                PAIRING_TIMER_RESET.wait(),
-            )
-            .await
-            {
-                Either::First(()) => {
-                    debug_log(format_args!("pairing window expired"));
-                    set_pairing_mode(false);
-                    BLE_LED_MODE.store(0, Ordering::Release);
-                    UI_REFRESH.signal(());
-                    apply_pairing_gate(stack);
+            let deadline = PAIRING_DEADLINE.lock(|d| d.borrow().at());
+            let expires = async {
+                if let Some(deadline) = deadline {
+                    Timer::at(Instant::from_millis(deadline)).await;
+                } else {
+                    core::future::pending::<()>().await;
                 }
-                Either::Second(()) => debug_log(format_args!("pairing timer reset")),
+            };
+            if let Either::First(()) = select(expires, PAIRING_TIMER_RESET.wait()).await {
+                set_pairing_mode(false);
+                BLE_LED_MODE.store(0, Ordering::Release);
+                UI_REFRESH.signal(());
+                apply_pairing_gate(stack);
             }
         }
     }
@@ -2144,13 +2211,14 @@ mod firmware {
         store: &BleStoreMutex,
     ) -> ! {
         loop {
-            match select3(
+            let request = select3(
                 PAIRING_CONFIG_CH.receive(),
                 PAIRING_MODE_REQUEST.wait(),
                 BLE_WIPE_REQUEST.wait(),
             )
-            .await
-            {
+            .await;
+            let _busy = BleConfigGuard::new();
+            match request {
                 Either3::First(pin) => {
                     debug_log(format_args!(
                         "pin config begin configured={}",
@@ -2238,9 +2306,18 @@ mod firmware {
                     apply_pairing_gate(stack);
                     PAIRING_MODE_ACK.signal(!locked_out);
                 }
-                Either3::Third(()) => {
+                Either3::Third(reply_over_ble) => {
                     debug_log(format_args!("security wipe requested"));
-                    if store.lock().await.clear_security().await.is_ok() {
+                    let irk = next_local_irk(store).await;
+                    if store.lock().await.forget_hosts(irk).await.is_ok() {
+                        BLE_WIPE_WAITING_REPLY.store(reply_over_ble, Ordering::Release);
+                        if reply_over_ble {
+                            BLE_WIPE_REPLY_DEADLINE
+                                .signal(Instant::now() + Duration::from_secs(10));
+                        }
+                        BLE_REKEY_PENDING.store(true, Ordering::Release);
+                        BLE_CONTROLLER_STATE.invalidate_advertising();
+                        BLE_RESTART_PENDING.store(true, Ordering::Release);
                         debug_log(format_args!("security wipe flash=ok"));
                         set_bond_count(0);
                         let mut identities: heapless::Vec<Identity, { ble_store::MAX_BONDS }> =
@@ -2281,6 +2358,7 @@ mod firmware {
                         debug_log(format_args!("security wipe complete"));
                         UI_NOTICE.signal(UiNotice::BondsCleared);
                         BLE_WIPE_ACK.signal(true);
+                        ADV_POLICY_CHANGED.signal(());
                     } else {
                         debug_log(format_args!("security wipe flash=FAILED"));
                         UI_NOTICE.signal(UiNotice::ClearFailed);
@@ -2303,68 +2381,41 @@ mod firmware {
         }
     }
 
-    async fn advertise<'values, 'server, C: Controller>(
+    async fn advertise<'values, C: Controller>(
+        stack: &Stack<'_, C, DefaultPacketPool>,
         peripheral: &mut Peripheral<'values, C, DefaultPacketPool>,
-        server: &'server UlcpServer<'values>,
-    ) -> Result<GattConnection<'values, 'server, DefaultPacketPool>, BleHostError<C::Error>> {
-        const SERVICE_UUID_LE: [u8; 16] = gatt::SERVICE_UUID.to_le_bytes();
-        // The advertisement and the GAP characteristic must agree, and this
-        // is the one place both are known to be about to matter.
-        sync_gap_device_name(server).await;
-        let name = {
-            let configured = DEVICE_NAME.lock().await;
-            if configured.is_empty() {
-                DeviceName::from_slice(default_device_name().as_bytes()).expect("default name fits")
-            } else {
-                configured.clone()
-            }
-        };
-        let adv_name_len = utf8_prefix_len(name.as_slice(), 8);
-        let mut adv_data = [0u8; 31];
-        let adv_len = AdStructure::encode_slice(
-            &[
-                AdStructure::Flags(LE_GENERAL_DISCOVERABLE | BR_EDR_NOT_SUPPORTED),
-                AdStructure::CompleteServiceUuids128(&[SERVICE_UUID_LE]),
-                AdStructure::ShortenedLocalName(&name[..adv_name_len]),
-            ],
-            &mut adv_data,
-        )?;
-        let scan_name_len = utf8_prefix_len(name.as_slice(), 29);
-        let scan_name = if scan_name_len == name.len() {
-            AdStructure::CompleteLocalName(&name[..scan_name_len])
-        } else {
-            AdStructure::ShortenedLocalName(&name[..scan_name_len])
-        };
-        let mut scan_data = [0u8; 31];
-        let scan_len = AdStructure::encode_slice(&[scan_name], &mut scan_data)?;
-        debug_log(format_args!(
-            "advertising start adv-bytes={} scan-bytes={}",
-            adv_len, scan_len
-        ));
-        let advertiser = peripheral
+    ) -> Result<Advertiser<'values, C, DefaultPacketPool>, BleHostError<C::Error>> {
+        if !BLE_CONTROLLER_STATE.wait_for_privacy().await {
+            return Err(trouble_host::Error::InvalidValue.into());
+        }
+        let name = device_name_snapshot().await;
+        let data = ble_privacy::advertisement(
+            gatt::SERVICE_UUID.to_le_bytes(),
+            &name,
+            pairing_window_open(),
+        );
+        // Trouble skips this HCI command for an empty slice. Explicitly clear
+        // the old scan response before installing a nameless advertisement.
+        stack
+            .command(bt_hci::cmd::le::LeSetScanResponseData::new(0, [0; 31]))
+            .await?;
+        peripheral
             .advertise(
-                &Default::default(),
+                &AdvertisementParameters {
+                    interval_min: Duration::from_micros(ble_privacy::ADVERTISING_INTERVAL_US),
+                    interval_max: Duration::from_micros(ble_privacy::ADVERTISING_INTERVAL_US),
+                    ..Default::default()
+                },
                 Advertisement::ConnectableScannableUndirected {
-                    adv_data: &adv_data[..adv_len],
-                    scan_data: &scan_data[..scan_len],
+                    adv_data: &data.advertising[..data.advertising_len],
+                    scan_data: &data.scan_response[..data.scan_response_len],
                 },
             )
-            .await?;
-        debug_log(format_args!("advertising controller-active"));
-        let raw_connection = advertiser.accept().await?;
-        debug_log(format_args!("advertising raw-connection accepted"));
-        let connection = raw_connection.with_attribute_server(server)?;
-        debug_log(format_args!("advertising gatt-server attached"));
-        Ok(connection)
+            .await
     }
 
     fn utf8_prefix_len(bytes: &[u8], maximum: usize) -> usize {
-        let text = core::str::from_utf8(bytes).expect("validated device name");
-        let mut len = bytes.len().min(maximum);
-        while !text.is_char_boundary(len) {
-            len -= 1;
-        }
-        len
+        ble_privacy::utf8_prefix_len(bytes, maximum)
     }
 
     async fn send_ble_frame(
@@ -2383,12 +2434,13 @@ mod firmware {
         let segment_payload = usize::from(conn.raw().att_mtu())
             .saturating_sub(4)
             .clamp(1, BLE_VALUE_MAX - 1);
-        let mut segments = generation_checked(
+        let segments = generation_checked(
             gatt::segments(&outbound.frame, segment_payload),
             outbound.generation,
             || SESSION_GEN.load(Ordering::Acquire),
         );
-        for segment in segments.by_ref() {
+        let mut segments = segments.peekable();
+        while let Some(segment) = segments.next() {
             let mut value: heapless09::Vec<u8, BLE_VALUE_MAX> = heapless09::Vec::new();
             value
                 .push(segment.header())
@@ -2396,12 +2448,32 @@ mod firmware {
             value
                 .extend_from_slice(segment.payload())
                 .map_err(|_| trouble_host::Error::InsufficientSpace)?;
+            BLE_CONTROLLER_STATE.notification(
+                server.ulcp.frame_out.handle,
+                outbound.finish_ble_wipe && segments.peek().is_none(),
+            );
             server.ulcp.frame_out.notify(conn, &value, false).await?;
         }
-        if segments.stale() {
+        if SESSION_GEN.load(Ordering::Acquire) != outbound.generation {
             debug_log(format_args!(
                 "ble outbound segmentation stopped generation-changed"
             ));
+        }
+        if outbound.finish_ble_wipe {
+            let deadline = Instant::now() + Duration::from_secs(10);
+            while !BLE_CONTROLLER_STATE.fence_done()
+                && !BLE_CONTROLLER_STATE.link_failed()
+                && Instant::now() < deadline
+            {
+                Timer::after_millis(10).await;
+            }
+            let sent = BLE_CONTROLLER_STATE.fence_done();
+            debug_log(format_args!(
+                "bond-clear final reply controller-completed={sent}"
+            ));
+            BLE_WIPE_WAITING_REPLY.store(false, Ordering::Release);
+            conn.raw().disconnect();
+            ADV_POLICY_CHANGED.signal(());
         }
         Ok(())
     }
@@ -2428,7 +2500,7 @@ mod firmware {
     /// Called before advertising and after a rename, so the value a client
     /// reads is the current name rather than whatever the device booted
     /// with.
-    async fn sync_gap_device_name(server: &UlcpServer<'_>) {
+    async fn sync_gap_device_name(server: &UlcpServer<'_>, store: &BleStoreMutex) {
         let Some(gap) = server.gap.as_ref() else {
             return;
         };
@@ -2438,30 +2510,72 @@ mod firmware {
             .is_err()
         {
             debug_log(format_args!("gap device-name update FAILED"));
+            return;
+        }
+        // Boot publication must precede the baseline comparison: the temporary
+        // hardware-default name must not look like a rename on every restart.
+        if DEVICE_NAME_READY.load(Ordering::Acquire) {
+            let hash = umsh_crypto::Sha256Provider::hash(&SoftwareSha256, &[name.as_slice()]);
+            let _busy = BleConfigGuard::new();
+            let mut store = store.lock().await;
+            if !BLE_REKEY_PENDING.load(Ordering::Acquire)
+                && store.observe_device_name(hash).await.is_err()
+            {
+                debug_log(format_args!("gap name-refresh persistence FAILED"));
+            }
         }
     }
 
-    /// Tell a connected client that its cached attributes are stale.
-    ///
-    /// A bonded iOS client caches the GAP device name against the bond and
-    /// will keep showing the old one—in Settings › Bluetooth and to every
-    /// app on the phone—until a Service Changed indication makes it
-    /// re-read. The indicated range covers the whole table, because the
-    /// point is to invalidate a cache rather than to describe a structural
-    /// change. Clients that never subscribed are skipped inside trouble.
+    /// Compatibility workaround for clients that cache the GAP name.
+    /// A name-value change is not a service-structure change, and iOS controls
+    /// when Settings refreshes. Only a retained bond with a pending rename is
+    /// indicated; confirmation clears that host's durable pending state.
     async fn announce_gatt_change(
         server: &UlcpServer<'_>,
         conn: &GattConnection<'_, '_, DefaultPacketPool>,
-    ) {
+        store: &BleStoreMutex,
+    ) -> bool {
+        if BLE_REKEY_PENDING.load(Ordering::Acquire)
+            || !DEVICE_NAME_READY.load(Ordering::Acquire)
+            || !matches!(
+                conn.raw().security_level(),
+                Ok(SecurityLevel::Encrypted | SecurityLevel::EncryptedAuthenticated)
+            )
+            || !conn.raw().is_bonded_peer()
+        {
+            return false;
+        }
+        let hash = {
+            let name = device_name_snapshot().await;
+            umsh_crypto::Sha256Provider::hash(&SoftwareSha256, &[name.as_slice()])
+        };
+        let (bond, revision) = {
+            let store = store.lock().await;
+            let snapshot = store.snapshot();
+            // A failed rename commit must be retried before acknowledging it.
+            if snapshot.device_name_hash != Some(hash) {
+                return false;
+            }
+            let peer = conn.raw().peer_identity();
+            let Some(bond) = snapshot.bonds.iter().find(|bond| {
+                trouble_bond(bond).is_some_and(|bond| bond.identity.match_identity(&peer))
+            }) else {
+                return false;
+            };
+            if !bond.name_refresh_pending {
+                return true;
+            }
+            (*bond, snapshot.name_revision)
+        };
         let Some(gap) = server.gap.as_ref() else {
-            return;
+            return false;
         };
         // A client that has not subscribed cannot be told anything, and
         // `indicate` reports that case as success. Checking first keeps the
-        // stale marker set so the next connection tries again.
+        // connection eligible to retry after subscription.
         if !gap.service_changed.should_indicate(conn) {
             debug_log(format_args!("service-changed not subscribed; deferring"));
-            return;
+            return false;
         }
         const WHOLE_TABLE: [u8; 4] = [0x01, 0x00, 0xFF, 0xFF];
         match gap
@@ -2470,10 +2584,32 @@ mod firmware {
             .await
         {
             Ok(()) => {
-                GATT_NAME_STALE.store(false, Ordering::Release);
-                debug_log(format_args!("service-changed indicated"));
+                // indicate() waits for ATT confirmation, not just queue insertion.
+                // Keep a concurrent rename or bond replacement eligible to retry.
+                let current_hash = {
+                    let current = device_name_snapshot().await;
+                    umsh_crypto::Sha256Provider::hash(&SoftwareSha256, &[current.as_slice()])
+                };
+                if hash != current_hash {
+                    return false;
+                }
+                let _busy = BleConfigGuard::new();
+                let mut store = store.lock().await;
+                if BLE_REKEY_PENDING.load(Ordering::Acquire) {
+                    return false;
+                }
+                match store.acknowledge_device_name(&bond, revision).await {
+                    Ok(acknowledged) => acknowledged,
+                    Err(()) => {
+                        debug_log(format_args!("gap name-refresh acknowledgement FAILED"));
+                        false
+                    }
+                }
             }
-            Err(error) => debug_log(format_args!("service-changed indicate error={error:?}")),
+            Err(error) => {
+                debug_log(format_args!("service-changed indicate error={error:?}"));
+                false
+            }
         }
     }
 
@@ -2503,6 +2639,7 @@ mod firmware {
             conn.raw().att_mtu(),
         ));
         let mut attached = false;
+        let mut name_announced = false;
         set_ble_link(BleLinkState::Connected);
         let mut reassembler: gatt::Reassembler<{ gatt::MAX_FRAME }> = gatt::Reassembler::new();
 
@@ -2640,6 +2777,7 @@ mod firmware {
                     debug_log(format_args!("oob requested"));
                 }
                 Either3::First(GattConnectionEvent::Encrypted { bond, .. }) => {
+                    sync_gap_device_name(server, store).await;
                     debug_log(format_args!(
                         "encrypted event_bond={} table_match={} level={:?}",
                         bond.is_some(),
@@ -2653,6 +2791,7 @@ mod firmware {
                         let peer = conn.raw().peer_identity();
                         let raw = peer.addr.to_bytes();
                         let address: [u8; 6] = raw[1..].try_into().unwrap();
+                        let _busy = BleConfigGuard::new();
                         match store.lock().await.touch_bond(raw[0], address).await {
                             Ok(true) => debug_log(format_args!("bond lru touch=moved")),
                             Ok(false) => {}
@@ -2666,8 +2805,8 @@ mod firmware {
                     // so a rename it missed has to be announced now. Only a
                     // client that has subscribed to Service Changed—which
                     // it does after encrypting—can be told.
-                    if GATT_NAME_STALE.load(Ordering::Acquire) {
-                        announce_gatt_change(server, conn).await;
+                    if !name_announced {
+                        name_announced = announce_gatt_change(server, conn, store).await;
                     }
                 }
                 Either3::First(GattConnectionEvent::PairingFailed(error)) => {
@@ -2687,6 +2826,42 @@ mod firmware {
                     }
                 }
                 Either3::First(GattConnectionEvent::Gatt { event }) => {
+                    if BLE_REKEY_PENDING.load(Ordering::Acquire) {
+                        event
+                            .reject(AttErrorCode::INSUFFICIENT_AUTHORISATION)?
+                            .send()
+                            .await;
+                        continue;
+                    }
+                    let accesses_name = server.gap.as_ref().is_some_and(|gap| {
+                        ble_controller::accesses_device_name(
+                            event.payload().incoming(),
+                            gap.device_name.handle,
+                        )
+                    });
+                    let encrypted = matches!(
+                        conn.raw().security_level(),
+                        Ok(SecurityLevel::Encrypted | SecurityLevel::EncryptedAuthenticated)
+                    );
+                    let retained = if accesses_name && encrypted && conn.raw().is_bonded_peer() {
+                        let peer = conn.raw().peer_identity();
+                        store.lock().await.snapshot().bonds.iter().any(|bond| {
+                            trouble_bond(bond)
+                                .is_some_and(|bond| bond.identity.match_identity(&peer))
+                        })
+                    } else {
+                        false
+                    };
+                    if accesses_name
+                        && !ble_privacy::name_visible(pairing_window_open(), encrypted, retained)
+                    {
+                        event
+                            .reject(AttErrorCode::INSUFFICIENT_AUTHENTICATION)?
+                            .send()
+                            .await;
+                        continue;
+                    }
+
                     match &event {
                         GattEvent::Read(read) => debug_log(format_args!(
                             "gatt read handle=0x{:04x} level={:?}",
@@ -2808,6 +2983,11 @@ mod firmware {
                         event.accept()
                     }?;
                     reply.send().await;
+                    // The indication path checks its own retained bond only when
+                    // a name refresh is still outstanding on this connection.
+                    if !name_announced && encrypted && conn.raw().is_bonded_peer() {
+                        name_announced = announce_gatt_change(server, conn, store).await;
+                    }
 
                     if protected && bonded && !durable_bond && bond_persist_failed {
                         debug_log(format_args!(
@@ -2851,15 +3031,17 @@ mod firmware {
                             (false, true) => {
                                 debug_log(format_args!("cccd subscribed=true"));
                                 attached = true;
-                                set_ble_link(BleLinkState::Attached);
                                 INPUT_CH.send(InEvent::Attached(Transport::Ble)).await;
+                                // Publish only after enqueueing, so teardown knows
+                                // whether the protocol session needs a detach.
+                                set_ble_link(BleLinkState::Attached);
                             }
                             (true, false) => {
                                 debug_log(format_args!("cccd subscribed=false"));
                                 attached = false;
-                                set_ble_link(BleLinkState::Connected);
                                 reassembler.reset();
                                 INPUT_CH.send(InEvent::Detached(Transport::Ble)).await;
+                                set_ble_link(BleLinkState::Connected);
                             }
                             (false, false) => debug_log(format_args!(
                                 "cccd state unchanged attached=false subscribed=false"
@@ -2932,7 +3114,11 @@ mod firmware {
                     supervision_timeout.as_micros(),
                 )),
                 Either3::Second(outbound) => {
-                    if attached && conn.raw().is_bonded_peer() {
+                    if attached
+                        && (conn.raw().is_bonded_peer()
+                            || (outbound.finish_ble_wipe
+                                && BLE_WIPE_WAITING_REPLY.load(Ordering::Acquire)))
+                    {
                         send_ble_frame(server, conn, outbound).await?;
                     } else {
                         debug_log(format_args!(
@@ -2944,7 +3130,10 @@ mod firmware {
                     }
                 }
                 Either3::Third(LinkSignal::AdvertisingPolicy) => {
-                    if !advertising_permitted() {
+                    if !advertising_permitted()
+                        || (BLE_REKEY_PENDING.load(Ordering::Acquire)
+                            && !BLE_WIPE_WAITING_REPLY.load(Ordering::Acquire))
+                    {
                         debug_log(format_args!(
                             "disconnect initiated by transport arbitration"
                         ));
@@ -2953,50 +3142,85 @@ mod firmware {
                     }
                 }
                 Either3::Third(LinkSignal::DeviceName) => {
-                    sync_gap_device_name(server).await;
-                    announce_gatt_change(server, conn).await;
+                    sync_gap_device_name(server, store).await;
+                    name_announced = false;
+                    if matches!(
+                        conn.raw().security_level(),
+                        Ok(SecurityLevel::Encrypted | SecurityLevel::EncryptedAuthenticated)
+                    ) && conn.raw().is_bonded_peer()
+                    {
+                        name_announced = announce_gatt_change(server, conn, store).await;
+                    }
                 }
             }
         }
-        set_ble_link(BleLinkState::None);
-        if attached {
-            INPUT_CH.send(InEvent::Detached(Transport::Ble)).await;
-        }
+        // Stack teardown owns the final detach, including cancellation paths.
         Ok(())
     }
 
-    async fn ble_peripheral<'values, C: Controller>(
+    async fn ble_peripheral<C: Controller>(
         stack: &Stack<'_, C, DefaultPacketPool>,
         store: &BleStoreMutex,
-        peripheral: &mut Peripheral<'values, C, DefaultPacketPool>,
-        server: &UlcpServer<'values>,
-    ) -> ! {
+        peripheral: &mut Peripheral<'_, C, DefaultPacketPool>,
+        server: &UlcpServer<'_>,
+    ) {
         loop {
+            if BLE_RESTART_PENDING.load(Ordering::Acquire) || BLE_CONTROLLER_STATE.failed() {
+                return;
+            }
             if !advertising_permitted() {
                 ADV_POLICY_CHANGED.wait().await;
                 continue;
             }
-            super::panic::breadcrumb_mark(12);
+            sync_gap_device_name(server, store).await;
+            let advertiser = match advertise(stack, peripheral).await {
+                Ok(advertiser) => advertiser,
+                Err(error) => {
+                    debug_log(format_args!("advertising error={error:?}"));
+                    Timer::after_millis(500).await;
+                    continue;
+                }
+            };
+            // Check again after the uncancellable configuration phase. A pairing
+            // transition during HCI setup must not leave the old payload active.
+            if BLE_RESTART_PENDING.load(Ordering::Acquire) || !advertising_permitted() {
+                drop(advertiser);
+                continue;
+            }
             match select3(
-                advertise(peripheral, server),
+                advertiser.accept(),
                 ADV_POLICY_CHANGED.wait(),
                 DEVICE_NAME_CHANGED.wait(),
             )
             .await
             {
                 Either3::First(Ok(connection)) => {
-                    match gatt_connection(stack, store, server, &connection).await {
-                        Ok(()) => debug_log(format_args!("gatt connection task ended ok")),
-                        Err(error) => {
-                            debug_log(format_args!("gatt connection task error={error:?}"))
+                    match connection.with_attribute_server(server) {
+                        Ok(connection) => {
+                            let result =
+                                select(gatt_connection(stack, store, server, &connection), async {
+                                    let deadline = BLE_WIPE_REPLY_DEADLINE.wait().await;
+                                    Timer::at(deadline).await;
+                                })
+                                .await;
+                            if !matches!(result, Either::First(Ok(()))) {
+                                debug_log(format_args!(
+                                    "BLE session ended before final response completed"
+                                ));
+                                BLE_WIPE_WAITING_REPLY.store(false, Ordering::Release);
+                                connection.raw().disconnect();
+                            }
                         }
+                        Err(error) => debug_log(format_args!("attribute server error={error:?}")),
                     }
+                    // Each stack serves at most one connection. Its next lifetime
+                    // gets a fresh RPA and a clean transmit-completion ledger.
+                    return;
                 }
                 Either3::First(Err(error)) => {
                     debug_log(format_args!("advertising error={error:?}"))
                 }
-                Either3::Second(()) => debug_log(format_args!("advertising policy changed")),
-                Either3::Third(()) => debug_log(format_args!("advertising device name changed")),
+                Either3::Second(()) | Either3::Third(()) => {}
             }
         }
     }
@@ -3012,136 +3236,172 @@ mod firmware {
         }
     }
 
-    async fn ble_app<C: Controller>(controller: C, store: BleStore) -> ! {
-        // Install the log→serial bridge before the host stack starts so
-        // trouble-host's boot-time resolving-list diagnostics are captured.
+    async fn ble_app<C>(controller: C, store: BleStore) -> !
+    where
+        C: Controller
+            + bt_hci::controller::ControllerCmdSync<bt_hci::cmd::le::LeReadResolvingListSize>,
+    {
         #[cfg(feature = "ble-debug")]
         init_foreign_crate_logging();
-        super::panic::breadcrumb_mark(10);
+        let store = BleStoreMutex::new(store);
         let mut resources: HostResources<
             _,
             DefaultPacketPool,
             BLE_CONNECTIONS_MAX,
             BLE_L2CAP_CHANNELS_MAX,
         > = HostResources::new();
-        let initial = store.snapshot().clone();
-        debug_log(format_args!(
-            "ble boot identity={} bonds={} pin={} local_irk={} privacy=false",
-            ble_identity_address(),
-            initial.bonds.len(),
-            initial.pin.is_some(),
-            initial.local_irk.is_some(),
-        ));
-        for bond in &initial.bonds {
-            debug_log(format_args!(
-                "restored bond peer-kind={} peer={:02x?} irk={} bonded={} level={}",
-                bond.address_kind,
-                bond.address,
-                bond.irk.is_some(),
-                bond.is_bonded,
-                bond.security_level,
-            ));
-        }
-        PAIRING_PIN.store(initial.pin.unwrap_or(u32::MAX), Ordering::Release);
-        set_bond_count(initial.bonds.len() as u8);
-        // `boot-pairing-window` boards open a window on *every* boot,
-        // bonded or not. They have no button and no menu, so this is the
-        // only way to ever pair a second host—without it the first
-        // bond would lock everyone else out permanently. Pressing RESET
-        // is the physical-presence ceremony on those boards, standing in
-        // for the button hold the others use; a configured PIN still
-        // gates the pairing itself, and the failure lockout still applies.
-        let initial_pairing_mode = initial.bonds.is_empty()
-            || FORCE_PAIRING_AT_BOOT.load(Ordering::Acquire)
-            || cfg!(feature = "boot-pairing-window");
-        PAIRING_MODE.store(initial_pairing_mode, Ordering::Release);
-        BLE_LED_MODE.store(u8::from(initial_pairing_mode), Ordering::Release);
-        // Seed the session's `PROP_BLE_PAIRING` mirror unconditionally:
-        // the change-triggered signal in `set_pairing_mode` cannot fire
-        // for a boot that lands on the static's initial value.
-        BLE_PAIRING_CHANGED.signal(pairing_window_open());
-        // The hold-through-power-on ceremony must end with a reachable
-        // radio even when the operator had turned Bluetooth off. Routed
-        // through the session so the property, the panel, the saved
-        // snapshot, and this transport all move together.
+        // GATT macros allocate their values once; only the host is rebuilt.
+        let server = UlcpServer::new_with_config(GapConfig::Peripheral(PeripheralConfig {
+            name: default_device_name(),
+            appearance: &appearance::computer::GENERIC_COMPUTER,
+        }))
+        .unwrap_or_else(|_| panic!("GATT construction failed"));
         if FORCE_PAIRING_AT_BOOT.load(Ordering::Acquire) {
             INPUT_CH.send(InEvent::ForceBluetoothOn).await;
         }
+        initialize_pairing_deadline().await;
+        // The force-on command above is queued, not yet applied. Seed the
+        // requested pairing state; heartbeat gates visibility on live BLE
+        // enablement so the blink appears as soon as force-on takes effect.
+        BLE_LED_MODE.store(
+            u8::from(PAIRING_MODE.load(Ordering::Acquire)),
+            Ordering::Release,
+        );
         UI_REFRESH.signal(());
-        let io_capabilities = if initial.pin.is_some() {
-            IoCapabilities::DisplayOnly
-        } else {
-            IoCapabilities::NoInputNoOutput
-        };
-        let initial_pairing_enabled =
-            pairing_enabled(initial_pairing_mode, initial.pin.is_some(), false);
-        debug_log(format_args!(
-            "ble stack configure io={io_capabilities:?} pairing-enabled={} fixed-passkey={}",
-            initial_pairing_enabled,
-            initial.pin.is_some(),
-        ));
-        let stack_builder = trouble_host::new(controller, &mut resources)
-            .set_random_address(ble_identity_address())
-            .set_io_capabilities(io_capabilities)
-            .set_pairing_enabled(initial_pairing_enabled)
-            .set_fixed_passkey(initial.pin);
-        let stack = match stack_builder {
-            Ok(builder) => {
-                debug_log(format_args!("ble stack fixed-passkey configure=ok"));
-                builder.build()
+        BLE_PAIRING_CHANGED.signal(pairing_window_open());
+        let mut recovery = ble_privacy::RestartBackoff::default();
+        loop {
+            if PAIRING_DEADLINE.lock(|d| d.borrow().expired(Instant::now().as_millis())) {
+                set_pairing_mode(false);
             }
-            Err(error) => {
-                debug_log(format_args!(
-                    "ble stack fixed-passkey configure=FAILED error={error:?}"
-                ));
-                ble_disabled_park("invalid fixed passkey").await
-            }
-        };
-        for (index, bond) in initial.bonds.iter().enumerate() {
-            if let Some(bond) = trouble_bond(bond) {
-                match stack.add_bond_information(bond) {
-                    Ok(()) => debug_log(format_args!("restored bond index={index} add=ok")),
-                    Err(error) => debug_log(format_args!(
-                        "restored bond index={index} add=FAILED error={error:?}"
-                    )),
+            BLE_CONTROLLER_STATE.reset();
+            BLE_STACK_FAULT.reset();
+            BLE_WIPE_REPLY_DEADLINE.reset();
+            BLE_RESTART_PENDING.store(false, Ordering::Release);
+            BLE_REKEY_PENDING.store(false, Ordering::Release);
+            BLE_WIPE_WAITING_REPLY.store(false, Ordering::Release);
+            let started = Instant::now();
+            let initial = store.lock().await.snapshot().clone();
+            let Some(irk) = initial
+                .local_irk
+                .and_then(IdentityResolvingKey::from_le_bytes)
+            else {
+                ble_disabled_park("missing local IRK").await
+            };
+            PAIRING_PIN.store(initial.pin.unwrap_or(u32::MAX), Ordering::Release);
+            set_bond_count(initial.bonds.len() as u8);
+            {
+                let stack = trouble_host::new(
+                    Guarded::new(ble_controller::Borrowed(&controller), &BLE_CONTROLLER_STATE),
+                    &mut resources,
+                )
+                .set_random_address(ble_identity_address())
+                .enable_privacy(irk)
+                .set_rpa_timeout(Duration::from_secs(ble_privacy::RPA_TIMEOUT_SECS))
+                .set_io_capabilities(if initial.pin.is_some() {
+                    IoCapabilities::DisplayOnly
+                } else {
+                    IoCapabilities::NoInputNoOutput
+                })
+                .set_pairing_enabled(pairing_enabled(
+                    PAIRING_MODE.load(Ordering::Acquire),
+                    initial.pin.is_some(),
+                    PAIRING_LOCKED_OUT.load(Ordering::Acquire),
+                ))
+                .set_fixed_passkey(initial.pin)
+                .expect("valid persisted PIN")
+                .build();
+                for bond in &initial.bonds {
+                    if let Some(bond) = trouble_bond(bond) {
+                        if stack.add_bond_information(bond).is_err() {
+                            BLE_CONTROLLER_STATE.fail();
+                        }
+                    }
                 }
+                let runner = stack.runner();
+                let mut peripheral = stack.peripheral();
+                select3(
+                    async {
+                        ble_peripheral(&stack, &store, &mut peripheral, &server).await;
+                        while BLE_CONFIG_BUSY.load(Ordering::Acquire) != 0 {
+                            Timer::after_millis(10).await;
+                        }
+                    },
+                    join(
+                        ble_runner(runner),
+                        join(pairing_timeout(&stack), pairing_config_task(&stack, &store)),
+                    ),
+                    async {
+                        BLE_STACK_FAULT.wait().await;
+                        while BLE_CONFIG_BUSY.load(Ordering::Acquire) != 0 {
+                            Timer::after_millis(10).await;
+                        }
+                    },
+                )
+                .await;
+            }
+            // This is the sole final-detach owner for both normal completion
+            // and cancellation by a runner exit or a lifecycle transition.
+            if BLE_LINK.load(Ordering::Acquire) == BleLinkState::Attached.code() {
+                INPUT_CH.send(InEvent::Detached(Transport::Ble)).await;
+            }
+            set_ble_link(BleLinkState::None);
+            if BLE_CONTROLLER_STATE.needs_recovery() {
+                let delay = recovery.after_exit(started.elapsed().as_millis());
+                debug_log(format_args!("BLE stack recovery in {delay} ms"));
+                Timer::after_millis(delay).await;
             } else {
-                debug_log(format_args!("restored bond index={index} decode=FAILED"));
+                recovery.reset();
+            }
+            if BLE_CONTROLLER_STATE.failed() {
+                debug_log(format_args!(
+                    "BLE privacy failed; toggle Bluetooth to retry"
+                ));
+                let mut disabled = !BLE_ENABLED.load(Ordering::Acquire);
+                loop {
+                    match select4(
+                        PAIRING_CONFIG_CH.receive(),
+                        PAIRING_MODE_REQUEST.wait(),
+                        BLE_WIPE_REQUEST.wait(),
+                        ADV_POLICY_CHANGED.wait(),
+                    )
+                    .await
+                    {
+                        Either4::First(pin) => {
+                            let ok = store.lock().await.set_pin(pin).await.is_ok();
+                            if ok {
+                                PAIRING_PIN.store(pin.unwrap_or(u32::MAX), Ordering::Release);
+                            }
+                            PAIRING_CONFIG_ACK.signal(ok);
+                        }
+                        Either4::Second(open) => {
+                            if !open {
+                                set_pairing_mode(false);
+                            }
+                            PAIRING_MODE_ACK.signal(!open);
+                        }
+                        Either4::Third(_) => {
+                            let irk = next_local_irk(&store).await;
+                            let ok = store.lock().await.forget_hosts(irk).await.is_ok();
+                            if ok {
+                                set_bond_count(0);
+                                PAIRING_PIN.store(u32::MAX, Ordering::Release);
+                                PAIRING_FAILURES.store(0, Ordering::Release);
+                                PAIRING_LOCKED_OUT.store(false, Ordering::Release);
+                                set_pairing_mode(true);
+                            }
+                            BLE_WIPE_ACK.signal(ok);
+                        }
+                        Either4::Fourth(()) => {}
+                    }
+                    if !BLE_ENABLED.load(Ordering::Acquire) {
+                        disabled = true;
+                    } else if disabled {
+                        break;
+                    }
+                }
             }
         }
-        let store = BleStoreMutex::new(store);
-        let runner = stack.runner();
-        let mut peripheral = stack.peripheral();
-        let server_result = UlcpServer::new_with_config(GapConfig::Peripheral(PeripheralConfig {
-            name: default_device_name(),
-            appearance: &appearance::computer::GENERIC_COMPUTER,
-        }));
-        let server = match server_result {
-            Ok(server) => {
-                debug_log(format_args!("gatt server construction=ok"));
-                server
-            }
-            Err(error) => {
-                debug_log(format_args!(
-                    "gatt server construction=FAILED error={error:?}"
-                ));
-                ble_disabled_park("gatt server construction failed").await
-            }
-        };
-
-        super::panic::breadcrumb_mark(11);
-        join(
-            ble_runner(runner),
-            join(
-                pairing_timeout(&stack),
-                join(
-                    pairing_config_task(&stack, &store),
-                    ble_peripheral(&stack, &store, &mut peripheral, &server),
-                ),
-            ),
-        )
-        .await;
-        unreachable!()
     }
 
     /// Owns the `lora_phy::LoRa` instance via the reconfigurable device
@@ -3830,7 +4090,7 @@ mod firmware {
                             );
                             push!();
                             redraw = false;
-                            BLE_WIPE_REQUEST.signal(());
+                            BLE_WIPE_REQUEST.signal(false);
                         }
                         Some(UiEffect::SelectWifiNetwork(_)) => {
                             model.set_notice(UiNotice::NetworkUnavailable)
@@ -4420,7 +4680,7 @@ mod firmware {
                             model.set_notice(UiNotice::CheckInRequested);
                         }
                         Some(UiEffect::StartPairing) => PAIRING_MODE_REQUEST.signal(true),
-                        Some(UiEffect::ClearBonds) => BLE_WIPE_REQUEST.signal(()),
+                        Some(UiEffect::ClearBonds) => BLE_WIPE_REQUEST.signal(false),
                         Some(UiEffect::SelectWifiNetwork(_)) => {
                             model.set_notice(UiNotice::NetworkUnavailable)
                         }
@@ -6033,8 +6293,7 @@ mod firmware {
             // Deliberate recovery image for hardware testing. This runs before the
             // Trouble host is constructed, so there is no live bond table to keep
             // in sync: the empty persisted snapshot becomes the host's initial
-            // state below. Preserve the device's local IRK, matching the normal
-            // security-wipe operation.
+            // state below. Replace the IRK as for a normal authorized wipe.
             #[cfg(feature = "ble-wipe-on-boot")]
             {
                 debug_log(format_args!(
@@ -6042,8 +6301,15 @@ mod firmware {
                     ble_store.snapshot().bonds.len(),
                     ble_store.snapshot().pin.is_some(),
                 ));
+                let replacement_irk = loop {
+                    let mut irk = [0; 16];
+                    rng.fill_bytes(&mut irk).await;
+                    if irk != [0; 16] && Some(irk) != ble_store.snapshot().local_irk {
+                        break irk;
+                    }
+                };
                 ble_store
-                    .clear_security()
+                    .forget_hosts(replacement_irk)
                     .await
                     .unwrap_or_else(|_| panic!("one-time ble wipe failed"));
                 debug_log(format_args!(
@@ -6054,8 +6320,8 @@ mod firmware {
             }
             BLE_BONDS_AT_BOOT.store(ble_store.snapshot().bonds.len() as u8, Ordering::Release);
             set_bond_count(ble_store.snapshot().bonds.len() as u8);
-            // See the matching seed in `ble_app` for why
-            // `boot-pairing-window` boards force this true every boot.
+            // Boards without a local pairing gesture open their boot window
+            // here once. Internal BLE restarts must not repeat this policy.
             PAIRING_MODE.store(
                 ble_store.snapshot().bonds.is_empty()
                     || FORCE_PAIRING_AT_BOOT.load(Ordering::Acquire)
@@ -6069,9 +6335,8 @@ mod firmware {
             );
             if ble_store.snapshot().local_irk.is_none() {
                 let mut local_irk = [0u8; 16];
-                rng.fill_bytes(&mut local_irk).await;
-                if local_irk == [0; 16] {
-                    local_irk[0] = 1;
+                while local_irk == [0; 16] {
+                    rng.fill_bytes(&mut local_irk).await;
                 }
                 ble_store
                     .set_local_irk(local_irk)
@@ -6086,6 +6351,11 @@ mod firmware {
                 ));
             }
             super::panic::breadcrumb_mark(6);
+            let mut privacy_seed = [0; 32];
+            rng.fill_bytes(&mut privacy_seed).await;
+            *BLE_PRIVACY_RNG.lock().await = Some(
+                <IdentityRng as rand_core::SeedableRng>::from_seed(privacy_seed),
+            );
             let controller = build_sdc(sdc_peripherals, &mut rng, mpsl, &mut sdc_memory)
                 .unwrap_or_else(|_| panic!("sdc init"));
             super::panic::breadcrumb_mark(7);
