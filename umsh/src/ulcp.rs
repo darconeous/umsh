@@ -112,6 +112,21 @@ impl core::fmt::Display for UlcpError {
     }
 }
 
+impl UlcpError {
+    /// Whether the transport underneath the handle is gone, as opposed to
+    /// the device having answered badly or slowly.
+    ///
+    /// [`Timeout`](Self::Timeout) is deliberately not included: it is the
+    /// device's deadline, not the link's, and a link that has actually
+    /// died reports so through the receive side while the wait is still
+    /// in progress. Over the mesh, [`Transport`](Self::Transport) carries
+    /// a failed *exchange* rather than a dead wire, which is why a handle
+    /// consults its own attach mode before believing this.
+    pub fn is_link_lost(&self) -> bool {
+        matches!(self, Self::Disconnected | Self::Io(_) | Self::Transport(_))
+    }
+}
+
 impl std::error::Error for UlcpError {}
 
 impl From<io::Error> for UlcpError {
@@ -608,6 +623,15 @@ pub struct BleFrameLinkConfig {
     /// ordinary GATT operation, this may include OS-mediated pairing and human
     /// PIN entry.
     pub pairing_timeout: Duration,
+    /// How long to wait for the adapter to be powered on before scanning.
+    ///
+    /// Zero (the default) refuses a powered-off adapter at once, which is
+    /// the right answer for a first connection: a scan against a radio
+    /// that is switched off can only time out. A link being recovered
+    /// after the machine slept, or after Bluetooth was toggled, wants
+    /// to wait instead—the adapter is the thing that is about to come
+    /// back.
+    pub power_on_timeout: Duration,
 }
 
 #[cfg(feature = "ble-radio")]
@@ -619,6 +643,7 @@ impl Default for BleFrameLinkConfig {
             discovery_timeout: Duration::from_secs(10),
             operation_timeout: Duration::from_secs(10),
             pairing_timeout: Duration::from_secs(90),
+            power_on_timeout: Duration::ZERO,
         }
     }
 }
@@ -694,11 +719,27 @@ pub struct BleScanResult {
 }
 
 /// GATT/SAR frame transport backed by `btleplug`.
+///
+/// The backend only reports an unsolicited disconnect on the adapter's
+/// event stream; the notification stream simply goes quiet, and a write
+/// to a peripheral the backend has already forgotten never answers. So
+/// the link watches the adapter's events for its own peripheral, and
+/// turns the disconnect into a closed receive side and a fast-failing
+/// send side, rather than letting an idle link stay "connected" until
+/// the next write times out.
 #[cfg(feature = "ble-radio")]
 pub struct BleFrameLink {
     peripheral: btleplug::platform::Peripheral,
+    /// Kept only so the event stream the watcher holds stays alive; a
+    /// link never scans on it again. After an unsolicited disconnect the
+    /// backend forgets the peripheral internally but not in this
+    /// adapter's own map, and rediscovering it on the same adapter trips
+    /// an assertion in the backend. Every connection builds a fresh one.
+    _adapter: btleplug::platform::Adapter,
     frame_in: btleplug::api::Characteristic,
     receiver: BleNotificationReceiver,
+    /// Set by the watcher when the adapter reports this peripheral gone.
+    dead: std::sync::Arc<std::sync::atomic::AtomicBool>,
     segment_payload: usize,
     operation_timeout: Duration,
 }
@@ -778,7 +819,7 @@ impl BleFrameLink {
         config: BleFrameLinkConfig,
     ) -> Result<Self, UlcpError> {
         use btleplug::api::{Central, Manager as _, Peripheral as _, ScanFilter};
-        use futures_util::StreamExt;
+        use futures_util::{FutureExt, StreamExt};
 
         config.validate()?;
 
@@ -789,8 +830,14 @@ impl BleFrameLink {
         let service = uuid::Uuid::from_u128(umsh_ulcp::gatt::SERVICE_UUID);
         let deadline = Instant::now() + config.discovery_timeout;
         let mut matches = Vec::new();
+        let mut chosen = None;
 
         for adapter in adapters {
+            // Subscribed before anything else happens on this adapter, so
+            // the disconnect that can race the setup below is not missed,
+            // and so a power-on can be waited for.
+            let events = adapter.events().await.map_err(ble_error)?;
+            let mut events = await_power_on(&adapter, events, config.power_on_timeout).await?;
             adapter
                 .start_scan(ScanFilter {
                     services: vec![service],
@@ -836,8 +883,12 @@ impl BleFrameLink {
             // configured deadline applies to every await, including cleanup.
             let _ = tokio::time::timeout(Duration::from_secs(1), adapter.stop_scan()).await;
             if !matches.is_empty() {
+                chosen = Some((adapter, events));
                 break;
             }
+            // Drain what the scan produced so the next adapter's wait
+            // does not read this one's history.
+            while let Some(Some(_)) = events.next().now_or_never() {}
         }
 
         let peripheral = match matches.len() {
@@ -853,6 +904,8 @@ impl BleFrameLink {
                 ));
             }
         };
+        let (adapter, mut events) = chosen.expect("a match names the adapter it was found on");
+        let dead = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
 
         let setup = async {
             let is_connected =
@@ -891,12 +944,35 @@ impl BleFrameLink {
                     .map_err(|_| ble_timeout("opening notifications"))?
                     .map_err(ble_error)?;
             let (tx, notifications) = tokio::sync::mpsc::channel(32);
+            // One task forwards notifications and watches for the
+            // disconnect. Ending the task is what drops `tx`, and a
+            // dropped `tx` is how the receive side learns the link is
+            // gone; the flag is how the send side learns it.
+            let id = peripheral.id();
+            let dead = dead.clone();
             tokio::spawn(async move {
-                while let Some(notification) = stream.next().await {
-                    if notification.uuid == frame_out_uuid
-                        && tx.send(notification.value).await.is_err()
-                    {
-                        break;
+                loop {
+                    tokio::select! {
+                        notification = stream.next() => match notification {
+                            Some(notification) => {
+                                if notification.uuid == frame_out_uuid
+                                    && tx.send(notification.value).await.is_err()
+                                {
+                                    break;
+                                }
+                            }
+                            None => break,
+                        },
+                        event = events.next() => match event {
+                            Some(btleplug::api::CentralEvent::DeviceDisconnected(gone))
+                                if gone == id =>
+                            {
+                                dead.store(true, std::sync::atomic::Ordering::Release);
+                                break;
+                            }
+                            Some(_) => {}
+                            None => break,
+                        },
                     }
                 }
             });
@@ -922,25 +998,56 @@ impl BleFrameLink {
 
         Ok(Self {
             peripheral,
+            _adapter: adapter,
             frame_in,
             receiver: BleNotificationReceiver::new(notifications),
+            dead,
             segment_payload: config.segment_payload,
             operation_timeout: config.operation_timeout,
         })
     }
 
+    /// Whether the adapter has reported this peripheral disconnected.
+    fn is_dead(&self) -> bool {
+        self.dead.load(std::sync::atomic::Ordering::Acquire)
+    }
+
+    /// Let go of the peripheral, waiting a bounded moment for the backend
+    /// to agree.
+    ///
+    /// Dropping the link does not disconnect the peripheral, and a radio
+    /// that admits one connection at a time stays occupied—and stops
+    /// advertising—until something does. A link being replaced is closed
+    /// first for exactly that reason; a link that is simply finished with
+    /// may be dropped.
+    pub async fn close(self) {
+        use btleplug::api::Peripheral as _;
+        if self.is_dead() {
+            return;
+        }
+        let _ = tokio::time::timeout(Duration::from_secs(2), self.peripheral.disconnect()).await;
+    }
+
     /// Capture the backend's view of a failed link, then make a bounded
     /// best-effort disconnect so a subsequent discovery does not inherit a
     /// stale CoreBluetooth/BlueZ connection object.
+    ///
+    /// A backend that already knows the peripheral is gone, or says so
+    /// when asked, makes this a plain disconnect; the prose form is kept
+    /// for a write that failed on a link the backend still believes in.
     async fn diagnose_and_disconnect(&self, failure: String) -> UlcpError {
         use btleplug::api::Peripheral as _;
 
+        if self.is_dead() {
+            return UlcpError::Disconnected;
+        }
         let connected = match tokio::time::timeout(
             Duration::from_secs(2),
             self.peripheral.is_connected(),
         )
         .await
         {
+            Ok(Ok(false)) => return UlcpError::Disconnected,
             Ok(Ok(value)) => value.to_string(),
             Ok(Err(error)) => format!("error({error})"),
             Err(_) => "query-timeout".into(),
@@ -961,11 +1068,63 @@ impl BleFrameLink {
     }
 }
 
+/// Wait for `adapter` to be powered on, for up to `timeout`.
+///
+/// A powered-off adapter is refused outright when there is nothing to
+/// wait with, which is also a better answer than the empty scan it would
+/// otherwise produce. The backend reports an adapter it has not yet
+/// heard from as unknown rather than off; that is what a scan has always
+/// started against, and it still does.
+#[cfg(feature = "ble-radio")]
+async fn await_power_on(
+    adapter: &btleplug::platform::Adapter,
+    mut events: core::pin::Pin<
+        Box<dyn futures_util::Stream<Item = btleplug::api::CentralEvent> + Send>,
+    >,
+    timeout: Duration,
+) -> Result<
+    core::pin::Pin<Box<dyn futures_util::Stream<Item = btleplug::api::CentralEvent> + Send>>,
+    UlcpError,
+> {
+    use btleplug::api::{Central as _, CentralEvent, CentralState};
+    use futures_util::StreamExt;
+
+    let state = tokio::time::timeout(Duration::from_secs(2), adapter.adapter_state())
+        .await
+        .map_err(|_| ble_timeout("reading the adapter state"))?
+        .map_err(ble_error)?;
+    if state == CentralState::PoweredOn || (state == CentralState::Unknown && timeout.is_zero()) {
+        return Ok(events);
+    }
+    if timeout.is_zero() {
+        return Err(UlcpError::Transport("Bluetooth is powered off".into()));
+    }
+    let deadline = Instant::now() + timeout;
+    loop {
+        match tokio::time::timeout_at(deadline, events.next()).await {
+            Ok(Some(CentralEvent::StateUpdate(CentralState::PoweredOn))) => return Ok(events),
+            Ok(Some(_)) => {}
+            Ok(None) => {
+                return Err(UlcpError::Transport(
+                    "the Bluetooth adapter went away".into(),
+                ));
+            }
+            Err(_) => return Err(ble_timeout("waiting for Bluetooth to be powered on")),
+        }
+    }
+}
+
 #[cfg(feature = "ble-radio")]
 impl FrameLink for BleFrameLink {
     async fn send_frame(&mut self, frame: &[u8]) -> Result<(), UlcpError> {
         use btleplug::api::{Peripheral as _, WriteType};
 
+        // A write to a peripheral the backend has forgotten never
+        // answers; the flag is what keeps a dead link from costing a
+        // write timeout per frame.
+        if self.is_dead() {
+            return Err(UlcpError::Disconnected);
+        }
         for segment in umsh_ulcp::gatt::segments(frame, self.segment_payload) {
             let mut value = vec![0; segment.payload().len() + 1];
             segment
@@ -1038,6 +1197,11 @@ pub struct UlcpDevice<L> {
     /// *next* exchange. Matching on the reason keeps the expectation
     /// from absorbing a reset somebody else caused in the meantime.
     expected_session_reset: Option<SessionResetReason>,
+    /// The transport reported that it is gone. Latched where the error is
+    /// born rather than classified by whoever ends up holding it, because
+    /// by then it has usually been turned into prose. Cleared by
+    /// [`Self::reattach`].
+    link_lost: bool,
     max_frame_size: usize,
     t_frame_ms: u32,
     dev_version: String,
@@ -1093,6 +1257,7 @@ where
             seen_reset: None,
             seen_session_reset: None,
             expected_session_reset: None,
+            link_lost: false,
             max_frame_size: 0,
             t_frame_ms: 0,
             dev_version: String::new(),
@@ -1242,16 +1407,14 @@ where
         if mode != AttachMode::Remote {
             radio.expected_session_reset = Some(SessionResetReason::Attached);
         }
-        // Reading LAST_STATUS does not overwrite it, so sync() still
-        // sees a retained reset code after this handshake.
-        //
-        // It also cannot travel with the rest. A `CMD_PROP_ARE` reports a
-        // refused position by putting `PROP_LAST_STATUS` in it, so a
-        // status that *is* the answer and a status standing in for one
-        // are the same bytes. Asking for it alone is what tells them
-        // apart.
-        let boot_status = radio.get_prop(prop::LAST_STATUS).await?;
-        radio.boot_status = decode_status(&boot_status);
+        radio.handshake().await?;
+        Ok(radio)
+    }
+
+    /// The non-resetting attach handshake: learn what is on the other
+    /// end of the link without telling it anything.
+    async fn handshake(&mut self) -> Result<(), UlcpError> {
+        self.read_boot_status().await?;
 
         // Everything else the handshake wants, in one exchange.
         const REST: [u32; 4] = [
@@ -1260,7 +1423,7 @@ where
             prop::DEV_MODEL,
             prop::PHY_MTU,
         ];
-        let answers = radio.read_each(&REST).await?;
+        let answers = self.read_each(&REST).await?;
         let [version, dev_version, dev_model, mtu] = answers.as_slice() else {
             return Err(UlcpError::Protocol("short answer to the attach handshake"));
         };
@@ -1273,13 +1436,13 @@ where
         if version.first().copied() != Some(ids::PROTOCOL_MAJOR_VERSION) {
             return Err(UlcpError::Protocol("protocol major version mismatch"));
         }
-        radio.dev_version = String::from_utf8_lossy(&required(dev_version)?)
+        self.dev_version = String::from_utf8_lossy(&required(dev_version)?)
             .trim_end_matches('\0')
             .to_owned();
         // `PROP_DEV_MODEL` is OPTIONAL, so a refusal is an answer—it
         // means "this device does not name its hardware"—and must not
         // fail the attach the way a missing DEV_VERSION would.
-        radio.dev_model = dev_model.as_ref().ok().map(|value| {
+        self.dev_model = dev_model.as_ref().ok().map(|value| {
             String::from_utf8_lossy(value)
                 .trim_end_matches('\0')
                 .to_owned()
@@ -1289,12 +1452,90 @@ where
         let [mtu_lo, mtu_hi, ..] = mtu[..] else {
             return Err(UlcpError::Protocol("malformed PROP_PHY_MTU"));
         };
-        radio.max_frame_size = usize::from(u16::from_le_bytes([mtu_lo, mtu_hi]));
-        if radio.max_frame_size == 0 {
+        self.max_frame_size = usize::from(u16::from_le_bytes([mtu_lo, mtu_hi]));
+        if self.max_frame_size == 0 {
             return Err(UlcpError::Protocol("device advertised zero MTU"));
         }
-        radio.refresh_t_frame().await?;
-        Ok(radio)
+        self.refresh_t_frame().await?;
+        Ok(())
+    }
+
+    /// Give this handle a new transport to the same device.
+    ///
+    /// Everything the handle *is* survives—its attach mode, its
+    /// configuration, its trace sink—and everything it *held about the
+    /// old link* is discarded: queued frames and responses, latched
+    /// notices, the transaction-identifier space. What it *learned* at
+    /// attach survives too: the device on the other end is the one it
+    /// attached to, so its version, model, MTU and frame time are not
+    /// asked for again. The one thing that can have changed in between
+    /// is whether it rebooted, so the retained status is re-read; that
+    /// single exchange is also what proves the new link is live.
+    ///
+    /// The old transport is dropped here, not closed. A transport the
+    /// device admits one of at a time (BLE) must be closed *before*
+    /// the new one is opened, or the device is still occupied by the
+    /// stale connection and never found; that is the caller's job, since
+    /// only the caller knows what a link is.
+    ///
+    /// The state is swapped before the first await, so a handshake that
+    /// is cancelled leaves a live link behind it; whatever the handshake
+    /// did not get to learn, the next exchange corrects.
+    ///
+    /// A mesh handle has no transport of its own to replace: the radio
+    /// underneath it is what gets reattached, and asking for this on the
+    /// handle is refused.
+    pub async fn reattach(&mut self, link: L) -> Result<(), UlcpError> {
+        if self.mode == AttachMode::Remote {
+            return Err(UlcpError::Protocol("a mesh handle cannot be reattached"));
+        }
+        self.link = link;
+        self.rx_queue.clear();
+        self.responses.clear();
+        self.prop_events.clear();
+        self.seen_reset = None;
+        self.seen_session_reset = None;
+        self.expected_session_reset = Some(SessionResetReason::Attached);
+        self.tids = TidAllocator::new();
+        self.link_lost = false;
+        self.read_boot_status().await
+    }
+
+    /// Learn whether the device rebooted, without touching anything.
+    ///
+    /// Reading LAST_STATUS does not overwrite it, so sync() still sees
+    /// a retained reset code after this.
+    ///
+    /// It also cannot travel with other properties. A `CMD_PROP_ARE`
+    /// reports a refused position by putting `PROP_LAST_STATUS` in it,
+    /// so a status that *is* the answer and a status standing in for
+    /// one are the same bytes. Asking for it alone is what tells them
+    /// apart.
+    async fn read_boot_status(&mut self) -> Result<(), UlcpError> {
+        let boot_status = self.get_prop(prop::LAST_STATUS).await?;
+        self.boot_status = decode_status(&boot_status);
+        Ok(())
+    }
+
+    /// Whether the transport has reported itself gone since the handle
+    /// was attached or last reattached. Every call on the handle fails
+    /// while this holds; [`Self::reattach`] is the way out.
+    pub fn link_lost(&self) -> bool {
+        self.link_lost
+    }
+
+    /// Borrow the transport, for whoever has to close or replace it.
+    pub fn link_mut(&mut self) -> &mut L {
+        &mut self.link
+    }
+
+    /// Latch a transport failure where it is born. Over the mesh a
+    /// transport error is a failed exchange, not a dead wire, and the
+    /// radio underneath keeps its own latch.
+    fn note_link_error(&mut self, error: &UlcpError) {
+        if self.mode != AttachMode::Remote && error.is_link_lost() {
+            self.link_lost = true;
+        }
     }
 
     /// Give up this handle and recover the transport underneath it.
@@ -1323,7 +1564,11 @@ where
         if let Some(trace) = &mut self.trace {
             trace(TraceDirection::HostToDevice, &describe_frame(frame));
         }
-        self.link.send_frame(frame).await
+        let result = self.link.send_frame(frame).await;
+        if let Err(error) = &result {
+            self.note_link_error(error);
+        }
+        result
     }
 
     /// The device's firmware version string (`PROP_DEV_VERSION`).
@@ -3090,7 +3335,10 @@ where
         }
         let frame = match tokio::time::timeout(deadline - now, self.link.recv_frame()).await {
             Err(_elapsed) => return Err(UlcpError::Timeout),
-            Ok(Err(error)) => return Err(error),
+            Ok(Err(error)) => {
+                self.note_link_error(&error);
+                return Err(error);
+            }
             Ok(Ok(frame)) => frame,
         };
         Ok(self.ingest_frame(&frame))
@@ -3233,7 +3481,10 @@ where
                 core::task::Poll::Ready(Ok(frame)) => {
                     self.ingest_frame(&frame);
                 }
-                core::task::Poll::Ready(Err(error)) => return core::task::Poll::Ready(Err(error)),
+                core::task::Poll::Ready(Err(error)) => {
+                    self.note_link_error(&error);
+                    return core::task::Poll::Ready(Err(error));
+                }
                 core::task::Poll::Pending => return core::task::Poll::Pending,
             }
         }
@@ -3364,7 +3615,10 @@ where
                 core::task::Poll::Ready(Ok(frame)) => {
                     self.ingest_frame(&frame);
                 }
-                core::task::Poll::Ready(Err(error)) => return core::task::Poll::Ready(Err(error)),
+                core::task::Poll::Ready(Err(error)) => {
+                    self.note_link_error(&error);
+                    return core::task::Poll::Ready(Err(error));
+                }
                 core::task::Poll::Pending => return core::task::Poll::Pending,
             }
         }
@@ -3549,26 +3803,29 @@ pub fn describe_frame(bytes: &[u8]) -> String {
     umsh_ulcp::FrameDescription(bytes).to_string()
 }
 
-#[cfg(test)]
-mod tests {
+/// In-process stand-ins for a device, for the tests here and for the
+/// tools built on this crate, which want a device to attach to that is
+/// as real as a pipe.
+#[cfg(any(test, feature = "test-support"))]
+pub mod testing {
     use super::*;
     use std::collections::HashMap;
-    use tokio::io::{AsyncReadExt, DuplexStream};
+    use tokio::io::AsyncReadExt;
     use umsh_ulcp::PropPayload;
     use umsh_ulcp::meta::RX_FLAG_BUFFERED;
 
     /// Payload that makes the fake device report a CCA failure.
-    const CCA_FAIL: &[u8] = b"cca-fail";
+    pub const CCA_FAIL: &[u8] = b"cca-fail";
     /// Payload that makes the fake device report success and then
     /// announce a spurious watchdog reset.
-    const RESET_AFTER: &[u8] = b"reset-after";
+    pub const RESET_AFTER: &[u8] = b"reset-after";
     /// Payload that makes the fake device report success and then
     /// announce a session reset nobody asked for—a second host
     /// displacing this one, as far as this host can tell.
-    const SESSION_RESET_AFTER: &[u8] = b"session-reset-after";
+    pub const SESSION_RESET_AFTER: &[u8] = b"session-reset-after";
     /// Property that switches the fake device's `CMD_RESTORE` completion
     /// to the reset form.
-    const RESTORE_RESET_FORM_KEY: u32 = 59_999;
+    pub const RESTORE_RESET_FORM_KEY: u32 = 59_999;
 
     /// Minimal in-process device: answers the initialization handshake,
     /// stores property sets and multi-value tables, and echoes
@@ -3577,7 +3834,35 @@ mod tests {
     /// Generic over the stream so the same device can be reached down a
     /// pipe or across a socket—which is the whole claim TCP support
     /// rests on.
-    async fn fake_device<IO: AsyncRead + AsyncWrite + Unpin>(mut io: IO) {
+    pub async fn fake_device<IO: AsyncRead + AsyncWrite + Unpin>(io: IO) {
+        fake_device_with(io, false).await
+    }
+
+    /// The same device with `CAP_CMD_MULTI`, which the non-resetting
+    /// attach handshake needs.
+    pub async fn fake_multi_device<IO: AsyncRead + AsyncWrite + Unpin>(io: IO) {
+        fake_device_with(io, true).await
+    }
+
+    /// What the fake device reports for a property read.
+    fn fake_value(key: u32, props: &HashMap<u32, Vec<u8>>) -> Vec<u8> {
+        match key {
+            prop::LAST_STATUS => vec![Status::RESET_POWER_ON.0 as u8],
+            prop::PROTOCOL_VERSION => {
+                vec![ids::PROTOCOL_MAJOR_VERSION, ids::PROTOCOL_MINOR_VERSION]
+            }
+            prop::DEV_VERSION => b"fake-dev/0.1\0".to_vec(),
+            prop::DEV_MODEL => b"Fake Board\0".to_vec(),
+            prop::PHY_MTU => 255u16.to_le_bytes().to_vec(),
+            prop::PHY_T_FRAME => props
+                .get(&key)
+                .cloned()
+                .unwrap_or_else(|| 624u32.to_le_bytes().to_vec()),
+            _ => props.get(&key).cloned().unwrap_or_default(),
+        }
+    }
+
+    pub async fn fake_device_with<IO: AsyncRead + AsyncWrite + Unpin>(mut io: IO, multi_get: bool) {
         let mut decoder = hdlc::Decoder::<WIRE_BUF>::new();
         let mut props: HashMap<u32, Vec<u8>> = HashMap::new();
         let mut tables: HashMap<u32, Vec<Vec<u8>>> = HashMap::new();
@@ -3618,21 +3903,17 @@ mod tests {
                     }
                     Cmd::PropGet => {
                         let key = PropPayload::parse(frame.payload).unwrap().key;
-                        let value: Vec<u8> = match key {
-                            prop::LAST_STATUS => vec![Status::RESET_POWER_ON.0 as u8],
-                            prop::PROTOCOL_VERSION => {
-                                vec![ids::PROTOCOL_MAJOR_VERSION, ids::PROTOCOL_MINOR_VERSION]
-                            }
-                            prop::DEV_VERSION => b"fake-dev/0.1\0".to_vec(),
-                            prop::DEV_MODEL => b"Fake Board\0".to_vec(),
-                            prop::PHY_MTU => 255u16.to_le_bytes().to_vec(),
-                            prop::PHY_T_FRAME => props
-                                .get(&key)
-                                .cloned()
-                                .unwrap_or_else(|| 624u32.to_le_bytes().to_vec()),
-                            _ => props.get(&key).cloned().unwrap_or_default(),
-                        };
+                        let value = fake_value(key, &props);
                         let len = frame::prop_is(&mut buf, tid, key, &value).unwrap();
+                        replies.push(buf[..len].to_vec());
+                    }
+                    Cmd::PropMultiGet if multi_get => {
+                        let mut writer = frame::prop_are(&mut buf, tid).unwrap();
+                        for key in umsh_ulcp::frame::MultiGetKeys::new(frame.payload) {
+                            let key = key.unwrap();
+                            writer.write_entry(key, &fake_value(key, &props)).unwrap();
+                        }
+                        let len = writer.finish();
                         replies.push(buf[..len].to_vec());
                     }
                     Cmd::PropSet => {
@@ -3842,6 +4123,15 @@ mod tests {
             }
         }
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::testing::*;
+    use super::*;
+    use tokio::io::DuplexStream;
+    use umsh_ulcp::PropPayload;
+    use umsh_ulcp::meta::RX_FLAG_BUFFERED;
 
     fn test_config() -> UlcpDeviceConfig {
         let mut config = UlcpDeviceConfig::new(906_875, 250_000, 11, 5);
@@ -4009,6 +4299,132 @@ mod tests {
         drop(tx);
         let result = core::future::poll_fn(|cx| receiver.poll_recv_frame(cx)).await;
         assert!(matches!(result, Err(UlcpError::Disconnected)));
+    }
+
+    #[test]
+    fn link_loss_is_the_transport_going_away_and_nothing_else() {
+        assert!(UlcpError::Disconnected.is_link_lost());
+        assert!(UlcpError::Io(io::Error::other("unplugged")).is_link_lost());
+        assert!(UlcpError::Transport("BLE write failed".into()).is_link_lost());
+        for error in [
+            UlcpError::Timeout,
+            UlcpError::Protocol("nonsense"),
+            UlcpError::Status(Status::FAILURE),
+            UlcpError::UnexpectedReset(Status::RESET_WATCHDOG),
+            UlcpError::SessionReset(SessionResetReason::Attached),
+            UlcpError::FrameTooLarge(300),
+            UlcpError::AdministrativeAttach,
+        ] {
+            assert!(!error.is_link_lost(), "{error}");
+        }
+    }
+
+    /// The handle outlives its transport: what it learned stays, what it
+    /// held about the old link goes, and the fresh attach on the far end
+    /// is expected rather than reported.
+    #[tokio::test]
+    async fn reattach_restores_a_handle_after_the_link_dies() {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let (client, server) = tokio::io::duplex(4096);
+        let device_task = tokio::spawn(fake_multi_device(server));
+        let mut radio =
+            UlcpDevice::attach_administrative(SerialFrameLink::new(client), test_config())
+                .await
+                .unwrap();
+        let traced = Arc::new(AtomicUsize::new(0));
+        let counter = traced.clone();
+        radio.set_frame_trace(Some(Box::new(move |_, _| {
+            counter.fetch_add(1, Ordering::Relaxed);
+        })));
+        assert!(!radio.link_lost());
+
+        // The far end goes away; the next exchange fails and says so.
+        device_task.abort();
+        let _ = device_task.await;
+        let error = radio.get_prop(prop::PHY_FREQ).await.unwrap_err();
+        assert!(error.is_link_lost(), "{error}");
+        assert!(radio.link_lost());
+        // A dead link stays dead until it is replaced.
+        assert!(radio.get_prop(prop::PHY_FREQ).await.is_err());
+        assert!(radio.link_lost());
+
+        // The replacement device cannot answer a multi-get: a reattach
+        // is not a second attach handshake.
+        let (client, server) = tokio::io::duplex(4096);
+        tokio::spawn(fake_device(server));
+        let before = traced.load(Ordering::Relaxed);
+        radio.reattach(SerialFrameLink::new(client)).await.unwrap();
+        assert!(!radio.link_lost());
+        assert_eq!(radio.attach_mode(), AttachMode::Administrative);
+        assert_eq!(radio.dev_version(), "fake-dev/0.1");
+        assert_eq!(radio.max_frame_size(), 255);
+        // The trace sink installed before the loss still sees frames,
+        // and it saw exactly one exchange: the status read and its answer,
+        // plus the fresh-attach notice the device sends on the first
+        // frame it hears. Nothing the handle already knew was asked for.
+        assert_eq!(traced.load(Ordering::Relaxed) - before, 3);
+
+        // A whole exchange, on a device that announced a fresh attach the
+        // moment it was spoken to: the notice was expected and absorbed.
+        radio.set_prop(prop::PHY_TX_POWER, &[14]).await.unwrap();
+        assert_eq!(radio.get_prop(prop::PHY_TX_POWER).await.unwrap(), [14]);
+        assert!(!radio.link_lost());
+    }
+
+    /// Frames queued from the old link are not delivered on the new one.
+    #[tokio::test]
+    async fn reattach_clears_what_the_old_link_left_behind() {
+        let mut radio = attached_radio().await;
+        // The fake echoes a transmission back as a reception, which the
+        // exchange that follows queues for the next receive poll.
+        radio
+            .transmit(b"echoed", TxOptions::default())
+            .await
+            .unwrap();
+        radio.get_prop(prop::PHY_FREQ).await.unwrap();
+
+        let (client, server) = tokio::io::duplex(4096);
+        tokio::spawn(fake_multi_device(server));
+        radio.reattach(SerialFrameLink::new(client)).await.unwrap();
+
+        let mut buf = [0u8; 256];
+        let receive = core::future::poll_fn(|cx| radio.poll_receive(cx, &mut buf));
+        assert!(
+            tokio::time::timeout(Duration::from_millis(50), receive)
+                .await
+                .is_err(),
+            "the old link's reception was delivered on the new one"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_mesh_handle_refuses_reattach() {
+        let (client, _server) = tokio::io::duplex(64);
+        let mut radio = UlcpDevice::open_remote(SerialFrameLink::new(client), test_config());
+        let (client, _server) = tokio::io::duplex(64);
+        assert!(matches!(
+            radio.reattach(SerialFrameLink::new(client)).await,
+            Err(UlcpError::Protocol(_))
+        ));
+        assert!(!radio.link_lost());
+    }
+
+    /// A device that does not answer is not a link that has gone away:
+    /// the handle stays attached, and only a transport failure latches.
+    #[tokio::test]
+    async fn a_timeout_is_not_link_loss() {
+        let mut radio = attached_radio().await;
+        // Swap in a link nobody is listening to, keeping its far end
+        // alive so the write succeeds and the read simply waits.
+        let (client, _server) = tokio::io::duplex(4096);
+        *radio.link_mut() = SerialFrameLink::new(client);
+        assert!(matches!(
+            radio.get_prop(prop::PHY_FREQ).await,
+            Err(UlcpError::Timeout)
+        ));
+        assert!(!radio.link_lost());
     }
 
     #[tokio::test]

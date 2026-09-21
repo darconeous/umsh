@@ -168,3 +168,24 @@ async fn an_unlisted_administrator_is_answered_by_silence() {
     assert!(mesh.device.borrow().unauthorized > 0);
     assert_eq!(mesh.device.borrow().executed, 0);
 }
+
+#[tokio::test(flavor = "current_thread")]
+async fn an_abandoned_exchange_frees_the_manager_for_the_next() {
+    mesh!("abandon", mesh);
+    let mut buf = [0u8; 16];
+    let len = frame::prop_get(&mut buf, 0, prop::DEV_NAME).unwrap();
+    mesh.manager.begin(&buf[..len], mesh.now_ms()).unwrap();
+    // The request is on the air, and the administrator stops waiting
+    // for it on its own terms.
+    mesh.settle(2).await;
+    let abandoned = mesh.manager.counter();
+    assert!(mesh.manager.is_busy());
+    mesh.manager.abandon();
+    assert!(!mesh.manager.is_busy());
+
+    // The next operation begins at once, on a token the abandoned one
+    // never used, and runs to its end.
+    let reply = mesh.reply(&buf[..len]).await;
+    assert_eq!(value_of(&reply), b"Simulated Device");
+    assert_ne!(mesh.manager.counter(), abandoned);
+}

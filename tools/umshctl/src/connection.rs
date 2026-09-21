@@ -23,6 +23,13 @@ use umsh::ulcp::{FrameLink, UlcpDevice, UlcpDeviceConfig, UlcpError};
 use crate::command::capture::pcap::{PcapDirection, PcapWriter};
 use crate::output;
 
+/// How long a recovered BLE link waits for the adapter to be powered on.
+///
+/// The machine slept, or Bluetooth was toggled: the adapter is the thing
+/// that is about to come back, and a scan against it while it is off
+/// can only time out. A day is "indefinitely" without being forever.
+const RECOVERY_POWER_ON_TIMEOUT: Duration = Duration::from_secs(24 * 60 * 60);
+
 /// How long general discovery listens before deciding what it found.
 const DISCOVERY_WINDOW: Duration = Duration::from_secs(2);
 
@@ -176,10 +183,27 @@ pub enum AnyLink {
     /// Ungated too: the mesh is reached through whatever radio is
     /// already attached, so it needs no transport of its own.
     Mesh(umsh::ulcp_mesh::MeshFrameLink),
-    /// Keeps the type inhabited in a build with no transport feature.
-    /// Never constructed.
-    #[allow(dead_code)]
+    /// No transport at all. What a handle holds between losing its link
+    /// and being given the next one, so the old link can be closed while
+    /// the handle keeps existing; also what keeps the type inhabited in
+    /// a build with no transport feature.
     Unavailable,
+}
+
+impl AnyLink {
+    /// Let go of the transport, waiting a bounded moment where the far
+    /// end has to be told.
+    ///
+    /// A BLE radio admits one connection and stops advertising while it
+    /// holds one, so a link being replaced is closed before the next one
+    /// is looked for. A wire needs nothing beyond being dropped.
+    pub async fn close(self) {
+        match self {
+            #[cfg(feature = "ble-radio")]
+            Self::Ble(link) => link.close().await,
+            _ => {}
+        }
+    }
 }
 
 impl FrameLink for AnyLink {
@@ -235,9 +259,21 @@ impl SessionLink {
         Self { inner, tap }
     }
 
+    /// Copy one frame into the tap.
+    ///
+    /// A tap that fails to write is removed as it fails, so the failure
+    /// is reported exactly once and the link goes on untapped rather
+    /// than failing every frame after it. The error still surfaces as
+    /// an I/O error on the link, which is the only channel there is; the
+    /// tap being gone afterwards is how a caller tells it apart from the
+    /// transport having failed.
     fn record(&self, direction: PcapDirection, frame: &[u8]) -> std::io::Result<()> {
-        if let Some(writer) = self.tap.borrow_mut().as_mut() {
-            writer.write_ulcp(direction, frame)?;
+        let mut tap = self.tap.borrow_mut();
+        if let Some(writer) = tap.as_mut()
+            && let Err(error) = writer.write_ulcp(direction, frame)
+        {
+            tap.take();
+            return Err(error);
         }
         Ok(())
     }
@@ -284,30 +320,176 @@ impl Session {
         matches!(self.target, Target::Mesh { .. })
     }
 
-    /// Open a fresh link to the same radio.
+    /// End the session, telling the far end where it has to be told.
     ///
-    /// This really does drop the connection—it exists for recovering a
-    /// capture whose BLE link failed. The capture tap comes along so a
-    /// recovered capture stays one file.
-    pub async fn reconnect(self, trace: bool) -> Result<Self> {
-        let Self {
-            device,
-            target,
-            label,
-            tap,
-        } = self;
-        drop(device);
-        let link = open(&target).await?;
-        let mut device = attach_tapped(link, tap.clone()).await?;
-        if trace {
-            install_trace(&mut device);
+    /// Dropping the session would leave a BLE radio connected to a
+    /// process that no longer speaks to it, and a radio that admits one
+    /// connection at a time would then be unreachable until the process
+    /// exited.
+    pub async fn close(self) {
+        self.device.into_link().inner.close().await;
+    }
+
+    /// Bring the link back after it was lost, keeping the session.
+    ///
+    /// The session is the logical connection—its name, its target, its
+    /// capture tap—and none of that changes; only the transport under
+    /// the device handle is replaced. Ctrl-C ends the wait.
+    pub async fn recover(&mut self, policy: &Recovery) -> Result<Recovered> {
+        if self.is_mesh() {
+            bail!("a mesh session recovers the radio underneath it, not itself");
         }
-        Ok(Self {
-            device,
-            target,
-            label,
-            tap,
-        })
+        let relink = Relink {
+            target: &self.target,
+            tap: &self.tap,
+            label: &self.label,
+        };
+        let interrupted = async {
+            let _ = tokio::signal::ctrl_c().await;
+        };
+        recover_device(&mut self.device, &relink, policy, interrupted).await
+    }
+}
+
+// ---------------------------------------------------------------------
+// Recovery
+// ---------------------------------------------------------------------
+
+/// How persistently a lost link is brought back.
+///
+/// There is no deadline: for a person Ctrl-C is the deadline, and a
+/// script that would rather fail has `--no-reconnect`. A session that
+/// has gone unrecovered for an hour is still the session the user
+/// asked for.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Recovery {
+    /// The wait after the first failed attempt.
+    pub initial: Duration,
+    /// The longest wait between attempts.
+    pub cap: Duration,
+}
+
+impl Default for Recovery {
+    fn default() -> Self {
+        Self {
+            initial: Duration::from_secs(2),
+            cap: Duration::from_secs(30),
+        }
+    }
+}
+
+impl Recovery {
+    /// The waits between attempts, doubling to the cap.
+    pub fn backoff(&self) -> Backoff {
+        Backoff {
+            next: self.initial.min(self.cap),
+            cap: self.cap,
+        }
+    }
+}
+
+/// The successive waits of one recovery.
+#[derive(Clone, Debug)]
+pub struct Backoff {
+    next: Duration,
+    cap: Duration,
+}
+
+impl Backoff {
+    /// The wait before the next attempt.
+    pub fn delay(&mut self) -> Duration {
+        let delay = self.next;
+        self.next = self.next.saturating_mul(2).min(self.cap);
+        delay
+    }
+}
+
+/// How a recovery ended.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Recovered {
+    /// The link is back and the handle attached over it.
+    Attached,
+    /// The caller's abort condition fired first; the link is still lost.
+    Interrupted,
+}
+
+/// Everything one reattachment needs to know, in one place, so no
+/// caller can forget a part of it.
+pub struct Relink<'a> {
+    pub target: &'a Target,
+    pub tap: &'a FrameTap,
+    /// What the user calls the device, for the narration.
+    pub label: &'a str,
+}
+
+/// One attempt: close the old link, open a new one to the same target,
+/// and reattach the handle over it.
+///
+/// The close comes first, and unconditionally. A BLE radio that still
+/// holds the stale connection does not advertise, so the scan that
+/// follows would never find it.
+pub async fn reattach_once(
+    device: &mut UlcpDevice<SessionLink>,
+    relink: &Relink<'_>,
+) -> Result<()> {
+    let old = core::mem::replace(
+        device.link_mut(),
+        SessionLink::new(AnyLink::Unavailable, relink.tap.clone()),
+    );
+    old.inner.close().await;
+    let link = reopen(relink.target).await?;
+    device
+        .reattach(SessionLink::new(link, relink.tap.clone()))
+        .await?;
+    Ok(())
+}
+
+/// Bring a handle's link back, attempt after attempt, until it is back
+/// or `abort` resolves.
+///
+/// Quiet when the first attempt succeeds: from the user's side the
+/// connection never went anywhere, and a reattach that takes a moment
+/// is not worth a line. From the first failed attempt on, every retry
+/// is narrated on stderr, so a command that has gone quiet is explained
+/// and the next wait is known. Never stdout, which may be carrying
+/// JSON.
+pub async fn recover_device(
+    device: &mut UlcpDevice<SessionLink>,
+    relink: &Relink<'_>,
+    policy: &Recovery,
+    abort: impl Future<Output = ()>,
+) -> Result<Recovered> {
+    let mut backoff = policy.backoff();
+    let mut attempts = 0u32;
+    tokio::pin!(abort);
+    loop {
+        attempts += 1;
+        let outcome = tokio::select! {
+            outcome = reattach_once(device, relink) => outcome,
+            _ = &mut abort => return Ok(Recovered::Interrupted),
+        };
+        match outcome {
+            Ok(()) => {
+                if attempts > 1 {
+                    eprintln!("reattached: {}", relink.label);
+                }
+                return Ok(Recovered::Attached);
+            }
+            Err(error) => {
+                let delay = backoff.delay();
+                eprintln!(
+                    "reconnecting to {} over {} (attempt {attempts}: {error:#}); next try in {} s \
+                     ...",
+                    relink.label,
+                    relink.target.transport(),
+                    delay.as_secs_f64().ceil() as u64
+                );
+                tokio::select! {
+                    _ = tokio::time::sleep(delay) => {}
+                    _ = &mut abort => return Ok(Recovered::Interrupted),
+                }
+            }
+        }
     }
 }
 
@@ -320,9 +502,22 @@ pub fn install_trace(device: &mut UlcpDevice<SessionLink>) {
 
 /// Open the transport named by `target`.
 pub async fn open(target: &Target) -> Result<AnyLink> {
+    open_with(target, Duration::ZERO).await
+}
+
+/// Open the transport named by `target` again, after it was lost.
+///
+/// The one difference from a first open: a BLE adapter that is powered
+/// off is waited for rather than refused, because after a sleep or a
+/// toggle it is what is about to come back.
+pub async fn reopen(target: &Target) -> Result<AnyLink> {
+    open_with(target, RECOVERY_POWER_ON_TIMEOUT).await
+}
+
+async fn open_with(target: &Target, power_on_timeout: Duration) -> Result<AnyLink> {
     match target {
         Target::Serial { port, baud } => open_serial(port, *baud).await,
-        Target::Ble { selector, .. } => open_ble(selector).await,
+        Target::Ble { selector, .. } => open_ble(selector, power_on_timeout).await,
         Target::Tcp { host, port } => open_tcp(host, *port).await,
         // A mesh session is not opened by naming a transport: it is
         // built on the radio already attached, by `mesh::open_remote`.
@@ -365,16 +560,20 @@ async fn open_serial(_port: &str, _baud: u32) -> Result<AnyLink> {
 }
 
 #[cfg(feature = "ble-radio")]
-async fn open_ble(selector: &str) -> Result<AnyLink> {
+async fn open_ble(selector: &str, power_on_timeout: Duration) -> Result<AnyLink> {
     use umsh::ulcp::{BleFrameLink, BleFrameLinkConfig};
-    let link = BleFrameLink::connect(Some(selector), BleFrameLinkConfig::default())
+    let config = BleFrameLinkConfig {
+        power_on_timeout,
+        ..BleFrameLinkConfig::default()
+    };
+    let link = BleFrameLink::connect(Some(selector), config)
         .await
         .with_context(|| format!("connecting to BLE radio {selector:?}"))?;
     Ok(AnyLink::Ble(link))
 }
 
 #[cfg(not(feature = "ble-radio"))]
-async fn open_ble(_selector: &str) -> Result<AnyLink> {
+async fn open_ble(_selector: &str, _power_on_timeout: Duration) -> Result<AnyLink> {
     bail!("this build has no BLE support (build with the ble-radio feature)")
 }
 
@@ -912,6 +1111,21 @@ mod tests {
     fn no_radios_is_not_an_error_here() {
         assert_eq!(choose(Vec::new(), false, Discovery::Auto).unwrap(), None);
         assert_eq!(choose(Vec::new(), false, Discovery::Ask).unwrap(), None);
+    }
+
+    #[test]
+    fn backoff_doubles_to_the_cap() {
+        let mut backoff = Recovery::default().backoff();
+        let delays: Vec<u64> = (0..6).map(|_| backoff.delay().as_secs()).collect();
+        assert_eq!(delays, [2, 4, 8, 16, 30, 30]);
+
+        // An initial wait above the cap is the cap.
+        let mut backoff = Recovery {
+            initial: Duration::from_secs(60),
+            cap: Duration::from_secs(30),
+        }
+        .backoff();
+        assert_eq!(backoff.delay().as_secs(), 30);
     }
 
     #[test]

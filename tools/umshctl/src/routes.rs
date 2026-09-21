@@ -20,7 +20,6 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use anyhow::{Context as _, Result};
 
 use umsh::core::{PublicKey, RouterHint};
-use umsh::hal::Radio;
 use umsh::mac::CachedRoute;
 
 use crate::connection;
@@ -179,7 +178,7 @@ impl RouteCache {
     ///
     /// Only what changed is stamped, so an unchanged route keeps saying
     /// when it was learned rather than when it was last looked at.
-    pub async fn harvest<R: Radio>(&mut self, handle: &crate::mesh::CtlHandle<'_, R>) {
+    pub async fn harvest(&mut self, handle: &crate::mesh::CtlHandle<'_>) {
         let mut peers = Vec::new();
         handle.for_each_peer(&mut |peer| peers.push(peer)).await;
         for peer in peers {

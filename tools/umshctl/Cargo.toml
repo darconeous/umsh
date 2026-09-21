@@ -36,6 +36,9 @@ tokio-serial = { version = "5", optional = true }
 # `time tz sync`.
 libc = "0.2"
 
+[dev-dependencies]
+umsh = { path = "../../umsh", features = ["test-support"] }
+
 [[bin]]
 name = "umshctl"
 path = "src/main.rs"

@@ -262,6 +262,24 @@ impl<M: MacBackend> NodeManager<M> {
         }
     }
 
+    /// Give up the outstanding exchange without an outcome, so the next
+    /// [`Self::begin`] is not refused as busy.
+    ///
+    /// For a caller that stopped waiting on its own terms—its patience
+    /// ran out, or the radio underneath it was replaced—rather than the
+    /// engine's. The token count is carried forward exactly as
+    /// [`settle`](Self::settle) carries it, so a device that does answer
+    /// the abandoned exchange late answers a token nothing will reissue.
+    /// A no-op when nothing is outstanding.
+    pub fn abandon(&mut self) {
+        if let Some(exchange) = &self.exchange {
+            self.counter = exchange.counter();
+        }
+        self.exchange = None;
+        self.ticket = None;
+        self.inbox.borrow_mut().clear();
+    }
+
     /// The reply frame of the exchange that just finished: one whole ULCP
     /// frame, its trailing content the concatenation of every fragment.
     pub fn reply(&self) -> &[u8] {

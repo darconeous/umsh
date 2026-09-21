@@ -1,15 +1,22 @@
 //! Explicit battery polling, with per-property discovery and no overlapping requests.
 use super::props::{PropArg, format_value, spell};
+use crate::App;
+use crate::connection::Recovered;
 use anyhow::{Result, bail};
 use serde_json::{Value as Json, json};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use umsh::ulcp::{FrameLink, UlcpDevice, UlcpError};
+use umsh::ulcp::UlcpError;
 use umsh::ulcp_wire::{
     Status,
     battery::BatteryStatus,
     battery_diagnostics::{self as diagnostics, Value, VoltageRequest},
     ids::{cap, prop},
 };
+
+/// The longest wait between polls after a failure, unless the interval
+/// itself is longer. A recovered link is worth polling again soon; ten
+/// minutes of silence after a reconnect would look like a hang.
+const FAILURE_BACKOFF_CAP: Duration = Duration::from_secs(60);
 
 #[derive(Debug, clap::Args)]
 pub struct BatteryArgs {
@@ -145,8 +152,9 @@ fn result_json(key: u32, result: &Result<Vec<u8>, Status>) -> Json {
     }
 }
 
-pub async fn run<L: FrameLink>(device: &mut UlcpDevice<L>, args: BatteryArgs) -> Result<()> {
+pub async fn run(app: &mut App, args: BatteryArgs) -> Result<()> {
     args.validate()?;
+    let device = app.device()?;
     let interval = args
         .interval
         .unwrap_or(Duration::from_secs(if device.is_remote() { 60 } else { 1 }));
@@ -170,6 +178,7 @@ pub async fn run<L: FrameLink>(device: &mut UlcpDevice<L>, args: BatteryArgs) ->
     let mut polls = 0;
     loop {
         let start = Instant::now();
+        let device = app.device()?;
         let result: Result<Vec<Result<Vec<u8>, Status>>> = async {
             if batched {
                 // A continuation would be another acquisition; do not label a
@@ -240,7 +249,7 @@ pub async fn run<L: FrameLink>(device: &mut UlcpDevice<L>, args: BatteryArgs) ->
                 backoff = if failed {
                     backoff
                         .saturating_mul(2)
-                        .min(interval.max(Duration::from_secs(600)))
+                        .min(interval.max(FAILURE_BACKOFF_CAP))
                 } else {
                     interval
                 };
@@ -264,9 +273,27 @@ pub async fn run<L: FrameLink>(device: &mut UlcpDevice<L>, args: BatteryArgs) ->
                 if !args.watch {
                     return Err(error);
                 }
+                // A lost link is brought back before the next poll rather
+                // than waited out: the session is still the user's, and
+                // a poll against a dead handle would only fail the same
+                // way. The reconnect narrates itself on stderr, so the
+                // JSON stream above stays one object per line.
+                let policy = app.recovery.clone();
+                let session = app.session()?;
+                if session.device.link_lost()
+                    && let Some(policy) = policy
+                {
+                    match session.recover(&policy).await? {
+                        Recovered::Attached => {
+                            backoff = interval;
+                            continue;
+                        }
+                        Recovered::Interrupted => return Ok(()),
+                    }
+                }
                 backoff = backoff
                     .saturating_mul(2)
-                    .min(interval.max(Duration::from_secs(600)));
+                    .min(interval.max(FAILURE_BACKOFF_CAP));
             }
         }
         polls += 1;
@@ -280,6 +307,64 @@ pub async fn run<L: FrameLink>(device: &mut UlcpDevice<L>, args: BatteryArgs) ->
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A watch is the command a link most often drops under. Here the
+    /// device is a fake at the far end of a socket, the socket is cut
+    /// partway through, and the watch runs to its count anyway—over a
+    /// second connection the recovery opened underneath it.
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_watch_survives_one_link_loss() {
+        use crate::connection::{Prefs, Recovery, Target};
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use umsh::ulcp::testing::fake_multi_device;
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let accepted = Arc::new(AtomicUsize::new(0));
+        let counter = accepted.clone();
+        tokio::spawn(async move {
+            // The first connection is served briefly and then hung up
+            // on, mid-watch; the second is served for as long as the
+            // host wants it.
+            let (first, _) = listener.accept().await.unwrap();
+            counter.fetch_add(1, Ordering::Relaxed);
+            let _ =
+                tokio::time::timeout(Duration::from_millis(200), fake_multi_device(first)).await;
+            let (second, _) = listener.accept().await.unwrap();
+            counter.fetch_add(1, Ordering::Relaxed);
+            fake_multi_device(second).await;
+        });
+
+        let target = Target::Tcp {
+            host: "127.0.0.1".into(),
+            port,
+        };
+        let session = crate::connection::connect(target, false).await.unwrap();
+        let recovery = Recovery {
+            initial: Duration::from_millis(10),
+            cap: Duration::from_millis(10),
+        };
+        let mut app = crate::App::for_extcap(session, Prefs::default(), 115_200, Some(recovery));
+        let args = BatteryArgs {
+            watch: true,
+            interval: Some(Duration::from_millis(20)),
+            json: true,
+            gauge_config: false,
+            gauge_telemetry: false,
+            properties: vec![PropArg(prop::BATTERY)],
+            count: Some(30),
+        };
+        run(&mut app, args).await.unwrap();
+
+        assert_eq!(
+            accepted.load(Ordering::Relaxed),
+            2,
+            "the watch was not reconnected"
+        );
+        assert!(!app.session().unwrap().device.link_lost());
+    }
+
     #[test]
     fn telemetry_json_distinguishes_counter_sentinels_sign_and_die_temperature() {
         use umsh::ulcp_wire::battery_gauge_telemetry::{MAX_ENCODED, Telemetry};

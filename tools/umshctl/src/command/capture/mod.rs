@@ -17,7 +17,7 @@ use self::pcap::{CaptureLayers, PcapEncapsulation, PcapWriter, RfParams};
 use super::values::HexU16Arg;
 use super::{decode_u32, phy};
 use crate::App;
-use crate::connection::SessionLink;
+use crate::connection::{Recovered, Recovery, SessionLink};
 use crate::output::{self, field, note, warn};
 
 #[derive(Debug, clap::Args)]
@@ -47,11 +47,12 @@ pub struct CaptureArgs {
     #[arg(long, default_value_t = 10, value_name = "SECS")]
     pub idle_probe_secs: u64,
 
-    /// Exit instead of recovering a failed BLE session.
+    /// Stop instead of bringing back a dropped link.
     #[arg(long)]
     pub no_reconnect: bool,
 
-    /// Seconds to wait before rediscovering after a failed session.
+    /// Seconds to wait before the first reconnect attempt after a
+    /// failed session; later attempts back off from there.
     #[arg(long, default_value_t = 2, value_name = "SECS")]
     pub reconnect_delay_secs: u64,
 
@@ -235,7 +236,7 @@ pub(crate) async fn run_with_writer(
         *app.session()?.tap.borrow_mut() = Some(writer);
     }
 
-    let outcome = capture_with_recovery(app, args).await;
+    let outcome = capture_with_recovery(app, args, tapped).await;
 
     // Both cleanups run whatever happened: a half-written pcap and a
     // device left promiscuous are each worse than the original failure.
@@ -248,15 +249,23 @@ pub(crate) async fn run_with_writer(
     outcome
 }
 
-/// Run the capture, recovering a dropped BLE link when asked to.
+/// Run the capture, recovering a dropped link when allowed to.
 ///
-/// Reconnection belongs to one-shot mode, which owns the link and can
-/// rediscover it. In the REPL the *session* owns the link: if it drops,
-/// the REPL itself is unattached, and saying so beats silently
-/// reconnecting underneath the user.
-async fn capture_with_recovery(app: &mut App, args: &CaptureArgs) -> Result<()> {
+/// The session owns the link, and a capture is one thing the session is
+/// doing: a link that drops underneath it comes back underneath it, on
+/// any transport, in the shell as much as in a one-shot. The recovery is
+/// narrated on stderr when it takes more than a moment, and Ctrl-C ends
+/// it the way it ends the capture.
+async fn capture_with_recovery(app: &mut App, args: &CaptureArgs, tapped: bool) -> Result<()> {
     let mut stats = Stats::new();
-    let reconnect = !args.no_reconnect && !app.interactive && app.target_is_ble();
+    let policy = if args.no_reconnect {
+        None
+    } else {
+        app.recovery.clone().map(|policy| Recovery {
+            initial: Duration::from_secs(args.reconnect_delay_secs),
+            ..policy
+        })
+    };
     loop {
         stats.sessions += 1;
         let failure = match capture_once(app, args, &mut stats).await {
@@ -268,7 +277,15 @@ async fn capture_with_recovery(app: &mut App, args: &CaptureArgs) -> Result<()> 
         if is_broken_pipe(&failure) {
             return Ok(());
         }
-        if !reconnect {
+        let Some(policy) = &policy else {
+            return Err(failure);
+        };
+        let session = app.session()?;
+        // The tap fails through the link, so a pcap that could not be
+        // written looks like a lost link from the handle's side. The
+        // tap removing itself is what tells the two apart; and a failure
+        // that is not the link's at all is not one a reconnect answers.
+        if (tapped && session.tap.borrow().is_none()) || !session.device.link_lost() {
             return Err(failure);
         }
         eprintln!(
@@ -276,12 +293,10 @@ async fn capture_with_recovery(app: &mut App, args: &CaptureArgs) -> Result<()> 
             stats.started.elapsed().as_secs_f64(),
             stats.sequence,
         );
-        println!(
-            "recovery: rediscovering in {} s (ctrl-c to exit) ...",
-            args.reconnect_delay_secs,
-        );
-        tokio::time::sleep(Duration::from_secs(args.reconnect_delay_secs)).await;
-        app.reconnect().await?;
+        match session.recover(policy).await? {
+            Recovered::Attached => {}
+            Recovered::Interrupted => return Ok(()),
+        }
     }
 }
 

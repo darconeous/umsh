@@ -15,6 +15,8 @@ software-crypto = ["umsh-crypto/software-crypto", "umsh-mac/software-crypto", "u
 tokio-support = ["std", "software-crypto", "dep:rand", "dep:socket2", "dep:tokio"]
 serial-radio = ["tokio-support", "dep:tokio-serial"]
 ble-radio = ["tokio-support", "dep:btleplug", "dep:futures-util", "dep:uuid"]
+# In-process fake devices for the tests of the tools built on this crate.
+test-support = ["tokio-support"]
 embassy-support = ["std", "software-crypto", "umsh-hal/embassy", "dep:embassy-executor", "dep:embassy-time", "dep:rand"]
 cli = ["tokio-support", "dep:umsh-cli"]
 

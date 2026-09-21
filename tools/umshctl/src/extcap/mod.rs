@@ -236,7 +236,8 @@ async fn capture(args: ExtcapArgs) -> Result<()> {
     let prefs = Prefs::load();
     let target = resolve_target(&args, &prefs).await?;
     let session = connection::connect(target, false).await?;
-    let mut app = App::for_extcap(session, prefs, args.baud);
+    let recovery = (!args.no_reconnect).then(connection::Recovery::default);
+    let mut app = App::for_extcap(session, prefs, args.baud, recovery);
 
     // Wireshark stops a capture by closing the FIFO and signalling. The
     // signal is the one that also arrives when the air is quiet, where

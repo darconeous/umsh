@@ -362,9 +362,14 @@ impl Command {
         {
             bail!("{refusal}");
         }
+        // A link that dropped since the last command comes back before
+        // this one runs; the session it belongs to never went anywhere.
+        if self.needs_device() {
+            app.ensure_attached().await?;
+        }
         match self {
             Self::Info(args) => info::run(app.device()?, args).await,
-            Self::Battery(args) => battery::run(app.device()?, args).await,
+            Self::Battery(args) => battery::run(app, args).await,
             Self::Identity { op } => lifecycle::identity(app.device()?, op).await,
             Self::Name { name } => lifecycle::name(app, name).await,
             Self::Save => lifecycle::save(app.device()?).await,

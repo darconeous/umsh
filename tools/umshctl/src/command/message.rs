@@ -17,7 +17,6 @@ use tokio::time::Instant;
 
 use umsh::core::{PayloadType, PublicKey};
 use umsh::crypto::software::SoftwareIdentity;
-use umsh::hal::Radio;
 use umsh::mac::{MacCounters, SendOptions};
 use umsh::node::{ReceivedPacketRef, SendProgressTicket};
 use umsh::text::{TextMessage, UnicastTextChatWrapper};
@@ -25,7 +24,7 @@ use umsh_sync::AsyncRefCell;
 
 use super::values::KeyArg;
 use crate::App;
-use crate::mesh::{self, CtlMac, NodeStack};
+use crate::mesh::{self, CtlMac, NodeStack, StackContext};
 use crate::output::{field, note, subfield};
 use crate::routes::RouteCache;
 
@@ -86,17 +85,15 @@ enum Errand {
 }
 
 impl mesh::RadioErrand for Errand {
-    async fn run<R: Radio>(
+    async fn run(
         self,
-        mac: &AsyncRefCell<CtlMac<R>>,
+        mac: &AsyncRefCell<CtlMac>,
         identity: SoftwareIdentity,
-    ) -> Result<()>
-    where
-        R::Error: core::fmt::Debug,
-    {
+        ctx: &StackContext,
+    ) -> Result<()> {
         match &self {
-            Errand::Send(args) => deliver(mac, identity, PublicKey(args.target.0), args).await,
-            Errand::Listen(args) => receive(mac, identity, args).await,
+            Errand::Send(args) => deliver(mac, identity, ctx, PublicKey(args.target.0), args).await,
+            Errand::Listen(args) => receive(mac, identity, ctx, args).await,
         }
     }
 }
@@ -111,17 +108,15 @@ pub async fn listen(app: &mut App, args: ListenArgs) -> Result<()> {
     mesh::borrowing_the_radio(app, Errand::Listen(args)).await
 }
 
-async fn deliver<R: Radio>(
-    mac: &AsyncRefCell<CtlMac<R>>,
+async fn deliver(
+    mac: &AsyncRefCell<CtlMac>,
     identity: SoftwareIdentity,
+    ctx: &StackContext,
     target: PublicKey,
     args: &SendArgs,
-) -> Result<()>
-where
-    R::Error: core::fmt::Debug,
-{
+) -> Result<()> {
     let text = args.text.join(" ");
-    let (mut stack, local_key) = NodeStack::build(mac, identity).await?;
+    let (mut stack, local_key) = NodeStack::build(mac, identity, ctx).await?;
     let peer = stack
         .node
         .peer(target)
@@ -170,15 +165,12 @@ where
 /// its ticket is finished the moment it is issued, before the frame has
 /// been anywhere near the radio; what finishes that one is the frame
 /// actually going out, which the MAC's own transmit counters report.
-async fn settle<R: Radio>(
-    stack: &mut NodeStack<'_, R>,
+async fn settle(
+    stack: &mut NodeStack<'_>,
     ticket: &SendProgressTicket,
     args: &SendArgs,
     before: MacCounters,
-) -> Result<()>
-where
-    R::Error: core::fmt::Debug,
-{
+) -> Result<()> {
     let give_up = Instant::now() + Duration::from_secs(args.timeout);
     if args.no_ack {
         loop {
@@ -223,15 +215,13 @@ where
 /// How long a single pump waits before the deadline is checked again.
 const POLL: Duration = Duration::from_millis(250);
 
-async fn receive<R: Radio>(
-    mac: &AsyncRefCell<CtlMac<R>>,
+async fn receive(
+    mac: &AsyncRefCell<CtlMac>,
     identity: SoftwareIdentity,
+    ctx: &StackContext,
     args: &ListenArgs,
-) -> Result<()>
-where
-    R::Error: core::fmt::Debug,
-{
-    let (mut stack, local_key) = NodeStack::build(mac, identity).await?;
+) -> Result<()> {
+    let (mut stack, local_key) = NodeStack::build(mac, identity, ctx).await?;
     field("listening as", local_key.to_string());
 
     // A unicast carries a short hint for its sender rather than a whole

@@ -22,7 +22,6 @@ use tokio::time::Instant;
 
 use umsh::core::{PayloadType, PublicKey, RouterHint};
 use umsh::crypto::software::SoftwareIdentity;
-use umsh::hal::Radio;
 use umsh::mac::{CachedRoute, SendOptions};
 use umsh::node::mac_command::IdentityRequestBuilder;
 use umsh::node::{
@@ -33,7 +32,7 @@ use umsh_sync::AsyncRefCell;
 
 use super::values::{HintPrefixArg, KeyArg};
 use crate::App;
-use crate::mesh::{self, CtlMac, NodeStack};
+use crate::mesh::{self, CtlMac, NodeStack, StackContext};
 use crate::output::{field, note, subfield};
 use crate::routes::{self, RouteCache};
 
@@ -140,26 +139,22 @@ pub async fn discover(app: &mut App, args: DiscoverArgs) -> Result<()> {
 }
 
 impl mesh::RadioErrand for DiscoverArgs {
-    async fn run<R: Radio>(
+    async fn run(
         self,
-        mac: &AsyncRefCell<CtlMac<R>>,
+        mac: &AsyncRefCell<CtlMac>,
         identity: SoftwareIdentity,
-    ) -> Result<()>
-    where
-        R::Error: core::fmt::Debug,
-    {
-        explore(mac, identity, &self).await
+        ctx: &StackContext,
+    ) -> Result<()> {
+        explore(mac, identity, ctx, &self).await
     }
 }
 
-async fn explore<R: Radio>(
-    mac: &AsyncRefCell<CtlMac<R>>,
+async fn explore(
+    mac: &AsyncRefCell<CtlMac>,
     identity: SoftwareIdentity,
+    ctx: &StackContext,
     args: &DiscoverArgs,
-) -> Result<()>
-where
-    R::Error: core::fmt::Debug,
-{
+) -> Result<()> {
     let mut routes = RouteCache::load();
     // Resolve the vantage before standing anything up: a route this tool
     // cannot express is a mistake in the command line, not a failure
@@ -169,7 +164,7 @@ where
         None => None,
     };
 
-    let (mut stack, local_key) = NodeStack::build(mac, identity).await?;
+    let (mut stack, local_key) = NodeStack::build(mac, identity, ctx).await?;
     // A stranger answers with its whole key in the source address,
     // having no reason to think this node has heard of it. Without this
     // the MAC has nowhere to put that key and drops the answer.
@@ -244,14 +239,11 @@ where
 
 /// Broadcast one Identity Request, and return the nonce it carries so
 /// the answers can be told from unsolicited advertisements.
-async fn ask<R: Radio>(
-    stack: &mut NodeStack<'_, R>,
+async fn ask(
+    stack: &mut NodeStack<'_>,
     args: &DiscoverArgs,
     vantage: Option<&[RouterHint]>,
-) -> Result<u32>
-where
-    R::Error: core::fmt::Debug,
-{
+) -> Result<u32> {
     let mut bytes = [0u8; 4];
     stack.handle.fill_random(&mut bytes).await;
     let nonce = u32::from_be_bytes(bytes);

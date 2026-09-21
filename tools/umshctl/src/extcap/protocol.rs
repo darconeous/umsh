@@ -102,7 +102,7 @@ pub fn config() -> String {
          {type=unsigned}{default=10}{range=1,3600}{group=Capture}\n",
     );
     out.push_str(
-        "arg {number=5}{call=--no-reconnect}{display=Do not recover a dropped BLE link}\
+        "arg {number=5}{call=--no-reconnect}{display=Do not recover a dropped link}\
          {type=boolflag}{default=false}{group=Capture}\n",
     );
     for (number, call, display, hint) in [

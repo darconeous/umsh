@@ -16,7 +16,6 @@ use anyhow::{Result, anyhow, bail};
 
 use tokio::time::Instant;
 use umsh::core::PayloadType;
-use umsh::hal::Radio;
 use umsh::mac::{MAX_FLOOD_HOPS, SendOptions};
 use umsh::node::PongMetadata;
 
@@ -174,10 +173,7 @@ struct SendProgress {
     repeated: bool,
 }
 
-pub async fn run<R: Radio>(ctl: &mut Ctl<'_, R>, args: PingArgs) -> Result<()>
-where
-    R::Error: core::fmt::Debug,
-{
+pub async fn run(ctl: &mut Ctl<'_>, args: PingArgs) -> Result<()> {
     let target = ctl.target;
     let options = args.send_options()?;
 
@@ -278,18 +274,15 @@ where
 
 /// Send one ping and wait out its deadline.
 #[allow(clippy::too_many_arguments)]
-async fn one_ping<R: Radio>(
-    ctl: &mut Ctl<'_, R>,
-    peer: &umsh::node::PeerConnection<umsh::node::LocalNode<crate::mesh::CtlHandle<'_, R>>>,
-    bound: Option<&umsh::node::BoundChannel<crate::mesh::CtlHandle<'_, R>>>,
+async fn one_ping(
+    ctl: &mut Ctl<'_>,
+    peer: &umsh::node::PeerConnection<umsh::node::LocalNode<crate::mesh::CtlHandle<'_>>>,
+    bound: Option<&umsh::node::BoundChannel<crate::mesh::CtlHandle<'_>>>,
     args: &PingArgs,
     options: &SendOptions,
     pong: &Rc<RefCell<Option<PongMetadata>>>,
     expired: &Rc<RefCell<bool>>,
-) -> Result<Reply>
-where
-    R::Error: core::fmt::Debug,
-{
+) -> Result<Reply> {
     let timeout = Duration::from_secs(args.timeout);
     let started = Instant::now();
     let deadline = started + timeout;
@@ -347,14 +340,11 @@ where
 }
 
 /// Drive the host until `done` or the deadline, whichever comes first.
-async fn pump_until<R: Radio>(
-    ctl: &mut Ctl<'_, R>,
+async fn pump_until(
+    ctl: &mut Ctl<'_>,
     deadline: Instant,
     mut done: impl FnMut() -> bool,
-) -> Result<()>
-where
-    R::Error: core::fmt::Debug,
-{
+) -> Result<()> {
     while !done() && Instant::now() < deadline {
         // A quiet radio produces no MAC wake, so the deadlines that retire
         // an unanswered ping need their own nudge—which the pump does.

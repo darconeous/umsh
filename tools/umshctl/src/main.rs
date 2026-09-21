@@ -32,7 +32,7 @@ use clap::Parser;
 use umsh::ulcp::UlcpDevice;
 
 use command::Command;
-use connection::{Discovery, Found, Prefs, Session, SessionLink, Target};
+use connection::{Discovery, Found, Prefs, Recovered, Recovery, Session, SessionLink, Target};
 use output::ColorChoice;
 
 #[derive(Debug, Parser)]
@@ -53,6 +53,12 @@ because identifying one means opening it, and opening a port can reset
 or DFU-trigger hardware that is not a ULCP radio at all. --tcp reaches a
 radio whose port has been bridged to a socket, which carries the same
 framing a wire does; there is nothing to discover, so it is always named.
+
+A link that drops under a long-running command, a shell, or a mesh
+session is reopened behind the scenes and the session carries on; the
+reattach is narrated on stderr only when it takes more than a moment.
+--no-reconnect fails instead. A one-shot command whose link drops fails
+either way.
 
 KEY values are 44-character base58 or 64-character hex. Secrets are
 never echoed in output or traces—though shell history keeps whatever
@@ -116,6 +122,15 @@ pub struct ToolArgs {
     #[arg(long, global = true)]
     trace: bool,
 
+    /// Fail when the radio link drops instead of bringing it back.
+    ///
+    /// A link that drops under a long-running command, a shell, or a
+    /// mesh session is otherwise reopened behind the scenes and the
+    /// session carries on. Scripts that would rather see the failure
+    /// turn that off here.
+    #[arg(long, global = true)]
+    no_reconnect: bool,
+
     /// Leave mutations live-only. They otherwise persist automatically
     /// via CMD_SAVE.
     #[arg(long, global = true)]
@@ -171,6 +186,8 @@ pub struct App {
     /// What a mesh session borrowed, while one is open. Present exactly
     /// when `session` reaches its device over the air.
     pub mesh: Option<mesh::MeshHome>,
+    /// How a lost link is brought back, or `None` to fail instead.
+    pub recovery: Option<Recovery>,
 }
 
 impl App {
@@ -185,11 +202,33 @@ impl App {
         Ok(&mut self.session()?.device)
     }
 
-    pub fn target_is_ble(&self) -> bool {
-        matches!(
-            self.session.as_ref().map(|session| &session.target),
-            Some(Target::Ble { .. })
-        )
+    /// Make sure the attached session's link is live before a command
+    /// uses it.
+    ///
+    /// Being attached is a logical state: a link that dropped between
+    /// two commands does not make the session any less the user's, so
+    /// it is brought back here, underneath, before the command runs. A
+    /// mesh session's link is the radio inside its driver, which keeps
+    /// itself; nothing to do from here. Not attached at all is not a
+    /// failure here either—the command says so in its own words.
+    pub async fn ensure_attached(&mut self) -> Result<()> {
+        let recovery = self.recovery.clone();
+        let Some(session) = &mut self.session else {
+            return Ok(());
+        };
+        if session.is_mesh() || !session.device.link_lost() {
+            return Ok(());
+        }
+        let Some(policy) = recovery else {
+            bail!(
+                "the link to {} was lost; `connect` reattaches (or drop --no-reconnect)",
+                session.label
+            );
+        };
+        match session.recover(&policy).await? {
+            Recovered::Attached => Ok(()),
+            Recovered::Interrupted => bail!("reconnect interrupted"),
+        }
     }
 
     /// Drop the attachment, returning what it was called. Dropping the
@@ -200,7 +239,11 @@ impl App {
     /// borrowed radio back—so the caller is left attached to the local
     /// radio again rather than to nothing.
     pub async fn detach(&mut self) -> Option<String> {
-        let label = self.session.take().map(|session| session.label);
+        let session = self.session.take();
+        let label = session.as_ref().map(|session| session.label.clone());
+        if let Some(session) = session {
+            session.close().await;
+        }
         if let Some(home) = self.mesh.take() {
             mesh::restore_local(self, home).await;
         }
@@ -217,10 +260,13 @@ impl App {
     /// interface.
     ///
     /// `interactive` is false in both its senses here: there is no
-    /// prompt to return to, and nobody to answer a question. That is
-    /// also what lets a dropped BLE link be recovered underneath a
-    /// running capture.
-    pub fn for_extcap(session: Session, prefs: Prefs, baud: u32) -> Self {
+    /// prompt to return to, and nobody to answer a question.
+    pub fn for_extcap(
+        session: Session,
+        prefs: Prefs,
+        baud: u32,
+        recovery: Option<Recovery>,
+    ) -> Self {
         Self {
             session: Some(session),
             prefs,
@@ -231,6 +277,7 @@ impl App {
             discovery: Discovery::Auto,
             last_scan: Vec::new(),
             mesh: None,
+            recovery,
         }
     }
 
@@ -238,16 +285,6 @@ impl App {
         let session = connection::connect(target, self.trace).await?;
         announce_attached(&session);
         self.session = Some(session);
-        Ok(())
-    }
-
-    /// Open a fresh link to the same radio, keeping the capture tap so a
-    /// recovered capture stays one file.
-    pub async fn reconnect(&mut self) -> Result<()> {
-        let Some(session) = self.session.take() else {
-            bail!("not attached");
-        };
-        self.session = Some(session.reconnect(self.trace).await?);
         Ok(())
     }
 
@@ -334,6 +371,7 @@ async fn run(args: ToolArgs) -> Result<()> {
         discovery: args.discovery(),
         last_scan: Vec::new(),
         mesh: None,
+        recovery: (!args.no_reconnect).then(Recovery::default),
     };
 
     // Everything clap's grammar cannot express is checked before a

@@ -15,7 +15,6 @@ use tokio::time::Instant;
 
 use umsh::core::PublicKey;
 use umsh::crypto::software::SoftwareIdentity;
-use umsh::hal::Radio;
 use umsh::node_mgmt::NodeManager;
 use umsh::node_mgmt::admin::Outcome;
 use umsh::ulcp_wire::ids::prop;
@@ -28,7 +27,7 @@ use super::tables::TableOp;
 use super::values::{AssignArg, BytesArg, KeyArg};
 use crate::App;
 use crate::connection::confirm;
-use crate::mesh::{self, CtlHandle, CtlMac, NodeStack, OPERATION_TIMEOUT, describe};
+use crate::mesh::{self, CtlHandle, CtlMac, NodeStack, OPERATION_TIMEOUT, StackContext, describe};
 use crate::output::{address, field, hex, note, subfield};
 
 // ─── Command surface ─────────────────────────────────────────────────────────
@@ -153,15 +152,13 @@ struct Errand {
 }
 
 impl mesh::RadioErrand for Errand {
-    async fn run<R: Radio>(
+    async fn run(
         self,
-        mac: &AsyncRefCell<CtlMac<R>>,
+        mac: &AsyncRefCell<CtlMac>,
         identity: SoftwareIdentity,
-    ) -> Result<()>
-    where
-        R::Error: core::fmt::Debug,
-    {
-        operate(mac, identity, self.target, self.op, self.no_save).await
+        ctx: &StackContext,
+    ) -> Result<()> {
+        operate(mac, identity, ctx, self.target, self.op, self.no_save).await
     }
 }
 
@@ -194,17 +191,15 @@ pub async fn run(app: &mut App, target: KeyArg, op: Operation) -> Result<()> {
     mesh::borrowing_the_radio(app, errand).await
 }
 
-async fn operate<R: Radio>(
-    mac: &AsyncRefCell<CtlMac<R>>,
+async fn operate(
+    mac: &AsyncRefCell<CtlMac>,
     identity: SoftwareIdentity,
+    ctx: &StackContext,
     target: PublicKey,
     op: Operation,
     no_save: bool,
-) -> Result<()>
-where
-    R::Error: core::fmt::Debug,
-{
-    let (stack, local_key) = NodeStack::build(mac, identity).await?;
+) -> Result<()> {
+    let (stack, local_key) = NodeStack::build(mac, identity, ctx).await?;
     let peer = stack
         .node
         .peer(target)
@@ -252,16 +247,13 @@ where
 }
 
 /// The tool as a node, for the duration of one operation.
-pub struct Ctl<'a, R: Radio> {
-    pub(super) stack: NodeStack<'a, R>,
+pub struct Ctl<'a> {
+    pub(super) stack: NodeStack<'a>,
     pub(super) target: PublicKey,
-    manager: NodeManager<CtlHandle<'a, R>>,
+    manager: NodeManager<CtlHandle<'a>>,
 }
 
-impl<'a, R: Radio> Ctl<'a, R>
-where
-    R::Error: core::fmt::Debug,
-{
+impl<'a> Ctl<'a> {
     /// Carry one exchange to its end, within what is left of the
     /// operation's budget.
     async fn exchange(&mut self, request: &[u8]) -> Result<Outcome> {
@@ -283,10 +275,7 @@ where
 
 // ─── Operations ──────────────────────────────────────────────────────────────
 
-async fn run_op<R: Radio>(ctl: &mut Ctl<'_, R>, op: Operation, no_save: bool) -> Result<()>
-where
-    R::Error: core::fmt::Debug,
-{
+async fn run_op(ctl: &mut Ctl<'_>, op: Operation, no_save: bool) -> Result<()> {
     let op = match op {
         Operation::Manage(op) => op,
         Operation::PeerRepeaters => return peer_repeaters(ctl).await,
@@ -410,10 +399,7 @@ where
 /// Not node management—it is a plain MAC command any node may send, and
 /// the target need not list this tool as an administrator. It reuses the
 /// same borrowed radio because the tool still has to be a node to ask.
-async fn peer_repeaters<R: Radio>(ctl: &mut Ctl<'_, R>) -> Result<()>
-where
-    R::Error: core::fmt::Debug,
-{
+async fn peer_repeaters(ctl: &mut Ctl<'_>) -> Result<()> {
     use umsh::node::OwnedMacCommand;
     use umsh::node::mac_command::PeerRepeatersResponseView;
 
@@ -557,10 +543,7 @@ fn last_heard(minutes: u16) -> String {
     }
 }
 
-async fn info<R: Radio>(ctl: &mut Ctl<'_, R>) -> Result<()>
-where
-    R::Error: core::fmt::Debug,
-{
+async fn info(ctl: &mut Ctl<'_>) -> Result<()> {
     let keys = [
         prop::PROTOCOL_VERSION,
         prop::DEV_VERSION,
@@ -599,10 +582,7 @@ where
     Ok(())
 }
 
-async fn admins<R: Radio>(ctl: &mut Ctl<'_, R>, op: TableOp, no_save: bool) -> Result<()>
-where
-    R::Error: core::fmt::Debug,
-{
+async fn admins(ctl: &mut Ctl<'_>, op: TableOp, no_save: bool) -> Result<()> {
     match op {
         TableOp::List => {
             let reply = ctl
@@ -650,10 +630,7 @@ where
 }
 
 /// Persist a mutation, matching what the local commands do.
-async fn save_if_asked<R: Radio>(ctl: &mut Ctl<'_, R>, no_save: bool) -> Result<()>
-where
-    R::Error: core::fmt::Debug,
-{
+async fn save_if_asked(ctl: &mut Ctl<'_>, no_save: bool) -> Result<()> {
     if no_save {
         note("--no-save—changes are live only; `manage <KEY> save` persists them");
         return Ok(());
