@@ -28,14 +28,16 @@ struct ManageDeviceScreen: View {
 
     var body: some View {
         Form {
-            identitySection
+            ManageDeviceIdentitySection(model: model)
             if model.card != nil {
-                categoriesSection
-                lifecycleSection
+                ManageDeviceCategoriesSection(model: model, browsing: browsing)
+                ManageDeviceLifecycleSection(
+                    model: model,
+                    confirmsRestart: $confirmsRestart,
+                    confirmsFactoryReset: $confirmsFactoryReset
+                )
             }
-            if let problem = model.problem {
-                Section { Text(problem).foregroundStyle(.red) }
-            }
+            RemoteProblemSection(model: model)
         }
         .confirmationDialog(
             "Restart this device?",
@@ -82,93 +84,6 @@ struct ManageDeviceScreen: View {
         // top makes this one disappear, and a subscription owned by this
         // view would be cancelled with it.
         .onAppear { model.observePushes() }
-    }
-
-    @ViewBuilder
-    private var identitySection: some View {
-        Section {
-            if let card = model.card {
-                LabeledContent("Name", value: card.deviceName ?? model.fallbackName)
-                if let model = card.deviceModel {
-                    LabeledContent("Model", value: model)
-                }
-                LabeledContent("Firmware", value: card.deviceVersion ?? "Not reported")
-                if card.supportsAlert {
-                    findButton
-                }
-            } else if model.isBusy {
-                ProgressView("Asking the device what it is")
-                    .frame(maxWidth: .infinity)
-            } else {
-                // Reached when the first card fetch failed. The problem
-                // section below says why, and the toolbar's refresh is how
-                // to try again.
-                Text("This device has not said what it is yet.")
-                    .foregroundStyle(.secondary)
-            }
-        } footer: {
-            if let asOf = model.cardAsOf {
-                Text("Asked \(asOf.formatted(.relative(presentation: .named))).")
-            }
-        }
-    }
-
-    /// The one control here that acts on the device rather than on its
-    /// settings—and the one worth a round trip, because a node whose last
-    /// known position is a week-old fix is found by making it beep.
-    private var findButton: some View {
-        Button {
-            Task { await model.setAlert(model.alert == .locating ? .none : .locating) }
-        } label: {
-            Label(
-                model.alert == .locating ? "Stop Locating" : "Find This Device",
-                systemImage: model.alert == .locating ? "bell.slash" : "bell"
-            )
-        }
-    }
-
-    private var categoriesSection: some View {
-        Section {
-            ForEach(ManageDeviceCategory.offered(by: model)) { entry in
-                NavigationLink {
-                    entry.destination(model, browsing)
-                } label: {
-                    Label(entry.title, systemImage: entry.symbol)
-                }
-            }
-        }
-    }
-
-    /// The controls that act on the device rather than on any one group of
-    /// its settings.
-    ///
-    /// Restart is offered wherever the device answers at all—the node
-    /// most worth restarting is the one nobody can walk to—and only when
-    /// the device says it can (`CAP_REBOOT`), the way the locate button
-    /// waits on `CAP_ALERT`. A factory reset is offered only where the
-    /// device is in hand: it destroys the identity this screen is addressed
-    /// to, so over the mesh there would be no device left to tell whether
-    /// it worked, and no way back if it was the wrong one.
-    @ViewBuilder
-    private var lifecycleSection: some View {
-        if model.supportsRestart || model.offersFactoryReset {
-            Section {
-                if model.supportsRestart {
-                    Button("Restart This Device…", role: .destructive) {
-                        confirmsRestart = true
-                    }
-                }
-                if model.offersFactoryReset {
-                    Button("Factory Reset…", role: .destructive) {
-                        confirmsFactoryReset = true
-                    }
-                }
-            } footer: {
-                Text(model.offersFactoryReset
-                     ? "A restart keeps everything the device has saved. A factory reset keeps nothing, the device's own identity included."
-                     : "A restart keeps everything the device has saved. Erasing a device is only offered while it is connected to this phone.")
-            }
-        }
     }
 }
 
@@ -400,48 +315,5 @@ extension View {
                 applyWarning: applyWarning
             )
         )
-    }
-}
-
-/// What a screen is showing and how old it is.
-///
-/// Every category screen carries one: values prefilled from the cache are
-/// the device as it was last seen, and presenting that as current is the
-/// one thing a design built on caching must not do.
-struct RemoteReadingFooter: View {
-    let asOf: Date?
-    let isFresh: Bool
-    let isBusy: Bool
-    /// What is being asked, as the sentences name it.
-    var subject = "the device"
-
-    init(reading: RemoteCategoryReading?, isBusy: Bool) {
-        asOf = reading?.asOf
-        isFresh = reading?.isFresh == true
-        self.isBusy = isBusy
-    }
-
-    /// The same footer for a reading that is not a property category—a
-    /// router's neighbor listing, say—so every cached screen dates itself
-    /// in the same words.
-    init(asOf: Date?, isFresh: Bool, isBusy: Bool, subject: String) {
-        self.asOf = asOf
-        self.isFresh = isFresh
-        self.isBusy = isBusy
-        self.subject = subject
-    }
-
-    var body: some View {
-        if isBusy {
-            Text("Asking \(subject)…")
-        } else if let asOf {
-            Text(
-                isFresh
-                    ? "Read from \(subject) just now."
-                    : "Last read \(asOf.formatted(.relative(presentation: .named)))."
-            )
-        } else {
-            Text("Nothing read yet. Tap Refresh to ask \(subject).")
-        }
     }
 }

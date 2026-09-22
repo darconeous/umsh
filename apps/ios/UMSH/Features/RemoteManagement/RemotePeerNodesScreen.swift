@@ -149,9 +149,9 @@ struct RemotePeerNodesScreen: View {
                     browsing.open(saved ?? Self.unsavedNode(identity))
                 } label: {
                     if let saved {
-                        PeerRow(peer: saved, diameter: 32)
+                        PeerRow(peer: saved, size: .compact)
                     } else {
-                        PeerRow(hint: identity.hint, title: "Unsaved node", diameter: 32)
+                        PeerRow(hint: identity.hint, title: "Unsaved node", size: .compact)
                     }
                 }
             } else {
@@ -160,7 +160,7 @@ struct RemotePeerNodesScreen: View {
                 PeerRow(
                     hint: entry.identity?.hint,
                     title: entry.isThisPhone ? "This phone" : "Unrecognized key",
-                    diameter: 32
+                    size: .compact
                 )
             }
         }

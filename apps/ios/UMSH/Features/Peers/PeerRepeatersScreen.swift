@@ -146,11 +146,10 @@ struct PeerRepeatersScreen: View {
             hint: resolved?.identity.hint ?? neighbor.avatarHint,
             title: neighbor.title(among: actions.knownPeers),
             subtitle: subtitle(neighbor),
-            diameter: 32,
+            size: .compact,
             showsFavoriteStar: resolved?.isFavorite == true,
-            avatarOpacity: isStale ? 0.5 : 1
+            isStale: isStale
         )
-        .foregroundStyle(isStale ? AnyShapeStyle(.secondary) : AnyShapeStyle(.primary))
     }
 
     /// The signal and age on one line, the regions and position on a second

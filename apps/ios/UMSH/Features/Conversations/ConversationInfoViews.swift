@@ -40,15 +40,13 @@ struct DirectConversationDetailView: View {
                         messageActions: messageActions
                     )
                 } label: {
-                    HStack(spacing: 12) {
-                        PeerAvatar(hint: peer.identity.hint, diameter: 52)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(peer.displayName)
-                                .font(.headline)
-                            Text(peer.isUlcpDevice ? "Companion radio identity" : peer.role.label)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
+                    IdentityHeader { diameter in
+                        PeerAvatar(hint: peer.identity.hint, diameter: diameter)
+                    } content: {
+                        IdentityHeaderText(
+                            title: peer.displayName,
+                            subtitle: peer.isUlcpDevice ? "Companion radio identity" : peer.role.label
+                        )
                     }
                 }
             } footer: {
@@ -73,13 +71,10 @@ struct DirectConversationDetailView: View {
             } footer: {
                 Text("Messages from \(peer.displayName) still arrive and still count as unread. This decides only whether they interrupt you—and whether a companion radio holding them while this phone is away makes a sound.")
             }
-            Section("Conversation") {
-                LabeledContent("Node hint") {
-                    Text(peer.identity.hint.text)
-                        .font(.body.monospaced())
-                }
-                LabeledContent("Messages", value: messageCount.map(String.init) ?? "…")
-            }
+            ConversationMetadataSection(
+                identifierLabel: "Node hint", identifier: peer.identity.hint.text,
+                messageCount: messageCount
+            )
             if let clearMessages, let messageCount {
                 ClearMessagesSection(
                     messageCount: messageCount,
@@ -124,15 +119,10 @@ struct ChannelConversationDetailView: View {
                         actions: channelWithoutConversationEntry
                     )
                 } label: {
-                    HStack(spacing: 12) {
-                        ChannelAvatar(channel: conversation.channel, size: 52)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(conversation.channel.title)
-                                .font(.headline)
-                            Text(conversation.channel.kindLabel)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
+                    IdentityHeader { diameter in
+                        ChannelAvatar(channel: conversation.channel, size: diameter)
+                    } content: {
+                        IdentityHeaderText(title: conversation.channel.title, subtitle: conversation.channel.kindLabel)
                     }
                 }
             } footer: {
@@ -155,13 +145,10 @@ struct ChannelConversationDetailView: View {
             } footer: {
                 Text("Messages in this channel still arrive and still count as unread. This decides only whether they interrupt you.")
             }
-            Section("Conversation") {
-                LabeledContent("Identifier") {
-                    Text(conversation.channel.channelIDHex)
-                        .font(.body.monospaced())
-                }
-                LabeledContent("Messages", value: messageCount.map(String.init) ?? "…")
-            }
+            ConversationMetadataSection(
+                identifierLabel: "Identifier", identifier: conversation.channel.channelIDHex,
+                messageCount: messageCount
+            )
             if let clearMessages, let messageCount {
                 ClearMessagesSection(
                     messageCount: messageCount,
@@ -190,6 +177,21 @@ struct ChannelConversationDetailView: View {
         var actions = channelActions
         actions.enterConversation = nil
         return actions
+    }
+}
+
+private struct ConversationMetadataSection: View {
+    let identifierLabel: String
+    let identifier: String
+    let messageCount: Int?
+
+    var body: some View {
+        Section("Conversation") {
+            LabeledContent(identifierLabel) {
+                Text(identifier).font(.body.monospaced())
+            }
+            LabeledContent("Messages", value: messageCount.map(String.init) ?? "…")
+        }
     }
 }
 

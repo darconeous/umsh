@@ -160,50 +160,6 @@ struct ChannelsView: View {
 
 /// One channel in a list: what it is called, what kind it is, and who has
 /// joined it.
-struct ChannelRow: View {
-    let channel: ChannelSummary
-    var showsScope = true
-
-    var body: some View {
-        HStack(spacing: 12) {
-            ChannelAvatar(channel: channel, size: 40)
-            content
-        }
-    }
-
-    private var content: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 6) {
-                Text(channel.title)
-                if !channel.notificationsEnabled && channel.isJoined {
-                    Image(systemName: "bell.slash")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .accessibilityLabel("Notifications off")
-                }
-            }
-            HStack(spacing: 6) {
-                Text(channel.kindLabel)
-                Text(channel.channelIDHex)
-                    .font(.caption.monospaced())
-                if showsScope, let scope = scopeLabel {
-                    Text("· \(scope)")
-                }
-            }
-            .font(.caption)
-            .foregroundStyle(.secondary)
-        }
-    }
-
-    private var scopeLabel: String? {
-        switch (channel.joinedPhone, channel.joinedDevice) {
-        case (true, true): "Phone and radio"
-        case (true, false): "Phone"
-        case (false, true): "Radio"
-        case (false, false): nil
-        }
-    }
-}
 
 #Preview {
     NavigationStack {

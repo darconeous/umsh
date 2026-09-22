@@ -82,32 +82,6 @@ struct SettingsView: View {
     @AppStorage("debug.radioTcp.endpoint") private var tcpRadioEndpoint = "127.0.0.1:9000"
     #endif
 
-    /// What this build knows about the world's routing regions.
-    ///
-    /// Read-only, and stated rather than acted on: the database ships with
-    /// the app, is never consulted over the network, and the only thing an
-    /// operator can do about it is know which release they are suggesting
-    /// regions from.
-    @ViewBuilder
-    private var regionDatabaseSection: some View {
-        Section {
-            if let version = regionService?.datasetVersion {
-                LabeledContent("Data release", value: version)
-                if let count = regionService?.regionCount {
-                    LabeledContent("Regions", value: count.formatted())
-                }
-            } else if let problem = regionService?.unavailableMessage {
-                Text(problem).foregroundStyle(.secondary)
-            } else {
-                Text("Opening…").foregroundStyle(.secondary)
-            }
-        } header: {
-            Text("Region database")
-        } footer: {
-            Text("Used to suggest routing regions for a device from where it is.")
-        }
-    }
-
     private func seedConversation(_ count: Int) async {
         guard let seedMessages, let first = conversations.wrappedValue.first else { return }
         await seedMessages(first.conversationAddress, count)
@@ -130,15 +104,7 @@ struct SettingsView: View {
                             startOver: startOver
                         )
                     } label: {
-                        HStack(spacing: 12) {
-                            PeerAvatar(hint: identity.publicIdentity.hint)
-                            VStack(alignment: .leading) {
-                                Text("Your identity")
-                                Text(identity.publicIdentity.hint.text)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
+                        PeerRow(hint: identity.publicIdentity.hint, title: "Your identity", subtitle: identity.publicIdentity.hint.text)
                     }
                 } else if isLoadingIdentity {
                     HStack {
@@ -213,9 +179,17 @@ struct SettingsView: View {
                 Text("Configure any nearby UMSH device—a repeater or a tracker—without disturbing this phone's own connection.")
             }
 
-            regionDatabaseSection
+            RegionDatabaseSection(
+                version: regionService?.datasetVersion,
+                regionCount: regionService?.regionCount,
+                problem: regionService?.unavailableMessage
+            )
 
             #if DEBUG
+            Section("Interface") {
+                NavigationLink("Component Gallery") { ComponentGalleryView() }
+            }
+
             Section {
                 Button("Terminate this app", role: .destructive) {
                     // SIGKILL rather than exit(0): the app stays eligible for
@@ -384,8 +358,9 @@ struct IdentityDetailView: View {
     var body: some View {
         List {
             Section {
-                HStack(spacing: 16) {
-                    PeerAvatar(hint: identity.publicIdentity.hint, diameter: 64)
+                IdentityHeader(style: .profile) { diameter in
+                    PeerAvatar(hint: identity.publicIdentity.hint, diameter: diameter)
+                } content: {
                     VStack(alignment: .leading) {
                         Text("Your identity")
                             .font(.title2.bold())
@@ -724,65 +699,7 @@ struct RadioDetailView: View {
                 }
             }
             if let provisioning = snapshot.provisioning {
-                Section("Radio state") {
-                    LabeledContent(
-                        "Protocol tier",
-                        value: provisioning.hasHostFiltering ? "Full ULCP" : "Transparent baseline"
-                    )
-                    LabeledContent("Capabilities", value: "\(provisioning.capabilityCount)")
-                    LabeledContent("Radio enabled", value: provisioning.phyEnabled ? "Yes" : "No")
-                    LabeledContent("Frequency", value: "\(provisioning.frequencyKHz) kHz")
-                    LabeledContent("Transmit power", value: "\(provisioning.transmitPowerDBm) dBm")
-                    if let bandwidth = provisioning.bandwidthHz {
-                        LabeledContent("Bandwidth", value: "\(bandwidth / 1_000) kHz")
-                    }
-                    if let spreadingFactor = provisioning.spreadingFactor {
-                        LabeledContent("Spreading factor", value: "SF\(spreadingFactor)")
-                    }
-                    if let codingRate = provisioning.codingRateDenominator {
-                        LabeledContent("Coding rate", value: "4/\(codingRate)")
-                    }
-                    if let saved = provisioning.saved {
-                        LabeledContent("Saved for restart", value: saved.summary)
-                        if let warning = saved.warning {
-                            Text(warning)
-                                .font(.footnote)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                    if let dutyNow = provisioning.dutyCycleNow {
-                        LabeledContent("Past-hour duty usage", value: formattedDutyCycle(dutyNow))
-                    }
-                    if let dutyLimit = provisioning.dutyCycleLimit {
-                        LabeledContent(
-                            "Duty-cycle limit",
-                            value: dutyLimit == UInt16.max ? "Disabled" : formattedDutyCycle(dutyLimit)
-                        )
-                    }
-                }
-
-                if provisioning.hasHostFiltering {
-                    Section("Host provisioning") {
-                        if let filterCount = provisioning.filterCount {
-                            LabeledContent("Receive filters", value: "\(filterCount)")
-                        }
-                        if let channelCount = provisioning.hostChannelCount {
-                            LabeledContent("Channel keys", value: "\(channelCount) identifiers")
-                        }
-                        if let peerCount = provisioning.hostPeerCount {
-                            LabeledContent("Peer keys", value: "\(peerCount) public keys")
-                        }
-                        if let queuedFrames = provisioning.queuedFrames {
-                            LabeledContent("Queued frames", value: "\(queuedFrames)")
-                        }
-                        if let droppedFrames = provisioning.droppedFrames {
-                            LabeledContent("Dropped frames", value: "\(droppedFrames)")
-                        }
-                        if let autoAck = provisioning.autoAcknowledgementEnabled {
-                            LabeledContent("Delegated acknowledgements", value: autoAck ? "Enabled" : "Disabled")
-                        }
-                    }
-                }
+                RadioProvisioningSections(provisioning: provisioning)
             }
             if let deviceIdentity = snapshot.deviceIdentity {
                 Section("Radio identity") {

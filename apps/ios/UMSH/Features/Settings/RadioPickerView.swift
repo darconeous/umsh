@@ -64,7 +64,12 @@ struct RadioScanList: View {
                         Button {
                             Task { await select(radio) }
                         } label: {
-                            RadioPickerRow(radio: radio, isSelecting: selecting == radio.id)
+                            RadioDiscoveryRow(
+                                radio: radio,
+                                fallbackName: "Unnamed radio",
+                                badge: radio.isRemembered ? "Saved" : nil,
+                                isBusy: selecting == radio.id
+                            )
                         }
                         .disabled(selecting != nil)
                         .contextMenu {
@@ -122,41 +127,6 @@ struct RadioScanList: View {
             selecting = nil
             problem = RadioAccessories.message(for: error)
         }
-    }
-}
-
-private struct RadioPickerRow: View {
-    let radio: DiscoveredRadio
-    let isSelecting: Bool
-
-    var body: some View {
-        HStack(spacing: 12) {
-            SignalStrengthIcon(bars: radio.signalBars, hasSignal: radio.hasSignal).frame(width: 22)
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 6) {
-                    Text(radio.name ?? "Unnamed radio")
-                        .foregroundStyle(.primary)
-                    if radio.isRemembered {
-                        Text("Saved")
-                            .font(.caption2.weight(.semibold))
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 1)
-                            .background(.tint.opacity(0.15), in: Capsule())
-                            .foregroundStyle(.tint)
-                    }
-                }
-                Text(radio.requiresMigration ? "Finish setup to reconnect"
-                     : radio.hasSignal ? "\(radio.rssiDBm) dBm"
-                     : "Available")
-                    .font(.caption.monospaced())
-                    .foregroundStyle(.secondary)
-            }
-            Spacer()
-            if isSelecting {
-                ProgressView()
-            }
-        }
-        .contentShape(Rectangle())
     }
 }
 

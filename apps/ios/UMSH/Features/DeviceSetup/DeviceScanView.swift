@@ -35,9 +35,10 @@ struct DeviceScanView: View {
                         Button {
                             Task { await controller.select(device) }
                         } label: {
-                            DeviceScanRow(
-                                device: device,
-                                isCompanion: controller.isCompanion(device),
+                            RadioDiscoveryRow(
+                                radio: device,
+                                fallbackName: "Unnamed device",
+                                badge: controller.isCompanion(device) ? "This phone's radio" : nil,
                                 isBusy: controller.busyDevice == device.id
                             )
                         }
@@ -133,41 +134,5 @@ struct DeviceConnectingView: View {
                 Button("Cancel") { cancel() }
             }
         }
-    }
-}
-
-private struct DeviceScanRow: View {
-    let device: DiscoveredRadio
-    let isCompanion: Bool
-    let isBusy: Bool
-
-    var body: some View {
-        HStack(spacing: 12) {
-            SignalStrengthIcon(bars: device.signalBars, hasSignal: device.hasSignal).frame(width: 22)
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 6) {
-                    Text(device.name ?? "Unnamed device")
-                        .foregroundStyle(.primary)
-                    if isCompanion {
-                        Text("This phone's radio")
-                            .font(.caption2.weight(.semibold))
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 1)
-                            .background(.tint.opacity(0.15), in: Capsule())
-                            .foregroundStyle(.tint)
-                    }
-                }
-                Text(device.requiresMigration ? "Finish setup to reconnect"
-                     : device.hasSignal ? "\(device.rssiDBm) dBm"
-                     : "Available")
-                    .font(.caption.monospaced())
-                    .foregroundStyle(.secondary)
-            }
-            Spacer()
-            if isBusy {
-                ProgressView()
-            }
-        }
-        .contentShape(Rectangle())
     }
 }

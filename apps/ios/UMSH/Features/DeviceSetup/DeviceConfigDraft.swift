@@ -404,17 +404,12 @@ final class DeviceConfigDraft {
             parts.append("\(megahertz.formatted(.number.precision(.fractionLength(0...3)))) MHz")
         }
         if showsLoRa {
-            parts.append("\(formattedBandwidth(bandwidthHz)) BW")
+            parts.append("\(RadioValuePresentation.bandwidth(bandwidthHz)) BW")
             parts.append("SF\(spreadingFactor)")
             parts.append("4/\(codingRate)")
         }
         parts.append("\(transmitPowerDBm) dBm")
         return parts.joined(separator: " · ")
-    }
-
-    private func formattedBandwidth(_ hertz: UInt32) -> String {
-        let kilohertz = Double(hertz) / 1_000
-        return "\(kilohertz.formatted(.number.precision(.fractionLength(0...2)))) kHz"
     }
 
     func adopt(_ preset: RadioPreset) {

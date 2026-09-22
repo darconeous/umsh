@@ -20,8 +20,9 @@ struct RecoveredIdentityView: View {
         VStack(spacing: 0) {
             Spacer(minLength: 0)
 
-            VStack(spacing: 20) {
-                PeerAvatar(hint: identity.publicIdentity.hint, diameter: 72)
+            IdentityHeader(style: .hero) { diameter in
+                PeerAvatar(hint: identity.publicIdentity.hint, diameter: diameter)
+            } content: {
                 VStack(spacing: 8) {
                     Text("An identity is already here")
                         .font(.title2.bold())

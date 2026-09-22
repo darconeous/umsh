@@ -313,17 +313,12 @@ struct DiscoverPeersView: View {
         // Value-based so a pushed page can be popped programmatically, which
         // is how re-aiming from one gets back to the control it changed.
         NavigationLink(value: peer) {
-            HStack(spacing: 12) {
-                PeerAvatar(hint: peer.identity.hint)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(peer.displayName)
-                    Text(peer.isSaved
-                         ? "Saved · \(peer.identity.hint.text)"
-                         : "Heard \(Self.heardLabel(peer.lastHeard)) · \(peer.identity.hint.text)")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
+            PeerRow(
+                peer: peer,
+                subtitle: peer.isSaved
+                    ? "Saved · \(peer.identity.hint.text)"
+                    : "Heard \(Self.heardLabel(peer.lastHeard)) · \(peer.identity.hint.text)"
+            )
         }
         .swipeActions(edge: .leading, allowsFullSwipe: false) {
             if !peer.isSaved, peerActions.promoteToSaved != nil {

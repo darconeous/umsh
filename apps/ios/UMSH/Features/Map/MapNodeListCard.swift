@@ -92,40 +92,26 @@ struct MapNodeListCard: View {
     // MARK: - Rows
 
     private func row(_ node: MapNode, now: Date) -> some View {
-        HStack(spacing: 12) {
-            PeerAvatar(
-                hint: node.hint,
-                diameter: 40,
-                showsFavoriteStar: node.isFavorite
-            )
-            VStack(alignment: .leading, spacing: 1) {
-                HStack(spacing: 4) {
-                    Text(node.displayName)
-                        .lineLimit(1)
-                    if !node.isAttributable {
-                        Image(systemName: "exclamationmark.triangle.fill")
-                            .font(.caption2)
-                            .foregroundStyle(.orange)
-                            .accessibilityLabel("Location unverified")
-                    } else if node.isReported {
-                        Image(systemName: "antenna.radiowaves.left.and.right")
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                            .accessibilityLabel("Position reported by a router")
-                    }
-                }
-                if let subtitle = subtitle(node, now: now) {
-                    Text(subtitle)
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
+        PeerRow(
+            hint: node.hint,
+            title: node.displayName,
+            subtitle: subtitle(node, now: now),
+            showsFavoriteStar: node.isFavorite
+        ) {
+            if !node.isAttributable {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.caption2)
+                    .foregroundStyle(.orange)
+                    .accessibilityLabel("Location unverified")
+            } else if node.isReported {
+                Image(systemName: "antenna.radiowaves.left.and.right")
+                    .font(.caption2)
+                    .foregroundStyle(Color(uiColor: .secondaryLabel))
+                    .accessibilityLabel("Position reported by a router")
             }
-            Spacer(minLength: 8)
+        } trailing: {
             if let distance = distanceText(node) {
                 Text(distance)
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
                     .monospacedDigit()
             }
         }

@@ -100,6 +100,19 @@
 		100000000000000000000055 /* UMSH/Services/Regions/RegionService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000055 /* UMSH/Services/Regions/RegionService.swift */; };
 		100000000000000000000056 /* UMSH/Features/Regions/RegionSuggestionSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000056 /* UMSH/Features/Regions/RegionSuggestionSheet.swift */; };
 		100000000000000000000050 /* UMSH/PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000050 /* UMSH/PrivacyInfo.xcprivacy */; };
+		4AC1CA045FF0286E7685FECA /* UMSH/DesignSystem/ChannelIdentityRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5641566B45EAD02D796BDD96 /* UMSH/DesignSystem/ChannelIdentityRow.swift */; };
+		8A5934D155AAA5B8AC7395EE /* UMSH/DesignSystem/ComponentGalleryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2CB26B95BF6ED49F301C172 /* UMSH/DesignSystem/ComponentGalleryView.swift */; };
+		897B05888F5549F6CFE33DF1 /* UMSH/DesignSystem/IdentityPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 47D7F780B8E5A35F62C5B9EF /* UMSH/DesignSystem/IdentityPresentation.swift */; };
+		46FA7128635DC8D61E5EFF2A /* UMSH/DesignSystem/RadioDiscoveryRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 23156EE150242BDD6828E0BF /* UMSH/DesignSystem/RadioDiscoveryRow.swift */; };
+		A323CDCDE5F7AEA554F2F41B /* UMSH/DesignSystem/SettingsNumberInput.swift in Sources */ = {isa = PBXBuildFile; fileRef = 581344E326E53E6D4C327E44 /* UMSH/DesignSystem/SettingsNumberInput.swift */; };
+		50034424FE7A9E1E699DC356 /* UMSH/Features/Channels/ChannelRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4E5B70CBF2B31E5142CD6E42 /* UMSH/Features/Channels/ChannelRow.swift */; };
+		D82F240C79C032C8ED41BF47 /* UMSH/Features/DeviceSetup/RadioPreset.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E45EE3064F70C2303766419 /* UMSH/Features/DeviceSetup/RadioPreset.swift */; };
+		0029C47A446D621C6854AD4D /* UMSH/Features/Peers/AdvertisedIdentitySection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A461BCD4FBE70F2A1606629 /* UMSH/Features/Peers/AdvertisedIdentitySection.swift */; };
+		D67C6E42D0B2B7C9D0D2CE1D /* UMSH/Features/RemoteManagement/ManageDeviceSections.swift in Sources */ = {isa = PBXBuildFile; fileRef = FC5CB56D52543A07577F9326 /* UMSH/Features/RemoteManagement/ManageDeviceSections.swift */; };
+		B5EA8F114645853E8A2654C6 /* UMSH/Features/RemoteManagement/RemoteFields.swift in Sources */ = {isa = PBXBuildFile; fileRef = 30520B4D2F6919A98F3A0565 /* UMSH/Features/RemoteManagement/RemoteFields.swift */; };
+		161F05AB755981A4C347AA4B /* UMSH/Features/RemoteManagement/RemoteReadingViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = BBF5A439138F87895415FF39 /* UMSH/Features/RemoteManagement/RemoteReadingViews.swift */; };
+		3E39D251A8B781FE5771B0BB /* UMSH/Features/Settings/RadioDetailSections.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1FAFDD5221F96A3490034BEB /* UMSH/Features/Settings/RadioDetailSections.swift */; };
+		EAF159B229604BECEB055AA7 /* UMSH/DesignSystem/RadioValuePresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 25A6AABD13091CEE7B628227 /* UMSH/DesignSystem/RadioValuePresentation.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -196,6 +209,19 @@
 		200000000000000000000055 /* UMSH/Services/Regions/RegionService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Services/Regions/RegionService.swift; sourceTree = "<group>"; };
 		200000000000000000000056 /* UMSH/Features/Regions/RegionSuggestionSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Features/Regions/RegionSuggestionSheet.swift; sourceTree = "<group>"; };
 		200000000000000000000050 /* UMSH/PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = UMSH/PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
+		5641566B45EAD02D796BDD96 /* UMSH/DesignSystem/ChannelIdentityRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/DesignSystem/ChannelIdentityRow.swift; sourceTree = "<group>"; };
+		A2CB26B95BF6ED49F301C172 /* UMSH/DesignSystem/ComponentGalleryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/DesignSystem/ComponentGalleryView.swift; sourceTree = "<group>"; };
+		47D7F780B8E5A35F62C5B9EF /* UMSH/DesignSystem/IdentityPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/DesignSystem/IdentityPresentation.swift; sourceTree = "<group>"; };
+		23156EE150242BDD6828E0BF /* UMSH/DesignSystem/RadioDiscoveryRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/DesignSystem/RadioDiscoveryRow.swift; sourceTree = "<group>"; };
+		581344E326E53E6D4C327E44 /* UMSH/DesignSystem/SettingsNumberInput.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/DesignSystem/SettingsNumberInput.swift; sourceTree = "<group>"; };
+		4E5B70CBF2B31E5142CD6E42 /* UMSH/Features/Channels/ChannelRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Features/Channels/ChannelRow.swift; sourceTree = "<group>"; };
+		8E45EE3064F70C2303766419 /* UMSH/Features/DeviceSetup/RadioPreset.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Features/DeviceSetup/RadioPreset.swift; sourceTree = "<group>"; };
+		6A461BCD4FBE70F2A1606629 /* UMSH/Features/Peers/AdvertisedIdentitySection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Features/Peers/AdvertisedIdentitySection.swift; sourceTree = "<group>"; };
+		FC5CB56D52543A07577F9326 /* UMSH/Features/RemoteManagement/ManageDeviceSections.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Features/RemoteManagement/ManageDeviceSections.swift; sourceTree = "<group>"; };
+		30520B4D2F6919A98F3A0565 /* UMSH/Features/RemoteManagement/RemoteFields.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Features/RemoteManagement/RemoteFields.swift; sourceTree = "<group>"; };
+		BBF5A439138F87895415FF39 /* UMSH/Features/RemoteManagement/RemoteReadingViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Features/RemoteManagement/RemoteReadingViews.swift; sourceTree = "<group>"; };
+		1FAFDD5221F96A3490034BEB /* UMSH/Features/Settings/RadioDetailSections.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Features/Settings/RadioDetailSections.swift; sourceTree = "<group>"; };
+		25A6AABD13091CEE7B628227 /* UMSH/DesignSystem/RadioValuePresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/DesignSystem/RadioValuePresentation.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -261,6 +287,19 @@
 				20000000000000000000000E /* UMSH/DesignSystem/PeerAvatar.swift */,
 				20000000000000000000AA01 /* UMSH/DesignSystem/AvatarStyle.swift */,
 				2000000000000000000000E1 /* UMSH/DesignSystem/PeerRow.swift */,
+				25A6AABD13091CEE7B628227 /* UMSH/DesignSystem/RadioValuePresentation.swift */,
+				1FAFDD5221F96A3490034BEB /* UMSH/Features/Settings/RadioDetailSections.swift */,
+				BBF5A439138F87895415FF39 /* UMSH/Features/RemoteManagement/RemoteReadingViews.swift */,
+				30520B4D2F6919A98F3A0565 /* UMSH/Features/RemoteManagement/RemoteFields.swift */,
+				FC5CB56D52543A07577F9326 /* UMSH/Features/RemoteManagement/ManageDeviceSections.swift */,
+				6A461BCD4FBE70F2A1606629 /* UMSH/Features/Peers/AdvertisedIdentitySection.swift */,
+				8E45EE3064F70C2303766419 /* UMSH/Features/DeviceSetup/RadioPreset.swift */,
+				4E5B70CBF2B31E5142CD6E42 /* UMSH/Features/Channels/ChannelRow.swift */,
+				581344E326E53E6D4C327E44 /* UMSH/DesignSystem/SettingsNumberInput.swift */,
+				23156EE150242BDD6828E0BF /* UMSH/DesignSystem/RadioDiscoveryRow.swift */,
+				47D7F780B8E5A35F62C5B9EF /* UMSH/DesignSystem/IdentityPresentation.swift */,
+				A2CB26B95BF6ED49F301C172 /* UMSH/DesignSystem/ComponentGalleryView.swift */,
+				5641566B45EAD02D796BDD96 /* UMSH/DesignSystem/ChannelIdentityRow.swift */,
 				200000000000000000000036 /* UMSH/DesignSystem/ChannelAvatar.swift */,
 				200000000000000000000037 /* UMSH/Features/Conversations/ChannelChatViews.swift */,
 				200000000000000000000038 /* UMSH/Features/Conversations/ConversationInfoViews.swift */,
@@ -462,6 +501,19 @@
 				10000000000000000000000E /* UMSH/DesignSystem/PeerAvatar.swift in Sources */,
 				10000000000000000000AA01 /* UMSH/DesignSystem/AvatarStyle.swift in Sources */,
 				1000000000000000000000E1 /* UMSH/DesignSystem/PeerRow.swift in Sources */,
+				EAF159B229604BECEB055AA7 /* UMSH/DesignSystem/RadioValuePresentation.swift in Sources */,
+				3E39D251A8B781FE5771B0BB /* UMSH/Features/Settings/RadioDetailSections.swift in Sources */,
+				161F05AB755981A4C347AA4B /* UMSH/Features/RemoteManagement/RemoteReadingViews.swift in Sources */,
+				B5EA8F114645853E8A2654C6 /* UMSH/Features/RemoteManagement/RemoteFields.swift in Sources */,
+				D67C6E42D0B2B7C9D0D2CE1D /* UMSH/Features/RemoteManagement/ManageDeviceSections.swift in Sources */,
+				0029C47A446D621C6854AD4D /* UMSH/Features/Peers/AdvertisedIdentitySection.swift in Sources */,
+				D82F240C79C032C8ED41BF47 /* UMSH/Features/DeviceSetup/RadioPreset.swift in Sources */,
+				50034424FE7A9E1E699DC356 /* UMSH/Features/Channels/ChannelRow.swift in Sources */,
+				A323CDCDE5F7AEA554F2F41B /* UMSH/DesignSystem/SettingsNumberInput.swift in Sources */,
+				46FA7128635DC8D61E5EFF2A /* UMSH/DesignSystem/RadioDiscoveryRow.swift in Sources */,
+				897B05888F5549F6CFE33DF1 /* UMSH/DesignSystem/IdentityPresentation.swift in Sources */,
+				8A5934D155AAA5B8AC7395EE /* UMSH/DesignSystem/ComponentGalleryView.swift in Sources */,
+				4AC1CA045FF0286E7685FECA /* UMSH/DesignSystem/ChannelIdentityRow.swift in Sources */,
 				100000000000000000000036 /* UMSH/DesignSystem/ChannelAvatar.swift in Sources */,
 				100000000000000000000037 /* UMSH/Features/Conversations/ChannelChatViews.swift in Sources */,
 				100000000000000000000038 /* UMSH/Features/Conversations/ConversationInfoViews.swift in Sources */,

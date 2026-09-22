@@ -134,7 +134,7 @@ struct RemoteRadioEditor: View {
                         problem: problems[edits.bandwidth.property]
                     ) {
                         ForEach(Self.bandwidths, id: \.self) { hertz in
-                            Text(Self.bandwidthLabel(hertz)).tag(hertz)
+                            Text(RadioValuePresentation.bandwidth(hertz)).tag(hertz)
                         }
                     }
                     RemotePicker(
@@ -378,11 +378,6 @@ struct RemoteRadioEditor: View {
 
     private static let bandwidths: [UInt32] = ulcpSupportedBandwidthsHz()
     private static let dutyLimits = dutyCycleLimitChoices
-
-    private static func bandwidthLabel(_ hertz: UInt32) -> String {
-        (Double(hertz) / 1000).formatted(.number.precision(.fractionLength(hertz < 100_000 ? 2 : 0)))
-            + " kHz"
-    }
 
     private static func dutyLabel(_ value: UInt16) -> String {
         formattedDutyCycle(value)
@@ -1335,152 +1330,5 @@ struct RemoteRepeaterEditor: View {
             desired.repeaterMinSnrDb = typed.minSnr.value ?? nil
             return desired
         }
-    }
-}
-
-// MARK: - Shared controls
-
-/// A row's title, turned red and explained when the device rejected the
-/// value the operator offered for it.
-struct RemoteFieldTitle: View {
-    let title: String
-    let problem: String?
-
-    init(_ title: String, problem: String?) {
-        self.title = title
-        self.problem = problem
-    }
-
-    var body: some View {
-        if let problem {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title).foregroundStyle(.red)
-                Text(problem).font(.caption).foregroundStyle(.red)
-            }
-        } else {
-            Text(title)
-        }
-    }
-}
-
-/// A typed setting, editable only once the device has said what it holds.
-struct RemoteNumberField: View {
-    let title: String
-    let unit: String
-    @Binding var text: String
-    let isKnown: Bool
-    var signed = false
-    var decimal = false
-    var problem: String?
-
-    init(
-        _ title: String,
-        unit: String,
-        text: Binding<String>,
-        isKnown: Bool,
-        signed: Bool = false,
-        decimal: Bool = false,
-        problem: String? = nil
-    ) {
-        self.title = title
-        self.unit = unit
-        _text = text
-        self.isKnown = isKnown
-        self.signed = signed
-        self.decimal = decimal
-        self.problem = problem
-    }
-
-    var body: some View {
-        if isKnown {
-            LabeledContent {
-                HStack(spacing: 5) {
-                    TextField(title, text: $text)
-                        .keyboardType(
-                            signed || decimal ? .numbersAndPunctuation : .numberPad
-                        )
-                        .multilineTextAlignment(.trailing)
-                        .accessibilityLabel("\(title) in \(unit)")
-                    Text(unit).foregroundStyle(.secondary)
-                }
-            } label: {
-                RemoteFieldTitle(title, problem: problem)
-            }
-        } else {
-            LabeledContent(title, value: "Not read")
-        }
-    }
-}
-
-/// A chosen setting, editable only once the device has said what it holds.
-struct RemotePicker<Value: Hashable & Sendable, Content: View>: View {
-    let title: String
-    /// What the device holds, which is also where an edit goes. Nil until
-    /// the device has said, which is when this goes read-only.
-    @Binding var selection: Value?
-    var problem: String?
-    @ViewBuilder let content: () -> Content
-
-    init(
-        _ title: String,
-        selection: Binding<Value?>,
-        problem: String? = nil,
-        @ViewBuilder content: @escaping () -> Content
-    ) {
-        self.title = title
-        _selection = selection
-        self.problem = problem
-        self.content = content
-    }
-
-    var body: some View {
-        if let value = selection {
-            Picker(selection: $selection.replacingNil(with: value), content: content) {
-                RemoteFieldTitle(title, problem: problem)
-            }
-        } else {
-            LabeledContent(title, value: "Not read")
-        }
-    }
-}
-
-/// A vetted PHY configuration a whole mesh can agree on.
-///
-/// The list comes from the shared table the firmware ships its own
-/// defaults from, so a device commissioned here and the phone's own radio
-/// cannot end up describing the same profile differently.
-struct RadioPreset: Identifiable {
-    let id: String
-    let name: String
-    let frequencyKHz: UInt32
-    /// Nil where the profile has no vetted power, in which case adopting
-    /// it leaves whatever the device is set to alone.
-    let transmitPowerDBm: Int8?
-    let bandwidthHz: UInt32
-    let spreadingFactor: UInt8
-    let codingRate: UInt8
-    let dutyCycleLimit: UInt16
-
-    /// Whether a node on this preset and one on `profile` can hear each
-    /// other—the same exclusion of power and the transmit limit that
-    /// ``RadioProfile/interoperates(with:)`` makes.
-    func interoperates(with profile: RadioProfile) -> Bool {
-        profile.frequencyKHz == frequencyKHz
-            && profile.bandwidthHz == bandwidthHz
-            && profile.spreadingFactor == spreadingFactor
-            && profile.codingRateDenominator == codingRate
-    }
-
-    static let vetted: [RadioPreset] = ulcpRadioPresets().map { preset in
-        RadioPreset(
-            id: preset.id,
-            name: preset.name,
-            frequencyKHz: preset.frequencyKhz,
-            transmitPowerDBm: preset.transmitPowerDbm,
-            bandwidthHz: preset.bandwidthHz,
-            spreadingFactor: preset.spreadingFactor,
-            codingRate: preset.codingRateDenom,
-            dutyCycleLimit: preset.dutyCycleLimit
-        )
     }
 }

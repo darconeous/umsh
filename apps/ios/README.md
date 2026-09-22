@@ -13,6 +13,20 @@ orientations for multitasking, and the UI is portrait-only. Signing is automatic
 against team `2ZEL2X74K7`; override `DEVELOPMENT_TEAM` locally if you build
 under a different account.
 
+## Shared interface components
+
+Debug builds include **Settings → Component Gallery**, with static peer, channel,
+radio, header, and settings-field examples. It offers light/dark appearance and
+accessibility text controls; the same fixtures have SwiftUI previews and require
+no runtime or radio services.
+
+Use `PeerRow`, `ChannelIdentityRow`, and `RadioDiscoveryRow` for identity labels.
+Keep navigation links, buttons, context menus, and feature-specific metadata with
+the screen. `IdentityHeader` provides information, editable-profile, and hero
+layouts; shared remote fields and reading footers live beside the management
+features. See [the refactoring plan](../../docs/ios-refactoring-plan.md) for scope,
+validation, and the pending service work.
+
 ## Radio setup and saved radios
 
 On iPhone, **Choose a Radio** and **Choose a Device** show authorized radios

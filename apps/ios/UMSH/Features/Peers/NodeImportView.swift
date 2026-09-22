@@ -27,15 +27,11 @@ struct NodeImportView: View {
 
             if let preview {
                 Section("Node Identity Preview") {
-                    HStack(spacing: 12) {
-                        PeerAvatar(hint: preview.publicIdentity.hint)
-                        VStack(alignment: .leading) {
-                            Text(preview.publicIdentity.hint.text)
-                            Text(previewCaption)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
+                    PeerRow(
+                        hint: preview.publicIdentity.hint,
+                        title: preview.publicIdentity.hint.text,
+                        subtitle: previewCaption
+                    )
                     CanonicalAddressView(address: preview.publicIdentity.canonicalAddress)
                     if let identity = preview.identity {
                         AdvertisedIdentityRows(identity: identity)

@@ -237,15 +237,7 @@ struct PeersView: View {
                 messageActions: messageActions
             )
         } label: {
-            HStack(spacing: 12) {
-                PeerAvatar(hint: peer.identity.hint, showsFavoriteStar: peer.isFavorite)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(peer.displayName)
-                    Text(subtitle(for: peer))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
+            PeerRow(peer: peer, subtitle: subtitle(for: peer), showsFavoriteStar: peer.isFavorite)
         }
         .swipeActions(edge: .leading, allowsFullSwipe: false) {
             if peer.isSaved, !peer.isUlcpDevice, peerActions.setFavorite != nil {

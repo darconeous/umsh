@@ -143,27 +143,17 @@ struct RadioSection: View {
         Section {
             Toggle("Radio enabled", isOn: $enabled)
             LabeledContent("Frequency") {
-                HStack(spacing: 5) {
-                    TextField("Frequency", text: $frequencyKHz)
-                        .keyboardType(.numberPad)
-                        .multilineTextAlignment(.trailing)
-                        .accessibilityLabel("Frequency in kilohertz")
-                    Text("kHz").foregroundStyle(.secondary)
-                }
+                SettingsNumberInput(title: "Frequency", unit: "kHz", text: $frequencyKHz, accessibilityName: "Frequency in kilohertz")
             }
+            .labeledContentStyle(SettingsFieldStyle())
             LabeledContent("Transmit power") {
-                HStack(spacing: 5) {
-                    TextField("Transmit power", text: $transmitPowerDBm)
-                        .keyboardType(.numbersAndPunctuation)
-                        .multilineTextAlignment(.trailing)
-                        .accessibilityLabel("Transmit power in dBm")
-                    Text("dBm").foregroundStyle(.secondary)
-                }
+                SettingsNumberInput(title: "Transmit power", unit: "dBm", text: $transmitPowerDBm, signed: true)
             }
+            .labeledContentStyle(SettingsFieldStyle())
             if showsLoRa {
                 Picker("Bandwidth", selection: $bandwidthHz) {
                     ForEach(ulcpSupportedBandwidthsHz(), id: \.self) { hertz in
-                        Text(Self.bandwidthLabel(hertz)).tag(hertz)
+                        Text(RadioValuePresentation.bandwidth(hertz)).tag(hertz)
                     }
                 }
                 Picker("Spreading factor", selection: $spreadingFactor) {
@@ -189,11 +179,6 @@ struct RadioSection: View {
         } footer: {
             Text("Changing PHY settings can leave this device unable to reach peers on a different configuration.")
         }
-    }
-
-    private static func bandwidthLabel(_ hertz: UInt32) -> String {
-        let kilohertz = Double(hertz) / 1_000
-        return "\(kilohertz.formatted(.number.precision(.fractionLength(0...2)))) kHz"
     }
 }
 

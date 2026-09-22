@@ -486,39 +486,3 @@ func ipOctets(_ text: String) -> Data? {
     if let address = IPv6Address(trimmed) { return address.rawValue }
     return nil
 }
-
-/// A typed setting that is text rather than a number, editable only once
-/// the device has said what it holds.
-struct RemoteTextField: View {
-    let title: String
-    @Binding var text: String
-    let isKnown: Bool
-    var problem: String?
-
-    init(
-        _ title: String,
-        text: Binding<String>,
-        isKnown: Bool,
-        problem: String? = nil
-    ) {
-        self.title = title
-        _text = text
-        self.isKnown = isKnown
-        self.problem = problem
-    }
-
-    var body: some View {
-        if isKnown {
-            LabeledContent {
-                TextField(title, text: $text)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-                    .multilineTextAlignment(.trailing)
-            } label: {
-                RemoteFieldTitle(title, problem: problem)
-            }
-        } else {
-            LabeledContent(title, value: "Not read")
-        }
-    }
-}

@@ -126,19 +126,13 @@ struct ChannelMemberSheet: View {
                             messageActions: messageActions
                         )
                     } label: {
-                        HStack(spacing: 12) {
-                            PeerAvatar(hint: knownPeer.identity.hint, diameter: 52)
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(knownPeer.displayName)
-                                    .font(.headline)
-                                Text(
-                                    knownPeer.isUlcpDevice
-                                        ? "Companion radio identity"
-                                        : knownPeer.role.label
-                                )
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                            }
+                        IdentityHeader { diameter in
+                            PeerAvatar(hint: knownPeer.identity.hint, diameter: diameter)
+                        } content: {
+                            IdentityHeaderText(
+                                title: knownPeer.displayName,
+                                subtitle: knownPeer.isUlcpDevice ? "Companion radio identity" : knownPeer.role.label
+                            )
                         }
                     }
                 } footer: {

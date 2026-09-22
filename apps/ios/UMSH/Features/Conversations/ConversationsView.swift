@@ -322,14 +322,7 @@ struct ConversationsView: View {
         searchRow {
             Task { await openConversation(with: peer) }
         } label: {
-            PeerAvatar(hint: peer.identity.hint, showsFavoriteStar: peer.isFavorite)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(peer.displayName)
-                    .foregroundStyle(.primary)
-                Text(peer.identity.hint.text)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
+            PeerRow(peer: peer, subtitle: peer.identity.hint.text, showsFavoriteStar: peer.isFavorite)
         }
     }
 
@@ -337,13 +330,8 @@ struct ConversationsView: View {
         searchRow {
             Task { await openConversation(in: channel) }
         } label: {
-            ChannelAvatar(channel: channel, size: 40)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(channel.title)
-                    .foregroundStyle(.primary)
+            ChannelIdentityRow(channel: channel) {
                 Text("\(channel.kindLabel) · \(channel.channelIDHex)")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
             }
         }
     }
@@ -353,7 +341,7 @@ struct ConversationsView: View {
         @ViewBuilder label: () -> Label
     ) -> some View {
         Button(action: action) {
-            HStack(spacing: 12) { label() }
+            label()
                 // A plain button is only as tappable as its label is wide,
                 // which for a name and a subtitle is nowhere near the row.
                 // Rows are tapped anywhere along them.

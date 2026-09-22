@@ -79,7 +79,7 @@ struct MapBottomCard<Header: View, Content: View>: View {
                 // is itself over a map—a fainter fill disappears into
                 // whatever happens to be underneath.
                 Capsule()
-                    .fill(.secondary)
+                    .fill(Color(uiColor: .secondaryLabel))
                     .frame(width: 40, height: 5)
                 header()
             }

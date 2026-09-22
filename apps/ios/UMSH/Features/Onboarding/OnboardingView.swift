@@ -47,14 +47,17 @@ struct OnboardingView: View {
     private var nameStep: some View {
         Form {
             Section {
-                VStack(spacing: 12) {
-                    PeerAvatar(hint: identity.publicIdentity.hint, diameter: 72)
-                    Text("Welcome to UMSH")
-                        .font(.title2.weight(.semibold))
-                    Text("This phone now has an identity of its own—\(identity.publicIdentity.hint.text)—and the key behind it never leaves the device.")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                        .multilineTextAlignment(.center)
+                IdentityHeader(style: .hero) { diameter in
+                    PeerAvatar(hint: identity.publicIdentity.hint, diameter: diameter)
+                } content: {
+                    VStack(spacing: 12) {
+                        Text("Welcome to UMSH")
+                            .font(.title2.weight(.semibold))
+                        Text("This phone now has an identity of its own—\(identity.publicIdentity.hint.text)—and the key behind it never leaves the device.")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                    }
                 }
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 8)

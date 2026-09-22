@@ -1,85 +1,76 @@
 import SwiftUI
 
-/// One node, as a row: its avatar, what to call it, and a line of detail.
-///
-/// The shape every list of nodes in the app was already building by hand.
-/// Gathered here so a node looks the same wherever it is listed, and so the
-/// next list of nodes gets that for free.
-///
-/// The avatar carries the node's hint, so a subtitle repeating it says
-/// nothing—pass the detail that is worth the line, or none at all.
-struct PeerRow: View {
-    /// The node's hint, or nil for a key this phone cannot read as one.
+/// One peer's identity and contextual details, shared by every node list.
+/// Screens own navigation, selection, menus, and the wording of their details.
+struct PeerRow<TitleAccessory: View, Trailing: View>: View {
     let hint: MeshNodeHint?
     let title: String
-    var subtitle: String?
-    var diameter: CGFloat = 44
-    var showsFavoriteStar = false
-    /// Rendered in the same style as the title, beside it—a badge or a
-    /// warning that belongs to the name rather than under it.
-    var titleAccessory: AnyView?
-    /// How solid the avatar is drawn. A row whose text is dimmed for a node
-    /// that has gone quiet dims the avatar with it, since the avatar's color
-    /// would otherwise be the loudest thing left on the row.
-    var avatarOpacity: Double = 1
+    let subtitle: String?
+    let size: IdentityRowSize
+    let showsFavoriteStar: Bool
+    let isStale: Bool
+    private let titleAccessory: TitleAccessory
+    private let trailing: Trailing
 
     init(
         hint: MeshNodeHint?,
         title: String,
         subtitle: String? = nil,
-        diameter: CGFloat = 44,
+        size: IdentityRowSize = .standard,
         showsFavoriteStar: Bool = false,
-        titleAccessory: AnyView? = nil,
-        avatarOpacity: Double = 1
+        isStale: Bool = false,
+        @ViewBuilder titleAccessory: () -> TitleAccessory = { EmptyView() },
+        @ViewBuilder trailing: () -> Trailing = { EmptyView() }
     ) {
         self.hint = hint
         self.title = title
         self.subtitle = subtitle
-        self.diameter = diameter
+        self.size = size
         self.showsFavoriteStar = showsFavoriteStar
-        self.titleAccessory = titleAccessory
-        self.avatarOpacity = avatarOpacity
+        self.isStale = isStale
+        self.titleAccessory = titleAccessory()
+        self.trailing = trailing()
     }
 
-    /// The usual case: a node this phone knows, named the way it is named
-    /// everywhere else.
     init(
         peer: PeerSummary,
         subtitle: String? = nil,
-        diameter: CGFloat = 44,
+        size: IdentityRowSize = .standard,
         showsFavoriteStar: Bool = false
-    ) {
+    ) where TitleAccessory == EmptyView, Trailing == EmptyView {
         self.init(
             hint: peer.identity.hint,
             title: peer.displayName,
             subtitle: subtitle,
-            diameter: diameter,
+            size: size,
             showsFavoriteStar: showsFavoriteStar
         )
     }
 
     var body: some View {
-        HStack(spacing: 12) {
-            if let hint {
-                PeerAvatar(hint: hint, diameter: diameter, showsFavoriteStar: showsFavoriteStar)
-                    .opacity(avatarOpacity)
-            } else {
-                Image(systemName: "person.crop.circle.badge.questionmark")
-                    .font(.system(size: diameter * 0.62))
-                    .foregroundStyle(.secondary)
-                    .frame(width: diameter, height: diameter)
-            }
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 4) {
-                    Text(title).lineLimit(1)
-                    titleAccessory
-                }
-                if let subtitle {
-                    Text(subtitle)
-                        .font(.caption)
+        IdentityRowLayout {
+            Group {
+                if let hint {
+                    PeerAvatar(hint: hint, diameter: size.avatarDiameter, showsFavoriteStar: showsFavoriteStar)
+                } else {
+                    Image(systemName: "person.crop.circle.badge.questionmark")
+                        .font(.system(size: size.avatarDiameter * 0.62))
                         .foregroundStyle(.secondary)
+                        .frame(width: size.avatarDiameter, height: size.avatarDiameter)
+                        .accessibilityLabel("Unknown node hint")
                 }
             }
+            .opacity(isStale ? 0.5 : 1)
+        } title: {
+            HStack(spacing: IdentityPresentation.accessorySpacing) {
+                Text(title)
+                titleAccessory
+            }
+        } subtitle: {
+            if let subtitle { Text(subtitle) }
+        } trailing: {
+            trailing
         }
+        .foregroundStyle(isStale ? AnyShapeStyle(.secondary) : AnyShapeStyle(.primary))
     }
 }
