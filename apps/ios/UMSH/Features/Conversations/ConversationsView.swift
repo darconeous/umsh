@@ -20,8 +20,8 @@ struct ConversationsView: View {
     var isLoading = false
     let inspectPeerIdentity: (String) async -> Result<MeshNodeURIPreview, MeshEngineError>
     let savePeer: (MeshNodeURIPreview, PeerImportDetails, Bool) async -> DirectConversationSummary?
-    let updateDraft: (Int64, String) async -> Void
-    var updateChannelDraft: (Int64, String) async -> Void = { _, _ in }
+    let updateDraft: (Int64, String) async -> AppOperationResult
+    var updateChannelDraft: (Int64, String) async -> AppOperationResult = { _, _ in .failure(.unavailable("Saving is unavailable.")) }
     let sendMessage: (ConversationListItem, String) async -> MessageSendResult
     var messageActions: ChatMessageActions = .unavailable
     var deleteConversation: (DirectConversationSummary) async -> Void = { _ in }

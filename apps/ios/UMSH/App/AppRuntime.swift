@@ -35,11 +35,12 @@ final class AppRuntime {
         openStore: () throws -> SQLiteApplicationStore = {
             try SQLiteApplicationStore.applicationStore()
         },
-        isStaging: Bool = false
+        isStaging: Bool = false,
+        identityVault: (any IdentityVault)? = nil
     ) {
         let meshEngine = RustMeshEngine()
         self.meshEngine = meshEngine
-        identityVault = KeychainIdentityVault(meshEngine: meshEngine)
+        self.identityVault = identityVault ?? KeychainIdentityVault(meshEngine: meshEngine)
         self.radioConnection = radioConnection
         self.isStaging = isStaging
         do {
@@ -51,6 +52,26 @@ final class AppRuntime {
             Self.logger.error(
                 "Could not open the application store: \(String(describing: error), privacy: .public)"
             )
+        }
+        identityOperations = IdentityOperations(
+            vault: self.identityVault,
+            knowsIdentity: { [applicationStore] identity in
+                guard let applicationStore else { throw AppOperationError.unavailable("The database is unavailable.") }
+                return try await applicationStore.knowsIdentity(id: identity.id, publicAddress: identity.publicIdentity.canonicalAddress)
+            },
+            persistName: { [applicationStore] owner, name in
+                guard let applicationStore else { throw AppOperationError.unavailable("The database is unavailable.") }
+                try await applicationStore.updateLocalAdvertisedName(ownerIdentityID: owner, name: name)
+            }
+        )
+        drafts = ConversationDraftStore { [applicationStore] key, text in
+            guard let applicationStore else { throw AppOperationError.unavailable("The database is unavailable.") }
+            switch key.kind {
+            case .direct:
+                try await applicationStore.updateDraft(ownerIdentityID: key.owner, conversationID: key.id, text: text)
+            case .channel:
+                try await applicationStore.updateChannelDraft(ownerIdentityID: key.owner, conversationID: key.id, text: text)
+            }
         }
     }
 
@@ -108,7 +129,11 @@ final class AppRuntime {
     /// The one region database, beside the location seam because the two
     /// are asked together: a place, and what covers it.
     let regionService = RegionService()
-    private let identityVault: KeychainIdentityVault
+    private let identityVault: any IdentityVault
+    var stateLoadError: AppOperationError?
+    private var failedReadAddress: String?
+    private let identityOperations: IdentityOperations
+    private let drafts: ConversationDraftStore
     private let radioConnection: any RadioConnection
     private let notificationService = ChatNotificationService.shared
     /// Whether this runtime runs against fabricated content in the staging
@@ -172,6 +197,9 @@ final class AppRuntime {
     /// which they hold while they run.
     func stop() {
         notificationService.clearReplyHandler()
+        drafts.stop()
+        coordinator.pendingReload?.cancel()
+        coordinator.runningReload?.cancel()
         for task in tasks { task.cancel() }
         tasks.removeAll()
         for observer in observers { NotificationCenter.default.removeObserver(observer) }
@@ -280,6 +308,7 @@ final class AppRuntime {
     /// lives. Each of these consumers is subscribed exactly once.
     func consumeSnapshots() async {
         for await snapshot in await radioConnection.snapshots() {
+            guard !Task.isCancelled else { break }
             // A snapshot is published for every ULCP frame the radio
             // sends, so the same state arrives many times a second while
             // the link is busy. Writing the observed property
@@ -306,18 +335,21 @@ final class AppRuntime {
 
     func consumeChatUpdates() async {
         for await update in await radioConnection.chatUpdates() {
+            guard !Task.isCancelled else { break }
             await applyChatUpdate(update)
         }
     }
 
     func consumeAdvertisementEvents() async {
         for await advertisement in await radioConnection.advertisementEvents() {
+            guard !Task.isCancelled else { break }
             await applyReceivedAdvertisement(advertisement)
         }
     }
 
     func consumePeerHeardEvents() async {
         for await heard in await radioConnection.peerHeardEvents() {
+            guard !Task.isCancelled else { break }
             await applyPeerHeard(heard)
         }
     }
@@ -731,41 +763,22 @@ final class AppRuntime {
         isLoadingIdentity = true
         defer { isLoadingIdentity = false }
         do {
-            var minted = false
-            switch try await identityVault.storedIdentity() {
-            case let .present(snapshot):
-                localIdentity = snapshot
-            case .none:
-                // A phone with no identity has nothing to ask about: every
-                // peer, channel and message this app stores is keyed by one,
-                // and until it exists the whole UI is a set of controls that
-                // quietly do nothing. The vault reports a genuinely absent
-                // item as none and a Keychain it could not read as a throw,
-                // so this only ever fills a vacancy—a locked phone leaves
-                // with an error instead and retries later.
-                minted = true
-                localIdentity = try await identityVault.createIdentity()
-            case let .orphaned(snapshot):
-                // A key with no anchor, from an install that is gone—or
-                // from a build that predates the anchor, which is the same
-                // key on the same phone with all its records intact. Ask the
-                // store which: a container that still knows this identity is
-                // its container, and adopting silently is the whole
-                // difference between a migration and an interrogation.
-                if await storeKnows(snapshot) {
-                    Self.logger.notice("Adopting an unanchored identity this store still holds records for")
-                    localIdentity = try await identityVault.adoptStoredIdentity()
-                } else {
-                    Self.logger.notice("Found an identity from an install that is gone; asking whether to keep it")
-                    orphanedIdentity = snapshot
-                    identityError = nil
-                    return
-                }
+            switch try await identityOperations.load() {
+            case let .ready(identity, minted):
+                try Task.checkCancellation()
+                localIdentity = identity
+                try await bootstrapIdentity(minted: minted)
+            case let .needsAdoption(identity):
+                orphanedIdentity = identity
+                identityError = nil
+                return
             }
-            try await bootstrapIdentity(minted: minted)
+            try Task.checkCancellation()
             if localIdentity != nil {
                 await radioConnection.autoConnect()
             }
+        } catch is CancellationError {
+            return
         } catch let error as IdentityVaultError {
             Self.logger.error("Identity load failed: \(String(describing: error), privacy: .public)")
             identityError = error
@@ -785,26 +798,20 @@ final class AppRuntime {
     /// never had a key comes up.
     @MainActor
     private func bootstrapIdentity(minted: Bool) async throws {
+        try Task.checkCancellation()
         try await radioConnection.useHostIdentity(localIdentity?.publicIdentity)
+        try Task.checkCancellation()
         try await installMeshSession()
+        try Task.checkCancellation()
         await prepareApplicationState()
+        try Task.checkCancellation()
         await prepareChatState()
+        try Task.checkCancellation()
         await loadAdvertisedName()
+        try Task.checkCancellation()
         await pushPhoneDiscoverability()
         identityError = nil
         settleOnboarding(mintedIdentity: minted)
-    }
-
-    /// Whether the store already holds records for this identity, which is
-    /// what tells a container that lost its anchor from one that never had
-    /// this identity's data in the first place.
-    @MainActor
-    private func storeKnows(_ snapshot: LocalIdentitySnapshot) async -> Bool {
-        guard let applicationStore else { return false }
-        return (try? await applicationStore.knowsIdentity(
-            id: snapshot.id,
-            publicAddress: snapshot.publicIdentity.canonicalAddress
-        )) ?? false
     }
 
     /// Decide whether this launch owes the user an introduction.
@@ -853,6 +860,8 @@ final class AppRuntime {
             localIdentity = try await identityVault.createIdentity()
             orphanedIdentity = nil
             try await bootstrapIdentity(minted: true)
+        } catch is CancellationError {
+            return
         } catch let error as IdentityVaultError {
             identityError = error
         } catch {
@@ -877,6 +886,8 @@ final class AppRuntime {
             orphanedIdentity = nil
             try await bootstrapIdentity(minted: true)
             await radioConnection.autoConnect()
+        } catch is CancellationError {
+            return
         } catch let error as IdentityVaultError {
             identityError = error
         } catch {
@@ -939,6 +950,8 @@ final class AppRuntime {
         do {
             localIdentity = try await identityVault.createIdentity()
             try await bootstrapIdentity(minted: true)
+        } catch is CancellationError {
+            return
         } catch let error as IdentityVaultError {
             identityError = error
         } catch {
@@ -999,17 +1012,17 @@ final class AppRuntime {
         ).flatMap { $0 }) ?? ""
     }
 
-    func saveAdvertisedName(_ name: String) async {
-        guard let applicationStore, let localIdentity else { return }
-        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        try? await applicationStore.updateLocalAdvertisedName(
-            ownerIdentityID: localIdentity.id,
-            name: trimmed.isEmpty ? nil : trimmed
-        )
-        advertisedName = trimmed
-        // The identity-request responder carries the same name; keep it
-        // current.
-        await pushPhoneDiscoverability()
+    func saveAdvertisedName(_ name: String) async -> AppOperationResult {
+        guard let owner = localIdentity?.id else {
+            return .failure(.unavailable("The local identity is unavailable."))
+        }
+        do {
+            let saved = try await identityOperations.saveName(name, owner: owner)
+            guard localIdentity?.id == owner else { return .failure(.cancelled) }
+            advertisedName = saved
+            await pushPhoneDiscoverability()
+            return .success(())
+        } catch { return .failure(AppOperationError.storage(error)) }
     }
 
     /// Hand the stored discoverability preference and display name to the
@@ -1781,7 +1794,7 @@ final class AppRuntime {
             ownerIdentityID: localIdentity.id,
             keyDigest: keyDigest
         )
-        return stored.map(Self.summary(from:))
+        return stored.map(ApplicationStateLoader.summary(from:))
     }
 
     /// Register keys with the phone's MAC, reporting whether they all fit.
@@ -2106,23 +2119,7 @@ final class AppRuntime {
         await reloadApplicationState()
     }
 
-    private static func summary(from stored: StoredChannel) -> ChannelSummary {
-        ChannelSummary(
-            id: stored.id,
-            kind: stored.kind,
-            canonicalName: stored.canonicalName,
-            name: stored.name,
-            alias: stored.alias,
-            channelIDHex: stored.channelIDHex,
-            tint: stored.tint,
-            regionCode: stored.regionCode,
-            maxFloodHops: stored.maxFloodHops,
-            joinedPhone: stored.joinedPhone,
-            joinedDevice: stored.joinedDevice,
-            notificationsEnabled: stored.notificationsEnabled,
-            joinedAt: stored.joinedAt
-        )
-    }
+
 
     /// One-way commitment to a channel key, used to recognize a key the store
     /// already holds without the store ever seeing the key itself.
@@ -2197,16 +2194,19 @@ final class AppRuntime {
         await reloadApplicationState()
     }
 
-    func updateDraft(_ conversationID: Int64, _ text: String) async {
-        guard let applicationStore, let localIdentity else { return }
-        try? await applicationStore.updateDraft(
-            ownerIdentityID: localIdentity.id,
-            conversationID: conversationID,
-            text: text
-        )
-        if let index = conversations.firstIndex(where: { $0.id == conversationID }) {
-            conversations[index].draftText = text
+    @discardableResult
+    func updateDraft(_ conversationID: Int64, _ text: String) async -> AppOperationResult {
+        guard let owner = localIdentity?.id else {
+            return .failure(.unavailable("The local identity is unavailable."))
         }
+        let key = ConversationDraftKey(owner: owner, kind: .direct, id: conversationID)
+        let result = await drafts.save(text, for: key)
+        guard localIdentity?.id == owner else { return .failure(.cancelled) }
+        if let index = conversations.firstIndex(where: { $0.id == conversationID }) {
+            // Retain unsaved text in memory, without reporting persistence success.
+            conversations[index].draftText = drafts.pendingText(for: key) ?? text
+        }
+        return result
     }
 
     func sendMessage(
@@ -2258,6 +2258,8 @@ final class AppRuntime {
         switch await sendMessage(item, text) {
         case .sent:
             return true
+        case .cancelled:
+            return false
         case let .failed(reason):
             Self.chatLogger.warning(
                 "Notification reply not sent: \(reason, privacy: .public)"
@@ -2489,80 +2491,45 @@ final class AppRuntime {
         guard radioSnapshot.linkState == .attached || radioSnapshot.linkState == .ready,
               radioSnapshot.hostState == .matchesCurrentIdentity
         else { return .failed("Connect a companion radio configured for this phone before sending.") }
-        do {
-            let batch = try await compose(UInt32.random(in: 1...UInt32.max))
-            do {
-                try await applicationStore.commitChatComposeBatch(
-                    ownerIdentityID: localIdentity.id,
-                    batch: batch
-                )
-                // The compose mutation is now durable. Publish that optimistic
-                // row immediately; radio transmission and delivery evidence
-                // can update its state afterward without making the user
-                // refresh or wait for the transport round trip.
-                //
-                // The bump has to precede the reload: the reload stamps the
-                // revision into the summary it publishes, and the open
-                // transcript takes its cue to re-read from that stamp.
-                coordinator.bumpChatRevisions([conversation.conversationAddress])
-                await reloadApplicationState()
-            } catch {
-                Self.logger.error("Could not persist chat compose batch: \(String(describing: error), privacy: .public)")
-                let checkpoints = (try? await applicationStore.chatCheckpoints(
-                    ownerIdentityID: localIdentity.id
-                )) ?? []
-                try? await radioConnection.rejectChatBatch(
-                    batch.batchId,
-                    checkpoints: checkpoints
-                )
-                return .failed("The message could not be saved locally: \(error)")
+        let owner = localIdentity.id
+        let draftKey: ConversationDraftKey
+        switch conversation {
+        case let .direct(item): draftKey = .init(owner: owner, kind: .direct, id: item.id)
+        case let .channel(item): draftKey = .init(owner: owner, kind: .channel, id: item.id)
+        }
+        let submittedDraft = drafts.latestText(for: draftKey) ?? conversation.draftText
+        let submission = ChatSubmissionCoordinator(
+            persist: { try await applicationStore.commitChatComposeBatch(ownerIdentityID: owner, batch: $0) },
+            reject: { batchID in
+                let checkpoints = try await applicationStore.chatCheckpoints(ownerIdentityID: owner)
+                try await self.radioConnection.rejectChatBatch(batchID, checkpoints: checkpoints)
+            },
+            release: { try await self.radioConnection.commitChatBatch($0) },
+            markFailed: { try await applicationStore.markChatComposeBatchFailed(ownerIdentityID: owner, batch: $0) }
+        )
+        let outcome = await submission.submit(
+            compose: { try await compose(UInt32.random(in: 1...UInt32.max)) },
+            didChange: {
+                self.coordinator.bumpChatRevisions([conversation.conversationAddress])
+                await self.reloadConversationState()
+            },
+            clearDraft: {
+                guard clearsDraft else { return }
+                try await self.drafts.clear(for: draftKey, preserving: submittedDraft)
             }
-            do {
-                try await radioConnection.commitChatBatch(batch.batchId)
-                let fragments = batch.mutations.compactMap(\.fragmentCount).max() ?? 1
-                Self.chatLogger.info(
-                    """
-                    Composed \(Self.conversationKindLabel(conversation), privacy: .public) message \
-                    handle \(batch.mutations.first?.handle ?? 0, privacy: .public) \
-                    in batch \(batch.batchId, privacy: .public): \
-                    \(fragments, privacy: .public) fragment(s), \
-                    \(batch.archives.count, privacy: .public) archive(s); released to radio
-                    """
-                )
-            } catch {
-                Self.chatLogger.error("Could not release chat batch to radio: \(String(describing: error), privacy: .public)")
-                try? await applicationStore.markChatComposeBatchFailed(
-                    ownerIdentityID: localIdentity.id,
-                    batch: batch
-                )
-                coordinator.bumpChatRevisions([conversation.conversationAddress])
-                await reloadApplicationState()
-                return .failed("The message could not be queued for transmission: \(error)")
-            }
-            if clearsDraft {
-                switch conversation {
-                case let .direct(direct):
-                    try await applicationStore.updateDraft(
-                        ownerIdentityID: localIdentity.id,
-                        conversationID: direct.id,
-                        text: ""
-                    )
-                case let .channel(channel):
-                    try await applicationStore.updateChannelDraft(
-                        ownerIdentityID: localIdentity.id,
-                        conversationID: channel.id,
-                        text: ""
-                    )
-                }
-            }
-            await reloadApplicationState()
-            guard let updated = conversationItems.first(where: { $0.id == conversation.id }) else {
-                return .failed("The message was saved, but the conversation could not be refreshed.")
-            }
-            return .sent(updated)
-        } catch {
-            Self.logger.error("Could not compose chat message: \(String(describing: error), privacy: .public)")
-            return .failed("The message could not be composed: \(error)")
+        )
+        switch outcome {
+        case let .failed(error):
+            if error == .cancelled { return .cancelled }
+            return .failed(error.localizedDescription)
+        case let .submitted(warning):
+            await reloadConversationState()
+            let updated = conversationItems.first(where: { $0.id == conversation.id }) ?? conversation
+            // Only the submission's own cleanup failure is a send warning: it
+            // is the one case where the composer must keep its text. A reload
+            // failure is reported by the root view's banner, and repeating it
+            // here would hold a sent message in the composer as a draft.
+            return .sent(updated, warning: warning?.localizedDescription)
         }
     }
 
@@ -2631,27 +2598,42 @@ final class AppRuntime {
         }
     }
 
-    func updateChannelDraft(_ conversationID: Int64, _ text: String) async {
-        guard let applicationStore, let localIdentity else { return }
-        try? await applicationStore.updateChannelDraft(
-            ownerIdentityID: localIdentity.id,
-            conversationID: conversationID,
-            text: text
-        )
-        if let index = channelConversations.firstIndex(where: { $0.id == conversationID }) {
-            channelConversations[index].draftText = text
+    @discardableResult
+    func updateChannelDraft(_ conversationID: Int64, _ text: String) async -> AppOperationResult {
+        guard let owner = localIdentity?.id else {
+            return .failure(.unavailable("The local identity is unavailable."))
         }
+        let key = ConversationDraftKey(owner: owner, kind: .channel, id: conversationID)
+        let result = await drafts.save(text, for: key)
+        guard localIdentity?.id == owner else { return .failure(.cancelled) }
+        if let index = channelConversations.firstIndex(where: { $0.id == conversationID }) {
+            // Retain unsaved text in memory, without reporting persistence success.
+            channelConversations[index].draftText = drafts.pendingText(for: key) ?? text
+        }
+        return result
     }
 
     /// Mark a conversation read. Driven by the transcript appearing, so the
     /// badge clears when the user actually looks at it.
     func markConversationRead(_ address: String) async {
         guard let applicationStore, let localIdentity else { return }
-        try? await applicationStore.markConversationRead(
-            ownerIdentityID: localIdentity.id,
-            conversationAddress: address
-        )
-        await reloadApplicationState()
+        do {
+            try await applicationStore.markConversationRead(
+                ownerIdentityID: localIdentity.id, conversationAddress: address)
+            if failedReadAddress == address {
+                failedReadAddress = nil
+                stateLoadError = nil
+            }
+            await reloadConversationState()
+        } catch {
+            failedReadAddress = address
+            stateLoadError = .persistence("The conversation could not be marked as read. Open it again to retry.")
+        }
+    }
+
+    func retryStateLoad() async {
+        if let failedReadAddress { await markConversationRead(failedReadAddress) }
+        else { await reloadApplicationState() }
     }
 
     func requestMemberIdentity(
@@ -3829,14 +3811,23 @@ final class AppRuntime {
 
     /// Reload every peer and transcript from storage.
     ///
-    /// A reload reads the full message history of every conversation and
-    /// decodes an identity bundle per peer, so overlapping callers (a chat
-    /// batch landing while a send is committing) used to multiply that work.
+    /// Full reconciliation decodes identity bundles and reloads neighbor reports.
+    /// Chat submission and read cursors only reload conversation summaries;
+    /// neither operation changes peer identity or map metadata.
     /// Callers arriving before a queued reload has begun join it instead of
     /// adding another; a caller arriving mid-reload gets a fresh one chained
     /// behind it. Either way `await` still returns only once state observed
     /// after the call has been published, which senders rely on.
     func reloadApplicationState() async {
+        await reloadApplicationState(includingPeers: true)
+    }
+
+    private func reloadConversationState() async {
+        await reloadApplicationState(includingPeers: false)
+    }
+
+    private func reloadApplicationState(includingPeers: Bool) async {
+        coordinator.pendingReloadIncludesPeers = coordinator.pendingReloadIncludesPeers || includingPeers
         if let pending = coordinator.pendingReload {
             await pending.value
             return
@@ -3844,139 +3835,51 @@ final class AppRuntime {
         let running = coordinator.runningReload
         let task = Task { @MainActor in
             await running?.value
+            let includingPeers = coordinator.pendingReloadIncludesPeers
+            coordinator.pendingReloadIncludesPeers = false
             coordinator.pendingReload = nil
-            await performApplicationStateReload()
+            await performApplicationStateReload(includingPeers: includingPeers)
         }
         coordinator.pendingReload = task
         coordinator.runningReload = task
         await task.value
     }
 
-    private func performApplicationStateReload() async {
-        guard let applicationStore, let localIdentity else { return }
+    private func performApplicationStateReload(includingPeers: Bool) async {
+        guard let applicationStore, let owner = localIdentity?.id, !Task.isCancelled else { return }
         do {
-            let storedPeers = try await applicationStore.listNodes(ownerIdentityID: localIdentity.id)
-            var mappedPeers: [Int64: PeerSummary] = [:]
-            for stored in storedPeers {
-                guard let identity = try? await meshEngine.inspectPublicIdentity(stored.publicAddress) else {
-                    continue
-                }
-                let advertisedIdentity: MeshNodeIdentity? = await {
-                    guard let payload = stored.advertisement else { return nil }
-                    return try? await meshEngine.decodeNodeIdentity(
-                        address: stored.publicAddress,
-                        payload: payload
-                    )
-                }()
-                mappedPeers[stored.id] = PeerSummary(
-                    id: stored.id,
-                    identity: identity,
-                    alias: stored.alias,
-                    advertisedName: stored.advertisedName,
-                    systemRole: stored.systemRole,
-                    storedRole: stored.nodeKind.flatMap(PeerRole.init(rawValue:)) ?? .unknown,
-                    advertisedIdentity: advertisedIdentity,
-                    advertisedIdentityAuthenticated: stored.advertisementAuthenticated,
-                    lastHeard: stored.lastHeardAt,
-                    isSaved: stored.isSaved,
-                    isFavorite: stored.isFavorite,
-                    isOnDeviceIdentity: stored.onDeviceIdentity,
-                    notifyWhenHeard: stored.notifyWhenHeard
-                )
+            var full = includingPeers
+            var records = try await applicationStore.applicationRecords(ownerIdentityID: owner, conversationsOnly: !full)
+            // A structural change while the request waited requires authoritative
+            // peer reconciliation, rather than silently dropping a conversation.
+            let knownIDs = Set(peers.map(\.id))
+            if !full, records.conversations.contains(where: { !knownIDs.contains($0.node.id) }) {
+                full = true
+                records = try await applicationStore.applicationRecords(ownerIdentityID: owner)
             }
-            let storedChannels = try await applicationStore.channels(
-                ownerIdentityID: localIdentity.id
-            )
-            let mappedChannels = storedChannels.map(Self.summary(from:))
-            if channels != mappedChannels {
-                channels = mappedChannels
+            var loaded = try await ApplicationStateLoader(meshEngine: meshEngine).load(
+                records: records, chatRevisions: coordinator.chatRevisions,
+                knownPeers: full ? nil : peers, neighbor: neighbor(from:))
+            guard localIdentity?.id == owner, !Task.isCancelled else { return }
+            for index in loaded.conversations.indices {
+                let key = ConversationDraftKey(owner: owner, kind: .direct, id: loaded.conversations[index].id)
+                if let text = drafts.pendingText(for: key) { loaded.conversations[index].draftText = text }
             }
-            let storedConversations = try await applicationStore.listDirectConversations(
-                ownerIdentityID: localIdentity.id
-            )
-            // Assign only on a real change: most reloads are triggered by
-            // radio or chat activity that leaves the displayed state
-            // identical, and an equal-value write to an observed property
-            // still invalidates everything that reads it.
-            let mappedPeerList = storedPeers.compactMap { mappedPeers[$0.id] }
-            if peers != mappedPeerList {
-                peers = mappedPeerList
+            for index in loaded.channelConversations.indices {
+                let key = ConversationDraftKey(owner: owner, kind: .channel, id: loaded.channelConversations[index].id)
+                if let text = drafts.pendingText(for: key) { loaded.channelConversations[index].draftText = text }
             }
-            let storedReports = try await applicationStore.allPeerRepeaterEntries(
-                ownerIdentityID: localIdentity.id
-            )
-            var mappedReports: [PeerRepeaterNeighborReport] = []
-            mappedReports.reserveCapacity(storedReports.count)
-            for report in storedReports {
-                guard let reporter = mappedPeers[report.reporterNodeID] else { continue }
-                mappedReports.append(
-                    PeerRepeaterNeighborReport(
-                        reporter: reporter,
-                        neighbor: await neighbor(from: report.entry)
-                    )
-                )
-            }
-            if neighborReports != mappedReports {
-                neighborReports = mappedReports
-            }
-            var mappedConversations: [DirectConversationSummary] = []
-            for stored in storedConversations {
-                guard let peer = mappedPeers[stored.node.id] else { continue }
-                mappedConversations.append(
-                    DirectConversationSummary(
-                        id: stored.id,
-                        peer: peer,
-                        draftText: stored.draftText,
-                        lastMessage: Self.previewMessage(from: stored.lastMessage),
-                        unreadCount: stored.unreadCount,
-                        createdAtMilliseconds: stored.createdAtMilliseconds,
-                        notificationsEnabled: stored.notificationsEnabled,
-                        messageRevision: coordinator.chatRevisions[
-                            peer.identity.canonicalAddress
-                        ] ?? 0
-                    )
-                )
-            }
-            if conversations != mappedConversations {
-                conversations = mappedConversations
-            }
-
-            let storedChannelConversations = try await applicationStore.listChannelConversations(
-                ownerIdentityID: localIdentity.id
-            )
-            let channelsByID = Dictionary(
-                mappedChannels.map { ($0.id, $0) },
-                uniquingKeysWith: { first, _ in first }
-            )
-            var mappedChannelConversations: [ChannelConversationSummary] = []
-            for stored in storedChannelConversations {
-                // A conversation whose channel was left has no key to send
-                // with and no name to show, so it is not listed.
-                guard let channel = channelsByID[stored.channelID], channel.joinedPhone else {
-                    continue
-                }
-                mappedChannelConversations.append(
-                    ChannelConversationSummary(
-                        id: stored.id,
-                        channel: channel,
-                        conversationAddress: stored.conversationAddress,
-                        draftText: stored.draftText,
-                        lastMessage: Self.previewMessage(from: stored.lastMessage),
-                        unreadCount: stored.unreadCount,
-                        createdAtMilliseconds: stored.createdAtMilliseconds,
-                        messageRevision: coordinator.chatRevisions[
-                            stored.conversationAddress
-                        ] ?? 0
-                    )
-                )
-            }
-            if channelConversations != mappedChannelConversations {
-                channelConversations = mappedChannelConversations
-            }
+            if full, peers != loaded.peers { peers = loaded.peers }
+            if channels != loaded.channels { channels = loaded.channels }
+            if full, neighborReports != loaded.neighborReports { neighborReports = loaded.neighborReports }
+            if conversations != loaded.conversations { conversations = loaded.conversations }
+            if channelConversations != loaded.channelConversations { channelConversations = loaded.channelConversations }
+            if full, failedReadAddress == nil { stateLoadError = nil }
+        } catch is CancellationError {
+            return
         } catch {
-            if !peers.isEmpty { peers = [] }
-            if !conversations.isEmpty { conversations = [] }
-            if !channelConversations.isEmpty { channelConversations = [] }
+            Self.logger.error("Could not reload application state: \(String(describing: error), privacy: .public)")
+            stateLoadError = .persistence("Stored information could not be refreshed. Your last loaded information is still shown.")
         }
     }
 
@@ -4028,20 +3931,7 @@ final class AppRuntime {
         )
     }
 
-    private static func previewMessage(
-        from stored: StoredConversationPreview?
-    ) -> ConversationPreviewMessage? {
-        stored.map { preview in
-            ConversationPreviewMessage(
-                createdAtMilliseconds: preview.createdAtMilliseconds,
-                body: preview.body,
-                isOutbound: preview.isOutbound,
-                isDeleted: preview.isDeleted,
-                senderAddress: preview.senderAddress,
-                senderHint: preview.senderHint
-            )
-        }
-    }
+
 
     /// Render every distinct sender hint in a transcript page once, so each
     /// group bubble can carry its sender's avatar without re-deriving it per
@@ -4101,6 +3991,7 @@ private final class AppStateCoordinator {
     /// A reload that has been queued but has not begun reading storage yet;
     /// later callers can safely join it.
     var pendingReload: Task<Void, Never>?
+    var pendingReloadIncludesPeers = false
     /// The most recently queued reload, joined or not. New reloads chain
     /// behind it so two never read and publish state concurrently.
     var runningReload: Task<Void, Never>?

@@ -38,8 +38,8 @@ struct ConversationThreadView: View {
 
     @Binding var conversation: ConversationListItem
     let radioSnapshot: RadioSnapshot
-    let updateDraft: (Int64, String) async -> Void
-    let updateChannelDraft: (Int64, String) async -> Void
+    let updateDraft: (Int64, String) async -> AppOperationResult
+    let updateChannelDraft: (Int64, String) async -> AppOperationResult
     let sendMessage: (ConversationListItem, String) async -> MessageSendResult
     let messageActions: ChatMessageActions
     let peerActions: PeerActions
@@ -65,6 +65,8 @@ struct ConversationThreadView: View {
     @State private var showsConversationInfo = false
     @State private var showsBlockedReason = false
     @State private var sendFailureMessage: String?
+    @State private var messageWasSubmitted = false
+    @State private var draftError: AppOperationError?
     @State private var editingMessage: ChatMessageSummary?
     @State private var editDraft = ""
     @State private var deletingMessage: ChatMessageSummary?
@@ -99,8 +101,8 @@ struct ConversationThreadView: View {
     init(
         conversation: Binding<ConversationListItem>,
         radioSnapshot: RadioSnapshot,
-        updateDraft: @escaping (Int64, String) async -> Void,
-        updateChannelDraft: @escaping (Int64, String) async -> Void = { _, _ in },
+        updateDraft: @escaping (Int64, String) async -> AppOperationResult,
+        updateChannelDraft: @escaping (Int64, String) async -> AppOperationResult = { _, _ in .failure(.unavailable("Saving is unavailable.")) },
         sendMessage: @escaping (ConversationListItem, String) async -> MessageSendResult,
         messageActions: ChatMessageActions = .unavailable,
         peerActions: PeerActions = .unavailable,
@@ -389,15 +391,17 @@ struct ConversationThreadView: View {
                 canSend: canSendNow,
                 send: { await send() }
             )
+            .safeAreaInset(edge: .top) {
+                if let draftError {
+                    OperationFailureView(error: draftError, retry: persistDraft)
+                        .padding(.horizontal)
+                }
+            }
             .task(id: draft) {
                 try? await Task.sleep(for: .milliseconds(250))
                 guard !Task.isCancelled else { return }
-                switch conversation {
-                case let .direct(direct):
-                    await updateDraft(direct.id, draft)
-                case let .channel(channel):
-                    await updateChannelDraft(channel.id, draft)
-                }
+                await persistDraft()
+
             }
         }
         // A conversation is a place, not a tab: Messages gives the transcript
@@ -415,6 +419,16 @@ struct ConversationThreadView: View {
         }
         .onDisappear {
             visibleConversationReporter.disappeared(conversation.conversationAddress)
+            // Hand the final text to the runtime-owned draft store even when
+            // navigation cancels the view's debounce task.
+            let text = draft
+            let leavingConversation = conversation
+            Task {
+                switch leavingConversation {
+                case let .direct(item): _ = await updateDraft(item.id, text)
+                case let .channel(item): _ = await updateChannelDraft(item.id, text)
+                }
+            }
             // Again on the way out: anything that arrived while the
             // transcript was on screen was seen, and must not leave a badge.
             Task { await markRead(conversation.conversationAddress) }
@@ -494,7 +508,7 @@ struct ConversationThreadView: View {
                 MessageDetailsSheet(message: message) { inspectedMessage = nil }
             }
         }
-        .alert("Message not sent", isPresented: $showsBlockedReason) {
+        .alert(messageWasSubmitted ? "Message submitted" : "Message not sent", isPresented: $showsBlockedReason) {
             Button("OK", role: .cancel) {}
         } message: {
             // The reassurance is about the composer's draft, so it only
@@ -503,8 +517,11 @@ struct ConversationThreadView: View {
             // look for something that was never there.
             Text(
                 (sendFailureMessage ?? blockedReason ?? "The message could not be queued.")
-                    + (draft.isEmpty ? "" : " Your draft has been preserved.")
+                    + (draft.isEmpty ? "" : " Your text is still in the composer.")
             )
+        }
+        .onChange(of: showsBlockedReason) { _, isShowing in
+            if !isShowing { messageWasSubmitted = false }
         }
         .sheet(item: $editingMessage) { message in
             MessageEditSheet(
@@ -615,8 +632,14 @@ struct ConversationThreadView: View {
         let body = newBody.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !body.isEmpty, body != message.body else { return }
         switch await messageActions.edit(conversation, message, body) {
-        case let .sent(updated):
+        case let .sent(updated, warning):
             conversation = updated
+            if let warning {
+                sendFailureMessage = warning
+                messageWasSubmitted = true
+                showsBlockedReason = true
+            }
+        case .cancelled: break
         case let .failed(reason):
             sendFailureMessage = reason
             showsBlockedReason = true
@@ -625,8 +648,14 @@ struct ConversationThreadView: View {
 
     private func delete(_ message: ChatMessageSummary) async {
         switch await messageActions.delete(conversation, message) {
-        case let .sent(updated):
+        case let .sent(updated, warning):
             conversation = updated
+            if let warning {
+                sendFailureMessage = warning
+                messageWasSubmitted = true
+                showsBlockedReason = true
+            }
+        case .cancelled: break
         case let .failed(reason):
             sendFailureMessage = reason
             showsBlockedReason = true
@@ -639,8 +668,14 @@ struct ConversationThreadView: View {
     private func resend(_ message: ChatMessageSummary) {
         Task {
             switch await messageActions.resend(conversation, message) {
-            case let .sent(updated):
+            case let .sent(updated, warning):
                 conversation = updated
+                if let warning {
+                    sendFailureMessage = warning
+                    messageWasSubmitted = true
+                    showsBlockedReason = true
+                }
+            case .cancelled: break
             case let .failed(reason):
                 sendFailureMessage = reason
                 showsBlockedReason = true
@@ -654,14 +689,20 @@ struct ConversationThreadView: View {
     private func resendAsNew(_ message: ChatMessageSummary) {
         Task {
             switch await messageActions.resendAsNew(conversation, message) {
-            case let .sent(updated):
+            case let .sent(updated, warning):
                 conversation = updated
+                if let warning {
+                    sendFailureMessage = warning
+                    messageWasSubmitted = true
+                    showsBlockedReason = true
+                }
                 if transcript.hasNewer {
                     await landAtLiveEdge()
                 } else {
                     scroll.followsLatestMessage = true
                     scrollToBottomRequest += 1
                 }
+            case .cancelled: break
             case let .failed(reason):
                 sendFailureMessage = reason
                 showsBlockedReason = true
@@ -674,8 +715,14 @@ struct ConversationThreadView: View {
     private func react(to message: ChatMessageSummary, with glyph: String) {
         Task {
             switch await messageActions.react(conversation, message, glyph) {
-            case let .sent(updated):
+            case let .sent(updated, warning):
                 conversation = updated
+                if let warning {
+                    sendFailureMessage = warning
+                    messageWasSubmitted = true
+                    showsBlockedReason = true
+                }
+            case .cancelled: break
             case let .failed(reason):
                 sendFailureMessage = reason
                 showsBlockedReason = true
@@ -1000,8 +1047,23 @@ struct ConversationThreadView: View {
         }
     }
 
+    private func persistDraft() async {
+        let text = draft
+        let result: AppOperationResult
+        switch conversation {
+        case let .direct(item): result = await updateDraft(item.id, text)
+        case let .channel(item): result = await updateChannelDraft(item.id, text)
+        }
+        guard draft == text, !Task.isCancelled else { return }
+        switch result {
+        case .success: draftError = nil
+        case let .failure(error): draftError = error == .cancelled ? nil : error
+        }
+    }
+
     private func send() async {
         sendFailureMessage = nil
+        let submittedDraft = draft
         let body = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !body.isEmpty else { return }
         guard blockedReason == nil else {
@@ -1009,9 +1071,15 @@ struct ConversationThreadView: View {
             return
         }
         switch await sendMessage(conversation, body) {
-        case let .sent(updatedConversation):
+        case let .sent(updatedConversation, warning):
             conversation = updatedConversation
-            draft = ""
+            if let warning {
+                sendFailureMessage = warning
+                messageWasSubmitted = true
+                showsBlockedReason = true
+            } else if draft == submittedDraft {
+                draft = ""
+            }
             if transcript.hasNewer {
                 // Sent from up in the history, where the new message is not
                 // even loaded. Bring the live edge in and land on it, rather
@@ -1024,6 +1092,7 @@ struct ConversationThreadView: View {
                 scroll.followsLatestMessage = true
                 scrollToBottomRequest += 1
             }
+        case .cancelled: break
         case let .failed(message):
             sendFailureMessage = message
             showsBlockedReason = true

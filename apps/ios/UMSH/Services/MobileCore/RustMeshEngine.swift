@@ -33,8 +33,8 @@ actor RustMeshEngine: MeshEngine {
                 canonicalAddress: record.canonicalAddress,
                 hint: MeshNodeHint(bytes: record.hint.bytes, text: record.hint.text)
             )
-        } catch is MobileError {
-            throw MeshEngineError.invalidAddress
+        } catch let error as MobileError {
+            throw Self.inputError(error)
         } catch {
             throw MeshEngineError.coreFailure
         }
@@ -43,8 +43,8 @@ actor RustMeshEngine: MeshEngine {
     func inspectNodeURI(_ uri: String) throws -> MeshNodeURIPreview {
         do {
             return Self.preview(from: try UMSHMobileCore.inspectNodeUri(uri: uri))
-        } catch is MobileError {
-            throw MeshEngineError.invalidAddress
+        } catch let error as MobileError {
+            throw Self.inputError(error)
         } catch {
             throw MeshEngineError.coreFailure
         }
@@ -53,8 +53,8 @@ actor RustMeshEngine: MeshEngine {
     func inspectPeerIdentity(_ input: String) throws -> MeshNodeURIPreview {
         do {
             return Self.preview(from: try UMSHMobileCore.inspectPeerIdentity(input: input))
-        } catch is MobileError {
-            throw MeshEngineError.invalidAddress
+        } catch let error as MobileError {
+            throw Self.inputError(error)
         } catch {
             throw MeshEngineError.coreFailure
         }
@@ -66,8 +66,8 @@ actor RustMeshEngine: MeshEngine {
             return Self.identity(from: record)
         } catch MobileError.InvalidIdentityData {
             throw MeshEngineError.invalidIdentityData
-        } catch is MobileError {
-            throw MeshEngineError.invalidAddress
+        } catch let error as MobileError {
+            throw Self.inputError(error)
         } catch {
             throw MeshEngineError.coreFailure
         }
@@ -76,8 +76,8 @@ actor RustMeshEngine: MeshEngine {
     func inspectChannelURI(_ uri: String) throws -> MeshChannelPreview {
         do {
             return Self.channelPreview(from: try UMSHMobileCore.inspectChannelUri(uri: uri))
-        } catch is MobileError {
-            throw MeshEngineError.invalidChannelURI
+        } catch let error as MobileError {
+            throw Self.inputError(error, invalidURI: .invalidChannelURI)
         } catch {
             throw MeshEngineError.coreFailure
         }
@@ -167,6 +167,28 @@ actor RustMeshEngine: MeshEngine {
         }
     }
 
+    /// Classify UniFFI's typed errors without treating every core failure as
+    /// invalid user input. New Rust cases require an explicit Swift decision.
+    static func inputError(_ error: MobileError, invalidURI: MeshEngineError = .invalidAddress) -> MeshEngineError {
+        switch error {
+        case .InvalidAddressLength, .InvalidAddressCharacter, .AddressOverflow,
+             .InvalidPublicKeyLength: .invalidAddress
+        case .InvalidUri: invalidURI
+        case .InvalidIdentityData: .invalidIdentityData
+        case .InvalidNodeHintLength: .invalidNodeHint
+        case .InvalidRouterHintLength: .invalidRouterHint
+        case .InvalidRegionCode: .invalidRegion
+        case .ChannelNameNotAscii: .channelNameNotASCII
+        case .ChannelNameTooLong: .channelNameTooLong
+        case .InvalidSecretKeyLength, .InvalidChannelKeyLength, .InvalidUlcpFrame,
+             .GattSegmentRunt, .GattSegmentReservedBits, .GattSegmentOrphan,
+             .GattSegmentTooLong, .GattMtuTooSmall, .UlcpFrameUnparsable,
+             .UlcpUnexpectedCommand, .UlcpMalformedPayload, .UlcpUnexpectedFrame,
+             .UlcpMismatchedResponse, .AdministrativeSession, .UnsupportedCapability:
+            .coreFailure
+        }
+    }
+
     private static func channelPreview(from record: ChannelPreviewRecord) -> MeshChannelPreview {
         MeshChannelPreview(
             kind: {
@@ -229,8 +251,8 @@ actor RustMeshEngine: MeshEngine {
                 canonicalAddress: record.canonicalAddress,
                 hint: MeshNodeHint(bytes: record.hint.bytes, text: record.hint.text)
             )
-        } catch is MobileError {
-            throw MeshEngineError.invalidAddress
+        } catch let error as MobileError {
+            throw Self.inputError(error)
         } catch {
             throw MeshEngineError.coreFailure
         }

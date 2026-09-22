@@ -497,7 +497,8 @@ enum ReactionEmoji {
 }
 
 enum MessageSendResult: Sendable {
-    case sent(ConversationListItem)
+    case sent(ConversationListItem, warning: String? = nil)
+    case cancelled
     case failed(String)
 }
 

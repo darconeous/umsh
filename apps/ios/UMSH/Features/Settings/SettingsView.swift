@@ -8,7 +8,7 @@ struct SettingsView: View {
     let isLoadingIdentity: Bool
     let createIdentity: () async -> Void
     var advertisedName: String = ""
-    var saveAdvertisedName: (String) async -> Void = { _ in }
+    var saveAdvertisedName: (String) async -> AppOperationResult = { _ in .failure(.unavailable("Saving is unavailable.")) }
     var advertiseIdentity: () async -> String? = { nil }
     var identityShareURI: (() async -> String)? = nil
     /// Whether this phone answers nearby nodes' identity requests, and the
@@ -43,7 +43,7 @@ struct SettingsView: View {
     /// radio identity's peer sheet so its "Message" button opens a working
     /// transcript instead of a blank destination.
     var conversations: Binding<[DirectConversationSummary]> = .constant([])
-    var updateDraft: ((Int64, String) async -> Void)? = nil
+    var updateDraft: ((Int64, String) async -> AppOperationResult)? = nil
     var sendMessage: ((DirectConversationSummary, String) async -> MessageSendResult)? = nil
     var messageActions: ChatMessageActions = .unavailable
     var channels: [ChannelSummary] = []
@@ -326,7 +326,7 @@ struct SettingsView: View {
 struct IdentityDetailView: View {
     let identity: LocalIdentitySnapshot
     var advertisedName: String = ""
-    var saveAdvertisedName: (String) async -> Void = { _ in }
+    var saveAdvertisedName: (String) async -> AppOperationResult = { _ in .failure(.unavailable("Saving is unavailable.")) }
     var advertiseIdentity: () async -> String? = { nil }
     var identityShareURI: (() async -> String)? = nil
     var phoneDiscoverable: Bool = true
@@ -545,7 +545,10 @@ struct IdentityDetailView: View {
     }
 
     private func commitName() async {
-        await saveAdvertisedName(nameDraft)
+        if case let .failure(error) = await saveAdvertisedName(nameDraft) {
+            advertiseFeedback = AdvertiseFeedback(message: error.localizedDescription, isSuccess: false)
+            return
+        }
         await refreshShareURI()
     }
 
@@ -554,7 +557,10 @@ struct IdentityDetailView: View {
         isAdvertising = true
         defer { isAdvertising = false }
         // Any pending name edit rides along with the advertisement.
-        await saveAdvertisedName(nameDraft)
+        if case let .failure(error) = await saveAdvertisedName(nameDraft) {
+            advertiseFeedback = AdvertiseFeedback(message: error.localizedDescription, isSuccess: false)
+            return
+        }
         if let message = await advertiseIdentity() {
             advertiseFeedback = AdvertiseFeedback(message: message, isSuccess: false)
         } else {
@@ -601,7 +607,7 @@ struct RadioDetailView: View {
     /// Conversation list plus messaging closures for that peer sheet, so
     /// "Message" there opens a working transcript.
     var conversations: Binding<[DirectConversationSummary]> = .constant([])
-    var updateDraft: ((Int64, String) async -> Void)? = nil
+    var updateDraft: ((Int64, String) async -> AppOperationResult)? = nil
     var sendMessage: ((DirectConversationSummary, String) async -> MessageSendResult)? = nil
     var messageActions: ChatMessageActions = .unavailable
     @Environment(\.dismiss) private var dismiss

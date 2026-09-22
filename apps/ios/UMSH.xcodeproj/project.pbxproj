@@ -114,6 +114,15 @@
 		161F05AB755981A4C347AA4B /* UMSH/Features/RemoteManagement/RemoteReadingViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = BBF5A439138F87895415FF39 /* UMSH/Features/RemoteManagement/RemoteReadingViews.swift */; };
 		3E39D251A8B781FE5771B0BB /* UMSH/Features/Settings/RadioDetailSections.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1FAFDD5221F96A3490034BEB /* UMSH/Features/Settings/RadioDetailSections.swift */; };
 		EAF159B229604BECEB055AA7 /* UMSH/DesignSystem/RadioValuePresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 25A6AABD13091CEE7B628227 /* UMSH/DesignSystem/RadioValuePresentation.swift */; };
+		F3B94716160F0C8088A80A82 /* UMSH/App/AppOperationError.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB311D8E101CBCDE9E974E35 /* UMSH/App/AppOperationError.swift */; };
+		A427660E57E1597A554B3DC4 /* UMSH/App/IdentityOperations.swift in Sources */ = {isa = PBXBuildFile; fileRef = E0658BFB3A3FF676EBE96770 /* UMSH/App/IdentityOperations.swift */; };
+		6DECDAF81E0BC26018152908 /* UMSH/App/ConversationDraftStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = C89ACCEF04F1CDDB4E109D76 /* UMSH/App/ConversationDraftStore.swift */; };
+		84F9C6AFE8462DF41305DE25 /* UMSH/App/ChatSubmissionCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49639CD17EDC87DD05ED742C /* UMSH/App/ChatSubmissionCoordinator.swift */; };
+		4488F44F088ED11EA4C30E29 /* UMSH/App/ApplicationStateLoader.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4048AA44DEA0BE0ACE259BDA /* UMSH/App/ApplicationStateLoader.swift */; };
+		530FE59CA145F07F03343576 /* UMSH/App/DebugTestHost.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D6E89B15898FBD4FE9B65F9 /* UMSH/App/DebugTestHost.swift */; };
+		1D68EF20EE14DD06275D4282 /* UMSH/DesignSystem/OperationFailureView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8C78E7E2074741B596606E30 /* UMSH/DesignSystem/OperationFailureView.swift */; };
+		0664B7196B500C9E83CC2DD2 /* UMSHTests/UMSHTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49AD04004A0CEFD14A0E09D6 /* UMSHTests/UMSHTests.swift */; };
+		F178D9252F3C6C0F301FD5B8 /* UMSHUITests/UMSHUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F8D039BDEB6291B3D807D5A2 /* UMSHUITests/UMSHUITests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -224,6 +233,17 @@
 		BBF5A439138F87895415FF39 /* UMSH/Features/RemoteManagement/RemoteReadingViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Features/RemoteManagement/RemoteReadingViews.swift; sourceTree = "<group>"; };
 		1FAFDD5221F96A3490034BEB /* UMSH/Features/Settings/RadioDetailSections.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Features/Settings/RadioDetailSections.swift; sourceTree = "<group>"; };
 		25A6AABD13091CEE7B628227 /* UMSH/DesignSystem/RadioValuePresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/DesignSystem/RadioValuePresentation.swift; sourceTree = "<group>"; };
+		BB311D8E101CBCDE9E974E35 /* UMSH/App/AppOperationError.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/App/AppOperationError.swift; sourceTree = "<group>"; };
+		E0658BFB3A3FF676EBE96770 /* UMSH/App/IdentityOperations.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/App/IdentityOperations.swift; sourceTree = "<group>"; };
+		C89ACCEF04F1CDDB4E109D76 /* UMSH/App/ConversationDraftStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/App/ConversationDraftStore.swift; sourceTree = "<group>"; };
+		49639CD17EDC87DD05ED742C /* UMSH/App/ChatSubmissionCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/App/ChatSubmissionCoordinator.swift; sourceTree = "<group>"; };
+		4048AA44DEA0BE0ACE259BDA /* UMSH/App/ApplicationStateLoader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/App/ApplicationStateLoader.swift; sourceTree = "<group>"; };
+		4D6E89B15898FBD4FE9B65F9 /* UMSH/App/DebugTestHost.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/App/DebugTestHost.swift; sourceTree = "<group>"; };
+		8C78E7E2074741B596606E30 /* UMSH/DesignSystem/OperationFailureView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/DesignSystem/OperationFailureView.swift; sourceTree = "<group>"; };
+		49AD04004A0CEFD14A0E09D6 /* UMSHTests/UMSHTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSHTests/UMSHTests.swift; sourceTree = "<group>"; };
+		9DEA7CFCDB43C3E8F3B3ABF8 /* UMSHTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; path = UMSHTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		F8D039BDEB6291B3D807D5A2 /* UMSHUITests/UMSHUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSHUITests/UMSHUITests.swift; sourceTree = "<group>"; };
+		26D2DBEB9A91A88B23B4E3AC /* UMSHUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; path = UMSHUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -249,6 +269,15 @@
 		400000000000000000000002 /* Sources */ = {
 			isa = PBXGroup;
 			children = (
+				F8D039BDEB6291B3D807D5A2 /* UMSHUITests/UMSHUITests.swift */,
+				49AD04004A0CEFD14A0E09D6 /* UMSHTests/UMSHTests.swift */,
+				8C78E7E2074741B596606E30 /* UMSH/DesignSystem/OperationFailureView.swift */,
+				4D6E89B15898FBD4FE9B65F9 /* UMSH/App/DebugTestHost.swift */,
+				4048AA44DEA0BE0ACE259BDA /* UMSH/App/ApplicationStateLoader.swift */,
+				49639CD17EDC87DD05ED742C /* UMSH/App/ChatSubmissionCoordinator.swift */,
+				C89ACCEF04F1CDDB4E109D76 /* UMSH/App/ConversationDraftStore.swift */,
+				E0658BFB3A3FF676EBE96770 /* UMSH/App/IdentityOperations.swift */,
+				BB311D8E101CBCDE9E974E35 /* UMSH/App/AppOperationError.swift */,
 				200000000000000000000001 /* UMSH/App/UMSHApp.swift */,
 				200000000000000000000002 /* UMSH/App/AppRootView.swift */,
 				2000000000000000000000E2 /* UMSH/App/AppRuntime.swift */,
@@ -362,6 +391,8 @@
 		400000000000000000000003 /* Products */ = {
 			isa = PBXGroup;
 			children = (
+				26D2DBEB9A91A88B23B4E3AC /* UMSHUITests.xctest */,
+				9DEA7CFCDB43C3E8F3B3ABF8 /* UMSHTests.xctest */,
 				20000000000000000000000D /* UMSH.app */,
 			);
 			name = Products;
@@ -391,7 +422,39 @@
 			productReference = 20000000000000000000000D /* UMSH.app */;
 			productType = "com.apple.product-type.application";
 		};
+		335CEA23E2F18D75177CBA55 /* UMSHTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 5D7C1199CA7559E89842600D /* UMSHTests configuration list */;
+			buildPhases = (59D3428F3B770598E988C11D /* UMSHTests Sources */,);
+			buildRules = ();
+			dependencies = (5481BF562DC2F4E7338B78F1 /* UMSH dependency */,);
+			name = UMSHTests;
+			productName = UMSHTests;
+			productReference = 9DEA7CFCDB43C3E8F3B3ABF8 /* UMSHTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+		985B5E009C794A180B74222A /* UMSHUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = CC05FCF70B4D0D041CE1D21F /* UMSHUITests configuration list */;
+			buildPhases = (B80082F4827FCBE14B27422B /* UMSHUITests Sources */,);
+			buildRules = ();
+			dependencies = (CBE002F3F63570F843DA77C0 /* UMSH dependency */,);
+			name = UMSHUITests;
+			productName = UMSHUITests;
+			productReference = 26D2DBEB9A91A88B23B4E3AC /* UMSHUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
 /* End PBXNativeTarget section */
+
+/* Begin PBXContainerItemProxy section */
+		E0ADDF2195A0DFEB5A7587E9 /* App proxy */ = {isa = PBXContainerItemProxy; containerPortal = 700000000000000000000001; proxyType = 1; remoteGlobalIDString = 500000000000000000000001; remoteInfo = UMSH; };
+		FF3093A0345A60AE7FE8B7F7 /* App proxy */ = {isa = PBXContainerItemProxy; containerPortal = 700000000000000000000001; proxyType = 1; remoteGlobalIDString = 500000000000000000000001; remoteInfo = UMSH; };
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXTargetDependency section */
+		5481BF562DC2F4E7338B78F1 /* UMSH dependency */ = {isa = PBXTargetDependency; target = 500000000000000000000001; targetProxy = E0ADDF2195A0DFEB5A7587E9 /* App proxy */; };
+		CBE002F3F63570F843DA77C0 /* UMSH dependency */ = {isa = PBXTargetDependency; target = 500000000000000000000001; targetProxy = FF3093A0345A60AE7FE8B7F7 /* App proxy */; };
+/* End PBXTargetDependency section */
 
 /* Begin PBXProject section */
 		700000000000000000000001 /* Project object */ = {
@@ -422,6 +485,8 @@
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
+				985B5E009C794A180B74222A /* UMSHUITests */,
+				335CEA23E2F18D75177CBA55 /* UMSHTests */,
 				500000000000000000000001 /* UMSH */,
 			);
 		};
@@ -464,6 +529,13 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				1D68EF20EE14DD06275D4282 /* UMSH/DesignSystem/OperationFailureView.swift in Sources */,
+				530FE59CA145F07F03343576 /* UMSH/App/DebugTestHost.swift in Sources */,
+				4488F44F088ED11EA4C30E29 /* UMSH/App/ApplicationStateLoader.swift in Sources */,
+				84F9C6AFE8462DF41305DE25 /* UMSH/App/ChatSubmissionCoordinator.swift in Sources */,
+				6DECDAF81E0BC26018152908 /* UMSH/App/ConversationDraftStore.swift in Sources */,
+				A427660E57E1597A554B3DC4 /* UMSH/App/IdentityOperations.swift in Sources */,
+				F3B94716160F0C8088A80A82 /* UMSH/App/AppOperationError.swift in Sources */,
 				100000000000000000000001 /* UMSH/App/UMSHApp.swift in Sources */,
 				100000000000000000000002 /* UMSH/App/AppRootView.swift in Sources */,
 				1000000000000000000000E2 /* UMSH/App/AppRuntime.swift in Sources */,
@@ -571,6 +643,8 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		59D3428F3B770598E988C11D /* UMSHTests Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (0664B7196B500C9E83CC2DD2 /* UMSHTests/UMSHTests.swift in Sources */,); runOnlyForDeploymentPostprocessing = 0; };
+		B80082F4827FCBE14B27422B /* UMSHUITests Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (F178D9252F3C6C0F301FD5B8 /* UMSHUITests/UMSHUITests.swift in Sources */,); runOnlyForDeploymentPostprocessing = 0; };
 /* End PBXSourcesBuildPhase section */
 
 /* Begin XCBuildConfiguration section */
@@ -578,6 +652,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CLANG_ENABLE_MODULES = YES;
+				ENABLE_TESTABILITY = YES;
 				"EXCLUDED_ARCHS[sdk=iphonesimulator*]" = x86_64;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
 				SWIFT_VERSION = 6.0;
@@ -661,6 +736,68 @@
 			};
 			name = Release;
 		};
+		12D4756E596E56BE156C1510 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.voria.umsh.UMSHTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = 1;
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/UMSH.app/UMSH";
+			};
+			name = Debug;
+		};
+		972FA44C9A30451147373E07 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.voria.umsh.UMSHTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = 1;
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/UMSH.app/UMSH";
+			};
+			name = Release;
+		};
+		21D18BB0B0F99DD8FA6E36FC /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.voria.umsh.UMSHUITests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = 1;
+				TEST_TARGET_NAME = UMSH;
+			};
+			name = Debug;
+		};
+		2999DC19D7D86E168558BC30 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.voria.umsh.UMSHUITests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = 1;
+				TEST_TARGET_NAME = UMSH;
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -682,6 +819,8 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
+		5D7C1199CA7559E89842600D /* UMSHTests configuration list */ = {isa = XCConfigurationList; buildConfigurations = (12D4756E596E56BE156C1510 /* Debug */, 972FA44C9A30451147373E07 /* Release */,); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+		CC05FCF70B4D0D041CE1D21F /* UMSHUITests configuration list */ = {isa = XCConfigurationList; buildConfigurations = (21D18BB0B0F99DD8FA6E36FC /* Debug */, 2999DC19D7D86E168558BC30 /* Release */,); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
 /* End XCConfigurationList section */
 
 /* Begin XCLocalSwiftPackageReference section */

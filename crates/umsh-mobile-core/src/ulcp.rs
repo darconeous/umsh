@@ -590,8 +590,20 @@ pub struct UlcpRawTransmitResultRecord {
 /// A correlated CRP operation completed with a non-OK `PROP_LAST_STATUS`.
 /// This is an operation failure, never evidence that the transport framing is
 /// corrupt or that the BLE connection should be closed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
+pub enum UlcpOperationFailureKind {
+    AlreadyApplied,
+    ItemMissing,
+    Capacity,
+    /// The live mutation succeeded; its chained persistence step failed.
+    SaveFailed,
+    Rejected,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
 pub struct UlcpOperationErrorRecord {
+    pub kind: UlcpOperationFailureKind,
+    /// Diagnostic labels, never inputs to host-side control flow.
     pub operation: String,
     pub status_code: u32,
     pub status_name: String,
@@ -2593,7 +2605,7 @@ impl MobileUlcpSession {
                 {
                     state.note_mismatch("save device channel keys".to_owned(), &response);
                 } else if inspect_ulcp_status(response.value.clone())? != 0 {
-                    operation_error = Some(ulcp_operation_error(
+                    operation_error = Some(ulcp_save_operation_error(
                         "save device channel keys".to_owned(),
                         response.value.as_slice(),
                     )?);
@@ -2680,7 +2692,7 @@ impl MobileUlcpSession {
                     // session stays attached and the caller sees the same
                     // `saved` warning path a failed configuration save uses.
                     let table = dev_key_table_name(property);
-                    operation_error = Some(ulcp_operation_error(
+                    operation_error = Some(ulcp_save_operation_error(
                         format!("save device {table}s"),
                         response.value.as_slice(),
                     )?);
@@ -6714,10 +6726,25 @@ fn ulcp_operation_error(
         return Err(MobileError::InvalidUlcpFrame);
     }
     Ok(UlcpOperationErrorRecord {
+        kind: match status {
+            umsh_ulcp::Status::ALREADY => UlcpOperationFailureKind::AlreadyApplied,
+            umsh_ulcp::Status::ITEM_NOT_FOUND => UlcpOperationFailureKind::ItemMissing,
+            umsh_ulcp::Status::NOMEM => UlcpOperationFailureKind::Capacity,
+            _ => UlcpOperationFailureKind::Rejected,
+        },
         operation,
         status_code,
         status_name: format!("{status:?}"),
     })
+}
+
+fn ulcp_save_operation_error(
+    operation: String,
+    value: &[u8],
+) -> Result<UlcpOperationErrorRecord, MobileError> {
+    let mut error = ulcp_operation_error(operation, value)?;
+    error.kind = UlcpOperationFailureKind::SaveFailed;
+    Ok(error)
 }
 
 /// Summarize a frame's header for a diagnostic log.
@@ -7122,6 +7149,23 @@ mod tests {
                 });
             pending.extend(update.outbound_frames);
         }
+    }
+
+    #[test]
+    fn operation_failure_kind_does_not_depend_on_diagnostic_labels() {
+        let value = [umsh_ulcp::Status::NOMEM.0 as u8];
+        assert_eq!(
+            ulcp_operation_error("any diagnostic label".into(), &value)
+                .unwrap()
+                .kind,
+            UlcpOperationFailureKind::Capacity
+        );
+        assert_eq!(
+            ulcp_save_operation_error("any diagnostic label".into(), &value)
+                .unwrap()
+                .kind,
+            UlcpOperationFailureKind::SaveFailed
+        );
     }
 
     #[test]
@@ -8406,6 +8450,7 @@ mod tests {
                 assert_eq!(
                     update.operation_error,
                     Some(UlcpOperationErrorRecord {
+                        kind: UlcpOperationFailureKind::Rejected,
                         operation: format!("set property {}", payload.key),
                         status_code: umsh_ulcp::Status::INVALID_ARGUMENT.0,
                         status_name: "Status::INVALID_ARGUMENT".into(),
@@ -8694,6 +8739,7 @@ mod tests {
         assert_eq!(
             full.operation_error,
             Some(UlcpOperationErrorRecord {
+                kind: UlcpOperationFailureKind::Capacity,
                 operation: "insert device peer".into(),
                 status_code: umsh_ulcp::Status::NOMEM.0,
                 status_name: "Status::NOMEM".into(),
@@ -8924,6 +8970,7 @@ mod tests {
         assert_eq!(
             full.operation_error,
             Some(UlcpOperationErrorRecord {
+                kind: UlcpOperationFailureKind::Capacity,
                 operation: "insert device administrator".into(),
                 status_code: umsh_ulcp::Status::NOMEM.0,
                 status_name: "Status::NOMEM".into(),
@@ -9058,6 +9105,7 @@ mod tests {
         assert_eq!(
             full.operation_error,
             Some(UlcpOperationErrorRecord {
+                kind: UlcpOperationFailureKind::Capacity,
                 operation: "insert device channel key".into(),
                 status_code: umsh_ulcp::Status::NOMEM.0,
                 status_name: "Status::NOMEM".into(),
@@ -9375,6 +9423,7 @@ mod tests {
         assert_eq!(
             refused.operation_error,
             Some(UlcpOperationErrorRecord {
+                kind: UlcpOperationFailureKind::Rejected,
                 operation: "drain offline queue".into(),
                 status_code: umsh_ulcp::Status::INVALID_STATE.0,
                 status_name: "Status::INVALID_STATE".into(),
@@ -9500,6 +9549,7 @@ mod tests {
         assert_eq!(
             full.operation_error,
             Some(UlcpOperationErrorRecord {
+                kind: UlcpOperationFailureKind::Capacity,
                 operation: "provision host peer key".into(),
                 status_code: umsh_ulcp::Status::NOMEM.0,
                 status_name: "Status::NOMEM".into(),

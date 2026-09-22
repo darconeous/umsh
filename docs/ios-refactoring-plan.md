@@ -111,72 +111,133 @@ Validation completed on September 21, 2026:
   appearance; results are `target/ios-ui-gallery/map-restored.png` and
   `target/ios-ui-gallery/map-restored-dark-accessibility.png`.
 
-Stage 1 implementation is complete. Stop here and wait for further instructions;
-the Stage 2 work below remains pending.
+Stage 1 implementation is complete, including the map metadata correction.
 
-## Stage 2: behavior and service boundaries—pending authorization
+## Stage 2: behavior and service boundaries
 
-None of this stage is part of the Stage 1 implementation. Work in small,
-independently reviewable changes, with a working application after each step.
+Authorized after the Stage 1 and Bluetooth recovery commits. The implementation
+keeps the existing process-owned transport and changes the application boundaries
+listed below. It does not attempt to replace every best-effort background action
+or every feature-specific result type.
 
 ### 1. Repair the test foundation
 
-- [ ] Repair the persistence smoke test's historical version-12 fixture. Its
+- [x] Repair the persistence smoke test's historical version-12 fixture. Its
   downgrade helper currently leaves `is_reaction` present, so migration attempts
   to add an existing column. Use an actual historical schema fixture rather than
   reverse-engineering one by dropping columns from today's schema.
-- [ ] Add an app Swift Testing target and a small UI test target. Cover observable
+- [x] Add an app Swift Testing target and a small UI test target. Cover observable
   behavior and meaningful transitions, not private implementation details.
-- [ ] Integrate the focused checks with CI and retain the existing host smoke
+- [x] Integrate the focused checks with CI and retain the existing host smoke
   tests. Keep device-only qualification separate from simulator/build evidence.
-- [ ] Add narrow dependency seams where needed for deterministic identity,
+- [x] Add narrow dependency seams where needed for deterministic identity,
   messaging, persistence, clock, and transport behavior. Avoid a blanket mock
   layer or a parallel application framework.
 
 ### 2. Make errors and operation outcomes explicit
 
-- [ ] Replace silent catches and ambiguous optional/Boolean outcomes at the
+- [x] Replace silent catches and ambiguous optional/Boolean outcomes at the
   relevant boundaries with typed results that distinguish cancellation,
   unavailable services, validation failures, and operational failures.
-- [ ] Keep user-facing recovery near the failed action. Reuse error presentation
+- [x] Keep user-facing recovery near the failed action. Reuse error presentation
   while preserving feature-specific recovery actions and retry policy.
-- [ ] Test that failed persistence or device operations do not report success,
+- [x] Test that failed persistence or device operations do not report success,
   erase pending input, or leave controls permanently busy.
 
 ### 3. Split application responsibilities at ownership boundaries
 
-- [ ] Keep `AppRuntime` as the composition root; separate identity operations,
+- [x] Keep `AppRuntime` as the composition root; separate identity operations,
   messaging coordination, conversation drafts, and persistence-facing work into
   focused collaborators as their contracts become clear.
-- [ ] Preserve the single process-owned companion transport and the distinction
+- [x] Preserve the single process-owned companion transport and the distinction
   between companion use and temporary administrative device sessions.
-- [ ] Keep AccessorySetupKit authorization in its current owner and CoreBluetooth
+- [x] Keep AccessorySetupKit authorization in its current owner and CoreBluetooth
   in the transport layer. Do not rebuild these lifetimes to simplify a view.
-- [ ] Give asynchronous operations explicit cancellation and ownership semantics;
+- [x] Give asynchronous operations explicit cancellation and ownership semantics;
   avoid unstructured tasks that outlive the state they update.
-- [ ] Prefer ordinary SwiftUI composition and observable state. Introduce a
+- [x] Prefer ordinary SwiftUI composition and observable state. Introduce a
   screen model only when it owns meaningful behavior, not for every view.
 
 ### 4. Strengthen Swift/Rust contracts
 
-- [ ] Review result and error types at the UniFFI boundary and make outcomes
+- [x] Review result and error types at the UniFFI boundary and make outcomes
   exhaustive where Swift currently reconstructs meaning from strings or nil.
-- [ ] Keep protocol interpretation and validation with the core that owns them;
+- [x] Keep protocol interpretation and validation with the core that owns them;
   expose the data the interface actually needs rather than duplicating decoding.
-- [ ] Validate boundary changes with targeted Rust and Swift tests and rebuild
+- [x] Validate boundary changes with targeted Rust and Swift tests and rebuild
   the generated bindings together with their consumers.
 
 ### 5. Narrow updates and audit concurrency
 
-- [ ] Replace broad reloads with targeted updates where measurements and call
+- [x] Replace broad reloads with targeted updates where measurements and call
   paths show they cause unnecessary work or stale UI. Retain clear fallback
   reconciliation rather than assuming local optimistic state is authoritative.
-- [ ] Audit queue and actor isolation at transport callbacks. Add assertions and
+- [x] Audit queue and actor isolation at transport callbacks. Add assertions and
   focused tests around the real callback and connection state machines.
-- [ ] Check request cancellation, disconnect/reconnect, stale session responses,
+- [x] Check request cancellation, disconnect/reconnect, stale session responses,
   and pending-operation completion without disturbing restoration ownership.
-- [ ] Measure before introducing caching, extra observation layers, or new
+- [x] Measure before introducing caching, extra observation layers, or new
   performance abstractions.
+
+### Implementation and evidence
+
+- `IdentityOperations` owns vault/store decisions and name persistence. A failed
+  identity lookup cannot be mistaken for an empty install. Name-save results
+  reach Settings and onboarding; onboarding keeps the entered name and stays on
+  the same step after failure.
+- `ConversationDraftStore` serializes each conversation's writes, retains failed
+  input in memory, rejects writes after runtime shutdown, and prevents send
+  cleanup from replacing newer input. A canceled caller cannot start a new
+  save, but it cannot stop the clear that follows a released message either;
+  only runtime shutdown refuses that write. Views report save failures and can
+  retry; leaving a transcript hands off its final text without waiting for the
+  debounce.
+- `ChatSubmissionCoordinator` owns persist/reject/release ordering. A persistence
+  failure cannot release frames. A release failure marks the stored message as
+  failed without clearing its draft. Failure after release is explicitly a
+  submitted message with a warning, including in the alert title. The only send
+  warning is the submission's own draft-clear failure, since that is the one
+  case where the composer must keep its text; a failed reload after a send is
+  reported by the root view's banner instead of being repeated in the alert.
+- `ApplicationStateLoader` maps a complete storage snapshot before publishing.
+  Read failures retain the last usable interface and provide a retry. The store
+  reads each snapshot in a read transaction. Chat submission and read cursors
+  skip peer decoding and neighbor-report queries; structural changes fall back
+  to full reconciliation. A test makes the report table unavailable to prove
+  these conversation-only refreshes do not query it. No latency claim or new
+  caching layer is based on this check.
+- `UlcpOperationFailureKind` moves device-operation classification into Rust.
+  Swift exhaustively switches on the kind instead of parsing English operation
+  and status labels. Live changes whose chained save failed retain the existing
+  unsaved-warning behavior. Input errors and compose errors also use exhaustive
+  mappings of UniFFI error cases. Generated Swift bindings and both library
+  slices were rebuilt together.
+- Local management and device-key operations use cancelable waiters. Cancellation
+  releases the caller but keeps the protocol slot occupied until completion or
+  disconnect. Tests cover cancellation before registration and cancellation of
+  an actual session request, including teardown. Session and GATT entry points
+  assert their queue, and cross-queue operation closures are `@Sendable`.
+- The version-12 fixture is frozen from commit `94502d422`, with populated
+  identity, peer, draft, message, checkpoint, and archive records. It migrates to
+  the current schema and opens again without depending on today's CREATE TABLE
+  definitions. No application schema migration was added.
+- `UMSHTests` uses Swift Testing; `UMSHUITests` verifies a failed onboarding save
+  preserves input and a retry advances. Test launches use an isolated store and
+  bypass Keychain/bootstrap/Bluetooth. CI runs both targets, the existing host
+  checks, package tests, and simulator/device build gates.
+
+Validation on September 21, 2026: 147 targeted Rust ULCP tests, 21 application
+tests, the onboarding UI test, and simulator/device Debug builds passed, the
+last two rerun after the final review fixes. All seven host smoke checks passed
+against regenerated bindings: mobile-core Swift, persistence migration (including
+the historical draft, message, checkpoint, and archive records), device
+management, accessory lifecycle, radio host state, radio lifecycle/deadlines,
+and actual-session timeout recovery. The host-state check had never linked the
+mobile-core module and failed on import until this stage; it now builds the
+module the way the other checks do. `git diff --check` is clean. Existing
+observation, fake-radio, and transcript animation warnings remain; the three
+session closure-sendability warnings are resolved. Physical iPhone/radio
+qualification for cancellation and reconnection remains a separate check.
 
 ### Constraints and completion criteria
 
@@ -192,6 +253,8 @@ check for any changed connection behavior.
 
 ## Protocol changes
 
-No ULCP or UMSH wire-protocol changes are proposed. If the boundary review reveals
+No ULCP or UMSH wire-protocol changes were made. The new operation-failure kind
+is an app/core UniFFI record field, so the bindings and native library must be
+rebuilt together; it adds no device or over-the-air field. If the boundary review reveals
 a protocol change is necessary, document it separately here before implementing
 it, including compatibility, firmware/host scope, and validation.

@@ -5,6 +5,7 @@ import UMSHMobileCore
 enum ApplicationStoreError: Error, Equatable, Sendable {
     case applicationSupportUnavailable
     case openFailed(Int32)
+    case recordNotFound
     /// A result code plus SQLite's own account of it. The code alone says only
     /// that something was refused; the message names the column, table or
     /// constraint, which is the difference between a usable report and a guess.
@@ -26,6 +27,8 @@ extension ApplicationStoreError {
             "The Application Support directory is unavailable."
         case .openFailed(let code):
             "sqlite3_open_v2 failed with code \(code)."
+        case .recordNotFound:
+            "The record being updated no longer exists."
         case .sqliteFailure(let code, let message):
             "SQLite returned code \(code): \(message)."
         case .unsupportedSchema(let version):
@@ -445,7 +448,28 @@ private func presenceCode(_ presence: MobileChatPresence) -> Int32 {
 ///
 /// This store contains public application records only. Private identity and
 /// channel key bytes are never accepted by this API and remain in Keychain.
+struct ApplicationRecords: Sendable {
+    let peers: [StoredNode]
+    let channels: [StoredChannel]
+    let conversations: [StoredDirectConversation]
+    let channelConversations: [StoredChannelConversation]
+    let reports: [StoredPeerRepeaterReport]
+}
+
 actor SQLiteApplicationStore {
+    /// One actor turn and one SQLite read transaction. A concurrent writer
+    /// cannot produce a mixture of old and new lists for the interface.
+    func applicationRecords(ownerIdentityID: String, conversationsOnly: Bool = false) throws -> ApplicationRecords {
+        try transaction(write: false) {
+            ApplicationRecords(
+                peers: conversationsOnly ? [] : try listNodes(ownerIdentityID: ownerIdentityID),
+                channels: try channels(ownerIdentityID: ownerIdentityID),
+                conversations: try listDirectConversations(ownerIdentityID: ownerIdentityID),
+                channelConversations: try listChannelConversations(ownerIdentityID: ownerIdentityID),
+                reports: conversationsOnly ? [] : try allPeerRepeaterEntries(ownerIdentityID: ownerIdentityID)
+            )
+        }
+    }
     /// Must equal the highest `PRAGMA user_version` any migration block in
     /// ``migrate(_:)`` stamps. Raise it in the same commit that adds one:
     /// migrations run when the stored version is *below* their target, but the
@@ -771,6 +795,7 @@ actor SQLiteApplicationStore {
         try bindOptional(name, to: statement, at: 1)
         try bind(ownerIdentityID, to: statement, at: 2)
         try stepDone(statement)
+        guard sqlite3_changes(database) == 1 else { throw ApplicationStoreError.recordNotFound }
     }
 
     // MARK: - Channels
@@ -2117,6 +2142,7 @@ actor SQLiteApplicationStore {
         try check(sqlite3_bind_int64(statement, 2, conversationID))
         try bind(ownerIdentityID, to: statement, at: 3)
         try stepDone(statement)
+        guard sqlite3_changes(database) == 1 else { throw ApplicationStoreError.recordNotFound }
     }
 
     /// Mark everything in a conversation read as of now. Addressed rather than
@@ -2239,6 +2265,7 @@ actor SQLiteApplicationStore {
         try check(sqlite3_bind_int64(statement, 2, conversationID))
         try bind(ownerIdentityID, to: statement, at: 3)
         try stepDone(statement)
+        guard sqlite3_changes(database) == 1 else { throw ApplicationStoreError.recordNotFound }
     }
 
     func chatCheckpoints(ownerIdentityID: String) throws -> [MobileChatCheckpointRecord] {
@@ -3897,8 +3924,8 @@ actor SQLiteApplicationStore {
         try stepDone(statement)
     }
 
-    private func transaction<T>(_ operation: () throws -> T) throws -> T {
-        try Self.execute(database, sql: "BEGIN IMMEDIATE")
+    private func transaction<T>(write: Bool = true, _ operation: () throws -> T) throws -> T {
+        try Self.execute(database, sql: write ? "BEGIN IMMEDIATE" : "BEGIN DEFERRED")
         do {
             let value = try operation()
             try Self.execute(database, sql: "COMMIT")

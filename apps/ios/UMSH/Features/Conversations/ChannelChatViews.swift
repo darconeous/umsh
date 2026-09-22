@@ -102,7 +102,7 @@ struct ChannelMemberSheet: View {
     let radioSnapshot: RadioSnapshot
     var peerActions: PeerActions = .unavailable
     var messageActions: ChatMessageActions = .unavailable
-    var updateDraft: ((Int64, String) async -> Void)? = nil
+    var updateDraft: ((Int64, String) async -> AppOperationResult)? = nil
     var sendMessage: ((DirectConversationSummary, String) async -> MessageSendResult)? = nil
 
     @State private var requested = false

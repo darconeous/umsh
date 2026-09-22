@@ -1332,6 +1332,7 @@ final class CoreBluetoothRadioConnection: UlcpRadioSession, RadioConnection, Ulc
     }
 
     private func acceptsGatt(_ peripheral: CBPeripheral) -> Bool {
+        dispatchPrecondition(condition: .onQueue(bluetoothQueue))
         guard self.peripheral === peripheral, central?.state == .poweredOn,
               lifecycle.acceptsGatt else { return false }
         guard peripheral.state == .connected else {

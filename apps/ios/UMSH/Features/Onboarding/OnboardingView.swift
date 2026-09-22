@@ -15,7 +15,7 @@ struct OnboardingView: View {
     /// The name already on record, for the case where this runs against an
     /// identity that has been named by hand.
     let advertisedName: String
-    let saveAdvertisedName: (String) async -> Void
+    let saveAdvertisedName: (String) async -> AppOperationResult
     let discoverRadios: () async -> AsyncStream<[DiscoveredRadio]>
     let selectRadio: (UUID) async throws -> Void
     let stopDiscovery: () async -> Void
@@ -29,6 +29,8 @@ struct OnboardingView: View {
 
     @State private var path: [Step] = []
     @State private var name = ""
+    @State private var saveError: AppOperationError?
+    @State private var isSaving = false
     @FocusState private var nameFocused: Bool
 
     var body: some View {
@@ -80,12 +82,17 @@ struct OnboardingView: View {
             }
 
             Section {
+                if let saveError {
+                    OperationFailureView(error: saveError, retry: continueToRadio)
+                }
                 Button {
                     Task { await continueToRadio() }
                 } label: {
                     Text("Continue").frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.borderedProminent)
+                .accessibilityIdentifier("onboarding.continue")
+                .disabled(isSaving)
                 .listRowBackground(Color.clear)
             }
         }
@@ -123,14 +130,22 @@ struct OnboardingView: View {
     }
 
     private func continueToRadio() async {
+        guard !isSaving else { return }
+        isSaving = true
+        defer { isSaving = false }
         nameFocused = false
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         // Saved before moving on rather than at the end: pairing a radio pushes
         // the display name into the mesh session, and the name should already be
         // the chosen one by the time that happens.
         if trimmed != advertisedName {
-            await saveAdvertisedName(trimmed)
+            if case let .failure(error) = await saveAdvertisedName(trimmed) {
+                saveError = error
+                return
+            }
         }
+        guard !Task.isCancelled else { return }
+        saveError = nil
         path.append(.radio)
     }
 }

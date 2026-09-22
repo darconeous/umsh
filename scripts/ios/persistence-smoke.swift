@@ -10,7 +10,7 @@ struct PersistenceSmokeTest {
         defer { try? FileManager.default.removeItem(at: root) }
         let databaseURL = root.appendingPathComponent("application.sqlite")
 
-        var store = try SQLiteApplicationStore(path: databaseURL.path)
+        let store = try SQLiteApplicationStore(path: databaseURL.path)
         let initialSchemaVersion = try await store.schemaVersion()
         precondition(initialSchemaVersion == SQLiteApplicationStore.currentSchemaVersion)
 
@@ -182,20 +182,30 @@ struct PersistenceSmokeTest {
         let migratedNodes = try await store.listNodes(ownerIdentityID: "legacy-public")
         precondition(migratedNodes.map(\.publicAddress) == ["legacy-peer"])
 
-        // v12 → current upgrade on a populated database: restore the v12 shape
-        //—v13's columns gone, v14's dropped `is_contact` back—and stamp
-        // user_version 12, then reopen. Nothing may vanish, and every
-        // pre-existing row must upgrade as saved.
-        store = try SQLiteApplicationStore(path: databaseURL.path)
-        try await store.demotePeerToTransient(ownerIdentityID: "alice", publicAddress: "flood-0")
-        try downgradeToV12(path: databaseURL.path)
-        let reopened = try SQLiteApplicationStore(path: databaseURL.path)
+        // Open an independent, populated historical database. This fixture is
+        // frozen, so future migrations cannot silently change the starting schema.
+        let historicalURL = root.appendingPathComponent("historical.sqlite")
+        try createHistoricalStore(path: historicalURL.path)
+        let reopened = try SQLiteApplicationStore(path: historicalURL.path)
         let reopenedSchemaVersion = try await reopened.schemaVersion()
         precondition(reopenedSchemaVersion == SQLiteApplicationStore.currentSchemaVersion)
         let upgraded = try await reopened.listNodes(ownerIdentityID: "alice")
-        precondition(upgraded.contains { $0.publicAddress == "flood-0" })
+        precondition(upgraded.map(\.publicAddress) == ["historical-peer"])
         precondition(upgraded.allSatisfy(\.isSaved))
         precondition(upgraded.allSatisfy { !$0.isFavorite && !$0.onDeviceIdentity })
+        precondition(upgraded[0].advertisementAuthenticated)
+        let historicalConversations = try await reopened.listDirectConversations(ownerIdentityID: "alice")
+        precondition(historicalConversations[0].draftText == "Historical draft")
+        precondition(historicalConversations[0].lastMessage?.body == "Historical message")
+        let checkpoints = try await reopened.chatCheckpoints(ownerIdentityID: "alice")
+        precondition(checkpoints.count == 1)
+        precondition(checkpoints[0].conversationAddress == "historical-peer")
+        precondition(checkpoints[0].nextId == 7 && checkpoints[0].epoch == 2)
+        let archive = try await reopened.chatArchive(ownerIdentityID: "alice",
+            lookup: .init(requestId: 0, conversationAddress: "historical-peer", messageId: 6, fragmentIndex: 0))
+        precondition(archive == Data([1, 2, 3]))
+        // Opening an already migrated store must also succeed.
+        _ = try SQLiteApplicationStore(path: historicalURL.path)
 
         print("SQLite tier, delete/demote, retention, migration, and upgrade checks passed")
 
@@ -213,51 +223,19 @@ struct PersistenceSmokeTest {
         return found
     }
 
-    /// Rewind a current-schema database to the v12 shape so the migration path
-    /// from a populated store is exercised for real.
-    ///
-    /// Every migration above 12 has to be undone, not just the ones whose data
-    /// the assertions look at: replaying a `CREATE TABLE` over a table the
-    /// rewind left behind fails, so a partial rewind tests nothing and takes
-    /// the whole harness down with it.
-    private static func downgradeToV12(path: String) throws {
+    private static func createHistoricalStore(path: String) throws {
+        let fixture = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .appendingPathComponent("fixtures/application-v12.sql")
+        let sql = try String(contentsOf: fixture, encoding: .utf8)
         var connection: OpaquePointer?
-        precondition(sqlite3_open(path, &connection) == SQLITE_OK, "downgrade open failed")
+        precondition(sqlite3_open(path, &connection) == SQLITE_OK)
         defer { sqlite3_close(connection) }
-        let sql = """
-            -- v16: conversation addressing, per-message reception, read cursors.
-            DROP TABLE channel_conversation;
-            ALTER TABLE direct_conversation DROP COLUMN last_read_at_ms;
-            ALTER TABLE chat_message DROP COLUMN rx_source_authenticated;
-            ALTER TABLE chat_message DROP COLUMN rx_route_hints;
-            ALTER TABLE chat_message DROP COLUMN rx_hop_count;
-            ALTER TABLE chat_message DROP COLUMN rx_lqi;
-            ALTER TABLE chat_message DROP COLUMN rx_snr_cb;
-            ALTER TABLE chat_message DROP COLUMN rx_rssi_dbm;
-            ALTER TABLE chat_message DROP COLUMN sender_hint;
-            ALTER TABLE chat_outbound_archive
-                RENAME COLUMN conversation_address TO peer_address;
-            ALTER TABLE chat_stream_checkpoint
-                RENAME COLUMN conversation_address TO peer_address;
-            ALTER TABLE chat_message RENAME COLUMN conversation_address TO peer_address;
-
-            -- v15: channel membership.
-            DROP TABLE channel;
-
-            -- v14 and v13: the node tiering columns.
-            DROP INDEX node_owner_transient_heard_idx;
-            ALTER TABLE node DROP COLUMN is_saved;
-            ALTER TABLE node DROP COLUMN is_favorite;
-            ALTER TABLE node DROP COLUMN on_dev_identity;
-            ALTER TABLE node ADD COLUMN is_contact INTEGER NOT NULL DEFAULT 0;
-
-            PRAGMA user_version = 12;
-            """
         precondition(
             sqlite3_exec(connection, sql, nil, nil, nil) == SQLITE_OK,
-            "downgrade DDL failed: \(String(cString: sqlite3_errmsg(connection)))"
+            "Historical fixture failed: \(String(cString: sqlite3_errmsg(connection)))"
         )
     }
+
 }
 
 // MARK: - Chat scale benchmark

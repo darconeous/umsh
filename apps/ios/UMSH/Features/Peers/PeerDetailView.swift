@@ -48,7 +48,7 @@ struct PeerDetailView: View {
     /// What this sheet can do with the node. One bundle so the sheet is the
     /// same wherever it is opened from.
     let actions: PeerActions
-    let updateDraft: ((Int64, String) async -> Void)?
+    let updateDraft: ((Int64, String) async -> AppOperationResult)?
     let sendMessage: ((DirectConversationSummary, String) async -> MessageSendResult)?
     let messageActions: ChatMessageActions
     /// Offered when this node may not exist locally yet—a device the
@@ -111,7 +111,7 @@ struct PeerDetailView: View {
         radioSnapshot: Binding<RadioSnapshot>,
         conversations: Binding<[DirectConversationSummary]> = .constant([]),
         actions: PeerActions = .unavailable,
-        updateDraft: ((Int64, String) async -> Void)? = nil,
+        updateDraft: ((Int64, String) async -> AppOperationResult)? = nil,
         sendMessage: ((DirectConversationSummary, String) async -> MessageSendResult)? = nil,
         messageActions: ChatMessageActions = .unavailable,
         savePeer: (() async -> Bool)? = nil,
@@ -431,7 +431,7 @@ struct PeerDetailView: View {
                 ConversationThreadView(
                     conversation: conversation,
                     radioSnapshot: radioSnapshot,
-                    updateDraft: updateDraft ?? { _, _ in },
+                    updateDraft: updateDraft ?? { _, _ in .failure(.unavailable("Saving is unavailable.")) },
                     sendMessage: { item, body in
                         guard case let .direct(conversation) = item, let sendMessage else {
                             return .failed("Messaging is unavailable.")

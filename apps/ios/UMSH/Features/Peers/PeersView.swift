@@ -21,7 +21,7 @@ struct PeersView: View {
     /// to the Conversations tab and pushes the transcript.
     var openConversation: (DirectConversationSummary) -> Void = { _ in }
     var peerActions: PeerActions = .unavailable
-    let updateDraft: ((Int64, String) async -> Void)?
+    let updateDraft: ((Int64, String) async -> AppOperationResult)?
     let sendMessage: ((DirectConversationSummary, String) async -> MessageSendResult)?
     var messageActions: ChatMessageActions = .unavailable
     /// Open the Discover Peers sheet, which the app root owns and presents.

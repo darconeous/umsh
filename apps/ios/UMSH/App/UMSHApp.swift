@@ -46,6 +46,16 @@ final class AppDelegate: NSObject, UIApplicationDelegate, ObservableObject {
     #endif
 
     override init() {
+        #if DEBUG
+        if AppTestLaunch.isTesting {
+            currentMode = .staging
+            runtime = AppRuntime(radioConnection: FakeRadioConnection(),
+                                 openStore: { try SQLiteApplicationStore(path: ":memory:") },
+                                 isStaging: true)
+            super.init()
+            return
+        }
+        #endif
         let mode = Self.desiredMode(UserDefaults.standard)
         currentMode = mode
         // The radio and the runtime are both built here, before `super.init`
@@ -86,6 +96,9 @@ final class AppDelegate: NSObject, UIApplicationDelegate, ObservableObject {
         _ application: UIApplication,
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
     ) -> Bool {
+        #if DEBUG
+        if AppTestLaunch.isTesting { return true }
+        #endif
         // Claiming the notification delegate is the whole point of touching
         // the service here: it must be set before launch completes.
         _ = ChatNotificationService.shared
@@ -232,7 +245,15 @@ private struct AppRootHost: View {
         // Keyed on the runtime so a debug mode change builds a fresh
         // interface with it, discarding the tab and sheet state that
         // belonged to the old one.
-        AppRootView(runtime: delegate.runtime)
-            .id(ObjectIdentifier(delegate.runtime))
+        #if DEBUG
+        if AppTestLaunch.isUITest {
+            DebugTestHost()
+        } else {
+            AppRootView(runtime: delegate.runtime)
+                .id(ObjectIdentifier(delegate.runtime))
+        }
+        #else
+        AppRootView(runtime: delegate.runtime).id(ObjectIdentifier(delegate.runtime))
+        #endif
     }
 }

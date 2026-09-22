@@ -15,6 +15,7 @@ if [ ! -f "$core_root/host/release/libumsh_mobile_core.dylib" ]; then
 fi
 
 mkdir -p "$build_root"
+export CLANG_MODULE_CACHE_PATH="$build_root/module-cache"
 
 swiftc \
     -swift-version 6 \

@@ -10743,19 +10743,22 @@ public func FfiConverterTypeUlcpMismatchedResponseRecord_lower(_ value: UlcpMism
 }
 
 
-/**
- * A correlated CRP operation completed with a non-OK `PROP_LAST_STATUS`.
- * This is an operation failure, never evidence that the transport framing is
- * corrupt or that the BLE connection should be closed.
- */
 public struct UlcpOperationErrorRecord: Equatable, Hashable {
+    public var kind: UlcpOperationFailureKind
+    /**
+     * Diagnostic labels, never inputs to host-side control flow.
+     */
     public var operation: String
     public var statusCode: UInt32
     public var statusName: String
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(operation: String, statusCode: UInt32, statusName: String) {
+    public init(kind: UlcpOperationFailureKind,
+        /**
+         * Diagnostic labels, never inputs to host-side control flow.
+         */operation: String, statusCode: UInt32, statusName: String) {
+        self.kind = kind
         self.operation = operation
         self.statusCode = statusCode
         self.statusName = statusName
@@ -10777,6 +10780,7 @@ public struct FfiConverterTypeUlcpOperationErrorRecord: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> UlcpOperationErrorRecord {
         return
             try UlcpOperationErrorRecord(
+                kind: FfiConverterTypeUlcpOperationFailureKind.read(from: &buf),
                 operation: FfiConverterString.read(from: &buf),
                 statusCode: FfiConverterUInt32.read(from: &buf),
                 statusName: FfiConverterString.read(from: &buf)
@@ -10784,6 +10788,7 @@ public struct FfiConverterTypeUlcpOperationErrorRecord: FfiConverterRustBuffer {
     }
 
     public static func write(_ value: UlcpOperationErrorRecord, into buf: inout [UInt8]) {
+        FfiConverterTypeUlcpOperationFailureKind.write(value.kind, into: &buf)
         FfiConverterString.write(value.operation, into: &buf)
         FfiConverterUInt32.write(value.statusCode, into: &buf)
         FfiConverterString.write(value.statusName, into: &buf)
@@ -15065,6 +15070,101 @@ public func FfiConverterTypeUlcpManageCategory_lift(_ buf: RustBuffer) throws ->
 #endif
 public func FfiConverterTypeUlcpManageCategory_lower(_ value: UlcpManageCategory) -> RustBuffer {
     return FfiConverterTypeUlcpManageCategory.lower(value)
+}
+
+
+
+/**
+ * A correlated CRP operation completed with a non-OK `PROP_LAST_STATUS`.
+ * This is an operation failure, never evidence that the transport framing is
+ * corrupt or that the BLE connection should be closed.
+ */
+
+public enum UlcpOperationFailureKind: Equatable, Hashable {
+
+    case alreadyApplied
+    case itemMissing
+    case capacity
+    /**
+     * The live mutation succeeded; its chained persistence step failed.
+     */
+    case saveFailed
+    case rejected
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension UlcpOperationFailureKind: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeUlcpOperationFailureKind: FfiConverterRustBuffer {
+    typealias SwiftType = UlcpOperationFailureKind
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> UlcpOperationFailureKind {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .alreadyApplied
+
+        case 2: return .itemMissing
+
+        case 3: return .capacity
+
+        case 4: return .saveFailed
+
+        case 5: return .rejected
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: UlcpOperationFailureKind, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .alreadyApplied:
+            writeInt(&buf, Int32(1))
+
+
+        case .itemMissing:
+            writeInt(&buf, Int32(2))
+
+
+        case .capacity:
+            writeInt(&buf, Int32(3))
+
+
+        case .saveFailed:
+            writeInt(&buf, Int32(4))
+
+
+        case .rejected:
+            writeInt(&buf, Int32(5))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeUlcpOperationFailureKind_lift(_ buf: RustBuffer) throws -> UlcpOperationFailureKind {
+    return try FfiConverterTypeUlcpOperationFailureKind.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeUlcpOperationFailureKind_lower(_ value: UlcpOperationFailureKind) -> RustBuffer {
+    return FfiConverterTypeUlcpOperationFailureKind.lower(value)
 }
 
 

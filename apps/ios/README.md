@@ -103,6 +103,34 @@ outstanding control-transaction reports used by those deadlines. Physical iPhone
 checks remain necessary for Bluetooth resets, dropped callbacks, Service Changed,
 AccessorySetupKit invalidation, and background reconnection.
 
+## Application behavior tests
+
+The shared `UMSH` scheme includes a Swift Testing target (`UMSHTests`) and a
+small XCTest UI target (`UMSHUITests`). Run them with an available iPhone
+simulator:
+
+```sh
+xcodebuild test -project apps/ios/UMSH.xcodeproj -scheme UMSH \
+  -destination 'platform=iOS Simulator,name=iPhone 18 Pro' CODE_SIGNING_ALLOWED=NO
+```
+
+Test launches use an isolated in-memory store and never start the process
+runtime, Keychain bootstrap, or Bluetooth manager. The UI test hosts the real
+onboarding view with a controlled save failure followed by success. Application
+tests exercise real SQLite failures, draft retention, submission ordering,
+typed core errors, and local-operation cancellation. Host smoke checks remain
+under `scripts/ios/verify-*.sh`; the persistence check loads a frozen, populated
+version-12 SQL fixture from commit `94502d422`.
+
+`AppRuntime` composes identity decisions (`IdentityOperations`), draft writes
+(`ConversationDraftStore`), submission transactions (`ChatSubmissionCoordinator`),
+and storage-to-view mapping (`ApplicationStateLoader`). The runtime still owns
+observable application state and the process's companion connection. A full
+reload is authoritative and publishes only after every read succeeds. Sending
+and marking a conversation read use narrower summary reads; a missing peer
+triggers full reconciliation. Failed draft writes retain text in memory and
+report failure to the caller; they are not a persistent outbox.
+
 ## Running against a real radio in the simulator
 
 The simulator has no Bluetooth, so a simulator build cannot reach a

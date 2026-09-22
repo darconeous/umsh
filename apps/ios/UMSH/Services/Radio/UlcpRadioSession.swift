@@ -216,7 +216,7 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
     var refreshInProgress = false
     var refreshWaiters: [CheckedContinuation<RadioSnapshot, any Error>] = []
     var configurationWaiter: CheckedContinuation<Void, any Error>?
-    var devicePeerWaiter: CheckedContinuation<Void, any Error>?
+    var devicePeerWaiter: RadioOperationWaiter<Void>?
     var meshSession: MobileMeshSession?
     var pingWaiters: [UInt64: CheckedContinuation<RadioPingResult, any Error>] = [:]
     /// Callers awaiting a node-management exchange, by operation id.
@@ -231,7 +231,7 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
     /// by the session update that carries its completion. One at a time
     /// because the Rust session runs one at a time.
     var localManagementWaiter:
-        CheckedContinuation<UlcpLocalManagementEventRecord, any Error>?
+        RadioOperationWaiter<UlcpLocalManagementEventRecord>?
     var propertyPushContinuations:
         [UUID: AsyncStream<UlcpPropertyPushRecord>.Continuation] = [:]
     var meshPumpGeneration = UUID()
@@ -743,35 +743,42 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
     /// `CAP_HOST_KEYS`, which the Rust session checks for itself.
     func performDevicePeerOperation(
         requiringDeviceIdentity: Bool = true,
-        _ operation: @escaping (MobileUlcpSession) throws -> UlcpSessionUpdateRecord
+        _ operation: @escaping @Sendable (MobileUlcpSession) throws -> UlcpSessionUpdateRecord
     ) async throws {
-        try await withCheckedThrowingContinuation { (result: CheckedContinuation<Void, any Error>) in
-            sessionQueue.async { [self] in
-                guard link?.linkIsReady == true,
-                      snapshot.linkState == .attached || snapshot.linkState == .ready,
-                      snapshot.hostState == .matchesCurrentIdentity
-                else {
-                    result.resume(throwing: DevicePeerError.radioUnavailable)
-                    return
-                }
-                guard !requiringDeviceIdentity
-                        || snapshot.provisioning?.supportsDeviceIdentity == true
-                else {
-                    result.resume(throwing: DevicePeerError.unsupported)
-                    return
-                }
-                guard devicePeerWaiter == nil, configurationWaiter == nil, !refreshInProgress
-                else {
-                    result.resume(throwing: RadioConnectionError.operationInProgress)
-                    return
-                }
-                devicePeerWaiter = result
-                do {
-                    try applySessionUpdate(operation(ulcpSession))
-                } catch {
-                    finishDevicePeerOperation(throwing: RadioConnectionError.operationInProgress)
+        let waiter = RadioOperationWaiter<Void>()
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (result: CheckedContinuation<Void, any Error>) in
+                guard waiter.install(result) else { return }
+                sessionQueue.async { [self] in
+                    guard !waiter.isCancelled else { return }
+                    guard link?.linkIsReady == true,
+                          snapshot.linkState == .attached || snapshot.linkState == .ready,
+                          snapshot.hostState == .matchesCurrentIdentity
+                    else {
+                        waiter.resume(throwing: DevicePeerError.radioUnavailable)
+                        return
+                    }
+                    guard !requiringDeviceIdentity
+                            || snapshot.provisioning?.supportsDeviceIdentity == true
+                    else {
+                        waiter.resume(throwing: DevicePeerError.unsupported)
+                        return
+                    }
+                    guard devicePeerWaiter == nil, configurationWaiter == nil, !refreshInProgress
+                    else {
+                        waiter.resume(throwing: RadioConnectionError.operationInProgress)
+                        return
+                    }
+                    devicePeerWaiter = waiter
+                    do {
+                        try applySessionUpdate(operation(ulcpSession))
+                    } catch {
+                        finishDevicePeerOperation(throwing: RadioConnectionError.operationInProgress)
+                    }
                 }
             }
+        } onCancel: {
+            waiter.cancel()
         }
     }
 
@@ -792,14 +799,11 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
     /// in Radio Detail covers persistence.
     func devicePeerOutcome(_ error: UlcpOperationErrorRecord?) -> (any Error)? {
         guard let error else { return nil }
-        if error.operation.hasPrefix("save device") { return nil }
-        if error.statusName.hasSuffix("ALREADY") || error.statusName.hasSuffix("ITEM_NOT_FOUND") {
-            return nil
+        switch error.kind {
+        case .saveFailed, .alreadyApplied, .itemMissing: return nil
+        case .capacity: return DevicePeerError.deviceFull
+        case .rejected: return DevicePeerError.failed(error.statusName)
         }
-        if error.statusName.hasSuffix("NOMEM") {
-            return DevicePeerError.deviceFull
-        }
-        return DevicePeerError.failed(error.statusName)
     }
 
     func setAlert(_ state: RadioAlertState) async throws {
@@ -1273,28 +1277,35 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
     /// link-down paths release the waiter the same way they release
     /// everything else.
     func performLocalManagement(
-        _ start: @escaping (MobileUlcpSession) throws -> UlcpSessionUpdateRecord
+        _ start: @escaping @Sendable (MobileUlcpSession) throws -> UlcpSessionUpdateRecord
     ) async throws -> UlcpLocalManagementEventRecord {
-        try await withCheckedThrowingContinuation {
-            (result: CheckedContinuation<UlcpLocalManagementEventRecord, any Error>) in
-            sessionQueue.async { [self] in
-                guard link?.linkIsReady == true, snapshot.linkState == .attached else {
-                    result.resume(throwing: RemoteManagementError.unavailable)
-                    return
-                }
-                guard localManagementWaiter == nil else {
-                    result.resume(throwing: RemoteManagementError.unavailable)
-                    return
-                }
-                localManagementWaiter = result
-                do {
-                    // An immediate completion—a save with nothing to ask—
-                    // resolves the waiter inside this call.
-                    try applySessionUpdate(start(ulcpSession))
-                } catch {
-                    finishLocalManagement(throwing: RemoteManagementError.unavailable)
+        let waiter = RadioOperationWaiter<UlcpLocalManagementEventRecord>()
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation {
+                (result: CheckedContinuation<UlcpLocalManagementEventRecord, any Error>) in
+                guard waiter.install(result) else { return }
+                sessionQueue.async { [self] in
+                    guard !waiter.isCancelled else { return }
+                    guard link?.linkIsReady == true, snapshot.linkState == .attached else {
+                        waiter.resume(throwing: RemoteManagementError.unavailable)
+                        return
+                    }
+                    guard localManagementWaiter == nil else {
+                        waiter.resume(throwing: RemoteManagementError.unavailable)
+                        return
+                    }
+                    localManagementWaiter = waiter
+                    do {
+                        // An immediate completion—a save with nothing to ask—
+                        // resolves the waiter inside this call.
+                        try applySessionUpdate(start(ulcpSession))
+                    } catch {
+                        finishLocalManagement(throwing: RemoteManagementError.unavailable)
+                    }
                 }
             }
+        } onCancel: {
+            waiter.cancel()
         }
     }
 
@@ -1317,7 +1328,7 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
     /// answers for it, so there is nothing to serialize here.
     func performManagement(
         progress: (@Sendable (UInt32?) -> Void)? = nil,
-        _ start: @escaping (MobileMeshSession) throws -> UInt64
+        _ start: @escaping @Sendable (MobileMeshSession) throws -> UInt64
     ) async throws -> MobileMeshManagementEventRecord {
         let event = try await withCheckedThrowingContinuation {
             (result: CheckedContinuation<MobileMeshManagementEventRecord, any Error>) in
@@ -1623,6 +1634,7 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
     }
 
     func beginSynchronization() {
+        dispatchPrecondition(condition: .onQueue(sessionQueue))
         guard link?.linkIsReady == true else { return }
         Self.logger.notice(
             "begin synchronization: hostKey=\(self.selectedHostKey != nil, privacy: .public)"
@@ -1653,6 +1665,7 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
     func applySessionUpdate(
         _ update: UlcpSessionUpdateRecord
     ) throws {
+        dispatchPrecondition(condition: .onQueue(sessionQueue))
         guard link?.linkIsReady == true else { throw RadioConnectionError.radioNotFound }
         let attachmentGeneration = linkGeneration
         let previousLinkState = snapshot.linkState
@@ -2582,6 +2595,7 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
 
     /// The transport can carry frames: start the ULCP session over it.
     func linkDidBecomeReady() {
+        dispatchPrecondition(condition: .onQueue(sessionQueue))
         linkGeneration &+= 1
         beginSynchronization()
     }
@@ -2664,6 +2678,7 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
     /// dropped completion parks every later send behind it for the life
     /// of the session.
     func sessionDidLoseLink() {
+        dispatchPrecondition(condition: .onQueue(sessionQueue))
         linkGeneration &+= 1
         // The attach is over however it ended. Leaving the stamp behind
         // would let a fault during the *next* attach's handshake claim

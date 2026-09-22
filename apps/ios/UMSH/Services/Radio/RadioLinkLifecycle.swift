@@ -1,5 +1,50 @@
 import Foundation
 
+/// A caller can stop waiting without freeing the radio's in-flight operation
+/// slot. The session retains this ticket until its answer or teardown, so a
+/// late answer cannot complete a newer request. The lock arbitrates only
+/// continuation ownership; protocol state remains on the session queue.
+final class RadioOperationWaiter<Value: Sendable>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<Value, any Error>?
+    private var cancelled = false
+
+    var isCancelled: Bool { lock.withLock { cancelled } }
+
+    func install(_ continuation: CheckedContinuation<Value, any Error>) -> Bool {
+        let accepted = lock.withLock {
+            guard !cancelled else { return false }
+            self.continuation = continuation
+            return true
+        }
+        if !accepted { continuation.resume(throwing: CancellationError()) }
+        return accepted
+    }
+
+    func cancel() {
+        let waiter = lock.withLock {
+            cancelled = true
+            let waiter = continuation
+            continuation = nil
+            return waiter
+        }
+        waiter?.resume(throwing: CancellationError())
+    }
+
+    func resume(returning value: Value) { finish(.success(value)) }
+    func resume(throwing error: any Error) { finish(.failure(error)) }
+    func resume() where Value == Void { finish(.success(())) }
+
+    private func finish(_ result: Result<Value, any Error>) {
+        let waiter = lock.withLock {
+            let waiter = continuation
+            continuation = nil
+            return waiter
+        }
+        waiter?.resume(with: result)
+    }
+}
+
 /// Admission and deadline tickets for one BLE attachment. User intent lives
 /// separately: retiring an attachment must not erase the saved radio.
 struct RadioLinkLifecycle {

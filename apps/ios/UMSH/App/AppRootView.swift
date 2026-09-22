@@ -55,6 +55,14 @@ struct AppRootView: View {
             StorageUnavailableView(error: applicationStoreError)
         } else {
             mainInterface
+                .safeAreaInset(edge: .top) {
+                    if let error = runtime.stateLoadError {
+                        OperationFailureView(error: error, retry: runtime.retryStateLoad)
+                            .padding()
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(.bar)
+                    }
+                }
         }
     }
 

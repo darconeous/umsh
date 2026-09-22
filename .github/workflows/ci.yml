@@ -230,6 +230,17 @@ jobs:
       - name: Build mobile-core xcframework + Swift bindings
         run: ./scripts/ios/build-mobile-core.sh
 
+      - name: Test persistence and radio boundaries on the host
+        run: |
+          export CLANG_MODULE_CACHE_PATH="$RUNNER_TEMP/umsh-swift-module-cache"
+          scripts/ios/verify-mobile-core-swift.sh
+          scripts/ios/verify-ios-persistence.sh
+          scripts/ios/verify-device-management.sh
+          scripts/ios/verify-radio-accessories.sh
+          scripts/ios/verify-radio-host-state.sh
+          scripts/ios/verify-radio-recovery.sh
+          scripts/ios/verify-radio-session-recovery.sh
+
       # GitHub rotates the simulators in its macOS images, so pinning a device
       # name is a standing breakage: the image this first ran on had no
       # "iPhone 16" at all (its oldest iPhone was 16e). Resolve a concrete
@@ -268,14 +279,20 @@ jobs:
             -destination "id=${{ steps.sim.outputs.udid }}" \
             CODE_SIGNING_ALLOWED=NO
 
-      # No app-level XCTest target exists yet (UMSH.xcscheme's TestAction has
-      # no Testables)—this is a build-only gate until one's added.
-      - name: Build UMSH app (simulator)
+      - name: Test UMSH application and UI
+        run: |
+          xcodebuild test \
+            -project apps/ios/UMSH.xcodeproj \
+            -scheme UMSH \
+            -destination "id=${{ steps.sim.outputs.udid }}" \
+            CODE_SIGNING_ALLOWED=NO
+
+      - name: Build UMSH app (device)
         run: |
           xcodebuild build \
             -project apps/ios/UMSH.xcodeproj \
             -scheme UMSH \
-            -destination 'generic/platform=iOS Simulator' \
+            -destination 'generic/platform=iOS' \
             CODE_SIGNING_ALLOWED=NO
 
   esp32:

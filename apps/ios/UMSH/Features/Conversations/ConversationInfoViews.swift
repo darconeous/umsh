@@ -13,7 +13,7 @@ struct DirectConversationDetailView: View {
     @Binding var conversations: [DirectConversationSummary]
     var peerActions: PeerActions = .unavailable
     var messageActions: ChatMessageActions = .unavailable
-    var updateDraft: ((Int64, String) async -> Void)? = nil
+    var updateDraft: ((Int64, String) async -> AppOperationResult)? = nil
     var sendMessage: ((DirectConversationSummary, String) async -> MessageSendResult)? = nil
     /// Erase the transcript. Absent when there is no store to erase it from.
     var clearMessages: (() async -> Void)? = nil
