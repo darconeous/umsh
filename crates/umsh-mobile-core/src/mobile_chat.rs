@@ -307,12 +307,28 @@ impl ChatDrain {
 /// needs, in both directions.
 #[derive(Default)]
 pub(crate) struct ChannelRegistry {
-    entries: BTreeMap<ChannelTag, ChannelKey>,
+    entries: BTreeMap<ChannelTag, ChannelEntry>,
+}
+
+/// One registered channel: its key, and how far the user lets its traffic
+/// travel.
+#[derive(Clone, Copy)]
+struct ChannelEntry {
+    key: ChannelKey,
+    /// The user's own flood-hop ceiling for this channel, or `None` to
+    /// use the session-wide default.
+    max_flood_hops: Option<u8>,
 }
 
 impl ChannelRegistry {
-    pub fn register(&mut self, tag: ChannelTag, key: ChannelKey) {
-        self.entries.insert(tag, key);
+    pub fn register(&mut self, tag: ChannelTag, key: ChannelKey, max_flood_hops: Option<u8>) {
+        self.entries.insert(
+            tag,
+            ChannelEntry {
+                key,
+                max_flood_hops,
+            },
+        );
     }
 
     pub fn remove(&mut self, tag: &ChannelTag) {
@@ -320,7 +336,14 @@ impl ChannelRegistry {
     }
 
     pub fn key(&self, tag: &ChannelTag) -> Option<ChannelKey> {
-        self.entries.get(tag).copied()
+        self.entries.get(tag).map(|entry| entry.key)
+    }
+
+    /// The flood-hop ceiling registered for a channel, if the user set
+    /// one. `None` both for a channel left at the default and for one not
+    /// registered at all.
+    pub fn max_flood_hops(&self, tag: &ChannelTag) -> Option<u8> {
+        self.entries.get(tag).and_then(|entry| entry.max_flood_hops)
     }
 
     pub fn contains(&self, tag: &ChannelTag) -> bool {
@@ -979,7 +1002,7 @@ mod tests {
     fn state_with_channel() -> (MobileChatState, ChannelTag) {
         let tag = crate::channel_tag(&CHANNEL_KEY);
         let registry = Rc::new(RefCell::new(ChannelRegistry::default()));
-        registry.borrow_mut().register(tag, CHANNEL_KEY);
+        registry.borrow_mut().register(tag, CHANNEL_KEY, None);
         (MobileChatState::new(LOCAL, registry), tag)
     }
 

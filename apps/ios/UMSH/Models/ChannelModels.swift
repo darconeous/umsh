@@ -1,4 +1,5 @@
 import Foundation
+import UMSHMobileCore
 
 /// A channel as the interface presents it.
 ///
@@ -58,24 +59,19 @@ struct ChannelSummary: Identifiable, Hashable, Sendable {
     }
 
     /// The flood-hop ceiling the protocol fixes for this channel, when it
-    /// fixes one. `public` and `EMERGENCY` are capped at five hops without a
-    /// region code and seven with one, so it is not the user's to choose.
+    /// fixes one. `public` and `EMERGENCY` are capped at five hops for a
+    /// frame carrying no region code—and the phone tags no group traffic
+    /// with one—so it is not the user's to choose. The mesh session
+    /// enforces the same ceiling whatever it is asked to register.
     ///
     /// Keyed on the canonical name rather than the record's kind, because the
     /// name is what derives the key: joining `umsh:cs:public` by hand reaches
     /// the same channel and inherits the same rules.
     var protocolMaxFloodHops: Int? {
         switch canonicalName {
-        case "public", "emergency": regionCode == nil ? 5 : 7
+        case "public", "emergency": 5
         default: nil
         }
-    }
-
-    /// The hop ceiling to actually use. A protocol-fixed channel ignores both
-    /// the stored value and any `mh=` an invitation carried, so read this
-    /// rather than `maxFloodHops` anywhere the number is acted on.
-    var effectiveMaxFloodHops: Int? {
-        protocolMaxFloodHops ?? maxFloodHops
     }
 
     /// How this channel behaves, where the protocol decides it.
@@ -157,6 +153,24 @@ struct ChannelPreview: Equatable, Sendable {
     /// legitimately share a display name with different keys; the user should
     /// see that before joining.
     let nameConflict: ChannelSummary?
+}
+
+/// One channel as the phone's mesh session registers it: the key, and the
+/// user's flood-hop ceiling for it, with `nil` for the session-wide
+/// default. The well-known channels are held to their protocol ceiling by
+/// the session whatever is passed here.
+struct ChannelRegistration: Hashable, Sendable {
+    let key: Data
+    let maxFloodHops: UInt8?
+
+    init(key: Data, maxFloodHops: Int?) {
+        self.key = key
+        self.maxFloodHops = maxFloodHops.flatMap { UInt8(exactly: $0) }
+    }
+
+    var record: MobileChannelRegistrationRecord {
+        MobileChannelRegistrationRecord(key: key, maxFloodHops: maxFloodHops)
+    }
 }
 
 /// Local details a user may set on a channel, at join time or later.

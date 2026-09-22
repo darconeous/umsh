@@ -159,6 +159,9 @@ final class AppRuntime {
     /// and restarted when that setting changes, and only then.
     private var advertSchedule: (seconds: Int, task: Task<Void, Never>)?
     private var beaconSchedule: (seconds: Int, task: Task<Void, Never>)?
+    /// The flood-hop pair last handed to the mesh session, so a preference
+    /// write that changed something else does not restate it.
+    private var pushedFloodHops: (defaultHops: UInt8, beaconHops: UInt8)?
     private var locationSharing: (key: Int, task: Task<Void, Never>)?
 
     /// Subscribe to the radio, arm the schedules, and bootstrap.
@@ -300,6 +303,12 @@ final class AppRuntime {
                 Task { await self.applyLocationSharing() }
             )
         }
+        // Pushed only when it changed: the session holds one current pair,
+        // and an unrelated write must not restate it.
+        let floodHops = (phoneFloodHops, phoneBeaconFloodHops)
+        if pushedFloodHops.map({ $0 != floodHops }) ?? true {
+            Task { await self.pushFloodHops() }
+        }
     }
 
     // MARK: - Stream consumers
@@ -396,6 +405,23 @@ final class AppRuntime {
 
     private var phoneLocationPrecision: Int {
         UserDefaults.standard.object(forKey: "phone.locationPrecision") as? Int ?? 5
+    }
+
+    /// How far what this phone sends may travel: the ceiling on messages,
+    /// pings, and requests, and the budget on a scheduled beacon. Held to
+    /// what the flood-hop field can carry, so a stray stored value cannot
+    /// make the session refuse the whole setting.
+    private var phoneFloodHops: UInt8 {
+        Self.floodHops(UserDefaults.standard.object(forKey: "phone.floodHops"), fallback: 10)
+    }
+
+    private var phoneBeaconFloodHops: UInt8 {
+        Self.floodHops(UserDefaults.standard.object(forKey: "phone.beaconFloodHops"), fallback: 5)
+    }
+
+    private static func floodHops(_ stored: Any?, fallback: UInt8) -> UInt8 {
+        guard let value = stored as? Int, let hops = UInt8(exactly: value) else { return fallback }
+        return min(hops, 15)
     }
 
     /// The first-run flow finished, however it finished.
@@ -810,6 +836,7 @@ final class AppRuntime {
         await loadAdvertisedName()
         try Task.checkCancellation()
         await pushPhoneDiscoverability()
+        await pushFloodHops()
         identityError = nil
         settleOnboarding(mintedIdentity: minted)
     }
@@ -992,6 +1019,8 @@ final class AppRuntime {
             "phone.locationPrecision",
             "phone.advertIntervalSeconds",
             "phone.beaconIntervalSeconds",
+            "phone.floodHops",
+            "phone.beaconFloodHops",
             "radio.connectedUUID",
             "radio.shouldAutoConnect",
             "radio.lastAttachedPeripheral",
@@ -1042,6 +1071,19 @@ final class AppRuntime {
         // session holds none, and the last accepted cell is what it
         // should resume with rather than waiting for the phone to move.
         await radioConnection.setAdvertisedLocation(sharedLocation)
+    }
+
+    /// Hand the stored reach preferences to the mesh session. Best-effort,
+    /// on the same reinstall rail as discoverability: a fresh session
+    /// starts at the built-in defaults, and this is what brings it back to
+    /// what the user chose.
+    func pushFloodHops() async {
+        let floodHops = (defaultHops: phoneFloodHops, beaconHops: phoneBeaconFloodHops)
+        pushedFloodHops = floodHops
+        await radioConnection.setFloodHops(
+            defaultHops: floodHops.defaultHops,
+            beaconHops: floodHops.beaconHops
+        )
     }
 
     /// Start or stop location readings to match the stored preference.
@@ -1531,7 +1573,9 @@ final class AppRuntime {
                 try? await channelKeyVault.deleteKey(channelID: id)
                 throw error
             }
-            let registered = await registerChannelKeys([preview.key])
+            let registered = await registerChannels([
+                ChannelRegistration(key: preview.key, maxFloodHops: channel.maxFloodHops),
+            ])
             guard registered else {
                 try? await applicationStore.deleteChannel(id: id)
                 try? await channelKeyVault.deleteKey(channelID: id)
@@ -1633,7 +1677,9 @@ final class AppRuntime {
               let key = try? await channelKeyVault.loadKey(channelID: channel.id)
         else { return .failed }
         if joined {
-            guard await registerChannelKeys([key]) else { return .phoneFull }
+            guard await registerChannels([
+                ChannelRegistration(key: key, maxFloodHops: channel.maxFloodHops),
+            ]) else { return .phoneFull }
         } else {
             try? await radioConnection.removeChannels([key])
         }
@@ -1714,6 +1760,16 @@ final class AppRuntime {
                 maxFloodHops: details.maxFloodHops,
                 notificationsEnabled: details.notificationsEnabled
             )
+            // The ceiling lives in the mesh session's channel table, so a
+            // changed one is re-registered—re-registering a held channel
+            // restates it. A channel the phone has not joined has no entry
+            // to restate; joining registers it with whatever is stored.
+            if channel.joinedPhone, details.maxFloodHops != channel.maxFloodHops,
+               let key = try? await channelKeyVault.loadKey(channelID: channel.id) {
+                _ = await registerChannels([
+                    ChannelRegistration(key: key, maxFloodHops: details.maxFloodHops),
+                ])
+            }
             await reloadApplicationState()
             return true
         } catch {
@@ -1797,10 +1853,10 @@ final class AppRuntime {
         return stored.map(ApplicationStateLoader.summary(from:))
     }
 
-    /// Register keys with the phone's MAC, reporting whether they all fit.
-    private func registerChannelKeys(_ keys: [Data]) async -> Bool {
+    /// Register channels with the phone's MAC, reporting whether they all fit.
+    private func registerChannels(_ channels: [ChannelRegistration]) async -> Bool {
         do {
-            try await radioConnection.registerChannels(keys)
+            try await radioConnection.registerChannels(channels)
             return true
         } catch {
             return false
@@ -2036,15 +2092,17 @@ final class AppRuntime {
     /// The session starts with an empty channel table, so this is what makes
     /// membership survive a relaunch.
     private func replayChannelMembership() async {
-        var keys: [Data] = []
+        var registrations: [ChannelRegistration] = []
         for channel in channels where channel.joinedPhone {
             if let key = try? await channelKeyVault.loadKey(channelID: channel.id) {
-                keys.append(key)
+                registrations.append(
+                    ChannelRegistration(key: key, maxFloodHops: channel.maxFloodHops)
+                )
             }
         }
         // Registration has to precede chat restore: a channel checkpoint can
         // only be understood once its key is held.
-        _ = await registerChannelKeys(keys)
+        _ = await registerChannels(registrations)
         await refreshChannelAddresses()
         await ensurePublicConversation()
         await reloadApplicationState()

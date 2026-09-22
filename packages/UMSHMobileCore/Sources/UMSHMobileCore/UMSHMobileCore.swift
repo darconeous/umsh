@@ -1611,13 +1611,15 @@ public protocol MobileMeshSessionProtocol: AnyObject, Sendable {
     func receive(frame: MobileMeshRxRecord) throws
 
     /**
-     * Register channel keys with the live MAC so their traffic is accepted.
+     * Register channels with the live MAC so their traffic is accepted,
+     * each with the flood-hop ceiling its group messages go out under.
      *
      * Membership itself is persisted by the platform, which replays the whole
      * joined set through this call when a session starts. Re-registering a
-     * channel already held is harmless.
+     * channel already held is harmless, and is how a changed ceiling
+     * takes effect.
      */
-    func registerChannels(keys: [Data]) async throws
+    func registerChannels(channels: [MobileChannelRegistrationRecord]) async throws
 
     func registerPeers(peerAddresses: [String]) async throws
 
@@ -1719,6 +1721,21 @@ public protocol MobileMeshSessionProtocol: AnyObject, Sendable {
     func setChatDisplayName(name: String) async throws
 
     func setDiscoverable(enabled: Bool, name: String?) async throws
+
+    /**
+     * Set how far the traffic this phone originates may travel.
+     *
+     * `default_hops` is the ceiling on anything sent because somebody
+     * asked—messages, pings, identity and management requests, a manual
+     * advertisement—and what a channel registered without a ceiling of
+     * its own uses. `beacon_hops` is the budget on a scheduled beacon.
+     * Either may be zero, which reaches direct neighbors only; neither
+     * may exceed what the flood-hop field can carry. The session starts
+     * at [`DEFAULT_FLOOD_HOPS`] and [`DEFAULT_BEACON_FLOOD_HOPS`]; the
+     * app pushes its stored preference right after install, as it does
+     * the discoverability settings.
+     */
+    func setFloodHops(defaultHops: UInt8, beaconHops: UInt8) async throws
 
     /**
      * Register (or replace) the listener that is told when this session
@@ -2460,18 +2477,20 @@ open func receive(frame: MobileMeshRxRecord)throws   {try rustCallWithError(FfiC
 }
 
     /**
-     * Register channel keys with the live MAC so their traffic is accepted.
+     * Register channels with the live MAC so their traffic is accepted,
+     * each with the flood-hop ceiling its group messages go out under.
      *
      * Membership itself is persisted by the platform, which replays the whole
      * joined set through this call when a session starts. Re-registering a
-     * channel already held is harmless.
+     * channel already held is harmless, and is how a changed ceiling
+     * takes effect.
      */
-open func registerChannels(keys: [Data])async throws   {
+open func registerChannels(channels: [MobileChannelRegistrationRecord])async throws   {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
                 uniffi_umsh_mobile_core_fn_method_mobilemeshsession_register_channels(
-                        self.uniffiCloneHandle(),FfiConverterSequenceData.lower(keys)
+                        self.uniffiCloneHandle(),FfiConverterSequenceTypeMobileChannelRegistrationRecord.lower(channels)
                 )
             },
             pollFunc: ffi_umsh_mobile_core_rust_future_poll_void,
@@ -2755,6 +2774,35 @@ open func setDiscoverable(enabled: Bool, name: String?)async throws   {
             rustFutureFunc: {
                 uniffi_umsh_mobile_core_fn_method_mobilemeshsession_set_discoverable(
                         self.uniffiCloneHandle(),FfiConverterBool.lower(enabled),FfiConverterOptionString.lower(name)
+                )
+            },
+            pollFunc: ffi_umsh_mobile_core_rust_future_poll_void,
+            completeFunc: ffi_umsh_mobile_core_rust_future_complete_void,
+            freeFunc: ffi_umsh_mobile_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeMobileMeshError_lift
+        )
+}
+
+    /**
+     * Set how far the traffic this phone originates may travel.
+     *
+     * `default_hops` is the ceiling on anything sent because somebody
+     * asked—messages, pings, identity and management requests, a manual
+     * advertisement—and what a channel registered without a ceiling of
+     * its own uses. `beacon_hops` is the budget on a scheduled beacon.
+     * Either may be zero, which reaches direct neighbors only; neither
+     * may exceed what the flood-hop field can carry. The session starts
+     * at [`DEFAULT_FLOOD_HOPS`] and [`DEFAULT_BEACON_FLOOD_HOPS`]; the
+     * app pushes its stored preference right after install, as it does
+     * the discoverability settings.
+     */
+open func setFloodHops(defaultHops: UInt8, beaconHops: UInt8)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_umsh_mobile_core_fn_method_mobilemeshsession_set_flood_hops(
+                        self.uniffiCloneHandle(),FfiConverterUInt8.lower(defaultHops),FfiConverterUInt8.lower(beaconHops)
                 )
             },
             pollFunc: ffi_umsh_mobile_core_rust_future_poll_void,
@@ -4895,6 +4943,81 @@ public func FfiConverterTypeMobileAnnouncementRecord_lift(_ buf: RustBuffer) thr
 #endif
 public func FfiConverterTypeMobileAnnouncementRecord_lower(_ value: MobileAnnouncementRecord) -> RustBuffer {
     return FfiConverterTypeMobileAnnouncementRecord.lower(value)
+}
+
+
+/**
+ * One channel the platform hands the session at registration.
+ */
+public struct MobileChannelRegistrationRecord: Equatable, Hashable {
+    /**
+     * The 32-byte channel key.
+     */
+    public var key: Data
+    /**
+     * The user's flood-hop ceiling for this channel, or `None` for the
+     * session-wide default. Whatever is asked, the well-known `public`
+     * and `EMERGENCY` channels are held to the ceiling the protocol
+     * fixes for them.
+     */
+    public var maxFloodHops: UInt8?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The 32-byte channel key.
+         */key: Data,
+        /**
+         * The user's flood-hop ceiling for this channel, or `None` for the
+         * session-wide default. Whatever is asked, the well-known `public`
+         * and `EMERGENCY` channels are held to the ceiling the protocol
+         * fixes for them.
+         */maxFloodHops: UInt8?) {
+        self.key = key
+        self.maxFloodHops = maxFloodHops
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileChannelRegistrationRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileChannelRegistrationRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileChannelRegistrationRecord {
+        return
+            try MobileChannelRegistrationRecord(
+                key: FfiConverterData.read(from: &buf),
+                maxFloodHops: FfiConverterOptionUInt8.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileChannelRegistrationRecord, into buf: inout [UInt8]) {
+        FfiConverterData.write(value.key, into: &buf)
+        FfiConverterOptionUInt8.write(value.maxFloodHops, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileChannelRegistrationRecord_lift(_ buf: RustBuffer) throws -> MobileChannelRegistrationRecord {
+    return try FfiConverterTypeMobileChannelRegistrationRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileChannelRegistrationRecord_lower(_ value: MobileChannelRegistrationRecord) -> RustBuffer {
+    return FfiConverterTypeMobileChannelRegistrationRecord.lower(value)
 }
 
 
@@ -16525,6 +16648,31 @@ fileprivate struct FfiConverterSequenceTypeHostPeerKeyEntryRecord: FfiConverterR
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeMobileChannelRegistrationRecord: FfiConverterRustBuffer {
+    typealias SwiftType = [MobileChannelRegistrationRecord]
+
+    public static func write(_ value: [MobileChannelRegistrationRecord], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeMobileChannelRegistrationRecord.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [MobileChannelRegistrationRecord] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [MobileChannelRegistrationRecord]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeMobileChannelRegistrationRecord.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeMobileChatArchiveDeleteRecord: FfiConverterRustBuffer {
     typealias SwiftType = [MobileChatArchiveDeleteRecord]
 
@@ -18373,7 +18521,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_receive() != 1961) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_register_channels() != 22220) {
+    if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_register_channels() != 59948) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_register_peers() != 30662) {
@@ -18413,6 +18561,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_set_discoverable() != 2082) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_set_flood_hops() != 27711) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_set_wake_listener() != 44475) {

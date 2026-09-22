@@ -354,6 +354,10 @@ struct IdentityDetailView: View {
     @AppStorage("phone.beaconIntervalSeconds") private var phoneBeaconInterval = 0
     @AppStorage("phone.shareLocation") private var phoneSharesLocation = false
     @AppStorage("phone.locationPrecision") private var phoneLocationPrecision = 5
+    /// How far what this phone sends may travel, in repeater hops. The
+    /// runtime reads the same keys and hands them to the mesh session.
+    @AppStorage("phone.floodHops") private var phoneFloodHops = 10
+    @AppStorage("phone.beaconFloodHops") private var phoneBeaconFloodHops = 5
 
     var body: some View {
         List {
@@ -429,6 +433,27 @@ struct IdentityDetailView: View {
                 Text("Announce on a schedule")
             } footer: {
                 Text("Both run only while UMSH is open—iOS gives a suspended app no way to keep talking to the mesh. A beacon publishes the path back to this phone; an identity announcement carries your name and reaches only nodes that can hear you directly. Each interval is a minimum: periods run a little longer at random, so phones on the same schedule do not all transmit at once.")
+            }
+
+            Section {
+                Picker("Messages and requests", selection: $phoneFloodHops) {
+                    ForEach(1...15, id: \.self) { hops in
+                        Text("^[\(hops) hop](inflect: true)").tag(hops)
+                    }
+                }
+                Picker("Beacon", selection: $phoneBeaconFloodHops) {
+                    ForEach(0...15, id: \.self) { hops in
+                        if hops == 0 {
+                            Text("Direct neighbors only").tag(hops)
+                        } else {
+                            Text("^[\(hops) hop](inflect: true)").tag(hops)
+                        }
+                    }
+                }
+            } header: {
+                Text("Reach")
+            } footer: {
+                Text("The most repeaters a transmission may cross. Messages, pings, and requests use the first; a scheduled beacon uses the second. A route already learned to a node narrows a message to what that route costs, so the ceiling matters on first contact and when a route goes stale. A channel can set its own ceiling in its details.")
             }
 
             Section {

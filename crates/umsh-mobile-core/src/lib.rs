@@ -471,6 +471,24 @@ pub(crate) fn channel_tag(key: &umsh_core::ChannelKey) -> umsh_core::ChannelTag 
     umsh_crypto::CryptoEngine::new(SoftwareAes, SoftwareSha256).derive_channel_tag(key)
 }
 
+/// The canonical name of the well-known `public` channel.
+pub(crate) const PUBLIC_CHANNEL_NAME: &str = "public";
+
+/// The tag of the well-known `public` channel.
+///
+/// Derived from the name for the same reason `emergency_channel_tag` is.
+pub(crate) fn public_channel_tag() -> umsh_core::ChannelTag {
+    static TAG: std::sync::OnceLock<umsh_core::ChannelTag> = std::sync::OnceLock::new();
+
+    *TAG.get_or_init(|| {
+        channel_tag(
+            umsh_node::Channel::named(PUBLIC_CHANNEL_NAME)
+                .expect("the public channel name is short ASCII")
+                .key(),
+        )
+    })
+}
+
 /// The canonical name of the well-known `EMERGENCY` channel.
 pub(crate) const EMERGENCY_CHANNEL_NAME: &str = "emergency";
 

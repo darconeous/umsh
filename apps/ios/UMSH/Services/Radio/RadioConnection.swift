@@ -29,6 +29,12 @@ protocol RadioConnection: AnyObject, Sendable {
     /// its own identity, and the display name those replies carry.
     /// Best-effort: the preference is reapplied on every session install.
     func setPhoneDiscoverable(_ enabled: Bool, name: String?) async
+    /// Set how far what this phone sends may travel: `defaultHops` is the
+    /// ceiling on messages, pings, identity and management requests, and a
+    /// manual advertisement, and what a channel without a ceiling of its
+    /// own uses; `beaconHops` is the budget on a scheduled beacon.
+    /// Best-effort: the preference is reapplied on every session install.
+    func setFloodHops(defaultHops: UInt8, beaconHops: UInt8) async
     func signIdentityBundle(name: String?) async throws -> Data
     func useHostIdentity(_ identity: MeshPublicIdentity?) async throws
     func useMeshSession(_ session: MobileMeshSession?) async
@@ -153,10 +159,12 @@ protocol RadioConnection: AnyObject, Sendable {
     func addDeviceChannel(_ channelKey: Data) async throws
     /// Remove a channel key from the radio's device identity. Idempotent.
     func removeDeviceChannel(_ channelKey: Data) async throws
-    /// Register channel keys with the phone's own MAC so their traffic is
-    /// accepted. Called with the full joined set at session start and
-    /// incrementally on join.
-    func registerChannels(_ channelKeys: [Data]) async throws
+    /// Register channels with the phone's own MAC so their traffic is
+    /// accepted, each with the flood-hop ceiling its group messages go out
+    /// under. Called with the full joined set at session start,
+    /// incrementally on join, and again for a channel whose ceiling
+    /// changed: re-registering is how the new ceiling takes effect.
+    func registerChannels(_ channels: [ChannelRegistration]) async throws
     /// Drop channel keys from the phone's MAC.
     func removeChannels(_ channelKeys: [Data]) async throws
     /// Make the radio's host channel-key table match the phone's joined

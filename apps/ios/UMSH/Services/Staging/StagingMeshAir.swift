@@ -210,7 +210,11 @@ actor StagingMeshAir: FakeRadioAir {
                 )
                 try await session.setChatDisplayName(name: node.name)
                 if !channelKeys.isEmpty {
-                    try await session.registerChannels(keys: channelKeys)
+                    try await session.registerChannels(
+                        channels: channelKeys.map {
+                            MobileChannelRegistrationRecord(key: $0, maxFloodHops: nil)
+                        }
+                    )
                 }
                 if let phoneAddress {
                     try await session.registerPeers(peerAddresses: [phoneAddress])

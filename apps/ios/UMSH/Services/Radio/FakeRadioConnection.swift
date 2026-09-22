@@ -25,7 +25,9 @@ actor FakeRadioConnection: RadioConnection {
     /// then reads as forgotten, as a real one would.
     private var routeCleared = false
     /// Stands in for the phone MAC's channel table.
-    private var registeredChannelKeys: Set<Data> = []
+    /// What the app registered, by key, so a late-built session gets the
+    /// same set—and the same ceilings—the app believes it registered.
+    private var registeredChannels: [Data: ChannelRegistration] = [:]
     /// What surrounds this radio. Without one, transmitted frames vanish.
     private let air: (any FakeRadioAir)?
     /// The same Rust session a real radio would drive. When the app installs
@@ -147,6 +149,11 @@ actor FakeRadioConnection: RadioConnection {
 
     func setPhoneDiscoverable(_ enabled: Bool, name: String?) async {}
 
+    func setFloodHops(defaultHops: UInt8, beaconHops: UInt8) async {
+        guard let meshSession else { return }
+        try? await meshSession.setFloodHops(defaultHops: defaultHops, beaconHops: beaconHops)
+    }
+
     func requestIdentity(peerAddress: String) async throws {
         throw RadioConnectionError.identityUnavailable
     }
@@ -209,8 +216,10 @@ actor FakeRadioConnection: RadioConnection {
         session.setWakeListener(listener: listener)
         // Channel keys can arrive before the session does; replay them so the
         // session's channel table matches what the app believes it registered.
-        if !registeredChannelKeys.isEmpty {
-            try? await session.registerChannels(keys: Array(registeredChannelKeys))
+        if !registeredChannels.isEmpty {
+            try? await session.registerChannels(
+                channels: registeredChannels.values.map(\.record)
+            )
         }
         if let air {
             await air.attach { [weak self] records in
@@ -317,14 +326,18 @@ actor FakeRadioConnection: RadioConnection {
         }
     }
 
-    func registerChannels(_ channelKeys: [Data]) async throws {
-        registeredChannelKeys.formUnion(channelKeys)
-        guard let meshSession, !channelKeys.isEmpty else { return }
-        try await meshSession.registerChannels(keys: channelKeys)
+    func registerChannels(_ channels: [ChannelRegistration]) async throws {
+        for channel in channels {
+            registeredChannels[channel.key] = channel
+        }
+        guard let meshSession, !channels.isEmpty else { return }
+        try await meshSession.registerChannels(channels: channels.map(\.record))
     }
 
     func removeChannels(_ channelKeys: [Data]) async throws {
-        registeredChannelKeys.subtract(channelKeys)
+        for key in channelKeys {
+            registeredChannels[key] = nil
+        }
         guard let meshSession, !channelKeys.isEmpty else { return }
         try await meshSession.removeChannels(keys: channelKeys)
     }

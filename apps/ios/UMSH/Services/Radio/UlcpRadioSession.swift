@@ -385,6 +385,11 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
         try? await session.setDiscoverable(enabled: enabled, name: name)
     }
 
+    func setFloodHops(defaultHops: UInt8, beaconHops: UInt8) async {
+        guard let session = try? await currentMeshSession() else { return }
+        try? await session.setFloodHops(defaultHops: defaultHops, beaconHops: beaconHops)
+    }
+
     func requestIdentity(peerAddress: String) async throws {
         let session = try await currentMeshSession()
         try await session.requestIdentity(peerAddress: peerAddress)
@@ -691,9 +696,9 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
         }
     }
 
-    func registerChannels(_ channelKeys: [Data]) async throws {
-        guard !channelKeys.isEmpty else { return }
-        try await currentMeshSession().registerChannels(keys: channelKeys)
+    func registerChannels(_ channels: [ChannelRegistration]) async throws {
+        guard !channels.isEmpty else { return }
+        try await currentMeshSession().registerChannels(channels: channels.map(\.record))
     }
 
     func removeChannels(_ channelKeys: [Data]) async throws {

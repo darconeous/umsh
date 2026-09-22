@@ -57,9 +57,49 @@ use crate::{MobileCounterStore, MobileError, MobileIdentity};
 
 const MAX_FRAME_SIZE: usize = 256;
 const DEFAULT_FRAME_TIME_MS: u32 = 800;
-/// Flood-hop budget on a beacon. A beacon exists to publish a path, so it
-/// has to travel far enough for there to be a path worth publishing.
-const BEACON_FLOOD_HOPS: u8 = 5;
+
+/// Flood-hop ceiling the phone starts with for the traffic it originates.
+pub const DEFAULT_FLOOD_HOPS: u8 = 10;
+/// Flood-hop budget a beacon starts with. A beacon exists to publish a
+/// path, so it has to travel far enough for there to be a path worth
+/// publishing—but it goes out on a timer, so it is held shorter than a
+/// send somebody asked for.
+pub const DEFAULT_BEACON_FLOOD_HOPS: u8 = 5;
+
+/// How far the phone lets the traffic it originates travel.
+///
+/// Both are `FHOPS_REM` budgets: the count of repeaters a frame may still
+/// cross, capped by what the nibble can carry. Zero sends no flood-hop
+/// field at all, which is a frame only direct neighbors hear.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct FloodHopSettings {
+    /// Ceiling on anything sent because somebody asked: direct and group
+    /// messages, pings, identity and management requests, and a manual
+    /// advertisement. A ceiling rather than a fixed value—the MAC narrows a
+    /// unicast to what an established route to the peer actually costs.
+    default_hops: u8,
+    /// Budget on a scheduled beacon.
+    beacon_hops: u8,
+}
+
+impl Default for FloodHopSettings {
+    fn default() -> Self {
+        Self {
+            default_hops: DEFAULT_FLOOD_HOPS,
+            beacon_hops: DEFAULT_BEACON_FLOOD_HOPS,
+        }
+    }
+}
+
+/// Spend `hops` on `options`: a budget for a flood, or no flood at all
+/// for zero.
+fn with_flood_reach(options: SendOptions, hops: u8) -> SendOptions {
+    if hops == 0 {
+        options.no_flood()
+    } else {
+        options.with_flood_hops(hops)
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Error)]
 pub enum MobileMeshError {
@@ -593,6 +633,18 @@ impl core::fmt::Debug for HostPeerKeyEntryRecord {
     }
 }
 
+/// One channel the platform hands the session at registration.
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct MobileChannelRegistrationRecord {
+    /// The 32-byte channel key.
+    pub key: Vec<u8>,
+    /// The user's flood-hop ceiling for this channel, or `None` for the
+    /// session-wide default. Whatever is asked, the well-known `public`
+    /// and `EMERGENCY` channels are held to the ceiling the protocol
+    /// fixes for them.
+    pub max_flood_hops: Option<u8>,
+}
+
 enum WorkerCommand {
     RegisterPeers {
         peers: Vec<PublicKey>,
@@ -607,7 +659,7 @@ enum WorkerCommand {
         response: oneshot::Sender<Result<(), MobileMeshError>>,
     },
     RegisterChannels {
-        keys: Vec<ChannelKey>,
+        channels: Vec<(ChannelKey, Option<u8>)>,
         response: oneshot::Sender<Result<(), MobileMeshError>>,
     },
     RemoveChannels {
@@ -702,6 +754,10 @@ enum WorkerCommand {
     },
     SetChatDisplayName {
         name: String,
+        response: oneshot::Sender<()>,
+    },
+    SetFloodHops {
+        settings: FloodHopSettings,
         response: oneshot::Sender<()>,
     },
     PeerRoute {
@@ -1719,6 +1775,40 @@ impl MobileMeshSession {
             .map_err(|_| MobileMeshError::SessionUnavailable)
     }
 
+    /// Set how far the traffic this phone originates may travel.
+    ///
+    /// `default_hops` is the ceiling on anything sent because somebody
+    /// asked—messages, pings, identity and management requests, a manual
+    /// advertisement—and what a channel registered without a ceiling of
+    /// its own uses. `beacon_hops` is the budget on a scheduled beacon.
+    /// Either may be zero, which reaches direct neighbors only; neither
+    /// may exceed what the flood-hop field can carry. The session starts
+    /// at [`DEFAULT_FLOOD_HOPS`] and [`DEFAULT_BEACON_FLOOD_HOPS`]; the
+    /// app pushes its stored preference right after install, as it does
+    /// the discoverability settings.
+    pub async fn set_flood_hops(
+        &self,
+        default_hops: u8,
+        beacon_hops: u8,
+    ) -> Result<(), MobileMeshError> {
+        if default_hops > umsh_mac::MAX_FLOOD_HOPS || beacon_hops > umsh_mac::MAX_FLOOD_HOPS {
+            return Err(MobileMeshError::InvalidRequest);
+        }
+        let (response, result) = oneshot::channel();
+        self.commands
+            .send(WorkerCommand::SetFloodHops {
+                settings: FloodHopSettings {
+                    default_hops,
+                    beacon_hops,
+                },
+                response,
+            })
+            .map_err(|_| MobileMeshError::SessionUnavailable)?;
+        result
+            .await
+            .map_err(|_| MobileMeshError::SessionUnavailable)
+    }
+
     pub async fn set_discoverable(
         &self,
         enabled: bool,
@@ -1869,16 +1959,32 @@ impl MobileMeshSession {
             .map_err(|_| MobileMeshError::SessionUnavailable)?
     }
 
-    /// Register channel keys with the live MAC so their traffic is accepted.
+    /// Register channels with the live MAC so their traffic is accepted,
+    /// each with the flood-hop ceiling its group messages go out under.
     ///
     /// Membership itself is persisted by the platform, which replays the whole
     /// joined set through this call when a session starts. Re-registering a
-    /// channel already held is harmless.
-    pub async fn register_channels(&self, keys: Vec<Vec<u8>>) -> Result<(), MobileMeshError> {
-        let keys = decode_channel_keys(keys)?;
+    /// channel already held is harmless, and is how a changed ceiling
+    /// takes effect.
+    pub async fn register_channels(
+        &self,
+        channels: Vec<MobileChannelRegistrationRecord>,
+    ) -> Result<(), MobileMeshError> {
+        let channels = channels
+            .into_iter()
+            .map(|channel| {
+                let hops = match channel.max_flood_hops {
+                    Some(hops) if hops > umsh_mac::MAX_FLOOD_HOPS => {
+                        return Err(MobileMeshError::InvalidRequest);
+                    }
+                    hops => hops,
+                };
+                Ok((decode_channel_key(channel.key)?, hops))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
         let (response, result) = oneshot::channel();
         self.commands
-            .send(WorkerCommand::RegisterChannels { keys, response })
+            .send(WorkerCommand::RegisterChannels { channels, response })
             .map_err(|_| MobileMeshError::SessionUnavailable)?;
         result
             .await
@@ -2461,11 +2567,6 @@ async fn build_signed_identity_bundle(
     Ok(bundle)
 }
 
-/// Flood-hop budget on a management request. A device worth managing
-/// remotely is one that is not in the room, so an unrouted first request
-/// has to be able to travel.
-const MANAGEMENT_FLOOD_HOPS: u8 = 5;
-
 /// How many properties one batch of a whole-device read asks for.
 ///
 /// Small enough that a device answers most batches in one frame, and that
@@ -2792,16 +2893,18 @@ async fn start_management<M: MacBackend>(
     request: ManagementRequest,
     now_ms: u64,
     token_seed: u16,
+    flood_hops: u8,
 ) -> Option<ManagementJob<M>> {
     let connection = node.peer(peer).await.ok()?;
     let mut manager = umsh_node_mgmt::NodeManager::new(connection, token_seed);
     // An acknowledgment is what completes a reset and what turns an
     // unreachable device into an early answer; a flood budget and a trace
     // route are what get a first request to a device no route is known
-    // for, and teach the MAC the way back.
-    *manager.send_options_mut() = SendOptions::default()
+    // for, and teach the MAC the way back. A device worth managing
+    // remotely is one that is not in the room, so the budget is the same
+    // one every other asked-for send gets.
+    *manager.send_options_mut() = with_flood_reach(SendOptions::default(), flood_hops)
         .with_ack_requested(true)
-        .with_flood_hops(MANAGEMENT_FLOOD_HOPS)
         .with_trace_route();
     let (plan, request) = match request {
         ManagementRequest::One { frame, shape } => (ManagementPlan::One(shape), frame),
@@ -2937,6 +3040,8 @@ async fn run_worker(
     let mut discoverable = true;
     let mut responder_name: Option<String> = None;
     let mut advertised_location: Option<NodeLocation> = None;
+    // How far what this phone sends may travel; pushed the same way.
+    let mut flood_hops = FloodHopSettings::default();
     node.enable_identity_responder_default(phone_identity_profile(
         local_key,
         responder_name.as_deref(),
@@ -3244,9 +3349,9 @@ async fn run_worker(
                             }
                             let _ = response.send(Ok(()));
                         }
-                        Some(WorkerCommand::RegisterChannels { keys, response }) => {
+                        Some(WorkerCommand::RegisterChannels { channels, response }) => {
                             let mut result = Ok(());
-                            for key in keys {
+                            for (key, max_flood_hops) in channels {
                                 // Named and private channels are the same
                                 // thing here: the app already holds the
                                 // derived key either way.
@@ -3254,9 +3359,11 @@ async fn run_worker(
                                     result = Err(MobileMeshError::ChannelCapacity);
                                     break;
                                 }
-                                channel_registry
-                                    .borrow_mut()
-                                    .register(crate::channel_tag(&key), key);
+                                channel_registry.borrow_mut().register(
+                                    crate::channel_tag(&key),
+                                    key,
+                                    max_flood_hops,
+                                );
                             }
                             let _ = response.send(result);
                         }
@@ -3284,11 +3391,13 @@ async fn run_worker(
                                         // cost. A ping that reports only a
                                         // round-trip time says a link is bad
                                         // without saying where.
-                                        &SendOptions::default()
-                                            .with_flood_hops(5)
-                                            .with_trace_route()
-                                            .with_trace_signal()
-                                            .with_mic_size(umsh_node::PING_MIC_SIZE),
+                                        &with_flood_reach(
+                                            SendOptions::default(),
+                                            flood_hops.default_hops,
+                                        )
+                                        .with_trace_route()
+                                        .with_trace_signal()
+                                        .with_mic_size(umsh_node::PING_MIC_SIZE),
                                         timeout_ms,
                                     )
                                     .await
@@ -3323,6 +3432,7 @@ async fn run_worker(
                                 request,
                                 now_ms,
                                 management_token,
+                                flood_hops.default_hops,
                             )
                             .await;
                             if management.is_none() {
@@ -3362,12 +3472,16 @@ async fn run_worker(
                                         // the neighbours who can hear it.
                                         options.no_flood()
                                     } else {
+                                        // Somebody asked, so it travels as
+                                        // far as anything else they send.
                                         // Trace route so a listener learns a
                                         // path back to this phone from the
                                         // same frame, and trace signal so it
                                         // learns what that path costs—the
                                         // two pair entry for entry.
-                                        options.with_trace_route().with_trace_signal()
+                                        with_flood_reach(options, flood_hops.default_hops)
+                                            .with_trace_route()
+                                            .with_trace_signal()
                                     };
                                     node.send_all(&frame, &options)
                                         .await
@@ -3390,10 +3504,12 @@ async fn run_worker(
                             let result = node
                                 .send_all(
                                     &[],
-                                    &SendOptions::default()
-                                        .with_flood_hops(BEACON_FLOOD_HOPS)
-                                        .with_trace_route()
-                                        .with_trace_signal(),
+                                    &with_flood_reach(
+                                        SendOptions::default(),
+                                        flood_hops.beacon_hops,
+                                    )
+                                    .with_trace_route()
+                                    .with_trace_signal(),
                                 )
                                 .await
                                 .map(|_| ())
@@ -3424,9 +3540,11 @@ async fn run_worker(
                             let result = match node.peer(peer).await {
                                 Ok(connection) => connection
                                     .request_identity(
-                                        &SendOptions::default()
-                                            .with_flood_hops(5)
-                                            .with_ack_requested(false),
+                                        &with_flood_reach(
+                                            SendOptions::default(),
+                                            flood_hops.default_hops,
+                                        )
+                                        .with_ack_requested(false),
                                     )
                                     .await
                                     .map(|_| ())
@@ -3460,6 +3578,8 @@ async fn run_worker(
                                     let route = member_routes.get(&(channel, hint.0)).cloned();
                                     let mut nonce_bytes = [0u8; 4];
                                     handle.fill_random(&mut nonce_bytes).await;
+                                    let reach =
+                                        channel_reach(&channel_registry, &channel, flood_hops);
                                     request_identity_over_channel(
                                         &node,
                                         &channel_registry,
@@ -3467,6 +3587,7 @@ async fn run_worker(
                                         hint,
                                         u32::from_be_bytes(nonce_bytes),
                                         route,
+                                        reach,
                                     )
                                     .await
                                 }
@@ -3533,6 +3654,10 @@ async fn run_worker(
                         }
                         Some(WorkerCommand::SetChatDisplayName { name, response }) => {
                             chat.engine.set_local_handle(&name);
+                            let _ = response.send(());
+                        }
+                        Some(WorkerCommand::SetFloodHops { settings, response }) => {
+                            flood_hops = settings;
                             let _ = response.send(());
                         }
                         Some(WorkerCommand::SetDiscoverable { enabled, name, response }) => {
@@ -3751,6 +3876,7 @@ async fn run_worker(
                                         &channel_registry,
                                         &mut chat,
                                         now_ms,
+                                        flood_hops,
                                     )
                                     .await;
                                     publish_chat_drain(chat.drain(), &chat_events);
@@ -3843,6 +3969,7 @@ async fn run_worker(
                                     &channel_registry,
                                     &mut chat,
                                     now_ms,
+                                    flood_hops,
                                 )
                                 .await;
                                 publish_chat_drain(chat.drain(), &chat_events);
@@ -3962,6 +4089,7 @@ async fn run_worker(
                                 &channel_registry,
                                 &mut chat,
                                 received_at_ms,
+                                flood_hops,
                             )
                             .await;
                             publish_chat_drain(chat.drain(), &chat_events);
@@ -4013,6 +4141,7 @@ async fn run_worker(
                             &channel_registry,
                             &mut chat,
                             now_ms,
+                            flood_hops,
                         )
                         .await;
                         publish_chat_drain(chat.drain(), &chat_events);
@@ -4042,6 +4171,7 @@ async fn queue_chat_transmissions<M: MacBackend>(
     channels: &Rc<RefCell<ChannelRegistry>>,
     chat: &mut MobileChatState,
     now_ms: u64,
+    flood_hops: FloodHopSettings,
 ) -> usize {
     pending.extend(transmissions);
     // Keep a bounded pipeline aligned with the device's target-selected
@@ -4076,7 +4206,11 @@ async fn queue_chat_transmissions<M: MacBackend>(
             Destination::Peer(peer) => match node.peer(peer).await {
                 Ok(connection) => {
                     connection
-                        .send(&payload, &SendOptions::default().with_ack_requested(true))
+                        .send(
+                            &payload,
+                            &with_flood_reach(SendOptions::default(), flood_hops.default_hops)
+                                .with_ack_requested(true),
+                        )
                         .await
                 }
                 Err(_) => {
@@ -4100,7 +4234,11 @@ async fn queue_chat_transmissions<M: MacBackend>(
                 // Carry the full source address: a member who misses a
                 // fragment can only ask us to resend it if our frames name
                 // the key to address that request to.
-                let mut options = SendOptions::default().with_full_source();
+                let mut options = with_flood_reach(
+                    SendOptions::default(),
+                    channel_reach(channels, &channel, flood_hops),
+                )
+                .with_full_source();
                 // An emergency message that only channel members can read is
                 // not an emergency message. The spec forbids encrypting chat
                 // on `EMERGENCY` so anyone in range can act on it, whether or
@@ -4135,8 +4273,12 @@ async fn queue_chat_transmissions<M: MacBackend>(
                     continue;
                 }
                 // A repair request; the engine owns retrying it, so no ACK is
-                // asked for here.
-                let mut options = SendOptions::default().with_full_source();
+                // asked for here. It travels as far as the channel does.
+                let mut options = with_flood_reach(
+                    SendOptions::default(),
+                    channel_reach(channels, &channel, flood_hops),
+                )
+                .with_full_source();
                 // Repairs carry the same message the multicast did, so they
                 // are held to the same rule—and have to be, since the
                 // receiving side refuses encrypted emergency text whatever
@@ -4191,6 +4333,7 @@ async fn request_identity_over_channel<M: MacBackend>(
     hint: NodeHint,
     nonce: u32,
     route: Option<MemberRoute>,
+    flood_hops: u8,
 ) -> Result<(), MobileMeshError> {
     let Some(bound) = bound_channel(node, channels, &channel) else {
         return Err(MobileMeshError::UnknownConversation);
@@ -4209,8 +4352,9 @@ async fn request_identity_over_channel<M: MacBackend>(
         .map_err(|_| MobileMeshError::SendFailed)?
         + 1;
     // Full source so the member can answer with a targeted unicast rather
-    // than another multicast.
-    let mut options = SendOptions::default().with_full_source();
+    // than another multicast. With nothing known about where the member
+    // is, the ask travels as far as the channel does.
+    let mut options = with_flood_reach(SendOptions::default(), flood_hops).with_full_source();
     match route.as_ref() {
         Some(route) if !route.route_hints.is_empty() => {
             let hops = route
@@ -4225,14 +4369,14 @@ async fn request_identity_over_channel<M: MacBackend>(
                 Ok(options) => options,
                 Err(_) => SendOptions::default()
                     .with_full_source()
-                    .with_flood_hops(flood_budget(route.hop_count)),
+                    .with_flood_hops(flood_budget(route.hop_count, flood_hops)),
             };
         }
         Some(MemberRoute {
             hop_count: Some(hops),
             ..
         }) => {
-            options = options.with_flood_hops(flood_budget(Some(*hops)));
+            options = options.with_flood_hops(flood_budget(Some(*hops), flood_hops));
         }
         _ => {}
     }
@@ -4449,13 +4593,40 @@ fn remember_member_route(
 /// The flood budget an observed hop count implies. A hop count includes the
 /// final link into this device, which no repeater has to pay for, so the
 /// budget is one less than the distance the frame was heard from—and at
-/// least one, since a budget of zero forwards nowhere.
-fn flood_budget(hop_count: Option<u8>) -> u8 {
+/// least one, since a budget of zero forwards nowhere. With no distance
+/// observed, it is `default`.
+fn flood_budget(hop_count: Option<u8>, default: u8) -> u8 {
     hop_count
-        .map(|hops| hops.saturating_sub(1))
-        .unwrap_or(5)
-        .max(1)
+        .map(|hops| hops.saturating_sub(1).max(1))
+        .unwrap_or(default)
 }
+
+/// How far traffic on a channel may travel: the ceiling the user registered
+/// for it, otherwise the session-wide default—and never past the ceiling
+/// the protocol fixes for the well-known `public` and `EMERGENCY` channels.
+///
+/// The protocol allows those two channels seven hops when the frame carries
+/// a region code, but the phone tags no group traffic with one, so their
+/// ceiling here is the five hops of an untagged frame.
+fn channel_reach(
+    channels: &Rc<RefCell<ChannelRegistry>>,
+    channel: &ChannelTag,
+    settings: FloodHopSettings,
+) -> u8 {
+    let asked = channels
+        .borrow()
+        .max_flood_hops(channel)
+        .unwrap_or(settings.default_hops);
+    if *channel == crate::public_channel_tag() || *channel == crate::emergency_channel_tag() {
+        asked.min(WELL_KNOWN_CHANNEL_MAX_FLOOD_HOPS)
+    } else {
+        asked
+    }
+}
+
+/// The flood-hop ceiling the protocol fixes for `public` and `EMERGENCY`
+/// traffic that carries no region code.
+const WELL_KNOWN_CHANNEL_MAX_FLOOD_HOPS: u8 = 5;
 
 /// What the last frame from a channel member showed about reaching them.
 #[derive(Clone)]
@@ -4469,14 +4640,14 @@ fn decode_peer(address: &str) -> Result<PublicKey, MobileError> {
     Ok(PublicKey(bytes))
 }
 
+fn decode_channel_key(key: Vec<u8>) -> Result<ChannelKey, MobileMeshError> {
+    <[u8; 32]>::try_from(key.as_slice())
+        .map(ChannelKey)
+        .map_err(|_| MobileMeshError::InvalidChannelKey)
+}
+
 fn decode_channel_keys(keys: Vec<Vec<u8>>) -> Result<Vec<ChannelKey>, MobileMeshError> {
-    keys.into_iter()
-        .map(|key| {
-            <[u8; 32]>::try_from(key.as_slice())
-                .map(ChannelKey)
-                .map_err(|_| MobileMeshError::InvalidChannelKey)
-        })
-        .collect()
+    keys.into_iter().map(decode_channel_key).collect()
 }
 
 /// The canonical fixed-width Base58 rendering of a peer key, matching what
@@ -4782,27 +4953,141 @@ mod tests {
         MobileMeshSession::new(identity(31), store).await.unwrap()
     }
 
+    /// Keys as the platform registers them, each at the default reach.
+    fn channel_registrations(keys: Vec<Vec<u8>>) -> Vec<MobileChannelRegistrationRecord> {
+        keys.into_iter()
+            .map(|key| MobileChannelRegistrationRecord {
+                key,
+                max_flood_hops: None,
+            })
+            .collect()
+    }
+
     #[tokio::test]
     async fn channel_registration_is_idempotent_and_reversible() {
         let session = channel_session("channels").await;
         let key = vec![0x5au8; 32];
 
-        session.register_channels(vec![key.clone()]).await.unwrap();
+        session
+            .register_channels(channel_registrations(vec![key.clone()]))
+            .await
+            .unwrap();
         // Re-registering an already-joined channel restates the current
         // state, which is what a session-start replay does.
-        session.register_channels(vec![key.clone()]).await.unwrap();
+        session
+            .register_channels(channel_registrations(vec![key.clone()]))
+            .await
+            .unwrap();
         session.remove_channels(vec![key.clone()]).await.unwrap();
         // Leaving a channel that is not joined is likewise not an error.
         session.remove_channels(vec![key.clone()]).await.unwrap();
         // And the key can come back afterwards.
-        session.register_channels(vec![key]).await.unwrap();
+        session
+            .register_channels(channel_registrations(vec![key]))
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn flood_hop_settings_are_bounded_by_the_wire_field() {
+        let session = channel_session("floodhops").await;
+        session.set_flood_hops(0, 0).await.unwrap();
+        session
+            .set_flood_hops(umsh_mac::MAX_FLOOD_HOPS, umsh_mac::MAX_FLOOD_HOPS)
+            .await
+            .unwrap();
+        assert_eq!(
+            session
+                .set_flood_hops(umsh_mac::MAX_FLOOD_HOPS + 1, 0)
+                .await,
+            Err(MobileMeshError::InvalidRequest)
+        );
+        assert_eq!(
+            session
+                .set_flood_hops(0, umsh_mac::MAX_FLOOD_HOPS + 1)
+                .await,
+            Err(MobileMeshError::InvalidRequest)
+        );
+        assert_eq!(
+            session
+                .register_channels(vec![MobileChannelRegistrationRecord {
+                    key: vec![0x5a; 32],
+                    max_flood_hops: Some(umsh_mac::MAX_FLOOD_HOPS + 1),
+                }])
+                .await,
+            Err(MobileMeshError::InvalidRequest)
+        );
+    }
+
+    /// A channel's reach is what the user set for it, else the session
+    /// default—and the well-known channels never exceed what the protocol
+    /// fixes for them, whatever was asked.
+    #[test]
+    fn channel_reach_honors_registered_ceiling_and_protocol_ceiling() {
+        let settings = FloodHopSettings {
+            default_hops: 10,
+            beacon_hops: 5,
+        };
+        let private_key = ChannelKey([0x11; 32]);
+        let private_tag = crate::channel_tag(&private_key);
+        let public_key = *umsh_node::Channel::named(crate::PUBLIC_CHANNEL_NAME)
+            .unwrap()
+            .key();
+        let public_tag = crate::channel_tag(&public_key);
+        let emergency_key = *umsh_node::Channel::named(crate::EMERGENCY_CHANNEL_NAME)
+            .unwrap()
+            .key();
+        let emergency_tag = crate::channel_tag(&emergency_key);
+
+        let registry = Rc::new(RefCell::new(ChannelRegistry::default()));
+        registry
+            .borrow_mut()
+            .register(private_tag, private_key, None);
+        registry
+            .borrow_mut()
+            .register(public_tag, public_key, Some(12));
+        registry
+            .borrow_mut()
+            .register(emergency_tag, emergency_key, None);
+
+        assert_eq!(channel_reach(&registry, &private_tag, settings), 10);
+        assert_eq!(
+            channel_reach(&registry, &public_tag, settings),
+            WELL_KNOWN_CHANNEL_MAX_FLOOD_HOPS
+        );
+        assert_eq!(
+            channel_reach(&registry, &emergency_tag, settings),
+            WELL_KNOWN_CHANNEL_MAX_FLOOD_HOPS
+        );
+
+        registry
+            .borrow_mut()
+            .register(private_tag, private_key, Some(3));
+        assert_eq!(channel_reach(&registry, &private_tag, settings), 3);
+        // Below the protocol ceiling, the user's own choice stands.
+        registry
+            .borrow_mut()
+            .register(public_tag, public_key, Some(2));
+        assert_eq!(channel_reach(&registry, &public_tag, settings), 2);
+    }
+
+    #[test]
+    fn flood_budget_follows_observed_distance_then_the_default() {
+        assert_eq!(flood_budget(None, 10), 10);
+        assert_eq!(flood_budget(None, 0), 0);
+        // One hop is a direct neighbor: nothing to forward through, but a
+        // budget of zero would forward nowhere at all.
+        assert_eq!(flood_budget(Some(1), 10), 1);
+        assert_eq!(flood_budget(Some(4), 10), 3);
     }
 
     #[tokio::test]
     async fn channel_keys_must_be_full_length() {
         let session = channel_session("shortkey").await;
         assert_eq!(
-            session.register_channels(vec![vec![0x01; 31]]).await,
+            session
+                .register_channels(channel_registrations(vec![vec![0x01; 31]]))
+                .await,
             Err(MobileMeshError::InvalidChannelKey)
         );
         assert_eq!(
@@ -4824,11 +5109,16 @@ mod tests {
             })
             .collect();
         assert!(keys.len() > umsh_mac::DEFAULT_CHANNELS);
-        session.register_channels(keys).await.unwrap();
+        session
+            .register_channels(channel_registrations(keys))
+            .await
+            .unwrap();
 
         let overflow = vec![vec![0xFFu8; 32]];
         assert_eq!(
-            session.register_channels(overflow).await,
+            session
+                .register_channels(channel_registrations(overflow))
+                .await,
             Err(MobileMeshError::ChannelCapacity)
         );
     }
@@ -6641,8 +6931,13 @@ mod tests {
         let key = vec![0x5Cu8; 32];
         let conversation = crate::channel_conversation_address(key.clone()).unwrap();
         assert!(conversation.starts_with("ch:"));
-        alice.register_channels(vec![key.clone()]).await.unwrap();
-        bob.register_channels(vec![key]).await.unwrap();
+        alice
+            .register_channels(channel_registrations(vec![key.clone()]))
+            .await
+            .unwrap();
+        bob.register_channels(channel_registrations(vec![key]))
+            .await
+            .unwrap();
 
         let batch = alice
             .compose_text(conversation.clone(), 1, "regroup at the ridge".to_owned())
@@ -6784,8 +7079,13 @@ mod tests {
             .unwrap()
             .key;
         let conversation = crate::channel_conversation_address(key.clone()).unwrap();
-        alice.register_channels(vec![key.clone()]).await.unwrap();
-        bob.register_channels(vec![key.clone()]).await.unwrap();
+        alice
+            .register_channels(channel_registrations(vec![key.clone()]))
+            .await
+            .unwrap();
+        bob.register_channels(channel_registrations(vec![key.clone()]))
+            .await
+            .unwrap();
 
         let body = "tower down at mile 14";
         let batch = alice
@@ -6981,8 +7281,13 @@ mod tests {
             .unwrap()
             .key;
         let conversation = crate::channel_conversation_address(key.clone()).unwrap();
-        alice.register_channels(vec![key.clone()]).await.unwrap();
-        bob.register_channels(vec![key]).await.unwrap();
+        alice
+            .register_channels(channel_registrations(vec![key.clone()]))
+            .await
+            .unwrap();
+        bob.register_channels(channel_registrations(vec![key]))
+            .await
+            .unwrap();
 
         let body: String = (0..600)
             .map(|index| char::from(b'a' + (index % 26) as u8))
@@ -7108,7 +7413,10 @@ mod tests {
 
         let key = vec![0x3Eu8; 32];
         let conversation = crate::channel_conversation_address(key.clone()).unwrap();
-        session.register_channels(vec![key]).await.unwrap();
+        session
+            .register_channels(channel_registrations(vec![key]))
+            .await
+            .unwrap();
 
         let batch = session
             .compose_text(conversation.clone(), 1, "anyone out there".to_owned())
@@ -7280,7 +7588,10 @@ mod tests {
             Err(MobileMeshError::UnknownConversation)
         );
 
-        session.register_channels(vec![key.clone()]).await.unwrap();
+        session
+            .register_channels(channel_registrations(vec![key.clone()]))
+            .await
+            .unwrap();
         let batch = session
             .compose_text(conversation.clone(), 2, "hello".to_owned())
             .await
@@ -7479,8 +7790,13 @@ mod tests {
 
         let key = vec![0x9Au8; 32];
         let conversation = crate::channel_conversation_address(key.clone()).unwrap();
-        alice.register_channels(vec![key.clone()]).await.unwrap();
-        bob.register_channels(vec![key]).await.unwrap();
+        alice
+            .register_channels(channel_registrations(vec![key.clone()]))
+            .await
+            .unwrap();
+        bob.register_channels(channel_registrations(vec![key]))
+            .await
+            .unwrap();
 
         // Comfortably past a single frame, so the engine must fragment.
         let body: String = (0..600)
