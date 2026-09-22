@@ -9,6 +9,7 @@
 /* Begin PBXBuildFile section */
 		A55000000000000000000001 /* RadioAccessories.swift in Sources */ = {isa = PBXBuildFile; fileRef = A55000000000000000000002 /* RadioAccessories.swift */; };
 		A55000000000000000000003 /* RadioAccessoryInventory.swift in Sources */ = {isa = PBXBuildFile; fileRef = A55000000000000000000004 /* RadioAccessoryInventory.swift */; };
+		A55000000000000000000005 /* RadioLinkLifecycle.swift in Sources */ = {isa = PBXBuildFile; fileRef = A55000000000000000000006 /* RadioLinkLifecycle.swift */; };
 		100000000000000000000001 /* UMSH/App/UMSHApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000001 /* UMSH/App/UMSHApp.swift */; };
 		10000000000000000000001A /* UMSH/Services/Radio/RadioGatt.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20000000000000000000001A /* UMSH/Services/Radio/RadioGatt.swift */; };
 		10000000000000000000001B /* UMSH/Services/Radio/AdminSessionRegistry.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20000000000000000000001B /* UMSH/Services/Radio/AdminSessionRegistry.swift */; };
@@ -118,6 +119,7 @@
 /* Begin PBXFileReference section */
 		A55000000000000000000002 /* RadioAccessories.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Services/Radio/RadioAccessories.swift; sourceTree = "<group>"; };
 		A55000000000000000000004 /* RadioAccessoryInventory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Services/Radio/RadioAccessoryInventory.swift; sourceTree = "<group>"; };
+		A55000000000000000000006 /* RadioLinkLifecycle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Services/Radio/RadioLinkLifecycle.swift; sourceTree = "<group>"; };
 		200000000000000000000001 /* UMSH/App/UMSHApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/App/UMSHApp.swift; sourceTree = "<group>"; };
 		20000000000000000000001A /* UMSH/Services/Radio/RadioGatt.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Services/Radio/RadioGatt.swift; sourceTree = "<group>"; };
 		20000000000000000000001B /* UMSH/Services/Radio/AdminSessionRegistry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Services/Radio/AdminSessionRegistry.swift; sourceTree = "<group>"; };
@@ -329,6 +331,7 @@
 				20000000000000000000001A /* UMSH/Services/Radio/RadioGatt.swift */,
 				A55000000000000000000002 /* RadioAccessories.swift */,
 				A55000000000000000000004 /* RadioAccessoryInventory.swift */,
+				A55000000000000000000006 /* RadioLinkLifecycle.swift */,
 				20000000000000000000001B /* UMSH/Services/Radio/AdminSessionRegistry.swift */,
 				20000000000000000000001C /* UMSH/Services/Radio/AdministrativeDeviceSession.swift */,
 				200000000000000000000014 /* UMSH/Models/ConversationModels.swift */,
@@ -543,6 +546,7 @@
 				10000000000000000000001A /* UMSH/Services/Radio/RadioGatt.swift in Sources */,
 				A55000000000000000000001 /* RadioAccessories.swift in Sources */,
 				A55000000000000000000003 /* RadioAccessoryInventory.swift in Sources */,
+				A55000000000000000000005 /* RadioLinkLifecycle.swift in Sources */,
 				10000000000000000000001B /* UMSH/Services/Radio/AdminSessionRegistry.swift in Sources */,
 				10000000000000000000001C /* UMSH/Services/Radio/AdministrativeDeviceSession.swift in Sources */,
 				100000000000000000000014 /* UMSH/Models/ConversationModels.swift in Sources */,

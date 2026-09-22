@@ -11418,6 +11418,17 @@ public struct UlcpSessionUpdateRecord: Equatable, Hashable {
     public var snapshot: UlcpSessionSnapshotRecord
     public var waitingForResponses: Bool
     /**
+     * Outstanding non-raw transactions, for transport recovery deadlines.
+     * Unsolicited updates preserve these IDs; raw PHY completion has its own
+     * longer deadline and must not disable control-plane recovery.
+     */
+    public var pendingControlTransactions: Data
+    /**
+     * A control response consumed by this update. An allocator may reuse its
+     * ID immediately; the new request must receive a fresh deadline.
+     */
+    public var completedControlTransaction: UInt8?
+    /**
      * True while one host-requested raw PHY transmission is awaiting the
      * radio's `PROP_LAST_STATUS` completion.
      */
@@ -11460,6 +11471,15 @@ public struct UlcpSessionUpdateRecord: Equatable, Hashable {
     // declare one manually.
     public init(outboundFrames: [Data], receivedFrames: [UlcpReceivedFrameRecord], snapshot: UlcpSessionSnapshotRecord, waitingForResponses: Bool,
         /**
+         * Outstanding non-raw transactions, for transport recovery deadlines.
+         * Unsolicited updates preserve these IDs; raw PHY completion has its own
+         * longer deadline and must not disable control-plane recovery.
+         */pendingControlTransactions: Data,
+        /**
+         * A control response consumed by this update. An allocator may reuse its
+         * ID immediately; the new request must receive a fresh deadline.
+         */completedControlTransaction: UInt8?,
+        /**
          * True while one host-requested raw PHY transmission is awaiting the
          * radio's `PROP_LAST_STATUS` completion.
          */rawTransmitPending: Bool,
@@ -11494,6 +11514,8 @@ public struct UlcpSessionUpdateRecord: Equatable, Hashable {
         self.receivedFrames = receivedFrames
         self.snapshot = snapshot
         self.waitingForResponses = waitingForResponses
+        self.pendingControlTransactions = pendingControlTransactions
+        self.completedControlTransaction = completedControlTransaction
         self.rawTransmitPending = rawTransmitPending
         self.rawTransmitStartedTransactionId = rawTransmitStartedTransactionId
         self.rawTransmitResult = rawTransmitResult
@@ -11523,6 +11545,8 @@ public struct FfiConverterTypeUlcpSessionUpdateRecord: FfiConverterRustBuffer {
                 receivedFrames: FfiConverterSequenceTypeUlcpReceivedFrameRecord.read(from: &buf),
                 snapshot: FfiConverterTypeUlcpSessionSnapshotRecord.read(from: &buf),
                 waitingForResponses: FfiConverterBool.read(from: &buf),
+                pendingControlTransactions: FfiConverterData.read(from: &buf),
+                completedControlTransaction: FfiConverterOptionUInt8.read(from: &buf),
                 rawTransmitPending: FfiConverterBool.read(from: &buf),
                 rawTransmitStartedTransactionId: FfiConverterOptionUInt8.read(from: &buf),
                 rawTransmitResult: FfiConverterOptionTypeUlcpRawTransmitResultRecord.read(from: &buf),
@@ -11538,6 +11562,8 @@ public struct FfiConverterTypeUlcpSessionUpdateRecord: FfiConverterRustBuffer {
         FfiConverterSequenceTypeUlcpReceivedFrameRecord.write(value.receivedFrames, into: &buf)
         FfiConverterTypeUlcpSessionSnapshotRecord.write(value.snapshot, into: &buf)
         FfiConverterBool.write(value.waitingForResponses, into: &buf)
+        FfiConverterData.write(value.pendingControlTransactions, into: &buf)
+        FfiConverterOptionUInt8.write(value.completedControlTransaction, into: &buf)
         FfiConverterBool.write(value.rawTransmitPending, into: &buf)
         FfiConverterOptionUInt8.write(value.rawTransmitStartedTransactionId, into: &buf)
         FfiConverterOptionTypeUlcpRawTransmitResultRecord.write(value.rawTransmitResult, into: &buf)

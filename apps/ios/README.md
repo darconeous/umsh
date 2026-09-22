@@ -86,6 +86,23 @@ Settings removal, and locked-phone background reconnection. See
 [ADR 0008](../../docs/architecture/decisions/ios/0008-accessory-setup.md) for
 the lifecycle and qualification cases.
 
+Companion recovery uses attachment generations to reject late GATT callbacks.
+Disconnect retires protocol work immediately and replaces the Bluetooth manager
+if cancellation has not completed within five seconds. Service and characteristic
+discovery each have a ten-second deadline; notification subscription allows
+sixty seconds for system pairing. Individual ATT writes and ULCP control replies
+have eight-second deadlines. Unrelated notifications and slow LoRa transmissions
+do not extend a control reply deadline. A radio that is simply out of range keeps
+its pending connection request without periodic scans or reconnect attempts.
+
+Run `scripts/ios/verify-radio-recovery.sh` for lifecycle and deadline checks.
+After rebuilding mobile-core, run `scripts/ios/verify-radio-session-recovery.sh`
+to exercise the actual ULCP session with a fake transport, including missing
+answers and teardown with delayed work. The Rust mobile session tests cover the
+outstanding control-transaction reports used by those deadlines. Physical iPhone
+checks remain necessary for Bluetooth resets, dropped callbacks, Service Changed,
+AccessorySetupKit invalidation, and background reconnection.
+
 ## Running against a real radio in the simulator
 
 The simulator has no Bluetooth, so a simulator build cannot reach a

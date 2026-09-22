@@ -681,6 +681,13 @@ pub struct UlcpSessionUpdateRecord {
     pub received_frames: Vec<UlcpReceivedFrameRecord>,
     pub snapshot: UlcpSessionSnapshotRecord,
     pub waiting_for_responses: bool,
+    /// Outstanding non-raw transactions, for transport recovery deadlines.
+    /// Unsolicited updates preserve these IDs; raw PHY completion has its own
+    /// longer deadline and must not disable control-plane recovery.
+    pub pending_control_transactions: Vec<u8>,
+    /// A control response consumed by this update. An allocator may reuse its
+    /// ID immediately; the new request must receive a fresh deadline.
+    pub completed_control_transaction: Option<u8>,
     /// True while one host-requested raw PHY transmission is awaiting the
     /// radio's `PROP_LAST_STATUS` completion.
     pub raw_transmit_pending: bool,
@@ -2079,7 +2086,10 @@ impl MobileUlcpSession {
                 state.expected.get(&parsed.header.tid())
             {
                 let keys = keys.clone();
-                return state.consume_battery_multi(parsed, &keys);
+                let tid = parsed.header.tid();
+                let mut update = state.consume_battery_multi(parsed, &keys)?;
+                update.completed_control_transaction = Some(tid);
+                return Ok(update);
             }
         }
         let response = inspect_ulcp_property_frame(frame)?;
@@ -2133,6 +2143,8 @@ impl MobileUlcpSession {
             .expected
             .remove(&response.transaction_id)
             .ok_or(MobileError::UlcpUnexpectedFrame)?;
+        let completed_control =
+            (!matches!(expected, ExpectedResponse::RawTransmit)).then_some(response.transaction_id);
         // From here on, an answer that is not the form its request predicted
         // is not a session fault either: the transaction was outstanding, so
         // the device acted, and the disagreement is about the property's
@@ -2811,7 +2823,10 @@ impl MobileUlcpSession {
             }
             state.start_rereads(&mut outbound)?;
         }
-        Ok(state.update_with(outbound, Vec::new(), raw_transmit_result, operation_error))
+        let mut update =
+            state.update_with(outbound, Vec::new(), raw_transmit_result, operation_error);
+        update.completed_control_transaction = completed_control;
+        Ok(update)
     }
 
     /// Invalidate all outstanding transactions for a disconnected transport.
@@ -3024,6 +3039,14 @@ impl UlcpSessionState {
                 provisioning: self.provisioning.clone(),
             },
             waiting_for_responses: !self.expected.is_empty(),
+            pending_control_transactions: self
+                .expected
+                .iter()
+                .filter_map(|(&tid, expected)| {
+                    (!matches!(expected, ExpectedResponse::RawTransmit)).then_some(tid)
+                })
+                .collect(),
+            completed_control_transaction: None,
             raw_transmit_pending,
             raw_transmit_started_transaction_id: None,
             raw_transmit_result,
@@ -7472,6 +7495,50 @@ mod tests {
     }
 
     #[test]
+    fn mobile_session_control_deadlines_follow_requests_not_notifications() {
+        let session = MobileUlcpSession::new();
+        let begin = session.begin(None).unwrap();
+        assert_eq!(begin.pending_control_transactions.len(), 7);
+        let pushed = session
+            .consume(property_response(
+                frame::TID_UNSOLICITED,
+                prop::BATTERY,
+                &[],
+            ))
+            .unwrap();
+        assert_eq!(
+            pushed.pending_control_transactions,
+            begin.pending_control_transactions
+        );
+        let tid = begin
+            .outbound_frames
+            .iter()
+            .find_map(|request| {
+                let (tid, property) = property_request(request);
+                (property == prop::PROTOCOL_VERSION).then_some(tid)
+            })
+            .unwrap();
+        let answered = session
+            .consume(property_response(tid, prop::PROTOCOL_VERSION, &[6, 0]))
+            .unwrap();
+        assert_eq!(answered.pending_control_transactions.len(), 6);
+        assert_eq!(answered.completed_control_transaction, Some(tid));
+        assert_eq!(pushed.completed_control_transaction, None);
+        assert!(!answered.pending_control_transactions.contains(&tid));
+        let reset = session.reset();
+        assert!(reset.pending_control_transactions.is_empty());
+        assert!(!reset.waiting_for_responses);
+        assert_eq!(
+            session
+                .begin(None)
+                .unwrap()
+                .pending_control_transactions
+                .len(),
+            7
+        );
+    }
+
+    #[test]
     fn mobile_session_owns_sync_tids_and_attaches_transparent_radio() {
         let session = MobileUlcpSession::new();
         let begin = session.begin(Some(vec![0xAA; 32])).unwrap();
@@ -8233,6 +8300,7 @@ mod tests {
 
         let transmit = session.transmit_raw(vec![1, 2, 3], false).unwrap();
         assert!(transmit.raw_transmit_pending);
+        assert!(transmit.pending_control_transactions.is_empty());
         assert_eq!(transmit.raw_transmit_result, None);
         assert_eq!(transmit.outbound_frames.len(), 1);
         let second_transmit = session.transmit_raw(vec![4], false).unwrap();
@@ -8240,6 +8308,17 @@ mod tests {
             transmit.raw_transmit_started_transaction_id,
             second_transmit.raw_transmit_started_transaction_id
         );
+
+        // Slow PHY completion does not suppress an independent control deadline.
+        let fetch = session.begin_property_fetch(vec![prop::DEV_NAME]).unwrap();
+        let (fetch_tid, _) = property_request(&fetch.outbound_frames[0]);
+        assert!(fetch.raw_transmit_pending);
+        assert_eq!(fetch.pending_control_transactions, vec![fetch_tid]);
+        let fetched = session
+            .consume(property_response(fetch_tid, prop::DEV_NAME, b"Radio"))
+            .unwrap();
+        assert!(fetched.raw_transmit_pending);
+        assert!(fetched.pending_control_transactions.is_empty());
 
         let request = Frame::parse(&transmit.outbound_frames[0]).unwrap();
         let rejected = session

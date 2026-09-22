@@ -13,6 +13,15 @@ import Foundation
 /// keeps the system text: an unhelpful accurate string beats an invented
 /// one, and the raw error still reaches the log either way.
 enum BluetoothErrorText {
+    /// ATT rejections can fail one operation. CoreBluetooth transport errors
+    /// and invalid service handles require rebuilding the attachment.
+    static func invalidatesTransport(_ error: any Error) -> Bool {
+        let error = error as NSError
+        if error.domain == CBErrorDomain { return true }
+        guard error.domain == CBATTErrorDomain else { return true }
+        return error.code == CBATTError.invalidHandle.rawValue
+            || error.code == CBATTError.attributeNotFound.rawValue
+    }
     /// The device and this phone have no pairing, so the encrypted ULCP
     /// characteristics are unreadable.
     static let notPaired = """

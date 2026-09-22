@@ -924,6 +924,10 @@ struct RadioDetailView: View {
                 Button(inProgressCancelTitle, role: .destructive) {
                     Task { await disconnect() }
                 }
+            } else {
+                Button("Stop Waiting", role: .destructive) {
+                    Task { await disconnect() }
+                }
             }
         case .attaching, .synchronizing, .awaitingHost, .attached, .ready:
             if snapshot.hostState == .unclaimed {

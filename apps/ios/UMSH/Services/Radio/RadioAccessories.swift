@@ -37,6 +37,8 @@ final class RadioAccessories {
     private let managedKey = "radio.accessories.managedIDs"
     private let namesKey = "radio.accessories.configuredNames"
     private var appIsActive = false
+    private var activationRecovery = RadioActivationRecovery()
+    private var recoveryToken = UUID()
     // Installed on the main actor, then only released by deinit. Foundation's
     // observer tokens are not Sendable; removal itself is thread-safe.
     @ObservationIgnored nonisolated(unsafe) private var lifecycleObservers: [NSObjectProtocol] = []
@@ -99,6 +101,7 @@ final class RadioAccessories {
                         guard let self else { return }
                         self.appIsActive = active
                         self.publish()
+                        if active { self.recoverIfNeeded() }
                     }
                 })
             }
@@ -113,6 +116,40 @@ final class RadioAccessories {
                 guard let self, self.sessionGeneration == generation else { return }
                 self.handle(event)
             }
+        }
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(8))
+            guard let self, self.sessionGeneration == generation, !self.inventory.ready else { return }
+            self.activationFailed(RadioConnectionError.operationTimedOut)
+        }
+    }
+
+    /// Foreground entry and explicit Reconnect can restart a failed inventory
+    /// activation without making the user open an unrelated setup picker.
+    func recoverIfNeeded() {
+        guard session == nil else { return }
+        activationRecovery.reset()
+        recoveryToken = UUID()
+        start()
+    }
+
+    private func activationFailed(_ error: any Error) {
+        sessionGeneration = UUID()
+        session?.invalidate()
+        session = nil
+        inventory.ready = false
+        inventory.problem = error.localizedDescription
+        finishActivation(error: error)
+        if setupState.isActive { finishPicker(.invalidated, error: error) }
+        else { publish() }
+        // Bounded recovery, not a permanent background polling loop.
+        guard let delay = activationRecovery.nextDelay() else { return }
+        let token = UUID()
+        recoveryToken = token
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(delay))
+            guard let self, self.recoveryToken == token, self.session == nil else { return }
+            self.start()
         }
     }
 
@@ -185,16 +222,18 @@ final class RadioAccessories {
         switch event.eventType {
         case .activated:
             if let error = event.error {
-                sessionGeneration = UUID()
-                session?.invalidate()
-                session = nil
-                inventory.problem = error.localizedDescription
-                publish()
-                finishActivation(error: error)
+                activationFailed(error)
                 return
             }
+            recoveryToken = UUID()
             refresh()
             finishActivation()
+            let generation = sessionGeneration
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(for: .seconds(60))
+                guard let self, self.sessionGeneration == generation, self.inventory.ready else { return }
+                self.activationRecovery.reset()
+            }
         case .accessoryAdded, .accessoryChanged, .accessoryRemoved:
             if inventory.pickerActive, event.eventType == .accessoryAdded {
                 pickerSelectedID = event.accessory?.bluetoothIdentifier
@@ -212,13 +251,7 @@ final class RadioAccessories {
             finishPicker(.pickerDismissed, error: pickerError)
         case .invalidated:
             let error = event.error ?? RadioConnectionError.bluetoothUnavailable
-            sessionGeneration = UUID()
-            session = nil
-            inventory.ready = false
-            inventory.problem = error.localizedDescription
-            finishActivation(error: error)
-            if setupState.isActive { finishPicker(.invalidated, error: error) }
-            else { publish() }
+            activationFailed(error)
         default: break
         }
     }

@@ -210,6 +210,8 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
         [UUID: AsyncStream<RadioPeerHeardEvent>.Continuation] = [:]
     let ulcpSession = MobileUlcpSession()
     var syncAttempt = UUID()
+    private var controlDeadlines = RadioControlDeadlines()
+    private var scheduledControlDeadline: TimeInterval?
     var selectedHostKey: Data?
     var refreshInProgress = false
     var refreshWaiters: [CheckedContinuation<RadioSnapshot, any Error>] = []
@@ -1573,10 +1575,7 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
             retries-left=\(self.fatalFaultRetriesRemaining, privacy: .public)
             """
         )
-        finishPendingOperations(throwing: RadioConnectionError.incompatibleProtocol)
-        abandonOutstandingMeshFrames()
-        syncAttempt = UUID()
-        _ = ulcpSession.reset()
+        sessionDidLoseLink()
         // A retry is a reconnect, and says so. Publishing `.failed` for a
         // teardown the app is about to undo would flash an error the user
         // cannot act on and that resolves itself a moment later.
@@ -1624,11 +1623,13 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
     }
 
     func beginSynchronization() {
+        guard link?.linkIsReady == true else { return }
         Self.logger.notice(
             "begin synchronization: hostKey=\(self.selectedHostKey != nil, privacy: .public)"
         )
         // Whatever the transport was part-way through belongs to the
         // session being replaced, not the one starting here.
+        sessionDidLoseLink()
         link?.linkResetFraming()
         // The session started below cannot answer for transactions submitted
         // to the one it replaces. Frames carried across the boundary would
@@ -1652,7 +1653,8 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
     func applySessionUpdate(
         _ update: UlcpSessionUpdateRecord
     ) throws {
-        syncAttempt = UUID()
+        guard link?.linkIsReady == true else { throw RadioConnectionError.radioNotFound }
+        let attachmentGeneration = linkGeneration
         let previousLinkState = snapshot.linkState
         let previousHostState = snapshot.hostState
         snapshot.linkState = switch update.snapshot.phase {
@@ -1986,6 +1988,7 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
                     ? update.rawTransmitStartedTransactionId
                     : nil
             )
+            guard linkGeneration == attachmentGeneration else { return }
         }
         if update.snapshot.phase == .attached {
             // A completed attach is the app's declaration of intent to stay
@@ -2065,13 +2068,19 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
             }
         }
 
-        // Raw PHY completion can legitimately take longer than the control
-        // plane's synchronization timeout at slow LoRa settings. It has its
-        // own ordered queue and must never tear down a healthy BLE session.
-        guard update.waitingForResponses, !update.rawTransmitPending else { return }
+        // Rust identifies the outstanding control transactions. Preserve each
+        // deadline across unrelated notifications and concurrent raw transmits.
+        let now = Double(DispatchTime.now().uptimeNanoseconds) / 1_000_000_000
+        controlDeadlines.update(pending: Array(update.pendingControlTransactions),
+                                completed: update.completedControlTransaction, now: now)
+        let deadline = controlDeadlines.next
+        guard deadline != scheduledControlDeadline else { return }
+        scheduledControlDeadline = deadline
+        syncAttempt = UUID()
+        guard let deadline else { return }
         let attempt = syncAttempt
         let phaseAtSchedule = snapshot.linkState
-        sessionQueue.asyncAfter(deadline: .now() + 8) { [weak self] in
+        sessionQueue.asyncAfter(deadline: .now() + max(0, deadline - now)) { [weak self] in
             guard let self, self.link != nil, self.syncAttempt == attempt else {
                 return
             }
@@ -2084,11 +2093,11 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
                 link=\(self.link?.linkIsReady == true, privacy: .public)
                 """
             )
-            self.reportOperationFailure(
+            self.finishStrandedOperations()
+            self.terminateConnectionForFatalProtocolError(
                 "The companion radio did not finish synchronizing",
                 name: link?.linkName
             )
-            self.finishStrandedOperations()
         }
     }
 
@@ -2666,6 +2675,14 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
         autoEnableAttemptedGeneration = nil
         autoClaimAttemptedGeneration = nil
         syncAttempt = UUID()
+        controlDeadlines.reset()
+        scheduledControlDeadline = nil
+    }
+
+    /// A deliberate new attempt gets a fresh recovery budget; a failing
+    /// automatic reconnect must not refill itself indefinitely.
+    func resetRecoveryBudget() {
+        fatalFaultRetriesRemaining = Self.fatalFaultRetryBudget
     }
 
     /// The transport went away on its own.

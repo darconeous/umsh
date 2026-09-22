@@ -74,6 +74,30 @@ reassembly, and persistent inbound-message ingestion are not yet connected to
 that stream. The app reports offline queue depth but deliberately does not drain
 queued traffic until those fail-closed consumers are implemented.
 
+## Recovery ownership
+
+Swift owns a generation for each BLE attachment and accepts callbacks only from
+that attachment's peripheral delegate, current service and characteristics, and
+expected phase. Disconnect retires the ULCP session before waiting for the system
+callback. Its bounded fallback replaces the central manager; the UI also provides
+an explicit escape while cancellation is pending. Neither late protocol updates
+nor old GATT callbacks can rearm a deliberate disconnect.
+
+Service discovery, characteristic discovery, notification subscription and ATT
+writes have recovery deadlines. Rust reports outstanding control transaction IDs
+and completed control responses. Swift retains a deadline per outstanding ID,
+including when raw PHY transmissions coexist with control work. Expiry releases
+callers, resets the Rust session, and uses bounded fault recovery. Ordinary ATT
+operation rejections stay distinct from transport loss. A new user-requested
+attempt resets the fault retry budget.
+
+Bluetooth unavailability retires all old protocol and GATT state. When the manager
+is usable again, the saved connection intent determines whether to retrieve the
+radio and resume. A pending connection to an absent radio is left with the system;
+the app does not replace it with a scan or polling loop. AccessorySetupKit session
+failure has bounded automatic activation retries and can also recover on foreground
+entry or explicit Reconnect.
+
 ## Remaining evidence gate
 
 An iOS-on-Mac build on Apple silicon has successfully discovered and paired with
