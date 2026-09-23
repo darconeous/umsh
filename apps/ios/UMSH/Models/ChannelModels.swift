@@ -59,17 +59,16 @@ struct ChannelSummary: Identifiable, Hashable, Sendable {
     }
 
     /// The flood-hop ceiling the protocol fixes for this channel, when it
-    /// fixes one. `public` and `EMERGENCY` are capped at five hops for a
-    /// frame carrying no region code—and the phone tags no group traffic
-    /// with one—so it is not the user's to choose. The mesh session
-    /// enforces the same ceiling whatever it is asked to register.
+    /// fixes one. `public` and `EMERGENCY` are capped at ten hops, so it is
+    /// not the user's to choose. The mesh session enforces the same ceiling
+    /// whatever it is asked to register.
     ///
     /// Keyed on the canonical name rather than the record's kind, because the
     /// name is what derives the key: joining `umsh:cs:public` by hand reaches
     /// the same channel and inherits the same rules.
     var protocolMaxFloodHops: Int? {
         switch canonicalName {
-        case "public", "emergency": 5
+        case "public", "emergency": 10
         default: nil
         }
     }

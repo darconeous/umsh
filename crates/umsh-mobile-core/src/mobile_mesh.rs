@@ -4604,10 +4604,6 @@ fn flood_budget(hop_count: Option<u8>, default: u8) -> u8 {
 /// How far traffic on a channel may travel: the ceiling the user registered
 /// for it, otherwise the session-wide default—and never past the ceiling
 /// the protocol fixes for the well-known `public` and `EMERGENCY` channels.
-///
-/// The protocol allows those two channels seven hops when the frame carries
-/// a region code, but the phone tags no group traffic with one, so their
-/// ceiling here is the five hops of an untagged frame.
 fn channel_reach(
     channels: &Rc<RefCell<ChannelRegistry>>,
     channel: &ChannelTag,
@@ -4624,9 +4620,8 @@ fn channel_reach(
     }
 }
 
-/// The flood-hop ceiling the protocol fixes for `public` and `EMERGENCY`
-/// traffic that carries no region code.
-const WELL_KNOWN_CHANNEL_MAX_FLOOD_HOPS: u8 = 5;
+/// The flood-hop ceiling the protocol fixes for `public` and `EMERGENCY`.
+const WELL_KNOWN_CHANNEL_MAX_FLOOD_HOPS: u8 = 10;
 
 /// What the last frame from a channel member showed about reaching them.
 #[derive(Clone)]

@@ -95,7 +95,7 @@ Implementations should recognize two well-known named channels with specific beh
 
 The `public` channel (derived from `umsh:cs:public`) is the default flooded group chat channel. It provides a shared communication space analogous to an open town square—any node that knows the name can participate.
 
-- Maximum flood hops: **5** without a region code, **7** with a region code.
+- Maximum flood hops: **10**.
 - Traffic **may** be encrypted (E=1), but the key is known so this doesn't really offer privacy.
 - Blind unicast on this channel is forbidden.
 - Chat messages that do not include the full source key (`S=1`) **MUST NOT** be displayed in the user interface. This ensures that users can always verify sender identity on the public channel, even though the channel key itself is public knowledge.
@@ -104,7 +104,7 @@ The `public` channel (derived from `umsh:cs:public`) is the default flooded grou
 
 The emergency channel (written `EMERGENCY` here for emphasis, but derived from `umsh:cs:emergency` after the ASCII case-folding described in [Named Channels](#named-channels), so `umsh:cs:EMERGENCY` and `umsh:cs:emergency` derive the same key) is reserved for emergency communications. Repeaters should prioritize forwarding packets on this channel.
 
-- Maximum flood hops: **5** without a region code, **7** with a region code.
+- Maximum flood hops: **10**.
 - Chat messages **must not** be encrypted—all emergency traffic must be readable by any node in range, including nodes that have not explicitly joined the channel.
 - Chat messages **must** include the full source key (`S=1`).
 - Chat messages **must** include an EdDSA signature in the payload.

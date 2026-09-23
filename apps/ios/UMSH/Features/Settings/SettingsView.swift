@@ -356,8 +356,19 @@ struct IdentityDetailView: View {
     @AppStorage("phone.locationPrecision") private var phoneLocationPrecision = 5
     /// How far what this phone sends may travel, in repeater hops. The
     /// runtime reads the same keys and hands them to the mesh session.
-    @AppStorage("phone.floodHops") private var phoneFloodHops = 10
-    @AppStorage("phone.beaconFloodHops") private var phoneBeaconFloodHops = 5
+    @AppStorage("phone.floodHops") private var phoneFloodHops = Self.recommendedFloodHops
+    @AppStorage("phone.beaconFloodHops") private var phoneBeaconFloodHops = Self.recommendedBeaconFloodHops
+    /// Past these, the picker asks for confirmation.
+    static let recommendedFloodHops = 10
+    static let recommendedBeaconFloodHops = 5
+    /// A reach just picked past its recommended ceiling, held until the
+    /// user confirms or the picker is put back.
+    @State private var reachWarning: ReachWarning?
+
+    private struct ReachWarning {
+        let isBeacon: Bool
+        let previous: Int
+    }
 
     var body: some View {
         List {
@@ -432,13 +443,18 @@ struct IdentityDetailView: View {
             } header: {
                 Text("Announce on a schedule")
             } footer: {
-                Text("Both run only while UMSH is open—iOS gives a suspended app no way to keep talking to the mesh. A beacon publishes the path back to this phone; an identity announcement carries your name and reaches only nodes that can hear you directly. Each interval is a minimum: periods run a little longer at random, so phones on the same schedule do not all transmit at once.")
+                Text("Runs only while UMSH is open. Intervals are minimums, staggered at random.")
             }
 
             Section {
                 Picker("Messages and requests", selection: $phoneFloodHops) {
                     ForEach(1...15, id: \.self) { hops in
                         Text("^[\(hops) hop](inflect: true)").tag(hops)
+                    }
+                }
+                .onChange(of: phoneFloodHops) { previous, current in
+                    if current > Self.recommendedFloodHops, previous <= Self.recommendedFloodHops {
+                        reachWarning = ReachWarning(isBeacon: false, previous: previous)
                     }
                 }
                 Picker("Beacon", selection: $phoneBeaconFloodHops) {
@@ -450,10 +466,16 @@ struct IdentityDetailView: View {
                         }
                     }
                 }
+                .onChange(of: phoneBeaconFloodHops) { previous, current in
+                    if current > Self.recommendedBeaconFloodHops,
+                       previous <= Self.recommendedBeaconFloodHops {
+                        reachWarning = ReachWarning(isBeacon: true, previous: previous)
+                    }
+                }
             } header: {
                 Text("Reach")
             } footer: {
-                Text("The most repeaters a transmission may cross. Messages, pings, and requests use the first; a scheduled beacon uses the second. A route already learned to a node narrows a message to what that route costs, so the ceiling matters on first contact and when a route goes stale. A channel can set its own ceiling in its details.")
+                Text("The most repeaters a transmission may cross. Channels can set their own.")
             }
 
             Section {
@@ -481,7 +503,7 @@ struct IdentityDetailView: View {
 
             Section("Storage") {
                 LabeledContent("Private key", value: "Device-only Keychain")
-                Text("Private key bytes are never displayed, copied, synchronized, or included in diagnostics. The Keychain outlives the app: deleting UMSH does not delete this key, and only the controls below do.")
+                Text("Never displayed or exported. Survives deleting the app.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -489,6 +511,27 @@ struct IdentityDetailView: View {
             eraseSection
         }
         .navigationTitle("Your identity")
+        .alert(
+            "Warning",
+            isPresented: Binding(
+                get: { reachWarning != nil },
+                set: { if !$0 { reachWarning = nil } }
+            ),
+            presenting: reachWarning
+        ) { warning in
+            Button("Cancel", role: .cancel) {
+                if warning.isBeacon {
+                    phoneBeaconFloodHops = warning.previous
+                } else {
+                    phoneFloodHops = warning.previous
+                }
+            }
+            Button("Continue") {}
+        } message: { warning in
+            Text(warning.isBeacon
+                 ? "Setting a beacon reach larger than \(Self.recommendedBeaconFloodHops) hops is not recommended. Are you sure you want to do this?"
+                 : "Setting a default flood hop count larger than \(Self.recommendedFloodHops) is not recommended. Are you sure you want to do this?")
+        }
         .task {
             nameDraft = advertisedName
             discoverableDraft = phoneDiscoverable
@@ -504,7 +547,7 @@ struct IdentityDetailView: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("Your private key is destroyed and this phone comes back as a different node—nobody will recognize it as you again. Messages and contacts stay on the phone but belong to the old identity, so nothing will show them.")
+            Text("Destroys the private key; this phone becomes a new node. Old messages stay but are unreachable.")
         }
         .confirmationDialog(
             "Start over?",
@@ -537,16 +580,16 @@ struct IdentityDetailView: View {
             Button("Erase Identity…", role: .destructive) { confirmsErase = true }
             Button("Start Over…", role: .destructive) { confirmsStartOver = true }
         } footer: {
-            Text("Erase Identity destroys the private key and mints a new one; your messages stay on the phone but are no longer reachable. Start Over removes those too, along with your contacts, channels, and paired radio.")
+            Text("Erase Identity keeps messages; Start Over removes everything.")
         }
     }
 
     private var advertisedIdentityFooter: String {
-        var footer = "Advertising broadcasts your public key, name, and capabilities to every nearby node, signed by your identity."
+        var footer = "Broadcasts your signed public key, name, and capabilities to nearby nodes."
         if setPhoneDiscoverable != nil {
             footer += discoverableDraft
-                ? " While discoverable, this phone also answers nearby nodes that ask it to identify itself."
-                : " This phone ignores nearby nodes that ask it to identify itself."
+                ? " Discoverable also answers identity requests."
+                : " Identity requests are ignored."
         }
         return footer
     }
@@ -555,7 +598,7 @@ struct IdentityDetailView: View {
         guard phoneSharesLocation else {
             return "Your identity says nothing about where you are."
         }
-        return "Identity announcements and replies name a \(precisionLabel(UInt8(clamping: phoneLocationPrecision))) area you are inside—never a more precise position than that. The shareable QR code never carries it, and your location is read only while UMSH is open."
+        return "Announcements name a \(precisionLabel(UInt8(clamping: phoneLocationPrecision))) area you are inside. The QR code never carries it."
     }
 
     /// Live enough for a footer: re-read on every body evaluation, so it
