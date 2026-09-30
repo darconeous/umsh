@@ -600,6 +600,16 @@ impl<const FRAME: usize> QueuedTx<FRAME> {
             forward_deferrals,
         })
     }
+
+    /// Whether the entry's earliest transmission time has passed.
+    pub fn is_ready(&self, now_ms: u64) -> bool {
+        self.not_before_ms <= now_ms
+    }
+
+    /// Whether the entry is an immediate ACK whose time has passed.
+    fn is_ready_immediate_ack(&self, now_ms: u64) -> bool {
+        self.priority == TxPriority::ImmediateAck && self.is_ready(now_ms)
+    }
 }
 
 /// Fixed-capacity, priority-ordered transmit queue owned by the [`Mac`](crate::Mac) coordinator.
@@ -615,7 +625,7 @@ impl<const FRAME: usize> QueuedTx<FRAME> {
 /// the worst-case burst: a forwarded frame, its MAC ACK, plus any application sends already
 /// queued, plus the retransmit backlog.
 ///
-/// Internally the queue is an unsorted `heapless::Vec<QueuedTx, N>`. The `dequeue` operation
+/// Internally the queue is an unsorted `heapless::Vec<QueuedTx, N>`. [`pop_ready`](Self::pop_ready)
 /// does a linear scan for the highest-priority, lowest-sequence entry whose `not_before_ms`
 /// has elapsed, which is O(N)—acceptable for the small N typical in embedded deployments.
 #[derive(Clone, Debug)]
@@ -691,31 +701,61 @@ impl<const N: usize, const FRAME: usize> TxQueue<N, FRAME> {
         Ok(sequence)
     }
 
-    /// Remove and return the highest-priority queued frame.
+    /// Remove and return the highest-priority queued frame, whether or not
+    /// its `not_before_ms` has elapsed.
     pub fn pop_next(&mut self) -> Option<QueuedTx<FRAME>> {
+        self.pop_best_matching(|_| true)
+    }
+
+    /// Remove and return the highest-priority queued frame that is ready to
+    /// send at `now_ms`.
+    ///
+    /// An entry still waiting out its `not_before_ms` is passed over rather
+    /// than holding back the traffic behind it: a forward sitting in its
+    /// contention delay, or a retry in its backoff, keeps its place while a
+    /// send that could go out now does.
+    pub fn pop_ready(&mut self, now_ms: u64) -> Option<QueuedTx<FRAME>> {
+        self.pop_best_matching(|entry| entry.is_ready(now_ms))
+    }
+
+    /// Remove and return the oldest immediate-ACK entry that is ready to send
+    /// at `now_ms`. Only these may transmit during a post-transmit listen
+    /// window; everything else stays queued until the window closes.
+    pub fn pop_ready_immediate_ack(&mut self, now_ms: u64) -> Option<QueuedTx<FRAME>> {
+        self.pop_best_matching(|entry| entry.is_ready_immediate_ack(now_ms))
+    }
+
+    fn pop_best_matching(
+        &mut self,
+        mut predicate: impl FnMut(&QueuedTx<FRAME>) -> bool,
+    ) -> Option<QueuedTx<FRAME>> {
         let index = self
             .entries
             .iter()
             .enumerate()
+            .filter(|(_, entry)| predicate(entry))
             .min_by_key(|(_, entry)| (entry.priority.rank(), entry.sequence))
             .map(|(index, _)| index)?;
         Some(self.entries.swap_remove(index))
     }
 
-    /// Return the earliest `not_before_ms` across all entries, if any are deferred.
-    pub fn earliest_not_before_ms(&self) -> Option<u64> {
+    /// Return the earliest `not_before_ms` still ahead of `now_ms`, if any
+    /// entry is deferred.
+    ///
+    /// This is the next moment the queue needs the coordinator awake for. An
+    /// entry whose time has already come is not a deadline but ready work,
+    /// reported by [`has_ready`](Self::has_ready) instead.
+    pub fn next_deferred_ms(&self, now_ms: u64) -> Option<u64> {
         self.entries
             .iter()
-            .filter(|entry| entry.not_before_ms > 0)
+            .filter(|entry| !entry.is_ready(now_ms))
             .map(|entry| entry.not_before_ms)
             .min()
     }
 
     /// Return whether the queue contains any entry that is ready to send now.
     pub fn has_ready(&self, now_ms: u64) -> bool {
-        self.entries
-            .iter()
-            .any(|entry| entry.not_before_ms <= now_ms)
+        self.entries.iter().any(|entry| entry.is_ready(now_ms))
     }
 
     /// Return whether the queue contains an immediate-ACK entry that is
@@ -723,9 +763,9 @@ impl<const N: usize, const FRAME: usize> TxQueue<N, FRAME> {
     /// listen window, so a wait predicate must not treat other ready
     /// entries as actionable while one is open.
     pub fn has_ready_immediate_ack(&self, now_ms: u64) -> bool {
-        self.entries.iter().any(|entry| {
-            entry.priority == TxPriority::ImmediateAck && entry.not_before_ms <= now_ms
-        })
+        self.entries
+            .iter()
+            .any(|entry| entry.is_ready_immediate_ack(now_ms))
     }
 
     /// Remove and return the first queued frame matching `predicate`.

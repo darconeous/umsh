@@ -753,6 +753,36 @@ fn tx_queue_pops_highest_priority_first_then_fifo_within_priority() {
     assert!(queue.is_empty());
 }
 
+/// An entry still waiting out its `not_before_ms` is not in the running: the
+/// best entry among those whose time has come is served, whatever outranks
+/// it further back in the queue. The deadline reported for the sleeper is
+/// always the next one still ahead, never one already passed.
+#[test]
+fn tx_queue_pop_ready_serves_the_best_entry_that_is_due() {
+    let mut queue = TxQueue::<8>::new();
+    queue
+        .enqueue_with_state(TxPriority::Forward, b"fwd", None, None, 1_000, 0, 0)
+        .unwrap();
+    queue
+        .enqueue_with_state(TxPriority::Retry, b"retry", None, None, 500, 0, 0)
+        .unwrap();
+    queue
+        .enqueue(TxPriority::Application, b"app", None, None)
+        .unwrap();
+
+    assert_eq!(queue.pop_ready(100).unwrap().frame.as_slice(), b"app");
+    assert!(queue.pop_ready(100).is_none());
+    assert!(!queue.has_ready(100));
+    assert_eq!(queue.next_deferred_ms(100), Some(500));
+
+    assert_eq!(queue.pop_ready(500).unwrap().frame.as_slice(), b"retry");
+    assert_eq!(queue.next_deferred_ms(500), Some(1_000));
+
+    assert_eq!(queue.pop_ready(1_000).unwrap().frame.as_slice(), b"fwd");
+    assert!(queue.next_deferred_ms(1_000).is_none());
+    assert!(queue.is_empty());
+}
+
 #[test]
 fn identity_slot_rejects_pending_ack_when_table_is_full() {
     let identity = LocalIdentity::LongTerm(DummyIdentity::new([0x44; 32]));
@@ -2314,6 +2344,110 @@ fn routed_mac_ack_without_identity_goes_untracked() {
 
     let queued = mac.tx_queue_mut().pop_next().unwrap();
     assert_eq!(queued.receipt, None);
+}
+
+/// A flood forward waits out its contention delay in the queue. That wait is
+/// the forward's alone: a send that is ready now goes ahead of it instead of
+/// queuing behind it, and once the forward is all that is left the
+/// coordinator sleeps until it is due rather than reporting ready on every
+/// poll.
+#[test]
+fn deferred_forward_does_not_hold_back_ready_traffic() {
+    let mut mac = make_mac();
+    let forward_due_ms = mac.clock().now_ms() + 5_000;
+    mac.tx_queue_mut()
+        .enqueue_with_state(
+            TxPriority::Forward,
+            b"fwd",
+            None,
+            None,
+            forward_due_ms,
+            0,
+            0,
+        )
+        .unwrap();
+    mac.tx_queue_mut()
+        .enqueue(TxPriority::Application, b"app", None, None)
+        .unwrap();
+
+    block_on(mac.drain_tx_queue(&mut |_, _| {})).unwrap();
+
+    assert_eq!(mac.radio().transmitted.len(), 1);
+    assert_eq!(mac.radio().transmitted[0].as_slice(), b"app");
+    assert_eq!(mac.tx_queue().len(), 1, "the forward keeps its place");
+
+    let waker = noop_waker();
+    let mut cx = Context::from_waker(&waker);
+    let mut buf = [0u8; 256];
+    assert!(
+        mac.poll_wait_for_wake(&mut cx, &mut buf).is_pending(),
+        "nothing is transmittable until the forward is due"
+    );
+    assert_eq!(mac.earliest_deadline_ms(), Some(forward_due_ms));
+
+    mac.clock().advance_ms(5_000);
+    assert!(matches!(
+        mac.poll_wait_for_wake(&mut cx, &mut buf),
+        Poll::Ready(Ok(WakeReason::TimerExpired))
+    ));
+    block_on(mac.drain_tx_queue(&mut |_, _| {})).unwrap();
+    assert_eq!(mac.radio().transmitted.len(), 2);
+    assert_eq!(mac.radio().transmitted[1].as_slice(), b"fwd");
+}
+
+/// A forward whose delay runs out inside a post-transmit listen window is
+/// held, not sent, and holding it must not cost anything: the window's own
+/// expiry is the next wake-up, and a poll in between stays pending.
+#[test]
+fn forward_falling_due_inside_listen_window_does_not_wake_the_coordinator() {
+    let (mut mac, local_id, peer_key) = make_sender_mac();
+    mac.queue_unicast(
+        local_id,
+        &peer_key,
+        b"hello",
+        &SendOptions::default().with_ack_requested(true),
+    )
+    .unwrap()
+    .unwrap();
+    let _ = block_on(mac.transmit_next(&mut |_, _| {})).unwrap();
+    assert_eq!(mac.radio().transmitted.len(), 1);
+    let listen_deadline_ms = mac
+        .earliest_deadline_ms()
+        .expect("the tracked send opened a listen window");
+    assert!(listen_deadline_ms > mac.clock().now_ms());
+
+    let forward_due_ms = mac.clock().now_ms() + 10;
+    assert!(forward_due_ms < listen_deadline_ms);
+    mac.tx_queue_mut()
+        .enqueue_with_state(
+            TxPriority::Forward,
+            b"fwd",
+            None,
+            None,
+            forward_due_ms,
+            0,
+            0,
+        )
+        .unwrap();
+    mac.clock().advance_ms(10);
+
+    let waker = noop_waker();
+    let mut cx = Context::from_waker(&waker);
+    let mut buf = [0u8; 256];
+    assert!(mac.poll_wait_for_wake(&mut cx, &mut buf).is_pending());
+    assert_eq!(mac.earliest_deadline_ms(), Some(listen_deadline_ms));
+    block_on(mac.drain_tx_queue(&mut |_, _| {})).unwrap();
+    assert_eq!(mac.radio().transmitted.len(), 1, "the forward is held");
+
+    mac.clock()
+        .advance_ms(listen_deadline_ms - mac.clock().now_ms());
+    assert!(matches!(
+        mac.poll_wait_for_wake(&mut cx, &mut buf),
+        Poll::Ready(Ok(WakeReason::TimerExpired))
+    ));
+    block_on(mac.drain_tx_queue(&mut |_, _| {})).unwrap();
+    assert_eq!(mac.radio().transmitted.len(), 2);
+    assert_eq!(mac.radio().transmitted[1].as_slice(), b"fwd");
 }
 
 #[test]

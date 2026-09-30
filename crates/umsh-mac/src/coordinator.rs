@@ -2153,30 +2153,27 @@ impl<
 
     /// Transmit the next eligible queued frame, if any.
     ///
-    /// While a post-transmit forwarding listen window is active, only immediate MAC
-    /// ACK traffic is permitted to bypass the listen state. Forwarded sends arm a new
-    /// listen window after the radio transmit completes. Non-immediate traffic honors
-    /// queued CAD backoff state and gives up after the configured maximum number of
-    /// CAD attempts.
+    /// Eligible means ready: the best entry whose `not_before_ms` has elapsed is
+    /// sent, and an entry still waiting out a contention delay or CAD backoff is
+    /// passed over rather than holding back the traffic behind it. While a
+    /// post-transmit forwarding listen window is active, only immediate MAC ACK
+    /// traffic is eligible. Forwarded sends arm a new listen window after the
+    /// radio transmit completes. Non-immediate traffic honors queued CAD backoff
+    /// state and gives up after the configured maximum number of CAD attempts.
     pub async fn transmit_next(
         &mut self,
         on_event: &mut impl FnMut(LocalIdentityId, crate::MacEventRef<'_>),
     ) -> Result<Option<SendReceipt>, MacError<<P::Radio as Radio>::Error>> {
         self.expire_post_tx_listen_if_needed();
-        let Some(queued) = self.tx_queue.pop_next() else {
+        let now_ms = self.clock.now_ms();
+        let queued = if self.post_tx_listen.is_some() {
+            self.tx_queue.pop_ready_immediate_ack(now_ms)
+        } else {
+            self.tx_queue.pop_ready(now_ms)
+        };
+        let Some(queued) = queued else {
             return Ok(None);
         };
-        let now_ms = self.clock.now_ms();
-
-        if queued.not_before_ms > now_ms {
-            self.requeue_tx(&queued).map_err(|_| MacError::QueueFull)?;
-            return Ok(None);
-        }
-
-        if self.post_tx_listen.is_some() && queued.priority != TxPriority::ImmediateAck {
-            self.requeue_tx(&queued).map_err(|_| MacError::QueueFull)?;
-            return Ok(None);
-        }
 
         let receipt = queued.receipt;
         let identity_id = queued.identity_id;
@@ -2351,9 +2348,16 @@ impl<
     ///
     /// Returns `None` when there are no pending timers.  The returned value
     /// covers pending ACK deadlines (both `ack_deadline_ms` and forwarding
-    /// `confirm_deadline_ms`), the post-transmit listen window, and deferred
-    /// transmit-queue entries.
+    /// `confirm_deadline_ms`), the post-transmit listen window, and
+    /// transmit-queue entries still waiting for their `not_before_ms`. A queue
+    /// entry already due is not a deadline but ready work; whether it can
+    /// actually go out is a separate question, answered by the wait predicate
+    /// in [`poll_wait_for_wake`](Self::poll_wait_for_wake).
     pub fn earliest_deadline_ms(&self) -> Option<u64> {
+        self.earliest_deadline_at(self.clock.now_ms())
+    }
+
+    fn earliest_deadline_at(&self, now_ms: u64) -> Option<u64> {
         let mut earliest: Option<u64> = None;
 
         if let Some(listen) = &self.post_tx_listen {
@@ -2384,7 +2388,7 @@ impl<
             }
         }
 
-        if let Some(nb) = self.tx_queue.earliest_not_before_ms() {
+        if let Some(nb) = self.tx_queue.next_deferred_ms(now_ms) {
             earliest = Some(earliest.map_or(nb, |e: u64| e.min(nb)));
         }
 
@@ -2462,7 +2466,7 @@ impl<
         }
 
         let now_ms = self.clock.now_ms();
-        if let Some(deadline) = self.earliest_deadline_ms() {
+        if let Some(deadline) = self.earliest_deadline_at(now_ms) {
             if now_ms >= deadline {
                 return Poll::Ready(Ok(WakeReason::TimerExpired));
             }
@@ -2476,13 +2480,16 @@ impl<
             }
         }
 
-        // Ready queue entries are only actionable when they could actually
-        // transmit: during a post-transmit listen window only immediate-ACK
-        // frames may go out, and the window's own expiry is already covered
-        // by `earliest_deadline_ms` above. Reporting a blocked-but-ready
-        // frame here would spin this poll hot for the whole window—
-        // starving every other task sharing the executor—since the drain
-        // it triggers requeues the frame without progress.
+        // A queue entry whose time has come is ready work rather than a
+        // deadline: the deadline computed above stops covering it at that
+        // moment, on the same `now_ms`, so this predicate is the only thing
+        // that reports it. Ready is only actionable when the entry could
+        // actually transmit: during a post-transmit listen window only
+        // immediate-ACK frames may go out, and the window's own expiry is
+        // already covered above. Reporting a blocked-but-ready frame here
+        // would spin this poll hot for the whole window—starving every other
+        // task sharing the executor—since the drain it triggers cannot send
+        // it and makes no progress.
         if self.tx_queue.has_ready(now_ms)
             && (self.post_tx_listen.is_none() || self.tx_queue.has_ready_immediate_ack(now_ms))
         {
@@ -4139,18 +4146,6 @@ impl<
             &buf[body_range],
         );
         self.crypto.compute_ack_trailer(&full_mac, &keys.k_enc)
-    }
-
-    fn requeue_tx(&mut self, queued: &crate::QueuedTx<FRAME>) -> Result<u32, CapacityError> {
-        self.tx_queue.enqueue_with_state(
-            queued.priority,
-            queued.frame.as_slice(),
-            queued.receipt,
-            queued.identity_id,
-            queued.not_before_ms,
-            queued.cad_attempts,
-            queued.forward_deferrals,
-        )
     }
 
     fn accept_unicast_replay(
