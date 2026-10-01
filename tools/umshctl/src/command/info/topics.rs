@@ -561,11 +561,14 @@ fn battery_status(set: &PropSet) -> Option<BatteryStatus> {
 }
 
 fn charge_state_name(state: umsh::ulcp_wire::battery::BatteryChargeState) -> &'static str {
-    use umsh::ulcp_wire::battery::BatteryChargeState::{Charged, Charging, Discharging};
+    use umsh::ulcp_wire::battery::BatteryChargeState::{
+        Charged, Charging, Discharging, NotCharging,
+    };
     match state {
         Discharging => "DISCHARGING",
         Charging => "CHARGING",
         Charged => "CHARGED",
+        NotCharging => "NOT_CHARGING",
     }
 }
 

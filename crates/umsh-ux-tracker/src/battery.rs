@@ -9,6 +9,7 @@ pub enum BatteryState {
     BatteryCritical = 2,
     BatteryCharging = 3,
     BatteryCharged = 4,
+    BatteryNotCharging = 5,
 }
 
 impl BatteryState {
@@ -18,13 +19,14 @@ impl BatteryState {
             2 => Self::BatteryCritical,
             3 => Self::BatteryCharging,
             4 => Self::BatteryCharged,
+            5 => Self::BatteryNotCharging,
             _ => Self::BatteryOnly,
         }
     }
 }
 
 /// The charge-state distinction reported to something outside the UX—
-/// a protocol property, a companion app—as opposed to the five-way
+/// a protocol property, a companion app—as opposed to the six-way
 /// presentation classification.
 ///
 /// Low and Critical are presentation policy layered over one physical
@@ -36,9 +38,10 @@ pub enum ChargeClass {
     Discharging,
     Charging,
     Charged,
+    NotCharging,
 }
 
-/// The [`ChargeClass`] behind a five-way [`BatteryState`].
+/// The [`ChargeClass`] behind a six-way [`BatteryState`].
 ///
 /// One definition so every consumer of the same monitor—an on-demand
 /// read and an asynchronous notification, in particular—reports the
@@ -47,6 +50,7 @@ pub const fn charge_class(state: BatteryState) -> ChargeClass {
     match state {
         BatteryState::BatteryCharging => ChargeClass::Charging,
         BatteryState::BatteryCharged => ChargeClass::Charged,
+        BatteryState::BatteryNotCharging => ChargeClass::NotCharging,
         BatteryState::BatteryOnly | BatteryState::BatteryLow | BatteryState::BatteryCritical => {
             ChargeClass::Discharging
         }
@@ -69,8 +73,11 @@ impl Default for BatteryThresholds {
     }
 }
 
-/// Classify external power first so battery-only warnings and lockouts can
-/// never leak into Charging or Charged from the user's perspective.
+/// Minimum measured cell voltage for a 4.2 V-class charger to report Charged.
+pub const CHARGED_MIN_MV: u16 = 4_100;
+
+/// Classify external power first so battery-only warnings and lockouts do
+/// not appear while input power is detected.
 pub const fn classify(
     battery_mv: u16,
     external_power: bool,
@@ -80,6 +87,8 @@ pub const fn classify(
     if external_power {
         if charging {
             BatteryState::BatteryCharging
+        } else if battery_mv < CHARGED_MIN_MV {
+            BatteryState::BatteryNotCharging
         } else {
             BatteryState::BatteryCharged
         }
@@ -210,14 +219,13 @@ pub const fn load_recent(now_ms: u32, last_load_ms: Option<u32>) -> bool {
 /// anchor the ceiling replaces it rather than capping it—which is how
 /// a partial charge shows up without waiting out a full window.
 ///
-/// While charging there is no level at all: charging voltage is not
-/// comparable to the discharge table, so the estimate is withdrawn rather
-/// than frozen at its pre-charge value. It returns on the first quiet
-/// reading after the charger goes away. The one exception is the
-/// `Charged` classification, which is a charger's completion signal and
-/// therefore an exact calibration point: it pins the level to 100. Boards
-/// whose charger reports no completion never see that state and simply
-/// report nothing for as long as they are plugged in.
+/// While external input is present without a confirmed completion, there is
+/// no level: terminal voltage is not comparable to the discharge table, so
+/// the estimate is withdrawn rather than frozen at its pre-charge value. It
+/// returns on the first quiet reading after the input goes away. The exception
+/// is `Charged`: a completion indication backed by at least 4.1 V pins the
+/// inferred level to 100. Boards without completion evidence report no level
+/// for as long as they are plugged in.
 pub struct LevelEstimator {
     window: [u16; LEVEL_WINDOW],
     window_len: usize,
@@ -240,8 +248,8 @@ impl LevelEstimator {
     }
 
     /// The current estimate, or `None` when no trustworthy one exists—
-    /// before the first quiet sample, and for as long as the pack is
-    /// charging.
+    /// before the first quiet sample, and while external input is present
+    /// without a confirmed completion.
     pub const fn level(&self) -> Option<u8> {
         self.level
     }
@@ -253,14 +261,14 @@ impl LevelEstimator {
         }
         match s.state {
             BatteryState::BatteryCharged => {
-                // The charger's completion signal is the one exact
-                // calibration point available.
+                // Completion evidence and the voltage guard permit an
+                // inferred 100% level.
                 self.level = Some(100);
                 self.disturb(s.now_ms);
                 self.charged_since_anchor = true;
             }
-            BatteryState::BatteryCharging => {
-                // Charging terminal voltage does not map through the
+            BatteryState::BatteryCharging | BatteryState::BatteryNotCharging => {
+                // Externally powered terminal voltage does not map through the
                 // discharge table, and on a charger that reports no
                 // completion there is no later moment to correct against
                 // either—so there is no level to report, and holding the
@@ -371,6 +379,14 @@ mod tests {
         );
         assert_eq!(
             classify(2_900, true, false, T),
+            BatteryState::BatteryNotCharging
+        );
+        assert_eq!(
+            classify(4_099, true, false, T),
+            BatteryState::BatteryNotCharging
+        );
+        assert_eq!(
+            classify(4_100, true, false, T),
             BatteryState::BatteryCharged
         );
     }
@@ -554,6 +570,17 @@ mod tests {
             now_ms: 60_000,
         });
         assert_eq!(estimator.level(), Some(100));
+        estimator.sample(LevelSample {
+            battery_mv: 4_050,
+            state: BatteryState::BatteryNotCharging,
+            load_recent: false,
+            now_ms: 90_000,
+        });
+        assert_eq!(
+            estimator.level(),
+            None,
+            "not charging must clear a stale 100%"
+        );
         // After unplugging, the first rested anchor may lower the level
         // (the charge released the discharge clamp exactly once).
         for index in 0..5u32 {

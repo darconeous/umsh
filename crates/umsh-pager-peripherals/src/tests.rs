@@ -750,9 +750,11 @@ fn battery_unknown_is_not_zero_or_charged() {
     assert_eq!((r.voltage_mv, r.percent, r.charge), (None, None, None));
     let r = decode_reading(0x18, true, Some((4000, 8, 75, 0x20)));
     assert_eq!(r.percent, Some(75));
+    assert_eq!(r.charge, Some(Charge::NotCharging));
+    let r = decode_reading(0x18, true, Some((4100, 8, 100, 0x20)));
     assert_eq!(r.charge, Some(Charge::Charged));
     let r = decode_reading(0, true, Some((4000, 8, 255, 0)));
-    assert_eq!((r.percent, r.charge), (None, None));
+    assert_eq!((r.percent, r.charge), (None, Some(Charge::NotCharging)));
     assert_eq!(
         decode_reading(0, false, Some((0, 8, 0, 0x20))).voltage_mv,
         None

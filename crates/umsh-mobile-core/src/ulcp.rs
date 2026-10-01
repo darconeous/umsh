@@ -71,6 +71,8 @@ pub enum UlcpChargeState {
     Charging,
     /// On external power, charge complete.
     Charged,
+    /// External input present, but the charger is not charging the battery.
+    NotCharging,
 }
 
 impl UlcpChargeState {
@@ -79,6 +81,7 @@ impl UlcpChargeState {
             BatteryChargeState::Discharging => Self::Discharging,
             BatteryChargeState::Charging => Self::Charging,
             BatteryChargeState::Charged => Self::Charged,
+            BatteryChargeState::NotCharging => Self::NotCharging,
         }
     }
 }
@@ -9857,6 +9860,21 @@ mod tests {
         assert_eq!(battery.percentage, Some(45));
         assert_eq!(battery.voltage_mv, Some(0x1010));
         assert_eq!(battery.charge_state, Some(UlcpChargeState::Charging));
+
+        let pushed = session
+            .consume(property_response(
+                frame::TID_UNSOLICITED,
+                prop::BATTERY,
+                &[0b101, 0xD0, 0x0F, 3],
+            ))
+            .unwrap();
+        let battery = pushed
+            .snapshot
+            .battery
+            .expect("new charge state is accepted");
+        assert_eq!(battery.voltage_mv, Some(4048));
+        assert_eq!(battery.percentage, None);
+        assert_eq!(battery.charge_state, Some(UlcpChargeState::NotCharging));
 
         // A later update that carries no measurement must not repeat it.
         // Consumers timestamp what they receive, so a repeat would report

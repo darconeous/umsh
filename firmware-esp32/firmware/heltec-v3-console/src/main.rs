@@ -514,6 +514,7 @@ fn state_name(state: BatteryState) -> &'static str {
         BatteryState::BatteryCritical => "critical",
         BatteryState::BatteryCharging => "charging",
         BatteryState::BatteryCharged => "charged",
+        BatteryState::BatteryNotCharging => "not charging",
     }
 }
 

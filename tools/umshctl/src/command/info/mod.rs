@@ -171,6 +171,7 @@ pub fn battery_display(status: &BatteryStatus) -> String {
         Some(BatteryChargeState::Discharging) => "discharging",
         Some(BatteryChargeState::Charging) => "charging",
         Some(BatteryChargeState::Charged) => "charged",
+        Some(BatteryChargeState::NotCharging) => "not charging",
         None => "charge state unsupported",
     };
     format!("{voltage}, {level}, {state}")

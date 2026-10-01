@@ -134,7 +134,7 @@ fn enter_off(reason: ShutdownReason) -> ! {
     tristate_pin(Port::P0, 6); // RGB blue  — ditto
     tristate_pin(Port::P0, 30); // RGB green — ditto
     tristate_pin(Port::P0, 31); // battery ADC (AIN7)
-    tristate_pin(Port::P0, 17); // BQ25100 ~CHG: drop the input buffer
+    tristate_pin(Port::P0, 17); // BQ25101 ~CHG: drop the input buffer
 
     // No wake pin is armed: there is nothing on this board to arm. The
     // chip comes back on RESET, on USB attach, or—below—on the cell

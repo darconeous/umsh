@@ -143,10 +143,9 @@ mod monitor {
 
     /// Whether the nRF USB regulator currently detects VBUS.
     ///
-    /// Together with the BQ25100's `~CHG` line this board can tell
-    /// "charging" from "charge complete"—VBUS present with `~CHG`
-    /// released means the charger terminated. `~CHG` alone cannot: it is
-    /// high both when the pack is full and when there is no input power.
+    /// The BQ25101's `~CHG` line reports active charging when LOW. A
+    /// released line with VBUS present means charged only when battery
+    /// voltage is at least 4.1 V; below that it means not charging.
     pub fn usb_power_present() -> bool {
         pac::POWER.usbregstatus().read().vbusdetect()
     }
@@ -163,13 +162,13 @@ mod monitor {
     pub struct BatterySample {
         pub battery_mv: u16,
         pub state: BatteryState,
-        /// `Some` from the monitor's first sample onward.
+        /// `Some` when a level estimate is trustworthy.
         pub level_percent: Option<u8>,
     }
 
     /// Battery measurements worth announcing to a remote observer, for
     /// `PROP_BATTERY` asynchronous updates. Multi-receiver, and filtered
-    /// on charge class plus level rather than the five-way presentation
+    /// on charge class plus level rather than the six-way presentation
     /// classification—see the T1000-E BSP's equivalent for the
     /// reasoning, which is identical.
     pub static BATTERY_ANNOUNCE: Watch<
@@ -215,13 +214,13 @@ mod monitor {
     ///   and **never raised or released**; see the module docs for why
     ///   both alternatives are worse. There is no settle step because
     ///   there is nothing to switch.
-    /// - `charge_status_n`—`P0.17`, the BQ25100's open-drain `~CHG`,
+    /// - `charge_status_n`—`P0.17`, the BQ25101's open-drain `~CHG`,
     ///   LOW while charging. Input only: it shares a node with the red
     ///   charge LED and driving it fights both.
     /// - `charge_current_hi`—`P0.13` (`HICHG`), held at the level the
     ///   caller chose (LOW = 100 mA, HIGH = 50 mA). The monitor only
     ///   keeps it alive; dropping the `Output` would return the pin to a
-    ///   disconnected input, which the BQ25100 reads as 50 mA.
+    ///   disconnected input, which the BQ25101 reads as 50 mA.
     ///
     /// `CONSECUTIVE_NEEDED` samples below the critical threshold (≈3.1 V,
     /// sustained ~5 min, only ever reached off-USB since `classify`
@@ -254,6 +253,8 @@ mod monitor {
         /// its intended ~5-minute latency instead of scaling with the
         /// normal interval.
         const LOW_SAMPLE_INTERVAL: Duration = Duration::from_secs(30);
+        /// Recheck the 4.1 V charged boundary while `~CHG` stays released.
+        const IDLE_POWERED_SAMPLE_INTERVAL: Duration = Duration::from_secs(60);
         /// How often VBUS and `~CHG` are checked between voltage samples.
         ///
         /// The `POWER` USB interrupts are unavailable to this firmware
@@ -286,11 +287,10 @@ mod monitor {
 
             let usb = usb_power_present();
             // Unlike the other boards in this family, the charger reports
-            // its own state: BQ25100 `~CHG` is LOW while charging and
-            // released once charging terminates. With VBUS as the
-            // external-power flag, BatteryCharged is genuinely reachable
-            // here—a remote observer sees charge completion, not just
-            // charge start and stop.
+            // its own state: BQ25101 `~CHG` is LOW while charging and
+            // released both after charge completion and when the charger
+            // cannot charge. Require at least 4.1 V before interpreting a
+            // released pin with VBUS present as Charged.
             let charging = charge_status_n.is_low();
             let state = classify(battery_mv, usb, charging, BatteryThresholds::default());
             publish_battery_state(state);
@@ -351,6 +351,11 @@ mod monitor {
                 BatteryState::BatteryLow | BatteryState::BatteryCritical
             ) {
                 LOW_SAMPLE_INTERVAL
+            } else if matches!(
+                state,
+                BatteryState::BatteryCharged | BatteryState::BatteryNotCharging
+            ) {
+                IDLE_POWERED_SAMPLE_INTERVAL
             } else {
                 SAMPLE_INTERVAL
             };

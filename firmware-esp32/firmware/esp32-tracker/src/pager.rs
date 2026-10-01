@@ -166,6 +166,7 @@ fn publish_battery_reading(reading: &board_battery::Reading) {
             Some(board_battery::Charge::Discharging) => 1,
             Some(board_battery::Charge::Charging) => 2,
             Some(board_battery::Charge::Charged) => 3,
+            Some(board_battery::Charge::NotCharging) => 4,
         },
         Ordering::Release,
     );
@@ -442,6 +443,9 @@ pub async fn battery_task(bus: &'static board::I2cBus, initial: board_battery::R
                     board_battery::Charge::Discharging
                 }
                 umsh_ulcp::battery::BatteryChargeState::Charged => board_battery::Charge::Charged,
+                umsh_ulcp::battery::BatteryChargeState::NotCharging => {
+                    board_battery::Charge::NotCharging
+                }
             }),
             vbus: matches!(
                 sample.get(umsh_ulcp::ids::prop::BATTERY_EXT_POWER_PRESENT),

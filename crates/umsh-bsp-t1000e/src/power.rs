@@ -289,7 +289,9 @@ pub async fn run_battery_monitor<I>(
 
         if matches!(
             state,
-            BatteryState::BatteryCharging | BatteryState::BatteryCharged
+            BatteryState::BatteryCharging
+                | BatteryState::BatteryCharged
+                | BatteryState::BatteryNotCharging
         ) {
             crate::preferences::set_battery_critical(false);
         }
@@ -311,7 +313,9 @@ pub async fn run_battery_monitor<I>(
         // then returns to the appropriate battery-only cadence. Preserve the
         // Low/Critical interval because the cutoff counts those samples.
         let interval = match state {
-            BatteryState::BatteryCharging | BatteryState::BatteryCharged => POWERED_SAMPLE_INTERVAL,
+            BatteryState::BatteryCharging
+            | BatteryState::BatteryCharged
+            | BatteryState::BatteryNotCharging => POWERED_SAMPLE_INTERVAL,
             BatteryState::BatteryLow | BatteryState::BatteryCritical => LOW_SAMPLE_INTERVAL,
             BatteryState::BatteryOnly => SAMPLE_INTERVAL,
         };

@@ -20,7 +20,7 @@ repository.workspace = true
 #
 #   * one common-anode RGB LED, ACTIVE LOW (P0.26/P0.06/P0.30)—the
 #     Solar Node's two discrete LEDs are active high
-#   * a BQ25100 charger with a firmware-visible status pin and a
+#   * a BQ25101 charger with a firmware-visible status pin and a
 #     charge-current select, where the Solar Node's CN3165 is autonomous
 #   * the battery divider is UNGATED: P0.14 is held LOW at all times
 #     (see the power module—this is a hardware rule, not a policy)
@@ -29,7 +29,7 @@ repository.workspace = true
 # In scope:
 #   * USB-CDC over the nRF native USB peripheral (chip BSP)
 #   * battery measurement (SAADC AIN7/P0.31, ungated 1M/510k divider)
-#   * BQ25100 charge status (P0.17) + charge-current select (P0.13)
+#   * BQ25101 charge status (P0.17) + charge-current select (P0.13)
 #   * SX1262 LoRa radio + external RXEN (P0.05)
 #   * headless System OFF teardown (no button wake source exists)
 #

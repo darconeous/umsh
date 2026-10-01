@@ -1813,6 +1813,7 @@ fn decode_property(key: u32, value: &[u8]) -> Option<DecodedValue> {
                     Some(umsh_ulcp::battery::BatteryChargeState::Discharging) => "discharging",
                     Some(umsh_ulcp::battery::BatteryChargeState::Charging) => "charging",
                     Some(umsh_ulcp::battery::BatteryChargeState::Charged) => "charged",
+                    Some(umsh_ulcp::battery::BatteryChargeState::NotCharging) => "not charging",
                     None => "charge state unsupported",
                 };
                 format!("{voltage}, {level}, {state}")

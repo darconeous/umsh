@@ -112,7 +112,7 @@ designs share the same controller family and the same radio module.
 | Controller module | XIAO nRF52840 | XIAO nRF52840 **Plus** (more pins broken out) |
 | User LEDs | one common-anode RGB, **active-low**, `P0.26`/`P0.06`/`P0.30` | two discrete LEDs, **active-high**, `P0.15` (white) / `P0.19` (blue) |
 | Buttons | one, on the radio carrier, `D0`/`P0.02` | two, `P1.01` (PWR) and `P1.07` (USR) |
-| Charger | TI **BQ25100**, 50/100 mA, firmware-visible status and current select | **CN3165** solar charger, ~0.99 A, fully autonomous, no firmware interface |
+| Charger | TI **BQ25101**, 50/100 mA, firmware-visible status and current select | **CN3165** solar charger, ~0.99 A, fully autonomous, no firmware interface |
 | GNSS power | none—the L76K is permanently powered; only standby (`D0`) is controllable | `P1.05` GPS_EN, `P1.03` reset candidate |
 | Grove / I²C | no Grove; I²C must be borrowed from `D6`/`D7` or the NFC pins | dedicated Grove on `P0.09`/`P0.10` |
 | External flash | 2 MB P25Q16H QSPI, on the XIAO itself | 2 MB P25Q16H QSPI, on the XIAO itself (same) |
@@ -138,7 +138,7 @@ constant is worth revisiting if that board is ever bench-calibrated.
                 USB-C 5 V ──┐
                             v
                     +---------------+
-                    | BQ25100       |──> BAT pads ──> 1S Li-ion (user supplied)
+                    | BQ25101       |──> BAT pads ──> 1S Li-ion (user supplied)
                     | 50/100 mA     |         │
                     | ISET: P0.13   |         │  1M / 510k gated divider
                     | ~CHG: P0.17   |         └──> P0.31 (AIN7), low side P0.14
@@ -216,7 +216,7 @@ out to a header. This table is therefore high-confidence throughout.
 | PDM CLK | 20 | `P1.00` | Sense-only; absent on this kit |
 | PDM DATA | 21 | `P0.16` | Sense-only; absent on this kit |
 | Charge-current select (`HICHG`) | 22 | `P0.13` | LOW → 100 mA, HIGH/input → 50 mA |
-| Charge status (`~CHG`) | 23 | `P0.17` | BQ25100 open-drain; LOW = charging. **Read only** |
+| Charge status (`~CHG`) | 23 | `P0.17` | BQ25101 open-drain; LOW = charging. **Read only** |
 | QSPI SCK | 24 | `P0.21` | reserved |
 | QSPI CSN | 25 | `P0.25` | reserved |
 | QSPI IO0 (DI) | 26 | `P0.20` | reserved |
@@ -582,10 +582,10 @@ regulation. One effective wake point at ≈3.66 V of cell, not a sliding one.
 
 ## Charging
 
-The charger is a TI **BQ25100** (schematic reference U2). Seeed's specification
-table names it "BQ25101" while linking the BQ25100 datasheet; Meshtastic's
-variant comments say "BQ25101" and its pin-map comment says "BQ25100". Treat
-BQ25100 as authoritative—that is what the schematic shows.
+The charger is a TI **BQ25101** (schematic reference U2 in Seeed's current
+XIAO nRF52840 schematic). The older schematic and some firmware comments call
+it BQ25100, but TI assigns pin C1 to `~CHG` only on the BQ25101; the BQ25100
+uses that pin for PRE-TERM. The board wires C1 to `P0.17_CHG`.
 
 Firmware-visible interface:
 
@@ -603,7 +603,7 @@ same convention. UMSH should make this a build/config choice keyed to the actual
 cell—100 mA is a sensible default for anything above ~500 mAh but is a 1C-plus
 rate for a small cell.
 
-**Charge status—`P0.17` (D23, `~CHG`).** The BQ25100's open-drain status
+**Charge status—`P0.17` (D23, `~CHG`).** The BQ25101's open-drain status
 output. It shares a node with the red charge LED (3V3 → 2.2 kΩ → LED →
 `P0.17`), so the LED and the MCU see the same signal.
 
@@ -615,10 +615,11 @@ Meshtastic models this as `EXT_CHRG_DETECT (23)` with
 with the comment "LOW when charging". They agree.
 
 `P0.17` must be configured as an **input only**—driving it fights the
-charger's open-drain output and the LED. Note also that it cannot distinguish
-"battery full" from "no input power"; combine it with the nRF52840's own VBUS
-detection (`POWER->USBREGSTATUS`) to tell those apart, exactly as the Solar Node
-BSP does.
+charger's open-drain output and the LED. A released `~CHG` also occurs when
+the charger cannot operate, including weak solar input. UMSH reports Charged
+only with VBUS detected, `~CHG` released, and battery voltage at least 4.1 V.
+With VBUS detected and `~CHG` released below 4.1 V, it reports Not charging
+and no level estimate.
 
 **Temperature qualification: none.** The schematic ties the `TS` pin to VSS
 through a fixed 10 kΩ with the note "NTC: Disable Temp sense function". There is
@@ -1108,7 +1109,7 @@ pub const BATTERY_ADC:        Pin = P0_31; // AIN7
 pub const BATTERY_DIVIDER_LO: Pin = P0_14; // drive LOW or leave input; NEVER high
 pub const DIVIDER_MICRO: u32 = 10_659;     // raw * 10659 / 4096 = mV, Gain1_6 12-bit
 
-// Charger (BQ25100)
+// Charger (BQ25101)
 pub const CHARGE_CURRENT_HI: Pin = P0_13; // LOW = 100 mA, HIGH/input = 50 mA
 pub const CHARGE_STATUS_N:   Pin = P0_17; // input only; LOW = charging
 
@@ -1259,8 +1260,10 @@ the volume name and family ID depend on which bootloader Seeed loaded.
   https://wiki.seeedstudio.com/XIAO_BLE/
 - **Wio-SX1262 for XIAO V1.0 schematic** (radio carrier, K1 button, pull-ups):
   https://files.seeedstudio.com/products/113010003/Wio-SX1262%20for%20XIAO%20V1.0.pdf
-- **XIAO nRF52840 v1.1 schematic** (BQ25100, divider, RGB LED, crystal, QSPI):
+- **XIAO nRF52840 v1.1 schematic** (older BQ25100 label, divider, RGB LED, crystal, QSPI):
   https://files.seeedstudio.com/wiki/XIAO-BLE/Seeed-Studio-XIAO-nRF52840-Sense-v1.1.pdf
+- **Current XIAO nRF52840 schematic** (BQ25101, `P0.17_CHG`):
+  https://files.seeedstudio.com/wiki/XIAO-BLE/Seeed_Studio_XIAO_nRF52840_PDF.pdf
 - Wio-SX1262 module datasheet:
   https://files.seeedstudio.com/products/SenseCAP/Wio_SX1262/Wio-SX1262_Module_Datasheet.pdf
 - L76K GNSS Module for XIAO:

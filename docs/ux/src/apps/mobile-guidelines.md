@@ -202,7 +202,7 @@ A radio that advertises no battery capability has no power position: omit it
 rather than reporting it as unavailable, and omit the power detail section of
 Radio Detail entirely. Where the radio does measure its power state, Radio
 Detail reports each measured field it publishes—level, terminal voltage in
-volts, and charge state as discharging, charging, or charged.
+volts, and charge state as discharging, charging, charged, or not charging.
 
 Never omit the power position of a battery-reporting radio merely because its
 value is unknown, and never present a cached value as live. The battery glyph is accompanied by an

@@ -45,7 +45,7 @@
 //! | RGB LED green                  | 13      | `P0.30`      | common anode, **active low**, 10 kΩ—visibly dimmer |
 //! | Battery divider low side       | 14      | `P0.14`      | **drive LOW always**—see [`power`] |
 //! | Charge-current select (HICHG)  | 22      | `P0.13`      | LOW → 100 mA, HIGH/input → 50 mA |
-//! | Charge status (`~CHG`)         | 23      | `P0.17`      | BQ25100 open drain, LOW = charging. **Read only** |
+//! | Charge status (`~CHG`)         | 23      | `P0.17`      | BQ25101 open drain, LOW = charging. **Read only** |
 //! | QSPI flash (P25Q16H, 2 MB)     | 24–29   | see below    | reserved; NV store is internal NVMC |
 //! | NFC pads                       | 30–31   | `P0.09/0.10` | GPIO use needs UICR `NFCPINS` cleared |
 //! | Battery ADC                    | 32      | `P0.31`/AIN7 | |

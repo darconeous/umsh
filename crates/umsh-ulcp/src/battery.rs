@@ -30,6 +30,8 @@ pub enum BatteryChargeState {
     Charging = 1,
     /// `BATTERY_CHARGE_STATE_CHARGED`
     Charged = 2,
+    /// `BATTERY_CHARGE_STATE_NOT_CHARGING`
+    NotCharging = 3,
 }
 
 impl BatteryChargeState {
@@ -44,6 +46,7 @@ impl BatteryChargeState {
             0 => Some(Self::Discharging),
             1 => Some(Self::Charging),
             2 => Some(Self::Charged),
+            3 => Some(Self::NotCharging),
             _ => None,
         }
     }
@@ -223,6 +226,13 @@ mod tests {
         );
         round_trip(
             BatteryStatus {
+                charge_state: Some(BatteryChargeState::NotCharging),
+                ..Default::default()
+            },
+            &[0b100, 3],
+        );
+        round_trip(
+            BatteryStatus {
                 voltage_mv: Some(4200),
                 level_percent: Some(87),
                 ..Default::default()
@@ -281,7 +291,7 @@ mod tests {
         );
         // Unknown charge-state code.
         assert_eq!(
-            BatteryStatus::decode(&[0b100, 3]),
+            BatteryStatus::decode(&[0b100, 4]),
             Err(BatteryError::Malformed)
         );
         // Truncated charge-state PUI.
@@ -325,6 +335,10 @@ mod tests {
             BatteryChargeState::from_code(2),
             Some(BatteryChargeState::Charged)
         );
-        assert_eq!(BatteryChargeState::from_code(3), None);
+        assert_eq!(
+            BatteryChargeState::from_code(3),
+            Some(BatteryChargeState::NotCharging)
+        );
+        assert_eq!(BatteryChargeState::from_code(4), None);
     }
 }

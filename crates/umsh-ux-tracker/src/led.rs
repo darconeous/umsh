@@ -253,7 +253,11 @@ impl T1000eLedEngine {
                 brightness: 0,
                 next_deadline_ms: now_ms.saturating_add(1_000),
             },
-            BatteryState::BatteryOnly | BatteryState::BatteryCharged if self.attention => {
+            BatteryState::BatteryOnly
+            | BatteryState::BatteryCharged
+            | BatteryState::BatteryNotCharging
+                if self.attention =>
+            {
                 dim_decision(
                     attention_pulse(
                         now_ms,
@@ -269,7 +273,7 @@ impl T1000eLedEngine {
                 self.timings.heartbeat_interval.as_millis() as u64,
                 dim_pulse_ms(60, dim),
             ),
-            BatteryState::BatteryOnly => binary_heartbeat(
+            BatteryState::BatteryOnly | BatteryState::BatteryNotCharging => binary_heartbeat(
                 now_ms,
                 self.heartbeat_anchor_ms,
                 self.timings.heartbeat_interval.as_millis() as u64,

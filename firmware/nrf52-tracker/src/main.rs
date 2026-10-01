@@ -1059,6 +1059,7 @@ mod firmware {
         let charge_state = match umsh_ux_tracker::battery::charge_class(sample.state) {
             ChargeClass::Charging => BatteryChargeState::Charging,
             ChargeClass::Charged => BatteryChargeState::Charged,
+            ChargeClass::NotCharging => BatteryChargeState::NotCharging,
             ChargeClass::Discharging => BatteryChargeState::Discharging,
         };
         // The level is reported by its absence when the estimator has
@@ -4989,8 +4990,8 @@ mod firmware {
     /// pins. The divider is **ungated**—P0.14 is its low side and is
     /// driven LOW for the life of the program, because both alternatives
     /// exceed P0.31's absolute maximum (see the BSP `power` module). The
-    /// BQ25100 does report its own state, so unlike the other boards here
-    /// this one distinguishes charging from charge-complete.
+    /// The BQ25101 reports active charging; battery voltage qualifies its
+    /// released `~CHG` line as charged or not charging.
     #[cfg(feature = "board-xiao-nrf52")]
     #[embassy_executor::task]
     async fn xiao_power_task(
@@ -6812,7 +6813,7 @@ mod firmware {
         // full cell voltage. Seeed's own wiki documents the rule; the
         // shipping Meshtastic build for this board violates it.
         //
-        // The BQ25100 adds what the other boards here lack: HICHG (P0.13,
+        // The BQ25101 adds what the other boards here lack: HICHG (P0.13,
         // LOW = 100 mA) and ~CHG (P0.17, open-drain, LOW while charging).
         // ~CHG shares its node with the red charge LED, so it is an input
         // and nothing else. Both pins are handed to the monitor so they
@@ -7173,6 +7174,7 @@ mod firmware {
                     battery,
                     umsh_ux_tracker::battery::BatteryState::BatteryOnly
                         | umsh_ux_tracker::battery::BatteryState::BatteryCharged
+                        | umsh_ux_tracker::battery::BatteryState::BatteryNotCharging
                 )
             {
                 let phase = Instant::now().as_millis() % 2_000;

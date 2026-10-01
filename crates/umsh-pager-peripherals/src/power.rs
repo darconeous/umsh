@@ -67,6 +67,7 @@ pub enum Charge {
     Discharging,
     Charging,
     Charged,
+    NotCharging,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Reading {
@@ -292,6 +293,7 @@ impl<I: I2c> Battery<I> {
                             Charge::Charging => BatteryChargeState::Charging,
                             Charge::Discharging => BatteryChargeState::Discharging,
                             Charge::Charged => BatteryChargeState::Charged,
+                            Charge::NotCharging => BatteryChargeState::NotCharging,
                         }),
                     }
                 })
@@ -453,8 +455,8 @@ pub fn decode_reading(status: u8, vbus: bool, gauge: Option<(u16, u16, u16, u16)
             } else {
                 match (status >> 3) & 3 {
                     1 | 2 => Some(Charge::Charging),
-                    3 => Some(Charge::Charged),
-                    _ => None,
+                    3 if mv >= 4_100 => Some(Charge::Charged),
+                    _ => Some(Charge::NotCharging),
                 }
             };
         }

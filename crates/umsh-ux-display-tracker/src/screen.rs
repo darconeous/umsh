@@ -968,6 +968,7 @@ fn battery_detail_line(
             let state = match status.battery.charge {
                 Some(ChargeClass::Charging) => "charging",
                 Some(ChargeClass::Charged) => "complete",
+                Some(ChargeClass::NotCharging) => "not charging",
                 Some(ChargeClass::Discharging) => "discharging",
                 None => "idle / unknown",
             };

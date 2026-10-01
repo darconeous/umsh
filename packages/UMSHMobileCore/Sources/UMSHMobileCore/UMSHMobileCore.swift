@@ -14686,6 +14686,10 @@ public enum UlcpChargeState: Equatable, Hashable {
      * On external power, charge complete.
      */
     case charged
+    /**
+     * External input present, but the charger is not charging the battery.
+     */
+    case notCharging
 
 
 
@@ -14713,6 +14717,8 @@ public struct FfiConverterTypeUlcpChargeState: FfiConverterRustBuffer {
 
         case 3: return .charged
 
+        case 4: return .notCharging
+
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
@@ -14731,6 +14737,10 @@ public struct FfiConverterTypeUlcpChargeState: FfiConverterRustBuffer {
 
         case .charged:
             writeInt(&buf, Int32(3))
+
+
+        case .notCharging:
+            writeInt(&buf, Int32(4))
 
         }
     }

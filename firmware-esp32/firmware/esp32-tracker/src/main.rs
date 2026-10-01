@@ -1188,17 +1188,24 @@ fn battery_level(reading: &board_battery::Reading) -> Option<u8> {
     }
 }
 
-/// The `ChargeClass` a reading supports, or `None` when the PMIC cannot
-/// say (no cell installed, or an unassigned status code).
+/// The `ChargeClass` a reading supports, or `None` when no cell is detected.
 #[cfg(feature = "pmic-axp2101")]
 fn battery_charge_class(reading: &board_battery::Reading) -> Option<ChargeClass> {
-    match reading.direction {
-        ChargeDirection::Charging => Some(ChargeClass::Charging),
-        ChargeDirection::Discharging => Some(ChargeClass::Discharging),
-        ChargeDirection::Standby if matches!(reading.state, ChargeState::Done) => {
-            Some(ChargeClass::Charged)
+    let battery_mv = reading.voltage_mv?;
+    if reading.vbus {
+        match reading.direction {
+            ChargeDirection::Charging => Some(ChargeClass::Charging),
+            ChargeDirection::Standby
+                if matches!(reading.state, ChargeState::Done) && battery_mv >= 4_100 =>
+            {
+                Some(ChargeClass::Charged)
+            }
+            ChargeDirection::Standby
+            | ChargeDirection::Discharging
+            | ChargeDirection::Unknown(_) => Some(ChargeClass::NotCharging),
         }
-        ChargeDirection::Standby | ChargeDirection::Unknown(_) => None,
+    } else {
+        Some(ChargeClass::Discharging)
     }
 }
 
@@ -1208,6 +1215,7 @@ fn battery_charge_class(reading: &board_battery::Reading) -> Option<ChargeClass>
         board_battery::Charge::Discharging => ChargeClass::Discharging,
         board_battery::Charge::Charging => ChargeClass::Charging,
         board_battery::Charge::Charged => ChargeClass::Charged,
+        board_battery::Charge::NotCharging => ChargeClass::NotCharging,
     })
 }
 
@@ -1245,6 +1253,7 @@ async fn battery_task(pmic: &'static SharedPmic) {
                 Some(ChargeClass::Discharging) => 1,
                 Some(ChargeClass::Charging) => 2,
                 Some(ChargeClass::Charged) => 3,
+                Some(ChargeClass::NotCharging) => 4,
             },
             Ordering::Release,
         );
@@ -1304,6 +1313,7 @@ fn battery_snapshot(reading: &board_battery::Reading) -> umsh_ulcp::battery::Bat
             ChargeClass::Discharging => umsh_ulcp::battery::BatteryChargeState::Discharging,
             ChargeClass::Charging => umsh_ulcp::battery::BatteryChargeState::Charging,
             ChargeClass::Charged => umsh_ulcp::battery::BatteryChargeState::Charged,
+            ChargeClass::NotCharging => umsh_ulcp::battery::BatteryChargeState::NotCharging,
         }),
     }
 }
@@ -3689,6 +3699,7 @@ fn ui_status<'a>(name: &'a DeviceName, identity: &'a IdentityText) -> screen::St
                 1 => Some(ChargeClass::Discharging),
                 2 => Some(ChargeClass::Charging),
                 3 => Some(ChargeClass::Charged),
+                4 => Some(ChargeClass::NotCharging),
                 _ => None,
             },
         }

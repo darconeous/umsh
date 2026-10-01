@@ -453,20 +453,25 @@ Value | Name
 0     | `BATTERY_CHARGE_STATE_DISCHARGING`
 1     | `BATTERY_CHARGE_STATE_CHARGING`
 2     | `BATTERY_CHARGE_STATE_CHARGED`
+3     | `BATTERY_CHARGE_STATE_NOT_CHARGING`
 
 `BATTERY_CHARGE_STATE_DISCHARGING`
-: The charging system reports neither active charging nor charge completion.
-  This is the charge state used for a disconnected battery when the
-  implementation can detect that condition; an absent field never carries
-  that meaning.
+: External power is absent and the battery supplies the device. An absent
+  field never carries that meaning.
 
 `BATTERY_CHARGE_STATE_CHARGING`
 : The charging system reports that the battery is actively receiving charge.
 
 `BATTERY_CHARGE_STATE_CHARGED`
-: External power is present and the charging system reports that charging has
-  completed. A battery at 100 percent while operating without external power
-  remains in `BATTERY_CHARGE_STATE_DISCHARGING`.
+: External power is present and the implementation has evidence that charging
+  completed. For a 4.2 V-class single-cell battery, measured voltage below
+  4.1 V is insufficient evidence of completion. A battery at 100 percent while
+  operating without external power remains in `BATTERY_CHARGE_STATE_DISCHARGING`.
+
+`BATTERY_CHARGE_STATE_NOT_CHARGING`
+: External power is detected, but the charging system does not report active
+  charging and the implementation cannot substantiate charge completion. This
+  state does not imply that the external source alone supplies the device.
 
 The property contains live, read-only state. It is never included in a
 saved snapshot and is not changed by `CMD_RESTORE`. A device **MAY** emit

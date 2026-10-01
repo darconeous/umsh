@@ -176,12 +176,14 @@ enum RadioChargeState: String, Equatable, Sendable {
     case discharging
     case charging
     case charged
+    case notCharging
 
     init(_ state: UlcpChargeState) {
         self = switch state {
         case .discharging: .discharging
         case .charging: .charging
         case .charged: .charged
+        case .notCharging: .notCharging
         }
     }
 
@@ -190,6 +192,7 @@ enum RadioChargeState: String, Equatable, Sendable {
         case .discharging: "Discharging"
         case .charging: "Charging"
         case .charged: "Charged"
+        case .notCharging: "Not charging"
         }
     }
 
@@ -198,6 +201,7 @@ enum RadioChargeState: String, Equatable, Sendable {
         case .discharging: "Discharging"
         case .charging: "Charging"
         case .charged: "Charged, on external power"
+        case .notCharging: "Not charging, external power detected"
         }
     }
 
@@ -208,6 +212,7 @@ enum RadioChargeState: String, Equatable, Sendable {
         case .discharging: nil
         case .charging: "bolt.fill"
         case .charged: "powerplug.fill"
+        case .notCharging: "powerplug.fill"
         }
     }
 }
