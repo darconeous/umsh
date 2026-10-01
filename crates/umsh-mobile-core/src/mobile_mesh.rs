@@ -4351,11 +4351,20 @@ async fn request_identity_over_channel<M: MacBackend>(
     let length = umsh_node::mac_command::encode(&cmd, &mut frame[1..])
         .map_err(|_| MobileMeshError::SendFailed)?
         + 1;
+    let options = channel_identity_request_options(route.as_ref(), flood_hops);
+    bound
+        .send_all(&frame[..length], &options)
+        .await
+        .map(|_| ())
+        .map_err(|_| MobileMeshError::SendFailed)
+}
+
+fn channel_identity_request_options(route: Option<&MemberRoute>, flood_hops: u8) -> SendOptions {
     // Full source so the member can answer with a targeted unicast rather
     // than another multicast. With nothing known about where the member
     // is, the ask travels as far as the channel does.
     let mut options = with_flood_reach(SendOptions::default(), flood_hops).with_full_source();
-    match route.as_ref() {
+    match route {
         Some(route) if !route.route_hints.is_empty() => {
             let hops = route
                 .route_hints
@@ -4380,11 +4389,13 @@ async fn request_identity_over_channel<M: MacBackend>(
         }
         _ => {}
     }
-    bound
-        .send_all(&frame[..length], &options)
-        .await
-        .map(|_| ())
-        .map_err(|_| MobileMeshError::SendFailed)
+    // Source-route construction and distance fallback can supply a budget.
+    // Apply the explicit zero-hop setting last so neither re-enables flooding.
+    if flood_hops == 0 {
+        options.no_flood()
+    } else {
+        options
+    }
 }
 
 /// How long one page of a Peer Repeaters listing is waited for.
@@ -5074,6 +5085,38 @@ mod tests {
         // budget of zero would forward nowhere at all.
         assert_eq!(flood_budget(Some(1), 10), 1);
         assert_eq!(flood_budget(Some(4), 10), 3);
+    }
+
+    #[test]
+    fn channel_identity_discovery_respects_zero_flood_setting_with_learned_routes() {
+        for route in [
+            None,
+            Some(MemberRoute {
+                hop_count: Some(4),
+                route_hints: Vec::new(),
+            }),
+            Some(MemberRoute {
+                hop_count: Some(2),
+                route_hints: vec![vec![1, 2]],
+            }),
+            // An overlong source route falls back to a flood-distance estimate.
+            Some(MemberRoute {
+                hop_count: Some(17),
+                route_hints: vec![vec![1, 2]; 16],
+            }),
+        ] {
+            let options = channel_identity_request_options(route.as_ref(), 0);
+            assert_eq!(options.flood_hops, None);
+            if route
+                .as_ref()
+                .is_some_and(|route| route.route_hints.len() == 1)
+            {
+                assert_eq!(
+                    options.source_route.as_deref(),
+                    Some(&[umsh_core::RouterHint([1, 2])][..])
+                );
+            }
+        }
     }
 
     #[tokio::test]

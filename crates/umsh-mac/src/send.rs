@@ -59,18 +59,13 @@ pub struct SendReceipt(pub u32);
 ///   at zero. For unicast and blind unicast this is a ceiling rather than a fixed value:
 ///   a route already learned for the peer narrows the budget to what that route costs plus
 ///   [`ESTABLISHED_ROUTE_EXTRA_FLOOD_HOPS`](crate::ESTABLISHED_ROUTE_EXTRA_FLOOD_HOPS), so an
-///   established path does not re-flood the whole mesh. With that slack at zero, a peer
-///   reached by source route or heard directly is sent no flood-hop field at all. Clear the
-///   peer's cached route ([`MacHandle::clear_peer_route`](crate::MacHandle::clear_peer_route))
-///   to get the full budget back.
-/// - **`trace_route`**—like `flood_hops`, bounded by what the MAC already knows about the
-///   peer rather than taken literally. A unicast with no route to follow adds one whether or
-///   not it was asked for, so the destination's reply has a path to come back along; a send
-///   that follows a source route, or that goes to a peer heard directly, adds none unless
-///   the caller asks. A frame that ends up with no flood budget and no source route adds
-///   none either way: repeaters are what fill a trace in, and no repeater may carry such a
-///   frame. Note that a peer heard directly is exactly the case where the narrowing above
-///   leaves no flood-hop field, so asking for a trace there gets none.
+///   established path does not re-flood the whole mesh. The default one-hop
+///   allowance also backstops a peer heard directly. Clear the cached route
+///   to restore the full requested discovery budget.
+/// - **`trace_route`**—floodable unicast traffic traces automatically, including
+///   direct observations with an optional flood hop. Source-routed traffic
+///   traces when requesting an ACK or when explicitly requested. A frame with
+///   neither flood permission nor source-route hints omits trace options.
 /// - **`trace_signal`**—held to the same condition as `trace_route`, which it pairs with
 ///   entry for entry.
 /// - **`full_source`**—include the full 32-byte public key instead of the 3-byte hint,
@@ -399,6 +394,9 @@ pub struct PendingAck<const FRAME: usize = MAX_RESEND_FRAME_LEN> {
     /// an overheard repeat can be matched against this entry even after the
     /// post-transmit listen window has lapsed.
     pub confirm_key: Option<DupCacheKey>,
+    /// Cached-route revision used by this attempt, or zero if no cached
+    /// assumption was used. Consumed when that attempt enters route recovery.
+    pub(crate) cached_route_revision: u64,
 }
 
 impl<const FRAME: usize> PendingAck<FRAME> {
@@ -416,6 +414,7 @@ impl<const FRAME: usize> PendingAck<FRAME> {
             },
             completion: CompletionSignal::Ack,
             confirm_key: None,
+            cached_route_revision: 0,
         }
     }
 
@@ -433,6 +432,7 @@ impl<const FRAME: usize> PendingAck<FRAME> {
             },
             completion: CompletionSignal::Ack,
             confirm_key: None,
+            cached_route_revision: 0,
         }
     }
 
@@ -451,6 +451,7 @@ impl<const FRAME: usize> PendingAck<FRAME> {
             },
             completion: CompletionSignal::RepeatOnly,
             confirm_key: None,
+            cached_route_revision: 0,
         }
     }
 

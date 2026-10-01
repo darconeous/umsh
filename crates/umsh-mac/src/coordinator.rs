@@ -1677,26 +1677,8 @@ impl<
         self.queue_multicast(from, channel_id, payload, options)
     }
 
-    /// Enqueues a MAC ACK frame, using any cached route to `peer_id` when available.
-    ///
-    /// `trace_route` mirrors the acknowledged frame: a sender that attached a
-    /// trace route was discovering a path, and the trace it collected only
-    /// taught *us* the way back. The matching trace on this ack is what closes
-    /// the other direction, and is the only thing an ack-only exchange gives
-    /// the sender to learn a route from.
-    ///
-    /// It is honored only when the route attached below gives this ack some
-    /// way to be repeated. An ack going back to a peer we hear directly
-    /// carries neither a flood budget nor a source route, so no repeater may
-    /// touch it and the trace would arrive as empty as it left. The sender
-    /// reads the direct link off the ack's own shape instead—see
-    /// [`Mac::learn_route_for_peer`].
-    ///
-    /// An ack that does ride through repeaters is tracked like any other
-    /// repeat-confirmed send: silence where the repeat should be means the
-    /// first hop never got it, and the retry ladder retransmits. The ladder
-    /// ends in a silent abandon—the sender's own data retries are the
-    /// backstop; this just spares them in the common case.
+    /// Enqueue an ACK using the cached route plus one optional flood hop.
+    /// A direct observation is not evidence that the reverse radio link works.
     pub fn queue_mac_ack_for_peer(
         &mut self,
         from: LocalIdentityId,
@@ -1704,51 +1686,63 @@ impl<
         ack_trailer: [u8; 8],
         trace_route: bool,
     ) -> Result<(), SendError> {
-        // Settled before the frame is built, because a trace route has to be
-        // encoded ahead of the route options that decide whether to keep it.
-        let repeatable = match self
+        self.queue_routed_mac_ack(from, peer_id, ack_trailer, trace_route, &[], None)
+    }
+
+    fn queue_routed_mac_ack(
+        &mut self,
+        from: LocalIdentityId,
+        peer_id: PeerId,
+        ack_trailer: [u8; 8],
+        trace_route: bool,
+        request_regions: &[[u8; 2]],
+        unknown_route_budget: Option<u8>,
+    ) -> Result<(), SendError> {
+        let cached = self
             .peer_registry
             .get(peer_id)
-            .and_then(|peer| peer.route.as_ref())
-        {
-            // Matching the arms below: a route that constrains no hop is not
-            // attached, so it leaves nothing to carry the ack either.
-            Some(CachedRoute::Source(route)) => !route.is_empty(),
-            Some(CachedRoute::Flood { .. }) => true,
-            _ => false,
+            .and_then(|peer| peer.route.as_ref());
+        let (source_route, flood_hops, requires_forwarding) = match cached {
+            Some(CachedRoute::Source(route)) if !route.is_empty() => (
+                Some(route.as_slice()),
+                ESTABLISHED_ROUTE_EXTRA_FLOOD_HOPS,
+                true,
+            ),
+            Some(CachedRoute::Flood { flood_hops, .. }) if *flood_hops > 0 => (
+                None,
+                flood_hops.saturating_add(ESTABLISHED_ROUTE_EXTRA_FLOOD_HOPS),
+                true,
+            ),
+            // A cached direct observation cannot bound the return distance of
+            // a consumed source route whose trace is missing or malformed.
+            _ if unknown_route_budget.is_some() => (None, unknown_route_budget.unwrap(), true),
+            _ => (None, ESTABLISHED_ROUTE_EXTRA_FLOOD_HOPS, false),
+        };
+        let regions = if !request_regions.is_empty() {
+            request_regions
+        } else if let Some(CachedRoute::Flood { regions, .. }) = cached {
+            regions.as_slice()
+        } else {
+            &[]
         };
         let mut buf = [0u8; FRAME];
-        let mut builder = PacketBuilder::new(&mut buf).mac_ack(ack_trailer);
-        // Ahead of the route options below: the builder rejects options
-        // encoded out of ascending number order.
-        if trace_route && repeatable {
+        let mut builder = PacketBuilder::new(&mut buf)
+            .mac_ack(ack_trailer)
+            .flood_hops(flood_hops.clamp(1, MAX_FLOOD_HOPS));
+        if trace_route {
             builder = builder.trace_route();
         }
-        if let Some(peer) = self.peer_registry.get(peer_id) {
-            match peer.route.as_ref() {
-                Some(CachedRoute::Source(route)) if !route.is_empty() => {
-                    builder = builder.source_route(route.as_slice());
-                }
-                Some(CachedRoute::Flood {
-                    flood_hops,
-                    regions,
-                }) => {
-                    builder = builder.flood_hops((*flood_hops).clamp(1, MAX_FLOOD_HOPS));
-                    for region in regions {
-                        builder = builder.region_code(*region);
-                    }
-                }
-                // Direct, unknown, or a route that constrains no hop: there
-                // is nothing to attach, and an empty option must not be
-                // originated.
-                _ => {}
-            }
+        if let Some(route) = source_route {
+            builder = builder.source_route(route);
+        }
+        for region in regions {
+            builder = builder.region_code(*region);
         }
         let frame = builder.build()?;
         if frame.len() > self.radio.max_frame_size() {
             return Err(SendError::Build(BuildError::BufferTooSmall));
         }
-        let tracked_receipt = if repeatable {
+        let tracked_receipt = if requires_forwarding {
             self.prepare_repeat_confirmed_ack(from, peer_id, frame)
         } else {
             None
@@ -1917,7 +1911,7 @@ impl<
         // asked for no tracking and sees none.
         let tracked_receipt = match receipt {
             Some(receipt) => Some(receipt),
-            None if Self::frame_solicits_repeat(packet.as_bytes()) => {
+            None if self.send_requires_forwarding(peer_id, packet.as_bytes()) => {
                 Some(self.prepare_repeat_confirmed_send(
                     from,
                     *peer,
@@ -2086,7 +2080,7 @@ impl<
         // asked for no tracking and sees none.
         let tracked_receipt = match receipt {
             Some(receipt) => Some(receipt),
-            None if Self::frame_solicits_repeat(packet.as_bytes()) => {
+            None if self.send_requires_forwarding(peer_id, packet.as_bytes()) => {
                 Some(self.prepare_repeat_confirmed_send(
                     from,
                     *peer,
@@ -2810,14 +2804,21 @@ impl<
         if let Some(target_peer) = self.peer_for_ack_trailer(&ack_trailer)
             && let Some((identity_id, receipt)) = self.complete_ack(&target_peer, &ack_trailer)
         {
-            // An ack is a packet the peer sent us, and route learning applies
-            // to it like any other. It is also the only packet an ack-only
-            // exchange produces, so without this a sender that never receives
-            // application traffic back from a peer never learns a route to it
-            //—the trace the peer mirrored onto the ack would arrive and be
-            // discarded.
-            if let Some((peer_id, _)) = self.peer_registry.lookup_by_key(&target_peer) {
-                self.learn_route_for_peer(peer_id, &buf[..frame_len], header, rx);
+            // Preserve a routed path, including a newer replacement, rather
+            // than swapping it for an asymmetric ACK return path. A direct
+            // observation is provisional: the extra flood hop may be what
+            // delivered the exchange. Let the ACK teach a named route instead
+            // of leaving that peer on a one-hop flood indefinitely.
+            if let Some((peer_id, peer)) = self.peer_registry.lookup_by_key(&target_peer) {
+                if peer
+                    .route
+                    .as_ref()
+                    .is_none_or(|route| route.hop_count() == 1)
+                {
+                    self.learn_route_for_peer(peer_id, &buf[..frame_len], header, rx);
+                } else if rx.buffered.is_none() {
+                    self.peer_registry.touch(peer_id, self.clock.now_ms());
+                }
             }
             on_event(
                 identity_id,
@@ -2864,7 +2865,7 @@ impl<
                 }
                 if header.ack_requested()
                     && self.should_emit_destination_ack(&buf[..frame_len], header, rx)
-                    && self.note_acknowledgeable_unicast_duplicate(
+                    && self.can_acknowledge_unicast_duplicate(
                         local_id,
                         peer_id,
                         header,
@@ -2887,9 +2888,13 @@ impl<
                         body_range.clone(),
                         &keys,
                     );
-                    let trace_route = Self::frame_requests_trace_route(&buf[..frame_len], header);
-                    self.queue_mac_ack_for_peer(local_id, peer_id, ack_trailer, trace_route)
-                        .ok();
+                    self.queue_received_mac_ack(
+                        local_id,
+                        peer_id,
+                        ack_trailer,
+                        &buf[..frame_len],
+                        header,
+                    );
                     handled = true;
                     break;
                 }
@@ -2960,9 +2965,13 @@ impl<
                         body_range.clone(),
                         &keys,
                     );
-                    let trace_route = Self::frame_requests_trace_route(&buf[..frame_len], header);
-                    self.queue_mac_ack_for_peer(local_id, peer_id, ack_trailer, trace_route)
-                        .ok();
+                    self.queue_received_mac_ack(
+                        local_id,
+                        peer_id,
+                        ack_trailer,
+                        &buf[..frame_len],
+                        header,
+                    );
                 }
 
                 if let Some(data) = Self::echo_request_data(payload) {
@@ -3168,7 +3177,7 @@ impl<
                         }
                         if header.ack_requested()
                             && self.should_emit_destination_ack(&buf[..frame_len], header, rx)
-                            && self.note_acknowledgeable_unicast_duplicate(
+                            && self.can_acknowledge_unicast_duplicate(
                                 local_id,
                                 peer_id,
                                 header,
@@ -3185,15 +3194,13 @@ impl<
                                 body_range.clone(),
                                 &blind_keys,
                             );
-                            let trace_route =
-                                Self::frame_requests_trace_route(&buf[..frame_len], header);
-                            self.queue_mac_ack_for_peer(
+                            self.queue_received_mac_ack(
                                 local_id,
                                 peer_id,
                                 ack_trailer,
-                                trace_route,
-                            )
-                            .ok();
+                                &buf[..frame_len],
+                                header,
+                            );
                             handled = true;
                             break;
                         }
@@ -3251,15 +3258,13 @@ impl<
                                 body_range.clone(),
                                 &blind_keys,
                             );
-                            let trace_route =
-                                Self::frame_requests_trace_route(&buf[..frame_len], header);
-                            self.queue_mac_ack_for_peer(
+                            self.queue_received_mac_ack(
                                 local_id,
                                 peer_id,
                                 ack_trailer,
-                                trace_route,
-                            )
-                            .ok();
+                                &buf[..frame_len],
+                                header,
+                            );
                         }
 
                         if let Some(data) = Self::echo_request_data(payload) {
@@ -3366,7 +3371,10 @@ impl<
             });
 
             if let Some(receipt) = receipt {
-                slot.pending_acks.remove(&receipt);
+                if let Some(pending) = slot.pending_acks.remove(&receipt) {
+                    self.peer_registry
+                        .confirm_route(peer, pending.cached_route_revision);
+                }
                 let identity_id = LocalIdentityId(index as u8);
                 // A retransmission may already be queued behind this ack.
                 // Nothing downstream re-checks, so it would otherwise go out
@@ -3433,6 +3441,11 @@ impl<
                     if !matches!(pending.state, crate::AckState::Queued { .. })
                         && now_ms >= pending.ack_deadline_ms
                     {
+                        if pending.expects_ack() {
+                            let revision = core::mem::take(&mut pending.cached_route_revision);
+                            self.peer_registry
+                                .fail_route(&pending.peer, revision, now_ms);
+                        }
                         if !pending.expects_ack() {
                             actions
                                 .push(Action::Abandon { receipt: *receipt })
@@ -3513,6 +3526,9 @@ impl<
                         resend,
                         not_before_ms,
                     } => {
+                        self.tx_queue.remove_all_matching(|entry| {
+                            entry.receipt == Some(receipt) && entry.identity_id == Some(identity_id)
+                        });
                         if let Some(rewritten) = self.synthesize_route_retry_resend(&peer, &resend)
                         {
                             let rewritten_key = Self::confirmation_key(rewritten.frame.as_slice());
@@ -3784,6 +3800,33 @@ impl<
             .unwrap_or(false)
     }
 
+    /// Optional forwarding permission alone is not a reason to retransmit a
+    /// non-ACK direct send when no repeater exists to confirm it.
+    fn send_requires_forwarding(&self, peer_id: PeerId, frame: &[u8]) -> bool {
+        let Ok(header) = PacketHeader::parse(frame) else {
+            return false;
+        };
+        let Ok(options) = ParsedOptions::extract(frame, header.options_range.clone()) else {
+            return false;
+        };
+        if options.source_route.is_some_and(|route| !route.is_empty()) {
+            return true;
+        }
+        if !Self::frame_solicits_repeat(frame) {
+            return false;
+        }
+        match self
+            .peer_registry
+            .get(peer_id)
+            .and_then(|peer| peer.route.as_ref())
+        {
+            Some(CachedRoute::Direct) => false,
+            Some(CachedRoute::Flood { flood_hops, .. }) => *flood_hops > 0,
+            Some(CachedRoute::Source(route)) => !route.is_empty(),
+            None => true,
+        }
+    }
+
     /// Track a non-ACK send that travels through repeaters.
     ///
     /// Such a send has no acknowledgement coming, but it is not therefore
@@ -3839,13 +3882,26 @@ impl<
         .map_err(|_| SendError::QueueFull)?
         .with_requested_flood_hops(options.flood_hops);
 
+        let cached_route_revision = self
+            .peer_registry
+            .lookup_by_key(&peer)
+            .filter(|(_, info)| {
+                let uses_hints = matches!(info.route.as_ref(),
+                    Some(CachedRoute::Source(route)) if !route.is_empty());
+                let narrowed_budget = options.flood_hops.is_some_and(|requested| {
+                    requested > header.flood_hops.map_or(0, |hops| hops.remaining())
+                });
+                options.source_route.is_none() && (uses_hints || narrowed_budget)
+            })
+            .map_or(0, |(_, info)| info.route_revision);
         let slot = self.identity_mut(from).ok_or(SendError::IdentityMissing)?;
         let receipt = slot.next_receipt();
-        let pending = if is_forwarded {
+        let mut pending = if is_forwarded {
             PendingAck::forwarded(ack_trailer, peer, resend)
         } else {
             PendingAck::direct(ack_trailer, peer, resend)
         };
+        pending.cached_route_revision = cached_route_revision;
         slot.try_insert_pending_ack(receipt, pending)
             .map_err(|_| SendError::PendingAckFull)?;
         Ok(receipt)
@@ -3894,66 +3950,20 @@ impl<
         }
     }
 
-    /// Whether this send should carry a trace route the caller did not ask
-    /// for, because nothing yet describes the path to the peer.
-    ///
-    /// A trace route asks the repeaters that carry a frame to record
-    /// themselves, so it is only worth its byte on a frame some repeater can
-    /// carry. A frame with no flood budget and no source route is not one:
-    /// nothing may forward it, the trace is guaranteed to arrive empty, and
-    /// the destination learns the link is direct from the frame's own shape
-    /// anyway—see [`Mac::learn_route_for_peer`].
-    ///
-    /// Past that, a peer heard directly has no repeaters for a trace to
-    /// record. Everything else floods toward a destination whose distance we
-    /// can at best estimate, and that is exactly the frame whose path is worth
-    /// writing down: it costs one byte on the way out and buys the
-    /// destination a precise route back. The destination mirrors the option
-    /// onto its ack, which closes the return direction, so a single exchange
-    /// leaves both ends holding a route and this condition stops firing.
-    /// Discovery is paid for once per path rather than per packet—the
-    /// always-on variant is [proactive route refresh], which the spec
-    /// deliberately leaves unspecified.
-    ///
-    /// A source route is the one case where knowing the path is not enough.
-    /// The frame reaches the destination with its hints consumed, so nothing
-    /// on it describes the way back, and an ack composed against an empty
-    /// route cache carries neither a flood budget nor a route of its own—
-    /// it dies at the first hop, and the sender retries against a peer that
-    /// has been answering all along. So a routed frame that asks for an ack
-    /// traces as well: the routed hops record themselves, and the ack has a
-    /// path home.
-    ///
-    /// This is unconditional for now. The narrower form only traces when the
-    /// peer has not shown it can reach us—a frame arriving from it with a
-    /// source-route option present, or with accumulated flood hops, is that
-    /// proof, and [`Mac::learn_route_for_peer`] already sees both.
-    /// Relax to that once there is enough field data to say the evidence bit
-    /// tracks reality; until then the extra byte is cheaper than a delivery
-    /// that silently never lands.
-    ///
-    /// [proactive route refresh]: https://darconeous.github.io/umsh/docs/protocol/beacons.html#potential-improvement-proactive-route-refresh
+    /// Trace all flooded discovery/backstop traffic, including peers heard
+    /// directly. An inbound direct observation does not prove the return link.
+    /// ACK-requested source routes also trace so the peer can route its ACK.
     fn needs_route_discovery(
         &self,
-        peer_id: PeerId,
+        _peer_id: PeerId,
         source_route: Option<&Vec<RouterHint, MAX_SOURCE_ROUTE_HINTS>>,
         flood_hops: Option<u8>,
         ack_requested: bool,
     ) -> bool {
         if source_route.is_some_and(|route| !route.is_empty()) {
-            // Routed hops prepend to a trace like flooded ones do, so the
-            // option arrives populated even though `FHOPS` never moved.
             return ack_requested;
         }
-        if flood_hops.unwrap_or(0) == 0 {
-            return false;
-        }
-        !matches!(
-            self.peer_registry
-                .get(peer_id)
-                .and_then(|peer| peer.route.as_ref()),
-            Some(CachedRoute::Direct)
-        )
+        flood_hops.is_some_and(|hops| hops > 0)
     }
 
     /// Whether a frame this node is about to originate gives any repeater
@@ -4195,14 +4205,13 @@ impl<
             .map(|state| state.replay_window.check(counter, mic, now_ms))
     }
 
-    /// Whether this duplicate has earned a fresh acknowledgement, recording
-    /// the acknowledgement when it has.
+    /// Whether an exact duplicate is eligible for its first ACK or a paced re-ACK.
     ///
     /// The holdoff is one forwarding-confirmation window: flood copies of a
     /// single transmission arrive within it, while a sender that lost its
     /// ack cannot have retransmitted before it lapsed.
-    fn note_acknowledgeable_unicast_duplicate(
-        &mut self,
+    fn can_acknowledge_unicast_duplicate(
+        &self,
         local_id: LocalIdentityId,
         peer_id: PeerId,
         header: &PacketHeader,
@@ -4213,13 +4222,61 @@ impl<
         };
         let now_ms = self.clock.now_ms();
         let holdoff_ms = self.forward_confirm_timeout_ms();
-        self.identity_mut(local_id)
-            .and_then(|slot| slot.peer_crypto_mut().get_mut(&peer_id))
+        self.identity(local_id)
+            .and_then(|slot| slot.peer_crypto().get(&peer_id))
             .is_some_and(|state| {
                 state
                     .replay_window
-                    .note_acknowledgeable_duplicate(counter, mic, now_ms, holdoff_ms)
+                    .can_acknowledge_duplicate(counter, mic, now_ms, holdoff_ms)
             })
+    }
+
+    /// Record acknowledgement only after a frame was actually queued.
+    fn queue_received_mac_ack(
+        &mut self,
+        local_id: LocalIdentityId,
+        peer_id: PeerId,
+        ack_trailer: [u8; 8],
+        frame: &[u8],
+        header: &PacketHeader,
+    ) {
+        let Ok(options) = ParsedOptions::extract(frame, header.options_range.clone()) else {
+            return;
+        };
+        let regions = Self::region_codes_from_options(frame, header.options_range.clone());
+        let usable_trace = options
+            .trace_route
+            .as_ref()
+            .and_then(|range| frame.get(range.clone()))
+            .and_then(|trace| self.source_route_from_trace(trace))
+            .is_some();
+        let unknown_budget = (options.source_route.is_some() && !usable_trace).then(|| {
+            header
+                .flood_hops
+                .map_or(0, |hops| hops.accumulated())
+                .saturating_add(ESTABLISHED_ROUTE_EXTRA_FLOOD_HOPS)
+                .max(5)
+        });
+        if self
+            .queue_routed_mac_ack(
+                local_id,
+                peer_id,
+                ack_trailer,
+                options.trace_route.is_some(),
+                &regions,
+                unknown_budget,
+            )
+            .is_ok()
+            && let Some((counter, mic)) = Self::replay_metadata(header, frame)
+        {
+            let now_ms = self.clock.now_ms();
+            if let Some(state) = self
+                .identity_mut(local_id)
+                .and_then(|slot| slot.peer_crypto_mut().get_mut(&peer_id))
+            {
+                state.replay_window.mark_ack_queued(counter, mic, now_ms);
+            }
+        }
     }
 
     fn try_accept_counter_resync_response(
@@ -4464,14 +4521,6 @@ impl<
             return None;
         }
         Some(data)
-    }
-
-    /// Whether a frame carries a trace-route option, and so is discovering a
-    /// path whose reply has to trace its own way back.
-    fn frame_requests_trace_route(frame: &[u8], header: &PacketHeader) -> bool {
-        ParsedOptions::extract(frame, header.options_range.clone())
-            .map(|parsed| parsed.trace_route.is_some())
-            .unwrap_or(false)
     }
 
     /// Mirror the requester's trace options onto the echo response.
@@ -4779,6 +4828,16 @@ impl<
             return;
         };
 
+        // An overheard early copy has not traversed its selected path yet.
+        // Its empty or partial trace must not poison the return-route cache.
+        if options
+            .source_route
+            .as_ref()
+            .is_some_and(|range| !range.is_empty())
+        {
+            return;
+        }
+
         if let Some(trace_range) = options.trace_route {
             if let Some(route) = self.source_route_from_trace(frame.get(trace_range).unwrap_or(&[]))
             {
@@ -4794,7 +4853,7 @@ impl<
                 } else {
                     crate::CachedRoute::Source(route)
                 };
-                self.peer_registry.update_route(peer_id, learned);
+                self.peer_registry.observe_route(peer_id, learned, now_ms);
                 return;
             }
         }
@@ -4818,17 +4877,18 @@ impl<
             // shape instead of out of an option—which is why a frame like
             // this is not worth spending a trace route on.
             self.peer_registry
-                .update_route(peer_id, crate::CachedRoute::Direct);
+                .observe_route(peer_id, crate::CachedRoute::Direct, now_ms);
             return;
         };
 
         let regions = Self::region_codes_from_options(frame, header.options_range.clone());
-        self.peer_registry.update_route(
+        self.peer_registry.observe_route(
             peer_id,
             crate::CachedRoute::Flood {
                 flood_hops: flood_hops.accumulated(),
                 regions,
             },
+            now_ms,
         );
     }
 
@@ -5964,7 +6024,12 @@ impl<
         // Route recovery re-attempts delivery of a packet whose fate is
         // knowable. A send with no ack to wait for never learns whether the
         // route failed, so it has nothing to recover from.
-        if !pending.expects_ack() {
+        if !pending.expects_ack()
+            || !pending
+                .resend
+                .requested_flood_hops
+                .is_some_and(|hops| hops > 0)
+        {
             return false;
         }
         let Ok(header) = PacketHeader::parse(pending.resend.frame.as_slice()) else {

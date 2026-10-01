@@ -77,7 +77,9 @@ UMSH does not define a dedicated path-discovery packet type. Instead, path disco
 
 4. **Bidirectional establishment**: The trace Node A sent taught Node B a path back, and nothing else. A node responding to a packet that carried a trace-route option SHOULD carry one on its response, whatever form that response takes—MAC ack, beacon, or application payload. Where the response is a MAC ack, that ack is the whole of what Node A receives, so an ack without a trace leaves Node A holding no route to Node B at all.
 
-A sender decides whether to originate the option from what it already knows about the destination. One that holds no path—no source route, and no evidence the destination is a direct neighbor—SHOULD include a trace route: the packet is going to flood regardless, and the trace is what turns that flood into a path. A sender following a source route SHOULD NOT, since that path is already known and re-recording it on every packet is the [proactive refresh](#potential-improvement-proactive-route-refresh) this specification does not define. That applies to a path the sender holds, which is what makes the re-recording redundant. A response steered down the trace its own request accumulated—the [Identity Request](mac-commands.md#identity-request-1) answered from a source route built out of the trace, for one—is following the requester's path rather than one either side had, and the response rule above governs: the requester holds nothing until the response records something.
+A sender decides whether to originate the option from what it already knows about the destination. One that holds no source route and permits flooding SHOULD include a trace route: the trace is what turns that flood into a path. This includes a peer heard directly, since hearing the peer does not establish that the peer can hear the sender. A sender following a source route SHOULD NOT routinely trace it, since that path is already known and re-recording it on every packet is the [proactive refresh](#potential-improvement-proactive-route-refresh) this specification does not define. An ACK-requested packet is an exception: it SHOULD include a trace so the destination can construct a return route for its ACK.
+
+The reason to omit a trace applies to a path the sender holds, which is what makes the re-recording redundant. A response steered down the trace its own request accumulated—the [Identity Request](mac-commands.md#identity-request-1) answered from a source route built out of the trace, for one—is following the requester's path rather than one either side had, and the response rule above governs: the requester holds nothing until the response records something.
 
 A packet carrying neither flood hops nor a source route SHOULD NOT carry a trace route at all, whatever the sender knows. No repeater may forward such a packet, so the option can only arrive as empty as it left, and its arrival already proves what an empty trace would have said.
 
@@ -85,20 +87,22 @@ Because router hints are only two bytes, different repeaters may share the same 
 
 ## Route Learning
 
-When a node successfully processes an incoming packet, it SHOULD update its routing state for the sender:
+A destination may overhear a frame while source-route hints remain unconsumed. Its empty or partial trace describes a path that has not finished traversing the selected repeaters, so it is unsuitable for replacing a cached route. A consumed route can supply a complete trace. Historical buffered frames likewise do not establish current reachability.
+
+When a node successfully processes other live incoming packets, it can update its routing state for the sender:
 
 - **Trace route**: if the packet contains a trace-route option, the node caches that trace route as a source route for future packets back to the sender. Because the trace route is accumulated most-recent first, it already describes the return path from the receiver back toward the original sender. This is the primary mechanism for learning precise multi-hop paths.
 - **Flood hop count**: if the packet contains a flood hop count, the node caches the sender's `FHOPS_ACC` value together with any region-code options that arrived on the packet. When no source route is available, these cached flood parameters can be reused for flood responses—scoping the flood to approximately the right radius and regional domain rather than flooding the entire network.
 
 - **Neither**: a packet that arrives carrying no flood hop count and no source route was one that no repeater had permission to forward, so it reached the receiver off the sender's own transmitter. The node SHOULD cache the sender as a direct neighbor. This is the same conclusion an empty trace route supports, drawn from the packet's structure rather than from an option, which is what lets an unforwardable packet leave the trace route off.
 
-A MAC ack is such a packet. It names no source, but its [ack trailer](security.md#ack-tag-construction) correlates it to an outstanding request and so to the peer that sent it, and whatever routing evidence it carries updates that peer's routing state like any other packet's would.
+A MAC ack can also supply routing evidence. It names no source, but its [ack trailer](security.md#ack-tag-construction) correlates it to an outstanding request and so to the peer that sent it. Its trace can establish a route or replace a provisional direct observation with a repeater path. An ACK confirms that the exchange succeeded; its return path may differ from the outbound path, so it need not replace a working source route. Route selection and retention are local policy.
 
 A packet that arrives carrying a source-route option—including one whose hints are all consumed—spends flood hops only after the route runs out, so its `FHOPS_ACC` counts the tail of the path rather than its length. Such a packet SHOULD NOT be used to derive a flood-distance estimate.
 
 This routing state applies to all subsequent communication with the sender—replies, acknowledgments, and new messages alike. A node MAY replace a cached route when a newer packet provides a fresher trace route, and SHOULD discard cached routes that have proven unreachable.
 
-In practice, "proven unreachable" usually means that an ack-requested packet sent using the cached source route exhausted its retry budget without end-to-end success. In that case, the sender should stop trusting the stale route and return to route-discovery behavior:
+An ACK timeout is evidence that the exchange failed, not proof that the outbound leg alone failed. When an ACK-requested packet exhausts its retry budget on a cached route, the sender can return to route discovery:
 
 - discard or demote the cached source route
 - send the same logical packet again using flood hops instead of the stale source route
@@ -107,17 +111,21 @@ In practice, "proven unreachable" usually means that an ack-requested packet sen
 
 Trading a source route for flood hops rewrites only fields the [associated data](security.md#associated-data) excludes. Adding `FHOPS` sets the FCF's `H` bit, which the AAD clears, so the MIC carries over unchanged.
 
-Once the peer replies and a fresher trace route is learned, the sender can resume normal source-routed transmission using the replacement route.
+Recovery stays within the sender's original flood ceiling; disabled flooding does not authorize a flooded retry. Once a replacement route is learned, normal routed transmission can resume. An ACK following Route Retry confirms delivery of the logical packet but does not identify which attempt delivered it.
 
 ## Scoping Flood Hops to a Known Route
 
 A wide flood hop count is a first-contact cost. Once routing state exists for a destination, the sender SHOULD scope `FHOPS_REM` to what the known path actually costs, plus a small margin:
 
-- **Source route**: the route constrains every hop until it empties, and only the final repeater spends flood budget, so one hop covers the route itself.
+- **Source route**: named repeaters consume hints without spending flood budget; the margin is available only after all hints are consumed.
 - **Flood distance**: the cached `FHOPS_ACC` is the radius at which the destination was last heard.
-- **Direct link**: no forwarding hop is needed at all.
+- **Direct observation**: no repeater carried the observed packet, but the reverse direction may still need one.
 
 The margin—one hop is a reasonable default—keeps delivery self-healing when the path has grown by a hop since it was learned, without paying for a mesh-wide flood on every packet. A route that has failed outright is repaired through the route-retry behavior above, which floods at the sender's full budget rather than the narrowed one.
+
+The margin also accommodates asymmetric links: a direct observation can still require a repeater in the reverse direction. ACKs can use the same allowance, retaining the request's region codes to scope any flooding even when the ACK also follows a source route. A consumed source route without a usable return trace supplies no total distance; a direct observation alone is insufficient to bound that ACK's return path. The request's flood ceiling governs the request, not the ACK's independently selected return path.
+
+An optional hop does not imply that a repeater is present. Not hearing a repeat is therefore insufficient reason to retransmit a directly addressed packet that requests no ACK, or an ACK sent directly with that allowance. Strong reception does not establish reverse reachability, and a successful exchange with the margin does not show it was unnecessary.
 
 ## Potential Improvement: Proactive Route Refresh
 

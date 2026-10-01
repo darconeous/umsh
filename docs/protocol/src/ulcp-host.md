@@ -598,6 +598,10 @@ if all of the following hold:
    (for example, one exceeding the device's buffer) is not acknowledged, so
    the sender keeps retrying until the host returns.
 
+A delegated ACK also requires that no unconsumed source-route hints remain. An early overheard copy may be queued without an ACK; the first eligible duplicate can then supply the ACK without another queue entry. `RX_FLAG_ACKED` requires successful radio transmission.
+
+Delegated ACKs follow the [return-path guidance](beacons.md#scoping-flood-hops-to-a-known-route), mirror a requested trace, and preserve the request's region codes on both flooded and source-routed returns.
+
 **Duplicates.** An authenticated frame that replay detection identifies as
 a previously accepted frame—typically a retransmission whose original
 ack was lost—is not queued again, but the device **MAY** retransmit its

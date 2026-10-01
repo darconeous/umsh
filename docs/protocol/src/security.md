@@ -118,6 +118,8 @@ recent acknowledgement of that packet: copies arriving inside the window share
 the acknowledgement already sent, while a sender that lost its acknowledgement
 cannot retransmit before its own confirmation window has lapsed.
 
+Payload acceptance does not begin the acknowledgement pacing window. A destination may accept an overheard source-routed copy while hints remain, withholding its ACK until the route is consumed. The first eligible copy may then be acknowledged immediately. A duplicate remains the same accepted packet: acknowledging it does not renew its replay-retention interval or deliver the payload again.
+
 #### Counter Persistence
 
 How a node persists and recovers its frame counter across reboots is implementation-specific. Possible strategies include writing the counter to non-volatile storage periodically or advancing the counter by a large margin on startup to avoid replaying previously used values.

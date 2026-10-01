@@ -18,6 +18,8 @@ pub const RECENT_MIC_CAPACITY: usize = 9;
 pub const REPLAY_BACKTRACK_SLOTS: u32 = 8;
 /// Out-of-order acceptance time bound (spec: 5 minutes).
 pub const REPLAY_STALE_MS: u64 = 5 * 60 * 1000;
+// ACK offsets reserve zero for "not queued" and cover the retention window.
+const _: () = assert!(REPLAY_STALE_MS < u32::MAX as u64);
 
 /// Recently accepted MIC tracked for backward-window replay handling.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -28,8 +30,27 @@ pub struct RecentMic {
     pub mic: [u8; 16],
     /// Number of valid bytes in [`mic`](Self::mic).
     pub mic_len: u8,
-    /// Acceptance timestamp in milliseconds.
-    pub accepted_ms: u64,
+    /// Monotonic acceptance time in wrapping u32 seconds, rounded down.
+    /// Retention may end up to 999 ms early, but never extends beyond the
+    /// five-minute limit.
+    pub accepted_secs: u32,
+    /// Milliseconds from the beginning of `accepted_secs` when an ACK was
+    /// queued, plus one; zero means no ACK was queued. This preserves exact
+    /// ACK timing even though the acceptance timestamp is rounded down.
+    ack_queued_offset: u32,
+}
+
+impl RecentMic {
+    fn age_ms(&self, now_ms: u64) -> u64 {
+        let now_secs = (now_ms / 1000) as u32;
+        // Subtract in the wrapping seconds domain before widening. Include
+        // the current fractional second so ACK offsets retain ms precision.
+        u64::from(now_secs.wrapping_sub(self.accepted_secs)) * 1000 + now_ms % 1000
+    }
+
+    fn is_recent(&self, now_ms: u64) -> bool {
+        self.age_ms(now_ms) <= REPLAY_STALE_MS
+    }
 }
 
 /// Replay-detection window for secure traffic from one sender.
@@ -43,19 +64,6 @@ pub struct ReplayWindow {
     pub backward_bitmap: u8,
     /// Accepted MICs retained for duplicate late-arrival checks.
     pub recent_mics: Deque<RecentMic, RECENT_MIC_CAPACITY>,
-    /// Counter of the last duplicate re-acknowledged, paired with
-    /// [`last_dup_ack_ms`](Self::last_dup_ack_ms).
-    ///
-    /// One pair for the whole window, not a stamp per retained MIC:
-    /// duplicate re-acks pace one packet's copies, and windows are
-    /// replicated widely enough (per channel, per tracked sender) that
-    /// per-entry state is real RAM on the embedded targets—spent, for
-    /// channel traffic, on packets that are never acknowledged at all.
-    pub last_dup_ack_counter: u32,
-    /// When the duplicate carrying
-    /// [`last_dup_ack_counter`](Self::last_dup_ack_counter) was last
-    /// re-acknowledged, in milliseconds.
-    pub last_dup_ack_ms: u64,
 }
 
 /// Result of checking a packet against a replay window.
@@ -85,8 +93,6 @@ impl ReplayWindow {
             last_accepted_time_ms: 0,
             backward_bitmap: 0,
             recent_mics: Deque::new(),
-            last_dup_ack_counter: 0,
-            last_dup_ack_ms: 0,
         }
     }
 
@@ -100,7 +106,7 @@ impl ReplayWindow {
             return ReplayVerdict::Accept;
         }
 
-        if now_ms.saturating_sub(self.last_accepted_time_ms) > REPLAY_STALE_MS {
+        if now_ms.wrapping_sub(self.last_accepted_time_ms) > REPLAY_STALE_MS {
             return ReplayVerdict::Stale;
         }
 
@@ -123,60 +129,41 @@ impl ReplayWindow {
         ReplayVerdict::Replay
     }
 
-    /// Return whether this is an exact, recently accepted packet eligible for
-    /// an idempotent duplicate acknowledgement, and record the
-    /// acknowledgement when it is.
-    ///
-    /// This deliberately requires both the bounded counter distance and a
-    /// matching retained MIC. Merely reusing an occupied counter does not prove
-    /// that the receiver previously accepted this logical packet.
-    ///
-    /// A duplicate is re-acknowledged at most once per `holdoff_ms`. The
-    /// duplicate-acknowledgement window exists so a sender whose ack was
-    /// lost can recover by retransmitting—but most duplicates are not
-    /// retransmissions, they are flood copies of a single transmission
-    /// arriving over different paths, and each already-sent ack covers
-    /// all of them. A sender cannot retransmit before its confirmation
-    /// window lapses, so a duplicate arriving inside that window proves
-    /// nothing was lost yet and earns no fresh ack. Callers pass their
-    /// forwarding-confirmation window (or the closest equivalent their
-    /// radio timing offers) as `holdoff_ms`.
-    ///
-    /// Two clocks pace this. Copies of the *accepted* transmission are
-    /// caught by the entry's acceptance time—the acceptance already
-    /// queued their ack. Copies of a *retransmission* are caught by the
-    /// re-ack stamp the first copy leaves behind. A `true` return
-    /// stamps: the caller is expected to queue the acknowledgement it
-    /// just asked about.
-    pub fn note_acknowledgeable_duplicate(
-        &mut self,
+    /// Whether an exact retained duplicate may be acknowledged. An accepted
+    /// payload may not yet have had an ACK-eligible copy (e.g. an overheard
+    /// source route), or enqueue may have failed. Only a successfully queued
+    /// ACK starts the per-packet holdoff. This never changes replay state.
+    pub fn can_acknowledge_duplicate(
+        &self,
         counter: u32,
         mic: &[u8],
         now_ms: u64,
         holdoff_ms: u64,
     ) -> bool {
-        if self.last_accepted_time_ms == 0 && self.recent_mics.is_empty() {
-            return false;
-        }
-
-        let ack_distance = self.last_accepted.wrapping_sub(counter);
-        if ack_distance > REPLAY_BACKTRACK_SLOTS {
+        if self.last_accepted.wrapping_sub(counter) > REPLAY_BACKTRACK_SLOTS {
             return false;
         }
         let Some(entry) = self.find_recent_mic(counter, mic, now_ms) else {
             return false;
         };
-        if now_ms.saturating_sub(entry.accepted_ms) < holdoff_ms {
-            return false;
+        let offset = entry.ack_queued_offset;
+        offset == 0 || entry.age_ms(now_ms).wrapping_sub(u64::from(offset - 1)) >= holdoff_ms
+    }
+
+    /// Record a successful ACK enqueue, without refreshing acceptance or the
+    /// replay baseline. Failed enqueue attempts must not call this method.
+    pub fn mark_ack_queued(&mut self, counter: u32, mic: &[u8], now_ms: u64) {
+        let Some((normalized_mic, mic_len)) = normalize_mic(mic) else {
+            return;
+        };
+        if let Some(entry) = self.recent_mics.iter_mut().find(|entry| {
+            entry.counter == counter
+                && entry.mic_len == mic_len
+                && entry.mic[..mic_len as usize] == normalized_mic[..mic_len as usize]
+                && entry.is_recent(now_ms)
+        }) {
+            entry.ack_queued_offset = (entry.age_ms(now_ms) + 1) as u32;
         }
-        if self.last_dup_ack_counter == counter
-            && now_ms.saturating_sub(self.last_dup_ack_ms) < holdoff_ms
-        {
-            return false;
-        }
-        self.last_dup_ack_counter = counter;
-        self.last_dup_ack_ms = now_ms;
-        true
     }
 
     /// Record an accepted `counter` and `mic` at `now_ms`.
@@ -217,7 +204,8 @@ impl ReplayWindow {
                 counter,
                 mic: normalized_mic,
                 mic_len,
-                accepted_ms: now_ms,
+                accepted_secs: (now_ms / 1000) as u32,
+                ack_queued_offset: 0,
             });
         }
     }
@@ -228,8 +216,6 @@ impl ReplayWindow {
         self.last_accepted_time_ms = now_ms;
         self.backward_bitmap = 0;
         self.recent_mics.clear();
-        self.last_dup_ack_counter = 0;
-        self.last_dup_ack_ms = 0;
     }
 
     fn has_matching_recent_mic(&self, counter: u32, mic: &[u8], now_ms: u64) -> bool {
@@ -239,7 +225,7 @@ impl ReplayWindow {
 
         self.recent_mics.iter().any(|entry| {
             entry.counter == counter
-                && now_ms.saturating_sub(entry.accepted_ms) <= REPLAY_STALE_MS
+                && entry.is_recent(now_ms)
                 && entry.mic_len == mic_len
                 && entry.mic[..mic_len as usize] == normalized_mic[..mic_len as usize]
         })
@@ -250,7 +236,7 @@ impl ReplayWindow {
 
         self.recent_mics.iter().find(|entry| {
             entry.counter == counter
-                && now_ms.saturating_sub(entry.accepted_ms) <= REPLAY_STALE_MS
+                && entry.is_recent(now_ms)
                 && entry.mic_len == mic_len
                 && entry.mic[..mic_len as usize] == normalized_mic[..mic_len as usize]
         })
@@ -258,7 +244,7 @@ impl ReplayWindow {
 
     fn prune_recent_mics(&mut self, now_ms: u64) {
         while let Some(front) = self.recent_mics.front() {
-            if now_ms.saturating_sub(front.accepted_ms) <= REPLAY_STALE_MS {
+            if front.is_recent(now_ms) {
                 break;
             }
             let _ = self.recent_mics.pop_front();
@@ -273,4 +259,156 @@ fn normalize_mic(mic: &[u8]) -> Option<([u8; 16], u8)> {
     let mut out = [0u8; 16];
     out[..mic.len()].copy_from_slice(mic);
     Some((out, mic.len() as u8))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ack_tracking_stays_within_replay_storage_budget() {
+        assert!(core::mem::size_of::<RecentMic>() <= 32);
+        assert!(core::mem::size_of::<ReplayWindow>() <= 384);
+    }
+
+    #[test]
+    fn rounded_acceptance_preserves_millisecond_ack_pacing() {
+        for base_ms in [
+            0,
+            1_000_000,
+            u64::from(u32::MAX) * 1000,
+            (u64::from(u32::MAX) + 1) * 1000,
+            (u64::from(u32::MAX) + 2) * 1000,
+        ] {
+            for fraction_ms in [0, 1, 999] {
+                for ack_delay_ms in [0, 1, 1_205] {
+                    let accepted_ms = base_ms + fraction_ms;
+                    let queued_ms = accepted_ms + ack_delay_ms;
+                    let mut window = ReplayWindow::new();
+                    window.accept(10, &[7; 8], accepted_ms);
+                    assert!(window.can_acknowledge_duplicate(10, &[7; 8], queued_ms, 100));
+                    window.mark_ack_queued(10, &[7; 8], queued_ms);
+                    assert!(!window.can_acknowledge_duplicate(10, &[7; 8], queued_ms + 99, 100));
+                    assert!(window.can_acknowledge_duplicate(10, &[7; 8], queued_ms + 100, 100));
+                    assert_eq!(window.last_accepted_time_ms, accepted_ms);
+                    assert_eq!(
+                        window.check(10, &[7; 8], queued_ms + 100),
+                        ReplayVerdict::Replay
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn rounded_acceptance_expires_conservatively_without_changing_replay_baseline() {
+        for base_ms in [
+            1_000_000,
+            u64::from(u32::MAX) * 1000,
+            (u64::from(u32::MAX) + 1) * 1000,
+        ] {
+            for fraction_ms in [0, 1, 999] {
+                let mut window = ReplayWindow::new();
+                let accepted_ms = base_ms + fraction_ms;
+                let last_retained_ms = base_ms + REPLAY_STALE_MS;
+                window.accept(10, &[7; 8], accepted_ms);
+                assert!(window.can_acknowledge_duplicate(10, &[7; 8], last_retained_ms, 0));
+                window.mark_ack_queued(10, &[7; 8], last_retained_ms);
+                let last_offset = window.recent_mics.front().unwrap().ack_queued_offset;
+                assert!(!window.can_acknowledge_duplicate(10, &[7; 8], last_retained_ms + 1, 0));
+                window.mark_ack_queued(10, &[7; 8], last_retained_ms + 1);
+                assert_eq!(
+                    window.recent_mics.front().unwrap().ack_queued_offset,
+                    last_offset
+                );
+                // Per-entry expiry can be early; the baseline still has exact timing.
+                assert_eq!(
+                    window.check(10, &[7; 8], accepted_ms + REPLAY_STALE_MS),
+                    ReplayVerdict::Replay
+                );
+                assert_eq!(
+                    window.check(10, &[7; 8], accepted_ms + REPLAY_STALE_MS + 1),
+                    ReplayVerdict::Stale
+                );
+                window.accept(11, &[8; 8], last_retained_ms + 1);
+                assert_eq!(window.recent_mics.len(), 1);
+                assert_eq!(window.recent_mics.front().unwrap().counter, 11);
+            }
+        }
+    }
+
+    #[test]
+    fn seconds_rollover_preserves_entries_ack_pacing_and_expiry() {
+        let mut window = ReplayWindow::new();
+        let rollover_ms = (u64::from(u32::MAX) + 1) * 1000;
+        window.accept(10, &[7; 8], rollover_ms - 20);
+        window.mark_ack_queued(10, &[7; 8], rollover_ms - 15);
+        window.accept(11, &[8; 8], rollover_ms + 10);
+        assert_eq!(window.recent_mics.len(), 2);
+        assert_eq!(window.recent_mics.front().unwrap().accepted_secs, u32::MAX);
+        assert_eq!(window.recent_mics.back().unwrap().accepted_secs, 0);
+        assert!(!window.can_acknowledge_duplicate(10, &[7; 8], rollover_ms + 84, 100));
+        assert!(window.can_acknowledge_duplicate(10, &[7; 8], rollover_ms + 85, 100));
+        assert!(window.can_acknowledge_duplicate(11, &[8; 8], rollover_ms + 85, 100));
+        window.mark_ack_queued(11, &[8; 8], rollover_ms + 85);
+        assert!(!window.can_acknowledge_duplicate(11, &[8; 8], rollover_ms + 184, 100));
+        assert!(window.can_acknowledge_duplicate(11, &[8; 8], rollover_ms + 185, 100));
+        assert_eq!(
+            window.check(10, &[7; 8], rollover_ms + 185),
+            ReplayVerdict::Replay
+        );
+        assert_eq!(window.last_accepted_time_ms, rollover_ms + 10);
+
+        // Prune the pre-wrap entry while retaining the post-wrap entry.
+        let expired_ms = rollover_ms - 1000 + REPLAY_STALE_MS + 1;
+        assert!(!window.can_acknowledge_duplicate(10, &[7; 8], expired_ms, 0));
+        assert!(window.can_acknowledge_duplicate(11, &[8; 8], expired_ms, 0));
+        window.accept(12, &[9; 8], expired_ms);
+        assert_eq!(window.recent_mics.len(), 2);
+        assert_eq!(window.recent_mics.front().unwrap().counter, 11);
+    }
+
+    #[test]
+    fn ack_offset_covers_the_entire_retention_window() {
+        // Exercise offsets beyond u16, including the last retained millisecond.
+        let mut window = ReplayWindow::new();
+        window.accept(10, &[7; 8], 1_000_000);
+        let last_ms = 1_000_000 + REPLAY_STALE_MS;
+        window.mark_ack_queued(10, &[7; 8], last_ms - 1);
+        assert!(!window.can_acknowledge_duplicate(10, &[7; 8], last_ms, 2));
+        assert!(window.can_acknowledge_duplicate(10, &[7; 8], last_ms, 1));
+        window.mark_ack_queued(10, &[7; 8], last_ms);
+        assert!(!window.can_acknowledge_duplicate(10, &[7; 8], last_ms, 1));
+        assert!(!window.can_acknowledge_duplicate(10, &[7; 8], last_ms + 1, 0));
+    }
+
+    #[test]
+    fn first_ack_waits_for_enqueue_not_payload_acceptance() {
+        let mut window = ReplayWindow::new();
+        window.accept(10, &[7; 8], 0);
+        assert!(window.can_acknowledge_duplicate(10, &[7; 8], 1, 100));
+        // A failed enqueue leaves the next copy immediately eligible.
+        assert!(window.can_acknowledge_duplicate(10, &[7; 8], 2, 100));
+        window.mark_ack_queued(10, &[7; 8], 2);
+        assert!(!window.can_acknowledge_duplicate(10, &[7; 8], 101, 100));
+        assert!(window.can_acknowledge_duplicate(10, &[7; 8], 102, 100));
+        assert_eq!(window.check(10, &[7; 8], 102), ReplayVerdict::Replay);
+        assert_eq!(window.last_accepted_time_ms, 0);
+    }
+
+    #[test]
+    fn interleaved_acks_are_paced_per_mic_and_do_not_refresh_expiry() {
+        let mut window = ReplayWindow::new();
+        for counter in 1..=2 {
+            window.accept(counter, &[counter as u8; 8], 1);
+            window.mark_ack_queued(counter, &[counter as u8; 8], 20);
+        }
+        assert!(!window.can_acknowledge_duplicate(1, &[1; 8], 100, 100));
+        assert!(!window.can_acknowledge_duplicate(1, &[9; 8], 120, 100));
+        window.mark_ack_queued(1, &[1; 8], REPLAY_STALE_MS);
+        assert!(!window.can_acknowledge_duplicate(1, &[1; 8], REPLAY_STALE_MS + 2, 0));
+        assert_eq!(window.last_accepted_time_ms, 1);
+        window.reset(2, REPLAY_STALE_MS + 2);
+        assert!(!window.can_acknowledge_duplicate(1, &[1; 8], REPLAY_STALE_MS + 3, 0));
+    }
 }

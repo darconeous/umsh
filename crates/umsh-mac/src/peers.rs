@@ -4,6 +4,8 @@ use umsh_crypto::{DerivedChannelKeys, PairwiseKeys};
 
 use crate::{CapacityError, cache::ReplayWindow};
 
+const FAILED_ROUTE_HOLDOFF_MS: u64 = 30_000;
+
 /// Opaque identifier for one remote peer.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct PeerId(pub u8);
@@ -11,12 +13,12 @@ pub struct PeerId(pub u8);
 /// Learned routing information for a remote peer.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum CachedRoute {
-    /// Peer is directly reachable without any intermediate routers.
+    /// Peer was heard directly; this is not proof of reverse reachability.
     ///
     /// Inferred when a packet arrives with no source-route or traceroute option
     /// (or an empty traceroute) and `FHOPS_ACC == 0`.
     Direct,
-    /// Explicit source route derived by reversing the inbound traceroute.
+    /// Explicit source route taken from the inbound traceroute (already in return order).
     /// Each hint names one repeater; the path is one hop longer than the
     /// route has hints.
     Source(Vec<RouterHint, 15>),
@@ -88,6 +90,10 @@ pub struct PeerInfo {
     pub pinned: bool,
     /// Most recent learned route, if any.
     pub route: Option<CachedRoute>,
+    /// Revision of the selected route. Use registry route methods to mutate it.
+    pub(crate) route_revision: u64,
+    /// One recently failed route, suppressed only for passive route learning.
+    failed_route: Option<(CachedRoute, u64)>,
     /// Most recent observation timestamp.
     pub last_seen_ms: u64,
     /// Highest RX frame counter loaded from persistent storage at boot.
@@ -122,6 +128,7 @@ pub struct PeerRemoval {
 #[derive(Clone, Debug)]
 pub struct PeerRegistry<const N: usize> {
     peers: Vec<PeerInfo, N>,
+    next_route_revision: u64,
 }
 
 impl<const N: usize> Default for PeerRegistry<N> {
@@ -133,7 +140,10 @@ impl<const N: usize> Default for PeerRegistry<N> {
 impl<const N: usize> PeerRegistry<N> {
     /// Create an empty peer registry.
     pub fn new() -> Self {
-        Self { peers: Vec::new() }
+        Self {
+            peers: Vec::new(),
+            next_route_revision: 0,
+        }
     }
 
     /// Iterate over peers whose derived hint matches `hint`.
@@ -190,6 +200,8 @@ impl<const N: usize> PeerRegistry<N> {
                 public_key: key,
                 pinned: true,
                 route: None,
+                route_revision: 0,
+                failed_route: None,
                 last_seen_ms: 0,
                 initial_rx_counter: 0,
             })
@@ -225,6 +237,8 @@ impl<const N: usize> PeerRegistry<N> {
                     public_key: key,
                     pinned: false,
                     route: None,
+                    route_revision: 0,
+                    failed_route: None,
                     last_seen_ms: now_ms,
                     initial_rx_counter: 0,
                 })
@@ -250,6 +264,8 @@ impl<const N: usize> PeerRegistry<N> {
             public_key: key,
             pinned: false,
             route: None,
+            route_revision: 0,
+            failed_route: None,
             last_seen_ms: now_ms,
             initial_rx_counter: 0,
         };
@@ -279,21 +295,87 @@ impl<const N: usize> PeerRegistry<N> {
         })
     }
 
-    /// Update the cached route for `id`.
+    fn next_revision(&mut self) -> u64 {
+        self.next_route_revision = self.next_route_revision.wrapping_add(1).max(1);
+        self.next_route_revision
+    }
+
+    /// Explicitly restore a route, overriding any passive-learning holdoff.
     pub fn update_route(&mut self, id: PeerId, route: CachedRoute) {
+        let revision = self.next_revision();
         if let Some(peer) = self.get_mut(id) {
             peer.route = Some(route);
+            peer.route_revision = revision;
+            peer.failed_route = None;
         }
     }
 
-    /// Forget the cached route for `id`, returning whether one was held.
-    ///
-    /// The peer itself stays registered; subsequent sends fall back to the
-    /// default delivery mode until a fresh inbound packet teaches a route.
+    /// Learn live inbound evidence without immediately resurrecting a failed
+    /// path. An identical observation is not fresh outbound success.
+    pub(crate) fn observe_route(&mut self, id: PeerId, route: CachedRoute, now_ms: u64) {
+        let Some(peer) = self.get_mut(id) else {
+            return;
+        };
+        if let Some((failed, until)) = &peer.failed_route {
+            if now_ms < *until
+                && (failed == &route || (failed.hop_count() == 1 && route.hop_count() == 1))
+            {
+                return;
+            }
+            if now_ms >= *until {
+                peer.failed_route = None;
+            }
+        }
+        if peer.route.as_ref() == Some(&route) {
+            return;
+        }
+        let revision = self.next_revision();
+        let peer = self.get_mut(id).expect("peer was just found");
+        peer.route = Some(route);
+        peer.route_revision = revision;
+    }
+
+    /// Forget a route explicitly; passive learning remains allowed.
     pub fn clear_route(&mut self, id: PeerId) -> bool {
+        let revision = self.next_revision();
         self.get_mut(id)
-            .map(|peer| peer.route.take().is_some())
+            .map(|peer| {
+                peer.route_revision = revision;
+                peer.failed_route = None;
+                peer.route.take().is_some()
+            })
             .unwrap_or(false)
+    }
+
+    /// Retire only the cached route used by the failed on-air attempt.
+    pub(crate) fn fail_route(&mut self, key: &PublicKey, revision: u64, now_ms: u64) {
+        let Some((id, peer)) = self.lookup_by_key(key) else {
+            return;
+        };
+        if revision == 0 || peer.route_revision != revision {
+            return;
+        }
+        let next_revision = self.next_revision();
+        let peer = self.get_mut(id).expect("peer was just found");
+        if let Some(route) = peer.route.take() {
+            peer.failed_route = Some((route, now_ms.saturating_add(FAILED_ROUTE_HOLDOFF_MS)));
+            peer.route_revision = next_revision;
+        }
+    }
+
+    /// A matching ACK protects this route from older outstanding failures.
+    /// It confirms the whole send policy, including its optional flood tail.
+    pub(crate) fn confirm_route(&mut self, key: &PublicKey, revision: u64) {
+        let Some((id, peer)) = self.lookup_by_key(key) else {
+            return;
+        };
+        if revision == 0 || peer.route_revision != revision || peer.route.is_none() {
+            return;
+        }
+        let next_revision = self.next_revision();
+        self.get_mut(id)
+            .expect("peer was just found")
+            .route_revision = next_revision;
     }
 
     /// Refresh the last-seen timestamp for `id`.

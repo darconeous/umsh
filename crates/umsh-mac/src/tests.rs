@@ -1,3 +1,5 @@
+mod routing_reliability;
+
 use super::*;
 use core::convert::Infallible;
 use core::{
@@ -387,11 +389,11 @@ fn duplicate_ack_window_requires_exact_recent_mic_within_eight_counters() {
         window.accept(counter, &[counter as u8; 8], counter as u64);
     }
 
-    assert!(window.note_acknowledgeable_duplicate(10, &original_mic, 19, 0));
-    assert!(!window.note_acknowledgeable_duplicate(10, &[0x5A; 8], 19, 0));
+    assert!(window.can_acknowledge_duplicate(10, &original_mic, 19, 0));
+    assert!(!window.can_acknowledge_duplicate(10, &[0x5A; 8], 19, 0));
 
     window.accept(19, &[19; 8], 20);
-    assert!(!window.note_acknowledgeable_duplicate(10, &original_mic, 21, 0));
+    assert!(!window.can_acknowledge_duplicate(10, &original_mic, 21, 0));
 }
 
 #[test]
@@ -403,7 +405,7 @@ fn duplicate_ack_window_uses_modular_counter_distance() {
     // recent MIC for the packet immediately before the wrap.
     window.last_accepted = 1;
 
-    assert!(window.note_acknowledgeable_duplicate(u32::MAX, &mic, 2, 0));
+    assert!(window.can_acknowledge_duplicate(u32::MAX, &mic, 2, 0));
 }
 
 /// One ack per transmission, not one per copy: flood duplicates inside
@@ -414,20 +416,22 @@ fn duplicate_ack_window_holdoff_paces_flood_copies() {
     let mut window = ReplayWindow::new();
     let mic = [0xA5; 8];
     window.accept(10, &mic, 1_000);
+    window.mark_ack_queued(10, &mic, 1_000);
 
     // Flood copies of the accepted transmission: the acceptance already
     // queued their ack.
-    assert!(!window.note_acknowledgeable_duplicate(10, &mic, 1_800, 2_000));
-    assert!(!window.note_acknowledgeable_duplicate(10, &mic, 2_500, 2_000));
+    assert!(!window.can_acknowledge_duplicate(10, &mic, 1_800, 2_000));
+    assert!(!window.can_acknowledge_duplicate(10, &mic, 2_500, 2_000));
 
     // A retransmission after the holdoff earns one re-ack...
-    assert!(window.note_acknowledgeable_duplicate(10, &mic, 6_000, 2_000));
+    assert!(window.can_acknowledge_duplicate(10, &mic, 6_000, 2_000));
+    window.mark_ack_queued(10, &mic, 6_000);
     // ...that also covers the retransmission's own flood copies.
-    assert!(!window.note_acknowledgeable_duplicate(10, &mic, 6_700, 2_000));
-    assert!(!window.note_acknowledgeable_duplicate(10, &mic, 7_900, 2_000));
+    assert!(!window.can_acknowledge_duplicate(10, &mic, 6_700, 2_000));
+    assert!(!window.can_acknowledge_duplicate(10, &mic, 7_900, 2_000));
 
     // A still later retransmission is re-acked again.
-    assert!(window.note_acknowledgeable_duplicate(10, &mic, 9_000, 2_000));
+    assert!(window.can_acknowledge_duplicate(10, &mic, 9_000, 2_000));
 }
 
 #[test]
@@ -468,14 +472,11 @@ fn receive_one_auto_replies_to_echo_request() {
     let header = PacketHeader::parse(response.frame.as_slice()).unwrap();
     let options =
         ParsedOptions::extract(response.frame.as_slice(), header.options_range.clone()).unwrap();
-    // The request arrived with no flood budget and no route, so it was heard
-    // directly and the response goes back the same way. There is no repeater
-    // on that path to write a trace, and the mirrored request is dropped
-    // rather than carried empty—see
-    // `echo_response_mirrors_a_trace_signal_request` for the traced path.
+    // Direct reception does not establish the return link. The response
+    // keeps a one-hop fallback and traces any repeater that carries it.
     assert!(
-        options.trace_route.is_none(),
-        "echo response to a direct neighbor must not carry an empty trace"
+        options.trace_route.is_some(),
+        "the optional return hop needs a trace"
     );
     let payload = decrypt_unicast_payload(response.frame.as_slice(), &keys);
     assert_eq!(
@@ -2242,7 +2243,7 @@ fn queue_mac_ack_for_peer_uses_cached_flood_route_regions_when_present() {
     let queued = mac.tx_queue_mut().pop_next().unwrap();
     let header = PacketHeader::parse(queued.frame.as_slice()).unwrap();
     assert_eq!(header.fcf.packet_type(), PacketType::MacAck);
-    assert_eq!(header.flood_hops, Some(FloodHops::new(2, 0).unwrap()));
+    assert_eq!(header.flood_hops, Some(FloodHops::new(3, 0).unwrap()));
     let mut regions = std::vec::Vec::<[u8; 2]>::new();
     for entry in iter_options(queued.frame.as_slice(), header.options_range.clone()) {
         let (number, value) = entry.unwrap();
@@ -4649,7 +4650,7 @@ fn unrepeatable_unicast_carries_no_trace_route_even_to_an_unrouted_peer() {
 /// carries no flood budget and no source route, so mirroring a trace onto it
 /// puts an unanswerable option on every acknowledgement.
 #[test]
-fn mac_ack_to_a_directly_heard_peer_mirrors_no_trace_route() {
+fn mac_ack_to_a_directly_heard_peer_mirrors_trace_for_optional_hop() {
     let mut mac = make_mac();
     let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
     let remote = DummyIdentity::new([0xAB; 32]);
@@ -4690,7 +4691,7 @@ fn mac_ack_to_a_directly_heard_peer_mirrors_no_trace_route() {
     let queued = mac.tx_queue_mut().pop_next().expect("queued mac ack");
     let header = PacketHeader::parse(queued.frame.as_slice()).unwrap();
     assert_eq!(header.fcf.packet_type(), PacketType::MacAck);
-    assert!(!frame_has_trace_route(queued.frame.as_slice()));
+    assert!(frame_has_trace_route(queued.frame.as_slice()));
 }
 
 /// The evidence an empty trace route used to carry, read off the frame's own
@@ -4728,9 +4729,9 @@ fn a_frame_nothing_could_have_repeated_proves_a_direct_link() {
     );
 }
 
-/// No repeater carries the frame, so there is nothing for a trace to record.
+/// The direct observation still permits a traced one-hop return backstop.
 #[test]
-fn unicast_to_a_directly_heard_peer_carries_no_trace_route() {
+fn unicast_to_a_directly_heard_peer_traces_optional_hop() {
     let mut mac = make_mac();
     let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
     let peer_key = test_pubkey(0xAB);
@@ -4751,14 +4752,10 @@ fn unicast_to_a_directly_heard_peer_carries_no_trace_route() {
         block_on(mac.send_unicast(local_id, &peer_key, b"hi", &SendOptions::default())).unwrap();
 
     let queued = mac.tx_queue_mut().pop_next().expect("queued unicast");
-    assert!(!frame_has_trace_route(queued.frame.as_slice()));
+    assert!(frame_has_trace_route(queued.frame.as_slice()));
 }
 
-/// Asking does not change the arithmetic. A directly heard peer is narrowed to
-/// no flood budget and no source route, so a caller that asks for both trace
-/// options gets neither: the applications that turn them on do so for every
-/// send, and honoring that literally would put two unanswerable options on
-/// every frame to every neighbor.
+/// Explicitly disabling forwarding still drops both unfillable traces.
 #[test]
 fn requested_trace_options_are_dropped_on_an_unrepeatable_unicast() {
     let mut mac = make_mac();
@@ -4784,7 +4781,8 @@ fn requested_trace_options_are_dropped_on_an_unrepeatable_unicast() {
             b"hi",
             &SendOptions::default()
                 .with_trace_route()
-                .with_trace_signal(),
+                .with_trace_signal()
+                .no_flood(),
         ),
     )
     .unwrap();
@@ -8916,7 +8914,9 @@ fn service_pending_ack_timeouts_reroutes_failed_source_route_once() {
 
     let mut route = heapless::Vec::new();
     route.push(RouterHint([1, 2])).unwrap();
-    let mut options = SendOptions::default().with_ack_requested(true).no_flood();
+    let mut options = SendOptions::default()
+        .with_ack_requested(true)
+        .with_flood_hops(5);
     options.source_route = Some(route.clone());
 
     let receipt = mac
@@ -8954,7 +8954,7 @@ fn service_pending_ack_timeouts_reroutes_failed_source_route_once() {
     assert!(retry_options.route_retry);
     assert!(retry_options.trace_route.is_some());
     assert!(retry_options.source_route.is_none());
-    assert_eq!(retry_header.flood_hops.unwrap().remaining(), 1);
+    assert_eq!(retry_header.flood_hops.unwrap().remaining(), 5);
 
     let original_header = PacketHeader::parse(original_frame.as_slice()).unwrap();
     assert_eq!(
@@ -9064,7 +9064,9 @@ fn route_retry_survives_a_timeout_sweep_before_it_airs() {
 
     let mut route = heapless::Vec::new();
     route.push(RouterHint([1, 2])).unwrap();
-    let mut options = SendOptions::default().with_ack_requested(true).no_flood();
+    let mut options = SendOptions::default()
+        .with_ack_requested(true)
+        .with_flood_hops(5);
     options.source_route = Some(route);
 
     let receipt = mac
@@ -9115,9 +9117,8 @@ fn route_retry_survives_a_timeout_sweep_before_it_airs() {
     );
 }
 
-/// The rewritten attempt reuses the original's MIC verbatim, so every byte the
-/// AAD covers has to survive the rewrite—including the FCF, whose
-/// flood-hops-present bit flips when a source route is abandoned for a flood.
+/// The rewritten attempt reuses the original's MIC verbatim, so every byte
+/// the AAD covers has to survive replacement of the route and flood budget.
 #[test]
 fn route_retry_preserves_the_authenticated_header() {
     let mut mac = make_mac();
@@ -9136,7 +9137,9 @@ fn route_retry_preserves_the_authenticated_header() {
 
     let mut route = heapless::Vec::new();
     route.push(RouterHint([1, 2])).unwrap();
-    let mut options = SendOptions::default().with_ack_requested(true).no_flood();
+    let mut options = SendOptions::default()
+        .with_ack_requested(true)
+        .with_flood_hops(5);
     options.source_route = Some(route);
 
     let receipt = mac
@@ -9163,9 +9166,9 @@ fn route_retry_preserves_the_authenticated_header() {
     };
 
     assert_ne!(
-        original.frame.as_slice()[0],
-        retry.frame.as_slice()[0],
-        "the rewrite is expected to add FHOPS, changing the FCF on the wire"
+        original.frame.as_slice(),
+        retry.frame.as_slice(),
+        "the route changes while authenticated fields remain identical"
     );
     assert_eq!(
         collect_aad(original.frame.as_slice()),

@@ -216,7 +216,7 @@ pub const DEFAULT_FRAME: usize = MAX_RESEND_FRAME_LEN;
 /// Default duplicate-cache capacity for the common `Mac<P>` configuration.
 pub const DEFAULT_DUP: usize = DEFAULT_DUP_CACHE_SIZE;
 /// Default per-channel full-key replay-window capacity (senders tracked
-/// per channel). Replay windows are ~330 bytes each, so these two
+/// per channel). Each window retains up to nine MICs, so these two
 /// capacities dominate the MAC's channel-table footprint; small targets
 /// shrink them. A full map fail-closes: frames from additional senders
 /// are dropped, never accepted unchecked.
@@ -232,23 +232,7 @@ pub const DEFAULT_CHANNEL_HINT_REPLAY: usize = 8;
 /// further" into "do not flood at all".
 pub const MAX_FLOOD_HOPS: u8 = 15;
 
-/// Flood-hop slack granted on top of what an established route to a peer
-/// already needs.
-///
-/// A route learned from inbound traffic tells the sender how far away the peer
-/// was, so a unicast that follows it does not need the wide flood budget of a
-/// first-contact packet. Slack past that distance buys the send a backstop: a
-/// path that has grown one hop longer—a repeater moved, a link that now needs
-/// one more relay—still gets through and re-teaches the correct route.
-///
-/// Zero spends nothing on that backstop. An established route is transmitted as
-/// exactly what it costs, and a route that has gone stale is recovered by the
-/// ack timeout rather than by a hop bolted onto every packet:
-/// route recovery compares what the application asked for against what the MAC
-/// narrowed it to, so a peer that moved is re-flooded on retry. A send with no
-/// ack coming has no such recovery and no repeat to listen for—that is the
-/// reliability this trades away for the airtime.
-pub const ESTABLISHED_ROUTE_EXTRA_FLOOD_HOPS: u8 = 0;
+pub use umsh_core::ESTABLISHED_ROUTE_EXTRA_FLOOD_HOPS;
 
 /// Error returned when a fixed-capacity MAC data structure is full.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
