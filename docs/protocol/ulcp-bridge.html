@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Radio Control - UMSH Protocol Specification</title>
+        <title>Bridge Client - UMSH Protocol Specification</title>
 
 
         <!-- Custom HTML head -->
@@ -174,303 +174,96 @@
 
                 <div id="mdbook-content" class="content">
                     <main>
-                        <h1 id="ulcp-radio-control"><a class="header" href="#ulcp-radio-control">ULCP: Radio Control</a></h1>
-<p>Radio control is the subsystem the host uses to configure and observe the
-physical transceiver: frequency, modulation, transmit power, and the
-transmit duty-cycle budget. Every ULCP device implements it.</p>
-<p>The interface is deliberately not LoRa-specific in shape where that can be
-avoided. The properties that any radio has—enable, frequency, transmit
-power, RSSI, MTU—are unconditional; the LoRa modulation parameters are
-gated behind <code>CAP_PHY_LORA</code>, and duty-cycle accounting behind
-<code>CAP_PHY_DUTY_LIMIT</code>. Traffic counters are exposed by <code>CAP_STATS</code>.</p>
-<p>The RF configuration is <a href="ulcp-core.html#device-domain">device-domain</a> state:
-it belongs to the radio rather than to whichever host is attached, it is
-part of a <a href="ulcp-saved-state.html#saved-state">saved snapshot</a>, and it
-survives a change of host.</p>
+                        <h1 id="bridge-client"><a class="header" href="#bridge-client">Bridge Client</a></h1>
+<p>An integrated <a href="internet-bridging.html">internet bridge</a> client connects the device’s
+node to a bridge server over IP. Configuration belongs to the device domain and
+is independent of the attached host. Enabling the client does not enable Wi-Fi,
+change IP configuration, or change <code>PROP_MAC_REPEATER_ENABLED</code>.</p>
 <h2 id="capabilities"><a class="header" href="#capabilities">Capabilities</a></h2>
+<p><code>CAP_BRIDGE_CLIENT</code> (58) requires <code>CAP_REPEATER</code> and at least one implemented IP
+family. It requires all five properties below. The IP-family requirement is an
+alternative expressed here in prose, not an AND-list of capability codes.</p>
+<h2 id="prop_bridge_enabled"><a class="header" href="#prop_bridge_enabled">PROP_BRIDGE_ENABLED</a></h2>
+<p>Property 4928; Get/Set; BOOL. Defaults to false. A write changes the desired
+state immediately; it does not wait for a connection. When enabled without a
+host or server key, the client reports Unconfigured and makes no connection.</p>
+<h2 id="prop_bridge_host"><a class="header" href="#prop_bridge_host">PROP_BRIDGE_HOST</a></h2>
+<p>Property 4929; Get/Set; STRING. A DNS A-label hostname or unbracketed IP literal,
+without a scheme, path, or port. Maximum 253 octets before the terminating NUL.
+Empty clears the host. A client uses the IP families its platform implements;
+an unsupported literal reports a connection failure rather than falling back
+to another destination. The hostname supplies TLS SNI where applicable; it
+does not establish trust in the server.</p>
+<h2 id="prop_bridge_port"><a class="header" href="#prop_bridge_port">PROP_BRIDGE_PORT</a></h2>
+<p>Property 4930; Get/Set; UINT16. Defaults to 21837. Zero is invalid. Like other
+ULCP scalars, the value is little-endian.</p>
+<h2 id="prop_bridge_server_key"><a class="header" href="#prop_bridge_server_key">PROP_BRIDGE_SERVER_KEY</a></h2>
+<p>Property 4931; Get/Set; a canonical 32-octet Ed25519 public key, or empty to clear
+the pin. Invalid or weak public keys are refused. The client authenticates the
+TLS 1.3 <code>CertificateVerify</code> signature against this key. Certificate claims,
+names, validity dates, and public certificate authorities do not establish trust.</p>
+<p>The client’s authentication identity <strong>MUST</strong> be the device identity exposed by
+<code>PROP_DEV_KEY</code>. No additional client key is provisioned or exposed through ULCP.
+If that identity ceases to match the running node and TLS credential, the client
+stops until identity initialization completes.</p>
+<h2 id="prop_bridge_link"><a class="header" href="#prop_bridge_link">PROP_BRIDGE_LINK</a></h2>
+<p>Property 4932; Get/Is; two octets: STATE followed by REASON. Read-only. Changes
+are announced to the attached host. Enablement and connection state are distinct.</p>
 <div class="table-wrapper">
 <table>
 <thead>
-<tr><th>Code</th><th>Name</th><th>Grants</th></tr>
+<tr><th>STATE</th><th>Meaning</th></tr>
 </thead>
 <tbody>
-<tr><td>16</td><td><code>CAP_PHY_DUTY_LIMIT</code></td><td>Duty-cycle accounting and enforcement: <code>PROP_PHY_DUTY_NOW</code>, <code>PROP_PHY_DUTY_LIMIT</code>, and <code>STATUS_DUTY_LIMIT</code></td></tr>
-<tr><td>52</td><td><code>CAP_STATS</code></td><td>Radio and forwarding traffic counters: <code>PROP_STAT_*</code></td></tr>
-<tr><td>515</td><td><code>CAP_PHY_LORA</code></td><td>The LoRa modulation parameters: <code>PROP_PHY_LORA_BW</code>, <code>PROP_PHY_LORA_SF</code>, <code>PROP_PHY_LORA_CR</code>, <code>PROP_PHY_LORA_SW</code></td></tr>
+<tr><td>0</td><td>Disabled</td></tr>
+<tr><td>1</td><td>Unconfigured</td></tr>
+<tr><td>2</td><td>Waiting for network</td></tr>
+<tr><td>3</td><td>Connecting</td></tr>
+<tr><td>4</td><td>Connected</td></tr>
+<tr><td>5</td><td>Retrying</td></tr>
 </tbody>
 </table>
 </div>
-<h2 id="properties"><a class="header" href="#properties">Properties</a></h2>
 <div class="table-wrapper">
 <table>
 <thead>
-<tr><th>Id</th><th>Mnemonic</th><th>Commands</th><th>Description</th></tr>
+<tr><th>REASON</th><th>Meaning</th></tr>
 </thead>
 <tbody>
-<tr><td>32</td><td><code>PROP_PHY_ENABLED</code></td><td>Get, Set</td><td>PHY enabled</td></tr>
-<tr><td>35</td><td><code>PROP_PHY_FREQ</code></td><td>Get, Set</td><td>Frequency in kHz</td></tr>
-<tr><td>37</td><td><code>PROP_PHY_TX_POWER</code></td><td>Get, Set</td><td>TX power in dBm</td></tr>
-<tr><td>38</td><td><code>PROP_PHY_RSSI</code></td><td>Get</td><td>Current RSSI</td></tr>
-<tr><td>39</td><td><code>PROP_PHY_LORA_BW</code></td><td>Get, Set</td><td>LoRa bandwidth</td></tr>
-<tr><td>40</td><td><code>PROP_PHY_LORA_SF</code></td><td>Get, Set</td><td>LoRa spreading factor</td></tr>
-<tr><td>41</td><td><code>PROP_PHY_LORA_CR</code></td><td>Get, Set</td><td>LoRa coding rate</td></tr>
-<tr><td>42</td><td><code>PROP_PHY_MTU</code></td><td>Get</td><td>Max size of a frame</td></tr>
-<tr><td>43</td><td><code>PROP_PHY_LORA_SW</code></td><td>Get, Set</td><td>LoRa sync word (16-bit style)</td></tr>
-<tr><td>44</td><td><code>PROP_PHY_T_FRAME</code></td><td>Get</td><td>Maximum frame airtime in milliseconds</td></tr>
-<tr><td>4820</td><td><code>PROP_PHY_DUTY_NOW</code></td><td>Get</td><td>Current duty usage</td></tr>
-<tr><td>4822</td><td><code>PROP_PHY_DUTY_LIMIT</code></td><td>Get, Set</td><td>Duty-cycle limit</td></tr>
-<tr><td>4832</td><td><code>PROP_STAT_TX_PACKETS</code></td><td>Get, Set</td><td>Packets transmitted over the air</td></tr>
-<tr><td>4833</td><td><code>PROP_STAT_TX_CHANNEL_BUSY</code></td><td>Get, Set</td><td>Transmissions deferred because the channel was busy</td></tr>
-<tr><td>4834</td><td><code>PROP_STAT_RX_PACKETS</code></td><td>Get, Set</td><td>Received packets with a UMSH first-octet pattern</td></tr>
-<tr><td>4835</td><td><code>PROP_STAT_RX_BAD_CRC</code></td><td>Get, Set</td><td>Receptions rejected because of a bad CRC</td></tr>
-<tr><td>4836</td><td><code>PROP_STAT_RX_NON_UMSH</code></td><td>Get, Set</td><td>Received packets without a UMSH first-octet pattern</td></tr>
-<tr><td>4837</td><td><code>PROP_STAT_RX_ACCEPTED</code></td><td>Get, Set</td><td>Received packets accepted by this device’s node</td></tr>
-<tr><td>4838</td><td><code>PROP_STAT_FORWARDED</code></td><td>Get, Set</td><td>Packets this device chose to forward</td></tr>
-<tr><td>4839</td><td><code>PROP_STAT_FORWARD_DROPPED</code></td><td>Get, Set</td><td>Forwarding candidates rejected by policy</td></tr>
-<tr><td>4840</td><td><code>PROP_STAT_FORWARD_CANCELLED</code></td><td>Get, Set</td><td>Queued forwards cancelled after an acknowledgement</td></tr>
+<tr><td>0</td><td>None</td></tr>
+<tr><td>1</td><td>DNS failure or unsupported address family</td></tr>
+<tr><td>2</td><td>TCP connection or I/O failure</td></tr>
+<tr><td>3</td><td>TLS protocol failure</td></tr>
+<tr><td>4</td><td>Authentication failure</td></tr>
+<tr><td>5</td><td>Receive idle timeout</td></tr>
+<tr><td>6</td><td>Device identity unavailable</td></tr>
 </tbody>
 </table>
 </div>
-<h3 id="prop-phy-enabled"><a class="header" href="#prop-phy-enabled">PROP 32: <code>PROP_PHY_ENABLED</code></a></h3>
-<ul>
-<li>Type: Single-Value, Read/Write</li>
-<li>Asynchronous Updates: No</li>
-<li>Required:
-<ul>
-<li><code>CMD_PROP_GET</code>: <strong>REQUIRED</strong></li>
-<li><code>CMD_PROP_SET</code>: <strong>REQUIRED</strong></li>
-</ul>
-</li>
-<li>Scope: NLI</li>
-<li>Value Type: BOOL</li>
-<li>Post-Reset Value: 0 (false)</li>
-</ul>
-<p>Set to 1 if the PHY is enabled, set to 0 otherwise. May be directly enabled to
-bypass higher-level packet processing in order to implement things like packet
-sniffers.</p>
-<h3 id="prop-phy-freq"><a class="header" href="#prop-phy-freq">PROP 35: <code>PROP_PHY_FREQ</code></a></h3>
-<ul>
-<li>Type: Single-Value, Read-Write</li>
-<li>Asynchronous Updates: No</li>
-<li>Required: <strong>REQUIRED</strong></li>
-<li>Scope: NLI</li>
-<li>Value Type: UINT32_LE</li>
-<li>Units: kHz</li>
-<li>Post-Reset Value: Unspecified</li>
-</ul>
-<p>Value is the radio frequency (in kilohertz) of the current channel.</p>
-<h3 id="prop-phy-tx-power"><a class="header" href="#prop-phy-tx-power">PROP 37: <code>PROP_PHY_TX_POWER</code></a></h3>
-<ul>
-<li>Type: Single-Value, Read-Write</li>
-<li>Asynchronous Updates: No</li>
-<li>Required: <strong>REQUIRED</strong></li>
-<li>Scope: NLI</li>
-<li>Value Type: INT8</li>
-<li>Units: dBm</li>
-<li>Post-Reset Value: Implementation-Specific</li>
-</ul>
-<p>Value is the radio transmit power in dBm.</p>
-<p>A device <strong>MUST</strong> clamp a written value to the range its radio can reach
-rather than rejecting it, and the emitted <code>CMD_PROP_IS</code> carries the
-clamped value. Nothing else publishes that range, so this is how a host
-discovers it: a host that needs to know what a device will actually
-transmit at reads the value it gets back rather than the one it wrote.</p>
-<h3 id="prop-phy-rssi"><a class="header" href="#prop-phy-rssi">PROP 38: <code>PROP_PHY_RSSI</code></a></h3>
-<ul>
-<li>Type: Single-Value, Read-Only</li>
-<li>Asynchronous Updates: No</li>
-<li>Required: <strong>REQUIRED</strong></li>
-<li>Value Type: INT8</li>
-<li>Unit: dBm (RF Power)</li>
-<li>Post-Reset Value: Unspecified</li>
-</ul>
-<p>Value is the current RSSI (Received Signal Strength Indication) from the radio.
-This value can be used in energy scans and for determining the ambient noise
-floor for the operating environment.</p>
-<p>Zero dBm represents one milliwatt of power.</p>
-<p>Sampling ambient RSSI requires the radio to be actively receiving. If
-<code>PROP_PHY_ENABLED</code> is false, getting this property fails with
-<code>STATUS_INVALID_STATE</code>. A get may also fail with <code>STATUS_FAILURE</code> if the
-radio cannot service the read (for example, mid-reconfiguration).</p>
-<h3 id="prop-phy-lora-bw"><a class="header" href="#prop-phy-lora-bw">PROP 39: <code>PROP_PHY_LORA_BW</code></a></h3>
-<ul>
-<li>Type: Single-Value, Read-Write</li>
-<li>Asynchronous Updates: No</li>
-<li>Required: <code>CAP_PHY_LORA</code></li>
-<li>Scope: NLI</li>
-<li>Value Type: UINT32_LE</li>
-<li>Units: Hz</li>
-<li>Post-Reset Value: Implementation-Specific</li>
-</ul>
-<p>Value is the configured LoRa bandwidth.</p>
-<h3 id="prop-phy-lora-sf"><a class="header" href="#prop-phy-lora-sf">PROP 40: <code>PROP_PHY_LORA_SF</code></a></h3>
-<ul>
-<li>Type: Single-Value, Read-Write</li>
-<li>Asynchronous Updates: No</li>
-<li>Required: <code>CAP_PHY_LORA</code></li>
-<li>Scope: NLI</li>
-<li>Value Type: UINT8</li>
-<li>Post-Reset Value: Implementation-Specific</li>
-</ul>
-<p>Value is the configured LoRa spreading factor.</p>
-<h3 id="prop-phy-lora-cr"><a class="header" href="#prop-phy-lora-cr">PROP 41: <code>PROP_PHY_LORA_CR</code></a></h3>
-<ul>
-<li>Type: Single-Value, Read-Write</li>
-<li>Asynchronous Updates: No</li>
-<li>Required: <code>CAP_PHY_LORA</code></li>
-<li>Scope: NLI</li>
-<li>Value Type: UINT8</li>
-<li>Post-Reset Value: Implementation-Specific</li>
-</ul>
-<p>Value is the configured LoRa coding rate.</p>
-<h3 id="prop-phy-mtu"><a class="header" href="#prop-phy-mtu">PROP 42: <code>PROP_PHY_MTU</code></a></h3>
-<ul>
-<li>Type: Single-Value, Read-Only</li>
-<li>Asynchronous Updates: No</li>
-<li>Required: <strong>REQUIRED</strong></li>
-<li>Scope: NLI</li>
-<li>Value Type: UINT16_LE</li>
-<li>Units: octets</li>
-<li>Post-Reset Value: Implementation-Specific</li>
-</ul>
-<p>Maximum size of the <code>DATA</code> field that may be supplied to <code>STR_PHY_RAW</code>.</p>
-<h3 id="prop-phy-lora-sw"><a class="header" href="#prop-phy-lora-sw">PROP 43: <code>PROP_PHY_LORA_SW</code></a></h3>
-<ul>
-<li>Type: Single-Value, Read-Write</li>
-<li>Asynchronous Updates: No</li>
-<li>Required: <code>CAP_PHY_LORA</code></li>
-<li>Scope: NLI</li>
-<li>Value Type: UINT16</li>
-<li>Post-Reset Value: Implementation-Specific, but 0x1424 is a good suggestion.</li>
-</ul>
-<p>Value is the 16-bit (SX126x-style) LoRa sync-word.</p>
-<h3 id="prop-phy-t-frame"><a class="header" href="#prop-phy-t-frame">PROP 44: <code>PROP_PHY_T_FRAME</code></a></h3>
-<ul>
-<li>Type: Single-Value, Read-Only</li>
-<li>Asynchronous Updates: No</li>
-<li>Required: <strong>REQUIRED</strong> for new implementations; older devices may return <code>STATUS_PROP_NOT_FOUND</code></li>
-<li>Scope: NLI</li>
-<li>Value Type: UINT32_LE</li>
-<li>Units: milliseconds</li>
-<li>Post-Reset Value: Derived from the post-reset PHY configuration</li>
-</ul>
-<p>An upper bound on the on-air duration of a frame with <code>PROP_PHY_MTU</code> data
-octets at the current PHY settings, rounded up to a whole millisecond.
-Implementations MAY round conservatively upward. The positive,
-nonzero value includes the transmit preamble, PHY header, coding overhead,
-and PHY CRC. It excludes channel-access waiting, retry delays, duty-cycle
-deferral, queueing, and host transport latency. It remains readable while
-the PHY is disabled and is recomputed from the current configuration.</p>
-<p>This is the PHY-independent <code>T_frame</code> used by <a href="channel-access.html">channel-access timing</a>.
-Hosts can use it without interpreting modulation-specific properties. A host
-SHOULD refresh it after PHY configuration changes and before choosing a
-transmit response deadline; <code>max(3000 ms, 2 × T_frame)</code> is a suggested budget.
-An explicit failure response, including <code>STATUS_CCA_FAILURE</code>, completes the
-request immediately rather than waiting for this deadline.</p>
-<p>Older LoRa devices can be supported by deriving an estimate from their live
-PHY parameters, with an implementation-specific assumption about the preamble
-when it is not exposed. Hosts MUST NOT substitute their desired or default
-configuration for the device’s current configuration.</p>
-<h3 id="prop-phy-duty-now"><a class="header" href="#prop-phy-duty-now">PROP 4820: <code>PROP_PHY_DUTY_NOW</code></a></h3>
-<ul>
-<li>Type: Single-Value, Read-Only</li>
-<li>Value Type: <code>u16</code></li>
-<li>Units: Percent, <code>0-65535 -&gt; 0-100%</code></li>
-<li>Post-Reset Value: 0%</li>
-<li>Required Capability: <code>CAP_PHY_DUTY_LIMIT</code></li>
-</ul>
-<p>The radio transmit duty cycle over the past hour, updated in 4-minute
-intervals.</p>
-<p>Under the hood, this is represented as 15 16-bit bins, one for each 4-minute
-interval. An increment of 1 represents 5ms. For each 5ms of transmission time,
-the current bin is incremented by 1. So a 20ms transmission would increment
-the current bin by 4, but a 22ms transmission would increment the bin by 5. At
-the transition between intervals, the new current bin is reset to zero.</p>
-<p>To calculate the current duty cycle, all of the bins are added together,
-multiplied by 65535, and then divided by 720000.</p>
-<h3 id="prop-phy-duty-limit"><a class="header" href="#prop-phy-duty-limit">PROP 4822: <code>PROP_PHY_DUTY_LIMIT</code></a></h3>
-<ul>
-<li>Type: Single-Value, Read-Write</li>
-<li>Value Type: <code>u16</code></li>
-<li>Units: Percent, <code>0-65535 -&gt; 0-100%</code></li>
-<li>Post-Reset Value: Settings-dependent</li>
-<li>Required Capability: <code>CAP_PHY_DUTY_LIMIT</code></li>
-</ul>
-<p>The value for <code>PROP_PHY_DUTY_NOW</code> above which sending additional packets will
-be prevented. Packets that are prevented from being sent will be dropped with
-<code>STATUS_DUTY_LIMIT</code>.</p>
-<p>Set to 0xFFFF to disable duty-cycle limiting. Note that <code>PROP_PHY_DUTY_NOW</code> will continue to be updated even if duty-cycle limiting is disabled.</p>
-<p>Values for common duty cycles:</p>
-<div class="table-wrapper">
-<table>
-<thead>
-<tr><th>Value</th><th>Percentage</th></tr>
-</thead>
-<tbody>
-<tr><td>13107</td><td>20%</td></tr>
-<tr><td>6553</td><td>10%</td></tr>
-<tr><td>655</td><td>1%</td></tr>
-<tr><td>65</td><td>0.1%</td></tr>
-</tbody>
-</table>
-</div>
-<h2 id="statistics"><a class="header" href="#statistics">Statistics</a></h2>
-<p>A device advertising <code>CAP_STATS</code> exposes cumulative <code>UINT32_LE</code> traffic
-counters. Values count since boot or the most recent reset of that counter and
-wrap modulo 2^32. Writing four zero octets resets a counter. A device <strong>MUST</strong>
-reject every other value or length with <code>STATUS_INVALID_ARGUMENT</code>.</p>
-<p>Statistics are live hardware history rather than configuration. They are not
-part of a saved snapshot, and <code>CMD_RST</code> <strong>MUST NOT</strong> clear them. A host can reset
-several counters with <code>CMD_PROP_MULTI_SET</code>, but the individual resets do not
-occur simultaneously: traffic arriving during the write sweep can fall on
-different sides of different counter resets.</p>
-<p><code>PROP_PHY_DUTY_NOW</code> is commonly displayed alongside these counters, but it is a
-rolling regulatory measurement and is not resettable.</p>
-<h3 id="prop-stat-tx-packets"><a class="header" href="#prop-stat-tx-packets">PROP 4832: <code>PROP_STAT_TX_PACKETS</code></a></h3>
-<p>Packets whose transmission completed successfully over the physical radio.
-Requires <code>CAP_STATS</code>.</p>
-<h3 id="prop-stat-tx-channel-busy"><a class="header" href="#prop-stat-tx-channel-busy">PROP 4833: <code>PROP_STAT_TX_CHANNEL_BUSY</code></a></h3>
-<p>Transmission attempts deferred because channel assessment reported the channel
-busy. Such an attempt does not also increment <code>PROP_STAT_TX_PACKETS</code>. Requires
-<code>CAP_STATS</code>.</p>
-<h3 id="prop-stat-rx-packets"><a class="header" href="#prop-stat-rx-packets">PROP 4834: <code>PROP_STAT_RX_PACKETS</code></a></h3>
-<p>Off-air receptions whose first octet carries the UMSH version and valid reserved
-bits. This classification does not require the rest of the packet to parse.
-Requires <code>CAP_STATS</code>.</p>
-<h3 id="prop-stat-rx-bad-crc"><a class="header" href="#prop-stat-rx-bad-crc">PROP 4835: <code>PROP_STAT_RX_BAD_CRC</code></a></h3>
-<p>Receptions the physical radio rejected because their payload CRC was invalid.
-Requires <code>CAP_STATS</code>.</p>
-<h3 id="prop-stat-rx-non-umsh"><a class="header" href="#prop-stat-rx-non-umsh">PROP 4836: <code>PROP_STAT_RX_NON_UMSH</code></a></h3>
-<p>Off-air receptions whose first octet does not carry the UMSH version and valid
-reserved bits. Requires <code>CAP_STATS</code>.</p>
-<h3 id="prop-stat-rx-accepted"><a class="header" href="#prop-stat-rx-accepted">PROP 4837: <code>PROP_STAT_RX_ACCEPTED</code></a></h3>
-<p>Receptions on which this device’s own node acted. Frames addressed to an
-attached host’s identity are not included. Requires <code>CAP_STATS</code> and
-<code>CAP_REPEATER</code>.</p>
-<h3 id="prop-stat-forwarded"><a class="header" href="#prop-stat-forwarded">PROP 4838: <code>PROP_STAT_FORWARDED</code></a></h3>
-<p>Receptions this device’s own node chose to repeat. The counter records the
-forwarding decision; successful physical transmissions are counted separately
-by <code>PROP_STAT_TX_PACKETS</code>. Requires <code>CAP_STATS</code> and <code>CAP_REPEATER</code>.</p>
-<h3 id="prop-stat-forward-dropped"><a class="header" href="#prop-stat-forward-dropped">PROP 4839: <code>PROP_STAT_FORWARD_DROPPED</code></a></h3>
-<p>Packets that were eligible for forwarding but were rejected by this repeater’s
-configured minimum RSSI, minimum SNR, or region policy. Exhausted flood budgets
-and packet-imposed signal thresholds are normal packet behavior, not
-administrator policy, and are not included. Duplicates, self-addressed packets,
-and packets received while forwarding is disabled are also excluded. Requires
-<code>CAP_STATS</code> and <code>CAP_REPEATER</code>.</p>
-<h3 id="prop-stat-forward-cancelled"><a class="header" href="#prop-stat-forward-cancelled">PROP 4840: <code>PROP_STAT_FORWARD_CANCELLED</code></a></h3>
-<p>Queued forwards cancelled because the destination’s acknowledgement was
-overheard before transmission. Requires <code>CAP_STATS</code> and <code>CAP_REPEATER</code>.</p>
+<p>Connected describes the tunnel, not whether the node repeats. A client whose
+repeater is disabled is a valid leaf; hosts should display the repeater state
+alongside the link state.</p>
+<h2 id="persistence-and-lifecycle"><a class="header" href="#persistence-and-lifecycle">Persistence and lifecycle</a></h2>
+<p>The four configuration properties are saved by <code>CMD_SAVE</code> in the device snapshot.
+<code>CMD_CLEAR</code> erases saved configuration without changing live configuration;
+<code>CMD_RST</code> follows the normal saved-state restore rules. Defaults are disabled,
+empty host, port 21837, and no server key. Attach/detach does not change these
+properties or interrupt the bridge. Authorized mesh administrators may write
+them through the existing device-management binding.</p>
+<p>Changing configuration or losing the network closes the current connection and
+discards queued frames. Each connection starts with empty queues and decoder
+state. Invalid writes leave the old value intact. Connection failures are
+reported through <code>PROP_BRIDGE_LINK</code>, not by delaying a configuration response.</p>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="ulcp-core.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="ulcp-ip.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                             </a>
 
-                            <a rel="next prefetch" href="ulcp-transport.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="ulcp-i2c.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                             </a>
 
@@ -480,11 +273,11 @@ overheard before transmission. Requires <code>CAP_STATS</code> and <code>CAP_REP
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="ulcp-core.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="ulcp-ip.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                     </a>
 
-                    <a rel="next prefetch" href="ulcp-transport.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="ulcp-i2c.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                     </a>
             </nav>

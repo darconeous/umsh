@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-a36d942b.js";
+            window.path_to_searchindex_js = "searchindex-e3fe62b3.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-fed4626c.js"></script>
+        <script src="toc-8b6941ec.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -299,8 +299,9 @@ resets, liveness, and the property grammar. The remaining commands are
 defined with the subsystem they act on: <code>CMD_STR_SEND</code> and <code>CMD_STR_RECV</code>
 in <a href="ulcp-transport.html">Frame Transport</a>, <code>CMD_QUEUE_DRAIN</code> in
 <a href="ulcp-host.html">Tethered Host Services</a>, <code>CMD_ANNOUNCE</code> in
-<a href="ulcp-device.html">Device Identity</a>, and the four state-management commands
-in <a href="ulcp-saved-state.html">Saved State</a>. The complete numeric allocation is
+<a href="ulcp-device.html">Device Identity</a>, the four state-management commands
+in <a href="ulcp-saved-state.html">Saved State</a>, and the three bus-access commands
+in <a href="ulcp-i2c.html">I2C Bus Access</a>. The complete numeric allocation is
 in the <a href="ulcp-index.html">Command and Property Index</a>.</p>
 <div class="table-wrapper">
 <table>
@@ -323,11 +324,15 @@ in the <a href="ulcp-index.html">Command and Property Index</a>.</p>
 <tr><td>22</td><td><code>CMD_PROP_MULTI_SET</code></td><td>Host-&gt;Device</td><td>Set several property values in order</td></tr>
 <tr><td>23</td><td><code>CMD_PROP_ARE</code></td><td>Device-&gt;Host</td><td>Multiple property value notification</td></tr>
 <tr><td>24</td><td><code>CMD_SESSION_RESET</code></td><td>Device-&gt;Host</td><td>Session state was discarded</td></tr>
+<tr><td>25</td><td><code>CMD_I2C_TRANSFER</code></td><td>Host-&gt;Device</td><td>One I2C transaction</td></tr>
+<tr><td>26</td><td><code>CMD_I2C_RESULT</code></td><td>Device-&gt;Host</td><td>Read data or scanned addresses</td></tr>
+<tr><td>27</td><td><code>CMD_I2C_SCAN</code></td><td>Host-&gt;Device</td><td>Probe a range of I2C addresses</td></tr>
 </tbody>
 </table>
 </div>
 <p>The multi-property commands (21–23) are gated by <code>CAP_CMD_MULTI</code>,
-<code>CMD_REBOOT</code> by <code>CAP_REBOOT</code>, and <code>CMD_ANNOUNCE</code> by <code>CAP_ADVERT</code> (see
+<code>CMD_REBOOT</code> by <code>CAP_REBOOT</code>, <code>CMD_ANNOUNCE</code> by <code>CAP_ADVERT</code>, and the
+bus-access commands (25–27) by <code>CAP_I2C</code> (see
 <a href="#capabilities">Capabilities</a>); everything else is unconditional.</p>
 <h3 id="cmd-noop"><a class="header" href="#cmd-noop">CMD 0: (Host -&gt; Device) <code>CMD_NOP</code></a></h3>
 <pre><code> 0                   1
@@ -540,6 +545,10 @@ entry answers.</p>
 <p>This command is available only on devices advertising <code>CAP_CMD_MULTI</code>.
 On any other device it is an unrecognized command,
 <code>STATUS_INVALID_COMMAND</code>.</p>
+<p>Battery diagnostics define a <a href="ulcp-device.html#battery-diagnostics">shared acquisition group</a>:
+when a device implements those properties, supported battery readings within
+one multi-get use one acquisition pass, including duplicate keys. This does
+not make other properties atomic or imply simultaneous hardware measurements.</p>
 <h3 id="cmd-prop-multi-set"><a class="header" href="#cmd-prop-multi-set">CMD 22: (Host -&gt; Device) <code>CMD_PROP_MULTI_SET</code></a></h3>
 <pre><code>  0                   1                   2                   3
  0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
@@ -1087,6 +1096,9 @@ and the <code>TID</code> of command it is referring to.</p>
 <tr><td>21</td><td><code>STATUS_CURSOR_INVALID</code></td></tr>
 <tr><td>22</td><td><code>STATUS_NOT_PERMITTED</code></td></tr>
 <tr><td>23</td><td><code>STATUS_CHANNEL_NOT_FOUND</code></td></tr>
+<tr><td>24</td><td><code>STATUS_NO_DEVICE</code></td></tr>
+<tr><td>25</td><td><code>STATUS_NACK</code></td></tr>
+<tr><td>26</td><td><code>STATUS_BUS_ERROR</code></td></tr>
 <tr><td>32</td><td><code>STATUS_DUTY_LIMIT</code></td></tr>
 </tbody>
 </table>
@@ -1156,6 +1168,18 @@ device holds no channel key that derives it. Distinct from
 written, and from <code>STATUS_INVALID_ARGUMENT</code>: the value is well formed,
 and the channel has only to be provisioned first
 (<code>PROP_DEV_CHANNEL_KEYS</code>).</dd>
+<dt id="status_no_device"><a class="header" href="#status_no_device"><code>STATUS_NO_DEVICE</code></a></dt>
+<dd>An <a href="ulcp-i2c.html#cmd-i2c-transfer">I2C transfer</a> was addressed to a
+peripheral that did not acknowledge its address: nothing answered on
+the bus. Distinct from <code>STATUS_ITEM_NOT_FOUND</code>, which is the bus
+itself not being one the device offers.</dd>
+<dt id="status_nack"><a class="header" href="#status_nack"><code>STATUS_NACK</code></a></dt>
+<dd>The peripheral acknowledged its address but refused a data octet of
+the transfer. Operations before the refused one have completed.</dd>
+<dt id="status_bus_error"><a class="header" href="#status_bus_error"><code>STATUS_BUS_ERROR</code></a></dt>
+<dd>The bus failed under the transaction: arbitration was lost, a bus
+error or overrun occurred, a line stayed stuck, or the transaction
+outlasted the device’s deadline. The device may attempt bus recovery.</dd>
 <dt id="status_cca_failure"><a class="header" href="#status_cca_failure"><code>STATUS_CCA_FAILURE</code></a></dt>
 <dd>The packet was not sent due to a CCA failure. This status code is only
 emitted when sending data to a packet stream with a TID other than zero.</dd>
@@ -1274,14 +1298,18 @@ grants:</p>
 <tr><td>55</td><td><code>CAP_IPV4</code></td><td>—</td><td><a href="ulcp-ip.html#capabilities">IP Connectivity</a></td></tr>
 <tr><td>56</td><td><code>CAP_IPV6</code></td><td>—</td><td><a href="ulcp-ip.html#capabilities">IP Connectivity</a></td></tr>
 <tr><td>57</td><td><code>CAP_WIFI_AP</code></td><td><code>CAP_WIFI_SCAN</code></td><td><a href="ulcp-wifi.html#capabilities">Wi-Fi</a></td></tr>
+<tr><td>58</td><td><code>CAP_BRIDGE_CLIENT</code></td><td><code>CAP_REPEATER</code>; IP family requirement in prose</td><td><a href="ulcp-bridge.html#capabilities">Bridge Client</a></td></tr>
+<tr><td>59</td><td><code>CAP_DISPLAY_MOTION_WAKE</code></td><td>—</td><td><a href="ulcp-device.html#display-motion-wake">Device Services</a></td></tr>
+<tr><td>60</td><td><code>CAP_I2C</code></td><td>—</td><td><a href="ulcp-i2c.html#capabilities">I2C Bus Access</a></td></tr>
 <tr><td>515</td><td><code>CAP_PHY_LORA</code></td><td>—</td><td><a href="ulcp-radio.html#capabilities">Radio Control</a></td></tr>
 </tbody>
 </table>
 </div>
 <p>A device <strong>MUST NOT</strong> advertise a capability without also advertising the
 capabilities it requires. Apart from the multi-property commands, which
-<code>CAP_CMD_MULTI</code> gates, <code>CMD_REBOOT</code>, which <code>CAP_REBOOT</code> gates, and
-<code>CMD_ANNOUNCE</code>, which <code>CAP_ADVERT</code> gates, the
+<code>CAP_CMD_MULTI</code> gates, <code>CMD_REBOOT</code>, which <code>CAP_REBOOT</code> gates,
+<code>CMD_ANNOUNCE</code>, which <code>CAP_ADVERT</code> gates, and the bus-access commands,
+which <code>CAP_I2C</code> gates, the
 commands and status codes defined in this chapter are unconditional and
 need no capability; a device that defines no
 mutable multi-value properties simply has nothing to apply

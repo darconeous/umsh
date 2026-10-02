@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-a36d942b.js";
+            window.path_to_searchindex_js = "searchindex-e3fe62b3.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-fed4626c.js"></script>
+        <script src="toc-8b6941ec.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -205,10 +205,13 @@
 <tr><td>22</td><td><a href="ulcp-core.html#cmd-prop-multi-set"><code>CMD_PROP_MULTI_SET</code></a></td><td>Host-&gt;Device</td><td><code>CAP_CMD_MULTI</code></td></tr>
 <tr><td>23</td><td><a href="ulcp-core.html#cmd-prop-are"><code>CMD_PROP_ARE</code></a></td><td>Device-&gt;Host</td><td><code>CAP_CMD_MULTI</code></td></tr>
 <tr><td>24</td><td><a href="ulcp-core.html#cmd-session-reset"><code>CMD_SESSION_RESET</code></a></td><td>Device-&gt;Host</td><td>—</td></tr>
+<tr><td>25</td><td><a href="ulcp-i2c.html#cmd-i2c-transfer"><code>CMD_I2C_TRANSFER</code></a></td><td>Host-&gt;Device</td><td><code>CAP_I2C</code></td></tr>
+<tr><td>26</td><td><a href="ulcp-i2c.html#cmd-i2c-result"><code>CMD_I2C_RESULT</code></a></td><td>Device-&gt;Host</td><td><code>CAP_I2C</code></td></tr>
+<tr><td>27</td><td><a href="ulcp-i2c.html#cmd-i2c-scan"><code>CMD_I2C_SCAN</code></a></td><td>Host-&gt;Device</td><td><code>CAP_I2C</code></td></tr>
 </tbody>
 </table>
 </div>
-<p>Command identifiers are 7-bit; 17–18, 20, and 25–127 are unassigned.</p>
+<p>Command identifiers are 7-bit; 17–18, 20, and 28–127 are unassigned.</p>
 <h2 id="properties-and-streams"><a class="header" href="#properties-and-streams">Properties and Streams</a></h2>
 <p>Identifiers are allocated by state class; see
 <a href="ulcp-core.html#property-allocation">Property Allocation</a>.</p>
@@ -234,6 +237,7 @@
 <tr><td>41</td><td><a href="ulcp-radio.html#prop-phy-lora-cr"><code>PROP_PHY_LORA_CR</code></a></td><td>Get, Set</td><td><code>CAP_PHY_LORA</code></td></tr>
 <tr><td>42</td><td><a href="ulcp-radio.html#prop-phy-mtu"><code>PROP_PHY_MTU</code></a></td><td>Get</td><td>—</td></tr>
 <tr><td>43</td><td><a href="ulcp-radio.html#prop-phy-lora-sw"><code>PROP_PHY_LORA_SW</code></a></td><td>Get, Set</td><td><code>CAP_PHY_LORA</code></td></tr>
+<tr><td>44</td><td><a href="ulcp-radio.html#prop-phy-t-frame"><code>PROP_PHY_T_FRAME</code></a></td><td>Get</td><td>—</td></tr>
 <tr><td>48</td><td><a href="ulcp-host.html#prop-mac-promiscuous"><code>PROP_MAC_PROMISCUOUS</code></a></td><td>Get, Set</td><td><code>CAP_HOST_FILTER</code></td></tr>
 <tr><td>49</td><td><a href="ulcp-saved-state.html#prop-saved"><code>PROP_SAVED</code></a></td><td>Get</td><td><code>CAP_SAVE</code></td></tr>
 <tr><td>50</td><td><a href="ulcp-host.html#prop-mac-backhaul"><code>PROP_MAC_BACKHAUL</code></a></td><td>Get, Set</td><td><code>CAP_MAC_BACKHAUL</code></td></tr>
@@ -298,6 +302,7 @@
 <tr><td>4872</td><td><a href="ulcp-ble.html#prop-ble-bond-count"><code>PROP_BLE_BOND_COUNT</code></a></td><td>Get, Set, Is</td><td><code>CAP_BLE</code></td></tr>
 <tr><td>4873</td><td><a href="ulcp-ble.html#prop-ble-link"><code>PROP_BLE_LINK</code></a></td><td>Get, Is</td><td><code>CAP_BLE</code></td></tr>
 <tr><td>4874</td><td><a href="ulcp-ble.html#prop-ble-pairing"><code>PROP_BLE_PAIRING</code></a></td><td>Get, Set, Is</td><td><code>CAP_BLE</code></td></tr>
+<tr><td>4875</td><td><a href="ulcp-device.html#prop-display-motion-wake-enabled"><code>PROP_DISPLAY_MOTION_WAKE_ENABLED</code></a></td><td>Get, Set, Is</td><td><code>CAP_DISPLAY_MOTION_WAKE</code></td></tr>
 <tr><td>4880</td><td><a href="ulcp-wifi.html#prop-wifi-enabled"><code>PROP_WIFI_ENABLED</code></a></td><td>Get, Set, Is</td><td><code>CAP_WIFI</code></td></tr>
 <tr><td>4881</td><td><a href="ulcp-wifi.html#prop-wifi-networks"><code>PROP_WIFI_NETWORKS</code></a></td><td>Get, Set, Insert, Remove</td><td><code>CAP_WIFI</code></td></tr>
 <tr><td>4882</td><td><a href="ulcp-wifi.html#prop-wifi-network"><code>PROP_WIFI_NETWORK</code></a></td><td>Get, Set, Is</td><td><code>CAP_WIFI</code></td></tr>
@@ -318,6 +323,28 @@
 <tr><td>4913</td><td><a href="ulcp-wifi.html#prop-wifi-ap-config"><code>PROP_WIFI_AP_CONFIG</code></a></td><td>Get, Set</td><td><code>CAP_WIFI_AP</code></td></tr>
 <tr><td>4914</td><td><a href="ulcp-wifi.html#prop-wifi-ap-state"><code>PROP_WIFI_AP_STATE</code></a></td><td>Get, Is</td><td><code>CAP_WIFI_AP</code></td></tr>
 <tr><td>4915</td><td><a href="ulcp-wifi.html#prop-wifi-ap-clients"><code>PROP_WIFI_AP_CLIENTS</code></a></td><td>Get, Is, Inserted, Removed</td><td><code>CAP_WIFI_AP</code></td></tr>
+<tr><td>4928</td><td><a href="ulcp-bridge.html#prop-bridge-enabled"><code>PROP_BRIDGE_ENABLED</code></a></td><td>Get, Set</td><td><code>CAP_BRIDGE_CLIENT</code></td></tr>
+<tr><td>4929</td><td><a href="ulcp-bridge.html#prop-bridge-host"><code>PROP_BRIDGE_HOST</code></a></td><td>Get, Set</td><td><code>CAP_BRIDGE_CLIENT</code></td></tr>
+<tr><td>4930</td><td><a href="ulcp-bridge.html#prop-bridge-port"><code>PROP_BRIDGE_PORT</code></a></td><td>Get, Set</td><td><code>CAP_BRIDGE_CLIENT</code></td></tr>
+<tr><td>4931</td><td><a href="ulcp-bridge.html#prop-bridge-server-key"><code>PROP_BRIDGE_SERVER_KEY</code></a></td><td>Get, Set</td><td><code>CAP_BRIDGE_CLIENT</code></td></tr>
+<tr><td>4932</td><td><a href="ulcp-bridge.html#prop-bridge-link"><code>PROP_BRIDGE_LINK</code></a></td><td>Get, Is</td><td><code>CAP_BRIDGE_CLIENT</code></td></tr>
+<tr><td>4944</td><td><a href="ulcp-device.html#prop-battery-current"><code>PROP_BATTERY_CURRENT</code></a></td><td>Get, Is</td><td>Optional with <code>CAP_BATTERY</code></td></tr>
+<tr><td>4945</td><td><a href="ulcp-device.html#prop-battery-remaining-capacity"><code>PROP_BATTERY_REMAINING_CAPACITY</code></a></td><td>Get, Is</td><td>Optional with <code>CAP_BATTERY</code></td></tr>
+<tr><td>4946</td><td><a href="ulcp-device.html#prop-battery-full-capacity"><code>PROP_BATTERY_FULL_CAPACITY</code></a></td><td>Get, Is</td><td>Optional with <code>CAP_BATTERY</code></td></tr>
+<tr><td>4947</td><td><a href="ulcp-device.html#prop-battery-design-capacity"><code>PROP_BATTERY_DESIGN_CAPACITY</code></a></td><td>Get, Is</td><td>Optional with <code>CAP_BATTERY</code></td></tr>
+<tr><td>4948</td><td><a href="ulcp-device.html#prop-battery-ext-power-present"><code>PROP_BATTERY_EXT_POWER_PRESENT</code></a></td><td>Get, Is</td><td>Optional with <code>CAP_BATTERY</code></td></tr>
+<tr><td>4949</td><td><a href="ulcp-device.html#prop-battery-present"><code>PROP_BATTERY_PRESENT</code></a></td><td>Get, Is</td><td>Optional with <code>CAP_BATTERY</code></td></tr>
+<tr><td>4950</td><td><a href="ulcp-device.html#prop-battery-gauge-full"><code>PROP_BATTERY_GAUGE_FULL</code></a></td><td>Get, Is</td><td>Optional with <code>CAP_BATTERY</code></td></tr>
+<tr><td>4951</td><td><a href="ulcp-device.html#prop-battery-gauge-initialized"><code>PROP_BATTERY_GAUGE_INITIALIZED</code></a></td><td>Get, Is</td><td>Optional with <code>CAP_BATTERY</code></td></tr>
+<tr><td>4952</td><td><a href="ulcp-device.html#prop-battery-gauge-smoothing"><code>PROP_BATTERY_GAUGE_SMOOTHING</code></a></td><td>Get, Is</td><td>Optional with <code>CAP_BATTERY</code></td></tr>
+<tr><td>4953</td><td><a href="ulcp-device.html#prop-battery-charge-voltage-request"><code>PROP_BATTERY_CHARGE_VOLTAGE_REQUEST</code></a></td><td>Get, Is</td><td>Optional with <code>CAP_BATTERY</code></td></tr>
+<tr><td>4954</td><td><a href="ulcp-device.html#prop-battery-gauge-format"><code>PROP_BATTERY_GAUGE_FORMAT</code></a></td><td>Get, Is</td><td>Optional with <code>CAP_BATTERY</code></td></tr>
+<tr><td>4955</td><td><a href="ulcp-device.html#prop-battery-gauge-status"><code>PROP_BATTERY_GAUGE_STATUS</code></a></td><td>Get, Is</td><td>Optional with <code>CAP_BATTERY</code></td></tr>
+<tr><td>4956</td><td><a href="ulcp-device.html#prop-battery-gauge-operation-status"><code>PROP_BATTERY_GAUGE_OPERATION_STATUS</code></a></td><td>Get, Is</td><td>Optional with <code>CAP_BATTERY</code></td></tr>
+<tr><td>4957</td><td><a href="ulcp-device.html#prop-battery-gauge-config"><code>PROP_BATTERY_GAUGE_CONFIG</code></a></td><td>Get, Is</td><td>Optional with <code>CAP_BATTERY</code>; explicit configuration inspection</td></tr>
+<tr><td>4958</td><td><a href="ulcp-device.html#prop-battery-gauge-telemetry"><code>PROP_BATTERY_GAUGE_TELEMETRY</code></a></td><td>Get, Is</td><td>Optional with <code>CAP_BATTERY</code>; live counters, temperatures, and estimates</td></tr>
+<tr><td>4960</td><td><a href="ulcp-i2c.html#prop-i2c-buses"><code>PROP_I2C_BUSES</code></a></td><td>Get, Is</td><td><code>CAP_I2C</code></td></tr>
+<tr><td>4961</td><td><a href="ulcp-i2c.html#prop-i2c-devices"><code>PROP_I2C_DEVICES</code></a></td><td>Get, Is</td><td><code>CAP_I2C</code></td></tr>
 </tbody>
 </table>
 </div>
@@ -358,6 +385,9 @@ is in <a href="ulcp-core.html#capabilities">Capabilities</a>.</p>
 <tr><td>55</td><td><code>CAP_IPV4</code></td><td><a href="ulcp-ip.html#capabilities">IP Connectivity</a></td></tr>
 <tr><td>56</td><td><code>CAP_IPV6</code></td><td><a href="ulcp-ip.html#capabilities">IP Connectivity</a></td></tr>
 <tr><td>57</td><td><code>CAP_WIFI_AP</code></td><td><a href="ulcp-wifi.html#capabilities">Wi-Fi</a></td></tr>
+<tr><td>58</td><td><code>CAP_BRIDGE_CLIENT</code></td><td><a href="ulcp-bridge.html#capabilities">Bridge Client</a></td></tr>
+<tr><td>59</td><td><code>CAP_DISPLAY_MOTION_WAKE</code></td><td><a href="ulcp-device.html#display-motion-wake">Device Services</a></td></tr>
+<tr><td>60</td><td><code>CAP_I2C</code></td><td><a href="ulcp-i2c.html#capabilities">I2C Bus Access</a></td></tr>
 <tr><td>515</td><td><code>CAP_PHY_LORA</code></td><td><a href="ulcp-radio.html#capabilities">Radio Control</a></td></tr>
 </tbody>
 </table>
@@ -370,16 +400,17 @@ is in <a href="ulcp-core.html#capabilities">Capabilities</a>.</p>
 <tr><th>Id</th><th>Name</th><th>Id</th><th>Name</th></tr>
 </thead>
 <tbody>
-<tr><td>0</td><td><code>STATUS_OK</code></td><td>12</td><td><code>STATUS_BUSY</code></td></tr>
-<tr><td>1</td><td><code>STATUS_FAILURE</code></td><td>13</td><td><code>STATUS_PROP_NOT_FOUND</code></td></tr>
-<tr><td>2</td><td><code>STATUS_UNIMPLEMENTED</code></td><td>18</td><td><code>STATUS_CCA_FAILURE</code></td></tr>
-<tr><td>3</td><td><code>STATUS_INVALID_ARGUMENT</code></td><td>19</td><td><code>STATUS_ALREADY</code></td></tr>
-<tr><td>4</td><td><code>STATUS_INVALID_STATE</code></td><td>20</td><td><code>STATUS_ITEM_NOT_FOUND</code></td></tr>
-<tr><td>5</td><td><code>STATUS_INVALID_COMMAND</code></td><td>21</td><td><code>STATUS_CURSOR_INVALID</code></td></tr>
-<tr><td>7</td><td><code>STATUS_INTERNAL_ERROR</code></td><td>22</td><td><code>STATUS_NOT_PERMITTED</code></td></tr>
-<tr><td>9</td><td><code>STATUS_PARSE_ERROR</code></td><td>23</td><td><code>STATUS_CHANNEL_NOT_FOUND</code></td></tr>
-<tr><td>10</td><td><code>STATUS_IN_PROGRESS</code></td><td>32</td><td><code>STATUS_DUTY_LIMIT</code></td></tr>
-<tr><td>11</td><td><code>STATUS_NOMEM</code></td><td></td><td></td></tr>
+<tr><td>0</td><td><code>STATUS_OK</code></td><td>13</td><td><code>STATUS_PROP_NOT_FOUND</code></td></tr>
+<tr><td>1</td><td><code>STATUS_FAILURE</code></td><td>18</td><td><code>STATUS_CCA_FAILURE</code></td></tr>
+<tr><td>2</td><td><code>STATUS_UNIMPLEMENTED</code></td><td>19</td><td><code>STATUS_ALREADY</code></td></tr>
+<tr><td>3</td><td><code>STATUS_INVALID_ARGUMENT</code></td><td>20</td><td><code>STATUS_ITEM_NOT_FOUND</code></td></tr>
+<tr><td>4</td><td><code>STATUS_INVALID_STATE</code></td><td>21</td><td><code>STATUS_CURSOR_INVALID</code></td></tr>
+<tr><td>5</td><td><code>STATUS_INVALID_COMMAND</code></td><td>22</td><td><code>STATUS_NOT_PERMITTED</code></td></tr>
+<tr><td>7</td><td><code>STATUS_INTERNAL_ERROR</code></td><td>23</td><td><code>STATUS_CHANNEL_NOT_FOUND</code></td></tr>
+<tr><td>9</td><td><code>STATUS_PARSE_ERROR</code></td><td>24</td><td><code>STATUS_NO_DEVICE</code></td></tr>
+<tr><td>10</td><td><code>STATUS_IN_PROGRESS</code></td><td>25</td><td><code>STATUS_NACK</code></td></tr>
+<tr><td>11</td><td><code>STATUS_NOMEM</code></td><td>26</td><td><code>STATUS_BUS_ERROR</code></td></tr>
+<tr><td>12</td><td><code>STATUS_BUSY</code></td><td>32</td><td><code>STATUS_DUTY_LIMIT</code></td></tr>
 </tbody>
 </table>
 </div>
@@ -410,7 +441,7 @@ reserved for them.</p>
 <tbody>
 <tr><td><code>PROP_SAVED</code></td><td>0 none, 1 current, 2 fallback, 3 unreadable</td><td><a href="ulcp-saved-state.html#prop-saved"><code>PROP_SAVED</code></a></td></tr>
 <tr><td>Filter types</td><td>0 <code>FILTER_DEST_HINT</code>, 1 <code>FILTER_CHANNEL_ID</code>, 2 <code>FILTER_PKT_TYPE</code></td><td><a href="ulcp-host.html#prop-host-rx-filters"><code>PROP_HOST_RX_FILTERS</code></a></td></tr>
-<tr><td>Charge states</td><td>0 discharging, 1 charging, 2 charged</td><td><a href="ulcp-device.html#prop-battery"><code>PROP_BATTERY</code></a></td></tr>
+<tr><td>Charge states</td><td>0 discharging, 1 charging, 2 charged, 3 not charging</td><td><a href="ulcp-device.html#prop-battery"><code>PROP_BATTERY</code></a></td></tr>
 <tr><td>Alert states</td><td>0 <code>ALERT_NONE</code>, 1 <code>ALERT_LOCATE</code></td><td><a href="ulcp-device.html#prop-alert"><code>PROP_ALERT</code></a></td></tr>
 <tr><td>Fix quality</td><td>0 none, 1 two-dimensional, 2 three-dimensional</td><td><a href="ulcp-device.html#prop-gnss-fix"><code>PROP_GNSS_FIX</code></a></td></tr>
 <tr><td>Transmit flags</td><td>bit 0 <code>TX_FLAG_NOCCA</code>, bit 1 <code>TX_FLAG_NODUTY</code></td><td><a href="ulcp-transport.html#str-radio-raw"><code>STR_PHY_RAW</code></a></td></tr>

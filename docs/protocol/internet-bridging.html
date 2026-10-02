@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-a36d942b.js";
+            window.path_to_searchindex_js = "searchindex-e3fe62b3.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-fed4626c.js"></script>
+        <script src="toc-8b6941ec.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -389,6 +389,25 @@ participant <strong>MUST NOT</strong> treat it as a failed hand-off or retry it.
 <p>No participant provisions node logic for the bridge: there is no bridge
 identity to provision. A participant’s device is configured as whatever
 node its owner intends it to be.</p>
+<h2 id="integrated-clients"><a class="header" href="#integrated-clients">Integrated Clients</a></h2>
+<p>A device may implement the client internally, configured through
+<a href="ulcp-bridge.html">Bridge Client</a>. Its internal backhaul connects directly to its
+own node, independently of any tethered host. The attachment delivers only
+the node’s successful transmissions to the tunnel, including its self-transmit
+metadata. It hands tunnel input only to that node as an unmeasured backhaul
+reception. Overheard radio input and a tethered host’s direct transmissions are
+not independently copied to the tunnel.</p>
+<p>This is the same two-repeater-hop crossing as an external participant. The
+internal client does not change the attached host’s backhaul or promiscuous
+settings, does not enable the repeater, and does not bypass its forwarding
+policy. Its TLS authentication key is the device identity. The server authorizes
+the public identity exposed by <code>PROP_DEV_KEY</code>.</p>
+<p>The internal attachment uses the same <code>STR_PHY_RAW</code> wire representation as
+external clients: a <strong>little-endian UINT16</strong> packet length, packet bytes, then
+receive metadata. The integrated client preserves HDLC-Lite framing, TLS 1.3,
+and the <code>umsh-bridge/1</code> ALPN offer. Its eight-frame queues discard the oldest
+frame under pressure and expire queued frames after ten seconds. A connection
+boundary discards both queues and the partial HDLC decoder state.</p>
 <h2 id="host-interfaces"><a class="header" href="#host-interfaces">Host Interfaces</a></h2>
 <p>A server <strong>MAY</strong> offer <strong>host interfaces</strong>: interfaces whose far end is
 not a participant fronting a segment but a single host, attached

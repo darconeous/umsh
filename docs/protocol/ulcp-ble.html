@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-a36d942b.js";
+            window.path_to_searchindex_js = "searchindex-e3fe62b3.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-fed4626c.js"></script>
+        <script src="toc-8b6941ec.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -348,26 +348,108 @@ work. Devices <strong>SHOULD</strong> accept connection intervals in the 15–50
 range so that transmit confirmations and received-frame delivery do
 not dominate MAC-layer timing budgets.</p>
 <h2 id="ble-advertising"><a class="header" href="#ble-advertising">Advertising and Discovery</a></h2>
-<p>While powered and not attached, the device <strong>SHOULD</strong> advertise as
-connectable and include the ULCP GATT Service UUID in its
-advertising data or scan response, so hosts can discover devices
-by service rather than by name. The advertised local name is
-implementation-specific unless the device advertises <code>CAP_DEV_NAME</code>. Such a device
-<strong>SHOULD</strong> use its current <code>PROP_DEV_NAME</code> as the advertised local name,
-shortening it without splitting a UTF-8 code point when the advertising or scan
-response payload cannot hold the complete value. A name changed while a BLE
-connection is active takes effect on the next advertising cycle; changing it
-does not require disconnecting the attached host.</p>
-<p>While a host is attached over another transport (for example, an open
-ULCP session over USB-CDC), the device <strong>SHOULD</strong> suspend
-advertising, and <strong>SHOULD</strong> resume it when that host detaches.</p>
-<p>Advertising content <strong>MUST NOT</strong> reveal whether the device holds bonds or
-identify previously bonded hosts. Devices <strong>SHOULD</strong> use resolvable
-private addresses.</p>
-<p>Pairing mode (see <a href="ulcp-ble.html#pairing-mode">Pairing Mode</a>) governs only the acceptance of
-pairing requests; it does not affect advertising. In particular, a
-bonded device continues to advertise outside pairing mode so that its
-bonded hosts can reconnect.</p>
+<p>Advertising <strong>MUST NOT</strong> begin until persisted configuration has been restored
+or startup has resolved the applicable defaults. The first advertising payload
+and BLE enablement decision <strong>MUST</strong> use that resolved configuration.</p>
+<p>While BLE is enabled and transport arbitration permits it, a disconnected
+device <strong>SHOULD</strong> advertise as connectable and undirected. Advertising <strong>SHOULD</strong>
+suspend during a BLE connection or an attached wired session, then resume
+when permitted. Hosts discover devices by the ULCP service UUID;
+bonded hosts reconnect using their retained peer identity.</p>
+<p>Outside <a href="#pairing-mode">pairing mode</a>, advertising data <strong>MUST</strong> contain only
+generic BLE flags and the ULCP GATT Service UUID, with no local name, service data, manufacturer
+data, appearance or per-device identifier. Scan-response data <strong>MUST</strong> be empty.
+The flags omit general and limited discoverability; the device remains connectable
+so bonded hosts can reconnect. Previously installed scan-response data
+<strong>MUST</strong> be explicitly cleared when returning to this mode. The advertising
+payload <strong>MUST</strong> also be replaced to remove the model identifier and any
+name advertised during pairing.</p>
+<p>During pairing mode, the device declares general discoverability,
+<strong>MUST</strong> include the ULCP GATT Service UUID in its advertising data, and
+<strong>SHOULD</strong> advertise its <a href="#ble-model-identifier">model identifier</a> and the
+current <code>PROP_DEV_NAME</code>, shortening the name without
+splitting a UTF-8 code point where needed. A rename
+during the window updates these payloads. Names, including existing
+hardware-derived default suffixes, are a deliberate disclosure during
+pairing. Ordinary renaming does not disconnect a connected host.</p>
+<p>Devices <strong>SHOULD</strong> use resolvable private addresses (RPAs) with a persisted
+local Identity Resolving Key (IRK). Devices using RPAs <strong>MUST NOT</strong> fall
+back to advertising a permanent address when privacy setup fails.
+Entering or leaving a named pairing window <strong>SHOULD</strong> refresh the
+advertising address, deferring the refresh until disconnection if a
+connection is active. Address refresh <strong>MUST NOT</strong> extend pairing
+deadlines or reset authentication failures or lockout.</p>
+<h3 id="ble-model-identifier"><a class="header" href="#ble-model-identifier">Model Identifier</a></h3>
+<p>A host platform can hand an application the advertising data alone,
+without the scan response, when the application is choosing a device to
+pair. The advertising data therefore identifies the hardware model, in a
+Manufacturer Specific Data element, and the name <strong>SHOULD</strong> travel in the
+scan-response data, where the ULCP GATT Service UUID does not compete
+with it for room.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Octets</th><th>Field</th><th>Value</th></tr>
+</thead>
+<tbody>
+<tr><td>0–1</td><td>Company Identifier</td><td><code>0xFFFF</code>, least significant octet first</td></tr>
+<tr><td>2–3</td><td>Model Identifier</td><td>Big-endian</td></tr>
+</tbody>
+</table>
+</div>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Model Identifier</th><th>Meaning</th></tr>
+</thead>
+<tbody>
+<tr><td><code>0x0000</code></td><td>Unspecified</td></tr>
+<tr><td><code>0x0001</code>–<code>0xFEFF</code></td><td>Assigned, as <code>model_id</code> in the board list below</td></tr>
+<tr><td><code>0xFF00</code>–<code>0xFFFF</code></td><td>Private use: hardware with no assignment</td></tr>
+</tbody>
+</table>
+</div>
+<pre><code class="language-json">{
+  "boards": [
+    { "id": "techo", "model_id": 1, "name": "T-Echo", "vendor": "LilyGO", "photo": "board-techo" },
+    { "id": "t1000e", "model_id": 2, "name": "SenseCAP T1000-E", "vendor": "Seeed Studio", "photo": "board-t1000e" },
+    { "id": "sensecap-solar", "model_id": 3, "name": "SenseCAP Solar Node P1", "vendor": "Seeed Studio", "photo": "board-sensecap-solar" },
+    { "id": "wio-tracker-l1", "model_id": 4, "name": "Wio Tracker L1", "vendor": "Seeed Studio", "photo": "board-wio-tracker-l1" },
+    { "id": "xiao-nrf52", "model_id": 5, "name": "XIAO nRF52840 + Wio-SX1262 Kit", "vendor": "Seeed Studio", "photo": "board-xiao-nrf52" },
+    { "id": "heltec-v2", "model_id": 6, "name": "WiFi LoRa 32 V2", "vendor": "Heltec", "photo": "board-heltec-v2" },
+    { "id": "heltec-v3", "model_id": 7, "name": "WiFi LoRa 32 V3", "vendor": "Heltec", "photo": "board-heltec-v3" },
+    { "id": "tbeam-supreme", "model_id": 8, "name": "T-Beam Supreme", "vendor": "LilyGO", "photo": "board-tbeam-supreme" },
+    { "id": "tlora-pager", "model_id": 9, "name": "T-LoRa Pager", "vendor": "LilyGO", "photo": "board-tlora-pager" }
+  ]
+}
+</code></pre>
+<p>A model identifier names the same hardware as
+<a href="ulcp-core.html#prop-dev-model"><code>PROP_DEV_MODEL</code></a>. A device with no fixed
+model sends 0. Octets after the model identifier are reserved: senders
+<strong>MUST NOT</strong> append any, and a host ignores any it finds. A host that
+does not recognize the model identifier, or finds no such element,
+presents the device without a model.</p>
+<p><code>0xFFFF</code> is not unique to UMSH. A host <strong>MUST</strong> interpret this element only
+in an advertisement that also carries the ULCP GATT Service UUID.</p>
+<p>A host platform can withhold a device whose advertising data names a
+company identifier the host application has not declared. During pairing
+mode the advertising data <strong>MUST NOT</strong> carry any other Manufacturer
+Specific Data element.</p>
+<h3 id="connected-device-names"><a class="header" href="#connected-device-names">Connected Device Names</a></h3>
+<p>The GAP Device Name characteristic exposes the configured name only
+while pairing, or on an encrypted connection backed by a durable,
+retained bond. Other name reads <strong>MUST</strong> receive an ATT security error.
+This applies to direct and offset reads, reads by type, multiple-value
+reads and name equality probes. Authenticated ULCP <code>PROP_DEV_NAME</code>
+behavior is unchanged.</p>
+<p>The GAP value <strong>SHOULD</strong> reflect the current configured name. A name-value
+change is not a change to the service structure. Ordinary renaming
+<strong>MUST NOT</strong> require re-pairing.</p>
+<p>Address rotation does not make a device anonymous to a host that holds
+its IRK. It reduces tracking by observers without that key. A deliberate
+pairing disclosure and continuous observation around a transition can
+still correlate activity; advertising frequency is not an anonymity
+guarantee.</p>
 <h2 id="capabilities"><a class="header" href="#capabilities">Capabilities</a></h2>
 <div class="table-wrapper">
 <table>
@@ -496,8 +578,11 @@ its bonded hosts to whoever asked would leak the association the pairing
 ceremony exists to protect, and the count is what an operator deciding
 whether to clear bonds actually needs.</p>
 <h4 id="clearing-bonds"><a class="header" href="#clearing-bonds">Writing Zero: Forgetting Every Host</a></h4>
-<p>Writing <code>0</code> deletes every stored bond, the pairing PIN, and the pairing
-failure lockout, then enters pairing mode.</p>
+<p>Writing <code>0</code> atomically persists an empty bond store, a cleared pairing PIN,
+and a fresh, nonzero local IRK different from the previous IRK. A failed
+commit leaves the previous security state intact. After success, it clears
+the pairing failure lockout and opens a pairing window. It does not enable
+BLE if BLE was disabled, or change non-BLE configuration or device identity.</p>
 <p>Zero is the only value a host may write, and any other <strong>MUST</strong> be
 answered <code>STATUS_INVALID_ARGUMENT</code>. Bonds are enrolled one pairing
 ceremony at a time and evicted by the device, so no other count names a
@@ -513,7 +598,11 @@ not accepting new ones is reachable by nothing.</p>
 <code>CMD_PROP_IS</code> carrying <code>0</code> once the deletion is durable. Sent over BLE,
 that answer is the last thing the sender hears, because the bond that
 carried it is among the bonds deleted; the reply <strong>MUST</strong> be emitted
-before the connection is dropped.</p>
+before the connection is dropped. Queue insertion alone <strong>MUST NOT</strong> be
+treated as completed transmission. Failure to deliver the reply <strong>MUST NOT</strong>
+undo durable revocation. Further GATT access <strong>MUST</strong> be denied after
+commit, and the new IRK <strong>MUST</strong> be installed before further advertising
+or pairing.</p>
 <p>Clearing the PIN alongside the bonds is deliberate. A PIN outliving the
 hosts it was set for would leave a device that has forgotten everyone
 still demanding a secret the operator may no longer have, recoverable
@@ -597,8 +686,7 @@ requirement.</p>
 <p>Entering pairing mode:</p>
 <ul>
 <li>While the device holds no bonds, it <strong>SHOULD</strong> enter pairing mode
-automatically at power-on for a short window (15–30 seconds
-<strong>RECOMMENDED</strong>).</li>
+automatically at power-on.</li>
 <li>Once the device holds one or more bonds, it <strong>MUST NOT</strong> enter pairing
 mode automatically. Entering pairing mode then requires either a
 deliberate physical gesture distinct from normal power-on—for
@@ -606,6 +694,8 @@ example, holding the user button through power-on until the device
 signals that pairing mode is active—or a write of <code>1</code> to
 <a href="#prop-ble-pairing"><code>PROP_BLE_PAIRING</code></a> from an authorized session.</li>
 </ul>
+<p>A timeout of five minutes with no bonds, or two minutes with one or more
+bonds, is <strong>RECOMMENDED</strong>, based on the bond count when the window opens.</p>
 <p>Pairing mode <strong>MUST</strong> end when any of the following occurs:</p>
 <ul>
 <li>a new bond completes;</li>

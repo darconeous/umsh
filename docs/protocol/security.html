@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-a36d942b.js";
+            window.path_to_searchindex_js = "searchindex-e3fe62b3.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-fed4626c.js"></script>
+        <script src="toc-8b6941ec.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -274,6 +274,7 @@ window</a>, measured from its most
 recent acknowledgement of that packet: copies arriving inside the window share
 the acknowledgement already sent, while a sender that lost its acknowledgement
 cannot retransmit before its own confirmation window has lapsed.</p>
+<p>Payload acceptance does not begin the acknowledgement pacing window. A destination may accept an overheard source-routed copy while hints remain, withholding its ACK until the route is consumed. The first eligible copy may then be acknowledged immediately. A duplicate remains the same accepted packet: acknowledging it does not renew its replay-retention interval or deliver the payload again.</p>
 <h4 id="counter-persistence"><a class="header" href="#counter-persistence">Counter Persistence</a></h4>
 <p>How a node persists and recovers its frame counter across reboots is implementation-specific. Possible strategies include writing the counter to non-volatile storage periodically or advancing the counter by a large margin on startup to avoid replaying previously used values.</p>
 <blockquote class="blockquote-tag blockquote-tag-caution">

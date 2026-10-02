@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-a36d942b.js";
+            window.path_to_searchindex_js = "searchindex-e3fe62b3.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-fed4626c.js"></script>
+        <script src="toc-8b6941ec.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -326,7 +326,7 @@ passphrase, which is valid only for the modes that derive one; a host
 that holds the key need never hand the device the passphrase, and a
 device never has to run the derivation. Bits 2 through 7 are reserved
 and <strong>MUST</strong> be zero.</p>
-<p><strong>SECURITY</strong> is one mode:</p>
+<p><strong>SECURITY</strong> is the minimum acceptable station security, using these mode codes:</p>
 <div class="table-wrapper">
 <table>
 <thead>
@@ -396,16 +396,35 @@ it: a WPA3 entry on a chip without SAE, or a WPA entry on a device that
 declines TKIP. The two are different answers because a host acts on
 them differently. The first is a bug in the host, and the second is a
 reason to pick the next mode the network offers.</p>
-<p>The security mode is exact. It is the mode the device uses, not a
-ceiling it negotiates down from. An entry marked <code>WIFI_SEC_WPA3</code> joins
-a WPA2/WPA3 transition network with SAE and fails against a WPA2-only
-one; an entry marked <code>WIFI_SEC_WPA2</code> joins either with PSK; an entry
-marked <code>WIFI_SEC_OWE</code> never falls back to open. A device <strong>MUST NOT</strong>
-negotiate a mode other than the one the entry names, so a host that
-takes the mode out of a scan result gets exactly the network it saw,
-and an evil twin advertising a weaker one gets nothing. Where the
-passphrase is the same across a transition network’s modes, which it
-usually is, the host writes the strongest one the device accepts.</p>
+<p>The station chooses the strongest mutually supported authentication mode
+compatible with the credential and meeting <strong>SECURITY</strong>. The codes are not
+a numerical ranking. The permitted relationships are:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Stored minimum</th><th>Permitted authentication</th></tr>
+</thead>
+<tbody>
+<tr><td>Open</td><td>Open or OWE, without credentials</td></tr>
+<tr><td>OWE</td><td>OWE; never open</td></tr>
+<tr><td>WPA, passphrase</td><td>WPA, WPA2, or WPA3</td></tr>
+<tr><td>WPA2, passphrase</td><td>WPA2 or WPA3</td></tr>
+<tr><td>WPA3, password</td><td>WPA3; never WPA2</td></tr>
+<tr><td>WPA, raw PMK</td><td>WPA or WPA2; never SAE</td></tr>
+<tr><td>WPA2, raw PMK</td><td>WPA2; never SAE</td></tr>
+</tbody>
+</table>
+</div>
+<p>A WPA2 entry therefore continues to work when its network upgrades to
+WPA3 with the same SSID and password. A raw PMK cannot make that upgrade:
+SAE needs the password, which cannot be recovered from the key. Modes
+outside the credential’s authentication family are not upgrades.</p>
+<p>The device <strong>MUST NOT</strong> use a mode below the stored minimum. Using a
+stronger mode does not modify that minimum or its saved value. A host
+that requires WPA3 writes WPA3; a host that permits WPA2 with opportunistic
+WPA3 writes WPA2. Lowering the minimum is an explicit host configuration
+change. Scan results still name the modes advertised by each access point;
+access-point configuration names the mode the device offers.</p>
 <p>Items are keyed by SSID: the table holds at most one entry per network,
 and an insert whose SSID matches an existing entry <strong>replaces</strong> it and
 reports the item as inserted. That is the path for a wrong passphrase,
@@ -1062,10 +1081,10 @@ framing. Everything else is a few.</p>
 meets the provisioning requirement, and is never reported. A later
 host on the same device cannot extract an earlier host’s Wi-Fi
 credentials any more than its channel keys.</li>
-<li>The security mode is exact. A device joins with the mode the entry
-names and no other, whatever the network in front of it advertises,
-so a downgrade has to be written by the host rather than offered by
-the air.</li>
+<li>The station’s security requirement is a minimum constrained by its
+credential. Stronger compatible modes are permitted; weaker modes
+require an explicit host write. A WPA3 requirement never falls back to
+WPA2, and an OWE requirement never falls back to open.</li>
 <li>Scan results are what the device heard, and an SSID is what its
 sender chose to call itself. A host displays them as untrusted
 strings.</li>

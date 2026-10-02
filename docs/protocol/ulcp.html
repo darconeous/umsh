@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-a36d942b.js";
+            window.path_to_searchindex_js = "searchindex-e3fe62b3.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-fed4626c.js"></script>
+        <script src="toc-8b6941ec.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -196,8 +196,9 @@ holds, and the status, reset, and capability registries</li>
 commands, and properties: <a href="ulcp-radio.html">Radio Control</a>,
 <a href="ulcp-transport.html">Frame Transport</a>, <a href="ulcp-device.html">Device Domain</a>,
 <a href="ulcp-saved-state.html">Saved State</a>,
-<a href="ulcp-host.html">Tethered Host Services</a>, <a href="ulcp-wifi.html">Wi-Fi</a>, and
-<a href="ulcp-ip.html">IP Connectivity</a></li>
+<a href="ulcp-host.html">Tethered Host Services</a>, <a href="ulcp-wifi.html">Wi-Fi</a>,
+<a href="ulcp-ip.html">IP Connectivity</a>, <a href="ulcp-bridge.html">Bridge Client</a>, and
+<a href="ulcp-i2c.html">I2C Bus Access</a></li>
 <li><a href="ulcp-conformance.html">Minimum Requirements</a> states what a device has to
 implement to be a ULCP device, and the
 <a href="ulcp-index.html">Command and Property Index</a> locates every numeric
@@ -379,7 +380,7 @@ provisioned. <a href="ulcp-core.html#provisioning-security">Provisioning
 Security</a> specifies the exact
 mechanism and its security consequences.</p>
 <h2 id="subsystems"><a class="header" href="#subsystems">Subsystems</a></h2>
-<p>The interface divides into seven subsystems, each specified by its own
+<p>The interface divides into nine subsystems, each specified by its own
 chapter and each discoverable through the capabilities it advertises.
 Only the first two are unconditional.</p>
 <h3 id="radio-control"><a class="header" href="#radio-control"><a href="ulcp-radio.html">Radio Control</a></a></h3>
@@ -441,6 +442,16 @@ sniffs beacons for geolocation can scan and can do nothing else.</p>
 configuration per family, the addresses and routers in effect, and the
 resolvers. One capability per family, and nothing in it knows what the
 link is.</p>
+<h3 id="bridge-client"><a class="header" href="#bridge-client"><a href="ulcp-bridge.html">Bridge Client</a></a></h3>
+<p>The device’s own node connected to an <a href="internet-bridging.html">internet bridge</a>
+over IP: where to connect, which server key to trust, whether the client
+is enabled, and what state the connection is in.</p>
+<h3 id="i2c-bus-access"><a class="header" href="#i2c-bus-access"><a href="ulcp-i2c.html">I2C Bus Access</a></a></h3>
+<p>Raw transactions with the device’s I2C peripherals, for bring-up and
+diagnosis: the buses and known peripherals the device names, one
+transaction per command with its read data in the reply, and a scan of
+who acknowledges. The device’s own drivers keep the bus between
+commands.</p>
 <h2 id="suggested-capability-matrix"><a class="header" href="#suggested-capability-matrix">Suggested Capability Matrix</a></h2>
 <p>The table below summarizes which side owns which function.</p>
 <div class="table-wrapper">

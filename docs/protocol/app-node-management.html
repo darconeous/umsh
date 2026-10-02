@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-a36d942b.js";
+            window.path_to_searchindex_js = "searchindex-e3fe62b3.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-fed4626c.js"></script>
+        <script src="toc-8b6941ec.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -289,8 +289,9 @@ spontaneous notifications, do not occur here. State an administrator cares
 about is read, not pushed.</p>
 <p>The Response echoes the token and carries one frame: exactly
 the frame the device would emit in reply on a local binding—a
-<code>CMD_PROP_IS</code>, <code>CMD_PROP_INSERTED</code>, <code>CMD_PROP_REMOVED</code>, or <code>CMD_PROP_ARE</code>
-on success, or a <code>CMD_PROP_IS</code> of <code>PROP_LAST_STATUS</code> reporting the error.
+<code>CMD_PROP_IS</code>, <code>CMD_PROP_INSERTED</code>, <code>CMD_PROP_REMOVED</code>, <code>CMD_PROP_ARE</code>,
+or <a href="ulcp-i2c.html#cmd-i2c-result"><code>CMD_I2C_RESULT</code></a> on success, or a
+<code>CMD_PROP_IS</code> of <code>PROP_LAST_STATUS</code> reporting the error.
 A request frame carrying a Device→Host command is answered
 <code>STATUS_INVALID_COMMAND</code>. Long-running operations report
 <code>STATUS_IN_PROGRESS</code> as on any binding; the administrator observes

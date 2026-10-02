@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-a36d942b.js";
+            window.path_to_searchindex_js = "searchindex-e3fe62b3.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-fed4626c.js"></script>
+        <script src="toc-8b6941ec.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -178,6 +178,8 @@
 <p>This chapter describes how UMSH nodes contend for channel access before transmitting. These procedures apply to all transmissions—original packets, forwarded packets, and acknowledgments—unless otherwise specified.</p>
 <h2 id="frame-duration"><a class="header" href="#frame-duration">Frame Duration</a></h2>
 <p><strong>T_frame</strong> is the maximum on-air duration of a LoRa frame at the configured channel settings (spreading factor, bandwidth, coding rate, and maximum payload size). T_frame is not a fixed protocol constant; implementations derive it from the channel configuration. All timing parameters in this chapter are expressed as multiples of T_frame.</p>
+<p>ULCP hosts can read <a href="ulcp-radio.html#prop-phy-t-frame"><code>PROP_PHY_T_FRAME</code></a> from
+the device instead of calculating it from modulation-specific parameters.</p>
 <p>For reference, typical T_frame values for a maximum-length (255-byte) packet using common MeshCore-style channel settings:</p>
 <div class="table-wrapper">
 <table>

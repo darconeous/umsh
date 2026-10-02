@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-a36d942b.js";
+            window.path_to_searchindex_js = "searchindex-e3fe62b3.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-fed4626c.js"></script>
+        <script src="toc-8b6941ec.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -229,6 +229,7 @@ private key and every pairwise key must be provisioned explicitly (see
 <tr><td>45</td><td><code>CAP_GNSS</code></td><td><code>CAP_TIME</code></td><td>A GNSS receiver: <code>PROP_GNSS_ENABLED</code>, <code>PROP_GNSS_LOCATION</code>, <code>PROP_GNSS_ALTITUDE</code>, <code>PROP_GNSS_FIX</code>, <code>PROP_GNSS_PRECISION</code>, <code>PROP_GNSS_SATELLITES</code>, <code>PROP_GNSS_IDENT_UPDATE</code>, <code>PROP_GNSS_IDENT_PRECISION</code>, <code>PROP_GNSS_TIME_TRUST</code></td></tr>
 <tr><td>46</td><td><code>CAP_ADVERT</code></td><td><code>CAP_DEV_IDENTITY</code></td><td>Announcing itself: on a schedule of its own (<code>PROP_ADVERT_INTERVAL</code>, <code>PROP_BEACON_INTERVAL</code>, <code>PROP_STARTUP_BEACON</code>) and on demand (<code>CMD_ANNOUNCE</code>)</td></tr>
 <tr><td>47</td><td><code>CAP_ILLUMINANCE</code></td><td>—</td><td>An ambient light sensor and <code>PROP_ILLUMINANCE</code></td></tr>
+<tr><td>59</td><td><code>CAP_DISPLAY_MOTION_WAKE</code></td><td>—</td><td>Orientation-qualified display wake and <code>PROP_DISPLAY_MOTION_WAKE_ENABLED</code></td></tr>
 </tbody>
 </table>
 </div>
@@ -352,6 +353,21 @@ device range, alongside the wall clock at 4866–4867.</p>
 <tr><td>67</td><td><code>PROP_DEV_PEERS</code></td><td>Get, Set, Insert, Remove</td><td>Device identity peer list</td></tr>
 <tr><td>68</td><td><code>PROP_DEV_NAME</code></td><td>Get, Set</td><td>Human-readable device name</td></tr>
 <tr><td>69</td><td><code>PROP_BATTERY</code></td><td>Get, Is</td><td>Battery status snapshot</td></tr>
+<tr><td>4944</td><td><code>PROP_BATTERY_CURRENT</code></td><td>Get, Is</td><td>Battery diagnostics</td></tr>
+<tr><td>4945</td><td><code>PROP_BATTERY_REMAINING_CAPACITY</code></td><td>Get, Is</td><td>Battery diagnostics</td></tr>
+<tr><td>4946</td><td><code>PROP_BATTERY_FULL_CAPACITY</code></td><td>Get, Is</td><td>Battery diagnostics</td></tr>
+<tr><td>4947</td><td><code>PROP_BATTERY_DESIGN_CAPACITY</code></td><td>Get, Is</td><td>Battery diagnostics</td></tr>
+<tr><td>4948</td><td><code>PROP_BATTERY_EXT_POWER_PRESENT</code></td><td>Get, Is</td><td>Battery diagnostics</td></tr>
+<tr><td>4949</td><td><code>PROP_BATTERY_PRESENT</code></td><td>Get, Is</td><td>Battery diagnostics</td></tr>
+<tr><td>4950</td><td><code>PROP_BATTERY_GAUGE_FULL</code></td><td>Get, Is</td><td>Battery diagnostics</td></tr>
+<tr><td>4951</td><td><code>PROP_BATTERY_GAUGE_INITIALIZED</code></td><td>Get, Is</td><td>Battery diagnostics</td></tr>
+<tr><td>4952</td><td><code>PROP_BATTERY_GAUGE_SMOOTHING</code></td><td>Get, Is</td><td>Battery diagnostics</td></tr>
+<tr><td>4953</td><td><code>PROP_BATTERY_CHARGE_VOLTAGE_REQUEST</code></td><td>Get, Is</td><td>Battery diagnostics</td></tr>
+<tr><td>4954</td><td><code>PROP_BATTERY_GAUGE_FORMAT</code></td><td>Get, Is</td><td>Battery diagnostics</td></tr>
+<tr><td>4955</td><td><code>PROP_BATTERY_GAUGE_STATUS</code></td><td>Get, Is</td><td>Battery diagnostics</td></tr>
+<tr><td>4956</td><td><code>PROP_BATTERY_GAUGE_OPERATION_STATUS</code></td><td>Get, Is</td><td>Battery diagnostics</td></tr>
+<tr><td>4957</td><td><code>PROP_BATTERY_GAUGE_CONFIG</code></td><td>Get, Is</td><td>On-demand gauge configuration</td></tr>
+<tr><td>4958</td><td><code>PROP_BATTERY_GAUGE_TELEMETRY</code></td><td>Get, Is</td><td>Live gauge counters and estimates</td></tr>
 <tr><td>70</td><td><code>PROP_MAC_REPEATER_ENABLED</code></td><td>Get, Set</td><td>Autonomous repeater forwarding enable</td></tr>
 <tr><td>71</td><td><code>PROP_IDENT</code></td><td>Get</td><td>Signed node identity of the device identity</td></tr>
 <tr><td>72</td><td><code>PROP_IDENT_ROLE</code></td><td>Get, Set</td><td>Advertised node role, or empty to derive it</td></tr>
@@ -589,27 +605,455 @@ estimates change monotonically.</dd>
 <tr><td>0</td><td><code>BATTERY_CHARGE_STATE_DISCHARGING</code></td></tr>
 <tr><td>1</td><td><code>BATTERY_CHARGE_STATE_CHARGING</code></td></tr>
 <tr><td>2</td><td><code>BATTERY_CHARGE_STATE_CHARGED</code></td></tr>
+<tr><td>3</td><td><code>BATTERY_CHARGE_STATE_NOT_CHARGING</code></td></tr>
 </tbody>
 </table>
 </div>
 <dl>
 <dt id="battery_charge_state_discharging"><a class="header" href="#battery_charge_state_discharging"><code>BATTERY_CHARGE_STATE_DISCHARGING</code></a></dt>
-<dd>The charging system reports neither active charging nor charge completion.
-This is the charge state used for a disconnected battery when the
-implementation can detect that condition; an absent field never carries
-that meaning.</dd>
+<dd>External power is absent and the battery supplies the device. An absent
+field never carries that meaning.</dd>
 <dt id="battery_charge_state_charging"><a class="header" href="#battery_charge_state_charging"><code>BATTERY_CHARGE_STATE_CHARGING</code></a></dt>
 <dd>The charging system reports that the battery is actively receiving charge.</dd>
 <dt id="battery_charge_state_charged"><a class="header" href="#battery_charge_state_charged"><code>BATTERY_CHARGE_STATE_CHARGED</code></a></dt>
-<dd>External power is present and the charging system reports that charging has
-completed. A battery at 100 percent while operating without external power
-remains in <code>BATTERY_CHARGE_STATE_DISCHARGING</code>.</dd>
+<dd>External power is present and the implementation has evidence that charging
+completed. For a 4.2 V-class single-cell battery, measured voltage below
+4.1 V is insufficient evidence of completion. A battery at 100 percent while
+operating without external power remains in <code>BATTERY_CHARGE_STATE_DISCHARGING</code>.</dd>
+<dt id="battery_charge_state_not_charging"><a class="header" href="#battery_charge_state_not_charging"><code>BATTERY_CHARGE_STATE_NOT_CHARGING</code></a></dt>
+<dd>External power is detected, but the charging system does not report active
+charging and the implementation cannot substantiate charge completion. This
+state does not imply that the external source alone supplies the device.</dd>
 </dl>
 <p>The property contains live, read-only state. It is never included in a
 saved snapshot and is not changed by <code>CMD_RESTORE</code>. A device <strong>MAY</strong> emit
 unsolicited <code>CMD_PROP_IS</code> updates when the reported snapshot changes. Such
 updates <strong>SHOULD</strong> be coalesced or rate-limited so that measurement noise
 does not produce excessive ULCP traffic.</p>
+<h3 id="battery-diagnostics"><a class="header" href="#battery-diagnostics">Battery diagnostics</a></h3>
+<p>Properties 4944–4956 are optional extensions to <code>CAP_BATTERY</code>. No additional
+capability is allocated. A device may implement any subset, except that raw
+status properties require <code>PROP_BATTERY_GAUGE_FORMAT</code>. Clients discover support
+by reading the properties individually or with <code>CMD_PROP_MULTI_GET</code>.</p>
+<p>All are <strong>single-value, read-only Device Domain properties</strong>, with
+<strong>no asynchronous updates</strong>. Their values are acquired on request and are
+excluded from saved state. They do not change the gauge or charger.
+<code>PROP_BATTERY</code> retains its existing encoding and notification behavior.</p>
+<h4 id="prop-battery-current"><a class="header" href="#prop-battery-current">PROP 4944: <code>PROP_BATTERY_CURRENT</code></a></h4>
+<ul>
+<li>Value Type: Minimal signed LE integer, 1–4 octets, mA, or empty</li>
+</ul>
+<p>Signed battery current: positive into the battery, negative out, zero is a valid reading.</p>
+<h4 id="prop-battery-remaining-capacity"><a class="header" href="#prop-battery-remaining-capacity">PROP 4945: <code>PROP_BATTERY_REMAINING_CAPACITY</code></a></h4>
+<ul>
+<li>Value Type: Minimal unsigned LE integer, 1–4 octets, mAh, or empty</li>
+</ul>
+<p>Gauge’s current remaining-capacity estimate.</p>
+<h4 id="prop-battery-full-capacity"><a class="header" href="#prop-battery-full-capacity">PROP 4946: <code>PROP_BATTERY_FULL_CAPACITY</code></a></h4>
+<ul>
+<li>Value Type: Minimal unsigned LE integer, 1–4 octets, mAh, or empty</li>
+</ul>
+<p>Gauge’s current estimate of capacity at full charge.</p>
+<h4 id="prop-battery-design-capacity"><a class="header" href="#prop-battery-design-capacity">PROP 4947: <code>PROP_BATTERY_DESIGN_CAPACITY</code></a></h4>
+<ul>
+<li>Value Type: Minimal unsigned LE integer, 1–4 octets, mAh, or empty</li>
+</ul>
+<p>Design capacity configured in the gauge or board profile.</p>
+<h4 id="prop-battery-ext-power-present"><a class="header" href="#prop-battery-ext-power-present">PROP 4948: <code>PROP_BATTERY_EXT_POWER_PRESENT</code></a></h4>
+<ul>
+<li>Value Type: <code>BOOL</code>, or empty</li>
+</ul>
+<p>External power detected by the platform, such as USB/VBUS, a DC input, or solar input; this does not imply battery charging or identify the source.</p>
+<h4 id="prop-battery-present"><a class="header" href="#prop-battery-present">PROP 4949: <code>PROP_BATTERY_PRESENT</code></a></h4>
+<ul>
+<li>Value Type: <code>BOOL</code>, or empty</li>
+</ul>
+<p>Battery detected by hardware.</p>
+<h4 id="prop-battery-gauge-full"><a class="header" href="#prop-battery-gauge-full">PROP 4950: <code>PROP_BATTERY_GAUGE_FULL</code></a></h4>
+<ul>
+<li>Value Type: <code>BOOL</code>, or empty</li>
+</ul>
+<p>Gauge’s full-charge indication, independent of charger completion.</p>
+<h4 id="prop-battery-gauge-initialized"><a class="header" href="#prop-battery-gauge-initialized">PROP 4951: <code>PROP_BATTERY_GAUGE_INITIALIZED</code></a></h4>
+<ul>
+<li>Value Type: <code>BOOL</code>, or empty</li>
+</ul>
+<p>Gauge initialization has completed; this does not assert successful capacity learning or calibration.</p>
+<h4 id="prop-battery-gauge-smoothing"><a class="header" href="#prop-battery-gauge-smoothing">PROP 4952: <code>PROP_BATTERY_GAUGE_SMOOTHING</code></a></h4>
+<ul>
+<li>Value Type: <code>BOOL</code>, or empty</li>
+</ul>
+<p>Gauge is currently applying smoothing to its reported capacity.</p>
+<h4 id="prop-battery-charge-voltage-request"><a class="header" href="#prop-battery-charge-voltage-request">PROP 4953: <code>PROP_BATTERY_CHARGE_VOLTAGE_REQUEST</code></a></h4>
+<ul>
+<li>Value Type: Tagged voltage request, below, or empty</li>
+</ul>
+<p>Gauge’s requested charging voltage, distinct from measured voltage and the charger’s configured voltage limit.</p>
+<h4 id="prop-battery-gauge-format"><a class="header" href="#prop-battery-gauge-format">PROP 4954: <code>PROP_BATTERY_GAUGE_FORMAT</code></a></h4>
+<ul>
+<li>Value Type: <code>PUI</code>, or empty</li>
+</ul>
+<p>Identifies the interpretation of the two raw status properties.</p>
+<h4 id="prop-battery-gauge-status"><a class="header" href="#prop-battery-gauge-status">PROP 4955: <code>PROP_BATTERY_GAUGE_STATUS</code></a></h4>
+<ul>
+<li>Value Type: Minimal unsigned LE integer, 1–4 octets, or empty</li>
+</ul>
+<p>Raw gauge battery-status flags, interpreted using the format identifier.</p>
+<h4 id="prop-battery-gauge-operation-status"><a class="header" href="#prop-battery-gauge-operation-status">PROP 4956: <code>PROP_BATTERY_GAUGE_OPERATION_STATUS</code></a></h4>
+<ul>
+<li>Value Type: Minimal unsigned LE integer, 1–4 octets, or empty</li>
+</ul>
+<p>Raw gauge operation-status flags, interpreted using the format identifier.</p>
+<h4 id="compact-value-encodings"><a class="header" href="#compact-value-encodings">Compact value encodings</a></h4>
+<p>Senders <strong>MUST</strong> use the fewest octets that represent each diagnostic integer value.
+The property value’s existing length supplies the width; no additional width
+prefix or continuation bits are added to these signed or unsigned LE integers.
+This applies equally to individual reads and entries in a multi-get response.</p>
+<ul>
+<li><strong>Signed current:</strong> little-endian two’s complement, with a signed 32-bit
+range. Reuse the encoding of
+<a href="ulcp-device.html#prop-ident-altitude"><code>PROP_IDENT_ALTITUDE</code></a>,
+requiring minimal output here. One octet covers −128 through 127; two cover
+−32768 through 32767; three cover −8388608 through 8388607. Keep a sign octet
+when removing it would change the value’s sign.</li>
+<li><strong>Unsigned capacities, voltage, and raw flags:</strong> little-endian with an
+unsigned 32-bit range. Remove high zero octets, retaining one octet for zero.
+One octet covers 0–255, two 0–65535, and three 0–16777215. Bit 7 of the last
+octet is ordinary data, not a sign or continuation bit.</li>
+<li><strong>Booleans:</strong> exactly one octet, <code>00</code> or <code>01</code>.</li>
+<li><strong>Gauge format and voltage discriminator:</strong> retain PUI encoding, using its
+shortest form. Format 1 and either defined discriminator occupy one octet.</li>
+</ul>
+<p>Receivers accept integer widths of one through four octets, sign-extending
+current and zero-extending unsigned values, including padded representations.
+Senders must not emit that padding. More than four octets is malformed. An
+empty property value remains unavailable; numeric zero is <code>00</code>, never empty.
+False likewise represents an actual indication, never an unavailable reading.</p>
+<p>Examples below show value bytes in hexadecimal, in transmission order:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Value</th><th>Bytes</th><th style="text-align: right">Octets</th></tr>
+</thead>
+<tbody>
+<tr><td>Current −100 mA</td><td><code>9C</code></td><td style="text-align: right">1</td></tr>
+<tr><td>Current −200 mA</td><td><code>38 FF</code></td><td style="text-align: right">2</td></tr>
+<tr><td>Current −128 / −129 mA</td><td><code>80</code> / <code>7F FF</code></td><td style="text-align: right">1 / 2</td></tr>
+<tr><td>Current 127 / 128 mA</td><td><code>7F</code> / <code>80 00</code></td><td style="text-align: right">1 / 2</td></tr>
+<tr><td>Current 0 mA or capacity 0 mAh</td><td><code>00</code></td><td style="text-align: right">1</td></tr>
+<tr><td>Capacity 200 mAh</td><td><code>C8</code></td><td style="text-align: right">1</td></tr>
+<tr><td>Capacity 1500 mAh</td><td><code>DC 05</code></td><td style="text-align: right">2</td></tr>
+<tr><td>Raw operation flags <code>0x00A6</code></td><td><code>A6</code></td><td style="text-align: right">1</td></tr>
+</tbody>
+</table>
+</div>
+<p>Capacities are charge quantities in mAh, not energy in mWh. No host should
+replace the reported percentage with a ratio it calculates from capacities;
+it may display that ratio separately for diagnosis.</p>
+<p>The charge-voltage-request value begins with a PUI discriminator:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th style="text-align: right">Code</th><th>Following bytes</th><th>Meaning</th></tr>
+</thead>
+<tbody>
+<tr><td style="text-align: right">0</td><td>Minimal unsigned LE integer, 1–4 octets, mV</td><td>A specific voltage request.</td></tr>
+<tr><td style="text-align: right">1</td><td>None</td><td>Request the charger’s maximum voltage.</td></tr>
+</tbody>
+</table>
+</div>
+<p>For code 0, all remaining bytes encode the voltage: one through four are
+required, with the compact unsigned rules above. Code 0 without a voltage or
+with more than four voltage octets is malformed. Code 1 has no following bytes;
+any trailing bytes are malformed. A 4200 mV request is <code>00 68 10</code> (three octets
+total), and a maximum-voltage request is <code>01</code> (one octet).</p>
+<p>An empty property value means unavailable, as below. Unknown discriminators
+are malformed. This avoids exposing a hardware
+sentinel as an implausibly large voltage. Reading this property never applies
+the request to the charger.</p>
+<h4 id="support-availability-and-errors"><a class="header" href="#support-availability-and-errors">Support, availability, and errors</a></h4>
+<p>Use existing ULCP status codes with explicit meanings:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Condition</th><th>Response to a diagnostic property read</th></tr>
+</thead>
+<tbody>
+<tr><td>This hardware/firmware does not implement the property</td><td><code>STATUS_PROP_NOT_FOUND</code>.</td></tr>
+<tr><td>Field implemented, but no meaningful value in the observed state</td><td>Successful <code>CMD_PROP_IS</code> with an empty value.</td></tr>
+<tr><td>Acquisition attempted and failed, including an I2C error or timeout</td><td><code>STATUS_FAILURE</code>.</td></tr>
+<tr><td>A valid measurement or indication exists</td><td>Successful <code>CMD_PROP_IS</code> containing the typed value.</td></tr>
+</tbody>
+</table>
+</div>
+<p>For example, an initializing gauge may report <code>GAUGE_INITIALIZED=false</code>
+while its capacity estimate is empty. A detected battery removal is
+<code>BATTERY_PRESENT=false</code>; dependent measurements may then be empty. A missing
+presence detector is <code>STATUS_PROP_NOT_FOUND</code>, not false. A failed read must
+not masquerade as battery removal, initialization, or an empty successful
+measurement.</p>
+<p>There is no separate support-discovery table: clients can discover individual
+support with their first multi-get and omit <code>STATUS_PROP_NOT_FOUND</code> fields
+from subsequent polls. That result is fixed for a firmware/hardware
+configuration; rediscover after reconnecting or updating firmware.
+An empty value or acquisition failure does not mean unsupported and must not
+cause the client to drop that property from future polls.</p>
+<p>Within a multi-get, each result occupies its normal position. A failed gauge
+read need not suppress a successful external-power reading from the charger.
+Correlated fields that depend on the failed read all report failure.
+<code>PROP_BATTERY</code> retains its existing rules, including its own failure behavior;
+the diagnostic properties do not redefine its empty or omitted-field meanings.</p>
+<p>Mutations (<code>SET</code>, <code>INSERT</code>, <code>REMOVE</code>) return <code>STATUS_INVALID_ARGUMENT</code> for
+implemented properties and <code>STATUS_PROP_NOT_FOUND</code> for unsupported properties.
+Reads do not unseal, reset,
+calibrate, configure, or otherwise change the gauge or charger.
+This restriction applies to the scalar diagnostics (4944–4956); the separate
+<a href="#prop-battery-gauge-config">configuration snapshot</a> permits temporary access unlocking.</p>
+<h4 id="shared-acquisition-within-a-multi-get"><a class="header" href="#shared-acquisition-within-a-multi-get">Shared acquisition within a multi-get</a></h4>
+<p>The battery read group contains <code>PROP_BATTERY</code> and properties
+4944–4958. A device implementing any diagnostic property follows these rules
+for the supported members of that group. Unsupported members retain their
+<code>STATUS_PROP_NOT_FOUND</code> results and require no acquisition:</p>
+<ol>
+<li>A single-property read acquires the requested live reading when serviced.</li>
+<li>A multi-get containing battery-group properties acquires all requested
+live battery values in one pass when that group is serviced. All occurrences
+of those properties, including duplicate keys, use that pass’s results.</li>
+<li>Only the requested measurements and their dependencies need to be read.
+Reading external-power presence alone must not require successful gauge communication.</li>
+<li>Semantic flags and raw status words come from the same register reads.
+The device must not reread a status word separately for each derived flag.</li>
+<li>The sample is scoped to that request. It is discarded on completion,
+cancellation, or session reset; an unrelated later read must not reuse it.
+Concurrent requests may share an acquisition that is already in flight.</li>
+</ol>
+<p>This is a battery-group guarantee, not general multi-get atomicity. Registers
+are often read sequentially and may update internally during acquisition; one
+pass does not promise a hardware-latched, simultaneous sample. Board adapters
+should use available latching or bounded consistency checks where required by
+their gauge, and report failure if they cannot obtain a usable result.</p>
+<p>Metadata such as gauge format may come from the fixed board configuration.
+Read-only design capacity may be configured or learned inside the gauge; it
+must not be confused with a writable ULCP setting. Battery values are excluded
+from saved state, and save/restore does not roll telemetry back.</p>
+<p>Node Management retransmissions retain the existing at-most-once semantics:
+retrying an exchange returns its retained response, rather than taking a new
+sample. A new monitoring poll is a new exchange with a new token. Any cursor
+continuations read the retained response from that same acquisition.</p>
+<h4 id="raw-gauge-formats-and-the-pager-mapping"><a class="header" href="#raw-gauge-formats-and-the-pager-mapping">Raw gauge formats and the Pager mapping</a></h4>
+<p>Format <code>1</code> is allocated to the TI BQ27220: <code>GAUGE_STATUS</code> contains
+BatteryStatus (<code>0x0A</code>) and <code>GAUGE_OPERATION_STATUS</code> contains OperationStatus
+(<code>0x3A</code>), each represented as a compact unsigned integer. A BQ27220 raw word
+therefore occupies one or two octets, with its high zero octet omitted.
+Format <code>0</code> is reserved;
+other formats need a documented allocation before a device emits them.
+Raw-register implementations must also implement <code>GAUGE_FORMAT</code>.</p>
+<p>Clients can show unknown format identifiers and raw words as numbers, while
+continuing to use the generic measurements and flags. They must not decode
+unknown raw formats as BQ27220 bits. Raw flag bits are opaque protocol data;
+reserved hardware bits are preserved rather than rejected by the ULCP codec.</p>
+<p>The Pager adapter uses current (<code>0x0C</code>), remaining (<code>0x10</code>), full (<code>0x12</code>),
+design (<code>0x3C</code>), and requested voltage (<code>0x30</code>). BatteryStatus supplies presence
+(bit 3) and full (bit 9); OperationStatus supplies initialized (bit 5) and
+smoothing (bit 6). Requested voltage <code>0xffff</code> maps to request code 1.
+These mappings follow the <a href="https://www.ti.com/lit/ug/sluubd4/sluubd4.pdf">BQ27220 technical reference manual,
+sections 2.7–2.10 and 2.23–2.28</a>.</p>
+<p>On the Pager, external-power presence maps to USB/VBUS detection by the BQ25896;
+charger state also comes from the BQ25896. Preserve the
+distinction between charger completion, gauge full, and 100% state of charge.
+Their disagreement is useful diagnostic information.</p>
+<h3 id="prop-battery-gauge-config"><a class="header" href="#prop-battery-gauge-config">PROP 4957: <code>PROP_BATTERY_GAUGE_CONFIG</code></a></h3>
+<ul>
+<li>Type: Single-Value, Read-Only</li>
+<li>Asynchronous Updates: No</li>
+<li>Required: Optional with <code>CAP_BATTERY</code>; no separate capability</li>
+<li>Value Type: PUI format, PUI schema version, format-specific fields</li>
+<li>Post-Reset Value: Acquired on demand; never saved</li>
+</ul>
+<p>A chip-specific inspection of the gauge’s live configuration. Ordinary battery
+polling does not imply reading this property. Hosts should request it explicitly
+for diagnosis and omit it from routine monitoring. Unsupported devices return
+<code>STATUS_PROP_NOT_FOUND</code>; acquisition or access-restoration failures return
+<code>STATUS_FAILURE</code>, never a partial snapshot. Implemented mutations return
+<code>STATUS_INVALID_ARGUMENT</code>.</p>
+<p>An implementation may temporarily unlock gauge access to read configuration,
+but <strong>MUST</strong> restore its original access state before reporting success. It
+<strong>MUST NOT</strong> reset the gauge, enter a configuration-update mode, commit
+parameters, calibrate, or change learned capacity. Cleanup must finish even if
+the host disconnects or abandons the request. Other drivers must not interleave
+commands to the same gauge during inspection. Implementations bound hardware
+waits and validate returned memory addresses and checksums.
+The BQ27220 requires FULL_ACCESS for these RAM reads; merely unsealing it is
+insufficient. Entering FULL_ACCESS is distinct from entering CFGUPDATE.
+Before each security-key sequence, leave the gauge unaddressed for four seconds,
+including by ordinary telemetry polling, as described in
+<a href="https://e2e.ti.com/support/power-management-group/power-management/f/power-management-forum/1106900/faq-how-to-enter-unseal-or-full-access-modes-after-sealing-the-gauge">TI’s security-mode timing guidance</a>.
+Other devices on the same bus can continue operating. This delay also applies
+to fallback keys and restoration of an originally unsealed state.</p>
+<p>The property participates in the battery acquisition group when requested,
+including duplicate-key reuse. Scalar status words describe their acquisition
+before temporary unlocking; they must not expose a transient access state as
+the steady state. Configuration fields are sequential reads, not an atomic
+hardware snapshot. Reading this property can take longer than scalar telemetry;
+hosts should allow a thirty-second device processing budget, plus transport time.
+A successful sealed-gauge inspection normally takes about nine seconds; ordinary
+scalar polling resumes after inspection and access restoration finish.</p>
+<p>Format <strong>1</strong>, version <strong>1</strong> describes the BQ27220 RAM parameter area identified
+by TI as CEDV Profile 1, plus shared configuration and calibration parameters.
+It does not select a profile. The battery-ID field is reported verbatim.
+Every field below appears exactly once, in order, without field IDs or lengths.
+Integer fields use shortest-form PUI. The two F4 fields instead use exactly four
+little-endian octets holding the chip’s raw calibration bit pattern; hosts must
+not assume IEEE-754 encoding. These are converted from the gauge’s big-endian
+memory representation. Unknown formats or versions must not be decoded using
+this layout. Truncation, extra fields, or values exceeding the indicated
+hardware width are malformed. Version 1 contains 48 fields and is at most 148
+octets, including the two header PUIs.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Order</th><th>Field</th><th>RAM address</th><th>Hardware octets</th><th>Units / representation</th></tr>
+</thead>
+<tbody>
+<tr><td>1</td><td><code>battery_id</code></td><td><code>0x929A</code></td><td>1</td><td>bits</td></tr>
+<tr><td>2</td><td><code>operation_config_a</code></td><td><code>0x9206</code></td><td>2</td><td>bits</td></tr>
+<tr><td>3</td><td><code>operation_config_b</code></td><td><code>0x9208</code></td><td>2</td><td>bits</td></tr>
+<tr><td>4</td><td><code>cedv_config</code></td><td><code>0x929B</code></td><td>2</td><td>bits</td></tr>
+<tr><td>5</td><td><code>full_capacity</code></td><td><code>0x929D</code></td><td>2</td><td>mAh</td></tr>
+<tr><td>6</td><td><code>design_capacity</code></td><td><code>0x929F</code></td><td>2</td><td>mAh</td></tr>
+<tr><td>7</td><td><code>design_voltage</code></td><td><code>0x92A3</code></td><td>2</td><td>mV</td></tr>
+<tr><td>8</td><td><code>termination_voltage_margin</code></td><td><code>0x92A5</code></td><td>2</td><td>mV</td></tr>
+<tr><td>9</td><td><code>charging_voltage</code></td><td><code>0x91FD</code></td><td>2</td><td>mV</td></tr>
+<tr><td>10</td><td><code>taper_current</code></td><td><code>0x9201</code></td><td>2</td><td>mA</td></tr>
+<tr><td>11</td><td><code>discharge_detection</code></td><td><code>0x9228</code></td><td>2</td><td>mA</td></tr>
+<tr><td>12</td><td><code>charge_detection</code></td><td><code>0x922A</code></td><td>2</td><td>mA</td></tr>
+<tr><td>13</td><td><code>quit_current</code></td><td><code>0x922C</code></td><td>2</td><td>mA</td></tr>
+<tr><td>14</td><td><code>battery_low</code></td><td><code>0x9251</code></td><td>2</td><td>0.01%</td></tr>
+<tr><td>15</td><td><code>learning_low_temp</code></td><td><code>0x925B</code></td><td>1</td><td>raw</td></tr>
+<tr><td>16</td><td><code>overload_current</code></td><td><code>0x9264</code></td><td>2</td><td>mA</td></tr>
+<tr><td>17</td><td><code>near_full</code></td><td><code>0x926B</code></td><td>2</td><td>mAh</td></tr>
+<tr><td>18</td><td><code>reserve_capacity</code></td><td><code>0x926D</code></td><td>2</td><td>mAh</td></tr>
+<tr><td>19</td><td><code>charge_efficiency</code></td><td><code>0x926F</code></td><td>1</td><td>%</td></tr>
+<tr><td>20</td><td><code>discharge_efficiency</code></td><td><code>0x9270</code></td><td>1</td><td>%</td></tr>
+<tr><td>21</td><td><code>fixed_edv0</code></td><td><code>0x92B4</code></td><td>2</td><td>mV</td></tr>
+<tr><td>22</td><td><code>edv0_hold</code></td><td><code>0x92B6</code></td><td>1</td><td>s</td></tr>
+<tr><td>23</td><td><code>fixed_edv1</code></td><td><code>0x92B7</code></td><td>2</td><td>mV</td></tr>
+<tr><td>24</td><td><code>edv1_hold</code></td><td><code>0x92B9</code></td><td>1</td><td>s</td></tr>
+<tr><td>25</td><td><code>fixed_edv2</code></td><td><code>0x92BA</code></td><td>2</td><td>mV</td></tr>
+<tr><td>26</td><td><code>edv2_hold</code></td><td><code>0x92BC</code></td><td>1</td><td>s</td></tr>
+<tr><td>27</td><td><code>emf</code></td><td><code>0x92A7</code></td><td>2</td><td>raw</td></tr>
+<tr><td>28</td><td><code>c0</code></td><td><code>0x92A9</code></td><td>2</td><td>raw</td></tr>
+<tr><td>29</td><td><code>r0</code></td><td><code>0x92AB</code></td><td>2</td><td>raw</td></tr>
+<tr><td>30</td><td><code>t0</code></td><td><code>0x92AD</code></td><td>2</td><td>raw</td></tr>
+<tr><td>31</td><td><code>r1</code></td><td><code>0x92AF</code></td><td>2</td><td>raw</td></tr>
+<tr><td>32</td><td><code>tc</code></td><td><code>0x92B1</code></td><td>1</td><td>raw</td></tr>
+<tr><td>33</td><td><code>c1</code></td><td><code>0x92B2</code></td><td>1</td><td>raw</td></tr>
+<tr><td>34</td><td><code>age_factor</code></td><td><code>0x92B3</code></td><td>1</td><td>raw</td></tr>
+<tr><td>35</td><td><code>flag_config_a</code></td><td><code>0x927F</code></td><td>2</td><td>bits</td></tr>
+<tr><td>36</td><td><code>flag_config_b</code></td><td><code>0x9281</code></td><td>1</td><td>bits</td></tr>
+<tr><td>37</td><td><code>full_set_voltage</code></td><td><code>0x9288</code></td><td>2</td><td>mV</td></tr>
+<tr><td>38</td><td><code>full_clear_voltage</code></td><td><code>0x928A</code></td><td>2</td><td>mV</td></tr>
+<tr><td>39</td><td><code>full_set_soc</code></td><td><code>0x928C</code></td><td>1</td><td>%</td></tr>
+<tr><td>40</td><td><code>full_clear_soc</code></td><td><code>0x928D</code></td><td>1</td><td>%</td></tr>
+<tr><td>41</td><td><code>smoothing_config</code></td><td><code>0x9271</code></td><td>1</td><td>bits</td></tr>
+<tr><td>42</td><td><code>cc_gain</code></td><td><code>0x9184</code></td><td>4</td><td>F4 bits</td></tr>
+<tr><td>43</td><td><code>cc_delta</code></td><td><code>0x9188</code></td><td>4</td><td>F4 bits</td></tr>
+<tr><td>44</td><td><code>current_deadband</code></td><td><code>0x91DE</code></td><td>1</td><td>mA</td></tr>
+<tr><td>45</td><td><code>cc_deadband</code></td><td><code>0x91DF</code></td><td>1</td><td>294 nV</td></tr>
+<tr><td>46</td><td><code>voltage_0_dod</code></td><td><code>0x92BD</code></td><td>2</td><td>mV</td></tr>
+<tr><td>47</td><td><code>voltage_50_dod</code></td><td><code>0x92C7</code></td><td>2</td><td>mV</td></tr>
+<tr><td>48</td><td><code>voltage_100_dod</code></td><td><code>0x92D1</code></td><td>2</td><td>mV</td></tr>
+</tbody>
+</table>
+</div>
+<p>Addresses and hardware widths follow <a href="https://www.ti.com/lit/ug/sluubd4a/sluubd4a.pdf">TI SLUUBD4A, table 3-2</a>.
+Bitfields and <code>raw</code> values preserve the chip representation. In particular,
+the learning-temperature code is left raw; no temperature conversion is implied.
+Fixed EDV voltages must be interpreted alongside the compensation-enable bits
+and model coefficients. CEDV bit 8 is <code>FCC_LIMIT</code>, bit 4 selects independent
+charger learning, and bit 3 enables EDV compensation. Charge-termination voltage
+is a margin below the charging voltage, not an absolute cutoff.</p>
+<p>Qmax and taper-window timing are not included: this schema exposes only the
+parameters with identified RAM locations in the cited memory map. It does not
+invent an address or substitute design capacity for an independently read Qmax.</p>
+<h3 id="prop-battery-gauge-telemetry"><a class="header" href="#prop-battery-gauge-telemetry">PROP 4958: <code>PROP_BATTERY_GAUGE_TELEMETRY</code></a></h3>
+<ul>
+<li>Type: Single-Value, Read-Only</li>
+<li>Asynchronous Updates: No</li>
+<li>Required: Optional with <code>CAP_BATTERY</code>; no separate capability</li>
+<li>Value Type: PUI format, PUI schema version, format-specific readings</li>
+<li>Post-Reset Value: Acquired on demand; never saved</li>
+</ul>
+<p>Live chip-specific readings for monitoring over USB or Node Management. Reading
+this property does not unlock, configure, calibrate, or reset the gauge. It uses
+the ordinary battery acquisition timeout and shares the request’s acquisition
+with other battery properties, including repeated keys. It does not read
+<code>PROP_BATTERY_GAUGE_CONFIG</code> implicitly. Unsupported devices return
+<code>STATUS_PROP_NOT_FOUND</code>; a failed register read returns <code>STATUS_FAILURE</code> for
+this entire property, without suppressing other successful battery properties.
+Mutations return <code>STATUS_INVALID_ARGUMENT</code> when supported. No saved alias exists.</p>
+<h4 id="format-1-version-1-bq27220-standard-commands"><a class="header" href="#format-1-version-1-bq27220-standard-commands">Format 1, version 1: BQ27220 standard commands</a></h4>
+<p>After format and version, a two-octet <strong>little-endian width bitmap</strong> precedes the
+14 readings in the order below. Bit <code>i</code> corresponds to zero-based field <code>i</code>:
+clear means one value octet, set means two. Bits 14–15 are reserved and zero.
+Each value uses unsigned little-endian or signed two’s-complement little-endian
+encoding as specified below. Senders use the shortest width that preserves the
+value and sign; receivers accept either width. For example, −100 uses <code>9C</code>,
+whereas −200 uses <code>38 FF</code>. The bitmap supplies their lengths without a length
+octet per field. The complete value occupies <strong>18–32 octets</strong>, including format,
+version, and bitmap. Missing fields, reserved width bits, and trailing data are
+malformed; unknown formats or versions must not be interpreted using this layout.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Index</th><th>Field</th><th>Register</th><th>Signed</th><th>Unit</th></tr>
+</thead>
+<tbody>
+<tr><td>0</td><td><code>raw_coulomb_count</code></td><td><code>0x22</code></td><td>Yes</td><td>mAh</td></tr>
+<tr><td>1</td><td><code>temperature</code></td><td><code>0x06</code></td><td>No</td><td>0.1 K</td></tr>
+<tr><td>2</td><td><code>internal_temperature</code></td><td><code>0x28</code></td><td>No</td><td>0.1 K</td></tr>
+<tr><td>3</td><td><code>average_current</code></td><td><code>0x14</code></td><td>Yes</td><td>mA</td></tr>
+<tr><td>4</td><td><code>average_power</code></td><td><code>0x24</code></td><td>Yes</td><td>mW</td></tr>
+<tr><td>5</td><td><code>time_to_empty</code></td><td><code>0x16</code></td><td>No</td><td>minutes</td></tr>
+<tr><td>6</td><td><code>time_to_full</code></td><td><code>0x18</code></td><td>No</td><td>minutes</td></tr>
+<tr><td>7</td><td><code>standby_current</code></td><td><code>0x1A</code></td><td>Yes</td><td>mA</td></tr>
+<tr><td>8</td><td><code>standby_time_to_empty</code></td><td><code>0x1C</code></td><td>No</td><td>minutes</td></tr>
+<tr><td>9</td><td><code>max_load_current</code></td><td><code>0x1E</code></td><td>Yes</td><td>mA</td></tr>
+<tr><td>10</td><td><code>max_load_time_to_empty</code></td><td><code>0x20</code></td><td>No</td><td>minutes</td></tr>
+<tr><td>11</td><td><code>cycle_count</code></td><td><code>0x2A</code></td><td>No</td><td>cycles</td></tr>
+<tr><td>12</td><td><code>state_of_health</code></td><td><code>0x2E</code></td><td>No</td><td>%</td></tr>
+<tr><td>13</td><td><code>charging_current</code></td><td><code>0x32</code></td><td>No</td><td>mA requested</td></tr>
+</tbody>
+</table>
+</div>
+<p>These are raw standard-command readings, available while sealed. Read presence
+and initialization flags alongside them before treating them as battery estimates.
+The wire preserves all register bits, including sentinel values:</p>
+<ul>
+<li>Time estimates of <code>65535</code> mean unavailable in the current charge/discharge
+state; they are not 65,535 minutes. Requested charging current <code>65535</code> means
+maximum requested current. Other fields retain their full numeric range.</li>
+<li><code>RawCoulombCount</code> is a signed 16-bit two’s-complement count: for example,
+register <code>0xFFEA</code> means −22 mAh and encodes in one value octet, <code>EA</code>.
+It counts discharge upward and charge downward; the gauge clears
+it when it recognizes full charge. It is neither remaining capacity nor a
+lifetime charge counter. Do not assume continuity across gauge resets or the
+full-charge event when integrating samples.</li>
+<li><code>Temperature</code> is the configured gauging source. <code>InternalTemperature</code> is the
+IC’s internal sensor, not necessarily cell temperature. Celsius is raw / 10 − 273.15.</li>
+<li>Current and power are positive during charge and negative during discharge.
+<code>ChargingCurrent</code> is a request, not measured current or charger configuration.</li>
+<li><code>CycleCount</code> uses the gauge’s configured accumulated-discharge threshold.
+<code>StateOfHealth</code> is its full/design-capacity ratio estimate, not independent
+evidence of cell condition. Neither resets merely because this property is read.</li>
+</ul>
+<p>Register definitions follow <a href="https://www.ti.com/lit/ug/sluubd4a/sluubd4a.pdf">TI SLUUBD4A, standard commands</a>.
+Units in the table are TI’s documented register units, not a promise of calibrated
+measurement accuracy. The Pager’s observed <code>AveragePower</code> scale disagrees with
+the stated mW unit; see the <a href="https://github.com/darconeous/umsh/blob/main/docs/hardware/lilygo-t-lora-pager-hardware.md">hardware qualification notes</a>.
+<code>umshctl battery --gauge-telemetry --watch --json</code> includes these readings in
+normal monitoring, retains raw values, labels unavailable estimates, and adds
+Celsius conversions. <code>umshctl get battery-gauge-telemetry</code> reads this property alone.</p>
 <h3 id="prop-mac-repeater-enabled"><a class="header" href="#prop-mac-repeater-enabled">PROP 70: <code>PROP_MAC_REPEATER_ENABLED</code></a></h3>
 <ul>
 <li>Type: Single-Value, Read-Write</li>
@@ -1369,6 +1813,47 @@ state and not the physical behavior of the device.</p>
 <p>The property is live device-domain state. It is never included in a saved
 snapshot, is not changed by <code>CMD_RESTORE</code>, and is <code>ALERT_NONE</code> after
 every reset—a device that loses power mid-alert comes back quiet.</p>
+<h2 id="display-motion-wake"><a class="header" href="#display-motion-wake">Display motion wake</a></h2>
+<p><code>CAP_DISPLAY_MOTION_WAKE</code> (59) means the device supports waking its display for
+movement qualified by screen-up orientation. It does not promise that the sensor
+is currently available. Sensor failures suppress automatic wake; normal device
+controls remain available.</p>
+<h3 id="prop_display_motion_wake_enabled"><a class="header" href="#prop_display_motion_wake_enabled">PROP_DISPLAY_MOTION_WAKE_ENABLED</a></h3>
+<p>Property 4875; BOOL; device domain; Get, Set, and unsolicited <code>CMD_PROP_IS</code>
+notification when changed. Requires <code>CAP_DISPLAY_MOTION_WAKE</code>. The default is
+true on supported platforms. Unsupported platforms omit the capability and
+answer Get and Set with <code>STATUS_UNIMPLEMENTED</code>. Malformed values use the normal
+BOOL validation and return <code>STATUS_INVALID_ARGUMENT</code>.</p>
+<p>This property enables the display’s motion policy. It does not control global
+accelerometer power: another consumer may still need movement detection when
+this property is false. It is included in <code>CMD_SAVE</code>, restored with the device
+configuration, and has a platform default of true after clearing saved state.
+<code>CMD_RST</code> follows the existing saved-state restore rules. A saved snapshot
+missing the property uses the platform default. A local toggle updates an
+existing saved snapshot, following the other local switches; it does not create
+a snapshot when none exists.</p>
+<p>The display wakes only from its fully lapsed state. Movement while active or
+dim consumes the episode without refreshing the attention timeout. Disabling
+the property cancels pending motion wakes. Explicit shutdown retains the
+platform’s existing button wake behavior.</p>
+<p>The Pager requires fresh movement followed by at least 200 ms of consistently
+screen-up acceleration. Its orientation range extends to 45 degrees from
+horizontal with the keyboard lower than the screen, and 30 degrees sideways or
+in the opposite direction. Combined tilts share an elliptical angular allowance.
+Verification uses a bounded one-second window. Rearming requires two seconds of
+sensor-reported stillness, or an outside orientation interval with exit thresholds
+of 55 degrees in the reading direction and 40 degrees otherwise, followed by
+fresh movement and screen-up verification. Sensor reporting latency
+can make the necessary physical pause longer. Flat, screen-up pocket movement
+cannot be distinguished from a pickup by orientation alone. This version adds
+no raw motion telemetry, threshold controls, or GPS automation properties.</p>
+<p>To suppress small vibrations, a native movement report must also be supported
+by a filtered acceleration-vector change of at least 0.12 g sustained for 80 ms
+within that verification window. The reference comes from its first three valid
+samples; small oscillations do not accumulate. This check belongs to the display
+policy and does not suppress native movement observations for other consumers.
+Exceptionally slow pickups, or pickups completed before verification begins,
+may not qualify. This does not identify every kind of bed or pocket movement.</p>
 
                     </main>
 

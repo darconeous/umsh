@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-a36d942b.js";
+            window.path_to_searchindex_js = "searchindex-e3fe62b3.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-fed4626c.js"></script>
+        <script src="toc-8b6941ec.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -238,6 +238,11 @@ in front of it, not what its operator asked for. A restored lease or a
 restored association would be a claim about a network the device may
 not be near. The Wi-Fi configuration that produces them, credentials
 included, is saved, which is what lets a device rejoin unattended.</p>
+<p>The <a href="ulcp-bridge.html">bridge client</a> enable flag, host, port, and server
+identity pin are saved as device configuration. Its live link state and
+tunnel queues are excluded. The client authenticates using the independently
+persisted device identity; saving bridge configuration does not copy its
+private key into the snapshot.</p>
 </li>
 <li>
 <p>At boot, if a snapshot exists, the device <strong>MUST</strong> restore it and resume

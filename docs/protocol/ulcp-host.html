@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-a36d942b.js";
+            window.path_to_searchindex_js = "searchindex-e3fe62b3.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-fed4626c.js"></script>
+        <script src="toc-8b6941ec.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -721,6 +721,8 @@ the oldest entry when full; a frame that nevertheless cannot be stored
 (for example, one exceeding the device’s buffer) is not acknowledged, so
 the sender keeps retrying until the host returns.</li>
 </ol>
+<p>A delegated ACK also requires that no unconsumed source-route hints remain. An early overheard copy may be queued without an ACK; the first eligible duplicate can then supply the ACK without another queue entry. <code>RX_FLAG_ACKED</code> requires successful radio transmission.</p>
+<p>Delegated ACKs follow the <a href="beacons.html#scoping-flood-hops-to-a-known-route">return-path guidance</a>, mirror a requested trace, and preserve the request’s region codes on both flooded and source-routed returns.</p>
 <p><strong>Duplicates.</strong> An authenticated frame that replay detection identifies as
 a previously accepted frame—typically a retransmission whose original
 ack was lost—is not queued again, but the device <strong>MAY</strong> retransmit its
