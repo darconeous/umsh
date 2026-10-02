@@ -109,8 +109,9 @@ constants (UF2 family, application base, bootloader volume) are mirrored from
 that script, which stays authoritative.
 
 Set `status` to `proven`, `partial`, `untested`, or `planned`; the badge on the
-card follows from it. A board with no `[boards.flash]` table is one no firmware
-exists for: its flash button is disabled and it is left off the flashing page. Put the photo in `static/images/boards/`, name it in the
+card follows from it. A board with no `[boards.flash]` table has no downloadable
+firmware release: its flash button is disabled and it is left off the flashing
+page. Put the photo in `static/images/boards/`, name it in the
 `photo` field, and record its source in that directory's `CREDITS.md`. A board
 with an empty `photo` renders a labeled placeholder rather than a broken
 image.

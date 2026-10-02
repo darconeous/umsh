@@ -5,9 +5,9 @@
     { "id": "sensecap-solar", "model_id": 3, "name": "SenseCAP Solar Node P1", "vendor": "Seeed Studio", "photo": "board-sensecap-solar" },
     { "id": "wio-tracker-l1", "model_id": 4, "name": "Wio Tracker L1", "vendor": "Seeed Studio", "photo": "board-wio-tracker-l1" },
     { "id": "xiao-nrf52", "model_id": 5, "name": "XIAO nRF52840 + Wio-SX1262 Kit", "vendor": "Seeed Studio", "photo": "board-xiao-nrf52" },
-    { "id": "heltec-v2", "model_id": 6, "name": "WiFi LoRa 32 V2", "vendor": "Heltec", "photo": null },
+    { "id": "heltec-v2", "model_id": 6, "name": "WiFi LoRa 32 V2", "vendor": "Heltec", "photo": "board-heltec-v2" },
     { "id": "heltec-v3", "model_id": 7, "name": "WiFi LoRa 32 V3", "vendor": "Heltec", "photo": "board-heltec-v3" },
     { "id": "tbeam-supreme", "model_id": 8, "name": "T-Beam Supreme", "vendor": "LilyGO", "photo": "board-tbeam-supreme" },
-    { "id": "tlora-pager", "model_id": 9, "name": "T-LoRa Pager", "vendor": "LilyGO", "photo": null }
+    { "id": "tlora-pager", "model_id": 9, "name": "T-LoRa Pager", "vendor": "LilyGO", "photo": "board-tlora-pager" }
   ]
 }

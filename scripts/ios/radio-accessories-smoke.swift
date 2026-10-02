@@ -34,11 +34,14 @@ struct RadioAccessoriesSmokeTest {
         precondition(catalog.board(modelID: 4)?.photo == "board-wio-tracker-l1")
         precondition(catalog.board(modelID: 0) == nil && catalog.board(modelID: nil) == nil)
         precondition(catalog.board(modelID: 0xFF00) == nil)
-        precondition(catalog.board(modelID: 6) != nil && catalog.board(modelID: 6)?.photo == nil,
-                     "A board without a photo keeps the generic image")
+        precondition(catalog.board(modelID: 6)?.photo == "board-heltec-v2")
+        precondition(catalog.board(modelID: 9)?.photo == "board-tlora-pager")
         let assets = repoRoot.appendingPathComponent("apps/ios/UMSH/Assets.xcassets")
         for modelID in UInt16.min...UInt16.max {
-            guard let photo = catalog.board(modelID: modelID)?.photo else { continue }
+            guard let board = catalog.board(modelID: modelID) else { continue }
+            guard let photo = board.photo else {
+                preconditionFailure("Every cataloged board needs a photo: \(board.name)")
+            }
             precondition(FileManager.default.fileExists(
                 atPath: assets.appendingPathComponent("\(photo).imageset/Contents.json").path
             ), "boards.json names a photo the asset catalog lacks: \(photo)")

@@ -76,8 +76,11 @@ the picker uses the advertised/cached name or the system label. This app-side
 cache does not rename the accessory in iOS Settings.
 
 The system setup picker titles a new radio by its board and shows the board's
-photo, from `docs/hardware/boards.json`. To add a board, add an entry there and,
-if it has a photo, an image set in `Assets.xcassets` named by the entry's `photo`.
+photo, from `docs/hardware/boards.json`. Every cataloged board has a photo. To add
+a board, add an entry there and an image set in `Assets.xcassets` named by the
+entry's `photo`. Use a transparent 180×120-point canvas at 2× and 3×, and record
+the manufacturer source in `site/static/images/boards/CREDITS.md`. Unknown
+models retain the generic radio image.
 
 The simulator retains its development transport, and iOS-on-Mac retains the
 CoreBluetooth discovery fallback. These environments do not exercise the

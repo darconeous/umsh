@@ -195,6 +195,26 @@ quirks = [
 ]
 
 [[boards]]
+id = "heltec-v2"
+name = "WiFi LoRa 32 V2"
+vendor = "Heltec"
+category = "devkit"
+status = "partial"
+status_note = "Firmware builds from source; hardware validation and downloadable releases are pending."
+blurb = """
+An earlier Heltec development board with an OLED display, Micro-USB, and \
+exposed headers. It uses the classic ESP32 and an SX1276/SX1278 radio."""
+mcu = "Espressif ESP32"
+radio = "Semtech SX1276/SX1278, depending on frequency variant"
+gnss = "None"
+display = "0.96\" OLED, 128×64"
+battery = "LiPo connector with onboard charger"
+extras = "Micro-USB, exposed GPIO headers"
+vendor_url = "https://heltec.org/project/wifi-lora-32v2/"
+photo = "heltec-v2.png"
+# No web-flasher entry: the classic ESP32 is not in the release artifacts.
+
+[[boards]]
 id = "heltec-v3"
 name = "WiFi LoRa 32 V3"
 vendor = "Heltec"
@@ -253,11 +273,6 @@ dfu_entry = "Double-tap the reset button on the module."
 quirks = [
 ]
 
-# ─── Planned: documented, but no firmware yet ───────────────────────────
-#
-# These carry no [boards.flash] table, which is what keeps them off the
-# flashing page and disables their flash button.
-
 [[boards]]
 id = "tlora-pager"
 name = "T-LoRa Pager"
@@ -276,6 +291,7 @@ display = "ST7796 TFT, 480×222"
 battery = "1500 mAh Li-ion with fuel gauge"
 extras = "Backlit QWERTY keyboard, rotary encoder, haptics, SD card"
 vendor_url = "https://lilygo.cc/products/t-lora-pager"
+photo = "tlora-pager.png"
 
 [boards.flash]
 make_target = "flash-tlora-pager"
@@ -288,6 +304,7 @@ quirks = [
   "The initial image uses the existing 4 MB UMSH layout; additional fitted flash is unused.",
 ]
 
+# Planned boards have no [boards.flash] table or downloadable firmware.
 [[boards]]
 id = "tdeck"
 name = "T-Deck"
