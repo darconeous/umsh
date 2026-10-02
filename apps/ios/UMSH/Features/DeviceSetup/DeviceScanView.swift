@@ -60,7 +60,10 @@ struct DeviceScanView: View {
             } footer: {
                 footer
             }
-            if RadioAccessories.usesSystemPicker { RadioAccessoryActions() }
+            if RadioAccessories.usesSystemPicker {
+                RadioAccessoryActions(onFinished: controller.selectAuthorizedRadio)
+                    .disabled(controller.isBusy)
+            }
         }
         // Animate membership changes, not name or fallback signal updates.
         .animation(UMSHAnimation.list, value: controller.devices.map(\.id))

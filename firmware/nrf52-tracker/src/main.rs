@@ -166,6 +166,7 @@ mod firmware {
     use embassy_sync::channel::Channel;
     use embassy_sync::mutex::Mutex;
     use embassy_sync::signal::Signal;
+    use embassy_sync::watch::Watch;
     use embassy_time::{Delay, Duration, Instant, Timer};
     use embassy_usb::class::cdc_acm::{CdcAcmClass, State};
     use embassy_usb::{Builder, Config};
@@ -448,6 +449,18 @@ mod firmware {
     const DEV_MODEL: &str = "Seeed Wio Tracker L1 / L1 Pro";
     #[cfg(feature = "board-xiao-nrf52")]
     const DEV_MODEL: &str = "Seeed XIAO nRF52840 + Wio-SX1262 Kit";
+
+    /// The same hardware, as the model identifier in pairing advertisements.
+    #[cfg(feature = "board-techo")]
+    const BLE_MODEL_ID: u16 = ble_privacy::model::LILYGO_T_ECHO;
+    #[cfg(feature = "t1000e")]
+    const BLE_MODEL_ID: u16 = ble_privacy::model::SEEED_SENSECAP_T1000_E;
+    #[cfg(feature = "board-sensecap-solar")]
+    const BLE_MODEL_ID: u16 = ble_privacy::model::SEEED_SENSECAP_SOLAR_P1;
+    #[cfg(feature = "board-wio-tracker-l1")]
+    const BLE_MODEL_ID: u16 = ble_privacy::model::SEEED_WIO_TRACKER_L1;
+    #[cfg(feature = "board-xiao-nrf52")]
+    const BLE_MODEL_ID: u16 = ble_privacy::model::SEEED_XIAO_NRF52840_KIT;
 
     const TX_PREAMBLE_SYMBOLS: u16 = 32;
 
@@ -1004,6 +1017,9 @@ mod firmware {
     type DeviceName = heapless::Vec<u8, { MAX_DEVICE_NAME_LEN }>;
     static DEVICE_NAME: Mutex<ThreadModeRawMutex, DeviceName> = Mutex::new(DeviceName::new());
     static DEVICE_NAME_READY: AtomicBool = AtomicBool::new(false);
+    // Retained readiness: rebuilt advertisers can observe it again, without
+    // postponing controller/stack initialization or consuming another task's wakeup.
+    static BOOT_SETTINGS_READY: Watch<ThreadModeRawMutex, (), 1> = Watch::new();
 
     /// Snapshot the live device name for the device node's
     /// advertisements. Falls back to the (FICR-suffixed) default until
@@ -1484,7 +1500,8 @@ mod firmware {
     /// the live-connection teardown and the status line cannot disagree
     /// about what it means to be reachable.
     fn advertising_permitted() -> bool {
-        ADV_ALLOWED.load(Ordering::Acquire)
+        BOOT_SETTINGS_READY.try_get().is_some()
+            && ADV_ALLOWED.load(Ordering::Acquire)
             && BLE_ENABLED.load(Ordering::Acquire)
             && !BLE_CONTROLLER_STATE.failed()
     }
@@ -2086,6 +2103,11 @@ mod firmware {
             }
         }
 
+        fn boot_settings_ready(&mut self) {
+            debug_log(format_args!("boot settings ready; BLE startup permitted"));
+            BOOT_SETTINGS_READY.sender().send(());
+        }
+
         fn publish_dev_domain(&mut self, snapshot: driver::DevDomainSnapshot) {
             // The zone and the positioning policy ride the device-domain
             // mirror, so a host write, a boot restore, and a `CMD_RST`
@@ -2376,7 +2398,8 @@ mod firmware {
     async fn advertise<'values, C: Controller>(
         stack: &Stack<'_, C, DefaultPacketPool>,
         peripheral: &mut Peripheral<'values, C, DefaultPacketPool>,
-    ) -> Result<Advertiser<'values, C, DefaultPacketPool>, BleHostError<C::Error>> {
+    ) -> Result<(Advertiser<'values, C, DefaultPacketPool>, Option<u64>), BleHostError<C::Error>>
+    {
         if !BLE_CONTROLLER_STATE.wait_for_privacy().await {
             return Err(trouble_host::Error::InvalidValue.into());
         }
@@ -2384,7 +2407,9 @@ mod firmware {
         let data = ble_privacy::advertisement(
             gatt::SERVICE_UUID.to_le_bytes(),
             &name,
+            BLE_MODEL_ID,
             pairing_window_open(),
+            Instant::now().as_millis(),
         );
         // Trouble skips this HCI command for an empty slice. Explicitly clear
         // the old scan response before installing a nameless advertisement.
@@ -2394,8 +2419,8 @@ mod firmware {
         peripheral
             .advertise(
                 &AdvertisementParameters {
-                    interval_min: Duration::from_micros(ble_privacy::ADVERTISING_INTERVAL_US),
-                    interval_max: Duration::from_micros(ble_privacy::ADVERTISING_INTERVAL_US),
+                    interval_min: Duration::from_micros(data.interval_us),
+                    interval_max: Duration::from_micros(data.interval_us),
                     ..Default::default()
                 },
                 Advertisement::ConnectableScannableUndirected {
@@ -2404,6 +2429,7 @@ mod firmware {
                 },
             )
             .await
+            .map(|advertiser| (advertiser, data.refresh_at_ms))
     }
 
     fn utf8_prefix_len(bytes: &[u8], maximum: usize) -> usize {
@@ -3156,6 +3182,13 @@ mod firmware {
         peripheral: &mut Peripheral<'_, C, DefaultPacketPool>,
         server: &UlcpServer<'_>,
     ) {
+        // Only advertising waits for restored settings. The runner and its
+        // synchronous security initialization keep their original startup order.
+        BOOT_SETTINGS_READY
+            .receiver()
+            .expect("one BLE advertiser")
+            .get()
+            .await;
         loop {
             if BLE_RESTART_PENDING.load(Ordering::Acquire) || BLE_CONTROLLER_STATE.failed() {
                 return;
@@ -3165,8 +3198,8 @@ mod firmware {
                 continue;
             }
             sync_gap_device_name(server, store).await;
-            let advertiser = match advertise(stack, peripheral).await {
-                Ok(advertiser) => advertiser,
+            let (advertiser, refresh_at_ms) = match advertise(stack, peripheral).await {
+                Ok(result) => result,
                 Err(error) => {
                     debug_log(format_args!("advertising error={error:?}"));
                     Timer::after_millis(500).await;
@@ -3181,7 +3214,18 @@ mod firmware {
             }
             match select3(
                 advertiser.accept(),
-                ADV_POLICY_CHANGED.wait(),
+                async {
+                    // Reconfigure only after advertise() has completed. A
+                    // boot deadline crossed during HCI setup fires immediately.
+                    select(ADV_POLICY_CHANGED.wait(), async {
+                        if let Some(deadline) = refresh_at_ms {
+                            Timer::at(Instant::from_millis(deadline)).await;
+                        } else {
+                            core::future::pending::<()>().await;
+                        }
+                    })
+                    .await;
+                },
                 DEVICE_NAME_CHANGED.wait(),
             )
             .await

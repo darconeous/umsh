@@ -39,8 +39,9 @@ the ULCP service UUID and display its name.
 AccessorySetupKit manages authorization and the saved list. CoreBluetooth
 still owns connections, GATT traffic, the selected companion's pending
 connection request, background Bluetooth mode and state restoration. Opening
-either list starts a foreground scan without a service filter, so flags-only
-advertisements can qualify. The list admits only authorized identifiers.
+either list starts a foreground scan without a service filter, so older flags-only
+advertisements can still qualify. Current firmware advertises the ULCP UUID in
+both modes. The list admits only authorized identifiers.
 Scanning stops when the list closes or the app becomes inactive; it resumes
 with an empty sightings list if the open picker returns to the foreground.
 Administrative visits do not select a
@@ -74,15 +75,38 @@ over cached Bluetooth or system accessory names. Until a name has been learned,
 the picker uses the advertised/cached name or the system label. This app-side
 cache does not rename the accessory in iOS Settings.
 
+The system setup picker titles a new radio by its board and shows the board's
+photo, from `docs/hardware/boards.json`. To add a board, add an entry there and,
+if it has a photo, an image set in `Assets.xcassets` named by the entry's `photo`.
+
 The simulator retains its development transport, and iOS-on-Mac retains the
 CoreBluetooth discovery fallback. These environments do not exercise the
 iPhone system picker. The implementation uses iOS 18 APIs.
 
 Run `scripts/ios/verify-radio-accessories.sh` for host checks of migration,
-authorization, foreground availability, name selection, removal and stale-update
-handling. Physical iPhone qualification
-is pending, including migration of a flags-only advertiser, pairing ceremony,
-Settings removal, and locked-phone background reconnection. See
+authorization, foreground availability, name selection, partial discovery reports,
+picker update recovery, removal and stale-update handling. For an empty system
+picker, Xcode's `radio discovery`, `updating radio picker`, `radio picker update`
+and `radio picker finished` messages distinguish missing discovery callbacks
+from filtered reports or failed display updates. They omit device names and IDs.
+
+For truncated accessory names, run a Debug build on an iPhone and filter Xcode's
+console for `radio name trace`. Capture one attempt from `begin` through pairing
+and the subsequent `authenticated-name` event. These Debug-only logs include
+exact, quoted names and UTF-8 byte counts: `discovery` records the advertised name,
+`submit-item` records the name passed to Apple's picker, and `accessoryAdded` and
+`inventory` record Apple's saved display name. `authenticated-name` records the
+full name read over the authorized connection; it updates only the app's cache.
+Session tags, sequence numbers, elapsed milliseconds, entry indexes and update
+attempts show the ordering. Object tokens distinguish discovery objects, while
+`P1`, `P2`, etc. label Bluetooth identifiers locally within the trace (a nil
+identifier before authorization is expected). `update-returned` only means the
+API call returned; `update-callback` records actual completion, including stale
+callbacks. These logs expose configured names in the Debug console, but do not
+log persistent Bluetooth identifiers or run in Release/TestFlight builds.
+
+Physical iPhone qualification is pending, including migration of a flags-only
+advertiser, pairing ceremony, Settings removal, and locked-phone background reconnection. See
 [ADR 0008](../../docs/architecture/decisions/ios/0008-accessory-setup.md) for
 the lifecycle and qualification cases.
 
@@ -212,6 +236,18 @@ diagnostic polling. The decoder and local/mesh request handling live in
 `umsh-mobile-core`, using the shared ULCP wire codecs.
 
 ## TestFlight
+
+On iOS 26.1 and later, new accessory setup uses filtered AccessorySetupKit
+discovery to set the accessory's display name from its pairing advertisement.
+Service-only advertisements are not offered for new setup. The configured
+name may be shortened to the firmware's advertising limit. Existing accessory
+names are not changed; the app's authenticated name cache remains separate from
+the name saved by iOS. Older iOS versions retain the predefined picker name.
+
+Verify on a physical iPhone that two radios with different configured names
+appear separately, that the selected name is retained in Accessories settings,
+and that cancellation, retry, migration and nameless advertisements are handled
+correctly. Host tests and builds cannot establish the system picker's behavior.
 
 AccessorySetupKit authorizes access per radio; the app does not depend on a
 Bluetooth permission toggle in its Settings page. Before the first radio is

@@ -738,6 +738,10 @@ pub trait DeviceEnv {
     /// Publish the session's device name to the board's consumers
     /// (advertising data, device node, UI).
     async fn publish_device_name(&mut self, name: &str);
+    /// Boot restoration (including fallback/default selection) and publication
+    /// of the authoritative name and settings have completed. Transports may
+    /// now become discoverable. Called once, never for a runtime reset/write.
+    fn boot_settings_ready(&mut self) {}
     /// Deliver a device-domain mirror to the board's device node.
     fn publish_dev_domain(&mut self, snapshot: DevDomainSnapshot);
     /// Start or stop the board's locate indication (`PROP_ALERT`).
@@ -1567,9 +1571,9 @@ where
     let mut emitter = Emitter::new();
     let mut arbitration = SessionArbitration::new(rt.session_gen.load(Ordering::Acquire));
     // Last device-domain generation mirrored to the device node.
-    // Matches the session's initial value; the first mutation (or a
-    // boot restore) publishes the first snapshot.
-    let mut dev_domain_synced: u32 = session.dev_domain_version();
+    // Force the first publication even on a bare device with no identity or
+    // snapshot, then use generation changes for subsequent publications.
+    let mut dev_domain_synced: u32 = session.dev_domain_version().wrapping_sub(1);
     // Shared staging buffer for the durable-write effect arms
     // (save/wipe). Held across their persist awaits, so as a
     // loop-lifetime local it costs one future slot instead of one
@@ -1649,7 +1653,9 @@ where
     // configured, where the answer is "the post-reset defaults" rather than
     // silence: the boot-time GNSS clock read waits on exactly this, and on
     // a bare device it would otherwise wait for a host that may never come.
+    env.publish_device_name(session.device_name()).await;
     sync_dev_domain(&session, &mut dev_domain_synced, &mut env);
+    env.boot_settings_ready();
 
     loop {
         // Resolve the next event in its own statement so the select's
@@ -2034,6 +2040,10 @@ where
         }
     }
 }
+
+#[cfg(test)]
+#[path = "driver_boot_tests.rs"]
+mod boot_tests;
 
 #[cfg(test)]
 mod ble_reply_tests {

@@ -197,6 +197,19 @@ final class AdminFlowController {
 
     // MARK: - Selection
 
+    /// Pairing already selected this device. It needn't advertise again to
+    /// become a selectable scan row before the administrative session starts.
+    func selectAuthorizedRadio(_ id: UUID) async throws {
+        let inventory = try await RadioAccessories.shared.prepareSelection(id)
+        guard let device = inventory.radios.first(where: { $0.id == id }) else {
+            throw RadioConnectionError.operationRejected("This radio is no longer authorized.")
+        }
+        guard !isCompanion(device) else {
+            throw RadioConnectionError.operationRejected("Manage this phone's radio from its companion radio screen.")
+        }
+        await select(device)
+    }
+
     func select(_ device: DiscoveredRadio) async {
         guard busyDevice == nil else { return }
         busyDevice = device.id

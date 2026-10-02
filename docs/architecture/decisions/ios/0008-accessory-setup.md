@@ -15,7 +15,7 @@ advertisement and no known active connection. Missing advertisements remove
 the row without revoking authorization. Adding a new radio is an explicit system-picker action,
 matching the ULCP service UUID advertised during pairing. The descriptor asks
 the system to perform Bluetooth LE pairing. Outside pairing, the radio can
-continue advertising generic flags with a rotating address. Selecting an
+continue advertising generic flags and the ULCP UUID with a rotating address. Selecting an
 authorized radio retrieves its peripheral by identifier and connects directly.
 While a picker is open and the app is active, its transport scans with no
 service UUID filter and duplicate reports enabled. A second authorization
@@ -35,6 +35,43 @@ Reconciliation removes names for revoked accessories. The configured name
 wins over advertising, peripheral-cache and ASK display names; a system label
 is the final fallback before a configured name is learned. This cache does not
 change iOS Settings names.
+
+On iOS 26.1 and later, addition uses filtered discovery and constructs an
+`ASDiscoveredDisplayItem` for each radio in pairing mode. The system reports a
+radio once, with its advertising data only; the scan response, which carries
+the configured name, does not reach the app. A pairing advertisement therefore
+carries the board's model identifier as manufacturer data under company
+identifier `0xFFFF`. The app declares that identifier in
+`NSAccessorySetupBluetoothCompanyIdentifiers`; without the declaration the
+system does not report a radio that advertises it. The item's title is an
+advertised name when the advertising data has one (older firmware sends an
+eight-byte prefix), otherwise the board's name, otherwise "UMSH radio". The
+system saves that title as the accessory name and shows the scan-response name
+beneath it. Board names and product photos come from
+`docs/hardware/boards.json`, bundled with the app; a board without a photo, or
+an unknown model identifier, keeps the generic image. Discoveries with neither
+a name nor a model identifier are excluded, because the service UUID alone is
+also advertised outside pairing; a later partial report does not erase a name
+already observed in the same picker. Updates retain
+separate entries for multiple peripherals, coalesce discovery bursts, and are scoped to
+the current picker generation. Discovery retains the system accessory object
+without requiring a Bluetooth identifier before authorization; equal names do
+not merge distinct accessories. A newer system object is republished even if
+its accessory identity and name compare equal. Updates wait for picker
+presentation and run after returning from the discovery callback. A newer
+snapshot does not wait for an older update's completion callback. Missing
+callbacks do not establish failure; explicit update errors retry twice without
+requiring another discovery callback. Stale completions cannot affect a newer submission.
+Picker diagnostics distinguish discovery reports, named reports, submitted
+entries, update completion and failure. Migration keeps its saved name and completion
+path. Older iOS releases use the predefined display item. Existing accessories
+are not renamed by this flow.
+
+Completing system setup from a selection screen selects the returned radio
+directly, without requiring another advertisement or a second tap on a list
+row. Companion selection and onboarding continue their existing selection
+flow; administrative selection opens that device without changing the companion.
+Canceling setup leaves the current selection unchanged.
 
 The two connection purposes share authorization, not transport ownership. A
 companion selection persists the reconnect target; an administrative selection
@@ -110,8 +147,8 @@ supported iOS release and a current release:
 
 - Fresh installation: cancel and retry Add; pair each tested firmware family;
   select the result for companion and administrative use.
-- Upgrade an older app with a saved bond to old firmware and to new flags-only
-  privacy firmware. Try migration without opening pairing, then with pairing
+- Upgrade an older app with a saved bond to old firmware, flags-only privacy
+  firmware, and current UUID-advertising firmware. Try migration without opening pairing, then with pairing
   open if needed. Confirm cancellation/relaunch/retry and no premature central
   creation. Distinguish erased firmware bonds from failed app authorization.
 - Upgrade with no saved companion but legacy administrative bonds. Add these
@@ -128,11 +165,18 @@ supported iOS release and a current release:
 - Verify that only authorized, recently advertising, connectable radios appear;
   stale, connected and revoked radios must disappear. Test foreground return,
   Bluetooth off/on, renames of two radios, relaunch and removal of cached names.
-  Confirm flags-only RPA advertisements reach the unfiltered foreground scan.
+  Confirm both legacy flags-only and current UUID-bearing RPA advertisements
+  reach the unfiltered foreground scan.
   Keep the companion's pending connection and verify locked-phone reconnection
   through absence and RPA rotation against the existing 30-second target.
 - Add another radio while the companion is connected or reconnecting; inspect
   background activity for app scanning loops or extra periodic wakeups.
+- On iOS 26.1+, add two radios with different configured names; verify picker
+  titles, photos and subtitles, and the name retained in Accessories settings.
+  Test a board without a photo, an unknown model identifier, truncated UTF-8
+  names, older firmware advertising a shortened name, pairing expiry,
+  cancellation, retry, and migration after an addition. Existing accessory
+  names must remain unchanged. Repeat setup on an older supported iOS release.
 
 ## Sources
 

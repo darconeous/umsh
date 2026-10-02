@@ -1,11 +1,142 @@
 import Foundation
 
+private final class EqualAccessory: NSObject {
+    let identity: Int
+    init(_ identity: Int) { self.identity = identity }
+    override func isEqual(_ object: Any?) -> Bool {
+        (object as? EqualAccessory)?.identity == identity
+    }
+    override var hash: Int { identity }
+}
+
 @main
 struct RadioAccessoriesSmokeTest {
     static func main() {
+        precondition(RadioPairingPresentation.name(advertisedName: "Backpack", modelName: "T1000-E") == "Backpack")
+        precondition(RadioPairingPresentation.name(advertisedName: "  ", modelName: "T1000-E") == "T1000-E")
+        precondition(RadioPairingPresentation.name(advertisedName: "山のラジオ") == "山のラジオ")
+        precondition(RadioPairingPresentation.name(advertisedName: nil) == nil)
+        precondition(RadioPairingPresentation.modelID(manufacturerData: Data([0xFF, 0xFF, 0x00, 0x04])) == 4)
+        precondition(RadioPairingPresentation.modelID(manufacturerData: Data([0xFF, 0xFF, 0x01, 0x02])) == 0x0102)
+        precondition(RadioPairingPresentation.modelID(manufacturerData: Data([0x4C, 0x00, 0x00, 0x04])) == nil,
+                     "Another company's data must not name a model")
+        precondition(RadioPairingPresentation.modelID(manufacturerData: Data([0xFF, 0xFF, 0x00])) == nil)
+        precondition(RadioPairingPresentation.modelID(manufacturerData: nil) == nil)
+        precondition(RadioPairingPresentation.name(advertisedName: " \n ") == nil)
+
+        // The app bundles the repository's board list; check the real file.
+        let repoRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let catalog = try! RadioBoardCatalog(
+            json: Data(contentsOf: repoRoot.appendingPathComponent("docs/hardware/boards.json"))
+        )
+        precondition(catalog.board(modelID: 4)?.name == "Wio Tracker L1")
+        precondition(catalog.board(modelID: 4)?.photo == "board-wio-tracker-l1")
+        precondition(catalog.board(modelID: 0) == nil && catalog.board(modelID: nil) == nil)
+        precondition(catalog.board(modelID: 0xFF00) == nil)
+        precondition(catalog.board(modelID: 6) != nil && catalog.board(modelID: 6)?.photo == nil,
+                     "A board without a photo keeps the generic image")
+        let assets = repoRoot.appendingPathComponent("apps/ios/UMSH/Assets.xcassets")
+        for modelID in UInt16.min...UInt16.max {
+            guard let photo = catalog.board(modelID: modelID)?.photo else { continue }
+            precondition(FileManager.default.fileExists(
+                atPath: assets.appendingPathComponent("\(photo).imageset/Contents.json").path
+            ), "boards.json names a photo the asset catalog lacks: \(photo)")
+        }
+        precondition(RadioPairingPresentation.preferredName(current: "UMSH TRACKER 2", incoming: "UMSH TRA") == "UMSH TRACKER 2")
+        precondition(RadioPairingPresentation.preferredName(current: "UMSH TRA", incoming: "UMSH TRACKER 2") == "UMSH TRACKER 2")
+        precondition(RadioPairingPresentation.preferredName(current: "Old radio", incoming: "Renamed radio") == "Renamed radio")
         let first = UUID(uuidString: "00000000-0000-0000-0000-000000000001")!
         let second = UUID(uuidString: "00000000-0000-0000-0000-000000000002")!
         let third = UUID(uuidString: "00000000-0000-0000-0000-000000000003")!
+
+        // ASK can discover a radio before it has a CoreBluetooth identifier.
+        // Use the discovered object for picker selection, not a required UUID.
+        var discoveries = RadioPairingDiscoveries<NSObject>(catalog: catalog)
+        let pendingFirst = NSObject()
+        let pendingSecond = NSObject()
+        precondition(discoveries.update(pendingFirst, bluetoothID: nil, advertisedName: "UMSH TRA"))
+        precondition(discoveries.entries.count == 1 && discoveries.entries[0].bluetoothID == nil)
+        precondition(discoveries.update(pendingFirst, bluetoothID: nil, advertisedName: "UMSH TRACKER 2"))
+        precondition(!discoveries.update(pendingFirst, bluetoothID: nil, advertisedName: "UMSH TRA"))
+        precondition(discoveries.entries[0].name == "UMSH TRACKER 2")
+        precondition(discoveries.update(pendingSecond, bluetoothID: nil, advertisedName: "UMSH TRACKER 2"))
+        precondition(discoveries.entries.count == 2, "Equal names must not merge separate radios")
+        discoveries.update(pendingFirst, bluetoothID: first, advertisedName: "UMSH TRACKER 2")
+        let identifiedFirst = NSObject()
+        discoveries.update(identifiedFirst, bluetoothID: first, advertisedName: "UMSH TRACKER 2")
+        precondition(discoveries.entries.count == 2)
+        precondition(discoveries.entries[0].accessory === identifiedFirst)
+        precondition(!discoveries.update(identifiedFirst, bluetoothID: first, advertisedName: nil))
+        precondition(discoveries.entries.count == 2 && discoveries.entries[0].name == "UMSH TRACKER 2",
+                     "A partial report must not remove a previously named pairing discovery")
+        // Pairing is a name or a model. The service UUID alone isn't.
+        precondition(!discoveries.update(NSObject(), bluetoothID: nil, advertisedName: nil),
+                     "A service-only advertisement must not create a setup entry")
+        let modelOnly = NSObject()
+        precondition(discoveries.update(modelOnly, bluetoothID: nil, advertisedName: nil, modelID: 4))
+        precondition(discoveries.entries.count == 3 && discoveries.entries[2].name == "Wio Tracker L1")
+        precondition(discoveries.entries[2].modelID == 4)
+        precondition(!discoveries.update(modelOnly, bluetoothID: nil, advertisedName: nil))
+        precondition(discoveries.entries[2].name == "Wio Tracker L1")
+        precondition(discoveries.update(modelOnly, bluetoothID: nil, advertisedName: "Backpack", modelID: 4))
+        precondition(discoveries.entries[2].name == "Backpack", "An advertised name outranks the model")
+        let unknownModel = NSObject()
+        precondition(discoveries.update(unknownModel, bluetoothID: nil, advertisedName: nil, modelID: 0xFFFE))
+        precondition(discoveries.entries.count == 4 && discoveries.entries[3].name == nil)
+        discoveries.removeAll()
+        precondition(discoveries.entries.isEmpty, "A new picker must not reuse old discoveries")
+        precondition(!discoveries.update(identifiedFirst, bluetoothID: first, advertisedName: nil),
+                     "A name from an earlier picker must not admit a nameless radio")
+
+        // The system may deliver a new selection object that compares equal.
+        // Its new token still needs to reach updatePicker, even for old firmware
+        // whose only reported name is shortened.
+        var equalDiscoveries = RadioPairingDiscoveries<EqualAccessory>(catalog: catalog)
+        let olderObject = EqualAccessory(1)
+        let newerObject = EqualAccessory(1)
+        precondition(equalDiscoveries.update(olderObject, bluetoothID: nil, advertisedName: "TrackerB"))
+        precondition(equalDiscoveries.update(newerObject, bluetoothID: nil, advertisedName: "TrackerB"))
+        precondition(equalDiscoveries.entries.count == 1 && equalDiscoveries.entries[0].accessory === newerObject)
+
+        var updates = RadioPickerUpdates()
+        updates.changed()
+        precondition(updates.begin() == nil, "Discovery before presentation must wait for the picker")
+        updates.isPresented = true
+        let initialUpdate = updates.begin()!
+        precondition(updates.begin() == nil, "An unchanged snapshot is submitted only once")
+        updates.changed() // ASK may never complete the first update.
+        let fullerNameUpdate = updates.begin()!
+        precondition(fullerNameUpdate.revision > initialUpdate.revision)
+        precondition(updates.complete(initialUpdate, succeeded: false) == .ignored,
+                     "An older callback cannot block or roll back a newer submission")
+        precondition(updates.complete(fullerNameUpdate, succeeded: true) == .updated)
+        precondition(updates.begin() == nil)
+
+        // Explicit failures retry without another discovery callback. Missing
+        // callbacks do not imply failure or block fresh discoveries.
+        updates.changed()
+        let failedUpdate = updates.begin()!
+        precondition(updates.complete(failedUpdate, succeeded: false) == .retry(after: 0.25))
+        precondition(updates.begin() == nil)
+        updates.retryReady()
+        let retry = updates.begin()!
+        precondition(retry.revision == failedUpdate.revision && retry.number != failedUpdate.number)
+        precondition(updates.complete(failedUpdate, succeeded: true) == .ignored)
+        precondition(updates.begin() == nil)
+        precondition(updates.complete(retry, succeeded: false) == .retry(after: 1))
+        updates.retryReady()
+        let lastTry = updates.begin()!
+        precondition(updates.complete(lastTry, succeeded: false) == .exhausted)
+        updates.changed()
+        precondition(updates.begin() == nil, "A broken picker must not retry indefinitely")
+        updates = RadioPickerUpdates()
+        updates.isPresented = true
+        updates.changed()
+        let freshTry = updates.begin()!
+        precondition(updates.complete(freshTry, succeeded: true) == .updated)
+        precondition(updates.begin() == nil, "A new picker starts with a fresh update budget")
+
         func radio(_ id: UUID, _ name: String = "Saved radio") -> DiscoveredRadio {
             DiscoveredRadio(id: id, name: name, rssiDBm: 127, isRemembered: true)
         }

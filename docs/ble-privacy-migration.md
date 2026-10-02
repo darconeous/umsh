@@ -1,10 +1,11 @@
 # BLE privacy migration and qualification
 
 The nRF52 and ESP32 firmware use rotating private addresses, advertising
-with only generic BLE flags outside pairing, and a 1,022.5 ms interval. See
+with generic BLE flags and the ULCP service UUID outside pairing. The interval
+is 20 ms during pairing and for the first 30 seconds after boot; otherwise it
+is 1,022.5 ms. See
 [ULCP over BLE](protocol/src/ulcp-ble.md#ble-advertising) for the policy.
-The iPhone app uses AccessorySetupKit to list saved radios without public
-service advertisements. No new UUID, property or firmware configuration
+The iPhone app uses AccessorySetupKit to authorize radios. No new UUID, property or firmware configuration
 switch is required.
 
 ## One-time migration
@@ -53,7 +54,7 @@ not establish this timing guarantee.
 
 The app reconnects to its remembered companion through a pending connection
 request, without requiring the ULCP UUID in each advertisement. Verify this
-path with the UUID absent outside pairing. Paired radios advertising nearby
+path across RPA rotation with the UUID advertised outside pairing. Paired radios advertising nearby
 appear in the app pickers without entering pairing. Devices stop appearing
 after roughly six to eight seconds without advertisements, while their saved
 authorization is retained. Adding a new radio uses Apple's picker with pairing
@@ -83,18 +84,45 @@ refresh it. Check the app name and Settings name separately.
 
 ## Implementation policy
 
-Both firmware families set the minimum and maximum advertising intervals to
-1,022,500 microseconds (1,636 units of 625 microseconds), including during
-pairing, with no fast bursts. The controller adds normal advertising jitter.
-Pairing advertisements carry the ULCP service UUID and up to eight UTF-8-safe
-name bytes; scan responses carry up to 29 name bytes. Outside pairing, the
-advertising payload is exactly the three bytes `02 01 04` (Flags, BR/EDR Not
-Supported), and scan-response data is empty. No service UUID, name, appearance,
-manufacturer data or service data is sent. Each transition replaces the
+BLE advertising waits for the protocol task to finish restoring NVRAM settings
+and publish the authoritative device name, BLE enablement and device-domain
+settings. A dedicated retained watch releases the advertiser only after
+that publication. It remains closed during snapshot fallback and asynchronous
+name publication. A factory-fresh device releases it after publishing defaults;
+unreadable snapshots follow the existing bounded fallback/default policy and
+diagnostics. Readiness remains available across internal BLE restarts. Stack
+and controller initialization are not deferred by this gate; only the advertiser
+waits. Initialization alone does not permit advertising with a temporary default name.
+
+Both firmware families set equal minimum and maximum advertising intervals:
+20,000 microseconds (32 units of 625 microseconds) throughout the pairing window
+and for the first 30 seconds of boot uptime, and 1,022,500 microseconds
+(1,636 units) otherwise. Opening the window selects the faster interval;
+expiry, explicit closure, successful pairing and bonded reconnection restore
+the normal policy for subsequent advertising once the startup period has ended.
+The startup deadline uses boot uptime, so internal BLE restarts and BLE
+disable/re-enable do not reset it. When the deadline expires outside pairing,
+an active advertiser is reconfigured without waiting for another user event.
+The deadline never interrupts controller configuration or an active connection.
+Fast startup advertising does not open a pairing window or disclose a name.
+The controller adds normal advertising jitter. This follows Apple's
+[advertising interval guidance](https://developer.apple.com/library/archive/qa/qa1931/_index.html),
+which recommends 20 ms for at least 30 seconds and permits slower intervals
+afterward. The faster rate lasts for the existing five-minute unbonded or
+two-minute bonded pairing window, unless that window closes earlier. It trades
+higher radio activity during startup and setup for more discovery opportunities.
+Pairing advertisements carry the ULCP service UUID and the board's model
+identifier, as manufacturer data under company identifier `0xFFFF`. Scan
+responses carry up to 29 UTF-8-safe name bytes. iOS hands the app only the
+advertising data during setup, so the app titles a new radio by its board and
+the system picker shows the scan-response name beneath it. Outside pairing, the
+advertising payload contains `02 01 04` (Flags, BR/EDR Not Supported) followed
+by the complete 128-bit ULCP service UUID list, and scan-response data is empty.
+No name, appearance, manufacturer data or service data is sent. Each transition replaces the
 advertising payload and explicitly clears previously installed scan-response
-data. This hides the explicit service identity from passive discovery; it
-does not make transmissions invisible or prevent active service probing
-through a connection.
+data. The common service UUID identifies ULCP capability, while names and
+per-device identifiers remain absent outside pairing. RPAs do not make
+transmissions invisible or prevent active service probing through a connection.
 
 Trouble uses the persisted local IRK with a 900-second RPA timeout. The static
 address remains an internal bonding identity. Pairing boundaries rebuild the
@@ -137,8 +165,8 @@ unverified on ESP32 and must not be inferred from a successful build.
 
 | Check | Required evidence | Status |
 | --- | --- | --- |
-| Advertising on both families | Capture min/max configuration and roughly 1.0225-second events plus BLE jitter, both in and outside pairing; no fast burst | Pending |
-| Payload privacy | Active and passive scans show only generic flags and an empty scan response outside pairing; ULCP UUID and configured name appear only during pairing; no permanent address or stale UUID/name after expiry/closure/success/reconnect | Pending |
+| Advertising on both families | Capture equal min/max configuration and roughly 20-ms events during pairing and the first 30 seconds after boot; verify an automatic return to 1.0225-second events outside both periods, plus BLE jitter. Internal BLE restart and disable/re-enable must not extend the startup deadline | Pending |
+| Payload privacy | Active and passive scans show only generic flags, the ULCP UUID and an empty scan response outside pairing; the model identifier and configured names appear only during pairing; no permanent address, stale model identifier or stale name after expiry/closure/success/reconnect | Pending |
 | Address changes | Capture at least two complete 15-minute rotation periods; resolve with the retained IRK; check fresh addresses at both pairing boundaries, including deferred refresh after a connected boundary | Pending |
 | Privacy failure | Inject unsupported commands, insufficient resolving-list capacity and local/peer IRK-entry failures; verify advertising stops and diagnostics identify failure | Pending on controllers |
 | Runner recovery | Inject an ordinary runner/transport exit; verify bounded automatic recovery, unchanged pairing deadline and lockout, and successful bonded reconnect without a BLE toggle | Pending |

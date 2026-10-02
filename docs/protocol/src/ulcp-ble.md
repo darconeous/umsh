@@ -197,23 +197,29 @@ not dominate MAC-layer timing budgets.
 
 ## Advertising and Discovery {#ble-advertising}
 
+Advertising **MUST NOT** begin until persisted configuration has been restored
+or startup has resolved the applicable defaults. The first advertising payload
+and BLE enablement decision **MUST** use that resolved configuration.
+
 While BLE is enabled and transport arbitration permits it, a disconnected
 device **SHOULD** advertise as connectable and undirected. Advertising **SHOULD**
 suspend during a BLE connection or an attached wired session, then resume
-when permitted. Hosts discover new devices by service UUID during pairing;
+when permitted. Hosts discover devices by the ULCP service UUID;
 bonded hosts reconnect using their retained peer identity.
 
 Outside [pairing mode](#pairing-mode), advertising data **MUST** contain only
-generic BLE flags, with no local name, service UUID, service data, manufacturer
+generic BLE flags and the ULCP GATT Service UUID, with no local name, service data, manufacturer
 data, appearance or per-device identifier. Scan-response data **MUST** be empty.
 The flags omit general and limited discoverability; the device remains connectable
 so bonded hosts can reconnect. Previously installed scan-response data
 **MUST** be explicitly cleared when returning to this mode. The advertising
-payload **MUST** also be replaced to remove the previously advertised service UUID.
+payload **MUST** also be replaced to remove the model identifier and any
+name advertised during pairing.
 
 During pairing mode, the device declares general discoverability,
 **MUST** include the ULCP GATT Service UUID in its advertising data, and
-**SHOULD** advertise the current `PROP_DEV_NAME`, shortening it without
+**SHOULD** advertise its [model identifier](#ble-model-identifier) and the
+current `PROP_DEV_NAME`, shortening the name without
 splitting a UTF-8 code point where needed. A rename
 during the window updates these payloads. Names, including existing
 hardware-derived default suffixes, are a deliberate disclosure during
@@ -226,6 +232,45 @@ Entering or leaving a named pairing window **SHOULD** refresh the
 advertising address, deferring the refresh until disconnection if a
 connection is active. Address refresh **MUST NOT** extend pairing
 deadlines or reset authentication failures or lockout.
+
+### Model Identifier {#ble-model-identifier}
+
+A host platform can hand an application the advertising data alone,
+without the scan response, when the application is choosing a device to
+pair. The advertising data therefore identifies the hardware model, in a
+Manufacturer Specific Data element, and the name **SHOULD** travel in the
+scan-response data, where the ULCP GATT Service UUID does not compete
+with it for room.
+
+Octets | Field              | Value
+-------|--------------------|-----------------------------------------------
+0–1    | Company Identifier | `0xFFFF`, least significant octet first
+2–3    | Model Identifier   | Big-endian
+
+Model Identifier    | Meaning
+--------------------|--------------------------------------------------
+`0x0000`            | Unspecified
+`0x0001`–`0xFEFF`   | Assigned, as `model_id` in the board list below
+`0xFF00`–`0xFFFF`   | Private use: hardware with no assignment
+
+~~~json
+{{#include ../../hardware/boards.json}}
+~~~
+
+A model identifier names the same hardware as
+[`PROP_DEV_MODEL`](ulcp-core.md#prop-dev-model). A device with no fixed
+model sends 0. Octets after the model identifier are reserved: senders
+**MUST NOT** append any, and a host ignores any it finds. A host that
+does not recognize the model identifier, or finds no such element,
+presents the device without a model.
+
+`0xFFFF` is not unique to UMSH. A host **MUST** interpret this element only
+in an advertisement that also carries the ULCP GATT Service UUID.
+
+A host platform can withhold a device whose advertising data names a
+company identifier the host application has not declared. During pairing
+mode the advertising data **MUST NOT** carry any other Manufacturer
+Specific Data element.
 
 ### Connected Device Names
 

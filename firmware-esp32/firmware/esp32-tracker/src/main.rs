@@ -308,6 +308,16 @@ const DEV_VERSION: &str = concat!("umsh/", env!("GIT_DESCRIBE"));
 /// (`heltec-v2` / `heltec-v3` / `tbeam-supreme`).
 const DEV_MODEL: &str = board::BOARD_NAME;
 
+/// The same hardware, as the model identifier in pairing advertisements.
+#[cfg(feature = "board-heltec-v2")]
+const BLE_MODEL_ID: u16 = ble_privacy::model::HELTEC_LORA32_V2;
+#[cfg(feature = "board-heltec-v3")]
+const BLE_MODEL_ID: u16 = ble_privacy::model::HELTEC_LORA32_V3;
+#[cfg(feature = "board-tbeam-supreme")]
+const BLE_MODEL_ID: u16 = ble_privacy::model::LILYGO_T_BEAM_SUPREME;
+#[cfg(feature = "board-tlora-pager")]
+const BLE_MODEL_ID: u16 = ble_privacy::model::LILYGO_T_LORA_PAGER;
+
 /// The board default name plus a stable per-die suffix—the low 16
 /// bits of the factory eFuse MAC, the same die-unique value the BLE
 /// identity address is built from—so factory-fresh radios are
@@ -561,6 +571,8 @@ static SESSION_GEN: AtomicU32 = AtomicU32::new(0);
 type DeviceName = heapless::Vec<u8, { MAX_DEVICE_NAME_LEN }>;
 static DEVICE_NAME: Mutex<CriticalSectionRawMutex, DeviceName> = Mutex::new(DeviceName::new());
 static DEVICE_NAME_READY: AtomicBool = AtomicBool::new(false);
+// Retained readiness for each advertiser, independent of stack initialization.
+static BOOT_SETTINGS_READY: Watch<CriticalSectionRawMutex, (), 1> = Watch::new();
 static DEVICE_NAME_CHANGED: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 
 /// GAP's own bound on the Device Name value, shorter than the ULCP limit.
@@ -1374,7 +1386,8 @@ async fn pmu_irq_task(pmic: &'static SharedPmic, mut irq: Input<'static>) {
 /// arbitration and the user's own `PROP_BLE_ENABLED`, both of which have
 /// to agree.
 fn advertising_permitted() -> bool {
-    ADV_ALLOWED.load(Ordering::Acquire)
+    BOOT_SETTINGS_READY.try_get().is_some()
+        && ADV_ALLOWED.load(Ordering::Acquire)
         && BLE_ENABLED.load(Ordering::Acquire)
         && !BLE_CONTROLLER_STATE.failed()
 }
@@ -1963,6 +1976,11 @@ impl DeviceEnv for BoardDeviceEnv {
         }
     }
 
+    fn boot_settings_ready(&mut self) {
+        debug_log(format_args!("boot settings ready; BLE startup permitted"));
+        BOOT_SETTINGS_READY.sender().send(());
+    }
+
     fn publish_dev_domain(&mut self, snapshot: driver::DevDomainSnapshot) {
         // The zone and the positioning policy ride the device-domain
         // mirror, so a host write, a boot restore, and a `CMD_RST` all
@@ -2271,7 +2289,7 @@ async fn serve_pairing_request_offline(request: PairingRequest, store: &BleStore
 async fn advertise<'values, C: Controller>(
     stack: &Stack<'_, C, DefaultPacketPool>,
     peripheral: &mut Peripheral<'values, C, DefaultPacketPool>,
-) -> Result<Advertiser<'values, C, DefaultPacketPool>, BleHostError<C::Error>> {
+) -> Result<(Advertiser<'values, C, DefaultPacketPool>, Option<u64>), BleHostError<C::Error>> {
     if !BLE_CONTROLLER_STATE.wait_for_privacy().await {
         return Err(trouble_host::Error::InvalidValue.into());
     }
@@ -2279,7 +2297,9 @@ async fn advertise<'values, C: Controller>(
     let data = ble_privacy::advertisement(
         gatt::SERVICE_UUID.to_le_bytes(),
         &name,
+        BLE_MODEL_ID,
         pairing_window_open(),
+        Instant::now().as_millis(),
     );
     // Trouble skips this HCI command for an empty slice. Explicitly clear
     // the old scan response before installing a nameless advertisement.
@@ -2289,8 +2309,8 @@ async fn advertise<'values, C: Controller>(
     peripheral
         .advertise(
             &AdvertisementParameters {
-                interval_min: Duration::from_micros(ble_privacy::ADVERTISING_INTERVAL_US),
-                interval_max: Duration::from_micros(ble_privacy::ADVERTISING_INTERVAL_US),
+                interval_min: Duration::from_micros(data.interval_us),
+                interval_max: Duration::from_micros(data.interval_us),
                 ..Default::default()
             },
             Advertisement::ConnectableScannableUndirected {
@@ -2299,6 +2319,7 @@ async fn advertise<'values, C: Controller>(
             },
         )
         .await
+        .map(|advertiser| (advertiser, data.refresh_at_ms))
 }
 
 fn utf8_prefix_len(bytes: &[u8], maximum: usize) -> usize {
@@ -2712,6 +2733,13 @@ async fn ble_peripheral<C: Controller>(
     peripheral: &mut Peripheral<'_, C, DefaultPacketPool>,
     server: &UlcpServer<'_>,
 ) {
+    // Withhold on-air discovery, not controller/stack initialization. Retain
+    // readiness across every internal stack rebuild.
+    BOOT_SETTINGS_READY
+        .receiver()
+        .expect("one BLE advertiser")
+        .get()
+        .await;
     loop {
         if BLE_RESTART_PENDING.load(Ordering::Acquire) || BLE_CONTROLLER_STATE.failed() {
             return;
@@ -2721,8 +2749,8 @@ async fn ble_peripheral<C: Controller>(
             continue;
         }
         sync_gap_device_name(server, store).await;
-        let advertiser = match advertise(stack, peripheral).await {
-            Ok(advertiser) => advertiser,
+        let (advertiser, refresh_at_ms) = match advertise(stack, peripheral).await {
+            Ok(result) => result,
             Err(error) => {
                 debug_log(format_args!("advertising error={error:?}"));
                 Timer::after_millis(500).await;
@@ -2737,7 +2765,18 @@ async fn ble_peripheral<C: Controller>(
         }
         match select3(
             advertiser.accept(),
-            ADV_POLICY_CHANGED.wait(),
+            async {
+                // Reconfigure only after advertise() has completed. A
+                // boot deadline crossed during HCI setup fires immediately.
+                select(ADV_POLICY_CHANGED.wait(), async {
+                    if let Some(deadline) = refresh_at_ms {
+                        Timer::at(Instant::from_millis(deadline)).await;
+                    } else {
+                        core::future::pending::<()>().await;
+                    }
+                })
+                .await;
+            },
             DEVICE_NAME_CHANGED.wait(),
         )
         .await

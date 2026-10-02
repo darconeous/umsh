@@ -1,5 +1,172 @@
 import Foundation
 
+/// Creation-time display values come from deliberate pairing advertisements.
+/// They are separate from the authenticated name cache used after connection.
+enum RadioPairingPresentation {
+    static func preferredName(current: String?, incoming: String) -> String {
+        // Scan responses can carry a longer name than the initial packet.
+        // Repeated shortened packets must not replace the longer name already
+        // received during this picker session.
+        if let current, current.hasPrefix(incoming) { return current }
+        return incoming
+    }
+
+    /// The model identifier in a pairing advertisement's manufacturer data:
+    /// the unassigned company identifier, then a big-endian identifier.
+    static func modelID(manufacturerData: Data?) -> UInt16? {
+        guard let bytes = manufacturerData.map(Array.init), bytes.count >= 4,
+              bytes[0] == 0xFF, bytes[1] == 0xFF else { return nil }
+        return UInt16(bytes[2]) << 8 | UInt16(bytes[3])
+    }
+
+    static func name(advertisedName: String?, modelName: String? = nil) -> String? {
+        for candidate in [advertisedName, modelName] {
+            if let name = candidate?.trimmingCharacters(in: .whitespacesAndNewlines), !name.isEmpty {
+                return name
+            }
+        }
+        return nil
+    }
+}
+
+/// The supported hardware, from `docs/hardware/boards.json`. A pairing
+/// advertisement names its board by model identifier.
+struct RadioBoardCatalog: Sendable {
+    struct Board: Decodable, Sendable {
+        let modelID: UInt16
+        /// The picker title.
+        let name: String
+        /// The asset-catalog image, for a board that has one.
+        let photo: String?
+
+        enum CodingKeys: String, CodingKey {
+            case modelID = "model_id", name, photo
+        }
+    }
+
+    private struct File: Decodable { let boards: [Board] }
+    private let boards: [UInt16: Board]
+
+    init() { boards = [:] }
+
+    init(json: Data) throws {
+        let file = try JSONDecoder().decode(File.self, from: json)
+        boards = Dictionary(file.boards.map { ($0.modelID, $0) }, uniquingKeysWith: { first, _ in first })
+    }
+
+    func board(modelID: UInt16?) -> Board? { modelID.flatMap { boards[$0] } }
+
+    static let bundled: RadioBoardCatalog = {
+        guard let url = Bundle.main.url(forResource: "boards", withExtension: "json"),
+              let catalog = try? RadioBoardCatalog(json: Data(contentsOf: url)) else {
+            assertionFailure("boards.json is missing from the bundle or unreadable")
+            return RadioBoardCatalog()
+        }
+        return catalog
+    }()
+}
+
+/// Discovery precedes authorization: a Bluetooth UUID isn't required yet.
+/// Keep the system's accessory object, which the picker needs for selection.
+struct RadioPairingDiscoveries<Accessory: NSObject> {
+    let catalog: RadioBoardCatalog
+
+    init(catalog: RadioBoardCatalog) { self.catalog = catalog }
+
+    struct Entry {
+        var accessory: Accessory
+        var bluetoothID: UUID?
+        /// The advertised name, else the model's; nil for an unknown model.
+        var name: String?
+        var modelID: UInt16?
+    }
+
+    private(set) var entries: [Entry] = []
+
+    mutating func removeAll() { entries.removeAll() }
+
+    @discardableResult
+    mutating func update(
+        _ accessory: Accessory, bluetoothID: UUID?, advertisedName: String?, modelID: UInt16? = nil
+    ) -> Bool {
+        let index = entries.firstIndex {
+            if let bluetoothID, $0.bluetoothID == bluetoothID { return true }
+            return $0.accessory.isEqual(accessory)
+        }
+        let advertised = RadioPairingPresentation.name(advertisedName: advertisedName)
+        let incoming = advertised ?? catalog.board(modelID: modelID)?.name
+        if let index {
+            let old = entries[index]
+            // A report without a scan response doesn't revoke a name already
+            // observed in this picker.
+            let name = incoming.map { RadioPairingPresentation.preferredName(current: old.name, incoming: $0) } ?? old.name
+            let model = modelID ?? old.modelID
+            entries[index] = Entry(
+                accessory: accessory, bluetoothID: bluetoothID ?? old.bluetoothID, name: name, modelID: model
+            )
+            // Equal discoveries can carry a newer system selection object.
+            // Publish that object even when its identity and name are equal.
+            return old.name != name || old.modelID != model || old.accessory !== accessory
+        }
+        // A radio advertises a name or a model only while pairing. The public
+        // service UUID alone must not become a setup row.
+        guard advertised != nil || modelID != nil else { return false }
+        // Never merge distinct accessories by name: two radios can share it.
+        entries.append(Entry(accessory: accessory, bluetoothID: bluetoothID, name: incoming, modelID: modelID))
+        return true
+    }
+}
+
+/// Track submitted picker snapshots without waiting for a completion callback
+/// before publishing a newer discovery. Only explicit failures trigger retries.
+struct RadioPickerUpdates {
+    struct Attempt: Equatable {
+        let revision: UInt64
+        let number: UInt64
+    }
+
+    enum Completion: Equatable {
+        case ignored, updated, exhausted
+        case retry(after: Double)
+    }
+
+    var isPresented = false
+    private var revision: UInt64 = 0
+    private var submittedRevision: UInt64 = 0
+    private var attemptNumber: UInt64 = 0
+    private var latestAttempt: Attempt?
+    private var failureCount = 0
+    private var retryScheduled = false
+
+    mutating func changed() { revision += 1 }
+
+    mutating func begin() -> Attempt? {
+        guard isPresented, !retryScheduled,
+              revision != submittedRevision, failureCount < 3 else { return nil }
+        attemptNumber += 1
+        let attempt = Attempt(revision: revision, number: attemptNumber)
+        latestAttempt = attempt
+        submittedRevision = revision
+        return attempt
+    }
+
+    mutating func complete(_ attempt: Attempt, succeeded: Bool) -> Completion {
+        guard latestAttempt == attempt else { return .ignored }
+        latestAttempt = nil
+        if succeeded {
+            failureCount = 0
+            return .updated
+        }
+        failureCount += 1
+        guard failureCount < 3 else { return .exhausted }
+        submittedRevision = 0
+        retryScheduled = true
+        return .retry(after: failureCount == 1 ? 0.25 : 1)
+    }
+
+    mutating func retryReady() { retryScheduled = false }
+}
+
 /// An accessory authorization is not evidence of radio proximity or a usable bond.
 struct RadioAccessoryInventory: Sendable {
     var revision: UInt64 = 0

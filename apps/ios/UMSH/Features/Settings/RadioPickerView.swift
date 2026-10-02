@@ -62,7 +62,7 @@ struct RadioScanList: View {
                 } else {
                     ForEach(radios) { radio in
                         Button {
-                            Task { await select(radio) }
+                            Task { await select(radio.id) }
                         } label: {
                             RadioDiscoveryRow(
                                 radio: radio,
@@ -95,7 +95,10 @@ struct RadioScanList: View {
                          : "Discovery keeps running while this list is open. Radios that power off drop out after a few seconds.")
                 }
             }
-            if RadioAccessories.usesSystemPicker { RadioAccessoryActions() }
+            if RadioAccessories.usesSystemPicker {
+                RadioAccessoryActions(onFinished: select)
+                    .disabled(selecting != nil)
+            }
         }
         // Only membership changes animate; a rename or fallback RSSI update
         // must not look like the row moved.
@@ -115,12 +118,12 @@ struct RadioScanList: View {
         }
     }
 
-    private func select(_ radio: DiscoveredRadio) async {
+    private func select(_ id: UUID) async {
         guard selecting == nil else { return }
-        selecting = radio.id
+        selecting = id
         problem = nil
         do {
-            try await selectRadio(radio.id)
+            try await selectRadio(id)
             await stopDiscovery()
             onConnected()
         } catch {
@@ -131,9 +134,11 @@ struct RadioScanList: View {
 }
 
 /// Shared by companion selection and administrative device selection. Apple
-/// owns discovery and authorization of new radios; these lists own selection
-/// among already authorized ones.
+/// owns discovery and authorization of new radios; the caller selects the
+/// returned radio once the system picker has finished.
 struct RadioAccessoryActions: View {
+    let onFinished: (UUID) async throws -> Void
+
     @State private var accessories = RadioAccessories.shared
     @State private var confirmsForget = false
     @State private var removalProblem: String?
@@ -141,7 +146,8 @@ struct RadioAccessoryActions: View {
     var body: some View {
         Section {
             RadioAccessoryPickerButton(
-                migrationOnly: accessories.inventory.migrationID != nil
+                migrationOnly: accessories.inventory.migrationID != nil,
+                onFinished: onFinished
             )
             if accessories.inventory.migrationID != nil {
                 Button("Forget Previous Radio…", role: .destructive) { confirmsForget = true }
@@ -168,7 +174,7 @@ struct RadioAccessoryActions: View {
 /// and saved-radio list. No screen sends the user hunting for another screen.
 struct RadioAccessoryPickerButton: View {
     let migrationOnly: Bool
-    var onFinished: (UUID) async throws -> Void = { _ in }
+    let onFinished: (UUID) async throws -> Void
 
     @State private var accessories = RadioAccessories.shared
     @State private var busy = false
