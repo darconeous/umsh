@@ -59,6 +59,8 @@ pub enum Command {
 
     /// Take one ambient light reading.
     Illuminance,
+    /// Sample all temperature sensors and display their names.
+    Temperatures,
 
     /// Write one property by name or number.
     ///
@@ -416,6 +418,7 @@ impl Command {
                 persist(device, no_save).await
             }
             Self::Illuminance => info::illuminance(app.device()?).await,
+            Self::Temperatures => info::temperatures(app.device()?).await,
             Self::Alert { op } => lifecycle::alert(app.device()?, op).await,
             Self::Capture(args) => capture::run(app, args).await,
             Self::BleScan { timeout } => ble_scan(app, timeout).await,

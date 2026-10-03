@@ -89,6 +89,7 @@ Id   | Mnemonic                                                                 
 92   | [`PROP_GNSS_PRECISION`](ulcp-device.md#prop-gnss-precision)                           | Get                        | `CAP_GNSS`
 93   | [`PROP_GNSS_SATELLITES`](ulcp-device.md#prop-gnss-satellites)                         | Get                        | `CAP_GNSS`
 94   | [`PROP_ILLUMINANCE`](ulcp-device.md#prop-illuminance)                                 | Get                        | `CAP_ILLUMINANCE`
+95   | [`PROP_TEMPERATURES`](ulcp-device.md#prop-temperatures) | Get | `CAP_TEMPERATURE`
 96   | [`PROP_HOST_KEY`](ulcp-host.md#prop-host-key)                                         | Get, Set                   | `CAP_HOST_FILTER`
 97   | [`PROP_HOST_CHANNEL_KEYS`](ulcp-host.md#prop-host-channel-keys)                       | Get, Set, Insert, Remove   | `CAP_HOST_KEYS`
 98   | [`PROP_HOST_PEER_KEYS`](ulcp-host.md#prop-host-peer-keys)                             | Get, Set, Insert, Remove   | `CAP_HOST_KEYS`
@@ -123,6 +124,7 @@ Id   | Mnemonic                                                                 
 4873 | [`PROP_BLE_LINK`](ulcp-ble.md#prop-ble-link)                                          | Get, Is                    | `CAP_BLE`
 4874 | [`PROP_BLE_PAIRING`](ulcp-ble.md#prop-ble-pairing)                                    | Get, Set, Is               | `CAP_BLE`
 4875 | [`PROP_DISPLAY_MOTION_WAKE_ENABLED`](ulcp-device.md#prop-display-motion-wake-enabled) | Get, Set, Is | `CAP_DISPLAY_MOTION_WAKE`
+4876 | [`PROP_TEMPERATURE_NAMES`](ulcp-device.md#prop-temperature-names) | Get | `CAP_TEMPERATURE`
 4880 | [`PROP_WIFI_ENABLED`](ulcp-wifi.md#prop-wifi-enabled)                                 | Get, Set, Is               | `CAP_WIFI`
 4881 | [`PROP_WIFI_NETWORKS`](ulcp-wifi.md#prop-wifi-networks)                               | Get, Set, Insert, Remove   | `CAP_WIFI`
 4882 | [`PROP_WIFI_NETWORK`](ulcp-wifi.md#prop-wifi-network)                                 | Get, Set, Is               | `CAP_WIFI`
@@ -204,6 +206,7 @@ Code | Name                      | Defined in
 58   | `CAP_BRIDGE_CLIENT`       | [Bridge Client](ulcp-bridge.md#capabilities)
 59   | `CAP_DISPLAY_MOTION_WAKE` | [Device Services](ulcp-device.md#display-motion-wake)
 60   | `CAP_I2C`                 | [I2C Bus Access](ulcp-i2c.md#capabilities)
+61   | `CAP_TEMPERATURE` | [Device Domain](ulcp-device.md#capabilities)
 515  | `CAP_PHY_LORA`            | [Radio Control](ulcp-radio.md#capabilities)
 
 ## Status Codes

@@ -53,9 +53,13 @@ pub const MAX_DEVICE_NAME_LEN: usize = 64;
 /// Room for a `CMD_STR_RECV` frame around a full-MTU payload.
 const SCRATCH: usize = MAX_MTU + 24;
 
-/// Largest encoded property value the session produces (bounded by
-/// `PROP_HOST_PEER_KEYS`' digest form: one public key per entry).
+/// Reference sender capacities; wire decoders accept larger arrays.
+pub const MAX_TEMPERATURE_SENSORS: usize = 16;
+pub const TEMPERATURE_NAMES_MAX: usize = 272;
+
+/// Largest encoded property value, accommodating peer keys and sensor names.
 const PROP_BUF: usize = MAX_PEER_KEYS * items::PUBLIC_KEY_LEN + 16;
+const _: () = assert!(TEMPERATURE_NAMES_MAX <= PROP_BUF);
 
 /// Radio configuration owned by the session and pushed to the radio
 /// via [`Effect::ApplyRadio`].
@@ -247,6 +251,8 @@ pub struct SessionConfig {
     /// `CAP_ILLUMINANCE` is advertised and `PROP_ILLUMINANCE` samples on
     /// every read; otherwise the property is unknown.
     pub illuminance: bool,
+    /// Enable both temperature properties only when environment hooks exist.
+    pub temperatures: bool,
     /// Orientation-qualified display wake; enabled by default when supported.
     pub display_motion_wake: bool,
     /// Whether the device has a Bluetooth transport it can make
@@ -375,6 +381,10 @@ pub enum Effect {
     /// `PROP_ILLUMINANCE` get; like the battery, nothing is cached, so
     /// every get samples.
     SampleIlluminance { tid: u8 },
+    /// Sample the inventory captured at acquisition start.
+    SampleTemperatures { tid: u8 },
+    /// Read the current inventory without acquisition or discovery.
+    ReadTemperatureNames { tid: u8 },
     /// Apply and persist a new BLE pairing PIN, then complete the deferred
     /// property transaction with [`Session::respond_pin_set`].
     SetPairingPin { tid: u8, pin: Option<u32> },
@@ -4506,6 +4516,13 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         }
         // Ambient light, likewise: the sensor is read on demand and the
         // session caches nothing.
+        if self.config.temperatures {
+            match key {
+                prop::TEMPERATURES => return Some(Effect::SampleTemperatures { tid }),
+                prop::TEMPERATURE_NAMES => return Some(Effect::ReadTemperatureNames { tid }),
+                _ => {}
+            }
+        }
         if key == prop::ILLUMINANCE && self.config.illuminance {
             return Some(Effect::SampleIlluminance { tid });
         }
@@ -5064,6 +5081,44 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                 self.send_prop_is(tid, prop::ILLUMINANCE, &value.to_le_bytes(), emit);
             }
             None => self.send_prop_is(tid, prop::ILLUMINANCE, &[], emit),
+        }
+    }
+
+    /// Complete a fresh acquisition; sensor failures occupy UNKNOWN slots.
+    pub fn respond_temperatures(
+        &mut self,
+        tid: u8,
+        values: Result<&[u16], Status>,
+        emit: &mut impl FnMut(&[u8]),
+    ) {
+        let mut out = [0; MAX_TEMPERATURE_SENSORS * 2];
+        match values.and_then(|values| {
+            umsh_ulcp::temperature::encode_readings(values, &mut out).map_err(|_| Status::NOMEM)
+        }) {
+            Ok(len) => self.send_prop_is(tid, prop::TEMPERATURES, &out[..len], emit),
+            Err(status) => self.complete(tid, status, emit),
+        }
+    }
+
+    /// Validate the entire inventory before returning it. Never truncate labels.
+    pub fn respond_temperature_names(
+        &mut self,
+        tid: u8,
+        value: Result<&[u8], Status>,
+        emit: &mut impl FnMut(&[u8]),
+    ) {
+        let value = value.and_then(|value| {
+            let count = umsh_ulcp::temperature::names(value)
+                .map_err(|_| Status::INTERNAL_ERROR)?
+                .count();
+            if value.len() > TEMPERATURE_NAMES_MAX || count > MAX_TEMPERATURE_SENSORS {
+                return Err(Status::NOMEM);
+            }
+            Ok(value)
+        });
+        match value {
+            Ok(value) => self.send_prop_is(tid, prop::TEMPERATURE_NAMES, value, emit),
+            Err(status) => self.complete(tid, status, emit),
         }
     }
 
@@ -6595,6 +6650,9 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                 Err(Status::INVALID_ARGUMENT)
             }
             prop::ILLUMINANCE if self.config.illuminance => Err(Status::INVALID_ARGUMENT),
+            prop::TEMPERATURES | prop::TEMPERATURE_NAMES if self.config.temperatures => {
+                Err(Status::INVALID_ARGUMENT)
+            }
             // Who is connected is the transport's to report, not the
             // host's to arrange. A host that wants nobody connected has
             // `PROP_BLE_ENABLED`.
@@ -7271,6 +7329,9 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         if key == prop::DISPLAY_MOTION_WAKE_ENABLED {
             return self.config.display_motion_wake;
         }
+        if matches!(key, prop::TEMPERATURES | prop::TEMPERATURE_NAMES) {
+            return self.config.temperatures;
+        }
         if key == prop::ILLUMINANCE {
             return self.config.illuminance;
         }
@@ -7438,6 +7499,9 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                 if self.config.display_motion_wake {
                     len += pui::encode(cap::DISPLAY_MOTION_WAKE, &mut out[len..]).unwrap_or(0);
                 }
+                if self.config.temperatures {
+                    len += pui::encode(cap::TEMPERATURE, &mut out[len..]).unwrap_or(0);
+                }
                 if self.config.illuminance {
                     len += pui::encode(cap::ILLUMINANCE, &mut out[len..]).unwrap_or(0);
                 }
@@ -7513,6 +7577,9 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             // samples; this arm is only a fallback.
             prop::BATTERY if self.config.battery.is_some() => return PropValue::Unimplemented,
             prop::ILLUMINANCE if self.config.illuminance => return PropValue::Unimplemented,
+            prop::TEMPERATURES | prop::TEMPERATURE_NAMES if self.config.temperatures => {
+                return PropValue::Unimplemented;
+            }
             prop::PHY_LORA_BW => put(out, &self.device.settings.bw_hz.to_le_bytes()),
             prop::PHY_LORA_SF => {
                 out[0] = self.device.settings.sf;
@@ -8281,6 +8348,7 @@ mod tests {
             gnss: Some(GnssConfig::DEFAULT),
             display_motion_wake: false,
             illuminance: true,
+            temperatures: false,
             ble: true,
             ble_pairing: true,
             reboot: true,
@@ -8535,6 +8603,16 @@ mod tests {
                 ),
                 Effect::ReadTime { tid } => {
                     session.respond_time(tid, Some(1_700_000_000), &mut |bytes: &[u8]| {
+                        emitted.push(bytes.to_vec())
+                    })
+                }
+                Effect::SampleTemperatures { tid } => {
+                    session.respond_temperatures(tid, Ok(&[2981, 0xffff]), &mut |bytes| {
+                        emitted.push(bytes.to_vec())
+                    })
+                }
+                Effect::ReadTemperatureNames { tid } => {
+                    session.respond_temperature_names(tid, Ok(b"\x03Die\x03Die"), &mut |bytes| {
                         emitted.push(bytes.to_vec())
                     })
                 }
@@ -11283,6 +11361,101 @@ mod tests {
         let len = frame::prop_remove(&mut buf, 4, prop::BATTERY, &[0]).unwrap();
         let (emitted, _) = dispatch(&mut session, &buf[..len], 0);
         expect_status(&emitted[0], 4, Status::INVALID_ARGUMENT);
+    }
+
+    #[test]
+    fn temperature_gating_mutations_and_multi_get() {
+        let mut buf = [0; 64];
+        for supported in [false, true] {
+            let mut config = test_config();
+            config.temperatures = supported;
+            let mut session = Session::new(config, Status::RESET_POWER_ON, test_engine());
+            session.attach(true);
+            let caps = get(&mut session, prop::CAPS);
+            assert_eq!(caps.contains(&(cap::TEMPERATURE as u8)), supported);
+            for key in [prop::TEMPERATURES, prop::TEMPERATURE_NAMES] {
+                let len = frame::prop_get(&mut buf, 1, key).unwrap();
+                let (emitted, effect) = dispatch(&mut session, &buf[..len], 0);
+                if supported {
+                    assert!(emitted.is_empty());
+                    assert_eq!(
+                        effect,
+                        Some(if key == prop::TEMPERATURES {
+                            Effect::SampleTemperatures { tid: 1 }
+                        } else {
+                            Effect::ReadTemperatureNames { tid: 1 }
+                        })
+                    );
+                    if key == prop::TEMPERATURES {
+                        session.respond_temperatures(1, Ok(&[]), &mut |_| {});
+                    } else {
+                        session.respond_temperature_names(1, Ok(&[]), &mut |_| {});
+                    }
+                } else {
+                    expect_status(&emitted[0], 1, Status::PROP_NOT_FOUND);
+                }
+                let status = if supported {
+                    Status::INVALID_ARGUMENT
+                } else {
+                    Status::PROP_NOT_FOUND
+                };
+                let (emitted, _) = set(&mut session, key, &[]);
+                expect_status(&emitted[0], 2, status);
+                let len = frame::prop_insert(&mut buf, 3, key, &[]).unwrap();
+                let (emitted, _) = dispatch(&mut session, &buf[..len], 0);
+                expect_status(&emitted[0], 3, status);
+                let len = frame::prop_remove(&mut buf, 4, key, &[]).unwrap();
+                let (emitted, _) = dispatch(&mut session, &buf[..len], 0);
+                expect_status(&emitted[0], 4, status);
+            }
+            let len =
+                frame::prop_multi_get(&mut buf, 5, &[prop::TEMPERATURES, prop::TEMPERATURE_NAMES])
+                    .unwrap();
+            let (_, entries, _) = multi(&mut session, &buf[..len], 0);
+            if supported {
+                assert_eq!(
+                    entries,
+                    [
+                        (prop::TEMPERATURES, vec![0xa5, 0x0b, 0xff, 0xff]),
+                        (prop::TEMPERATURE_NAMES, b"\x03Die\x03Die".to_vec())
+                    ]
+                );
+            } else {
+                assert!(entries.iter().all(|(key, value)| *key == prop::LAST_STATUS
+                    && entry_status(value) == Status::PROP_NOT_FOUND));
+            }
+        }
+    }
+
+    #[test]
+    fn temperature_responses_reject_overflow_and_malformed_names() {
+        let mut session = test_session();
+        let mut frames = Vec::new();
+        session.respond_temperatures(1, Ok(&[0; MAX_TEMPERATURE_SENSORS + 1]), &mut |frame| {
+            frames.push(frame.to_vec())
+        });
+        expect_status(&frames.pop().unwrap(), 1, Status::NOMEM);
+        for value in [b"\0".as_slice(), b"\x02a".as_slice()] {
+            session
+                .respond_temperature_names(2, Ok(value), &mut |frame| frames.push(frame.to_vec()));
+            expect_status(&frames.pop().unwrap(), 2, Status::INTERNAL_ERROR);
+        }
+        let names = b"\x01a".repeat(17);
+        session.respond_temperature_names(2, Ok(&names), &mut |frame| frames.push(frame.to_vec()));
+        expect_status(&frames.pop().unwrap(), 2, Status::NOMEM);
+        let names = [&[64][..], &[b'a'; 64]].concat().repeat(5);
+        session.respond_temperature_names(2, Ok(&names), &mut |frame| frames.push(frame.to_vec()));
+        expect_status(&frames.pop().unwrap(), 2, Status::NOMEM);
+        session.respond_temperatures(3, Ok(&[0xffff; 16]), &mut |frame| {
+            frames.push(frame.to_vec())
+        });
+        assert_eq!(parse_prop_is(&frames.pop().unwrap()).2, vec![0xff; 32]);
+        session.respond_temperature_names(4, Ok(&[]), &mut |frame| frames.push(frame.to_vec()));
+        assert!(parse_prop_is(&frames.pop().unwrap()).2.is_empty());
+        let names = [&[16][..], &[b'a'; 16]].concat().repeat(16);
+        assert_eq!(names.len(), TEMPERATURE_NAMES_MAX);
+        session.respond_temperature_names(5, Ok(&names), &mut |frame| frames.push(frame.to_vec()));
+        assert_eq!(parse_prop_is(&frames.pop().unwrap()).2, names);
     }
 
     #[test]

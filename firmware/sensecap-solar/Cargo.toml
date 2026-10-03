@@ -53,7 +53,7 @@ lfclk-rc = []
 # (Solar P1 PWR button on P1.01).
 power-button = []
 boot-pairing-window = []
-# Diagnostic build: skip MPSL/SDC/Trouble entirely (USB-only device).
+# Diagnostic build: skip SDC/Trouble (USB-only device); retain MPSL.
 no-ble = []
 # Hardware-diagnostic mode: mirror BLE security/GATT lifecycle events as
 # ASCII on the USB serial endpoint.

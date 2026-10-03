@@ -98,6 +98,8 @@ mod ble_store;
 #[cfg(target_os = "none")]
 mod device_node;
 mod proto_store;
+#[cfg_attr(not(target_os = "none"), allow(dead_code))]
+mod temperature;
 
 // The #[panic_handler] must live in the binary crate.
 #[cfg(target_os = "none")]
@@ -529,6 +531,8 @@ mod firmware {
             // sensor fitted.
             display_motion_wake: false,
             illuminance: cfg!(feature = "cap-illuminance"),
+            // Every supported nRF52840 board has the MPSL-managed die sensor.
+            temperatures: true,
             // Every board here is an nRF52840 running the SoftDevice
             // controller, and every one can be made unfindable: see
             // `advertising_permitted`.
@@ -1759,6 +1763,7 @@ mod firmware {
     /// T-Echo build keeps the driver's no-op defaults for the indicator
     /// and load hooks.
     struct BoardDeviceEnv {
+        temperatures: super::temperature::Sensors<&'static MultiprotocolServiceLayer<'static>>,
         proto_store: ProtoStore,
         identity_store: ProtoStore,
         identity_rng: IdentityRng,
@@ -1899,6 +1904,14 @@ mod firmware {
 
         async fn sample_battery(&mut self) -> Result<umsh_ulcp::battery::BatteryStatus, ()> {
             sample_battery_snapshot().await
+        }
+
+        async fn sample_temperatures(&mut self, out: &mut [u16]) -> Result<usize, Status> {
+            self.temperatures.sample(out).await
+        }
+
+        async fn read_temperature_names(&mut self, out: &mut [u8]) -> Result<usize, Status> {
+            self.temperatures.read_names(out)
         }
 
         #[cfg(feature = "cap-illuminance")]
@@ -3601,6 +3614,7 @@ mod firmware {
     ///—over this board's channel wiring and [`BoardDeviceEnv`] couplings.
     #[embassy_executor::task]
     async fn device_task(
+        mpsl: &'static MultiprotocolServiceLayer<'static>,
         boot_reason: Status,
         proto_store: ProtoStore,
         boot_snapshot: Option<BootSnapshot>,
@@ -3629,6 +3643,8 @@ mod firmware {
                 session_gen: &SESSION_GEN,
             },
             BoardDeviceEnv {
+                // Owned outside Session: reconnects and CMD_RST retain indices.
+                temperatures: super::temperature::Sensors::new(mpsl),
                 proto_store,
                 identity_store,
                 identity_rng,
@@ -6592,6 +6608,7 @@ mod firmware {
 
         spawner.spawn(
             device_task(
+                mpsl,
                 boot_reason,
                 proto_store,
                 boot_snapshot,

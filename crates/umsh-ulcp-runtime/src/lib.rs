@@ -50,6 +50,8 @@ pub mod journal;
 pub mod node_counters;
 #[cfg(feature = "radio")]
 pub mod radio_mux;
+#[cfg(feature = "driver")]
+pub mod temperature;
 
 #[cfg(feature = "wifi")]
 pub mod wifi_journal;

@@ -85,6 +85,7 @@ fn session_config() -> SessionConfig {
         gnss: None,
         display_motion_wake: false,
         illuminance: false,
+        temperatures: false,
         ble: false,
         ble_pairing: false,
         // A host interface is a task inside this process; there is no

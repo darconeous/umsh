@@ -493,6 +493,17 @@ pub trait DeviceEnv {
     async fn sample_illuminance(&mut self) -> Option<u32> {
         None
     }
+    /// Sample every sensor present at acquisition start, preserving failed slots
+    /// as 0xffff. Return the captured count; appended sensors wait for the next get.
+    /// Inventory indices/names survive session resets and never change in place.
+    async fn sample_temperatures(&mut self, _out: &mut [u16]) -> Result<usize, Status> {
+        Err(Status::UNIMPLEMENTED)
+    }
+    /// Encode the current names without sampling or discovery. Reject insufficient
+    /// capacity with NOMEM; never truncate. Names use the shared temperature codec.
+    async fn read_temperature_names(&mut self, _out: &mut [u8]) -> Result<usize, Status> {
+        Err(Status::UNIMPLEMENTED)
+    }
     /// Wait for a battery measurement the board considers worth
     /// announcing, for publication as an unsolicited `PROP_BATTERY`
     /// (`Session::publish_battery`).
@@ -1022,6 +1033,8 @@ async fn apply_effect<A, S, const TXQ: usize, M, const RX: usize, const TX: usiz
         | Some(Effect::SampleBattery { .. })
         | Some(Effect::SampleBatteryGroup { .. })
         | Some(Effect::SampleIlluminance { .. })
+        | Some(Effect::SampleTemperatures { .. })
+        | Some(Effect::ReadTemperatureNames { .. })
         | Some(Effect::ReadTime { .. })
         | Some(Effect::SampleGnss { .. })
         | Some(Effect::SetPairingPin { .. })
@@ -1253,6 +1266,22 @@ async fn serve_frame<A, S, const TXQ: usize, M, const RX: usize, const TX: usize
                 session.respond_battery_group(tid, key, sample, &mut |frame: &[u8]| {
                     emitter.push(frame)
                 });
+                emitter.flush(sink).await;
+            }
+            Some(Effect::SampleTemperatures { tid }) => {
+                let mut out =
+                    [umsh_ulcp::temperature::UNKNOWN; umsh_ulcp_device::MAX_TEMPERATURE_SENSORS];
+                let result = env.sample_temperatures(&mut out).await;
+                let values = result.and_then(|len| out.get(..len).ok_or(Status::NOMEM));
+                session.respond_temperatures(tid, values, &mut |frame: &[u8]| emitter.push(frame));
+                emitter.flush(sink).await;
+            }
+            Some(Effect::ReadTemperatureNames { tid }) => {
+                let mut out = [0; umsh_ulcp_device::TEMPERATURE_NAMES_MAX];
+                let result = env.read_temperature_names(&mut out).await;
+                let names = result.and_then(|len| out.get(..len).ok_or(Status::NOMEM));
+                session
+                    .respond_temperature_names(tid, names, &mut |frame: &[u8]| emitter.push(frame));
                 emitter.flush(sink).await;
             }
             Some(Effect::SampleIlluminance { tid }) => {

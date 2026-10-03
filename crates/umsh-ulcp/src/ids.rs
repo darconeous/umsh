@@ -111,8 +111,7 @@ pub mod prop {
     /// First of the device-behavior settings range (70–95), which is
     /// subdivided as 70–79 repeater and identity, 80–87 advertisement
     /// policy (80–84 allocated, 85–87 spare), 88–93 positioning, 94–95
-    /// environmental sensing (94 illuminance, 95 spare—the board's
-    /// thermistor is the expected claimant). A
+    /// environmental sensing (94 illuminance, 95 temperatures). A
     /// single-octet identifier is the scarce resource, so the positioning
     /// range holds the enable toggle and the fix telemetry a host reads
     /// and the device announces continually; the rarely-touched
@@ -230,6 +229,10 @@ pub mod prop {
     /// point rather than extrapolating past it. Requires
     /// `CAP_ILLUMINANCE`.
     pub const ILLUMINANCE: u32 = 94;
+    /// Ordered UINT16_LE temperatures in tenths of kelvin; 0xffff is unknown.
+    pub const TEMPERATURES: u32 = 95;
+    /// Ordered PUI-length-prefixed UTF-8 temperature sensor labels.
+    pub const TEMPERATURE_NAMES: u32 = 4876;
     /// Tethered host identity public key (`PROP_HOST_KEY`).
     pub const HOST_KEY: u32 = 96;
     /// Host channel keys (`PROP_HOST_CHANNEL_KEYS`).
@@ -745,6 +748,8 @@ pub mod cap {
     /// `CMD_I2C_TRANSFER`, `CMD_I2C_SCAN`, answered by `CMD_I2C_RESULT`).
     /// Without it the commands answer `STATUS_UNIMPLEMENTED`.
     pub const I2C: u32 = 60;
+    /// Both temperature properties, with an append-only inventory.
+    pub const TEMPERATURE: u32 = 61;
 }
 
 /// Whether a property is writable by a mesh administrator.

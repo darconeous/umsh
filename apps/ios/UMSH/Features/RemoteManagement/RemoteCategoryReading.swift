@@ -37,6 +37,8 @@ struct RemoteCategoryReading {
     /// Keep individual error codes: an acquisition failure is not an
     /// unsupported diagnostic and must remain visible and retryable.
     var statuses: [UInt32: UInt32] = [:]
+    /// Transport failures are distinct from property refusals and malformed values.
+    var failures: [UInt32: String] = [:]
     /// Battery pushes update the summary independently of explicit reads
     /// of the diagnostics, so they must not make old diagnostics look fresh.
     private(set) var batteryDiagnosticsAsOf: Date?
@@ -79,5 +81,85 @@ struct RemoteCategoryReading {
         )
         asOf = instant
         isFresh = isFresh || fromAir
+    }
+}
+
+/// Sensor inventories are connection-local, and measurements are always read fresh.
+func isPersistentManagedProperty(_ property: UInt32) -> Bool {
+    ![ulcpProperties.illuminance, ulcpProperties.temperatures,
+      ulcpProperties.temperatureNames, ulcpProperties.wifiScanResults,
+      ulcpProperties.wifiRssi].contains(property)
+}
+
+struct RemoteTemperatureRow: Identifiable {
+    let id: Int
+    let name: String
+    let value: String
+}
+
+struct RemoteTemperaturePresentation {
+    let rows: [RemoteTemperatureRow]
+    let problem: String?
+    let state: String?
+    let sampledAt: Date?
+
+    init(reading: RemoteCategoryReading?, locale: Locale = .autoupdatingCurrent) {
+        let id = ulcpProperties
+        let readings = reading?.properties.temperatures
+        let names = reading?.properties.temperatureNames
+        sampledAt = reading?.receivedAt[id.temperatures]
+        let metadataFailed = reading?.failures[id.temperatureNames] != nil
+            || reading?.refused.contains(id.temperatureNames) == true
+        let malformedNames = reading?.values[id.temperatureNames] != nil && names == nil
+        let shortNames = readings.map { names == nil || (names?.count ?? 0) < $0.count } ?? false
+        if metadataFailed {
+            problem = "Sensor names could not be read."
+        } else if malformedNames || shortNames {
+            problem = "Sensor names are invalid or incomplete."
+        } else {
+            problem = nil
+        }
+        let labels = problem == nil ? names : nil
+        let failure: String?
+        if let status = reading?.statuses[id.temperatures] {
+            failure = "Read failed (\(ulcpStatusName(status: status)))"
+        } else if reading?.failures[id.temperatures] != nil
+                    || reading?.refused.contains(id.temperatures) == true {
+            failure = "Read failed"
+        } else if reading?.values[id.temperatures] != nil && readings == nil {
+            failure = "Invalid reading"
+        } else {
+            failure = nil
+        }
+        let count = max(readings?.count ?? 0, labels?.count ?? 0)
+        rows = (0..<count).map { index in
+            let value: String
+            if let failure {
+                value = failure
+            } else if let readings, index < readings.count {
+                value = readings[index].map { Self.format($0, locale: locale) } ?? "Unavailable"
+            } else {
+                value = "Not read"
+            }
+            return RemoteTemperatureRow(
+                id: index, name: labels?[index] ?? "Temperature \(index + 1)", value: value
+            )
+        }
+        state = count == 0 ? (failure ?? (readings != nil ? "No temperature sensors" : "Not read")) : nil
+    }
+
+    static func format(_ tenthsKelvin: UInt16, locale: Locale = .autoupdatingCurrent) -> String {
+        guard tenthsKelvin != .max else { return "Unavailable" }
+        let kelvin = Measurement(value: Double(tenthsKelvin) / 10, unit: UnitTemperature.kelvin)
+        let unit = UnitTemperature(forLocale: locale)
+        func formatted(_ unit: UnitTemperature) -> String {
+            kelvin.converted(to: unit).formatted(
+                .measurement(width: .abbreviated, usage: .asProvided,
+                             numberFormatStyle: .number.precision(.fractionLength(1)))
+                    .locale(locale)
+            )
+        }
+        let preferred = formatted(unit)
+        return unit == .celsius ? preferred : "\(preferred) (\(formatted(.celsius)))"
     }
 }

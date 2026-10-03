@@ -82,6 +82,8 @@ pub const fn property_name(key: u32) -> Option<&'static str> {
         prop::GNSS_PRECISION => "PROP_GNSS_PRECISION",
         prop::GNSS_SATELLITES => "PROP_GNSS_SATELLITES",
         prop::ILLUMINANCE => "PROP_ILLUMINANCE",
+        prop::TEMPERATURES => "PROP_TEMPERATURES",
+        prop::TEMPERATURE_NAMES => "PROP_TEMPERATURE_NAMES",
         prop::HOST_KEY => "PROP_HOST_KEY",
         prop::HOST_CHANNEL_KEYS => "PROP_HOST_CHANNEL_KEYS",
         prop::HOST_PEER_KEYS => "PROP_HOST_PEER_KEYS",
@@ -213,6 +215,8 @@ pub const PROPERTIES: &[u32] = &[
     prop::GNSS_PRECISION,
     prop::GNSS_SATELLITES,
     prop::ILLUMINANCE,
+    prop::TEMPERATURES,
+    prop::TEMPERATURE_NAMES,
     prop::HOST_KEY,
     prop::HOST_CHANNEL_KEYS,
     prop::HOST_PEER_KEYS,
@@ -322,6 +326,7 @@ pub const fn property_type(key: u32) -> Option<PropertyType> {
         // Tables of bus and device items, decoded by `i2c::buses` and
         // `i2c::devices`.
         prop::I2C_BUSES | prop::I2C_DEVICES => Bytes,
+        prop::TEMPERATURES | prop::TEMPERATURE_NAMES => Bytes,
         prop::LAST_STATUS => Status,
         // Major and minor, one octet each.
         prop::PROTOCOL_VERSION => Bytes,
@@ -446,6 +451,7 @@ pub const fn capability_name(code: u32) -> Option<&'static str> {
         cap::GNSS => "GNSS",
         cap::ADVERT => "ADVERT",
         cap::ILLUMINANCE => "ILLUMINANCE",
+        cap::TEMPERATURE => "TEMPERATURE",
         cap::DISPLAY_MOTION_WAKE => "DISPLAY_MOTION_WAKE",
         cap::MAC_BACKHAUL => "MAC_BACKHAUL",
         cap::ADMIN => "ADMIN",
@@ -781,7 +787,8 @@ mod tests {
         assert_eq!(capability_name(cap::BLE), Some("BLE"));
         // One past the last allocated code: an unassigned capability has
         // no name to give, whatever a device claims by advertising it.
-        assert_eq!(capability_name(cap::I2C + 1), None);
+        assert_eq!(capability_name(cap::TEMPERATURE), Some("TEMPERATURE"));
+        assert_eq!(capability_name(cap::TEMPERATURE + 1), None);
     }
 
     #[test]

@@ -3,8 +3,8 @@
 //!
 //! The report is a list of topics ([`topics::TOPICS`]), each a set of
 //! properties and two renderings of them. Everything a run needs is
-//! fetched in one `CMD_PROP_MULTI_GET`—plus the two that cannot share
-//! one—so a whole report costs about what a single property used to.
+//! fetched in one `CMD_PROP_MULTI_GET` where possible. Status, capability
+//! discovery, and temperature sampling/labels use separate requests.
 //!
 //! Naming a topic asks for that topic alone, which over the mesh is the
 //! difference between a question and an errand.
@@ -108,12 +108,33 @@ pub async fn run<L: FrameLink>(device: &mut UlcpDevice<L>, args: InfoArgs) -> Re
             }
         }
     }
+    // Sampling arrays and appendable labels must not share a continued batch.
+    let has_temperatures = keys.contains(&prop::TEMPERATURES);
+    keys.retain(|key| !matches!(*key, prop::TEMPERATURES | prop::TEMPERATURE_NAMES));
     let fetched = props::fetch(device, &keys, props::batched(&ctx.caps)).await?;
     for &key in &keys {
         if let Some(value) = fetched.bytes(key) {
             set.insert(key, Ok(value.to_vec()));
         } else if let Some(status) = fetched.refusal(key) {
             set.insert(key, Err(status));
+        }
+    }
+
+    if has_temperatures {
+        for key in [prop::TEMPERATURES, prop::TEMPERATURE_NAMES] {
+            let answer = match props::fetch(device, &[key], false).await {
+                Ok(answer) => answer,
+                Err(error) if key == prop::TEMPERATURE_NAMES => {
+                    eprintln!("sensor names: {error}");
+                    continue;
+                }
+                Err(error) => return Err(error.into()),
+            };
+            if let Some(bytes) = answer.bytes(key) {
+                set.insert(key, Ok(bytes.to_vec()));
+            } else if let Some(status) = answer.refusal(key) {
+                set.insert(key, Err(status));
+            }
         }
     }
 
@@ -175,6 +196,30 @@ pub fn battery_display(status: &BatteryStatus) -> String {
         None => "charge state unsupported",
     };
     format!("{voltage}, {level}, {state}")
+}
+
+/// Read all temperatures, then their current labels, without batching the values.
+pub async fn temperatures<L: FrameLink>(device: &mut UlcpDevice<L>) -> Result<()> {
+    if !device.capabilities().await?.contains(&cap::TEMPERATURE) {
+        field("temperatures", "unsupported (no CAP_TEMPERATURE)");
+        return Ok(());
+    }
+    let mut set = props::fetch(device, &[prop::TEMPERATURES], false).await?;
+    // Preserve measurements even if the metadata exchange fails.
+    match props::fetch(device, &[prop::TEMPERATURE_NAMES], false).await {
+        Ok(names) => {
+            if let Some(value) = names.bytes(prop::TEMPERATURE_NAMES) {
+                set.insert(prop::TEMPERATURE_NAMES, Ok(value.to_vec()));
+            } else if let Some(status) = names.refusal(prop::TEMPERATURE_NAMES) {
+                set.insert(prop::TEMPERATURE_NAMES, Err(status));
+            }
+        }
+        Err(error) => eprintln!("sensor names: {error}"),
+    }
+    for (label, value) in topics::render_temperatures(&set) {
+        field(&label, value);
+    }
+    Ok(())
 }
 
 /// `illuminance`: one ambient light reading, on its own.

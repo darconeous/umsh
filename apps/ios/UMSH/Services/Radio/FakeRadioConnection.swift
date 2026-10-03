@@ -475,7 +475,7 @@ actor FakeRadioConnection: RadioConnection {
         return propertyIDs.map { property in
             MobileMeshManagementAnswerRecord(
                 propertyId: property,
-                value: managedDevice.values[property],
+                value: managedDevice.read(property),
                 // A property the canned device holds no value for is one
                 // it does not implement, which is a refusal rather than
                 // silence.
@@ -555,7 +555,7 @@ actor FakeRadioConnection: RadioConnection {
         propertyIDs.map { property in
             MobileMeshManagementAnswerRecord(
                 propertyId: property,
-                value: managedDevice.values[property],
+                value: managedDevice.read(property),
                 statusCode: managedDevice.values[property] == nil ? Self.propertyNotFound : nil
             )
         }
@@ -640,6 +640,11 @@ actor FakeRadioConnection: RadioConnection {
     }
 
     private func store(_ write: MobileMeshPropertyWriteRecord) -> MobileMeshManagementAnswerRecord {
+        if [ulcpProperties.temperatures, ulcpProperties.temperatureNames].contains(write.propertyId) {
+            return MobileMeshManagementAnswerRecord(
+                propertyId: write.propertyId, value: nil, statusCode: 3
+            )
+        }
         managedDevice.values[write.propertyId] = write.value
         let id = ulcpProperties
         if [id.bridgeEnabled, id.bridgeHost, id.bridgePort, id.bridgeServerKey].contains(write.propertyId) {
@@ -1330,6 +1335,18 @@ struct FakeManagedDevice: Sendable {
 
     /// Everything the device would answer, keyed by property.
     var values: [UInt32: Data]
+    private var appendedTemperature = false
+
+    /// The first sample captures three sensors; names then reveal an appended fourth.
+    mutating func read(_ property: UInt32) -> Data? {
+        let answer = values[property]
+        if property == ulcpProperties.temperatures && !appendedTemperature {
+            appendedTemperature = true
+            values[ulcpProperties.temperatureNames]?.append(Self.item(Data("External".utf8)))
+            values[ulcpProperties.temperatures]?.append(Data([0x41, 0x0B]))
+        }
+        return answer
+    }
 
     /// Whether this device has a station to join networks with, or only
     /// the receiver to hear them.
@@ -1350,6 +1367,11 @@ struct FakeManagedDevice: Sendable {
             id.deviceName: Data("Ridgeline".utf8),
             // Flags, then 4.11 V, 78%, charging.
             id.battery: Data([0b111, 0x0F, 0x10, 78, 1]),
+            id.illuminance: UInt32(320_000).littleEndianData,
+            id.temperatures: Data([0xA5, 0x0B, 0x73, 0x0B, 0xFF, 0xFF]),
+            id.temperatureNames: ["MCU die", "Battery", "External"].reduce(into: Data()) {
+                $0.append(Self.item(Data($1.utf8)))
+            },
             id.phyEnabled: Data([1]),
             id.frequency: UInt32(906_875).littleEndianData,
             id.transmitPower: Data([22]),
@@ -1624,7 +1646,7 @@ struct FakeManagedDevice: Sendable {
     /// `PROP_CAPS` for a fully-featured tracker: duty limit (16), save
     /// (36), device identity (37), device name (38), battery (39),
     /// repeater (40), identity (41), alert (42), administrators (43),
-    /// clock (44), receiver (45), advertisement (46), batched commands
+    /// clock (44), receiver (45), advertisement (46), illuminance (47), batched commands
     /// (49), Bluetooth (50), restart (51), statistics (52), Wi-Fi scanning
     /// (53), the Wi-Fi station (54), IPv4 (55), IPv6 (56), and the LoRa
     /// modem (515, which needs two PUI octets).
@@ -1632,7 +1654,7 @@ struct FakeManagedDevice: Sendable {
     /// Bond management has no capability of its own: this fake claims it
     /// by answering `PROP_BLE_BOND_COUNT` rather than by listing a code.
     private static let capabilities = Data([
-        0x10, 0x24, 0x25, 0x26, 0x27, 0x28, 0x29, 0x2A, 0x2B, 0x2C, 0x2D, 0x2E, 0x31, 0x32,
+        0x10, 0x24, 0x25, 0x26, 0x27, 0x28, 0x29, 0x2A, 0x2B, 0x2C, 0x2D, 0x2E, 0x2F, 0x3D, 0x31, 0x32,
         0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x3A, 0x83, 0x04,
     ])
 
@@ -1640,7 +1662,7 @@ struct FakeManagedDevice: Sendable {
     /// scanning (53) and neither the station nor either IP family, which
     /// is the shape a device that scans to place itself really has.
     private static let scanOnlyCapabilities = Data([
-        0x10, 0x24, 0x25, 0x26, 0x27, 0x28, 0x29, 0x2A, 0x2B, 0x2C, 0x2D, 0x2E, 0x31, 0x32,
+        0x10, 0x24, 0x25, 0x26, 0x27, 0x28, 0x29, 0x2A, 0x2B, 0x2C, 0x2D, 0x2E, 0x2F, 0x3D, 0x31, 0x32,
         0x33, 0x34, 0x35, 0x83, 0x04,
     ])
 }

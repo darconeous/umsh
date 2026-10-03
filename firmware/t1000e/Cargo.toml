@@ -48,7 +48,7 @@ lfclk-rc = []
 # (Solar P1 PWR button on P1.01).
 power-button = []
 boot-pairing-window = []
-# Diagnostic build: skip MPSL/SDC/Trouble entirely (USB-only device) while
+# Diagnostic build: skip SDC/Trouble (USB-only device), retaining MPSL and
 # keeping the BLE clock configuration, to isolate the post-DFU
 # first-boot watchdog freeze. Not a production configuration.
 no-ble = []

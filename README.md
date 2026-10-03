@@ -166,6 +166,13 @@ umshctl --ble="UMSH T-Echo" info
 umshctl --port /dev/cu.usbmodem101 phy on
 ```
 
+Devices advertising temperature support can be sampled with `umshctl temperatures`.
+`umshctl info sensors` includes light and temperature readings; `info --env sensors`
+also exposes indexed `SENSORS_TEMPERATURE_<index>_NAME` and
+`SENSORS_TEMPERATURE_<index>_DECIKELVIN` values (`unknown` for unavailable readings).
+Temperature labels are fetched freshly after sampling; duplicate labels retain
+their distinct indices.
+
 Given none, it opens a shell against a single attachment—worth a great deal over BLE, where
 every fresh attach costs a discovery pass plus a handshake:
 

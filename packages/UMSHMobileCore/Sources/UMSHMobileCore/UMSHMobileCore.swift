@@ -9119,6 +9119,15 @@ public struct UlcpDevicePropertiesRecord: Equatable, Hashable {
     public var bridgeLink: UlcpBridgeLinkRecord?
     public var devKey: Data?
     public var battery: UlcpBatteryRecord?
+    /**
+     * Ambient light in millilux. Empty means a measurement was unavailable.
+     */
+    public var illuminanceMillilux: UInt32?
+    /**
+     * Tenths of kelvin; inner None is an unavailable sensor.
+     */
+    public var temperatures: [UInt16?]?
+    public var temperatureNames: [String]?
     public var phyEnabled: Bool?
     public var frequencyKhz: UInt32?
     public var transmitPowerDbm: Int8?
@@ -9281,7 +9290,13 @@ public struct UlcpDevicePropertiesRecord: Equatable, Hashable {
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(bridgeEnabled: Bool?, bridgeHost: String?, bridgePort: UInt16?, bridgeServerKey: Data?, bridgeLink: UlcpBridgeLinkRecord?, devKey: Data?, battery: UlcpBatteryRecord?, phyEnabled: Bool?, frequencyKhz: UInt32?, transmitPowerDbm: Int8?, bandwidthHz: UInt32?, spreadingFactor: UInt8?, codingRateDenom: UInt8?, dutyCycleNow: UInt16?, dutyCycleLimit: UInt16?, statTxPackets: UInt32?, statTxChannelBusy: UInt32?, statRxPackets: UInt32?, statRxBadCrc: UInt32?, statRxNonUmsh: UInt32?, statRxAccepted: UInt32?, statForwarded: UInt32?, statForwardDropped: UInt32?, statForwardCancelled: UInt32?, deviceName: String?,
+    public init(bridgeEnabled: Bool?, bridgeHost: String?, bridgePort: UInt16?, bridgeServerKey: Data?, bridgeLink: UlcpBridgeLinkRecord?, devKey: Data?, battery: UlcpBatteryRecord?,
+        /**
+         * Ambient light in millilux. Empty means a measurement was unavailable.
+         */illuminanceMillilux: UInt32?,
+        /**
+         * Tenths of kelvin; inner None is an unavailable sensor.
+         */temperatures: [UInt16?]?, temperatureNames: [String]?, phyEnabled: Bool?, frequencyKhz: UInt32?, transmitPowerDbm: Int8?, bandwidthHz: UInt32?, spreadingFactor: UInt8?, codingRateDenom: UInt8?, dutyCycleNow: UInt16?, dutyCycleLimit: UInt16?, statTxPackets: UInt32?, statTxChannelBusy: UInt32?, statRxPackets: UInt32?, statRxBadCrc: UInt32?, statRxNonUmsh: UInt32?, statRxAccepted: UInt32?, statForwarded: UInt32?, statForwardDropped: UInt32?, statForwardCancelled: UInt32?, deviceName: String?,
         /**
          * `None` is the device deriving its own role, which reads the same
          * as never having been told.
@@ -9383,6 +9398,9 @@ public struct UlcpDevicePropertiesRecord: Equatable, Hashable {
         self.bridgeLink = bridgeLink
         self.devKey = devKey
         self.battery = battery
+        self.illuminanceMillilux = illuminanceMillilux
+        self.temperatures = temperatures
+        self.temperatureNames = temperatureNames
         self.phyEnabled = phyEnabled
         self.frequencyKhz = frequencyKhz
         self.transmitPowerDbm = transmitPowerDbm
@@ -9473,6 +9491,9 @@ public struct FfiConverterTypeUlcpDevicePropertiesRecord: FfiConverterRustBuffer
                 bridgeLink: FfiConverterOptionTypeUlcpBridgeLinkRecord.read(from: &buf),
                 devKey: FfiConverterOptionData.read(from: &buf),
                 battery: FfiConverterOptionTypeUlcpBatteryRecord.read(from: &buf),
+                illuminanceMillilux: FfiConverterOptionUInt32.read(from: &buf),
+                temperatures: FfiConverterOptionSequenceOptionUInt16.read(from: &buf),
+                temperatureNames: FfiConverterOptionSequenceString.read(from: &buf),
                 phyEnabled: FfiConverterOptionBool.read(from: &buf),
                 frequencyKhz: FfiConverterOptionUInt32.read(from: &buf),
                 transmitPowerDbm: FfiConverterOptionInt8.read(from: &buf),
@@ -9549,6 +9570,9 @@ public struct FfiConverterTypeUlcpDevicePropertiesRecord: FfiConverterRustBuffer
         FfiConverterOptionTypeUlcpBridgeLinkRecord.write(value.bridgeLink, into: &buf)
         FfiConverterOptionData.write(value.devKey, into: &buf)
         FfiConverterOptionTypeUlcpBatteryRecord.write(value.battery, into: &buf)
+        FfiConverterOptionUInt32.write(value.illuminanceMillilux, into: &buf)
+        FfiConverterOptionSequenceOptionUInt16.write(value.temperatures, into: &buf)
+        FfiConverterOptionSequenceString.write(value.temperatureNames, into: &buf)
         FfiConverterOptionBool.write(value.phyEnabled, into: &buf)
         FfiConverterOptionUInt32.write(value.frequencyKhz, into: &buf)
         FfiConverterOptionInt8.write(value.transmitPowerDbm, into: &buf)
@@ -10393,6 +10417,9 @@ public struct UlcpManagedPropertyIds: Equatable, Hashable {
     public var deviceModel: UInt32
     public var deviceName: UInt32
     public var battery: UInt32
+    public var illuminance: UInt32
+    public var temperatures: UInt32
+    public var temperatureNames: UInt32
     public var batteryCurrent: UInt32
     public var batteryRemainingCapacity: UInt32
     public var batteryFullCapacity: UInt32
@@ -10476,12 +10503,15 @@ public struct UlcpManagedPropertyIds: Equatable, Hashable {
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(caps: UInt32, deviceVersion: UInt32, deviceModel: UInt32, deviceName: UInt32, battery: UInt32, batteryCurrent: UInt32, batteryRemainingCapacity: UInt32, batteryFullCapacity: UInt32, batteryDesignCapacity: UInt32, batteryExtPowerPresent: UInt32, batteryPresent: UInt32, batteryGaugeFull: UInt32, batteryGaugeInitialized: UInt32, batteryGaugeSmoothing: UInt32, batteryChargeVoltageRequest: UInt32, batteryGaugeFormat: UInt32, batteryGaugeStatus: UInt32, batteryGaugeOperationStatus: UInt32, phyEnabled: UInt32, frequency: UInt32, transmitPower: UInt32, loraBandwidth: UInt32, loraSpreadingFactor: UInt32, loraCodingRate: UInt32, dutyCycleNow: UInt32, dutyCycleLimit: UInt32, statTxPackets: UInt32, statTxChannelBusy: UInt32, statRxPackets: UInt32, statRxBadCrc: UInt32, statRxNonUmsh: UInt32, statRxAccepted: UInt32, statForwarded: UInt32, statForwardDropped: UInt32, statForwardCancelled: UInt32, identRole: UInt32, identMobile: UInt32, identLocation: UInt32, identAltitude: UInt32, devDiscoverable: UInt32, gnssIdentUpdate: UInt32, gnssIdentPrecision: UInt32, uptime: UInt32, advertInterval: UInt32, beaconInterval: UInt32, startupBeacon: UInt32, gnssEnabled: UInt32, displayMotionWakeEnabled: UInt32, gnssTimeTrust: UInt32, bleEnabled: UInt32, bleBondCount: UInt32, bleLink: UInt32, blePairing: UInt32, wifiEnabled: UInt32, bridgeEnabled: UInt32, bridgeHost: UInt32, bridgePort: UInt32, bridgeServerKey: UInt32, bridgeLink: UInt32, devKey: UInt32, wifiNetworks: UInt32, wifiNetwork: UInt32, wifiScanning: UInt32, wifiScanResults: UInt32, wifiLink: UInt32, wifiRssi: UInt32, wifiMac: UInt32, ipv4State: UInt32, ipv4Config: UInt32, ipv4Address: UInt32, ipv6State: UInt32, ipv6Config: UInt32, ipv6Addresses: UInt32, ipDns: UInt32, ipResolvers: UInt32, time: UInt32, tzOffset: UInt32, alert: UInt32, repeaterEnabled: UInt32, repeaterRegions: UInt32, repeaterDefaultRegion: UInt32, repeaterMinRssi: UInt32, repeaterMinSnr: UInt32, devPeers: UInt32, devAdmins: UInt32) {
+    public init(caps: UInt32, deviceVersion: UInt32, deviceModel: UInt32, deviceName: UInt32, battery: UInt32, illuminance: UInt32, temperatures: UInt32, temperatureNames: UInt32, batteryCurrent: UInt32, batteryRemainingCapacity: UInt32, batteryFullCapacity: UInt32, batteryDesignCapacity: UInt32, batteryExtPowerPresent: UInt32, batteryPresent: UInt32, batteryGaugeFull: UInt32, batteryGaugeInitialized: UInt32, batteryGaugeSmoothing: UInt32, batteryChargeVoltageRequest: UInt32, batteryGaugeFormat: UInt32, batteryGaugeStatus: UInt32, batteryGaugeOperationStatus: UInt32, phyEnabled: UInt32, frequency: UInt32, transmitPower: UInt32, loraBandwidth: UInt32, loraSpreadingFactor: UInt32, loraCodingRate: UInt32, dutyCycleNow: UInt32, dutyCycleLimit: UInt32, statTxPackets: UInt32, statTxChannelBusy: UInt32, statRxPackets: UInt32, statRxBadCrc: UInt32, statRxNonUmsh: UInt32, statRxAccepted: UInt32, statForwarded: UInt32, statForwardDropped: UInt32, statForwardCancelled: UInt32, identRole: UInt32, identMobile: UInt32, identLocation: UInt32, identAltitude: UInt32, devDiscoverable: UInt32, gnssIdentUpdate: UInt32, gnssIdentPrecision: UInt32, uptime: UInt32, advertInterval: UInt32, beaconInterval: UInt32, startupBeacon: UInt32, gnssEnabled: UInt32, displayMotionWakeEnabled: UInt32, gnssTimeTrust: UInt32, bleEnabled: UInt32, bleBondCount: UInt32, bleLink: UInt32, blePairing: UInt32, wifiEnabled: UInt32, bridgeEnabled: UInt32, bridgeHost: UInt32, bridgePort: UInt32, bridgeServerKey: UInt32, bridgeLink: UInt32, devKey: UInt32, wifiNetworks: UInt32, wifiNetwork: UInt32, wifiScanning: UInt32, wifiScanResults: UInt32, wifiLink: UInt32, wifiRssi: UInt32, wifiMac: UInt32, ipv4State: UInt32, ipv4Config: UInt32, ipv4Address: UInt32, ipv6State: UInt32, ipv6Config: UInt32, ipv6Addresses: UInt32, ipDns: UInt32, ipResolvers: UInt32, time: UInt32, tzOffset: UInt32, alert: UInt32, repeaterEnabled: UInt32, repeaterRegions: UInt32, repeaterDefaultRegion: UInt32, repeaterMinRssi: UInt32, repeaterMinSnr: UInt32, devPeers: UInt32, devAdmins: UInt32) {
         self.caps = caps
         self.deviceVersion = deviceVersion
         self.deviceModel = deviceModel
         self.deviceName = deviceName
         self.battery = battery
+        self.illuminance = illuminance
+        self.temperatures = temperatures
+        self.temperatureNames = temperatureNames
         self.batteryCurrent = batteryCurrent
         self.batteryRemainingCapacity = batteryRemainingCapacity
         self.batteryFullCapacity = batteryFullCapacity
@@ -10585,6 +10615,9 @@ public struct FfiConverterTypeUlcpManagedPropertyIds: FfiConverterRustBuffer {
                 deviceModel: FfiConverterUInt32.read(from: &buf),
                 deviceName: FfiConverterUInt32.read(from: &buf),
                 battery: FfiConverterUInt32.read(from: &buf),
+                illuminance: FfiConverterUInt32.read(from: &buf),
+                temperatures: FfiConverterUInt32.read(from: &buf),
+                temperatureNames: FfiConverterUInt32.read(from: &buf),
                 batteryCurrent: FfiConverterUInt32.read(from: &buf),
                 batteryRemainingCapacity: FfiConverterUInt32.read(from: &buf),
                 batteryFullCapacity: FfiConverterUInt32.read(from: &buf),
@@ -10674,6 +10707,9 @@ public struct FfiConverterTypeUlcpManagedPropertyIds: FfiConverterRustBuffer {
         FfiConverterUInt32.write(value.deviceModel, into: &buf)
         FfiConverterUInt32.write(value.deviceName, into: &buf)
         FfiConverterUInt32.write(value.battery, into: &buf)
+        FfiConverterUInt32.write(value.illuminance, into: &buf)
+        FfiConverterUInt32.write(value.temperatures, into: &buf)
+        FfiConverterUInt32.write(value.temperatureNames, into: &buf)
         FfiConverterUInt32.write(value.batteryCurrent, into: &buf)
         FfiConverterUInt32.write(value.batteryRemainingCapacity, into: &buf)
         FfiConverterUInt32.write(value.batteryFullCapacity, into: &buf)
@@ -15086,6 +15122,10 @@ public enum UlcpManageCategory: Equatable, Hashable {
      * Who this device talks to, and who may manage it.
      */
     case peerNodes
+    /**
+     * Measurements from sensors fitted to the device. Read-only.
+     */
+    case sensors
 
 
 
@@ -15130,6 +15170,8 @@ public struct FfiConverterTypeUlcpManageCategory: FfiConverterRustBuffer {
         case 11: return .repeater
 
         case 12: return .peerNodes
+
+        case 13: return .sensors
 
         default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -15185,6 +15227,10 @@ public struct FfiConverterTypeUlcpManageCategory: FfiConverterRustBuffer {
 
         case .peerNodes:
             writeInt(&buf, Int32(12))
+
+
+        case .sensors:
+            writeInt(&buf, Int32(13))
 
         }
     }
@@ -16533,6 +16579,30 @@ fileprivate struct FfiConverterOptionSequenceTypeUlcpWifiScanResultRecord: FfiCo
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionSequenceOptionUInt16: FfiConverterRustBuffer {
+    typealias SwiftType = [UInt16?]?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterSequenceOptionUInt16.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterSequenceOptionUInt16.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceUInt32: FfiConverterRustBuffer {
     typealias SwiftType = [UInt32]
 
@@ -17300,6 +17370,31 @@ fileprivate struct FfiConverterSequenceTypeUlcpWifiScanResultRecord: FfiConverte
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypeUlcpWifiScanResultRecord.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceOptionUInt16: FfiConverterRustBuffer {
+    typealias SwiftType = [UInt16?]
+
+    public static func write(_ value: [UInt16?], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterOptionUInt16.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [UInt16?] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [UInt16?]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterOptionUInt16.read(from: &buf))
         }
         return seq
     }

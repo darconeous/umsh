@@ -52,6 +52,7 @@ struct Device<const PAYLOAD: usize> {
     /// here.
     executed: u32,
     battery_samples: u32,
+    temperature_samples: u32,
     /// Requests refused before the engine saw them.
     unauthorized: u32,
     /// The peripheral on the simulated bus, counting what reached it.
@@ -96,6 +97,7 @@ impl<const PAYLOAD: usize> Device<PAYLOAD> {
             gnss: Some(GnssConfig::DEFAULT),
             display_motion_wake: false,
             illuminance: true,
+            temperatures: true,
             ble: true,
             ble_pairing: true,
             reboot: true,
@@ -121,6 +123,7 @@ impl<const PAYLOAD: usize> Device<PAYLOAD> {
             admins: Vec::new(),
             executed: 0,
             battery_samples: 0,
+            temperature_samples: 0,
             unauthorized: 0,
             i2c: Default::default(),
         }
@@ -263,6 +266,18 @@ impl<const PAYLOAD: usize> Device<PAYLOAD> {
                             emitted.push(bytes.to_vec())
                         })
                 }
+                Effect::SampleTemperatures { tid } => {
+                    self.temperature_samples += 1;
+                    self.session
+                        .respond_temperatures(tid, Ok(&[2981, 0xffff]), &mut |bytes| {
+                            emitted.push(bytes.to_vec())
+                        });
+                }
+                Effect::ReadTemperatureNames { tid } => self.session.respond_temperature_names(
+                    tid,
+                    Ok(b"\x03Die\x03Die"),
+                    &mut |bytes| emitted.push(bytes.to_vec()),
+                ),
                 Effect::SampleIlluminance { tid } => {
                     self.session
                         .respond_illuminance(tid, Some(1234), &mut |bytes: &[u8]| {
@@ -650,6 +665,27 @@ fn a_retransmission_is_answered_without_executing_again() {
         .expect("a response");
     assert_eq!(again, first, "the retained response is repeated verbatim");
     assert_eq!(device.executed, 1, "the request did not run twice");
+}
+
+#[test]
+fn temperature_retries_replay_and_fresh_tokens_sample_again() {
+    let mut device = managed();
+    let mut buf = [0; 32];
+    let len = frame::prop_get(&mut buf, 0, prop::TEMPERATURES).unwrap();
+    let mut request = [0; PAYLOAD];
+    for token in [3, 4] {
+        let mut exchange = Exchange::<192>::new(&buf[..len], token, 0).unwrap();
+        let Step::Send { len } = exchange.poll(0, &mut request) else {
+            panic!("expected request")
+        };
+        let first = device.deliver(&ADMIN_KEY, &request[..len], 0).unwrap();
+        assert_eq!(device.temperature_samples, u32::from(token - 2));
+        let again = device
+            .deliver(&ADMIN_KEY, &request[..len], RETRY_MS)
+            .unwrap();
+        assert_eq!(again, first);
+        assert_eq!(device.temperature_samples, u32::from(token - 2));
+    }
 }
 
 /// A raw bus write is the at-most-once property's hardest case: the

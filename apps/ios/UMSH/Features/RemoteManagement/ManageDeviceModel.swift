@@ -346,7 +346,7 @@ final class ManageDeviceModel {
         if readings[category] == nil {
             let properties = properties(of: category)
             guard !properties.isEmpty else { return }
-            let cached = await management.loadValues(address, properties)
+            let cached = await management.loadValues(address, properties.filter(isPersistentManagedProperty))
             var reading = RemoteCategoryReading()
             reading.propertyIDs = properties
             if let oldest = cached.values.map(\.fetchedAt).min() {
@@ -368,6 +368,34 @@ final class ManageDeviceModel {
         guard !properties.isEmpty, let card else { return }
         writeRefusals[category] = nil
         await run { [self] in
+            if category == .sensors {
+                // Keep changing measurement arrays out of continued multi-property replies.
+                // Capture each receipt date before the following request starts.
+                var reading = RemoteCategoryReading()
+                reading.propertyIDs = properties
+                readings[category] = reading
+                let order = [ulcpProperties.temperatures, ulcpProperties.temperatureNames,
+                             ulcpProperties.illuminance].filter { properties.contains($0) }
+                for property in order {
+                    do {
+                        let answers = try await fetch([property], multiHint: false)
+                        let now = Date()
+                        for answer in answers where answer.value == nil {
+                            reading.refused.insert(answer.propertyId)
+                            reading.statuses[answer.propertyId] = answer.statusCode
+                        }
+                        let reported = Self.values(in: answers)
+                        if reported[property] == nil && !reading.refused.contains(property) {
+                            reading.failures[property] = "No response"
+                        }
+                        reading.absorb(reported, at: now, fromAir: true)
+                    } catch {
+                        reading.failures[property] = error.localizedDescription
+                    }
+                    readings[category] = reading
+                }
+                return
+            }
             let answers = try await fetch(properties, multiHint: card.supportsMulti)
             let reported = Self.values(in: answers)
             await cache(reported)
@@ -858,11 +886,7 @@ final class ManageDeviceModel {
     /// are read fresh or not shown. The known-network table caches
     /// normally: its reported form carries no credential.
     private func cache(_ values: [UInt32: Data]) async {
-        let ephemeral: Set<UInt32> = [
-            ulcpProperties.wifiScanResults,
-            ulcpProperties.wifiRssi,
-        ]
-        let keepable = values.filter { !ephemeral.contains($0.key) }
+        let keepable = values.filter { isPersistentManagedProperty($0.key) }
         guard !keepable.isEmpty else { return }
         await management.saveValues(address, keepable)
     }

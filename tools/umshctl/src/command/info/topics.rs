@@ -192,8 +192,17 @@ pub const TOPICS: &[Topic] = &[
     Topic {
         name: "sensors",
         prefix: "SENSORS",
-        gate: |ctx| ctx.has(cap::ILLUMINANCE),
-        keys: |_| vec![prop::ILLUMINANCE],
+        gate: |ctx| ctx.has(cap::ILLUMINANCE) || ctx.has(cap::TEMPERATURE),
+        keys: |ctx| {
+            let mut keys = Vec::new();
+            if ctx.has(cap::ILLUMINANCE) {
+                keys.push(prop::ILLUMINANCE);
+            }
+            if ctx.has(cap::TEMPERATURE) {
+                keys.extend([prop::TEMPERATURES, prop::TEMPERATURE_NAMES]);
+            }
+            keys
+        },
         render: render_sensors,
         env: env_sensors,
     },
@@ -915,17 +924,183 @@ fn env_time(set: &PropSet, _ctx: &Context) -> Vec<Line> {
 
 // ─── sensors ─────────────────────────────────────────────────────────
 
-fn render_sensors(set: &PropSet, _ctx: &Context) -> Vec<Line> {
-    match set.u32(prop::ILLUMINANCE) {
-        Some(millilux) => vec![("illuminance".into(), format_millilux(millilux))],
-        None => vec![("illuminance".into(), "no reading".into())],
+fn render_sensors(set: &PropSet, ctx: &Context) -> Vec<Line> {
+    let mut lines = Vec::new();
+    if ctx.has(cap::ILLUMINANCE) {
+        lines.push((
+            "illuminance".into(),
+            set.u32(prop::ILLUMINANCE)
+                .map(format_millilux)
+                .unwrap_or_else(|| "no reading".into()),
+        ));
     }
+    if ctx.has(cap::TEMPERATURE) {
+        lines.extend(render_temperatures(set));
+    }
+    lines
+}
+
+fn temperature_values(set: &PropSet) -> Option<Vec<Option<u16>>> {
+    umsh::ulcp_wire::temperature::readings(set.bytes(prop::TEMPERATURES)?)
+        .ok()
+        .map(Iterator::collect)
+}
+
+fn temperature_names(set: &PropSet) -> Option<Vec<&str>> {
+    umsh::ulcp_wire::temperature::names(set.bytes(prop::TEMPERATURE_NAMES)?)
+        .ok()
+        .map(Iterator::collect)
+}
+
+pub fn render_temperatures(set: &PropSet) -> Vec<Line> {
+    let mut lines = Vec::new();
+    let readings = temperature_values(set);
+    let names = temperature_names(set);
+    let count = readings.as_ref().map_or(0, Vec::len);
+    let names_ok = names.as_ref().is_some_and(|names| names.len() >= count);
+    if !names_ok {
+        lines.push((
+            "sensor names".into(),
+            "unavailable, malformed, or incomplete".into(),
+        ));
+    }
+    let names = if names_ok { names } else { None };
+    let rows = count.max(names.as_ref().map_or(0, Vec::len));
+    let failure = if readings.is_some() {
+        None
+    } else if set.bytes(prop::TEMPERATURES).is_some() {
+        Some("invalid reading".to_owned())
+    } else {
+        Some(set.refusal(prop::TEMPERATURES).map_or_else(
+            || "not read".into(),
+            |status| format!("read failed: {status:?}"),
+        ))
+    };
+    for index in 0..rows {
+        let label = names
+            .as_ref()
+            .map(|names| names[index].to_owned())
+            .unwrap_or_else(|| format!("Temperature {}", index + 1));
+        let value = if let Some(failure) = &failure {
+            failure.clone()
+        } else {
+            match readings.as_ref().and_then(|values| values.get(index)) {
+                Some(Some(value)) => format!(
+                    "{:.1} °C ({:.1} K)",
+                    f64::from(*value) / 10.0 - 273.15,
+                    f64::from(*value) / 10.0
+                ),
+                Some(None) => "unavailable".into(),
+                None => "not read".into(),
+            }
+        };
+        lines.push((format!("{index}: {label}"), value));
+    }
+    if rows == 0 {
+        lines.push((
+            "temperatures".into(),
+            failure.unwrap_or_else(|| "no sensors".into()),
+        ));
+    }
+    lines
 }
 
 fn env_sensors(set: &PropSet, _ctx: &Context) -> Vec<Line> {
-    match set.u32(prop::ILLUMINANCE) {
-        Some(millilux) => vec![("ILLUMINANCE_MLUX".into(), millilux.to_string())],
-        None => Vec::new(),
+    let mut env = Vec::new();
+    if let Some(value) = set.u32(prop::ILLUMINANCE) {
+        env.push(("ILLUMINANCE_MLUX".into(), value.to_string()));
+    }
+    if let Some(values) = temperature_values(set) {
+        env.push(("TEMPERATURE_COUNT".into(), values.len().to_string()));
+        let names = temperature_names(set).filter(|names| names.len() >= values.len());
+        for (index, value) in values.iter().enumerate() {
+            env.push((
+                format!("TEMPERATURE_{index}_DECIKELVIN"),
+                value.map_or_else(|| "unknown".into(), |value| value.to_string()),
+            ));
+            let name = names
+                .as_ref()
+                .map(|names| names[index].to_owned())
+                .unwrap_or_else(|| format!("Temperature {}", index + 1));
+            env.push((format!("TEMPERATURE_{index}_NAME"), name));
+        }
+    }
+    env
+}
+
+#[cfg(test)]
+mod temperature_tests {
+    use super::*;
+
+    #[test]
+    fn temperature_labels_growth_unknown_and_bad_metadata() {
+        let mut set = PropSet::new();
+        set.insert(prop::TEMPERATURES, Ok(vec![0xa5, 0x0b, 0xff, 0xff]));
+        set.insert(
+            prop::TEMPERATURE_NAMES,
+            Ok(b"\x03Die\x03Die\x03New".to_vec()),
+        );
+        assert_eq!(
+            render_temperatures(&set),
+            [
+                ("0: Die".into(), "25.0 °C (298.1 K)".into()),
+                ("1: Die".into(), "unavailable".into()),
+                ("2: New".into(), "not read".into()),
+            ]
+        );
+        for value in [
+            Ok(b"\x03Die".to_vec()),
+            Ok(vec![0]),
+            Err(Status::PROP_NOT_FOUND),
+        ] {
+            set.insert(prop::TEMPERATURE_NAMES, value);
+            let lines = render_temperatures(&set);
+            assert_eq!(lines[0].0, "sensor names");
+            assert_eq!(
+                lines[1],
+                ("0: Temperature 1".into(), "25.0 °C (298.1 K)".into())
+            );
+            assert_eq!(lines[2].1, "unavailable");
+        }
+        set.insert(prop::TEMPERATURES, Ok(vec![0]));
+        assert_eq!(
+            render_temperatures(&set).last().unwrap().1,
+            "invalid reading"
+        );
+        set.insert(prop::TEMPERATURES, Ok(vec![]));
+        set.insert(prop::TEMPERATURE_NAMES, Ok(vec![]));
+        assert_eq!(
+            render_temperatures(&set),
+            [("temperatures".into(), "no sensors".into())]
+        );
+    }
+
+    #[test]
+    fn temperature_only_topic_and_shell_output() {
+        let ctx = Context {
+            caps: vec![cap::TEMPERATURE],
+            remote: false,
+            expect_host_key: None,
+            dev_version: String::new(),
+            dev_model: None,
+        };
+        let sensors = topic("sensors").unwrap();
+        assert!((sensors.gate)(&ctx));
+        assert_eq!(
+            (sensors.keys)(&ctx),
+            [prop::TEMPERATURES, prop::TEMPERATURE_NAMES]
+        );
+        let mut set = PropSet::new();
+        set.insert(prop::TEMPERATURES, Ok(vec![0xff, 0xff]));
+        assert!(
+            env_sensors(&set, &ctx)
+                .contains(&("TEMPERATURE_0_DECIKELVIN".into(), "unknown".into()))
+        );
+        assert!(
+            !render_sensors(&set, &ctx)
+                .iter()
+                .any(|(label, _)| label == "illuminance")
+        );
     }
 }
 

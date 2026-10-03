@@ -44,6 +44,7 @@ pub mod reply;
 pub mod sint;
 pub mod stats;
 pub mod status;
+pub mod temperature;
 pub mod uint;
 pub mod wifi;
 

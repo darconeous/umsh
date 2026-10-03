@@ -123,6 +123,11 @@ struct ManageDeviceCategory: Identifiable {
             symbol: "battery.100"
         ) { model, _ in AnyView(RemotePowerScreen(model: model)) },
         ManageDeviceCategory(
+            category: .sensors,
+            title: "Sensors",
+            symbol: "sun.max"
+        ) { model, _ in AnyView(RemoteSensorsScreen(model: model)) },
+        ManageDeviceCategory(
             category: .radio,
             title: "Radio",
             symbol: "antenna.radiowaves.left.and.right"

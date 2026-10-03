@@ -4224,6 +4224,8 @@ pub enum UlcpManageCategory {
     Repeater,
     /// Who this device talks to, and who may manage it.
     PeerNodes,
+    /// Measurements from sensors fitted to the device. Read-only.
+    Sensors,
 }
 
 /// The property numbers the management screens name.
@@ -4240,6 +4242,9 @@ pub struct UlcpManagedPropertyIds {
     pub device_model: u32,
     pub device_name: u32,
     pub battery: u32,
+    pub illuminance: u32,
+    pub temperatures: u32,
+    pub temperature_names: u32,
     pub battery_current: u32,
     pub battery_remaining_capacity: u32,
     pub battery_full_capacity: u32,
@@ -4331,6 +4336,9 @@ pub fn ulcp_managed_property_ids() -> UlcpManagedPropertyIds {
         device_model: prop::DEV_MODEL,
         device_name: prop::DEV_NAME,
         battery: prop::BATTERY,
+        illuminance: prop::ILLUMINANCE,
+        temperatures: prop::TEMPERATURES,
+        temperature_names: prop::TEMPERATURE_NAMES,
         battery_current: prop::BATTERY_CURRENT,
         battery_remaining_capacity: prop::BATTERY_REMAINING_CAPACITY,
         battery_full_capacity: prop::BATTERY_FULL_CAPACITY,
@@ -4453,6 +4461,13 @@ pub fn ulcp_category_properties(
             when(has(cap::BATTERY), &[prop::BATTERY]);
             // Diagnostics are discovered per property, with no additional capability.
             when(has(cap::BATTERY), &umsh_ulcp::battery_diagnostics::KEYS);
+        }
+        UlcpManageCategory::Sensors => {
+            when(has(cap::ILLUMINANCE), &[prop::ILLUMINANCE]);
+            when(
+                has(cap::TEMPERATURE),
+                &[prop::TEMPERATURES, prop::TEMPERATURE_NAMES],
+            );
         }
         UlcpManageCategory::Radio => {
             when(
@@ -4890,6 +4905,11 @@ pub struct UlcpDevicePropertiesRecord {
     pub bridge_link: Option<UlcpBridgeLinkRecord>,
     pub dev_key: Option<Vec<u8>>,
     pub battery: Option<UlcpBatteryRecord>,
+    /// Ambient light in millilux. Empty means a measurement was unavailable.
+    pub illuminance_millilux: Option<u32>,
+    /// Tenths of kelvin; inner None is an unavailable sensor.
+    pub temperatures: Option<Vec<Option<u16>>>,
+    pub temperature_names: Option<Vec<String>>,
     pub phy_enabled: Option<bool>,
     pub frequency_khz: Option<u32>,
     pub transmit_power_dbm: Option<i8>,
@@ -5100,6 +5120,24 @@ pub fn inspect_ulcp_properties(
         battery: optional_value(at, prop::BATTERY, |value| {
             inspect_ulcp_battery(value.to_vec())
         }),
+        illuminance_millilux: optional_value(at, prop::ILLUMINANCE, |value| {
+            decode_optional(value, decode_u32)
+        })
+        .flatten(),
+        temperatures: property_value(at, prop::TEMPERATURES)
+            .ok()
+            .and_then(|value| {
+                umsh_ulcp::temperature::readings(value)
+                    .ok()
+                    .map(|values| values.collect())
+            }),
+        temperature_names: property_value(at, prop::TEMPERATURE_NAMES)
+            .ok()
+            .and_then(|value| {
+                umsh_ulcp::temperature::names(value)
+                    .ok()
+                    .map(|names| names.map(str::to_owned).collect())
+            }),
         phy_enabled: optional_value(at, prop::PHY_ENABLED, decode_bool),
         frequency_khz: optional_value(at, prop::PHY_FREQ, decode_u32),
         transmit_power_dbm: optional_value(at, prop::PHY_TX_POWER, decode_i8),
@@ -10917,6 +10955,81 @@ mod tests {
             cap::IPV4,
             cap::IPV6,
         ])
+    }
+
+    #[test]
+    fn temperature_categories_and_arrays_preserve_absence_empty_and_unknown() {
+        for caps in [
+            &[cap::TEMPERATURE][..],
+            &[cap::TEMPERATURE, cap::ILLUMINANCE][..],
+        ] {
+            let keys =
+                ulcp_category_properties(UlcpManageCategory::Sensors, encoded_capabilities(caps))
+                    .unwrap();
+            assert!(keys.contains(&prop::TEMPERATURES) && keys.contains(&prop::TEMPERATURE_NAMES));
+            assert_eq!(keys.contains(&prop::ILLUMINANCE), caps.len() == 2);
+        }
+        let empty = inspect_ulcp_properties(vec![]);
+        assert_eq!(empty.temperatures, None);
+        assert_eq!(empty.temperature_names, None);
+        let empty = inspect_ulcp_properties(vec![
+            response(prop::TEMPERATURES, &[]),
+            response(prop::TEMPERATURE_NAMES, &[]),
+        ]);
+        assert_eq!(empty.temperatures, Some(vec![]));
+        assert_eq!(empty.temperature_names, Some(vec![]));
+        let valid = inspect_ulcp_properties(vec![
+            response(prop::TEMPERATURES, &[0xa5, 0x0b, 0xff, 0xff]),
+            response(prop::TEMPERATURE_NAMES, b"\x03Die\x03Die"),
+        ]);
+        assert_eq!(valid.temperatures, Some(vec![Some(2981), None]));
+        assert_eq!(
+            valid.temperature_names,
+            Some(vec!["Die".into(), "Die".into()])
+        );
+        let bad = inspect_ulcp_properties(vec![
+            response(prop::TEMPERATURES, &[1]),
+            response(prop::TEMPERATURE_NAMES, b"\x03Die\x02a"),
+        ]);
+        assert_eq!(bad.temperatures, None);
+        assert_eq!(bad.temperature_names, None);
+        // Host decoders have no reference sender count limit.
+        assert_eq!(
+            inspect_ulcp_properties(vec![response(prop::TEMPERATURES, &[0; 34])])
+                .temperatures
+                .unwrap()
+                .len(),
+            17
+        );
+    }
+
+    #[test]
+    fn sensors_are_offered_only_when_advertised_and_decode_optional_readings() {
+        assert!(
+            ulcp_category_properties(UlcpManageCategory::Sensors, encoded_capabilities(&[]))
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            ulcp_category_properties(
+                UlcpManageCategory::Sensors,
+                encoded_capabilities(&[cap::ILLUMINANCE])
+            )
+            .unwrap(),
+            vec![prop::ILLUMINANCE]
+        );
+        assert_eq!(
+            inspect_ulcp_properties(vec![response(prop::ILLUMINANCE, &320_000u32.to_le_bytes())])
+                .illuminance_millilux,
+            Some(320_000)
+        );
+        for value in [&[][..], &[1, 2, 3][..]] {
+            assert_eq!(
+                inspect_ulcp_properties(vec![response(prop::ILLUMINANCE, value)])
+                    .illuminance_millilux,
+                None
+            );
+        }
     }
 
     /// The scan is the base capability, so a tracker that can hear

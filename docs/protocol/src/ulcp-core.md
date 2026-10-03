@@ -1304,6 +1304,7 @@ Code | Name                      | Requires                             | Define
 58   | `CAP_BRIDGE_CLIENT`       | `CAP_REPEATER`; IP family requirement in prose | [Bridge Client](ulcp-bridge.md#capabilities)
 59   | `CAP_DISPLAY_MOTION_WAKE` | — | [Device Services](ulcp-device.md#display-motion-wake)
 60   | `CAP_I2C`                 | —                                    | [I2C Bus Access](ulcp-i2c.md#capabilities)
+61   | `CAP_TEMPERATURE` | — | [Device Domain](ulcp-device.md#capabilities)
 515  | `CAP_PHY_LORA`            | —                                    | [Radio Control](ulcp-radio.md#capabilities)
 
 A device **MUST NOT** advertise a capability without also advertising the

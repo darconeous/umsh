@@ -42,7 +42,8 @@ pub use session::{
     AlertConfig, AnnounceRequest, BatteryFields, Binding, CHANNEL_TAG_LEN, DEFAULT_IDENT_PRECISION,
     Effect, GnssConfig, I2C_DATA_MAX, I2C_MAX_OPS, IdentitySource, MAX_CHANNEL_KEYS,
     MAX_DEV_ADMINS, MAX_DEV_PEERS, MAX_DEVICE_NAME_LEN, MAX_IDENT_PRECISION, MAX_PEER_KEYS,
-    MAX_REPEATER_REGIONS, MULTI_MAX, NETWORK_TABLE_MAX, PRIVATE_KEY_LEN, QueuedClass, QueuedNotice,
-    REGION_STRING_MAX_LEN, RadioRxInfo, RadioSettings, SNAPSHOT_MAX, SavedStatus, Session,
-    SessionConfig, SnapshotError, TimeConfig, TxOutcome, TxPower, assert_i2c_tables_fit,
+    MAX_REPEATER_REGIONS, MAX_TEMPERATURE_SENSORS, MULTI_MAX, NETWORK_TABLE_MAX, PRIVATE_KEY_LEN,
+    QueuedClass, QueuedNotice, REGION_STRING_MAX_LEN, RadioRxInfo, RadioSettings, SNAPSHOT_MAX,
+    SavedStatus, Session, SessionConfig, SnapshotError, TEMPERATURE_NAMES_MAX, TimeConfig,
+    TxOutcome, TxPower, assert_i2c_tables_fit,
 };

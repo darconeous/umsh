@@ -82,6 +82,9 @@ pub struct SimulatedDevice {
     announcements: Vec<AnnounceRequest>,
     /// The one peripheral on the simulated bus.
     i2c: SimulatedI2c,
+    temperatures: Vec<(String, u16)>,
+    temperature_samples: u64,
+    temperature_append_on_sample: Option<(String, u16)>,
 }
 
 /// The bus the simulated device advertises: one controller, one
@@ -270,7 +273,67 @@ impl SimulatedDevice {
             network: SimulatedNetwork::default(),
             announcements: Vec::new(),
             i2c: SimulatedI2c::default(),
+            temperatures: vec![
+                ("MCU die".into(), 2981),
+                ("Battery".into(), 2931),
+                ("External".into(), 0xffff),
+            ],
+            temperature_samples: 0,
+            temperature_append_on_sample: None,
         }
+    }
+
+    /// Append a sensor without changing any existing index or name.
+    pub fn append_temperature_sensor(&mut self, name: &str, value: u16) -> Result<usize, Status> {
+        if !umsh_ulcp::temperature::valid_name(name) {
+            return Err(Status::INVALID_ARGUMENT);
+        }
+        let pending_bytes = self
+            .temperature_append_on_sample
+            .as_ref()
+            .map_or(0, |(name, _)| name.len() + 1);
+        let pending_count = usize::from(self.temperature_append_on_sample.is_some());
+        let bytes: usize = self
+            .temperatures
+            .iter()
+            .map(|(name, _)| 1 + name.len())
+            .sum();
+        if self.temperatures.len() + pending_count >= umsh_ulcp_device::MAX_TEMPERATURE_SENSORS
+            || bytes + pending_bytes + 1 + name.len() > umsh_ulcp_device::TEMPERATURE_NAMES_MAX
+        {
+            return Err(Status::NOMEM);
+        }
+        let index = self.temperatures.len();
+        self.temperatures.push((name.into(), value));
+        Ok(index)
+    }
+
+    /// Change availability or temperature while preserving the inventory.
+    pub fn set_temperature(&mut self, index: usize, value: u16) -> Result<(), Status> {
+        self.temperatures
+            .get_mut(index)
+            .ok_or(Status::INVALID_ARGUMENT)?
+            .1 = value;
+        Ok(())
+    }
+
+    /// Stage registration during the next acquisition for UI/transport scenarios.
+    pub fn append_temperature_during_next_sample(
+        &mut self,
+        name: &str,
+        value: u16,
+    ) -> Result<(), Status> {
+        if self.temperature_append_on_sample.is_some() {
+            return Err(Status::BUSY);
+        }
+        // Validate capacity using the same registration path without exposing it yet.
+        self.append_temperature_sensor(name, value)?;
+        self.temperature_append_on_sample = self.temperatures.pop();
+        Ok(())
+    }
+
+    pub fn temperature_samples(&self) -> u64 {
+        self.temperature_samples
     }
 
     /// The caller's clock, rebased onto this device's boot.
@@ -385,7 +448,16 @@ impl SimulatedDevice {
         self.flush_session_reset_notice();
     }
 
-    fn execute(&mut self, effect: Option<Effect>, emitted: &mut Vec<Vec<u8>>) {
+    fn execute(&mut self, mut effect: Option<Effect>, emitted: &mut Vec<Vec<u8>>) {
+        while effect.is_some() {
+            self.execute_one(effect, emitted);
+            effect = self
+                .session
+                .resume_multi(self.device_ms(), &mut |frame| emitted.push(frame.to_vec()));
+        }
+    }
+
+    fn execute_one(&mut self, effect: Option<Effect>, emitted: &mut Vec<Vec<u8>>) {
         let mut emit = |frame: &[u8]| emitted.push(frame.to_vec());
         match effect {
             // The simulated board has no buzzer or LED to drive, so the
@@ -448,6 +520,28 @@ impl SimulatedDevice {
                 }
                 self.session
                     .respond_battery_group(tid, key, sample, &mut emit);
+            }
+            Some(Effect::SampleTemperatures { tid }) => {
+                self.temperature_samples += 1;
+                let values: Vec<_> = self.temperatures.iter().map(|(_, value)| *value).collect();
+                if let Some((name, value)) = self.temperature_append_on_sample.take() {
+                    self.append_temperature_sensor(&name, value)
+                        .expect("staged registration fits");
+                }
+                self.session
+                    .respond_temperatures(tid, Ok(&values), &mut emit);
+            }
+            Some(Effect::ReadTemperatureNames { tid }) => {
+                let names: Vec<_> = self
+                    .temperatures
+                    .iter()
+                    .map(|(name, _)| name.as_str())
+                    .collect();
+                let mut value = [0; umsh_ulcp_device::TEMPERATURE_NAMES_MAX];
+                let len = umsh_ulcp::temperature::encode_names(&names, &mut value)
+                    .expect("bounded inventory");
+                self.session
+                    .respond_temperature_names(tid, Ok(&value[..len]), &mut emit);
             }
             Some(Effect::SampleIlluminance { tid }) => {
                 // A stable simulated reading: ordinary office lighting.
@@ -904,6 +998,7 @@ mod tests {
             gnss: Some(GnssConfig::DEFAULT),
             display_motion_wake: false,
             illuminance: true,
+            temperatures: true,
             ble: true,
             ble_pairing: true,
             // A simulated power cycle is a rebuilt session, which is
@@ -955,6 +1050,89 @@ mod tests {
             frames.push(decode(wire));
         }
         frames
+    }
+
+    fn temperature_get(sim: &mut SimulatedDevice, key: u32) -> Vec<u8> {
+        let mut request = [0; 16];
+        let len = frame::prop_get(&mut request, 1, key).unwrap();
+        let frames = exchange(sim, &request[..len]);
+        let parsed = Frame::parse(&frames[0]).unwrap();
+        let payload = PropPayload::parse(parsed.payload).unwrap();
+        assert_eq!(payload.key, key);
+        payload.value.to_vec()
+    }
+
+    #[test]
+    fn temperature_simulator_multi_get_completes() {
+        let mut sim = SimulatedDevice::new(test_config());
+        attach(&mut sim);
+        let mut request = [0; 32];
+        let len = frame::prop_multi_get(
+            &mut request,
+            2,
+            &[prop::TEMPERATURES, prop::TEMPERATURE_NAMES],
+        )
+        .unwrap();
+        let frames = exchange(&mut sim, &request[..len]);
+        assert_eq!(frames.len(), 1);
+        let response = Frame::parse(&frames[0]).unwrap();
+        assert_eq!(response.command(), Some(umsh_ulcp::Cmd::PropAre));
+        let entries: Vec<_> = umsh_ulcp::MultiEntries::new(response.payload)
+            .map(Result::unwrap)
+            .collect();
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].key, prop::TEMPERATURES);
+        assert_eq!(entries[1].key, prop::TEMPERATURE_NAMES);
+        assert_eq!(sim.temperature_samples(), 1);
+    }
+
+    #[test]
+    fn temperature_inventory_acquisition_append_failures_and_resets() {
+        let mut sim = SimulatedDevice::new(test_config());
+        attach(&mut sim);
+        let initial_names = temperature_get(&mut sim, prop::TEMPERATURE_NAMES);
+        assert_eq!(sim.temperature_samples(), 0);
+        assert_eq!(
+            umsh_ulcp::temperature::names(&initial_names)
+                .unwrap()
+                .count(),
+            3
+        );
+        sim.append_temperature_during_next_sample("External", 2800)
+            .unwrap();
+        let first = temperature_get(&mut sim, prop::TEMPERATURES);
+        assert_eq!(
+            umsh_ulcp::temperature::readings(&first)
+                .unwrap()
+                .collect::<Vec<_>>(),
+            [Some(2981), Some(2931), None]
+        );
+        let names = temperature_get(&mut sim, prop::TEMPERATURE_NAMES);
+        assert!(names.starts_with(&initial_names));
+        assert_eq!(umsh_ulcp::temperature::names(&names).unwrap().count(), 4);
+        assert_eq!(sim.temperature_samples(), 1);
+        let second = temperature_get(&mut sim, prop::TEMPERATURES);
+        assert_eq!(
+            umsh_ulcp::temperature::readings(&second).unwrap().last(),
+            Some(Some(2800))
+        );
+        assert_eq!(sim.temperature_samples(), 2);
+        for index in 0..4 {
+            sim.set_temperature(index, 0xffff).unwrap();
+        }
+        assert_eq!(temperature_get(&mut sim, prop::TEMPERATURES), vec![0xff; 8]);
+        sim.detach();
+        attach(&mut sim);
+        assert_eq!(temperature_get(&mut sim, prop::TEMPERATURE_NAMES), names);
+        let mut request = [0; 16];
+        let len = frame::reset(&mut request, 2).unwrap();
+        exchange(&mut sim, &request[..len]);
+        assert_eq!(temperature_get(&mut sim, prop::TEMPERATURE_NAMES), names);
+        // Reference capacity failures leave the existing inventory untouched.
+        while sim.append_temperature_sensor("a", 0).is_ok() {}
+        let full = temperature_get(&mut sim, prop::TEMPERATURE_NAMES);
+        assert_eq!(sim.append_temperature_sensor("b", 0), Err(Status::NOMEM));
+        assert_eq!(temperature_get(&mut sim, prop::TEMPERATURE_NAMES), full);
     }
 
     #[test]

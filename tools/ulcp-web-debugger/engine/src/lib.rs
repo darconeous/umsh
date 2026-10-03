@@ -73,6 +73,7 @@ pub fn web_sim_config() -> umsh_ulcp_simdev::SessionConfig {
         gnss: Some(GnssConfig::DEFAULT),
         display_motion_wake: false,
         illuminance: true,
+        temperatures: true,
         // The simulator has no radio at all, but it does have a
         // reachability switch the debugger can flip, which is the whole
         // of what the capability claims.

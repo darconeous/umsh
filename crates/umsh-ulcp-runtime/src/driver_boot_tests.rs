@@ -42,6 +42,7 @@ fn session(name: &'static str) -> TestSession {
             gnss: None,
             display_motion_wake: false,
             illuminance: false,
+            temperatures: false,
             ble: true,
             ble_pairing: true,
             reboot: false,

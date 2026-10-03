@@ -123,6 +123,7 @@ local PROPERTIES = {
   [92] = "PROP_GNSS_PRECISION",
   [93] = "PROP_GNSS_SATELLITES",
   [94] = "PROP_ILLUMINANCE",
+  [95] = "PROP_TEMPERATURES",
   [96] = "PROP_HOST_KEY",
   [97] = "PROP_HOST_CHANNEL_KEYS",
   [98] = "PROP_HOST_PEER_KEYS",
@@ -156,6 +157,7 @@ local PROPERTIES = {
   [4873] = "PROP_BLE_LINK",
   [4874] = "PROP_BLE_PAIRING",
   [4875] = "PROP_DISPLAY_MOTION_WAKE_ENABLED",
+  [4876] = "PROP_TEMPERATURE_NAMES",
   [4880] = "PROP_WIFI_ENABLED",
   [4881] = "PROP_WIFI_NETWORKS",
   [4882] = "PROP_WIFI_NETWORK",
@@ -200,6 +202,42 @@ local I2C_OP_KINDS = {
 local I2C_SCAN_DEFAULT_FIRST, I2C_SCAN_DEFAULT_LAST = 0x08, 0x77
 
 local proto = Proto("umsh.ulcp", "UMSH ULCP")
+local CAPABILITIES = {
+  [8] = "CAP_WRITABLE_RAW_STREAM",
+  [16] = "CAP_PHY_DUTY_LIMIT",
+  [515] = "CAP_PHY_LORA",
+  [32] = "CAP_HOST_FILTER",
+  [33] = "CAP_HOST_RX_QUEUE",
+  [34] = "CAP_HOST_KEYS",
+  [35] = "CAP_HOST_AUTO_ACK",
+  [36] = "CAP_SAVE",
+  [37] = "CAP_DEV_IDENTITY",
+  [38] = "CAP_DEV_NAME",
+  [39] = "CAP_BATTERY",
+  [40] = "CAP_REPEATER",
+  [41] = "CAP_IDENT",
+  [42] = "CAP_ALERT",
+  [43] = "CAP_ADMIN",
+  [44] = "CAP_TIME",
+  [45] = "CAP_GNSS",
+  [46] = "CAP_ADVERT",
+  [47] = "CAP_ILLUMINANCE",
+  [48] = "CAP_MAC_BACKHAUL",
+  [49] = "CAP_CMD_MULTI",
+  [50] = "CAP_BLE",
+  [51] = "CAP_REBOOT",
+  [52] = "CAP_STATS",
+  [53] = "CAP_WIFI_SCAN",
+  [54] = "CAP_WIFI",
+  [55] = "CAP_IPV4",
+  [56] = "CAP_IPV6",
+  [57] = "CAP_WIFI_AP",
+  [58] = "CAP_BRIDGE_CLIENT",
+  [59] = "CAP_DISPLAY_MOTION_WAKE",
+  [60] = "CAP_I2C",
+  [61] = "CAP_TEMPERATURE",
+}
+
 local f = {}
 f.direction = ProtoField.string("umsh.ulcp.direction", "Direction")
 f.header = ProtoField.uint8("umsh.ulcp.header", "Header", base.HEX)
@@ -208,6 +246,7 @@ f.reserved = ProtoField.uint8("umsh.ulcp.reserved", "Reserved", base.HEX, nil, 0
 f.tid = ProtoField.uint8("umsh.ulcp.tid", "Transaction ID", base.DEC, nil, 0x07)
 f.command = ProtoField.uint8("umsh.ulcp.command", "Command", base.DEC, COMMANDS)
 f.property = ProtoField.uint32("umsh.ulcp.property", "Property", base.DEC, PROPERTIES)
+f.capability = ProtoField.uint32("umsh.ulcp.capability", "Capability", base.DEC, CAPABILITIES)
 f.property_value = ProtoField.bytes("umsh.ulcp.property_value", "Property Value")
 f.entry = ProtoField.bytes("umsh.ulcp.entry", "Entry")
 f.entry_length = ProtoField.uint32("umsh.ulcp.entry_length", "Entry Length", base.DEC)
@@ -259,6 +298,16 @@ local function decode_pui(buf, offset)
   return nil, 0
 end
 
+local function add_capabilities(parent, value)
+  local offset = 0
+  while offset < value:len() do
+    local capability, consumed = decode_pui(value, offset)
+    if not capability then return end
+    parent:add(f.capability, value(offset, consumed), capability)
+    offset = offset + consumed
+  end
+end
+
 local function add_malformed(item, message)
   item:add_proto_expert_info(malformed, message)
 end
@@ -300,6 +349,7 @@ local function dissect_frame(buf, pinfo, tree, direction)
       local value_offset = 2 + consumed
       if value_offset < buf:len() then
         root:add(f.property_value, buf(value_offset))
+        if command == 6 and key == 5 then add_capabilities(root, buf(value_offset):tvb()) end
       end
     end
   elseif command == 21 then
@@ -356,6 +406,9 @@ local function dissect_frame(buf, pinfo, tree, direction)
                                      count, name, entry_len - key_consumed))
         if key_consumed < entry_len then
           entry:add(f.property_value, buf(body + key_consumed, entry_len - key_consumed))
+          if command == 23 and key == 5 then
+            add_capabilities(entry, buf(body + key_consumed, entry_len - key_consumed):tvb())
+          end
         end
         names[#names + 1] = name
       end

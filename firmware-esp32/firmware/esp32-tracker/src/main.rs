@@ -464,6 +464,7 @@ fn session_config() -> SessionConfig {
             not(feature = "motion-qualification")
         )),
         illuminance: false,
+        temperatures: false,
         // The ESP32-S3 radio is always up on this board, but the
         // peripheral can be made unfindable: see `advertising_permitted`.
         ble: true,

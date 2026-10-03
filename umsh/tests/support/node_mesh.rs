@@ -118,6 +118,7 @@ impl DeviceSide {
             gnss: Some(GnssConfig::DEFAULT),
             display_motion_wake: false,
             illuminance: true,
+            temperatures: false,
             // The simulated board is reachable over Bluetooth, so
             // `PROP_BLE_ENABLED` is one more property an administrator
             // can find over the mesh.

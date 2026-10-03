@@ -213,6 +213,35 @@ for how the board answers a question the shared runtime asks. Behavior that
 must compose belongs behind the trait, where the type checker sees every
 implementation.
 
+### Temperature inventory and acquisition
+
+All five shared nRF52840 tracker images advertise `CAP_TEMPERATURE`, with
+`MCU die` registered at index 0. The device environment owns the inventory
+for the physical boot; ULCP reconnects and protocol resets preserve it.
+MPSL owns the TEMP peripheral and supplies fresh readings through its safe
+`get_temperature()` API on the same thread-mode executor as its run loop.
+This also works in `no-ble` builds, which retain MPSL for flash and clock
+coordination.
+
+The shared runtime's `TemperatureInventory<S>` owns append-only source
+identifiers and encoded names, bounded to 16 sources and 272 name bytes.
+Registration validates both capacities before changing either array. Duplicate
+labels are allowed; indices identify sensors. Sampling captures source identifiers
+before acquisition, and unavailable sources retain their slots as `0xFFFF`.
+Names reads access inventory data without sampling or discovering hardware.
+
+The nRF sampler converts MPSL's signed quarter-degree Celsius reading directly
+to **tenths of a kelvin** using integer arithmetic, rounding nearest with ties
+upward. Quantization does not increase the sensor's resolution or accuracy.
+Unrepresentable values become `0xFFFF`. The reported value is chip die
+temperature, which need not match ambient temperature.
+
+Future battery and external drivers add typed source variants and acquisition
+branches in the shared nRF temperature module, then register through its owner.
+Discovery appends entries; disconnection changes availability, not names or
+indices. Per-source failure must leave the other readings intact. There is no
+background temperature polling or persisted sensor inventory.
+
 ## Crate naming conventions
 
 | Prefix / location | Purpose | Examples |

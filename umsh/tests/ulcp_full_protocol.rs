@@ -92,6 +92,7 @@ fn session_config() -> SessionConfig {
         // And a synthetic light sensor, so the host wrapper is exercised
         // against the real session too.
         illuminance: true,
+        temperatures: false,
         ble: true,
         ble_pairing: true,
         reboot: true,
@@ -261,6 +262,13 @@ impl SimDevice {
                 });
                 self.session
                     .respond_battery_group(tid, key, sample, &mut emit);
+            }
+            Some(Effect::SampleTemperatures { tid }) => {
+                self.session.respond_temperatures(tid, Ok(&[]), &mut emit);
+            }
+            Some(Effect::ReadTemperatureNames { tid }) => {
+                self.session
+                    .respond_temperature_names(tid, Ok(&[]), &mut emit);
             }
             Some(Effect::SampleIlluminance { tid }) => {
                 // A stable simulated reading: ordinary office lighting.

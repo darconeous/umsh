@@ -1,6 +1,62 @@
 import SwiftUI
 import UMSHMobileCore
 
+/// Read-only measurements from the sensors this device advertises.
+struct RemoteSensorsScreen: View {
+    let model: ManageDeviceModel
+
+    private var reading: RemoteCategoryReading? { model.readings[.sensors] }
+
+    var body: some View {
+        Form {
+            if model.properties(of: .sensors).contains(ulcpProperties.illuminance) {
+                Section {
+                    LabeledContent("Ambient light", value: lightReading)
+                } footer: {
+                    if let date = reading?.receivedAt[ulcpProperties.illuminance] {
+                        Text(date, style: .relative)
+                    }
+                }
+            }
+            if model.properties(of: .sensors).contains(ulcpProperties.temperatures) {
+                let temperature = RemoteTemperaturePresentation(reading: reading)
+                Section {
+                    ForEach(temperature.rows) { row in
+                        LabeledContent(row.name, value: row.value)
+                    }
+                    if let state = temperature.state { Text(state).foregroundStyle(.secondary) }
+                } header: {
+                    Text("Temperature")
+                } footer: {
+                    if let problem = temperature.problem { Text(problem) }
+                    if let date = temperature.sampledAt { Text(date, style: .relative) }
+                }
+            }
+            RemoteProblemSection(model: model)
+        }
+        .remoteCategoryChrome(model: model, category: .sensors, title: "Sensors")
+    }
+
+    private var lightReading: String {
+        if reading?.failures[ulcpProperties.illuminance] != nil
+            || reading?.refused.contains(ulcpProperties.illuminance) == true
+                && reading?.statuses[ulcpProperties.illuminance] == nil { return "Read failed" }
+        if let status = reading?.statuses[ulcpProperties.illuminance] {
+            return "Read failed (\(ulcpStatusName(status: status)))"
+        }
+        guard let bytes = reading?.values[ulcpProperties.illuminance] else {
+            return "Not read"
+        }
+        if bytes.isEmpty { return "Unavailable" }
+        guard let millilux = reading?.properties.illuminanceMillilux else {
+            return "Invalid reading"
+        }
+        let lux = Double(millilux) / 1_000
+        let digits = lux < 1 ? 3 : 2
+        return lux.formatted(.number.precision(.fractionLength(digits))) + " lx"
+    }
+}
+
 /// What a device's battery reports. Nothing here is settable—the readings
 /// are the device describing itself.
 struct RemotePowerScreen: View {

@@ -59,6 +59,7 @@ Code | Name               | Requires           | Grants
 46   | `CAP_ADVERT`       | `CAP_DEV_IDENTITY` | Announcing itself: on a schedule of its own (`PROP_ADVERT_INTERVAL`, `PROP_BEACON_INTERVAL`, `PROP_STARTUP_BEACON`) and on demand (`CMD_ANNOUNCE`)
 47   | `CAP_ILLUMINANCE`  | —                  | An ambient light sensor and `PROP_ILLUMINANCE`
 59   | `CAP_DISPLAY_MOTION_WAKE` | — | Orientation-qualified display wake and `PROP_DISPLAY_MOTION_WAKE_ENABLED`
+61 | `CAP_TEMPERATURE` | — | `PROP_TEMPERATURES` and `PROP_TEMPERATURE_NAMES`; the inventory may initially be empty
 
 `CAP_ADVERT` requires `CAP_DEV_IDENTITY` because what an advertisement
 carries *is* the device identity, and a beacon's source address names
@@ -166,7 +167,7 @@ advertised node identity settings, 79 is the locate alert, 80–87 are what
 the device announces about itself—80–82 the advertisement schedule,
 83–84 the advertised position, 85–87 reserved—88–93 are positioning (88
 the receiver switch, 89–93 the fix telemetry), and 94–95 are
-environmental sensing: 94 illuminance, 95 reserved.
+environmental sensing: 94 illuminance, 95 temperatures.
 
 The advertised position at 83–84 and the fix telemetry at 89–90 are
 deliberately separate properties. The fix is what the receiver currently
@@ -224,6 +225,8 @@ Id | Mnemonic                    | Commands                 | Description
 92 | `PROP_GNSS_PRECISION`       | Get                      | Estimated horizontal accuracy of the last fix
 93 | `PROP_GNSS_SATELLITES`      | Get                      | Satellites used, and optionally in view
 94 | `PROP_ILLUMINANCE`          | Get                      | Ambient illuminance in millilux
+95 | `PROP_TEMPERATURES` | Get | Ordered temperature readings in tenths of kelvin
+4876 | `PROP_TEMPERATURE_NAMES` | Get | Ordered temperature sensor names
 4866 | `PROP_TIME`               | Get, Set, Is             | Wall clock, or empty when unknown
 4867 | `PROP_TZ_OFFSET`          | Get, Set                 | Local time-zone offset from UTC
 4868 | `PROP_GNSS_IDENT_UPDATE`  | Get, Set                 | Whether fixes update the advertised node identity
@@ -1602,6 +1605,76 @@ A sensor that saturates reports its **clamped maximum** rather than an
 extrapolation past the point where it stopped responding to light. The
 alternative—a number derived from a transfer function outside the range
 it was fitted in—is indistinguishable at the host from a real reading.
+
+### Temperature sensors
+
+`CAP_TEMPERATURE` implements both properties below, with no prerequisite
+capabilities. They are **Single-Value, Read-Only** properties whose values are
+ordered arrays. The multi-value property model describes unordered sets and
+cannot express their positional correspondence. Both support ordinary gets and
+multi-get processing, have no unsolicited updates, and have no saved aliases.
+Supported properties reject Set, Insert, and Remove with
+`STATUS_INVALID_ARGUMENT`; devices without the capability return
+`STATUS_PROP_NOT_FOUND`.
+
+The environment owns an append-only inventory. Array position identifies a
+sensor. New sensors append to both arrays; existing entries MUST NOT be renamed,
+reordered, removed, or reassigned during operation. An unavailable or disconnected
+sensor retains its name and position. Labels need not be unique and MUST NOT be
+interpreted as sensor types. They may describe chip die, battery, or external
+sensors.
+
+Session resets and `CMD_RST` preserve this inventory. A physical reboot may
+rebuild it; hosts MUST obtain fresh names rather than persist index associations
+across connections. Discovery uses `CAP_TEMPERATURE`, which may be advertised
+with no sensors registered. No protocol-version change or storage migration is
+required.
+
+#### PROP 95: `PROP_TEMPERATURES` {#prop-temperatures}
+
+* Type: Single-Value, Read-Only
+* Asynchronous Updates: No
+* Required: `CAP_TEMPERATURE`
+* Value Type: Ordered array of `UINT16_LE`
+* Post-Reset Value: Fresh acquisition
+
+Each word is a temperature in **tenths of a kelvin**, with no count or per-reading
+prefix. The value length determines the count. `0x0000` through `0xFFFE` are
+numeric readings; `0xFFFF` means unavailable, invalid, disconnected, or failed
+acquisition. An empty array means no sensors are registered. Odd-length values
+are malformed. For example, `A5 0B FF FF` reports 298.1 K at index 0 and an unknown
+reading at index 1.
+
+Each fresh get samples all sensors registered when acquisition begins. Sensors
+appended during acquisition are included in the next get. Sampling need not be
+simultaneous. Failure of one sensor MUST NOT suppress other readings: each failed
+slot is `0xFFFF`, and an all-failed acquisition returns the full array of unknown
+values. Transport retransmissions retain their existing retry semantics.
+
+#### PROP 4876: `PROP_TEMPERATURE_NAMES` {#prop-temperature-names}
+
+* Type: Single-Value, Read-Only
+* Asynchronous Updates: No
+* Required: `CAP_TEMPERATURE`
+* Value Type: Ordered array of PUI-length-prefixed UTF-8 names
+* Post-Reset Value: Unchanged
+
+Each name is its UTF-8 byte length in PUI form followed by the bytes, without a
+terminator. Names contain 1–64 bytes and no NUL. An empty array is valid. Hosts
+validate the complete array before using any name. Reading names does not sample
+sensors or initiate hardware discovery.
+
+Hosts should fetch temperatures first, then fresh names in a separate request,
+keeping changing measurement arrays out of continued multi-property replies.
+Additional names represent sensors appended since acquisition began and have
+not yet been read. If names are refused, malformed, or shorter than the readings,
+hosts retain the valid measurements with numbered labels and report the metadata
+problem; they do not reuse old labels.
+
+The reference sender supports **16 sensors** and **272 encoded name bytes**, and
+rejects capacity overflow with `STATUS_NOMEM` without truncation or reindexing.
+These are implementation capacities, not limits imposed on other devices by the
+wire decoders.
 
 ### PROP 4866: `PROP_TIME` {#prop-time}
 

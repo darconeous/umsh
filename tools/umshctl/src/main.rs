@@ -811,6 +811,7 @@ mod tests {
             vec!["dev-peer"],
             vec!["alert"],
             vec!["illuminance"],
+            vec!["temperatures"],
             vec!["pin", "123456"],
             vec!["admin-key"],
             vec!["i2c", "buses"],
