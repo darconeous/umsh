@@ -355,7 +355,44 @@ The device appears to have:
 - NTC temperature sensor on ADC P0.31
 - Light sensor on ADC P0.29
 
-Temperature is calculated from an NTC lookup table and related resistor constants.
+### Temperature sensors
+
+ULCP exposes this fixed inventory in tenths of a kelvin:
+
+| Index | Label | Acquisition |
+|---|---|---|
+| 0 | MCU die | nRF52840 TEMP through MPSL |
+| 1 | Board NTC | P0.31/AIN7 through the battery task's SAADC owner |
+| 2 | LoRa die | LR1110 `GetTemp` through the radio task |
+
+Each temperature get requests fresh samples. Failures retain their slot and
+report `0xFFFF`. Reading names does not sample hardware. The existing iOS
+Sensors page and `umshctl temperatures` display these additional entries.
+
+The NTC shares the light sensor's P1.06 rail and P0.04 enable. Sampling raises
+both, waits 10 ms, reads fresh battery and NTC voltages with 14-bit SAADC and
+32× oversampling, then lowers both. These requests do not advance the battery
+estimator or low-voltage shutdown counters. The conversion uses the 8.25 kΩ
+divider and −30°C to 105°C resistance table from the
+[MeshCore T1000-E driver](https://github.com/meshcore-dev/MeshCore/blob/main/variants/t1000-e/t1000e_sensors.cpp),
+with interpolation and rounding only at the final 0.1 K value. Open/short
+circuits and readings outside that table report unavailable. The supply model
+is `min(VBAT, 3300 mV)`; accuracy near regulator dropout needs board measurements.
+This is a board thermistor, with no established battery-cell thermal coupling.
+
+The LR1110 value is an 11-bit ADC code, converted using Semtech's nominal
+Vana, Vbe25, and VbeSlope values from
+[`lr11xx_system_get_temp`](https://github.com/Lora-net/SWDR001/blob/master/src/lr11xx_system.h).
+The runner briefly enters standby, samples, and restores RX. It returns
+unavailable while a packet is already being received, while disabled, or
+after shutdown. In particular, a temperature request never wakes a disabled
+radio. SPI operations finish even if the requester times out; sequence numbers
+keep late replies from satisfying subsequent gets.
+
+These conversions and ownership paths have software tests. Absolute accuracy,
+low-battery behavior, and RF coexistence still need physical qualification.
+Additional I²C sensors and the T-Echo display sensor are deferred. Other nRF52
+boards retain their MCU-die inventory.
 
 ### Ambient light sensor
 

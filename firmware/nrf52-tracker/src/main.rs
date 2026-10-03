@@ -998,6 +998,14 @@ mod firmware {
     /// Runtime radio settings pushed by the session to the runner.
     static DEVICE_CTL: DeviceControl<ThreadModeRawMutex> = DeviceControl::new();
 
+    #[cfg(feature = "t1000e")]
+    pub(super) async fn sample_radio_temperature() -> Option<u16> {
+        embassy_time::with_timeout(Duration::from_secs(2), DEVICE_CTL.sample_temperature())
+            .await
+            .ok()
+            .flatten()
+    }
+
     /// The one traffic ledger for the whole device.
     ///
     /// The mux is where every real transmit and every off-air reception
@@ -3474,7 +3482,11 @@ mod firmware {
         // boards run) should land here only with its own RF validation
         // pass. The LR1110's 16-symbol acquisition would fall back to
         // continuous against the 32-symbol preamble anyway.
-        umsh_radio_loraphy::device_runner(
+        #[cfg(feature = "t1000e")]
+        let temperature = umsh_radio_loraphy::temperature::Lr1110Temperature;
+        #[cfg(not(feature = "t1000e"))]
+        let temperature = umsh_radio_loraphy::temperature::NoTemperature;
+        umsh_radio_loraphy::device_runner_with_temperature(
             lora,
             &RADIO_CH,
             &DEVICE_CTL,
@@ -3482,6 +3494,7 @@ mod firmware {
             TX_PREAMBLE_SYMBOLS,
             umsh_radio_loraphy::RxStrategy::Continuous,
             Some(&STATS),
+            temperature,
         )
         .await;
     }
@@ -3644,7 +3657,7 @@ mod firmware {
             },
             BoardDeviceEnv {
                 // Owned outside Session: reconnects and CMD_RST retain indices.
-                temperatures: super::temperature::Sensors::new(mpsl),
+                temperatures: super::temperature::Sensors::with_board_sensors(mpsl),
                 proto_store,
                 identity_store,
                 identity_rng,
@@ -5016,20 +5029,22 @@ mod firmware {
         saadc: Peri<'static, peripherals::SAADC>,
         battery_pin: Peri<'static, peripherals::P0_02>,
         light_pin: Peri<'static, peripherals::P0_29>,
+        temperature_pin: Peri<'static, peripherals::P0_31>,
         sensor_rail: Output<'static>,
         sensor_enable: Output<'static>,
         external_power: Input<'static>,
         charge_active: Input<'static>,
     ) {
         // The BSP builds a single-channel converter per measurement—the
-        // battery's and the light sensor's configurations have nothing in
-        // common—so it takes the peripheral and `Irqs` rather than a
+        // battery, light, and NTC have different configurations—so it
+        // takes the peripheral and `Irqs` rather than a
         // built `Saadc`. This shim is where `Irqs` is named concretely.
         umsh_bsp_t1000e::power::run_battery_monitor(
             saadc,
             Irqs,
             battery_pin,
             light_pin,
+            temperature_pin,
             sensor_rail,
             sensor_enable,
             external_power,
@@ -6736,12 +6751,11 @@ mod firmware {
             umsh_bsp_t1000e::BUZZER_SIGNAL.signal(&buzzer_melodies::POWER_ON);
 
             let sensor_rail = Output::new(p.P1_06, Level::Low, OutputDrive::Standard);
-            // The light sensor's own enable, downstream of the rail.
+            // Shared light/NTC enable, downstream of the sensor rail.
             let sensor_enable = Output::new(p.P0_04, Level::Low, OutputDrive::Standard);
-            // AIN0 the battery divider, AIN5 the ambient light sensor. The
-            // two are never wanted at the same instant and want opposite
-            // converter configurations, so the BSP builds a single-channel
-            // `Saadc` per measurement rather than scanning both.
+            // AIN0 battery, AIN5 light, AIN7 NTC. The BSP builds a
+            // single-channel SAADC per measurement, allowing independent
+            // configuration and hardware oversampling.
             let external_power = Input::new(p.P0_05, Pull::Down);
             let charge_active = Input::new(p.P1_03, Pull::Up);
             spawner.spawn(
@@ -6749,6 +6763,7 @@ mod firmware {
                     p.SAADC,
                     p.P0_02,
                     p.P0_29,
+                    p.P0_31,
                     sensor_rail,
                     sensor_enable,
                     external_power,

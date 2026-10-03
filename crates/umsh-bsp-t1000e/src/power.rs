@@ -188,6 +188,7 @@ pub async fn run_battery_monitor<I>(
     irq: I,
     mut battery_pin: Peri<'static, peripherals::P0_02>,
     mut light_pin: Peri<'static, peripherals::P0_29>,
+    mut temperature_pin: Peri<'static, peripherals::P0_31>,
     mut sensor_rail: Output<'static>,
     mut sensor_enable: Output<'static>,
     mut external_power: Input<'static>,
@@ -319,9 +320,9 @@ pub async fn run_battery_monitor<I>(
             BatteryState::BatteryLow | BatteryState::BatteryCritical => LOW_SAMPLE_INTERVAL,
             BatteryState::BatteryOnly => SAMPLE_INTERVAL,
         };
-        // Wait for the next battery iteration. Light requests are serviced
-        // inside this wait and do not end it: they have their own enable,
-        // settle and averaging, and must not pull a battery sample forward
+        // Wait for the next battery iteration. Light and NTC requests are
+        // serviced inside this wait and do not end it: their acquisitions
+        // must not pull a battery-policy iteration forward
         //—the estimator, the announce filter and the critical-battery
         // cutoff all count iterations.
         let mut deadline = Timer::after(interval);
@@ -333,7 +334,10 @@ pub async fn run_battery_monitor<I>(
                     charge_active.wait_for_any_edge(),
                     BATTERY_SAMPLE_REQUEST.wait(),
                 ),
-                crate::light::LIGHT_SAMPLE_REQUEST.wait(),
+                select(
+                    crate::light::LIGHT_SAMPLE_REQUEST.wait(),
+                    crate::temperature::REQUEST.wait(),
+                ),
             )
             .await
             {
@@ -344,7 +348,7 @@ pub async fn run_battery_monitor<I>(
                 // An on-demand request: sample immediately and reply from
                 // the top of the loop.
                 Either::First(Either4::Fourth(())) => reply_pending = true,
-                Either::Second(()) => {
+                Either::Second(Either::First(())) => {
                     let millilux = sample_light(
                         &mut saadc,
                         irq,
@@ -357,10 +361,67 @@ pub async fn run_battery_monitor<I>(
                     crate::light::LIGHT_SAMPLE_REPLY.signal(millilux);
                     continue;
                 }
+                Either::Second(Either::Second(id)) => {
+                    let value = sample_temperature(
+                        &mut saadc,
+                        irq,
+                        &mut battery_pin,
+                        &mut temperature_pin,
+                        &mut sensor_rail,
+                        &mut sensor_enable,
+                    )
+                    .await;
+                    crate::temperature::REPLY.signal((id, value));
+                    continue;
+                }
             }
             break;
         }
     }
+}
+
+/// Fresh NTC and supply estimate without advancing battery policy counters.
+/// Run to completion, so even a timed-out requester cannot leave rails on.
+async fn sample_temperature<I>(
+    saadc: &mut Peri<'static, peripherals::SAADC>,
+    irq: I,
+    battery_pin: &mut Peri<'static, peripherals::P0_02>,
+    temperature_pin: &mut Peri<'static, peripherals::P0_31>,
+    sensor_rail: &mut Output<'static>,
+    sensor_enable: &mut Output<'static>,
+) -> Option<u16>
+where
+    I: Binding<SaadcIrq, SaadcInterruptHandler> + Copy + 'static,
+{
+    sensor_rail.set_high();
+    sensor_enable.set_high();
+    Timer::after(Duration::from_millis(10)).await;
+    let config = || {
+        let mut config = SaadcConfig::default();
+        config.resolution = Resolution::_14bit;
+        config.oversample = Oversample::Over32x;
+        config
+    };
+    let battery_raw = {
+        let mut channel = ChannelConfig::single_ended(battery_pin.reborrow());
+        channel.time = SaadcTime::_40US;
+        let mut converter = Saadc::new(saadc.reborrow(), irq, config(), [channel]);
+        let mut buf = [0i16; 1];
+        converter.sample(&mut buf).await;
+        buf[0]
+    };
+    let raw = {
+        let mut channel = ChannelConfig::single_ended(temperature_pin.reborrow());
+        channel.time = SaadcTime::_40US;
+        let mut converter = Saadc::new(saadc.reborrow(), irq, config(), [channel]);
+        let mut buf = [0i16; 1];
+        converter.sample(&mut buf).await;
+        buf[0]
+    };
+    sensor_enable.set_low();
+    sensor_rail.set_low();
+    let battery_mv = (u32::from(battery_raw.max(0) as u16) * 7200 / 16384) as u16;
+    crate::temperature::from_adc(raw, battery_mv)
 }
 
 /// Points taken per reading. Two of them are discarded, so this is two

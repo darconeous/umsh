@@ -22,6 +22,7 @@ pub mod gnss;
 pub mod indicator;
 
 pub mod light;
+pub mod temperature;
 
 #[cfg(target_os = "none")]
 pub mod platform;

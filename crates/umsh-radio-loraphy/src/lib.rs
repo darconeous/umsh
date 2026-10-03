@@ -36,7 +36,7 @@
 #![no_std]
 #![allow(async_fn_in_trait)]
 
-use core::sync::atomic::{AtomicBool, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use core::task::{Context, Poll};
 
 use embassy_futures::select::{Either, select};
@@ -59,6 +59,9 @@ use umsh_hal::{RxInfo, RxOrigin, Snr, TxOptions};
 pub use umsh_ulcp::profiles;
 use umsh_ulcp::profiles::PhyProfile;
 use umsh_ulcp::stats::{Counter, StatsLedger};
+
+pub mod temperature;
+use temperature::{NoTemperature, TemperatureSensor};
 
 /// Tally a reception the demodulator rejected on CRC.
 ///
@@ -406,6 +409,9 @@ pub struct DeviceControl<M: RawMutex> {
     settings: Signal<M, DeviceSettings>,
     rssi_req: Signal<M, ()>,
     rssi_resp: Signal<M, Result<i16, ()>>,
+    temperature_req: Signal<M, u32>,
+    temperature_resp: Signal<M, (u32, Option<u16>)>,
+    temperature_sequence: AtomicU32,
     shutdown: AtomicBool,
     shutdown_done: Signal<M, ()>,
 }
@@ -416,6 +422,9 @@ impl<M: RawMutex> DeviceControl<M> {
             settings: Signal::new(),
             rssi_req: Signal::new(),
             rssi_resp: Signal::new(),
+            temperature_req: Signal::new(),
+            temperature_resp: Signal::new(),
+            temperature_sequence: AtomicU32::new(0),
             shutdown: AtomicBool::new(false),
             shutdown_done: Signal::new(),
         }
@@ -467,6 +476,24 @@ impl<M: RawMutex> DeviceControl<M> {
     /// in dBm. `Err(())` means the read failed at the radio.
     pub async fn wait_rssi(&self) -> Result<i16, ()> {
         self.rssi_resp.wait().await
+    }
+
+    /// Fresh temperature request, one consumer at a time. The caller bounds
+    /// this wait; canceling it leaves the runner free to finish bus work.
+    /// A late response from a canceled request cannot satisfy a later get.
+    pub async fn sample_temperature(&self) -> Option<u16> {
+        if self.shutdown.load(Ordering::Acquire) {
+            return None;
+        }
+        let id = self.temperature_sequence.fetch_add(1, Ordering::Relaxed);
+        self.temperature_resp.reset();
+        self.temperature_req.signal(id);
+        loop {
+            let (reply_id, value) = self.temperature_resp.wait().await;
+            if reply_id == id {
+                return value;
+            }
+        }
     }
 }
 
@@ -617,7 +644,7 @@ pub fn coding_rate_from_denom(cr: u8) -> Option<CodingRate> {
 /// `wait_for_irq` and the two channel/signal waits are cancelled by the
 /// select; IRQ processing and TX always run to completion.
 pub async fn device_runner<RK, DLY, M, const RX: usize, const TX: usize>(
-    mut lora: LoRa<RK, DLY>,
+    lora: LoRa<RK, DLY>,
     ch: &'static Channels<M, RX, TX>,
     ctl: &'static DeviceControl<M>,
     rx_preamble: u16,
@@ -629,6 +656,37 @@ where
     RK: RadioKind,
     DLY: embedded_hal_async::delay::DelayNs,
     M: RawMutex,
+{
+    device_runner_with_temperature(
+        lora,
+        ch,
+        ctl,
+        rx_preamble,
+        tx_preamble,
+        rx_strategy,
+        stats,
+        NoTemperature,
+    )
+    .await
+}
+
+/// [`device_runner`] with a temperature hook executed by the same bus owner.
+#[allow(clippy::too_many_arguments)]
+pub async fn device_runner_with_temperature<RK, DLY, M, T, const RX: usize, const TX: usize>(
+    mut lora: LoRa<RK, DLY>,
+    ch: &'static Channels<M, RX, TX>,
+    ctl: &'static DeviceControl<M>,
+    rx_preamble: u16,
+    tx_preamble: u16,
+    rx_strategy: RxStrategy,
+    stats: Option<&'static StatsLedger>,
+    mut temperature: T,
+) -> !
+where
+    RK: RadioKind,
+    DLY: embedded_hal_async::delay::DelayNs,
+    M: RawMutex,
+    T: TemperatureSensor<RK>,
 {
     use embassy_futures::select::{Either4, select4};
 
@@ -643,9 +701,19 @@ where
     // the radio is enabled), so a request can race into an idle window.
     async fn wait_settings_while_idle<M: RawMutex>(ctl: &DeviceControl<M>) -> DeviceSettings {
         loop {
-            match select(ctl.settings.wait(), ctl.rssi_req.wait()).await {
+            match select(
+                ctl.settings.wait(),
+                select(ctl.rssi_req.wait(), ctl.temperature_req.wait()),
+            )
+            .await
+            {
                 Either::First(new_settings) => return new_settings,
-                Either::Second(()) => ctl.rssi_resp.signal(Err(())),
+                Either::Second(Either::First(())) => ctl.rssi_resp.signal(Err(())),
+                Either::Second(Either::Second(id)) => {
+                    // Keep a disabled radio asleep, including during the
+                    // enable-to-RX transition or a configuration failure.
+                    ctl.temperature_resp.signal((id, None));
+                }
             }
         }
     }
@@ -729,7 +797,7 @@ where
                     lora.wait_for_irq(),
                     ch.tx.receive(),
                     ctl.settings.wait(),
-                    ctl.rssi_req.wait(),
+                    select(ctl.rssi_req.wait(), ctl.temperature_req.wait()),
                 )
                 .await
                 {
@@ -794,7 +862,7 @@ where
                         settings = Some(new_settings);
                         continue 'reconfigure;
                     }
-                    Either4::Fourth(()) => {
+                    Either4::Fourth(Either::First(())) => {
                         // Sample the instantaneous channel RSSI. Like TX,
                         // `get_rssi` runs to completion outside the select
                         // (only `wait_for_irq` and the channel/signal waits are
@@ -809,6 +877,21 @@ where
                         if rx_mode != RxMode::Continuous {
                             continue 'rx;
                         }
+                    }
+                    Either4::Fourth(Either::Second(id)) => {
+                        // Do not interrupt a packet whose preamble arrived.
+                        // Report unavailable rather than holding up the get.
+                        if rx_in_progress || !T::SUPPORTED {
+                            ctl.temperature_resp.signal((id, None));
+                            continue;
+                        }
+                        let value = if lora.enter_standby().await.is_ok() {
+                            temperature.sample(lora.radio_kind_mut()).await
+                        } else {
+                            None
+                        };
+                        ctl.temperature_resp.signal((id, value));
+                        continue 'rx;
                     }
                 }
             }

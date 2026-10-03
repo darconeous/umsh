@@ -8,6 +8,10 @@ use umsh_ulcp_runtime::temperature::TemperatureInventory;
 #[derive(Clone, Copy)]
 pub(crate) enum Source {
     McuDie,
+    #[cfg(feature = "t1000e")]
+    BoardNtc,
+    #[cfg(feature = "t1000e")]
+    RadioDie,
 }
 
 pub(crate) trait Reader {
@@ -29,6 +33,22 @@ impl<R: Reader> Sensors<R> {
         sensors
             .register(Source::McuDie, "MCU die")
             .expect("initial die sensor fits");
+        sensors
+    }
+
+    /// Add the board's fixed inventory once at boot, after the MCU slot.
+    pub(crate) fn with_board_sensors(reader: R) -> Self {
+        #[allow(unused_mut)]
+        let mut sensors = Self::new(reader);
+        #[cfg(feature = "t1000e")]
+        {
+            sensors
+                .register(Source::BoardNtc, "Board NTC")
+                .expect("NTC fits");
+            sensors
+                .register(Source::RadioDie, "LoRa die")
+                .expect("radio fits");
+        }
         sensors
     }
 
@@ -75,6 +95,10 @@ impl Reader for &'static nrf_mpsl::MultiprotocolServiceLayer<'static> {
                 // runs at the same thread-mode priority as mpsl_task's run loop.
                 quarter_celsius_to_tenths_kelvin(self.get_temperature().raw())
             }
+            #[cfg(feature = "t1000e")]
+            Source::BoardNtc => umsh_bsp_t1000e::temperature::sample().await,
+            #[cfg(feature = "t1000e")]
+            Source::RadioDie => super::firmware::sample_radio_temperature().await,
         }
     }
 }
@@ -153,5 +177,25 @@ mod tests {
         let mut after = [0; 64];
         assert_eq!(sensors.read_names(&mut after), Ok(len));
         assert_eq!(names, after);
+    }
+
+    #[cfg(feature = "t1000e")]
+    #[test]
+    fn temperature_board_inventory_retains_unavailable_radio_slot() {
+        let mut sensors = Sensors::with_board_sensors(FakeReader {
+            calls: 0,
+            values: [Some(3000), Some(2982), None],
+        });
+        let mut names = [0; 64];
+        let len = sensors.read_names(&mut names).unwrap();
+        assert_eq!(&names[..len], b"\x07MCU die\x09Board NTC\x08LoRa die");
+        assert_eq!(sensors.reader.calls, 0);
+        let mut out = [0; 3];
+        assert_eq!(block_on(sensors.sample(&mut out)), Ok(3));
+        assert_eq!(out, [3000, 2982, UNKNOWN]);
+        sensors.reader.values[2] = Some(2990);
+        assert_eq!(block_on(sensors.sample(&mut out)), Ok(3));
+        assert_eq!(out, [3000, 2982, 2990]);
+        assert_eq!(sensors.reader.calls, 6);
     }
 }
