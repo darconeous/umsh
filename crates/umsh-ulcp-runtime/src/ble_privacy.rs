@@ -1,6 +1,6 @@
 //! Public BLE discovery policy. No hardware or host-stack dependencies.
 
-pub const ADVERTISING_INTERVAL_US: u64 = 1_022_500;
+pub const ADVERTISING_INTERVAL_US: u64 = 546_250;
 pub const FAST_ADVERTISING_INTERVAL_US: u64 = 20_000;
 pub const STARTUP_FAST_ADVERTISING_MS: u64 = 30_000;
 pub const RPA_TIMEOUT_SECS: u64 = 900;
@@ -191,8 +191,7 @@ mod tests {
     }
     #[test]
     fn pairing_and_reconnect_intervals_use_exact_controller_units() {
-        for (pairing, interval_us, controller_units) in
-            [(true, 20_000, 32), (false, 1_022_500, 1_636)]
+        for (pairing, interval_us, controller_units) in [(true, 20_000, 32), (false, 546_250, 874)]
         {
             let data = advertisement([0; 16], b"TrackerB2", MODEL, pairing, 30_000);
             assert_eq!(data.interval_us, interval_us);
@@ -213,7 +212,7 @@ mod tests {
                 assert_eq!(data.interval_us, 20_000);
                 assert_eq!(data.refresh_at_ms, Some(30_000));
             } else {
-                assert_eq!(data.interval_us, 1_022_500);
+                assert_eq!(data.interval_us, 546_250);
                 assert_eq!(data.refresh_at_ms, None);
             }
             let pairing = advertisement([0xa5; 16], b"TrackerB2", MODEL, true, uptime_ms);
@@ -350,7 +349,7 @@ mod tests {
             }
             deadline.close();
             let data = advertisement([1; 16], b"radio", MODEL, state.pairing_mode, 30_000);
-            assert_eq!(data.interval_us, 1_022_500);
+            assert_eq!(data.interval_us, 546_250);
             assert_eq!(data.advertising_len, 21);
             assert_eq!(&data.advertising[..5], &[2, 1, 4, 17, 7]);
             assert_eq!(&data.advertising[5..21], &[1; 16]);

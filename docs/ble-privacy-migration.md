@@ -3,7 +3,7 @@
 The nRF52 and ESP32 firmware use rotating private addresses, advertising
 with generic BLE flags and the ULCP service UUID outside pairing. The interval
 is 20 ms during pairing and for the first 30 seconds after boot; otherwise it
-is 1,022.5 ms. See
+is 546.25 ms. See
 [ULCP over BLE](protocol/src/ulcp-ble.md#ble-advertising) for the policy.
 The iPhone app uses AccessorySetupKit to authorize radios. No new UUID, property or firmware configuration
 switch is required.
@@ -96,8 +96,8 @@ waits. Initialization alone does not permit advertising with a temporary default
 
 Both firmware families set equal minimum and maximum advertising intervals:
 20,000 microseconds (32 units of 625 microseconds) throughout the pairing window
-and for the first 30 seconds of boot uptime, and 1,022,500 microseconds
-(1,636 units) otherwise. Opening the window selects the faster interval;
+and for the first 30 seconds of boot uptime, and 546,250 microseconds
+(874 units) otherwise. Opening the window selects the faster interval;
 expiry, explicit closure, successful pairing and bonded reconnection restore
 the normal policy for subsequent advertising once the startup period has ended.
 The startup deadline uses boot uptime, so internal BLE restarts and BLE
