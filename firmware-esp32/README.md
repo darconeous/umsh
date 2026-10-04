@@ -47,6 +47,68 @@ inside its own directory** (`cargo build --release` there, or `cargo run
 Flashing uses the mask-ROM serial bootloader with DTR/RTS auto-entry—
 there is no bootloader to brick and no DFU/UF2 machinery.
 
+### Bluetooth power management
+
+The Heltec V3, T-Beam Supreme, and T-LoRa Pager enable BLE modem sleep.
+The controller turns the PHY off between events and coordinates automatic MCU
+light sleep through its wake source, sleep veto, and next-event deadline. The
+CPU runs at 80 MHz while awake. BLE timing uses the main crystal, which remains
+powered through sleep; no external 32 kHz crystal is required. The esp-hal
+driver fork below fixes controller initialization and teardown sleep boundaries.
+The original ESP32/Heltec V2 and the bring-up console keep modem sleep disabled.
+
+`EspCryptoRng` owns a BLE controller with modem sleep disabled and holds the
+Bluetooth peripheral exclusively for its lifetime. The tracker uses it only
+for short seed harvests, dropping it before the operational BLE controller
+starts. The persisted entropy pool seeds software CSPRNGs, so normal
+randomness generation does not keep RF awake. Seed refresh failures leave the
+existing committed pool usable and retry on a subsequent BLE lifecycle.
+
+USB and GNSS/UART wake locks still prevent MCU light sleep when those peripherals
+are active. In particular, Heltec V3 retains its UART0 serial receiver for the
+whole boot, including on battery: it can use BLE modem sleep, but this existing
+wake lock still blocks MCU light sleep. T-Beam and Pager release their native
+USB transport on battery and can light-sleep with GNSS and WiFi disabled.
+WiFi remains in `PowerSaveMode::None`; WiFi light-sleep policy and
+CPU/cache-retention optimizations are separate work.
+
+For a battery comparison, disconnect USB, disable GNSS and WiFi, put the display
+in its normal idle state, close the pairing window, and wait at least 30 seconds
+after boot for fast advertising to finish. Compare Bluetooth disabled, ordinary
+advertising, an idle bonded connection, and active traffic with the same LoRa
+configuration. Build and stack checks establish software compatibility, not
+current consumption or battery life.
+
+Hardware qualification should cover:
+
+- Bonded reconnect, pairing/PIN, privacy-address rotation, and Bluetooth toggles.
+- LoRa traffic and GPIO wake while advertising and while connected.
+- Elapsed-time accuracy across idle periods, and USB/GNSS off/on transitions.
+- WiFi scans, reconnects, and traffic alongside BLE with WiFi power saving off.
+- First boot, normal stored-seed boot, and restart after a failed seed refresh.
+  Disabling Bluetooth during seed persistence must leave the controller down.
+- Combined BLE/WiFi traffic (plus bridge traffic where supported), recording
+  heap minima and stack watermarks against the required stack reserves.
+
+#### Controller lifecycle fork
+
+The [driver fork](https://github.com/darconeous/esp-hal/tree/codex/ble-awake-teardown)
+adds two lifecycle protections to the upstream sleep support:
+
+- Hold a temporary MCU wake lock during controller initialization, until the
+  BLE sleep veto is registered.
+- Prevent new modem sleep, wake the BTDM controller with its sleep callbacks
+  still active, and wait for its active state before teardown. A temporary
+  MCU wake lock protects teardown after the BLE wake source is released.
+
+Resetting a sleeping S3 baseband can hang in `r_rwble_hw_disable`.
+The fork follows Espressif's
+[reference wake-before-shutdown sequence](https://github.com/espressif/esp-idf/blob/v5.5.1/components/bt/controller/esp32c3/bt.c#L2060-L2070)
+and includes a regression test for asleep teardown followed by awake-controller
+reinitialization. Keep the fork delta limited to these lifecycle protections
+and their tests; return the dependency family to upstream when it includes
+equivalent fixes.
+
 ### WiFi on ESP32-S3
 
 The normal T-Beam Supreme build includes WiFi and PSRAM. WiFi remains opt-in
@@ -64,8 +126,8 @@ The build targets reject individual Xtensa frames that exceed the available
 main stack minus a nested-call reserve: 20 KiB on T-Beam, 32 KiB on Pager,
 and 8 KiB on Heltec. These checks do not replace stack measurements under load.
 
-The Heltec V3 uses internal session storage and a 112 KiB internal heap. The
-T-Beam uses a 120 KiB internal heap and, with its default `psram` feature,
+The Heltec V3 uses internal session storage and a 104 KiB internal heap. The
+T-Beam uses a 108 KiB internal heap and, with its default `psram` feature,
 explicit PSRAM storage for the protocol session and snapshot buffer. WiFi
 does not require PSRAM as a feature dependency. Neither WiFi nor PSRAM is
 enabled in the default Heltec build; WiFi is unsupported on the Heltec V2.
@@ -82,9 +144,14 @@ IPv4. Connection attempts use the driver's authentication threshold without
 an application prescan; the negotiated authentication is checked before
 publishing the link as up. The driver chooses APs by signal strength, so
 preference for the strongest security across separate BSSIDs is not guaranteed.
+The pinned high-level authentication enum omits WPA3. An application-side
+adapter uses the same upstream `esp-wifi-sys-esp32s3` bindings to raise only the
+station's authentication threshold to WPA3 before connecting. Failed reads or
+writes prevent the connection attempt; credentials are never tried with a
+weaker threshold. Remove this adapter once the high-level API exposes WPA3.
 WPA3-only upgrades and refusal of weaker modes still need hardware qualification.
 
-The following limitations apply to both ESP32-S3 boards:
+The following limitations apply to the ESP32-S3 boards:
 
 - Raw PMKs, non-UTF-8 SSIDs, SSIDs containing NUL, OWE, and WPA3 passwords
   over 63 UTF-8 octets return `STATUS_UNIMPLEMENTED`. Unicode SSIDs remain
@@ -129,11 +196,14 @@ endurance remain pending.
 
 ## Version pins
 
-The whole esp-hal family (esp-hal, esp-rtos, esp-radio, esp-alloc,
-esp-println, esp-bootloader-esp-idf) is pinned to a single git rev of
-esp-rs/esp-hal in this workspace's `[patch.crates-io]`—the published
-esp-radio 1.0.0-beta.0 speaks bt-hci 0.8 while our audited trouble-host
-fork requires bt-hci 0.9; main carries the 0.9 bump. All family members
-must move together (they share in-repo path dependencies). Drop the block
-when esp-radio > beta.0 ships. `lora-phy`/`lora-modulation`/`trouble-host`
-patches mirror the root workspace and must stay in lockstep with it.
+The whole esp-hal family (including esp-storage) is pinned to the
+`darconeous/esp-hal` fork at `29246b52591db568f31e74e13e26d8d09464d53c` in this
+workspace's `[patch.crates-io]`. Its upstream base, `76a0e71d5ea8`, includes BLE
+modem sleep (#6376), BLE-aware light sleep (#6378), and the bt-hci 0.9 transport
+required by our audited trouble-host fork. The only fork changes are the BLE
+lifecycle wake boundaries and regression test described above.
+All family members must move together because they share in-repository path
+dependencies. Return to upstream and then released crates when they contain
+these capabilities and lifecycle fixes.
+`lora-phy`/`lora-modulation`/`trouble-host` patches mirror the root workspace
+and must stay in lockstep with it.

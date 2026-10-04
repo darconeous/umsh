@@ -134,14 +134,14 @@ embedded-io-async = { version = "0.7", default-features = false }
 # Raw flash over the internal SPI NOR (journal backing). The chip feature
 # and `embedded-storage` impl come from umsh-bsp-esp32's esp-storage
 # dependency via feature unification.
-esp-storage = { version = "0.9", default-features = false, features = ["critical-section", "embedded-storage"] }
+esp-storage = { version = "0.10", default-features = false, features = ["critical-section", "embedded-storage"] }
 # umsh-node / umsh-sync use `alloc`.
-esp-alloc = { version = "0.10" }
-esp-bootloader-esp-idf = { version = "0.5", features = ["esp32"] }
-esp-hal = { version = "1.1", features = ["esp32", "unstable"] }
-esp-println = { version = "0.17", features = ["esp32"] }
-esp-radio = { version = "1.0.0-beta.0", features = ["esp32", "ble", "unstable"] }
-esp-rtos = { version = "0.3", features = ["esp32", "embassy", "esp-radio", "esp-alloc"] }
+esp-alloc = { version = "0.11" }
+esp-bootloader-esp-idf = { version = "0.6", features = ["esp32"] }
+esp-hal = { version = "1.2", features = ["esp32", "unstable"] }
+esp-println = { version = "0.18", features = ["esp32"] }
+esp-radio = { version = "1.0.0-beta.2", features = ["esp32", "ble", "unstable"] }
+esp-rtos = { version = "0.4", features = ["esp32", "embassy", "esp-radio", "esp-alloc"] }
 # Resolves to ../../lora-rs via the workspace [patch].
 lora-phy = { version = "3.0.2-alpha", default-features = false }
 # Device-identity generation and the device node's CSPRNG: ChaCha20

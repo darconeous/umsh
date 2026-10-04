@@ -540,7 +540,8 @@ commands need 5 ms, while sleep-in needs 120 ms. This driver uses display
 on/off commands and does not send sleep-in. Cold-power-on and repeated warm
 reset display behavior still require qualification at the shorter timings.
 The startup serial log records the logo-visible time in milliseconds of uptime.
-The internal heap is 94 KiB, leaving room for audio DMA/task state and nested
+The default Wi-Fi build's internal heap is 82 KiB (18 KiB ordinary plus 64 KiB
+reclaimed), leaving room for audio DMA/task state and nested
 startup calls. The board's stack check requires another 32 KiB
 beyond its largest individual function frame; a smaller reserve missed an
 on-device startup stack overflow during bring-up.

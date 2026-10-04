@@ -1,5 +1,4 @@
 //! Station ownership and the private ULCP-to-network boundary.
-use alloc::string::String;
 use core::cell::RefCell;
 use embassy_futures::select::{Either3, select, select3};
 use embassy_sync::{
@@ -9,8 +8,9 @@ use embassy_sync::{
 };
 use embassy_time::{Duration, Timer, with_timeout};
 use esp_radio::wifi::{
-    AuthenticationMethod as Auth, Config, ControllerConfig, Interface, WifiController,
-    ap::AccessPointInfo, scan::ScanConfig, sta::StationConfig,
+    AuthenticationMethod as Auth, AuthenticationMethodConfig as AuthConfig, Config,
+    ControllerConfig, Interface, PowerSaveMode, WifiController, ap::AccessPointInfo,
+    scan::ScanConfig, sta::StationConfig,
 };
 use umsh_ulcp::{
     Status,
@@ -276,19 +276,60 @@ fn station(entry: NetworkEntry<'_>) -> Option<StationConfig> {
     CONFIG.validate_network(&entry).ok()?;
     // The upstream driver enforces an authentication threshold and
     // chooses APs by signal strength. Association needs no application scan.
-    let password = String::from(core::str::from_utf8(entry.credential).ok()?);
+    let password = core::str::from_utf8(entry.credential)
+        .ok()?
+        .try_into()
+        .ok()?;
+    let authentication = match entry.security {
+        // The public configuration currently omits WPA3. set_station_config
+        // raises its raw threshold before any connection attempt can start.
+        SecurityMode::Wpa3 | SecurityMode::Wpa2 => AuthConfig::Wpa2Personal(password),
+        SecurityMode::Wpa => AuthConfig::Wpa(password),
+        SecurityMode::Open => AuthConfig::Open,
+        _ => return None,
+    };
     Some(
         StationConfig::default()
-            .with_ssid(entry.ssid)
-            .with_password(password)
-            .with_scan_method(esp_radio::wifi::sta::ScanMethod::AllChannels)
-            .with_auth_method(match entry.security {
-                SecurityMode::Wpa3 => Auth::Wpa3Personal,
-                SecurityMode::Wpa2 => Auth::Wpa2Personal,
-                SecurityMode::Wpa => Auth::Wpa,
-                _ => Auth::None,
-            }),
+            .with_ssid(entry.ssid.try_into().ok()?)
+            .with_authentication(authentication)
+            .with_scan_method(esp_radio::wifi::sta::ScanMethod::AllChannels),
     )
+}
+
+/// Preserve the WPA3 minimum absent from esp-radio's public authentication enum.
+///
+/// This task exclusively owns the station controller and calls this only before
+/// connect_async, after any previous attempt has been disconnected. Never connect
+/// if either raw call fails: checking negotiated security afterward alone would
+/// allow a WPA3-only credential to participate in a WPA2 exchange.
+fn set_station_config(
+    controller: &mut WifiController<'_>,
+    config: StationConfig,
+    security: SecurityMode,
+) -> Result<(), ()> {
+    controller
+        .set_config(&Config::Station(config))
+        .map_err(|_| ())?;
+    if security == SecurityMode::Wpa3 {
+        use esp_wifi_sys_esp32s3::include::{
+            ESP_OK, esp_wifi_get_config, esp_wifi_set_config, wifi_auth_mode_t_WIFI_AUTH_WPA3_PSK,
+            wifi_config_t, wifi_interface_t_WIFI_IF_STA,
+        };
+        // SAFETY: the controller above has initialized STA. The bindings are
+        // the same upstream blob ABI used by esp-radio. Read-modify-write keeps
+        // every other field, including credentials, as configured by esp-radio.
+        unsafe {
+            let mut raw: wifi_config_t = core::mem::zeroed();
+            if esp_wifi_get_config(wifi_interface_t_WIFI_IF_STA, &mut raw) != ESP_OK as i32 {
+                return Err(());
+            }
+            raw.sta.threshold.authmode = wifi_auth_mode_t_WIFI_AUTH_WPA3_PSK;
+            if esp_wifi_set_config(wifi_interface_t_WIFI_IF_STA, &mut raw) != ESP_OK as i32 {
+                return Err(());
+            }
+        }
+    }
+    Ok(())
 }
 
 async fn report_ap(ap: &AccessPointInfo, generation: u32) {
@@ -366,7 +407,7 @@ pub async fn task(
             .with_dynamic_tx_buf_num(8)
             .with_rx_ba_win(4)
             .with_initial_config(Config::Station(
-                StationConfig::default().with_auth_method(Auth::None),
+                StationConfig::default().with_authentication(AuthConfig::Open),
             ));
         let mut controller = match WifiController::new(peripheral.reborrow(), config) {
             Ok(controller) => controller,
@@ -375,6 +416,13 @@ pub async fn task(
                 continue;
             }
         };
+        // Wi-Fi light sleep is a separate policy change. Keep the existing
+        // no-power-save behavior even when upstream defaults change.
+        if controller.set_power_saving(PowerSaveMode::None).is_err() {
+            drop(controller);
+            Timer::after_secs(5).await;
+            continue;
+        }
         let mut active: Option<heapless::Vec<u8, { umsh_ulcp::wifi::NETWORK_ENTRY_MAX_LEN }>> =
             None;
         let mut backoff = 1;
@@ -478,7 +526,7 @@ pub async fn task(
                             break;
                         }
                         let config = ScanConfig::default()
-                            .with_ssid(ssid.as_slice())
+                            .with_ssid(ssid.as_slice().try_into().expect("validated SSID"))
                             .with_channel(channel)
                             .with_show_hidden(true)
                             .with_max(32);
@@ -516,7 +564,7 @@ pub async fn task(
             if current.enabled && !current.entry.is_empty() {
                 let entry = NetworkEntry::decode(&current.entry).unwrap();
                 if let Some(config) = station(entry) {
-                    if controller.set_config(&Config::Station(config)).is_ok() {
+                    if set_station_config(&mut controller, config, entry.security).is_ok() {
                         active = Some(current.entry.clone());
                         super::debug_log(format_args!(
                             "wifi: connection attempt (minimum={:?})",
@@ -559,6 +607,8 @@ pub async fn task(
                                 continue;
                             }
                         }
+                    } else {
+                        link.reason = LinkReason::Rejected;
                     }
                 } else {
                     link.reason = LinkReason::Rejected;

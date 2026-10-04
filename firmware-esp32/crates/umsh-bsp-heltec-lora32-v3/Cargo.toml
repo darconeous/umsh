@@ -14,7 +14,7 @@ umsh-ulcp = { path = "../../../crates/umsh-ulcp", default-features = false, opti
 umsh-ulcp-device = { path = "../../../crates/umsh-ulcp-device", default-features = false, optional = true }
 umsh-ulcp-runtime = { path = "../../../crates/umsh-ulcp-runtime", default-features = false, features = ["i2c"], optional = true }
 umsh-bsp-esp32 = { path = "../umsh-bsp-esp32", features = ["esp32s3"] }
-esp-hal = { version = "1.1", default-features = false, features = ["esp32s3", "rt", "unstable"] }
+esp-hal = { version = "1.2", default-features = false, features = ["esp32s3", "rt", "unstable"] }
 embassy-time = { version = "0.5", default-features = false }
 nb = "1"
 ssd1306 = { version = "0.10", default-features = false, features = ["async", "graphics"] }

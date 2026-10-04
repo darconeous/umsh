@@ -36,20 +36,21 @@ lora-modulation = { git = "https://github.com/darconeous/lora-rs.git", rev = "28
 trouble-host    = { git = "https://github.com/darconeous/trouble.git", rev = "675edc8a373b58ccdeaf1821653b41e19e595bab" }
 
 # The whole esp-hal family is pinned to a single repo rev instead of the
-# crates.io releases: the published esp-radio 1.0.0-beta.0 implements the
-# bt-hci 0.8 transport traits, but the audited trouble-host fork requires
-# bt-hci 0.9. main carries the bt-hci 0.9 bump at unchanged crate versions.
-# This upstream rev includes the sleep-completion wait needed to restore
-# elapsed light-sleep time before resuming (esp-hal #6060, 2026-08-11).
-# Return to crates.io once compatible releases include both changes.
+# crates.io releases. This revision includes BLE modem sleep (#6376),
+# BLE-aware automatic light sleep (#6378), and the bt-hci 0.9 transport
+# required by the audited trouble-host fork. The esp-hal fork adds BTDM
+# initialization wake protection and wake-before-teardown to upstream
+# 76a0e71d5ea8; modem sleep is opt-in.
+# Return to upstream once it includes these lifecycle fixes, then crates.io
+# once compatible releases include these changes.
 # Family members must stay on the SAME rev (they share in-repo path deps).
-esp-hal                = { git = "https://github.com/esp-rs/esp-hal.git", rev = "1ca3457845cdb8c172487180d59b2c1ecc5a9d29" }
-esp-rtos               = { git = "https://github.com/esp-rs/esp-hal.git", rev = "1ca3457845cdb8c172487180d59b2c1ecc5a9d29" }
-esp-radio              = { git = "https://github.com/esp-rs/esp-hal.git", rev = "1ca3457845cdb8c172487180d59b2c1ecc5a9d29" }
-esp-alloc              = { git = "https://github.com/esp-rs/esp-hal.git", rev = "1ca3457845cdb8c172487180d59b2c1ecc5a9d29" }
-esp-println            = { git = "https://github.com/esp-rs/esp-hal.git", rev = "1ca3457845cdb8c172487180d59b2c1ecc5a9d29" }
-esp-bootloader-esp-idf = { git = "https://github.com/esp-rs/esp-hal.git", rev = "1ca3457845cdb8c172487180d59b2c1ecc5a9d29" }
-esp-storage            = { git = "https://github.com/esp-rs/esp-hal.git", rev = "1ca3457845cdb8c172487180d59b2c1ecc5a9d29" }
+esp-hal                = { git = "https://github.com/darconeous/esp-hal.git", rev = "29246b52591db568f31e74e13e26d8d09464d53c" }
+esp-rtos               = { git = "https://github.com/darconeous/esp-hal.git", rev = "29246b52591db568f31e74e13e26d8d09464d53c" }
+esp-radio              = { git = "https://github.com/darconeous/esp-hal.git", rev = "29246b52591db568f31e74e13e26d8d09464d53c" }
+esp-alloc              = { git = "https://github.com/darconeous/esp-hal.git", rev = "29246b52591db568f31e74e13e26d8d09464d53c" }
+esp-println            = { git = "https://github.com/darconeous/esp-hal.git", rev = "29246b52591db568f31e74e13e26d8d09464d53c" }
+esp-bootloader-esp-idf = { git = "https://github.com/darconeous/esp-hal.git", rev = "29246b52591db568f31e74e13e26d8d09464d53c" }
+esp-storage            = { git = "https://github.com/darconeous/esp-hal.git", rev = "29246b52591db568f31e74e13e26d8d09464d53c" }
 
 # Xtensa needs optimization even in dev builds; unoptimized images are too
 # slow to meet radio/BLE timing and blow past IRAM budgets.

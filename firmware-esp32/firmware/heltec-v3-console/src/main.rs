@@ -23,10 +23,10 @@
 //!
 //! ## Boot order is constrained
 //!
-//! The BLE controller comes up first and stays up. It is not used as a
-//! transport here—it is the RF entropy source without which
-//! `EspCryptoRng` refuses to exist (see `umsh_bsp_esp32::rng`). Storage
-//! and the identity follow, because the MAC needs both.
+//! `EspCryptoRng` first takes ownership of the Bluetooth peripheral and
+//! starts its controller with modem sleep disabled. It keeps that RF
+//! entropy source awake for the MAC's lifetime. Storage and the identity
+//! follow, because the MAC needs both.
 
 #![no_std]
 #![no_main]
@@ -48,7 +48,6 @@ use esp_hal::Async;
 use esp_hal::clock::CpuClock;
 use esp_hal::gpio::{Input, InputConfig, Level, Output, OutputConfig, Pull};
 use esp_hal::i2c::master::{Config as I2cConfig, I2c};
-use esp_hal::interrupt::software::SoftwareInterruptControl;
 use esp_hal::rtc_cntl::{Rtc, RwdtStage};
 use esp_hal::spi::Mode;
 use esp_hal::spi::master::{Config as SpiConfig, Spi};
@@ -56,7 +55,6 @@ use esp_hal::time::Rate;
 use esp_hal::timer::timg::TimerGroup;
 use esp_hal::uart::{Config as UartConfig, Uart, UartRx, UartTx};
 use esp_println::println;
-use esp_radio::ble::controller::BleConnector;
 use lora_phy::LoRa;
 use lora_phy::mod_params::{Bandwidth, ModulationParams, PacketParams, SpreadingFactor};
 use static_cell::StaticCell;
@@ -123,8 +121,7 @@ async fn main(spawner: Spawner) {
     rtc.rwdt.enable();
 
     let timg0 = TimerGroup::new(peripherals.TIMG0);
-    let software_interrupt = SoftwareInterruptControl::new(peripherals.SW_INTERRUPT);
-    esp_rtos::start(timg0.timer0, software_interrupt.software_interrupt0);
+    esp_rtos::start(timg0.timer0);
 
     println!(
         "{} {} on {}",
@@ -153,17 +150,11 @@ async fn main(spawner: Spawner) {
         });
 
     // ── RF entropy source ────────────────────────────────────────────────
-    // Bound by name, not `_`: `BleConnector` runs `ble_deinit` on drop,
-    // which takes the entropy source with it, and a bare `_` pattern drops
-    // it immediately. Without this the TRNG degrades to pseudo-random
-    // *silently*, which is why `EspCryptoRng` is fallible at all.
-    let _ble = match BleConnector::new(peripherals.BT, Default::default()) {
-        Ok(connector) => {
-            println!("ble: controller up (RF entropy source)");
-            connector
-        }
-        Err(e) => panic!("ble init failed ({e:?})—no trustworthy RNG"),
-    };
+    // The RNG owns a non-sleeping controller. Moving it into the MAC below
+    // keeps trusted RF entropy active for every subsequent draw.
+    let mut rng = EspCryptoRng::new(peripherals.BT)
+        .unwrap_or_else(|e| panic!("crypto rng unavailable: {e:?}"));
+    println!("ble: controller up (RF entropy source)");
 
     // ── Flash storage ────────────────────────────────────────────────────
     // Resolved by label from the on-flash partition table. A board flashed
@@ -179,7 +170,6 @@ async fn main(spawner: Spawner) {
     // Loaded from flash on later boots, TRNG-generated on the first. There
     // is deliberately no PRNG fallback: a predictable long-term key is
     // worse than refusing to start.
-    let mut rng = EspCryptoRng::new().unwrap_or_else(|e| panic!("crypto rng unavailable: {e:?}"));
     let sk_bytes: [u8; 32] = match storage.load_sk().await {
         Ok(Some(sk)) => sk,
         Ok(None) => {

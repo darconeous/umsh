@@ -569,7 +569,7 @@ mod tests {
                 .iter()
                 .find(|(op, _)| *op == LeSetAdvParams::OPCODE)
                 .unwrap();
-            assert_eq!(&bytes[..4], &[0x64, 0x06, 0x64, 0x06]); // 1636 x 625 us
+            assert_eq!(&bytes[..4], &[0x6a, 0x03, 0x6a, 0x03]); // 874 x 625 us
             drop(calls);
             c.exec(&advertising_params(false)).await.unwrap();
             assert!(c.exec(&LeSetAdvEnable::new(true)).await.is_err());

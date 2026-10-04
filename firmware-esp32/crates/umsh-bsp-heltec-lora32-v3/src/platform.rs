@@ -14,10 +14,10 @@
 //!
 //! ## Construction order
 //!
-//! [`umsh_bsp_esp32::rng::EspCryptoRng`] only exists while an RF entropy
-//! source is live, so the BLE controller must be initialized **before**
-//! the MAC is built, and must stay alive for as long as it runs. See that
-//! module for why this is enforced rather than documented.
+//! [`umsh_bsp_esp32::rng::EspCryptoRng`] consumes the Bluetooth peripheral
+//! and owns a controller with modem sleep disabled for its entire lifetime.
+//! Construct it before the MAC, after initializing the radio scheduler.
+//! Tracker firmware instead uses a pool-seeded software-RNG platform.
 
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_time::Delay;
@@ -38,7 +38,7 @@ impl Platform for HeltecV3Platform {
     type Radio = umsh_radio_loraphy::LoraphyRadio<CriticalSectionRawMutex, 4, 2>;
     type Delay = Delay;
     type Clock = EmbassyClock;
-    type Rng = EspCryptoRng;
+    type Rng = EspCryptoRng<'static>;
     type CounterStore = EspCounterStore;
     type KeyValueStore = EspKeyValueStore;
 }

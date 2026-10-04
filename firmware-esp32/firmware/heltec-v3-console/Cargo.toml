@@ -33,15 +33,15 @@ embassy-futures = { version = "0.1", default-features = false }
 embassy-sync = { version = "0.8", default-features = false }
 embassy-time = { version = "0.5", default-features = false }
 embedded-graphics = { version = "0.8", default-features = false }
-esp-bootloader-esp-idf = { version = "0.5", features = ["esp32s3"] }
+esp-bootloader-esp-idf = { version = "0.6", features = ["esp32s3"] }
 # umsh-cli / umsh-node / umsh-sync use `alloc`.
-esp-alloc = { version = "0.10" }
-esp-hal = { version = "1.1", features = ["esp32s3", "unstable"] }
-esp-rtos = { version = "0.3", features = ["esp32s3", "embassy", "esp-radio", "esp-alloc"] }
+esp-alloc = { version = "0.11" }
+esp-hal = { version = "1.2", features = ["esp32s3", "unstable"] }
+esp-rtos = { version = "0.4", features = ["esp32s3", "embassy", "esp-radio", "esp-alloc"] }
 # The BLE controller is the RF entropy source that makes the hardware TRNG
 # a true noise source (see umsh_bsp_esp32::rng).
-esp-radio = { version = "1.0.0-beta.0", features = ["esp32s3", "ble", "unstable"] }
-esp-println = { version = "0.17", features = ["esp32s3"] }
+esp-radio = { version = "1.0.0-beta.2", features = ["esp32s3", "ble", "unstable"] }
+esp-println = { version = "0.18", features = ["esp32s3"] }
 # 0.8 to match umsh-radio-loraphy's frame Vec type.
 heapless = { version = "0.8", default-features = false }
 # Resolves to ../../lora-rs via the workspace [patch].

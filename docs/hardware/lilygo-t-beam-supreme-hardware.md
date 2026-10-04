@@ -919,18 +919,18 @@ The Supreme offers considerably more power-control opportunity than a board with
 
 The UMSH firmware's low-power architecture on this board is **automatic light sleep with the radio receiving through it**: the SX1262 stays in continuous RX on its own rail, the ESP32-S3 sleeps whenever the scheduler is idle, and DIO1—armed as a level-triggered GPIO wake source—pulls the chip back up when a frame arrives. The radio latches its IRQ and buffers the frame in its own FIFO, so the sub-millisecond wake costs nothing. Deep sleep is not part of the receive story (it is a reboot, and the mesh state does not survive it); on this board deep sleep is not used at all, since "off" is a PMIC power-off.
 
-Sleep is gated entirely by esp-hal wake locks rather than by explicit policy code. The lock holders, and what each one means:
+Sleep is gated by esp-hal wake locks and radio sleep vetoes/deadlines. The constraints are:
 
 | Holder | Meaning |
 | --- | --- |
-| esp-radio (BLE init → deinit) | BLE enabled ⇒ no sleep. The controller has hard real-time deadlines and esp-radio has no modem sleep; `PROP_BLE_ENABLED` off tears the controller down and releases the lock. |
+| BLE controller | Modem sleep releases the PHY between events. The BLE wake source vetoes MCU sleep while the controller is active and bounds sleep by the next radio deadline. Initialization, teardown, and the separate hardware-entropy harvest hold temporary wake locks. |
 | USB-Serial-JTAG driver | The driver exists only while the PMU reports VBUS, so this lock **is** the never-sleep-on-USB-power policy. |
 | GNSS UART | Opened at receiver power-on, dropped at power-off, so GNSS enabled ⇒ no sleep—correct, since a light-sleeping UART loses RX bytes mid-sentence. |
 | GPIO waits (unarmed) | Any `wait_for_*` without wake-enable holds a lock; the firmware's long-lived waits (DIO1, PMU IRQ, BOOT button) are all wake-enabled level events instead. |
 
-The steady sleeping state on battery is therefore: BLE off, GNSS off, panel dark, no USB—radio in RX, chip asleep between the watchdog's timer wakes (20 s feeds under a 30 s RWDT timeout), woken by DIO1 traffic, the PMU IRQ (POWER key, VBUS), or the BOOT button.
+With GNSS and Wi-Fi off, the panel dark, and USB disconnected, the chip can sleep between BLE events and other scheduled work while LoRa stays in RX. DIO1 traffic, the PMU IRQ (POWER key, VBUS), the BOOT button, and timer deadlines wake it. With BLE also off, the watchdog's timer wakes remain (20 s feeds under a 30 s RWDT timeout).
 
-Sleep **during** BLE would need esp-radio modem sleep, which does not exist and is gated upstream behind an esp-hal clock-tree rework (esp-rs/esp-hal#3235)—and full sleep-during-BLE on the S3 additionally wants an external 32.768 kHz crystal, which this board is not known to route. BLE-off-then-sleep is the architecture, not a stopgap.
+BLE uses the main crystal as its low-power clock, so this mode does not require an external 32.768 kHz crystal. The CPU remains at 80 MHz while awake. The [ESP32 workspace](../../firmware-esp32/README.md#bluetooth-power-management) documents the pinned controller lifecycle fixes and qualification scenarios; Wi-Fi power optimization remains separate work.
 
 ### 17.2 GNSS backup
 

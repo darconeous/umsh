@@ -282,6 +282,18 @@ mod tests {
     }
 
     #[test]
+    fn mixing_and_refreshing_do_not_bypass_the_boot_commit() {
+        let mut p = pool(&[8; 32], b"salt");
+        p.mix(b"fresh hardware entropy");
+        p.seed_refreshed();
+        let mut out = [0xa5; 32];
+        assert_eq!(p.draw(b"x", &mut out), Err(DrawBeforeCommit));
+        assert_eq!(out, [0xa5; 32]);
+        p.seed_committed();
+        assert_eq!(p.draw(b"x", &mut out), Ok(()));
+    }
+
+    #[test]
     fn mixed_streams_diverge_from_unmixed() {
         let mut a = pool(&[9; 32], b"salt");
         let mut b = pool(&[9; 32], b"salt");

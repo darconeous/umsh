@@ -35,9 +35,9 @@
 //! On a `pmic-axp2101` board the PMU comes up before everything: until
 //! its rails are configured, the radio, panel, and receiver are dark,
 //! and probing them reports parts missing that are merely unpowered.
-//! The BLE controller is next (first, elsewhere) and stays up: it is
-//! both a transport and the RF entropy source without which
-//! `EspCryptoRng` refuses to exist (see `umsh_bsp_esp32::rng`).
+//! A short-lived, non-sleeping BLE controller supplies hardware entropy
+//! when the seed journal needs bootstrapping. Operational BLE can sleep
+//! or be disabled; the node uses CSPRNGs seeded from the persisted pool.
 //! Journals mount before the ULCP session starts so a stored snapshot
 //! is restored (and the PHY re-applied) before the first host command.
 //!
@@ -83,7 +83,6 @@ use esp_hal::Async;
 use esp_hal::clock::CpuClock;
 use esp_hal::gpio::{Event, Input, InputConfig, Level, Output, OutputConfig, Pull};
 use esp_hal::i2c::master::{Config as I2cConfig, I2c};
-use esp_hal::interrupt::software::SoftwareInterruptControl;
 use esp_hal::rtc_cntl::{Rtc, RwdtStage, SocResetReason};
 use esp_hal::spi::Mode;
 use esp_hal::spi::master::{Config as SpiConfig, Spi};
@@ -102,7 +101,7 @@ use trouble_host::gap;
 use trouble_host::prelude::*;
 
 use umsh_bsp_esp32::flash_store;
-use umsh_bsp_esp32::rng::EspCryptoRng;
+use umsh_bsp_esp32::rng::{EspCryptoRng, RngError as EntropyHarvestError};
 // The board BSP, under one name whatever the board. Every board-specific
 // pin, peripheral, and radio type reaches this file through `board`.
 #[cfg(feature = "board-heltec-v2")]
@@ -2831,28 +2830,36 @@ async fn ble_peripheral<C: Controller>(
 /// Bring the RF subsystem up just long enough for one TRNG draw, then
 /// tear it back down.
 ///
-/// Only for the boot paths that cannot proceed without hardware
-/// entropy—an empty seed journal, or a refused seed commit. The
-/// connector's drop deinitializes the controller again; the BLE
-/// supervisor brings its own up when advertising is wanted.
-fn harvest_trng_once(bt: &mut esp_hal::peripherals::BT<'static>) -> [u8; 32] {
-    let connector = BleConnector::new(bt.reborrow(), Default::default())
-        .unwrap_or_else(|e| panic!("ble init failed ({e:?})—no entropy source"));
-    let mut rng = EspCryptoRng::new().unwrap_or_else(|e| panic!("crypto rng unavailable: {e:?}"));
+/// Used for bootstrapping and the supervisor's optional seed refresh.
+/// An initialized sleeping controller does not guarantee live RF noise;
+/// the RNG owns a controller with modem sleep off for the entire draw.
+/// The caller must arbitrate ADC2 on the original ESP32 once tasks run.
+fn try_harvest_trng_once(
+    bt: &mut esp_hal::peripherals::BT<'static>,
+) -> Result<[u8; 32], EntropyHarvestError> {
+    let mut rng = EspCryptoRng::new(bt.reborrow())?;
     let mut out = [0u8; 32];
     rng.fill_bytes(&mut out);
-    drop(connector);
-    out
+    drop(rng);
+    Ok(out)
+}
+
+/// Boot cannot proceed with an empty/uncommitted seed and no trusted entropy.
+fn harvest_trng_once(bt: &mut esp_hal::peripherals::BT<'static>) -> [u8; 32] {
+    try_harvest_trng_once(bt)
+        .unwrap_or_else(|e| panic!("entropy harvest failed ({e})—no trusted entropy source"))
 }
 
 /// BLE supervisor: rebuild for enablement, pairing boundaries and disconnects.
 ///
 /// While BLE is enabled this owns the whole trouble stack. When the
-/// property goes false, [`run_ble_stack`] unwinds and everything drops
-/// in reverse order—server, peripheral, runner, stack, controller,
-/// connector—and the connector's drop is what deinitializes the btdm
-/// controller, powers down the PHY, and releases esp-radio's wake
-/// lock, the gate on the scheduler's light-sleep path. Re-enabling
+/// property goes false, [`run_ble_stack`] unwinds the peripheral,
+/// runner, stack, controller, and connector. The server and journal
+/// survive across cycles. The connector's drop deinitializes the btdm
+/// controller and releases its PHY and wake-source ownership. On S3,
+/// the pinned driver wakes a sleeping controller before teardown. Upstream
+/// sleep hooks coordinate light sleep between events while enabled; the
+/// original ESP32 retains its controller-lifetime wake lock. Re-enabling
 /// builds a fresh stack over the same static `HostResources`, which
 /// `trouble_host::new` rewrites field-by-field on every call.
 ///
@@ -2910,7 +2917,7 @@ async fn ble_app(
             }
             continue;
         }
-        let device = bt.take().unwrap_or_else(|| {
+        let mut device = bt.take().unwrap_or_else(|| {
             // SAFETY: the peripheral singleton was consumed by a
             // previous cycle's connector, which `run_ble_stack`
             // dropped before returning; this supervisor is the only
@@ -2918,6 +2925,37 @@ async fn ble_app(
             // owner exists at any time.
             unsafe { esp_hal::peripherals::BT::steal() }
         });
+        if !seed_harvested {
+            let fresh = {
+                #[cfg(feature = "board-heltec-v2")]
+                let _adc2_claim = ADC2_ARBITER.lock().await;
+                // The temporary controller drops before the ADC2 guard
+                // and before any await or operational BLE construction.
+                try_harvest_trng_once(&mut device)
+            };
+            match fresh {
+                Ok(fresh) => {
+                    pool.mix(&fresh);
+                    // Failure leaves the pool dirty, but the boot-time
+                    // commit still protects this boot. Retry on the next
+                    // normal lifecycle, without a periodic wakeup.
+                    if seed_store.persist(pool.next_seed()).await.is_ok() {
+                        pool.seed_refreshed();
+                        seed_harvested = true;
+                    }
+                }
+                Err(error) => {
+                    debug_log(format_args!(
+                        "ble entropy harvest FAILED error={error}; refresh deferred"
+                    ));
+                }
+            }
+        }
+        // Persistence can yield while Bluetooth is disabled remotely.
+        if !BLE_ENABLED.load(Ordering::Acquire) {
+            bt = Some(device);
+            continue;
+        }
         let connector = {
             // V2: exclude a mid-flight battery sample while esp-radio
             // claims ADC2 (see [`ADC2_ARBITER`]).
@@ -2925,7 +2963,10 @@ async fn ble_app(
             let _adc2_claim = ADC2_ARBITER.lock().await;
             #[cfg(feature = "board-heltec-v2")]
             ADC2_RADIO_UP.store(true, Ordering::Release);
-            BleConnector::new(device, Default::default())
+            BleConnector::new(
+                device,
+                esp_radio::ble::Config::default().with_modem_sleep(cfg!(feature = "chip-esp32s3")),
+            )
         };
         let connector = match connector {
             Ok(connector) => connector,
@@ -2937,19 +2978,6 @@ async fn ble_app(
                 continue;
             }
         };
-        // Harvest: the RF entropy source is live for as long as the
-        // connector exists. A failed seed refresh is not fatal—the
-        // mix still hardens this session, and the boot-time commit
-        // already covers replay.
-        if !seed_harvested && let Ok(mut rng) = EspCryptoRng::new() {
-            let mut fresh = [0u8; 32];
-            rng.fill_bytes(&mut fresh);
-            pool.mix(&fresh);
-            if seed_store.persist(pool.next_seed()).await.is_ok() {
-                pool.seed_refreshed();
-                seed_harvested = true;
-            }
-        }
         let controller: BleController =
             Guarded::new(ExternalController::new(connector), &BLE_CONTROLLER_STATE);
         if PAIRING_DEADLINE.lock(|d| d.borrow().expired(Instant::now().as_millis())) {
@@ -4671,7 +4699,18 @@ async fn main(spawner: Spawner) {
     // targets at 80 MHz for the same reason). esp-radio's documented
     // floor is 80 MHz, and APB stays at 80 MHz either way so SPI/UART
     // timing is unchanged.
-    let config = esp_hal::Config::default().with_cpu_clock(CpuClock::_80MHz);
+    let clocks = {
+        #[allow(unused_mut)]
+        let mut clocks = esp_hal::clock::ClockConfig::from(CpuClock::_80MHz);
+        #[cfg(feature = "chip-esp32s3")]
+        {
+            // The main crystal supports BLE light sleep without requiring
+            // a separate 32 kHz crystal on the board.
+            clocks.ble_lp_clk = Some(esp_hal::clock::ll::BleLpClkConfig::Xtal);
+        }
+        clocks
+    };
+    let config = esp_hal::Config::default().with_cpu_clock(clocks);
     let peripherals = esp_hal::init(config);
     #[cfg(feature = "board-tlora-pager")]
     let pager_boot_lights =
@@ -4693,13 +4732,15 @@ async fn main(spawner: Spawner) {
         // The Heltec keeps its session internally; the Pager adds DMA state.
         // Their smaller heaps leave room for nested calls and interrupts.
         #[cfg(feature = "board-heltec-v3")]
-        esp_alloc::heap_allocator!(size: 48 * 1024);
+        esp_alloc::heap_allocator!(size: 40 * 1024);
         // Leave room for sleep and audio DMA/task state while preserving the
-        // checked 32 KiB nested-call reserve (94 KiB total internal heap).
+        // checked 32 KiB nested-call reserve (82 KiB total internal heap).
         #[cfg(feature = "board-tlora-pager")]
-        esp_alloc::heap_allocator!(size: 30 * 1024);
+        esp_alloc::heap_allocator!(size: 18 * 1024);
         #[cfg(not(any(feature = "board-heltec-v3", feature = "board-tlora-pager")))]
-        esp_alloc::heap_allocator!(size: 56 * 1024);
+        // Keep the 20 KiB stack reserve and nested task construction headroom
+        // with the upgraded radio/scheduler's internal static storage.
+        esp_alloc::heap_allocator!(size: 44 * 1024);
         esp_alloc::heap_allocator!(#[esp_hal::ram(reclaimed)] size: 64 * 1024);
     }
     #[cfg(feature = "psram")]
@@ -4723,21 +4764,17 @@ async fn main(spawner: Spawner) {
     rtc.rwdt.enable();
 
     let timg0 = TimerGroup::new(peripherals.TIMG0);
-    let sw_int = SoftwareInterruptControl::new(peripherals.SW_INTERRUPT);
     // Automatic light sleep: when the scheduler runs out of ready
     // tasks, no `WakeLock` is held, and the next timer deadline is far
     // enough away, the idle hook enters light sleep until that deadline
     // (GPIO wake always armed) instead of spinning `waiti` at 80 MHz.
-    // The gating is entirely lock-driven—esp-radio holds a lock from
-    // BLE init to deinit, the wired-transport and UART drivers hold
-    // theirs for their lifetimes, and GPIO level waits arm wake sources.
+    // S3 BLE supplies a sleep veto and wake deadline between events.
+    // Wired-transport and UART drivers retain their lifetime wake locks,
+    // and GPIO level waits arm wake sources. Original ESP32 BLE still
+    // holds a lock from controller initialization to deinitialization.
     // A board whose locks never all clear simply falls back to WFI.
     let sleep = esp_rtos::sleep::configure(peripherals.LPWR);
-    esp_rtos::start_with_idle_hook(
-        timg0.timer0,
-        sw_int.software_interrupt0,
-        sleep.light_sleep_hook,
-    );
+    esp_rtos::start_with_idle_hook(timg0.timer0, sleep.light_sleep_hook);
 
     println!(
         "{} {} on {}",
@@ -4968,9 +5005,9 @@ async fn main(spawner: Spawner) {
     // The seed-file protocol (see `umsh_crypto::pool`): derive the
     // working key one-way from the stored seed plus per-boot salt,
     // commit the next boot's seed to flash, and only then draw. The
-    // RF-gated TRNG is a source the pool harvests when the radio
-    // happens to be up—not a liveness requirement, which is what lets
-    // the BLE controller be torn down while the node keeps running.
+    // RF-gated TRNG is harvested through a temporary non-sleeping
+    // controller, not the operational controller that may sleep.
+    // Software generators keep the node running while BLE is off.
     let mut seed_store = ble_store::SeedStore::mount(shared, &partition).await;
     let mut pool = match seed_store.seed() {
         Some(stored) => {

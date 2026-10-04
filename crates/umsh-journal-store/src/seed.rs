@@ -163,6 +163,34 @@ mod tests {
     }
 
     #[test]
+    fn every_partial_seed_write_preserves_the_committed_seed() {
+        let old = sample();
+        let old_bytes = committed(&old);
+        let new = SeedRecord {
+            generation: old.generation + 1,
+            seed: [0x92; 32],
+        };
+        let new_bytes = committed(&new);
+        // Body and commit word are written in order. Cut after every byte,
+        // including all partial commit words, and rescan as on the next boot.
+        for written in 0..SLOT_SIZE {
+            let mut torn = [0xff; SLOT_SIZE];
+            torn[..written].copy_from_slice(&new_bytes[..written]);
+            let latest = consider_record(None, 0x1000, &old_bytes);
+            assert_eq!(
+                consider_record(latest, 0x1040, &torn),
+                Some((0x1000, old)),
+                "power cut after {written} bytes"
+            );
+        }
+        let latest = consider_record(None, 0x1000, &old_bytes);
+        assert_eq!(
+            consider_record(latest, 0x1040, &new_bytes),
+            Some((0x1040, new))
+        );
+    }
+
+    #[test]
     fn generation_wraparound_prefers_the_wrapped_record() {
         let pre_wrap = committed(&SeedRecord {
             generation: u32::MAX,
