@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Reject Xtensa function frames that alone exceed the linked main stack.
+"""Reject oversized Xtensa frames and the known device-task construction chain.
 
 This is a necessary budget check, not a call-graph or RTOS-task stack proof.
 Nested calls, interrupts, and radio task stacks still need hardware measurement.
@@ -51,6 +51,33 @@ def function_frames(disassembly):
             yield lines[0], size
 
 
+def device_task_construction(frames):
+    """Conservative lower bound for main -> device_task -> future initializer.
+
+    Embassy's generated constructor can copy the large boot snapshot while its
+    initializer materializes the entire future. If LLVM keeps the constructor
+    out of line, all three frames coexist. Single-frame-plus-reserve checking
+    missed this on T-Beam. An inlined stage has no separate frame to add.
+    This intentionally checks our known startup path, not a general call graph.
+    """
+    main = []
+    constructor = []
+    initializer = []
+    for name, size in frames:
+        if re.search(r" <firmware_\w+::__main::____embassy_main_task::"
+                     r"____embassy_main_task_inner_function::\{closure#0\}>:$", name):
+            main.append((name, size))
+        elif re.search(r" <firmware_\w+::device_task>:$", name):
+            constructor.append((name, size))
+        elif ("UninitCell<" in name and "::__device_task_task::" in name
+              and "::write_in_place::<" in name):
+            initializer.append((name, size))
+    if not main:
+        return []
+    return [max(stage, key=lambda frame: frame[1])
+            for stage in (main, constructor, initializer) if stage]
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("elf")
@@ -65,6 +92,14 @@ def main():
     if not frames:
         raise SystemExit("stack check: no Xtensa function prologues found")
     failures = [(name, size) for name, size in frames if size + args.reserve > available]
+    construction = device_task_construction(frames)
+    construction_size = sum(size for _, size in construction)
+    if construction_size > available:
+        print(f"stack check FAILED: device task construction needs at least "
+              f"{construction_size} bytes > {available} byte main stack")
+        for name, size in construction:
+            print(f"  {size} bytes: {name}")
+        raise SystemExit(1)
     if failures:
         for name, size in failures:
             print(f"stack check FAILED: {size} byte frame + {args.reserve} reserve > "
@@ -73,6 +108,10 @@ def main():
     print(f"stack check: main stack {available} bytes; "
           f"largest individual frame {max(size for _, size in frames)} bytes; "
           f"reserve {args.reserve} bytes")
+    if construction:
+        print(f"stack check: device task construction lower bound "
+              f"{construction_size} bytes; {available - construction_size} bytes "
+              "remain for callers, interrupts, and other nested work")
 
 
 if __name__ == "__main__":

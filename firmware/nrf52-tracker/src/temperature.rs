@@ -8,6 +8,8 @@ use umsh_ulcp_runtime::temperature::TemperatureInventory;
 #[derive(Clone, Copy)]
 pub(crate) enum Source {
     McuDie,
+    #[cfg(feature = "board-techo")]
+    Bme280,
     #[cfg(feature = "t1000e")]
     BoardNtc,
     #[cfg(feature = "t1000e")]
@@ -40,6 +42,12 @@ impl<R: Reader> Sensors<R> {
     pub(crate) fn with_board_sensors(reader: R) -> Self {
         #[allow(unused_mut)]
         let mut sensors = Self::new(reader);
+        #[cfg(all(target_os = "none", feature = "board-techo"))]
+        if super::bme280::SENSOR.address().is_some() {
+            sensors
+                .register(Source::Bme280, "BME280")
+                .expect("BME280 fits");
+        }
         #[cfg(feature = "t1000e")]
         {
             sensors
@@ -90,6 +98,8 @@ fn quarter_celsius_to_tenths_kelvin(raw: i32) -> Option<u16> {
 impl Reader for &'static nrf_mpsl::MultiprotocolServiceLayer<'static> {
     async fn sample(&mut self, source: Source) -> Option<u16> {
         match source {
+            #[cfg(feature = "board-techo")]
+            Source::Bme280 => super::bme280::sample().await,
             Source::McuDie => {
                 // MPSL owns TEMP. Its approximately 50 us synchronous acquisition
                 // runs at the same thread-mode priority as mpsl_task's run loop.

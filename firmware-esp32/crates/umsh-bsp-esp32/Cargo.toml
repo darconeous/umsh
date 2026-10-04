@@ -39,6 +39,8 @@ esp-bootloader-esp-idf = { version = "0.5" }
 umsh-flash-store = { path = "../../../crates/umsh-flash-store" }
 embassy-embedded-hal = { version = "0.3", default-features = false }
 embassy-sync = { version = "0.8", default-features = false }
+embassy-time = { version = "0.5", default-features = false }
+critical-section = "1.2"
 # `rand 0.10` synchronous traits, so the RF-gated TRNG satisfies
 # `rand::CryptoRng` and can be handed straight to `Mac` as `Platform::Rng`.
 rand = { version = "0.10.1", default-features = false }

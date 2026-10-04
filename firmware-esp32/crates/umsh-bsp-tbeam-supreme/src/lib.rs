@@ -54,8 +54,8 @@ pub const LORA_DIO1: u8 = 1;
 
 // Sensor/display I²C bus. SH1106 at 0x3C or 0x3D depending on the
 // magnetometer population—probed, never assumed (§2.4, §9.2). Also
-// carries the BME280 (0x77/0x76) and magnetometer, both out of scope.
-// Dead until ALDO1/ALDO2 are up.
+// carries the BME280 (0x77/0x76, on-demand temperature) and magnetometer.
+// Dead until ALDO1 is up.
 pub const SENSOR_I2C_SDA: u8 = 17;
 pub const SENSOR_I2C_SCL: u8 = 18;
 

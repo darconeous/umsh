@@ -470,6 +470,21 @@ The presence of a dedicated RTC interrupt line means firmware can potentially us
 
 ## BME280 environmental sensor
 
+UMSH probes for BME280 chip ID `0x60` at `0x77` during boot. When present,
+`BME280` follows `MCU die` in the ULCP temperature inventory. Variants without
+the sensor retain only the MCU row. Each temperature get triggers a fresh
+temperature-only ×1 forced conversion, with the IIR filter disabled, and
+returns factory-compensated tenths of a kelvin. The sensor sleeps between gets;
+pressure and humidity are not exposed. Names reads do not sample hardware.
+
+A dedicated worker locks the shared TWIM bus through the complete acquisition
+so RTC/raw host traffic cannot change its configuration midway. Canceling a
+host request does not cancel DMA; tagged replies prevent the next get from
+using the abandoned request's sample. Read errors and invalid measurements
+retain the sensor's index and report `0xFFFF`. Detection occurs once per boot.
+The BME280 measures its own temperature, which can reflect PCB heating; see
+the [Bosch datasheet](https://www.bosch-sensortec.com/media/boschsensortec/downloads/datasheets/bst-bme280-ds002.pdf).
+
 The BME280 is on shared I²C address 0x77. MeshCore enables it for the T-Echo with:
 
 ```ini

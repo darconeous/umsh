@@ -1644,6 +1644,7 @@ dependencies = [
  "umsh-pmic-axp2101",
  "umsh-radio-loraphy",
  "umsh-rtc-pcf8563",
+ "umsh-sensor-bme280",
  "umsh-sync",
  "umsh-ulcp",
  "umsh-ulcp-device",
@@ -3093,8 +3094,10 @@ dependencies = [
 name = "umsh-bsp-esp32"
 version = "0.1.0"
 dependencies = [
+ "critical-section",
  "embassy-embedded-hal 0.3.2",
  "embassy-sync 0.8.0",
+ "embassy-time",
  "embedded-hal-async",
  "esp-bootloader-esp-idf",
  "esp-hal",
@@ -3357,6 +3360,14 @@ version = "0.1.0"
 dependencies = [
  "embedded-hal-async",
  "umsh-gnss",
+]
+
+[[package]]
+name = "umsh-sensor-bme280"
+version = "0.1.0"
+dependencies = [
+ "embassy-sync 0.8.0",
+ "embedded-hal-async",
 ]
 
 [[package]]

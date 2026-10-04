@@ -64,6 +64,9 @@ use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU16, AtomicU32, Ordering};
 
 use bt_hci::controller::ExternalController;
 use embassy_embedded_hal::shared_bus::asynch::i2c::I2cDevice;
+
+#[cfg(feature = "board-tbeam-supreme")]
+mod bme280;
 use embassy_executor::Spawner;
 use embassy_futures::join::join;
 use embassy_futures::select::{Either, Either3, Either4, select, select3, select4};
@@ -199,6 +202,8 @@ mod external;
 mod ip;
 #[cfg(feature = "board-tlora-pager")]
 mod pager;
+#[cfg(feature = "chip-esp32s3")]
+mod temperature;
 #[cfg(feature = "wifi")]
 mod wifi;
 #[cfg(all(feature = "wifi", feature = "ble-debug"))]
@@ -464,7 +469,7 @@ fn session_config() -> SessionConfig {
             not(feature = "motion-qualification")
         )),
         illuminance: false,
-        temperatures: false,
+        temperatures: cfg!(feature = "chip-esp32s3"),
         // The ESP32-S3 radio is always up on this board, but the
         // peripheral can be made unfindable: see `advertising_permitted`.
         ble: true,
@@ -1579,6 +1584,8 @@ fn classify_pairing_failure(error: &trouble_host::Error) -> PairingFailureClass 
 /// driver's no-op defaults—this board has no buzzer or battery-sag
 /// estimator to feed.
 struct BoardDeviceEnv {
+    #[cfg(feature = "chip-esp32s3")]
+    temperatures: &'static mut temperature::Sensors,
     proto_store: SnapshotStore,
     identity_store: ProtoStore,
     identity_rng: IdentityRng,
@@ -1671,6 +1678,16 @@ impl BoardDeviceEnv {
 }
 
 impl DeviceEnv for BoardDeviceEnv {
+    #[cfg(feature = "chip-esp32s3")]
+    async fn sample_temperatures(&mut self, out: &mut [u16]) -> Result<usize, Status> {
+        self.temperatures.sample(out).await
+    }
+
+    #[cfg(feature = "chip-esp32s3")]
+    async fn read_temperature_names(&mut self, out: &mut [u8]) -> Result<usize, Status> {
+        self.temperatures.read_names(out)
+    }
+
     #[cfg(feature = "board-tlora-pager")]
     fn set_alert(&mut self, state: umsh_ulcp::alert::AlertState) {
         pager::alert::set(state.is_active());
@@ -3550,7 +3567,11 @@ fn internal_session(config: SessionConfig, boot_reason: Status) -> &'static mut 
 /// (`umsh_ulcp_runtime::driver::run`)—host frames, radio
 /// receptions, transmit completions, and every session effect—over
 /// this board's channel wiring and [`BoardDeviceEnv`] couplings.
+/// Pager needs a separate constructor to bound main's frame. On T-Beam, keep
+/// it inlined: a separate constructor adds a ~9 KiB frame between main and the
+/// ~18 KiB future initializer, overflowing the stack despite each frame fitting.
 #[embassy_executor::task]
+#[cfg_attr(feature = "board-tlora-pager", inline(never))]
 async fn device_task(
     boot_reason: Status,
     proto_store: SnapshotStore,
@@ -3561,6 +3582,8 @@ async fn device_task(
     node_counters: &'static NodeCountersMutex,
     #[cfg(feature = "external-rtc")] rtc: Option<&'static RtcMutex>,
     #[cfg(feature = "ulcp-i2c")] i2c: board::i2c::Buses,
+    #[cfg(feature = "chip-esp32s3")] sens: esp_hal::peripherals::SENS<'static>,
+    #[cfg(feature = "pmic-axp2101")] pmic: &'static SharedPmic,
 ) {
     // The retained hardware reset cause answers the first
     // PROP_LAST_STATUS query; attach itself never modifies it.
@@ -3602,6 +3625,12 @@ async fn device_task(
             session_gen: &SESSION_GEN,
         },
         BoardDeviceEnv {
+            #[cfg(feature = "chip-esp32s3")]
+            temperatures: temperature::sensors(
+                umsh_bsp_esp32::temperature::TemperatureSensor::new(sens),
+                #[cfg(feature = "pmic-axp2101")]
+                pmic,
+            ),
             proto_store,
             identity_store,
             identity_rng,
@@ -5355,6 +5384,9 @@ async fn main(spawner: Spawner) {
     ))]
     let host_buses = board::i2c::Buses { bus: display_bus };
 
+    #[cfg(feature = "board-tbeam-supreme")]
+    bme280::start(spawner, display_bus, pmu_bus).await;
+
     // ── The ULCP session ─────────────────────────────────────────────────
     spawner.spawn(
         device_task(
@@ -5369,6 +5401,10 @@ async fn main(spawner: Spawner) {
             wall_clock_rtc,
             #[cfg(feature = "ulcp-i2c")]
             host_buses,
+            #[cfg(feature = "chip-esp32s3")]
+            peripherals.SENS,
+            #[cfg(feature = "pmic-axp2101")]
+            pmic,
         )
         .unwrap(),
     );

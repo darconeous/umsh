@@ -108,6 +108,12 @@ The PlatformIO board definition reports:
 - Upload speed: 460800 baud
 - Arduino partition layout: `default_8MB.csv`
 
+UMSH keeps `CAP_TEMPERATURE` disabled on this original ESP32 target. The
+ESP32-S3 temperature driver does not apply to this chip, and UMSH does not use
+the legacy, unsupported ESP32 temperature API. No calibrated SX127x temperature
+source is implemented. The shared temperature properties remain unsupported
+instead of advertising a fabricated or permanently unknown MCU reading.
+
 ### 3.2 External flash
 
 The schematic shows a Winbond `W25Q64`, an 8 MiB SPI NOR flash.

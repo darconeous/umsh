@@ -10,3 +10,5 @@ pub mod flash_store;
 pub mod iv;
 pub mod panic_capture;
 pub mod rng;
+#[cfg(feature = "esp32s3")]
+pub mod temperature;

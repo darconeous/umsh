@@ -2,10 +2,29 @@
 
 import unittest
 
-from check_xtensa_stack import function_frames, stack_size
+from check_xtensa_stack import device_task_construction, function_frames, stack_size
 
 
 class StackCheckTests(unittest.TestCase):
+    def test_tbeam_nested_constructor_overflows_despite_individual_frames_fitting(self):
+        main = ("42112da4 <firmware_tbeam_supreme::__main::____embassy_main_task::"
+                "____embassy_main_task_inner_function::{closure#0}>:", 22960)
+        constructor = ("42135d68 <firmware_tbeam_supreme::device_task>:", 9024)
+        initializer = ("4207e850 <<embassy_executor::raw::util::UninitCell<"
+                       "firmware_tbeam_supreme::__device_task_task::"
+                       "__device_task_task_inner_function::{closure#0}>>::write_in_place::<"
+                       "firmware_tbeam_supreme::device_task::{closure#0}>>:", 17792)
+        frames = [main, constructor, initializer]
+        available = 46108
+        self.assertTrue(all(size + 20480 <= available for _, size in frames))
+        self.assertEqual(sum(size for _, size in device_task_construction(frames)), 49776)
+        self.assertGreater(sum(size for _, size in device_task_construction(frames)), available)
+        # Inlining the wrapper removes its nested frame; its work is accounted
+        # for by the larger caller frame measured in the baseline ELF.
+        inlined = [(main[0], 23744), (initializer[0], 17728)]
+        self.assertEqual(sum(size for _, size in device_task_construction(inlined)), 41472)
+        self.assertLess(41472, 46492)
+
     def test_large_frame_that_jumps_over_the_guard(self):
         text = """4211cae0 <node_startup>:
 4211cae0: 004136 entry a1, 32

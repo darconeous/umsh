@@ -527,6 +527,36 @@ impl<I: I2c> Axp2101<I> {
         Ok(())
     }
 
+    /// Enable continuous acquisition of the internal die temperature.
+    pub async fn set_die_temperature_measurement(&mut self, on: bool) -> Result<(), I::Error> {
+        self.set_bit(reg::ADC_CHANNEL_CTRL, reg::ADC_CH_TDIE, on)
+            .await
+    }
+
+    /// Latest die ADC acquisition, in tenths of a kelvin. Disabled, saturated,
+    /// and nonphysical conversions are unavailable. This does not enable the
+    /// channel or read the external TS input.
+    pub async fn die_temperature(&mut self) -> Result<Option<u16>, I::Error> {
+        if !self
+            .get_bit(reg::ADC_CHANNEL_CTRL, reg::ADC_CH_TDIE)
+            .await?
+        {
+            return Ok(None);
+        }
+        let raw = self
+            .read_adc(reg::ADC_TDIE_H, reg::ADC_TDIE_L, reg::ADC_H6_MASK)
+            .await?;
+        if raw == 0 || raw == 0x3fff {
+            return Ok(None);
+        }
+        // XPowersLib AXP2101 conversion: 22 C + (7274 - raw) / 20.
+        // In twentieths of kelvin: 5903 + 7274 - raw. Round only once.
+        let kelvin_twentieths = 13177 - i32::from(raw);
+        Ok(u16::try_from((kelvin_twentieths + 1) / 2)
+            .ok()
+            .filter(|_| kelvin_twentieths >= 0))
+    }
+
     /// Switch the TS (battery thermistor) ADC channel on or off.
     ///
     /// Only for a board that has confirmed its TS pin is populated. Two

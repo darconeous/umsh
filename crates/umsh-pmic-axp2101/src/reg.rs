@@ -59,6 +59,7 @@ pub const ADC_CH_VBAT: u8 = 0;
 pub const ADC_CH_TS: u8 = 1;
 pub const ADC_CH_VBUS: u8 = 2;
 pub const ADC_CH_VSYS: u8 = 3;
+pub const ADC_CH_TDIE: u8 = 4;
 
 /// VBAT result, high byte. 5 significant bits, then an 8-bit low byte.
 pub const ADC_VBAT_H: u8 = 0x34;
@@ -78,6 +79,9 @@ pub const ADC_VBUS_L: u8 = 0x39;
 /// VSYS result, high byte. 6 significant bits.
 pub const ADC_VSYS_H: u8 = 0x3A;
 pub const ADC_VSYS_L: u8 = 0x3B;
+/// Internal die temperature, 14-bit ADC. T(C) = 22 + (7274 - raw) / 20.
+pub const ADC_TDIE_H: u8 = 0x3C;
+pub const ADC_TDIE_L: u8 = 0x3D;
 
 pub const ADC_H5_MASK: u8 = 0x1F;
 pub const ADC_H6_MASK: u8 = 0x3F;

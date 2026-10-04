@@ -95,6 +95,8 @@ static ALLOCATOR: embedded_alloc::Heap = embedded_alloc::Heap::empty();
 use umsh_ulcp_runtime::{ble_security, radio_mux, transport_policy};
 #[cfg_attr(not(target_os = "none"), allow(dead_code))]
 mod ble_store;
+#[cfg(all(target_os = "none", feature = "board-techo"))]
+mod bme280;
 #[cfg(target_os = "none")]
 mod device_node;
 mod proto_store;
@@ -6602,6 +6604,7 @@ mod firmware {
             }
             // Even an unset RTC can receive its first valid time later.
             spawner.spawn(rtc_task(primary_i2c).unwrap());
+            super::bme280::start(spawner, primary_i2c).await;
         }
         #[cfg(all(feature = "ulcp-i2c", feature = "board-wio-tracker-l1"))]
         let host_i2c = {

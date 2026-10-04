@@ -1666,6 +1666,7 @@ dependencies = [
  "umsh-node",
  "umsh-radio-loraphy",
  "umsh-rtc-pcf8563",
+ "umsh-sensor-bme280",
  "umsh-sync",
  "umsh-ulcp",
  "umsh-ulcp-device",
@@ -4368,6 +4369,17 @@ dependencies = [
  "embassy-futures",
  "embedded-hal-async",
  "umsh-gnss",
+]
+
+[[package]]
+name = "umsh-sensor-bme280"
+version = "0.1.0"
+dependencies = [
+ "critical-section",
+ "embassy-futures",
+ "embassy-sync",
+ "embedded-hal 1.0.0",
+ "embedded-hal-async",
 ]
 
 [[package]]

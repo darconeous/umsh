@@ -101,6 +101,9 @@ pub async fn bring_up<I: I2c, D: DelayNs>(
     pmic.set_charge_led(ChargeLed::Charger).await?;
 
     pmic.enable_telemetry().await?;
+    // Temperature telemetry is optional; an enable failure must not prevent
+    // boot. Its reader checks the enable bit and reports an unavailable slot.
+    let _ = pmic.set_die_temperature_measurement(true).await;
     // The TS pin is populated on this board (§6.5), so the charger's
     // thermal protection has something real to act on. Whether the part
     // is an NTC or the fixed resistor often fitted in its place is still

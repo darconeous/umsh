@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "crates/umsh-sensor-bme280",
     "crates/umsh-bridge-client",
     "crates/umsh-core",
     "crates/umsh-ulcp",
@@ -57,6 +58,7 @@ members = [
 # explicitly built with `cargo build -p firmware-t1000e-console`
 # (or by running cargo from inside the firmware directory).
 default-members = [
+    "crates/umsh-sensor-bme280",
     "crates/umsh-bridge-client",
     "crates/umsh-core",
     "crates/umsh-ulcp",

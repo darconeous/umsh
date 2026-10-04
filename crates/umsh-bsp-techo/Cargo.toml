@@ -19,10 +19,11 @@ repository.workspace = true
 #   * USB-CDC over the nRF native USB peripheral
 #   * blue LED (P0.14) for heartbeat
 #   * e-paper SPI bus + control pins (SSD1681)
+#   * PCF8563 time and BME280 temperature in the shipping firmware, sharing
+#     the I2C controller with `ulcp-i2c` raw access
 #
 # Out of scope for bringup (planned but not yet):
 #   * SX1262 LoRa radio
-#   * native PCF8563 / BME280 drivers (raw access uses `ulcp-i2c`)
 #   * QSPI external flash
 #   * Buttons (user, touch, reset)
 #   * Plus-only back-panel peripherals (DRV2605, BHI260, buzzer)

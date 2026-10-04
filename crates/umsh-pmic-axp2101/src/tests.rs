@@ -459,6 +459,40 @@ fn charge_direction_reads_the_high_field() {
 // ─── Telemetry ────────────────────────────────────────────────────────────
 
 #[test]
+fn die_temperature_channel_preserves_other_adc_settings() {
+    let mut p = pmic(MockPmic::new().with(reg::ADC_CHANNEL_CTRL, 0xef));
+    block_on(p.set_die_temperature_measurement(true)).unwrap();
+    assert_eq!(p.i2c.regs[reg::ADC_CHANNEL_CTRL as usize], 0xff);
+    block_on(p.set_die_temperature_measurement(false)).unwrap();
+    assert_eq!(p.release().regs[reg::ADC_CHANNEL_CTRL as usize], 0xef);
+}
+
+#[test]
+fn die_temperature_is_tenths_kelvin_with_one_rounding() {
+    for (raw, expected) in [
+        (7274u16, Some(2952)),
+        (6714, Some(3232)),
+        (7814, Some(2682)),
+        (0, None),
+        (0x3fff, None),
+        (14000, None),
+    ] {
+        let mut p = pmic(
+            MockPmic::new()
+                .with(reg::ADC_CHANNEL_CTRL, 1 << reg::ADC_CH_TDIE)
+                // Reserved high bits must not enter the 14-bit result.
+                .with(reg::ADC_TDIE_H, (raw >> 8) as u8 | 0xc0)
+                .with(reg::ADC_TDIE_L, raw as u8),
+        );
+        assert_eq!(block_on(p.die_temperature()).unwrap(), expected);
+        assert!(p.release().writes.is_empty());
+    }
+    let mut p = pmic(MockPmic::new());
+    assert_eq!(block_on(p.die_temperature()), Ok(None));
+    assert!(block_on(pmic(MockPmic::failing()).die_temperature()).is_err());
+}
+
+#[test]
 fn enabling_telemetry_leaves_the_thermistor_channel_alone() {
     // Whether TS belongs on is a board fact; the board opts in.
     let mut p = pmic(MockPmic::new());

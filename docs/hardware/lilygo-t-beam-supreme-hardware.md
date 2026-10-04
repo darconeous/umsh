@@ -507,6 +507,25 @@ Two further transcription items are unproven and should be settled on hardware:
 
 Until both are settled, treat the reading as raw counts. UMSH does not convert it to a temperature or display it.
 
+### 6.6 UMSH temperature telemetry
+
+The ULCP temperature inventory is `MCU die` (ESP32-S3, index 0), followed by
+`PMIC die` (AXP2101, index 1), then `BME280` (index 2) when detected at boot.
+All use tenths of a kelvin; an unavailable source
+retains its slot and returns `0xFFFF`. The MCU uses the shared
+[S3 on-demand acquisition](heltec-lora32-v3-hardware.md#35-umsh-temperature-telemetry).
+
+Bring-up enables the AXP2101 internal die ADC via register `0x30` bit 4, without
+changing TS or other channel enables. Each temperature get reads the latest
+continuous ADC result at `0x3C`/`0x3D` under the existing PMIC mutex. The 14-bit
+conversion is `22 + (7274 - raw) / 20` °C, rounded once after adding 273.15 K.
+Disabled channels, saturated values, and read failures report unavailable.
+These registers and the formula agree with
+[XPowersLib](https://github.com/lewisxhe/XPowersLib/blob/master/src/XPowersAXP2101.hpp)
+and its [AXP2101 constants](https://github.com/lewisxhe/XPowersLib/blob/master/src/REG/AXP2101Constants.h).
+Absolute readings still need hardware qualification. External TS conversion
+and display temperature are not implemented.
+
 ---
 
 ## 7. GNSS subsystem
@@ -694,6 +713,22 @@ UMSH should implement address probing from the beginning.
 ## 10. BME280 environmental sensor
 
 The onboard BME280 is on the GPIO17/18 sensor I2C bus.
+
+UMSH probes chip ID `0x60` at `0x77`, then `0x76`, at boot and appends the
+detected onboard sensor to the ULCP temperature inventory. Unpopulated variants
+have no BME280 row. Each temperature get forces a temperature-only ×1 conversion
+with the IIR filter off, applies factory compensation, and returns tenths of a
+kelvin. The sensor sleeps between gets. Names reads do not access hardware.
+
+A dedicated worker holds the sensor bus for the complete acquisition, and the
+PMU bus prevents ALDO1 changes during it. If ALDO1 is off, the bus fails, or the
+measurement is invalid, the existing slot returns `0xFFFF`. Calibration is read
+afresh so a later powered acquisition recovers after a rail cycle. No pressure
+or humidity properties are exposed.
+
+Temperature describes the BME280 itself and can be influenced by PCB heat; it
+is not a calibrated ambient-temperature measurement. Register sequencing and
+compensation follow the [Bosch datasheet](https://www.bosch-sensortec.com/media/boschsensortec/downloads/datasheets/bst-bme280-ds002.pdf).
 
 - normal/default address: `0x77`
 - alternate selectable address: `0x76` on boards/revisions with the address-selection provision

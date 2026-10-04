@@ -97,6 +97,7 @@ name = "firmware-tbeam-supreme"
 path = "../esp32-tracker/src/main.rs"
 
 [dependencies]
+umsh-sensor-bme280 = { path = "../../../crates/umsh-sensor-bme280" }
 umsh-bridge-client = { path = "../../../crates/umsh-bridge-client", optional = true }
 embedded-tls = { version = "=0.19.0", default-features = false, optional = true }
 embassy-net = { version = "0.8", default-features = false, optional = true, features = ["medium-ethernet", "proto-ipv4", "dhcpv4", "dhcpv4-hostname"] }

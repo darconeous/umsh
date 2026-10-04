@@ -29,6 +29,8 @@ static SPI_BUS: StaticCell<board::SpiBus> = StaticCell::new();
 static GROUP_REQUEST: Signal<CriticalSectionRawMutex, (u32, BatteryFieldsRequested)> =
     Signal::new();
 static GROUP_REPLY: Signal<CriticalSectionRawMutex, (u32, BatterySample)> = Signal::new();
+static TEMPERATURE_REQUEST: Signal<CriticalSectionRawMutex, u32> = Signal::new();
+static TEMPERATURE_REPLY: Signal<CriticalSectionRawMutex, (u32, [Option<u16>; 2])> = Signal::new();
 static GROUP_LOCK: Mutex<CriticalSectionRawMutex, ()> = Mutex::new(());
 static GROUP_GENERATION: AtomicU32 = AtomicU32::new(0);
 static GAUGE_REPORT: critical_section::Mutex<RefCell<Option<heapless::String<192>>>> =
@@ -68,6 +70,32 @@ pub async fn sample_battery_group(fields: BatteryFieldsRequested) -> BatterySamp
     })
     .await
     .unwrap_or_default()
+}
+
+pub async fn sample_temperatures() -> [Option<u16>; 2] {
+    let _guard = GROUP_LOCK.lock().await;
+    let generation = GROUP_GENERATION.fetch_add(1, Ordering::Relaxed);
+    TEMPERATURE_REPLY.reset();
+    TEMPERATURE_REQUEST.signal(generation);
+    // Abandon only the reply on timeout: the owner completes bus cleanup.
+    with_timeout(Duration::from_secs(2), async {
+        loop {
+            let (returned, values) = TEMPERATURE_REPLY.wait().await;
+            if returned == generation {
+                return values;
+            }
+        }
+    })
+    .await
+    .unwrap_or([None; 2])
+}
+
+// Published by the existing startup inspection. Until then the known physical
+// gauge die is the only gauge source in the temperature inventory.
+static SEPARATE_GAUGE_TEMPERATURE: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
+pub fn has_separate_gauge_temperature() -> bool {
+    SEPARATE_GAUGE_TEMPERATURE.load(Ordering::Acquire)
 }
 
 fn screen_battery(sample: &BatterySample) -> Option<screen::BatteryDiagnostics> {
@@ -195,6 +223,10 @@ async fn check_termination(battery: &mut Battery<board::I2cHandle>) {
     let mut report = heapless::String::new();
     match config {
         Ok(config) => {
+            SEPARATE_GAUGE_TEMPERATURE.store(
+                umsh_pager_peripherals::gauge::has_separate_temperature(&config),
+                Ordering::Release,
+            );
             let taper = config.taper_current_ma();
             match battery.limit_termination(taper).await {
                 Ok(limit) => {
@@ -289,13 +321,16 @@ pub async fn battery_task(bus: &'static board::I2cBus, initial: board_battery::R
             match select3(
                 startup.as_mut(),
                 BATTERY_REQUEST.wait(),
-                GROUP_REQUEST.wait(),
+                select(GROUP_REQUEST.wait(), TEMPERATURE_REQUEST.wait()),
             )
             .await
             {
                 Either3::First(()) => break,
                 Either3::Second(()) => BATTERY_REPLY.signal(initial),
-                Either3::Third((generation, _)) => {
+                Either3::Third(Either::Second(generation)) => {
+                    TEMPERATURE_REPLY.signal((generation, [None; 2]));
+                }
+                Either3::Third(Either::First((generation, _))) => {
                     // Respond promptly without violating the gauge's quiet
                     // periods. Scalar diagnostics must be retried after startup.
                     let mut sample = BatterySample::default();
@@ -329,7 +364,7 @@ pub async fn battery_task(bus: &'static board::I2cBus, initial: board_battery::R
         let event = select4(
             Timer::at(next_tick),
             BATTERY_REQUEST.wait(),
-            GROUP_REQUEST.wait(),
+            select(GROUP_REQUEST.wait(), TEMPERATURE_REQUEST.wait()),
             BATTERY_DETAILS_CHANGED.wait(),
         )
         .await;
@@ -338,9 +373,21 @@ pub async fn battery_task(bus: &'static board::I2cBus, initial: board_battery::R
             // page; do not wait out the old minute or perform a stale fast read.
             continue;
         }
+        if let Either4::Third(Either::Second(generation)) = event {
+            // Same acquisition budget as battery diagnostics, without changing
+            // the periodic snapshot or low-voltage evidence. The gauge driver
+            // checks CFGUPDATE before touching either temperature register.
+            Timer::at(next_acquisition).await;
+            next_acquisition = Instant::now() + Duration::from_millis(500);
+            let values = battery
+                .sample_temperatures(&mut SampleDelay, has_separate_gauge_temperature())
+                .await;
+            TEMPERATURE_REPLY.signal((generation, values));
+            continue;
+        }
         let requested = matches!(event, Either4::Second(()));
         let group = match event {
-            Either4::Third(request) => Some(request),
+            Either4::Third(Either::First(request)) => Some(request),
             _ => None,
         };
         let periodic = Instant::now() >= next_tick;

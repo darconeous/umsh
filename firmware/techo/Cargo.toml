@@ -113,6 +113,7 @@ name = "firmware-techo"
 path = "../nrf52-tracker/src/main.rs"
 
 [dependencies]
+umsh-sensor-bme280 = { path = "../../crates/umsh-sensor-bme280" }
 umsh-bsp-nrf52840 = { path = "../../crates/umsh-bsp-nrf52840", default-features = false }
 umsh-bsp-techo = { path = "../../crates/umsh-bsp-techo", default-features = false, features = ["display", "power", "battery", "gnss"] }
 umsh-radio-loraphy = { path = "../../crates/umsh-radio-loraphy", default-features = false }

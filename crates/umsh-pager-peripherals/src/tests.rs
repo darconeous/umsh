@@ -208,6 +208,113 @@ fn gauge_word(ops: &mut Vec<Op>, reg: u8, value: u16) {
 }
 
 #[test]
+fn temperatures_read_both_gauge_channels_fresh_with_bus_free_spacing() {
+    let mut ops = Vec::new();
+    for (configured, die) in [(2981, 3052), (2992, 3063)] {
+        gauge_word(&mut ops, 0x3a, 0);
+        gauge_word(&mut ops, 0x06, configured);
+        gauge_word(&mut ops, 0x28, die);
+    }
+    let mut battery = Battery::new(Bus(ops.into()));
+    let mut delay = GaugeDelay::default();
+    assert_eq!(
+        embassy_futures::block_on(battery.sample_temperatures(&mut delay, true)),
+        [Some(2981), Some(3052)]
+    );
+    assert_eq!(
+        embassy_futures::block_on(battery.sample_temperatures(&mut delay, true)),
+        [Some(2992), Some(3063)]
+    );
+    assert_eq!(delay.0, vec![100_000; 12]);
+}
+
+#[test]
+fn temperatures_skip_the_alias_register_when_using_the_internal_sensor() {
+    let mut ops = Vec::new();
+    gauge_word(&mut ops, 0x3a, 0);
+    gauge_word(&mut ops, 0x28, 2981);
+    let mut battery = Battery::new(Bus(ops.into()));
+    assert_eq!(
+        embassy_futures::block_on(battery.sample_temperatures(&mut GaugeDelay::default(), false)),
+        [None, Some(2981)]
+    );
+}
+
+#[test]
+fn temperature_source_selection_uses_configuration_not_equal_values() {
+    use crate::gauge::has_separate_temperature;
+    use umsh_ulcp::battery_gauge_config::Config;
+    for (a, b, separate) in [
+        (0x0484, 0, false),      // default internal source
+        (0x0484, 0xffff, false), // Config B does not select temperature
+        (0x8484, 0, true),       // external thermistor
+        (0x0584, 0, true),       // host-written temperature
+        (0x8584, 0, true),       // WRTEMP takes priority over TEMPS
+    ] {
+        let mut config = Config::default();
+        config.set(1, a).unwrap();
+        config.set(2, b).unwrap();
+        assert_eq!(has_separate_temperature(&config), separate);
+    }
+    // Independent sources must both survive even when their values coincide.
+    let mut ops = Vec::new();
+    gauge_word(&mut ops, 0x3a, 0);
+    gauge_word(&mut ops, 0x06, 2981);
+    gauge_word(&mut ops, 0x28, 2981);
+    let mut battery = Battery::new(Bus(ops.into()));
+    assert_eq!(
+        embassy_futures::block_on(battery.sample_temperatures(&mut GaugeDelay::default(), true)),
+        [Some(2981), Some(2981)]
+    );
+}
+
+#[test]
+fn temperatures_preserve_slots_on_independent_failures_and_unknowns() {
+    for (first, second, expected) in [
+        (None, Some(3021), [None, Some(3021)]),
+        (Some(2981), None, [Some(2981), None]),
+        (None, None, [None, None]),
+        (Some(u16::MAX), Some(0), [None, Some(0)]),
+    ] {
+        let mut ops = Vec::new();
+        gauge_word(&mut ops, 0x3a, 0);
+        for (reg, value) in [(0x06, first), (0x28, second)] {
+            match value {
+                Some(value) => gauge_word(&mut ops, reg, value),
+                None => ops.push(Op::FailedRead(0x55, vec![reg])),
+            }
+        }
+        assert_eq!(
+            embassy_futures::block_on(
+                Battery::new(Bus(ops.into())).sample_temperatures(&mut GaugeDelay::default(), true)
+            ),
+            expected
+        );
+    }
+}
+
+#[test]
+fn temperatures_do_not_access_gauge_during_cfgupdate_or_unknown_state() {
+    for op in [
+        Op::Read(
+            0x55,
+            vec![0x3a],
+            crate::gauge::CONFIG_UPDATE.to_le_bytes().to_vec(),
+        ),
+        Op::FailedRead(0x55, vec![0x3a]),
+    ] {
+        let mut delay = GaugeDelay::default();
+        assert_eq!(
+            embassy_futures::block_on(
+                Battery::new(Bus([op].into())).sample_temperatures(&mut delay, true)
+            ),
+            [None; 2]
+        );
+        assert_eq!(delay.0, vec![100_000; 2]);
+    }
+}
+
+#[test]
 fn battery_group_selects_dependencies_and_preserves_independent_failures() {
     use umsh_ulcp::{
         Status,

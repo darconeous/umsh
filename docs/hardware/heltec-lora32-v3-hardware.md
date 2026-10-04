@@ -160,6 +160,31 @@ The LoRa oscillator is controlled from SX1262 DIO3 and is configured by MeshCore
 
 ---
 
+### 3.5 UMSH temperature telemetry
+
+ULCP advertises `CAP_TEMPERATURE` and exposes `MCU die` at index 0 through
+`PROP_TEMPERATURES` and `PROP_TEMPERATURE_NAMES`. This is the ESP32-S3 junction
+temperature, not an ambient measurement. The same BSP serves T-Beam Supreme
+and T-LoRa Pager; their other sensors append after this slot.
+
+The BSP owns SENS and acquires on demand using the S3 PAC and ROM analog-I2C
+accessors. It applies the factory eFuse correction when its version is known,
+otherwise the nominal transfer function. It tries the -10–80 °C range first,
+then alternate ranges covering -40–125 °C, with a bounded ready wait and power
+cleanup on success, failure, or cancellation. Results are rounded once to
+**tenths of a kelvin**; failed or out-of-range acquisitions report `0xFFFF`.
+Names do not access hardware, and protocol resets retain the inventory.
+
+The pinned upstream esp-hal does not provide an S3 temperature driver. The
+BSP sequence and conversion follow Espressif's
+[S3 low-level driver](https://github.com/espressif/esp-idf/blob/v5.4.2/components/hal/esp32s3/include/hal/temperature_sensor_ll.h),
+[range table](https://github.com/espressif/esp-idf/blob/v5.4.2/components/soc/esp32s3/temperature_sensor_periph.c),
+and [factory calibration](https://github.com/espressif/esp-idf/blob/v5.4.2/components/efuse/esp32s3/esp_efuse_rtc_calib.c).
+It leaves ADC voltage channels untouched and uses the existing RF entropy
+configuration, not the ADC entropy source. Absolute accuracy, range transitions,
+sleep recovery, and simultaneous radio/ADC operation still need hardware
+qualification. SX1262 temperature telemetry is not exposed.
+
 ## 4. LoRa radio subsystem
 
 ### 4.1 SX1262 interface

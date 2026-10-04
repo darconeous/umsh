@@ -6,6 +6,10 @@ sensor and dump its calibration and data registers. Paste the hex those
 commands print back as arguments and it applies Bosch's compensation and
 shows temperature, pressure, and humidity.
 
+Shipping firmware also samples BME280 temperature via `umshctl info sensors`.
+Do not refresh ULCP temperatures between these diagnostic commands: native
+acquisition reconfigures the sensor for temperature-only measurements.
+
 Standard library only. The sensor sits at 0x77 unless `--addr` says
 otherwise; `--bus` and `--node` are passed through to the printed commands.
 """
@@ -52,9 +56,9 @@ Take one forced measurement, then read the sensor out:
        {ctl} write {bus} 0x{addr:02x} {WAKE_WRITE}
 
      0x{addr:02x} is in the firmware's peripheral table, so umshctl warns
-     before the write. Nothing on the board drives this sensor, so the
-     warning is expected. The measurement takes about 10 ms; the command
-     round trip is longer than that, so no wait is needed.
+     before the write. Avoid ULCP temperature refreshes until step 2 is
+     complete: they reconfigure this sensor. The measurement takes about
+     10 ms; the command round trip is longer than that, so no wait is needed.
 
   2. Read the chip id, both calibration blocks, and the data registers in
      one transaction:

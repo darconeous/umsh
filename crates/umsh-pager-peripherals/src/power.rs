@@ -220,6 +220,32 @@ impl<I: I2c> Battery<I> {
         result
     }
 
+    /// Fresh reads of the configured gauge temperature (0x06) and the gauge's
+    /// internal die temperature (0x28), already in tenths of a kelvin. The
+    /// configured source may be internal, external, or host-provided; it is
+    /// not necessarily the battery cell. Keep individual failures independent.
+    /// The owner serializes these with all other acquisitions and rate limits
+    /// complete polls. CFGUPDATE permits no reads after OperationStatus.
+    /// Skip Temperature() when it aliases the internal sensor (or its source
+    /// has not been identified). The returned positions remain fixed.
+    pub async fn sample_temperatures(
+        &mut self,
+        delay: &mut impl DelayNs,
+        separate: bool,
+    ) -> [Option<u16>; 2] {
+        match self.sample_word(delay, 0x3a).await {
+            Ok(operation) if operation & crate::gauge::CONFIG_UPDATE == 0 => {}
+            _ => return [None; 2],
+        }
+        let configured = if separate {
+            self.sample_word(delay, 0x06).await.ok()
+        } else {
+            None
+        };
+        let internal = self.sample_word(delay, 0x28).await.ok();
+        [configured, internal].map(|value| value.filter(|raw| *raw != u16::MAX))
+    }
+
     /// Read requested scalar registers once, retaining independent failures.
     /// Always check OperationStatus first. A host CFGUPDATE owns the gauge:
     /// return BUSY without any further reads or writes, including charger reads.

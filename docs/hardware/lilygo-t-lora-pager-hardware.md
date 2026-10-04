@@ -395,6 +395,42 @@ have no navigation action outside locate alerts; text composition, media playbac
 expansion features are deferred. Backspace is TCA8418 raw FIFO key **30**,
 not the zero-based matrix index `0x1D`.
 
+### UMSH temperature telemetry
+
+The ULCP temperature inventory starts with two stable indices:
+
+| Index | Label | Source |
+|---|---|---|
+| 0 | MCU die | ESP32-S3 on-die acquisition |
+| 1 | Gauge die | BQ27220 `InternalTemperature()`, register `0x28` |
+| 2 (optional) | Gauge temperature | BQ27220 `Temperature()`, register `0x06` |
+
+The MCU uses the shared [S3 driver](heltec-lora32-v3-hardware.md#35-umsh-temperature-telemetry).
+Both gauge words are already in tenths of a kelvin, as specified in the
+[BQ27220 technical reference](https://www.ti.com/lit/ug/sluubd4a/sluubd4a.pdf).
+`Temperature()` follows gauge configuration and can select an internal,
+external, or host-provided source; its label does not claim a battery-cell
+measurement. Startup configuration inspection checks Operation Config A's
+TEMPS (bit 15) and WRTEMP (bit 8). When both are clear, the two registers name
+the same physical sensor: only `Gauge die` is registered and read. If either
+bit is set, `Gauge temperature` is appended after startup inspection. Equal
+readings from distinct configured sources are retained. Until configuration is
+known, only the die source is exposed. Inventory selection lasts until reboot;
+reboot after provisioning a different temperature source.
+
+Each ULCP get requests the registered gauge readings from the existing battery owner,
+sharing the two-polls-per-second limit with diagnostics and periodic snapshots.
+It observes the bus-free spacing, checks `OperationStatus` first, and reads no
+further registers during CFGUPDATE. During the startup security procedure it
+returns unavailable without touching the gauge. Independent failed channels
+remain in place as `0xFFFF`; no cached temperature substitutes for a failed read.
+Temperature requests do not advance low-battery evidence or display attention.
+
+The running BHI260AP image's [enumerated virtual sensors](../tlora-pager-motion-qualification.md#initial-measurements-september-13-2026)
+do not include a temperature channel. Charger TS conversion, additional I2C
+devices, and display temperature remain unimplemented. The new ULCP acquisition
+path and its absolute readings still need hardware qualification.
+
 ### Locate alerts
 
 The Pager exposes `CAP_ALERT` and the existing `PROP_ALERT` interface over

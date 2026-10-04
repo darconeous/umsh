@@ -9,6 +9,14 @@ const FULL_ACCESS: u16 = 2;
 const UNSEALED: u16 = 4;
 const SEALED: u16 = 6;
 
+/// Whether Temperature() selects a source other than InternalTemperature().
+/// TI SLUUBD4A section 4.1.2: Operation Config A high-byte bit 7 is TEMPS,
+/// bit 0 is WRTEMP. Table 2-5 mislabels WRTEMP as belonging to Config B;
+/// the register definition and section 4.9.67 place it in Config A.
+pub fn has_separate_temperature(config: &umsh_ulcp::battery_gauge_config::Config) -> bool {
+    config.value(1) & 0x8100 != 0
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub enum ConfigError<E> {
     Bus(E),
