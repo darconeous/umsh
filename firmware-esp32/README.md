@@ -197,11 +197,12 @@ endurance remain pending.
 ## Version pins
 
 The whole esp-hal family (including esp-storage) is pinned to the
-`darconeous/esp-hal` fork at `29246b52591db568f31e74e13e26d8d09464d53c` in this
+`darconeous/esp-hal` fork at `5a55bb86021934c83be40d25b45a26922898ad91` in this
 workspace's `[patch.crates-io]`. Its upstream base, `76a0e71d5ea8`, includes BLE
 modem sleep (#6376), BLE-aware light sleep (#6378), and the bt-hci 0.9 transport
 required by our audited trouble-host fork. The only fork changes are the BLE
-lifecycle wake boundaries and regression test described above.
+lifecycle wake boundaries and regression test described above, and an esp-rtos
+fix that disarms the scheduler's standing wake deadline before deep sleep.
 All family members must move together because they share in-repository path
 dependencies. Return to upstream and then released crates when they contain
 these capabilities and lifecycle fixes.

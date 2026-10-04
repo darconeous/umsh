@@ -40,17 +40,19 @@ trouble-host    = { git = "https://github.com/darconeous/trouble.git", rev = "67
 # BLE-aware automatic light sleep (#6378), and the bt-hci 0.9 transport
 # required by the audited trouble-host fork. The esp-hal fork adds BTDM
 # initialization wake protection and wake-before-teardown to upstream
-# 76a0e71d5ea8; modem sleep is opt-in.
-# Return to upstream once it includes these lifecycle fixes, then crates.io
+# 76a0e71d5ea8; modem sleep is opt-in. It also disarms the scheduler's
+# standing wake deadline before deep sleep, which otherwise panics or
+# ends the sleep early.
+# Return to upstream once it includes these fixes, then crates.io
 # once compatible releases include these changes.
 # Family members must stay on the SAME rev (they share in-repo path deps).
-esp-hal                = { git = "https://github.com/darconeous/esp-hal.git", rev = "29246b52591db568f31e74e13e26d8d09464d53c" }
-esp-rtos               = { git = "https://github.com/darconeous/esp-hal.git", rev = "29246b52591db568f31e74e13e26d8d09464d53c" }
-esp-radio              = { git = "https://github.com/darconeous/esp-hal.git", rev = "29246b52591db568f31e74e13e26d8d09464d53c" }
-esp-alloc              = { git = "https://github.com/darconeous/esp-hal.git", rev = "29246b52591db568f31e74e13e26d8d09464d53c" }
-esp-println            = { git = "https://github.com/darconeous/esp-hal.git", rev = "29246b52591db568f31e74e13e26d8d09464d53c" }
-esp-bootloader-esp-idf = { git = "https://github.com/darconeous/esp-hal.git", rev = "29246b52591db568f31e74e13e26d8d09464d53c" }
-esp-storage            = { git = "https://github.com/darconeous/esp-hal.git", rev = "29246b52591db568f31e74e13e26d8d09464d53c" }
+esp-hal                = { git = "https://github.com/darconeous/esp-hal.git", rev = "5a55bb86021934c83be40d25b45a26922898ad91" }
+esp-rtos               = { git = "https://github.com/darconeous/esp-hal.git", rev = "5a55bb86021934c83be40d25b45a26922898ad91" }
+esp-radio              = { git = "https://github.com/darconeous/esp-hal.git", rev = "5a55bb86021934c83be40d25b45a26922898ad91" }
+esp-alloc              = { git = "https://github.com/darconeous/esp-hal.git", rev = "5a55bb86021934c83be40d25b45a26922898ad91" }
+esp-println            = { git = "https://github.com/darconeous/esp-hal.git", rev = "5a55bb86021934c83be40d25b45a26922898ad91" }
+esp-bootloader-esp-idf = { git = "https://github.com/darconeous/esp-hal.git", rev = "5a55bb86021934c83be40d25b45a26922898ad91" }
+esp-storage            = { git = "https://github.com/darconeous/esp-hal.git", rev = "5a55bb86021934c83be40d25b45a26922898ad91" }
 
 # Xtensa needs optimization even in dev builds; unoptimized images are too
 # slow to meet radio/BLE timing and blow past IRAM budgets.

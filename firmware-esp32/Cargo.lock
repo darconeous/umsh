@@ -1082,7 +1082,7 @@ checksum = "877a4ace8713b0bcf2a4e7eec82529c029f1d0619886d18145fea96c3ffe5c0f"
 [[package]]
 name = "esp-alloc"
 version = "0.11.0"
-source = "git+https://github.com/darconeous/esp-hal.git?rev=29246b52591db568f31e74e13e26d8d09464d53c#29246b52591db568f31e74e13e26d8d09464d53c"
+source = "git+https://github.com/darconeous/esp-hal.git?rev=5a55bb86021934c83be40d25b45a26922898ad91#5a55bb86021934c83be40d25b45a26922898ad91"
 dependencies = [
  "allocator-api2",
  "document-features",
@@ -1097,7 +1097,7 @@ dependencies = [
 [[package]]
 name = "esp-bootloader-esp-idf"
 version = "0.6.0"
-source = "git+https://github.com/darconeous/esp-hal.git?rev=29246b52591db568f31e74e13e26d8d09464d53c#29246b52591db568f31e74e13e26d8d09464d53c"
+source = "git+https://github.com/darconeous/esp-hal.git?rev=5a55bb86021934c83be40d25b45a26922898ad91#5a55bb86021934c83be40d25b45a26922898ad91"
 dependencies = [
  "document-features",
  "esp-config",
@@ -1113,7 +1113,7 @@ dependencies = [
 [[package]]
 name = "esp-config"
 version = "0.8.0"
-source = "git+https://github.com/darconeous/esp-hal.git?rev=29246b52591db568f31e74e13e26d8d09464d53c#29246b52591db568f31e74e13e26d8d09464d53c"
+source = "git+https://github.com/darconeous/esp-hal.git?rev=5a55bb86021934c83be40d25b45a26922898ad91#5a55bb86021934c83be40d25b45a26922898ad91"
 dependencies = [
  "document-features",
  "esp-metadata-generated",
@@ -1125,7 +1125,7 @@ dependencies = [
 [[package]]
 name = "esp-hal"
 version = "1.2.0"
-source = "git+https://github.com/darconeous/esp-hal.git?rev=29246b52591db568f31e74e13e26d8d09464d53c#29246b52591db568f31e74e13e26d8d09464d53c"
+source = "git+https://github.com/darconeous/esp-hal.git?rev=5a55bb86021934c83be40d25b45a26922898ad91#5a55bb86021934c83be40d25b45a26922898ad91"
 dependencies = [
  "bitfield",
  "bytemuck",
@@ -1190,7 +1190,7 @@ dependencies = [
 [[package]]
 name = "esp-hal-procmacros"
 version = "0.23.0"
-source = "git+https://github.com/darconeous/esp-hal.git?rev=29246b52591db568f31e74e13e26d8d09464d53c#29246b52591db568f31e74e13e26d8d09464d53c"
+source = "git+https://github.com/darconeous/esp-hal.git?rev=5a55bb86021934c83be40d25b45a26922898ad91#5a55bb86021934c83be40d25b45a26922898ad91"
 dependencies = [
  "document-features",
  "object",
@@ -1204,12 +1204,12 @@ dependencies = [
 [[package]]
 name = "esp-metadata-generated"
 version = "0.6.0"
-source = "git+https://github.com/darconeous/esp-hal.git?rev=29246b52591db568f31e74e13e26d8d09464d53c#29246b52591db568f31e74e13e26d8d09464d53c"
+source = "git+https://github.com/darconeous/esp-hal.git?rev=5a55bb86021934c83be40d25b45a26922898ad91#5a55bb86021934c83be40d25b45a26922898ad91"
 
 [[package]]
 name = "esp-phy"
 version = "0.3.0"
-source = "git+https://github.com/darconeous/esp-hal.git?rev=29246b52591db568f31e74e13e26d8d09464d53c#29246b52591db568f31e74e13e26d8d09464d53c"
+source = "git+https://github.com/darconeous/esp-hal.git?rev=5a55bb86021934c83be40d25b45a26922898ad91#5a55bb86021934c83be40d25b45a26922898ad91"
 dependencies = [
  "document-features",
  "esp-config",
@@ -1225,7 +1225,7 @@ dependencies = [
 [[package]]
 name = "esp-println"
 version = "0.18.0"
-source = "git+https://github.com/darconeous/esp-hal.git?rev=29246b52591db568f31e74e13e26d8d09464d53c#29246b52591db568f31e74e13e26d8d09464d53c"
+source = "git+https://github.com/darconeous/esp-hal.git?rev=5a55bb86021934c83be40d25b45a26922898ad91#5a55bb86021934c83be40d25b45a26922898ad91"
 dependencies = [
  "document-features",
  "esp-metadata-generated",
@@ -1237,7 +1237,7 @@ dependencies = [
 [[package]]
 name = "esp-radio"
 version = "1.0.0-beta.2"
-source = "git+https://github.com/darconeous/esp-hal.git?rev=29246b52591db568f31e74e13e26d8d09464d53c#29246b52591db568f31e74e13e26d8d09464d53c"
+source = "git+https://github.com/darconeous/esp-hal.git?rev=5a55bb86021934c83be40d25b45a26922898ad91#5a55bb86021934c83be40d25b45a26922898ad91"
 dependencies = [
  "allocator-api2",
  "bt-hci",
@@ -1276,7 +1276,7 @@ dependencies = [
 [[package]]
 name = "esp-radio-rtos-driver"
 version = "0.4.2"
-source = "git+https://github.com/darconeous/esp-hal.git?rev=29246b52591db568f31e74e13e26d8d09464d53c#29246b52591db568f31e74e13e26d8d09464d53c"
+source = "git+https://github.com/darconeous/esp-hal.git?rev=5a55bb86021934c83be40d25b45a26922898ad91#5a55bb86021934c83be40d25b45a26922898ad91"
 dependencies = [
  "esp-sync",
  "portable-atomic",
@@ -1285,7 +1285,7 @@ dependencies = [
 [[package]]
 name = "esp-riscv-rt"
 version = "0.15.0"
-source = "git+https://github.com/darconeous/esp-hal.git?rev=29246b52591db568f31e74e13e26d8d09464d53c#29246b52591db568f31e74e13e26d8d09464d53c"
+source = "git+https://github.com/darconeous/esp-hal.git?rev=5a55bb86021934c83be40d25b45a26922898ad91#5a55bb86021934c83be40d25b45a26922898ad91"
 dependencies = [
  "document-features",
  "riscv",
@@ -1295,7 +1295,7 @@ dependencies = [
 [[package]]
 name = "esp-rom-sys"
 version = "0.1.5"
-source = "git+https://github.com/darconeous/esp-hal.git?rev=29246b52591db568f31e74e13e26d8d09464d53c#29246b52591db568f31e74e13e26d8d09464d53c"
+source = "git+https://github.com/darconeous/esp-hal.git?rev=5a55bb86021934c83be40d25b45a26922898ad91#5a55bb86021934c83be40d25b45a26922898ad91"
 dependencies = [
  "document-features",
  "esp-metadata-generated",
@@ -1306,7 +1306,7 @@ dependencies = [
 [[package]]
 name = "esp-rtos"
 version = "0.4.0"
-source = "git+https://github.com/darconeous/esp-hal.git?rev=29246b52591db568f31e74e13e26d8d09464d53c#29246b52591db568f31e74e13e26d8d09464d53c"
+source = "git+https://github.com/darconeous/esp-hal.git?rev=5a55bb86021934c83be40d25b45a26922898ad91#5a55bb86021934c83be40d25b45a26922898ad91"
 dependencies = [
  "allocator-api2",
  "defmt",
@@ -1331,7 +1331,7 @@ dependencies = [
 [[package]]
 name = "esp-storage"
 version = "0.10.0"
-source = "git+https://github.com/darconeous/esp-hal.git?rev=29246b52591db568f31e74e13e26d8d09464d53c#29246b52591db568f31e74e13e26d8d09464d53c"
+source = "git+https://github.com/darconeous/esp-hal.git?rev=5a55bb86021934c83be40d25b45a26922898ad91#5a55bb86021934c83be40d25b45a26922898ad91"
 dependencies = [
  "document-features",
  "embedded-storage",
@@ -1347,7 +1347,7 @@ dependencies = [
 [[package]]
 name = "esp-sync"
 version = "0.3.0"
-source = "git+https://github.com/darconeous/esp-hal.git?rev=29246b52591db568f31e74e13e26d8d09464d53c#29246b52591db568f31e74e13e26d8d09464d53c"
+source = "git+https://github.com/darconeous/esp-hal.git?rev=5a55bb86021934c83be40d25b45a26922898ad91#5a55bb86021934c83be40d25b45a26922898ad91"
 dependencies = [
  "document-features",
  "embassy-sync 0.6.2",
@@ -3589,7 +3589,7 @@ dependencies = [
 [[package]]
 name = "xtensa-lx"
 version = "0.13.0"
-source = "git+https://github.com/darconeous/esp-hal.git?rev=29246b52591db568f31e74e13e26d8d09464d53c#29246b52591db568f31e74e13e26d8d09464d53c"
+source = "git+https://github.com/darconeous/esp-hal.git?rev=5a55bb86021934c83be40d25b45a26922898ad91#5a55bb86021934c83be40d25b45a26922898ad91"
 dependencies = [
  "critical-section",
 ]
@@ -3597,7 +3597,7 @@ dependencies = [
 [[package]]
 name = "xtensa-lx-rt"
 version = "0.23.0"
-source = "git+https://github.com/darconeous/esp-hal.git?rev=29246b52591db568f31e74e13e26d8d09464d53c#29246b52591db568f31e74e13e26d8d09464d53c"
+source = "git+https://github.com/darconeous/esp-hal.git?rev=5a55bb86021934c83be40d25b45a26922898ad91#5a55bb86021934c83be40d25b45a26922898ad91"
 dependencies = [
  "document-features",
  "xtensa-lx",
@@ -3607,7 +3607,7 @@ dependencies = [
 [[package]]
 name = "xtensa-lx-rt-proc-macros"
 version = "0.5.0"
-source = "git+https://github.com/darconeous/esp-hal.git?rev=29246b52591db568f31e74e13e26d8d09464d53c#29246b52591db568f31e74e13e26d8d09464d53c"
+source = "git+https://github.com/darconeous/esp-hal.git?rev=5a55bb86021934c83be40d25b45a26922898ad91#5a55bb86021934c83be40d25b45a26922898ad91"
 dependencies = [
  "proc-macro2",
  "quote",
