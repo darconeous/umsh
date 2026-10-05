@@ -64,6 +64,8 @@
 
           <li class="flasher__step" id="flasher-step-firmware" hidden>
             <h3><span class="flasher__num">2</span> Choose the firmware</h3>
+            {# Shown only for a board with more than one image; main.js fills it. #}
+            <select class="flasher__image" id="flasher-image" aria-label="Firmware image" hidden></select>
             <label class="flasher__choice">
               <input type="radio" name="flasher-source" value="latest" checked />
               <span>Latest release <em id="flasher-release-meta"></em></span>

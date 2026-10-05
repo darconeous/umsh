@@ -11,7 +11,7 @@
  * keep a strict Content-Security-Policy.
  */
 
-import { loadBoards, boardFromQuery, isNrf, isEsp, warningsFor, updateModeFor } from "./boards.js";
+import { loadBoards, boardFromQuery, imagesFor, isNrf, isEsp, warningsFor, updateModeFor } from "./boards.js";
 import { SerialLink, SerialLostError, describePort, touch1200, sleep } from "./serial.js";
 import { NrfDfu, parseDfuPackage, DfuPackageError } from "./nrf-dfu.js";
 import { flashEsp } from "./esp-flash.js";
@@ -31,6 +31,9 @@ const elements = Object.fromEntries(
 const state = {
   boards: loadBoards(),
   board: null,
+  /** Which of the board's firmware images: the id the manifest and the file
+   *  names go by. The board's own id unless the board lists several. */
+  image: null,
   source: "latest",
   /** Set once the user picks a source, so we stop moving it for them. */
   sourcePinned: false,
@@ -64,6 +67,14 @@ function main() {
 
   elements["flasher-board"].addEventListener("change", (event) => {
     selectBoard(state.boards.find((board) => board.id === event.target.value) ?? null);
+  });
+
+  elements["flasher-image"].addEventListener("change", (event) => {
+    state.image = event.target.value;
+    state.artifact = null;
+    setStatus("");
+    renderFirmwareStep();
+    renderFlashStep();
   });
 
   for (const input of document.querySelectorAll("input[name='flasher-source']")) {
@@ -106,6 +117,12 @@ function selectBoard(board) {
   setStatus("");
   setLog("");
 
+  const images = imagesFor(board);
+  state.image = images[0]?.id ?? null;
+  const picker = elements["flasher-image"];
+  picker.replaceChildren(...images.map((image) => new Option(image.name, image.id)));
+  picker.hidden = images.length < 2;
+
   const url = new URL(location.href);
   if (board) url.searchParams.set("board", board.id);
   else url.searchParams.delete("board");
@@ -122,7 +139,7 @@ function renderFirmwareStep() {
   const board = state.board;
   if (!board) return;
 
-  const entry = state.manifest ? manifestBoard(state.manifest, board.id) : null;
+  const entry = state.manifest ? manifestBoard(state.manifest, state.image) : null;
   const file = entry ? flashableFile(entry) : null;
   const latestInput = document.querySelector("input[name='flasher-source'][value='latest']");
 
@@ -153,14 +170,14 @@ function renderFirmwareStep() {
   elements["flasher-file-hint"].hidden = !custom;
   elements["flasher-file-hint"].innerHTML = isEsp(board)
     ? "For developers: a merged image, as <code>make merged-bin-" +
-      board.id +
+      state.image +
       "</code> writes it—<code>umsh-" +
-      board.id +
+      state.image +
       "-&lt;version&gt;.bin</code>."
     : "For developers: a DFU package, as <code>make dfu-zip-" +
-      board.id +
+      state.image +
       "</code> writes it—<code>umsh-" +
-      board.id +
+      state.image +
       "-&lt;version&gt;-dfu.zip</code>.";
 }
 
@@ -200,7 +217,7 @@ function renderFlashStep() {
   elements["flasher-step-flash"].hidden = !board;
   if (!board) return;
 
-  const warnings = warningsFor(board);
+  const warnings = warningsFor(board, state.image);
   elements["flasher-warnings"].innerHTML = warnings.length
     ? `<div class="notice notice--compact"><ul>${warnings.map((w) => `<li>${w}</li>`).join("")}</ul></div>`
     : "";
@@ -266,12 +283,12 @@ function renderFlashStep() {
 function mismatchNote() {
   const name = state.artifact?.binName;
   if (!name || !state.board) return "";
-  if (name.includes(state.board.id)) return "";
+  if (name.includes(state.image)) return "";
   return `This package contains <code>${name}</code>, which does not look like firmware for the ${state.board.name}. Flashing it will leave the board running software built for different hardware.`;
 }
 
 function appendDownloadLinks(container, { primary = false } = {}) {
-  const entry = state.manifest ? manifestBoard(state.manifest, state.board.id) : null;
+  const entry = state.manifest ? manifestBoard(state.manifest, state.image) : null;
   if (!entry) return;
 
   const uf2 = fileByRole(entry, "uf2");
@@ -435,7 +452,7 @@ async function ensureArtifact() {
     throw new Error("choose a firmware file first.");
   }
 
-  const entry = manifestBoard(state.manifest, state.board.id);
+  const entry = manifestBoard(state.manifest, state.image);
   const file = flashableFile(entry);
   showStage("downloading");
   const bytes = await fetchArtifact(file, { onProgress: showProgress });

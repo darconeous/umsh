@@ -23,6 +23,20 @@ export function boardFromQuery(boards) {
   return boards.find((board) => board.id === wanted) ?? null;
 }
 
+/**
+ * The firmware images a board can be flashed with, default first.
+ *
+ * Nearly every board has exactly one, and its id is the board's own. A board
+ * that lists several under `flash.images` is still one board: one entry on
+ * the hardware page, one option in the board list, and a choice of image.
+ * An image id is what the release manifest and the file names are keyed by.
+ */
+export function imagesFor(board) {
+  if (!board) return [];
+  const listed = board.flash?.images;
+  return listed?.length ? listed : [{ id: board.id, name: "" }];
+}
+
 export function isNrf(board) {
   return board?.flash?.methods?.includes("serial-dfu") ?? false;
 }
@@ -76,6 +90,9 @@ const WARNINGS = {
   "heltec-v3": [
     "If this board previously ran different firmware, flashing clears whatever settings that firmware had stored on it.",
   ],
+  "heltec-v3-bridge": [
+    "This image has no Bluetooth. Set it up over USB.",
+  ],
   "tbeam-supreme": [
     // The Supreme is sold with three different radios behind one product
     // name, and only the SX1262 has a driver here. A board with the wrong
@@ -89,6 +106,12 @@ const WARNINGS = {
   ],
 };
 
-export function warningsFor(board) {
-  return WARNINGS[board?.id] ?? [];
+/**
+ * The cautions for flashing `imageId` onto `board`: the image's own first,
+ * then the board's, which hold whichever image goes on it.
+ */
+export function warningsFor(board, imageId = board?.id) {
+  const forBoard = WARNINGS[board?.id] ?? [];
+  if (!imageId || imageId === board?.id) return forBoard;
+  return [...(WARNINGS[imageId] ?? []), ...forBoard];
 }

@@ -242,6 +242,18 @@ quirks = [
   "Building this board needs Espressif's Xtensa Rust toolchain, installed with <code>espup</code>.",
 ]
 
+# The firmware images this board can be flashed with, where there is more
+# than one; the flasher offers the choice. Each `id` is a release image id
+# (`scripts/release.py`) and a `make` target suffix. The first is the one a
+# visitor gets without choosing, and is the board's own id.
+[[boards.flash.images]]
+id = "heltec-v3"
+name = "Standard"
+
+[[boards.flash.images]]
+id = "heltec-v3-bridge"
+name = "Internet bridge"
+
 [[boards]]
 id = "xiao-nrf52"
 name = "XIAO nRF52840 + Wio-SX1262 Kit"
