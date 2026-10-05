@@ -482,6 +482,39 @@ mod tests {
     }
 
     #[test]
+    fn dfu_cli_and_shell_offer_exactly_the_defined_modes() {
+        use command::lifecycle::{DfuModeArg, confirm_dfu};
+        for mode in ["default", "serial", "uf2", "ble"] {
+            assert!(matches!(
+                parse(&["dfu", mode, "--yes"]).unwrap().command,
+                Some(Command::Dfu { yes: true, .. })
+            ));
+            let target = "abababababababababababababababababababababababababababababababab";
+            assert!(parse(&["manage", target, "dfu", mode, "--yes"]).is_ok());
+            assert!(repl::ReplCommandLine::try_parse_from(["dfu", mode]).is_ok());
+        }
+        assert!(matches!(
+            parse(&["dfu"]).unwrap().command,
+            Some(Command::Dfu {
+                mode: DfuModeArg::Default,
+                yes: false
+            })
+        ));
+        for mode in ["4", "ota", "usb"] {
+            assert!(parse(&["dfu", mode]).is_err());
+        }
+        let error = confirm_dfu(false, false, "remote node", DfuModeArg::Ble)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("remote node")
+                && error.contains("inaccessible indefinitely")
+                && error.contains("--yes")
+        );
+        assert!(confirm_dfu(false, true, "remote node", DfuModeArg::Ble).unwrap());
+    }
+
+    #[test]
     fn the_ble_selector_needs_the_equals_form() {
         // Bare `--ble` means "BLE, discover", and must not swallow the
         // command word that follows it.

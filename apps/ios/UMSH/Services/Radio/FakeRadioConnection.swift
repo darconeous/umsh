@@ -1041,6 +1041,15 @@ actor FakeRadioConnection: RadioConnection {
         publish(.disconnected)
     }
 
+    func enterDfu(mode: UlcpDfuMode) async throws {
+        try await answerAsIfOverTheAir()
+        publish(.disconnected)
+    }
+
+    func enterRemoteDfu(peerAddress: String, mode: UlcpDfuMode) async throws {
+        try await answerAsIfOverTheAir()
+    }
+
     func announce(_ request: MobileAnnouncementRecord) async throws {
         try await answerAsIfOverTheAir()
     }

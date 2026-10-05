@@ -221,6 +221,11 @@ final class TcpRadioConnection: UlcpRadioSession, RadioConnection, UlcpFrameLink
         wantsConnection = false
     }
 
+    func linkDidEnterDfu() {
+        wantsConnection = false
+        teardown(problem: nil)
+    }
+
     // ------------------------------------------------------------------
     // The socket
     // ------------------------------------------------------------------

@@ -11,7 +11,12 @@ use crate::{
     cache::DupCacheKey,
 };
 
-/// Opaque tracking token returned for ACK-requested transmissions.
+/// Opaque tracking token for delivery or local transmission completion.
+///
+/// Setting [`SendOptions::track_transmission`] also returns a receipt for
+/// unicast without requesting an ACK. In that case `Transmitted` confirms
+/// local transmission and `TxAbandoned` reports failure to transmit; neither
+/// implies that the receiver heard the packet.
 ///
 /// When [`Mac::queue_unicast`](crate::Mac::queue_unicast) or
 /// [`Mac::queue_blind_unicast`](crate::Mac::queue_blind_unicast) is called with
@@ -85,6 +90,9 @@ pub struct SendOptions {
     pub encrypted: bool,
     /// Whether a transport ACK should be requested.
     pub ack_requested: bool,
+    /// Return a local transmission receipt even without a wire ACK request.
+    /// This does not alter the packet or its forwarding policy.
+    pub track_transmission: bool,
     /// Whether to encode the full source public key.
     pub full_source: bool,
     /// Optional flood-hop budget.
@@ -115,6 +123,7 @@ impl Default for SendOptions {
             mic_size: MicSize::Mic16,
             encrypted: true,
             ack_requested: false,
+            track_transmission: false,
             full_source: false,
             flood_hops: Some(5),
             trace_route: false,

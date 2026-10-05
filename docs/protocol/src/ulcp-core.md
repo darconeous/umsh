@@ -176,6 +176,7 @@ Id | Mnemonic             | Dir          | Description
 7  | `CMD_PROP_INSERTED`  | Device->Host | Item-inserted notification
 8  | `CMD_PROP_REMOVED`   | Device->Host | Item-removed notification
 16 | `CMD_REBOOT`         | Host->Device | Restart the device's hardware
+17 | `CMD_DFU`            | Host->Device | Enter bootloader firmware-update mode
 19 | `CMD_ANNOUNCE`       | Host->Device | Announce the device now
 21 | `CMD_PROP_MULTI_GET` | Host->Device | Get several property values
 22 | `CMD_PROP_MULTI_SET` | Host->Device | Set several property values in order
@@ -440,6 +441,62 @@ This command is only available on devices advertising `CAP_REBOOT`.
 A device without it answers `STATUS_UNIMPLEMENTED`—which is the only
 response this command ever produces, and the only thing that distinguishes
 a device that declined from one that is already restarting.
+
+### CMD 17: (Host -> Device) `CMD_DFU` {#cmd-dfu}
+
+Enter the platform's bootloader for a firmware update. The payload is empty
+or one `UINT8` selecting the DFU method:
+
+Value | Method
+------|-------
+0 | Default DFU
+1 | Serial/USB-CDC DFU
+2 | UF2 (file-copy) DFU
+3 | BLE DFU
+
+An empty payload selects Default. The default is fixed by the platform,
+independent of the command's transport. Current nRF52 platforms use UF2.
+Other mode values are undefined. There is no capability or discovery
+property for this command; the device decides whether its supported
+bootloader can enter the requested mode.
+
+The device answers with `CMD_PROP_IS(PROP_LAST_STATUS)`:
+
+Status | Meaning
+-------|--------
+`STATUS_OK` | Prepared to enter DFU after transmitting this response
+`STATUS_UNIMPLEMENTED` | The platform or its supported bootloader cannot enter this method
+`STATUS_INVALID_ARGUMENT` | The mode is undefined
+`STATUS_PARSE_ERROR` | The payload contains more than one byte
+
+Other failure statuses report preparation failures and leave the application
+running. Before returning success, the device MUST complete all fallible
+preparation, including persisting replay-counter state. It MUST NOT enter
+DFU until the complete matching response has transmitted. Queue acceptance
+alone is insufficient. Failed, canceled, or expired response transmission
+MUST leave the application running and invalidate the pending action and
+any retained success response. Completion of another response, or of an
+earlier transport generation, MUST NOT authorize entry.
+
+A direct request MUST use a nonzero TID. A direct TID-zero request records
+`STATUS_INVALID_ARGUMENT` without entering DFU. Over
+[Node Management](app-node-management.md#dfu), the TID is zero and the
+ordinary token-correlated response confirms acceptance. This command does
+not use reset-command acknowledgment semantics.
+
+DFU entry preserves saved configuration, identity, bonds, and pairing
+credentials. Unsaved application state is lost. Existing administrative
+authentication and authorization apply. Bootloader residency and exit
+behavior are bootloader-defined; automatic return to UMSH is not promised.
+The command enters DFU only and does not transfer or install firmware.
+
+A host MUST report success only upon receiving `STATUS_OK`. Timeout or
+disconnect before that response leaves entry unconfirmed and MUST NOT
+cause an automatic new DFU command. Hosts SHOULD warn that the device may
+remain inaccessible indefinitely, and that BLE updating requires an
+updater within Bluetooth range. Older firmware's `STATUS_INVALID_COMMAND`
+is treated as unsupported. This additive command does not change the
+protocol version.
 
 ### CMD 21: (Host -> Device) `CMD_PROP_MULTI_GET` {#cmd-prop-multi-get}
 

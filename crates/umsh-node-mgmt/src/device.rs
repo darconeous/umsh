@@ -400,6 +400,19 @@ impl<const PAYLOAD: usize, const ENTRIES: usize> DeviceEngine<PAYLOAD, ENTRIES> 
         self.entries = [Entry::default(); ENTRIES];
     }
 
+    /// Replace an unsent lifecycle success with a failure for the same token.
+    /// A retry must not replay OK after its pending handoff was canceled.
+    pub fn fail_retained(&mut self, from: &PublicKey, token: Token) {
+        if let Some(entry) = self.retained(from, token) {
+            let mut frame = [0; 8];
+            let len = frame::last_status(&mut frame, 0, Status::FAILURE).expect("status fits");
+            match Envelope::new(token, &frame[..len]).encode(&mut entry.payload) {
+                Ok(len) => entry.len = len,
+                Err(_) => entry.occupied = false,
+            }
+        }
+    }
+
     /// Answer a request the engine can decide on its own, and retain the
     /// answer like any other.
     fn answer(
@@ -542,6 +555,43 @@ mod tests {
             engine.complete(Produced::complete(&[0x80, 0x06]), &mut out),
             Err(CompleteError::NotDispatched)
         );
+    }
+
+    #[test]
+    fn dfu_is_response_tracked_and_failed_transmission_invalidates_cached_success() {
+        let mut engine = Engine::new(1);
+        let mut frame_buf = [0; 8];
+        let n = frame::dfu(&mut frame_buf, 0, Some(umsh_ulcp::DfuMode::Ble)).unwrap();
+        let mut payload = [0; PAYLOAD];
+        let len = request([1, 2], &frame_buf[..n], &mut payload);
+        let mut out = [0; PAYLOAD];
+        let Ingress::Dispatch(dispatch) = engine.begin(&ALICE, &payload[..len], 7, 0, &mut out)
+        else {
+            panic!("DFU must be dispatched");
+        };
+        assert!(
+            !dispatch.resets,
+            "a delivery acknowledgment cannot confirm DFU"
+        );
+        let n = frame::last_status(&mut frame_buf, 0, Status::OK).unwrap();
+        let n = engine
+            .complete(Produced::complete(&frame_buf[..n]), &mut out)
+            .unwrap()
+            .unwrap();
+        assert_eq!(reported_status(&out[..n]), Status::OK);
+        engine.fail_retained(&BOB, [1, 2]);
+        engine.fail_retained(&ALICE, [2, 3]);
+        let Ingress::Respond { len: n } = engine.begin(&ALICE, &payload[..len], 7, 0, &mut out)
+        else {
+            panic!("retry must replay, never dispatch again");
+        };
+        assert_eq!(reported_status(&out[..n]), Status::OK);
+        engine.fail_retained(&ALICE, [1, 2]);
+        let Ingress::Respond { len: n } = engine.begin(&ALICE, &payload[..len], 7, 0, &mut out)
+        else {
+            panic!("canceled DFU must retain a refusal");
+        };
+        assert_eq!(reported_status(&out[..n]), Status::FAILURE);
     }
 
     #[test]

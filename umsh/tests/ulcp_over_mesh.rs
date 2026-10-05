@@ -94,6 +94,28 @@ fn open(link: MeshFrameLink) -> UlcpDevice<MeshFrameLink> {
 }
 
 #[tokio::test(flavor = "current_thread")]
+async fn dfu_over_mesh_waits_for_the_device_refusal_instead_of_accepting_delivery() {
+    mesh!("dfu", mesh);
+    let (link, mut endpoint) = mesh_link();
+    let mut device = open(link);
+    let result = with_mesh(
+        &mut mesh,
+        &mut endpoint,
+        device.enter_dfu(umsh::ulcp_wire::DfuMode::Ble),
+    )
+    .await;
+    assert!(matches!(
+        result,
+        Err(UlcpError::Status(Status::UNIMPLEMENTED))
+    ));
+    assert!(
+        with_mesh(&mut mesh, &mut endpoint, device.device_name())
+            .await
+            .is_ok()
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn opening_a_handle_puts_nothing_on_the_air() {
     mesh!("open", mesh);
     let (link, mut endpoint) = mesh_link();

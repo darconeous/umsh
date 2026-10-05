@@ -222,6 +222,13 @@ impl DeviceSide {
         );
         while let Some(effect) = pending.take() {
             match effect {
+                Effect::Dfu { tid, .. } => {
+                    self.session.respond_dfu(
+                        tid,
+                        Err(Status::UNIMPLEMENTED),
+                        &mut |bytes: &[u8]| emitted.push(bytes.to_vec()),
+                    );
+                }
                 Effect::SaveSnapshot { tid } => {
                     self.session.respond_save(tid, Ok(()), &mut |bytes: &[u8]| {
                         emitted.push(bytes.to_vec())

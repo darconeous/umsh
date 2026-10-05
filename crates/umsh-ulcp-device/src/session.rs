@@ -454,6 +454,8 @@ pub enum Effect {
     /// link. What comes back is the same device with the same identity,
     /// announcing its power-on reset.
     Reboot,
+    /// Prepare DFU, then respond before committing the bootloader handoff.
+    Dfu { tid: u8, mode: umsh_ulcp::DfuMode },
     /// A `PROP_BLE_BOND_COUNT` write of zero: delete every stored bond,
     /// the pairing PIN, and the pairing failure lockout, then open a
     /// pairing window so the device can be paired again. Complete with
@@ -3775,6 +3777,19 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                 }
                 Some(Effect::Reboot)
             }
+            Some(Cmd::Dfu) => {
+                if tid == TID_UNSOLICITED && !self.is_admin() {
+                    self.complete(tid, Status::INVALID_ARGUMENT, emit);
+                    return None;
+                }
+                match umsh_ulcp::DfuMode::parse(received.payload) {
+                    Ok(mode) => Some(Effect::Dfu { tid, mode }),
+                    Err(status) => {
+                        self.complete(tid, status, emit);
+                        None
+                    }
+                }
+            }
             // Announce now. The options are validated here, including
             // resolving a named channel to the key the node addresses it
             // by; whether the announcement can be queued at all is the
@@ -5447,6 +5462,17 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             }
             Err(()) => self.complete(tid, Status::INTERNAL_ERROR, emit),
         }
+    }
+
+    /// Complete DFU preparation. The runtime must transmit this response
+    /// before entering the bootloader, and must cancel entry if sending fails.
+    pub fn respond_dfu(
+        &mut self,
+        tid: u8,
+        result: Result<(), Status>,
+        emit: &mut impl FnMut(&[u8]),
+    ) {
+        self.complete(tid, result.err().unwrap_or(Status::OK), emit);
     }
 
     /// Complete a deferred `CMD_ANNOUNCE`.
@@ -9119,6 +9145,77 @@ mod tests {
                 "prop {key} is settable without a node"
             );
         }
+    }
+
+    #[test]
+    fn dfu_validates_before_deferring_and_always_requires_a_reply() {
+        let mut session = test_session();
+        let mut buf = [0; 16];
+        for mode in [
+            None,
+            Some(umsh_ulcp::DfuMode::Default),
+            Some(umsh_ulcp::DfuMode::Serial),
+            Some(umsh_ulcp::DfuMode::Uf2),
+            Some(umsh_ulcp::DfuMode::Ble),
+        ] {
+            let len = frame::dfu(&mut buf, 3, mode).unwrap();
+            let (emitted, effect) = dispatch(&mut session, &buf[..len], 0);
+            assert!(emitted.is_empty());
+            assert_eq!(
+                effect,
+                Some(Effect::Dfu {
+                    tid: 3,
+                    mode: mode.unwrap_or_default()
+                })
+            );
+            for status in [Status::OK, Status::UNIMPLEMENTED, Status::FAILURE] {
+                let mut replies = std::vec::Vec::new();
+                session.respond_dfu(
+                    3,
+                    if status == Status::OK {
+                        Ok(())
+                    } else {
+                        Err(status)
+                    },
+                    &mut |bytes: &[u8]| replies.push(bytes.to_vec()),
+                );
+                let (tid, key, value) = parse_prop_is(&replies[0]);
+                assert_eq!(tid, 3);
+                assert_eq!(key, prop::LAST_STATUS);
+                assert_eq!(pui::decode(&value).unwrap().0, status.0);
+            }
+        }
+        for (payload, expected) in [
+            (&[4][..], Status::INVALID_ARGUMENT),
+            (&[0, 0][..], Status::PARSE_ERROR),
+        ] {
+            let mut writer = frame::FrameWriter::new(&mut buf, 3, Cmd::Dfu).unwrap();
+            writer.write_bytes(payload).unwrap();
+            let len = writer.finish();
+            let (emitted, effect) = dispatch(&mut session, &buf[..len], 0);
+            assert_eq!(effect, None);
+            assert_eq!(
+                pui::decode(&parse_prop_is(&emitted[0]).2).unwrap().0,
+                expected.0
+            );
+        }
+        let len = frame::dfu(&mut buf, 0, None).unwrap();
+        let (emitted, effect) = dispatch(&mut session, &buf[..len], 0);
+        assert!(emitted.is_empty());
+        assert_eq!(effect, None);
+        let mut replies = std::vec::Vec::new();
+        let effect = session.handle_admin_frame(&buf[..len], 0, 180, &mut |bytes: &[u8]| {
+            replies.push(bytes.to_vec())
+        });
+        assert_eq!(
+            effect,
+            Some(Effect::Dfu {
+                tid: 0,
+                mode: umsh_ulcp::DfuMode::Default
+            })
+        );
+        session.respond_dfu(0, Ok(()), &mut |bytes: &[u8]| replies.push(bytes.to_vec()));
+        assert_eq!(parse_prop_is(&replies[0]).0, 0);
     }
 
     /// `CMD_REBOOT` is the platform's to perform, and a platform that

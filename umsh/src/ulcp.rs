@@ -2475,6 +2475,19 @@ where
         Ok(true)
     }
 
+    /// Enter bootloader DFU after receiving its successful status response.
+    /// A dropped link or timeout never counts as confirmation.
+    pub async fn enter_dfu(&mut self, mode: umsh_ulcp::DfuMode) -> Result<(), UlcpError> {
+        let tid = self.alloc_tid();
+        let mut buf = [0u8; 3];
+        let len = frame::dfu(&mut buf, tid, Some(mode))
+            .map_err(|_| UlcpError::Protocol("frame encode"))?;
+        self.send(&buf[..len]).await?;
+        self.finish_prop_transaction(tid, prop::LAST_STATUS, PropResponsePolicy::StatusOnly)
+            .await?;
+        Ok(())
+    }
+
     /// Announce the device now (`CMD_ANNOUNCE`; requires `CAP_ADVERT`):
     /// send an advertisement or a beacon, as a broadcast or on one of the
     /// device's own channels.
@@ -4098,6 +4111,7 @@ pub mod testing {
                     Cmd::PropMultiGet
                     | Cmd::PropMultiSet
                     | Cmd::Reboot
+                    | Cmd::Dfu
                     | Cmd::I2cTransfer
                     | Cmd::I2cScan => {
                         let len = frame::last_status(&mut buf, tid, Status::UNIMPLEMENTED).unwrap();

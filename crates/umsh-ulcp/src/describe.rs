@@ -487,6 +487,11 @@ impl fmt::Display for FrameDescription<'_> {
             return write!(out, "unknown command tid={tid} ({} bytes)", bytes.len());
         };
         match command {
+            Cmd::Dfu => write!(
+                out,
+                "Dfu tid={tid} mode={:?}",
+                crate::DfuMode::parse(frame.payload)
+            ),
             Cmd::Nop
             | Cmd::Reset
             | Cmd::QueueDrain

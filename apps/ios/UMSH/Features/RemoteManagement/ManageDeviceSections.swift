@@ -11,7 +11,7 @@ struct ManageDeviceIdentitySection: View {
                     LabeledContent("Model", value: model)
                 }
                 LabeledContent("Firmware", value: card.deviceVersion ?? "Not reported")
-                if card.supportsAlert {
+                if card.supportsAlert && !model.enteredDfu {
                     findButton
                 }
             } else if model.isBusy {
@@ -64,10 +64,14 @@ struct ManageDeviceLifecycleSection: View {
     let model: ManageDeviceModel
     @Binding var confirmsRestart: Bool
     @Binding var confirmsFactoryReset: Bool
+    @Binding var confirmsDfu: Bool
 
     var body: some View {
-        if model.supportsRestart || model.offersFactoryReset {
+        Group {
             Section {
+                Button("Enter DFU Mode…", role: .destructive) {
+                    confirmsDfu = true
+                }
                 if model.supportsRestart {
                     Button("Restart This Device…", role: .destructive) {
                         confirmsRestart = true
@@ -79,9 +83,11 @@ struct ManageDeviceLifecycleSection: View {
                     }
                 }
             } footer: {
+                if model.supportsRestart || model.offersFactoryReset {
                 Text(model.offersFactoryReset
                      ? "A restart keeps everything the device has saved. A factory reset keeps nothing, the device's own identity included."
                      : "A restart keeps everything the device has saved. Erasing a device is only offered while it is connected to this phone.")
+                }
             }
         }
     }

@@ -1920,6 +1920,11 @@ impl<
                     options.flood_hops,
                 )?)
             }
+            None if options.track_transmission => Some(
+                self.identity_mut(from)
+                    .ok_or(SendError::IdentityMissing)?
+                    .next_receipt(),
+            ),
             None => None,
         };
         let not_before_ms = self.tx_not_before_ms(options);
@@ -1931,7 +1936,11 @@ impl<
             }
             return Err(err);
         }
-        Ok(receipt)
+        Ok(if options.track_transmission {
+            tracked_receipt
+        } else {
+            receipt
+        })
     }
 
     /// Enqueue a unicast frame for transmission, deriving secure peer state on first use.
@@ -2089,6 +2098,11 @@ impl<
                     options.flood_hops,
                 )?)
             }
+            None if options.track_transmission => Some(
+                self.identity_mut(from)
+                    .ok_or(SendError::IdentityMissing)?
+                    .next_receipt(),
+            ),
             None => None,
         };
         let not_before_ms = self.tx_not_before_ms(options);
@@ -2100,7 +2114,11 @@ impl<
             }
             return Err(err);
         }
-        Ok(receipt)
+        Ok(if options.track_transmission {
+            tracked_receipt
+        } else {
+            receipt
+        })
     }
 
     /// Enqueue a blind-unicast frame for transmission, deriving secure peer state on first use.
@@ -3621,7 +3639,7 @@ impl<
             .is_some();
 
         // Also remove any queued retransmission for this receipt.
-        self.tx_queue.remove_first_matching(|entry| {
+        self.tx_queue.remove_all_matching(|entry| {
             entry.receipt == Some(receipt) && entry.identity_id == Some(identity_id)
         });
 

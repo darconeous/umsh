@@ -92,6 +92,11 @@ pub type FrameBuf = heapless::Vec<u8, FRAME_IN_MAX>;
 /// exchange can await several platform round trips before it is finished.
 pub type AdminFrame = FrameBuf;
 
+pub struct AdminReply {
+    pub frame: AdminFrame,
+    pub completion: Option<crate::reply_completion::ReplyCompletion>,
+}
+
 /// One-slot return path for [`InEvent::Admin`].
 ///
 /// A single static rather than a channel per request: there is one
@@ -102,7 +107,7 @@ pub type AdminFrame = FrameBuf;
 /// one message per request and never has to time the loop out.
 pub static ADMIN_REPLY: Channel<
     embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex,
-    AdminFrame,
+    AdminReply,
     1,
 > = Channel::new();
 
@@ -187,6 +192,7 @@ pub type InputChannel<M> = Channel<M, InEvent, 8>;
 pub struct OutFrame {
     /// Final BLE reply: drain controller transmissions before replacing its IRK.
     pub finish_ble_wipe: bool,
+    pub completion: Option<crate::reply_completion::ReplyCompletion>,
     pub generation: u32,
     pub frame: FrameBuf,
 }
@@ -742,6 +748,18 @@ pub trait DeviceEnv {
     /// retries of that same command are then accepted again after boot:
     /// one reboot per retry.
     async fn reboot(&mut self) -> !;
+    /// Resolve and validate the bootloader mode, and durably preserve replay
+    /// boundaries. No bootloader marker is written until the response is sent.
+    async fn prepare_dfu(
+        &mut self,
+        _mode: umsh_ulcp::DfuMode,
+    ) -> Result<umsh_ulcp::DfuMode, Status> {
+        Err(Status::UNIMPLEMENTED)
+    }
+    /// Only called after successful preparation and response transmission.
+    fn enter_dfu(&mut self, _mode: umsh_ulcp::DfuMode) -> ! {
+        unreachable!("DFU preparation succeeded without a platform handoff")
+    }
     /// Publish the transport-arbitration advertising policy (a wired
     /// attach suppresses BLE advertising). Diagnostic builds may
     /// deliberately ignore `allowed`.
@@ -835,6 +853,7 @@ pub struct DeviceRuntime<M: RawMutex + 'static, const RX: usize, const TX: usize
 /// session emits at most one frame per call; two slots give headroom.
 struct Emitter {
     finish_ble_wipe: bool,
+    completion: Option<crate::reply_completion::ReplyCompletion>,
     bufs: [[u8; FRAME_OUT_MAX]; 2],
     lens: [usize; 2],
     count: usize,
@@ -844,6 +863,7 @@ impl Emitter {
     const fn new() -> Self {
         Self {
             finish_ble_wipe: false,
+            completion: None,
             bufs: [[0; FRAME_OUT_MAX]; 2],
             lens: [0; 2],
             count: 0,
@@ -890,20 +910,33 @@ impl Emitter {
                         debug_assert!(false, "Emitter frame copy exceeded FrameBuf capacity");
                         continue;
                     }
-                    out.for_transport(*transport)
-                        .send(OutFrame {
-                            finish_ble_wipe: self.finish_ble_wipe
-                                && index + 1 == self.count
-                                && *transport == Transport::Ble,
-                            generation: *generation,
-                            frame: copy,
-                        })
-                        .await;
+                    let send = out.for_transport(*transport).send(OutFrame {
+                        completion: self.completion,
+                        finish_ble_wipe: self.finish_ble_wipe
+                            && index + 1 == self.count
+                            && *transport == Transport::Ble,
+                        generation: *generation,
+                        frame: copy,
+                    });
+                    if let Some(completion) = self.completion {
+                        if embassy_time::with_deadline(completion.deadline(), send)
+                            .await
+                            .is_err()
+                        {
+                            completion.complete(false);
+                        }
+                    } else {
+                        send.await;
+                    }
                 }
                 // Nobody attached: the response has nowhere to go.
                 ReplySink::Transport {
                     destination: None, ..
-                } => {}
+                } => {
+                    if let Some(completion) = self.completion {
+                        completion.complete(false);
+                    }
+                }
                 ReplySink::Admin { reply } => {
                     // An exchange is one request and one response. A
                     // second frame would mean the session emitted
@@ -919,6 +952,7 @@ impl Emitter {
         }
         self.count = 0;
         self.finish_ble_wipe = false;
+        self.completion = None;
     }
 }
 
@@ -1053,6 +1087,7 @@ async fn apply_effect<A, S, const TXQ: usize, M, const RX: usize, const TX: usiz
         | Some(Effect::ProvisionIdentity { .. })
         | Some(Effect::FactoryReset)
         | Some(Effect::Reboot)
+        | Some(Effect::Dfu { .. })
         | Some(Effect::Announce { .. })
         | None => {}
     }
@@ -1208,12 +1243,14 @@ async fn serve_frame<A, S, const TXQ: usize, M, const RX: usize, const TX: usize
     snapshot_buf: &mut [u8; SNAPSHOT_MAX],
     rt: &DeviceRuntime<M, RX, TX>,
     env: &mut E,
-) where
+) -> Option<(umsh_ulcp::DfuMode, crate::reply_completion::ReplyCompletion)>
+where
     A: AesProvider,
     S: Sha256Provider,
     M: RawMutex,
     E: DeviceEnv,
 {
+    let mut dfu = None;
     let now_ms = Instant::now().as_millis();
     let mut pending = match exchange {
         Exchange::Local(bytes) => {
@@ -1501,6 +1538,25 @@ async fn serve_frame<A, S, const TXQ: usize, M, const RX: usize, const TX: usize
                 session.respond_announce(tid, result, &mut |frame: &[u8]| emitter.push(frame));
                 emitter.flush(sink).await;
             }
+            Some(Effect::Dfu { tid, mode }) => {
+                let prepared = env.prepare_dfu(mode).await;
+                if let Ok(mode) = prepared {
+                    let seconds = if matches!(sink, ReplySink::Admin { .. }) {
+                        60
+                    } else {
+                        10
+                    };
+                    let completion = crate::reply_completion::ReplyCompletion::begin(
+                        Instant::now() + embassy_time::Duration::from_secs(seconds),
+                    );
+                    emitter.completion = Some(completion);
+                    dfu = Some((mode, completion));
+                }
+                session.respond_dfu(tid, prepared.map(|_| ()), &mut |frame: &[u8]| {
+                    emitter.push(frame)
+                });
+                emitter.flush(sink).await;
+            }
             Some(Effect::FactoryReset) => {
                 // Hand off to the platform, which erases every
                 // persistent journal and reboots. This never
@@ -1547,6 +1603,19 @@ async fn serve_frame<A, S, const TXQ: usize, M, const RX: usize, const TX: usize
     }
     if session.queued_frame_count() == 0 {
         env.queue_emptied();
+    }
+    dfu
+}
+
+async fn finish_dfu(
+    env: &mut impl DeviceEnv,
+    dfu: Option<(umsh_ulcp::DfuMode, crate::reply_completion::ReplyCompletion)>,
+) {
+    if let Some((mode, completion)) = dfu {
+        if completion.wait().await {
+            env.enter_dfu(mode);
+        }
+        env.trace(format_args!("DFU canceled: response transmission failed"));
     }
 }
 
@@ -1869,7 +1938,7 @@ where
                         destination: arbitration.destination(),
                         out: rt.out,
                     };
-                    serve_frame(
+                    let dfu = serve_frame(
                         session,
                         Exchange::Local(&frame_bytes),
                         &mut emitter,
@@ -1879,6 +1948,7 @@ where
                         &mut env,
                     )
                     .await;
+                    finish_dfu(&mut env, dfu).await;
                 }
             }
             Either4::First(InEvent::Admin {
@@ -1890,7 +1960,7 @@ where
                 // for a reset-class command, and for anything the session
                 // declined to respond to at all.
                 let mut reply = AdminFrame::new();
-                {
+                let dfu = {
                     let mut sink = ReplySink::Admin { reply: &mut reply };
                     serve_frame(
                         session,
@@ -1904,9 +1974,15 @@ where
                         &rt,
                         &mut env,
                     )
+                    .await
+                };
+                ADMIN_REPLY
+                    .send(AdminReply {
+                        frame: reply,
+                        completion: dfu.map(|(_, completion)| completion),
+                    })
                     .await;
-                }
-                ADMIN_REPLY.send(reply).await;
+                finish_dfu(&mut env, dfu).await;
             }
             Either4::Second(RxFrame { data, info }) => {
                 // While detached this may stage a delegated MAC

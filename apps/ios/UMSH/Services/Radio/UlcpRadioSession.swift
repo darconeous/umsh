@@ -102,6 +102,8 @@ protocol UlcpFrameLink: AnyObject {
     /// The radio is erasing itself and will reboot. Drop the binding,
     /// but leave the link up: the command still has to reach the wire.
     func linkAbandonBinding()
+    /// Stop automatic reconnect after confirmed DFU, retaining the binding.
+    func linkDidEnterDfu()
 }
 
 /// Everything a companion radio session does above its transport: the
@@ -232,6 +234,7 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
     /// because the Rust session runs one at a time.
     var localManagementWaiter:
         RadioOperationWaiter<UlcpLocalManagementEventRecord>?
+    private var localManagementIsDfu = false
     var propertyPushContinuations:
         [UUID: AsyncStream<UlcpPropertyPushRecord>.Continuation] = [:]
     var meshPumpGeneration = UUID()
@@ -998,6 +1001,25 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
         return answers
     }
 
+    /// Enter DFU only after receiving the target's status response.
+    func enterRemoteDfu(peerAddress: String, mode: UlcpDfuMode) async throws {
+        try await DfuEntryError.perform {
+            let event = try await self.performManagement { session in
+                try session.beginManagementDfu(peerAddress: peerAddress, mode: mode)
+            }
+            return event.statusCode
+        }
+    }
+
+    func enterDfu(mode: UlcpDfuMode) async throws {
+        try await DfuEntryError.perform {
+            let event = try await self.performLocalManagement(dfu: true) { session in
+                try session.enterDfu(mode: mode)
+            }
+            return event.statusCode
+        }
+    }
+
     /// Restart or wipe a device across the mesh.
     ///
     /// The reset-class commands are answered by nothing: the device acts and
@@ -1282,6 +1304,7 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
     /// link-down paths release the waiter the same way they release
     /// everything else.
     func performLocalManagement(
+        dfu: Bool = false,
         _ start: @escaping @Sendable (MobileUlcpSession) throws -> UlcpSessionUpdateRecord
     ) async throws -> UlcpLocalManagementEventRecord {
         let waiter = RadioOperationWaiter<UlcpLocalManagementEventRecord>()
@@ -1300,6 +1323,7 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
                         return
                     }
                     localManagementWaiter = waiter
+                    localManagementIsDfu = dfu
                     do {
                         // An immediate completion—a save with nothing to ask—
                         // resolves the waiter inside this call.
@@ -1317,12 +1341,16 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
     func finishLocalManagement(with event: UlcpLocalManagementEventRecord) {
         guard let waiter = localManagementWaiter else { return }
         localManagementWaiter = nil
+        let enteredDfu = localManagementIsDfu && event.statusCode == 0
+        localManagementIsDfu = false
+        if enteredDfu { link?.linkDidEnterDfu() }
         waiter.resume(returning: event)
     }
 
     func finishLocalManagement(throwing error: any Error) {
         guard let waiter = localManagementWaiter else { return }
         localManagementWaiter = nil
+        localManagementIsDfu = false
         waiter.resume(throwing: error)
     }
 
@@ -1991,7 +2019,11 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
         }
 
         if let event = update.managementEvent {
+            let enteredDfu = localManagementIsDfu && event.statusCode == 0
             finishLocalManagement(with: event)
+            // Do not re-arm linkDidAttach or schedule more radio work from
+            // the snapshot that accompanied the final DFU response.
+            if enteredDfu { return }
         }
         for push in update.pushedProperties {
             for continuation in propertyPushContinuations.values {

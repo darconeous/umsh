@@ -215,6 +215,7 @@ private final class TestRadioLink: UlcpFrameLink {
     func linkDidAttach() {}
     func linkDidReportName(_ name: String) {}
     func linkAbandonBinding() {}
+    func linkDidEnterDfu() {}
 }
 
 @Suite @MainActor

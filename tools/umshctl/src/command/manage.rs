@@ -92,6 +92,14 @@ pub enum ManageOp {
     /// acknowledgment, and a device that cannot restart says so.
     Reboot,
 
+    /// Enter bootloader DFU on the target device.
+    Dfu {
+        #[arg(value_enum, default_value = "default")]
+        mode: super::lifecycle::DfuModeArg,
+        #[arg(long)]
+        yes: bool,
+    },
+
     /// Manage the device's Bluetooth bonds (CAP_BLE). Unlike the
     /// resets above these are property writes and answer with a value:
     /// an administrator is addressing the device's node, not one of its
@@ -165,6 +173,11 @@ impl mesh::RadioErrand for Errand {
 /// Take the attachment over as this tool's radio, run `op` against
 /// `target`, and hand the attachment back.
 pub async fn run(app: &mut App, target: KeyArg, op: Operation) -> Result<()> {
+    if let Operation::Manage(ManageOp::Dfu { mode, yes }) = &op {
+        if !super::lifecycle::confirm_dfu(app.interactive, *yes, &address(&target.0), *mode)? {
+            return Ok(());
+        }
+    }
     // Ask before borrowing the radio: a cancelled wipe should not have
     // cost an attach, and this is the last point where the terminal is
     // still ours.
@@ -354,6 +367,22 @@ async fn run_op(ctl: &mut Ctl<'_>, op: Operation, no_save: bool) -> Result<()> {
                 Outcome::Replied { .. } => report_value(prop::LAST_STATUS, ctl.manager.reply()),
                 Outcome::Failed(failure) => Err(describe(failure)),
             }
+        }
+        ManageOp::Dfu { mode, .. } => {
+            let reply = ctl
+                .reply(&encode(|buf| frame::dfu(buf, 0, Some(mode.into())))?)
+                .await
+                .map_err(|error| anyhow!("DFU entry could not be confirmed: {error}"))?;
+            match reply::status_of(&reply) {
+                Some(Status::OK) => {}
+                Some(Status::UNIMPLEMENTED | Status::INVALID_COMMAND) => {
+                    bail!("this firmware does not support the requested DFU mode")
+                }
+                Some(status) => bail!("the device refused DFU entry: {status:?}"),
+                None => bail!("DFU entry could not be confirmed: unexpected response"),
+            }
+            println!("DFU entry confirmed; the target device is leaving UMSH");
+            Ok(())
         }
         ManageOp::Reboot => {
             match ctl.exchange(&encode(|buf| frame::reboot(buf, 0))?).await? {

@@ -169,6 +169,24 @@ back, and a repeater that restarts takes its stretch of the network with
 it. `CMD_REBOOT` is nonetheless within an administrator's reach, because
 the node it is most worth sending to is the one nobody can walk to.
 
+### DFU Entry {#dfu}
+
+[`CMD_DFU`](ulcp-core.md#cmd-dfu) uses an ordinary request/response
+exchange with TID zero and the request token in the Node Management
+Response. A MAC acknowledgment confirms delivery only; it does not confirm
+DFU acceptance. The device finishes fallible preparation and persists
+replay-counter state before emitting `STATUS_OK`, then enters the
+bootloader after that specific response transmits. No additional wire
+acknowledgment is requested for the response.
+
+A pending handoff belongs to its retained reply. Retries cannot initiate
+another handoff. If transmission fails, is canceled, or exceeds the
+completion deadline, the device remains running and replaces the retained
+success with a failure, so a later retry cannot falsely confirm entry.
+Normal administrator authorization applies; DFU preserves saved settings
+and credentials. The administrator stops operating on the target after
+confirmed entry, while its companion-radio connection remains intact.
+
 ### Retries and At-Most-Once Processing {#at-most-once}
 
 The MAC layer's replay protection means a device never receives the same

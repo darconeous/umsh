@@ -58,6 +58,7 @@ struct DeviceManagementBackend {
     /// doing the thing and saying nothing, so success here means the
     /// command was delivered, not that the device has finished.
     var reset: (String, MobileMeshResetScope) async throws -> Void
+    var enterDfu: (String, UlcpDfuMode) async throws -> Void
     /// Ask the device to announce itself now. Answered, so returning means
     /// the device said it had the announcement queued; when it actually
     /// goes out is up to channel access and the device's duty limit.
@@ -139,6 +140,7 @@ final class ManageDeviceModel {
     /// The device may run one operation at a time, so the whole screen is
     /// held while any of them is out.
     private(set) var isBusy = false
+    private(set) var enteredDfu = false
     /// Properties the running fetch has yet to ask for, for progress.
     private(set) var propertiesRemaining: UInt32?
     /// What went wrong, in a sentence an operator can act on.
@@ -763,6 +765,14 @@ final class ManageDeviceModel {
 
     // MARK: - Acting on the device
 
+    /// Stop management only after the device has confirmed entry.
+    func enterDfu(_ mode: UlcpDfuMode) async {
+        await run { [self] in
+            try await management.enterDfu(address, mode)
+            enteredDfu = true
+        }
+    }
+
     /// Restart the device, keeping everything it has configured.
     ///
     /// Nothing here changes, so nothing is invalidated: the same device
@@ -852,7 +862,7 @@ final class ManageDeviceModel {
     /// Run one operation against the device, holding the screen while it is
     /// out and turning whatever went wrong into a sentence.
     private func run(_ operation: () async throws -> Void) async {
-        guard !isBusy else { return }
+        guard !isBusy, !enteredDfu else { return }
         isBusy = true
         problem = nil
         defer {
@@ -906,7 +916,8 @@ final class ManageDeviceModel {
     /// to a node it does not list, so "no reply" and "not an administrator"
     /// arrive identically and the copy has to carry both.
     static func text(for error: any Error) -> String {
-        switch error as? RemoteManagementError {
+        if let error = error as? DfuEntryError { return error.localizedDescription }
+        return switch error as? RemoteManagementError {
         case .noAnswer:
             """
             No response—this phone may not be an administrator of that \

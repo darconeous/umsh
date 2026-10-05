@@ -107,12 +107,9 @@ pub enum Cmd {
     /// `CMD_FACTORY_RESET` it does not reply. Requires `CAP_REBOOT`; a
     /// device without it answers `STATUS_UNIMPLEMENTED` instead.
     Reboot = 16,
-    // 17 and 18 briefly held CMD_BLE_CLEAR_BONDS and
-    // CMD_BLE_START_PAIRING. Both were states wearing a command's
-    // clothes: forgetting every host is `PROP_BLE_BOND_COUNT` written to
-    // zero, and the pairing window is `PROP_BLE_PAIRING`. A property can
-    // be read back and can publish itself moving, which a command that
-    // only acts can never do.
+    /// Enter bootloader DFU after transmitting a successful status response.
+    /// Empty payload selects Default; otherwise one [`crate::DfuMode`] byte.
+    Dfu = 17,
     /// Announce the device now (host to device): send an advertisement or
     /// a beacon, as a broadcast or on one of the device's own channels.
     /// The payload is an option list; see [`crate::announce`]. Requires
@@ -167,6 +164,7 @@ impl Cmd {
             14 => Some(Self::Restore),
             15 => Some(Self::FactoryReset),
             16 => Some(Self::Reboot),
+            17 => Some(Self::Dfu),
             19 => Some(Self::Announce),
             21 => Some(Self::PropMultiGet),
             22 => Some(Self::PropMultiSet),
@@ -634,6 +632,15 @@ pub fn reboot(buf: &mut [u8], tid: u8) -> Result<usize, WriteError> {
     Ok(FrameWriter::new(buf, tid, Cmd::Reboot)?.finish())
 }
 
+/// Encode `CMD_DFU`. Omission and explicit Default have identical semantics.
+pub fn dfu(buf: &mut [u8], tid: u8, mode: Option<crate::DfuMode>) -> Result<usize, WriteError> {
+    let mut writer = FrameWriter::new(buf, tid, Cmd::Dfu)?;
+    if let Some(mode) = mode {
+        writer.write_u8(mode as u8)?;
+    }
+    Ok(writer.finish())
+}
+
 /// Encode a `CMD_ANNOUNCE` frame: the options that differ from their
 /// defaults, in the multi-property entry form.
 pub fn announce(
@@ -923,11 +930,11 @@ mod tests {
 
     #[test]
     fn every_assigned_command_round_trips() {
-        for id in (0..=16u8).chain([19]).chain(21..=27) {
+        for id in (0..=17u8).chain([19]).chain(21..=27) {
             let cmd = Cmd::from_u8(id).unwrap_or_else(|| panic!("command {id} unassigned"));
             assert_eq!(cmd as u8, id);
         }
-        for id in (17..=18u8).chain([20]).chain(28..=127) {
+        for id in [18u8, 20].into_iter().chain(28..=127) {
             assert_eq!(Cmd::from_u8(id), None, "command {id} should be unassigned");
         }
     }

@@ -99,6 +99,8 @@ mod ble_store;
 mod bme280;
 #[cfg(target_os = "none")]
 mod device_node;
+#[cfg(target_os = "none")]
+mod dfu;
 mod proto_store;
 #[cfg_attr(not(target_os = "none"), allow(dead_code))]
 mod temperature;
@@ -2084,6 +2086,26 @@ mod firmware {
             cortex_m::peripheral::SCB::sys_reset()
         }
 
+        async fn prepare_dfu(
+            &mut self,
+            mode: umsh_ulcp::DfuMode,
+        ) -> Result<umsh_ulcp::DfuMode, umsh_ulcp::Status> {
+            let mode = super::dfu::prepare(mode)?;
+            umsh_ulcp_runtime::device_node::prepare_for_dfu()
+                .await
+                .map_err(|_| umsh_ulcp::Status::FAILURE)?;
+            Ok(mode)
+        }
+
+        fn enter_dfu(&mut self, mode: umsh_ulcp::DfuMode) -> ! {
+            use umsh_bsp_nrf52840::gpregret;
+            match mode {
+                umsh_ulcp::DfuMode::Default | umsh_ulcp::DfuMode::Uf2 => gpregret::enter_dfu_uf2(),
+                umsh_ulcp::DfuMode::Serial => gpregret::enter_dfu_serial(),
+                umsh_ulcp::DfuMode::Ble => gpregret::enter_dfu_ble(),
+            }
+        }
+
         async fn reboot(&mut self) -> ! {
             // Settle the mesh first: air the MAC acknowledgment that
             // answers a mesh-commanded reboot, and force the frame
@@ -2464,12 +2486,21 @@ mod firmware {
         conn: &GattConnection<'_, '_, DefaultPacketPool>,
         outbound: OutFrame,
     ) -> Result<(), trouble_host::Error> {
+        if outbound
+            .completion
+            .is_some_and(|completion| !completion.is_pending())
+        {
+            return Ok(());
+        }
         if SESSION_GEN.load(Ordering::Acquire) != outbound.generation {
             debug_log(format_args!(
                 "ble outbound dropped stale-generation frame-gen={} active-gen={}",
                 outbound.generation,
                 SESSION_GEN.load(Ordering::Acquire),
             ));
+            if let Some(completion) = outbound.completion {
+                completion.complete(false);
+            }
             return Ok(());
         }
         let segment_payload = usize::from(conn.raw().att_mtu())
@@ -2482,6 +2513,12 @@ mod firmware {
         );
         let mut segments = segments.peekable();
         while let Some(segment) = segments.next() {
+            if outbound
+                .completion
+                .is_some_and(|completion| !completion.is_pending())
+            {
+                return Ok(());
+            }
             let mut value: heapless09::Vec<u8, BLE_VALUE_MAX> = heapless09::Vec::new();
             value
                 .push(segment.header())
@@ -2491,7 +2528,8 @@ mod firmware {
                 .map_err(|_| trouble_host::Error::InsufficientSpace)?;
             BLE_CONTROLLER_STATE.notification(
                 server.ulcp.frame_out.handle,
-                outbound.finish_ble_wipe && segments.peek().is_none(),
+                (outbound.finish_ble_wipe || outbound.completion.is_some())
+                    && segments.peek().is_none(),
             );
             server.ulcp.frame_out.notify(conn, &value, false).await?;
         }
@@ -2499,6 +2537,18 @@ mod firmware {
             debug_log(format_args!(
                 "ble outbound segmentation stopped generation-changed"
             ));
+        }
+        if let Some(completion) = outbound.completion {
+            while completion.is_pending()
+                && !BLE_CONTROLLER_STATE.fence_done()
+                && !BLE_CONTROLLER_STATE.link_failed()
+            {
+                Timer::after_millis(5).await;
+            }
+            completion.complete(
+                BLE_CONTROLLER_STATE.fence_done()
+                    && SESSION_GEN.load(Ordering::Acquire) == outbound.generation,
+            );
         }
         if outbound.finish_ble_wipe {
             let deadline = Instant::now() + Duration::from_secs(10);
@@ -3160,8 +3210,35 @@ mod firmware {
                             || (outbound.finish_ble_wipe
                                 && BLE_WIPE_WAITING_REPLY.load(Ordering::Acquire)))
                     {
-                        send_ble_frame(server, conn, outbound).await?;
+                        let completion = outbound.completion;
+                        let result = if let Some(completion) = completion {
+                            match embassy_time::with_deadline(
+                                completion.deadline(),
+                                send_ble_frame(server, conn, outbound),
+                            )
+                            .await
+                            {
+                                Ok(result) => result,
+                                Err(_) => {
+                                    completion.complete(false);
+                                    // Discard controller-queued segments from the expired reply.
+                                    conn.raw().disconnect();
+                                    break;
+                                }
+                            }
+                        } else {
+                            send_ble_frame(server, conn, outbound).await
+                        };
+                        if result.is_err() {
+                            if let Some(completion) = completion {
+                                completion.complete(false);
+                            }
+                        }
+                        result?;
                     } else {
+                        if let Some(completion) = outbound.completion {
+                            completion.complete(false);
+                        }
                         debug_log(format_args!(
                             "ble outbound dropped attached={} bonded={} level={:?}",
                             attached,
@@ -3573,12 +3650,50 @@ mod firmware {
             #[cfg(not(feature = "ble-debug"))]
             let outbound = OUT_CH.wired.receive().await;
             if SESSION_GEN.load(Ordering::Acquire) != outbound.generation {
+                if let Some(completion) = outbound.completion {
+                    completion.complete(false);
+                }
+                continue;
+            }
+            if outbound
+                .completion
+                .is_some_and(|completion| !completion.is_pending())
+            {
                 continue;
             }
             let mut wire = [0u8; WIRE_MAX];
             let Ok(len) = hdlc::encode_frame(&outbound.frame, &mut wire) else {
+                if let Some(completion) = outbound.completion {
+                    completion.complete(false);
+                }
                 continue;
             };
+            if let Some(completion) = outbound.completion {
+                let send = async {
+                    for chunk in wire[..len].chunks(64) {
+                        if !tx.dtr()
+                            || !completion.is_pending()
+                            || SESSION_GEN.load(Ordering::Acquire) != outbound.generation
+                        {
+                            return false;
+                        }
+                        if tx.write_packet(chunk).await.is_err() {
+                            return false;
+                        }
+                    }
+                    // embassy-nrf's write waits for the previous packet's
+                    // EPDATA acknowledgement before loading the next DMA.
+                    // A final ZLP fences the response's final packet without
+                    // modifying dependencies or adding bytes to the ULCP frame.
+                    tx.write_packet(&[]).await.is_ok()
+                        && SESSION_GEN.load(Ordering::Acquire) == outbound.generation
+                };
+                let sent = embassy_time::with_deadline(completion.deadline(), send)
+                    .await
+                    .unwrap_or(false);
+                completion.complete(sent);
+                continue;
+            }
             for chunk in generation_checked(wire[..len].chunks(64), outbound.generation, || {
                 SESSION_GEN.load(Ordering::Acquire)
             }) {

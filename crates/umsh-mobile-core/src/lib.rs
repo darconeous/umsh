@@ -41,8 +41,8 @@ pub use regions::{
 };
 pub use ulcp::{
     GattSegmentRecord, MobileGattReassembler, MobileUlcpSession, UlcpAlertState, UlcpAttachMode,
-    UlcpBatteryRecord, UlcpChargeState, UlcpDeviceConfigRecord, UlcpFixKind, UlcpGnssRecord,
-    UlcpGnssSettingsRecord, UlcpHostOwnership, UlcpIdentPositionRecord,
+    UlcpBatteryRecord, UlcpChargeState, UlcpDeviceConfigRecord, UlcpDfuMode, UlcpFixKind,
+    UlcpGnssRecord, UlcpGnssSettingsRecord, UlcpHostOwnership, UlcpIdentPositionRecord,
     UlcpMismatchedResponseRecord, UlcpOperationErrorRecord, UlcpPropertyFrameRecord,
     UlcpRadioSettingsRecord, UlcpReceivedFrameRecord, UlcpRepeaterSettingsRecord, UlcpSessionPhase,
     UlcpSessionSnapshotRecord, UlcpSessionUpdateRecord, UlcpSyncRecord, UlcpTimeRecord,

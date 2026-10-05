@@ -21,7 +21,7 @@ use core::sync::atomic::{AtomicU32, Ordering};
 use embassy_sync::blocking_mutex::Mutex as BlockingMutex;
 use embassy_sync::blocking_mutex::raw::{CriticalSectionRawMutex, RawMutex};
 use embassy_sync::channel::Channel;
-use embassy_time::Instant;
+use embassy_time::{Duration, Instant, Timer};
 
 use umsh_core::{ChannelId, PayloadType, PublicKey};
 use umsh_hal::CounterStore;
@@ -32,8 +32,11 @@ use umsh_node_mgmt::fragment::{continuable, produce};
 use umsh_ulcp_device::{MAX_DEV_ADMINS, MULTI_MAX};
 
 use crate::device_node::{DeviceNode, NodeMutex};
-use crate::driver::{ADMIN_REPLY, AdminFrame, DevDomainSnapshot, InEvent, InputChannel};
+use crate::driver::{
+    ADMIN_REPLY, AdminFrame, AdminReply, DevDomainSnapshot, InEvent, InputChannel,
+};
 use crate::log::debug_log;
+use crate::reply_completion::ReplyCompletion;
 
 /// What one secure unicast frame spends before its application payload
 /// begins, itemized against the packet format:
@@ -248,6 +251,7 @@ pub async fn responder_loop<CS: CounterStore + 'static, M: RawMutex + 'static>(
         let request = REQUESTS.receive().await;
         let generation = GENERATION.load(Ordering::Relaxed) as u16;
         let now_ms = Instant::now().as_millis();
+        let mut completion = None;
         let len = match engine.begin(
             &request.from,
             &request.payload,
@@ -262,10 +266,14 @@ pub async fn responder_loop<CS: CounterStore + 'static, M: RawMutex + 'static>(
             Ingress::Respond { len } => Some(len),
             Ingress::Dispatch(dispatch) => {
                 let reply = serve(input, &dispatch).await;
-                let produced = produce(&reply, &dispatch, &mut cut);
+                completion = reply.completion;
+                let produced = produce(&reply.frame, &dispatch, &mut cut);
                 match engine.complete(produced, &mut out) {
                     Ok(len) => len,
                     Err(error) => {
+                        if let Some(completion) = completion {
+                            completion.complete(false);
+                        }
                         // Nothing goes out. The administrator retransmits,
                         // and gets here again—which is the honest
                         // outcome for a reply this device cannot carry.
@@ -278,7 +286,19 @@ pub async fn responder_loop<CS: CounterStore + 'static, M: RawMutex + 'static>(
         // A reset-class command is answered by no payload at all; its
         // delivery was confirmed by the MAC acknowledgment of the request.
         let Some(len) = len else { continue };
-        respond(&node, &request.from, request.channel, &out[..len]).await;
+        let sent = respond(
+            &node,
+            &request.from,
+            request.channel,
+            &out[..len],
+            completion,
+        )
+        .await;
+        if let Some(completion) = completion {
+            if !completion.complete(sent) {
+                engine.fail_retained(&request.from, [request.payload[0], request.payload[1]]);
+            }
+        }
     }
 }
 
@@ -290,7 +310,7 @@ pub async fn responder_loop<CS: CounterStore + 'static, M: RawMutex + 'static>(
 async fn serve<M: RawMutex + 'static>(
     input: &'static InputChannel<M>,
     dispatch: &Dispatch<'_>,
-) -> AdminFrame {
+) -> AdminReply {
     let mut frame = AdminFrame::new();
     if frame.extend_from_slice(dispatch.frame).is_err() {
         // The frame came out of a payload smaller than this buffer.
@@ -298,7 +318,10 @@ async fn serve<M: RawMutex + 'static>(
             false,
             "admin request frame exceeds the driver's frame buffer"
         );
-        return AdminFrame::new();
+        return AdminReply {
+            frame: AdminFrame::new(),
+            completion: None,
+        };
     }
     // A read may be continued with a cursor, so let the session build the
     // whole answer and cut it down here. Everything else—a write
@@ -329,7 +352,8 @@ async fn respond<CS: CounterStore + 'static>(
     to: &[u8; 32],
     channel: Option<ChannelId>,
     payload: &[u8],
-) {
+    completion: Option<ReplyCompletion>,
+) -> bool {
     let mut wire = heapless::Vec::<u8, { ADMIN_PAYLOAD_MAX + 1 }>::new();
     if wire
         .push(PayloadType::NodeManagementResponse as u8)
@@ -337,7 +361,26 @@ async fn respond<CS: CounterStore + 'static>(
         || wire.extend_from_slice(payload).is_err()
     {
         debug_assert!(false, "admin response exceeds ADMIN_PAYLOAD_MAX");
-        return;
+        return false;
+    }
+    if let Some(completion) = completion {
+        if !completion.is_pending() {
+            return false;
+        }
+        let Ok(ticket) = node
+            .send_response_tracked(&PublicKey(*to), channel, &wire)
+            .await
+        else {
+            return false;
+        };
+        while completion.is_pending() && !ticket.is_finished() {
+            Timer::after(Duration::from_millis(5)).await;
+        }
+        let sent = ticket.was_transmitted() && completion.is_pending();
+        if let Some(token) = ticket.token() {
+            node.cancel_send(token).await;
+        }
+        return sent;
     }
     if node
         .send_response(&PublicKey(*to), channel, &wire, &SendOptions::default())
@@ -348,5 +391,7 @@ async fn respond<CS: CounterStore + 'static>(
             "admin: response to {:02x}{:02x}.. FAILED",
             to[0], to[1]
         ));
+        return false;
     }
+    true
 }

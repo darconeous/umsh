@@ -539,6 +539,9 @@ final class AppRuntime {
                     scope: scope
                 )
             },
+            enterDfu: { address, mode in
+                try await self.radioConnection.enterRemoteDfu(peerAddress: address, mode: mode)
+            },
             announce: { address, request in
                 try await self.radioConnection.announceRemoteDevice(
                     peerAddress: address,
@@ -626,6 +629,9 @@ final class AppRuntime {
         }
         management.save = { _ in
             try await self.radioConnection.saveCompanionDevice()
+        }
+        management.enterDfu = { _, mode in
+            try await self.radioConnection.enterDfu(mode: mode)
         }
         management.setAdministrator = { _, key, present in
             present

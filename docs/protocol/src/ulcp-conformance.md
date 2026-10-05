@@ -2,7 +2,7 @@
 
 This chapter is the conformance statement for ULCP. A device that meets
 the requirements below is a ULCP device; everything past them is optional
-and is discovered through `PROP_CAPS`.
+and is discovered through `PROP_CAPS` or a command's defined refusal.
 
 There are no protocol levels, tiers, or profiles. A host that wants a
 plain frame pipe and a host that wants a fully provisioned companion
@@ -35,6 +35,7 @@ Id | Mnemonic       | Required
 6  | `CMD_PROP_IS`  | Always
 9  | `CMD_STR_SEND` | Always
 10 | `CMD_STR_RECV` | Always
+17 | `CMD_DFU`      | Always; unsupported methods return `STATUS_UNIMPLEMENTED`
 
 `CMD_PROP_INSERT`, `CMD_PROP_REMOVE`, and their notifications belong to
 the base grammar rather than to any capability. A device that defines no
@@ -48,6 +49,15 @@ when the capability is not advertised, as **MUST**
 `CMD_CLEAR` and `CMD_FACTORY_RESET`
 are available regardless of capabilities (see
 [Saved State](ulcp-saved-state.md)).
+
+DFU implementations **MUST** validate the optional mode, require a nonzero
+direct TID, finish fallible preparation before success, and wait for the
+matching response's transmission before handing off to the bootloader.
+Transmission failure or timeout **MUST** cancel the handoff and invalidate
+retained success. Tests must cover stale completions, administrative
+retries, and replay-counter persistence failures; a build alone does not
+qualify a bootloader's supported DFU methods. See
+[`CMD_DFU`](ulcp-core.md#cmd-dfu).
 
 ## Properties
 

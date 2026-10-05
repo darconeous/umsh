@@ -10269,6 +10269,91 @@ fn duplicate_key_for_secure_frame(frame: &[u8]) -> DupCacheKey {
 
 type TestMac = Mac<DummyPlatform, 4, 16, 8, 16, 16, 256, 64>;
 
+#[test]
+fn dfu_reply_receipts_track_unicast_transmission_without_wire_acknowledgments() {
+    for blind in [false, true] {
+        for abandon in [false, true] {
+            let mut mac = make_mac();
+            let local = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
+            let peer = test_pubkey(0xAB);
+            let peer_id = mac.add_peer(peer).unwrap();
+            mac.install_pairwise_keys(
+                local,
+                peer_id,
+                PairwiseKeys {
+                    k_enc: [1; 32],
+                    k_mic: [2; 32],
+                },
+            )
+            .unwrap();
+            let key = ChannelKey([0x5A; 32]);
+            let channel = mac.crypto().derive_channel_id(&key);
+            mac.add_channel(key).unwrap();
+            let options = SendOptions {
+                track_transmission: true,
+                ..SendOptions::default().no_flood()
+            };
+            let receipt = if blind {
+                mac.queue_blind_unicast(local, &peer, &channel, b"dfu reply", &options)
+            } else {
+                mac.queue_unicast(local, &peer, b"dfu reply", &options)
+            }
+            .unwrap()
+            .unwrap();
+            assert!(mac.identity(local).unwrap().pending_ack(&receipt).is_none());
+            if abandon {
+                for _ in 0..crate::MAX_CAD_ATTEMPTS {
+                    mac.radio_mut().cad_responses.push_back(true).unwrap();
+                }
+            }
+            let mut transmitted = 0;
+            let mut abandoned = 0;
+            for _ in 0..crate::MAX_CAD_ATTEMPTS {
+                block_on(mac.transmit_next(&mut |_, event| match event {
+                    crate::MacEventRef::Transmitted {
+                        receipt: actual,
+                        wire_bytes,
+                        ..
+                    } => {
+                        assert_eq!(actual, Some(receipt));
+                        let header = PacketHeader::parse(wire_bytes).unwrap();
+                        assert_eq!(
+                            header.fcf.packet_type(),
+                            if blind {
+                                PacketType::BlindUnicast
+                            } else {
+                                PacketType::Unicast
+                            }
+                        );
+                        transmitted += 1;
+                    }
+                    crate::MacEventRef::TxAbandoned {
+                        receipt: actual, ..
+                    } => {
+                        assert_eq!(actual, Some(receipt));
+                        abandoned += 1;
+                    }
+                    _ => {}
+                }))
+                .unwrap();
+                mac.clock().advance_ms(1_000);
+            }
+            assert_eq!(transmitted, usize::from(!abandon));
+            assert_eq!(abandoned, usize::from(abandon));
+            assert!(mac.tx_queue().is_empty());
+            let receipt = mac
+                .queue_unicast(local, &peer, b"cancel", &options)
+                .unwrap()
+                .unwrap();
+            mac.cancel_pending_ack(local, receipt);
+            assert!(
+                mac.tx_queue().is_empty(),
+                "cancel must remove even a non-ACK reply"
+            );
+        }
+    }
+}
+
 fn make_mac() -> TestMac {
     Mac::new(
         DummyRadio::default(),

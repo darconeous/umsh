@@ -19,6 +19,9 @@ pub trait MacBackend: Clone {
     /// Error type returned by the event-loop driver, [`next_event`](Self::next_event).
     type RunError;
 
+    /// Cancel every queued transmission and retry for this local receipt.
+    async fn cancel_send(&self, _identity_id: LocalIdentityId, _receipt: SendReceipt) {}
+
     /// Drive the MAC until one wake cycle completes, invoking `on_event` for
     /// each emitted event.
     ///
@@ -219,6 +222,10 @@ impl<
     type SendError = SendError;
     type CapacityError = CapacityError;
     type RunError = MacError<<P::Radio as umsh_hal::Radio>::Error>;
+
+    async fn cancel_send(&self, identity_id: LocalIdentityId, receipt: SendReceipt) {
+        self.cancel_pending_ack(identity_id, receipt).await;
+    }
 
     async fn next_event(
         &self,

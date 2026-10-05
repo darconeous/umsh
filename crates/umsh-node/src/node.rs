@@ -712,6 +712,29 @@ impl<M: MacBackend> LocalNode<M> {
             .evaluate(&ctx, now_ms)
     }
 
+    /// Observe local transmission of a response without adding a wire ACK.
+    pub async fn send_response_tracked(
+        &self,
+        to: &PublicKey,
+        channel: Option<ChannelId>,
+        payload: &[u8],
+    ) -> Result<SendProgressTicket, crate::MacBackendError<M::SendError, M::CapacityError>> {
+        let options = SendOptions {
+            track_transmission: true,
+            ..SendOptions::default()
+        };
+        let receipt = self
+            .send_response(to, channel, payload, &options)
+            .await?
+            .expect("tracked response must return a local receipt");
+        Ok(self.register_non_ack_send(self.identity_id, receipt))
+    }
+
+    /// Stop a queued response, including any forwarding-confirmation retries.
+    pub async fn cancel_send(&self, token: SendToken) {
+        self.mac.cancel_send(token.identity_id, token.receipt).await;
+    }
+
     /// Send a response over the carriage its request arrived on.
     ///
     /// A blind unicast conceals both endpoints from anyone without the channel

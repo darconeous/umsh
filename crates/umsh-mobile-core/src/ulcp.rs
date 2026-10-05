@@ -771,6 +771,26 @@ struct HostMuteStep {
     insert: bool,
 }
 
+/// Bootloader DFU mode. Support is determined by the device's response.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
+pub enum UlcpDfuMode {
+    Default,
+    Serial,
+    Uf2,
+    Ble,
+}
+
+impl From<UlcpDfuMode> for umsh_ulcp::DfuMode {
+    fn from(mode: UlcpDfuMode) -> Self {
+        match mode {
+            UlcpDfuMode::Default => Self::Default,
+            UlcpDfuMode::Serial => Self::Serial,
+            UlcpDfuMode::Uf2 => Self::Uf2,
+            UlcpDfuMode::Ble => Self::Ble,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum ExpectedResponse {
     Property(u32),
@@ -862,6 +882,7 @@ enum ExpectedResponse {
     /// Answered by a status and nothing else: what the device reports is
     /// that the announcement is queued, and nothing about it is cached.
     ManagementAnnounce,
+    ManagementDfu,
 }
 
 impl ExpectedResponse {
@@ -876,6 +897,7 @@ impl ExpectedResponse {
                 | Self::ManagementItem(_)
                 | Self::ManagementSave
                 | Self::ManagementAnnounce
+                | Self::ManagementDfu
         )
     }
 }
@@ -1250,6 +1272,20 @@ impl MobileUlcpSession {
             .expected
             .insert(tid, ExpectedResponse::ManagementAnnounce);
         Ok(state.update(vec![frame]))
+    }
+
+    /// Request DFU as a response-tracked local operation. Disconnecting
+    /// without receiving STATUS_OK is an unknown outcome, never success.
+    pub fn enter_dfu(&self, mode: UlcpDfuMode) -> Result<UlcpSessionUpdateRecord, MobileError> {
+        let mut state = self.inner.lock().expect("ULCP session mutex poisoned");
+        state.begin_local_management()?;
+        let tid = state.allocate_management_tid()?;
+        let mut buf = [0; 3];
+        let len = frame::dfu(&mut buf, tid, Some(mode.into()))
+            .map_err(|_| MobileError::InvalidUlcpFrame)?;
+        state.management = Some(LocalManagement::default());
+        state.expected.insert(tid, ExpectedResponse::ManagementDfu);
+        Ok(state.update(vec![buf[..len].to_vec()]))
     }
 
     /// Set—or clear—the device's wall clock (`PROP_TIME`).
@@ -2806,8 +2842,9 @@ impl MobileUlcpSession {
             }
             // Both are answered by a status and nothing else, and both
             // are the whole of the operation that issued them.
-            expected
-            @ (ExpectedResponse::ManagementSave | ExpectedResponse::ManagementAnnounce) => {
+            expected @ (ExpectedResponse::ManagementSave
+            | ExpectedResponse::ManagementAnnounce
+            | ExpectedResponse::ManagementDfu) => {
                 if response.property_id != prop::LAST_STATUS
                     || response.command != Cmd::PropIs as u8
                 {
@@ -2815,6 +2852,8 @@ impl MobileUlcpSession {
                     // says so by carrying no status.
                     let operation = if matches!(expected, ExpectedResponse::ManagementSave) {
                         "save device configuration"
+                    } else if matches!(expected, ExpectedResponse::ManagementDfu) {
+                        "enter DFU"
                     } else {
                         "send announcement"
                     };
@@ -10955,6 +10994,52 @@ mod tests {
             cap::IPV4,
             cap::IPV6,
         ])
+    }
+
+    #[test]
+    fn dfu_requires_its_status_response_on_both_local_attach_modes() {
+        use umsh_ulcp::Status;
+        for mode in [
+            UlcpDfuMode::Default,
+            UlcpDfuMode::Serial,
+            UlcpDfuMode::Uf2,
+            UlcpDfuMode::Ble,
+        ] {
+            for session in [
+                MobileUlcpSession::new(),
+                MobileUlcpSession::administrative(),
+            ] {
+                let attached =
+                    attach_commissionable(&session, Some(vec![0xAA; 32]), vec![0xAA; 32]);
+                assert_eq!(attached.snapshot.phase, UlcpSessionPhase::Attached);
+                for status in [
+                    Status::OK,
+                    Status::UNIMPLEMENTED,
+                    Status::INVALID_COMMAND,
+                    Status::FAILURE,
+                ] {
+                    let update = session.enter_dfu(mode).unwrap();
+                    assert!(
+                        update.management_event.is_none(),
+                        "queueing is not confirmation"
+                    );
+                    assert_eq!(update.outbound_frames.len(), 1);
+                    let request = Frame::parse(&update.outbound_frames[0]).unwrap();
+                    assert_eq!(request.command(), Some(Cmd::Dfu));
+                    assert_ne!(request.header.tid(), 0);
+                    assert_eq!(request.payload, &[umsh_ulcp::DfuMode::from(mode) as u8]);
+                    let done = session
+                        .consume(property_response(
+                            request.header.tid(),
+                            prop::LAST_STATUS,
+                            &[status.0 as u8],
+                        ))
+                        .unwrap();
+                    assert_eq!(done.management_event.unwrap().status_code, Some(status.0));
+                    assert!(done.outbound_frames.is_empty());
+                }
+            }
+        }
     }
 
     #[test]

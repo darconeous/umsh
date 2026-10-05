@@ -614,6 +614,10 @@ impl SimulatedDevice {
                     CryptoEngine::new(SoftwareAes, SoftwareSha256),
                 );
             }
+            Some(Effect::Dfu { tid, .. }) => {
+                self.session
+                    .respond_dfu(tid, Err(Status::UNIMPLEMENTED), &mut emit);
+            }
             Some(Effect::Reboot) => {
                 // A power cycle and nothing else: the persisted
                 // artifacts survive, the session comes back announcing

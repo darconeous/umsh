@@ -1177,7 +1177,7 @@ pub async fn identity_profile_loop<CS: CounterStore + 'static>(node: DeviceNode<
 /// at all, and this is the same shape the pairing-PIN round trip already
 /// uses.
 static QUIESCE_REQUEST: Signal<NodeMutex, ()> = Signal::new();
-static QUIESCE_DONE: Signal<NodeMutex, ()> = Signal::new();
+static QUIESCE_DONE: Signal<NodeMutex, Result<(), ()>> = Signal::new();
 
 /// How long a pending transmission may hold up a reboot.
 ///
@@ -1208,12 +1208,18 @@ const QUIESCE_TX_DEADLINE: Duration = Duration::from_secs(3);
 /// A node that never came up has accepted nothing and holds no
 /// acknowledgment; the call returns immediately.
 pub async fn quiesce_for_reboot() {
+    let _ = prepare_for_dfu().await;
+}
+
+/// Preserve accepted replay counters before acknowledging a DFU request.
+/// Unlike unconditional reboot, DFU must refuse if persistence fails.
+pub async fn prepare_for_dfu() -> Result<(), ()> {
     if !NODE_UP.load(Ordering::Relaxed) {
-        return;
+        return Ok(());
     }
     QUIESCE_DONE.reset();
     QUIESCE_REQUEST.signal(());
-    QUIESCE_DONE.wait().await;
+    QUIESCE_DONE.wait().await
 }
 
 /// Answers [`QUIESCE_REQUEST`]; see [`quiesce_for_reboot`].
@@ -1228,13 +1234,13 @@ pub async fn reboot_quiesce_loop<CS: CounterStore + 'static>(mac: DeviceNodeHand
             }
             Timer::after_millis(20).await;
         }
-        if mac.flush_frame_counters().await.is_err() {
-            // Nothing to do but say so: the reboot must happen either
-            // way, and the sender's retries will at worst be absorbed by
-            // the (stale) persisted boundary plus the dedup cache.
+        let result = mac.flush_frame_counters().await;
+        if result.is_err() {
+            // Unconditional reboot still proceeds, but a DFU caller must
+            // refuse before emitting success when persistence fails.
             debug_log(format_args!("reboot quiesce: counter flush FAILED"));
         }
-        QUIESCE_DONE.signal(());
+        QUIESCE_DONE.signal(result);
     }
 }
 

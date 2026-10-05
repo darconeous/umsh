@@ -23,6 +23,7 @@ Id | Mnemonic                                                     | Dir         
 14 | [`CMD_RESTORE`](ulcp-saved-state.md#cmd-restore)             | Host->Device | `CAP_SAVE`
 15 | [`CMD_FACTORY_RESET`](ulcp-saved-state.md#cmd-factory-reset) | Host->Device | —
 16 | [`CMD_REBOOT`](ulcp-core.md#cmd-reboot)                      | Host->Device | `CAP_REBOOT`
+17 | [`CMD_DFU`](ulcp-core.md#cmd-dfu)                            | Host->Device | —
 19 | [`CMD_ANNOUNCE`](ulcp-device.md#cmd-announce)                | Host->Device | `CAP_ADVERT`
 21 | [`CMD_PROP_MULTI_GET`](ulcp-core.md#cmd-prop-multi-get)      | Host->Device | `CAP_CMD_MULTI`
 22 | [`CMD_PROP_MULTI_SET`](ulcp-core.md#cmd-prop-multi-set)      | Host->Device | `CAP_CMD_MULTI`
@@ -32,7 +33,7 @@ Id | Mnemonic                                                     | Dir         
 26 | [`CMD_I2C_RESULT`](ulcp-i2c.md#cmd-i2c-result)               | Device->Host | `CAP_I2C`
 27 | [`CMD_I2C_SCAN`](ulcp-i2c.md#cmd-i2c-scan)                   | Host->Device | `CAP_I2C`
 
-Command identifiers are 7-bit; 17–18, 20, and 28–127 are unassigned.
+Command identifiers are 7-bit; 18, 20, and 28–127 are unassigned.
 
 ## Properties and Streams
 

@@ -1236,6 +1236,12 @@ final class CoreBluetoothRadioConnection: UlcpRadioSession, RadioConnection, Ulc
         defaults.removeObject(forKey: PreferenceKey.connectedUUID)
     }
 
+    func linkDidEnterDfu() {
+        // The ordinary deliberate-disconnect path preserves connectedUUID
+        // and bonds, and disables restored/background reconnection too.
+        disconnectOnQueue()
+    }
+
     private func clearPeripheral() {
         lifecycle.clear()
         retryAttempt = UUID()

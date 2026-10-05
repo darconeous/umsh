@@ -404,6 +404,7 @@ final class AdminFlowController {
                 return state
             },
             reset: { _, scope in try await session.reset(scope: scope) },
+            enterDfu: { _, mode in try await session.enterDfu(mode: mode) },
             announce: { _, request in try await session.announce(request) },
             clearBluetoothBonds: { _ in try await session.clearBluetoothBonds() },
             phoneNodeKey: { [key = phoneNodeKey] in key },

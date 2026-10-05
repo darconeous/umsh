@@ -20,6 +20,7 @@ struct ManageDeviceScreen: View {
     @State private var model: ManageDeviceModel
     @State private var confirmsRestart = false
     @State private var confirmsFactoryReset = false
+    @State private var confirmsDfu = false
 
     init(peer: PeerSummary, management: DeviceManagementBackend, browsing: RemotePeerBrowsing) {
         self.browsing = browsing
@@ -29,15 +30,24 @@ struct ManageDeviceScreen: View {
     var body: some View {
         Form {
             ManageDeviceIdentitySection(model: model)
-            if model.card != nil {
+            if model.enteredDfu {
+                Section {
+                    Label("DFU entry confirmed", systemImage: "checkmark.circle")
+                    Text("The device is leaving UMSH.")
+                }
+            } else if model.card != nil {
                 ManageDeviceCategoriesSection(model: model, browsing: browsing)
                 ManageDeviceLifecycleSection(
                     model: model,
                     confirmsRestart: $confirmsRestart,
-                    confirmsFactoryReset: $confirmsFactoryReset
+                    confirmsFactoryReset: $confirmsFactoryReset,
+                    confirmsDfu: $confirmsDfu
                 )
             }
             RemoteProblemSection(model: model)
+        }
+        .sheet(isPresented: $confirmsDfu) {
+            DfuEntrySheet(model: model)
         }
         .confirmationDialog(
             "Restart this device?",
@@ -70,7 +80,7 @@ struct ManageDeviceScreen: View {
             ToolbarItem(placement: .topBarTrailing) {
                 if model.isBusy {
                     ProgressView()
-                } else {
+                } else if !model.enteredDfu {
                     Button {
                         Task { await model.refreshCard() }
                     } label: {
@@ -84,6 +94,61 @@ struct ManageDeviceScreen: View {
         // top makes this one disappear, and a subscription owned by this
         // view would be cancelled with it.
         .onAppear { model.observePushes() }
+    }
+}
+
+private struct DfuEntrySheet: View {
+    let model: ManageDeviceModel
+    @Environment(\.dismiss) private var dismiss
+    @State private var mode: UlcpDfuMode = .default
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    Text(model.card?.deviceName ?? model.fallbackName)
+                        .font(.headline)
+                    Text(model.address).font(.caption.monospaced())
+                    Picker("DFU Method", selection: $mode) {
+                        Text("Default DFU").tag(UlcpDfuMode.default)
+                        Text("Serial/USB-CDC DFU").tag(UlcpDfuMode.serial)
+                        Text("UF2 (File-copy) DFU").tag(UlcpDfuMode.uf2)
+                        Text("BLE DFU").tag(UlcpDfuMode.ble)
+                    }
+                }
+                Section {
+                    Label("Device may become inaccessible", systemImage: "exclamationmark.triangle.fill")
+                        .font(.headline)
+                        .foregroundStyle(.red)
+                    Text("This device will stop normal operation and may remain inaccessible indefinitely. Continue only if someone is ready to complete the firmware update using the selected method.")
+                    if mode == .ble {
+                        Text("The updater must be within Bluetooth range.")
+                    }
+                    Text("This action only enters DFU; it does not install firmware.")
+                }
+                Section {
+                    Button("Enter DFU Mode", role: .destructive) {
+                        Task {
+                            await model.enterDfu(mode)
+                            if model.enteredDfu { dismiss() }
+                        }
+                    }
+                    if model.isBusy { ProgressView("Waiting for confirmation…") }
+                    if let problem = model.problem {
+                        Text(problem).foregroundStyle(.red)
+                    }
+                }
+            }
+            .disabled(model.isBusy)
+            .navigationTitle("Enter DFU Mode")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }.disabled(model.isBusy)
+                }
+            }
+        }
+        .interactiveDismissDisabled(model.isBusy)
     }
 }
 

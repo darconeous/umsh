@@ -2,7 +2,7 @@
 //! `clear`, `reset`, `factory-reset`, `pin`, `ble`, `identity`, `name`,
 //! and `alert`.
 
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 
 use umsh::core::PublicKey;
 use umsh::ulcp::{FrameLink, UlcpDevice};
@@ -14,6 +14,79 @@ use super::values::PinArg;
 use crate::App;
 use crate::connection::confirm;
 use crate::output::field;
+
+#[derive(Clone, Copy, Debug, Default, clap::ValueEnum)]
+pub enum DfuModeArg {
+    #[default]
+    Default,
+    Serial,
+    Uf2,
+    Ble,
+}
+
+impl From<DfuModeArg> for umsh::ulcp_wire::DfuMode {
+    fn from(mode: DfuModeArg) -> Self {
+        match mode {
+            DfuModeArg::Default => Self::Default,
+            DfuModeArg::Serial => Self::Serial,
+            DfuModeArg::Uf2 => Self::Uf2,
+            DfuModeArg::Ble => Self::Ble,
+        }
+    }
+}
+
+pub fn confirm_dfu(interactive: bool, yes: bool, target: &str, mode: DfuModeArg) -> Result<bool> {
+    let label = match mode {
+        DfuModeArg::Default => "Default",
+        DfuModeArg::Serial => "Serial/USB-CDC",
+        DfuModeArg::Uf2 => "UF2 (File-copy)",
+        DfuModeArg::Ble => "BLE",
+    };
+    let warning = format!(
+        "{target}: enter {label} DFU. This device will stop normal operation and may remain inaccessible indefinitely. Continue only if someone is ready to complete the firmware update using the selected method. This action only enters DFU; it does not install firmware.{}",
+        if matches!(mode, DfuModeArg::Ble) {
+            " The updater must be within Bluetooth range."
+        } else {
+            ""
+        }
+    );
+    if !interactive && !yes {
+        bail!("{warning} Re-run with --yes to confirm.");
+    }
+    println!("{warning}");
+    if yes {
+        return Ok(true);
+    }
+    let confirmed = confirm("enter DFU mode?")?;
+    if !confirmed {
+        println!("canceled");
+    }
+    Ok(confirmed)
+}
+
+pub async fn dfu(app: &mut App, mode: DfuModeArg, yes: bool) -> Result<()> {
+    let target = app
+        .session
+        .as_ref()
+        .map(|session| session.label.as_str())
+        .unwrap_or("connected device");
+    if !confirm_dfu(app.interactive, yes, target, mode)? {
+        return Ok(());
+    }
+    let result = app.device()?.enter_dfu(mode.into()).await;
+    if matches!(
+        result,
+        Err(umsh::ulcp::UlcpError::Status(
+            umsh::ulcp_wire::Status::UNIMPLEMENTED | umsh::ulcp_wire::Status::INVALID_COMMAND
+        ))
+    ) {
+        bail!("this firmware does not support the requested DFU mode");
+    }
+    result.context("DFU entry could not be confirmed")?;
+    println!("DFU entry confirmed; the device is leaving UMSH");
+    app.detach().await;
+    Ok(())
+}
 
 #[derive(Debug, clap::Subcommand)]
 pub enum IdentityOp {

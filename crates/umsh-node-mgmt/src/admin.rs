@@ -522,6 +522,30 @@ mod tests {
         assert!(Admin::new(&buf[..len], 1, 0).unwrap().expects_response());
     }
 
+    #[test]
+    fn dfu_expects_a_status_response() {
+        let mut buf = [0; 8];
+        let len = frame::dfu(&mut buf, 0, Some(umsh_ulcp::DfuMode::Ble)).unwrap();
+        let mut exchange = Admin::new(&buf[..len], 1, 0).unwrap();
+        assert!(exchange.expects_response());
+        let mut out = [0; PAYLOAD];
+        assert!(matches!(exchange.poll(0, &mut out), Step::Send { .. }));
+        // The node adapter calls delivered() only for commands that do not
+        // expect a response; DFU continues waiting under the same token.
+        assert!(matches!(exchange.poll(1, &mut out), Step::Wait { .. }));
+        let mut response = [0; PAYLOAD];
+        let len = frame::last_status(&mut buf, 0, Status::OK).unwrap();
+        let len = Envelope::new(1u16.to_be_bytes(), &buf[..len])
+            .encode(&mut response)
+            .unwrap();
+        let mut storage = [0; 32];
+        let mut reassembly = Reassembly::new(&mut storage);
+        assert!(matches!(
+            exchange.receive(&response[..len], &mut reassembly, 1, &mut out),
+            Some(Step::Done(Outcome::Replied { .. }))
+        ));
+    }
+
     /// Run a whole exchange against a real [`DeviceEngine`], with the
     /// caller's dispatch serving `value` in fragments of at most
     /// `chunk` octets.

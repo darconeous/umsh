@@ -51,6 +51,8 @@ pub mod node_counters;
 #[cfg(feature = "radio")]
 pub mod radio_mux;
 #[cfg(feature = "driver")]
+pub mod reply_completion;
+#[cfg(feature = "driver")]
 pub mod temperature;
 
 #[cfg(feature = "wifi")]

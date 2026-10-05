@@ -188,6 +188,15 @@ pub enum Command {
     /// everything the device has persisted.
     Reboot,
 
+    /// Enter bootloader DFU. The device may remain inaccessible indefinitely.
+    Dfu {
+        #[arg(value_enum, default_value = "default")]
+        mode: lifecycle::DfuModeArg,
+        /// Confirm DFU entry. Required outside the REPL, which asks.
+        #[arg(long)]
+        yes: bool,
+    },
+
     /// Manage the device's Bluetooth bonds (CAP_BLE).
     Ble {
         #[command(subcommand)]
@@ -379,6 +388,7 @@ impl Command {
             Self::Clear => lifecycle::clear(app.device()?).await,
             Self::Reset => lifecycle::reset(app.device()?).await,
             Self::Reboot => lifecycle::reboot(app).await,
+            Self::Dfu { mode, yes } => lifecycle::dfu(app, mode, yes).await,
             Self::Ble { op } => lifecycle::ble(app, op).await,
             Self::FactoryReset { yes } => lifecycle::factory_reset(app, yes).await,
             Self::Pin { value } => lifecycle::pin(app.device()?, value).await,

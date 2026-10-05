@@ -1487,6 +1487,22 @@ impl MobileMeshSession {
         )
     }
 
+    /// Enter DFU across the mesh, requiring the device's status response.
+    pub fn begin_management_dfu(
+        &self,
+        peer_address: String,
+        mode: crate::ulcp::UlcpDfuMode,
+    ) -> Result<u64, MobileMeshError> {
+        let frame = encode_management(|buf| frame::dfu(buf, 0, Some(mode.into())))?;
+        self.begin_management(
+            peer_address,
+            ManagementRequest::One {
+                frame,
+                shape: ReplyShape::Status,
+            },
+        )
+    }
+
     /// Reset a device across the mesh.
     ///
     /// A device answers a reset with nothing—it is busy doing what was

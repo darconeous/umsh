@@ -804,6 +804,16 @@ final class AdministrativeDeviceSession: NSObject, @unchecked Sendable {
         }
     }
 
+    func enterDfu(mode: UlcpDfuMode) async throws {
+        try await DfuEntryError.perform {
+            let event = try await self.performManagement { session in
+                try session.enterDfu(mode: mode)
+            }
+            return event.statusCode
+        }
+        await disconnect()
+    }
+
     /// Values the attached device announces on its own, verbatim.
     func propertyPushes() async -> AsyncStream<UlcpPropertyPushRecord> {
         await withCheckedContinuation { result in

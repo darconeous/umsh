@@ -20,6 +20,7 @@ local COMMANDS = {
   [14] = "CMD_RESTORE",
   [15] = "CMD_FACTORY_RESET",
   [16] = "CMD_REBOOT",
+  [17] = "CMD_DFU",
   [19] = "CMD_ANNOUNCE",
   [21] = "CMD_PROP_MULTI_GET",
   [22] = "CMD_PROP_MULTI_SET",
@@ -38,7 +39,7 @@ M.COMMANDS = COMMANDS
 M.COMMAND_TO_DEVICE = {
   [0] = true, [1] = true, [2] = true, [3] = true, [4] = true, [5] = true,
   [9] = true, [11] = true, [12] = true, [13] = true, [14] = true,
-  [15] = true, [16] = true, [19] = true,
+  [15] = true, [16] = true, [17] = true, [19] = true,
   [21] = true, [22] = true, [25] = true, [27] = true,
 }
 M.COMMAND_TO_HOST = {
@@ -245,6 +246,8 @@ f.flag = ProtoField.uint8("umsh.ulcp.flag", "Flag", base.DEC, nil, 0xc0)
 f.reserved = ProtoField.uint8("umsh.ulcp.reserved", "Reserved", base.HEX, nil, 0x38)
 f.tid = ProtoField.uint8("umsh.ulcp.tid", "Transaction ID", base.DEC, nil, 0x07)
 f.command = ProtoField.uint8("umsh.ulcp.command", "Command", base.DEC, COMMANDS)
+local DFU_MODES = {[0] = "Default", [1] = "Serial/USB-CDC", [2] = "UF2", [3] = "BLE"}
+f.dfu_mode = ProtoField.uint8("umsh.ulcp.dfu_mode", "DFU method", base.DEC, DFU_MODES)
 f.property = ProtoField.uint32("umsh.ulcp.property", "Property", base.DEC, PROPERTIES)
 f.capability = ProtoField.uint32("umsh.ulcp.capability", "Capability", base.DEC, CAPABILITIES)
 f.property_value = ProtoField.bytes("umsh.ulcp.property_value", "Property Value")
@@ -351,6 +354,17 @@ local function dissect_frame(buf, pinfo, tree, direction)
         root:add(f.property_value, buf(value_offset))
         if command == 6 and key == 5 then add_capabilities(root, buf(value_offset):tvb()) end
       end
+    end
+  elseif command == 17 then
+    if buf:len() > 3 then
+      add_malformed(root, "CMD_DFU accepts at most one mode byte")
+    elseif buf:len() == 3 then
+      local mode = buf(2, 1):uint()
+      root:add(f.dfu_mode, buf(2, 1))
+      info = info .. " " .. (DFU_MODES[mode] or "Undefined DFU method")
+      if not DFU_MODES[mode] then add_malformed(root, "undefined DFU method") end
+    else
+      info = info .. " Default"
     end
   elseif command == 21 then
     -- CMD_PROP_MULTI_GET: property keys one after another, no delimiters.

@@ -223,6 +223,10 @@ impl SimDevice {
             // the way up. Nothing is emitted—on hardware the reboot
             // drops the link before anything could be.
             Some(Effect::Reboot) => self.boot(),
+            Some(Effect::Dfu { tid, .. }) => {
+                self.session
+                    .respond_dfu(tid, Err(Status::UNIMPLEMENTED), &mut emit)
+            }
             // The node behind this session is simulated, so an
             // announcement is queued and nothing reaches the air; the
             // status reports the queuing, the way it does on a board.
@@ -1371,6 +1375,24 @@ async fn bonds_are_cleared_and_the_count_follows() {
             .unwrap(),
         vec![0]
     );
+}
+
+#[tokio::test]
+async fn dfu_refusal_leaves_the_host_session_and_persistent_settings_intact() {
+    let sim = SimDevice::new();
+    let mut radio = attached_host(&sim).await;
+    for mode in [
+        umsh_ulcp::DfuMode::Default,
+        umsh_ulcp::DfuMode::Serial,
+        umsh_ulcp::DfuMode::Uf2,
+        umsh_ulcp::DfuMode::Ble,
+    ] {
+        assert!(matches!(
+            radio.enter_dfu(mode).await,
+            Err(UlcpError::Status(Status::UNIMPLEMENTED))
+        ));
+        assert!(radio.get_prop(umsh_ulcp::ids::prop::DEV_NAME).await.is_ok());
+    }
 }
 
 /// `CMD_REBOOT` is the one reset that puts nothing back: the device

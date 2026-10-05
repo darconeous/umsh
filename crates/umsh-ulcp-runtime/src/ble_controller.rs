@@ -66,6 +66,7 @@ struct State {
     notification_active: bool,
     fence_notification: u64,
     fence_packet: Option<u64>,
+    fence_transmitted: bool,
 }
 
 impl State {
@@ -99,16 +100,27 @@ impl State {
                 self.written_notifications += 1;
                 if self.fence_notification == self.written_notifications {
                     self.fence_packet = Some(self.sent);
+                    self.latch_fence();
                 }
             }
         }
     }
-    fn fence_done(&self) -> bool {
-        !self.tx_failed
+    fn latch_fence(&mut self) {
+        self.fence_transmitted |= !self.tx_failed
             && !self.disconnected
             && self
                 .fence_packet
-                .is_some_and(|packet| self.completed >= packet)
+                .is_some_and(|packet| self.completed >= packet);
+    }
+    fn completed_packets(&mut self, count: u16) {
+        self.completed += u64::from(count);
+        self.latch_fence();
+    }
+    fn fence_done(&self) -> bool {
+        // A host may disconnect immediately after receiving the response.
+        // Preserve a completion observed before that disconnect; completion
+        // credits flushed after disconnection cannot authorize a handoff.
+        self.fence_transmitted
     }
 }
 
@@ -143,6 +155,7 @@ impl ControllerState {
                 notification_active: false,
                 fence_notification: 0,
                 fence_packet: None,
+                fence_transmitted: false,
             })),
             embassy_sync::signal::Signal::new(),
         )
@@ -206,6 +219,7 @@ impl ControllerState {
             if final_reply {
                 s.fence_notification = s.queued_notifications;
                 s.fence_packet = None;
+                s.fence_transmitted = false;
             }
         });
     }
@@ -263,7 +277,7 @@ impl<C: Controller> Controller for Guarded<C> {
                     {
                         for entry in completed.completed_packets {
                             if let Ok(count) = entry.num_completed_packets() {
-                                self.state.with(|s| s.completed += u64::from(count));
+                                self.state.with(|s| s.completed_packets(count));
                             }
                         }
                     }
@@ -443,17 +457,32 @@ mod tests {
         };
         let earlier = [4, 0, 4, 0, 0x1b, 3, 0, 42];
         s.acl(&earlier, false);
-        s.completed = 1;
+        s.completed_packets(1);
         assert!(!s.fence_done());
         s.acl(&[6, 0, 4, 0, 0x1b, 3, 0, 42], false);
-        s.completed = 2;
+        s.completed_packets(1);
         assert!(!s.fence_done());
         s.acl(&[43, 44], true);
         assert!(!s.fence_done());
-        s.completed = 3;
+        s.completed_packets(1);
         assert!(s.fence_done());
         s.disconnected = true;
-        assert!(!s.fence_done());
+        assert!(
+            s.fence_done(),
+            "a subsequent disconnect cannot undo a transmitted response"
+        );
+        let mut canceled = State {
+            notify_handle: 3,
+            fence_notification: 1,
+            ..State::default()
+        };
+        canceled.acl(&earlier, false);
+        canceled.disconnected = true;
+        canceled.completed_packets(1);
+        assert!(
+            !canceled.fence_done(),
+            "disconnect credits cannot confirm transmission"
+        );
     }
     #[test]
     fn privacy_is_fail_closed() {

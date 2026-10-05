@@ -28,6 +28,7 @@ pub mod battery_gauge_telemetry;
 pub mod ble;
 pub mod bridge;
 pub mod describe;
+pub mod dfu;
 pub mod frame;
 pub mod gatt;
 pub mod gnss;
@@ -54,6 +55,7 @@ pub use battery::{BatteryChargeState, BatteryError, BatteryStatus};
 pub use describe::{
     FrameDescription, PROPERTIES, PropertyType, capability_name, property_name, property_type,
 };
+pub use dfu::DfuMode;
 pub use frame::{
     Cmd, Frame, FrameWriter, Header, MultiEntries, MultiEntry, MultiGetKeys, PropPayload,
     StreamPayload,

@@ -1352,6 +1352,11 @@ public protocol MobileMeshSessionProtocol: AnyObject, Sendable {
     func beginManagementAnnounce(peerAddress: String, request: MobileAnnouncementRecord) throws  -> UInt64
 
     /**
+     * Enter DFU across the mesh, requiring the device's status response.
+     */
+    func beginManagementDfu(peerAddress: String, mode: UlcpDfuMode) throws  -> UInt64
+
+    /**
      * Read a named set of properties across the mesh.
      *
      * The caller names what it wants, in as many exchanges as the
@@ -1908,6 +1913,20 @@ open func beginManagementAnnounce(peerAddress: String, request: MobileAnnounceme
             self.uniffiCloneHandle(),
         FfiConverterString.lower(peerAddress),
         FfiConverterTypeMobileAnnouncementRecord_lower(request),uniffiCallStatus
+    )
+})
+}
+
+    /**
+     * Enter DFU across the mesh, requiring the device's status response.
+     */
+open func beginManagementDfu(peerAddress: String, mode: UlcpDfuMode)throws  -> UInt64  {
+    return try  FfiConverterUInt64.lift(try rustCallWithError(FfiConverterTypeMobileMeshError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobilemeshsession_begin_management_dfu(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(peerAddress),
+        FfiConverterTypeUlcpDfuMode_lower(mode),uniffiCallStatus
     )
 })
 }
@@ -3520,6 +3539,12 @@ public protocol MobileUlcpSessionProtocol: AnyObject, Sendable {
     func drainQueue() throws  -> UlcpSessionUpdateRecord
 
     /**
+     * Request DFU as a response-tracked local operation. Disconnecting
+     * without receiving STATUS_OK is an unknown outcome, never success.
+     */
+    func enterDfu(mode: UlcpDfuMode) throws  -> UlcpSessionUpdateRecord
+
+    /**
      * Erase ALL mutable state on the radio (saved provisioning, device
      * identity, BLE bonds, pairing PIN, every persisted journal) and
      * reboot it. The radio does not reply—the reset drops the link—
@@ -4155,6 +4180,20 @@ open func drainQueue()throws  -> UlcpSessionUpdateRecord  {
         uniffiCallStatus in
     uniffi_umsh_mobile_core_fn_method_mobileulcpsession_drain_queue(
             self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+
+    /**
+     * Request DFU as a response-tracked local operation. Disconnecting
+     * without receiving STATUS_OK is an unknown outcome, never success.
+     */
+open func enterDfu(mode: UlcpDfuMode)throws  -> UlcpSessionUpdateRecord  {
+    return try  FfiConverterTypeUlcpSessionUpdateRecord_lift(try rustCallWithError(FfiConverterTypeMobileError_lift) {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobileulcpsession_enter_dfu(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeUlcpDfuMode_lower(mode),uniffiCallStatus
     )
 })
 }
@@ -14800,6 +14839,89 @@ public func FfiConverterTypeUlcpChargeState_lower(_ value: UlcpChargeState) -> R
 
 
 /**
+ * Bootloader DFU mode. Support is determined by the device's response.
+ */
+
+public enum UlcpDfuMode: Equatable, Hashable {
+
+    case `default`
+    case serial
+    case uf2
+    case ble
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension UlcpDfuMode: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeUlcpDfuMode: FfiConverterRustBuffer {
+    typealias SwiftType = UlcpDfuMode
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> UlcpDfuMode {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .`default`
+
+        case 2: return .serial
+
+        case 3: return .uf2
+
+        case 4: return .ble
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: UlcpDfuMode, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .`default`:
+            writeInt(&buf, Int32(1))
+
+
+        case .serial:
+            writeInt(&buf, Int32(2))
+
+
+        case .uf2:
+            writeInt(&buf, Int32(3))
+
+
+        case .ble:
+            writeInt(&buf, Int32(4))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeUlcpDfuMode_lift(_ buf: RustBuffer) throws -> UlcpDfuMode {
+    return try FfiConverterTypeUlcpDfuMode.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeUlcpDfuMode_lower(_ value: UlcpDfuMode) -> RustBuffer {
+    return FfiConverterTypeUlcpDfuMode.lower(value)
+}
+
+
+
+/**
  * `PROP_GNSS_FIX`: what kind of position solution the receiver has.
  */
 
@@ -18536,6 +18658,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_begin_management_announce() != 57918) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_begin_management_dfu() != 40333) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_begin_management_fetch() != 3066) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -18750,6 +18875,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_drain_queue() != 18254) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_enter_dfu() != 5089) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_factory_reset() != 45923) {

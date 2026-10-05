@@ -62,6 +62,8 @@ protocol RadioConnection: AnyObject, Sendable {
     /// down and the app's binding to it is deliberately kept, because what
     /// comes back is the same radio.
     func reboot() async throws
+    func enterDfu(mode: UlcpDfuMode) async throws
+    func enterRemoteDfu(peerAddress: String, mode: UlcpDfuMode) async throws
     /// Ask the radio to announce itself now (`CMD_ANNOUNCE`)—an
     /// advertisement or a beacon, outside either schedule. The radio
     /// answers once it has the announcement queued; channel access and
@@ -586,6 +588,32 @@ extension RadioConnectionError {
 
 /// Failures of managing a device across the mesh, shaped for the copy the
 /// remote-management screen shows.
+enum DfuEntryError: Error, LocalizedError, Sendable {
+    case unconfirmed
+    case unsupported
+    case refused(UInt32)
+
+    var errorDescription: String? {
+        switch self {
+        case .unconfirmed: "DFU entry could not be confirmed"
+        case .unsupported: "This firmware does not support the requested DFU mode."
+        case let .refused(status): "The device refused DFU entry: \(ulcpStatusName(status: status))."
+        }
+    }
+
+    static func perform(_ operation: () async throws -> UInt32?) async throws {
+        let status: UInt32?
+        do { status = try await operation() }
+        catch { throw DfuEntryError.unconfirmed }
+        switch status {
+        case 0: return
+        case 2, 5: throw DfuEntryError.unsupported
+        case let .some(status): throw DfuEntryError.refused(status)
+        case nil: throw DfuEntryError.unconfirmed
+        }
+    }
+}
+
 enum RemoteManagementError: Error, Equatable, Sendable {
     /// Nothing came back inside the exchange's budget.
     ///

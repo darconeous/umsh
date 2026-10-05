@@ -5,7 +5,7 @@
 //! | Value | Bootloader action                              |
 //! |-------|------------------------------------------------|
 //! | 0x57  | UF2 mass-storage + CDC DFU (TECHOBOOT drive)  |
-//! | 0x4e  | Serial-only DFU (CDC; for nrfutil)             |
+//! | 0x4e  | Serial DFU (CDC; for nrfutil)                  |
 //! | 0xA8  | BLE OTA DFU (cold reset; SD not yet enabled)   |
 //! | 0xB1  | BLE OTA DFU (warm; SD already initialized)     |
 //! | 0x6d  | Skip DFU entirely, boot app immediately        |
@@ -31,15 +31,22 @@ pub fn enter_dfu_uf2() -> ! {
     reset_with_gpregret(0x57)
 }
 
-/// Enter serial-only DFU mode (GPREGRET = 0x4e).
+/// Enter serial DFU mode (GPREGRET = 0x4e).
 ///
-/// The bootloader will expose only a CDC DFU port on next startup
-/// (no UF2 mass-storage drive). Suitable for `adafruit-nrfutil` /
-/// `nrfutil` users who explicitly want the slimmer DFU interface.
+/// The bootloader exposes a CDC DFU port on next startup, suitable for
+/// `adafruit-nrfutil`. Some board bootloaders also expose UF2 in this mode;
+/// the Wio Tracker L1's 0.9.2-dirty build does so.
 ///
 /// DIVERGES via [`cortex_m::peripheral::SCB::sys_reset`].
 pub fn enter_dfu_serial() -> ! {
     reset_with_gpregret(0x4e)
+}
+
+/// Enter the Adafruit bootloader's BLE DFU after a system reset. The
+/// bootloader initializes its resident SoftDevice; the application's BLE
+/// controller is not carried across the reset (the 0xB1 jump path).
+pub fn enter_dfu_ble() -> ! {
+    reset_with_gpregret(0xA8)
 }
 
 /// Trigger a plain system reset (GPREGRET = 0).
