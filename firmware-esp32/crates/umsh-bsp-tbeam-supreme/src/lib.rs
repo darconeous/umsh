@@ -29,6 +29,7 @@
 pub mod battery;
 pub mod display;
 pub mod gnss;
+#[cfg(feature = "ble")]
 pub mod platform;
 pub mod power;
 pub mod radio;

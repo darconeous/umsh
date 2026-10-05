@@ -45,6 +45,7 @@ fn session(name: &'static str) -> TestSession {
             temperatures: false,
             ble: true,
             ble_pairing: true,
+            ble_pin: true,
             reboot: false,
             mac_node: false,
             wifi: None,

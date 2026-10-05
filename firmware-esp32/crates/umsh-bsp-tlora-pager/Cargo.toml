@@ -8,6 +8,9 @@ repository.workspace = true
 
 [features]
 ulcp-i2c = ["dep:umsh-ulcp", "dep:umsh-ulcp-device", "dep:umsh-ulcp-runtime"]
+# Forwarded so every board BSP answers to the same feature. Nothing in
+# this crate uses the chip BSP's BLE-owned RNG.
+ble = ["umsh-bsp-esp32/ble"]
 
 [dependencies]
 umsh-ulcp = { path = "../../../crates/umsh-ulcp", default-features = false, optional = true }

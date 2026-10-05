@@ -52,6 +52,8 @@ pub mod node_counters;
 pub mod radio_mux;
 #[cfg(feature = "driver")]
 pub mod reply_completion;
+#[cfg(feature = "reseed")]
+pub mod reseed;
 #[cfg(feature = "driver")]
 pub mod temperature;
 

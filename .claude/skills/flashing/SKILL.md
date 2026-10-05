@@ -38,5 +38,6 @@ Build from `firmware-esp32/`; needs the espup toolchain
 cannot be bricked, stays attached as monitor.
 
 - `make flash-heltec-v3`, `make flash-heltec-v3-console` (override `ESPFLASH_PORT=...`)
+- `make flash-heltec-v3-bridge`—the Heltec V3's second image: Wi-Fi and the bridge client, no BLE. Same board, same journals.
 - `make flash-heltec-v2` (classic ESP32; same CP2102 flow, `--chip esp32`)
 - ESP32 flashes rewrite the partition table (`partitions-umsh.csv`, carries the 64 KB `umsh` data partition)—reflashing loses data past the old factory partition.

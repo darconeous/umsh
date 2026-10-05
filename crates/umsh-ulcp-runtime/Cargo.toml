@@ -76,9 +76,11 @@ device-node = [
     "dep:umsh-sync",
     "umsh-hal/embassy",
     "dep:rand",
-    "dep:rand_core",
-    "dep:rand_chacha",
+    "reseed",
 ]
+# A ChaCha20 generator that folds in seeds offered after it was built, so
+# entropy a board harvests during a long uptime reaches what is running.
+reseed = ["dep:rand_core", "dep:rand_chacha", "dep:umsh-crypto", "dep:zeroize"]
 # `ThreadModeRawMutex` for the device node's statics. For boards on a
 # single thread-mode executor whose BLE controller cannot tolerate the
 # critical sections the portable default would take in the radio path.
@@ -114,6 +116,7 @@ umsh-sync = { path = "../umsh-sync", default-features = false, optional = true }
 rand = { workspace = true, optional = true }
 rand_core = { workspace = true, optional = true }
 rand_chacha = { version = "0.3", default-features = false, optional = true }
+zeroize = { workspace = true, optional = true }
 embedded-hal-async = { workspace = true, optional = true }
 
 [dev-dependencies]

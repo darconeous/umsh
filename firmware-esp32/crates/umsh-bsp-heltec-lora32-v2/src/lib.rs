@@ -15,6 +15,7 @@
 
 pub mod battery;
 pub mod display;
+#[cfg(feature = "ble")]
 pub mod platform;
 pub mod radio;
 pub mod vext;

@@ -100,6 +100,7 @@ impl<const PAYLOAD: usize> Device<PAYLOAD> {
             temperatures: true,
             ble: true,
             ble_pairing: true,
+            ble_pin: true,
             reboot: true,
             stats: None,
             mac_node: true,

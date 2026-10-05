@@ -13,17 +13,42 @@ repository.workspace = true
 
 [features]
 ulcp-i2c = ["umsh-ulcp-runtime/i2c", "umsh-bsp-heltec-lora32-v3/ulcp-i2c"]
-wifi = ["esp-radio/wifi", "esp-radio/coex", "dep:esp-wifi-sys-esp32s3", "dep:embassy-net", "umsh-ulcp-runtime/wifi"]
+# T-LoRa Pager bench qualification builds. Nothing on another board reads
+# them; every image declares them so the shared sources see one feature set.
+input-qualification = []
+motion-qualification = ["ble-debug"]
+# The BLE transport: the GATT host, its bond journal, and the controller.
+# An image built without it has no Bluetooth at all, and harvests its
+# hardware entropy through Wi-Fi instead.
+ble = [
+    "dep:trouble-host",
+    "dep:bt-hci",
+    "esp-radio/ble",
+    "umsh-ulcp-runtime/ble-host",
+    "umsh-bsp-esp32/ble",
+    "umsh-bsp-heltec-lora32-v3/ble",
+]
+wifi = ["esp-radio/wifi", "dep:esp-wifi-sys-esp32s3", "dep:esp-phy", "dep:embassy-net", "umsh-ulcp-runtime/wifi"]
+# Wi-Fi and BLE in one image share the radio through the coexistence
+# arbiter, which esp-radio builds only when both are present.
+coex = ["wifi", "ble", "esp-radio/coex"]
+# The autonomous bridge client. Its buffers go in PSRAM where there is
+# some and are trimmed to fit internal RAM where there is not.
+bridge-client = ["wifi", "dep:umsh-bridge-client", "dep:embedded-tls", "umsh-ulcp-runtime/bridge-client", "embassy-net/tcp", "embassy-net/dns"]
 psram = []
+# Mix a draw from the SAR ADC entropy source into the pool at every boot.
+# For images whose ADC1 is free at that point.
+entropy-sar-adc = []
 # Board identity. Exactly one is on; it selects the BSP module, the pin
 # and peripheral wiring, the radio's power and band limits, and the
-# static capacities the board's RAM budget allows. This block is kept
-# identical across the ESP32 device boards; `default` and BSP feature
-# forwarding select the image's board.
-default = ["board-heltec-v3"]
+# static capacities the board's RAM budget allows. The feature table is
+# kept in step across the ESP32 device images by
+# `scripts/check_esp32_manifests.py`; `default` and BSP feature
+# forwarding select the image.
+default = ["board-heltec-v3", "ble"]
 board-heltec-v2 = ["ulcp-i2c", "chip-esp32", "radio-sx127x", "vext-gates-battery"]
 board-heltec-v3 = ["ulcp-i2c", "chip-esp32s3", "radio-sx126x"]
-board-tlora-pager = ["ulcp-i2c", "chip-esp32s3", "radio-sx126x", "display-st7796", "wired-usb-serial-jtag", "gnss", "external-rtc"]
+board-tlora-pager = ["chip-esp32s3", "radio-sx126x", "display-st7796", "wired-usb-serial-jtag", "gnss", "external-rtc"]
 board-tbeam-supreme = [
     "ulcp-i2c",
     "chip-esp32s3",
@@ -80,11 +105,13 @@ rtc-pcf8563 = ["external-rtc"]
 external-rtc = []
 display-st7796 = []
 
-# Mirror of the nRF firmware's ble-debug: multiplex driver/BLE diagnostics as
-# ASCII lines onto the UART0 output stream (HDLC hosts resynchronize
-# past them) and keep advertising open regardless of transport
-# arbitration so the BLE path stays reachable while debugging.
-ble-debug = ["trouble-host/security-debug"]
+# Multiplex driver diagnostics as ASCII lines onto the wired output
+# stream (HDLC hosts resynchronize past them).
+debug-log = []
+# Mirror of the nRF firmware's ble-debug: the diagnostic stream, the BLE
+# host's security trace, and advertising kept open regardless of
+# transport arbitration so the BLE path stays reachable while debugging.
+ble-debug = ["debug-log", "ble", "trouble-host/security-debug"]
 
 [[bin]]
 name = "firmware-heltec-v3"
@@ -94,6 +121,8 @@ name = "firmware-heltec-v3"
 path = "../esp32-tracker/src/main.rs"
 
 [dependencies]
+umsh-bridge-client = { path = "../../../crates/umsh-bridge-client", optional = true }
+embedded-tls = { version = "=0.19.0", default-features = false, optional = true }
 embassy-net = { version = "0.8", default-features = false, optional = true, features = ["medium-ethernet", "proto-ipv4", "dhcpv4", "dhcpv4-hostname"] }
 umsh-bsp-esp32 = { path = "../../crates/umsh-bsp-esp32", features = ["esp32s3", "panic-handler"] }
 umsh-bsp-heltec-lora32-v3 = { path = "../../crates/umsh-bsp-heltec-lora32-v3" }
@@ -102,7 +131,7 @@ umsh-ulcp-device = { path = "../../../crates/umsh-ulcp-device", default-features
 # Board-agnostic device runtime shared with the T-Echo/T-1000E images:
 # session driver, radio mux, transport policy, pairing policy, counter
 # map. Default features pull the radio and journal-store machinery.
-umsh-ulcp-runtime = { path = "../../../crates/umsh-ulcp-runtime", features = ["ble-host", "device-node"] }
+umsh-ulcp-runtime = { path = "../../../crates/umsh-ulcp-runtime", features = ["device-node"] }
 umsh-crypto = { path = "../../../crates/umsh-crypto", default-features = false, features = ["software-crypto"] }
 umsh-hal = { path = "../../../crates/umsh-hal", default-features = false, features = ["embassy"] }
 umsh-journal-store = { path = "../../../crates/umsh-journal-store" }
@@ -116,7 +145,7 @@ umsh-mac = { path = "../../../crates/umsh-mac", default-features = false, featur
 umsh-node = { path = "../../../crates/umsh-node", default-features = false, features = ["alloc", "software-crypto"] }
 umsh-sync = { path = "../../../crates/umsh-sync", default-features = false }
 
-bt-hci = { version = "0.9", default-features = false }
+bt-hci = { version = "0.9", default-features = false, optional = true }
 # 0.8 matches the shared driver's FrameBuf and the journal payload types;
 # the trouble 0.7 GATT server characteristics are built on 0.9.
 heapless = { version = "0.8", default-features = false }
@@ -140,9 +169,11 @@ esp-alloc = { version = "0.11" }
 esp-bootloader-esp-idf = { version = "0.6", features = ["esp32s3"] }
 esp-hal = { version = "1.2", features = ["esp32s3", "unstable"] }
 esp-println = { version = "0.18", features = ["esp32s3"] }
-esp-radio = { version = "1.0.0-beta.2", features = ["esp32s3", "ble", "unstable"] }
+esp-radio = { version = "1.0.0-beta.2", features = ["esp32s3", "unstable"] }
 # WPA3 threshold adapter; must resolve to esp-radio's same upstream blob ABI.
 esp-wifi-sys-esp32s3 = { version = "=0.3.0", optional = true }
+# Holds the RF front end on across a hardware-entropy read.
+esp-phy = { version = "0.3", features = ["esp32s3"], optional = true }
 esp-rtos = { version = "0.4", features = ["esp32s3", "embassy", "esp-radio", "esp-alloc"] }
 # Resolves to ../../lora-rs via the workspace [patch].
 lora-phy = { version = "3.0.2-alpha", default-features = false }
@@ -152,6 +183,6 @@ rand = { version = "0.10", default-features = false }
 rand_chacha = { version = "0.3", default-features = false }
 rand_core = { version = "0.6", default-features = false }
 static_cell = "2"
-trouble-host = { version = "0.7", default-features = false, features = ["derive", "peripheral", "gatt", "security", "default-packet-pool", "default-packet-pool-mtu-255"] }
+trouble-host = { version = "0.7", default-features = false, features = ["derive", "peripheral", "gatt", "security", "default-packet-pool", "default-packet-pool-mtu-255"], optional = true }
 
 embassy-embedded-hal = { version = "0.6", default-features = false }

@@ -545,6 +545,7 @@ mod firmware {
             // every board here; both commands reach the machinery the
             // front-panel menu already drives.
             ble_pairing: true,
+            ble_pin: true,
             // Every nRF52 board can reset itself through the bootloader
             // register; see the `reboot` hook below.
             reboot: true,

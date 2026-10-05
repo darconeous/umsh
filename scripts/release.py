@@ -92,6 +92,23 @@ RELEASE_BOARDS = {
             "partition_table": "partitions-umsh.csv",
         },
     },
+    # A second image for the same board, not another board: Wi-Fi and the
+    # internet bridge client in place of Bluetooth, which do not fit in
+    # the V3's RAM together. Same hardware, so the same model string; the
+    # id is what tells the two apart. The site lists it under the V3's
+    # own entry (`[[boards.flash.images]]` in site/data/hardware.toml).
+    "heltec-v3-bridge": {
+        "chip": "esp32s3",
+        "elf": "firmware-heltec-v3-bridge",
+        "name": "Heltec WiFi LoRa 32 V3",
+        "flash_methods": ["esp-serial"],
+        "esp": {
+            "chip": "esp32s3",
+            "offset": "0x0",
+            "flash_size": "4MB",
+            "partition_table": "partitions-umsh.csv",
+        },
+    },
     "tbeam-supreme": {
         "chip": "esp32s3",
         "elf": "firmware-tbeam-supreme",

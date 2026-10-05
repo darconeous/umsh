@@ -79,6 +79,7 @@ pub fn web_sim_config() -> umsh_ulcp_simdev::SessionConfig {
         // of what the capability claims.
         ble: true,
         ble_pairing: true,
+        ble_pin: true,
         // The simulator restarts by rebuilding its session, which is
         // near enough a power cycle for the debugger to exercise.
         reboot: true,

@@ -1,4 +1,4 @@
-//! Optional qualification measurements. Enabled by wifi + ble-debug.
+//! Optional qualification measurements. Enabled by wifi + debug-log.
 use core::{
     alloc::{GlobalAlloc, Layout},
     sync::atomic::{AtomicUsize, Ordering},

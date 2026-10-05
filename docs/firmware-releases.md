@@ -66,7 +66,7 @@ rejected rather than quietly missing the tag by one prefix.
 
 `release-artifacts` refuses to run unless the working tree is clean, the
 annotated tag exists, and `HEAD` is exactly at it—`git describe` has no way
-to warn you about any of those on its own. It builds all seven shipping images,
+to warn you about any of those on its own. It builds every shipping image,
 converts them, and writes `manifest.json` and `SHA256SUMS` into
 `target/firmware-release/<version>/`, where `<version>` is the tag without its
 `fw-` prefix.
@@ -83,7 +83,7 @@ bringup harnesses, not products.
 
 ## Artifacts
 
-| Board | Chip | Artifacts |
+| Image | Chip | Artifacts |
 |---|---|---|
 | `techo` | nRF52840 | `.uf2`, `-dfu.zip` |
 | `t1000e` | nRF52840 | `.uf2`, `-dfu.zip` |
@@ -91,12 +91,16 @@ bringup harnesses, not products.
 | `wio-tracker-l1` | nRF52840 | `.uf2`, `-dfu.zip` |
 | `xiao-nrf52` | nRF52840 | `.uf2`, `-dfu.zip` |
 | `heltec-v3` | ESP32-S3 | `.bin` (merged, written at `0x0`) |
+| `heltec-v3-bridge` | ESP32-S3 | `.bin` (merged, written at `0x0`; Heltec V3, Wi-Fi and bridge client, no BLE) |
 | `tbeam-supreme` | ESP32-S3 | `.bin` (merged, written at `0x0`) |
 | `tlora-pager` | ESP32-S3 | `.bin` (merged, written at `0x0`; SX1262 only) |
 
-Named `umsh-<board>-<version>.<ext>`. Board ids match the `BOARDS` presets in
+Named `umsh-<image>-<version>.<ext>`. An image id is the board's id, except
+where a board has a second image. Ids match the `BOARDS` presets in
 `scripts/firmware_image.py`, the `make` target suffixes, and
-`site/data/hardware.toml`—keep the four in step.
+`site/data/hardware.toml`—keep the four in step. A second image is not a
+second board there: it is listed under its board's `[[boards.flash.images]]`,
+and the flasher offers it as a firmware choice.
 
 The UF2 is not converted by the release; `make build-<board>` already writes
 it, and the release ships that exact file.
@@ -184,10 +188,11 @@ having in the page.
 
 ## manifest.json
 
-`schema_version` is `1`. Per board: the id, display name, the `model` string
-its firmware reports as `PROP_DEV_MODEL`, the chip, the flash methods, the
-UF2 family id and app base or the ESP32 write offset, and for each file a
-size, a SHA-256, a `url`, and a `path`.
+`schema_version` is `1`. `boards` has one entry per image: the id, display
+name, the `model` string its firmware reports as `PROP_DEV_MODEL`, the chip,
+the flash methods, the UF2 family id and app base or the ESP32 write offset,
+and for each file a size, a SHA-256, a `url`, and a `path`. Two images of one
+board report the same `model`; the id is what tells them apart.
 
 `path` is the same-origin mirror location, and is `null` for anything not
 mirrored. A flasher reads that as "offer this as a download, do not try to
@@ -195,7 +200,7 @@ fetch it".
 
 The manifest carries only what is needed to put bytes on a board. Photos,
 specs, and prose about entering DFU live in `site/data/hardware.toml`, keyed
-by the same board ids, so the two join without duplicating each other.
+by the same ids, so the two join without duplicating each other.
 
 ## Verification
 

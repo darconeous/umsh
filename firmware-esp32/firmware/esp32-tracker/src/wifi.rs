@@ -382,6 +382,75 @@ async fn report_ap(ap: &AccessPointInfo, generation: u32) {
         .await;
 }
 
+fn controller_config() -> ControllerConfig {
+    ControllerConfig::default()
+        .with_country_info(*b"US")
+        .with_rx_queue_size(4)
+        .with_tx_queue_size(4)
+        .with_static_rx_buf_num(4)
+        .with_dynamic_rx_buf_num(8)
+        .with_dynamic_tx_buf_num(8)
+        .with_rx_ba_win(4)
+        .with_initial_config(Config::Station(
+            StationConfig::default().with_authentication(AuthConfig::Open),
+        ))
+}
+
+/// Read the TRNG while a controller is alive.
+///
+/// The chip's TRNG is true-random only while RF is live. A started
+/// station that is not associated may idle its RF, so the PHY is held on
+/// for the read. Nothing awaits in here: the reader is gone before the
+/// controller can be.
+fn harvest(_alive: &WifiController<'_>) -> Option<[u8; 32]> {
+    let _phy = esp_phy::enable_phy();
+    let trng = esp_hal::rng::Trng::try_new().ok()?;
+    let mut fresh = [0u8; 32];
+    trng.read(&mut fresh);
+    Some(fresh)
+}
+
+/// Bring a controller up just long enough for one TRNG draw.
+#[cfg(not(feature = "ble"))]
+fn harvest_once(peripheral: &mut esp_hal::peripherals::WIFI<'static>) -> Option<[u8; 32]> {
+    let controller = WifiController::new(peripheral.reborrow(), controller_config()).ok()?;
+    harvest(&controller)
+}
+
+/// Boot cannot proceed with an empty/uncommitted seed and no trusted entropy.
+#[cfg(not(feature = "ble"))]
+pub fn harvest_trng_once(peripheral: &mut esp_hal::peripherals::WIFI<'static>) -> [u8; 32] {
+    harvest_once(peripheral)
+        .unwrap_or_else(|| panic!("entropy harvest failed—no trusted entropy source"))
+}
+
+fn offer_harvest(fresh: Option<[u8; 32]>) {
+    match fresh {
+        Some(fresh) => super::entropy::offer(fresh),
+        None => {
+            super::debug_log(format_args!("wifi entropy harvest FAILED; retrying later"));
+            super::entropy::harvest_failed();
+        }
+    }
+}
+
+/// Keep entropy arriving while the controller is down.
+///
+/// Where Bluetooth is compiled in, its supervisor does this and Wi-Fi
+/// stays dark when switched off. Without it this radio is the only one
+/// there is, and comes up for one read when a harvest is overdue.
+async fn harvest_while_parked(peripheral: &mut esp_hal::peripherals::WIFI<'static>) {
+    #[cfg(not(feature = "ble"))]
+    loop {
+        super::entropy::overdue().await;
+        offer_harvest(harvest_once(peripheral));
+    }
+    #[cfg(feature = "ble")]
+    let _ = peripheral;
+    #[cfg(feature = "ble")]
+    core::future::pending::<()>().await;
+}
+
 #[embassy_executor::task]
 pub async fn task(
     mut peripheral: esp_hal::peripherals::WIFI<'static>,
@@ -390,26 +459,20 @@ pub async fn task(
     let mut link = Link::default();
     loop {
         let Some(mut current) = settings() else {
-            CHANGED.wait().await;
+            select(CHANGED.wait(), harvest_while_parked(&mut peripheral)).await;
             continue;
         };
         if !current.enabled && !scan_state().0 {
             super::ip::update(stack, &current, false).await;
-            select(CHANGED.wait(), SCAN_CHANGED.wait()).await;
+            select3(
+                CHANGED.wait(),
+                SCAN_CHANGED.wait(),
+                harvest_while_parked(&mut peripheral),
+            )
+            .await;
             continue;
         }
-        let config = ControllerConfig::default()
-            .with_country_info(*b"US")
-            .with_rx_queue_size(4)
-            .with_tx_queue_size(4)
-            .with_static_rx_buf_num(4)
-            .with_dynamic_rx_buf_num(8)
-            .with_dynamic_tx_buf_num(8)
-            .with_rx_ba_win(4)
-            .with_initial_config(Config::Station(
-                StationConfig::default().with_authentication(AuthConfig::Open),
-            ));
-        let mut controller = match WifiController::new(peripheral.reborrow(), config) {
+        let mut controller = match WifiController::new(peripheral.reborrow(), controller_config()) {
             Ok(controller) => controller,
             Err(_) => {
                 Timer::after_secs(5).await;
@@ -427,8 +490,12 @@ pub async fn task(
             None;
         let mut backoff = 1;
         loop {
-            #[cfg(feature = "ble-debug")]
+            #[cfg(feature = "debug-log")]
             super::wifi_memory::sample();
+            // The controller is up anyway, so a harvest costs nothing.
+            if super::entropy::harvest_due() {
+                offer_harvest(harvest(&controller));
+            }
             // Signals describe changes since this snapshot. Discard an
             // already-observed wake before starting cancelable work.
             CHANGED.reset();

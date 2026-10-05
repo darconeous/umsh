@@ -18,9 +18,9 @@ use embassy_sync::{
 use embassy_time::{Duration, Instant, Timer, with_timeout};
 use embedded_io_async::{ErrorType, Read, Write};
 use embedded_tls::{Aes128GcmSha256, TlsConfig, TlsConnection, TlsContext};
-use rand_core::{RngCore, SeedableRng};
+use rand_core::RngCore;
 use umsh_bridge_client::{
-    ALPN, IDLE_MS, KEEPALIVE_MS, MAX_AGE_MS, MAX_BODY,
+    ALPN, FRAME_MAX, IDLE_MS, KEEPALIVE_MS, MAX_AGE_MS, MAX_BODY, MAX_DATA,
     tls::{IdentityProvider, failure_reason},
     tunnel::{Frame, Queue},
 };
@@ -32,13 +32,33 @@ use umsh_ulcp::{
 use umsh_ulcp_device::bridge::BridgeConfig;
 use umsh_ulcp_runtime::{driver::PublishEvent, radio_mux::BridgePort};
 
-// Only byte buffers and plain queue data live in PSRAM.
+const _: () = assert!(MAX_PAYLOAD <= MAX_DATA);
+
+// With PSRAM the TLS receive buffer holds a full-size record from any
+// server. Without it the buffers come out of internal RAM, and are the
+// smallest that hold a record from a conforming server.
+#[cfg(feature = "psram")]
+mod size {
+    pub const TCP_RX: usize = 4096;
+    pub const TCP_TX: usize = 4096;
+    pub const TLS_RX: usize = 18 * 1024;
+    pub const TLS_TX: usize = 4096;
+}
+#[cfg(not(feature = "psram"))]
+mod size {
+    pub const TCP_RX: usize = 2048;
+    pub const TCP_TX: usize = 1536;
+    pub const TLS_RX: usize = umsh_bridge_client::TLS_RX_MIN;
+    pub const TLS_TX: usize = umsh_bridge_client::TLS_TX_MIN;
+}
+
+// Only byte buffers and plain queue data, so either may live in PSRAM.
 pub struct Buffers {
-    tcp_rx: [u8; 4096],
-    tcp_tx: [u8; 4096],
-    tls_rx: [u8; 18 * 1024],
-    tls_tx: [u8; 4096],
-    encoded: [u8; hdlc::max_encoded_len(MAX_BODY)],
+    tcp_rx: [u8; size::TCP_RX],
+    tcp_tx: [u8; size::TCP_TX],
+    tls_rx: [u8; size::TLS_RX],
+    tls_tx: [u8; size::TLS_TX],
+    encoded: [u8; hdlc::max_encoded_len(FRAME_MAX)],
 }
 
 pub struct Queues {
@@ -52,6 +72,29 @@ impl Queues {
             to_server: Queue::new(),
         }
     }
+}
+
+/// The client's buffers and queues: PSRAM where the board has it,
+/// internal statics otherwise.
+#[cfg(feature = "psram")]
+pub fn storage() -> (&'static mut Buffers, &'static mut Queues) {
+    (
+        super::external::bridge_buffers(),
+        super::external::bridge_queues(),
+    )
+}
+#[cfg(not(feature = "psram"))]
+pub fn storage() -> (&'static mut Buffers, &'static mut Queues) {
+    use static_cell::ConstStaticCell;
+    static BUFFERS: ConstStaticCell<Buffers> = ConstStaticCell::new(Buffers {
+        tcp_rx: [0; size::TCP_RX],
+        tcp_tx: [0; size::TCP_TX],
+        tls_rx: [0; size::TLS_RX],
+        tls_tx: [0; size::TLS_TX],
+        encoded: [0; hdlc::max_encoded_len(FRAME_MAX)],
+    });
+    static QUEUES: ConstStaticCell<Queues> = ConstStaticCell::new(Queues::new());
+    (BUFFERS.take(), QUEUES.take())
 }
 
 struct PortState {
@@ -108,10 +151,14 @@ impl Port {
                 malformed, rx_overflow, tx_overflow, rx_stale, tx_stale
             ));
         }
+        #[cfg(feature = "psram")]
+        let external = super::external::used();
+        #[cfg(not(feature = "psram"))]
+        let external = 0;
         super::debug_log(format_args!(
             "bridge memory: internal heap={} psram={} buffers={} queues={}",
             esp_alloc::HEAP.used(),
-            super::external::used(),
+            external,
             core::mem::size_of::<Buffers>(),
             core::mem::size_of::<Queues>()
         ));
@@ -265,7 +312,7 @@ pub async fn task(
     rng_seed: [u8; 32],
     buffers: &'static mut Buffers,
 ) -> ! {
-    let mut rng = super::IdentityRng::from_seed(rng_seed);
+    let mut rng = super::IdentityRng::new(rng_seed, &super::entropy::BRIDGE_RESEED);
     use umsh_crypto::NodeIdentity as _;
     let public = seed.as_ref().map(|seed| {
         umsh_crypto::software::SoftwareIdentity::from_secret_bytes(seed)

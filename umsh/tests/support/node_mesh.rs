@@ -124,6 +124,7 @@ impl DeviceSide {
             // can find over the mesh.
             ble: true,
             ble_pairing: true,
+            ble_pin: true,
             reboot: true,
             stats: None,
             mac_node: true,

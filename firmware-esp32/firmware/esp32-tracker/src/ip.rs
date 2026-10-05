@@ -14,7 +14,7 @@ static APPLIED: Mutex<CriticalSectionRawMutex, RefCell<Option<ip::V4Config>>> =
     Mutex::new(RefCell::new(None));
 static STATE: Mutex<CriticalSectionRawMutex, RefCell<Option<FamilyState>>> =
     Mutex::new(RefCell::new(None));
-#[cfg(feature = "ble-debug")]
+#[cfg(feature = "debug-log")]
 static DIAGNOSTIC: Mutex<CriticalSectionRawMutex, RefCell<Option<(FamilyState, Option<[u8; 4]>)>>> =
     Mutex::new(RefCell::new(None));
 
@@ -64,7 +64,7 @@ pub async fn update(stack: Stack<'static>, settings: &Settings, linked: bool) {
     } else {
         FamilyState::Waiting
     };
-    #[cfg(feature = "ble-debug")]
+    #[cfg(feature = "debug-log")]
     {
         let diagnostic = (
             state,

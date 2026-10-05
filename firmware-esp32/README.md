@@ -29,6 +29,7 @@ From the repo root, via the Makefile (preferred):
 ```sh
 make build-heltec-v3
 make flash-heltec-v3             # espflash over the CP2102, then monitor
+make flash-heltec-v3-bridge      # the same board as an internet bridge
 make flash-heltec-v3-console ESPFLASH_PORT=/dev/cu.usbserial-0001
 make build-heltec-v2
 make flash-heltec-v2
@@ -47,6 +48,75 @@ inside its own directory** (`cargo build --release` there, or `cargo run
 Flashing uses the mask-ROM serial bootloader with DTR/RTS auto-entry—
 there is no bootloader to brick and no DFU/UF2 machinery.
 
+### Images and features
+
+The device images are thin manifests over one set of sources in
+`firmware/esp32-tracker/`. Each manifest carries the same `[features]` table
+and differs in `default`; `scripts/check_esp32_manifests.py` (run in CI) fails
+when a copy drifts.
+
+| Image | Board | Default radios |
+|---|---|---|
+| `heltec-v3` | Heltec V3 | BLE |
+| `heltec-v3-bridge` | Heltec V3 | Wi-Fi, bridge client |
+| `heltec-v2` | Heltec V2 | BLE |
+| `tbeam-supreme` | T-Beam Supreme | BLE, Wi-Fi, bridge client |
+| `tlora-pager` | T-LoRa Pager | BLE, Wi-Fi, bridge client |
+
+The radio features:
+
+- `ble`—the BLE transport, its GATT host, and its bond journal. An image
+  without it advertises no Bluetooth capability and shows no Bluetooth menu.
+- `wifi`—the Wi-Fi station and IPv4.
+- `coex`—Wi-Fi and BLE in one image. Required whenever both are on.
+- `bridge-client`—the [internet bridge](../docs/protocol/src/internet-bridging.md)
+  client. Its buffers live in PSRAM with `psram`, and in internal RAM, trimmed,
+  without.
+- `debug-log`—diagnostic lines on the wired port. `ble-debug` adds the BLE
+  security trace and keeps advertising open.
+
+At least one of `ble` and `wifi` is required: the TRNG needs a live radio.
+
+The Heltec V3 has no PSRAM, and the BLE host and the bridge client do not fit
+in its internal RAM together. `heltec-v3-bridge` is the same board built with
+Wi-Fi and the bridge client and without BLE. It is set up over USB with
+`umshctl`, or over the mesh from another radio. Both images keep the device
+identity, frame counters, entropy seed, and BLE bonds in the same journals, so
+either can be flashed over the other and the board stays the same node; the
+bridge image leaves the bonds alone. Saved settings carry over from the
+standard image to the bridge image. In the other direction they do not: an
+image without Wi-Fi does not read the full-page snapshot records an image
+with Wi-Fi writes, and starts from defaults.
+
+### Entropy
+
+The chip's TRNG is true-random only while RF is live, so nothing draws from it
+directly. A pool seeded from flash (`umsh_crypto::pool`) makes every boot
+cryptographically strong without a radio, and `entropy.rs` keeps that pool fed:
+
+- **Boot.** The stored seed and per-boot salt give the pool its key, the next
+  boot's seed is committed, and only then is anything drawn. With no stored
+  seed—a first boot or a factory reset—the pool starts from a TRNG read
+  through a radio brought up for the purpose (BLE where present, otherwise
+  Wi-Fi), and the boot stops if that fails.
+- **Harvest.** Each radio driver reads 32 octets from the TRNG when it can
+  prove RF is on: the BLE supervisor between stacks, through a controller
+  with modem sleep off, and the Wi-Fi task with its controller up and the PHY
+  held on. A driver harvests when one is cheap and the last is an hour old.
+  After six hours without one, an idle BLE advertiser restarts its stack for
+  it, and an image without BLE brings Wi-Fi up briefly. A connected host is
+  never interrupted. Harvests continue while a radio is switched off.
+- **Reseed.** Every harvest rekeys the running generators: the device node's
+  (ephemeral keys), the session's, the BLE privacy generator, and the bridge's
+  TLS generator.
+- **Persist.** The first harvest of a boot is written to the seed journal at
+  once. Later ones go out with another journal write once the last seed write
+  is an hour old, and by themselves at six hours.
+
+Timing of LoRa interrupts and button presses is mixed in alongside, and
+`entropy-sar-adc` adds a read of the SAR ADC noise source at boot on images
+whose ADC1 is free then. Neither is trusted alone.
+
 ### Bluetooth power management
 
 The Heltec V3, T-Beam Supreme, and T-LoRa Pager enable BLE modem sleep.
@@ -59,10 +129,10 @@ The original ESP32/Heltec V2 and the bring-up console keep modem sleep disabled.
 
 `EspCryptoRng` owns a BLE controller with modem sleep disabled and holds the
 Bluetooth peripheral exclusively for its lifetime. The tracker uses it only
-for short seed harvests, dropping it before the operational BLE controller
+for short entropy harvests, dropping it before the operational BLE controller
 starts. The persisted entropy pool seeds software CSPRNGs, so normal
-randomness generation does not keep RF awake. Seed refresh failures leave the
-existing committed pool usable and retry on a subsequent BLE lifecycle.
+randomness generation does not keep RF awake. A failed harvest or seed write
+leaves the committed pool usable and is retried; see [Entropy](#entropy).
 
 USB and GNSS/UART wake locks still prevent MCU light sleep when those peripherals
 are active. In particular, Heltec V3 retains its UART0 serial receiver for the
@@ -85,8 +155,9 @@ Hardware qualification should cover:
 - LoRa traffic and GPIO wake while advertising and while connected.
 - Elapsed-time accuracy across idle periods, and USB/GNSS off/on transitions.
 - WiFi scans, reconnects, and traffic alongside BLE with WiFi power saving off.
-- First boot, normal stored-seed boot, and restart after a failed seed refresh.
-  Disabling Bluetooth during seed persistence must leave the controller down.
+- First boot, normal stored-seed boot, and restart after a failed seed write.
+- An hourly harvest on reconnect, the six-hour forced harvest while idle and
+  while Bluetooth is disabled, and a session established after a reseed.
 - Combined BLE/WiFi traffic (plus bridge traffic where supported), recording
   heap minima and stack watermarks against the required stack reserves.
 
@@ -111,26 +182,29 @@ equivalent fixes.
 
 ### WiFi on ESP32-S3
 
-The normal T-Beam Supreme build includes WiFi and PSRAM. WiFi remains opt-in
-on Heltec V3. From the repo root:
+The normal T-Beam Supreme build includes WiFi and PSRAM. On the Heltec V3,
+WiFi is in the bridge image, and opt-in alongside BLE in the standard one.
+From the repo root:
 
 ```sh
-make flash-heltec-v3 ESP32_CARGO_FLAGS=--features=wifi ESPFLASH_PORT=/dev/cu.usbserial-0001
+make flash-heltec-v3-bridge ESPFLASH_PORT=/dev/cu.usbserial-0001
+make flash-heltec-v3 ESP32_CARGO_FLAGS=--features=wifi,coex ESPFLASH_PORT=/dev/cu.usbserial-0001
 make flash-tbeam-supreme
 ```
 
-Add `ble-debug` (`--features=wifi,ble-debug`) for serial connection diagnostics,
+Add `debug-log` (`--features=debug-log`) for serial connection diagnostics,
 sampled heap minima, largest free allocation, and a main-stack watermark.
 These measurements do not replace sustained load and radio-task stack testing.
 The build targets reject individual Xtensa frames that exceed the available
-main stack minus a nested-call reserve: 20 KiB on T-Beam, 32 KiB on Pager,
-and 8 KiB on Heltec. These checks do not replace stack measurements under load.
+main stack minus a nested-call reserve: 20 KiB on T-Beam and the Heltec V3
+bridge image, 32 KiB on Pager, and 8 KiB on the standard Heltec image. These
+checks do not replace stack measurements under load.
 
 The Heltec V3 uses internal session storage and a 104 KiB internal heap. The
 T-Beam uses a 108 KiB internal heap and, with its default `psram` feature,
 explicit PSRAM storage for the protocol session and snapshot buffer. WiFi
 does not require PSRAM as a feature dependency. Neither WiFi nor PSRAM is
-enabled in the default Heltec build; WiFi is unsupported on the Heltec V2.
+enabled in the standard Heltec build; WiFi is unsupported on the Heltec V2.
 
 #### Upstream dependency support and remaining work
 

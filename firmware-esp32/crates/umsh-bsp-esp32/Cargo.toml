@@ -11,18 +11,21 @@ default = []
 # Exactly one chip feature must be enabled by the board BSP.
 esp32 = [
     "esp-hal/esp32",
-    "esp-radio/esp32",
+    "esp-radio?/esp32",
     "esp-println/esp32",
     "esp-storage/esp32",
     "esp-bootloader-esp-idf/esp32",
 ]
 esp32s3 = [
     "esp-hal/esp32s3",
-    "esp-radio/esp32s3",
+    "esp-radio?/esp32s3",
     "esp-println/esp32s3",
     "esp-storage/esp32s3",
     "esp-bootloader-esp-idf/esp32s3",
 ]
+# The `rng` module: a hardware RNG that owns a BLE controller. Off in an
+# image built without Bluetooth, which must not link one.
+ble = ["dep:esp-radio"]
 #
 # Install this crate's panic handler (print over UART0, capture to RTC RAM,
 # software reset). Enable from the firmware crate, not from library crates.
@@ -30,7 +33,7 @@ panic-handler = []
 
 [dependencies]
 esp-hal = { version = "1.2", default-features = false, features = ["rt", "unstable"] }
-esp-radio = { version = "1.0.0-beta.2", default-features = false, features = ["ble", "unstable"] }
+esp-radio = { version = "1.0.0-beta.2", default-features = false, features = ["ble", "unstable"], optional = true }
 esp-println = { version = "0.18" }
 
 # Flash storage. `esp-storage` provides the raw NorFlash over internal

@@ -16,13 +16,15 @@
 	build-techo flash-techo flash-techo-serial \
 	build-heltec-v3-console flash-heltec-v3-console \
 	build-heltec-v3 flash-heltec-v3 \
+	build-heltec-v3-bridge flash-heltec-v3-bridge \
 	build-heltec-v2 flash-heltec-v2 \
 	build-tbeam-supreme flash-tbeam-supreme \
 	build-tlora-pager flash-tlora-pager \
 	esp-toolchain-check espflash-check \
 	dfu-zip-techo dfu-zip-t1000e dfu-zip-sensecap-solar \
 	dfu-zip-wio-tracker-l1 dfu-zip-xiao-nrf52 \
-	merged-bin-heltec-v3 merged-bin-tbeam-supreme merged-bin-tlora-pager \
+	merged-bin-heltec-v3 merged-bin-heltec-v3-bridge \
+	merged-bin-tbeam-supreme merged-bin-tlora-pager \
 	release-artifacts release-stage release-publish release-mirror \
 	ios-mobile-core ios-archive ios-upload \
 	install-umshctl install-umsh-bridge install-dissector install-extcap \
@@ -108,11 +110,12 @@ export UMSH_FW_VERSION
 # The five boards that ship a UF2 and a DFU package.
 RELEASE_BOARDS_NRF52 = techo t1000e sensecap-solar wio-tracker-l1 xiao-nrf52
 
-# The Espressif boards, which ship a merged `.bin` instead: no UF2
+# The Espressif images, which ship a merged `.bin` instead: no UF2
 # bootloader, so no family id or app base, and a different artifact
 # entirely. These are ESP32-S3, which `merged-bin-%` assumes. heltec-v2 is
 # not here—it is a classic ESP32 and has no working image yet.
-RELEASE_BOARDS_ESP32 = heltec-v3 tbeam-supreme tlora-pager
+# heltec-v3-bridge is a second image for the Heltec V3, not another board.
+RELEASE_BOARDS_ESP32 = heltec-v3 heltec-v3-bridge tbeam-supreme tlora-pager
 
 build-techo-console:
 	cd firmware/techo-console && cargo build --release
@@ -391,6 +394,16 @@ build-heltec-v3: esp-toolchain-check
 flash-heltec-v3: espflash-check build-heltec-v3
 	espflash flash --monitor $(ESPFLASH_PORT_ARG) $(ESPFLASH_PARTITIONS) \
 		$(ESP32S3_TARGET_DIR)/firmware-heltec-v3
+
+# The Heltec V3 with Wi-Fi and the bridge client in place of Bluetooth.
+# The TLS handshake runs on the main stack, as on the T-Beam.
+build-heltec-v3-bridge: esp-toolchain-check
+	$(ESP_ENV) cd firmware-esp32/firmware/heltec-v3-bridge && cargo build --release $(ESP32_CARGO_FLAGS)
+	$(ESP_ENV) python3 scripts/check_xtensa_stack.py $(ESP32S3_TARGET_DIR)/firmware-heltec-v3-bridge --reserve 20480
+
+flash-heltec-v3-bridge: espflash-check build-heltec-v3-bridge
+	espflash flash --monitor $(ESPFLASH_PORT_ARG) $(ESPFLASH_PARTITIONS) \
+		$(ESP32S3_TARGET_DIR)/firmware-heltec-v3-bridge
 
 build-heltec-v2: esp-toolchain-check
 	$(ESP_ENV) cd firmware-esp32/firmware/heltec-v2 && cargo build --release

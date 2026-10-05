@@ -15,6 +15,8 @@
 //! - **Rng** is a ChaCha20 CSPRNG seeded from the board's hardware TRNG
 //!   at boot ([`NodeRng`]): project policy forbids non-crypto RNGs, and
 //!   under BLE builds the RNG peripheral is not ours to read at runtime.
+//!   A board that harvests entropy later offers it through
+//!   [`NODE_RESEED`].
 //! - **The counter store** is the board's—the `CS` parameter—so TX
 //!   reservation boundaries for the device identity and per-peer RX
 //!   replay boundaries survive power cycles, flushed from inside the MAC
@@ -74,6 +76,7 @@ use umsh_ulcp_device::{
 use crate::driver::DevDomainSnapshot;
 use crate::duty_gate::DutyGatedRadio;
 use crate::log::debug_log;
+use crate::reseed::{ReseedSlot, ReseedingRng};
 
 /// The mutex kind guarding the node's statics.
 ///
@@ -95,15 +98,21 @@ pub type NodeMutex = CriticalSectionRawMutex;
 
 // ─── Platform ────────────────────────────────────────────────────────────────
 
+/// Fresh seeds for the node's generator, from a board that harvests
+/// entropy after boot. A board that never offers one runs on its boot
+/// seed, and its stream is the plain ChaCha20 one.
+pub static NODE_RESEED: ReseedSlot = ReseedSlot::new();
+
 /// ChaCha20 CSPRNG adapter implementing the `rand 0.10` traits the MAC
-/// requires (`Platform::Rng: rand::CryptoRng`). Seeded once at boot from
-/// the board's hardware TRNG, exactly like the session's `IdentityRng`,
-/// while that source is still ours to read.
-pub struct NodeRng(rand_chacha::ChaCha20Rng);
+/// requires (`Platform::Rng: rand::CryptoRng`). Seeded at boot from the
+/// board's hardware TRNG, exactly like the session's `IdentityRng`,
+/// while that source is still ours to read, and rekeyed from
+/// [`NODE_RESEED`] afterwards.
+pub struct NodeRng(ReseedingRng);
 
 impl NodeRng {
     pub fn from_seed(seed: [u8; 32]) -> Self {
-        Self(<rand_chacha::ChaCha20Rng as rand_core::SeedableRng>::from_seed(seed))
+        Self(ReseedingRng::new(seed, &NODE_RESEED))
     }
 }
 

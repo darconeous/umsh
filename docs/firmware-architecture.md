@@ -30,6 +30,13 @@ BSP, the flash layout, and the target triple.
 points in the configuration space, and host tooling offers them as presets—
 but they no longer name build targets.
 
+The one exception is a hardware limit, not a role. The Heltec V3 has no
+PSRAM, and the BLE host and the internet bridge client do not fit in its
+internal RAM together, so it has a second image, `heltec-v3-bridge`, with
+Wi-Fi and the bridge client in place of BLE. It is the same board, BSP, and
+flash layout; on the site and in the flasher it is a firmware choice on the
+Heltec V3's entry, not a board of its own.
+
 ### The shipping matrix
 
 | Board | MCU | Shipping image | Transports | Flash/RAM (of budget) | Status |
@@ -39,6 +46,7 @@ but they no longer name build targets.
 | SenseCAP Solar | nRF52840 | `sensecap-solar` | BLE, USB-CDC | 462/134 KiB (756/256) | hardware-accepted |
 | Wio Tracker L1 | nRF52840 | `wio-tracker-l1` | BLE, USB-CDC | 476/136 KiB (756/256) | bringup complete, hw validation open |
 | Heltec V3 | ESP32-S3 | `heltec-v3` | BLE, UART | 1298/216 KiB (3008/512) | hardware-accepted |
+| Heltec V3 | ESP32-S3 | `heltec-v3-bridge` | UART, Wi-Fi | 1599/270 KiB (3008/512) | bridge verified on hardware; qualification open |
 | Heltec V2 | ESP32 | `heltec-v2` | BLE, UART | 1260/191 KiB (3008/see below) | bringup complete, hw validation open |
 | T-LoRa Pager SX1262 | ESP32-S3 | `tlora-pager` | BLE, native USB, Wi-Fi | 4 MiB image layout; PSRAM | hardware qualification in progress |
 

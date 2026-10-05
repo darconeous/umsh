@@ -4447,6 +4447,7 @@ dependencies = [
  "umsh-sync",
  "umsh-ulcp",
  "umsh-ulcp-device",
+ "zeroize",
 ]
 
 [[package]]

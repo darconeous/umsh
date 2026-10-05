@@ -64,6 +64,8 @@ impl InterfaceVariant for EspInterfaceVariant {
 
     async fn await_irq(&mut self) -> Result<(), RadioError> {
         self.irq.wait_for(Event::HighLevel).await;
+        // When the radio raises its line is set by traffic on the air.
+        crate::jitter::sample();
         Ok(())
     }
 

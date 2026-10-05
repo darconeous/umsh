@@ -272,6 +272,13 @@ pub struct SessionConfig {
     /// the refusal—a question it has to be able to answer anyway, since
     /// any property may be refused by firmware older than the host.
     pub ble_pairing: bool,
+    /// Whether the device has a Bluetooth transport that pairs with a
+    /// configured passkey. When set, `PROP_BLE_PAIRING_PIN` exists;
+    /// otherwise it is unknown.
+    ///
+    /// Separate from [`ble`](Self::ble), which is about making the
+    /// transport unreachable: one that is always reachable still pairs.
+    pub ble_pin: bool,
     /// `None`: no Wi-Fi hardware; `CAP_WIFI_SCAN` and `CAP_WIFI` are
     /// absent and every Wi-Fi property is unknown. `Some`: the scan
     /// capability is advertised, and the station capability with it
@@ -4482,7 +4489,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         // The write-only properties must not disclose their values—
         // for the device private key, not even whether one is
         // configured (spec §PROP_DEV_PRIVATE_KEY).
-        if key == prop::BLE_PAIRING_PIN || key == prop::DEV_PRIVATE_KEY {
+        if (key == prop::BLE_PAIRING_PIN && self.config.ble_pin) || key == prop::DEV_PRIVATE_KEY {
             self.complete(tid, Status::UNIMPLEMENTED, emit);
             return None;
         }
@@ -6053,6 +6060,10 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             return None;
         }
         if key == prop::BLE_PAIRING_PIN {
+            if !self.config.ble_pin {
+                self.complete(tid, Status::PROP_NOT_FOUND, emit);
+                return None;
+            }
             let pin = if value.is_empty() {
                 None
             } else {
@@ -7373,6 +7384,9 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         if key == prop::BLE_PAIRING {
             return self.config.ble_pairing;
         }
+        if key == prop::BLE_PAIRING_PIN {
+            return self.config.ble_pin;
+        }
         if matches!(key, prop::TIME | prop::TZ_OFFSET) {
             return self.config.time.is_some();
         }
@@ -7436,7 +7450,6 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                 | prop::STARTUP_BEACON
                 | prop::PHY_DUTY_NOW
                 | prop::PHY_DUTY_LIMIT
-                | prop::BLE_PAIRING_PIN
                 | prop::MAC_PROMISCUOUS
                 | prop::SAVED
                 | prop::HOST_KEY
@@ -8377,6 +8390,7 @@ mod tests {
             temperatures: false,
             ble: true,
             ble_pairing: true,
+            ble_pin: true,
             reboot: true,
             mac_node: true,
             wifi: Some(net::WifiConfig::STATION),
@@ -11969,6 +11983,37 @@ mod tests {
         let (emitted, effect) = dispatch(&mut session, &request[..len], 0);
         assert!(effect.is_none());
         expect_status(&emitted[0], 5, Status::UNIMPLEMENTED);
+    }
+
+    /// Without a transport to pair on there is no passkey to hold, and a
+    /// write must not reach a platform that has nowhere to put it.
+    #[test]
+    fn pairing_pin_is_unknown_without_a_transport_that_takes_one() {
+        let config = SessionConfig {
+            ble_pin: false,
+            ..test_config()
+        };
+        let mut session: TestSession = Session::new(config, Status::RESET_POWER_ON, test_engine());
+        session.attach(true);
+
+        let (emitted, effect) = set(
+            &mut session,
+            prop::BLE_PAIRING_PIN,
+            &123_456u32.to_le_bytes(),
+        );
+        assert!(effect.is_none());
+        expect_status(&emitted[0], 2, Status::PROP_NOT_FOUND);
+
+        let mut request = [0; 16];
+        let len = frame::prop_get(&mut request, 5, prop::BLE_PAIRING_PIN).unwrap();
+        let (emitted, effect) = dispatch(&mut session, &request[..len], 0);
+        assert!(effect.is_none());
+        expect_status(&emitted[0], 5, Status::PROP_NOT_FOUND);
+
+        // Unknown to the table verbs too, not merely not a table.
+        let len = frame::prop_insert(&mut request, 6, prop::BLE_PAIRING_PIN, &[0]).unwrap();
+        let (emitted, _) = dispatch(&mut session, &request[..len], 0);
+        expect_status(&emitted[0], 6, Status::PROP_NOT_FOUND);
     }
 
     #[test]

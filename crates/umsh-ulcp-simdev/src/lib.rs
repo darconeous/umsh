@@ -1005,6 +1005,7 @@ mod tests {
             temperatures: true,
             ble: true,
             ble_pairing: true,
+            ble_pin: true,
             // A simulated power cycle is a rebuilt session, which is
             // exactly what a host watching this device would see.
             reboot: true,

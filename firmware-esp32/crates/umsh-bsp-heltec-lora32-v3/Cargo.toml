@@ -8,6 +8,9 @@ repository.workspace = true
 
 [features]
 ulcp-i2c = ["dep:umsh-ulcp", "dep:umsh-ulcp-device", "dep:umsh-ulcp-runtime"]
+# The `platform` module: its MAC bundle draws from the chip BSP's hardware
+# RNG, which owns a BLE controller.
+ble = ["umsh-bsp-esp32/ble"]
 
 [dependencies]
 umsh-ulcp = { path = "../../../crates/umsh-ulcp", default-features = false, optional = true }

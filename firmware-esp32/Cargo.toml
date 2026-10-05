@@ -16,6 +16,7 @@ members = [
     "firmware/heltec-v2",
     "firmware/heltec-v3-console",
     "firmware/heltec-v3",
+    "firmware/heltec-v3-bridge",
     "firmware/tbeam-supreme",
     "firmware/tlora-pager",
 ]
@@ -53,6 +54,7 @@ esp-alloc              = { git = "https://github.com/darconeous/esp-hal.git", re
 esp-println            = { git = "https://github.com/darconeous/esp-hal.git", rev = "5a55bb86021934c83be40d25b45a26922898ad91" }
 esp-bootloader-esp-idf = { git = "https://github.com/darconeous/esp-hal.git", rev = "5a55bb86021934c83be40d25b45a26922898ad91" }
 esp-storage            = { git = "https://github.com/darconeous/esp-hal.git", rev = "5a55bb86021934c83be40d25b45a26922898ad91" }
+esp-phy                = { git = "https://github.com/darconeous/esp-hal.git", rev = "5a55bb86021934c83be40d25b45a26922898ad91" }
 
 # Xtensa needs optimization even in dev builds; unoptimized images are too
 # slow to meet radio/BLE timing and blow past IRAM budgets.
