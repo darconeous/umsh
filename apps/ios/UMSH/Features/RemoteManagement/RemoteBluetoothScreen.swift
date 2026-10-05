@@ -47,12 +47,12 @@ struct RemoteBluetoothScreen: View {
             Section {
                 if model.supportsBluetoothPairing {
                     if let count = reading?.properties.bleBondCount {
-                        LabeledContent("Paired phones", value: "\(count)")
+                        RemoteValueRow("Paired phones", value: "\(count)")
                     } else {
-                        LabeledContent("Paired phones", value: "Not read")
+                        RemoteValueRow("Paired phones", value: "Not read")
                     }
                 }
-                LabeledContent("Currently Connected", value: connectionSummary)
+                RemoteValueRow("Currently Connected", value: connectionSummary)
             } header: {
                 Text("Status")
             } footer: {

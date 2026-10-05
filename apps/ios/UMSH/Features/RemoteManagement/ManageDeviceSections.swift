@@ -6,11 +6,11 @@ struct ManageDeviceIdentitySection: View {
     var body: some View {
         Section {
             if let card = model.card {
-                LabeledContent("Name", value: card.deviceName ?? model.fallbackName)
+                RemoteValueRow("Name", value: card.deviceName ?? model.fallbackName)
                 if let model = card.deviceModel {
-                    LabeledContent("Model", value: model)
+                    RemoteValueRow("Model", value: model)
                 }
-                LabeledContent("Firmware", value: card.deviceVersion ?? "Not reported")
+                RemoteValueRow("Firmware", value: card.deviceVersion ?? "Not reported")
                 if card.supportsAlert && !model.enteredDfu {
                     findButton
                 }

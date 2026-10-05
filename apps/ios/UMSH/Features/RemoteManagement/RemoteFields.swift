@@ -2,6 +2,23 @@ import SwiftUI
 
 // MARK: - Shared controls
 
+/// A read-only value with the same long-press Copy menu as address rows.
+/// Copy the displayed value, including units, without its field label.
+struct RemoteValueRow: View {
+    let title: String
+    let value: String
+
+    init(_ title: String, value: String) {
+        self.title = title
+        self.value = value
+    }
+
+    var body: some View {
+        LabeledContent(title, value: value)
+            .copyable(value)
+    }
+}
+
 /// A row's title, turned red and explained when the device rejected the
 /// value the operator offered for it.
 struct RemoteFieldTitle: View {

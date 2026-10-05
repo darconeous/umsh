@@ -30,9 +30,9 @@ struct RemoteBridgeScreen: View {
                 Text("Enter the server's UMSH identity to authenticate it. Wi-Fi and IP must be configured separately.")
             }
             Section("Connection") {
-                LabeledContent("Status", value: stateText)
+                RemoteValueRow("Status", value: stateText)
                 if let reason = reasonText { Text(reason).foregroundStyle(.secondary) }
-                LabeledContent("Node", value: reading?.properties.repeaterEnabled.map { $0 ? "Repeater" : "Leaf" } ?? "Not read")
+                RemoteValueRow("Node", value: reading?.properties.repeaterEnabled.map { $0 ? "Repeater" : "Leaf" } ?? "Not read")
                 if reading?.properties.repeaterEnabled == false {
                     Text("This device can communicate across the bridge but does not forward traffic for other nodes.")
                         .foregroundStyle(.secondary)

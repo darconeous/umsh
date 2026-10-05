@@ -49,10 +49,10 @@ struct RemoteNetworkScreen: View {
     @ViewBuilder
     private var v4StatusSection: some View {
         Section {
-            LabeledContent("Status", value: ipStateText(reading?.properties.ipv4State))
+            RemoteValueRow("Status", value: ipStateText(reading?.properties.ipv4State))
             if let held = reading?.properties.ipv4Address, !held.address.isEmpty {
-                LabeledContent("Address", value: "\(ipText(held.address))/\(held.prefix)")
-                LabeledContent(
+                RemoteValueRow("Address", value: "\(ipText(held.address))/\(held.prefix)")
+                RemoteValueRow(
                     "Router",
                     value: held.gateway.allSatisfy { $0 == 0 }
                         ? "None"
@@ -116,9 +116,9 @@ struct RemoteNetworkScreen: View {
     @ViewBuilder
     private var v6StatusSection: some View {
         Section {
-            LabeledContent("Status", value: ipStateText(reading?.properties.ipv6State))
+            RemoteValueRow("Status", value: ipStateText(reading?.properties.ipv6State))
             ForEach(Array(v6Items.enumerated()), id: \.offset) { _, item in
-                LabeledContent(
+                RemoteValueRow(
                     item.kind == 1 ? "Router" : "Address",
                     value: item.kind == 1
                         ? ipText(item.address)
@@ -189,7 +189,7 @@ struct RemoteNetworkScreen: View {
     private var dnsSection: some View {
         Section {
             if !edits.dns.isKnown {
-                LabeledContent("Resolvers", value: "Not read")
+                RemoteValueRow("Resolvers", value: "Not read")
             } else {
                 ForEach(Array(edits.dnsText.enumerated()), id: \.offset) { index, _ in
                     HStack {

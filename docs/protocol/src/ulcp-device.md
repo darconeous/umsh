@@ -1664,12 +1664,16 @@ terminator. Names contain 1–64 bytes and no NUL. An empty array is valid. Host
 validate the complete array before using any name. Reading names does not sample
 sensors or initiate hardware discovery.
 
-Hosts should fetch temperatures first, then fresh names in a separate request,
-keeping changing measurement arrays out of continued multi-property replies.
-Additional names represent sensors appended since acquisition began and have
-not yet been read. If names are refused, malformed, or shorter than the readings,
-hosts retain the valid measurements with numbered labels and report the metadata
-problem; they do not reuse old labels.
+Hosts should fetch temperatures first, then request names separately if any
+reading lacks a known name. Names may be reused within the connection; index
+associations must not persist across connections. Keep changing measurement
+arrays out of continued multi-property replies. Additional names represent
+sensors appended since acquisition began and have not yet been read.
+
+While replacement names are loading, hosts retain known labels. Refused,
+malformed, or incomplete metadata must not erase known names or valid
+measurements. Validate the complete names encoding before replacing labels,
+use numbered labels for unmatched indices, and report metadata problems.
 
 The reference sender supports **16 sensors** and **272 encoded name bytes**, and
 rejects capacity overflow with `STATUS_NOMEM` without truncation or reindexing.

@@ -39,6 +39,8 @@ struct RemoteCategoryReading {
     var statuses: [UInt32: UInt32] = [:]
     /// Transport failures are distinct from property refusals and malformed values.
     var failures: [UInt32: String] = [:]
+    /// A failed metadata replacement must not discard usable labels.
+    private(set) var invalidTemperatureNames = false
     /// Battery pushes update the summary independently of explicit reads
     /// of the diagnostics, so they must not make old diagnostics look fresh.
     private(set) var batteryDiagnosticsAsOf: Date?
@@ -58,6 +60,36 @@ struct RemoteCategoryReading {
     /// controls out rather than showing them empty.
     func answered(_ property: UInt32) -> Bool {
         propertyIDs.contains(property) && !refused.contains(property)
+    }
+
+    /// Keep names within this management session while acquiring new readings.
+    static func sensorRefresh(previous: Self?, properties: [UInt32]) -> Self {
+        var reading = Self()
+        reading.propertyIDs = properties
+        let names = ulcpProperties.temperatureNames
+        if properties.contains(names), previous?.properties.temperatureNames != nil,
+           let bytes = previous?.values[names], let date = previous?.receivedAt[names] {
+            reading.absorb([names: bytes], at: date, fromAir: false)
+        }
+        return reading
+    }
+
+    var needsTemperatureNames: Bool {
+        (properties.temperatures?.count ?? 0) > (properties.temperatureNames?.count ?? 0)
+    }
+
+    /// Publish a valid replacement atomically. An incomplete reply cannot erase
+    /// labels already known; a growing partial inventory can still add labels.
+    mutating func absorbTemperatureNames(_ bytes: Data, at date: Date) {
+        let decoded = inspectUlcpProperties(responses: [
+            ulcpPropertyRecord(propertyId: ulcpProperties.temperatureNames, value: bytes)
+        ]).temperatureNames
+        guard let decoded, decoded.count >= (properties.temperatureNames?.count ?? 0) else {
+            invalidTemperatureNames = true
+            return
+        }
+        invalidTemperatureNames = false
+        absorb([ulcpProperties.temperatureNames: bytes], at: date, fromAir: true)
     }
 
     /// Take in values the device reported, from a read or from a write's
@@ -110,7 +142,8 @@ struct RemoteTemperaturePresentation {
         sampledAt = reading?.receivedAt[id.temperatures]
         let metadataFailed = reading?.failures[id.temperatureNames] != nil
             || reading?.refused.contains(id.temperatureNames) == true
-        let malformedNames = reading?.values[id.temperatureNames] != nil && names == nil
+        let malformedNames = reading?.invalidTemperatureNames == true
+            || (reading?.values[id.temperatureNames] != nil && names == nil)
         let shortNames = readings.map { names == nil || (names?.count ?? 0) < $0.count } ?? false
         if metadataFailed {
             problem = "Sensor names could not be read."
@@ -119,7 +152,7 @@ struct RemoteTemperaturePresentation {
         } else {
             problem = nil
         }
-        let labels = problem == nil ? names : nil
+        let labels = names
         let failure: String?
         if let status = reading?.statuses[id.temperatures] {
             failure = "Read failed (\(ulcpStatusName(status: status)))"
@@ -142,7 +175,9 @@ struct RemoteTemperaturePresentation {
                 value = "Not read"
             }
             return RemoteTemperatureRow(
-                id: index, name: labels?[index] ?? "Temperature \(index + 1)", value: value
+                id: index,
+                name: labels.flatMap { index < $0.count ? $0[index] : nil } ?? "Temperature \(index + 1)",
+                value: value
             )
         }
         state = count == 0 ? (failure ?? (readings != nil ? "No temperature sensors" : "Not read")) : nil

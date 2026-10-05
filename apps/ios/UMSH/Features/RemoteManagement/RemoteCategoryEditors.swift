@@ -167,7 +167,7 @@ struct RemoteRadioEditor: View {
                 )
                 if model.card?.supportsDutyCycleLimit == true {
                     if let used = reading?.properties.dutyCycleNow {
-                        LabeledContent("Past-hour usage", value: Self.dutyLabel(used))
+                        RemoteValueRow("Past-hour usage", value: Self.dutyLabel(used))
                     }
                     RemotePicker(
                         "Transmit limit",
@@ -432,7 +432,7 @@ struct RemoteIdentityEditor: View {
                             }
                         }
                     } else {
-                        LabeledContent("Name", value: "Not read")
+                        RemoteValueRow("Name", value: "Not read")
                     }
                 } header: {
                     Text("Name")
@@ -578,9 +578,9 @@ struct RemoteIdentityEditor: View {
     private var positionSection: some View {
         Section {
             if edits.isSelfPositioning {
-                LabeledContent("Position", value: edits.positionSummary)
+                RemoteValueRow("Position", value: edits.positionSummary)
                 if let altitude = edits.altitude.reported ?? nil {
-                    LabeledContent("Altitude", value: "\(altitude) m")
+                    RemoteValueRow("Altitude", value: "\(altitude) m")
                 }
             } else {
                 RemoteNumberField(
@@ -1052,7 +1052,7 @@ struct RemoteRepeaterEditor: View {
                         }
                     }
                 } else {
-                    LabeledContent("Regions", value: "Not read")
+                    RemoteValueRow("Regions", value: "Not read")
                 }
             } header: {
                 Text("Flood regions")

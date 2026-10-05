@@ -373,12 +373,16 @@ final class ManageDeviceModel {
             if category == .sensors {
                 // Keep changing measurement arrays out of continued multi-property replies.
                 // Capture each receipt date before the following request starts.
-                var reading = RemoteCategoryReading()
-                reading.propertyIDs = properties
+                var reading = RemoteCategoryReading.sensorRefresh(
+                    previous: readings[category], properties: properties
+                )
                 readings[category] = reading
                 let order = [ulcpProperties.temperatures, ulcpProperties.temperatureNames,
                              ulcpProperties.illuminance].filter { properties.contains($0) }
                 for property in order {
+                    if property == ulcpProperties.temperatureNames && !reading.needsTemperatureNames {
+                        continue
+                    }
                     do {
                         let answers = try await fetch([property], multiHint: false)
                         let now = Date()
@@ -390,7 +394,11 @@ final class ManageDeviceModel {
                         if reported[property] == nil && !reading.refused.contains(property) {
                             reading.failures[property] = "No response"
                         }
-                        reading.absorb(reported, at: now, fromAir: true)
+                        if property == ulcpProperties.temperatureNames, let names = reported[property] {
+                            reading.absorbTemperatureNames(names, at: now)
+                        } else {
+                            reading.absorb(reported, at: now, fromAir: true)
+                        }
                     } catch {
                         reading.failures[property] = error.localizedDescription
                     }
@@ -773,15 +781,11 @@ final class ManageDeviceModel {
         }
     }
 
-    /// Restart the device, keeping everything it has configured.
-    ///
-    /// Nothing here changes, so nothing is invalidated: the same device
-    /// comes back with the same settings, and the readings on screen are as
-    /// true afterward as they were before. What is no longer true is the
-    /// uptime, which the next refresh corrects.
+    /// Restart while preserving saved settings; refresh the sensor inventory.
     func restart() async {
         await run { [self] in
             try await management.reset(address, .reboot)
+            readings[.sensors] = nil
         }
     }
 

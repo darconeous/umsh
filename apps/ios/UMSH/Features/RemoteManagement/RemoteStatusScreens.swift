@@ -11,7 +11,7 @@ struct RemoteSensorsScreen: View {
         Form {
             if model.properties(of: .sensors).contains(ulcpProperties.illuminance) {
                 Section {
-                    LabeledContent("Ambient light", value: lightReading)
+                    RemoteValueRow("Ambient light", value: lightReading)
                 } footer: {
                     if let date = reading?.receivedAt[ulcpProperties.illuminance] {
                         Text(date, style: .relative)
@@ -22,7 +22,7 @@ struct RemoteSensorsScreen: View {
                 let temperature = RemoteTemperaturePresentation(reading: reading)
                 Section {
                     ForEach(temperature.rows) { row in
-                        LabeledContent(row.name, value: row.value)
+                        RemoteValueRow(row.name, value: row.value)
                     }
                     if let state = temperature.state { Text(state).foregroundStyle(.secondary) }
                 } header: {
@@ -69,17 +69,17 @@ struct RemotePowerScreen: View {
             Section {
                 if let battery = model.readings[.power]?.properties.battery {
                     if let percentage = battery.percentage {
-                        LabeledContent("Charge", value: "\(percentage)%")
+                        RemoteValueRow("Charge", value: "\(percentage)%")
                     }
                     if let millivolts = battery.voltageMv {
-                        LabeledContent(
+                        RemoteValueRow(
                             "Voltage",
                             value: (Double(millivolts) / 1000)
                                 .formatted(.number.precision(.fractionLength(2))) + " V"
                         )
                     }
                     if let state = battery.chargeState {
-                        LabeledContent("State", value: RadioChargeState(state).label)
+                        RemoteValueRow("State", value: RadioChargeState(state).label)
                     }
                     if battery.percentage == nil, battery.voltageMv == nil,
                        battery.chargeState == nil {
@@ -117,6 +117,7 @@ struct RemotePowerScreen: View {
                         Text(instant, style: .relative)
                             .foregroundStyle(.secondary)
                     }
+                    .copyable(instant.formatted(date: .abbreviated, time: .standard))
                     Text("Refresh to request new diagnostics.")
                         .foregroundStyle(.secondary)
                 }
@@ -139,7 +140,7 @@ struct RemotePowerScreen: View {
         if !visible.isEmpty {
             Section {
                 ForEach(visible, id: \.0) { property, label in
-                    LabeledContent(label, value: diagnosticText(property))
+                    RemoteValueRow(label, value: diagnosticText(property))
                 }
             } header: {
                 Text(title)
@@ -209,19 +210,19 @@ struct RemoteGnssScreen: View {
 
             Section {
                 if let gnss = reading?.properties.gnss {
-                    LabeledContent("Fix", value: label(for: gnss.fix))
+                    RemoteValueRow("Fix", value: label(for: gnss.fix))
                     if let latitude = gnss.latitudeDeg, let longitude = gnss.longitudeDeg {
-                        LabeledContent(
+                        RemoteValueRow(
                             "Position",
                             value: "\(coordinate(latitude)), \(coordinate(longitude))"
                         )
                     }
                     if let altitude = gnss.altitudeM {
-                        LabeledContent("Altitude", value: "\(altitude) m")
+                        RemoteValueRow("Altitude", value: "\(altitude) m")
                     }
-                    LabeledContent("Satellites used", value: "\(gnss.satellitesUsed)")
+                    RemoteValueRow("Satellites used", value: "\(gnss.satellitesUsed)")
                     if let inView = gnss.satellitesInView {
-                        LabeledContent("Satellites in view", value: "\(inView)")
+                        RemoteValueRow("Satellites in view", value: "\(inView)")
                     }
                 } else {
                     RemoteEmptyReading()
@@ -331,7 +332,7 @@ struct RemoteTimeScreen: View {
                     // was—and a stopped counter would read as a device
                     // that had just rebooted.
                     TimelineView(.periodic(from: .now, by: 1)) { context in
-                        LabeledContent(
+                        RemoteValueRow(
                             "Uptime",
                             value: formattedUptime(elapsedUptime(uptime, asOf: context.date))
                         )
@@ -350,7 +351,7 @@ struct RemoteTimeScreen: View {
                         // not as a stopped reading from whenever the screen
                         // was refreshed.
                         TimelineView(.periodic(from: .now, by: 1)) { context in
-                            LabeledContent(
+                            RemoteValueRow(
                                 "Device time",
                                 value: date.addingTimeInterval(
                                     context.date.timeIntervalSince(clock.readAt)
@@ -359,10 +360,10 @@ struct RemoteTimeScreen: View {
                             )
                         }
                         if let drift = clock.driftSummary() {
-                            LabeledContent("Drift", value: drift)
+                            RemoteValueRow("Drift", value: drift)
                         }
                     } else {
-                        LabeledContent("Device time", value: "Not set")
+                        RemoteValueRow("Device time", value: "Not set")
                     }
                     Button("Set From iPhone") {
                         Task { await setFromPhone() }
@@ -563,13 +564,13 @@ struct RemoteStatisticsScreen: View {
         Form {
             Section("Transmit") {
                 if let value = stats.statTxPackets {
-                    LabeledContent("Packets", value: value.formatted())
+                    RemoteValueRow("Packets", value: value.formatted())
                 }
                 if let value = stats.statTxChannelBusy {
-                    LabeledContent("Deferred—channel busy", value: value.formatted())
+                    RemoteValueRow("Deferred—channel busy", value: value.formatted())
                 }
                 if let value = stats.dutyCycleNow {
-                    LabeledContent("Duty cycle", value: dutyPercent(value))
+                    RemoteValueRow("Duty cycle", value: dutyPercent(value))
                 }
                 if stats.statTxPackets == nil,
                    stats.statTxChannelBusy == nil,
@@ -580,29 +581,29 @@ struct RemoteStatisticsScreen: View {
 
             Section("Receive") {
                 if let value = stats.statRxPackets {
-                    LabeledContent("UMSH packets", value: value.formatted())
+                    RemoteValueRow("UMSH packets", value: value.formatted())
                 }
                 if let value = stats.statRxBadCrc {
-                    LabeledContent("Bad CRC", value: value.formatted())
+                    RemoteValueRow("Bad CRC", value: value.formatted())
                 }
                 if let value = stats.statRxNonUmsh {
-                    LabeledContent("Non-UMSH packets", value: value.formatted())
+                    RemoteValueRow("Non-UMSH packets", value: value.formatted())
                 }
                 if let value = stats.statRxAccepted {
-                    LabeledContent("For this node", value: value.formatted())
+                    RemoteValueRow("For this node", value: value.formatted())
                 }
             }
 
             if hasForwarding {
                 Section("Forwarding") {
                     if let value = stats.statForwarded {
-                        LabeledContent("Forwarded", value: value.formatted())
+                        RemoteValueRow("Forwarded", value: value.formatted())
                     }
                     if let value = stats.statForwardDropped {
-                        LabeledContent("Policy dropped", value: value.formatted())
+                        RemoteValueRow("Policy dropped", value: value.formatted())
                     }
                     if let value = stats.statForwardCancelled {
-                        LabeledContent("Cancelled", value: value.formatted())
+                        RemoteValueRow("Cancelled", value: value.formatted())
                     }
                 }
             }
@@ -610,7 +611,7 @@ struct RemoteStatisticsScreen: View {
             Section {
                 if let uptime = currentUptime {
                     TimelineView(.periodic(from: .now, by: 1)) { context in
-                        LabeledContent(
+                        RemoteValueRow(
                             "Uptime",
                             value: formattedUptime(elapsedUptime(uptime, asOf: context.date))
                         )

@@ -110,20 +110,20 @@ struct RemoteWifiScreen: View {
     @ViewBuilder
     private var connectionSection: some View {
         Section {
-            LabeledContent("Status", value: connectionSummary)
+            RemoteValueRow("Status", value: connectionSummary)
             if let link = reading?.properties.wifiLink, let bssid = link.bssid {
-                LabeledContent("Access point", value: macAddressText(bssid))
+                RemoteValueRow("Access point", value: macAddressText(bssid))
             }
             if let link = reading?.properties.wifiLink,
                let frequency = link.frequencyMhz
             {
-                LabeledContent("Channel", value: wifiChannelText(frequency))
+                RemoteValueRow("Channel", value: wifiChannelText(frequency))
             }
             if let rssi = reading?.properties.wifiRssiDbm {
-                LabeledContent("Signal", value: "\(rssi) dBm")
+                RemoteValueRow("Signal", value: "\(rssi) dBm")
             }
             if let mac = reading?.properties.wifiMac, !mac.isEmpty {
-                LabeledContent("Wi-Fi address", value: macAddressText(mac))
+                RemoteValueRow("Wi-Fi address", value: macAddressText(mac))
             }
         } header: {
             Text("Connection")
@@ -155,7 +155,7 @@ struct RemoteWifiScreen: View {
     private var networksSection: some View {
         Section {
             if reading?.answered(ulcpProperties.wifiNetworks) != true {
-                LabeledContent("Networks", value: "Not read")
+                RemoteValueRow("Networks", value: "Not read")
             } else if knownNetworks.isEmpty {
                 Text("No networks stored.").foregroundStyle(.secondary)
             } else {

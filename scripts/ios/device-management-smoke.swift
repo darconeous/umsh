@@ -112,9 +112,12 @@ struct DeviceManagementSmokeTest {
         precondition(grown.rows.map(\.value) == ["25.0°C","Unavailable","Not read"])
         precondition(grown.problem == nil)
         for labels in [names(["Die"]), Data([3,65]), Data([0])] {
-            reading.absorb([id.temperatureNames: labels], at: date, fromAir: true)
-            let presentation = RemoteTemperaturePresentation(reading: reading, locale: celsius)
-            precondition(presentation.rows.map(\.name) == ["Temperature 1","Temperature 2"])
+            var incomplete = RemoteCategoryReading()
+            incomplete.absorb([id.temperatures: Data([0xA5,0x0B,0xFF,0xFF])], at: date, fromAir: true)
+            incomplete.absorbTemperatureNames(labels, at: date)
+            let presentation = RemoteTemperaturePresentation(reading: incomplete, locale: celsius)
+            precondition(presentation.rows.map(\.name) ==
+                         (labels == names(["Die"]) ? ["Die","Temperature 2"] : ["Temperature 1","Temperature 2"]))
             precondition(presentation.rows.map(\.value) == ["25.0°C","Unavailable"])
             precondition(presentation.problem != nil)
         }
@@ -132,6 +135,54 @@ struct DeviceManagementSmokeTest {
         failed.absorb([id.temperatures: Data(), id.temperatureNames: Data()], at: date, fromAir: true)
         precondition(RemoteTemperaturePresentation(reading: failed).state == "No temperature sensors")
         precondition(RemoteTemperaturePresentation(reading: nil).state == "Not read")
+
+        // Request names only when a successful measurement has unnamed slots.
+        var refresh = RemoteCategoryReading.sensorRefresh(previous: nil, properties: temperatureOnly)
+        precondition(!refresh.needsTemperatureNames)
+        refresh.absorb([id.temperatures: Data()], at: date, fromAir: true)
+        precondition(!refresh.needsTemperatureNames)
+        refresh.absorb([id.temperatures: Data([0xA5,0x0B])], at: date, fromAir: true)
+        precondition(refresh.needsTemperatureNames)
+        refresh.absorbTemperatureNames(names(["Die"]), at: date)
+        precondition(!refresh.needsTemperatureNames)
+        for _ in 0..<3 {
+            refresh = .sensorRefresh(previous: refresh, properties: temperatureOnly)
+            precondition(RemoteTemperaturePresentation(reading: refresh).rows[0].name == "Die")
+            refresh.absorb([id.temperatures: Data([0xA6,0x0B])], at: date.addingTimeInterval(10), fromAir: true)
+            precondition(!refresh.needsTemperatureNames)
+            precondition(refresh.receivedAt[id.temperatureNames] == date)
+            precondition(RemoteTemperaturePresentation(reading: refresh).sampledAt == date.addingTimeInterval(10))
+        }
+        refresh.absorb([id.temperatures: Data([0xA5,0x0B,0xFF,0xFF])], at: date, fromAir: true)
+        precondition(refresh.needsTemperatureNames)
+        precondition(RemoteTemperaturePresentation(reading: refresh).rows.map(\.name) == ["Die","Temperature 2"])
+        // Refusal, timeout, malformed and shrinking replies retain known names.
+        for invalid in [Data([3,65]), Data([0]), Data()] {
+            refresh.absorbTemperatureNames(invalid, at: date.addingTimeInterval(20))
+            precondition(refresh.properties.temperatureNames == ["Die"])
+            precondition(refresh.receivedAt[id.temperatureNames] == date)
+            precondition(refresh.needsTemperatureNames)
+            precondition(RemoteTemperaturePresentation(reading: refresh).problem != nil)
+        }
+        refresh.failures[id.temperatureNames] = "Timeout"
+        precondition(RemoteTemperaturePresentation(reading: refresh).rows[0].name == "Die")
+        refresh.failures = [:]
+        refresh.refused.insert(id.temperatureNames)
+        precondition(RemoteTemperaturePresentation(reading: refresh).rows[0].name == "Die")
+        refresh = .sensorRefresh(previous: refresh, properties: temperatureOnly)
+        refresh.absorb([id.temperatures: Data([0xA5,0x0B,0xFF,0xFF])], at: date, fromAir: true)
+        refresh.absorbTemperatureNames(names(["MCU die", "Battery", "External"]), at: date.addingTimeInterval(30))
+        precondition(!refresh.needsTemperatureNames)
+        let replaced = RemoteTemperaturePresentation(reading: refresh)
+        precondition(replaced.rows.map(\.name) == ["MCU die", "Battery", "External"])
+        precondition(replaced.rows[2].value == "Not read")
+        precondition(replaced.problem == nil)
+        refresh = .sensorRefresh(previous: refresh, properties: temperatureOnly)
+        refresh.absorb([id.temperatures: Data([0])], at: date, fromAir: true)
+        precondition(!refresh.needsTemperatureNames) // Malformed acquisition is not inventory growth.
+        precondition(refresh.properties.temperatureNames == ["MCU die", "Battery", "External"])
+        precondition(RemoteCategoryReading.sensorRefresh(previous: nil, properties: temperatureOnly)
+            .properties.temperatureNames == nil) // New management session starts without associations.
     }
 
     static func bytes<T: FixedWidthInteger>(_ value: T) -> Data {
