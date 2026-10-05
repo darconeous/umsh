@@ -37,6 +37,13 @@ use crate::identity::BridgeIdentity;
 /// rather than misparsing its frames.
 pub const ALPN: &[u8] = b"umsh-bridge/1";
 
+/// The most plaintext one TLS record may carry, from the spec. It is
+/// what lets a constrained participant bound its record buffer.
+pub const MAX_RECORD_PLAINTEXT: usize = 4096;
+
+/// rustls counts the five-octet record header in its fragment size.
+const MAX_FRAGMENT_SIZE: usize = MAX_RECORD_PLAINTEXT + 5;
+
 /// A participant's identity in its public form: an Ed25519 public key,
 /// written and parsed as the canonical UMSH address (fixed-width base58,
 /// or 64 hex digits).
@@ -160,6 +167,7 @@ pub fn server_config(credential: &Credential, accepted: Vec<Address>) -> Result<
         .with_single_cert(credential.chain.clone(), credential.key.clone_key())
         .context("the minted certificate and identity key do not go together")?;
     config.alpn_protocols = vec![ALPN.to_vec()];
+    config.max_fragment_size = Some(MAX_FRAGMENT_SIZE);
     Ok(Arc::new(config))
 }
 
@@ -174,6 +182,7 @@ pub fn client_config(credential: &Credential, server: Address) -> Result<Arc<Cli
         .with_client_auth_cert(credential.chain.clone(), credential.key.clone_key())
         .context("the minted certificate and identity key do not go together")?;
     config.alpn_protocols = vec![ALPN.to_vec()];
+    config.max_fragment_size = Some(MAX_FRAGMENT_SIZE);
     Ok(Arc::new(config))
 }
 

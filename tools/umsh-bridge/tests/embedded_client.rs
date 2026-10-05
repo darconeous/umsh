@@ -8,7 +8,7 @@ use umsh_bridge::{
     identity::BridgeIdentity,
     tls::{self, Address, Credential},
 };
-use umsh_bridge_client::{ALPN, tls::IdentityProvider};
+use umsh_bridge_client::{ALPN, TLS_RX_MIN, TLS_TX_MIN, tls::IdentityProvider};
 
 async fn handshake(wrong_pin: bool, unauthorized: bool, wrong_alpn: bool, omit_alpn: bool) -> bool {
     let server = BridgeIdentity::from_seed(&[0x11; 32]);
@@ -51,8 +51,8 @@ async fn handshake(wrong_pin: bool, unauthorized: bool, wrong_alpn: bool, omit_a
         }
         assert_eq!(&bytes, b"UMSH");
         stream.write_all(b"OK").await.unwrap();
-        // A standard-size incoming TLS record must fit even though decoded
-        // tunnel bodies have a much smaller independent bound.
+        // A write several records long must arrive intact through the
+        // smallest receive buffer: the server splits it at the record limit.
         stream.write_all(&[0x7e; 16 * 1024]).await.unwrap();
         stream.flush().await.unwrap();
         true
@@ -65,8 +65,8 @@ async fn handshake(wrong_pin: bool, unauthorized: bool, wrong_alpn: bool, omit_a
     let mut provider =
         IdentityProvider::new(&[0x22; 32], &pin.0, ChaCha20Rng::from_seed([0x33; 32])).unwrap();
     assert_eq!(provider.public_key(), device.public_key().0);
-    let mut read = [0; 18 * 1024];
-    let mut write = [0; 4096];
+    let mut read = [0; TLS_RX_MIN];
+    let mut write = [0; TLS_TX_MIN];
     let mut connection =
         TlsConnection::<_, Aes128GcmSha256>::new(FromTokio::new(client), &mut read, &mut write);
     let config = TlsConfig::new().with_alpn(&[ALPN]);

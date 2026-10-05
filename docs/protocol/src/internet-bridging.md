@@ -123,6 +123,11 @@ The tunnel carries no version of its own. Participants **SHOULD** offer
 the ALPN protocol identifier `umsh-bridge/1`, so that an incompatible
 future revision fails the handshake instead of misparsing frames.
 
+A participant **MUST NOT** send a TLS record carrying more than 4096
+octets of plaintext. This bounds the record buffer a constrained
+participant needs; a participant that cannot buffer a larger record
+closes the connection.
+
 ### Message Framing
 
 The tunnel is a stream of

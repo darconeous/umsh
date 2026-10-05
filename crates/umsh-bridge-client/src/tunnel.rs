@@ -1,11 +1,11 @@
 //! Bounded, byte-faithful tunnel records and drop-oldest queues.
-use crate::{MAX_AGE_MS, MAX_BODY, QUEUE_DEPTH};
+use crate::{FRAME_MAX, MAX_AGE_MS, QUEUE_DEPTH};
 use heapless::{Deque, Vec};
 use umsh_ulcp::meta::{BufferedRxMeta, RX_FLAG_SELF_TX};
 
 #[derive(Clone, Debug)]
 pub struct Frame {
-    pub body: Vec<u8, MAX_BODY>,
+    pub body: Vec<u8, FRAME_MAX>,
     pub queued_ms: u64,
 }
 
@@ -17,11 +17,13 @@ impl Frame {
             return None;
         }
         let metadata = &rest[len..];
-        // Unknown trailing metadata is preserved, but a partial known header
+        // Unknown trailing metadata is tolerated, but a partial known header
         // cannot be interpreted as a valid receipt.
         BufferedRxMeta::decode(metadata).ok()?;
+        // Nothing reads past the known header, so nothing past it is kept.
+        let kept = 2 + len + metadata.len().min(BufferedRxMeta::WIRE_LEN);
         Some(Self {
-            body: Vec::from_slice(body).ok()?,
+            body: Vec::from_slice(&body[..kept]).ok()?,
             queued_ms: now_ms,
         })
     }
@@ -100,6 +102,7 @@ impl Queue {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{MAX_BODY, MAX_DATA};
     #[test]
     fn queue_drops_oldest_and_expires_frames() {
         let mut queue = Queue::new();
@@ -119,6 +122,19 @@ mod tests {
         assert!(Frame::parse(&frame.body, 12, 1).is_none());
         assert!(Frame::parse(&[3, 0, 1], 0, 255).is_none());
         assert!(Frame::parse(&[0, 0], 0, 255).is_none());
+    }
+
+    #[test]
+    fn trailing_metadata_is_accepted_and_not_kept() {
+        let frame = Frame::transmitted(&[0x55; MAX_DATA], 0).unwrap();
+        assert_eq!(frame.body.len(), FRAME_MAX);
+        let mut body: Vec<u8, MAX_BODY> = Vec::from_slice(&frame.body).unwrap();
+        body.resize(MAX_BODY, 0xaa).unwrap();
+        let parsed = Frame::parse(&body, 0, MAX_DATA).unwrap();
+        assert_eq!(parsed.body, frame.body);
+        assert_eq!(parsed.data(), frame.data());
+        // A header cut short of a field boundary is still refused.
+        assert!(Frame::parse(&body[..FRAME_MAX - 1], 0, MAX_DATA).is_none());
     }
 
     #[test]
