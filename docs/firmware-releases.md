@@ -10,8 +10,12 @@ Releases are currently tagged `fw-YYYY.MM.NN`—annotated, with a zero-padded se
 number within the month:
 
 ```bash
-git tag -a fw-2026.08.01 -m "UMSH firmware 2026.08.01"
+git tag -a fw-2026.08.01
 ```
+
+The tag message is a subject line (`UMSH firmware 2026.08.01`), a blank line,
+and the release notes, which `release-publish` uses as the GitHub Release's
+description. `release-artifacts` refuses a tag with no notes.
 
 Crate versions are all `0.1.0` and mean nothing, so a date-based scheme is
 the honest one for a technology preview. The padding is not cosmetic: it
@@ -49,7 +53,7 @@ and fall back to `git describe` as before.
 ## Cutting a release
 
 ```bash
-git tag -a fw-2026.08.01 -m "UMSH firmware 2026.08.01"
+git tag -a fw-2026.08.01
 make release-artifacts
 #   ... verify on hardware, see below ...
 git push origin main --follow-tags
@@ -71,7 +75,8 @@ converts them, and writes `manifest.json` and `SHA256SUMS` into
 `target/firmware-release/<version>/`, where `<version>` is the tag without its
 `fw-` prefix.
 
-`release-publish` drafts the GitHub Release. Review the asset list, then
+`release-publish` drafts the GitHub Release, with the tag's notes as its
+description. Review the notes and the asset list, then
 `gh release edit fw-2026.08.01 --draft=false`.
 
 Releases are cut **locally, not in CI**: this is where the Xtensa toolchain

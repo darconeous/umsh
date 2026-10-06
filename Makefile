@@ -62,7 +62,7 @@ TARGET_DIR := target/thumbv7em-none-eabihf/release
 # bare number—and it defaults to the tag on HEAD, so cutting a release takes
 # no argument at all:
 #
-#     git tag -a fw-2026.08.01 -m "UMSH firmware 2026.08.01"
+#     git tag -a fw-2026.08.01        # subject, blank line, release notes
 #     make release-artifacts
 #
 # Deriving it rather than asking for it is the point: the tag already is the
@@ -91,9 +91,13 @@ define require-release-tag
 	@case "$(VERSION)" in fw-*) ;; *) \
 		echo "VERSION must be a release tag, e.g. VERSION=fw-2026.08.01 (got \"$(VERSION)\")"; \
 		echo "or tag HEAD and drop the argument entirely:"; \
-		echo "    git tag -a fw-2026.08.01 -m \"UMSH firmware 2026.08.01\""; \
+		echo "    git tag -a fw-2026.08.01"; \
 		exit 1 ;; esac
 endef
+
+# The tag's description—its message past the subject line—which is what the
+# GitHub Release carries as its notes. A signature, if any, is not part of it.
+RELEASE_NOTES = git for-each-ref --format='%(contents:body)' refs/tags/$(RELEASE_TAG)
 
 # The version the firmware reports as PROP_DEV_VERSION. Empty for ordinary
 # builds, which makes each build.rs fall back to `git describe`;
@@ -451,7 +455,7 @@ $(addprefix merged-bin-,$(RELEASE_BOARDS_ESP32)): merged-bin-%: espflash-check b
 #
 # The whole flow, in order:
 #
-#     git tag -a fw-2026.08.01 -m "UMSH firmware 2026.08.01"
+#     git tag -a fw-2026.08.01        # subject, blank line, release notes
 #     make release-artifacts
 #     ... bench-verify the staged artifacts ...
 #     git push origin main --follow-tags
@@ -472,7 +476,13 @@ release-artifacts:
 		exit 1; }
 	@git rev-parse -q --verify "$(RELEASE_TAG)^{tag}" >/dev/null || { \
 		echo "no annotated tag $(RELEASE_TAG). Create it first:"; \
-		echo "    git tag -a $(RELEASE_TAG) -m \"UMSH firmware $(FW_VERSION)\""; \
+		echo "    git tag -a $(RELEASE_TAG)"; \
+		exit 1; }
+	@# Checked here rather than only at publish: until the tag is pushed,
+	@# re-annotating it is still harmless.
+	@$(RELEASE_NOTES) | grep -q . || { \
+		echo "tag $(RELEASE_TAG) has no description to use as release notes. Re-annotate it:"; \
+		echo "    git tag -a -f $(RELEASE_TAG)"; \
 		exit 1; }
 	@test "$$(git rev-parse HEAD)" = "$$(git rev-parse "$(RELEASE_TAG)^{commit}")" || { \
 		echo "HEAD is not at $(RELEASE_TAG); check out the tagged commit"; \
@@ -501,14 +511,18 @@ release-stage: $(addprefix dfu-zip-,$(RELEASE_BOARDS_NRF52)) \
 # every file, and the download URL the manifest points at. Drafted rather
 # than published outright, so the asset list can be looked at before anyone
 # else can see it—promote it from the web UI, or with
-# `gh release edit $(RELEASE_TAG) --draft=false`.
+# `gh release edit $(RELEASE_TAG) --draft=false`. The notes are the tag's
+# description, read from the local tag.
 release-publish:
 	@test -f $(FW_DIR)/manifest.json || { \
 		echo "nothing staged for $(VERSION); run: make release-artifacts VERSION=$(VERSION)"; \
 		exit 1; }
-	gh release create $(RELEASE_TAG) --draft \
+	@$(RELEASE_NOTES) | grep -q . || { \
+		echo "tag $(RELEASE_TAG) has no description to use as release notes"; \
+		exit 1; }
+	$(RELEASE_NOTES) | gh release create $(RELEASE_TAG) --draft \
 		--title "UMSH firmware $(FW_VERSION)" \
-		--notes "Technology preview. See docs/firmware-releases.md for what is in here and how to flash it." \
+		--notes-file - \
 		$(FW_DIR)/umsh-*-$(FW_VERSION).uf2 \
 		$(FW_DIR)/umsh-*-$(FW_VERSION)-dfu.zip \
 		$(FW_DIR)/umsh-*-$(FW_VERSION).bin \
