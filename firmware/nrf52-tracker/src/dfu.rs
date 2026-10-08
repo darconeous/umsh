@@ -29,15 +29,13 @@ const PROFILE: Profile = if cfg!(feature = "board-techo") {
 };
 
 pub fn prepare(mode: DfuMode) -> Result<DfuMode, Status> {
-    match PROFILE {
-        Profile::TEcho
-        | Profile::T1000E
-        | Profile::SenseCapSolar
-        | Profile::WioTrackerL1
-        | Profile::XiaoSense => Ok(match mode {
-            DfuMode::Default => DfuMode::Uf2,
-            mode => mode,
-        }),
-        Profile::Unsupported => Err(Status::UNIMPLEMENTED),
-    }
+    let default = match PROFILE {
+        Profile::XiaoSense | Profile::SenseCapSolar => DfuMode::Ble,
+        Profile::TEcho | Profile::T1000E | Profile::WioTrackerL1 => DfuMode::Uf2,
+        Profile::Unsupported => return Err(Status::UNIMPLEMENTED),
+    };
+    Ok(match mode {
+        DfuMode::Default => default,
+        mode => mode,
+    })
 }

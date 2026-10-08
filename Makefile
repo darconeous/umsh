@@ -10,8 +10,9 @@
 	build-t1000e-console flash-t1000e-console \
 	flash-t1000e-console-serial \
 	build-sensecap-solar-console flash-sensecap-solar-console \
-	build-sensecap-solar flash-sensecap-solar \
-	build-xiao-nrf52 flash-xiao-nrf52 \
+	build-sensecap-solar flash-sensecap-solar flash-ble-sensecap-solar \
+	build-xiao-nrf52 flash-xiao-nrf52 flash-ble-xiao-nrf52 \
+	install-ble-dfu-setup scan-ble-dfu ble-dfu-check \
 	build-t1000e flash-t1000e-serial \
 	build-techo flash-techo flash-techo-serial \
 	build-heltec-v3-console flash-heltec-v3-console \
@@ -237,6 +238,46 @@ build-xiao-nrf52:
 flash-xiao-nrf52: build-xiao-nrf52
 	scripts/flash.py --board xiao-nrf52 --copy-default \
 		$(TARGET_DIR)/firmware-xiao-nrf52.uf2
+
+# Native Bluetooth upload to a board already in BLE DFU. The optional
+# uploader environment is separate from firmware build dependencies.
+# Setup: make install-ble-dfu-setup. Select the bootloader UUID/address from
+# `make scan-ble-dfu`, not the application's Bluetooth identity.
+DFU_BLE_SETUP_PYTHON ?= python3
+DFU_BLE_VENV ?= $(CURDIR)/target/ble-dfu/venv
+DFU_BLE_PYTHON ?= $(DFU_BLE_VENV)/bin/python
+DFU_BLE_UPLOADER ?= $(CURDIR)/target/ble-dfu/nrf_dfu_py
+DFU_BLE_ADDRESS ?=
+DFU_BLE_REVISION := 409e4b75d55c8d75859022217dfba0db33730f16
+
+install-ble-dfu-setup:
+	"$(DFU_BLE_SETUP_PYTHON)" -c 'import sys; sys.exit("BLE DFU setup requires Python 3.10 or newer; set DFU_BLE_SETUP_PYTHON" if sys.version_info < (3, 10) else 0)'
+	@if ! test -d "$(DFU_BLE_UPLOADER)/.git"; then \
+		git clone --no-checkout https://github.com/recrof/nrf_dfu_py.git "$(DFU_BLE_UPLOADER)" || exit $$?; \
+		git -C "$(DFU_BLE_UPLOADER)" checkout --detach $(DFU_BLE_REVISION) || exit $$?; \
+	fi
+	@test "$$(git -C "$(DFU_BLE_UPLOADER)" rev-parse HEAD)" = "$(DFU_BLE_REVISION)" || { \
+		echo "Existing BLE uploader is at another revision; move it aside or set DFU_BLE_UPLOADER to a new directory"; exit 1; }
+	@git -C "$(DFU_BLE_UPLOADER)" diff --quiet HEAD -- || { \
+		echo "Existing BLE uploader has local changes; move it aside or set DFU_BLE_UPLOADER to a new directory"; exit 1; }
+	"$(DFU_BLE_SETUP_PYTHON)" -m venv "$(DFU_BLE_VENV)"
+	"$(DFU_BLE_VENV)/bin/python" -m pip install bleak==3.0.2
+	$(MAKE) ble-dfu-check
+
+ble-dfu-check:
+	@command -v "$(DFU_BLE_PYTHON)" >/dev/null || { \
+		echo "Set up the BLE uploader first: make install-ble-dfu-setup"; exit 1; }
+	"$(DFU_BLE_PYTHON)" tools/ble-dfu/flash.py --upstream "$(DFU_BLE_UPLOADER)" check
+
+scan-ble-dfu: ble-dfu-check
+	"$(DFU_BLE_PYTHON)" tools/ble-dfu/flash.py --upstream "$(DFU_BLE_UPLOADER)" scan
+
+flash-ble-xiao-nrf52 flash-ble-sensecap-solar: flash-ble-%: ble-dfu-check
+	@test -n "$(DFU_BLE_ADDRESS)" || { \
+		echo "Set DFU_BLE_ADDRESS to the bootloader UUID/address from make scan-ble-dfu"; exit 1; }
+	$(MAKE) dfu-zip-$*
+	"$(DFU_BLE_PYTHON)" tools/ble-dfu/flash.py --upstream "$(DFU_BLE_UPLOADER)" \
+		flash "$(FW_DIR)/umsh-$*-$(FW_VERSION)-dfu.zip" --address "$(DFU_BLE_ADDRESS)"
 
 build-t1000e:
 	cd firmware/t1000e && cargo build --release

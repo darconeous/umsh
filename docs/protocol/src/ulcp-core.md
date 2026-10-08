@@ -455,7 +455,8 @@ Value | Method
 3 | BLE DFU
 
 An empty payload selects Default. The default is fixed by the platform,
-independent of the command's transport. Current nRF52 platforms use UF2.
+independent of the command's transport. XIAO nRF52 and SenseCAP Solar use
+BLE; T-Echo, T1000-E, and Wio Tracker L1 use UF2.
 Other mode values are undefined. There is no capability or discovery
 property for this command; the device decides whether its supported
 bootloader can enter the requested mode.

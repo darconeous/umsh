@@ -7,6 +7,12 @@ interactive shell, which prompts when `--yes` is omitted. Firmware transfer
 is a separate operation. iOS offers **Enter DFU Mode…** in device management
 with a method picker and a destructive confirmation sheet.
 
+For an XIAO or SenseCAP Solar already in BLE DFU, use
+`make flash-ble-xiao-nrf52 DFU_BLE_ADDRESS=<bootloader-UUID-or-MAC>` or
+`make flash-ble-sensecap-solar DFU_BLE_ADDRESS=<bootloader-UUID-or-MAC>`
+to build and upload its application over the computer's Bluetooth adapter.
+See [BLE uploader setup and usage](../tools/ble-dfu/README.md).
+
 ## Protocol
 
 [`CMD_DFU = 17`](protocol/src/ulcp-core.md#cmd-dfu) carries zero or one mode
@@ -30,8 +36,9 @@ companion connected and ends management of the target.
 The shipping board feature selects an internal profile in
 `firmware/nrf52-tracker/src/dfu.rs`. These profiles target the documented
 Adafruit-derived bootloaders, not arbitrary replacement bootloaders.
-All select UF2 for Default, regardless of the command's transport. ESP32
-and platforms without a hook return `UNIMPLEMENTED`.
+XIAO and SenseCAP Solar select BLE for Default; T-Echo, T1000-E, and Wio
+Tracker L1 select UF2. These defaults are independent of the command's
+transport. ESP32 and platforms without a hook return `UNIMPLEMENTED`.
 
 Profile | Documented bootloader contract
 --------|-------------------------------
