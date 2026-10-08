@@ -3,9 +3,9 @@
 //!
 //! The device half here is what the firmware's responder does, in the
 //! order it does it—authorization first, then [`DeviceEngine::begin`],
-//! then the session, then [`produce`] and [`DeviceEngine::complete`]—so
-//! this is the binding's semantics under test rather than a paraphrase of
-//! them. The administrator half is the shipping [`Exchange`] engine.
+//! then the session, then [`DeviceEngine::complete`]—so this is the
+//! binding's semantics under test rather than a paraphrase of them. The
+//! administrator half is the shipping [`Exchange`] engine.
 //!
 //! Nothing here is timed by the wall clock and nothing is random: the
 //! virtual clock only advances where a test says so, and both engines take
@@ -15,7 +15,6 @@ use umsh_crypto::CryptoEngine;
 use umsh_crypto::software::{SoftwareAes, SoftwareSha256};
 use umsh_node_mgmt::admin::{Exchange, Outcome, RETRY_MS, Reassembly, Step};
 use umsh_node_mgmt::device::{DeviceEngine, Ingress};
-use umsh_node_mgmt::fragment::{continuable, produce};
 use umsh_ulcp::frame::{Cmd, Frame, MultiEntries};
 use umsh_ulcp::ids::prop;
 use umsh_ulcp::status::Status;
@@ -43,7 +42,7 @@ const STRANGER_KEY: [u8; 32] = [0x5F; 32];
 /// device engine, and a real session behind them.
 struct Device<const PAYLOAD: usize> {
     session: Session<SoftwareAes, SoftwareSha256>,
-    engine: DeviceEngine<PAYLOAD, 2>,
+    engine: DeviceEngine<PAYLOAD, { 2 * MULTI_MAX }, 2>,
     /// The mirrored `PROP_DEV_ADMINS`, as the firmware's receive path
     /// mirrors it: authorization happens before the session is reached.
     admins: Vec<[u8; 32]>,
@@ -197,20 +196,14 @@ impl<const PAYLOAD: usize> Device<PAYLOAD> {
             self.unauthorized += 1;
             return None;
         }
-        let generation = self.session.dev_domain_version() as u16;
         let mut out = [0u8; PAYLOAD];
-        let mut cut = [0u8; PAYLOAD];
-        let len = match self
-            .engine
-            .begin(from, payload, generation, now_ms, &mut out)
-        {
+        let len = match self.engine.begin(from, payload, now_ms, &mut out) {
             Ingress::Drop(_) => return None,
             Ingress::Respond { len } => Some(len),
             Ingress::Dispatch(dispatch) => {
                 self.executed += 1;
                 let reply = self.serve(&dispatch, now_ms);
-                let produced = produce(&reply, &dispatch, &mut cut);
-                self.engine.complete(produced, &mut out).expect("complete")
+                self.engine.complete(&reply, &mut out).expect("complete")
             }
         };
         len.map(|len| out[..len].to_vec())
@@ -219,15 +212,11 @@ impl<const PAYLOAD: usize> Device<PAYLOAD> {
     /// Run one frame through the session, serving the deferred platform
     /// round trips the way the driver's event loop does.
     fn serve(&mut self, dispatch: &umsh_node_mgmt::device::Dispatch<'_>, now_ms: u64) -> Vec<u8> {
-        let reply_budget = match dispatch.command() {
-            Some(cmd) if continuable(cmd) => MULTI_MAX,
-            _ => dispatch.budget,
-        };
         let mut emitted: Vec<Vec<u8>> = Vec::new();
         let mut pending = self.session.handle_admin_frame(
             dispatch.frame,
             now_ms,
-            reply_budget,
+            dispatch.budget,
             &mut |bytes: &[u8]| emitted.push(bytes.to_vec()),
         );
         while let Some(effect) = pending.take() {
@@ -668,25 +657,31 @@ fn a_retransmission_is_answered_without_executing_again() {
     assert_eq!(device.executed, 1, "the request did not run twice");
 }
 
+/// A read's retransmission is answered afresh: the device samples again
+/// rather than repeating a reading the administrator never received.
 #[test]
-fn temperature_retries_replay_and_fresh_tokens_sample_again() {
+fn a_retried_temperature_read_samples_again() {
     let mut device = managed();
     let mut buf = [0; 32];
     let len = frame::prop_get(&mut buf, 0, prop::TEMPERATURES).unwrap();
+    let mut exchange = Exchange::<192>::new(&buf[..len], 3, 0).unwrap();
     let mut request = [0; PAYLOAD];
-    for token in [3, 4] {
-        let mut exchange = Exchange::<192>::new(&buf[..len], token, 0).unwrap();
-        let Step::Send { len } = exchange.poll(0, &mut request) else {
-            panic!("expected request")
-        };
-        let first = device.deliver(&ADMIN_KEY, &request[..len], 0).unwrap();
-        assert_eq!(device.temperature_samples, u32::from(token - 2));
-        let again = device
-            .deliver(&ADMIN_KEY, &request[..len], RETRY_MS)
-            .unwrap();
-        assert_eq!(again, first);
-        assert_eq!(device.temperature_samples, u32::from(token - 2));
-    }
+
+    let Step::Send { len } = exchange.poll(0, &mut request) else {
+        panic!("expected a request")
+    };
+    device.deliver(&ADMIN_KEY, &request[..len], 0).unwrap();
+    assert_eq!(device.temperature_samples, 1);
+
+    // No answer arrived, so the identical request goes out again.
+    let Step::Send { len } = exchange.poll(RETRY_MS, &mut request) else {
+        panic!("expected a retransmission")
+    };
+    device
+        .deliver(&ADMIN_KEY, &request[..len], RETRY_MS)
+        .unwrap();
+    assert_eq!(device.temperature_samples, 2);
+    assert_eq!(device.executed, 2);
 }
 
 /// A raw bus write is the at-most-once property's hardest case: the
@@ -766,8 +761,10 @@ fn an_oversize_bus_read_is_refused_before_the_bus() {
     assert_eq!(device.i2c.executed(), 1, "the refused read never ran");
 }
 
+/// One battery multi-get is one acquisition, duplicate keys included. Its
+/// retransmission is another, answered with what the gauge says now.
 #[test]
-fn battery_multi_get_replays_one_sample_and_new_tokens_acquire_again() {
+fn battery_multi_get_samples_once_and_a_retry_samples_again() {
     for extra in [prop::BATTERY_GAUGE_CONFIG, prop::BATTERY_GAUGE_TELEMETRY] {
         let mut device = managed();
         let mut buf = [0; 64];
@@ -795,11 +792,17 @@ fn battery_multi_get_replays_one_sample_and_new_tokens_acquire_again() {
         let retry = device
             .deliver(&ADMIN_KEY, &wire[..wire_len], RETRY_MS)
             .unwrap();
-        assert_eq!(first, retry);
-        assert_eq!(device.battery_samples, 1);
-        let next = converse(&mut device, &buf[..len], 4);
         assert_eq!(device.battery_samples, 2);
-        let parsed = Frame::parse(&next.reply).unwrap();
+        assert_ne!(first, retry, "a fresh reading, not the lost one");
+
+        let mut storage = [0u8; 512];
+        let mut reassembly = Reassembly::new(&mut storage);
+        let mut out = [0; PAYLOAD];
+        assert!(matches!(
+            exchange.receive(&retry, &mut reassembly, RETRY_MS, &mut out),
+            Some(Step::Done(Outcome::Replied { .. }))
+        ));
+        let parsed = Frame::parse(reassembly.frame()).unwrap();
         let entries: Vec<_> = MultiEntries::new(parsed.payload)
             .map(Result::unwrap)
             .collect();
@@ -831,31 +834,31 @@ fn battery_multi_get_replays_one_sample_and_new_tokens_acquire_again() {
 }
 
 /// The other face of at-most-once, and why a token may never be issued
-/// twice: a *different* request arriving under an already-answered token
-/// is indistinguishable from a retransmission. The device replays the
-/// retained answer, the new request never runs, and the administrator
-/// walks away holding the old exchange's values as if they answered the
-/// new one.
+/// twice in a row: a *different* request arriving under the token of a
+/// retained exchange is indistinguishable from a retransmission. The
+/// device replays the retained answer, the new request never runs, and
+/// the administrator walks away holding the old exchange's values as if
+/// they answered the new one.
 #[test]
 fn a_reused_token_replays_the_past_and_runs_nothing() {
     let mut device = managed();
     let mut buf = [0u8; 64];
 
-    let len = frame::prop_get(&mut buf, 0, prop::DEV_NAME).unwrap();
-    let read = converse(&mut device, &buf[..len], 7);
-    assert_eq!(value_of(&read.reply), b"Simulated Device");
+    let len = frame::prop_set(&mut buf, 0, prop::DEV_NAME, b"Ridgeline").unwrap();
+    let write = converse(&mut device, &buf[..len], 7);
+    assert_eq!(value_of(&write.reply), b"Ridgeline");
     assert_eq!(device.executed, 1);
 
     let len = frame::prop_set(&mut buf, 0, prop::DEV_NAME, b"Windy Gap").unwrap();
     let collided = converse(&mut device, &buf[..len], 7);
     assert!(matches!(collided.outcome, Outcome::Replied { .. }));
-    assert_eq!(device.executed, 1, "the write never ran");
+    assert_eq!(device.executed, 1, "the second write never ran");
     assert_eq!(
         value_of(&collided.reply),
-        b"Simulated Device",
-        "and what came back was the old read's answer"
+        b"Ridgeline",
+        "and what came back was the first write's answer"
     );
-    assert_eq!(device.local_get(prop::DEV_NAME), b"Simulated Device");
+    assert_eq!(device.local_get(prop::DEV_NAME), b"Ridgeline");
 }
 
 /// A lost response costs a round trip and nothing else: the retry finds
@@ -932,6 +935,7 @@ fn a_large_multi_read_is_continued_across_fragments() {
         read.requests > 1,
         "a continued read takes more than one exchange"
     );
+    assert_eq!(device.executed, 1, "and runs once");
 
     // Every slot is present, in order, and the reassembled frame is a
     // well-formed ARE.
@@ -940,6 +944,100 @@ fn a_large_multi_read_is_continued_across_fragments() {
         entries.iter().map(|(key, _)| *key).collect::<Vec<_>>(),
         keys
     );
+}
+
+/// A continued read is one acquisition, whatever it reads. The first
+/// fragment ends partway into the gauge telemetry; a continuation that
+/// sampled again would finish the value with another reading's octets.
+#[test]
+fn a_continued_read_samples_once() {
+    let mut device = managed();
+    for index in 0..4u8 {
+        device.provision_peer(&[0xD0 | index; 32]);
+    }
+    let keys = [
+        prop::DEV_NAME,
+        prop::DEV_PEERS,
+        prop::BATTERY_GAUGE_TELEMETRY,
+        prop::BATTERY_CURRENT,
+    ];
+    let mut buf = [0u8; 32];
+    let len = frame::prop_multi_get(&mut buf, 0, &keys).unwrap();
+
+    let read = converse(&mut device, &buf[..len], 1);
+    assert!(matches!(read.outcome, Outcome::Replied { .. }));
+    assert_eq!(device.executed, 1);
+    assert_eq!(device.battery_samples, 1);
+
+    let parsed = Frame::parse(&read.reply).unwrap();
+    let entries: Vec<_> = MultiEntries::new(parsed.payload)
+        .map(Result::unwrap)
+        .collect();
+    assert_eq!(
+        entries.iter().map(|entry| entry.key).collect::<Vec<_>>(),
+        keys
+    );
+    let telemetry = entries[2].value;
+    let start = telemetry.as_ptr() as usize - read.reply.as_ptr() as usize;
+    let cut = PAYLOAD - umsh_node_mgmt::envelope::OVERHEAD_MAX;
+    assert!(
+        start < cut && cut < start + telemetry.len(),
+        "the first fragment is meant to end inside the telemetry"
+    );
+    assert_eq!(
+        umsh_ulcp::battery_gauge_telemetry::Telemetry::decode(telemetry)
+            .unwrap()
+            .raw[11],
+        1,
+        "the first sample's, whole"
+    );
+}
+
+/// A read reports the device as it stood when the read began. Here the
+/// peer table grows between the fragments—a change that would shift
+/// every entry after the table if the continuation came from a fresh
+/// execution—and the read neither notices nor fails.
+#[test]
+fn a_continued_read_is_unmoved_by_a_change_between_its_fragments() {
+    let mut device = managed();
+    for index in 0..5u8 {
+        device.provision_peer(&[0xD0 | index; 32]);
+    }
+    let keys = [prop::DEV_PEERS, prop::DEV_NAME];
+    let mut buf = [0u8; 32];
+    let len = frame::prop_multi_get(&mut buf, 0, &keys).unwrap();
+
+    let mut exchange = Exchange::<192>::new(&buf[..len], 1, 0).expect("begin");
+    let mut storage = [0u8; 1024];
+    let mut reassembly = Reassembly::new(&mut storage);
+    let mut wire = [0u8; PAYLOAD];
+    let Step::Send { len } = exchange.poll(0, &mut wire) else {
+        panic!("expected a request");
+    };
+    let first = device
+        .deliver(&ADMIN_KEY, &wire[..len], 0)
+        .expect("a response");
+    let Some(Step::Send { len }) = exchange.receive(&first, &mut reassembly, 0, &mut wire) else {
+        panic!("this read is meant to be continued");
+    };
+
+    device.provision_peer(&[0xE0; 32]);
+    let rest = device
+        .deliver(&ADMIN_KEY, &wire[..len], 0)
+        .expect("a response");
+    assert!(matches!(
+        exchange.receive(&rest, &mut reassembly, 0, &mut wire),
+        Some(Step::Done(Outcome::Replied { .. }))
+    ));
+    assert_eq!(device.executed, 1);
+
+    let entries = entries_of(reassembly.frame());
+    assert_eq!(
+        entries.iter().map(|(key, _)| *key).collect::<Vec<_>>(),
+        keys
+    );
+    assert_eq!(entries[0].1.len(), 5 * 32, "the table as the read found it");
+    assert_eq!(entries[1].1, b"Simulated Device");
 }
 
 /// The budget rule: a write sequence whose reply would overflow the

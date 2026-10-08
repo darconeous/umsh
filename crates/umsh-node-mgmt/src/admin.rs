@@ -165,12 +165,12 @@ pub struct Exchange<const REQUEST: usize> {
 impl<const REQUEST: usize> Exchange<REQUEST> {
     /// Begin an operation carrying `frame`.
     ///
-    /// `seed` picks the first token. A device retains its answer to every
-    /// recent token against retransmission, and answers a reused token
-    /// with the retained response instead of executing—so the seed must
-    /// come from above [`Exchange::counter`] of every exchange the device
-    /// may still remember: a counter carried across exchanges, itself
-    /// seeded unpredictably.
+    /// `seed` picks the first token. A device may retain its answer to an
+    /// administrator's most recent exchange against retransmission, and
+    /// answers a request reusing that token with the retained response
+    /// instead of executing—so the seed must come from above
+    /// [`Exchange::counter`] of the exchange before: a counter carried
+    /// across exchanges, itself seeded unpredictably.
     pub fn new(frame: &[u8], seed: u16, now_ms: u64) -> Result<Self, Failure> {
         if frame.len() > REQUEST {
             return Err(Failure::TooLarge);
@@ -213,10 +213,10 @@ impl<const REQUEST: usize> Exchange<REQUEST> {
     ///
     /// A continued read issues a fresh token per fragment, so an exchange
     /// consumes a caller-invisible stretch of the counter space. The next
-    /// exchange's seed must come from above this value: the device holds
-    /// every answered token against retransmission, and a new request
-    /// under any of them is answered with the old response instead of
-    /// running.
+    /// exchange's seed must come from above this value: the device may
+    /// hold the last token this exchange used against retransmission, and
+    /// a new request under it would be answered with the old response
+    /// instead of running.
     pub fn counter(&self) -> u16 {
         self.counter
     }
@@ -240,8 +240,8 @@ impl<const REQUEST: usize> Exchange<REQUEST> {
     ///
     /// The first call hands out the first attempt; later calls hand out
     /// retransmissions of the identical request under the identical
-    /// token, which the device answers from its retained response rather
-    /// than executing again.
+    /// token. The device answers a write's from its retained response
+    /// rather than executing it again, and simply answers a read again.
     pub fn poll(&mut self, now_ms: u64, out: &mut [u8]) -> Step {
         let (deadline_ms, attempts) = match self.state {
             State::Finished(outcome) => return Step::Done(outcome),
@@ -368,10 +368,9 @@ impl<const REQUEST: usize> Exchange<REQUEST> {
         self.token = self.counter.to_be_bytes();
 
         if stalled {
-            // An empty fragment means nothing further is available yet,
-            // which suits data that accumulates over time. Asking again
-            // at once would spin; the deadline paces it instead, and
-            // the attempt budget still bounds the wait.
+            // An empty fragment carries the read no further. Asking again
+            // at once would spin; the deadline paces it instead, and the
+            // attempt budget still bounds the wait.
             let deadline_ms = now_ms + RETRY_MS;
             self.state = State::Awaiting {
                 deadline_ms,
@@ -409,17 +408,61 @@ fn reported_status(parsed: &Frame<'_>) -> Option<Status> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::device::{DeviceEngine, Dispatch, Ingress, Produced, PublicKey};
+    use crate::device::{DeviceEngine, Ingress, PublicKey};
+    use crate::envelope::OVERHEAD_MAX;
     use umsh_ulcp::frame;
     use umsh_ulcp::ids::prop;
 
     const PAYLOAD: usize = 180;
     const ADMIN: PublicKey = [0xAA; 32];
-    type Device = DeviceEngine<PAYLOAD, 2>;
+    /// Room to retain the largest value these tests read whole.
+    type Device = DeviceEngine<PAYLOAD, 1024, 2>;
     type Admin = Exchange<64>;
 
     fn get(key: u32, buf: &mut [u8]) -> usize {
         frame::prop_get(buf, 0, key).expect("encode")
+    }
+
+    /// A real [`DeviceEngine`] whose every executed request answers
+    /// `reply`, counting how often it actually runs.
+    struct Bench<'r> {
+        device: Device,
+        reply: &'r [u8],
+        /// The device fills whatever payload it is given, so a smaller
+        /// one is how a test picks the size of each fragment.
+        payload: usize,
+        executed: u32,
+    }
+
+    impl<'r> Bench<'r> {
+        /// A device carrying `chunk` octets of `reply`'s trailing content
+        /// per fragment.
+        fn new(reply: &'r [u8], chunk: usize) -> Self {
+            let prefix = crate::fragment::trailing_offset(reply).expect("trailing content");
+            Self {
+                device: Device::new(0x5AA5),
+                reply,
+                payload: (OVERHEAD_MAX + prefix + chunk).min(PAYLOAD),
+                executed: 0,
+            }
+        }
+
+        /// Answer one request payload into `response`, returning the
+        /// response's length.
+        fn answer(&mut self, request: &[u8], response: &mut [u8]) -> usize {
+            let out = &mut response[..self.payload];
+            match self.device.begin(&ADMIN, request, 0, out) {
+                Ingress::Dispatch(_) => {
+                    self.executed += 1;
+                    self.device
+                        .complete(self.reply, out)
+                        .expect("complete")
+                        .expect("a response")
+                }
+                Ingress::Respond { len } => len,
+                Ingress::Drop(reason) => panic!("dropped: {reason:?}"),
+            }
+        }
     }
 
     #[test]
@@ -546,11 +589,12 @@ mod tests {
         ));
     }
 
-    /// Run a whole exchange against a real [`DeviceEngine`], with the
-    /// caller's dispatch serving `value` in fragments of at most
-    /// `chunk` octets.
+    /// Run a whole exchange against a real [`DeviceEngine`] whose reply
+    /// carries `value`, at most `chunk` octets of it per fragment.
     fn converse(request: &[u8], value: &[u8], chunk: usize) -> (Outcome, Vec<u8>) {
-        let mut device = Device::new(0x5AA5);
+        let mut whole = vec![0u8; value.len() + 8];
+        let whole_len = frame::prop_is(&mut whole, 0, prop::CAPS, value).unwrap();
+        let mut bench = Bench::new(&whole[..whole_len], chunk);
         let mut admin = Admin::new(request, 7, 0).expect("begin");
         let mut storage = [0u8; 1024];
         let mut reassembly = Reassembly::new(&mut storage);
@@ -560,34 +604,13 @@ mod tests {
         let mut step = admin.poll(now, &mut wire);
         while let Step::Send { len } = step {
             let mut response = [0u8; PAYLOAD];
-            let Ingress::Dispatch(Dispatch { resume, budget, .. }) =
-                device.begin(&ADMIN, &wire[..len], 1, now, &mut response)
-            else {
-                panic!("expected a dispatch");
-            };
-
-            // Serve the value from `resume`, in `chunk`-sized bites.
-            let resume = resume as usize;
-            let mut frame_buf = [0u8; PAYLOAD];
-            let head = frame::prop_is(&mut frame_buf, 0, prop::CAPS, &[]).unwrap();
-            let room = budget.saturating_sub(head).min(chunk);
-            let end = (resume + room).min(value.len());
-            let fragment = &value[resume..end];
-            let len = frame::prop_is(&mut frame_buf, 0, prop::CAPS, fragment).unwrap();
-            let remaining = (value.len() - end) as u32;
-            let len = device
-                .complete(
-                    Produced::fragment(&frame_buf[..len], fragment.len() as u32, remaining),
-                    &mut response,
-                )
-                .expect("complete")
-                .expect("a response");
-
+            let len = bench.answer(&wire[..len], &mut response);
             now += 100;
             step = admin
                 .receive(&response[..len], &mut reassembly, now, &mut wire)
                 .expect("this exchange's response");
         }
+        assert_eq!(bench.executed, 1, "the device ran the read once");
 
         let Step::Done(outcome) = step else {
             panic!("expected a finished exchange, got {step:?}");
@@ -636,7 +659,9 @@ mod tests {
         let mut buf = [0u8; 8];
         let frame_len = get(prop::CAPS, &mut buf);
         let frame = &buf[..frame_len];
-        let mut device = Device::new(1);
+        let mut reply = [0u8; 32];
+        let reply_len = frame::prop_is(&mut reply, 0, prop::CAPS, &[1; 16]).unwrap();
+        let mut bench = Bench::new(&reply[..reply_len], 4);
         let mut admin = Admin::new(frame, 100, 0).expect("begin");
         let mut storage = [0u8; 1024];
         let mut reassembly = Reassembly::new(&mut storage);
@@ -648,19 +673,7 @@ mod tests {
         let first_token = Envelope::parse(&wire[..len]).unwrap().token;
 
         let mut response = [0u8; PAYLOAD];
-        assert!(matches!(
-            device.begin(&ADMIN, &wire[..len], 1, 0, &mut response),
-            Ingress::Dispatch(_)
-        ));
-        let mut frame_buf = [0u8; 32];
-        let reply = frame::prop_is(&mut frame_buf, 0, prop::CAPS, &[1, 2, 3, 4]).unwrap();
-        let len = device
-            .complete(
-                Produced::fragment(&frame_buf[..reply], 4, 12),
-                &mut response,
-            )
-            .unwrap()
-            .unwrap();
+        let len = bench.answer(&wire[..len], &mut response);
         let issued = Envelope::parse(&response[..len]).unwrap();
         let cursor = issued.cursor.expect("a cursor").to_vec();
         assert_eq!(admin.remaining(), None);
@@ -688,85 +701,70 @@ mod tests {
         let mut buf = [0u8; 8];
         let frame_len = get(prop::CAPS, &mut buf);
         let frame = &buf[..frame_len];
-        let mut device = Device::new(1);
+        let mut reply = [0u8; 32];
+        let reply_len = frame::prop_is(&mut reply, 0, prop::CAPS, &[1; 10]).unwrap();
+        let mut bench = Bench::new(&reply[..reply_len], 2);
         let mut admin = Admin::new(frame, 5, 0).expect("begin");
         let mut storage = [0u8; 1024];
         let mut reassembly = Reassembly::new(&mut storage);
         let mut wire = [0u8; PAYLOAD];
         let mut response = [0u8; PAYLOAD];
 
-        // One fragment at generation 1, issuing a cursor.
+        // One fragment, issuing a cursor.
         let Step::Send { len } = admin.poll(0, &mut wire) else {
             panic!("expected a request");
         };
-        assert!(matches!(
-            device.begin(&ADMIN, &wire[..len], 1, 0, &mut response),
-            Ingress::Dispatch(_)
-        ));
-        let mut frame_buf = [0u8; 32];
-        let reply = frame::prop_is(&mut frame_buf, 0, prop::CAPS, &[1, 2]).unwrap();
-        let len = device
-            .complete(Produced::fragment(&frame_buf[..reply], 2, 8), &mut response)
-            .unwrap()
-            .unwrap();
+        let len = bench.answer(&wire[..len], &mut response);
         let Some(Step::Send { len }) =
             admin.receive(&response[..len], &mut reassembly, 0, &mut wire)
         else {
             panic!("expected a continuation");
         };
 
-        // The device domain moves before the continuation lands.
-        let Ingress::Respond { len } = device.begin(&ADMIN, &wire[..len], 2, 0, &mut response)
-        else {
-            panic!("expected a refusal");
-        };
+        // The device resets before the continuation lands, and the reply
+        // the cursor pointed into goes with it.
+        bench.device.forget_retained();
+        let len = bench.answer(&wire[..len], &mut response);
+        assert_eq!(bench.executed, 1, "a refused cursor executes nothing");
         assert_eq!(
             admin.receive(&response[..len], &mut reassembly, 0, &mut wire),
             Some(Step::Done(Outcome::Failed(Failure::CursorInvalid)))
         );
     }
 
+    /// A continuation answered with nothing further must not set the
+    /// administrator spinning. No device this crate builds sends one—
+    /// every fragment is cut from a reply it already holds—so the
+    /// responses here are written by hand.
     #[test]
     fn an_empty_fragment_paces_the_next_request_rather_than_spinning() {
         let mut buf = [0u8; 8];
         let frame_len = get(prop::CAPS, &mut buf);
         let frame = &buf[..frame_len];
-        let mut device = Device::new(1);
         let mut admin = Admin::new(frame, 11, 0).expect("begin");
         let mut storage = [0u8; 256];
         let mut reassembly = Reassembly::new(&mut storage);
         let mut wire = [0u8; PAYLOAD];
         let mut response = [0u8; PAYLOAD];
         let mut frame_buf = [0u8; 32];
+        let cursor = [0xC0; 4];
 
-        let Step::Send { len } = admin.poll(0, &mut wire) else {
-            panic!("expected a request");
-        };
-        assert!(matches!(
-            device.begin(&ADMIN, &wire[..len], 1, 0, &mut response),
-            Ingress::Dispatch(_)
-        ));
+        assert!(matches!(admin.poll(0, &mut wire), Step::Send { .. }));
         let reply = frame::prop_is(&mut frame_buf, 0, prop::CAPS, &[1, 2]).unwrap();
-        let len = device
-            .complete(Produced::fragment(&frame_buf[..reply], 2, 4), &mut response)
-            .unwrap()
+        let len = Envelope::new(admin.token(), &frame_buf[..reply])
+            .with_cursor(&cursor)
+            .encode(&mut response)
             .unwrap();
-        let Some(Step::Send { len }) =
-            admin.receive(&response[..len], &mut reassembly, 0, &mut wire)
-        else {
-            panic!("expected a continuation");
-        };
-
-        // Nothing further is available yet: the same cursor comes back
-        // with an empty fragment.
         assert!(matches!(
-            device.begin(&ADMIN, &wire[..len], 1, 0, &mut response),
-            Ingress::Dispatch(_)
+            admin.receive(&response[..len], &mut reassembly, 0, &mut wire),
+            Some(Step::Send { .. })
         ));
+
+        // An empty fragment, and the same cursor back.
         let reply = frame::prop_is(&mut frame_buf, 0, prop::CAPS, &[]).unwrap();
-        let len = device
-            .complete(Produced::fragment(&frame_buf[..reply], 0, 4), &mut response)
-            .unwrap()
+        let len = Envelope::new(admin.token(), &frame_buf[..reply])
+            .with_cursor(&cursor)
+            .encode(&mut response)
             .unwrap();
         assert_eq!(
             admin.receive(&response[..len], &mut reassembly, 100, &mut wire),
@@ -787,29 +785,19 @@ mod tests {
         let mut buf = [0u8; 8];
         let frame_len = get(prop::CAPS, &mut buf);
         let frame = &buf[..frame_len];
-        let mut device = Device::new(1);
+        let mut reply = [0u8; 80];
+        let reply_len = frame::prop_is(&mut reply, 0, prop::CAPS, &[0; 64]).unwrap();
+        let mut bench = Bench::new(&reply[..reply_len], 16);
         let mut admin = Admin::new(frame, 5, 0).expect("begin");
         let mut storage = [0u8; 24];
         let mut reassembly = Reassembly::new(&mut storage);
         let mut wire = [0u8; PAYLOAD];
         let mut response = [0u8; PAYLOAD];
-        let mut frame_buf = [0u8; 64];
 
         let mut step = admin.poll(0, &mut wire);
         for _ in 0..8 {
             let Step::Send { len } = step else { break };
-            assert!(matches!(
-                device.begin(&ADMIN, &wire[..len], 1, 0, &mut response),
-                Ingress::Dispatch(_)
-            ));
-            let reply = frame::prop_is(&mut frame_buf, 0, prop::CAPS, &[0; 16]).unwrap();
-            let len = device
-                .complete(
-                    Produced::fragment(&frame_buf[..reply], 16, 999),
-                    &mut response,
-                )
-                .unwrap()
-                .unwrap();
+            let len = bench.answer(&wire[..len], &mut response);
             step = admin
                 .receive(&response[..len], &mut reassembly, 0, &mut wire)
                 .expect("this exchange's response");
@@ -906,14 +894,8 @@ mod tests {
         let len = frame::prop_multi_get(&mut buf, 0, &[prop::CAPS, prop::DEV_ADMINS]).unwrap();
         let request = &buf[..len];
 
-        let mut device = Device::new(1);
-        let mut admin = Admin::new(request, 9, 0).expect("begin");
-        let mut storage = [0u8; 512];
-        let mut reassembly = Reassembly::new(&mut storage);
-        let mut wire = [0u8; PAYLOAD];
-        let mut response = [0u8; PAYLOAD];
-
-        // The whole entry list, served two entries at a time.
+        // The whole entry list, cut wherever the payload runs out—which
+        // is mid-entry as often as not.
         let mut whole = [0u8; 128];
         let whole_len = {
             let mut writer = frame::prop_are(&mut whole, 0).unwrap();
@@ -924,33 +906,16 @@ mod tests {
             }
             writer.finish()
         };
-        // Skip the two-octet frame header to get the entry list alone.
-        let entries = &whole[2..whole_len];
+        let mut bench = Bench::new(&whole[..whole_len], 22);
+        let mut admin = Admin::new(request, 9, 0).expect("begin");
+        let mut storage = [0u8; 512];
+        let mut reassembly = Reassembly::new(&mut storage);
+        let mut wire = [0u8; PAYLOAD];
+        let mut response = [0u8; PAYLOAD];
 
-        let mut served = 0usize;
         let mut step = admin.poll(0, &mut wire);
         while let Step::Send { len } = step {
-            assert!(matches!(
-                device.begin(&ADMIN, &wire[..len], 1, 0, &mut response),
-                Ingress::Dispatch(_)
-            ));
-            let end = (served + 22).min(entries.len());
-            let mut frame_buf = [0u8; 64];
-            let reply = {
-                let mut writer = frame::prop_are(&mut frame_buf, 0).unwrap();
-                writer.write_bytes(&entries[served..end]).unwrap();
-                writer.finish()
-            };
-            let produced = (end - served) as u32;
-            let remaining = (entries.len() - end) as u32;
-            served = end;
-            let len = device
-                .complete(
-                    Produced::fragment(&frame_buf[..reply], produced, remaining),
-                    &mut response,
-                )
-                .unwrap()
-                .unwrap();
+            let len = bench.answer(&wire[..len], &mut response);
             step = admin
                 .receive(&response[..len], &mut reassembly, 0, &mut wire)
                 .expect("this exchange's response");
@@ -958,5 +923,6 @@ mod tests {
 
         assert!(matches!(step, Step::Done(Outcome::Replied { .. })));
         assert_eq!(reassembly.frame(), &whole[..whole_len]);
+        assert_eq!(bench.executed, 1);
     }
 }

@@ -93,9 +93,10 @@ async fn a_read_larger_than_one_payload_is_continued_across_exchanges() {
         "the reassembled entry list covers every slot"
     );
     assert_eq!(entries[0].1.len(), 6 * 32);
-    assert!(
-        mesh.device.borrow().executed > 1,
-        "a continued read takes several exchanges"
+    assert_eq!(
+        mesh.device.borrow().executed,
+        1,
+        "every continuation is cut from the first exchange's reply"
     );
 }
 

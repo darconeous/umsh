@@ -17,11 +17,12 @@
 //!
 //! - a [token](envelope::Token) correlating a response with its request,
 //!   in place of the TID of the local bindings;
-//! - [retained responses](device::DeviceEngine), so a retransmission is
-//!   answered again rather than executed again;
+//! - [retained responses](device::DeviceEngine), so a retransmitted
+//!   request that changes something is answered again rather than
+//!   executed again;
 //! - [cursors](device::DeviceEngine::begin), carrying a read larger than
-//!   one frame across as many exchanges as it takes, with no per-read
-//!   state on the device.
+//!   one frame across as many exchanges as it takes, every fragment cut
+//!   from the reply its first exchange retained.
 //!
 //! Both engines are sans-IO: they own no transport, no clock, and no
 //! buffers beyond their own state. The caller sends the payloads they
@@ -41,9 +42,9 @@ pub mod fragment;
 pub mod node_adapter;
 
 pub use admin::{Exchange, Failure, Outcome, Reassembly, Step};
-pub use device::{DeviceEngine, Dispatch, DropReason, Ingress, Produced, PublicKey};
+pub use device::{DeviceEngine, Dispatch, DropReason, Ingress, PublicKey};
 pub use envelope::{Envelope, EnvelopeError, Token};
-pub use fragment::{continuable, produce, trailing, trailing_offset};
+pub use fragment::{continuable, trailing, trailing_offset};
 #[cfg(feature = "node")]
 pub use node_adapter::{BeginError, ManagementError, NodeManager, Progress};
 

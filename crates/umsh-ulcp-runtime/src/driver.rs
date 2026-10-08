@@ -1217,7 +1217,7 @@ enum Exchange<'a> {
     /// transport frame, which is what the session assumes by default.
     Local(&'a [u8]),
     /// A frame from a mesh administrator, whose reply must fit
-    /// `reply_budget` octets of Node Management payload.
+    /// `reply_budget` octets.
     Admin {
         frame: &'a [u8],
         reply_budget: usize,

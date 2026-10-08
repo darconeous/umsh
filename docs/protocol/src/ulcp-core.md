@@ -1199,9 +1199,9 @@ Id | Name
 `STATUS_CURSOR_INVALID`
 : The cursor presented in a [Node Management](app-node-management.md#cursors)
   continuation is not one the device can honor—it does not parse, it was
-  issued for a different request, or the underlying data has changed so
-  that the position is meaningless. The administrator restarts the read
-  from an initial, cursor-less request.
+  issued for a different request, or the response it continues is no
+  longer retained. The administrator restarts the read from an initial,
+  cursor-less request.
 
 `STATUS_NOT_PERMITTED`
 : The property or command exists, but the binding the request arrived

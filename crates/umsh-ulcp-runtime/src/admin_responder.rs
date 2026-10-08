@@ -6,8 +6,8 @@
 //! and [`responder_loop`] runs each admitted exchange: the
 //! [`DeviceEngine`] reads the envelope, the session—reached through the
 //! driver's event loop, since it belongs to that task—serves the frame
-//! inside, and the engine wraps the answer and retains it against a
-//! retransmission.
+//! inside, and the engine wraps the answer, retaining it where executing
+//! the request again would be wrong.
 //!
 //! Two things are deliberately not here. The session's property surface
 //! is unchanged, because an administrative exchange runs through the same
@@ -28,12 +28,11 @@ use umsh_hal::CounterStore;
 use umsh_mac::SendOptions;
 use umsh_node::{PacketFamily, ReceivedPacketRef};
 use umsh_node_mgmt::device::{DeviceEngine, Dispatch, Ingress};
-use umsh_node_mgmt::fragment::{continuable, produce};
-use umsh_ulcp_device::{MAX_DEV_ADMINS, MULTI_MAX};
+use umsh_ulcp_device::MAX_DEV_ADMINS;
 
 use crate::device_node::{DeviceNode, NodeMutex};
 use crate::driver::{
-    ADMIN_REPLY, AdminFrame, AdminReply, DevDomainSnapshot, InEvent, InputChannel,
+    ADMIN_REPLY, AdminFrame, AdminReply, DevDomainSnapshot, FRAME_IN_MAX, InEvent, InputChannel,
 };
 use crate::log::debug_log;
 use crate::reply_completion::ReplyCompletion;
@@ -68,10 +67,17 @@ use crate::reply_completion::ReplyCompletion;
 const FRAME_RESERVE: usize = 75;
 
 /// The largest Node Management payload this device produces.
-///
-/// Also the size of each retained response, since a retained entry holds
-/// a complete payload.
 pub const ADMIN_PAYLOAD_MAX: usize = umsh_radio_loraphy::MAX_PAYLOAD - FRAME_RESERVE;
+
+/// The largest reply the session hands back for one exchange: an
+/// [`AdminFrame`] is all that crosses back from the driver.
+const ADMIN_REPLY_MAX: usize = FRAME_IN_MAX;
+
+/// The octets every retained reply shares. A read too large for one
+/// payload is retained whole and every continuation is cut from it, so
+/// this is room for two administrators to be partway through the largest
+/// read at once, or for one to be while writes are retained around it.
+const ADMIN_POOL: usize = 2 * ADMIN_REPLY_MAX;
 
 /// A payload that cannot hold an envelope plus a frame is not a budget,
 /// it is a bug in the reserve above.
@@ -109,8 +115,7 @@ struct Request {
 /// round trips.
 static REQUESTS: Channel<NodeMutex, Request, 1> = Channel::new();
 
-/// The mirrored `PROP_DEV_ADMINS`, and the device-domain generation it
-/// was taken at.
+/// The mirrored `PROP_DEV_ADMINS`.
 ///
 /// Mirrored rather than read from the session because authorization
 /// happens in the node's receive callback, which cannot borrow the
@@ -120,10 +125,6 @@ static ADMINS: BlockingMutex<
     CriticalSectionRawMutex,
     RefCell<heapless::Vec<[u8; 32], MAX_DEV_ADMINS>>,
 > = BlockingMutex::new(RefCell::new(heapless::Vec::new()));
-
-/// The device-domain generation the mirror was taken at, as the cursor
-/// generation.
-static GENERATION: AtomicU32 = AtomicU32::new(0);
 
 /// Requests dropped before reaching the engine, by reason.
 static UNAUTHORIZED: AtomicU32 = AtomicU32::new(0);
@@ -171,7 +172,6 @@ pub fn publish_dev_domain(snapshot: &DevDomainSnapshot) {
             let _ = admins.push(*key);
         }
     });
-    GENERATION.store(snapshot.version, Ordering::Relaxed);
 }
 
 fn is_admin(key: &[u8; 32]) -> bool {
@@ -238,27 +238,19 @@ pub fn admit(packet: &ReceivedPacketRef<'_>) {
 ///
 /// `nonce` is drawn once per boot from the platform's cryptographic RNG.
 /// It is what stops a cursor issued before a reboot from being honored
-/// after one, when the device-domain generation has started over.
+/// after one, when the engine's serials have started over.
 pub async fn responder_loop<CS: CounterStore + 'static, M: RawMutex + 'static>(
     node: DeviceNode<CS>,
     input: &'static InputChannel<M>,
     nonce: u16,
 ) {
-    let mut engine: DeviceEngine<ADMIN_PAYLOAD_MAX> = DeviceEngine::new(nonce);
+    let mut engine: DeviceEngine<ADMIN_PAYLOAD_MAX, ADMIN_POOL> = DeviceEngine::new(nonce);
     let mut out = [0u8; ADMIN_PAYLOAD_MAX];
-    let mut cut = [0u8; ADMIN_PAYLOAD_MAX];
     loop {
         let request = REQUESTS.receive().await;
-        let generation = GENERATION.load(Ordering::Relaxed) as u16;
         let now_ms = Instant::now().as_millis();
         let mut completion = None;
-        let len = match engine.begin(
-            &request.from,
-            &request.payload,
-            generation,
-            now_ms,
-            &mut out,
-        ) {
+        let len = match engine.begin(&request.from, &request.payload, now_ms, &mut out) {
             Ingress::Drop(reason) => {
                 debug_log(format_args!("admin: dropped {reason:?}"));
                 continue;
@@ -267,8 +259,7 @@ pub async fn responder_loop<CS: CounterStore + 'static, M: RawMutex + 'static>(
             Ingress::Dispatch(dispatch) => {
                 let reply = serve(input, &dispatch).await;
                 completion = reply.completion;
-                let produced = produce(&reply.frame, &dispatch, &mut cut);
-                match engine.complete(produced, &mut out) {
+                match engine.complete(&reply.frame, &mut out) {
                     Ok(len) => len,
                     Err(error) => {
                         if let Some(completion) = completion {
@@ -323,19 +314,15 @@ async fn serve<M: RawMutex + 'static>(
             completion: None,
         };
     }
-    // A read may be continued with a cursor, so let the session build the
-    // whole answer and cut it down here. Everything else—a write
-    // sequence above all—is measured against what actually fits,
+    // A read is built whole and continued from the engine's copy; anything
+    // else—a write sequence above all—is measured against one payload,
     // because there is no continuing it: the binding's rule is that an
-    // entry whose reply would not fit is not executed at all.
-    let reply_budget = match dispatch.command() {
-        Some(cmd) if continuable(cmd) => MULTI_MAX,
-        _ => dispatch.budget,
-    };
+    // entry whose reply would not fit is not executed at all. The engine
+    // has already said which.
     input
         .send(InEvent::Admin {
             frame,
-            reply_budget,
+            reply_budget: dispatch.budget,
         })
         .await;
     ADMIN_REPLY.receive().await

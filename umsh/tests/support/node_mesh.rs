@@ -28,7 +28,6 @@ use umsh::mac::test_support::{SimulatedNetwork, SimulatedRadio};
 use umsh::mac::{Mac, MacHandle, OperatingPolicy, RepeaterConfig, SendOptions};
 use umsh::node::{Host, LocalNode, PeerConnection, ReceivedPacketRef, Subscription};
 use umsh::node_mgmt::device::{DeviceEngine, Dispatch, Ingress};
-use umsh::node_mgmt::fragment::{continuable, produce};
 use umsh::node_mgmt::{NodeManager, Outcome, Progress};
 use umsh::tokio_support::{StdClock, TokioFileCounterStore, TokioFileKeyValueStore, TokioPlatform};
 use umsh::ulcp_wire::gnss::GnssSnapshot;
@@ -76,7 +75,7 @@ pub const PATIENCE: Duration = Duration::from_secs(30);
 /// the same order, as the firmware's responder.
 pub struct DeviceSide {
     session: Session<SoftwareAes, SoftwareSha256>,
-    engine: DeviceEngine<PAYLOAD, 2>,
+    engine: DeviceEngine<PAYLOAD, { 2 * MULTI_MAX }, 2>,
     pub admins: Vec<[u8; 32]>,
     pub executed: u32,
     pub unauthorized: u32,
@@ -189,20 +188,14 @@ impl DeviceSide {
             self.unauthorized += 1;
             return None;
         }
-        let generation = self.session.dev_domain_version() as u16;
         let mut out = [0u8; PAYLOAD];
-        let mut cut = [0u8; PAYLOAD];
-        let len = match self
-            .engine
-            .begin(&from.0, payload, generation, now_ms, &mut out)
-        {
+        let len = match self.engine.begin(&from.0, payload, now_ms, &mut out) {
             Ingress::Drop(_) => return None,
             Ingress::Respond { len } => Some(len),
             Ingress::Dispatch(dispatch) => {
                 self.executed += 1;
                 let reply = self.serve(&dispatch, now_ms);
-                let produced = produce(&reply, &dispatch, &mut cut);
-                self.engine.complete(produced, &mut out).expect("complete")
+                self.engine.complete(&reply, &mut out).expect("complete")
             }
         };
         len.map(|len| out[..len].to_vec())
@@ -211,15 +204,11 @@ impl DeviceSide {
     /// Run one frame through the session, serving the deferred platform
     /// round trips the way the driver's event loop does.
     pub fn serve(&mut self, dispatch: &Dispatch<'_>, now_ms: u64) -> Vec<u8> {
-        let reply_budget = match dispatch.command() {
-            Some(cmd) if continuable(cmd) => MULTI_MAX,
-            _ => dispatch.budget,
-        };
         let mut emitted: Vec<Vec<u8>> = Vec::new();
         let mut pending = self.session.handle_admin_frame(
             dispatch.frame,
             now_ms,
-            reply_budget,
+            dispatch.budget,
             &mut |bytes: &[u8]| emitted.push(bytes.to_vec()),
         );
         while let Some(effect) = pending.take() {

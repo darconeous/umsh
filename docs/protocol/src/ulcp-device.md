@@ -702,10 +702,10 @@ Read-only design capacity may be configured or learned inside the gauge; it
 must not be confused with a writable ULCP setting. Battery values are excluded
 from saved state, and save/restore does not roll telemetry back.
 
-Node Management retransmissions retain the existing at-most-once semantics:
-retrying an exchange returns its retained response, rather than taking a new
-sample. A new monitoring poll is a new exchange with a new token. Any cursor
-continuations read the retained response from that same acquisition.
+Over [Node Management](app-node-management.md#at-most-once), a retransmitted
+battery read is executed again like any other read, and takes a new sample. A
+read too large for one payload is still one acquisition: its continuations are
+cut from the retained response.
 
 #### Raw gauge formats and the Pager mapping
 

@@ -14,8 +14,6 @@
 use umsh_ulcp::frame::{Cmd, Frame};
 use umsh_ulcp::pui;
 
-use crate::device::{Dispatch, Produced};
-
 /// Whether a cursor may continue a request bearing this command.
 ///
 /// Reads only. A write sequence cannot be continued—resuming one would
@@ -55,41 +53,38 @@ pub fn trailing(frame: &[u8]) -> &[u8] {
     }
 }
 
-/// Cut a whole reply down to the fragment one exchange carries.
+/// The share of a reply one response carries: the frame's leading
+/// `prefix` octets, then `take` octets of its trailing content beginning
+/// `resume` octets in.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Cut {
+    pub prefix: usize,
+    pub resume: usize,
+    pub take: usize,
+    /// Trailing octets after this fragment. Zero ends the read.
+    pub remaining: usize,
+}
+
+/// Cut the fragment of `reply` that begins `resume` octets into its
+/// trailing content and fills at most `room` octets of frame.
 ///
-/// `reply` is what the local dispatch produced, which for a continuable
-/// read may be larger than a payload holds. The result is the frame's
-/// leading bytes followed by the slice of its trailing content beginning
-/// at `dispatch.resume`, sized to `dispatch.budget` and to `buf`.
-///
-/// A reply the caller cannot cut—one with no trailing content—is
-/// copied through whole. If it does not fit, that is not this function's
-/// to hide: [`DeviceEngine::complete`](crate::device::DeviceEngine::complete)
-/// refuses it.
-pub fn produce<'b>(reply: &[u8], dispatch: &Dispatch<'_>, buf: &'b mut [u8]) -> Produced<'b> {
-    if reply.is_empty() {
-        return Produced::no_response();
+/// A reply with no trailing content is all prefix: it fits or it does
+/// not. `None` when the fragment cannot be carried at all—the leading
+/// bytes alone overflow `room`, `resume` lies past the end, or what is
+/// left over could never make progress.
+pub(crate) fn cut(reply: &[u8], resume: usize, room: usize) -> Option<Cut> {
+    let prefix = trailing_offset(reply).unwrap_or(reply.len());
+    let available = reply.len().checked_sub(prefix)?.checked_sub(resume)?;
+    let take = available.min(room.checked_sub(prefix)?);
+    if take == 0 && available > 0 {
+        return None;
     }
-    let Some(offset) = trailing_offset(reply) else {
-        let len = reply.len().min(buf.len());
-        buf[..len].copy_from_slice(&reply[..len]);
-        return Produced::complete(&buf[..len]);
-    };
-    let (prefix, trailing) = reply.split_at(offset);
-    let prefix_len = prefix.len().min(buf.len());
-    // A cursor pointing past the end yields an empty last fragment, which
-    // ends the read rather than failing it.
-    let resume = (dispatch.resume as usize).min(trailing.len());
-    let available = trailing.len() - resume;
-    let room = dispatch
-        .budget
-        .saturating_sub(prefix_len)
-        .min(buf.len() - prefix_len);
-    let take = available.min(room);
-    let end = prefix_len + take;
-    buf[..prefix_len].copy_from_slice(&prefix[..prefix_len]);
-    buf[prefix_len..end].copy_from_slice(&trailing[resume..resume + take]);
-    Produced::fragment(&buf[..end], take as u32, (available - take) as u32)
+    Some(Cut {
+        prefix,
+        resume,
+        take,
+        remaining: available - take,
+    })
 }
 
 #[cfg(test)]
@@ -98,82 +93,60 @@ mod tests {
     use umsh_ulcp::frame;
     use umsh_ulcp::ids::prop;
 
-    /// A dispatch of the shape `produce` reads: only the cursor position
-    /// and the budget matter to it.
-    fn dispatch(resume: u32, budget: usize) -> Dispatch<'static> {
-        Dispatch {
-            frame: &[],
-            resume,
-            budget,
-            resets: false,
-        }
-    }
-
     #[test]
     fn a_reply_that_fits_is_carried_whole() {
         let mut reply = [0u8; 64];
         let len = frame::prop_is(&mut reply, 0, prop::DEV_PEERS, &[7; 32]).unwrap();
-        let mut buf = [0u8; 64];
-        let produced = produce(&reply[..len], &dispatch(0, 64), &mut buf);
-        assert_eq!(produced.frame, &reply[..len]);
-        assert_eq!(produced.remaining, 0);
+        let cut = cut(&reply[..len], 0, 64).unwrap();
+        assert_eq!(cut.prefix + cut.take, len);
+        assert_eq!(cut.remaining, 0);
     }
 
     #[test]
-    fn a_reply_that_does_not_fit_is_cut_at_the_budget() {
+    fn a_reply_that_does_not_fit_is_cut_at_the_room() {
         let mut reply = [0u8; 64];
         let len = frame::prop_is(&mut reply, 0, prop::DEV_PEERS, &[7; 32]).unwrap();
         let prefix = trailing_offset(&reply[..len]).unwrap();
 
-        let mut buf = [0u8; 64];
-        let first = produce(&reply[..len], &dispatch(0, prefix + 20), &mut buf);
-        assert_eq!(first.produced, 20);
+        let first = cut(&reply[..len], 0, prefix + 20).unwrap();
+        assert_eq!(first.prefix, prefix);
+        assert_eq!(first.take, 20);
         assert_eq!(first.remaining, 12);
-        assert_eq!(&first.frame[..prefix], &reply[..prefix]);
-        assert_eq!(&first.frame[prefix..], &[7; 20]);
 
         // The continuation resumes where the first left off, and this time
         // the rest fits.
-        let mut buf = [0u8; 64];
-        let rest = produce(&reply[..len], &dispatch(20, prefix + 20), &mut buf);
-        assert_eq!(rest.produced, 12);
+        let rest = cut(&reply[..len], 20, prefix + 20).unwrap();
+        assert_eq!(rest.resume, 20);
+        assert_eq!(rest.take, 12);
         assert_eq!(rest.remaining, 0);
-        assert_eq!(&rest.frame[prefix..], &[7; 12]);
     }
 
-    /// The buffer is a second ceiling, and the smaller of the two wins.
     #[test]
-    fn the_buffer_bounds_the_cut_as_much_as_the_budget_does() {
+    fn a_reply_without_trailing_content_fits_whole_or_not_at_all() {
+        let mut reply = [0u8; 32];
+        let len = frame::prop_inserted(&mut reply, 0, prop::DEV_PEERS, &[1, 2]).unwrap();
+        let whole = cut(&reply[..len], 0, len).unwrap();
+        assert_eq!((whole.prefix, whole.take, whole.remaining), (len, 0, 0));
+        assert_eq!(cut(&reply[..len], 0, len - 1), None);
+    }
+
+    /// Positions this binding never issues, and rooms that could only
+    /// produce empty fragments forever, are refused rather than served.
+    #[test]
+    fn a_cut_that_cannot_make_progress_is_refused() {
         let mut reply = [0u8; 64];
         let len = frame::prop_is(&mut reply, 0, prop::DEV_PEERS, &[7; 32]).unwrap();
         let prefix = trailing_offset(&reply[..len]).unwrap();
-        let mut buf = [0u8; 16];
-        let produced = produce(&reply[..len], &dispatch(0, 1024), &mut buf);
-        assert_eq!(produced.frame.len(), 16);
-        assert_eq!(produced.produced as usize, 16 - prefix);
-        assert_eq!(produced.remaining as usize, 32 - (16 - prefix));
-    }
-
-    /// A cursor at or past the end is answered by an empty last fragment,
-    /// which ends the read rather than failing it.
-    #[test]
-    fn a_cursor_past_the_end_ends_the_read() {
-        let mut reply = [0u8; 64];
-        let len = frame::prop_is(&mut reply, 0, prop::DEV_PEERS, &[7; 32]).unwrap();
-        let prefix = trailing_offset(&reply[..len]).unwrap();
-        let mut buf = [0u8; 64];
-        let produced = produce(&reply[..len], &dispatch(99, 64), &mut buf);
-        assert_eq!(produced.frame.len(), prefix);
-        assert_eq!(produced.produced, 0);
-        assert_eq!(produced.remaining, 0);
-    }
-
-    #[test]
-    fn an_empty_reply_is_a_reset() {
-        let mut buf = [0u8; 8];
+        assert_eq!(cut(&reply[..len], 33, 64), None, "past the end");
         assert_eq!(
-            produce(&[], &dispatch(0, 64), &mut buf),
-            Produced::no_response()
+            cut(&reply[..len], 0, prefix),
+            None,
+            "no room past the prefix"
+        );
+        assert_eq!(
+            cut(&reply[..len], 0, prefix - 1),
+            None,
+            "the prefix overflows"
         );
     }
 

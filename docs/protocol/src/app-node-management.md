@@ -32,10 +32,10 @@ adds what the ULCP grammar needs on such a transport:
 
 - a **token** correlates responses with requests across long and variable
   round trips, in place of the TID of the local bindings;
-- **retained responses** make retransmission safe: a repeated request is
-  answered again, not executed again;
-- **cursors** carry responses larger than one frame across as many
-  exchanges as needed, without per-read state on the device.
+- **retained responses** make retransmission safe: a repeated request
+  that changes something is answered again, not executed again;
+- **cursors** carry a response larger than one frame across as many
+  exchanges as needed, every fragment cut from that one response.
 
 Several operations per exchange need nothing from the envelope: the
 [multi-property commands](ulcp-core.md#cmd-prop-multi-get) already carry
@@ -192,19 +192,33 @@ confirmed entry, while its companion-radio connection remains intact.
 The MAC layer's replay protection means a device never receives the same
 request frame twice; what it can receive twice is the same request *sent*
 twice—an administrator retransmitting because no response arrived,
-though the request may in fact have been executed. The device therefore
-retains, per administrator, the token and the complete response of the
-most recent exchange. A request whose token matches the retained token is
-answered by retransmitting the retained response, without executing
-anything. A device MAY bound how many administrators it retains an entry
-for, evicting the least recently active, but retains at least the entry
-for the most recently active administrator.
+though the request may in fact have been executed. Executing a request
+that changes something twice would be wrong, so for every request other
+than a read the device retains, per administrator, the token and the
+complete response of the most recent exchange. A request whose token
+matches the retained token is answered by retransmitting the retained
+response, without executing anything.
+
+A read (`CMD_PROP_GET` or `CMD_PROP_MULTI_GET`) changes nothing, so its
+response is not retained: a retransmitted read is executed again and
+answered with current values. The exception is a read whose response
+does not fit one payload. Its whole response is retained, and each
+fragment is cut from it (see [Reading Large Values](#cursors)).
+
+Each new exchange ends the one before it. When an administrator begins an
+exchange under a different token, the device discards that
+administrator's retained entry, whether or not the new exchange is
+retained in turn; only a continuation carries the read it continues
+forward. A device MAY bound what it retains, in entries or in octets,
+evicting the least recently active administrator's entry first, but
+retains at least the entry for the most recently active administrator.
 
 An administrator that receives no response retransmits the identical
 request with the identical token, paced to the path's round-trip
-behavior; the retained response makes this safe whether the request or
-only its response was lost. An administrator MUST NOT have more than one
-exchange outstanding with a given device.
+behavior. This is safe whether the request or only its response was
+lost: a retained response is repeated, and a read is answered afresh. An
+administrator MUST NOT have more than one exchange outstanding with a
+given device.
 
 Retained entries do not survive a reset. A reset command retransmitted
 after it has already acted is therefore executed again—with the same
@@ -215,17 +229,23 @@ result.
 A read whose response does not fit one payload is completed across
 several exchanges. This applies to both read requests: a `CMD_PROP_GET`
 whose value does not fit, and a `CMD_PROP_MULTI_GET` whose entry list
-does not fit. The response frame is well-formed but its trailing content
-—the value of the `CMD_PROP_IS`, or the entry list of the
-`CMD_PROP_ARE`—is a leading fragment, accompanied by a **CURSOR**
+does not fit. The response frame is well-formed, but its trailing
+content (the value of the `CMD_PROP_IS`, or the entry list of the
+`CMD_PROP_ARE`) is a leading fragment, accompanied by a **CURSOR**
 option: an opaque continuation handle, one to eight octets, chosen
-entirely by the device. The administrator continues with a new exchange—
-fresh token—whose request carries the returned cursor verbatim
-alongside a repeat of the request being continued. Each response carries
-the cursor to present in the *next* request; a response without one ends
-the read, its fragment being the last. Fragment sizes are the device's
-choice, made to fill each frame; there is no fixed block size and no
-position numbering.
+entirely by the device. The administrator continues with a new
+exchange, under a fresh token, whose request carries the returned cursor
+verbatim alongside a repeat of the request being continued. Each
+response carries the cursor to present in the *next* request; a
+response without one ends the read, its fragment being the last.
+Fragment sizes are the device's choice, made to fill each frame; there
+is no fixed block size and no position numbering.
+
+The request is executed once, by the exchange that begins the read. The
+device retains that complete response and answers each continuation with
+the next fragment cut from it, executing nothing. The reassembled value
+or entry list is therefore exactly what one execution produced, however
+the device's state changes between exchanges.
 
 A request carrying a CURSOR option MUST be the read being continued—the
 same `CMD_PROP_GET` or `CMD_PROP_MULTI_GET` that began it. A cursor on
@@ -240,27 +260,25 @@ The contract:
   administrator reassembles the read by concatenating the fragments in
   order and parses the whole: a property value under the property's own
   rules, an entry list under `CMD_PROP_ARE`'s.
-- Presenting the same cursor again SHOULD yield the same fragment or an
-  equivalent one; a retransmitted continuation is in any case answered
-  from the retained response (see
+- Presenting the same cursor again yields a fragment cut from the same
+  response at the same position; a retransmitted continuation is in any
+  case answered from the retained response (see
   [Retries and At-Most-Once Processing](#at-most-once)).
 - Cursors are untrusted input. The device validates every cursor it
-  receives and answers one it cannot honor—it does not parse, it was
-  issued for a different request, or the underlying data has changed out
-  from under the position—with
-  `STATUS_CURSOR_INVALID` (see [Status Codes](ulcp-core.md#status-codes));
-  the administrator restarts from a cursor-less request. A practical
-  cursor encodes the position together with a generation of the
-  underlying data—a table revision, a boot count—so that every change
-  that invalidates positions is detected rather than served wrong.
-- A response MAY carry an empty fragment with a cursor equal to the one
-  presented, meaning nothing further is available yet; this suits data
-  that accumulates over time.
+  receives and answers one it cannot honor (it does not parse, it was
+  issued for a different request, or the response it continues is no
+  longer retained) with `STATUS_CURSOR_INVALID` (see
+  [Status Codes](ulcp-core.md#status-codes)); the administrator restarts
+  from a cursor-less request.
+- A cursor is honored only while the response it continues is retained.
+  Any other exchange from the same administrator ends the read, a fresh
+  start of the same read included, and eviction or a reset discards it.
 - A response MAY carry a **REMAINING** option: the approximate number of
   octets not yet returned, as a packed unsigned integer. It is advisory,
   for progress reporting.
-- The read holds no state on the device: between exchanges, the position
-  lives entirely in the cursor the administrator holds.
+- Between exchanges, the position lives entirely in the cursor the
+  administrator holds; the device keeps nothing for the read beyond the
+  retained response.
 
 ## Authorization {#authorization}
 

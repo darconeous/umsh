@@ -523,7 +523,7 @@ pub fn describe(failure: Failure) -> anyhow::Error {
              administrators (`admin-key` prints the key it would have to list)"
         ),
         Failure::CursorInvalid => {
-            anyhow!("the device's state changed mid-read; run the command again")
+            anyhow!("the device lost its place in the read; run the command again")
         }
         Failure::TooLarge => anyhow!("the answer is larger than this tool reassembles"),
         Failure::Malformed => anyhow!("the device's answer could not be read"),

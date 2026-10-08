@@ -284,7 +284,7 @@ pub fn describe(failure: Failure) -> String {
                 .into()
         }
         Failure::CursorInvalid => {
-            "the device's state changed mid-read; run the command again".into()
+            "the device lost its place in the read; run the command again".into()
         }
         Failure::TooLarge => "the answer is larger than this host reassembles".into(),
         Failure::Malformed => "the device's answer could not be read".into(),
