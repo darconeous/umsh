@@ -3081,6 +3081,17 @@ struct MultiState {
     /// Set when an entry's reply would not fit, which ends the sequence
     /// without executing it.
     truncated: bool,
+    /// Whether the entry being served has left its answer—a value or a
+    /// status—in the reply.
+    answered: bool,
+    /// The key of an entry that deferred to the driver and has not been
+    /// answered yet.
+    ///
+    /// Position, not key, tells the requester which answer is which, so
+    /// every key consumed must leave exactly one entry behind. An entry
+    /// that defers leaves none until its `respond_*` arrives; this is how
+    /// the sequence knows it is owed one.
+    owed: Option<u32>,
 }
 
 impl MultiState {
@@ -3101,6 +3112,8 @@ impl MultiState {
             reply_budget: reply_budget.min(MULTI_MAX),
             failed: false,
             truncated: false,
+            answered: false,
+            owed: None,
         })
     }
 
@@ -3109,7 +3122,12 @@ impl MultiState {
     }
 
     /// Append one entry, reporting whether it fit.
+    ///
+    /// Either way the entry being served has been answered: one that did
+    /// not fit ends the sequence, and the requester reissues it.
     fn push_entry(&mut self, key: u32, value: &[u8]) -> bool {
+        self.answered = true;
+        self.owed = None;
         let Some(needed) = frame::entry_len(key, value.len()) else {
             return false;
         };
@@ -3128,6 +3146,17 @@ impl MultiState {
         let mut value = [0u8; pui::MAX_LEN];
         let len = pui::encode(status.0, &mut value).unwrap_or(0);
         self.push_entry(prop::LAST_STATUS, &value[..len])
+    }
+
+    /// Answer the entry being served with a failure, for one that would
+    /// otherwise leave no answer at all.
+    ///
+    /// A missing position would not read as missing: every answer after
+    /// it would land on the key before it. A failure in its place is the
+    /// honest answer, and the sequence goes on.
+    fn fail_unanswered(&mut self) {
+        self.failed = true;
+        self.truncated |= !self.push_status(Status::FAILURE);
     }
 }
 
@@ -4416,14 +4445,36 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             let Some((key, value_len)) = next else {
                 return self.finish_multi(emit);
             };
+            if let Some(state) = self.multi.as_mut() {
+                state.answered = false;
+            }
             let effect = if writes {
                 self.prop_set(tid, key, &value[..value_len], now_ms, emit)
             } else {
                 self.prop_get(tid, key, now_ms, emit)
             };
-            // A deferred value: the driver serves the effect, the
-            // matching `respond_*` fills the slot, and `resume_multi`
-            // brings us back here for the next entry.
+            // The entry may have discarded the whole command; then there
+            // is no sequence left to keep in order.
+            let Some(state) = self.multi.as_mut() else {
+                return effect;
+            };
+            if !state.answered {
+                if effect.is_some() {
+                    // A deferred value: the driver serves the effect, the
+                    // matching `respond_*` fills the slot, and
+                    // `resume_multi` brings us back here for the next
+                    // entry.
+                    state.owed = Some(key);
+                    return effect;
+                }
+                debug_assert!(
+                    false,
+                    "property {key} left no answer in a multi-property command"
+                );
+                state.fail_unanswered();
+            }
+            // An effect from an entry already answered is one the driver
+            // applies and returns from, such as a radio reconfiguration.
             if effect.is_some() {
                 return effect;
             }
@@ -4447,7 +4498,17 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     /// Returns `None` when no multi-property command is in flight, which
     /// is the ordinary case after a single-property deferral.
     pub fn resume_multi(&mut self, now_ms: u64, emit: &mut impl FnMut(&[u8])) -> Option<Effect> {
-        self.multi.as_ref()?;
+        let state = self.multi.as_mut()?;
+        if let Some(key) = state.owed {
+            // The driver came back without the value this entry deferred
+            // for. Its position still gets an answer, or every answer after
+            // it would land on the wrong key.
+            debug_assert!(
+                false,
+                "property {key}'s deferred value was never answered; the driver dropped its effect"
+            );
+            state.fail_unanswered();
+        }
         self.advance_multi(now_ms, emit)
     }
 
@@ -8730,6 +8791,37 @@ mod tests {
         assert_eq!(entries[1].1, 1_700_000_000u32.to_le_bytes());
         assert_eq!(entries[2].0, prop::ILLUMINANCE);
         assert_eq!(entries[3].0, prop::PHY_MTU);
+    }
+
+    /// A driver that drops a deferred effect leaves nothing for that
+    /// position. Leaving it out would land every later answer on the key
+    /// before it, so the session answers it with a failure instead—and a
+    /// debug build says so loudly, because the driver has a bug.
+    #[test]
+    #[cfg_attr(debug_assertions, should_panic(expected = "never answered"))]
+    fn a_deferred_value_never_answered_still_fills_its_position() {
+        let mut session = test_session();
+        let mut buf = [0u8; 64];
+        let len = frame::prop_multi_get(&mut buf, 1, &[prop::TIME, prop::PHY_MTU]).unwrap();
+        let mut emitted = Vec::new();
+        let effect = session.handle_frame(&buf[..len], 0, &mut |bytes: &[u8]| {
+            emitted.push(bytes.to_vec())
+        });
+        assert_eq!(effect, Some(Effect::ReadTime { tid: 1 }));
+
+        // The driver drops the effect and comes straight back.
+        let effect = session.resume_multi(0, &mut |bytes: &[u8]| emitted.push(bytes.to_vec()));
+        assert_eq!(effect, None);
+
+        assert_eq!(emitted.len(), 1);
+        let parsed = Frame::parse(&emitted[0]).unwrap();
+        let entries: Vec<_> = MultiEntries::new(parsed.payload)
+            .map(Result::unwrap)
+            .collect();
+        assert_eq!(entries.len(), 2, "every key asked for has a position");
+        assert_eq!(entries[0].key, prop::LAST_STATUS);
+        assert_eq!(entry_status(entries[0].value), Status::FAILURE);
+        assert_eq!(entries[1].key, prop::PHY_MTU);
     }
 
     #[test]

@@ -731,7 +731,17 @@ fn zip_answers(keys: &[u32], reply: &[u8]) -> Result<Vec<Answer>> {
     })?;
     entries
         .map(|entry| {
-            let (key, answer) = entry.map_err(|error| anyhow!("malformed entry: {error:?}"))?;
+            let (key, answer) = entry.map_err(|error| match error {
+                reply::EntryError::Misplaced {
+                    requested,
+                    answered,
+                } => anyhow!(
+                    "the device answered {} where {} was asked for",
+                    label(answered),
+                    label(requested)
+                ),
+                reply::EntryError::Unreadable(error) => anyhow!("malformed entry: {error:?}"),
+            })?;
             Ok(match answer {
                 reply::Answer::Value(value) => (key, Ok(value.to_vec())),
                 reply::Answer::Refused(status) => (key, Err(status)),

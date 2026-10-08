@@ -10,7 +10,7 @@
 //! Nothing is copied: an [`Answer`] borrows from the reply it was read out
 //! of.
 
-use crate::frame::{Cmd, Frame, MultiEntries, ParseError, PropPayload};
+use crate::frame::{Cmd, Frame, MultiEntries, MultiEntry, ParseError, PropPayload};
 use crate::ids::prop;
 use crate::pui;
 use crate::status::Status;
@@ -95,28 +95,75 @@ impl From<ParseError> for EntriesError {
     }
 }
 
+/// Why one position of a multi-property reply could not be read.
+///
+/// Either way nothing after it can be trusted, so the reading ends there.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EntryError {
+    /// The entry is malformed, and with it the length that locates the
+    /// next one.
+    Unreadable(ParseError),
+    /// The device answered this position with a property other than the
+    /// one asked for there.
+    ///
+    /// A device that leaves a position out shifts every answer after it
+    /// onto the key before it, and this is where that shows. Read on and
+    /// values would be attributed to properties they do not belong to.
+    Misplaced { requested: u32, answered: u32 },
+}
+
 /// Split a `CMD_PROP_ARE` into per-position answers, paired with the keys
 /// they were asked for.
 ///
 /// A device may answer fewer positions than were asked for—it stops
 /// before a reply overflows rather than truncating one—so the iterator
 /// simply ends, and the caller reissues whatever is left over.
+///
+/// A value is never attributed to a key it does not name. An entry that
+/// names a property other than the one asked for at its position yields
+/// [`EntryError::Misplaced`] and ends the iterator, as a malformed entry
+/// does: what came before it stands, and the caller reissues the rest
+/// just as it would for a short answer.
 pub fn entries<'a>(
     requested: &'a [u32],
     reply: &'a [u8],
-) -> Result<impl Iterator<Item = Result<(u32, Answer<'a>), ParseError>> + 'a, EntriesError> {
+) -> Result<impl Iterator<Item = Result<(u32, Answer<'a>), EntryError>> + 'a, EntriesError> {
     let parsed = Frame::parse(reply)?;
     if parsed.command() != Some(Cmd::PropAre) {
         return Err(EntriesError::NotEntries);
     }
-    Ok(MultiEntries::new(parsed.payload)
-        .enumerate()
-        .map(move |(position, entry)| {
-            let entry = entry?;
-            // Past the end of what was asked for, the entry names itself.
-            let key = requested.get(position).copied().unwrap_or(entry.key);
-            Ok((key, Answer::read(key, entry.key, entry.value)))
-        }))
+    let mut positions = MultiEntries::new(parsed.payload).enumerate();
+    let mut ended = false;
+    Ok(core::iter::from_fn(move || {
+        if ended {
+            return None;
+        }
+        let (position, entry) = positions.next()?;
+        let read = read_entry(requested.get(position).copied(), entry);
+        ended = read.is_err();
+        Some(read)
+    }))
+}
+
+/// Read one position of a `CMD_PROP_ARE` against the key asked for there.
+fn read_entry(
+    requested: Option<u32>,
+    entry: Result<MultiEntry<'_>, ParseError>,
+) -> Result<(u32, Answer<'_>), EntryError> {
+    let entry = entry.map_err(EntryError::Unreadable)?;
+    // Past the end of what was asked for, the entry names itself.
+    let Some(requested) = requested else {
+        return Ok((entry.key, Answer::read(entry.key, entry.key, entry.value)));
+    };
+    // A refusal names `PROP_LAST_STATUS` rather than the property it
+    // stands in for; every other entry names the property it answers.
+    if entry.key != requested && entry.key != prop::LAST_STATUS {
+        return Err(EntryError::Misplaced {
+            requested,
+            answered: entry.key,
+        });
+    }
+    Ok((requested, Answer::read(requested, entry.key, entry.value)))
 }
 
 #[cfg(test)]
@@ -165,6 +212,34 @@ mod tests {
                 (prop::DEV_NAME, Answer::Value(b"Ridge".as_slice())),
                 (prop::HOST_KEY, Answer::Refused(Status::PROP_NOT_FOUND)),
             ]
+        );
+    }
+
+    /// A device that left a position out has shifted every answer after
+    /// it. The first value that names the wrong property ends the read,
+    /// and nothing is attributed to a key it does not belong to.
+    #[test]
+    fn a_value_under_the_wrong_key_ends_the_read() {
+        let mut buf = [0u8; 128];
+        let mut writer = frame::prop_are(&mut buf, 3).unwrap();
+        // Asked for three; the device skipped the second.
+        writer.write_entry(prop::DEV_NAME, b"Ridge").unwrap();
+        writer.write_entry(prop::PHY_MTU, &[0xFF, 0x00]).unwrap();
+        let len = writer.finish();
+        let reply = &buf[..len];
+
+        let requested = [prop::DEV_NAME, prop::DEV_VERSION, prop::PHY_MTU];
+        let read: Vec<_> = entries(&requested, reply).unwrap().collect();
+        assert_eq!(
+            read,
+            vec![
+                Ok((prop::DEV_NAME, Answer::Value(b"Ridge".as_slice()))),
+                Err(EntryError::Misplaced {
+                    requested: prop::DEV_VERSION,
+                    answered: prop::PHY_MTU,
+                }),
+            ],
+            "the read stops at the misplaced entry"
         );
     }
 

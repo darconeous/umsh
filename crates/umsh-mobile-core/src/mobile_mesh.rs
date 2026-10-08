@@ -4853,6 +4853,33 @@ mod tests {
         assert_eq!(crawl.answers.len(), 2);
     }
 
+    /// A device that leaves a position out shifts every answer after it.
+    /// None of those is filed under the key it landed on; they are asked
+    /// for again instead.
+    #[test]
+    fn a_fetch_never_files_a_value_under_the_wrong_key() {
+        let mut crawl = FetchCrawl::new(long_list(), true);
+        crawl.next_request().unwrap().unwrap();
+        let batch = asked(&crawl);
+        assert!(batch.len() > 2);
+
+        // The second position is missing, so the third key's value sits
+        // where the second was asked for.
+        crawl.receive(&are_reply(&[batch[0], batch[2]])).unwrap();
+        assert_eq!(crawl.answers.len(), 1);
+        assert_eq!(crawl.answers[0].property_id, batch[0]);
+        assert_eq!(
+            crawl
+                .pending
+                .iter()
+                .take(batch.len() - 1)
+                .copied()
+                .collect::<Vec<_>>(),
+            batch[1..].to_vec(),
+            "everything from the misplaced answer on is asked for again"
+        );
+    }
+
     #[test]
     fn a_fetch_falls_back_to_one_property_at_a_time() {
         let mut crawl = FetchCrawl::new(long_list(), true);
