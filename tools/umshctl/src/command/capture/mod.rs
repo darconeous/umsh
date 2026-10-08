@@ -499,17 +499,7 @@ async fn apply_rf(device: &mut UlcpDevice<SessionLink>, args: &CaptureArgs) -> R
 /// Say what the radio is actually listening on, read back from the
 /// device rather than assumed.
 async fn report_rf(device: &mut UlcpDevice<SessionLink>) {
-    let mut parts = Vec::new();
-    if let Some(freq) = device
-        .get_prop(prop::PHY_FREQ)
-        .await
-        .ok()
-        .and_then(|value| decode_u32(&value))
-    {
-        parts.push(format!("{freq} kHz"));
-    }
-    parts.extend(phy::lora_parts(device).await);
-    parts.extend(phy::power_part(device).await);
+    let parts = phy::rf_parts(device).await.unwrap_or_default();
     field("radio", parts.join(", "));
 }
 

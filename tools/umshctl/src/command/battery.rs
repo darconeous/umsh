@@ -5,12 +5,11 @@ use crate::connection::Recovered;
 use anyhow::{Result, bail};
 use serde_json::{Value as Json, json};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use umsh::ulcp::UlcpError;
 use umsh::ulcp_wire::{
     Status,
     battery::BatteryStatus,
     battery_diagnostics::{self as diagnostics, Value, VoltageRequest},
-    ids::{cap, prop},
+    ids::prop,
 };
 
 /// The longest wait between polls after a failure, unless the interval
@@ -158,7 +157,6 @@ pub async fn run(app: &mut App, args: BatteryArgs) -> Result<()> {
     let interval = args
         .interval
         .unwrap_or(Duration::from_secs(if device.is_remote() { 60 } else { 1 }));
-    let batched = device.capabilities().await?.contains(&cap::CMD_MULTI);
     let mut keys: Vec<_> = if args.properties.is_empty() {
         std::iter::once(prop::BATTERY)
             .chain(diagnostics::KEYS)
@@ -180,33 +178,21 @@ pub async fn run(app: &mut App, args: BatteryArgs) -> Result<()> {
         let start = Instant::now();
         let device = app.device()?;
         let result: Result<Vec<Result<Vec<u8>, Status>>> = async {
-            if batched {
-                // A continuation would be another acquisition; do not label a
-                // concatenation of different requests as a shared sample.
-                let entries = device.get_props(&keys).await?;
-                if entries.len() != keys.len() {
-                    bail!("battery reply was truncated; request fewer properties");
-                }
-                entries
-                    .into_iter()
-                    .zip(&keys)
-                    .map(|(entry, requested)| match entry {
-                        Ok((key, value)) if key == *requested => Ok(Ok(value)),
-                        Ok(_) => anyhow::bail!("battery reply was out of order"),
-                        Err(status) => Ok(Err(status)),
-                    })
-                    .collect()
-            } else {
-                let mut entries = Vec::new();
-                for &key in &keys {
-                    entries.push(match device.get_prop(key).await {
-                        Ok(v) => Ok(v),
-                        Err(UlcpError::Status(s)) => Err(s),
-                        Err(e) => return Err(e.into()),
-                    });
-                }
-                Ok(entries)
+            // A continuation would be another acquisition; do not label a
+            // concatenation of different requests as a shared sample.
+            let entries = device.get_props(&keys).await?;
+            if entries.len() != keys.len() {
+                bail!("battery reply was truncated; request fewer properties");
             }
+            entries
+                .into_iter()
+                .zip(&keys)
+                .map(|(entry, requested)| match entry {
+                    Ok((key, value)) if key == *requested => Ok(Ok(value)),
+                    Ok(_) => anyhow::bail!("battery reply was out of order"),
+                    Err(status) => Ok(Err(status)),
+                })
+                .collect()
         }
         .await;
         let received = SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis();
@@ -220,16 +206,11 @@ pub async fn run(app: &mut App, args: BatteryArgs) -> Result<()> {
                 if args.json {
                     println!(
                         "{}",
-                        json!({"received_at_unix_ms":received,"exchange_ms":start.elapsed().as_millis(),"shared_sample":batched,"properties":values})
+                        json!({"received_at_unix_ms":received,"exchange_ms":start.elapsed().as_millis(),"shared_sample":true,"properties":values})
                     );
                 } else {
                     println!(
-                        "battery sample ({}, {} ms)",
-                        if batched {
-                            "multi-get"
-                        } else {
-                            "sequential; not a shared sample"
-                        },
+                        "battery sample (multi-get, {} ms)",
                         start.elapsed().as_millis()
                     );
                     for (&key, answer) in keys.iter().zip(&answers) {

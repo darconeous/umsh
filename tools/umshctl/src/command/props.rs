@@ -263,36 +263,48 @@ where
 // ─── The commands ────────────────────────────────────────────────────
 
 /// Read properties, named or numbered.
+///
+/// Everything asked for travels in one `CMD_PROP_MULTI_GET`, continued
+/// where the answer runs out of room. Over the mesh that is one exchange
+/// for the whole list rather than one per name.
 pub async fn get<L: FrameLink>(
     device: &mut UlcpDevice<L>,
     keys: &[PropArg],
     raw: bool,
 ) -> Result<()> {
-    // One key is one exchange either way, and a device that never
-    // learned the multi-property commands must still answer.
-    let batched = keys.len() > 1
-        && device
-            .capabilities()
-            .await
-            .is_ok_and(|caps| caps.contains(&umsh::ulcp_wire::ids::cap::CMD_MULTI));
-    let numbers: Vec<u32> = keys.iter().map(|key| key.0).collect();
-
-    if batched {
-        let answers = device.read_each(&numbers).await?;
-        for (key, answer) in keys.iter().zip(answers) {
-            report(*key, answer.as_deref().map_err(|status| *status), raw);
-        }
-        return Ok(());
-    }
-    for key in keys {
-        let answer = match device.get_prop(key.0).await {
+    let mut answers = device.read_each(&batchable(keys)).await?.into_iter();
+    // `PROP_LAST_STATUS` cannot share the batch, so it is asked alone.
+    let status = if keys.contains(&PropArg(prop::LAST_STATUS)) {
+        Some(match device.get_prop(prop::LAST_STATUS).await {
             Ok(value) => Ok(value),
             Err(umsh::ulcp::UlcpError::Status(status)) => Err(status),
             Err(error) => return Err(error.into()),
+        })
+    } else {
+        None
+    };
+    for key in keys {
+        let answer = if key.0 == prop::LAST_STATUS {
+            status.clone()
+        } else {
+            answers.next()
+        };
+        let Some(answer) = answer else {
+            bail!("the device answered fewer properties than were asked for");
         };
         report(*key, answer.as_deref().map_err(|status| *status), raw);
     }
     Ok(())
+}
+
+/// The keys of a `get` that can travel together: all of them but
+/// `PROP_LAST_STATUS`, whose value and a refusal standing in for one are
+/// the same octets in a multi-property answer.
+fn batchable(keys: &[PropArg]) -> Vec<u32> {
+    keys.iter()
+        .map(|key| key.0)
+        .filter(|&key| key != prop::LAST_STATUS)
+        .collect()
 }
 
 fn report(key: PropArg, answer: Result<&[u8], umsh::ulcp_wire::Status>, raw: bool) {
@@ -379,6 +391,19 @@ mod tests {
             "gnss-enabled".parse::<PropArg>().unwrap().0,
             prop::GNSS_ENABLED
         );
+    }
+
+    /// The status property is asked on its own and everything else
+    /// together, in the order given.
+    #[test]
+    fn the_status_property_is_left_out_of_the_batch() {
+        let keys = [
+            PropArg(prop::PHY_FREQ),
+            PropArg(prop::LAST_STATUS),
+            PropArg(prop::DEV_NAME),
+        ];
+        assert_eq!(batchable(&keys), vec![prop::PHY_FREQ, prop::DEV_NAME]);
+        assert!(batchable(&[PropArg(prop::LAST_STATUS)]).is_empty());
     }
 
     #[test]

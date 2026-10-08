@@ -31,7 +31,7 @@ use umsh::ulcp::{
 };
 use umsh::ulcp_mesh::{DeliveredOutcome, MeshEndpoint, MeshFrameLink, mesh_link};
 use umsh::ulcp_wire::Status;
-use umsh::ulcp_wire::ids::prop;
+use umsh::ulcp_wire::ids::{cap, prop};
 
 /// The attach config a mesh session wants: the response timeout has to
 /// outlast the exchange engine's own retry budget, or the handle gives up
@@ -224,6 +224,82 @@ async fn the_synchronization_procedure_reads_the_host_domain_too() {
     assert_eq!(sync.freq_khz, 910_525);
     assert!(!sync.phy_enabled);
     assert!(!sync.capabilities.is_empty());
+}
+
+/// A device's capabilities do not change under a handle, so they are
+/// asked for once.
+#[tokio::test(flavor = "current_thread")]
+async fn the_capability_list_is_asked_for_once() {
+    mesh!("caps", mesh);
+    let (link, mut endpoint) = mesh_link();
+    let mut device = open(link);
+
+    for _ in 0..3 {
+        let caps = with_mesh(&mut mesh, &mut endpoint, device.capabilities())
+            .await
+            .expect("the device lists its capabilities");
+        assert!(caps.contains(&cap::GNSS));
+    }
+    assert_eq!(mesh.device.borrow().executed, 1);
+}
+
+/// The capability check behind a gated read rides in the read's own
+/// batch, so the first one is one exchange, not two—and every one after
+/// it is one exchange too.
+#[tokio::test(flavor = "current_thread")]
+async fn a_gated_read_is_one_exchange() {
+    mesh!("gated", mesh);
+    let (link, mut endpoint) = mesh_link();
+    let mut device = open(link);
+
+    let gnss = with_mesh(&mut mesh, &mut endpoint, device.gnss_status())
+        .await
+        .expect("the device reports its receiver");
+    assert!(gnss.is_some());
+    assert_eq!(mesh.device.borrow().executed, 1);
+    assert!(
+        device
+            .cached_capabilities()
+            .is_some_and(|caps| caps.contains(&cap::GNSS)),
+        "the list came back with the read"
+    );
+
+    let repeater = with_mesh(&mut mesh, &mut endpoint, device.repeater_policy())
+        .await
+        .expect("the device reports its forwarding policy");
+    assert!(repeater.is_some());
+    assert_eq!(mesh.device.borrow().executed, 2);
+
+    let time = with_mesh(&mut mesh, &mut endpoint, device.time())
+        .await
+        .expect("the device reports its clock");
+    assert!(time.is_some());
+    let advert = with_mesh(&mut mesh, &mut endpoint, device.advert_policy())
+        .await
+        .expect("the device reports its advertisement policy");
+    assert!(advert.is_some());
+    assert_eq!(mesh.device.borrow().executed, 4);
+}
+
+/// A key list longer than one request frame can carry is split across
+/// requests rather than refused, and every position is still answered.
+#[tokio::test(flavor = "current_thread")]
+async fn a_read_too_long_for_one_request_is_split() {
+    mesh!("split", mesh);
+    let (link, mut endpoint) = mesh_link();
+    let mut device = open(link);
+
+    // Two octets apiece, so a hundred of them cannot fit one request.
+    let keys = vec![prop::STAT_TX_PACKETS; 100];
+    assert!(keys.len() * 2 > umsh::node_mgmt::REQUEST_MAX);
+    let answers = with_mesh(&mut mesh, &mut endpoint, device.read_each(&keys))
+        .await
+        .expect("the read completes");
+    assert_eq!(answers.len(), keys.len());
+    // The simulated board keeps no counters, so every position is the
+    // same refusal—but it is there.
+    assert!(answers.iter().all(Result::is_err));
+    assert!(mesh.device.borrow().executed >= 2);
 }
 
 #[tokio::test(flavor = "current_thread")]

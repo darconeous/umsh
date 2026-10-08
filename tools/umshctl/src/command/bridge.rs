@@ -25,9 +25,19 @@ pub enum BridgeOp {
 pub async fn run(app: &mut App, op: Option<BridgeOp>) -> Result<()> {
     let no_save = app.no_save;
     let device = app.device()?;
-    let enabled = device.get_prop(prop::BRIDGE_ENABLED).await?;
     match op.unwrap_or(BridgeOp::Show) {
         BridgeOp::Show => {
+            let [enabled, host, port, server_key, device_key, link, repeater] = device
+                .read_all(&[
+                    prop::BRIDGE_ENABLED,
+                    prop::BRIDGE_HOST,
+                    prop::BRIDGE_PORT,
+                    prop::BRIDGE_SERVER_KEY,
+                    prop::DEV_KEY,
+                    prop::BRIDGE_LINK,
+                    prop::MAC_REPEATER_ENABLED,
+                ])
+                .await?;
             subfield(
                 "bridge",
                 if enabled == [1] {
@@ -36,20 +46,17 @@ pub async fn run(app: &mut App, op: Option<BridgeOp>) -> Result<()> {
                     "disabled"
                 },
             );
-            let host = device.get_prop(prop::BRIDGE_HOST).await?;
             subfield(
                 "host",
                 String::from_utf8_lossy(host.strip_suffix(&[0]).unwrap_or(&host)),
             );
-            let port = device.get_prop(prop::BRIDGE_PORT).await?;
             if let Ok(port) = <[u8; 2]>::try_from(port.as_slice()) {
                 subfield("port", u16::from_le_bytes(port).to_string());
             }
-            for (name, key) in [
-                ("server identity", prop::BRIDGE_SERVER_KEY),
-                ("device identity", prop::DEV_KEY),
+            for (name, bytes) in [
+                ("server identity", server_key),
+                ("device identity", device_key),
             ] {
-                let bytes = device.get_prop(key).await?;
                 subfield(
                     name,
                     match <[u8; 32]>::try_from(bytes.as_slice()) {
@@ -58,13 +65,12 @@ pub async fn run(app: &mut App, op: Option<BridgeOp>) -> Result<()> {
                     },
                 );
             }
-            if let Some(link) = Link::decode(&device.get_prop(prop::BRIDGE_LINK).await?) {
+            if let Some(link) = Link::decode(&link) {
                 subfield(
                     "connection",
                     format!("{:?} ({:?})", link.state, link.reason),
                 );
             }
-            let repeater = device.get_prop(prop::MAC_REPEATER_ENABLED).await?;
             subfield("node", if repeater == [1] { "repeater" } else { "leaf" });
             return Ok(());
         }

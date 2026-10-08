@@ -3,11 +3,12 @@
 //!
 //! The report is a list of topics ([`topics::TOPICS`]), each a set of
 //! properties and two renderings of them. Everything a run needs is
-//! fetched in one `CMD_PROP_MULTI_GET` where possible. Status, capability
-//! discovery, and temperature sampling/labels use separate requests.
+//! fetched in one `CMD_PROP_MULTI_GET`. The retained status and the
+//! temperature sampling and labels use requests of their own.
 //!
-//! Naming a topic asks for that topic alone, which over the mesh is the
-//! difference between a question and an errand.
+//! Naming topics asks for those topics alone, with the capability list
+//! riding in the same batch, which over the mesh is the difference
+//! between a question and an errand.
 
 pub mod props;
 pub mod topics;
@@ -35,12 +36,12 @@ pub struct InfoArgs {
     #[arg(long)]
     pub env: bool,
 
-    /// Report one subject rather than all of them.
+    /// Report these subjects rather than all of them.
     ///
-    /// With no topic every subject the device supports is reported, and
-    /// each one named here reports that subject alone.
+    /// With no topic every subject the device supports is reported.
+    /// Several named together are fetched together.
     #[arg(value_name = "TOPIC", value_parser = topic_parser())]
-    pub topic: Option<String>,
+    pub topics: Vec<String>,
 }
 
 /// The topic names, as a value parser—so clap rejects a misspelling,
@@ -51,21 +52,31 @@ fn topic_parser() -> clap::builder::PossibleValuesParser {
 }
 
 pub async fn run<L: FrameLink>(device: &mut UlcpDevice<L>, args: InfoArgs) -> Result<()> {
-    // Two properties cannot travel with the rest and must come first.
-    //
-    // `PROP_LAST_STATUS` reports a refused position by putting itself
-    // into it, so its value and a refusal are the same bytes; asking for
-    // it alone is what tells them apart. `PROP_CAPS` decides which
-    // topics exist and therefore what the batch contains, so it cannot
-    // be in that batch.
+    // clap has already checked every name against the same table.
+    let mut named: Vec<&'static Topic> = Vec::new();
+    for name in &args.topics {
+        let topic = topics::topic(name).expect("clap accepted an unknown topic");
+        if !named.iter().any(|seen| seen.name == topic.name) {
+            named.push(topic);
+        }
+    }
+
+    // The capability list decides which topics exist and what each one
+    // asks for, so it is wanted before anything else—but not
+    // necessarily on its own.
     let mut set = PropSet::new();
-    set.insert(
-        prop::LAST_STATUS,
-        Ok(device.get_prop(prop::LAST_STATUS).await?),
-    );
-    let raw_caps = device.get_prop(prop::CAPS).await?;
-    let caps = umsh::ulcp::decode_capabilities(&raw_caps)?;
-    set.insert(prop::CAPS, Ok(raw_caps));
+    let caps = match folded_keys(
+        &named,
+        device.cached_capabilities().is_some(),
+        device.is_remote(),
+    ) {
+        Some(keys) => {
+            let (caps, answers) = device.read_each_with_capabilities(&keys).await?;
+            set = props::collect(&keys, answers);
+            caps
+        }
+        None => device.capabilities().await?,
+    };
 
     let ctx = Context {
         caps,
@@ -81,60 +92,66 @@ pub async fn run<L: FrameLink>(device: &mut UlcpDevice<L>, args: InfoArgs) -> Re
             .map(str::to_owned),
     };
 
-    let selected: Vec<&Topic> = match &args.topic {
-        // clap has already checked the name against the same table.
-        Some(name) => {
-            let topic = topics::topic(name).expect("clap accepted an unknown topic");
-            if !(topic.gate)(&ctx) {
-                bail!(
-                    "this device has nothing to report under {name:?}—see `info` for what it \
-                     does report"
-                );
-            }
-            vec![topic]
-        }
-        None => topics::TOPICS
+    let selected: Vec<&Topic> = if named.is_empty() {
+        topics::TOPICS
             .iter()
             .filter(|topic| (topic.gate)(&ctx))
-            .collect(),
+            .collect()
+    } else {
+        let (reportable, absent): (Vec<&Topic>, Vec<&Topic>) =
+            named.iter().partition(|topic| (topic.gate)(&ctx));
+        let absent = absent
+            .iter()
+            .map(|topic| format!("{:?}", topic.name))
+            .collect::<Vec<_>>()
+            .join(", ");
+        if reportable.is_empty() {
+            bail!(
+                "this device has nothing to report under {absent}—see `info` for what it does \
+                 report"
+            );
+        }
+        if !absent.is_empty() {
+            crate::output::warn(format!("this device has nothing to report under {absent}"));
+        }
+        reportable
     };
 
-    // Every property every selected topic wants, asked for at once.
-    let mut keys: Vec<u32> = Vec::new();
-    for topic in &selected {
-        for key in (topic.keys)(&ctx) {
-            if !keys.contains(&key) {
-                keys.push(key);
-            }
-        }
-    }
-    // Sampling arrays and appendable labels must not share a continued batch.
-    let has_temperatures = keys.contains(&prop::TEMPERATURES);
-    keys.retain(|key| !matches!(*key, prop::TEMPERATURES | prop::TEMPERATURE_NAMES));
-    let fetched = props::fetch(device, &keys, props::batched(&ctx.caps)).await?;
-    for &key in &keys {
-        if let Some(value) = fetched.bytes(key) {
-            set.insert(key, Ok(value.to_vec()));
-        } else if let Some(status) = fetched.refusal(key) {
-            set.insert(key, Err(status));
-        }
+    // Whatever the selected topics want that no batch has carried yet:
+    // everything, for a whole report, and nothing when the named topics
+    // were asked for up front.
+    let wanted: Vec<u32> = batch_keys(&selected, &ctx)
+        .into_iter()
+        .filter(|&key| !set.contains(key))
+        .collect();
+    if !wanted.is_empty() {
+        set.merge(props::fetch(device, &wanted).await?);
     }
 
+    // `PROP_LAST_STATUS` reports a refused position by putting itself
+    // into it, so its value and a refusal are the same bytes; asking for
+    // it alone is what tells them apart.
+    if wants_status(&selected) {
+        set.insert(
+            prop::LAST_STATUS,
+            Ok(device.get_prop(prop::LAST_STATUS).await?),
+        );
+    }
+
+    let has_temperatures = selected
+        .iter()
+        .any(|topic| (topic.keys)(&ctx).contains(&prop::TEMPERATURES));
     if has_temperatures {
         for key in [prop::TEMPERATURES, prop::TEMPERATURE_NAMES] {
-            let answer = match props::fetch(device, &[key], false).await {
+            let answer = match props::fetch_alone(device, key).await {
                 Ok(answer) => answer,
                 Err(error) if key == prop::TEMPERATURE_NAMES => {
                     eprintln!("sensor names: {error}");
                     continue;
                 }
-                Err(error) => return Err(error.into()),
+                Err(error) => return Err(error),
             };
-            if let Some(bytes) = answer.bytes(key) {
-                set.insert(key, Ok(bytes.to_vec()));
-            } else if let Some(status) = answer.refusal(key) {
-                set.insert(key, Err(status));
-            }
+            set.merge(answer);
         }
     }
 
@@ -176,6 +193,51 @@ pub async fn run<L: FrameLink>(device: &mut UlcpDevice<L>, args: InfoArgs) -> Re
     Ok(())
 }
 
+/// The keys to ask for alongside the capability list, or `None` when the
+/// list should be learned first.
+///
+/// Named topics are asked for outright, as if the device had every
+/// capability, with the list riding in the same batch: the keys of a
+/// subject the device lacks come back refused, which costs a few octets
+/// rather than an exchange. A whole report learns the list first, since
+/// asking for every subject there is would cost more answer than the
+/// exchange it saves. A list already known needs neither.
+fn folded_keys(named: &[&Topic], caps_known: bool, remote: bool) -> Option<Vec<u32>> {
+    if named.is_empty() || caps_known {
+        return None;
+    }
+    Some(batch_keys(
+        named,
+        &Context::assuming_every_capability(remote),
+    ))
+}
+
+/// Every property the topics want that can share one batch, each once.
+///
+/// The temperature samples and their labels are asked for on their own:
+/// a sampling array and an appendable list must not share an answer that
+/// may be continued across exchanges.
+fn batch_keys(selected: &[&Topic], ctx: &Context) -> Vec<u32> {
+    let mut keys: Vec<u32> = Vec::new();
+    for topic in selected {
+        for key in (topic.keys)(ctx) {
+            if !keys.contains(&key) {
+                keys.push(key);
+            }
+        }
+    }
+    keys.retain(|key| !matches!(*key, prop::TEMPERATURES | prop::TEMPERATURE_NAMES));
+    keys
+}
+
+/// Whether the report includes the retained status, which costs an
+/// exchange of its own.
+fn wants_status(selected: &[&Topic]) -> bool {
+    selected
+        .iter()
+        .any(|topic| topic.name == topics::DEVICE_TOPIC)
+}
+
 pub fn battery_display(status: &BatteryStatus) -> String {
     if status.is_empty() {
         return "unsupported reporting".to_string();
@@ -204,16 +266,10 @@ pub async fn temperatures<L: FrameLink>(device: &mut UlcpDevice<L>) -> Result<()
         field("temperatures", "unsupported (no CAP_TEMPERATURE)");
         return Ok(());
     }
-    let mut set = props::fetch(device, &[prop::TEMPERATURES], false).await?;
+    let mut set = props::fetch_alone(device, prop::TEMPERATURES).await?;
     // Preserve measurements even if the metadata exchange fails.
-    match props::fetch(device, &[prop::TEMPERATURE_NAMES], false).await {
-        Ok(names) => {
-            if let Some(value) = names.bytes(prop::TEMPERATURE_NAMES) {
-                set.insert(prop::TEMPERATURE_NAMES, Ok(value.to_vec()));
-            } else if let Some(status) = names.refusal(prop::TEMPERATURE_NAMES) {
-                set.insert(prop::TEMPERATURE_NAMES, Err(status));
-            }
-        }
+    match props::fetch_alone(device, prop::TEMPERATURE_NAMES).await {
+        Ok(names) => set.merge(names),
         Err(error) => eprintln!("sensor names: {error}"),
     }
     for (label, value) in topics::render_temperatures(&set) {
@@ -228,11 +284,14 @@ pub async fn temperatures<L: FrameLink>(device: &mut UlcpDevice<L>) -> Result<()
 /// reference meter means taking readings in a tight loop, and a full
 /// report per data point is unusable for that.
 pub async fn illuminance<L: FrameLink>(device: &mut UlcpDevice<L>) -> Result<()> {
+    let reading = device.illuminance().await?;
+    // The reading learned the capability list on its way, so telling no
+    // sensor from no reading costs nothing more.
     if !device.capabilities().await?.contains(&cap::ILLUMINANCE) {
         field("illuminance", "unsupported (no CAP_ILLUMINANCE)");
         return Ok(());
     }
-    match device.illuminance().await? {
+    match reading {
         Some(millilux) => field(
             "illuminance",
             format!("{} ({millilux} mlux)", format_millilux(millilux)),
@@ -329,6 +388,76 @@ mod tests {
                 topic.name
             );
         }
+    }
+
+    /// Named topics are asked for in the same batch as the capability
+    /// list; a whole report, or a device whose list is already known,
+    /// does not fold.
+    #[test]
+    fn named_topics_ride_with_the_capability_list() {
+        let stats = topic("stats").unwrap();
+        let keys = folded_keys(&[stats], false, true).expect("named topics fold");
+        assert_eq!(keys, (stats.keys)(&context(&[])));
+        assert!(
+            !keys.contains(&prop::CAPS),
+            "the device appends the list itself"
+        );
+        assert!(!keys.contains(&prop::LAST_STATUS));
+
+        assert_eq!(folded_keys(&[], false, true), None, "a whole report");
+        assert_eq!(
+            folded_keys(&[stats], true, true),
+            None,
+            "list already known"
+        );
+    }
+
+    /// Before the list is known, a named topic asks for everything it
+    /// could want: what the device lacks comes back refused.
+    #[test]
+    fn a_folded_batch_assumes_every_capability() {
+        let keys = folded_keys(
+            &[topic("radio").unwrap(), topic("sensors").unwrap()],
+            false,
+            true,
+        )
+        .unwrap();
+        assert!(keys.contains(&prop::PHY_LORA_SF));
+        assert!(keys.contains(&prop::ILLUMINANCE));
+        // Still never the samples or their labels.
+        assert!(!keys.contains(&prop::TEMPERATURES));
+        assert!(!keys.contains(&prop::TEMPERATURE_NAMES));
+    }
+
+    /// The retained status costs an exchange of its own, so only the
+    /// topic that prints it pays for it.
+    #[test]
+    fn only_the_device_topic_reads_the_status() {
+        let stats = topic("stats").unwrap();
+        let device = topic("device").unwrap();
+        assert!(!wants_status(&[stats]));
+        assert!(wants_status(&[stats, device]));
+    }
+
+    /// A mesh handle read nothing on opening, so the report asks for the
+    /// firmware and model itself.
+    #[test]
+    fn over_the_mesh_the_device_topic_reads_its_own_firmware() {
+        let device = topic("device").unwrap();
+        let mut ctx = context(&[]);
+        assert!(!(device.keys)(&ctx).contains(&prop::DEV_VERSION));
+
+        ctx.remote = true;
+        ctx.dev_version = String::new();
+        ctx.dev_model = None;
+        let keys = (device.keys)(&ctx);
+        assert!(keys.contains(&prop::DEV_VERSION));
+        assert!(keys.contains(&prop::DEV_MODEL));
+
+        let set = props_of(&[(prop::DEV_VERSION, b"umsh/1.2\0"), (prop::DEV_MODEL, b"\0")]);
+        let lines = (device.render)(&set, &ctx);
+        assert_eq!(value(&lines, "firmware").as_deref(), Some("umsh/1.2"));
+        assert_eq!(value(&lines, "model"), None, "an empty model names nothing");
     }
 
     #[test]

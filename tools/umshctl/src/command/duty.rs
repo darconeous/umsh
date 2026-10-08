@@ -29,9 +29,10 @@ pub async fn run(app: &mut App, op: Option<DutyOp>) -> Result<()> {
     let device = app.device()?;
     match op.unwrap_or(DutyOp::Show) {
         DutyOp::Show => {
-            let now = device.get_prop(prop::PHY_DUTY_NOW).await?;
+            let [now, limit] = device
+                .read_all(&[prop::PHY_DUTY_NOW, prop::PHY_DUTY_LIMIT])
+                .await?;
             let now = decode_u16(&now).ok_or_else(|| anyhow!("malformed PHY_DUTY_NOW"))?;
-            let limit = device.get_prop(prop::PHY_DUTY_LIMIT).await?;
             println!("duty now   {now} ({:.2}% of the hour)", duty_percent(now));
             print_limit(decode_u16(&limit).ok_or_else(|| anyhow!("malformed PHY_DUTY_LIMIT"))?);
             Ok(())

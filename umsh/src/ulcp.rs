@@ -1208,6 +1208,14 @@ pub struct UlcpDevice<L> {
     dev_model: Option<String>,
     /// Hardware reset cause retained by the device before our protocol reset.
     boot_status: Status,
+    /// `PROP_CAPS`, once something has read it.
+    ///
+    /// A device's capabilities are fixed by its firmware and the board it
+    /// was built for, so one answer stands until the device on the other
+    /// end could have changed: a new link, or new firmware. Over the mesh
+    /// every read is an exchange on the air, and asking again before each
+    /// gated command would cost more than the command.
+    caps: Option<Vec<u32>>,
     tids: TidAllocator,
     /// Optional per-frame trace sink for both directions.
     trace: Option<FrameTrace>,
@@ -1263,6 +1271,7 @@ where
             dev_version: String::new(),
             dev_model: None,
             boot_status: Status::RESET_UNKNOWN,
+            caps: None,
             tids: TidAllocator::new(),
             trace: None,
             mode: AttachMode::Tethered,
@@ -1498,6 +1507,10 @@ where
         self.expected_session_reset = Some(SessionResetReason::Attached);
         self.tids = TidAllocator::new();
         self.link_lost = false;
+        // A link that dropped may have dropped for a firmware update, and
+        // capabilities are what a new build changes. Asking again costs
+        // one read down a wire.
+        self.caps = None;
         self.read_boot_status().await
     }
 
@@ -1639,10 +1652,13 @@ where
     /// no reading", which is what a caller acts on; neither is an error.
     /// Live telemetry, so deliberately not part of [`UlcpDevice::sync`].
     pub async fn illuminance(&mut self) -> Result<Option<u32>, UlcpError> {
-        if !self.capabilities().await?.contains(&cap::ILLUMINANCE) {
+        let Some(answers) = self
+            .read_gated(cap::ILLUMINANCE, &[prop::ILLUMINANCE])
+            .await?
+        else {
             return Ok(None);
-        }
-        let value = self.get_prop(prop::ILLUMINANCE).await?;
+        };
+        let [value] = required_answers(answers)?;
         match value.len() {
             0 => Ok(None),
             4 => Ok(Some(u32::from_le_bytes(value[..4].try_into().unwrap()))),
@@ -1655,10 +1671,10 @@ where
     /// `Ok(None)` means the device does not advertise `CAP_ALERT`—it has
     /// no way to make itself conspicuous.
     pub async fn alert(&mut self) -> Result<Option<AlertState>, UlcpError> {
-        if !self.capabilities().await?.contains(&cap::ALERT) {
+        let Some(answers) = self.read_gated(cap::ALERT, &[prop::ALERT]).await? else {
             return Ok(None);
-        }
-        let value = self.get_prop(prop::ALERT).await?;
+        };
+        let [value] = required_answers(answers)?;
         Ok(Some(decode_alert(&value)?))
     }
 
@@ -1691,20 +1707,26 @@ where
     ///
     /// `Ok(None)` means the device does not advertise `CAP_REPEATER`.
     pub async fn repeater_policy(&mut self) -> Result<Option<RepeaterPolicy>, UlcpError> {
-        if !self.capabilities().await?.contains(&cap::REPEATER) {
+        const KEYS: [u32; 5] = [
+            prop::MAC_REPEATER_ENABLED,
+            prop::MAC_REPEATER_REGIONS,
+            prop::MAC_REPEATER_DEFAULT_REGION,
+            prop::MAC_REPEATER_MIN_RSSI,
+            prop::MAC_REPEATER_MIN_SNR,
+        ];
+        let Some(answers) = self.read_gated(cap::REPEATER, &KEYS).await? else {
             return Ok(None);
-        }
-        let enabled = self.get_prop(prop::MAC_REPEATER_ENABLED).await?;
+        };
+        let [enabled, regions, default_region, min_rssi, min_snr] = required_answers(answers)?;
         let enabled = match enabled.first() {
             Some(&byte) => byte != 0,
             None => return Err(UlcpError::Protocol("malformed PROP_MAC_REPEATER_ENABLED")),
         };
-        let regions = decode_region_list(&self.get_prop(prop::MAC_REPEATER_REGIONS).await?)?;
-        let default_region =
-            decode_region_code(&self.get_prop(prop::MAC_REPEATER_DEFAULT_REGION).await?)?;
-        let min_rssi = decode_opt_i16(&self.get_prop(prop::MAC_REPEATER_MIN_RSSI).await?)
+        let regions = decode_region_list(&regions)?;
+        let default_region = decode_region_code(&default_region)?;
+        let min_rssi = decode_opt_i16(&min_rssi)
             .ok_or(UlcpError::Protocol("malformed PROP_MAC_REPEATER_MIN_RSSI"))?;
-        let min_snr = decode_opt_i8(&self.get_prop(prop::MAC_REPEATER_MIN_SNR).await?)
+        let min_snr = decode_opt_i8(&min_snr)
             .ok_or(UlcpError::Protocol("malformed PROP_MAC_REPEATER_MIN_SNR"))?;
         Ok(Some(RepeaterPolicy {
             enabled,
@@ -1715,8 +1737,7 @@ where
         }))
     }
 
-    /// Read the forwarding filter's region strings on their own, without
-    /// the four extra round trips a whole-policy read costs.
+    /// Read the forwarding filter's region strings on their own.
     pub async fn repeater_regions(&mut self) -> Result<Vec<String>, UlcpError> {
         decode_region_list(&self.get_prop(prop::MAC_REPEATER_REGIONS).await?)
     }
@@ -1825,11 +1846,15 @@ where
     /// does not know what time it is—the state in which a device with a
     /// screen must show no clock at all.
     pub async fn time(&mut self) -> Result<Option<DeviceTime>, UlcpError> {
-        if !self.capabilities().await?.contains(&cap::TIME) {
+        let Some(answers) = self
+            .read_gated(cap::TIME, &[prop::TIME, prop::TZ_OFFSET])
+            .await?
+        else {
             return Ok(None);
-        }
-        let epoch = decode_epoch(&self.get_prop(prop::TIME).await?)?;
-        let tz_offset_min = decode_tz_offset(&self.get_prop(prop::TZ_OFFSET).await?)?;
+        };
+        let [epoch, tz_offset_min] = required_answers(answers)?;
+        let epoch = decode_epoch(&epoch)?;
+        let tz_offset_min = decode_tz_offset(&tz_offset_min)?;
         Ok(Some(DeviceTime {
             epoch,
             tz_offset_min,
@@ -1867,37 +1892,48 @@ where
     /// is live telemetry, so a disabled or searching receiver reports
     /// [`GnssSnapshot::SEARCHING`] rather than an error.
     pub async fn gnss_status(&mut self) -> Result<Option<GnssStatus>, UlcpError> {
-        if !self.capabilities().await?.contains(&cap::GNSS) {
-            return Ok(None);
-        }
-        let enabled = decode_bool(
-            &self.get_prop(prop::GNSS_ENABLED).await?,
-            "PROP_GNSS_ENABLED",
-        )?;
-        let mut fix = GnssSnapshot::SEARCHING;
-        for key in [
+        const FIX_KEYS: [u32; 5] = [
             prop::GNSS_FIX,
             prop::GNSS_LOCATION,
             prop::GNSS_ALTITUDE,
             prop::GNSS_PRECISION,
             prop::GNSS_SATELLITES,
-        ] {
-            let value = self.get_prop(key).await?;
-            fix.absorb(key, &value)
+        ];
+        const KEYS: [u32; 9] = [
+            prop::GNSS_ENABLED,
+            FIX_KEYS[0],
+            FIX_KEYS[1],
+            FIX_KEYS[2],
+            FIX_KEYS[3],
+            FIX_KEYS[4],
+            prop::GNSS_IDENT_UPDATE,
+            prop::GNSS_IDENT_PRECISION,
+            prop::GNSS_TIME_TRUST,
+        ];
+        let Some(answers) = self.read_gated(cap::GNSS, &KEYS).await? else {
+            return Ok(None);
+        };
+        let [
+            enabled,
+            fix_values @ ..,
+            ident_update,
+            ident_precision,
+            time_trust,
+        ] = required_answers::<9>(answers)?;
+        let enabled = decode_bool(&enabled, "PROP_GNSS_ENABLED")?;
+        // One reading of the receiver, all five fields of it from the
+        // same moment, which a property-at-a-time read never promised.
+        let mut fix = GnssSnapshot::SEARCHING;
+        for (key, value) in FIX_KEYS.into_iter().zip(&fix_values) {
+            fix.absorb(key, value)
                 .map_err(|_| UlcpError::Protocol("malformed PROP_GNSS_* value"))?;
         }
-        let ident_update = decode_bool(
-            &self.get_prop(prop::GNSS_IDENT_UPDATE).await?,
-            "PROP_GNSS_IDENT_UPDATE",
-        )?;
-        let ident_precision = match self.get_prop(prop::GNSS_IDENT_PRECISION).await?[..] {
+        let ident_update = decode_bool(&ident_update, "PROP_GNSS_IDENT_UPDATE")?;
+        let ident_precision = match ident_precision[..] {
             [precision] => precision,
             _ => return Err(UlcpError::Protocol("malformed PROP_GNSS_IDENT_PRECISION")),
         };
-        let time_trust = decode_bool(
-            &self.get_prop(prop::GNSS_TIME_TRUST).await?,
-            "PROP_GNSS_TIME_TRUST",
-        )?;
+        let time_trust = decode_bool(&time_trust, "PROP_GNSS_TIME_TRUST")?;
         Ok(Some(GnssStatus {
             enabled,
             fix,
@@ -1910,24 +1946,20 @@ where
     /// Read the device's advertisement policy, or `None` on a device
     /// without `CAP_ADVERT`.
     pub async fn advert_policy(&mut self) -> Result<Option<AdvertPolicy>, UlcpError> {
-        if !self.capabilities().await?.contains(&cap::ADVERT) {
+        const KEYS: [u32; 3] = [
+            prop::ADVERT_INTERVAL,
+            prop::BEACON_INTERVAL,
+            prop::STARTUP_BEACON,
+        ];
+        let Some(answers) = self.read_gated(cap::ADVERT, &KEYS).await? else {
             return Ok(None);
-        }
-        let advert_interval_s = self.get_interval(prop::ADVERT_INTERVAL).await?;
-        let beacon_interval_s = self.get_interval(prop::BEACON_INTERVAL).await?;
-        let startup_beacon = decode_bool(
-            &self.get_prop(prop::STARTUP_BEACON).await?,
-            "PROP_STARTUP_BEACON",
-        )?;
+        };
+        let [advert_interval_s, beacon_interval_s, startup_beacon] = required_answers(answers)?;
         Ok(Some(AdvertPolicy {
-            advert_interval_s,
-            beacon_interval_s,
-            startup_beacon,
+            advert_interval_s: decode_interval(&advert_interval_s)?,
+            beacon_interval_s: decode_interval(&beacon_interval_s)?,
+            startup_beacon: decode_bool(&startup_beacon, "PROP_STARTUP_BEACON")?,
         }))
-    }
-
-    async fn get_interval(&mut self, key: u32) -> Result<u32, UlcpError> {
-        decode_interval(&self.get_prop(key).await?)
     }
 
     /// Set the seconds between signed identity advertisements, 0 for none
@@ -2120,19 +2152,7 @@ where
         if keys.iter().any(|key| index(*key).is_none()) {
             return Err(UlcpError::Protocol("not a battery diagnostic property"));
         }
-        let values = if self.capabilities().await?.contains(&cap::CMD_MULTI) {
-            self.read_each(keys).await?
-        } else {
-            let mut values = Vec::new();
-            for &key in keys {
-                values.push(match self.get_prop(key).await {
-                    Ok(value) => Ok(value),
-                    Err(UlcpError::Status(status)) => Err(status),
-                    Err(error) => return Err(error),
-                });
-            }
-            values
-        };
+        let values = self.read_each(keys).await?;
         Ok(keys
             .iter()
             .zip(values)
@@ -2169,13 +2189,14 @@ where
             .await
     }
 
-    /// Read several properties, in as few exchanges as the reply budget
-    /// allows.
+    /// Read several properties, in as few exchanges as the frame and
+    /// reply budgets allow.
     ///
     /// One `CMD_PROP_MULTI_GET`, continued where the reply ran out of
-    /// room. Every position comes back either as a value or as the
-    /// status standing in for one, so an OPTIONAL property's refusal
-    /// reads as the answer it is rather than ending the whole read.
+    /// room, and split where the request itself would not fit a frame.
+    /// Every position comes back either as a value or as the status
+    /// standing in for one, so an OPTIONAL property's refusal reads as the
+    /// answer it is rather than ending the whole read.
     ///
     /// `PROP_LAST_STATUS` must not appear in `keys`: a refused position
     /// is reported by putting that very property into it, so its value
@@ -2190,7 +2211,7 @@ where
         );
         let mut answers: Vec<Result<Vec<u8>, Status>> = Vec::with_capacity(keys.len());
         while answers.len() < keys.len() {
-            let remaining = &keys[answers.len()..];
+            let remaining = self.keys_that_fit(&keys[answers.len()..]);
             let entries = self.get_props(remaining).await?;
             if entries.is_empty() {
                 // Nothing answered and nothing refused; continuing would
@@ -2213,6 +2234,41 @@ where
             }
         }
         Ok(answers)
+    }
+
+    /// Read every one of `keys` in one batch, for a caller that needs them
+    /// all: a refusal anywhere fails the read with the error a lone
+    /// `CMD_PROP_GET` of that property would have raised.
+    pub async fn read_all<const N: usize>(
+        &mut self,
+        keys: &[u32; N],
+    ) -> Result<[Vec<u8>; N], UlcpError> {
+        required_answers(self.read_each(keys).await?)
+    }
+
+    /// The longest leading run of `keys` one `CMD_PROP_MULTI_GET` frame
+    /// can carry, and never less than one key.
+    ///
+    /// Before the attach handshake has learned the ceiling there is none
+    /// to keep to; the handshake's own few keys are all that is asked
+    /// then.
+    fn keys_that_fit<'k>(&self, keys: &'k [u32]) -> &'k [u32] {
+        // The frame's header and command octets.
+        const FRAME_OVERHEAD: usize = 2;
+        if self.max_frame_size == 0 {
+            return keys;
+        }
+        let mut room = self.max_frame_size.saturating_sub(FRAME_OVERHEAD);
+        let mut count = 0;
+        for &key in keys {
+            let len = pui::encoded_len(key);
+            if len > room {
+                break;
+            }
+            room -= len;
+            count += 1;
+        }
+        &keys[..count.max(1)]
     }
 
     /// Read several properties in one exchange via
@@ -2478,6 +2534,8 @@ where
     /// Enter bootloader DFU after receiving its successful status response.
     /// A dropped link or timeout never counts as confirmation.
     pub async fn enter_dfu(&mut self, mode: umsh_ulcp::DfuMode) -> Result<(), UlcpError> {
+        // Whatever comes back from the bootloader may be another build.
+        self.caps = None;
         let tid = self.alloc_tid();
         let mut buf = [0u8; 3];
         let len = frame::dfu(&mut buf, tid, Some(mode))
@@ -2738,9 +2796,76 @@ where
             .map(|_| ())
     }
 
-    /// Fetch and decode `PROP_CAPS`.
+    /// The device's capability list (`PROP_CAPS`), read at most once per
+    /// handle.
     pub async fn capabilities(&mut self) -> Result<Vec<u32>, UlcpError> {
-        decode_capabilities(&self.get_prop(prop::CAPS).await?)
+        if let Some(caps) = &self.caps {
+            return Ok(caps.clone());
+        }
+        let caps = decode_capabilities(&self.get_prop(prop::CAPS).await?)?;
+        self.caps = Some(caps.clone());
+        Ok(caps)
+    }
+
+    /// The capability list, if this handle has already read it.
+    ///
+    /// For a caller planning a batch: knowing the list already, it asks
+    /// for exactly what it needs; not knowing it, it can have the list
+    /// ride along with [`Self::read_each_with_capabilities`] rather than
+    /// spend an exchange learning it first.
+    pub fn cached_capabilities(&self) -> Option<&[u32]> {
+        self.caps.as_deref()
+    }
+
+    /// Read `keys` together with the capability list that decides what
+    /// they mean.
+    ///
+    /// When the list is not yet known, `PROP_CAPS` rides at the end of
+    /// the same batch rather than costing an exchange of its own. Over the
+    /// mesh that is the difference between one exchange and two for every
+    /// gated read. A key the device lacks the capability for comes back
+    /// refused in its position, which costs a few octets and asks the
+    /// device nothing it cannot answer.
+    ///
+    /// The list goes last so that, should the answer ever be cut across
+    /// two exchanges, the entry straddling the cut is the one value that
+    /// cannot have changed in between.
+    pub async fn read_each_with_capabilities(
+        &mut self,
+        keys: &[u32],
+    ) -> Result<(Vec<u32>, Vec<Result<Vec<u8>, Status>>), UlcpError> {
+        if let Some(caps) = self.caps.clone() {
+            return Ok((caps, self.read_each(keys).await?));
+        }
+        let mut batch = keys.to_vec();
+        batch.push(prop::CAPS);
+        let mut answers = self.read_each(&batch).await?;
+        let raw = answers
+            .pop()
+            .ok_or(UlcpError::Protocol("short multi-property answer"))?
+            .map_err(UlcpError::Status)?;
+        let caps = decode_capabilities(&raw)?;
+        self.caps = Some(caps.clone());
+        Ok((caps, answers))
+    }
+
+    /// Read `keys` if the device advertises `capability`, or `None` if it
+    /// does not—in one exchange either way.
+    async fn read_gated(
+        &mut self,
+        capability: u32,
+        keys: &[u32],
+    ) -> Result<Option<Vec<Result<Vec<u8>, Status>>>, UlcpError> {
+        // Known not to be there: nothing to ask at all.
+        if self
+            .caps
+            .as_ref()
+            .is_some_and(|caps| !caps.contains(&capability))
+        {
+            return Ok(None);
+        }
+        let (caps, answers) = self.read_each_with_capabilities(keys).await?;
+        Ok(caps.contains(&capability).then_some(answers))
     }
 
     /// Run the spec's post-attach synchronization procedure: fetch the
@@ -3654,6 +3779,21 @@ where
 // same readings the per-property methods here apply—otherwise the only
 // way to understand a value is to spend a round trip fetching it alone,
 // which is the cost batching exists to avoid.
+
+/// The answers to a batch whose every position the reader needs, in the
+/// order asked. A refused position fails the read with the error a lone
+/// `CMD_PROP_GET` of that property would have raised.
+fn required_answers<const N: usize>(
+    answers: Vec<Result<Vec<u8>, Status>>,
+) -> Result<[Vec<u8>; N], UlcpError> {
+    let values = answers
+        .into_iter()
+        .map(|answer| answer.map_err(UlcpError::Status))
+        .collect::<Result<Vec<_>, _>>()?;
+    values
+        .try_into()
+        .map_err(|_| UlcpError::Protocol("short multi-property answer"))
+}
 
 fn decode_u32(value: &[u8], property: &'static str) -> Result<u32, UlcpError> {
     let bytes = value

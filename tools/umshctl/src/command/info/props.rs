@@ -9,7 +9,6 @@ use std::collections::HashMap;
 
 use umsh::ulcp::{FrameLink, UlcpDevice};
 use umsh::ulcp_wire::Status;
-use umsh::ulcp_wire::ids::cap;
 
 /// Properties fetched together, each either answered or refused.
 ///
@@ -34,6 +33,16 @@ impl PropSet {
 
     pub fn insert(&mut self, key: u32, answer: Result<Vec<u8>, Status>) {
         self.values.insert(key, answer);
+    }
+
+    /// Whether this property was asked about at all, answered or refused.
+    pub fn contains(&self, key: u32) -> bool {
+        self.values.contains_key(&key)
+    }
+
+    /// Take in everything another fetch learned.
+    pub fn merge(&mut self, other: PropSet) {
+        self.values.extend(other.values);
     }
 
     /// Whether the device answered this property at all.
@@ -116,47 +125,42 @@ impl PropSet {
     }
 }
 
-/// Read `keys` in as few exchanges as the device allows.
-///
-/// One `CMD_PROP_MULTI_GET`, continued where a reply ran out of room.
-/// A device without `CAP_CMD_MULTI` never learned the command, so it
-/// gets the same questions one at a time—the report is identical
-/// either way, and only the cost differs.
+/// Gather `keys` and their answers into a set.
 ///
 /// A key the device refuses lands in the set as a refusal rather than
 /// ending the read: assembling a report is exactly the case where one
 /// unimplemented property must not cost the other eleven.
+pub fn collect(keys: &[u32], answers: Vec<Result<Vec<u8>, Status>>) -> PropSet {
+    let mut set = PropSet::new();
+    for (&key, answer) in keys.iter().zip(answers) {
+        set.insert(key, answer);
+    }
+    set
+}
+
+/// Read `keys` in one `CMD_PROP_MULTI_GET`, continued where a reply ran
+/// out of room.
 pub async fn fetch<L: FrameLink>(
     device: &mut UlcpDevice<L>,
     keys: &[u32],
-    batched: bool,
 ) -> anyhow::Result<PropSet> {
-    let mut set = PropSet::new();
-    if keys.is_empty() {
-        return Ok(set);
-    }
-    if batched {
-        let answers = device.read_each(keys).await?;
-        for (&key, answer) in keys.iter().zip(answers) {
-            set.insert(key, answer);
-        }
-        return Ok(set);
-    }
-    for &key in keys {
-        let answer = match device.get_prop(key).await {
-            Ok(value) => Ok(value),
-            // A device that refused says which way; a link that failed
-            // has ended the conversation, and pressing on with eleven
-            // more questions it cannot hear helps nobody.
-            Err(umsh::ulcp::UlcpError::Status(status)) => Err(status),
-            Err(error) => return Err(error.into()),
-        };
-        set.insert(key, answer);
-    }
-    Ok(set)
+    Ok(collect(keys, device.read_each(keys).await?))
 }
 
-/// Whether this device serves the multi-property commands.
-pub fn batched(caps: &[u32]) -> bool {
-    caps.contains(&cap::CMD_MULTI)
+/// Read one property with a `CMD_PROP_GET` of its own.
+///
+/// For a value that may be too long to share a multi-property answer at
+/// all, as an appendable list of labels can be.
+pub async fn fetch_alone<L: FrameLink>(
+    device: &mut UlcpDevice<L>,
+    key: u32,
+) -> anyhow::Result<PropSet> {
+    let answer = match device.get_prop(key).await {
+        Ok(value) => Ok(value),
+        // A device that refused says which way; a link that failed has
+        // ended the conversation.
+        Err(umsh::ulcp::UlcpError::Status(status)) => Err(status),
+        Err(error) => return Err(error.into()),
+    };
+    Ok(collect(&[key], vec![answer]))
 }

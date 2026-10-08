@@ -31,6 +31,7 @@ use umsh::node_mgmt::device::{DeviceEngine, Dispatch, Ingress};
 use umsh::node_mgmt::fragment::{continuable, produce};
 use umsh::node_mgmt::{NodeManager, Outcome, Progress};
 use umsh::tokio_support::{StdClock, TokioFileCounterStore, TokioFileKeyValueStore, TokioPlatform};
+use umsh::ulcp_wire::gnss::GnssSnapshot;
 use umsh::ulcp_wire::ids::prop;
 use umsh::ulcp_wire::{Cmd, Frame, MultiEntries, Status, frame, pui};
 use umsh_sync::AsyncRefCell;
@@ -248,6 +249,29 @@ impl DeviceSide {
                     let found = self.i2c.scan(self.session.i2c_scan_request());
                     self.session
                         .respond_i2c(tid, Ok(&found), &mut |bytes: &[u8]| {
+                            emitted.push(bytes.to_vec())
+                        });
+                }
+                // The simulated board's receiver has found nothing yet,
+                // nobody has set its clock, and its light sensor has no
+                // reading. Answered rather than dropped, as the driver
+                // does: a sample left unanswered would leave its
+                // position in a multi-property read empty.
+                Effect::SampleGnss { tid, key } => {
+                    self.session.respond_gnss(
+                        tid,
+                        key,
+                        Ok(GnssSnapshot::SEARCHING),
+                        &mut |bytes: &[u8]| emitted.push(bytes.to_vec()),
+                    );
+                }
+                Effect::ReadTime { tid } => {
+                    self.session
+                        .respond_time(tid, None, &mut |bytes: &[u8]| emitted.push(bytes.to_vec()));
+                }
+                Effect::SampleIlluminance { tid } => {
+                    self.session
+                        .respond_illuminance(tid, None, &mut |bytes: &[u8]| {
                             emitted.push(bytes.to_vec())
                         });
                 }

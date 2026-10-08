@@ -8,7 +8,7 @@
 
 use umsh::core::{PublicKey, RegionCode};
 use umsh::node::location::NodeLocation;
-use umsh::ulcp::{decode_capabilities, decode_filter_table, decode_status};
+use umsh::ulcp::{decode_filter_table, decode_status};
 use umsh::ulcp_wire::Status;
 use umsh::ulcp_wire::battery::BatteryStatus;
 use umsh::ulcp_wire::ids::{DUTY_LIMIT_DISABLED, cap, prop, saved};
@@ -36,10 +36,31 @@ pub struct Context {
 }
 
 impl Context {
+    /// A context to plan a batch against before the device's
+    /// capabilities are known: one holding every capability this build
+    /// can name, so each topic asks for the most it could ever want.
+    pub fn assuming_every_capability(remote: bool) -> Self {
+        Self {
+            // Every code a two-octet PUI can carry, which is every code
+            // allocated and room besides.
+            caps: (0..1 << 14)
+                .filter(|&code| umsh::ulcp_wire::capability_name(code).is_some())
+                .collect(),
+            remote,
+            expect_host_key: None,
+            dev_version: String::new(),
+            dev_model: None,
+        }
+    }
+
     fn has(&self, capability: u32) -> bool {
         self.caps.contains(&capability)
     }
 }
+
+/// The topic whose report includes the retained status, which no batch
+/// can carry.
+pub const DEVICE_TOPIC: &str = "device";
 
 /// One line of a report: a label and what it says.
 pub type Line = (String, String);
@@ -66,18 +87,10 @@ pub struct Topic {
 /// Every subject, in the order a bare report prints them.
 pub const TOPICS: &[Topic] = &[
     Topic {
-        name: "device",
+        name: DEVICE_TOPIC,
         prefix: "DEVICE",
         gate: |_| true,
-        keys: |_| {
-            vec![
-                prop::DEV_NAME,
-                prop::PROTOCOL_VERSION,
-                prop::UPTIME,
-                prop::SAVED,
-                prop::BLE_ENABLED,
-            ]
-        },
+        keys: device_keys,
         render: render_device,
         env: env_device,
     },
@@ -226,14 +239,46 @@ pub fn topic(name: &str) -> Option<&'static Topic> {
 
 // ─── device ──────────────────────────────────────────────────────────
 
+fn device_keys(ctx: &Context) -> Vec<u32> {
+    let mut keys = vec![
+        prop::DEV_NAME,
+        prop::PROTOCOL_VERSION,
+        prop::UPTIME,
+        prop::SAVED,
+        prop::BLE_ENABLED,
+    ];
+    // An attach down a wire reads these as it opens. A mesh handle reads
+    // nothing it was not asked for, so the report asks.
+    if ctx.remote {
+        keys.extend([prop::DEV_VERSION, prop::DEV_MODEL]);
+    }
+    keys
+}
+
+/// The firmware version, from the report's own batch if it asked, or
+/// from what the attach read.
+fn firmware(set: &PropSet, ctx: &Context) -> String {
+    set.text(prop::DEV_VERSION)
+        .unwrap_or_else(|| ctx.dev_version.clone())
+}
+
+/// The hardware model, if the device names one. An empty answer names
+/// nothing, any more than a refusal does.
+fn model(set: &PropSet, ctx: &Context) -> Option<String> {
+    match set.text(prop::DEV_MODEL) {
+        Some(model) => Some(model).filter(|model| !model.is_empty()),
+        None => ctx.dev_model.clone(),
+    }
+}
+
 fn render_device(set: &PropSet, ctx: &Context) -> Vec<Line> {
     let mut lines = Vec::new();
     if let Some(name) = set.text(prop::DEV_NAME) {
         lines.push(("name".into(), format!("{name:?}")));
     }
-    lines.push(("firmware".into(), ctx.dev_version.clone()));
-    if let Some(model) = &ctx.dev_model {
-        lines.push(("model".into(), model.clone()));
+    lines.push(("firmware".into(), firmware(set, ctx)));
+    if let Some(model) = model(set, ctx) {
+        lines.push(("model".into(), model));
     }
     if let Some([major, minor, ..]) = set.bytes(prop::PROTOCOL_VERSION) {
         lines.push(("protocol".into(), format!("{major}.{minor}")));
@@ -262,7 +307,7 @@ fn render_device(set: &PropSet, ctx: &Context) -> Vec<Line> {
     if let Some(enabled) = set.bool(prop::BLE_ENABLED) {
         lines.push(("bluetooth".into(), on_off(enabled).into()));
     }
-    lines.push(("capabilities".into(), capability_list(set)));
+    lines.push(("capabilities".into(), capability_list(ctx)));
     lines
 }
 
@@ -271,9 +316,9 @@ fn env_device(set: &PropSet, ctx: &Context) -> Vec<Line> {
     if let Some(name) = set.text(prop::DEV_NAME) {
         env.push(("NAME".into(), name));
     }
-    env.push(("FIRMWARE".into(), ctx.dev_version.clone()));
-    if let Some(model) = &ctx.dev_model {
-        env.push(("MODEL".into(), model.clone()));
+    env.push(("FIRMWARE".into(), firmware(set, ctx)));
+    if let Some(model) = model(set, ctx) {
+        env.push(("MODEL".into(), model));
     }
     if let Some(status) = set.bytes(prop::LAST_STATUS) {
         env.push(("STATUS".into(), status_token(decode_status(status))));
@@ -290,10 +335,10 @@ fn env_device(set: &PropSet, ctx: &Context) -> Vec<Line> {
     if let Some(enabled) = set.bool(prop::BLE_ENABLED) {
         env.push(("BLUETOOTH".into(), bit(enabled)));
     }
-    let caps = decode_capabilities(set.bytes(prop::CAPS).unwrap_or_default()).unwrap_or_default();
     env.push((
         "CAPABILITIES".into(),
-        caps.iter()
+        ctx.caps
+            .iter()
             .map(|&code| capability_name(code))
             .collect::<Vec<_>>()
             .join(" "),
@@ -312,16 +357,15 @@ fn status_token(status: Status) -> String {
         .map_or(debug.clone(), |(_, name)| name.to_string())
 }
 
-fn capability_list(set: &PropSet) -> String {
-    match decode_capabilities(set.bytes(prop::CAPS).unwrap_or_default()) {
-        Ok(caps) if !caps.is_empty() => caps
-            .iter()
-            .map(|&code| capability_name(code))
-            .collect::<Vec<_>>()
-            .join(" "),
-        Ok(_) => "none".to_string(),
-        Err(_) => "malformed".to_string(),
+fn capability_list(ctx: &Context) -> String {
+    if ctx.caps.is_empty() {
+        return "none".to_string();
     }
+    ctx.caps
+        .iter()
+        .map(|&code| capability_name(code))
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// The spec mnemonic, or the bare number for a capability this build has

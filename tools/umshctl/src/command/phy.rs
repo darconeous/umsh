@@ -3,9 +3,10 @@
 //! The PHY must be enabled before the radio can receive, forward, or
 //! transmit—so an autonomous node or repeater needs `phy on`.
 
-use anyhow::Result;
+use anyhow::{Result, bail};
 
-use umsh::ulcp::{FrameLink, UlcpDevice};
+use umsh::ulcp::{FrameLink, UlcpDevice, UlcpError};
+use umsh::ulcp_wire::Status;
 use umsh::ulcp_wire::ids::prop;
 
 use super::{decode_u32, persist};
@@ -88,75 +89,70 @@ async fn set_enabled<L: FrameLink>(device: &mut UlcpDevice<L>, on: bool) -> Resu
     Ok(())
 }
 
+/// What `phy` reports and `capture` narrates, asked for together.
+const RF_KEYS: [u32; 6] = [
+    prop::PHY_FREQ,
+    prop::PHY_LORA_BW,
+    prop::PHY_LORA_SF,
+    prop::PHY_LORA_CR,
+    prop::PHY_LORA_SW,
+    prop::PHY_TX_POWER,
+];
+
 /// Print the current PHY enable state and LoRa parameters on one line.
 pub async fn report<L: FrameLink>(device: &mut UlcpDevice<L>) -> Result<()> {
-    let enabled = device
-        .get_prop(prop::PHY_ENABLED)
-        .await?
-        .first()
-        .copied()
-        .unwrap_or(0)
-        != 0;
+    let mut keys = vec![prop::PHY_ENABLED];
+    keys.extend(RF_KEYS);
+    let answers = device.read_each(&keys).await?;
+    let Some((enabled, rf)) = answers.split_first() else {
+        bail!("the device answered none of the PHY properties");
+    };
+    let enabled = match enabled {
+        Ok(value) => value.first().copied().unwrap_or(0) != 0,
+        Err(status) => return Err(UlcpError::Status(*status).into()),
+    };
     let mut parts = vec![if enabled { "enabled" } else { "disabled" }.to_string()];
-    if let Some(freq) = device
-        .get_prop(prop::PHY_FREQ)
-        .await
-        .ok()
-        .and_then(|value| decode_u32(&value))
-    {
-        parts.push(format!("{freq} kHz"));
-    }
-    parts.extend(lora_parts(device).await);
-    parts.extend(power_part(device).await);
+    parts.extend(rf_parts_of(rf));
     field("phy", parts.join(", "));
     Ok(())
 }
 
-/// The LoRa modulation parameters, each omitted when the device will not
-/// report it.
-pub async fn lora_parts<L: FrameLink>(device: &mut UlcpDevice<L>) -> Vec<String> {
+/// The frequency, LoRa modulation, and transmit power, in one exchange.
+pub async fn rf_parts<L: FrameLink>(device: &mut UlcpDevice<L>) -> Result<Vec<String>> {
+    Ok(rf_parts_of(&device.read_each(&RF_KEYS).await?))
+}
+
+/// [`RF_KEYS`]'s answers as report fragments, each omitted when the
+/// device would not report it.
+fn rf_parts_of(answers: &[Result<Vec<u8>, Status>]) -> Vec<String> {
+    let value = |key: u32| {
+        RF_KEYS
+            .iter()
+            .position(|&asked| asked == key)
+            .and_then(|index| answers.get(index))
+            .and_then(|answer| answer.as_deref().ok())
+    };
     let mut parts = Vec::new();
-    if let Some(bw) = device
-        .get_prop(prop::PHY_LORA_BW)
-        .await
-        .ok()
-        .and_then(|value| decode_u32(&value))
-    {
+    if let Some(freq) = value(prop::PHY_FREQ).and_then(decode_u32) {
+        parts.push(format!("{freq} kHz"));
+    }
+    if let Some(bw) = value(prop::PHY_LORA_BW).and_then(decode_u32) {
         parts.push(format!("BW {bw} Hz"));
     }
-    if let Some(sf) = device
-        .get_prop(prop::PHY_LORA_SF)
-        .await
-        .ok()
-        .and_then(|value| value.first().copied())
-    {
+    if let Some(&sf) = value(prop::PHY_LORA_SF).and_then(<[u8]>::first) {
         parts.push(format!("SF{sf}"));
     }
-    if let Some(cr) = device
-        .get_prop(prop::PHY_LORA_CR)
-        .await
-        .ok()
-        .and_then(|value| value.first().copied())
-    {
+    if let Some(&cr) = value(prop::PHY_LORA_CR).and_then(<[u8]>::first) {
         parts.push(format!("CR 4/{cr}"));
     }
-    if let Some(sw) = device
-        .get_prop(prop::PHY_LORA_SW)
-        .await
-        .ok()
-        .and_then(|value| <[u8; 2]>::try_from(value.as_slice()).ok())
+    if let Some(sw) = value(prop::PHY_LORA_SW)
+        .and_then(|value| <[u8; 2]>::try_from(value).ok())
         .map(u16::from_le_bytes)
     {
         parts.push(format!("sync 0x{sw:04x}"));
     }
+    if let Some(&power) = value(prop::PHY_TX_POWER).and_then(<[u8]>::first) {
+        parts.push(format!("TX {} dBm", power as i8));
+    }
     parts
-}
-
-pub async fn power_part<L: FrameLink>(device: &mut UlcpDevice<L>) -> Option<String> {
-    device
-        .get_prop(prop::PHY_TX_POWER)
-        .await
-        .ok()
-        .and_then(|value| value.first().copied())
-        .map(|power| format!("TX {} dBm", power as i8))
 }
