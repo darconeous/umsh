@@ -1664,11 +1664,12 @@ terminator. Names contain 1–64 bytes and no NUL. An empty array is valid. Host
 validate the complete array before using any name. Reading names does not sample
 sensors or initiate hardware discovery.
 
-Hosts should fetch temperatures first, then request names separately if any
-reading lacks a known name. Names may be reused within the connection; index
-associations must not persist across connections. Keep changing measurement
-arrays out of continued multi-property replies. Additional names represent
-sensors appended since acquisition began and have not yet been read.
+Hosts should request temperatures and names together on the initial read,
+using multi-get. Once names are known, fetch temperatures and request names
+again only if a reading lacks a known name. Names may be reused
+within the connection; index associations must not persist across connections.
+Additional names represent sensors appended since acquisition began and have
+not yet been read.
 
 While replacement names are loading, hosts retain known labels. Refused,
 malformed, or incomplete metadata must not erase known names or valid

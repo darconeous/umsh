@@ -136,17 +136,24 @@ struct DeviceManagementSmokeTest {
         precondition(RemoteTemperaturePresentation(reading: failed).state == "No temperature sensors")
         precondition(RemoteTemperaturePresentation(reading: nil).state == "Not read")
 
-        // Request names only when a successful measurement has unnamed slots.
+        // Always bootstrap both properties, even before any readings exist.
         var refresh = RemoteCategoryReading.sensorRefresh(previous: nil, properties: temperatureOnly)
+        precondition(refresh.sensorRefreshRequests == [[id.temperatures, id.temperatureNames]])
+        let combined = RemoteCategoryReading.sensorRefresh(previous: nil, properties: temperatureOnly + [id.illuminance])
+        precondition(combined.sensorRefreshRequests == [[id.temperatures, id.temperatureNames], [id.illuminance]])
+        let lightOnly = RemoteCategoryReading.sensorRefresh(previous: nil, properties: [id.illuminance])
+        precondition(lightOnly.sensorRefreshRequests == [[id.illuminance]])
         precondition(!refresh.needsTemperatureNames)
         refresh.absorb([id.temperatures: Data()], at: date, fromAir: true)
         precondition(!refresh.needsTemperatureNames)
+        precondition(refresh.sensorRefreshRequests == [[id.temperatures, id.temperatureNames]])
         refresh.absorb([id.temperatures: Data([0xA5,0x0B])], at: date, fromAir: true)
         precondition(refresh.needsTemperatureNames)
         refresh.absorbTemperatureNames(names(["Die"]), at: date)
         precondition(!refresh.needsTemperatureNames)
         for _ in 0..<3 {
             refresh = .sensorRefresh(previous: refresh, properties: temperatureOnly)
+            precondition(refresh.sensorRefreshRequests == [[id.temperatures], [id.temperatureNames]])
             precondition(RemoteTemperaturePresentation(reading: refresh).rows[0].name == "Die")
             refresh.absorb([id.temperatures: Data([0xA6,0x0B])], at: date.addingTimeInterval(10), fromAir: true)
             precondition(!refresh.needsTemperatureNames)
@@ -183,6 +190,13 @@ struct DeviceManagementSmokeTest {
         precondition(refresh.properties.temperatureNames == ["MCU die", "Battery", "External"])
         precondition(RemoteCategoryReading.sensorRefresh(previous: nil, properties: temperatureOnly)
             .properties.temperatureNames == nil) // New management session starts without associations.
+        var emptyInventory = RemoteCategoryReading.sensorRefresh(previous: nil, properties: temperatureOnly)
+        emptyInventory.absorb([id.temperatures: Data()], at: date, fromAir: true)
+        emptyInventory.absorbTemperatureNames(Data(), at: date)
+        emptyInventory = .sensorRefresh(previous: emptyInventory, properties: temperatureOnly)
+        precondition(emptyInventory.sensorRefreshRequests == [[id.temperatures], [id.temperatureNames]])
+        emptyInventory.absorb([id.temperatures: Data()], at: date, fromAir: true)
+        precondition(!emptyInventory.needsTemperatureNames)
     }
 
     static func bytes<T: FixedWidthInteger>(_ value: T) -> Data {

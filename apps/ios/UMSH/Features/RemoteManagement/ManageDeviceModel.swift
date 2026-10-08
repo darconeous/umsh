@@ -371,36 +371,38 @@ final class ManageDeviceModel {
         writeRefusals[category] = nil
         await run { [self] in
             if category == .sensors {
-                // Keep changing measurement arrays out of continued multi-property replies.
-                // Capture each receipt date before the following request starts.
+                // Bootstrap temperatures and names together, then reuse names
+                // until a later measurement reveals additional sensors.
                 var reading = RemoteCategoryReading.sensorRefresh(
                     previous: readings[category], properties: properties
                 )
                 readings[category] = reading
-                let order = [ulcpProperties.temperatures, ulcpProperties.temperatureNames,
-                             ulcpProperties.illuminance].filter { properties.contains($0) }
-                for property in order {
-                    if property == ulcpProperties.temperatureNames && !reading.needsTemperatureNames {
+                for requested in reading.sensorRefreshRequests {
+                    if requested == [ulcpProperties.temperatureNames] && !reading.needsTemperatureNames {
                         continue
                     }
                     do {
-                        let answers = try await fetch([property], multiHint: false)
+                        let answers = try await fetch(requested, multiHint: true)
                         let now = Date()
                         for answer in answers where answer.value == nil {
                             reading.refused.insert(answer.propertyId)
                             reading.statuses[answer.propertyId] = answer.statusCode
                         }
                         let reported = Self.values(in: answers)
-                        if reported[property] == nil && !reading.refused.contains(property) {
+                        for property in requested where reported[property] == nil && !reading.refused.contains(property) {
                             reading.failures[property] = "No response"
                         }
-                        if property == ulcpProperties.temperatureNames, let names = reported[property] {
+                        reading.absorb(
+                            reported.filter { $0.key != ulcpProperties.temperatureNames },
+                            at: now, fromAir: true
+                        )
+                        if let names = reported[ulcpProperties.temperatureNames] {
                             reading.absorbTemperatureNames(names, at: now)
-                        } else {
-                            reading.absorb(reported, at: now, fromAir: true)
                         }
                     } catch {
-                        reading.failures[property] = error.localizedDescription
+                        for property in requested {
+                            reading.failures[property] = error.localizedDescription
+                        }
                     }
                     readings[category] = reading
                 }

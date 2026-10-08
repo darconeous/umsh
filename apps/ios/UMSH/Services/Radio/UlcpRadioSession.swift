@@ -1194,8 +1194,9 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
     ///
     /// The local counterpart of `fetchRemoteProperties`: same answers,
     /// same refusal semantics, no mesh in between. `multiHint` has no
-    /// local meaning—the Rust session selects a multi-get for battery
-    /// diagnostics when supported, and pipelines other single reads.
+    /// local meaning—the Rust session selects a multi-get for paired
+    /// temperature/name reads and supported battery diagnostics, and pipelines
+    /// other single reads.
     func fetchCompanionProperties(
         _ propertyIDs: [UInt32]
     ) async throws -> [MobileMeshManagementAnswerRecord] {

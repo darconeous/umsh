@@ -78,6 +78,29 @@ struct RemoteCategoryReading {
         (properties.temperatures?.count ?? 0) > (properties.temperatureNames?.count ?? 0)
     }
 
+    /// Bootstrap readings and labels in one request. Once names are known,
+    /// the names-only group is conditional on the preceding measurement count.
+    var sensorRefreshRequests: [[UInt32]] {
+        let id = ulcpProperties
+        var requests: [[UInt32]] = []
+        if propertyIDs.contains(id.temperatures) {
+            if propertyIDs.contains(id.temperatureNames) {
+                if properties.temperatureNames == nil {
+                    requests.append([id.temperatures, id.temperatureNames])
+                } else {
+                    requests.append([id.temperatures])
+                    requests.append([id.temperatureNames])
+                }
+            } else {
+                requests.append([id.temperatures])
+            }
+        }
+        if propertyIDs.contains(id.illuminance) {
+            requests.append([id.illuminance])
+        }
+        return requests
+    }
+
     /// Publish a valid replacement atomically. An incomplete reply cannot erase
     /// labels already known; a growing partial inventory can still add labels.
     mutating func absorbTemperatureNames(_ bytes: Data, at date: Date) {

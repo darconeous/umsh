@@ -867,8 +867,8 @@ enum ExpectedResponse {
     /// `Property`, a refusal is an answer to record, never a stage
     /// failure: the caller asked an open question about one property.
     ManagementGet(u32),
-    /// One battery acquisition, shared by all entries in this multi-get.
-    ManagementBatteryGet(Vec<u32>),
+    /// A grouped local read, preserving the requested property order.
+    ManagementMultiGet(Vec<u32>),
     /// A `CMD_PROP_SET` issued by a local management write, answered by
     /// the device's echo or a per-property refusal.
     ManagementSet(u32),
@@ -892,7 +892,7 @@ impl ExpectedResponse {
         matches!(
             self,
             Self::ManagementGet(_)
-                | Self::ManagementBatteryGet(_)
+                | Self::ManagementMultiGet(_)
                 | Self::ManagementSet(_)
                 | Self::ManagementItem(_)
                 | Self::ManagementSave
@@ -932,7 +932,7 @@ pub enum UlcpItemMutation {
 #[derive(Debug, Default)]
 struct LocalManagement {
     fetch_queue: VecDeque<u32>,
-    battery_multi: bool,
+    multi_get: bool,
     write_queue: VecDeque<(u32, Vec<u8>)>,
     /// Item mutations, drained after the writes. A table edit and a
     /// scalar write are different commands, so they cannot share a
@@ -1519,11 +1519,13 @@ impl MobileUlcpSession {
             && property_ids.len() <= 14
             && property_ids
                 .iter()
-                .all(|key| umsh_ulcp::battery_diagnostics::Fields::ALL.contains(*key))
-            && state.has_capability(cap::CMD_MULTI)?;
+                .all(|key| umsh_ulcp::battery_diagnostics::Fields::ALL.contains(*key));
+        let temperature_multi = property_ids == [prop::TEMPERATURES, prop::TEMPERATURE_NAMES];
+        let multi_get =
+            temperature_multi || (battery_multi && state.has_capability(cap::CMD_MULTI)?);
         state.management = Some(LocalManagement {
             fetch_queue: property_ids.into(),
-            battery_multi,
+            multi_get,
             ..LocalManagement::default()
         });
         let mut outbound = Vec::new();
@@ -2133,12 +2135,12 @@ impl MobileUlcpSession {
         }
         {
             let mut state = self.inner.lock().expect("ULCP session mutex poisoned");
-            if let Some(ExpectedResponse::ManagementBatteryGet(keys)) =
+            if let Some(ExpectedResponse::ManagementMultiGet(keys)) =
                 state.expected.get(&parsed.header.tid())
             {
                 let keys = keys.clone();
                 let tid = parsed.header.tid();
-                let mut update = state.consume_battery_multi(parsed, &keys)?;
+                let mut update = state.consume_management_multi(parsed, &keys)?;
                 update.completed_control_transaction = Some(tid);
                 return Ok(update);
             }
@@ -2737,7 +2739,7 @@ impl MobileUlcpSession {
                     )?);
                 }
             }
-            ExpectedResponse::ManagementBatteryGet(_) => {
+            ExpectedResponse::ManagementMultiGet(_) => {
                 return Err(MobileError::UlcpMismatchedResponse);
             }
             ExpectedResponse::ManagementGet(property) => {
@@ -3280,7 +3282,7 @@ impl UlcpSessionState {
             });
             self.management = Some(op);
         } else if !op.fetch_queue.is_empty() {
-            if op.battery_multi {
+            if op.multi_get {
                 let keys: Vec<_> = op.fetch_queue.drain(..).collect();
                 let tid = self.allocate_management_tid()?;
                 let mut bytes = vec![0; MAX_FRAME];
@@ -3288,7 +3290,7 @@ impl UlcpSessionState {
                     .map_err(|_| MobileError::InvalidUlcpFrame)?;
                 bytes.truncate(used);
                 self.expected
-                    .insert(tid, ExpectedResponse::ManagementBatteryGet(keys));
+                    .insert(tid, ExpectedResponse::ManagementMultiGet(keys));
                 outbound.push(bytes);
                 self.management = Some(op);
                 return Ok(());
@@ -3317,7 +3319,7 @@ impl UlcpSessionState {
     /// Decode the whole response before accepting any entries. Statuses
     /// occupy the position of the property they answer, including empty
     /// successful readings. A short response re-asks its unreturned suffix.
-    fn consume_battery_multi(
+    fn consume_management_multi(
         &mut self,
         response: Frame<'_>,
         keys: &[u32],
@@ -3373,7 +3375,7 @@ impl UlcpSessionState {
             && answers[0].status_code == Some(umsh_ulcp::Status::UNIMPLEMENTED.0)
         {
             if let Some(op) = self.management.as_mut() {
-                op.battery_multi = false;
+                op.multi_get = false;
                 op.fetch_queue.extend(keys.iter().copied());
             }
         } else {
@@ -12353,6 +12355,98 @@ mod tests {
                 .unwrap()
                 .is_empty()
         );
+    }
+
+    #[test]
+    fn temperature_initial_read_uses_multi_without_capability_hint() {
+        for (temperatures, names) in [
+            (
+                vec![0xa5, 0x0b, 0xff, 0xff],
+                Some(b"\x03MCU\x04LoRa".to_vec()),
+            ),
+            (vec![], Some(vec![])),
+            (vec![0xa5, 0x0b], None),
+        ] {
+            let session = MobileUlcpSession::new();
+            attach_commissionable(&session, Some(vec![0xAA; 32]), vec![0xAA; 32]);
+            let keys = vec![prop::TEMPERATURES, prop::TEMPERATURE_NAMES];
+            let start = session.begin_property_fetch(keys.clone()).unwrap();
+            assert_eq!(start.outbound_frames.len(), 1);
+            let request = Frame::parse(&start.outbound_frames[0]).unwrap();
+            assert_eq!(request.command(), Some(Cmd::PropMultiGet));
+            assert_eq!(
+                frame::MultiGetKeys::new(request.payload)
+                    .collect::<Result<Vec<_>, _>>()
+                    .unwrap(),
+                keys
+            );
+            let mut bytes = [0; 100];
+            let mut response = frame::prop_are(&mut bytes, request.header.tid()).unwrap();
+            response
+                .write_entry(prop::TEMPERATURES, &temperatures)
+                .unwrap();
+            if let Some(names) = &names {
+                response
+                    .write_entry(prop::TEMPERATURE_NAMES, names)
+                    .unwrap();
+            } else {
+                response
+                    .write_status_entry(umsh_ulcp::Status::FAILURE)
+                    .unwrap();
+            }
+            let used = response.finish();
+            let done = session.consume(bytes[..used].to_vec()).unwrap();
+            assert!(done.outbound_frames.is_empty());
+            let answers = done.management_event.unwrap().answers;
+            assert_eq!(
+                answers.iter().map(|a| a.property_id).collect::<Vec<_>>(),
+                keys
+            );
+            assert_eq!(answers[0].value, Some(temperatures));
+            assert_eq!(answers[1].value, names);
+            assert_eq!(
+                answers[1].status_code,
+                names.is_none().then_some(umsh_ulcp::Status::FAILURE.0)
+            );
+        }
+    }
+
+    #[test]
+    fn temperature_short_multi_response_only_retries_names() {
+        let session = MobileUlcpSession::new();
+        attach_commissionable(&session, Some(vec![0xAA; 32]), vec![0xAA; 32]);
+        let start = session
+            .begin_property_fetch(vec![prop::TEMPERATURES, prop::TEMPERATURE_NAMES])
+            .unwrap();
+        let request = Frame::parse(&start.outbound_frames[0]).unwrap();
+        let mut bytes = [0; 40];
+        let mut response = frame::prop_are(&mut bytes, request.header.tid()).unwrap();
+        response
+            .write_entry(prop::TEMPERATURES, &[0xa5, 0x0b])
+            .unwrap();
+        let used = response.finish();
+        let more = session.consume(bytes[..used].to_vec()).unwrap();
+        assert!(more.management_event.is_none());
+        assert_eq!(more.outbound_frames.len(), 1);
+        let next = Frame::parse(&more.outbound_frames[0]).unwrap();
+        assert_eq!(next.command(), Some(Cmd::PropMultiGet));
+        assert_eq!(
+            frame::MultiGetKeys::new(next.payload)
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap(),
+            [prop::TEMPERATURE_NAMES]
+        );
+        let mut response = frame::prop_are(&mut bytes, next.header.tid()).unwrap();
+        response
+            .write_entry(prop::TEMPERATURE_NAMES, b"\x03MCU")
+            .unwrap();
+        let used = response.finish();
+        let done = session.consume(bytes[..used].to_vec()).unwrap();
+        assert!(done.outbound_frames.is_empty());
+        let answers = done.management_event.unwrap().answers;
+        assert_eq!(answers.len(), 2);
+        assert_eq!(answers[0].value, Some(vec![0xa5, 0x0b]));
+        assert_eq!(answers[1].value, Some(b"\x03MCU".to_vec()));
     }
 
     fn battery_multi_session() -> Arc<MobileUlcpSession> {

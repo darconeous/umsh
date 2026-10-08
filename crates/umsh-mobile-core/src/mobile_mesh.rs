@@ -4769,6 +4769,31 @@ mod tests {
         assert_eq!(asked(&legacy), vec![prop::BATTERY]);
     }
 
+    #[test]
+    fn temperature_mesh_fetch_batches_initial_read_and_only_continues_missing_names() {
+        let keys = vec![prop::TEMPERATURES, prop::TEMPERATURE_NAMES];
+        let mut crawl = FetchCrawl::new(keys.clone(), true);
+        let request = crawl.next_request().unwrap().unwrap();
+        let request = frame::Frame::parse(&request).unwrap();
+        assert_eq!(request.command(), Some(frame::Cmd::PropMultiGet));
+        assert_eq!(
+            frame::MultiGetKeys::new(request.payload)
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap(),
+            keys
+        );
+        crawl.receive(&are_reply(&keys[..1])).unwrap();
+        let next = crawl.next_request().unwrap().unwrap();
+        let next = frame::Frame::parse(&next).unwrap();
+        assert_eq!(next.command(), Some(frame::Cmd::PropGet));
+        assert_eq!(asked(&crawl), [prop::TEMPERATURE_NAMES]);
+        crawl
+            .receive(&is_reply(prop::TEMPERATURE_NAMES, b"\x03MCU"))
+            .unwrap();
+        assert_eq!(crawl.answers.len(), 2);
+        assert!(crawl.next_request().unwrap().is_none());
+    }
+
     /// A list long enough to need more than one batch.
     fn long_list() -> Vec<u32> {
         vec![
