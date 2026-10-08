@@ -173,14 +173,12 @@ local function parse_channel_lines(pref_str)
 end
 
 -- ---------------------------------------------------------------------------
--- Public: rebuild all tables from preference strings
+-- Public: add to, or rebuild, all tables from preference strings
 -- ---------------------------------------------------------------------------
 
-function M.rebuild(node_pref, privkey_pref, channel_pref)
-  nodes    = {}
-  privkeys = {}
-  channels = {}
-
+-- Append the keys in three preference-format strings to the tables, keeping
+-- whatever they already hold. A key listed twice resolves to its first entry.
+function M.add(node_pref, privkey_pref, channel_pref)
   -- Node name mappings (public key : name)
   for _, item in ipairs(parse_key_name_lines(node_pref or "")) do
     local b = parse_key_material(item.key, "n")
@@ -228,8 +226,17 @@ function M.rebuild(node_pref, privkey_pref, channel_pref)
   end
 end
 
+-- Replace all tables with the keys in three preference-format strings.
+function M.rebuild(node_pref, privkey_pref, channel_pref)
+  nodes    = {}
+  privkeys = {}
+  channels = {}
+  M.add(node_pref, privkey_pref, channel_pref)
+end
+
 -- ---------------------------------------------------------------------------
 -- Public: rebuild from UAT table (Pref.uat rows: {type, key, label})
+-- Unused while Pref.uat crashes libwireshark on exit (see umsh.lua).
 -- ---------------------------------------------------------------------------
 
 function M.rebuild_from_uat(uat_rows)
@@ -420,9 +427,9 @@ function M.load_keyfile(path)
   end
   f:close()
 
-  -- Merge into existing tables by calling rebuild with concatenated strings
+  -- Merge into the existing tables, so keys from the preferences survive
   local function join(t) return table.concat(t, "\n") end
-  M.rebuild(join(node_lines), join(priv_lines), join(chan_lines))
+  M.add(join(node_lines), join(priv_lines), join(chan_lines))
 end
 
 -- ---------------------------------------------------------------------------

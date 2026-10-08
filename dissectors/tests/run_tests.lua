@@ -269,6 +269,26 @@ check("UAT lookup NodeA by full key",
       keystore.lookup_node_by_key(from_hex(NODE_A_PUB)), "UatNodeA")
 
 -- ─────────────────────────────────────────────────────────────────────────────
+-- Key file
+-- The key file is applied after the preferences and adds to them.
+-- ─────────────────────────────────────────────────────────────────────────────
+section("Key file")
+
+local keyfile_path = os.tmpname()
+local keyfile = assert(io.open(keyfile_path, "w"))
+keyfile:write("[nodes]\n" .. NODE_B_PUB .. ":FileNodeB\n")
+keyfile:close()
+
+keystore.rebuild(NODE_A_PUB .. ":PrefNodeA", "", "")
+keystore.load_keyfile(keyfile_path)
+os.remove(keyfile_path)
+
+check("key file entry resolves",
+      keystore.lookup_node_by_key(from_hex(NODE_B_PUB)), "FileNodeB")
+check("preference entry survives the key file",
+      keystore.lookup_node_by_key(from_hex(NODE_A_PUB)), "PrefNodeA")
+
+-- ─────────────────────────────────────────────────────────────────────────────
 -- Key input forms
 -- Anywhere a key is configured, it may be written the way the rest of the
 -- project writes one: hex, base58, or the matching URI.

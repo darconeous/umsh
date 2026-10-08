@@ -237,7 +237,7 @@ frequency, bandwidth, spreading factor, sync word, RSSI, and SNR the radio repor
 seeds from Wireshark's stock rules rather than replacing them. The dissector decodes and
 annotates UMSH packets from a live capture or a pcap file, and when keys are provided it
 verifies MICs and decrypts unicast, multicast, and blind unicast payloads. Full setup,
-including the key tables, is in [dissectors/README.md](dissectors/README.md).
+including the key preferences, is in [dissectors/README.md](dissectors/README.md).
 
 > On macOS, Wireshark.app declares no Bluetooth usage description, so a BLE capture started
 > from the Wireshark GUI may be denied by the OS with no prompt. Name a serial port in the
@@ -312,7 +312,7 @@ under the Embassy adapter.
 
 Because the transport is plain UDP, Wireshark can watch it directly: capture on loopback with
 the display filter `udp.port == 7373` and the dissector's UDP heuristic will find the frames.
-To decrypt, add both identity files as `privkey` entries in the UMSH key table
+To decrypt, add both identity files to the UMSH **Private keys** preference
 (**Edit > Preferences > Protocols > UMSH**):
 
 ```sh

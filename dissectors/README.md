@@ -119,76 +119,51 @@ by hand still works and keeps whatever label you give it.
 
 Everything else needs keys. Without them the dissector shows the raw wire
 structure but cannot verify MICs or decrypt payloads. To enable full
-decryption:
+decryption, go to **Edit > Preferences > Protocols > UMSH** and fill in the
+key preferences, or point the **Key File** preference at a
+[key file](#key-file).
 
-1. Go to **Edit > Preferences > Protocols > UMSH**
-2. Click the **Decryption Keys** button to open the key table editor
+### Key preferences
 
-### Decryption Keys table (Wireshark 4.6+)
+Three preferences hold the keys, one per line:
 
-The key table has three columns:
+| Preference | Format | Holds |
+|---|---|---|
+| **Node names** | `<key>:<name>` | A 32-byte Ed25519 public key and a display name; annotates source and destination hints, no decryption |
+| **Private keys** | `<key>:<name>` | A 32-byte Ed25519 seed, for unicast and blind unicast decryption |
+| **Channel keys** | `<key>:<name>` or `umsh:cs:<name>:<label>` | A 32-byte symmetric channel key, for multicast and blind unicast decryption |
 
-| Column | Description |
-|---|---|
-| **type** | One of: `pubkey`, `privkey`, or `channel` |
-| **key** | The key, in any form below |
-| **label** | Human-readable display name |
+The name is optional. For example, **Channel keys** might hold:
 
-Key types:
-- **pubkey**—maps a 32-byte Ed25519 public key to a display name (annotates
-  source/destination hints, no decryption)
-- **privkey**—a 32-byte Ed25519 seed used for unicast and blind unicast
-  decryption
-- **channel**—a 32-byte symmetric channel key used for multicast and blind
-  unicast decryption
+```text
+5A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5A:TestChannel
+umsh:cs:public:Public
+```
 
 #### Key formats
 
-A key may be written any of these ways, in the key table and in the
-preference strings and key files alike. Hex and base58 are told apart by
-length, the same rule `PublicKey::FromStr` uses in the reference
-implementation, so an address copied from `umshctl`, the phone app, or this
-dissector's own display pastes straight in.
+A key may be written any of these ways, in the preferences and key files
+alike. Hex and base58 are told apart by length, the same rule
+`PublicKey::FromStr` uses in the reference implementation, so an address
+copied from `umshctl`, the phone app, or this dissector's own display pastes
+straight in.
 
 | Form | Example | Valid for |
 |---|---|---|
-| 64 hex characters | `ED54A59FB1AC3A51…` | all three types |
-| 44 base58 characters | `GySVDr1omr3GTodgWFH7qD1ZKav9C5NMPFjdpwb33LvU` | all three types |
-| `umsh:n:<44-base58>` | `umsh:n:GySVDr1omr3GTodg…` | `pubkey` |
-| `umsh:ck:<44-base58>` | `umsh:ck:75hbt6uvDqjPZ9Wg…` | `channel` |
-| `umsh:cs:<name>` | `umsh:cs:public` | `channel` (derives the key from the name) |
+| 64 hex characters | `ED54A59FB1AC3A51…` | all three |
+| 44 base58 characters | `GySVDr1omr3GTodgWFH7qD1ZKav9C5NMPFjdpwb33LvU` | all three |
+| `umsh:n:<44-base58>` | `umsh:n:GySVDr1omr3GTodg…` | node names |
+| `umsh:ck:<44-base58>` | `umsh:ck:75hbt6uvDqjPZ9Wg…` | channel keys |
+| `umsh:cs:<name>` | `umsh:cs:public` | channel keys (derives the key from the name) |
 
 URI `?k=v` parameters are ignored, so a scanned QR code works unedited. A URI
 of the wrong kind is refused rather than read as the wrong sort of key.
 
-Example rows:
-
-| type | key | label |
-|---|---|---|
-| `pubkey` | `GySVDr1omr3GTodgWFH7qD1ZKav9C5NMPFjdpwb33LvU` | Alice |
-| `privkey` | `1112131415161718...` | MyNode |
-| `channel` | `5A5A5A5A5A5A5A5A...` | TestChannel |
-| `channel` | `umsh:cs:public` | Public |
-
-### Fallback for Wireshark < 4.6
-
-On older Wireshark versions, the key table is not available. Instead, three
-separate string preferences are shown:
-
-| Preference | Format |
-|---|---|
-| **Node names** | `<key>:<name>` (one per line) |
-| **Private keys** | `<key>:<name>` (one per line) |
-| **Channel keys** | `<key>:<name>` or `umsh:cs:<name>:<label>` (one per line) |
-
-`<key>` takes any of the forms in [Key formats](#key-formats) above. The label
-is optional.
-
 ### Extracting keys from desktop_chat
 
 To decrypt traffic from the `desktop_chat` example, add the 32-byte Ed25519
-seed (the raw contents of the `.umsh/desktop-chat.identity` file) as a
-`privkey` entry. Convert the identity file to hex with:
+seed (the raw contents of the `.umsh/desktop-chat.identity` file) to
+**Private keys**. Convert the identity file to hex with:
 
 ```sh
 xxd -p -c 32 .umsh/desktop-chat.identity
@@ -204,7 +179,9 @@ When keys are configured correctly, the dissector will:
 ## Key File
 
 For convenience, keys can also be stored in a text file and loaded via the
-**Key File** preference. The file uses an INI-like format:
+**Key File** preference. Its keys are added to those in the preferences. The
+file uses an INI-like format, with lines written the same way as in the
+preferences:
 
 ```ini
 [nodes]

@@ -184,33 +184,21 @@ umsh.experts = {
 -- Preferences
 -- ──────────────────────────────────────────────────────────────────────────
 
--- Key table via Pref.uat (Wireshark 4.6+), with string-pref fallback.
-local _has_uat = pcall(function()
-  umsh.prefs.keys = Pref.uat("Decryption Keys", {
-    {"type",  "pubkey = name only (no decrypt), privkey = decrypt unicast, channel = decrypt multicast"},
-    {"key",   "64 hex chars, 44 base58 chars, or a umsh:n:/umsh:ck:/umsh:cs: URI"},
-    {"label", "Human-readable display name"},
-  }, "Type: pubkey (Ed25519 public key, display name only), "
-  .. "privkey (Ed25519 seed, enables unicast decryption), "
-  .. "channel (symmetric key or umsh:cs:<name>, enables multicast decryption). "
-  .. "Keys may be written as 64 hex characters or as the 44-character base58 "
-  .. "address form, so an address copied from umshctl or the app pastes in "
-  .. "directly.",
-  "umsh_keys")
-end)
-
-if not _has_uat then
-  -- Fallback for Wireshark < 4.6: three separate string preferences
-  umsh.prefs.node_names   = Pref.string("Node names",   "",
-    "One per line: <key>:<display-name>\n"
-    .. "<key> is 64 hex chars, 44 base58 chars, or umsh:n:<base58>")
-  umsh.prefs.privkeys     = Pref.string("Private keys", "",
-    "One per line: <ed25519-seed>:<display-name>\n"
-    .. "The seed is 64 hex chars or 44 base58 chars")
-  umsh.prefs.channel_keys = Pref.string("Channel keys", "",
-    "One per line:\n  <key>:<display-name>\n  umsh:ck:<base58>:<display-name>"
-    .. "\n  umsh:cs:<name>:<display-name>")
-end
+-- Keys are three string preferences, not a Pref.uat table. Merely calling
+-- Pref.uat makes tshark and Wireshark crash on exit: libwireshark frees its
+-- UAT list without clearing the pointer, then the Lua finalizer for the pref
+-- walks the freed list. The crash lands before stdout is flushed, so piped
+-- tshark output comes back truncated or empty. keystore.rebuild_from_uat
+-- stays as the way back once upstream fixes it.
+umsh.prefs.node_names   = Pref.string("Node names",   "",
+  "One per line: <key>:<display-name>\n"
+  .. "<key> is 64 hex chars, 44 base58 chars, or umsh:n:<base58>")
+umsh.prefs.privkeys     = Pref.string("Private keys", "",
+  "One per line: <ed25519-seed>:<display-name>\n"
+  .. "The seed is 64 hex chars or 44 base58 chars")
+umsh.prefs.channel_keys = Pref.string("Channel keys", "",
+  "One per line:\n  <key>:<display-name>\n  umsh:ck:<base58>:<display-name>"
+  .. "\n  umsh:cs:<name>:<display-name>")
 
 umsh.prefs.udp_port     = Pref.uint  ("UDP Port", 0, "UDP port to dissect as UMSH (0 = disabled)")
 umsh.prefs.keyfile      = Pref.string("Key File",  "",
@@ -1510,12 +1498,7 @@ end
 -- ──────────────────────────────────────────────────────────────────────────
 local function apply_prefs()
   -- Rebuild keystore from preferences
-  if _has_uat then
-    local keys = umsh.prefs.keys
-    keystore.rebuild_from_uat(keys)
-  else
-    keystore.rebuild(umsh.prefs.node_names, umsh.prefs.privkeys, umsh.prefs.channel_keys)
-  end
+  keystore.rebuild(umsh.prefs.node_names, umsh.prefs.privkeys, umsh.prefs.channel_keys)
 
   -- Merge optional key file (silently ignored if path is empty or file missing)
   keystore.load_keyfile(umsh.prefs.keyfile)
@@ -1523,7 +1506,6 @@ local function apply_prefs()
   -- The two well-known channels derive from names the spec fixes, so their
   -- keys are public knowledge and cost nothing to carry: emergency traffic
   -- verifies and public traffic decrypts with no configuration at all.
-  -- Added after the key file, which rebuilds the tables from scratch.
   keystore.add_builtin_channels()
 
   -- Recompute channel crypto after rebuild
