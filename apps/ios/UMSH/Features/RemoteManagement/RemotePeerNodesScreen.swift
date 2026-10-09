@@ -151,7 +151,7 @@ struct RemotePeerNodesScreen: View {
                     if let saved {
                         PeerRow(peer: saved, size: .compact)
                     } else {
-                        PeerRow(hint: identity.hint, title: "Unsaved node", size: .compact)
+                        PeerRow(hint: identity.hint, shape: .hexagon, title: "Unsaved node", size: .compact)
                     }
                 }
             } else {
@@ -159,6 +159,7 @@ struct RemotePeerNodesScreen: View {
                 // do not read as a key have no page behind them.
                 PeerRow(
                     hint: entry.identity?.hint,
+                    shape: entry.isThisPhone ? .circle : .hexagon,
                     title: entry.isThisPhone ? "This phone" : "Unrecognized key",
                     size: .compact
                 )

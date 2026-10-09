@@ -4,6 +4,7 @@ import SwiftUI
 /// Screens own navigation, selection, menus, and the wording of their details.
 struct PeerRow<TitleAccessory: View, Trailing: View>: View {
     let hint: MeshNodeHint?
+    let shape: PeerAvatarShape
     let title: String
     let subtitle: String?
     let size: IdentityRowSize
@@ -14,6 +15,7 @@ struct PeerRow<TitleAccessory: View, Trailing: View>: View {
 
     init(
         hint: MeshNodeHint?,
+        shape: PeerAvatarShape,
         title: String,
         subtitle: String? = nil,
         size: IdentityRowSize = .standard,
@@ -23,6 +25,7 @@ struct PeerRow<TitleAccessory: View, Trailing: View>: View {
         @ViewBuilder trailing: () -> Trailing = { EmptyView() }
     ) {
         self.hint = hint
+        self.shape = shape
         self.title = title
         self.subtitle = subtitle
         self.size = size
@@ -40,6 +43,7 @@ struct PeerRow<TitleAccessory: View, Trailing: View>: View {
     ) where TitleAccessory == EmptyView, Trailing == EmptyView {
         self.init(
             hint: peer.identity.hint,
+            shape: peer.avatarShape,
             title: peer.displayName,
             subtitle: subtitle,
             size: size,
@@ -51,7 +55,7 @@ struct PeerRow<TitleAccessory: View, Trailing: View>: View {
         IdentityRowLayout {
             Group {
                 if let hint {
-                    PeerAvatar(hint: hint, diameter: size.avatarDiameter, showsFavoriteStar: showsFavoriteStar)
+                    PeerAvatar(hint: hint, shape: shape, diameter: size.avatarDiameter, showsFavoriteStar: showsFavoriteStar)
                 } else {
                     Image(systemName: "person.crop.circle.badge.questionmark")
                         .font(.system(size: size.avatarDiameter * 0.62))

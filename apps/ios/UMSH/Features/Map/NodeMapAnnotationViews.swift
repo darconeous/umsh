@@ -21,19 +21,21 @@ struct MapNodeMarker: View {
         VStack(spacing: -2) {
             PeerAvatar(
                 hint: node.hint,
+                shape: node.avatarShape,
                 diameter: diameter,
                 showsFavoriteStar: node.isFavorite
             )
             .padding(3)
-            .background(.background, in: Circle())
+            .background(.background, in: PeerAvatarOutline(node.avatarShape))
             .overlay {
                 if node.isReported {
-                    Circle().strokeBorder(
+                    PeerAvatarOutline(node.avatarShape).strokeBorder(
                         isSelected ? Color.accentColor : Color.secondary,
                         style: StrokeStyle(lineWidth: isSelected ? 2.5 : 1.5, dash: [4, 3])
                     )
                 } else {
-                    Circle().strokeBorder(isSelected ? Color.accentColor : .clear, lineWidth: 2.5)
+                    PeerAvatarOutline(node.avatarShape)
+                        .strokeBorder(isSelected ? Color.accentColor : .clear, lineWidth: 2.5)
                 }
             }
             .overlay(alignment: .bottomTrailing) {

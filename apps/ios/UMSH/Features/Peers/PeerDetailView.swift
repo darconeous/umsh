@@ -139,7 +139,7 @@ struct PeerDetailView: View {
                 // word. The hint is not written out either—the avatar is
                 // the hint, drawn.
                 IdentityHeader(style: .profile) { diameter in
-                    PeerAvatar(hint: peer.identity.hint, diameter: diameter)
+                    PeerAvatar(peer: peer, diameter: diameter)
                 } content: {
                     VStack(alignment: .leading) {
                         if actions.updateAlias != nil {

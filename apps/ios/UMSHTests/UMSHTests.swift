@@ -333,3 +333,53 @@ private struct StoreFixture {
     }
     func remove() { try? FileManager.default.removeItem(at: url) }
 }
+
+@Suite
+struct PeerAvatarTests {
+    private func textIsWhite(_ bytes: [UInt8]) -> Bool {
+        AvatarStyle.peer(hint: MeshNodeHint(bytes: Data(bytes), text: "test")).text == .white
+    }
+
+    /// The vectors in docs/ux/src/apps/peer-identity-and-sessions.md.
+    @Test func guidelineVectorsChooseTheDocumentedTextColor() {
+        #expect(!textIsWhite([0xA1, 0xB2, 0x03]))
+        #expect(textIsWhite([0x84, 0x81, 0x1B]))
+        #expect(textIsWhite([0x5E, 0xA1, 0xB2]))
+        #expect(textIsWhite([0x8B, 0x60, 0xF5]))
+    }
+
+    @Test func textColorFollowsPerceivedContrast() {
+        #expect(!textIsWhite([0xFF, 0xFF, 0xFF]))
+        #expect(!textIsWhite([0x80, 0xFF, 0x00]))
+        #expect(!textIsWhite([0xFF, 0xFF, 0x00]))
+        #expect(textIsWhite([0x00, 0x00, 0xFF]))
+        #expect(textIsWhite([0xFF, 0x00, 0x00]))
+        #expect(textIsWhite([0x00, 0x00, 0x00]))
+    }
+
+    @Test func shapeRulesApplyInOrder() {
+        #expect(PeerAvatarShape(role: .repeater, capabilities: .textMessages) == .circle)
+        #expect(PeerAvatarShape(role: .chat, capabilities: []) == .circle)
+        #expect(PeerAvatarShape(role: .bridge, capabilities: []) == .triangle)
+        #expect(PeerAvatarShape(role: .repeater, capabilities: nil) == .triangle)
+        #expect(PeerAvatarShape(role: .tracker, capabilities: .repeater) == .hexagon)
+        #expect(PeerAvatarShape(role: .unknown, capabilities: nil) == .hexagon)
+    }
+
+    @Test func storedChatRoleWithoutAdvertisementIsACircle() {
+        let identity = MeshPublicIdentity(
+            canonicalAddress: "test",
+            hint: MeshNodeHint(bytes: Data([1, 2, 3]), text: "Test")
+        )
+        let chat = PeerSummary(
+            id: 1, identity: identity, alias: nil, advertisedName: nil, systemRole: nil, storedRole: .chat
+        )
+        let unknown = PeerSummary(
+            id: 2, identity: identity, alias: nil, advertisedName: nil, systemRole: nil, storedRole: .unknown
+        )
+        #expect(chat.avatarShape == .circle)
+        #expect(chat.roleLabel == "Chat")
+        #expect(unknown.avatarShape == .hexagon)
+        #expect(unknown.roleLabel == nil)
+    }
+}

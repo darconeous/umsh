@@ -398,12 +398,14 @@ Navigation title: **Peers**. A native search field and filter menu support:
 - Repeaters and bridges; and
 - Rooms.
 
-The default list groups **Favorites** and **Saved nodes** when those groups
-contain items; a node the user starred is one they want at the top, and there is
-no second tier of saved node below that. Nodes heard on the air but not saved
-stay out of the list and surface through search and the discovery session.
-Duplicate addresses appear once even if learned by several paths. Rows show role/capabilities, last observation, and a concise
-source label. RSSI/SNR may appear in detail, not as a fake distance.
+The default list groups **Favorites**, then **Saved nodes**, then **Saved
+radio** last, each when it contains items; a node the user starred is one they
+want at the top, and there is no second tier of saved node below that. Nodes
+heard on the air but not saved stay out of the list and surface through search
+and the discovery session. Duplicate addresses appear once even if learned by
+several paths. Rows follow [Peer list rows](../peer-identity-and-sessions.md#peer-list-rows):
+the role as the second line, never the NodeHint. RSSI/SNR may appear in detail,
+not as a fake distance.
 
 Toolbar actions: **Scan code**, **Paste URI**, and an overflow action for
 **Enter public key**. **Discover peers** is the prominent empty-state action and
@@ -471,7 +473,7 @@ to chat preserves the draft and transcript position.
 
 When a saved companion radio exposes its own UMSH public identity, that
 identity is also represented by exactly one `NodeRecord` and appears in the
-Peers list as a peer. Peer Detail labels it **Companion radio identity** and
+Peers list as a peer, in its own section after every other saved peer. Peer Detail labels it **Companion radio identity** and
 links to Radio Detail. The record is system-managed: ordinary peer removal is
 unavailable while the associated radio remains saved. This does not
 make the radio identity the phone's identity or grant infrastructure-management

@@ -68,7 +68,9 @@ enum StagingScenario {
             seed: 0x22,
             name: "Tallac Ridge",
             role: .repeater,
-            capabilities: [.repeater, .textMessages],
+            // What a fixed repeater's firmware advertises: it forwards, and
+            // exchanges no text of its own.
+            capabilities: [.repeater],
             latitude: 38.9061,
             longitude: -120.0983,
             // The high node, which is the point of a ridgeline repeater.

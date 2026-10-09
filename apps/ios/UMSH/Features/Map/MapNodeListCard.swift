@@ -94,6 +94,7 @@ struct MapNodeListCard: View {
     private func row(_ node: MapNode, now: Date) -> some View {
         PeerRow(
             hint: node.hint,
+            shape: node.avatarShape,
             title: node.displayName,
             subtitle: subtitle(node, now: now),
             showsFavoriteStar: node.isFavorite

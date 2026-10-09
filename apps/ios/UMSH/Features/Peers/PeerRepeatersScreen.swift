@@ -144,6 +144,7 @@ struct PeerRepeatersScreen: View {
             // else. A two-byte hint draws gray, which is what a node known
             // only by its trace looks like.
             hint: resolved?.identity.hint ?? neighbor.avatarHint,
+            shape: resolved?.avatarShape ?? .hexagon,
             title: neighbor.title(among: actions.knownPeers),
             subtitle: subtitle(neighbor),
             size: .compact,

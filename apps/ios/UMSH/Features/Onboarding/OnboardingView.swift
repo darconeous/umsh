@@ -50,7 +50,7 @@ struct OnboardingView: View {
         Form {
             Section {
                 IdentityHeader(style: .hero) { diameter in
-                    PeerAvatar(hint: identity.publicIdentity.hint, diameter: diameter)
+                    PeerAvatar(hint: identity.publicIdentity.hint, shape: .circle, diameter: diameter)
                 } content: {
                     VStack(spacing: 12) {
                         Text("Welcome to UMSH")

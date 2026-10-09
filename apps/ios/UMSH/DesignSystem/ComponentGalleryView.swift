@@ -40,6 +40,7 @@ struct ComponentGalleryExamples: View {
     @State private var name = "Ridge relay"
 
     static let hint = MeshNodeHint(bytes: Data([0xA1, 0xB2, 0x03]), text: "BtC5")
+    static let purpleHint = MeshNodeHint(bytes: Data([0x8B, 0x60, 0xF5]), text: "AP5R")
     static let channel = ChannelSummary(
         id: UUID(uuidString: "00000000-0000-0000-0000-000000000001")!,
         kind: .privateKey, canonicalName: nil, name: "Trail Crew", alias: nil,
@@ -60,17 +61,17 @@ struct ComponentGalleryExamples: View {
     private var peerExamples: some View {
         Group {
             Section("Peer rows") {
-                PeerRow(hint: Self.hint, title: "Ridge relay", subtitle: "Saved · BtC5", showsFavoriteStar: true)
-                PeerRow(hint: Self.hint, title: "North Ridge Search and Rescue Operations", subtitle: "Heard 5m ago · BtC5")
-                PeerRow(hint: nil, title: "Unrecognized key")
-                PeerRow(hint: Self.hint, title: "Hilltop", subtitle: "Position reported by a router") {
+                PeerRow(hint: Self.hint, shape: .triangle, title: "Ridge relay", subtitle: "Repeater", showsFavoriteStar: true)
+                PeerRow(hint: Self.purpleHint, shape: .circle, title: "North Ridge Search and Rescue Operations", subtitle: "Chat")
+                PeerRow(hint: nil, shape: .hexagon, title: "Unrecognized key")
+                PeerRow(hint: Self.hint, shape: .hexagon, title: "Hilltop", subtitle: "Position reported by a router") {
                     Image(systemName: "antenna.radiowaves.left.and.right")
                         .font(.caption2).foregroundStyle(.secondary)
                         .accessibilityLabel("Position reported by a router")
                 } trailing: {
                     Text("1.2 km").monospacedDigit()
                 }
-                PeerRow(hint: Self.hint, title: "Unverified location", subtitle: "Heard 2h ago") {
+                PeerRow(hint: Self.hint, shape: .hexagon, title: "Unverified location", subtitle: "Heard 2h ago") {
                     Image(systemName: "exclamationmark.triangle.fill")
                         .font(.caption2).foregroundStyle(.orange)
                         .accessibilityLabel("Location unverified")
@@ -79,8 +80,18 @@ struct ComponentGalleryExamples: View {
                 }
             }
             Section("Compact rows") {
-                PeerRow(hint: Self.hint, title: "Sleeping relay", subtitle: "−104 dBm · 8h ago\nUS · Position reported", size: .compact, isStale: true)
-                PeerRow(hint: Self.hint, title: "This phone", size: .compact)
+                PeerRow(hint: Self.hint, shape: .triangle, title: "Sleeping relay", subtitle: "−104 dBm · 8h ago\nUS · Position reported", size: .compact, isStale: true)
+                PeerRow(hint: Self.hint, shape: .circle, title: "This phone", size: .compact)
+            }
+            Section("Avatar shapes") {
+                ForEach([Self.hint, Self.purpleHint], id: \.text) { hint in
+                    HStack(spacing: 16) {
+                        ForEach(PeerAvatarShape.allCases, id: \.self) { shape in
+                            PeerAvatar(hint: hint, shape: shape, diameter: 64, showsFavoriteStar: true)
+                        }
+                    }
+                    .padding(.vertical, 8)
+                }
             }
             Section("Channels") {
                 ChannelRow(channel: Self.channel)
@@ -103,7 +114,7 @@ struct ComponentGalleryExamples: View {
         Group {
             Section("Information") {
                 IdentityHeader { diameter in
-                    PeerAvatar(hint: Self.hint, diameter: diameter)
+                    PeerAvatar(hint: Self.hint, shape: .hexagon, diameter: diameter)
                 } content: {
                     IdentityHeaderText(title: "North Ridge Search and Rescue", subtitle: "Companion radio identity")
                 }
@@ -115,7 +126,7 @@ struct ComponentGalleryExamples: View {
             }
             Section("Editable profile") {
                 IdentityHeader(style: .profile) { diameter in
-                    PeerAvatar(hint: Self.hint, diameter: diameter)
+                    PeerAvatar(hint: Self.purpleHint, shape: .triangle, diameter: diameter)
                 } content: {
                     VStack(alignment: .leading) {
                         TextField("Name", text: $name).font(.title2.bold())
@@ -125,7 +136,7 @@ struct ComponentGalleryExamples: View {
             }
             Section("Onboarding") {
                 IdentityHeader(style: .hero) { diameter in
-                    PeerAvatar(hint: Self.hint, diameter: diameter)
+                    PeerAvatar(hint: Self.hint, shape: .circle, diameter: diameter)
                 } content: {
                     VStack(spacing: 8) {
                         Text("Welcome to UMSH").font(.title2.bold())

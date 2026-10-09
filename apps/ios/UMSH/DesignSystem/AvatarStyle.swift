@@ -27,13 +27,13 @@ struct AvatarStyle {
 
 extension AvatarStyle {
     /// A peer's avatar: the hint's own three leading octets as a color, and
-    /// whichever of black or white reads against it.
+    /// whichever of black or white has the greater APCA contrast against it.
     static func peer(hint: MeshNodeHint) -> AvatarStyle {
         let rgb = components(hint.bytes)
         let characters = Array(hint.text)
         return AvatarStyle(
             fill: UIColor(red: rgb.red, green: rgb.green, blue: rgb.blue, alpha: 1),
-            text: relativeLuminance(rgb) < 0.179 ? .white : .black,
+            text: prefersWhiteText(on: rgb) ? .white : .black,
             lines: [String(characters.prefix(2)), String(characters.dropFirst(2))],
             fontRatio: 0.30,
             lineSpacingRatio: -0.08
@@ -136,15 +136,27 @@ extension AvatarStyle {
         return (CGFloat(octets[0]) / 255, CGFloat(octets[1]) / 255, CGFloat(octets[2]) / 255)
     }
 
-    private static func relativeLuminance(
-        _ rgb: (red: CGFloat, green: CGFloat, blue: CGFloat)
-    ) -> CGFloat {
-        func linear(_ component: CGFloat) -> CGFloat {
-            component <= 0.04045
-                ? component / 12.92
-                : pow((component + 0.055) / 1.055, 2.4)
+    /// Whether white text has the greater APCA lightness contrast (SAPC
+    /// 0.0.98G) against `rgb` than black text does.
+    ///
+    /// Not the WCAG 2 contrast ratio: that overrates black text on saturated
+    /// mid-tones and picks it on purples and blues that read far better in
+    /// white.
+    static func prefersWhiteText(on rgb: (red: CGFloat, green: CGFloat, blue: CGFloat)) -> Bool {
+        func screenLuminance(_ red: CGFloat, _ green: CGFloat, _ blue: CGFloat) -> CGFloat {
+            let y = 0.2126729 * pow(red, 2.4) + 0.7151522 * pow(green, 2.4) + 0.0721750 * pow(blue, 2.4)
+            // Soft clamp near black, where the display's flare dominates.
+            return y < 0.022 ? y + pow(0.022 - y, 1.414) : y
         }
-        return 0.2126 * linear(rgb.red) + 0.7152 * linear(rgb.green) + 0.0722 * linear(rgb.blue)
+        let background = screenLuminance(rgb.red, rgb.green, rgb.blue)
+        let white = screenLuminance(1, 1, 1)
+        let black = screenLuminance(0, 0, 0)
+        // Light text on a darker background, and dark text on a lighter one,
+        // each with its own polarity's exponents. Scaled and offset alike, so
+        // the raw magnitudes compare directly.
+        let whiteContrast = max(0, pow(white, 0.62) - pow(background, 0.65))
+        let blackContrast = max(0, pow(background, 0.56) - pow(black, 0.57))
+        return whiteContrast > blackContrast
     }
 }
 

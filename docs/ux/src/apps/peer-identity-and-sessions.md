@@ -42,30 +42,53 @@ Given `NodeHint([r, g, b])`:
    produces an exact four-character form such as `BtC5`, or a rare
    three-character star-terminated form such as `9v*`, according to the
    canonical addressing algorithm.
-2. Draw a circle whose background is the raw three-byte RGB value `#rrggbb`.
-   The bytes are used directly; they are not derived from the rendered
-   characters or passed through a palette.
+2. Fill the avatar outline (see [Avatar shape](#avatar-shape)) with the raw
+   three-byte RGB value `#rrggbb`. The bytes are used directly; they are not
+   derived from the rendered characters or passed through a palette.
 3. For a four-character representation, place the first two characters on the
    top line and the final two on the bottom line. For a three-character
    representation, place the first two on top and the final character on the
    bottom. The `*`, when present, is displayed literally.
 4. Use the platform's system monospaced font. Scale the glyph size with the
-   circle diameter so compact list/chat avatars do not reuse the larger detail
+   avatar size so compact list/chat avatars do not reuse the larger detail
    avatar's type size.
-5. Choose black or white text according to whichever produces the greater WCAG
-   contrast ratio against the raw RGB background. Use standard sRGB relative
-   luminance; do not choose by a fixed brightness threshold or aesthetic
-   preference.
+5. Choose black or white text according to whichever produces the greater
+   APCA lightness contrast (|Lc|, SAPC 0.0.98G) against the raw RGB
+   background. Do not choose by a fixed brightness threshold or aesthetic
+   preference. The WCAG 2 contrast ratio is not used here: it overrates black
+   text on saturated mid-tones, so it picks black on purples and blues that
+   read better in white.
 6. Expose an accessible label such as **Node hint BtC5**. The color is never an
    identity label by itself.
 
-Examples from the `umsh_core` reference vectors:
+Examples:
 
 | Hint bytes | Standard text | Background | Text layout | Contrast text |
 |---|---|---|---|---|
 | `a1 b2 03` | `BtC5` | `#A1B203` | `Bt` / `C5` | black |
-| `84 81 1b` | `9v*` | `#84811B` | `9v` / `*` | black |
-| `5e a1 b2` | `7NQL` | `#5EA1B2` | `7N` / `QL` | black |
+| `84 81 1b` | `9v*` | `#84811B` | `9v` / `*` | white |
+| `5e a1 b2` | `7NQL` | `#5EA1B2` | `7N` / `QL` | white |
+| `8b 60 f5` | `AP5R` | `#8B60F5` | `AP` / `5R` | white |
+
+### Avatar shape
+
+The outline tells what kind of node the avatar stands for. The first rule that
+matches decides it:
+
+1. **Circle**: the node advertises the Chat (TXT) capability or holds the
+   Chat role.
+2. **Rounded triangle**, pointing up: the node's role is Repeater or Bridge.
+   The repeater capability bit alone does not qualify.
+3. **Rounded hexagon**: every other node, including one whose role is unknown.
+
+Only the outline changes. The text, its layout, and the fill are the same in
+every shape, and the text sits at the shape's visual center: for the triangle,
+its incenter rather than the middle of its bounding box. Anything drawn around
+the avatar, such as a state ring or a map marker's border, follows the
+outline. The user's own identity is drawn as a circle.
+
+Shape, like color, is never the only cue. The accessible label still names the
+node hint, and a role that matters to a decision is stated in text.
 
 The avatar does not resolve NodeHint collisions and must not be presented as a
 verification mark. Peer Detail and trust-sensitive confirmation screens expose
@@ -77,6 +100,16 @@ A later release may let the user choose a local photo, symbol, or other icon for
 a peer. Such a replacement is local-only by default and does not overwrite the
 deterministic avatar for other users. The NodeHint avatar remains available in
 Peer Detail and as the fallback if the replacement is removed or unavailable.
+
+## Peer list rows
+
+A peer row shows the avatar, the peer's label, and, as its second line, the
+node's role (**Repeater**, **Chat**, **Tracker**, and so on). The avatar
+already carries the NodeHint, so the second line never repeats it. When the
+role is unknown, the row has no second line.
+
+A saved companion radio's own identity is listed after every other saved
+peer, favorites included.
 
 ## PFS status on peer avatars
 

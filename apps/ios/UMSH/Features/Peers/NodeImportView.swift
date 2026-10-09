@@ -29,6 +29,7 @@ struct NodeImportView: View {
                 Section("Node Identity Preview") {
                     PeerRow(
                         hint: preview.publicIdentity.hint,
+                        shape: preview.identity.map(PeerAvatarShape.init(identity:)) ?? .hexagon,
                         title: preview.publicIdentity.hint.text,
                         subtitle: previewCaption
                     )

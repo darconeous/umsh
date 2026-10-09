@@ -159,12 +159,6 @@ struct PeersView: View {
 
     @ViewBuilder
     private var peerSections: some View {
-        let radios = arranged(visiblePeers.filter(\.isUlcpDevice))
-        if !radios.isEmpty {
-            Section("Saved radio") {
-                ForEach(radios) { peer in peerRow(peer) }
-            }
-        }
         let favorites = arranged(visiblePeers.filter { !$0.isUlcpDevice && $0.isFavorite })
         if !favorites.isEmpty {
             Section("Favorites") {
@@ -183,6 +177,13 @@ struct PeersView: View {
             Section {
                 Text("No saved nodes. Nodes heard over the air appear in search until you save them.")
                     .foregroundStyle(.secondary)
+            }
+        }
+        // The radio's own identity is the node least often looked for.
+        let radios = arranged(visiblePeers.filter(\.isUlcpDevice))
+        if !radios.isEmpty {
+            Section("Saved radio") {
+                ForEach(radios) { peer in peerRow(peer) }
             }
         }
         Section {
@@ -237,7 +238,7 @@ struct PeersView: View {
                 messageActions: messageActions
             )
         } label: {
-            PeerRow(peer: peer, subtitle: subtitle(for: peer), showsFavoriteStar: peer.isFavorite)
+            PeerRow(peer: peer, subtitle: peer.roleLabel, showsFavoriteStar: peer.isFavorite)
         }
         .swipeActions(edge: .leading, allowsFullSwipe: false) {
             if peer.isSaved, !peer.isUlcpDevice, peerActions.setFavorite != nil {
@@ -274,16 +275,6 @@ struct PeersView: View {
                 .tint(.red)
             }
         }
-    }
-
-    private func subtitle(for peer: PeerSummary) -> String {
-        if peer.isUlcpDevice {
-            return "Companion radio identity · \(peer.identity.hint.text)"
-        }
-        if !peer.isSaved {
-            return "Discovered · \(peer.identity.hint.text)"
-        }
-        return peer.identity.hint.text
     }
 
     /// The saved radio's release path is Forget Radio; every other row can

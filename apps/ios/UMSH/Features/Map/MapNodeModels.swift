@@ -53,6 +53,10 @@ struct MapNode: Identifiable, Hashable {
         CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
     }
 
+    /// A node known only by a hint has no role on record, so it takes the
+    /// hexagon.
+    var avatarShape: PeerAvatarShape { peer?.avatarShape ?? .hexagon }
+
     /// Whether this pin is what a router said rather than what the node said.
     var isReported: Bool { reportedBy != nil }
 

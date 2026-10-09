@@ -315,9 +315,10 @@ struct DiscoverPeersView: View {
         NavigationLink(value: peer) {
             PeerRow(
                 peer: peer,
-                subtitle: peer.isSaved
-                    ? "Saved · \(peer.identity.hint.text)"
-                    : "Heard \(Self.heardLabel(peer.lastHeard)) · \(peer.identity.hint.text)"
+                subtitle: [
+                    peer.isSaved ? "Saved" : "Heard \(Self.heardLabel(peer.lastHeard))",
+                    peer.roleLabel,
+                ].compactMap { $0 }.joined(separator: " · ")
             )
         }
         .swipeActions(edge: .leading, allowsFullSwipe: false) {

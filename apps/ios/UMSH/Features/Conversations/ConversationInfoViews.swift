@@ -41,7 +41,7 @@ struct DirectConversationDetailView: View {
                     )
                 } label: {
                     IdentityHeader { diameter in
-                        PeerAvatar(hint: peer.identity.hint, diameter: diameter)
+                        PeerAvatar(peer: peer, diameter: diameter)
                     } content: {
                         IdentityHeaderText(
                             title: peer.displayName,

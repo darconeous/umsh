@@ -64,6 +64,17 @@ struct PeerSummary: Identifiable, Hashable, Sendable {
             || advertisedIdentity?.capabilityBits.contains(.textMessages) == true
     }
 
+    /// The role as a peer row's second line, or `nil` when it is unknown and
+    /// the row should have no second line.
+    var roleLabel: String? {
+        role == .unknown ? nil : role.label
+    }
+
+    /// The outline this node's avatar is drawn in.
+    var avatarShape: PeerAvatarShape {
+        PeerAvatarShape(role: role, capabilities: advertisedIdentity?.capabilityBits)
+    }
+
     /// What this phone actually knows about whether the node repeats.
     ///
     /// `isLikelyRepeater` answers `false` identically for a node we know to be

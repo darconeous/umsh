@@ -127,7 +127,7 @@ struct ChannelMemberSheet: View {
                         )
                     } label: {
                         IdentityHeader { diameter in
-                            PeerAvatar(hint: knownPeer.identity.hint, diameter: diameter)
+                            PeerAvatar(peer: knownPeer, diameter: diameter)
                         } content: {
                             IdentityHeaderText(
                                 title: knownPeer.displayName,

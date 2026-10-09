@@ -204,6 +204,10 @@ struct ChatMessageBubble: View, @MainActor Equatable {
     var senderLabel: String?
     /// The sender's hint, which is what their avatar is derived from.
     var senderHint: MeshNodeHint?
+    /// The outline of the sender's avatar. A sender this phone knows nothing
+    /// else about has at least sent a chat message, so it defaults to the
+    /// chat circle.
+    var senderShape: PeerAvatarShape = .circle
     var onEdit: (() -> Void)?
     var onDelete: (() -> Void)?
     /// Put a failed message back on the air. Present only while the message
@@ -236,6 +240,7 @@ struct ChatMessageBubble: View, @MainActor Equatable {
             && lhs.expectsAcknowledgment == rhs.expectsAcknowledgment
             && lhs.senderLabel == rhs.senderLabel
             && lhs.senderHint == rhs.senderHint
+            && lhs.senderShape == rhs.senderShape
             && (lhs.onEdit == nil) == (rhs.onEdit == nil)
             && (lhs.onDelete == nil) == (rhs.onDelete == nil)
             && (lhs.onResend == nil) == (rhs.onResend == nil)
@@ -349,7 +354,7 @@ struct ChatMessageBubble: View, @MainActor Equatable {
                 // The same deterministic avatar this member gets everywhere
                 // else: derived from the hint their frames carry, so it is
                 // stable before anyone knows who they are.
-                PeerAvatar(hint: senderHint, diameter: Self.avatarGutter)
+                PeerAvatar(hint: senderHint, shape: senderShape, diameter: Self.avatarGutter)
             }
             .buttonStyle(.plain)
             .disabled(onShowSender == nil)

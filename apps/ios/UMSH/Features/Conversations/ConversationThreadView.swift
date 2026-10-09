@@ -207,6 +207,8 @@ struct ConversationThreadView: View {
                                         senderHint: isChannel && !message.isOutbound
                                             ? message.senderNodeHint
                                             : nil,
+                                        senderShape: message.senderAddress
+                                            .flatMap(knownPeer(address:))?.avatarShape ?? .circle,
                                         // Editing reaches only the recent
                                         // past: an edit of an older message
                                         // has no reference peers still
@@ -603,7 +605,7 @@ struct ConversationThreadView: View {
                     VStack(spacing: -6) {
                         Group {
                             if let peer {
-                                PeerAvatar(hint: peer.identity.hint, diameter: 54)
+                                PeerAvatar(peer: peer, diameter: 54)
                             } else if let channelConversation {
                                 ChannelAvatar(channel: channelConversation.channel, size: 54)
                             }

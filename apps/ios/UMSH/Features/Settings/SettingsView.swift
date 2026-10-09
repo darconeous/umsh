@@ -104,7 +104,7 @@ struct SettingsView: View {
                             startOver: startOver
                         )
                     } label: {
-                        PeerRow(hint: identity.publicIdentity.hint, title: "Your identity", subtitle: identity.publicIdentity.hint.text)
+                        PeerRow(hint: identity.publicIdentity.hint, shape: .circle, title: "Your identity")
                     }
                 } else if isLoadingIdentity {
                     HStack {
@@ -374,7 +374,7 @@ struct IdentityDetailView: View {
         List {
             Section {
                 IdentityHeader(style: .profile) { diameter in
-                    PeerAvatar(hint: identity.publicIdentity.hint, diameter: diameter)
+                    PeerAvatar(hint: identity.publicIdentity.hint, shape: .circle, diameter: diameter)
                 } content: {
                     VStack(alignment: .leading) {
                         Text("Your identity")

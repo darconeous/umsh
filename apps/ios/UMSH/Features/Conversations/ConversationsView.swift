@@ -322,7 +322,7 @@ struct ConversationsView: View {
         searchRow {
             Task { await openConversation(with: peer) }
         } label: {
-            PeerRow(peer: peer, subtitle: peer.identity.hint.text, showsFavoriteStar: peer.isFavorite)
+            PeerRow(peer: peer, subtitle: peer.roleLabel, showsFavoriteStar: peer.isFavorite)
         }
     }
 
@@ -436,7 +436,7 @@ private struct ConversationRow: View {
         HStack(spacing: 12) {
             switch item {
             case let .direct(conversation):
-                PeerAvatar(hint: conversation.peer.identity.hint)
+                PeerAvatar(peer: conversation.peer)
             case let .channel(conversation):
                 ChannelAvatar(channel: conversation.channel, size: 40)
             }
