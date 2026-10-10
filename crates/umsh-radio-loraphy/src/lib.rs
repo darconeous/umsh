@@ -36,7 +36,7 @@
 #![no_std]
 #![allow(async_fn_in_trait)]
 
-use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
 use core::task::{Context, Poll};
 
 use embassy_futures::select::{Either, select};
@@ -108,6 +108,9 @@ pub struct Channels<M: RawMutex, const RX: usize, const TX: usize> {
     pub tx: Channel<M, TxRequest, TX>,
     pub tx_done: Signal<M, Result<(), TxError<RadioError>>>,
     pub rx_waker: AtomicWaker,
+    /// The spreading factor [`device_runner`] last configured the chip
+    /// with, or zero before it has configured one.
+    spreading_factor: AtomicU8,
 }
 
 impl<M: RawMutex, const RX: usize, const TX: usize> Channels<M, RX, TX> {
@@ -117,6 +120,7 @@ impl<M: RawMutex, const RX: usize, const TX: usize> Channels<M, RX, TX> {
             tx: Channel::new(),
             tx_done: Signal::new(),
             rx_waker: AtomicWaker::new(),
+            spreading_factor: AtomicU8::new(0),
         }
     }
 }
@@ -191,6 +195,13 @@ impl<M: RawMutex + 'static, const RX: usize, const TX: usize> umsh_hal::Radio
 
     fn t_frame_ms(&self) -> u32 {
         self.t_frame_ms
+    }
+
+    fn spreading_factor(&self) -> Option<u8> {
+        match self.ch.spreading_factor.load(Ordering::Relaxed) {
+            0 => None,
+            sf => Some(sf),
+        }
     }
 }
 
@@ -771,6 +782,8 @@ where
             settings = Some(wait_settings_while_idle(ctl).await);
             continue 'reconfigure;
         };
+        ch.spreading_factor
+            .store(sf_value(active.sf) as u8, Ordering::Relaxed);
 
         let rx_mode = match rx_strategy {
             RxStrategy::Continuous => RxMode::Continuous,

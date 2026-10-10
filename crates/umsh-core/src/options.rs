@@ -109,35 +109,40 @@ impl<'a> OptionEncoder<'a> {
 pub struct TraceSignalEntry([u8; 2]);
 
 impl TraceSignalEntry {
-    /// What a hop writes when its radio reported no measurement at all.
+    /// What a hop writes when it received the packet over a point-to-point
+    /// link—a bridge—rather than the air.
     ///
     /// An RSSI byte of zero is 0 dBm at the receiver, which no link this
-    /// protocol runs over produces, so it cannot be mistaken for a
-    /// reading. Writing it keeps the entry-for-entry pairing with the
-    /// trace route intact, which a hop that measures nothing is still
-    /// obliged to maintain.
-    pub const UNMEASURED: Self = Self([0, 0]);
+    /// protocol runs over produces, and [`new`](Self::new) never writes it,
+    /// so it cannot be mistaken for a reading. Writing it keeps the
+    /// entry-for-entry pairing with the trace route intact, which a hop with
+    /// no radio in it is still obliged to maintain.
+    pub const POINT_TO_POINT: Self = Self([0, 0]);
 
-    /// The entry for a hop that measured both fields.
+    /// The entry for a hop that measured the packet off the air.
     pub const fn new(rssi_dbm: i16, snr_centibels: i16) -> Self {
         Self([saturate_rssi(rssi_dbm), saturate_snr(snr_centibels)])
     }
 
-    /// The entry for a hop whose radio may not report either field.
-    ///
-    /// The two measurements are independent, so a radio that reports one
-    /// and not the other still contributes the one it has.
-    pub const fn from_measurements(rssi_dbm: Option<i16>, snr_centibels: Option<i16>) -> Self {
-        Self([
-            match rssi_dbm {
-                Some(rssi) => saturate_rssi(rssi),
-                None => Self::UNMEASURED.0[0],
-            },
-            match snr_centibels {
-                Some(snr) => saturate_snr(snr),
-                None => Self::UNMEASURED.0[1],
-            },
-        ])
+    /// An entry as a hop prepended it.
+    pub const fn from_bytes(bytes: [u8; 2]) -> Self {
+        Self(bytes)
+    }
+
+    /// Whether the hop received the packet over a point-to-point link
+    /// rather than the air.
+    pub const fn is_point_to_point(self) -> bool {
+        self.0[0] == 0 && self.0[1] == 0
+    }
+
+    /// The SNR the hop measured, in centibels, or `None` when it received
+    /// the packet over a point-to-point link and measured nothing.
+    pub const fn snr_centibels(self) -> Option<i16> {
+        if self.is_point_to_point() {
+            None
+        } else {
+            Some(self.0[1] as i8 as i16)
+        }
     }
 
     /// The two bytes, ready to prepend to a trace-signal option value.
@@ -146,9 +151,11 @@ impl TraceSignalEntry {
     }
 }
 
+/// Saturates at -1 dBm rather than 0, so no reading ever writes the
+/// point-to-point marker.
 const fn saturate_rssi(rssi_dbm: i16) -> u8 {
-    if rssi_dbm >= 0 {
-        0
+    if rssi_dbm >= -1 {
+        1
     } else if rssi_dbm < -255 {
         255
     } else {
@@ -404,19 +411,22 @@ mod tests {
         assert_eq!(TraceSignalEntry::new(-90, -500).as_bytes()[1], 0x80);
     }
 
+    /// The point-to-point marker is reserved: even a reading at the top of
+    /// the scale must not be read back as a hop with no radio in it.
     #[test]
-    fn a_radio_that_reports_one_field_still_contributes_it() {
-        let entry = TraceSignalEntry::from_measurements(Some(-91), None);
-        assert_eq!(entry.as_bytes()[0], 91);
-        assert_eq!(
-            entry.as_bytes()[1],
-            TraceSignalEntry::UNMEASURED.as_bytes()[1]
-        );
+    fn no_reading_writes_the_point_to_point_marker() {
+        let loudest = TraceSignalEntry::new(0, 0);
+        assert_ne!(loudest, TraceSignalEntry::POINT_TO_POINT);
+        assert_eq!(loudest.snr_centibels(), Some(0));
+        assert!(TraceSignalEntry::POINT_TO_POINT.is_point_to_point());
+        assert_eq!(TraceSignalEntry::POINT_TO_POINT.snr_centibels(), None);
+    }
 
-        assert_eq!(
-            TraceSignalEntry::from_measurements(None, None),
-            TraceSignalEntry::UNMEASURED
-        );
+    #[test]
+    fn an_entry_reads_back_the_snr_it_was_written_with() {
+        let entry = TraceSignalEntry::from_bytes(TraceSignalEntry::new(-120, -75).as_bytes());
+        assert_eq!(entry.snr_centibels(), Some(-75));
+        assert!(!entry.is_point_to_point());
     }
 
     // ── parse_be_u32 ──────────────────────────────────────────────────────────

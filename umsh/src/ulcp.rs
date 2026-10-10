@@ -3769,6 +3769,10 @@ where
     fn t_frame_ms(&self) -> u32 {
         self.t_frame_ms
     }
+
+    fn spreading_factor(&self) -> Option<u8> {
+        Some(self.config.spreading_factor)
+    }
 }
 
 // ─── Value decoders ──────────────────────────────────────────────────

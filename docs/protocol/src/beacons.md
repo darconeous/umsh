@@ -57,7 +57,7 @@ them contend from the same instant every time. Carrier sensing resolves
 the individual collision; the scatter is what keeps the mesh from having
 to resolve one on every period.
 
-A node that has just restarted is the node whose neighbours hold the
+A node that has just restarted is the node whose neighbors hold the
 stalest paths to it, so emitting one beacon at bring-up is RECOMMENDED.
 That beacon is not delayed: nodes do not restart in unison, so bring-up
 is already scattered by whatever staggered it.
@@ -79,6 +79,8 @@ UMSH does not define a dedicated path-discovery packet type. Instead, path disco
 
 A sender decides whether to originate the option from what it already knows about the destination. One that holds no source route and permits flooding SHOULD include a trace route: the trace is what turns that flood into a path. This includes a peer heard directly, since hearing the peer does not establish that the peer can hear the sender. A sender following a source route SHOULD NOT routinely trace it, since that path is already known and re-recording it on every packet is the [proactive refresh](#potential-improvement-proactive-route-refresh) this specification does not define. An ACK-requested packet is an exception: it SHOULD include a trace so the destination can construct a return route for its ACK.
 
+A packet that carries a trace route SHOULD also carry a [trace signal](packet-options.md#trace-signal-option-10). The hints say which repeaters a path crossed; the signal entries say how well each hop held, which is what lets the node learning the path choose between paths.
+
 The reason to omit a trace applies to a path the sender holds, which is what makes the re-recording redundant. A response steered down the trace its own request accumulated—the [Identity Request](mac-commands.md#identity-request-1) answered from a source route built out of the trace, for one—is following the requester's path rather than one either side had, and the response rule above governs: the requester holds nothing until the response records something.
 
 A packet carrying neither flood hops nor a source route SHOULD NOT carry a trace route at all, whatever the sender knows. No repeater may forward such a packet, so the option can only arrive as empty as it left, and its arrival already proves what an empty trace would have said.
@@ -87,7 +89,9 @@ Because router hints are only two bytes, different repeaters may share the same 
 
 ## Route Learning
 
-A destination may overhear a frame while source-route hints remain unconsumed. Its empty or partial trace describes a path that has not finished traversing the selected repeaters, so it is unsuitable for replacing a cached route. A consumed route can supply a complete trace. Historical buffered frames likewise do not establish current reachability.
+A destination may overhear a frame while source-route hints remain unconsumed. The way back is then the remaining hints in reverse, followed by the trace: the whole path the sender chose, through the repeaters still to forward it. The trace alone would describe a shortcut past those repeaters, and a repeater being audible at the destination does not establish that it hears the destination. Historical buffered frames do not establish current reachability.
+
+Copies of one packet, or of one MAC ack, that arrive over different paths each describe a path, and the first to arrive is not necessarily the best. A node MAY weigh them against each other and against the route it holds, using the [Trace Signal option](packet-options.md#trace-signal-option-10) where the copies carry one. A copy that arrives long after the first is a replay rather than evidence of a current path.
 
 When a node successfully processes other live incoming packets, it can update its routing state for the sender:
 

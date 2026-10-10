@@ -1315,7 +1315,7 @@ as described for [`PROP_ADVERT_INTERVAL`](#prop-advert-interval).
 * Post-Reset Value: 1 (true), or restored from saved state
 
 Whether the device emits one beacon once it has come up. On by default:
-a node that has just restarted is exactly the node whose neighbours hold
+a node that has just restarted is exactly the node whose neighbors hold
 the stalest paths to it, and a single empty broadcast is the cheapest
 correction available.
 

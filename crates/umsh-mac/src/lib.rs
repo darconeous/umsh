@@ -296,7 +296,9 @@ pub mod forward_id;
 mod handle;
 mod observations;
 mod peers;
+mod route_score;
 mod send;
+mod uplinks;
 
 pub use cache::{
     DUP_CACHE_TTL_MS, DupCacheKey, DuplicateCache, RecentMic, ReplayVerdict, ReplayWindow,

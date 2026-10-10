@@ -92,6 +92,13 @@ pub struct PeerInfo {
     pub route: Option<CachedRoute>,
     /// Revision of the selected route. Use registry route methods to mutate it.
     pub(crate) route_revision: u64,
+    /// How the selected route scored on the latest evidence for it (see
+    /// [`crate::route_score`]). `None` for a route nothing has measured: a
+    /// flood distance, or a route installed by hand.
+    pub(crate) route_score: Option<i16>,
+    /// When an acknowledgment last came back for a send on the selected
+    /// route.
+    pub(crate) route_confirmed_ms: Option<u64>,
     /// One recently failed route, suppressed only for passive route learning.
     failed_route: Option<(CachedRoute, u64)>,
     /// Most recent observation timestamp.
@@ -102,6 +109,50 @@ pub struct PeerInfo {
     /// first installed for this peer, the replay window is initialized to
     /// this value so that frames from before the reboot are rejected.
     pub initial_rx_counter: u32,
+}
+
+impl PeerInfo {
+    fn new(public_key: PublicKey, pinned: bool, last_seen_ms: u64) -> Self {
+        Self {
+            public_key,
+            pinned,
+            route: None,
+            route_revision: 0,
+            route_score: None,
+            route_confirmed_ms: None,
+            failed_route: None,
+            last_seen_ms,
+            initial_rx_counter: 0,
+        }
+    }
+
+    /// How the selected route scored on the latest evidence for it, in
+    /// centibels; higher is better. `None` when nothing has measured it.
+    pub fn route_score(&self) -> Option<i16> {
+        self.route_score
+    }
+
+    /// Select `route`, forgetting what was known about the one it replaces.
+    fn select_route(&mut self, route: Option<CachedRoute>, score: Option<i16>, revision: u64) {
+        self.route = route;
+        self.route_score = score;
+        self.route_confirmed_ms = None;
+        self.route_revision = revision;
+    }
+}
+
+/// Evidence for a route, as one received frame offers it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct RouteOffer {
+    pub route: CachedRoute,
+    /// How the path scored on what the frame measured. `None` for a flood
+    /// distance, which names no path to score.
+    pub score: Option<i16>,
+    /// The sender declared its own route failed and is rediscovering, so
+    /// whatever this node held is suspect too.
+    pub supersedes: bool,
+    /// The path is the one an acknowledgment came back on.
+    pub acknowledgment: bool,
 }
 
 /// Outcome of inserting or updating an auto-learned peer.
@@ -196,15 +247,7 @@ impl<const N: usize> PeerRegistry<N> {
         }
 
         self.peers
-            .push(PeerInfo {
-                public_key: key,
-                pinned: true,
-                route: None,
-                route_revision: 0,
-                failed_route: None,
-                last_seen_ms: 0,
-                initial_rx_counter: 0,
-            })
+            .push(PeerInfo::new(key, true, 0))
             .map_err(|_| CapacityError)?;
         Ok(PeerId((self.peers.len() - 1) as u8))
     }
@@ -233,15 +276,7 @@ impl<const N: usize> PeerRegistry<N> {
 
         if self.peers.len() < N {
             self.peers
-                .push(PeerInfo {
-                    public_key: key,
-                    pinned: false,
-                    route: None,
-                    route_revision: 0,
-                    failed_route: None,
-                    last_seen_ms: now_ms,
-                    initial_rx_counter: 0,
-                })
+                .push(PeerInfo::new(key, false, now_ms))
                 .map_err(|_| CapacityError)?;
             return Ok(AutoPeerUpdate {
                 peer_id: PeerId((self.peers.len() - 1) as u8),
@@ -260,15 +295,7 @@ impl<const N: usize> PeerRegistry<N> {
         };
 
         let evicted_key = oldest.public_key;
-        self.peers[index] = PeerInfo {
-            public_key: key,
-            pinned: false,
-            route: None,
-            route_revision: 0,
-            failed_route: None,
-            last_seen_ms: now_ms,
-            initial_rx_counter: 0,
-        };
+        self.peers[index] = PeerInfo::new(key, false, now_ms);
         Ok(AutoPeerUpdate {
             peer_id: PeerId(index as u8),
             evicted_key: Some(evicted_key),
@@ -301,24 +328,37 @@ impl<const N: usize> PeerRegistry<N> {
     }
 
     /// Explicitly restore a route, overriding any passive-learning holdoff.
+    ///
+    /// Nothing has measured a route installed this way, so the first
+    /// received frame that offers a scored path replaces it.
     pub fn update_route(&mut self, id: PeerId, route: CachedRoute) {
         let revision = self.next_revision();
         if let Some(peer) = self.get_mut(id) {
-            peer.route = Some(route);
-            peer.route_revision = revision;
+            peer.select_route(Some(route), None, revision);
             peer.failed_route = None;
         }
     }
 
-    /// Learn live inbound evidence without immediately resurrecting a failed
-    /// path. An identical observation is not fresh outbound success.
-    pub(crate) fn observe_route(&mut self, id: PeerId, route: CachedRoute, now_ms: u64) {
+    /// Weigh the route one received frame offers against the one held,
+    /// without immediately resurrecting a failed path.
+    ///
+    /// - The path already held is not replaced but re-scored: the newest
+    ///   measurement of it is the one that says what it is worth now. An
+    ///   identical observation is not fresh outbound success, so it does
+    ///   not count as confirmation.
+    /// - A path displaces a flood distance, which only stands in for a path
+    ///   not yet known; a flood distance never displaces a path.
+    /// - A scored path displaces one nothing has measured.
+    /// - Otherwise the offer has to score clearly better, and better still
+    ///   when an acknowledgment has recently vouched for the route held.
+    pub(crate) fn offer_route(&mut self, id: PeerId, offer: RouteOffer, now_ms: u64) {
         let Some(peer) = self.get_mut(id) else {
             return;
         };
         if let Some((failed, until)) = &peer.failed_route {
             if now_ms < *until
-                && (failed == &route || (failed.hop_count() == 1 && route.hop_count() == 1))
+                && (failed == &offer.route
+                    || (failed.hop_count() == 1 && offer.route.hop_count() == 1))
             {
                 return;
             }
@@ -326,13 +366,37 @@ impl<const N: usize> PeerRegistry<N> {
                 peer.failed_route = None;
             }
         }
-        if peer.route.as_ref() == Some(&route) {
+        if peer.route.as_ref() == Some(&offer.route) {
+            if offer.score.is_some() {
+                peer.route_score = offer.score;
+            }
+            return;
+        }
+        let confirmed = peer
+            .route_confirmed_ms
+            .is_some_and(|at| now_ms.saturating_sub(at) <= crate::route_score::CONFIRMATION_TTL_MS);
+        let replace = offer.supersedes
+            || match (&peer.route, offer.score) {
+                (None | Some(CachedRoute::Flood { .. }), _) => true,
+                (Some(_), None) => false,
+                (Some(current), Some(score)) => match peer.route_score {
+                    Some(held) => crate::route_score::displaces(score, held, confirmed),
+                    // Nothing scored the route in use: it was installed by
+                    // hand or restored, and any measured path replaces it.
+                    // An acknowledgment's way back replaces only a direct
+                    // route, which is often just an observation of the
+                    // peer's transmitter and says nothing about whether the
+                    // peer hears us. A longer route the ack answered is not
+                    // contradicted by a different way back.
+                    None => !offer.acknowledgment || current.hop_count() <= 1,
+                },
+            };
+        if !replace {
             return;
         }
         let revision = self.next_revision();
         let peer = self.get_mut(id).expect("peer was just found");
-        peer.route = Some(route);
-        peer.route_revision = revision;
+        peer.select_route(Some(offer.route), offer.score, revision);
     }
 
     /// Forget a route explicitly; passive learning remains allowed.
@@ -340,9 +404,10 @@ impl<const N: usize> PeerRegistry<N> {
         let revision = self.next_revision();
         self.get_mut(id)
             .map(|peer| {
-                peer.route_revision = revision;
+                let held = peer.route.is_some();
+                peer.select_route(None, None, revision);
                 peer.failed_route = None;
-                peer.route.take().is_some()
+                held
             })
             .unwrap_or(false)
     }
@@ -359,13 +424,17 @@ impl<const N: usize> PeerRegistry<N> {
         let peer = self.get_mut(id).expect("peer was just found");
         if let Some(route) = peer.route.take() {
             peer.failed_route = Some((route, now_ms.saturating_add(FAILED_ROUTE_HOLDOFF_MS)));
-            peer.route_revision = next_revision;
+            peer.select_route(None, None, next_revision);
         }
     }
 
-    /// A matching ACK protects this route from older outstanding failures.
-    /// It confirms the whole send policy, including its optional flood tail.
-    pub(crate) fn confirm_route(&mut self, key: &PublicKey, revision: u64) {
+    /// A matching ACK protects this route from older outstanding failures,
+    /// and credits it against new candidates for a while.
+    ///
+    /// It confirms the whole send policy, including its optional flood
+    /// tail, which is why the credit is not a guarantee: the tail may be
+    /// what delivered the exchange.
+    pub(crate) fn confirm_route(&mut self, key: &PublicKey, revision: u64, now_ms: u64) {
         let Some((id, peer)) = self.lookup_by_key(key) else {
             return;
         };
@@ -373,9 +442,9 @@ impl<const N: usize> PeerRegistry<N> {
             return;
         }
         let next_revision = self.next_revision();
-        self.get_mut(id)
-            .expect("peer was just found")
-            .route_revision = next_revision;
+        let peer = self.get_mut(id).expect("peer was just found");
+        peer.route_revision = next_revision;
+        peer.route_confirmed_ms = Some(now_ms);
     }
 
     /// Refresh the last-seen timestamp for `id`.

@@ -4266,6 +4266,11 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         if let AckReturn::Source(hints) = &plan.route {
             builder = builder.source_route(hints);
         }
+        // Option order puts the signal after the source route; it rides
+        // with the trace so the origin can weigh the path it learns.
+        if plan.trace {
+            builder = builder.trace_signal();
+        }
         for region in &plan.regions {
             builder = builder.region_code(*region);
         }

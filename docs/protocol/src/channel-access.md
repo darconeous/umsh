@@ -36,7 +36,7 @@ When CAD indicates the channel is busy:
 
 ## Flood Forwarding Contention Window
 
-When a repeater is eligible to flood-forward a packet, it SHOULD NOT just transmit like it would any other packet. Instead, it waits a contention delay proportional to the power of the received signal yet also inversely proportional to the quality of the received signal. Nodes that heard the packet cleanly but faintly transmit first; nodes that barely met the signal threshold, or heard it very strongly, wait longer. When a well-positioned repeater transmits, others overhear it, recognize the packet via duplicate suppression, and usually defer or abandon their own pending forwarding.
+When a repeater is eligible to flood-forward a packet, it SHOULD NOT just transmit like it would any other packet. Instead, it waits a contention delay proportional to the power of the received signal yet also inversely proportional to the quality of the received signal. Nodes that heard the packet cleanly but faintly transmit first; nodes that heard it very strongly wait longer; and nodes that heard it near the limit of demodulation wait until the others have had their chance. When a well-positioned repeater transmits, others overhear it, recognize the packet via duplicate suppression, and usually defer or abandon their own pending forwarding.
 
 > [!NOTE]
 > This guidance is still provisional and should be treated as a starting point until it is validated with real-world measurements.
@@ -46,8 +46,8 @@ Although the contention parameters below are configurable in principle, nodes in
 For the first forwarding decision after reception, compute the contention window as:
 
 ```text
-SNR_low = -9 dB
-SNR_high = 3 dB
+SNR_low = SNR_floor + 6 dB
+SNR_high = SNR_floor + 18 dB
 RSSI_low = -100 dBm
 RSSI_high = -70 dBm
 
@@ -58,14 +58,19 @@ W_jitter = T_frame/10
 quality = clamp((received_SNR − SNR_low) / (SNR_high − SNR_low), 0, 1)
 signal = clamp((received_RSSI − RSSI_low) / (RSSI_high − RSSI_low), 0, 1)
 
-W       = W_min + (W_max − W_min) × max((1 − quality), signal)
+if received_SNR < SNR_low:
+    W   = W_max + W_jitter
+else:
+    W   = W_min + (W_max − W_min) × max((1 − quality), signal)
 delay   = D_ack + W + uniform_random(0, W_jitter)
 ```
 
 Where:
 
 - When flood-forwarding, the effective minimum SNR threshold is the higher of the Minimum SNR packet option (if present) and any locally configured minimum SNR. A repeater MUST NOT flood-forward if the received SNR is below that effective threshold. (Signal-quality thresholds do not apply to source-routed hops.)
+- `SNR_floor` is the lowest SNR at which LoRa demodulates at the spreading factor in use: −7.5 dB at SF7, and 2.5 dB lower for each step up, to −20 dB at SF12. The same reading is a comfortable margin at one spreading factor and a failing link at another, so the band is measured from the floor. Bandwidth moves the receiver's sensitivity in dBm, not the SNR it needs.
 - `SNR_low`/`SNR_high` and `RSSI_low`/`RSSI_high` define the clamp ranges that normalize the two measurements for the contention heuristic.
+- A reception below `SNR_low` waits out the whole window and one jitter range before drawing its own jitter. Any repeater that heard the packet within the band transmits first, and this one forwards only if none did.
 - `W_min` is the minimum contention window for strong receptions.
 - `W_max` is the maximum intentional forwarding-delay window.
 - `W_jitter` bounds the random tie-breaking delay added after the deterministic window, so that nodes whose measurements agree do not transmit in the same instant.
@@ -83,7 +88,7 @@ This deferral behavior is intended only for the first local forwarding decision 
 Nodes waiting for implicit forwarding confirmation MUST size their confirmation timeout to include this full forwarding-delay window. A safe default is to allow:
 
 - up to `D_ack` of ACK protection delay, when it applies
-- up to `W_max + W_jitter` of intentional forwarding delay
+- up to `W_max + 2 × W_jitter` of intentional forwarding delay
 - up to `T_frame` for the forwarded transmission itself
 - an additional guard margin of up to `T_frame`
 

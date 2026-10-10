@@ -150,6 +150,18 @@ impl ReplayWindow {
         offset == 0 || entry.age_ms(now_ms).wrapping_sub(u64::from(offset - 1)) >= holdoff_ms
     }
 
+    /// How long ago the copy this one duplicates was accepted, when it is an
+    /// exact retained duplicate—same counter, same MIC.
+    ///
+    /// A copy of one transmission still propagating through the mesh
+    /// arrives within seconds of the first; the age is what separates it
+    /// from the same frame replayed minutes later. Acceptance times are
+    /// rounded down to the second, so the age can read up to 999 ms long.
+    pub fn duplicate_age_ms(&self, counter: u32, mic: &[u8], now_ms: u64) -> Option<u64> {
+        self.find_recent_mic(counter, mic, now_ms)
+            .map(|entry| entry.age_ms(now_ms))
+    }
+
     /// Record a successful ACK enqueue, without refreshing acceptance or the
     /// replay baseline. Failed enqueue attempts must not call this method.
     pub fn mark_ack_queued(&mut self, counter: u32, mic: &[u8], now_ms: u64) {

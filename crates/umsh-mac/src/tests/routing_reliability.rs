@@ -1,4 +1,15 @@
 use super::*;
+use crate::peers::RouteOffer;
+
+/// A route as a received frame would offer it, scored as given.
+fn scored(route: CachedRoute, score: i16) -> RouteOffer {
+    RouteOffer {
+        route,
+        score: Some(score),
+        supersedes: false,
+        acknowledgment: false,
+    }
+}
 
 #[test]
 fn direct_ack_requested_exchange_stops_at_exactly_two_frames() {
@@ -224,7 +235,7 @@ fn asymmetric_shortcut_completes_first_exchange_and_subsequent_bidirectional_sen
 }
 
 #[test]
-fn unconsumed_copy_cannot_poison_cache_and_consumed_duplicate_gets_first_ack() {
+fn unconsumed_copy_teaches_whole_route_and_consumed_duplicate_gets_first_ack() {
     let (mut mac, local_id, _, peer_id) = mac_with_keyed_peer();
     let remote = DummyIdentity::new([0xAB; 32]);
     let keys = PairwiseKeys {
@@ -261,10 +272,14 @@ fn unconsumed_copy_cannot_poison_cache_and_consumed_duplicate_gets_first_ack() {
         }))
         .unwrap();
         if !consumed {
+            // Overheard before the last repeater consumed its hint, the copy
+            // still teaches the route through that repeater, never the
+            // shortcut past it.
             assert_eq!(
                 mac.peer_registry().get(peer_id).unwrap().route,
-                Some(original.clone())
+                CachedRoute::source(&route)
             );
+            assert_ne!(Some(original.clone()), CachedRoute::source(&route));
             assert!(mac.tx_queue().is_empty());
         }
         mac.clock().advance_ms(1);
@@ -406,18 +421,18 @@ fn route_failure_recovery_and_passive_learning_holdoff() {
     );
     let now = mac.clock().now_ms();
     mac.peer_registry_mut()
-        .observe_route(peer_id, CachedRoute::Direct, now + 1);
+        .offer_route(peer_id, scored(CachedRoute::Direct, -10), now + 1);
     assert!(mac.peer_registry().get(peer_id).unwrap().route.is_none());
     let alternate = CachedRoute::source(&[RouterHint([1, 2])]).unwrap();
     mac.peer_registry_mut()
-        .observe_route(peer_id, alternate.clone(), now + 2);
+        .offer_route(peer_id, scored(alternate.clone(), -60), now + 2);
     expire_attempt(&mut mac, local_id, receipt);
     assert_eq!(
         mac.peer_registry().get(peer_id).unwrap().route,
         Some(alternate)
     );
     mac.peer_registry_mut()
-        .observe_route(peer_id, CachedRoute::Direct, now + 30_000);
+        .offer_route(peer_id, scored(CachedRoute::Direct, -10), now + 30_000);
     assert_eq!(
         mac.peer_registry().get(peer_id).unwrap().route,
         Some(CachedRoute::Direct)
@@ -669,7 +684,7 @@ fn terminal_failure_of_cached_source_route_respects_no_flood() {
     mac.tx_queue_mut().pop_next().unwrap();
     // Passive repetition of the same evidence cannot immunize a failed route.
     mac.peer_registry_mut()
-        .observe_route(peer_id, route.clone(), 1);
+        .offer_route(peer_id, scored(route.clone(), -40), 1);
     expire_attempt(&mut mac, local_id, receipt);
     assert!(mac.peer_registry().get(peer_id).unwrap().route.is_none());
     assert!(mac.tx_queue().is_empty());
@@ -777,4 +792,298 @@ fn consumed_source_route_without_usable_trace_uses_broader_ack_fallback() {
             }
         }
     }
+}
+
+fn reply_keys() -> PairwiseKeys {
+    PairwiseKeys {
+        k_enc: [1; 32],
+        k_mic: [2; 32],
+    }
+}
+
+fn route_to(mac: &TestMac, peer_id: PeerId) -> Option<CachedRoute> {
+    mac.peer_registry().get(peer_id).unwrap().route.clone()
+}
+
+/// Copies of one reply arrive over several paths. The first teaches a route
+/// at once; a later copy over a clearly better path replaces it, and a
+/// flood-tail copy over a worse one does not.
+#[test]
+fn a_better_copy_of_a_reply_replaces_the_route_and_a_worse_one_does_not() {
+    let (mut mac, local_id, _, peer_id) = mac_with_keyed_peer();
+    let remote = DummyIdentity::new([0xAB; 32]);
+    let dst = mac
+        .identity(local_id)
+        .unwrap()
+        .identity()
+        .public_key()
+        .hint();
+    let (a, b, c) = (
+        RouterHint([0xA1, 0xA2]),
+        RouterHint([0xB1, 0xB2]),
+        RouterHint([0xC1, 0xC2]),
+    );
+
+    // Barely: A heard at -12 dB here, and A heard the peer at -14 dB.
+    mac.radio_mut().rx_snr = Snr::from_decibels(-12);
+    mac.radio_mut()
+        .queue_received_traced_unicast(&remote, &reply_keys(), &dst, 7, &[a], &[-140]);
+    block_on(mac.receive_one(|_, _| {})).unwrap();
+    assert_eq!(route_to(&mac, peer_id), CachedRoute::source(&[a]));
+
+    // The same reply through B, heard cleanly at both hops.
+    mac.clock().advance_ms(50);
+    mac.radio_mut().rx_snr = Snr::from_decibels(3);
+    mac.radio_mut()
+        .queue_received_traced_unicast(&remote, &reply_keys(), &dst, 7, &[b], &[50]);
+    block_on(mac.receive_one(|_, _| {})).unwrap();
+    assert_eq!(route_to(&mac, peer_id), CachedRoute::source(&[b]));
+
+    // A flood-tail copy through B and then C, its last hop marginal.
+    mac.clock().advance_ms(50);
+    mac.radio_mut().rx_snr = Snr::from_decibels(-10);
+    mac.radio_mut().queue_received_traced_unicast(
+        &remote,
+        &reply_keys(),
+        &dst,
+        7,
+        &[c, b],
+        &[0, 50],
+    );
+    block_on(mac.receive_one(|_, _| {})).unwrap();
+    assert_eq!(route_to(&mac, peer_id), CachedRoute::source(&[b]));
+}
+
+/// A copy that turns up long after the reply it duplicates is a replay, not
+/// a path the reply took just now.
+#[test]
+fn a_stale_duplicate_teaches_nothing() {
+    let (mut mac, local_id, _, peer_id) = mac_with_keyed_peer();
+    let remote = DummyIdentity::new([0xAB; 32]);
+    let dst = mac
+        .identity(local_id)
+        .unwrap()
+        .identity()
+        .public_key()
+        .hint();
+    let (a, b) = (RouterHint([0xA1, 0xA2]), RouterHint([0xB1, 0xB2]));
+    mac.radio_mut().rx_snr = Snr::from_decibels(-12);
+    mac.radio_mut()
+        .queue_received_traced_unicast(&remote, &reply_keys(), &dst, 7, &[a], &[-140]);
+    block_on(mac.receive_one(|_, _| {})).unwrap();
+
+    mac.clock().advance_ms(60_000);
+    mac.radio_mut().rx_snr = Snr::from_decibels(3);
+    mac.radio_mut()
+        .queue_received_traced_unicast(&remote, &reply_keys(), &dst, 7, &[b], &[50]);
+    block_on(mac.receive_one(|_, _| {})).unwrap();
+    assert_eq!(route_to(&mac, peer_id), CachedRoute::source(&[a]));
+}
+
+#[test]
+fn a_flood_distance_never_displaces_a_path() {
+    let (mut mac, _, _, peer_id) = mac_with_keyed_peer();
+    let flood = RouteOffer {
+        route: CachedRoute::flood(2, &[]).unwrap(),
+        score: None,
+        supersedes: false,
+        acknowledgment: false,
+    };
+    let path = CachedRoute::source(&[RouterHint([1, 2])]).unwrap();
+    let registry = mac.peer_registry_mut();
+    registry.offer_route(peer_id, flood.clone(), 1);
+    assert_eq!(
+        registry.get(peer_id).unwrap().route,
+        Some(flood.route.clone())
+    );
+    registry.offer_route(peer_id, scored(path.clone(), -400), 2);
+    assert_eq!(
+        registry.get(peer_id).unwrap().route,
+        Some(path.clone()),
+        "any path replaces a flood distance"
+    );
+    registry.offer_route(peer_id, flood, 3);
+    assert_eq!(registry.get(peer_id).unwrap().route, Some(path));
+}
+
+/// An acknowledgment vouches for the route it answered, so a new path has to
+/// beat that route by more than usual, until the acknowledgment ages out.
+#[test]
+fn an_acknowledged_route_takes_a_larger_margin_to_displace() {
+    let (mut mac, _, key, peer_id) = mac_with_keyed_peer();
+    let held = CachedRoute::source(&[RouterHint([1, 2])]).unwrap();
+    let better = CachedRoute::source(&[RouterHint([3, 4])]).unwrap();
+    let registry = mac.peer_registry_mut();
+    registry.offer_route(peer_id, scored(held.clone(), -200), 1);
+    let revision = registry.get(peer_id).unwrap().route_revision;
+    registry.confirm_route(&key, revision, 2);
+
+    // 5 dB better: past the switching margin, short of the credit on top.
+    registry.offer_route(peer_id, scored(better.clone(), -150), 3);
+    assert_eq!(registry.get(peer_id).unwrap().route, Some(held));
+
+    let aged = 3 + crate::route_score::CONFIRMATION_TTL_MS + 1;
+    registry.offer_route(peer_id, scored(better.clone(), -150), aged);
+    assert_eq!(registry.get(peer_id).unwrap().route, Some(better));
+}
+
+/// The first copy of an ack completes the send; a later copy over a better
+/// path still teaches that path.
+#[test]
+fn a_later_copy_of_a_completed_ack_still_teaches_its_route() {
+    let (mut mac, local_id, key, peer_id) = mac_with_keyed_peer();
+    let receipt = mac
+        .queue_unicast(
+            local_id,
+            &key,
+            b"payload",
+            &SendOptions::default().with_ack_requested(true),
+        )
+        .unwrap()
+        .unwrap();
+    mac.tx_queue_mut().pop_next().unwrap();
+    let ack = mac
+        .identity(local_id)
+        .unwrap()
+        .pending_ack(&receipt)
+        .unwrap()
+        .ack_trailer;
+    let (a, b) = (RouterHint([0xA1, 0xA2]), RouterHint([0xB1, 0xB2]));
+    let mut acknowledged = 0;
+
+    mac.radio_mut().rx_snr = Snr::from_decibels(-12);
+    mac.radio_mut()
+        .queue_received_mac_ack_with_signal(ack, &[a], &[-140]);
+    block_on(mac.receive_one(|_, event| {
+        if matches!(event, MacEventRef::AckReceived { .. }) {
+            acknowledged += 1;
+        }
+    }))
+    .unwrap();
+    assert_eq!(route_to(&mac, peer_id), CachedRoute::source(&[a]));
+
+    mac.clock().advance_ms(50);
+    mac.radio_mut().rx_snr = Snr::from_decibels(3);
+    mac.radio_mut()
+        .queue_received_mac_ack_with_signal(ack, &[b], &[50]);
+    block_on(mac.receive_one(|_, event| {
+        if matches!(event, MacEventRef::AckReceived { .. }) {
+            acknowledged += 1;
+        }
+    }))
+    .unwrap();
+    assert_eq!(acknowledged, 1, "only the first copy completes the send");
+    assert_eq!(route_to(&mac, peer_id), CachedRoute::source(&[b]));
+}
+
+#[test]
+fn discovery_sends_and_their_acks_carry_a_trace_signal() {
+    let (mut mac, local_id, key, peer_id) = mac_with_keyed_peer();
+    mac.queue_unicast(
+        local_id,
+        &key,
+        b"payload",
+        &SendOptions::default()
+            .with_ack_requested(true)
+            .with_flood_hops(3),
+    )
+    .unwrap();
+    mac.queue_mac_ack_for_peer(local_id, peer_id, [7; 8], true)
+        .unwrap();
+    while let Some(queued) = mac.tx_queue_mut().pop_next() {
+        let header = PacketHeader::parse(&queued.frame).unwrap();
+        let options = ParsedOptions::extract(&queued.frame, header.options_range.clone()).unwrap();
+        assert!(options.trace_route.is_some());
+        assert!(
+            options.trace_signal.is_some(),
+            "{:?} traces its route but not what each hop measured",
+            header.packet_type()
+        );
+    }
+}
+
+/// Carry `frame` through a repeater with identity `seed` that heard it at
+/// `snr`, returning what the repeater forwards and the repeater's hint.
+fn forward_through(frame: &[u8], seed: u8, snr: Snr) -> (heapless::Vec<u8, 256>, RouterHint) {
+    let mut repeater = make_mac();
+    repeater.repeater_config_mut().enabled = true;
+    repeater.radio_mut().rx_rssi = -90;
+    repeater.radio_mut().rx_snr = snr;
+    let id = repeater
+        .add_identity(DummyIdentity::new([seed; 32]))
+        .unwrap();
+    let hint = repeater
+        .identity(id)
+        .unwrap()
+        .identity()
+        .public_key()
+        .router_hint();
+    repeater.radio_mut().queue_received_frame(frame);
+    block_on(repeater.receive_one(|_, _| {})).unwrap();
+    let forwarded = repeater
+        .tx_queue_mut()
+        .pop_next()
+        .expect("the repeater forwards the flood");
+    (forwarded.frame.iter().copied().collect(), hint)
+}
+
+/// Replies arrive through Z and then, more strongly, through Y. Which one the
+/// route should use depends on what this node's own flood showed: whether Z
+/// and Y hear us at all.
+fn route_after_replies(
+    with_uplink_evidence: bool,
+) -> (Option<CachedRoute>, RouterHint, RouterHint) {
+    let (mut mac, local_id, key, peer_id) = mac_with_keyed_peer();
+    let remote = DummyIdentity::new([0xAB; 32]);
+    let dst = mac
+        .identity(local_id)
+        .unwrap()
+        .identity()
+        .public_key()
+        .hint();
+    mac.queue_unicast(
+        local_id,
+        &key,
+        b"payload",
+        &SendOptions::default()
+            .with_ack_requested(true)
+            .with_flood_hops(3),
+    )
+    .unwrap();
+    block_on(mac.transmit_next(&mut |_, _| {})).unwrap();
+    let sent = mac.radio().transmitted.last().unwrap().clone();
+    // Z takes our flood off the air; Y hears only Z's forward of it.
+    let (via_z, z) = forward_through(&sent, 0x20, Snr::from_decibels(3));
+    let (via_y, y) = forward_through(&via_z, 0x30, Snr::from_decibels(8));
+    if with_uplink_evidence {
+        for copy in [&via_z, &via_y] {
+            mac.radio_mut().queue_received_frame(copy);
+            block_on(mac.receive_one(|_, _| {})).unwrap();
+        }
+    }
+
+    mac.radio_mut().rx_snr = Snr::from_decibels(3);
+    mac.radio_mut()
+        .queue_received_traced_unicast(&remote, &reply_keys(), &dst, 7, &[z], &[-40]);
+    block_on(mac.receive_one(|_, _| {})).unwrap();
+    mac.radio_mut()
+        .queue_received_traced_unicast(&remote, &reply_keys(), &dst, 8, &[y], &[50]);
+    block_on(mac.receive_one(|_, _| {})).unwrap();
+    (route_to(&mac, peer_id), z, y)
+}
+
+/// Hearing a repeater well says nothing about whether it hears us. A
+/// repeater that forwarded our flood only from another repeater's copy is
+/// charged as a first hop, so the reply through it, however strong, does not
+/// displace the route through one that took our transmission directly.
+#[test]
+fn a_repeater_that_does_not_hear_us_is_not_chosen_as_the_first_hop() {
+    let (route, _, y) = route_after_replies(false);
+    assert_eq!(
+        route,
+        CachedRoute::source(&[y]),
+        "without evidence, the stronger reply wins"
+    );
+    let (route, z, _) = route_after_replies(true);
+    assert_eq!(route, CachedRoute::source(&[z]));
 }

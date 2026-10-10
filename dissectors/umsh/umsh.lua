@@ -644,10 +644,18 @@ local function parse_options(buf, start_off, bound, tree, static_opts_out, pinfo
           for i = 1, routers do
             local rssi = val:byte(i * 2 - 1)
             local snr  = val:byte(i * 2)
-            if snr >= 128 then snr = snr - 256 end
-            local text = string.format("-%d dBm, %.1f dB SNR", rssi, snr / 10)
-            item:add(f.opt_signal_entry, buf(val_off + (i - 1) * 2, 2), text)
-              :set_text(string.format("Repeater %d heard: %s", i, text))
+            local entry = buf(val_off + (i - 1) * 2, 2)
+            if rssi == 0 and snr == 0 then
+              -- No air hop writes this: the repeater took the packet off
+              -- a point-to-point link, a bridge for one.
+              item:add(f.opt_signal_entry, entry, "bridged")
+                :set_text(string.format("Repeater %d: bridged hop", i))
+            else
+              if snr >= 128 then snr = snr - 256 end
+              local text = string.format("-%d dBm, %.1f dB SNR", rssi, snr / 10)
+              item:add(f.opt_signal_entry, entry, text)
+                :set_text(string.format("Repeater %d heard: %s", i, text))
+            end
           end
         end
 

@@ -2,7 +2,7 @@ use core::num::NonZeroU8;
 use core::{future::poll_fn, task::Poll};
 
 use hamaddr::HamAddr;
-use heapless::{LinearMap, Vec};
+use heapless::{Deque, LinearMap, Vec};
 use rand::{Rng, RngExt as _};
 use umsh_core::{
     BuildError, ChannelId, ChannelKey, FloodHops, NodeHint, OptionNumber, PacketBuilder,
@@ -20,11 +20,13 @@ use crate::{
     MAX_RESEND_FRAME_LEN, MAX_SOURCE_ROUTE_HINTS, Platform, ReplayVerdict, ReplayWindow,
     cache::{DupCacheKey, DuplicateCache},
     peers::CachedRoute,
-    peers::{ChannelTable, PeerCryptoMap, PeerId, PeerRegistry},
+    peers::{ChannelTable, PeerCryptoMap, PeerId, PeerRegistry, RouteOffer},
+    route_score::{Hop, path_score},
     send::{
         CompletionSignal, PendingAck, PendingAckError, ResendRecord, SendOptions, SendReceipt,
         TxPriority, TxQueue,
     },
+    uplinks::Uplink,
 };
 
 /// Why [`Mac::poll_wait_for_wake`] returned ready.
@@ -72,6 +74,22 @@ pub(crate) enum ReplyCarriage<'a> {
 struct PendingCounterResync {
     nonce: u32,
     requested_ms: u64,
+}
+
+/// How many acknowledgments are remembered after they complete, so later
+/// copies of the same ack can still teach a route.
+const RECENT_ACKS: usize = 4;
+
+/// An acknowledgment that completed a send, kept for its later copies.
+///
+/// The first copy of an ack to arrive completes the send and is gone from
+/// the pending table; the rest still carry route evidence, and the trailer
+/// is what authenticates them as the same ack.
+#[derive(Clone, Copy, Debug)]
+struct CompletedAck {
+    trailer: [u8; 8],
+    peer: PublicKey,
+    at_ms: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -561,10 +579,18 @@ fn trace_signal_entry(rx: &RxInfo) -> TraceSignalEntry {
     if rx.origin.is_measured() {
         TraceSignalEntry::new(rx.rssi, rx.snr.as_centibels())
     } else {
-        // A hop that measured nothing still owes the trace an entry, or
-        // every reading after it pairs with the wrong hop.
-        TraceSignalEntry::UNMEASURED
+        // A hop with no radio in it still owes the trace an entry, or every
+        // reading after it pairs with the wrong hop.
+        TraceSignalEntry::POINT_TO_POINT
     }
+}
+
+/// The SNR below which LoRa stops demodulating at spreading factor `sf`, in
+/// centibels: −7.5 dB at SF7 and 2.5 dB lower for each step up. A radio that
+/// does not report its spreading factor is graded as SF10.
+fn lora_snr_floor_cb(sf: Option<u8>) -> i32 {
+    let sf = i32::from(sf.unwrap_or(10).clamp(5, 12));
+    -75 - 25 * (sf - 7)
 }
 
 /// Local transmission policy enforced by the [`Mac`] coordinator on all outgoing frames.
@@ -651,10 +677,13 @@ pub struct RepeaterConfig {
     pub min_rssi: Option<i16>,
     /// Minimum SNR threshold for flood forwarding.
     pub min_snr: Option<i8>,
-    /// Lower clamp bound for the SNR quality term of flood forwarding contention.
-    pub flood_contention_snr_low_db: i8,
-    /// Upper clamp bound for the SNR quality term of flood forwarding contention.
-    pub flood_contention_snr_high_db: i8,
+    /// Lower clamp bound for the SNR quality term of flood forwarding
+    /// contention, in dB above the spreading factor's demodulation floor.
+    /// A reception below it waits out the whole window before contending.
+    pub flood_contention_snr_low_margin_db: u8,
+    /// Upper clamp bound for the SNR quality term of flood forwarding
+    /// contention, in dB above the spreading factor's demodulation floor.
+    pub flood_contention_snr_high_margin_db: u8,
     /// Lower clamp bound for the RSSI signal term of flood forwarding contention.
     pub flood_contention_rssi_low_dbm: i16,
     /// Upper clamp bound for the RSSI signal term of flood forwarding contention.
@@ -687,8 +716,8 @@ impl Default for RepeaterConfig {
             default_region: None,
             min_rssi: None,
             min_snr: None,
-            flood_contention_snr_low_db: -9,
-            flood_contention_snr_high_db: 3,
+            flood_contention_snr_low_margin_db: 6,
+            flood_contention_snr_high_margin_db: 18,
             flood_contention_rssi_low_dbm: -100,
             flood_contention_rssi_high_dbm: -70,
             flood_contention_min_window_percent: 0,
@@ -944,6 +973,8 @@ pub struct Mac<
     identities: Vec<Option<IdentitySlot<P::Identity, PEERS, ACKS, FRAME>>, IDENTITIES>,
     peer_registry: PeerRegistry<PEERS>,
     transmitter_observations: crate::TransmitterObservations,
+    uplinks: crate::uplinks::UplinkObservations,
+    recent_acks: Deque<CompletedAck, RECENT_ACKS>,
     channels: ChannelTable<CHANNELS, RN, HN>,
     dup_cache: DuplicateCache<DUP>,
     multicast_unknown_dup_cache: DuplicateCache<DUP>,
@@ -988,6 +1019,8 @@ impl<
             identities: Vec::new(),
             peer_registry: PeerRegistry::new(),
             transmitter_observations: crate::TransmitterObservations::new(),
+            uplinks: crate::uplinks::UplinkObservations::new(),
+            recent_acks: Deque::new(),
             channels: ChannelTable::new(),
             dup_cache: DuplicateCache::new(),
             multicast_unknown_dup_cache: DuplicateCache::new(),
@@ -1735,6 +1768,9 @@ impl<
         if let Some(route) = source_route {
             builder = builder.source_route(route);
         }
+        if trace_route {
+            builder = builder.trace_signal();
+        }
         for region in regions {
             builder = builder.region_code(*region);
         }
@@ -1863,15 +1899,15 @@ impl<
         if let Some(hops) = effective_flood_hops {
             builder = builder.flood_hops(hops);
         }
-        if repeatable
+        let traced = repeatable
             && (options.trace_route
                 || self.needs_route_discovery(
                     peer_id,
                     effective_source_route.as_ref(),
                     effective_flood_hops,
                     options.ack_requested,
-                ))
-        {
+                ));
+        if traced {
             builder = builder.trace_route();
         }
         if let Some(route) = effective_source_route.as_ref() {
@@ -1880,7 +1916,10 @@ impl<
         if let Some(callsign) = self.operating_policy.operator_callsign {
             builder = builder.option(OptionNumber::OperatorCallsign, callsign.as_trimmed_slice());
         }
-        if options.trace_signal && repeatable {
+        // A trace route goes out with its trace signal: a returned route is
+        // weighed by what each hop measured, and the hints alone say only
+        // which hops there were.
+        if repeatable && (options.trace_signal || traced) {
             builder = builder.trace_signal();
         }
         if let Some(region_code) = options.region_code {
@@ -2039,15 +2078,15 @@ impl<
         if let Some(hops) = effective_flood_hops {
             builder = builder.flood_hops(hops);
         }
-        if repeatable
+        let traced = repeatable
             && (options.trace_route
                 || self.needs_route_discovery(
                     peer_id,
                     effective_source_route.as_ref(),
                     effective_flood_hops,
                     options.ack_requested,
-                ))
-        {
+                ));
+        if traced {
             builder = builder.trace_route();
         }
         if let Some(route) = effective_source_route.as_ref() {
@@ -2056,7 +2095,10 @@ impl<
         if let Some(callsign) = self.operating_policy.operator_callsign {
             builder = builder.option(OptionNumber::OperatorCallsign, callsign.as_trimmed_slice());
         }
-        if options.trace_signal && repeatable {
+        // A trace route goes out with its trace signal: a returned route is
+        // weighed by what each hop measured, and the hints alone say only
+        // which hops there were.
+        if repeatable && (options.trace_signal || traced) {
             builder = builder.trace_signal();
         }
         if let Some(region_code) = options.region_code {
@@ -2822,21 +2864,13 @@ impl<
         if let Some(target_peer) = self.peer_for_ack_trailer(&ack_trailer)
             && let Some((identity_id, receipt)) = self.complete_ack(&target_peer, &ack_trailer)
         {
-            // Preserve a routed path, including a newer replacement, rather
-            // than swapping it for an asymmetric ACK return path. A direct
-            // observation is provisional: the extra flood hop may be what
-            // delivered the exchange. Let the ACK teach a named route instead
-            // of leaving that peer on a one-hop flood indefinitely.
-            if let Some((peer_id, peer)) = self.peer_registry.lookup_by_key(&target_peer) {
-                if peer
-                    .route
-                    .as_ref()
-                    .is_none_or(|route| route.hop_count() == 1)
-                {
-                    self.learn_route_for_peer(peer_id, &buf[..frame_len], header, rx);
-                } else if rx.buffered.is_none() {
-                    self.peer_registry.touch(peer_id, self.clock.now_ms());
-                }
+            self.remember_completed_ack(ack_trailer, target_peer);
+            // The path the ack came back by is evidence like any other
+            // frame's. Scoring is what keeps an asymmetric return path from
+            // displacing a better route, helped by the confirmation the
+            // completion just credited to the route the send went out on.
+            if let Some((peer_id, _)) = self.peer_registry.lookup_by_key(&target_peer) {
+                self.learn_route_for_peer(peer_id, &buf[..frame_len], header, rx);
             }
             on_event(
                 identity_id,
@@ -2846,6 +2880,14 @@ impl<
                 },
             );
             return true;
+        }
+        // A later copy of an ack that already completed its send—the copy
+        // overheard before its source route ran out often arrives first.
+        // It completes nothing, but the path it came by still counts.
+        if let Some(peer) = self.recent_ack_peer(&ack_trailer)
+            && let Some((peer_id, _)) = self.peer_registry.lookup_by_key(&peer)
+        {
+            self.learn_route_for_peer(peer_id, &buf[..frame_len], header, rx);
         }
         forwarding_confirmed || self.maybe_forward_received(&buf[..frame_len], header, rx, false)
     }
@@ -2970,7 +3012,17 @@ impl<
                             continue;
                         }
                     }
-                    Some(ReplayVerdict::Replay) | None => continue,
+                    Some(ReplayVerdict::Replay) => {
+                        // A later copy of a frame already taken. It carries
+                        // the path it came by, which may be better than the
+                        // first copy's—and the first may have been
+                        // overheard before its source route ran out.
+                        if self.is_fresh_duplicate(local_id, peer_id, header, &buf[..frame_len]) {
+                            self.learn_route_for_peer(peer_id, &buf[..frame_len], header, rx);
+                        }
+                        continue;
+                    }
+                    None => continue,
                 }
                 self.learn_route_for_peer(peer_id, &buf[..frame_len], header, rx);
 
@@ -3263,7 +3315,25 @@ impl<
                                     continue;
                                 }
                             }
-                            Some(ReplayVerdict::Replay) | None => continue,
+                            Some(ReplayVerdict::Replay) => {
+                                // As on the unicast path: a later copy still
+                                // carries the path it came by.
+                                if self.is_fresh_duplicate(
+                                    local_id,
+                                    peer_id,
+                                    header,
+                                    &buf[..frame_len],
+                                ) {
+                                    self.learn_route_for_peer(
+                                        peer_id,
+                                        &buf[..frame_len],
+                                        header,
+                                        rx,
+                                    );
+                                }
+                                continue;
+                            }
+                            None => continue,
                         }
                         self.learn_route_for_peer(peer_id, &buf[..frame_len], header, rx);
 
@@ -3376,6 +3446,7 @@ impl<
         peer: &PublicKey,
         ack_trailer: &[u8; 8],
     ) -> Option<(LocalIdentityId, SendReceipt)> {
+        let now_ms = self.clock.now_ms();
         for (index, slot) in self.identities.iter_mut().enumerate() {
             let Some(slot) = slot.as_mut() else {
                 continue;
@@ -3391,7 +3462,7 @@ impl<
             if let Some(receipt) = receipt {
                 if let Some(pending) = slot.pending_acks.remove(&receipt) {
                     self.peer_registry
-                        .confirm_route(peer, pending.cached_route_revision);
+                        .confirm_route(peer, pending.cached_route_revision, now_ms);
                 }
                 let identity_id = LocalIdentityId(index as u8);
                 // A retransmission may already be queued behind this ack.
@@ -4845,69 +4916,227 @@ impl<
         let Ok(options) = ParsedOptions::extract(frame, header.options_range.clone()) else {
             return;
         };
-
-        // An overheard early copy has not traversed its selected path yet.
-        // Its empty or partial trace must not poison the return-route cache.
-        if options
-            .source_route
-            .as_ref()
-            .is_some_and(|range| !range.is_empty())
-        {
-            return;
+        if let Some(offer) = self.route_offer(peer_id, frame, header, &options, rx, now_ms) {
+            self.peer_registry.offer_route(peer_id, offer, now_ms);
         }
+    }
 
-        if let Some(trace_range) = options.trace_route {
-            if let Some(route) = self.source_route_from_trace(frame.get(trace_range).unwrap_or(&[]))
-            {
-                // A trace route that accumulated no hints means the packet
-                // reached us without passing through a repeater. That is a
-                // direct neighbour, not a zero-hop source route—caching it
-                // as a route would attach an empty SourceRoute option to
-                // everything we send back. Only a repeater consuming the
-                // final hint may leave an empty option behind, for
-                // provenance; an originator must never add one.
-                let learned = if route.is_empty() {
-                    crate::CachedRoute::Direct
-                } else {
-                    crate::CachedRoute::Source(route)
-                };
-                self.peer_registry.observe_route(peer_id, learned, now_ms);
-                return;
-            }
-        }
-
-        // A source-routed packet—including one whose hints are all consumed,
-        // since the emptied option is preserved for provenance—spends flood
-        // budget only after the route runs out. Its `FHOPS_ACC` therefore
-        // counts the tail of the path, not its length, and would understate
-        // how far away the peer is. Leave whatever route is already cached
-        // (that route is what carried this packet here) rather than replacing
-        // it with a distance estimate that is known to be short.
-        if options.source_route.is_some() {
-            return;
-        }
-
-        let Some(flood_hops) = header.flood_hops else {
-            // No flood budget and no source route: nothing on this frame gave
-            // any repeater permission to carry it, so the only way it reached
-            // us is off the sender's own transmitter. That is the same
-            // evidence an empty trace route carries, read off the frame's
-            // shape instead of out of an option—which is why a frame like
-            // this is not worth spending a trace route on.
-            self.peer_registry
-                .observe_route(peer_id, crate::CachedRoute::Direct, now_ms);
-            return;
+    /// The route back to `peer_id` that one received frame offers, scored
+    /// on what the frame measured along it.
+    fn route_offer(
+        &self,
+        peer_id: PeerId,
+        frame: &[u8],
+        header: &PacketHeader,
+        options: &ParsedOptions,
+        rx: &RxInfo,
+        now_ms: u64,
+    ) -> Option<RouteOffer> {
+        let supersedes = options.route_retry;
+        let acknowledgment = header.packet_type() == PacketType::MacAck;
+        // Hints the frame has yet to cross, the next one first. Only a copy
+        // overheard before its source route ran out still holds any.
+        let remaining = match &options.source_route {
+            Some(range) => frame.get(range.clone())?,
+            None => &[],
         };
 
-        let regions = Self::region_codes_from_options(frame, header.options_range.clone());
-        self.peer_registry.observe_route(
-            peer_id,
-            crate::CachedRoute::Flood {
-                flood_hops: flood_hops.accumulated(),
-                regions,
+        let Some(trace_range) = options.trace_route.clone() else {
+            // A source-routed packet—including one whose hints are all
+            // consumed, since the emptied option is preserved for
+            // provenance—spends flood budget only after the route runs out.
+            // Its `FHOPS_ACC` therefore counts the tail of the path, not its
+            // length, and would understate how far away the peer is. With no
+            // trace there is no path to offer either.
+            if options.source_route.is_some() {
+                return None;
+            }
+            return Some(match header.flood_hops {
+                // No flood budget and no source route: nothing on this frame
+                // gave any repeater permission to carry it, so the only way
+                // it reached us is off the sender's own transmitter. That is
+                // the same evidence an empty trace route carries, read off
+                // the frame's shape instead of out of an option—which is why
+                // a frame like this is not worth spending a trace route on.
+                None => RouteOffer {
+                    route: CachedRoute::Direct,
+                    score: Some(path_score([self.first_hop_to_peer(
+                        peer_id,
+                        Self::inbound_hop(rx),
+                        now_ms,
+                    )])),
+                    supersedes,
+                    acknowledgment,
+                },
+                Some(flood_hops) => RouteOffer {
+                    route: CachedRoute::Flood {
+                        flood_hops: flood_hops.accumulated(),
+                        regions: Self::region_codes_from_options(
+                            frame,
+                            header.options_range.clone(),
+                        ),
+                    },
+                    score: None,
+                    supersedes,
+                    acknowledgment,
+                },
+            });
+        };
+
+        let trace = frame.get(trace_range)?;
+        if trace.len() % 2 != 0 || remaining.len() % 2 != 0 {
+            return None;
+        }
+        // The way back is the stretch the frame has yet to cross, nearest
+        // first, then the stretch it crossed, nearest first. A copy
+        // overheard early thereby offers the whole path the sender chose,
+        // never a shortcut through the repeater that happened to be heard:
+        // that repeater being audible here says nothing about whether it
+        // hears us. An empty way back means the packet reached us without
+        // passing through a repeater: a direct neighbor, not a zero-hop
+        // source route, which would attach an empty SourceRoute option to
+        // everything sent back. Only a repeater consuming the final hint
+        // may leave an empty option behind, for provenance.
+        let mut hints: Vec<RouterHint, MAX_SOURCE_ROUTE_HINTS> = Vec::new();
+        for pair in remaining.chunks_exact(2).rev().chain(trace.chunks_exact(2)) {
+            hints.push(RouterHint([pair[0], pair[1]])).ok()?;
+        }
+
+        // The hop into the nearest hint was measured here only if that hint
+        // is the transmitter this copy came from.
+        let first_inbound = if remaining.is_empty() {
+            Self::inbound_hop(rx)
+        } else {
+            Hop::Unmeasured
+        };
+        let first = match hints.first() {
+            Some(hint) => self.first_hop(*hint, first_inbound, now_ms),
+            None => self.first_hop_to_peer(peer_id, first_inbound, now_ms),
+        };
+        // Entry N of the trace signal is how hint N heard the transmitter
+        // before it, which is the hop after hint N on the way back. A list
+        // that does not pair entry for entry with the trace cannot be
+        // attributed, so its hops count as unmeasured.
+        let signal = options
+            .trace_signal
+            .as_ref()
+            .and_then(|range| frame.get(range.clone()))
+            .filter(|signal| signal.len() == trace.len());
+        let traveled = (0..trace.len()).step_by(2).map(|at| match signal {
+            Some(signal) => {
+                Hop::from_trace_entry(TraceSignalEntry::from_bytes([signal[at], signal[at + 1]]))
+            }
+            None => Hop::Unmeasured,
+        });
+        let untraveled = core::iter::repeat_n(Hop::Unmeasured, remaining.len() / 2);
+        let score = path_score(core::iter::once(first).chain(untraveled).chain(traveled));
+
+        Some(RouteOffer {
+            route: if hints.is_empty() {
+                CachedRoute::Direct
+            } else {
+                CachedRoute::Source(hints)
             },
-            now_ms,
-        );
+            score: Some(score),
+            supersedes,
+            acknowledgment,
+        })
+    }
+
+    /// What this reception measured about the hop it arrived on.
+    fn inbound_hop(rx: &RxInfo) -> Hop {
+        match rx.origin {
+            RxOrigin::Air => Hop::Inbound(rx.snr.as_centibels()),
+            RxOrigin::Backhaul => Hop::PointToPoint,
+            RxOrigin::LocalTx => Hop::Unmeasured,
+        }
+    }
+
+    /// The first hop of a path through `hint`, refined by whatever this
+    /// node knows about whether that repeater hears it.
+    fn first_hop(&self, hint: RouterHint, inbound: Hop, now_ms: u64) -> Hop {
+        match self.uplinks.uplink(&hint, now_ms) {
+            Uplink::Heard(Some(entry)) => match entry.snr_centibels() {
+                Some(snr) => Hop::Outbound(snr),
+                None => Hop::PointToPoint,
+            },
+            // Proven to work our way, but not measured that way: the
+            // measurement toward us is the best estimate, undiscounted.
+            Uplink::Heard(None) => match inbound {
+                Hop::Inbound(snr) => Hop::Outbound(snr),
+                other => other,
+            },
+            Uplink::Unheard => match inbound {
+                Hop::Inbound(snr) => Hop::Unheard(Some(snr)),
+                Hop::PointToPoint => Hop::PointToPoint,
+                _ => Hop::Unheard(None),
+            },
+            Uplink::Unknown => inbound,
+        }
+    }
+
+    /// The only hop of a direct path, to the peer itself. A peer that also
+    /// repeats may have shown whether it hears us.
+    fn first_hop_to_peer(&self, peer_id: PeerId, inbound: Hop, now_ms: u64) -> Hop {
+        match self.peer_registry.get(peer_id) {
+            Some(peer) => self.first_hop(peer.public_key.router_hint(), inbound, now_ms),
+            None => inbound,
+        }
+    }
+
+    /// How long after the first copy of a frame a later copy still counts
+    /// as the same transmission making its way through the mesh, rather
+    /// than the frame replayed.
+    ///
+    /// The copies a node hears differ by a hop or two of forwarding, and a
+    /// forwarding-confirmation timeout is sized to one hop's worst case.
+    /// The floor covers radios that report no frame time.
+    fn duplicate_route_window_ms(&self) -> u64 {
+        self.forward_confirm_timeout_ms()
+            .saturating_mul(2)
+            .max(5_000)
+    }
+
+    /// Whether a frame the replay window turned away is a copy of one it
+    /// accepted moments ago—same counter, same MIC—and so still worth
+    /// learning a route from.
+    fn is_fresh_duplicate(
+        &self,
+        local_id: LocalIdentityId,
+        peer_id: PeerId,
+        header: &PacketHeader,
+        frame: &[u8],
+    ) -> bool {
+        let Some((counter, mic)) = Self::replay_metadata(header, frame) else {
+            return false;
+        };
+        let now_ms = self.clock.now_ms();
+        self.identity(local_id)
+            .and_then(|slot| slot.peer_crypto().get(&peer_id))
+            .and_then(|state| state.replay_window.duplicate_age_ms(counter, mic, now_ms))
+            .is_some_and(|age_ms| age_ms <= self.duplicate_route_window_ms())
+    }
+
+    fn remember_completed_ack(&mut self, trailer: [u8; 8], peer: PublicKey) {
+        if self.recent_acks.is_full() {
+            let _ = self.recent_acks.pop_front();
+        }
+        let _ = self.recent_acks.push_back(CompletedAck {
+            trailer,
+            peer,
+            at_ms: self.clock.now_ms(),
+        });
+    }
+
+    /// The peer whose ack carried `trailer`, if that ack completed a send
+    /// moments ago.
+    fn recent_ack_peer(&self, trailer: &[u8; 8]) -> Option<PublicKey> {
+        let now_ms = self.clock.now_ms();
+        let window_ms = self.duplicate_route_window_ms();
+        self.recent_acks
+            .iter()
+            .find(|ack| &ack.trailer == trailer && now_ms.saturating_sub(ack.at_ms) <= window_ms)
+            .map(|ack| ack.peer)
     }
 
     fn region_codes_from_options(
@@ -5686,10 +5915,15 @@ impl<
     /// forward would mostly cover ground already covered. Clean, distant
     /// receptions—the ones that carry the flood outward—go first.
     ///
-    /// The quality scale's floor is raised from the spec's constant to the
-    /// effective minimum-SNR forwarding threshold when one is set: eligibility
-    /// already cut the range off there, and grading receptions against ground
-    /// none of them can occupy would compress every survivor toward "clean".
+    /// The SNR scale is measured up from the spreading factor's demodulation
+    /// floor, since the same reading is a comfortable margin at one spreading
+    /// factor and a failing link at another. A reception below the scale
+    /// waits out the whole window before contending: any repeater that heard
+    /// the frame cleanly forwards first, and this one forwards only if none
+    /// did. The scale's bottom is raised to the effective minimum-SNR
+    /// forwarding threshold when one is set: eligibility already cut the
+    /// range off there, and grading receptions against ground none of them
+    /// can occupy would compress every survivor toward "clean".
     fn sample_flood_contention_delay_ms(&mut self, rx: &RxInfo, options: &ParsedOptions) -> u64 {
         // Contention delay staggers the repeaters that all heard one
         // transmission, weighted so the best-placed one goes first. A
@@ -5698,18 +5932,13 @@ impl<
         if !rx.origin.is_measured() {
             return 0;
         }
-        let effective_threshold_db =
-            Self::effective_min_snr(options, &self.repeater).unwrap_or(i8::MIN);
-        let snr_low_db = self
-            .repeater
-            .flood_contention_snr_low_db
-            .max(effective_threshold_db);
-        let snr_high_db = self
-            .repeater
-            .flood_contention_snr_high_db
-            .max(snr_low_db.saturating_add(1));
-        let snr_low = i32::from(Snr::from_decibels(snr_low_db).as_centibels());
-        let snr_high = i32::from(Snr::from_decibels(snr_high_db).as_centibels());
+        let floor = lora_snr_floor_cb(self.radio.spreading_factor());
+        let effective_threshold = Self::effective_min_snr(options, &self.repeater)
+            .map_or(i32::MIN, |threshold_db| i32::from(threshold_db) * 10);
+        let snr_low = (floor + i32::from(self.repeater.flood_contention_snr_low_margin_db) * 10)
+            .max(effective_threshold);
+        let snr_high = (floor + i32::from(self.repeater.flood_contention_snr_high_margin_db) * 10)
+            .max(snr_low + 10);
         let snr_received = i32::from(rx.snr.as_centibels());
         let quality_den = (snr_high - snr_low) as u64;
         let quality_num = (snr_received - snr_low).clamp(0, snr_high - snr_low) as u64;
@@ -5733,11 +5962,15 @@ impl<
         // span × (1 − quality) and span × signal, each as one integer product.
         let quality_term = span_ms.saturating_mul(quality_den - quality_num) / quality_den;
         let signal_term = span_ms.saturating_mul(signal_num) / signal_den;
-        let window_ms = min_window_ms.saturating_add(quality_term.max(signal_term));
 
         let jitter_ms = t_frame_ms
             .saturating_mul(u64::from(self.repeater.flood_contention_jitter_percent))
             / 100;
+        let window_ms = if snr_received < snr_low {
+            max_window_ms.saturating_add(jitter_ms)
+        } else {
+            min_window_ms.saturating_add(quality_term.max(signal_term))
+        };
         if jitter_ms == 0 {
             window_ms
         } else {
@@ -5989,8 +6222,9 @@ impl<
     ///
     /// The next hop must hear the frame out, wait out its contention window and
     /// jitter, hold back for the destination's immediate ACK, and then transmit:
-    /// `2 × T_frame + W_max + W_jitter + D_ack`, which at the default tuning is
-    /// `2.85 × T_frame` (repeater-operation.md § Forwarding Confirmation).
+    /// `2 × T_frame + W_max + 2 × W_jitter + D_ack`, which at the default
+    /// tuning is `2.95 × T_frame` (repeater-operation.md § Forwarding
+    /// Confirmation).
     fn forward_confirm_timeout_ms(&self) -> u64 {
         let t_frame_ms = u64::from(self.radio.t_frame_ms());
         t_frame_ms
@@ -5999,8 +6233,9 @@ impl<
             .saturating_add(t_frame_ms)
     }
 
-    /// Longest contention delay a forwarding repeater can draw: the deterministic
-    /// window at its maximum plus the whole jitter range.
+    /// Longest contention delay a forwarding repeater can draw: a reception
+    /// below the SNR band waits out the window at its maximum and one jitter
+    /// range, then draws from the jitter range again.
     fn max_forward_contention_delay_ms(&self) -> u64 {
         let t_frame_ms = u64::from(self.radio.t_frame_ms());
         let max_window_ms = t_frame_ms
@@ -6009,7 +6244,7 @@ impl<
         let jitter_ms = t_frame_ms
             .saturating_mul(u64::from(self.repeater.flood_contention_jitter_percent))
             / 100;
-        max_window_ms.saturating_add(jitter_ms)
+        max_window_ms.saturating_add(jitter_ms.saturating_mul(2))
     }
 
     /// Jitter cap for a forwarding-confirmation retry: one frame time, flat
@@ -6166,6 +6401,53 @@ impl<
         crate::forward_id::forwarding_dup_key(frame)
     }
 
+    /// Record what a repeater's forward of a frame this node originated
+    /// says about which repeaters hear us (see [`crate::uplinks`]).
+    fn note_uplinks(&mut self, frame: &[u8]) {
+        let Ok(header) = PacketHeader::parse(frame) else {
+            return;
+        };
+        let Ok(options) = ParsedOptions::extract(frame, header.options_range.clone()) else {
+            return;
+        };
+        let Some(trace) = options
+            .trace_route
+            .as_ref()
+            .and_then(|range| frame.get(range.clone()))
+        else {
+            return;
+        };
+        if trace.len() < 2 || trace.len() % 2 != 0 {
+            return;
+        }
+        let signal = options
+            .trace_signal
+            .as_ref()
+            .and_then(|range| frame.get(range.clone()))
+            .filter(|signal| signal.len() == trace.len());
+        let now_ms = self.clock.now_ms();
+        // The trace is prepended to, so the repeater that took the frame
+        // off our transmission is the last hint, and its entry is how well
+        // it heard us.
+        let first = trace.len() - 2;
+        self.uplinks.note_heard(
+            RouterHint([trace[first], trace[first + 1]]),
+            signal.map(|signal| TraceSignalEntry::from_bytes([signal[first], signal[first + 1]])),
+            now_ms,
+        );
+        // Only a flood says anything about the rest. A flood repeater
+        // forwards the first copy it accepts, and ours went out first, so a
+        // repeater that forwarded someone else's copy did not take ours. A
+        // hop named in a source route forwards when its turn comes whether
+        // or not it heard us.
+        if options.source_route.is_none() {
+            for pair in trace[..first].chunks_exact(2) {
+                self.uplinks
+                    .note_unheard(RouterHint([pair[0], pair[1]]), now_ms);
+            }
+        }
+    }
+
     /// Check if a received frame confirms forwarding of a pending send.
     ///
     /// Confirmation is not tied to the post-transmit listen window. That
@@ -6196,24 +6478,31 @@ impl<
             self.post_tx_listen = None;
         }
 
+        let mut ours = false;
         let mut found = None;
         'search: for (index, slot) in self.identities.iter().enumerate() {
             let Some(slot) = slot.as_ref() else {
                 continue;
             };
             for (receipt, pending) in slot.pending_acks.iter() {
+                if pending.confirm_key.as_ref() != Some(&received_key) {
+                    continue;
+                }
+                ours = true;
                 if !matches!(
                     pending.state,
                     crate::AckState::AwaitingForward { .. } | crate::AckState::RetryQueued
                 ) {
                     continue;
                 }
-                if pending.confirm_key.as_ref() != Some(&received_key) {
-                    continue;
-                }
                 found = Some((LocalIdentityId(index as u8), *receipt, pending.completion));
                 break 'search;
             }
+        }
+        // Every forward of our own frame says something about which
+        // repeaters hear us, the first one and the ones after it alike.
+        if ours {
+            self.note_uplinks(frame);
         }
         let (identity_id, receipt, completion) = found?;
 

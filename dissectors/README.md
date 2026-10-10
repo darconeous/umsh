@@ -320,8 +320,8 @@ and pairs it with the token.
 
 All twelve options in the spec's Defined Options table are decoded. Trace
 Route and Source Route break out their router hints per hop; Trace Signal
-breaks out the RSSI and SNR each repeater recorded; Region Code and the two
-callsign options are ARNCE-decoded.
+breaks out the RSSI and SNR each repeater recorded, and labels a zero entry
+as a bridged hop; Region Code and the two callsign options are ARNCE-decoded.
 
 An Ack MIC option (8) is a MAC ack piggy-backed onto a reply instead of sent
 as its own packet, so it is resolved to the frame it acknowledges the same

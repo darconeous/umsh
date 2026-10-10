@@ -5112,6 +5112,25 @@ fn send_unicast_uses_cached_source_route_when_present() {
 ///
 /// Zero slack is not `Some(0)`: a field granting no forward says nothing a
 /// missing field does not, so the send leaves it off.
+/// A trace route's value: the hints, nearest first.
+fn encode_trace(trace: &[RouterHint]) -> ([u8; 30], usize) {
+    let mut encoded = [0u8; 30];
+    for (at, hint) in trace.iter().enumerate() {
+        encoded[2 * at..2 * at + 2].copy_from_slice(&hint.0);
+    }
+    (encoded, 2 * trace.len())
+}
+
+/// A trace signal's value for SNR readings in centibels, nearest first. The
+/// RSSI in each entry is an arbitrary reading; route scoring ignores it.
+fn encode_trace_signal(snr_centibels: &[i16]) -> ([u8; 30], usize) {
+    let mut encoded = [0u8; 30];
+    for (at, snr) in snr_centibels.iter().enumerate() {
+        encoded[2 * at..2 * at + 2].copy_from_slice(&TraceSignalEntry::new(-100, *snr).as_bytes());
+    }
+    (encoded, 2 * snr_centibels.len())
+}
+
 const ESTABLISHED_ROUTE_SLACK_FIELD: Option<u8> = if ESTABLISHED_ROUTE_EXTRA_FLOOD_HOPS > 0 {
     Some(ESTABLISHED_ROUTE_EXTRA_FLOOD_HOPS)
 } else {
@@ -5930,7 +5949,7 @@ fn repeater_forwards_a_backhauled_frame_without_inventing_measurements() {
         .expect("the hop still owes the trace an entry");
     assert_eq!(
         &forwarded.frame[signal][..2],
-        &TraceSignalEntry::UNMEASURED.as_bytes(),
+        &TraceSignalEntry::POINT_TO_POINT.as_bytes(),
         "a wired hop must not publish a reading it never took"
     );
 }
@@ -6024,8 +6043,14 @@ fn repeater_forwards_an_identical_reack_once_the_ack_entry_ages_out() {
 /// Queue a flooded beacon at a chosen signal level and report the contention
 /// delay the repeater scheduled it with, relative to the clock.
 fn flood_contention_delay_at(rssi_dbm: i16, snr: Snr) -> u64 {
+    flood_contention_delay_at_sf(None, rssi_dbm, snr)
+}
+
+/// [`flood_contention_delay_at`] on a radio reporting spreading factor `sf`.
+fn flood_contention_delay_at_sf(sf: Option<u8>, rssi_dbm: i16, snr: Snr) -> u64 {
     let mut mac = make_mac();
     mac.repeater_config_mut().enabled = true;
+    mac.radio_mut().spreading_factor = sf;
     mac.radio_mut().rx_rssi = rssi_dbm;
     mac.radio_mut().rx_snr = snr;
     let _repeater_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
@@ -6062,12 +6087,15 @@ fn flood_contention_makes_a_loud_reception_wait_longer_than_a_faint_one() {
     );
 }
 
-/// Either term alone can push the window to its maximum: a reception that is
-/// barely demodulable waits as long as one that arrives on top of the sender.
+/// Either term alone can push the window to its maximum: a reception at the
+/// bottom of the SNR band waits as long as one that arrives on top of the
+/// sender.
 #[test]
 fn flood_contention_saturates_at_either_extreme() {
-    // T_frame is 100 ms, so W_max is 50 ms and the jitter spans 10 ms.
-    let noisy_and_faint = flood_contention_delay_at(-120, Snr::from_decibels(-20));
+    // T_frame is 100 ms, so W_max is 50 ms and the jitter spans 10 ms. With
+    // no spreading factor reported the band is graded as SF10's: its floor
+    // is -15 dB, so the band runs from -9 dB to +3 dB.
+    let noisy_and_faint = flood_contention_delay_at(-120, Snr::from_decibels(-9));
     let clean_and_loud = flood_contention_delay_at(-20, Snr::from_decibels(20));
 
     for delay in [noisy_and_faint, clean_and_loud] {
@@ -6076,6 +6104,44 @@ fn flood_contention_saturates_at_either_extreme() {
             "{delay} ms should sit at W_max plus jitter"
         );
     }
+}
+
+/// A reception below the SNR band barely made it, so it must not tie with
+/// one that is merely too close to the sender: it waits out the whole window
+/// and the jitter range, forwarding only if no better-placed repeater did.
+#[test]
+fn flood_contention_holds_a_reception_below_the_band_past_the_window() {
+    let below_band = flood_contention_delay_at(-120, Snr::from_decibels(-10));
+    assert!(
+        (60..=70).contains(&below_band),
+        "{below_band} ms should sit past W_max plus jitter"
+    );
+}
+
+/// The same SNR is a comfortable margin at one spreading factor and a
+/// failing link at another, so the band is measured from the floor of the
+/// spreading factor in use.
+#[test]
+fn flood_contention_grades_snr_against_the_spreading_factor_floor() {
+    let faint = -110;
+    let snr = Snr::from_decibels(-10);
+    // SF12's floor is -20 dB: -10 dB sits a third of the way up the band.
+    let sf12 = flood_contention_delay_at_sf(Some(12), faint, snr);
+    // SF7's floor is -7.5 dB: -10 dB is below it.
+    let sf7 = flood_contention_delay_at_sf(Some(7), faint, snr);
+    assert!(
+        (33..=44).contains(&sf12),
+        "{sf12} ms should be two thirds of W_max plus jitter"
+    );
+    assert!(
+        (60..=70).contains(&sf7),
+        "{sf7} ms should sit past W_max plus jitter"
+    );
+    assert_eq!(
+        flood_contention_delay_at_sf(Some(10), faint, snr),
+        flood_contention_delay_at_sf(None, faint, snr),
+        "a radio that reports nothing is graded as SF10"
+    );
 }
 
 /// With both window bounds collapsed the delay is jitter and nothing else,
@@ -9036,10 +9102,10 @@ fn forwarded_ack_window_grows_with_the_hops_the_ack_must_cross() {
         far > near,
         "a four-hop flood ({far} ms) should be given longer than a one-hop one ({near} ms)"
     );
-    // T_frame is 100 ms: the ladder is 2.85 + 3 × 3.85 = 14.4 frame times and
-    // each further hop of round trip costs 2 × 1.85.
-    assert_eq!(near, 1_440 + 2 * 185);
-    assert_eq!(far, 1_440 + 8 * 185);
+    // T_frame is 100 ms: the ladder is 2.95 + 3 × 3.95 = 14.8 frame times and
+    // each further hop of round trip costs 2 × 1.95.
+    assert_eq!(near, 1_480 + 2 * 195);
+    assert_eq!(far, 1_480 + 8 * 195);
 }
 
 /// A route retry waits out a backoff in the transmit queue. The sweep that
@@ -10896,6 +10962,8 @@ struct DummyRadio {
     rx_origin: RxOrigin,
     /// Buffered-delivery metadata attached to every received frame.
     rx_buffered: Option<RxBuffered>,
+    /// The spreading factor the radio reports, if any.
+    spreading_factor: Option<u8>,
 }
 
 impl DummyRadio {
@@ -10975,6 +11043,60 @@ impl DummyRadio {
             stored.push(*byte).unwrap();
         }
         self.received.push_back(stored).unwrap();
+    }
+
+    /// A MAC ack as it arrives after crossing `trace` repeaters, each having
+    /// prepended its hint and the SNR, in centibels, it heard the
+    /// transmitter before it at.
+    fn queue_received_mac_ack_with_signal(
+        &mut self,
+        ack_trailer: [u8; 8],
+        trace: &[RouterHint],
+        snr_centibels: &[i16],
+    ) {
+        let (hints, hints_len) = encode_trace(trace);
+        let (signal, signal_len) = encode_trace_signal(snr_centibels);
+        let mut buf = [0u8; 256];
+        let frame = PacketBuilder::new(&mut buf)
+            .mac_ack(ack_trailer)
+            .option(OptionNumber::TraceRoute, &hints[..hints_len])
+            .option(OptionNumber::TraceSignal, &signal[..signal_len])
+            .build()
+            .unwrap();
+        self.queue_received_frame(frame);
+    }
+
+    /// A flooded unicast as it arrives after crossing `trace` repeaters,
+    /// each having prepended its hint and the SNR, in centibels, it heard
+    /// the transmitter before it at. Copies of one transmission share a
+    /// frame counter.
+    fn queue_received_traced_unicast(
+        &mut self,
+        source: &DummyIdentity,
+        keys: &PairwiseKeys,
+        dst: &umsh_core::NodeHint,
+        frame_counter: u32,
+        trace: &[RouterHint],
+        snr_centibels: &[i16],
+    ) {
+        let (hints, hints_len) = encode_trace(trace);
+        let (signal, signal_len) = encode_trace_signal(snr_centibels);
+        let mut buf = [0u8; 256];
+        let mut packet = PacketBuilder::new(&mut buf)
+            .unicast(*dst)
+            .source_full(source.public_key())
+            .frame_counter(frame_counter)
+            .encrypted()
+            .flood_hops(2)
+            .option(OptionNumber::TraceRoute, &hints[..hints_len])
+            .option(OptionNumber::TraceSignal, &signal[..signal_len])
+            .payload(b"reply")
+            .build()
+            .unwrap();
+        CryptoEngine::new(DummyAes, DummySha)
+            .seal_packet(&mut packet, keys)
+            .unwrap();
+        self.queue_received_frame(packet.as_bytes());
     }
 
     fn queue_received_unicast(
@@ -11351,6 +11473,9 @@ impl Radio for DummyRadio {
     }
     fn t_frame_ms(&self) -> u32 {
         100
+    }
+    fn spreading_factor(&self) -> Option<u8> {
+        self.spreading_factor
     }
 }
 

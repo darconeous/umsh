@@ -199,6 +199,17 @@ pub trait Radio {
     fn max_frame_size(&self) -> usize;
     /// Return the approximate airtime for a maximum-length frame.
     fn t_frame_ms(&self) -> u32;
+
+    /// The LoRa spreading factor this radio is currently receiving with,
+    /// when it knows.
+    ///
+    /// The spreading factor alone sets the SNR a LoRa receiver can
+    /// demodulate down to, so it is what turns a measured SNR into a
+    /// margin. A radio that is not LoRa, or that does not know how its
+    /// far end is configured, reports `None`.
+    fn spreading_factor(&self) -> Option<u8> {
+        None
+    }
 }
 
 /// Monotonic millisecond clock.

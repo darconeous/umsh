@@ -88,6 +88,10 @@ impl<R: Radio, C: Clock> Radio for DutyGatedRadio<R, C> {
     fn t_frame_ms(&self) -> u32 {
         self.inner.t_frame_ms()
     }
+
+    fn spreading_factor(&self) -> Option<u8> {
+        self.inner.spreading_factor()
+    }
 }
 
 #[cfg(test)]
