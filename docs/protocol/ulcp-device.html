@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-e3fe62b3.js";
+            window.path_to_searchindex_js = "searchindex-6c34194f.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-8b6941ec.js"></script>
+        <script src="toc-e4cb2f86.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -230,6 +230,8 @@ private key and every pairwise key must be provisioned explicitly (see
 <tr><td>46</td><td><code>CAP_ADVERT</code></td><td><code>CAP_DEV_IDENTITY</code></td><td>Announcing itself: on a schedule of its own (<code>PROP_ADVERT_INTERVAL</code>, <code>PROP_BEACON_INTERVAL</code>, <code>PROP_STARTUP_BEACON</code>) and on demand (<code>CMD_ANNOUNCE</code>)</td></tr>
 <tr><td>47</td><td><code>CAP_ILLUMINANCE</code></td><td>—</td><td>An ambient light sensor and <code>PROP_ILLUMINANCE</code></td></tr>
 <tr><td>59</td><td><code>CAP_DISPLAY_MOTION_WAKE</code></td><td>—</td><td>Orientation-qualified display wake and <code>PROP_DISPLAY_MOTION_WAKE_ENABLED</code></td></tr>
+<tr><td>61</td><td><code>CAP_TEMPERATURE</code></td><td>—</td><td><code>PROP_TEMPERATURES</code> and <code>PROP_TEMPERATURE_NAMES</code>; the inventory may initially be empty</td></tr>
+<tr><td>62</td><td><code>CAP_MESHCORE_FORWARDER</code></td><td><code>CAP_REPEATER</code></td><td><a href="#meshcore-forwarding">MeshCore forwarding</a>: <code>PROP_MESHCORE_FORWARDING_ENABLED</code>, <code>PROP_MESHCORE_REGION_POLICY</code>, <code>PROP_MESHCORE_REGIONS</code>; with <code>CAP_STATS</code>, the <a href="ulcp-radio.html#prop-stat-meshcore-seen">MeshCore counters</a></td></tr>
 </tbody>
 </table>
 </div>
@@ -331,7 +333,7 @@ advertised node identity settings, 79 is the locate alert, 80–87 are what
 the device announces about itself—80–82 the advertisement schedule,
 83–84 the advertised position, 85–87 reserved—88–93 are positioning (88
 the receiver switch, 89–93 the fix telemetry), and 94–95 are
-environmental sensing: 94 illuminance, 95 reserved.</p>
+environmental sensing: 94 illuminance, 95 temperatures.</p>
 <p>The advertised position at 83–84 and the fix telemetry at 89–90 are
 deliberately separate properties. The fix is what the receiver currently
 sees; the advertised position is what the identity claims, which a device
@@ -390,11 +392,16 @@ device range, alongside the wall clock at 4866–4867.</p>
 <tr><td>92</td><td><code>PROP_GNSS_PRECISION</code></td><td>Get</td><td>Estimated horizontal accuracy of the last fix</td></tr>
 <tr><td>93</td><td><code>PROP_GNSS_SATELLITES</code></td><td>Get</td><td>Satellites used, and optionally in view</td></tr>
 <tr><td>94</td><td><code>PROP_ILLUMINANCE</code></td><td>Get</td><td>Ambient illuminance in millilux</td></tr>
+<tr><td>95</td><td><code>PROP_TEMPERATURES</code></td><td>Get</td><td>Ordered temperature readings in tenths of kelvin</td></tr>
+<tr><td>4876</td><td><code>PROP_TEMPERATURE_NAMES</code></td><td>Get</td><td>Ordered temperature sensor names</td></tr>
 <tr><td>4866</td><td><code>PROP_TIME</code></td><td>Get, Set, Is</td><td>Wall clock, or empty when unknown</td></tr>
 <tr><td>4867</td><td><code>PROP_TZ_OFFSET</code></td><td>Get, Set</td><td>Local time-zone offset from UTC</td></tr>
 <tr><td>4868</td><td><code>PROP_GNSS_IDENT_UPDATE</code></td><td>Get, Set</td><td>Whether fixes update the advertised node identity</td></tr>
 <tr><td>4869</td><td><code>PROP_GNSS_IDENT_PRECISION</code></td><td>Get, Set</td><td>Precision the advertised location is clamped to</td></tr>
 <tr><td>4870</td><td><code>PROP_GNSS_TIME_TRUST</code></td><td>Get, Set</td><td>Whether receiver-derived time may set the clock</td></tr>
+<tr><td>4976</td><td><code>PROP_MESHCORE_FORWARDING_ENABLED</code></td><td>Get, Set</td><td>MeshCore forwarding enable</td></tr>
+<tr><td>4977</td><td><code>PROP_MESHCORE_REGION_POLICY</code></td><td>Get, Set</td><td>How MeshCore transport codes gate flood forwarding</td></tr>
+<tr><td>4978</td><td><code>PROP_MESHCORE_REGIONS</code></td><td>Get, Set, Insert, Remove</td><td>MeshCore region names the device forwards scoped floods for</td></tr>
 </tbody>
 </table>
 </div>
@@ -836,10 +843,10 @@ their gauge, and report failure if they cannot obtain a usable result.</p>
 Read-only design capacity may be configured or learned inside the gauge; it
 must not be confused with a writable ULCP setting. Battery values are excluded
 from saved state, and save/restore does not roll telemetry back.</p>
-<p>Node Management retransmissions retain the existing at-most-once semantics:
-retrying an exchange returns its retained response, rather than taking a new
-sample. A new monitoring poll is a new exchange with a new token. Any cursor
-continuations read the retained response from that same acquisition.</p>
+<p>Over <a href="app-node-management.html#at-most-once">Node Management</a>, a retransmitted
+battery read is executed again like any other read, and takes a new sample. A
+read too large for one payload is still one acquisition: its continuations are
+cut from the retained response.</p>
 <h4 id="raw-gauge-formats-and-the-pager-mapping"><a class="header" href="#raw-gauge-formats-and-the-pager-mapping">Raw gauge formats and the Pager mapping</a></h4>
 <p>Format <code>1</code> is allocated to the TI BQ27220: <code>GAUGE_STATUS</code> contains
 BatteryStatus (<code>0x0A</code>) and <code>GAUGE_OPERATION_STATUS</code> contains OperationStatus
@@ -1068,11 +1075,14 @@ and the master switch for the repeater policy in
 <code>PROP_MAC_REPEATER_MIN_RSSI</code>, and <code>PROP_MAC_REPEATER_MIN_SNR</code>, which are
 configurable while forwarding is disabled and take effect when it is
 enabled. When true, the <strong>device identity</strong> acts as an
-autonomous mesh repeater: its on-board node forwards overheard routable
-frames according to <a href="repeater-operation.html">Repeater Operation</a>, and it
-sets the repeater capability bit in its <a href="node-identity.html">node
-identity</a>. When false, the device identity does not
-forward and the bit is clear.</p>
+autonomous mesh repeater: its on-board node forwards the routable UMSH
+frames it receives—off the air, from a <a href="lan-bearer.html">LAN bearer</a>, or over
+<a href="ulcp-host.html#prop-mac-backhaul">backhaul</a>—according to <a href="repeater-operation.html">Repeater
+Operation</a> and <a href="lan-bearer.html#forwarding-across-bearers">Forwarding Across
+Bearers</a>, and it sets the repeater
+capability bit in its <a href="node-identity.html">node identity</a>. When false, the
+device identity forwards nothing on any medium—it sends only its own traffic
+and its attached host’s—and the bit is clear.</p>
 <p>The capability bit is a statement of fact and <strong>MUST</strong> track the live
 forwarding state. The advertised <em>role</em> is a separate matter: it is
 configuration, set through <a href="ulcp-device.html#prop-ident-role"><code>PROP_IDENT_ROLE</code></a>,
@@ -1228,8 +1238,9 @@ procedure</a>: where the packet
 also carries a minimum, the higher of the two applies. Raising it trades
 reach for a quieter mesh, which is what a dense deployment wants from a
 repeater sitting at the edge of everyone’s range.</p>
-<p>Applies to flood forwarding only. Source-routed packets are forwarded on
-the strength of the route, not the link.</p>
+<p>Applies to flood forwarding only, <a href="#meshcore-forwarding">MeshCore floods</a>
+included. Source-routed packets are forwarded on the strength of the
+route, not the link.</p>
 <h3 id="prop-mac-repeater-min-snr"><a class="header" href="#prop-mac-repeater-min-snr">PROP 77: <code>PROP_MAC_REPEATER_MIN_SNR</code></a></h3>
 <ul>
 <li>Type: Single-Value, Read-Write</li>
@@ -1246,7 +1257,93 @@ procedure</a>, combined with any
 packet-imposed minimum the same way <code>PROP_MAC_REPEATER_MIN_RSSI</code> is. On
 spreading factors that decode well below the noise floor, this is the
 more meaningful of the two thresholds.</p>
-<p>Applies to flood forwarding only.</p>
+<p>Applies to flood forwarding only, <a href="#meshcore-forwarding">MeshCore floods</a>
+included.</p>
+<h3 id="meshcore-forwarding"><a class="header" href="#meshcore-forwarding">MeshCore forwarding</a></h3>
+<p>A device with <code>CAP_MESHCORE_FORWARDER</code> also forwards MeshCore v1 packets,
+interoperating with MeshCore repeaters and companions as a MeshCore
+repeater would, with MeshCore repeater firmware v1.17.1 as the
+compatibility baseline. The two protocols share the radio, the duty
+ledger, and the link-quality thresholds; their packets are told apart by
+the version bits of the first octet, so neither is mistaken for the
+other.</p>
+<p>The MeshCore forwarder runs only while all of these hold:</p>
+<pre><code class="language-text">PHY enabled AND MESHCORE_FORWARDING_ENABLED
+            AND running identity prefix not reserved
+</code></pre>
+<p><code>PROP_MAC_REPEATER_ENABLED</code> governs UMSH forwarding alone; a device may
+forward either protocol without the other.</p>
+<p>The forwarder takes its path entries from the public key of the device
+identity it was brought up under; it signs and originates nothing. A
+MeshCore node never runs under a key whose first octet is <code>0x00</code> or
+<code>0xFF</code>, so a device whose running identity has such a key does not
+forward MeshCore traffic, whatever its settings. A client can apply the
+same test to <a href="#prop-dev-key"><code>PROP_DEV_KEY</code></a>.</p>
+<p>Whenever the gate is false, the forwarder discards everything it had
+seen and queued.</p>
+<p>MeshCore regions are configured in <code>PROP_MESHCORE_REGIONS</code>.
+<code>PROP_MAC_REPEATER_REGIONS</code> and <code>PROP_MAC_REPEATER_DEFAULT_REGION</code> apply to
+UMSH only.</p>
+<h4 id="prop-meshcore-forwarding-enabled"><a class="header" href="#prop-meshcore-forwarding-enabled">PROP 4976: <code>PROP_MESHCORE_FORWARDING_ENABLED</code></a></h4>
+<ul>
+<li>Type: Single-Value, Read-Write</li>
+<li>Asynchronous Updates: No</li>
+<li>Required: <code>CAP_MESHCORE_FORWARDER</code></li>
+<li>Value Type: BOOL</li>
+<li>Post-Reset Value: False, or restored from saved state</li>
+</ul>
+<p>Whether the device forwards MeshCore traffic. Independent of
+<code>PROP_MAC_REPEATER_ENABLED</code>.</p>
+<p>Changing it from false to true <strong>MUST</strong> fail with <code>STATUS_INVALID_STATE</code>
+while the first octet of <code>PROP_DEV_KEY</code> is <code>0x00</code> or <code>0xFF</code>. Replacing the
+device identity leaves the value unchanged, and a write that leaves it
+unchanged succeeds.</p>
+<h4 id="prop-meshcore-region-policy"><a class="header" href="#prop-meshcore-region-policy">PROP 4977: <code>PROP_MESHCORE_REGION_POLICY</code></a></h4>
+<ul>
+<li>Type: Single-Value, Read-Write</li>
+<li>Asynchronous Updates: No</li>
+<li>Required: <code>CAP_MESHCORE_FORWARDER</code></li>
+<li>Value Type: UINT8</li>
+<li>Post-Reset Value: 0, or restored from saved state</li>
+</ul>
+<p>How MeshCore transport codes gate flood forwarding. A scoped flood
+matches when its first transport code is the one a region in
+<code>PROP_MESHCORE_REGIONS</code> gives it.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Value</th><th>Policy</th><th>Forwarded floods</th></tr>
+</thead>
+<tbody>
+<tr><td>0</td><td>Open</td><td>Unscoped floods, and scoped floods that match</td></tr>
+<tr><td>1</td><td>Scoped only</td><td>Scoped floods that match</td></tr>
+<tr><td>2</td><td>Ignore</td><td>Every flood, whatever its scope</td></tr>
+</tbody>
+</table>
+</div>
+<p>A device <strong>MUST</strong> reject any other value with <code>STATUS_INVALID_ARGUMENT</code>.
+Direct traffic is never gated by region.</p>
+<h4 id="prop-meshcore-regions"><a class="header" href="#prop-meshcore-regions">PROP 4978: <code>PROP_MESHCORE_REGIONS</code></a></h4>
+<ul>
+<li>Type: Multiple-Value, Read-Write</li>
+<li>Has Item Length Prefix: Yes</li>
+<li>Asynchronous Updates: No</li>
+<li>Required: <code>CAP_MESHCORE_FORWARDER</code></li>
+<li>Item Form: 1–30 octets of UTF-8 (a MeshCore region name without its <code>#</code>)</li>
+<li>Remove Selector: the region name</li>
+<li>Post-Reset Value: Empty, or restored from saved state</li>
+</ul>
+<p>The MeshCore public regions whose scoped floods the device forwards. Each
+region’s transport key is the first 16 octets of SHA-256 over <code>#</code> followed
+by the item, as MeshCore derives a hashtag region’s key. The derivation is
+case-sensitive, so items compare octet for octet: <code>us-ca</code> and <code>US-CA</code> are
+two regions. An insert identical to a held item reports <code>STATUS_ALREADY</code>,
+and the remove selector matches the same way.</p>
+<p>A device <strong>MUST</strong> reject an item that is empty, longer than 30 octets, not
+UTF-8, or begins with <code>#</code> or <code>$</code> with <code>STATUS_INVALID_ARGUMENT</code>, and <strong>MAY</strong>
+reject a write that exceeds the number of entries it can hold. A name
+beginning with <code>$</code> is a MeshCore private region, whose key does not derive
+from its name.</p>
 <h3 id="prop-dev-discoverable"><a class="header" href="#prop-dev-discoverable">PROP 78: <code>PROP_DEV_DISCOVERABLE</code></a></h3>
 <ul>
 <li>Type: Single-Value, Read-Write</li>
@@ -1402,7 +1499,7 @@ as described for <a href="#prop-advert-interval"><code>PROP_ADVERT_INTERVAL</cod
 <li>Post-Reset Value: 1 (true), or restored from saved state</li>
 </ul>
 <p>Whether the device emits one beacon once it has come up. On by default:
-a node that has just restarted is exactly the node whose neighbours hold
+a node that has just restarted is exactly the node whose neighbors hold
 the stalest paths to it, and a single empty broadcast is the cheapest
 correction available.</p>
 <p>The beacon is emitted after the device’s own configuration has been
@@ -1659,6 +1756,71 @@ has learned what it needed to.</p>
 extrapolation past the point where it stopped responding to light. The
 alternative—a number derived from a transfer function outside the range
 it was fitted in—is indistinguishable at the host from a real reading.</p>
+<h3 id="temperature-sensors"><a class="header" href="#temperature-sensors">Temperature sensors</a></h3>
+<p><code>CAP_TEMPERATURE</code> implements both properties below, with no prerequisite
+capabilities. They are <strong>Single-Value, Read-Only</strong> properties whose values are
+ordered arrays. The multi-value property model describes unordered sets and
+cannot express their positional correspondence. Both support ordinary gets and
+multi-get processing, have no unsolicited updates, and have no saved aliases.
+Supported properties reject Set, Insert, and Remove with
+<code>STATUS_INVALID_ARGUMENT</code>; devices without the capability return
+<code>STATUS_PROP_NOT_FOUND</code>.</p>
+<p>The environment owns an append-only inventory. Array position identifies a
+sensor. New sensors append to both arrays; existing entries MUST NOT be renamed,
+reordered, removed, or reassigned during operation. An unavailable or disconnected
+sensor retains its name and position. Labels need not be unique and MUST NOT be
+interpreted as sensor types. They may describe chip die, battery, or external
+sensors.</p>
+<p>Session resets and <code>CMD_RST</code> preserve this inventory. A physical reboot may
+rebuild it; hosts MUST obtain fresh names rather than persist index associations
+across connections. Discovery uses <code>CAP_TEMPERATURE</code>, which may be advertised
+with no sensors registered. No protocol-version change or storage migration is
+required.</p>
+<h4 id="prop-temperatures"><a class="header" href="#prop-temperatures">PROP 95: <code>PROP_TEMPERATURES</code></a></h4>
+<ul>
+<li>Type: Single-Value, Read-Only</li>
+<li>Asynchronous Updates: No</li>
+<li>Required: <code>CAP_TEMPERATURE</code></li>
+<li>Value Type: Ordered array of <code>UINT16_LE</code></li>
+<li>Post-Reset Value: Fresh acquisition</li>
+</ul>
+<p>Each word is a temperature in <strong>tenths of a kelvin</strong>, with no count or per-reading
+prefix. The value length determines the count. <code>0x0000</code> through <code>0xFFFE</code> are
+numeric readings; <code>0xFFFF</code> means unavailable, invalid, disconnected, or failed
+acquisition. An empty array means no sensors are registered. Odd-length values
+are malformed. For example, <code>A5 0B FF FF</code> reports 298.1 K at index 0 and an unknown
+reading at index 1.</p>
+<p>Each fresh get samples all sensors registered when acquisition begins. Sensors
+appended during acquisition are included in the next get. Sampling need not be
+simultaneous. Failure of one sensor MUST NOT suppress other readings: each failed
+slot is <code>0xFFFF</code>, and an all-failed acquisition returns the full array of unknown
+values. Transport retransmissions retain their existing retry semantics.</p>
+<h4 id="prop-temperature-names"><a class="header" href="#prop-temperature-names">PROP 4876: <code>PROP_TEMPERATURE_NAMES</code></a></h4>
+<ul>
+<li>Type: Single-Value, Read-Only</li>
+<li>Asynchronous Updates: No</li>
+<li>Required: <code>CAP_TEMPERATURE</code></li>
+<li>Value Type: Ordered array of PUI-length-prefixed UTF-8 names</li>
+<li>Post-Reset Value: Unchanged</li>
+</ul>
+<p>Each name is its UTF-8 byte length in PUI form followed by the bytes, without a
+terminator. Names contain 1–64 bytes and no NUL. An empty array is valid. Hosts
+validate the complete array before using any name. Reading names does not sample
+sensors or initiate hardware discovery.</p>
+<p>Hosts should request temperatures and names together on the initial read,
+using multi-get. Once names are known, fetch temperatures and request names
+again only if a reading lacks a known name. Names may be reused
+within the connection; index associations must not persist across connections.
+Additional names represent sensors appended since acquisition began and have
+not yet been read.</p>
+<p>While replacement names are loading, hosts retain known labels. Refused,
+malformed, or incomplete metadata must not erase known names or valid
+measurements. Validate the complete names encoding before replacing labels,
+use numbered labels for unmatched indices, and report metadata problems.</p>
+<p>The reference sender supports <strong>16 sensors</strong> and <strong>272 encoded name bytes</strong>, and
+rejects capacity overflow with <code>STATUS_NOMEM</code> without truncation or reindexing.
+These are implementation capacities, not limits imposed on other devices by the
+wire decoders.</p>
 <h3 id="prop-time"><a class="header" href="#prop-time">PROP 4866: <code>PROP_TIME</code></a></h3>
 <ul>
 <li>Type: Single-Value, Read-Write</li>

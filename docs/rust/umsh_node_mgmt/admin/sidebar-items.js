@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"constant":["MAX_ATTEMPTS","RETRY_MS"],"enum":["Failure","Outcome","Step"],"struct":["Exchange","Reassembly"]};
+window.SIDEBAR_ITEMS = {"constant":["MAX_ATTEMPTS","RESPONSE_WAIT_MIN_MS","RESPONSE_WAIT_RTT_MULTIPLE"],"enum":["Failure","Outcome","Step"],"struct":["Exchange","Reassembly"]};

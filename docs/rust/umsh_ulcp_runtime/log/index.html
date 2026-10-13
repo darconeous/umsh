@@ -2,8 +2,8 @@
 <p>Shared code needs to emit the same diagnostic lines the firmwares
 already print, but each board owns its own sink: the nRF images
 multiplex a USB-serial debug channel, the ESP32 image writes to its
-UART. Rather than thread a logger through every signature — most of
-which are <code>static</code>-backed tasks with no place to put one — a board
+UART. Rather than thread a logger through every signature—most of
+which are <code>static</code>-backed tasks with no place to put one—a board
 installs its sink once at boot and the shared modules call
 <a href="fn.debug_log.html" title="fn umsh_ulcp_runtime::log::debug_log"><code>debug_log</code></a> freely.</p>
 <p>Before <a href="fn.set_debug_log.html" title="fn umsh_ulcp_runtime::log::set_debug_log"><code>set_debug_log</code></a> runs, logging is a no-op. That is the

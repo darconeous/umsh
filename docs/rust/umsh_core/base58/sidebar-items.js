@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"constant":["ENCODED_LEN"],"fn":["decode","encode"]};
+window.SIDEBAR_ITEMS = {"constant":["ENCODED_LEN"],"fn":["decode","encode","prefix_bounds"]};

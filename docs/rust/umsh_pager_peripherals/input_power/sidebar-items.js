@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["Gesture","Mode"],"struct":["InputPower","PowerWindow"]};

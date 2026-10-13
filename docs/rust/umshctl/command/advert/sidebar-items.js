@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["AdvertOp","ToggleOp"],"fn":["format_interval","report","run"],"struct":["Period"]};
+window.SIDEBAR_ITEMS = {"enum":["AdvertOp","ToggleOp"],"fn":["flood_hops","format_interval","noun","reach","report","run"],"struct":["Period"]};

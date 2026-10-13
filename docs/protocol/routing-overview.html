@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-e3fe62b3.js";
+            window.path_to_searchindex_js = "searchindex-6c34194f.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-8b6941ec.js"></script>
+        <script src="toc-e4cb2f86.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -199,7 +199,7 @@ Region scoping is not enforced during the source-routed portion of a hybrid rout
 <h2 id="source-routing"><a class="header" href="#source-routing">Source Routing</a></h2>
 <p>When the sender knows a path to the destination, it can include a <strong>source-route option</strong> listing the sequence of repeater hints the packet should traverse. Each repeater checks whether it matches the next hint, removes its own hint, and forwards. Only the designated repeaters handle the packet, so source routing avoids the airtime cost of flooding.</p>
 <p>Source routes are learned from the <strong>trace-route option</strong>: when a packet carries a trace-route option, each forwarding repeater prepends its own hint, on routed hops as well as flooded ones. The recipient can reverse the accumulated trace and cache it as a source route for future replies. This means path discovery is not a separate operation—it falls out of normal packet exchange.</p>
-<p>Knowing the path forward is not the same as the destination knowing the path back. A source-routed packet arrives with its hints consumed, so nothing on it describes the return direction, and a destination with no cached route composes a reply that no repeater may carry. A sender that source-routes a packet requesting an acknowledgement should therefore include a trace-route option as well, unless it already knows the destination can reach it. The routed hops record themselves, and the acknowledgement has a path home.</p>
+<p>Knowing the path forward is not the same as the destination knowing the path back. A source-routed packet arrives with its hints consumed, so nothing on it describes the return direction, and a destination with no cached route composes a reply that no repeater may carry. A sender therefore includes a trace-route option whenever the destination may not hold a working path back; the routed hops record themselves, and the reply or acknowledgement has a path home. See <a href="beacons.html#when-to-include-a-trace-route">When to Include a Trace Route</a>.</p>
 <p>See <a href="packet-options.html#source-route-option-3">Packet Options § Source Route</a>, <a href="packet-options.html#trace-route-option-2">Packet Options § Trace Route</a>, and <a href="beacons.html#route-learning">Beacons &amp; Path Discovery § Route Learning</a>.</p>
 <h2 id="hybrid-routing"><a class="header" href="#hybrid-routing">Hybrid Routing</a></h2>
 <p>A packet can carry both a source-route option and a flood hop count. The packet is source-routed through the listed repeaters first; once the source-route hints are exhausted, it transitions to flood routing bounded by the remaining flood hop count. This enables “deliver to a region, then flood locally” behavior—useful for reaching a node in a known area without flooding the entire mesh.</p>
@@ -218,7 +218,7 @@ non-local chatter. Moreso than other types of bridges, internet bridges MUST lim
 them: the flood hop count is bounded by the two hops a crossing spends, and deployments SHOULD
 rate-limit each participant and MAY clamp the hop count further.</p>
 </blockquote>
-<p>A client–server tunnel realization of an internet bridge is specified in <a href="internet-bridging.html">Internet Bridging</a>.</p>
+<p>A client–server tunnel realization of an internet bridge is specified in <a href="internet-bridging.html">Internet Bridging</a>. Repeaters sharing a local network bridge over it as described in <a href="lan-bearer.html">LAN Bearer</a>.</p>
 <h2 id="forwarding-confirmation-and-recovery"><a class="header" href="#forwarding-confirmation-and-recovery">Forwarding Confirmation and Recovery</a></h2>
 <p>UMSH provides hop-by-hop forwarding confirmation for both source-routed and flood-originated packets. After transmitting, a node listens for the next hop to retransmit the same packet. If no retransmission is heard within a timeout, the node retries after a short jittered delay (up to 3 retries). The original sender does not currently receive any notification of a forwarding failure when source routing.</p>
 <p>If a cached route fails entirely (noticed because of a timeout), the sender can fall back to flood routing for the same logical packet using the <strong>route retry option</strong>, which allows repeaters to forward it even if they already suppressed the original attempt.</p>

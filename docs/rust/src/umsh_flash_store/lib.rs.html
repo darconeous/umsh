@@ -21,7 +21,7 @@
 <a href=#21 id=21 data-nosnippet>21</a>//! ## CPU stall warning
 <a href=#22 id=22 data-nosnippet>22</a>//!
 <a href=#23 id=23 data-nosnippet>23</a>//! Page erases block the executor for a long time on every backend we
-<a href=#24 id=24 data-nosnippet>24</a>//! use — the nRF52840 NVMC halts the CPU for ~85 ms, and the ESP32
+<a href=#24 id=24 data-nosnippet>24</a>//! use—the nRF52840 NVMC halts the CPU for ~85 ms, and the ESP32
 <a href=#25 id=25 data-nosnippet>25</a>//! suspends the flash cache for the duration of the write. No amount of
 <a href=#26 id=26 data-nosnippet>26</a>//! async scheduling can preempt either. Callers MUST batch writes; the
 <a href=#27 id=27 data-nosnippet>27</a>//! MAC's TX-side `COUNTER_PERSIST_BLOCK_SIZE = 128` and the RX-side
@@ -34,7 +34,7 @@
 <a href=#34 id=34 data-nosnippet>34</a>//! [`KeyValueView`], [`CounterView`], [`PeerView`], and [`ChannelView`]
 <a href=#35 id=35 data-nosnippet>35</a>//! are zero-cost view types that each hold a `&amp;'static FlashStore`. They
 <a href=#36 id=36 data-nosnippet>36</a>//! exist as separate types because the `umsh-hal` traits both define
-<a href=#37 id=37 data-nosnippet>37</a>//! `load` and `store` methods — implementing both on a single type would
+<a href=#37 id=37 data-nosnippet>37</a>//! `load` and `store` methods—implementing both on a single type would
 <a href=#38 id=38 data-nosnippet>38</a>//! force every caller to disambiguate via UFCS. Keep them split.
 <a href=#39 id=39 data-nosnippet>39</a></span><span class="attr">#![no_std]
 <a href=#40 id=40 data-nosnippet>40</a>
@@ -127,7 +127,7 @@
 <a href=#127 id=127 data-nosnippet>127</a>    M: RawMutex,
 <a href=#128 id=128 data-nosnippet>128</a>{
 <a href=#129 id=129 data-nosnippet>129</a>    <span class="doccomment">/// Wrap an async flash driver over `range`. Does NOT erase or format
-<a href=#130 id=130 data-nosnippet>130</a>    /// the flash — the underlying map mounts lazily on first access.
+<a href=#130 id=130 data-nosnippet>130</a>    /// the flash—the underlying map mounts lazily on first access.
 <a href=#131 id=131 data-nosnippet>131</a>    ///
 <a href=#132 id=132 data-nosnippet>132</a>    /// `range` must be page-aligned and at least two pages long;
 <a href=#133 id=133 data-nosnippet>133</a>    /// `MapConfig::new` panics otherwise. Callers pass a board constant,
@@ -217,7 +217,7 @@
 <a href=#217 id=217 data-nosnippet>217</a>        <span class="kw">let </span><span class="kw-2">mut </span>buf = [<span class="number">0u8</span>; <span class="number">32</span>];
 <a href=#218 id=218 data-nosnippet>218</a>        <span class="kw">match </span><span class="self">self</span>.load_bytes(SK_KEY, <span class="kw-2">&amp;mut </span>buf).<span class="kw">await</span><span class="question-mark">? </span>{
 <a href=#219 id=219 data-nosnippet>219</a>            <span class="prelude-val">Some</span>(<span class="number">32</span>) =&gt; <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(buf)),
-<a href=#220 id=220 data-nosnippet>220</a>            <span class="comment">// Missing or wrong length — treat as "not yet written".
+<a href=#220 id=220 data-nosnippet>220</a>            <span class="comment">// Missing or wrong length—treat as "not yet written".
 <a href=#221 id=221 data-nosnippet>221</a>            </span><span class="prelude-val">Some</span>(<span class="kw">_</span>) | <span class="prelude-val">None </span>=&gt; <span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>),
 <a href=#222 id=222 data-nosnippet>222</a>        }
 <a href=#223 id=223 data-nosnippet>223</a>    }
@@ -793,7 +793,7 @@
 <a href=#793 id=793 data-nosnippet>793</a>        <span class="kw">let </span><span class="kw-2">mut </span>buf = [<span class="number">0u8</span>; <span class="number">4</span>];
 <a href=#794 id=794 data-nosnippet>794</a>        <span class="kw">match </span><span class="self">self</span>.storage.load_bytes(context, <span class="kw-2">&amp;mut </span>buf).<span class="kw">await</span><span class="question-mark">? </span>{
 <a href=#795 id=795 data-nosnippet>795</a>            <span class="prelude-val">Some</span>(<span class="number">4</span>) =&gt; <span class="prelude-val">Ok</span>(u32::from_le_bytes(buf)),
-<a href=#796 id=796 data-nosnippet>796</a>            <span class="comment">// Missing entry, or a corrupt one of unexpected size — treat
+<a href=#796 id=796 data-nosnippet>796</a>            <span class="comment">// Missing entry, or a corrupt one of unexpected size—treat
 <a href=#797 id=797 data-nosnippet>797</a>            // as "no boundary persisted yet" so the MAC layer reseeds.
 <a href=#798 id=798 data-nosnippet>798</a>            </span><span class="prelude-val">Some</span>(<span class="kw">_</span>) | <span class="prelude-val">None </span>=&gt; <span class="prelude-val">Ok</span>(<span class="number">0</span>),
 <a href=#799 id=799 data-nosnippet>799</a>        }

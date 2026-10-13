@@ -3,17 +3,17 @@
 this is the one parser and each board contributes only its power
 sequencing. Four sentence types carry everything UMSH wants:</p>
 <ul>
-<li><strong>RMC</strong> — the time, the date, and whether the fix is valid. The only
+<li><strong>RMC</strong>—the time, the date, and whether the fix is valid. The only
 sentence carrying a <em>date</em>, which is why it is the one that can set
 a wall clock.</li>
-<li><strong>GGA</strong> — fix quality, altitude, and satellites in use.</li>
-<li><strong>GSA</strong> — whether the solution is two- or three-dimensional, and the
+<li><strong>GGA</strong>—fix quality, altitude, and satellites in use.</li>
+<li><strong>GSA</strong>—whether the solution is two- or three-dimensional, and the
 dilution of precision.</li>
-<li><strong>GSV</strong> — satellites in view.</li>
+<li><strong>GSV</strong>—satellites in view.</li>
 </ul>
 <h2 id="integers-only"><a class="doc-anchor" href="#integers-only">§</a>Integers only</h2>
 <p>No floating point anywhere. Latitude and longitude are parsed into
-<code>i32</code> at 1e-7 degrees, which resolves about 11 mm — two orders finer
+<code>i32</code> at 1e-7 degrees, which resolves about 11 mm—two orders finer
 than the 7-byte location encoding needs, and exact, so a position
 never shifts by a rounding step between the receiver and the wire.
 Parsing <code>ddmm.mmmm</code> in binary floating point would introduce error

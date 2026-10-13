@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["MAX_PAYLOAD","SLOT_SIZE"],"struct":["WifiStore"],"type":["BootPayload"]};

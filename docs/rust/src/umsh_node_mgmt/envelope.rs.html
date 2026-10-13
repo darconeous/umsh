@@ -15,11 +15,11 @@
 <a href=#15 id=15 data-nosnippet>15</a><span class="kw">use </span>umsh_core::{EncodeError, ParseError};
 <a href=#16 id=16 data-nosnippet>16</a><span class="kw">use </span>umsh_ulcp::pui;
 <a href=#17 id=17 data-nosnippet>17</a>
-<a href=#18 id=18 data-nosnippet>18</a><span class="doccomment">/// Option 1 — the continuation handle for a read spanning several
+<a href=#18 id=18 data-nosnippet>18</a><span class="doccomment">/// Option 1—the continuation handle for a read spanning several
 <a href=#19 id=19 data-nosnippet>19</a>/// exchanges. Critical: a device that cannot honor a cursor must say so
 <a href=#20 id=20 data-nosnippet>20</a>/// rather than answer from the beginning.
 <a href=#21 id=21 data-nosnippet>21</a></span><span class="kw">pub const </span>OPT_CURSOR: u16 = <span class="number">1</span>;
-<a href=#22 id=22 data-nosnippet>22</a><span class="doccomment">/// Option 2 — approximate octets not yet returned. Elective: it drives a
+<a href=#22 id=22 data-nosnippet>22</a><span class="doccomment">/// Option 2—approximate octets not yet returned. Elective: it drives a
 <a href=#23 id=23 data-nosnippet>23</a>/// progress bar and nothing else.
 <a href=#24 id=24 data-nosnippet>24</a></span><span class="kw">pub const </span>OPT_REMAINING: u16 = <span class="number">2</span>;
 <a href=#25 id=25 data-nosnippet>25</a>
@@ -123,7 +123,7 @@
 <a href=#123 id=123 data-nosnippet>123</a>        }
 <a href=#124 id=124 data-nosnippet>124</a>
 <a href=#125 id=125 data-nosnippet>125</a>        <span class="comment">// The frame follows the end marker, so a payload that never
-<a href=#126 id=126 data-nosnippet>126</a>        // reached one has no frame at all — an empty frame, which the
+<a href=#126 id=126 data-nosnippet>126</a>        // reached one has no frame at all—an empty frame, which the
 <a href=#127 id=127 data-nosnippet>127</a>        // caller answers `STATUS_PARSE_ERROR`.
 <a href=#128 id=128 data-nosnippet>128</a>        </span><span class="prelude-val">Ok</span>(<span class="self">Self </span>{
 <a href=#129 id=129 data-nosnippet>129</a>            token: [<span class="kw-2">*</span>token0, <span class="kw-2">*</span>token1],

@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["battery_display","format_millilux","illuminance","run","topic_parser"],"mod":["props","topics"],"struct":["InfoArgs"]};
+window.SIDEBAR_ITEMS = {"fn":["batch_keys","battery_display","folded_keys","format_millilux","illuminance","run","temperatures","topic_parser","wants_status"],"mod":["props","topics"],"struct":["InfoArgs"]};

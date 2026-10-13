@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-e3fe62b3.js";
+            window.path_to_searchindex_js = "searchindex-6c34194f.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-8b6941ec.js"></script>
+        <script src="toc-e4cb2f86.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -205,10 +205,10 @@ adds what the ULCP grammar needs on such a transport:</p>
 <ul>
 <li>a <strong>token</strong> correlates responses with requests across long and variable
 round trips, in place of the TID of the local bindings;</li>
-<li><strong>retained responses</strong> make retransmission safe: a repeated request is
-answered again, not executed again;</li>
-<li><strong>cursors</strong> carry responses larger than one frame across as many
-exchanges as needed, without per-read state on the device.</li>
+<li><strong>retained responses</strong> make retransmission safe: a repeated request
+that changes something is answered again, not executed again;</li>
+<li><strong>cursors</strong> carry a response larger than one frame across as many
+exchanges as needed, every fragment cut from that one response.</li>
 </ul>
 <p>Several operations per exchange need nothing from the envelope: the
 <a href="ulcp-core.html#cmd-prop-multi-get">multi-property commands</a> already carry
@@ -233,8 +233,11 @@ Requests are addressed to the device identity, and Responses return to the
 requesting node on the carriage the Request arrived on (see
 <a href="payload-format.html#response-carriage">Response Carriage</a>), using whatever
 routing state the exchange has supplied (see
-<a href="beacons.html#route-learning">Route Learning</a>). A device drops a Node
-Management payload arriving by multicast or broadcast, with accounting.</p>
+<a href="beacons.html#route-learning">Route Learning</a>). A Response carries the
+<a href="packet-options.html#ack-mic-option-8">Ack MIC option</a> naming the Request
+it answers, so it confirms the Request’s delivery even when the MAC
+acknowledgment is lost. A device drops a Node Management payload
+arriving by multicast or broadcast, with accounting.</p>
 <h3 id="token"><a class="header" href="#token">Token</a></h3>
 <p>Two opaque octets chosen by the administrator and echoed verbatim in the
 response. The token correlates a response with its request and identifies
@@ -323,22 +326,55 @@ later exchange reading <code>PROP_LAST_STATUS</code> for the reset code.</p>
 back, and a repeater that restarts takes its stretch of the network with
 it. <code>CMD_REBOOT</code> is nonetheless within an administrator’s reach, because
 the node it is most worth sending to is the one nobody can walk to.</p>
+<h3 id="dfu"><a class="header" href="#dfu">DFU Entry</a></h3>
+<p><a href="ulcp-core.html#cmd-dfu"><code>CMD_DFU</code></a> uses an ordinary request/response
+exchange with TID zero and the request token in the Node Management
+Response. A MAC acknowledgment confirms delivery only; it does not confirm
+DFU acceptance. The device finishes fallible preparation and persists
+replay-counter state before emitting <code>STATUS_OK</code>, then enters the
+bootloader after that specific response transmits. No additional wire
+acknowledgment is requested for the response.</p>
+<p>A pending handoff belongs to its retained reply. Retries cannot initiate
+another handoff. If transmission fails, is canceled, or exceeds the
+completion deadline, the device remains running and replaces the retained
+success with a failure, so a later retry cannot falsely confirm entry.
+Normal administrator authorization applies; DFU preserves saved settings
+and credentials. The administrator stops operating on the target after
+confirmed entry, while its companion-radio connection remains intact.</p>
 <h3 id="at-most-once"><a class="header" href="#at-most-once">Retries and At-Most-Once Processing</a></h3>
 <p>The MAC layer’s replay protection means a device never receives the same
 request frame twice; what it can receive twice is the same request <em>sent</em>
 twice—an administrator retransmitting because no response arrived,
-though the request may in fact have been executed. The device therefore
-retains, per administrator, the token and the complete response of the
-most recent exchange. A request whose token matches the retained token is
-answered by retransmitting the retained response, without executing
-anything. A device MAY bound how many administrators it retains an entry
-for, evicting the least recently active, but retains at least the entry
-for the most recently active administrator.</p>
-<p>An administrator that receives no response retransmits the identical
-request with the identical token, paced to the path’s round-trip
-behavior; the retained response makes this safe whether the request or
-only its response was lost. An administrator MUST NOT have more than one
-exchange outstanding with a given device.</p>
+though the request may in fact have been executed. Executing a request
+that changes something twice would be wrong, so for every request other
+than a read the device retains, per administrator, the token and the
+complete response of the most recent exchange. A request whose token
+matches the retained token is answered by retransmitting the retained
+response, without executing anything.</p>
+<p>A read (<code>CMD_PROP_GET</code> or <code>CMD_PROP_MULTI_GET</code>) changes nothing, so its
+response is not retained: a retransmitted read is executed again and
+answered with current values. The exception is a read whose response
+does not fit one payload. Its whole response is retained, and each
+fragment is cut from it (see <a href="#cursors">Reading Large Values</a>).</p>
+<p>Each new exchange ends the one before it. When an administrator begins an
+exchange under a different token, the device discards that
+administrator’s retained entry, whether or not the new exchange is
+retained in turn; only a continuation carries the read it continues
+forward. A device MAY bound what it retains, in entries or in octets,
+evicting the least recently active administrator’s entry first, but
+retains at least the entry for the most recently active administrator.</p>
+<p>An administrator requests a MAC acknowledgment for every request, and
+recovering a lost request is the MAC’s work: its retransmissions and
+<a href="packet-options.html#route-retry-option-6">Route Retry</a>. An administrator
+MUST NOT retransmit a request whose delivery the MAC has not yet
+resolved, since a retransmission is a new packet that repeaters forward
+again. A request the MAC fails to deliver ends the exchange. A request
+that is acknowledged but not answered is retransmitted, identical and
+under the identical token, once its response is overdue for the path’s
+round-trip behavior. This is safe whether or not the device executed the
+request: a retained response is repeated, and a read is answered afresh.
+An administrator MUST NOT have more than one exchange outstanding with a
+given device.</p>
 <p>Retained entries do not survive a reset. A reset command retransmitted
 after it has already acted is therefore executed again—with the same
 result.</p>
@@ -346,17 +382,22 @@ result.</p>
 <p>A read whose response does not fit one payload is completed across
 several exchanges. This applies to both read requests: a <code>CMD_PROP_GET</code>
 whose value does not fit, and a <code>CMD_PROP_MULTI_GET</code> whose entry list
-does not fit. The response frame is well-formed but its trailing content
-—the value of the <code>CMD_PROP_IS</code>, or the entry list of the
-<code>CMD_PROP_ARE</code>—is a leading fragment, accompanied by a <strong>CURSOR</strong>
+does not fit. The response frame is well-formed, but its trailing
+content (the value of the <code>CMD_PROP_IS</code>, or the entry list of the
+<code>CMD_PROP_ARE</code>) is a leading fragment, accompanied by a <strong>CURSOR</strong>
 option: an opaque continuation handle, one to eight octets, chosen
-entirely by the device. The administrator continues with a new exchange—
-fresh token—whose request carries the returned cursor verbatim
-alongside a repeat of the request being continued. Each response carries
-the cursor to present in the <em>next</em> request; a response without one ends
-the read, its fragment being the last. Fragment sizes are the device’s
-choice, made to fill each frame; there is no fixed block size and no
-position numbering.</p>
+entirely by the device. The administrator continues with a new
+exchange, under a fresh token, whose request carries the returned cursor
+verbatim alongside a repeat of the request being continued. Each
+response carries the cursor to present in the <em>next</em> request; a
+response without one ends the read, its fragment being the last.
+Fragment sizes are the device’s choice, made to fill each frame; there
+is no fixed block size and no position numbering.</p>
+<p>The request is executed once, by the exchange that begins the read. The
+device retains that complete response and answers each continuation with
+the next fragment cut from it, executing nothing. The reassembled value
+or entry list is therefore exactly what one execution produced, however
+the device’s state changes between exchanges.</p>
 <p>A request carrying a CURSOR option MUST be the read being continued—the
 same <code>CMD_PROP_GET</code> or <code>CMD_PROP_MULTI_GET</code> that began it. A cursor on
 any other request is answered <code>STATUS_INVALID_ARGUMENT</code>.</p>
@@ -369,27 +410,25 @@ byte-for-byte and MUST NOT construct or modify one.</li>
 administrator reassembles the read by concatenating the fragments in
 order and parses the whole: a property value under the property’s own
 rules, an entry list under <code>CMD_PROP_ARE</code>’s.</li>
-<li>Presenting the same cursor again SHOULD yield the same fragment or an
-equivalent one; a retransmitted continuation is in any case answered
-from the retained response (see
+<li>Presenting the same cursor again yields a fragment cut from the same
+response at the same position; a retransmitted continuation is in any
+case answered from the retained response (see
 <a href="#at-most-once">Retries and At-Most-Once Processing</a>).</li>
 <li>Cursors are untrusted input. The device validates every cursor it
-receives and answers one it cannot honor—it does not parse, it was
-issued for a different request, or the underlying data has changed out
-from under the position—with
-<code>STATUS_CURSOR_INVALID</code> (see <a href="ulcp-core.html#status-codes">Status Codes</a>);
-the administrator restarts from a cursor-less request. A practical
-cursor encodes the position together with a generation of the
-underlying data—a table revision, a boot count—so that every change
-that invalidates positions is detected rather than served wrong.</li>
-<li>A response MAY carry an empty fragment with a cursor equal to the one
-presented, meaning nothing further is available yet; this suits data
-that accumulates over time.</li>
+receives and answers one it cannot honor (it does not parse, it was
+issued for a different request, or the response it continues is no
+longer retained) with <code>STATUS_CURSOR_INVALID</code> (see
+<a href="ulcp-core.html#status-codes">Status Codes</a>); the administrator restarts
+from a cursor-less request.</li>
+<li>A cursor is honored only while the response it continues is retained.
+Any other exchange from the same administrator ends the read, a fresh
+start of the same read included, and eviction or a reset discards it.</li>
 <li>A response MAY carry a <strong>REMAINING</strong> option: the approximate number of
 octets not yet returned, as a packed unsigned integer. It is advisory,
 for progress reporting.</li>
-<li>The read holds no state on the device: between exchanges, the position
-lives entirely in the cursor the administrator holds.</li>
+<li>Between exchanges, the position lives entirely in the cursor the
+administrator holds; the device keeps nothing for the read beyond the
+retained response.</li>
 </ul>
 <h2 id="authorization"><a class="header" href="#authorization">Authorization</a></h2>
 <p>A device executes a Node Management request only when the packet arrived

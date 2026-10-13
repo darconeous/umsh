@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"constant":["ALPN"],"fn":["certificate_key","client_config","server_config","server_name"],"struct":["Address","Credential"]};
+window.SIDEBAR_ITEMS = {"constant":["ALPN","MAX_RECORD_PLAINTEXT"],"fn":["certificate_key","client_config","server_config","server_name"],"struct":["Address","Credential"]};

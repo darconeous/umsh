@@ -1,8 +1,8 @@
 <!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `crates/umsh-mobile-core/src/regions.rs`."><title>regions.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../static.files/rustdoc-80aa586b.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="umsh_mobile_core" data-themes="" data-resource-suffix="" data-rustdoc-version="1.94.0-nightly (fcf67da03 2025-12-18)" data-channel="nightly" data-search-js="search-9e2438ea.js" data-stringdex-js="stringdex-a3946164.js" data-settings-js="settings-c38705f0.js" ><script src="../../static.files/storage-e2aeef58.js"></script><script defer src="../../static.files/src-script-813739b1.js"></script><script defer src="../../src-files.js"></script><script defer src="../../static.files/main-3e30299d.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-ffcac47a.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><section id="main-content" class="content"><div class="main-heading"><h1><div class="sub-heading">umsh_mobile_core/</div>regions.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap digits-3"><pre class="rust"><code><a href=#1 id=1 data-nosnippet>1</a><span class="doccomment">//! Geographic region suggestions from a `.regiondb` database.
 <a href=#2 id=2 data-nosnippet>2</a>//!
 <a href=#3 id=3 data-nosnippet>3</a>//! The database proposes; it never writes to a radio. Everything here
-<a href=#4 id=4 data-nosnippet>4</a>//! produces values for the existing repeater-settings surfaces —
-<a href=#5 id=5 data-nosnippet>5</a>//! `regions` strings and a 2-octet `default_region` — and the editor's
+<a href=#4 id=4 data-nosnippet>4</a>//! produces values for the existing repeater-settings surfaces—
+<a href=#5 id=5 data-nosnippet>5</a>//! `regions` strings and a 2-octet `default_region`—and the editor's
 <a href=#6 id=6 data-nosnippet>6</a>//! own apply path remains the only thing that transmits.
 <a href=#7 id=7 data-nosnippet>7</a>//!
 <a href=#8 id=8 data-nosnippet>8</a>//! Region-list policy lives on this side of the boundary deliberately.
@@ -21,7 +21,7 @@
 <a href=#21 id=21 data-nosnippet>21</a><span class="doccomment">/// Widest positional uncertainty a proposal accepts, in meters.
 <a href=#22 id=22 data-nosnippet>22</a>///
 <a href=#23 id=23 data-nosnippet>23</a>/// Against 2 km expansion margins and 100 km airport radii, sampling the
-<a href=#24 id=24 data-nosnippet>24</a>/// corners of a coarser position returns dozens of "uncertain" regions —
+<a href=#24 id=24 data-nosnippet>24</a>/// corners of a coarser position returns dozens of "uncertain" regions—
 <a href=#25 id=25 data-nosnippet>25</a>/// noise dressed up as diligence. 25 km admits advert cells of three
 <a href=#26 id=26 data-nosnippet>26</a>/// bytes (≈ 9.8 km at the equator) and finer, and refuses one- and
 <a href=#27 id=27 data-nosnippet>27</a>/// two-byte cells (≈ 2,500 km and ≈ 156 km).
@@ -131,8 +131,8 @@
 <a href=#131 id=131 data-nosnippet>131</a>
 <a href=#132 id=132 data-nosnippet>132</a><span class="doccomment">/// A place to propose regions for, with its honest uncertainty.
 <a href=#133 id=133 data-nosnippet>133</a>///
-<a href=#134 id=134 data-nosnippet>134</a>/// Positions come from sources of very different quality — a node's
-<a href=#135 id=135 data-nosnippet>135</a>/// advertised identity cell, a live GNSS fix, hand-entered coordinates —
+<a href=#134 id=134 data-nosnippet>134</a>/// Positions come from sources of very different quality—a node's
+<a href=#135 id=135 data-nosnippet>135</a>/// advertised identity cell, a live GNSS fix, hand-entered coordinates—
 <a href=#136 id=136 data-nosnippet>136</a>/// and the proposal widens itself to match. At most one of
 <a href=#137 id=137 data-nosnippet>137</a>/// `location_bytes` and `accuracy_m` should be set; the cell wins when
 <a href=#138 id=138 data-nosnippet>138</a>/// both are.
@@ -297,9 +297,9 @@
 <a href=#297 id=297 data-nosnippet>297</a>    <span class="doccomment">/// Propose a region configuration for a position, against what the
 <a href=#298 id=298 data-nosnippet>298</a>    /// device currently holds.
 <a href=#299 id=299 data-nosnippet>299</a>    ///
-<a href=#300 id=300 data-nosnippet>300</a>    /// The proposal samples the position's uncertainty — an identity
+<a href=#300 id=300 data-nosnippet>300</a>    /// The proposal samples the position's uncertainty—an identity
 <a href=#301 id=301 data-nosnippet>301</a>    /// cell's center and four corners, or a measured fix's center and
-<a href=#302 id=302 data-nosnippet>302</a>    /// the four cardinal points of its accuracy circle — and suggests
+<a href=#302 id=302 data-nosnippet>302</a>    /// the four cardinal points of its accuracy circle—and suggests
 <a href=#303 id=303 data-nosnippet>303</a>    /// every region any sample hit. A node whose position straddles a
 <a href=#304 id=304 data-nosnippet>304</a>    /// boundary should usually forward both sides, the same reasoning
 <a href=#305 id=305 data-nosnippet>305</a>    /// that gives the database its expansion margins; the non-unanimous
@@ -338,7 +338,7 @@
 <a href=#338 id=338 data-nosnippet>338</a>        })<span class="question-mark">?</span>;
 <a href=#339 id=339 data-nosnippet>339</a>
 <a href=#340 id=340 data-nosnippet>340</a>        <span class="comment">// The merged view: every match any sample hit, once, with its
-<a href=#341 id=341 data-nosnippet>341</a>        // best membership — a core hit anywhere beats an expanded one.
+<a href=#341 id=341 data-nosnippet>341</a>        // best membership—a core hit anywhere beats an expanded one.
 <a href=#342 id=342 data-nosnippet>342</a>        </span><span class="kw">let </span><span class="kw-2">mut </span>merged: Vec&lt;RegionMatch&gt; = Vec::new();
 <a href=#343 id=343 data-nosnippet>343</a>        <span class="kw">for </span>lookup <span class="kw">in </span><span class="kw-2">&amp;</span>lookups {
 <a href=#344 id=344 data-nosnippet>344</a>            <span class="kw">for </span>candidate <span class="kw">in </span><span class="kw-2">&amp;</span>lookup.matches {
@@ -762,7 +762,7 @@
 <a href=#762 id=762 data-nosnippet>762</a>        <span class="comment">// At this point OAK answers and SFO does not, but a 20 km circle
 <a href=#763 id=763 data-nosnippet>763</a>        // reaches across their boundary: the southern and western samples
 <a href=#764 id=764 data-nosnippet>764</a>        // return SFO and lose OAK. Both airports join the suggestion and
-<a href=#765 id=765 data-nosnippet>765</a>        // both are uncertain — the honest answer near a bisector — while
+<a href=#765 id=765 data-nosnippet>765</a>        // both are uncertain—the honest answer near a bisector—while
 <a href=#766 id=766 data-nosnippet>766</a>        // the regions every sample agrees on stay certain.
 <a href=#767 id=767 data-nosnippet>767</a>        </span><span class="kw">let </span>position = MobileRegionPositionRecord {
 <a href=#768 id=768 data-nosnippet>768</a>            accuracy_m: <span class="prelude-val">Some</span>(<span class="number">20_000.0</span>),

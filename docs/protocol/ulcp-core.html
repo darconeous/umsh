@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-e3fe62b3.js";
+            window.path_to_searchindex_js = "searchindex-6c34194f.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-8b6941ec.js"></script>
+        <script src="toc-e4cb2f86.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -319,6 +319,7 @@ in the <a href="ulcp-index.html">Command and Property Index</a>.</p>
 <tr><td>7</td><td><code>CMD_PROP_INSERTED</code></td><td>Device-&gt;Host</td><td>Item-inserted notification</td></tr>
 <tr><td>8</td><td><code>CMD_PROP_REMOVED</code></td><td>Device-&gt;Host</td><td>Item-removed notification</td></tr>
 <tr><td>16</td><td><code>CMD_REBOOT</code></td><td>Host-&gt;Device</td><td>Restart the device’s hardware</td></tr>
+<tr><td>17</td><td><code>CMD_DFU</code></td><td>Host-&gt;Device</td><td>Enter bootloader firmware-update mode</td></tr>
 <tr><td>19</td><td><code>CMD_ANNOUNCE</code></td><td>Host-&gt;Device</td><td>Announce the device now</td></tr>
 <tr><td>21</td><td><code>CMD_PROP_MULTI_GET</code></td><td>Host-&gt;Device</td><td>Get several property values</td></tr>
 <tr><td>22</td><td><code>CMD_PROP_MULTI_SET</code></td><td>Host-&gt;Device</td><td>Set several property values in order</td></tr>
@@ -524,6 +525,67 @@ as completion, and MUST NOT wait for a <code>PROP_LAST_STATUS</code>.</p>
 A device without it answers <code>STATUS_UNIMPLEMENTED</code>—which is the only
 response this command ever produces, and the only thing that distinguishes
 a device that declined from one that is already restarting.</p>
+<h3 id="cmd-dfu"><a class="header" href="#cmd-dfu">CMD 17: (Host -&gt; Device) <code>CMD_DFU</code></a></h3>
+<p>Enter the platform’s bootloader for a firmware update. The payload is empty
+or one <code>UINT8</code> selecting the DFU method:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Value</th><th>Method</th></tr>
+</thead>
+<tbody>
+<tr><td>0</td><td>Default DFU</td></tr>
+<tr><td>1</td><td>Serial/USB-CDC DFU</td></tr>
+<tr><td>2</td><td>UF2 (file-copy) DFU</td></tr>
+<tr><td>3</td><td>BLE DFU</td></tr>
+</tbody>
+</table>
+</div>
+<p>An empty payload selects Default. The default is fixed by the platform,
+independent of the command’s transport. XIAO nRF52 and SenseCAP Solar use
+BLE; T-Echo, T1000-E, and Wio Tracker L1 use UF2.
+Other mode values are undefined. There is no capability or discovery
+property for this command; the device decides whether its supported
+bootloader can enter the requested mode.</p>
+<p>The device answers with <code>CMD_PROP_IS(PROP_LAST_STATUS)</code>:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Status</th><th>Meaning</th></tr>
+</thead>
+<tbody>
+<tr><td><code>STATUS_OK</code></td><td>Prepared to enter DFU after transmitting this response</td></tr>
+<tr><td><code>STATUS_UNIMPLEMENTED</code></td><td>The platform or its supported bootloader cannot enter this method</td></tr>
+<tr><td><code>STATUS_INVALID_ARGUMENT</code></td><td>The mode is undefined</td></tr>
+<tr><td><code>STATUS_PARSE_ERROR</code></td><td>The payload contains more than one byte</td></tr>
+</tbody>
+</table>
+</div>
+<p>Other failure statuses report preparation failures and leave the application
+running. Before returning success, the device MUST complete all fallible
+preparation, including persisting replay-counter state. It MUST NOT enter
+DFU until the complete matching response has transmitted. Queue acceptance
+alone is insufficient. Failed, canceled, or expired response transmission
+MUST leave the application running and invalidate the pending action and
+any retained success response. Completion of another response, or of an
+earlier transport generation, MUST NOT authorize entry.</p>
+<p>A direct request MUST use a nonzero TID. A direct TID-zero request records
+<code>STATUS_INVALID_ARGUMENT</code> without entering DFU. Over
+<a href="app-node-management.html#dfu">Node Management</a>, the TID is zero and the
+ordinary token-correlated response confirms acceptance. This command does
+not use reset-command acknowledgment semantics.</p>
+<p>DFU entry preserves saved configuration, identity, bonds, and pairing
+credentials. Unsaved application state is lost. Existing administrative
+authentication and authorization apply. Bootloader residency and exit
+behavior are bootloader-defined; automatic return to UMSH is not promised.
+The command enters DFU only and does not transfer or install firmware.</p>
+<p>A host MUST report success only upon receiving <code>STATUS_OK</code>. Timeout or
+disconnect before that response leaves entry unconfirmed and MUST NOT
+cause an automatic new DFU command. Hosts SHOULD warn that the device may
+remain inaccessible indefinitely, and that BLE updating requires an
+updater within Bluetooth range. Older firmware’s <code>STATUS_INVALID_COMMAND</code>
+is treated as unsupported. This additive command does not change the
+protocol version.</p>
 <h3 id="cmd-prop-multi-get"><a class="header" href="#cmd-prop-multi-get">CMD 21: (Host -&gt; Device) <code>CMD_PROP_MULTI_GET</code></a></h3>
 <pre><code>  0                   1                   2                   3
  0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
@@ -1150,9 +1212,9 @@ item it names has merely to be created first.</dd>
 <dt id="status_cursor_invalid"><a class="header" href="#status_cursor_invalid"><code>STATUS_CURSOR_INVALID</code></a></dt>
 <dd>The cursor presented in a <a href="app-node-management.html#cursors">Node Management</a>
 continuation is not one the device can honor—it does not parse, it was
-issued for a different request, or the underlying data has changed so
-that the position is meaningless. The administrator restarts the read
-from an initial, cursor-less request.</dd>
+issued for a different request, or the response it continues is no
+longer retained. The administrator restarts the read from an initial,
+cursor-less request.</dd>
 <dt id="status_not_permitted"><a class="header" href="#status_not_permitted"><code>STATUS_NOT_PERMITTED</code></a></dt>
 <dd>The property or command exists, but the binding the request arrived
 over is not allowed to perform it—in particular, a <a href="app-node-management.html#authorization">Node
@@ -1288,7 +1350,7 @@ grants:</p>
 <tr><td>45</td><td><code>CAP_GNSS</code></td><td><code>CAP_TIME</code></td><td><a href="ulcp-device.html#capabilities">Device Domain</a></td></tr>
 <tr><td>46</td><td><code>CAP_ADVERT</code></td><td><code>CAP_DEV_IDENTITY</code></td><td><a href="ulcp-device.html#capabilities">Device Domain</a></td></tr>
 <tr><td>47</td><td><code>CAP_ILLUMINANCE</code></td><td>—</td><td><a href="ulcp-device.html#capabilities">Device Domain</a></td></tr>
-<tr><td>48</td><td><code>CAP_MAC_BACKHAUL</code></td><td><code>CAP_REPEATER</code></td><td><a href="ulcp-host.html#capabilities">Tethered Host Services</a></td></tr>
+<tr><td>48</td><td><code>CAP_MAC_BACKHAUL</code></td><td><code>CAP_DEV_IDENTITY</code></td><td><a href="ulcp-host.html#capabilities">Tethered Host Services</a></td></tr>
 <tr><td>49</td><td><code>CAP_CMD_MULTI</code></td><td>—</td><td><a href="ulcp-core.html#cmd-prop-multi-get">Framing and Common Semantics</a></td></tr>
 <tr><td>50</td><td><code>CAP_BLE</code></td><td>—</td><td><a href="ulcp-ble.html#capabilities">BLE Binding</a></td></tr>
 <tr><td>51</td><td><code>CAP_REBOOT</code></td><td>—</td><td><a href="ulcp-core.html#cmd-reboot">Framing and Common Semantics</a></td></tr>
@@ -1298,9 +1360,12 @@ grants:</p>
 <tr><td>55</td><td><code>CAP_IPV4</code></td><td>—</td><td><a href="ulcp-ip.html#capabilities">IP Connectivity</a></td></tr>
 <tr><td>56</td><td><code>CAP_IPV6</code></td><td>—</td><td><a href="ulcp-ip.html#capabilities">IP Connectivity</a></td></tr>
 <tr><td>57</td><td><code>CAP_WIFI_AP</code></td><td><code>CAP_WIFI_SCAN</code></td><td><a href="ulcp-wifi.html#capabilities">Wi-Fi</a></td></tr>
-<tr><td>58</td><td><code>CAP_BRIDGE_CLIENT</code></td><td><code>CAP_REPEATER</code>; IP family requirement in prose</td><td><a href="ulcp-bridge.html#capabilities">Bridge Client</a></td></tr>
+<tr><td>58</td><td><code>CAP_BRIDGE_CLIENT</code></td><td><code>CAP_DEV_IDENTITY</code>; IP family requirement in prose</td><td><a href="ulcp-bridge.html#capabilities">Bridge Client</a></td></tr>
 <tr><td>59</td><td><code>CAP_DISPLAY_MOTION_WAKE</code></td><td>—</td><td><a href="ulcp-device.html#display-motion-wake">Device Services</a></td></tr>
 <tr><td>60</td><td><code>CAP_I2C</code></td><td>—</td><td><a href="ulcp-i2c.html#capabilities">I2C Bus Access</a></td></tr>
+<tr><td>61</td><td><code>CAP_TEMPERATURE</code></td><td>—</td><td><a href="ulcp-device.html#capabilities">Device Domain</a></td></tr>
+<tr><td>62</td><td><code>CAP_MESHCORE_FORWARDER</code></td><td><code>CAP_REPEATER</code></td><td><a href="ulcp-device.html#capabilities">Device Domain</a></td></tr>
+<tr><td>63</td><td><code>CAP_LAN_BEARER</code></td><td><code>CAP_DEV_IDENTITY</code>, <code>CAP_IPV4</code></td><td><a href="ulcp-lan-bearer.html#capabilities">LAN Bearer</a></td></tr>
 <tr><td>515</td><td><code>CAP_PHY_LORA</code></td><td>—</td><td><a href="ulcp-radio.html#capabilities">Radio Control</a></td></tr>
 </tbody>
 </table>

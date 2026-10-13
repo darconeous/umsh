@@ -4,8 +4,8 @@
     pub location_bytes: <a class="enum" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="struct" href="https://doc.rust-lang.org/nightly/alloc/vec/struct.Vec.html" title="struct alloc::vec::Vec">Vec</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.u8.html">u8</a>&gt;&gt;,
     pub accuracy_m: <a class="enum" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.f64.html">f64</a>&gt;,
 }</code></pre><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>A place to propose regions for, with its honest uncertainty.</p>
-<p>Positions come from sources of very different quality — a node’s
-advertised identity cell, a live GNSS fix, hand-entered coordinates —
+<p>Positions come from sources of very different quality—a node’s
+advertised identity cell, a live GNSS fix, hand-entered coordinates—
 and the proposal widens itself to match. At most one of
 <code>location_bytes</code> and <code>accuracy_m</code> should be set; the cell wins when
 both are.</p>

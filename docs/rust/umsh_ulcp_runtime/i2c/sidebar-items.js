@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["deadline_for","guarded_scan","guarded_transfer","scan_deadline","scan_with","status_for","transfer_deadline","transfer_with"],"struct":["Held","Reservation"],"trait":["Reservations"]};

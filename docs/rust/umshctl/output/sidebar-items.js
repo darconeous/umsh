@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"constant":["LABEL_WIDTH"],"enum":["ColorChoice"],"fn":["address","color","field","hex","note","set_color","styled","subfield","warn"],"static":["COLOR"]};
+window.SIDEBAR_ITEMS = {"constant":["LABEL_WIDTH","UNAVAILABLE"],"enum":["ColorChoice"],"fn":["address","color","field","hex","note","or_unavailable","set_color","styled","subfield","warn"],"static":["COLOR"]};

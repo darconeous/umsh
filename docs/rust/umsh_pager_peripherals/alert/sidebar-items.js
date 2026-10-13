@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["CODEC","DAC_VOLUME","HAPTIC","PERIOD_MS","PULSE_MS"],"fn":["bright"],"struct":["Codec","Haptic","ToneSamples"]};

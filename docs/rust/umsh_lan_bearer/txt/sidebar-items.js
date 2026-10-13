@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["SCHEMA_VERSION"],"enum":["TxtError"],"mod":["key"],"struct":["Advertisement","LoraSettings"]};

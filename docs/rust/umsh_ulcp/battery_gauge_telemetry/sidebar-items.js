@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["FIELDS","FORMAT","MAX_ENCODED","VERSION"],"struct":["Field","Telemetry"]};

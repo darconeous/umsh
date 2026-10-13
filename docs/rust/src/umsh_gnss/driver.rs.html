@@ -38,7 +38,7 @@
 <a href=#38 id=38 data-nosnippet>38</a>
 <a href=#39 id=39 data-nosnippet>39</a><span class="doccomment">/// Everything one cycle of sentences said, in integers.
 <a href=#40 id=40 data-nosnippet>40</a>///
-<a href=#41 id=41 data-nosnippet>41</a>/// Coordinates are in units of 1e-7 degrees — about 11 mm, and exact,
+<a href=#41 id=41 data-nosnippet>41</a>/// Coordinates are in units of 1e-7 degrees—about 11 mm, and exact,
 <a href=#42 id=42 data-nosnippet>42</a>/// because they were parsed from the receiver's decimal digits without
 <a href=#43 id=43 data-nosnippet>43</a>/// ever passing through a float.
 <a href=#44 id=44 data-nosnippet>44</a></span><span class="attr">#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -223,8 +223,8 @@
 <a href=#223 id=223 data-nosnippet>223</a>
 <a href=#224 id=224 data-nosnippet>224</a>                <span class="comment">// The dimension comes from GSA when it said anything.
 <a href=#225 id=225 data-nosnippet>225</a>                // Without GSA there is no dimension indicator anywhere in
-<a href=#226 id=226 data-nosnippet>226</a>                // NMEA — GGA's quality field says *whether* the receiver
-<a href=#227 id=227 data-nosnippet>227</a>                // is fixed, never in how many dimensions — so the presence
+<a href=#226 id=226 data-nosnippet>226</a>                // NMEA—GGA's quality field says *whether* the receiver
+<a href=#227 id=227 data-nosnippet>227</a>                // is fixed, never in how many dimensions—so the presence
 <a href=#228 id=228 data-nosnippet>228</a>                // of an altitude stands in for it. That is not a receiver
 <a href=#229 id=229 data-nosnippet>229</a>                // that emits GSA and merely happened not to this cycle; it
 <a href=#230 id=230 data-nosnippet>230</a>                // is one configured never to emit it at all, which is the
@@ -493,7 +493,7 @@
 <a href=#493 id=493 data-nosnippet>493</a>    }
 <a href=#494 id=494 data-nosnippet>494</a>
 <a href=#495 id=495 data-nosnippet>495</a>    <span class="doccomment">/// Each constellation counts only its own satellites, so a
-<a href=#496 id=496 data-nosnippet>496</a>    /// multi-constellation receiver's bursts have to be summed — and the
+<a href=#496 id=496 data-nosnippet>496</a>    /// multi-constellation receiver's bursts have to be summed—and the
 <a href=#497 id=497 data-nosnippet>497</a>    /// repeat messages within a burst must not be summed again.
 <a href=#498 id=498 data-nosnippet>498</a>    </span><span class="attr">#[test]
 <a href=#499 id=499 data-nosnippet>499</a>    </span><span class="kw">fn </span>satellites_in_view_sum_across_constellations_once_each() {
@@ -507,7 +507,7 @@
 <a href=#507 id=507 data-nosnippet>507</a>        <span class="macro">assert_eq!</span>(fix.sats_in_view, <span class="prelude-val">Some</span>(<span class="number">18</span>), <span class="string">"11 GPS + 7 GLONASS"</span>);
 <a href=#508 id=508 data-nosnippet>508</a>
 <a href=#509 id=509 data-nosnippet>509</a>        <span class="comment">// A repeated first message from the same talker replaces rather
-<a href=#510 id=510 data-nosnippet>510</a>        // than adds — the count is a property of the burst.
+<a href=#510 id=510 data-nosnippet>510</a>        // than adds—the count is a property of the burst.
 <a href=#511 id=511 data-nosnippet>511</a>        </span><span class="kw">let </span><span class="kw-2">mut </span>driver = Driver::new();
 <a href=#512 id=512 data-nosnippet>512</a>        feed(<span class="kw-2">&amp;mut </span>driver, <span class="string">"GPGSV,1,1,05,03,03,111,00"</span>);
 <a href=#513 id=513 data-nosnippet>513</a>        feed(<span class="kw-2">&amp;mut </span>driver, <span class="string">"GPGSV,1,1,05,03,03,111,00"</span>);

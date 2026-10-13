@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["batched","fetch"],"struct":["PropSet"]};
+window.SIDEBAR_ITEMS = {"fn":["collect","fetch","fetch_alone"],"struct":["PropSet"]};

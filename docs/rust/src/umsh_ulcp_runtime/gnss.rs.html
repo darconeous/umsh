@@ -17,7 +17,7 @@
 <a href=#17 id=17 data-nosnippet>17</a>//! # Reading versus announcing
 <a href=#18 id=18 data-nosnippet>18</a>//!
 <a href=#19 id=19 data-nosnippet>19</a>//! The last fix is cached here and nowhere else. The ULCP session
-<a href=#20 id=20 data-nosnippet>20</a>//! deliberately never caches a reading — a `CMD_PROP_GET` samples — so
+<a href=#20 id=20 data-nosnippet>20</a>//! deliberately never caches a reading—a `CMD_PROP_GET` samples—so
 <a href=#21 id=21 data-nosnippet>21</a>//! "the most recent thing the receiver said" has to live somewhere the
 <a href=#22 id=22 data-nosnippet>22</a>//! sampler can reach, and this is it.
 <a href=#23 id=23 data-nosnippet>23</a>//!
@@ -25,7 +25,7 @@
 <a href=#25 id=25 data-nosnippet>25</a>//! well it knows, and off how many satellites are all poll-only: a host
 <a href=#26 id=26 data-nosnippet>26</a>//! that wants them asks, and asks no more often than it has something to
 <a href=#27 id=27 data-nosnippet>27</a>//! do with the answer. Announcing them instead would put this board on
-<a href=#28 id=28 data-nosnippet>28</a>//! the air continuously for no one — a receiver reports about a fix a
+<a href=#28 id=28 data-nosnippet>28</a>//! the air continuously for no one—a receiver reports about a fix a
 <a href=#29 id=29 data-nosnippet>29</a>//! second, and at the precision the cache keeps, ordinary noise from a
 <a href=#30 id=30 data-nosnippet>30</a>//! receiver that has not moved is enough to make consecutive readings
 <a href=#31 id=31 data-nosnippet>31</a>//! differ. Every one of those would have cost a BLE notification and a
@@ -120,7 +120,7 @@
 <a href=#120 id=120 data-nosnippet>120</a>
 <a href=#121 id=121 data-nosnippet>121</a><span class="doccomment">/// The last cell offered to the identity, at the advertised precision.
 <a href=#122 id=122 data-nosnippet>122</a>///
-<a href=#123 id=123 data-nosnippet>123</a>/// A rate limit, not a source of truth — `PROP_IDENT_LOCATION` on the
+<a href=#123 id=123 data-nosnippet>123</a>/// A rate limit, not a source of truth—`PROP_IDENT_LOCATION` on the
 <a href=#124 id=124 data-nosnippet>124</a>/// session is where the advertised position actually lives. A receiver
 <a href=#125 id=125 data-nosnippet>125</a>/// produces a fix a second and a stationary node's fixes all clamp into
 <a href=#126 id=126 data-nosnippet>126</a>/// one cell, so without this the driver would wake every second to be
@@ -146,7 +146,7 @@
 <a href=#146 id=146 data-nosnippet>146</a><span class="doccomment">/// Take the publication receiver.
 <a href=#147 id=147 data-nosnippet>147</a>///
 <a href=#148 id=148 data-nosnippet>148</a>/// Cancellation-safe to await. `None` only if one was already taken,
-<a href=#149 id=149 data-nosnippet>149</a>/// which would mean two things publishing the same properties — a wiring
+<a href=#149 id=149 data-nosnippet>149</a>/// which would mean two things publishing the same properties—a wiring
 <a href=#150 id=150 data-nosnippet>150</a>/// mistake rather than a runtime condition.
 <a href=#151 id=151 data-nosnippet>151</a></span><span class="kw">pub fn </span>announcer() -&gt; <span class="prelude-ty">Option</span>&lt;Announcer&gt; {
 <a href=#152 id=152 data-nosnippet>152</a>    ANNOUNCE.receiver()
@@ -210,8 +210,8 @@
 <a href=#210 id=210 data-nosnippet>210</a><span class="doccomment">/// The ULCP view of one fix.
 <a href=#211 id=211 data-nosnippet>211</a>///
 <a href=#212 id=212 data-nosnippet>212</a>/// Pure, and separate from [`absorb`] for that reason: this is the part
-<a href=#213 id=213 data-nosnippet>213</a>/// with rules in it — which fields survive a degraded solution, what a
-<a href=#214 id=214 data-nosnippet>214</a>/// dilution figure becomes — and it is worth being able to check without
+<a href=#213 id=213 data-nosnippet>213</a>/// with rules in it—which fields survive a degraded solution, what a
+<a href=#214 id=214 data-nosnippet>214</a>/// dilution figure becomes—and it is worth being able to check without
 <a href=#215 id=215 data-nosnippet>215</a>/// a clock, a receiver, or a board.
 <a href=#216 id=216 data-nosnippet>216</a></span><span class="kw">pub fn </span>to_snapshot(fix: <span class="kw-2">&amp;</span>Fix) -&gt; GnssSnapshot {
 <a href=#217 id=217 data-nosnippet>217</a>    <span class="kw">let </span><span class="kw-2">mut </span>snapshot = GnssSnapshot::SEARCHING;
@@ -255,7 +255,7 @@
 <a href=#255 id=255 data-nosnippet>255</a>    <span class="comment">// The fix indicator is what a host watches to know whether the device
 <a href=#256 id=256 data-nosnippet>256</a>    // is located at all, so its transitions are always worth a frame. The
 <a href=#257 id=257 data-nosnippet>257</a>    // position, altitude, accuracy and satellite count are not announced
-<a href=#258 id=258 data-nosnippet>258</a>    // at any threshold — see the module docs. They are read.
+<a href=#258 id=258 data-nosnippet>258</a>    // at any threshold—see the module docs. They are read.
 <a href=#259 id=259 data-nosnippet>259</a>    </span><span class="kw">if </span>current.<span class="macro">fix !</span>= previous.fix {
 <a href=#260 id=260 data-nosnippet>260</a>        publish(Announce::Gnss(prop::GNSS_FIX, current));
 <a href=#261 id=261 data-nosnippet>261</a>    }
@@ -263,8 +263,8 @@
 <a href=#263 id=263 data-nosnippet>263</a>    <span class="comment">// ─── The wall clock ──────────────────────────────────────────────
 <a href=#264 id=264 data-nosnippet>264</a>    //
 <a href=#265 id=265 data-nosnippet>265</a>    // Every fix carrying an instant offers it. The precedence rule in
-<a href=#266 id=266 data-nosnippet>266</a>    // `wall_clock` decides what happens next — a manual set outranks
-<a href=#267 id=267 data-nosnippet>267</a>    // this, and a cleared trust flag refuses it outright — so there is
+<a href=#266 id=266 data-nosnippet>266</a>    // `wall_clock` decides what happens next—a manual set outranks
+<a href=#267 id=267 data-nosnippet>267</a>    // this, and a cleared trust flag refuses it outright—so there is
 <a href=#268 id=268 data-nosnippet>268</a>    // no second copy of that decision here.
 <a href=#269 id=269 data-nosnippet>269</a>    </span><span class="kw">if let </span><span class="prelude-val">Some</span>(at) = fix.time
 <a href=#270 id=270 data-nosnippet>270</a>        &amp;&amp; <span class="kw">let </span><span class="prelude-val">Some</span>(epoch) = at.to_unix()
@@ -291,7 +291,7 @@
 <a href=#291 id=291 data-nosnippet>291</a>    //
 <a href=#292 id=292 data-nosnippet>292</a>    // Offered rather than applied: the session holds the advertised
 <a href=#293 id=293 data-nosnippet>293</a>    // position and decides what a fix does to it. Only a change in the
-<a href=#294 id=294 data-nosnippet>294</a>    // *clamped* cell is worth waking it for — at the default precision a
+<a href=#294 id=294 data-nosnippet>294</a>    // *clamped* cell is worth waking it for—at the default precision a
 <a href=#295 id=295 data-nosnippet>295</a>    // stationary node's fixes all land in the same one.
 <a href=#296 id=296 data-nosnippet>296</a>    </span><span class="kw">if </span>policy.update_identity
 <a href=#297 id=297 data-nosnippet>297</a>        &amp;&amp; <span class="kw">let </span><span class="prelude-val">Some</span>(location) = location
@@ -315,7 +315,7 @@
 <a href=#315 id=315 data-nosnippet>315</a></span><span class="kw">pub fn </span>configure(enabled: bool, policy: Policy) {
 <a href=#316 id=316 data-nosnippet>316</a>    <span class="kw">let </span>previous = POLICY.lock(|cell| cell.replace(policy));
 <a href=#317 id=317 data-nosnippet>317</a>    <span class="comment">// A policy change can make an already-offered cell worth offering
-<a href=#318 id=318 data-nosnippet>318</a>    // again — a finer precision asks a different question of the same
+<a href=#318 id=318 data-nosnippet>318</a>    // again—a finer precision asks a different question of the same
 <a href=#319 id=319 data-nosnippet>319</a>    // fix, and auto-update coming back on has to re-establish a position
 <a href=#320 id=320 data-nosnippet>320</a>    // the operator may have edited in the meantime.
 <a href=#321 id=321 data-nosnippet>321</a>    </span><span class="kw">if </span><span class="macro">previous !</span>= policy {
@@ -334,7 +334,7 @@
 <a href=#334 id=334 data-nosnippet>334</a>///
 <a href=#335 id=335 data-nosnippet>335</a>/// The boot-time receiver-RTC read needs this. That read is gated on
 <a href=#336 id=336 data-nosnippet>336</a>/// `PROP_GNSS_TIME_TRUST`, and [`policy`] answers with the post-reset
-<a href=#337 id=337 data-nosnippet>337</a>/// default until the saved state has been restored — so a read that did
+<a href=#337 id=337 data-nosnippet>337</a>/// default until the saved state has been restored—so a read that did
 <a href=#338 id=338 data-nosnippet>338</a>/// not wait would trust a receiver on a device configured not to, exactly
 <a href=#339 id=339 data-nosnippet>339</a>/// once per boot, which is the one time it matters.
 <a href=#340 id=340 data-nosnippet>340</a>///
@@ -346,7 +346,7 @@
 <a href=#346 id=346 data-nosnippet>346</a>    <span class="kw">let </span><span class="prelude-val">Some</span>(<span class="kw-2">mut </span>configured) = CONFIGURED.receiver() <span class="kw">else </span>{
 <a href=#347 id=347 data-nosnippet>347</a>        <span class="comment">// Silently skipping a wait a caller asked for would be worse than
 <a href=#348 id=348 data-nosnippet>348</a>        // the wiring bug that got here, but this is not worth a panic on a
-<a href=#349 id=349 data-nosnippet>349</a>        // shipping device — the cost is one boot's clock restore.
+<a href=#349 id=349 data-nosnippet>349</a>        // shipping device—the cost is one boot's clock restore.
 <a href=#350 id=350 data-nosnippet>350</a>        </span><span class="macro">debug_assert!</span>(<span class="bool-val">false</span>, <span class="string">"gnss: wait_configured is single-caller"</span>);
 <a href=#351 id=351 data-nosnippet>351</a>        <span class="kw">return</span>;
 <a href=#352 id=352 data-nosnippet>352</a>    };
@@ -373,7 +373,7 @@
 <a href=#373 id=373 data-nosnippet>373</a>
 <a href=#374 id=374 data-nosnippet>374</a><span class="kw">impl </span>EnableSource {
 <a href=#375 id=375 data-nosnippet>375</a>    <span class="doccomment">/// Take the pump's enable receiver, or `None` if one was already
-<a href=#376 id=376 data-nosnippet>376</a>    /// taken — which would mean two pumps for one receiver.
+<a href=#376 id=376 data-nosnippet>376</a>    /// taken—which would mean two pumps for one receiver.
 <a href=#377 id=377 data-nosnippet>377</a>    </span><span class="kw">pub fn </span>new() -&gt; <span class="prelude-ty">Option</span>&lt;<span class="self">Self</span>&gt; {
 <a href=#378 id=378 data-nosnippet>378</a>        ENABLE.receiver().map(|changed| <span class="self">Self </span>{ changed })
 <a href=#379 id=379 data-nosnippet>379</a>    }
@@ -406,181 +406,154 @@
 <a href=#406 id=406 data-nosnippet>406</a>    ANNOUNCE.sender().send(announce);
 <a href=#407 id=407 data-nosnippet>407</a>}
 <a href=#408 id=408 data-nosnippet>408</a>
-<a href=#409 id=409 data-nosnippet>409</a><span class="doccomment">/// A time driver for the host tests.
-<a href=#410 id=410 data-nosnippet>410</a>///
-<a href=#411 id=411 data-nosnippet>411</a>/// [`absorb`] offers every fix's instant to the wall clock, so a test
-<a href=#412 id=412 data-nosnippet>412</a>/// that calls it links `embassy_time`'s driver hook — which on a device
-<a href=#413 id=413 data-nosnippet>413</a>/// is the RTC and here is nothing at all. A monotonic counter is enough:
-<a href=#414 id=414 data-nosnippet>414</a>/// no test in this module asserts on elapsed time.
-<a href=#415 id=415 data-nosnippet>415</a></span><span class="attr">#[cfg(test)]
-<a href=#416 id=416 data-nosnippet>416</a></span><span class="kw">mod </span>test_driver {
-<a href=#417 id=417 data-nosnippet>417</a>    <span class="kw">use </span>core::sync::atomic::{AtomicU64, Ordering};
-<a href=#418 id=418 data-nosnippet>418</a>    <span class="kw">use </span>core::task::Waker;
-<a href=#419 id=419 data-nosnippet>419</a>
-<a href=#420 id=420 data-nosnippet>420</a>    <span class="kw">struct </span>Stub;
+<a href=#409 id=409 data-nosnippet>409</a><span class="attr">#[cfg(test)]
+<a href=#410 id=410 data-nosnippet>410</a></span><span class="kw">mod </span>tests {
+<a href=#411 id=411 data-nosnippet>411</a>    <span class="kw">use </span>super::<span class="kw-2">*</span>;
+<a href=#412 id=412 data-nosnippet>412</a>    <span class="kw">use </span>umsh_gnss::DateTime;
+<a href=#413 id=413 data-nosnippet>413</a>
+<a href=#414 id=414 data-nosnippet>414</a>    <span class="kw">fn </span>policy() -&gt; Policy {
+<a href=#415 id=415 data-nosnippet>415</a>        Policy {
+<a href=#416 id=416 data-nosnippet>416</a>            trust_time: <span class="bool-val">true</span>,
+<a href=#417 id=417 data-nosnippet>417</a>            update_identity: <span class="bool-val">false</span>,
+<a href=#418 id=418 data-nosnippet>418</a>            identity_precision: <span class="number">5</span>,
+<a href=#419 id=419 data-nosnippet>419</a>        }
+<a href=#420 id=420 data-nosnippet>420</a>    }
 <a href=#421 id=421 data-nosnippet>421</a>
-<a href=#422 id=422 data-nosnippet>422</a>    <span class="kw">impl </span>embassy_time_driver::Driver <span class="kw">for </span>Stub {
-<a href=#423 id=423 data-nosnippet>423</a>        <span class="kw">fn </span>now(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; u64 {
-<a href=#424 id=424 data-nosnippet>424</a>            <span class="kw">static </span>TICKS: AtomicU64 = AtomicU64::new(<span class="number">0</span>);
-<a href=#425 id=425 data-nosnippet>425</a>            TICKS.fetch_add(<span class="number">1</span>, Ordering::Relaxed)
-<a href=#426 id=426 data-nosnippet>426</a>        }
-<a href=#427 id=427 data-nosnippet>427</a>
-<a href=#428 id=428 data-nosnippet>428</a>        <span class="kw">fn </span>schedule_wake(<span class="kw-2">&amp;</span><span class="self">self</span>, _at: u64, _waker: <span class="kw-2">&amp;</span>Waker) {
-<a href=#429 id=429 data-nosnippet>429</a>            <span class="macro">unimplemented!</span>(<span class="string">"these tests never wait on a timer"</span>);
-<a href=#430 id=430 data-nosnippet>430</a>        }
-<a href=#431 id=431 data-nosnippet>431</a>    }
-<a href=#432 id=432 data-nosnippet>432</a>
-<a href=#433 id=433 data-nosnippet>433</a>    <span class="macro">embassy_time_driver::time_driver_impl!</span>(<span class="kw">static </span>DRIVER: Stub = Stub);
-<a href=#434 id=434 data-nosnippet>434</a>}
-<a href=#435 id=435 data-nosnippet>435</a>
-<a href=#436 id=436 data-nosnippet>436</a><span class="attr">#[cfg(test)]
-<a href=#437 id=437 data-nosnippet>437</a></span><span class="kw">mod </span>tests {
-<a href=#438 id=438 data-nosnippet>438</a>    <span class="kw">use </span>super::<span class="kw-2">*</span>;
-<a href=#439 id=439 data-nosnippet>439</a>    <span class="kw">use </span>umsh_gnss::DateTime;
-<a href=#440 id=440 data-nosnippet>440</a>
-<a href=#441 id=441 data-nosnippet>441</a>    <span class="kw">fn </span>policy() -&gt; Policy {
-<a href=#442 id=442 data-nosnippet>442</a>        Policy {
-<a href=#443 id=443 data-nosnippet>443</a>            trust_time: <span class="bool-val">true</span>,
-<a href=#444 id=444 data-nosnippet>444</a>            update_identity: <span class="bool-val">false</span>,
-<a href=#445 id=445 data-nosnippet>445</a>            identity_precision: <span class="number">5</span>,
-<a href=#446 id=446 data-nosnippet>446</a>        }
-<a href=#447 id=447 data-nosnippet>447</a>    }
-<a href=#448 id=448 data-nosnippet>448</a>
-<a href=#449 id=449 data-nosnippet>449</a>    <span class="kw">fn </span>fixed_at(lat_e7: i32, lon_e7: i32) -&gt; Fix {
-<a href=#450 id=450 data-nosnippet>450</a>        Fix {
-<a href=#451 id=451 data-nosnippet>451</a>            quality: FixQuality::ThreeD,
-<a href=#452 id=452 data-nosnippet>452</a>            latitude_e7: <span class="prelude-val">Some</span>(lat_e7),
-<a href=#453 id=453 data-nosnippet>453</a>            longitude_e7: <span class="prelude-val">Some</span>(lon_e7),
-<a href=#454 id=454 data-nosnippet>454</a>            altitude_m: <span class="prelude-val">Some</span>(<span class="number">31</span>),
-<a href=#455 id=455 data-nosnippet>455</a>            hdop_centi: <span class="prelude-val">Some</span>(<span class="number">120</span>),
-<a href=#456 id=456 data-nosnippet>456</a>            sats_used: <span class="number">9</span>,
-<a href=#457 id=457 data-nosnippet>457</a>            sats_in_view: <span class="prelude-val">Some</span>(<span class="number">13</span>),
-<a href=#458 id=458 data-nosnippet>458</a>            time: <span class="prelude-val">Some</span>(DateTime {
-<a href=#459 id=459 data-nosnippet>459</a>                year: <span class="number">2026</span>,
-<a href=#460 id=460 data-nosnippet>460</a>                month: <span class="number">8</span>,
-<a href=#461 id=461 data-nosnippet>461</a>                day: <span class="number">4</span>,
-<a href=#462 id=462 data-nosnippet>462</a>                hour: <span class="number">12</span>,
-<a href=#463 id=463 data-nosnippet>463</a>                minute: <span class="number">0</span>,
-<a href=#464 id=464 data-nosnippet>464</a>                second: <span class="number">0</span>,
-<a href=#465 id=465 data-nosnippet>465</a>            }),
-<a href=#466 id=466 data-nosnippet>466</a>            time_from_fix: <span class="bool-val">true</span>,
-<a href=#467 id=467 data-nosnippet>467</a>        }
-<a href=#468 id=468 data-nosnippet>468</a>    }
-<a href=#469 id=469 data-nosnippet>469</a>
-<a href=#470 id=470 data-nosnippet>470</a>    <span class="attr">#[test]
-<a href=#471 id=471 data-nosnippet>471</a>    </span><span class="kw">fn </span>a_fix_becomes_the_property_surface() {
-<a href=#472 id=472 data-nosnippet>472</a>        <span class="kw">let </span>snapshot = to_snapshot(<span class="kw-2">&amp;</span>fixed_at(<span class="number">481_173_000</span>, <span class="number">115_166_666</span>));
-<a href=#473 id=473 data-nosnippet>473</a>        <span class="macro">assert_eq!</span>(snapshot.fix, umsh_ulcp::gnss::FixKind::ThreeD);
-<a href=#474 id=474 data-nosnippet>474</a>        <span class="macro">assert_eq!</span>(snapshot.sats_used, <span class="number">9</span>);
-<a href=#475 id=475 data-nosnippet>475</a>        <span class="macro">assert_eq!</span>(snapshot.sats_in_view, <span class="prelude-val">Some</span>(<span class="number">13</span>));
-<a href=#476 id=476 data-nosnippet>476</a>        <span class="macro">assert_eq!</span>(snapshot.altitude_m, <span class="prelude-val">Some</span>(<span class="number">31</span>));
-<a href=#477 id=477 data-nosnippet>477</a>        <span class="comment">// HDOP 1.20 scaled by the assumed range error.
-<a href=#478 id=478 data-nosnippet>478</a>        </span><span class="macro">assert_eq!</span>(snapshot.accuracy_dm, <span class="prelude-val">Some</span>(<span class="number">60</span>));
-<a href=#479 id=479 data-nosnippet>479</a>        <span class="macro">assert_eq!</span>(snapshot.location().len(), MAX_PRECISION <span class="kw">as </span>usize);
-<a href=#480 id=480 data-nosnippet>480</a>        <span class="comment">// The cached location is the finest the format carries: what the
-<a href=#481 id=481 data-nosnippet>481</a>        // *mesh* sees is clamped separately, because telling a host
-<a href=#482 id=482 data-nosnippet>482</a>        // where you are is a different disclosure from telling everyone.
-<a href=#483 id=483 data-nosnippet>483</a>        </span><span class="macro">assert_eq!</span>(
-<a href=#484 id=484 data-nosnippet>484</a>            snapshot.location(),
-<a href=#485 id=485 data-nosnippet>485</a>            NodeLocation::from_e7(<span class="number">481_173_000</span>, <span class="number">115_166_666</span>, MAX_PRECISION).as_bytes()
-<a href=#486 id=486 data-nosnippet>486</a>        );
-<a href=#487 id=487 data-nosnippet>487</a>    }
-<a href=#488 id=488 data-nosnippet>488</a>
-<a href=#489 id=489 data-nosnippet>489</a>    <span class="doccomment">/// A searching receiver reports zero for the facts it is sure of and
-<a href=#490 id=490 data-nosnippet>490</a>    /// empty for the position it does not have — never a stale one.
-<a href=#491 id=491 data-nosnippet>491</a>    </span><span class="attr">#[test]
-<a href=#492 id=492 data-nosnippet>492</a>    </span><span class="kw">fn </span>a_searching_cycle_carries_no_position() {
-<a href=#493 id=493 data-nosnippet>493</a>        <span class="kw">let </span>snapshot = to_snapshot(<span class="kw-2">&amp;</span>Fix::default());
-<a href=#494 id=494 data-nosnippet>494</a>        <span class="macro">assert_eq!</span>(snapshot.fix, umsh_ulcp::gnss::FixKind::None);
-<a href=#495 id=495 data-nosnippet>495</a>        <span class="macro">assert!</span>(snapshot.location().is_empty());
-<a href=#496 id=496 data-nosnippet>496</a>        <span class="macro">assert_eq!</span>(snapshot.altitude_m, <span class="prelude-val">None</span>);
-<a href=#497 id=497 data-nosnippet>497</a>        <span class="macro">assert_eq!</span>(snapshot.accuracy_dm, <span class="prelude-val">None</span>);
-<a href=#498 id=498 data-nosnippet>498</a>        <span class="macro">assert_eq!</span>(snapshot.sats_used, <span class="number">0</span>);
-<a href=#499 id=499 data-nosnippet>499</a>    }
-<a href=#500 id=500 data-nosnippet>500</a>
-<a href=#501 id=501 data-nosnippet>501</a>    <span class="doccomment">/// Half a coordinate pair is not a position.
-<a href=#502 id=502 data-nosnippet>502</a>    </span><span class="attr">#[test]
-<a href=#503 id=503 data-nosnippet>503</a>    </span><span class="kw">fn </span>a_partial_coordinate_pair_yields_no_location() {
-<a href=#504 id=504 data-nosnippet>504</a>        <span class="kw">let </span><span class="kw-2">mut </span>fix = fixed_at(<span class="number">481_173_000</span>, <span class="number">115_166_666</span>);
-<a href=#505 id=505 data-nosnippet>505</a>        fix.longitude_e7 = <span class="prelude-val">None</span>;
-<a href=#506 id=506 data-nosnippet>506</a>        <span class="macro">assert!</span>(to_snapshot(<span class="kw-2">&amp;</span>fix).location().is_empty());
-<a href=#507 id=507 data-nosnippet>507</a>    }
-<a href=#508 id=508 data-nosnippet>508</a>
-<a href=#509 id=509 data-nosnippet>509</a>    <span class="doccomment">/// The advertised cell is what decides whether an identity is worth
-<a href=#510 id=510 data-nosnippet>510</a>    /// re-signing: at the default precision a stationary node's fixes all
-<a href=#511 id=511 data-nosnippet>511</a>    /// land in the same cell, and re-signing each would put a fresh
-<a href=#512 id=512 data-nosnippet>512</a>    /// identity on the air every second to say what the last one said.
-<a href=#513 id=513 data-nosnippet>513</a>    </span><span class="attr">#[test]
-<a href=#514 id=514 data-nosnippet>514</a>    </span><span class="kw">fn </span>only_a_change_of_advertised_cell_is_a_move() {
-<a href=#515 id=515 data-nosnippet>515</a>        <span class="kw">let </span>precision = policy().identity_precision;
-<a href=#516 id=516 data-nosnippet>516</a>        <span class="kw">let </span>here = fix_location(<span class="kw-2">&amp;</span>fixed_at(<span class="number">481_173_000</span>, <span class="number">115_166_666</span>))
-<a href=#517 id=517 data-nosnippet>517</a>            .unwrap()
-<a href=#518 id=518 data-nosnippet>518</a>            .clamped(precision);
-<a href=#519 id=519 data-nosnippet>519</a>        <span class="comment">// A jitter of a few centimeters.
-<a href=#520 id=520 data-nosnippet>520</a>        </span><span class="kw">let </span>jittered = fix_location(<span class="kw-2">&amp;</span>fixed_at(<span class="number">481_173_010</span>, <span class="number">115_166_680</span>))
-<a href=#521 id=521 data-nosnippet>521</a>            .unwrap()
-<a href=#522 id=522 data-nosnippet>522</a>            .clamped(precision);
-<a href=#523 id=523 data-nosnippet>523</a>        <span class="macro">assert_eq!</span>(here, jittered, <span class="string">"a sub-cell jitter changed the cell"</span>);
-<a href=#524 id=524 data-nosnippet>524</a>
-<a href=#525 id=525 data-nosnippet>525</a>        <span class="kw">let </span>elsewhere = fix_location(<span class="kw-2">&amp;</span>fixed_at(<span class="number">490_000_000</span>, <span class="number">120_000_000</span>))
-<a href=#526 id=526 data-nosnippet>526</a>            .unwrap()
-<a href=#527 id=527 data-nosnippet>527</a>            .clamped(precision);
-<a href=#528 id=528 data-nosnippet>528</a>        <span class="macro">assert_ne!</span>(here, elsewhere);
-<a href=#529 id=529 data-nosnippet>529</a>
-<a href=#530 id=530 data-nosnippet>530</a>        <span class="comment">// The advertised value is coarser than the cached one, and is a
-<a href=#531 id=531 data-nosnippet>531</a>        // prefix of it: the same position, said less precisely.
-<a href=#532 id=532 data-nosnippet>532</a>        </span><span class="kw">let </span>cached = fix_location(<span class="kw-2">&amp;</span>fixed_at(<span class="number">481_173_000</span>, <span class="number">115_166_666</span>)).unwrap();
-<a href=#533 id=533 data-nosnippet>533</a>        <span class="macro">assert_eq!</span>(here.precision(), precision);
-<a href=#534 id=534 data-nosnippet>534</a>        <span class="macro">assert_eq!</span>(here.as_bytes(), <span class="kw-2">&amp;</span>cached.as_bytes()[..precision <span class="kw">as </span>usize]);
-<a href=#535 id=535 data-nosnippet>535</a>    }
-<a href=#536 id=536 data-nosnippet>536</a>
-<a href=#537 id=537 data-nosnippet>537</a>    <span class="doccomment">/// Which fixes are worth offering to the identity, in one test on
-<a href=#538 id=538 data-nosnippet>538</a>    /// purpose: it is the only one that touches the module's statics, and
-<a href=#539 id=539 data-nosnippet>539</a>    /// two of them would race each other for the same globals.
-<a href=#540 id=540 data-nosnippet>540</a>    ///
-<a href=#541 id=541 data-nosnippet>541</a>    /// What *becomes* of an offer is the session's business — it holds
-<a href=#542 id=542 data-nosnippet>542</a>    /// `PROP_IDENT_LOCATION` and has its own tests. All this module
-<a href=#543 id=543 data-nosnippet>543</a>    /// decides is whether waking the driver is warranted.
-<a href=#544 id=544 data-nosnippet>544</a>    </span><span class="attr">#[test]
-<a href=#545 id=545 data-nosnippet>545</a>    </span><span class="kw">fn </span>a_fix_is_offered_only_when_the_advertised_cell_moves() {
-<a href=#546 id=546 data-nosnippet>546</a>        <span class="comment">// Undated fixes throughout: what the clock does with a fix is a
-<a href=#547 id=547 data-nosnippet>547</a>        // separate decision with its own tests, and letting these set it
-<a href=#548 id=548 data-nosnippet>548</a>        // would leave a wall clock behind for whatever runs next.
-<a href=#549 id=549 data-nosnippet>549</a>        </span><span class="kw">let </span>untimed = |lat_e7, lon_e7| Fix {
-<a href=#550 id=550 data-nosnippet>550</a>            time: <span class="prelude-val">None</span>,
-<a href=#551 id=551 data-nosnippet>551</a>            ..fixed_at(lat_e7, lon_e7)
-<a href=#552 id=552 data-nosnippet>552</a>        };
-<a href=#553 id=553 data-nosnippet>553</a>        <span class="kw">let </span>updating = Policy {
-<a href=#554 id=554 data-nosnippet>554</a>            update_identity: <span class="bool-val">true</span>,
-<a href=#555 id=555 data-nosnippet>555</a>            ..policy()
-<a href=#556 id=556 data-nosnippet>556</a>        };
-<a href=#557 id=557 data-nosnippet>557</a>
-<a href=#558 id=558 data-nosnippet>558</a>        <span class="comment">// The first fix under the switch is offered; a second in the same
-<a href=#559 id=559 data-nosnippet>559</a>        // cell is not.
-<a href=#560 id=560 data-nosnippet>560</a>        </span>configure(<span class="bool-val">true</span>, updating);
-<a href=#561 id=561 data-nosnippet>561</a>        <span class="kw">let </span>here = untimed(<span class="number">481_173_000</span>, <span class="number">115_166_666</span>);
-<a href=#562 id=562 data-nosnippet>562</a>        <span class="macro">assert!</span>(absorb(<span class="kw-2">&amp;</span>here, updating).identity_moved);
-<a href=#563 id=563 data-nosnippet>563</a>        <span class="macro">assert!</span>(!absorb(<span class="kw-2">&amp;</span>here, updating).identity_moved);
-<a href=#564 id=564 data-nosnippet>564</a>
-<a href=#565 id=565 data-nosnippet>565</a>        <span class="comment">// Far enough to leave the cell.
-<a href=#566 id=566 data-nosnippet>566</a>        </span><span class="macro">assert!</span>(absorb(<span class="kw-2">&amp;</span>untimed(<span class="number">490_000_000</span>, <span class="number">120_000_000</span>), updating).identity_moved);
-<a href=#567 id=567 data-nosnippet>567</a>
-<a href=#568 id=568 data-nosnippet>568</a>        <span class="comment">// A fix arriving while the switch is off is not offered at all.
-<a href=#569 id=569 data-nosnippet>569</a>        </span>configure(<span class="bool-val">true</span>, policy());
-<a href=#570 id=570 data-nosnippet>570</a>        <span class="macro">assert!</span>(!absorb(<span class="kw-2">&amp;</span>here, policy()).identity_moved);
-<a href=#571 id=571 data-nosnippet>571</a>
-<a href=#572 id=572 data-nosnippet>572</a>        <span class="comment">// Switching back on re-arms it: the operator may have edited the
-<a href=#573 id=573 data-nosnippet>573</a>        // advertised position while the device was not maintaining it,
-<a href=#574 id=574 data-nosnippet>574</a>        // and the same cell is now worth offering again.
-<a href=#575 id=575 data-nosnippet>575</a>        </span>configure(<span class="bool-val">true</span>, updating);
-<a href=#576 id=576 data-nosnippet>576</a>        <span class="macro">assert!</span>(absorb(<span class="kw-2">&amp;</span>here, updating).identity_moved);
-<a href=#577 id=577 data-nosnippet>577</a>
-<a href=#578 id=578 data-nosnippet>578</a>        <span class="comment">// So does switching the receiver off and back on — the position
-<a href=#579 id=579 data-nosnippet>579</a>        // it comes back with has to reach the identity even if the
-<a href=#580 id=580 data-nosnippet>580</a>        // device never left.
-<a href=#581 id=581 data-nosnippet>581</a>        </span>configure(<span class="bool-val">false</span>, updating);
-<a href=#582 id=582 data-nosnippet>582</a>        configure(<span class="bool-val">true</span>, updating);
-<a href=#583 id=583 data-nosnippet>583</a>        <span class="macro">assert!</span>(absorb(<span class="kw-2">&amp;</span>here, updating).identity_moved);
-<a href=#584 id=584 data-nosnippet>584</a>    }
-<a href=#585 id=585 data-nosnippet>585</a>}
+<a href=#422 id=422 data-nosnippet>422</a>    <span class="kw">fn </span>fixed_at(lat_e7: i32, lon_e7: i32) -&gt; Fix {
+<a href=#423 id=423 data-nosnippet>423</a>        Fix {
+<a href=#424 id=424 data-nosnippet>424</a>            quality: FixQuality::ThreeD,
+<a href=#425 id=425 data-nosnippet>425</a>            latitude_e7: <span class="prelude-val">Some</span>(lat_e7),
+<a href=#426 id=426 data-nosnippet>426</a>            longitude_e7: <span class="prelude-val">Some</span>(lon_e7),
+<a href=#427 id=427 data-nosnippet>427</a>            altitude_m: <span class="prelude-val">Some</span>(<span class="number">31</span>),
+<a href=#428 id=428 data-nosnippet>428</a>            hdop_centi: <span class="prelude-val">Some</span>(<span class="number">120</span>),
+<a href=#429 id=429 data-nosnippet>429</a>            sats_used: <span class="number">9</span>,
+<a href=#430 id=430 data-nosnippet>430</a>            sats_in_view: <span class="prelude-val">Some</span>(<span class="number">13</span>),
+<a href=#431 id=431 data-nosnippet>431</a>            time: <span class="prelude-val">Some</span>(DateTime {
+<a href=#432 id=432 data-nosnippet>432</a>                year: <span class="number">2026</span>,
+<a href=#433 id=433 data-nosnippet>433</a>                month: <span class="number">8</span>,
+<a href=#434 id=434 data-nosnippet>434</a>                day: <span class="number">4</span>,
+<a href=#435 id=435 data-nosnippet>435</a>                hour: <span class="number">12</span>,
+<a href=#436 id=436 data-nosnippet>436</a>                minute: <span class="number">0</span>,
+<a href=#437 id=437 data-nosnippet>437</a>                second: <span class="number">0</span>,
+<a href=#438 id=438 data-nosnippet>438</a>            }),
+<a href=#439 id=439 data-nosnippet>439</a>            time_from_fix: <span class="bool-val">true</span>,
+<a href=#440 id=440 data-nosnippet>440</a>        }
+<a href=#441 id=441 data-nosnippet>441</a>    }
+<a href=#442 id=442 data-nosnippet>442</a>
+<a href=#443 id=443 data-nosnippet>443</a>    <span class="attr">#[test]
+<a href=#444 id=444 data-nosnippet>444</a>    </span><span class="kw">fn </span>a_fix_becomes_the_property_surface() {
+<a href=#445 id=445 data-nosnippet>445</a>        <span class="kw">let </span>snapshot = to_snapshot(<span class="kw-2">&amp;</span>fixed_at(<span class="number">481_173_000</span>, <span class="number">115_166_666</span>));
+<a href=#446 id=446 data-nosnippet>446</a>        <span class="macro">assert_eq!</span>(snapshot.fix, umsh_ulcp::gnss::FixKind::ThreeD);
+<a href=#447 id=447 data-nosnippet>447</a>        <span class="macro">assert_eq!</span>(snapshot.sats_used, <span class="number">9</span>);
+<a href=#448 id=448 data-nosnippet>448</a>        <span class="macro">assert_eq!</span>(snapshot.sats_in_view, <span class="prelude-val">Some</span>(<span class="number">13</span>));
+<a href=#449 id=449 data-nosnippet>449</a>        <span class="macro">assert_eq!</span>(snapshot.altitude_m, <span class="prelude-val">Some</span>(<span class="number">31</span>));
+<a href=#450 id=450 data-nosnippet>450</a>        <span class="comment">// HDOP 1.20 scaled by the assumed range error.
+<a href=#451 id=451 data-nosnippet>451</a>        </span><span class="macro">assert_eq!</span>(snapshot.accuracy_dm, <span class="prelude-val">Some</span>(<span class="number">60</span>));
+<a href=#452 id=452 data-nosnippet>452</a>        <span class="macro">assert_eq!</span>(snapshot.location().len(), MAX_PRECISION <span class="kw">as </span>usize);
+<a href=#453 id=453 data-nosnippet>453</a>        <span class="comment">// The cached location is the finest the format carries: what the
+<a href=#454 id=454 data-nosnippet>454</a>        // *mesh* sees is clamped separately, because telling a host
+<a href=#455 id=455 data-nosnippet>455</a>        // where you are is a different disclosure from telling everyone.
+<a href=#456 id=456 data-nosnippet>456</a>        </span><span class="macro">assert_eq!</span>(
+<a href=#457 id=457 data-nosnippet>457</a>            snapshot.location(),
+<a href=#458 id=458 data-nosnippet>458</a>            NodeLocation::from_e7(<span class="number">481_173_000</span>, <span class="number">115_166_666</span>, MAX_PRECISION).as_bytes()
+<a href=#459 id=459 data-nosnippet>459</a>        );
+<a href=#460 id=460 data-nosnippet>460</a>    }
+<a href=#461 id=461 data-nosnippet>461</a>
+<a href=#462 id=462 data-nosnippet>462</a>    <span class="doccomment">/// A searching receiver reports zero for the facts it is sure of and
+<a href=#463 id=463 data-nosnippet>463</a>    /// empty for the position it does not have—never a stale one.
+<a href=#464 id=464 data-nosnippet>464</a>    </span><span class="attr">#[test]
+<a href=#465 id=465 data-nosnippet>465</a>    </span><span class="kw">fn </span>a_searching_cycle_carries_no_position() {
+<a href=#466 id=466 data-nosnippet>466</a>        <span class="kw">let </span>snapshot = to_snapshot(<span class="kw-2">&amp;</span>Fix::default());
+<a href=#467 id=467 data-nosnippet>467</a>        <span class="macro">assert_eq!</span>(snapshot.fix, umsh_ulcp::gnss::FixKind::None);
+<a href=#468 id=468 data-nosnippet>468</a>        <span class="macro">assert!</span>(snapshot.location().is_empty());
+<a href=#469 id=469 data-nosnippet>469</a>        <span class="macro">assert_eq!</span>(snapshot.altitude_m, <span class="prelude-val">None</span>);
+<a href=#470 id=470 data-nosnippet>470</a>        <span class="macro">assert_eq!</span>(snapshot.accuracy_dm, <span class="prelude-val">None</span>);
+<a href=#471 id=471 data-nosnippet>471</a>        <span class="macro">assert_eq!</span>(snapshot.sats_used, <span class="number">0</span>);
+<a href=#472 id=472 data-nosnippet>472</a>    }
+<a href=#473 id=473 data-nosnippet>473</a>
+<a href=#474 id=474 data-nosnippet>474</a>    <span class="doccomment">/// Half a coordinate pair is not a position.
+<a href=#475 id=475 data-nosnippet>475</a>    </span><span class="attr">#[test]
+<a href=#476 id=476 data-nosnippet>476</a>    </span><span class="kw">fn </span>a_partial_coordinate_pair_yields_no_location() {
+<a href=#477 id=477 data-nosnippet>477</a>        <span class="kw">let </span><span class="kw-2">mut </span>fix = fixed_at(<span class="number">481_173_000</span>, <span class="number">115_166_666</span>);
+<a href=#478 id=478 data-nosnippet>478</a>        fix.longitude_e7 = <span class="prelude-val">None</span>;
+<a href=#479 id=479 data-nosnippet>479</a>        <span class="macro">assert!</span>(to_snapshot(<span class="kw-2">&amp;</span>fix).location().is_empty());
+<a href=#480 id=480 data-nosnippet>480</a>    }
+<a href=#481 id=481 data-nosnippet>481</a>
+<a href=#482 id=482 data-nosnippet>482</a>    <span class="doccomment">/// The advertised cell is what decides whether an identity is worth
+<a href=#483 id=483 data-nosnippet>483</a>    /// re-signing: at the default precision a stationary node's fixes all
+<a href=#484 id=484 data-nosnippet>484</a>    /// land in the same cell, and re-signing each would put a fresh
+<a href=#485 id=485 data-nosnippet>485</a>    /// identity on the air every second to say what the last one said.
+<a href=#486 id=486 data-nosnippet>486</a>    </span><span class="attr">#[test]
+<a href=#487 id=487 data-nosnippet>487</a>    </span><span class="kw">fn </span>only_a_change_of_advertised_cell_is_a_move() {
+<a href=#488 id=488 data-nosnippet>488</a>        <span class="kw">let </span>precision = policy().identity_precision;
+<a href=#489 id=489 data-nosnippet>489</a>        <span class="kw">let </span>here = fix_location(<span class="kw-2">&amp;</span>fixed_at(<span class="number">481_173_000</span>, <span class="number">115_166_666</span>))
+<a href=#490 id=490 data-nosnippet>490</a>            .unwrap()
+<a href=#491 id=491 data-nosnippet>491</a>            .clamped(precision);
+<a href=#492 id=492 data-nosnippet>492</a>        <span class="comment">// A jitter of a few centimeters.
+<a href=#493 id=493 data-nosnippet>493</a>        </span><span class="kw">let </span>jittered = fix_location(<span class="kw-2">&amp;</span>fixed_at(<span class="number">481_173_010</span>, <span class="number">115_166_680</span>))
+<a href=#494 id=494 data-nosnippet>494</a>            .unwrap()
+<a href=#495 id=495 data-nosnippet>495</a>            .clamped(precision);
+<a href=#496 id=496 data-nosnippet>496</a>        <span class="macro">assert_eq!</span>(here, jittered, <span class="string">"a sub-cell jitter changed the cell"</span>);
+<a href=#497 id=497 data-nosnippet>497</a>
+<a href=#498 id=498 data-nosnippet>498</a>        <span class="kw">let </span>elsewhere = fix_location(<span class="kw-2">&amp;</span>fixed_at(<span class="number">490_000_000</span>, <span class="number">120_000_000</span>))
+<a href=#499 id=499 data-nosnippet>499</a>            .unwrap()
+<a href=#500 id=500 data-nosnippet>500</a>            .clamped(precision);
+<a href=#501 id=501 data-nosnippet>501</a>        <span class="macro">assert_ne!</span>(here, elsewhere);
+<a href=#502 id=502 data-nosnippet>502</a>
+<a href=#503 id=503 data-nosnippet>503</a>        <span class="comment">// The advertised value is coarser than the cached one, and is a
+<a href=#504 id=504 data-nosnippet>504</a>        // prefix of it: the same position, said less precisely.
+<a href=#505 id=505 data-nosnippet>505</a>        </span><span class="kw">let </span>cached = fix_location(<span class="kw-2">&amp;</span>fixed_at(<span class="number">481_173_000</span>, <span class="number">115_166_666</span>)).unwrap();
+<a href=#506 id=506 data-nosnippet>506</a>        <span class="macro">assert_eq!</span>(here.precision(), precision);
+<a href=#507 id=507 data-nosnippet>507</a>        <span class="macro">assert_eq!</span>(here.as_bytes(), <span class="kw-2">&amp;</span>cached.as_bytes()[..precision <span class="kw">as </span>usize]);
+<a href=#508 id=508 data-nosnippet>508</a>    }
+<a href=#509 id=509 data-nosnippet>509</a>
+<a href=#510 id=510 data-nosnippet>510</a>    <span class="doccomment">/// Which fixes are worth offering to the identity, in one test on
+<a href=#511 id=511 data-nosnippet>511</a>    /// purpose: it is the only one that touches the module's statics, and
+<a href=#512 id=512 data-nosnippet>512</a>    /// two of them would race each other for the same globals.
+<a href=#513 id=513 data-nosnippet>513</a>    ///
+<a href=#514 id=514 data-nosnippet>514</a>    /// What *becomes* of an offer is the session's business—it holds
+<a href=#515 id=515 data-nosnippet>515</a>    /// `PROP_IDENT_LOCATION` and has its own tests. All this module
+<a href=#516 id=516 data-nosnippet>516</a>    /// decides is whether waking the driver is warranted.
+<a href=#517 id=517 data-nosnippet>517</a>    </span><span class="attr">#[test]
+<a href=#518 id=518 data-nosnippet>518</a>    </span><span class="kw">fn </span>a_fix_is_offered_only_when_the_advertised_cell_moves() {
+<a href=#519 id=519 data-nosnippet>519</a>        <span class="comment">// Undated fixes throughout: what the clock does with a fix is a
+<a href=#520 id=520 data-nosnippet>520</a>        // separate decision with its own tests, and letting these set it
+<a href=#521 id=521 data-nosnippet>521</a>        // would leave a wall clock behind for whatever runs next.
+<a href=#522 id=522 data-nosnippet>522</a>        </span><span class="kw">let </span>untimed = |lat_e7, lon_e7| Fix {
+<a href=#523 id=523 data-nosnippet>523</a>            time: <span class="prelude-val">None</span>,
+<a href=#524 id=524 data-nosnippet>524</a>            ..fixed_at(lat_e7, lon_e7)
+<a href=#525 id=525 data-nosnippet>525</a>        };
+<a href=#526 id=526 data-nosnippet>526</a>        <span class="kw">let </span>updating = Policy {
+<a href=#527 id=527 data-nosnippet>527</a>            update_identity: <span class="bool-val">true</span>,
+<a href=#528 id=528 data-nosnippet>528</a>            ..policy()
+<a href=#529 id=529 data-nosnippet>529</a>        };
+<a href=#530 id=530 data-nosnippet>530</a>
+<a href=#531 id=531 data-nosnippet>531</a>        <span class="comment">// The first fix under the switch is offered; a second in the same
+<a href=#532 id=532 data-nosnippet>532</a>        // cell is not.
+<a href=#533 id=533 data-nosnippet>533</a>        </span>configure(<span class="bool-val">true</span>, updating);
+<a href=#534 id=534 data-nosnippet>534</a>        <span class="kw">let </span>here = untimed(<span class="number">481_173_000</span>, <span class="number">115_166_666</span>);
+<a href=#535 id=535 data-nosnippet>535</a>        <span class="macro">assert!</span>(absorb(<span class="kw-2">&amp;</span>here, updating).identity_moved);
+<a href=#536 id=536 data-nosnippet>536</a>        <span class="macro">assert!</span>(!absorb(<span class="kw-2">&amp;</span>here, updating).identity_moved);
+<a href=#537 id=537 data-nosnippet>537</a>
+<a href=#538 id=538 data-nosnippet>538</a>        <span class="comment">// Far enough to leave the cell.
+<a href=#539 id=539 data-nosnippet>539</a>        </span><span class="macro">assert!</span>(absorb(<span class="kw-2">&amp;</span>untimed(<span class="number">490_000_000</span>, <span class="number">120_000_000</span>), updating).identity_moved);
+<a href=#540 id=540 data-nosnippet>540</a>
+<a href=#541 id=541 data-nosnippet>541</a>        <span class="comment">// A fix arriving while the switch is off is not offered at all.
+<a href=#542 id=542 data-nosnippet>542</a>        </span>configure(<span class="bool-val">true</span>, policy());
+<a href=#543 id=543 data-nosnippet>543</a>        <span class="macro">assert!</span>(!absorb(<span class="kw-2">&amp;</span>here, policy()).identity_moved);
+<a href=#544 id=544 data-nosnippet>544</a>
+<a href=#545 id=545 data-nosnippet>545</a>        <span class="comment">// Switching back on re-arms it: the operator may have edited the
+<a href=#546 id=546 data-nosnippet>546</a>        // advertised position while the device was not maintaining it,
+<a href=#547 id=547 data-nosnippet>547</a>        // and the same cell is now worth offering again.
+<a href=#548 id=548 data-nosnippet>548</a>        </span>configure(<span class="bool-val">true</span>, updating);
+<a href=#549 id=549 data-nosnippet>549</a>        <span class="macro">assert!</span>(absorb(<span class="kw-2">&amp;</span>here, updating).identity_moved);
+<a href=#550 id=550 data-nosnippet>550</a>
+<a href=#551 id=551 data-nosnippet>551</a>        <span class="comment">// So does switching the receiver off and back on—the position
+<a href=#552 id=552 data-nosnippet>552</a>        // it comes back with has to reach the identity even if the
+<a href=#553 id=553 data-nosnippet>553</a>        // device never left.
+<a href=#554 id=554 data-nosnippet>554</a>        </span>configure(<span class="bool-val">false</span>, updating);
+<a href=#555 id=555 data-nosnippet>555</a>        configure(<span class="bool-val">true</span>, updating);
+<a href=#556 id=556 data-nosnippet>556</a>        <span class="macro">assert!</span>(absorb(<span class="kw-2">&amp;</span>here, updating).identity_moved);
+<a href=#557 id=557 data-nosnippet>557</a>    }
+<a href=#558 id=558 data-nosnippet>558</a>}
 </code></pre></div></section></main></body></html>

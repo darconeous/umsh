@@ -18,7 +18,7 @@ for accurate results at 6–7 byte precision.</p>
 </div></details><details class="toggle method-toggle" open><summary><section id="method.from_e7" class="method"><a class="src rightside" href="../../src/umsh_node/location.rs.html#132-159">Source</a><h4 class="code-header">pub fn <a href="#method.from_e7" class="fn">from_e7</a>(lat_e7: <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.i32.html">i32</a>, lon_e7: <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.i32.html">i32</a>, precision: <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.u8.html">u8</a>) -&gt; Self</h4></section></summary><div class="docblock"><p>Encode a <code>(latitude, longitude)</code> position given in units of 1e-7
 degrees, exactly and without floating point.</p>
 <p>This is the constructor to use for a position that arrived as
-decimal digits — a GNSS receiver’s <code>ddmm.mmmm</code> fields, most of
+decimal digits—a GNSS receiver’s <code>ddmm.mmmm</code> fields, most of
 all. <a href="struct.NodeLocation.html#method.from_lat_lon" title="associated function umsh_node::location::NodeLocation::from_lat_lon"><code>from_lat_lon</code></a> has to round the value
 into a binary float first, which at 6–7 byte precision can land it
 in the neighbouring cell; this cannot, at any precision, with or

@@ -5,13 +5,13 @@ power, no display, no speaker, no keyboard. Both Seeed Studio
 SenseCap T1000-E and SenseCap Solar P1 fall in this class.</p>
 <p>The crate provides only <strong>mechanism</strong>, not policy:</p>
 <ul>
-<li><a href="button/index.html" title="mod umsh_ux_tracker::button"><code>button</code></a> — recognize Single / Double / Triple / Long button
+<li><a href="button/index.html" title="mod umsh_ux_tracker::button"><code>button</code></a>—recognize Single / Double / Triple / Long button
 events from raw debounced edges + a monotonic-millisecond clock.</li>
-<li><a href="led/index.html" title="mod umsh_ux_tracker::led"><code>led</code></a> — drive a single-LED heartbeat with one-shot sequences
+<li><a href="led/index.html" title="mod umsh_ux_tracker::led"><code>led</code></a>—drive a single-LED heartbeat with one-shot sequences
 layered on top (power-on, power-off, location-advert, …).</li>
-<li><a href="buzzer/index.html" title="mod umsh_ux_tracker::buzzer"><code>buzzer</code></a> — play short tone melodies on a piezo buzzer with
+<li><a href="buzzer/index.html" title="mod umsh_ux_tracker::buzzer"><code>buzzer</code></a>—play short tone melodies on a piezo buzzer with
 silence-mode support.</li>
-<li><a href="power/index.html" title="mod umsh_ux_tracker::power"><code>power</code></a> — vocabulary (<a href="power/enum.PowerIntent.html" title="enum umsh_ux_tracker::power::PowerIntent"><code>PowerIntent</code></a>,
+<li><a href="power/index.html" title="mod umsh_ux_tracker::power"><code>power</code></a>—vocabulary (<a href="power/enum.PowerIntent.html" title="enum umsh_ux_tracker::power::PowerIntent"><code>PowerIntent</code></a>,
 <a href="power/enum.PowerIntentSource.html" title="enum umsh_ux_tracker::power::PowerIntentSource"><code>PowerIntentSource</code></a>) shared by every
 source that wants to take the device out of normal operation,
 plus a <a href="power/struct.LowBatteryDetector.html" title="struct umsh_ux_tracker::power::LowBatteryDetector"><code>LowBatteryDetector</code></a> that
@@ -23,8 +23,8 @@ exist, how the MAC integrates) belongs in the consuming app
 crate, e.g. <code>umsh-app-ulcp-cli</code>.</p>
 <p>Devices in a different class (handheld with screen + speaker +
 keyboard, headless mesh nodes) need their own <code>umsh-ux-&lt;class&gt;</code>
-crate because the abstractions here — single-LED heartbeat,
-piezo-tone melodies, gesture-on-one-button — do not generalize
+crate because the abstractions here—single-LED heartbeat,
+piezo-tone melodies, gesture-on-one-button—do not generalize
 meaningfully across classes.</p>
 <p>See <code>docs/firmware-architecture.md</code> for the broader BSP / UX / App
 / Binary layering.</p>

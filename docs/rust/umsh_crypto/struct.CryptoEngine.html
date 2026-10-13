@@ -5,13 +5,13 @@
 <code>k_mic</code> is the leftmost half (the S2V key <code>K1</code>) and <code>k_enc</code> is the
 rightmost half (the CTR key <code>K2</code>).</p>
 </div></details><details class="toggle method-toggle" open><summary><section id="method.derive_channel_id" class="method"><a class="src rightside" href="../src/umsh_crypto/lib.rs.html#314-318">Source</a><h4 class="code-header">pub fn <a href="#method.derive_channel_id" class="fn">derive_channel_id</a>(&amp;self, channel_key: &amp;ChannelKey) -&gt; ChannelId</h4></section></summary><div class="docblock"><p>Derive the channel identifier from a raw channel key.</p>
-</div></details><details class="toggle method-toggle" open><summary><section id="method.derive_channel_tint" class="method"><a class="src rightside" href="../src/umsh_crypto/lib.rs.html#327-331">Source</a><h4 class="code-header">pub fn <a href="#method.derive_channel_tint" class="fn">derive_channel_tint</a>(&amp;self, channel_key: &amp;ChannelKey) -&gt; [<a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.u8.html">u8</a>; <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.array.html">3</a>]</h4></section></summary><div class="docblock"><p>Derive three bytes for presentation — a deterministic color a user
+</div></details><details class="toggle method-toggle" open><summary><section id="method.derive_channel_tint" class="method"><a class="src rightside" href="../src/umsh_crypto/lib.rs.html#327-331">Source</a><h4 class="code-header">pub fn <a href="#method.derive_channel_tint" class="fn">derive_channel_tint</a>(&amp;self, channel_key: &amp;ChannelKey) -&gt; [<a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.u8.html">u8</a>; <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.array.html">3</a>]</h4></section></summary><div class="docblock"><p>Derive three bytes for presentation—a deterministic color a user
 interface can give a channel.</p>
 <p>This is the channel-identifier derivation run one byte longer, so the
 first two bytes are the channel identifier itself: HKDF-Expand emits a
 prefix of the same block either way. Nothing on the wire carries the
 third byte, and nothing depends on it.</p>
-</div></details><details class="toggle method-toggle" open><summary><section id="method.derive_channel_tag" class="method"><a class="src rightside" href="../src/umsh_crypto/lib.rs.html#338-342">Source</a><h4 class="code-header">pub fn <a href="#method.derive_channel_tag" class="fn">derive_channel_tag</a>(&amp;self, channel_key: &amp;ChannelKey) -&gt; ChannelTag</h4></section></summary><div class="docblock"><p>Derive the channel tag — a local identity wide enough to tell apart two
+</div></details><details class="toggle method-toggle" open><summary><section id="method.derive_channel_tag" class="method"><a class="src rightside" href="../src/umsh_crypto/lib.rs.html#338-342">Source</a><h4 class="code-header">pub fn <a href="#method.derive_channel_tag" class="fn">derive_channel_tag</a>(&amp;self, channel_key: &amp;ChannelKey) -&gt; ChannelTag</h4></section></summary><div class="docblock"><p>Derive the channel tag—a local identity wide enough to tell apart two
 channels whose keys derive the same channel identifier.</p>
 <p>Same derivation as the channel identifier, run to sixteen bytes, so the
 identifier and the presentation tint are prefixes of it.</p>
@@ -33,7 +33,7 @@ key second.</p>
 ) -&gt; <a class="enum" href="https://doc.rust-lang.org/nightly/core/result/enum.Result.html" title="enum core::result::Result">Result</a>&lt;ChannelKey, <a class="enum" href="enum.ChannelNameError.html" title="enum umsh_crypto::ChannelNameError">ChannelNameError</a>&gt;</h4></section></summary><div class="docblock"><p>Derive a channel key from a human-readable channel name.</p>
 <p>The name is canonicalized first, per the spec (multicast-channels.md
 § Named Channels): it must be ASCII, and ASCII letters are folded to
-lowercase before derivation — so <code>Public</code>, <code>public</code>, and <code>PUBLIC</code> all
+lowercase before derivation—so <code>Public</code>, <code>public</code>, and <code>PUBLIC</code> all
 derive the same key. Non-ASCII names are rejected (UTF-8 case-folding
 is deferred by the spec). Names longer than
 <a href="constant.MAX_CHANNEL_NAME_LEN.html" title="constant umsh_crypto::MAX_CHANNEL_NAME_LEN"><code>MAX_CHANNEL_NAME_LEN</code></a> are rejected as an implementation limit of
@@ -80,7 +80,7 @@ S2V tag and <code>k_enc</code>.</p>
 <ul>
 <li><strong><code>ack_mic</code></strong> = the first 4 bytes of <code>full_tag</code>. Because the on-wire
 MIC is a prefix-truncation of the full tag, this equals the first
-4 bytes of the acknowledged packet’s on-wire MIC — a <em>public</em>
+4 bytes of the acknowledged packet’s on-wire MIC—a <em>public</em>
 correlation handle any node that received the original packet
 (including forwarding repeaters) can compute.</li>
 <li><strong><code>ack_tag</code></strong> = <code>truncate_4( AES-256-ECB(k_enc, full_tag) )</code>. A keyed
@@ -92,7 +92,7 @@ authenticates the standalone ack.</li>
 </div></details><details class="toggle method-toggle" open><summary><section id="method.aes_cmac" class="method"><a class="src rightside" href="../src/umsh_crypto/lib.rs.html#635-641">Source</a><h4 class="code-header">pub fn <a href="#method.aes_cmac" class="fn">aes_cmac</a>(&amp;self, key: &amp;[<a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.u8.html">u8</a>; <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.array.html">32</a>], data: &amp;[&amp;[<a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.u8.html">u8</a>]]) -&gt; [<a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.u8.html">u8</a>; <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.array.html">16</a>]</h4></section></summary><div class="docblock"><p>Convenience wrapper for AES-CMAC over concatenated slices.</p>
 </div></details><details class="toggle method-toggle" open><summary><section id="method.aes_ctr" class="method"><a class="src rightside" href="../src/umsh_crypto/lib.rs.html#644-646">Source</a><h4 class="code-header">pub fn <a href="#method.aes_ctr" class="fn">aes_ctr</a>(&amp;self, key: &amp;[<a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.u8.html">u8</a>; <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.array.html">32</a>], iv: &amp;[<a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.u8.html">u8</a>; <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.array.html">16</a>], data: &amp;mut [<a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.u8.html">u8</a>])</h4></section></summary><div class="docblock"><p>Apply AES-CTR using <code>iv</code> as the initial counter block.</p>
 </div></details><details class="toggle method-toggle" open><summary><section id="method.build_ctr_iv" class="method"><a class="src rightside" href="../src/umsh_crypto/lib.rs.html#656-666">Source</a><h4 class="code-header">pub fn <a href="#method.build_ctr_iv" class="fn">build_ctr_iv</a>(&amp;self, mic: &amp;[<a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.u8.html">u8</a>], sec_info_bytes: &amp;[<a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.u8.html">u8</a>]) -&gt; [<a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.u8.html">u8</a>; <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.array.html">16</a>]</h4></section></summary><div class="docblock"><p>Construct the CTR IV from MIC bytes and SECINFO bytes.</p>
-<p>With a 16-byte MIC the IV is the masked MIC alone — exactly the
+<p>With a 16-byte MIC the IV is the masked MIC alone—exactly the
 initial counter <code>Q</code> from RFC 5297 §2.6; shorter MICs are padded
 from the SECINFO bytes, so the IV construction of a received
 packet must locate SECINFO exactly (see [<code>sec_info_bytes_range</code>]).

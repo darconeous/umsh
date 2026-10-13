@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"struct":["AlertConfig","BatteryFields","DutyLedger","GnssConfig","RadioRxInfo","RadioSettings","SessionConfig","SimulatedDevice","TimeConfig"]};
+window.SIDEBAR_ITEMS = {"constant":["SIMULATED_I2C_BUSES","SIMULATED_I2C_DEVICES"],"mod":["host","soft"],"struct":["AlertConfig","BatteryFields","DutyLedger","GnssConfig","IpConfig","RadioRxInfo","RadioSettings","SessionConfig","SimulatedDevice","SimulatedI2c","SimulatedPlatform","TimeConfig","WifiConfig"]};

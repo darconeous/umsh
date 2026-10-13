@@ -8,7 +8,7 @@ it does not authorize enrollment, so it can never stand in for the
 physical-presence gesture that arms the window.</p>
 <p>Lockout is conditioned on <code>pin_configured</code> deliberately: it exists to stop
 Passkey Entry bit-leak probing, and under Just Works there is no passkey to
-leak — gating the unauthenticated path on the same counter would let an
+leak—gating the unauthenticated path on the same counter would let an
 in-range attacker deny pairing for the rest of the power cycle with three
 bad confirm values.</p>
 <p>Bond-store capacity is deliberately <strong>not</strong> a term. A full store evicts its

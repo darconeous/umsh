@@ -4,7 +4,7 @@
 <a href=#4 id=4 data-nosnippet>4</a>//! The bridge carries frames between radios that cannot hear each other,
 <a href=#5 id=5 data-nosnippet>5</a>//! and that is all it does. Every participant's device runs in backhaul
 <a href=#6 id=6 data-nosnippet>6</a>//! mode, so the node behind each radio is a repeater whose point-to-point
-<a href=#7 id=7 data-nosnippet>7</a>//! neighbor is the participant — duplicate suppression, hop accounting,
+<a href=#7 id=7 data-nosnippet>7</a>//! neighbor is the participant—duplicate suppression, hop accounting,
 <a href=#8 id=8 data-nosnippet>8</a>//! trace prepending, and forwarding policy are that node's, applied to
 <a href=#9 id=9 data-nosnippet>9</a>//! bridged traffic as to anything else it hears. A packet crossing the
 <a href=#10 id=10 data-nosnippet>10</a>//! bridge is repeated twice: once by the device that heard it, whose
@@ -152,7 +152,7 @@
 <a href=#152 id=152 data-nosnippet>152</a><span class="doccomment">/// Lower `FHOPS_REM` to `max`, reporting whether the frame changed.
 <a href=#153 id=153 data-nosnippet>153</a>///
 <a href=#154 id=154 data-nosnippet>154</a>/// The flood hop count is dynamic routing metadata, excluded from the
-<a href=#155 id=155 data-nosnippet>155</a>/// MIC, so rewriting it in passing keeps the packet authentic — the same
+<a href=#155 id=155 data-nosnippet>155</a>/// MIC, so rewriting it in passing keeps the packet authentic—the same
 <a href=#156 id=156 data-nosnippet>156</a>/// reason a repeater may decrement it. It is the byte after the FCF
 <a href=#157 id=157 data-nosnippet>157</a>/// whenever the FCF says it is present, so the rewrite is one byte and
 <a href=#158 id=158 data-nosnippet>158</a>/// the accumulated count is left alone.
@@ -229,7 +229,7 @@
 <a href=#229 id=229 data-nosnippet>229</a>            .to_vec()
 <a href=#230 id=230 data-nosnippet>230</a>    }
 <a href=#231 id=231 data-nosnippet>231</a>
-<a href=#232 id=232 data-nosnippet>232</a>    <span class="doccomment">/// A broadcast with no `FHOPS` field at all — what a sender emits
+<a href=#232 id=232 data-nosnippet>232</a>    <span class="doccomment">/// A broadcast with no `FHOPS` field at all—what a sender emits
 <a href=#233 id=233 data-nosnippet>233</a>    /// when the frame must not be flooded onward.
 <a href=#234 id=234 data-nosnippet>234</a>    </span><span class="kw">fn </span>unfloodable_frame() -&gt; Vec&lt;u8&gt; {
 <a href=#235 id=235 data-nosnippet>235</a>        <span class="kw">use </span>umsh_core::{NodeHint, PacketBuilder};

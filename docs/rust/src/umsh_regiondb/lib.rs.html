@@ -2,15 +2,15 @@
 <a href=#2 id=2 data-nosnippet>2</a>//!
 <a href=#3 id=3 data-nosnippet>3</a>//! A `.regiondb` answers one question: given a position, which UMSH regions
 <a href=#4 id=4 data-nosnippet>4</a>//! should a repeater there normally be configured to accept? All of the hard
-<a href=#5 id=5 data-nosnippet>5</a>//! geography — nearest-airport partitions, commercial-service classification,
-<a href=#6 id=6 data-nosnippet>6</a>//! metropolitan boundaries, jurisdiction boundaries, manual corrections —
+<a href=#5 id=5 data-nosnippet>5</a>//! geography—nearest-airport partitions, commercial-service classification,
+<a href=#6 id=6 data-nosnippet>6</a>//! metropolitan boundaries, jurisdiction boundaries, manual corrections—
 <a href=#7 id=7 data-nosnippet>7</a>//! happens in the build, in `tools/regiondb-build/`. Nothing in this crate
 <a href=#8 id=8 data-nosnippet>8</a>//! knows how any of it was derived, and the radio knows even less: it is
 <a href=#9 id=9 data-nosnippet>9</a>//! handed ordinary region strings through the existing repeater configuration
 <a href=#10 id=10 data-nosnippet>10</a>//! path.
 <a href=#11 id=11 data-nosnippet>11</a>//!
-<a href=#12 id=12 data-nosnippet>12</a>//! Only core geometry is stored. A region's expansion margin — the overlap
-<a href=#13 id=13 data-nosnippet>13</a>//! that lets a repeater near a border serve both sides — is a distance
+<a href=#12 id=12 data-nosnippet>12</a>//! Only core geometry is stored. A region's expansion margin—the overlap
+<a href=#13 id=13 data-nosnippet>13</a>//! that lets a repeater near a border serve both sides—is a distance
 <a href=#14 id=14 data-nosnippet>14</a>//! resolved at lookup time by the sampled-dilation rule in [`sampling`]: the
 <a href=#15 id=15 data-nosnippet>15</a>//! position itself and a fixed pattern of points around it are tested against
 <a href=#16 id=16 data-nosnippet>16</a>//! the core polygons, and a hit on any of them is membership. A hit on the
@@ -30,8 +30,8 @@
 <a href=#30 id=30 data-nosnippet>30</a>//! ```
 <a href=#31 id=31 data-nosnippet>31</a>//!
 <a href=#32 id=32 data-nosnippet>32</a>//! The file itself is an ordinary SQLite database, and every implementation
-<a href=#33 id=33 data-nosnippet>33</a>//! that reads one — this crate, the Python builder, and eventually the
-<a href=#34 id=34 data-nosnippet>34</a>//! browser — must return identical results for identical positions. That is
+<a href=#33 id=33 data-nosnippet>33</a>//! that reads one—this crate, the Python builder, and eventually the
+<a href=#34 id=34 data-nosnippet>34</a>//! browser—must return identical results for identical positions. That is
 <a href=#35 id=35 data-nosnippet>35</a>//! not left to good intentions: `regions/tests/conformance.json` is replayed
 <a href=#36 id=36 data-nosnippet>36</a>//! by all of them, and the geometry codec, grid arithmetic, and sample
 <a href=#37 id=37 data-nosnippet>37</a>//! pattern here are written to match their Python counterparts operation for
@@ -124,7 +124,7 @@
 <a href=#124 id=124 data-nosnippet>124</a></span><span class="kw">pub enum </span>Membership {
 <a href=#125 id=125 data-nosnippet>125</a>    <span class="doccomment">/// The position itself is inside the region.
 <a href=#126 id=126 data-nosnippet>126</a>    </span>Core,
-<a href=#127 id=127 data-nosnippet>127</a>    <span class="doccomment">/// Only the sampled margin reaches the region — the position is near it,
+<a href=#127 id=127 data-nosnippet>127</a>    <span class="doccomment">/// Only the sampled margin reaches the region—the position is near it,
 <a href=#128 id=128 data-nosnippet>128</a>    /// within the region's expansion distance.
 <a href=#129 id=129 data-nosnippet>129</a>    </span>Expanded,
 <a href=#130 id=130 data-nosnippet>130</a>}
@@ -283,7 +283,7 @@
 <a href=#283 id=283 data-nosnippet>283</a>        // SQLite built without that module fails only then, as an opaque
 <a href=#284 id=284 data-nosnippet>284</a>        // "no such module: rtree" from deep inside a query. Probing here
 <a href=#285 id=285 data-nosnippet>285</a>        // turns that into a named error at the one moment a caller is
-<a href=#286 id=286 data-nosnippet>286</a>        // prepared to handle one. An empty table is fine — it is the
+<a href=#286 id=286 data-nosnippet>286</a>        // prepared to handle one. An empty table is fine—it is the
 <a href=#287 id=287 data-nosnippet>287</a>        // module that is being tested, not the data.
 <a href=#288 id=288 data-nosnippet>288</a>        </span><span class="kw">if </span>!has_lookup_ranges {
 <a href=#289 id=289 data-nosnippet>289</a>            <span class="kw">match </span>connection.query_row(<span class="string">"SELECT 1 FROM effective_rtree LIMIT 1"</span>, [], |<span class="kw">_</span>| <span class="prelude-val">Ok</span>(())) {
@@ -623,7 +623,7 @@
 <a href=#623 id=623 data-nosnippet>623</a><span class="doccomment">/// Collapse semantic matches onto the list a radio would be given.
 <a href=#624 id=624 data-nosnippet>624</a>///
 <a href=#625 id=625 data-nosnippet>625</a>/// Two matches that encode identically are one region as far as the radio is
-<a href=#626 id=626 data-nosnippet>626</a>/// concerned — the airport and metro senses of `SFO`, say — so the first in
+<a href=#626 id=626 data-nosnippet>626</a>/// concerned—the airport and metro senses of `SFO`, say—so the first in
 <a href=#627 id=627 data-nosnippet>627</a>/// policy order takes the slot.
 <a href=#628 id=628 data-nosnippet>628</a></span><span class="kw">fn </span>radio_regions(matches: <span class="kw-2">&amp;</span>[RegionMatch]) -&gt; Vec&lt;RadioRegion&gt; {
 <a href=#629 id=629 data-nosnippet>629</a>    <span class="kw">let </span><span class="kw-2">mut </span>seen = HashSet::new();
@@ -676,7 +676,7 @@
 <a href=#676 id=676 data-nosnippet>676</a>///
 <a href=#677 id=677 data-nosnippet>677</a>/// A sphere is enough here: this only ever orders two candidates that are both
 <a href=#678 id=678 data-nosnippet>678</a>/// within a hundred kilometers, and the ellipsoidal correction is far too small
-<a href=#679 id=679 data-nosnippet>679</a>/// to change which is nearer — and, unlike a geodesic, every implementation
+<a href=#679 id=679 data-nosnippet>679</a>/// to change which is nearer—and, unlike a geodesic, every implementation
 <a href=#680 id=680 data-nosnippet>680</a>/// reproduces it with plain arithmetic.
 <a href=#681 id=681 data-nosnippet>681</a></span><span class="kw">fn </span>site_distance(entry: <span class="kw-2">&amp;</span>RegionMatch, latitude: f64, longitude: f64) -&gt; f64 {
 <a href=#682 id=682 data-nosnippet>682</a>    <span class="kw">let </span><span class="prelude-val">Some</span>((site_longitude, site_latitude)) = entry.site <span class="kw">else </span>{

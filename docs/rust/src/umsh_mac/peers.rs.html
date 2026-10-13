@@ -1,460 +1,1095 @@
-<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `crates/umsh-mac/src/peers.rs`."><title>peers.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../static.files/rustdoc-80aa586b.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="umsh_mac" data-themes="" data-resource-suffix="" data-rustdoc-version="1.94.0-nightly (fcf67da03 2025-12-18)" data-channel="nightly" data-search-js="search-9e2438ea.js" data-stringdex-js="stringdex-a3946164.js" data-settings-js="settings-c38705f0.js" ><script src="../../static.files/storage-e2aeef58.js"></script><script defer src="../../static.files/src-script-813739b1.js"></script><script defer src="../../src-files.js"></script><script defer src="../../static.files/main-3e30299d.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-ffcac47a.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><section id="main-content" class="content"><div class="main-heading"><h1><div class="sub-heading">umsh_mac/</div>peers.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap digits-3"><pre class="rust"><code><a href=#1 id=1 data-nosnippet>1</a><span class="kw">use </span>heapless::{LinearMap, Vec};
-<a href=#2 id=2 data-nosnippet>2</a><span class="kw">use </span>umsh_core::{ChannelId, ChannelKey, NodeHint, PublicKey, RouterHint};
-<a href=#3 id=3 data-nosnippet>3</a><span class="kw">use </span>umsh_crypto::{DerivedChannelKeys, PairwiseKeys};
-<a href=#4 id=4 data-nosnippet>4</a>
-<a href=#5 id=5 data-nosnippet>5</a><span class="kw">use </span>crate::{CapacityError, cache::ReplayWindow};
-<a href=#6 id=6 data-nosnippet>6</a>
-<a href=#7 id=7 data-nosnippet>7</a><span class="doccomment">/// Opaque identifier for one remote peer.
-<a href=#8 id=8 data-nosnippet>8</a></span><span class="attr">#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-<a href=#9 id=9 data-nosnippet>9</a></span><span class="kw">pub struct </span>PeerId(<span class="kw">pub </span>u8);
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `crates/umsh-mac/src/peers.rs`."><title>peers.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../static.files/rustdoc-80aa586b.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="umsh_mac" data-themes="" data-resource-suffix="" data-rustdoc-version="1.94.0-nightly (fcf67da03 2025-12-18)" data-channel="nightly" data-search-js="search-9e2438ea.js" data-stringdex-js="stringdex-a3946164.js" data-settings-js="settings-c38705f0.js" ><script src="../../static.files/storage-e2aeef58.js"></script><script defer src="../../static.files/src-script-813739b1.js"></script><script defer src="../../src-files.js"></script><script defer src="../../static.files/main-3e30299d.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-ffcac47a.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><section id="main-content" class="content"><div class="main-heading"><h1><div class="sub-heading">umsh_mac/</div>peers.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap digits-4"><pre class="rust"><code><a href=#1 id=1 data-nosnippet>1</a><span class="kw">use </span>core::num::NonZeroU32;
+<a href=#2 id=2 data-nosnippet>2</a>
+<a href=#3 id=3 data-nosnippet>3</a><span class="kw">use </span>heapless::{LinearMap, Vec};
+<a href=#4 id=4 data-nosnippet>4</a><span class="kw">use </span>umsh_core::{
+<a href=#5 id=5 data-nosnippet>5</a>    ChannelId, ChannelKey, NodeHint, PublicKey, RouterHint, options::TraceSignalEntry,
+<a href=#6 id=6 data-nosnippet>6</a>};
+<a href=#7 id=7 data-nosnippet>7</a><span class="kw">use </span>umsh_crypto::{DerivedChannelKeys, PairwiseKeys};
+<a href=#8 id=8 data-nosnippet>8</a>
+<a href=#9 id=9 data-nosnippet>9</a><span class="kw">use </span>crate::{CapacityError, cache::ReplayWindow};
 <a href=#10 id=10 data-nosnippet>10</a>
-<a href=#11 id=11 data-nosnippet>11</a><span class="doccomment">/// Learned routing information for a remote peer.
-<a href=#12 id=12 data-nosnippet>12</a></span><span class="attr">#[derive(Clone, Debug, PartialEq, Eq)]
-<a href=#13 id=13 data-nosnippet>13</a></span><span class="kw">pub enum </span>CachedRoute {
-<a href=#14 id=14 data-nosnippet>14</a>    <span class="doccomment">/// Peer is directly reachable without any intermediate routers.
-<a href=#15 id=15 data-nosnippet>15</a>    ///
-<a href=#16 id=16 data-nosnippet>16</a>    /// Inferred when a packet arrives with no source-route or traceroute option
-<a href=#17 id=17 data-nosnippet>17</a>    /// (or an empty traceroute) and `FHOPS_ACC == 0`.
-<a href=#18 id=18 data-nosnippet>18</a>    </span>Direct,
-<a href=#19 id=19 data-nosnippet>19</a>    <span class="doccomment">/// Explicit source route derived by reversing the inbound traceroute.
-<a href=#20 id=20 data-nosnippet>20</a>    </span>Source(Vec&lt;RouterHint, <span class="number">15</span>&gt;),
-<a href=#21 id=21 data-nosnippet>21</a>    <span class="doccomment">/// Flood-delivery parameters learned from an inbound packet.
-<a href=#22 id=22 data-nosnippet>22</a>    </span>Flood { hops: u8, regions: Vec&lt;[u8; <span class="number">2</span>], <span class="number">8</span>&gt; },
-<a href=#23 id=23 data-nosnippet>23</a>}
-<a href=#24 id=24 data-nosnippet>24</a>
-<a href=#25 id=25 data-nosnippet>25</a><span class="kw">impl </span>CachedRoute {
-<a href=#26 id=26 data-nosnippet>26</a>    <span class="doccomment">/// Maximum hops a source route can name, matching `MAX_SOURCE_ROUTE_HOPS`.
-<a href=#27 id=27 data-nosnippet>27</a>    </span><span class="kw">pub const </span>MAX_HINTS: usize = <span class="number">15</span>;
-<a href=#28 id=28 data-nosnippet>28</a>    <span class="doccomment">/// Maximum region codes a learned flood route carries.
-<a href=#29 id=29 data-nosnippet>29</a>    </span><span class="kw">pub const </span>MAX_REGIONS: usize = <span class="number">8</span>;
-<a href=#30 id=30 data-nosnippet>30</a>
-<a href=#31 id=31 data-nosnippet>31</a>    <span class="doccomment">/// Build a source route from `hints`, or `None` if there are more
-<a href=#32 id=32 data-nosnippet>32</a>    /// than a packet could carry.
-<a href=#33 id=33 data-nosnippet>33</a>    ///
-<a href=#34 id=34 data-nosnippet>34</a>    /// For callers outside this crate, which have no reason to name a
-<a href=#35 id=35 data-nosnippet>35</a>    /// fixed-capacity container. Refusing an over-long route beats
-<a href=#36 id=36 data-nosnippet>36</a>    /// truncating one, which would send traffic to the wrong place.
-<a href=#37 id=37 data-nosnippet>37</a>    </span><span class="kw">pub fn </span>source(hints: <span class="kw-2">&amp;</span>[RouterHint]) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="self">Self</span>&gt; {
-<a href=#38 id=38 data-nosnippet>38</a>        Vec::from_slice(hints).ok().map(<span class="self">Self</span>::Source)
-<a href=#39 id=39 data-nosnippet>39</a>    }
-<a href=#40 id=40 data-nosnippet>40</a>
-<a href=#41 id=41 data-nosnippet>41</a>    <span class="doccomment">/// Build a flood route from `hops` and `regions`, or `None` if there
-<a href=#42 id=42 data-nosnippet>42</a>    /// are more region codes than one carries.
-<a href=#43 id=43 data-nosnippet>43</a>    </span><span class="kw">pub fn </span>flood(hops: u8, regions: <span class="kw-2">&amp;</span>[[u8; <span class="number">2</span>]]) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="self">Self</span>&gt; {
-<a href=#44 id=44 data-nosnippet>44</a>        Vec::from_slice(regions)
-<a href=#45 id=45 data-nosnippet>45</a>            .ok()
-<a href=#46 id=46 data-nosnippet>46</a>            .map(|regions| <span class="self">Self</span>::Flood { hops, regions })
-<a href=#47 id=47 data-nosnippet>47</a>    }
-<a href=#48 id=48 data-nosnippet>48</a>}
-<a href=#49 id=49 data-nosnippet>49</a>
-<a href=#50 id=50 data-nosnippet>50</a><span class="doccomment">/// Shared metadata tracked for a remote peer.
-<a href=#51 id=51 data-nosnippet>51</a></span><span class="attr">#[derive(Clone, Debug, PartialEq, Eq)]
-<a href=#52 id=52 data-nosnippet>52</a></span><span class="kw">pub struct </span>PeerInfo {
-<a href=#53 id=53 data-nosnippet>53</a>    <span class="doccomment">/// Full public key.
-<a href=#54 id=54 data-nosnippet>54</a>    </span><span class="kw">pub </span>public_key: PublicKey,
-<a href=#55 id=55 data-nosnippet>55</a>    <span class="doccomment">/// Whether this peer was explicitly configured by the local application.
-<a href=#56 id=56 data-nosnippet>56</a>    </span><span class="kw">pub </span>pinned: bool,
-<a href=#57 id=57 data-nosnippet>57</a>    <span class="doccomment">/// Most recent learned route, if any.
-<a href=#58 id=58 data-nosnippet>58</a>    </span><span class="kw">pub </span>route: <span class="prelude-ty">Option</span>&lt;CachedRoute&gt;,
-<a href=#59 id=59 data-nosnippet>59</a>    <span class="doccomment">/// Most recent observation timestamp.
-<a href=#60 id=60 data-nosnippet>60</a>    </span><span class="kw">pub </span>last_seen_ms: u64,
-<a href=#61 id=61 data-nosnippet>61</a>    <span class="doccomment">/// Highest RX frame counter loaded from persistent storage at boot.
-<a href=#62 id=62 data-nosnippet>62</a>    ///
-<a href=#63 id=63 data-nosnippet>63</a>    /// Non-zero means a stored boundary was found. When pairwise keys are
-<a href=#64 id=64 data-nosnippet>64</a>    /// first installed for this peer, the replay window is initialized to
-<a href=#65 id=65 data-nosnippet>65</a>    /// this value so that frames from before the reboot are rejected.
-<a href=#66 id=66 data-nosnippet>66</a>    </span><span class="kw">pub </span>initial_rx_counter: u32,
-<a href=#67 id=67 data-nosnippet>67</a>}
-<a href=#68 id=68 data-nosnippet>68</a>
-<a href=#69 id=69 data-nosnippet>69</a><span class="doccomment">/// Outcome of inserting or updating an auto-learned peer.
-<a href=#70 id=70 data-nosnippet>70</a></span><span class="attr">#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-<a href=#71 id=71 data-nosnippet>71</a></span><span class="kw">pub struct </span>AutoPeerUpdate {
-<a href=#72 id=72 data-nosnippet>72</a>    <span class="doccomment">/// Slot assigned to the peer.
-<a href=#73 id=73 data-nosnippet>73</a>    </span><span class="kw">pub </span>peer_id: PeerId,
-<a href=#74 id=74 data-nosnippet>74</a>    <span class="doccomment">/// Previous peer key displaced from this slot, if any.
-<a href=#75 id=75 data-nosnippet>75</a>    </span><span class="kw">pub </span>evicted_key: <span class="prelude-ty">Option</span>&lt;PublicKey&gt;,
-<a href=#76 id=76 data-nosnippet>76</a>}
-<a href=#77 id=77 data-nosnippet>77</a>
-<a href=#78 id=78 data-nosnippet>78</a><span class="doccomment">/// Outcome of removing a peer from the registry.
-<a href=#79 id=79 data-nosnippet>79</a></span><span class="attr">#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-<a href=#80 id=80 data-nosnippet>80</a></span><span class="kw">pub struct </span>PeerRemoval {
-<a href=#81 id=81 data-nosnippet>81</a>    <span class="doccomment">/// Public key of the removed peer.
-<a href=#82 id=82 data-nosnippet>82</a>    </span><span class="kw">pub </span>removed_key: PublicKey,
-<a href=#83 id=83 data-nosnippet>83</a>    <span class="doccomment">/// When removal swap-moved the last entry into the freed slot: that
-<a href=#84 id=84 data-nosnippet>84</a>    /// entry's `(old, new)` identifiers. Every `PeerId`-keyed structure must
-<a href=#85 id=85 data-nosnippet>85</a>    /// be re-keyed accordingly.
-<a href=#86 id=86 data-nosnippet>86</a>    </span><span class="kw">pub </span>moved: <span class="prelude-ty">Option</span>&lt;(PeerId, PeerId)&gt;,
-<a href=#87 id=87 data-nosnippet>87</a>}
-<a href=#88 id=88 data-nosnippet>88</a>
-<a href=#89 id=89 data-nosnippet>89</a><span class="doccomment">/// Fixed-capacity registry of remote peers.
-<a href=#90 id=90 data-nosnippet>90</a></span><span class="attr">#[derive(Clone, Debug)]
-<a href=#91 id=91 data-nosnippet>91</a></span><span class="kw">pub struct </span>PeerRegistry&lt;<span class="kw">const </span>N: usize&gt; {
-<a href=#92 id=92 data-nosnippet>92</a>    peers: Vec&lt;PeerInfo, N&gt;,
-<a href=#93 id=93 data-nosnippet>93</a>}
-<a href=#94 id=94 data-nosnippet>94</a>
-<a href=#95 id=95 data-nosnippet>95</a><span class="kw">impl</span>&lt;<span class="kw">const </span>N: usize&gt; Default <span class="kw">for </span>PeerRegistry&lt;N&gt; {
-<a href=#96 id=96 data-nosnippet>96</a>    <span class="kw">fn </span>default() -&gt; <span class="self">Self </span>{
-<a href=#97 id=97 data-nosnippet>97</a>        <span class="self">Self</span>::new()
-<a href=#98 id=98 data-nosnippet>98</a>    }
-<a href=#99 id=99 data-nosnippet>99</a>}
-<a href=#100 id=100 data-nosnippet>100</a>
-<a href=#101 id=101 data-nosnippet>101</a><span class="kw">impl</span>&lt;<span class="kw">const </span>N: usize&gt; PeerRegistry&lt;N&gt; {
-<a href=#102 id=102 data-nosnippet>102</a>    <span class="doccomment">/// Create an empty peer registry.
-<a href=#103 id=103 data-nosnippet>103</a>    </span><span class="kw">pub fn </span>new() -&gt; <span class="self">Self </span>{
-<a href=#104 id=104 data-nosnippet>104</a>        <span class="self">Self </span>{ peers: Vec::new() }
-<a href=#105 id=105 data-nosnippet>105</a>    }
-<a href=#106 id=106 data-nosnippet>106</a>
-<a href=#107 id=107 data-nosnippet>107</a>    <span class="doccomment">/// Iterate over peers whose derived hint matches `hint`.
-<a href=#108 id=108 data-nosnippet>108</a>    </span><span class="kw">pub fn </span>lookup_by_hint(<span class="kw-2">&amp;</span><span class="self">self</span>, hint: <span class="kw-2">&amp;</span>NodeHint) -&gt; <span class="kw">impl </span>Iterator&lt;Item = (PeerId, <span class="kw-2">&amp;</span>PeerInfo)&gt; {
-<a href=#109 id=109 data-nosnippet>109</a>        <span class="self">self</span>.peers
-<a href=#110 id=110 data-nosnippet>110</a>            .iter()
-<a href=#111 id=111 data-nosnippet>111</a>            .enumerate()
-<a href=#112 id=112 data-nosnippet>112</a>            .filter(<span class="kw">move </span>|(<span class="kw">_</span>, peer)| peer.public_key.hint() == <span class="kw-2">*</span>hint)
-<a href=#113 id=113 data-nosnippet>113</a>            .map(|(index, peer)| (PeerId(index <span class="kw">as </span>u8), peer))
-<a href=#114 id=114 data-nosnippet>114</a>    }
-<a href=#115 id=115 data-nosnippet>115</a>
-<a href=#116 id=116 data-nosnippet>116</a>    <span class="doccomment">/// Look up a peer by full public key.
-<a href=#117 id=117 data-nosnippet>117</a>    </span><span class="kw">pub fn </span>lookup_by_key(<span class="kw-2">&amp;</span><span class="self">self</span>, key: <span class="kw-2">&amp;</span>PublicKey) -&gt; <span class="prelude-ty">Option</span>&lt;(PeerId, <span class="kw-2">&amp;</span>PeerInfo)&gt; {
-<a href=#118 id=118 data-nosnippet>118</a>        <span class="self">self</span>.peers
-<a href=#119 id=119 data-nosnippet>119</a>            .iter()
-<a href=#120 id=120 data-nosnippet>120</a>            .enumerate()
-<a href=#121 id=121 data-nosnippet>121</a>            .find(|(<span class="kw">_</span>, peer)| peer.public_key == <span class="kw-2">*</span>key)
-<a href=#122 id=122 data-nosnippet>122</a>            .map(|(index, peer)| (PeerId(index <span class="kw">as </span>u8), peer))
-<a href=#123 id=123 data-nosnippet>123</a>    }
-<a href=#124 id=124 data-nosnippet>124</a>
-<a href=#125 id=125 data-nosnippet>125</a>    <span class="doccomment">/// Iterate over all registered peers.
-<a href=#126 id=126 data-nosnippet>126</a>    </span><span class="kw">pub fn </span>iter(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Iterator&lt;Item = (PeerId, <span class="kw-2">&amp;</span>PeerInfo)&gt; {
-<a href=#127 id=127 data-nosnippet>127</a>        <span class="self">self</span>.peers
-<a href=#128 id=128 data-nosnippet>128</a>            .iter()
-<a href=#129 id=129 data-nosnippet>129</a>            .enumerate()
-<a href=#130 id=130 data-nosnippet>130</a>            .map(|(index, peer)| (PeerId(index <span class="kw">as </span>u8), peer))
-<a href=#131 id=131 data-nosnippet>131</a>    }
-<a href=#132 id=132 data-nosnippet>132</a>
-<a href=#133 id=133 data-nosnippet>133</a>    <span class="doccomment">/// Borrow peer metadata by identifier.
-<a href=#134 id=134 data-nosnippet>134</a>    </span><span class="kw">pub fn </span>get(<span class="kw-2">&amp;</span><span class="self">self</span>, id: PeerId) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>PeerInfo&gt; {
-<a href=#135 id=135 data-nosnippet>135</a>        <span class="self">self</span>.peers.get(id.<span class="number">0 </span><span class="kw">as </span>usize)
-<a href=#136 id=136 data-nosnippet>136</a>    }
-<a href=#137 id=137 data-nosnippet>137</a>
-<a href=#138 id=138 data-nosnippet>138</a>    <span class="doccomment">/// Mutably borrow peer metadata by identifier.
-<a href=#139 id=139 data-nosnippet>139</a>    </span><span class="kw">pub fn </span>get_mut(<span class="kw-2">&amp;mut </span><span class="self">self</span>, id: PeerId) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;mut </span>PeerInfo&gt; {
-<a href=#140 id=140 data-nosnippet>140</a>        <span class="self">self</span>.peers.get_mut(id.<span class="number">0 </span><span class="kw">as </span>usize)
-<a href=#141 id=141 data-nosnippet>141</a>    }
-<a href=#142 id=142 data-nosnippet>142</a>
-<a href=#143 id=143 data-nosnippet>143</a>    <span class="doccomment">/// Insert or refresh an explicitly configured peer entry.
-<a href=#144 id=144 data-nosnippet>144</a>    </span><span class="kw">pub fn </span>try_insert_or_update(<span class="kw-2">&amp;mut </span><span class="self">self</span>, key: PublicKey) -&gt; <span class="prelude-ty">Result</span>&lt;PeerId, CapacityError&gt; {
-<a href=#145 id=145 data-nosnippet>145</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>((id, peer)) = <span class="self">self
-<a href=#146 id=146 data-nosnippet>146</a>            </span>.peers
-<a href=#147 id=147 data-nosnippet>147</a>            .iter_mut()
-<a href=#148 id=148 data-nosnippet>148</a>            .enumerate()
-<a href=#149 id=149 data-nosnippet>149</a>            .find(|(<span class="kw">_</span>, peer)| peer.public_key == key)
-<a href=#150 id=150 data-nosnippet>150</a>        {
-<a href=#151 id=151 data-nosnippet>151</a>            peer.public_key = key;
-<a href=#152 id=152 data-nosnippet>152</a>            peer.pinned = <span class="bool-val">true</span>;
-<a href=#153 id=153 data-nosnippet>153</a>            <span class="kw">return </span><span class="prelude-val">Ok</span>(PeerId(id <span class="kw">as </span>u8));
-<a href=#154 id=154 data-nosnippet>154</a>        }
-<a href=#155 id=155 data-nosnippet>155</a>
-<a href=#156 id=156 data-nosnippet>156</a>        <span class="self">self</span>.peers
-<a href=#157 id=157 data-nosnippet>157</a>            .push(PeerInfo {
-<a href=#158 id=158 data-nosnippet>158</a>                public_key: key,
-<a href=#159 id=159 data-nosnippet>159</a>                pinned: <span class="bool-val">true</span>,
-<a href=#160 id=160 data-nosnippet>160</a>                route: <span class="prelude-val">None</span>,
-<a href=#161 id=161 data-nosnippet>161</a>                last_seen_ms: <span class="number">0</span>,
-<a href=#162 id=162 data-nosnippet>162</a>                initial_rx_counter: <span class="number">0</span>,
-<a href=#163 id=163 data-nosnippet>163</a>            })
-<a href=#164 id=164 data-nosnippet>164</a>            .map_err(|<span class="kw">_</span>| CapacityError)<span class="question-mark">?</span>;
-<a href=#165 id=165 data-nosnippet>165</a>        <span class="prelude-val">Ok</span>(PeerId((<span class="self">self</span>.peers.len() - <span class="number">1</span>) <span class="kw">as </span>u8))
-<a href=#166 id=166 data-nosnippet>166</a>    }
-<a href=#167 id=167 data-nosnippet>167</a>
-<a href=#168 id=168 data-nosnippet>168</a>    <span class="doccomment">/// Insert or refresh an opportunistically learned peer entry.
-<a href=#169 id=169 data-nosnippet>169</a>    ///
-<a href=#170 id=170 data-nosnippet>170</a>    /// When the registry is full, this may recycle the oldest non-pinned entry in place
-<a href=#171 id=171 data-nosnippet>171</a>    /// rather than failing. Explicitly configured (`pinned`) peers are never displaced.
-<a href=#172 id=172 data-nosnippet>172</a>    </span><span class="kw">pub fn </span>try_insert_or_update_auto(
-<a href=#173 id=173 data-nosnippet>173</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
-<a href=#174 id=174 data-nosnippet>174</a>        key: PublicKey,
-<a href=#175 id=175 data-nosnippet>175</a>        now_ms: u64,
-<a href=#176 id=176 data-nosnippet>176</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;AutoPeerUpdate, CapacityError&gt; {
-<a href=#177 id=177 data-nosnippet>177</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>((id, peer)) = <span class="self">self
-<a href=#178 id=178 data-nosnippet>178</a>            </span>.peers
-<a href=#179 id=179 data-nosnippet>179</a>            .iter_mut()
-<a href=#180 id=180 data-nosnippet>180</a>            .enumerate()
-<a href=#181 id=181 data-nosnippet>181</a>            .find(|(<span class="kw">_</span>, peer)| peer.public_key == key)
-<a href=#182 id=182 data-nosnippet>182</a>        {
-<a href=#183 id=183 data-nosnippet>183</a>            peer.last_seen_ms = now_ms;
-<a href=#184 id=184 data-nosnippet>184</a>            <span class="kw">return </span><span class="prelude-val">Ok</span>(AutoPeerUpdate {
-<a href=#185 id=185 data-nosnippet>185</a>                peer_id: PeerId(id <span class="kw">as </span>u8),
-<a href=#186 id=186 data-nosnippet>186</a>                evicted_key: <span class="prelude-val">None</span>,
-<a href=#187 id=187 data-nosnippet>187</a>            });
-<a href=#188 id=188 data-nosnippet>188</a>        }
-<a href=#189 id=189 data-nosnippet>189</a>
-<a href=#190 id=190 data-nosnippet>190</a>        <span class="kw">if </span><span class="self">self</span>.peers.len() &lt; N {
-<a href=#191 id=191 data-nosnippet>191</a>            <span class="self">self</span>.peers
-<a href=#192 id=192 data-nosnippet>192</a>                .push(PeerInfo {
-<a href=#193 id=193 data-nosnippet>193</a>                    public_key: key,
-<a href=#194 id=194 data-nosnippet>194</a>                    pinned: <span class="bool-val">false</span>,
-<a href=#195 id=195 data-nosnippet>195</a>                    route: <span class="prelude-val">None</span>,
-<a href=#196 id=196 data-nosnippet>196</a>                    last_seen_ms: now_ms,
-<a href=#197 id=197 data-nosnippet>197</a>                    initial_rx_counter: <span class="number">0</span>,
-<a href=#198 id=198 data-nosnippet>198</a>                })
-<a href=#199 id=199 data-nosnippet>199</a>                .map_err(|<span class="kw">_</span>| CapacityError)<span class="question-mark">?</span>;
-<a href=#200 id=200 data-nosnippet>200</a>            <span class="kw">return </span><span class="prelude-val">Ok</span>(AutoPeerUpdate {
-<a href=#201 id=201 data-nosnippet>201</a>                peer_id: PeerId((<span class="self">self</span>.peers.len() - <span class="number">1</span>) <span class="kw">as </span>u8),
-<a href=#202 id=202 data-nosnippet>202</a>                evicted_key: <span class="prelude-val">None</span>,
-<a href=#203 id=203 data-nosnippet>203</a>            });
-<a href=#204 id=204 data-nosnippet>204</a>        }
-<a href=#205 id=205 data-nosnippet>205</a>
-<a href=#206 id=206 data-nosnippet>206</a>        <span class="kw">let </span><span class="prelude-val">Some</span>((index, oldest)) = <span class="self">self
-<a href=#207 id=207 data-nosnippet>207</a>            </span>.peers
-<a href=#208 id=208 data-nosnippet>208</a>            .iter()
-<a href=#209 id=209 data-nosnippet>209</a>            .enumerate()
-<a href=#210 id=210 data-nosnippet>210</a>            .filter(|(<span class="kw">_</span>, peer)| !peer.pinned)
-<a href=#211 id=211 data-nosnippet>211</a>            .min_by_key(|(<span class="kw">_</span>, peer)| peer.last_seen_ms)
-<a href=#212 id=212 data-nosnippet>212</a>        <span class="kw">else </span>{
-<a href=#213 id=213 data-nosnippet>213</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(CapacityError);
-<a href=#214 id=214 data-nosnippet>214</a>        };
-<a href=#215 id=215 data-nosnippet>215</a>
-<a href=#216 id=216 data-nosnippet>216</a>        <span class="kw">let </span>evicted_key = oldest.public_key;
-<a href=#217 id=217 data-nosnippet>217</a>        <span class="self">self</span>.peers[index] = PeerInfo {
-<a href=#218 id=218 data-nosnippet>218</a>            public_key: key,
-<a href=#219 id=219 data-nosnippet>219</a>            pinned: <span class="bool-val">false</span>,
-<a href=#220 id=220 data-nosnippet>220</a>            route: <span class="prelude-val">None</span>,
-<a href=#221 id=221 data-nosnippet>221</a>            last_seen_ms: now_ms,
-<a href=#222 id=222 data-nosnippet>222</a>            initial_rx_counter: <span class="number">0</span>,
-<a href=#223 id=223 data-nosnippet>223</a>        };
-<a href=#224 id=224 data-nosnippet>224</a>        <span class="prelude-val">Ok</span>(AutoPeerUpdate {
-<a href=#225 id=225 data-nosnippet>225</a>            peer_id: PeerId(index <span class="kw">as </span>u8),
-<a href=#226 id=226 data-nosnippet>226</a>            evicted_key: <span class="prelude-val">Some</span>(evicted_key),
-<a href=#227 id=227 data-nosnippet>227</a>        })
+<a href=#11 id=11 data-nosnippet>11</a><span class="kw">const </span>FAILED_ROUTE_HOLDOFF_MS: u64 = <span class="number">30_000</span>;
+<a href=#12 id=12 data-nosnippet>12</a>
+<a href=#13 id=13 data-nosnippet>13</a><span class="doccomment">/// Opaque identifier for one remote peer.
+<a href=#14 id=14 data-nosnippet>14</a></span><span class="attr">#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+<a href=#15 id=15 data-nosnippet>15</a></span><span class="kw">pub struct </span>PeerId(<span class="kw">pub </span>u8);
+<a href=#16 id=16 data-nosnippet>16</a>
+<a href=#17 id=17 data-nosnippet>17</a><span class="doccomment">/// Learned routing information for a remote peer.
+<a href=#18 id=18 data-nosnippet>18</a></span><span class="attr">#[derive(Clone, Debug, PartialEq, Eq)]
+<a href=#19 id=19 data-nosnippet>19</a></span><span class="kw">pub enum </span>CachedRoute {
+<a href=#20 id=20 data-nosnippet>20</a>    <span class="doccomment">/// Peer was heard directly; this is not proof of reverse reachability.
+<a href=#21 id=21 data-nosnippet>21</a>    ///
+<a href=#22 id=22 data-nosnippet>22</a>    /// Inferred when a packet arrives with no source-route or traceroute option
+<a href=#23 id=23 data-nosnippet>23</a>    /// (or an empty traceroute) and `FHOPS_ACC == 0`.
+<a href=#24 id=24 data-nosnippet>24</a>    </span>Direct,
+<a href=#25 id=25 data-nosnippet>25</a>    <span class="doccomment">/// Explicit source route taken from the inbound traceroute (already in return order).
+<a href=#26 id=26 data-nosnippet>26</a>    /// Each hint names one repeater; the path is one hop longer than the
+<a href=#27 id=27 data-nosnippet>27</a>    /// route has hints.
+<a href=#28 id=28 data-nosnippet>28</a>    </span>Source(Vec&lt;RouterHint, <span class="number">15</span>&gt;),
+<a href=#29 id=29 data-nosnippet>29</a>    <span class="doccomment">/// Flood-delivery parameters learned from an inbound packet.
+<a href=#30 id=30 data-nosnippet>30</a>    ///
+<a href=#31 id=31 data-nosnippet>31</a>    /// `flood_hops` is the `FHOPS_ACC` the peer was last heard at, which is
+<a href=#32 id=32 data-nosnippet>32</a>    /// also the `FHOPS_REM` budget the next send needs. It is one less than
+<a href=#33 id=33 data-nosnippet>33</a>    /// the distance in hops: the final transmission of a flood spends no
+<a href=#34 id=34 data-nosnippet>34</a>    /// budget. Learned only from a packet that carried no source route, so
+<a href=#35 id=35 data-nosnippet>35</a>    /// that relation holds for it; see [`CachedRoute::hop_count`].
+<a href=#36 id=36 data-nosnippet>36</a>    </span>Flood {
+<a href=#37 id=37 data-nosnippet>37</a>        flood_hops: u8,
+<a href=#38 id=38 data-nosnippet>38</a>        regions: Vec&lt;[u8; <span class="number">2</span>], <span class="number">8</span>&gt;,
+<a href=#39 id=39 data-nosnippet>39</a>    },
+<a href=#40 id=40 data-nosnippet>40</a>}
+<a href=#41 id=41 data-nosnippet>41</a>
+<a href=#42 id=42 data-nosnippet>42</a><span class="kw">impl </span>CachedRoute {
+<a href=#43 id=43 data-nosnippet>43</a>    <span class="doccomment">/// Maximum repeater hints a source route can name, matching
+<a href=#44 id=44 data-nosnippet>44</a>    /// `MAX_SOURCE_ROUTE_HINTS`.
+<a href=#45 id=45 data-nosnippet>45</a>    </span><span class="kw">pub const </span>MAX_HINTS: usize = <span class="number">15</span>;
+<a href=#46 id=46 data-nosnippet>46</a>    <span class="doccomment">/// Maximum region codes a learned flood route carries.
+<a href=#47 id=47 data-nosnippet>47</a>    </span><span class="kw">pub const </span>MAX_REGIONS: usize = <span class="number">8</span>;
+<a href=#48 id=48 data-nosnippet>48</a>
+<a href=#49 id=49 data-nosnippet>49</a>    <span class="doccomment">/// Build a source route from `hints`, or `None` if there are more
+<a href=#50 id=50 data-nosnippet>50</a>    /// than a packet could carry.
+<a href=#51 id=51 data-nosnippet>51</a>    ///
+<a href=#52 id=52 data-nosnippet>52</a>    /// For callers outside this crate, which have no reason to name a
+<a href=#53 id=53 data-nosnippet>53</a>    /// fixed-capacity container. Refusing an over-long route beats
+<a href=#54 id=54 data-nosnippet>54</a>    /// truncating one, which would send traffic to the wrong place.
+<a href=#55 id=55 data-nosnippet>55</a>    </span><span class="kw">pub fn </span>source(hints: <span class="kw-2">&amp;</span>[RouterHint]) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="self">Self</span>&gt; {
+<a href=#56 id=56 data-nosnippet>56</a>        Vec::from_slice(hints).ok().map(<span class="self">Self</span>::Source)
+<a href=#57 id=57 data-nosnippet>57</a>    }
+<a href=#58 id=58 data-nosnippet>58</a>
+<a href=#59 id=59 data-nosnippet>59</a>    <span class="doccomment">/// Build a flood route from `flood_hops` and `regions`, or `None` if
+<a href=#60 id=60 data-nosnippet>60</a>    /// there are more region codes than one carries.
+<a href=#61 id=61 data-nosnippet>61</a>    </span><span class="kw">pub fn </span>flood(flood_hops: u8, regions: <span class="kw-2">&amp;</span>[[u8; <span class="number">2</span>]]) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="self">Self</span>&gt; {
+<a href=#62 id=62 data-nosnippet>62</a>        Vec::from_slice(regions).ok().map(|regions| <span class="self">Self</span>::Flood {
+<a href=#63 id=63 data-nosnippet>63</a>            flood_hops,
+<a href=#64 id=64 data-nosnippet>64</a>            regions,
+<a href=#65 id=65 data-nosnippet>65</a>        })
+<a href=#66 id=66 data-nosnippet>66</a>    }
+<a href=#67 id=67 data-nosnippet>67</a>
+<a href=#68 id=68 data-nosnippet>68</a>    <span class="doccomment">/// The distance to the peer in hops, per the spec's definition: one
+<a href=#69 id=69 data-nosnippet>69</a>    /// transmission between adjacent nodes.
+<a href=#70 id=70 data-nosnippet>70</a>    ///
+<a href=#71 id=71 data-nosnippet>71</a>    /// The counterpart of `ReceivedPacketRef::hop_count` for a cached route,
+<a href=#72 id=72 data-nosnippet>72</a>    /// so a route and the frame that taught it report the same number. A
+<a href=#73 id=73 data-nosnippet>73</a>    /// direct peer is one hop away. A source route is one hop longer than it
+<a href=#74 id=74 data-nosnippet>74</a>    /// has hints, the leg into the first repeater belonging to no hint. A
+<a href=#75 id=75 data-nosnippet>75</a>    /// flood route is one hop past its `flood_hops`, the final transmission
+<a href=#76 id=76 data-nosnippet>76</a>    /// spending no budget.
+<a href=#77 id=77 data-nosnippet>77</a>    </span><span class="kw">pub fn </span>hop_count(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; u8 {
+<a href=#78 id=78 data-nosnippet>78</a>        <span class="kw">match </span><span class="self">self </span>{
+<a href=#79 id=79 data-nosnippet>79</a>            <span class="self">Self</span>::Direct =&gt; <span class="number">1</span>,
+<a href=#80 id=80 data-nosnippet>80</a>            <span class="self">Self</span>::Source(hints) =&gt; u8::try_from(hints.len())
+<a href=#81 id=81 data-nosnippet>81</a>                .unwrap_or(u8::MAX)
+<a href=#82 id=82 data-nosnippet>82</a>                .saturating_add(<span class="number">1</span>),
+<a href=#83 id=83 data-nosnippet>83</a>            <span class="self">Self</span>::Flood { flood_hops, .. } =&gt; flood_hops.saturating_add(<span class="number">1</span>),
+<a href=#84 id=84 data-nosnippet>84</a>        }
+<a href=#85 id=85 data-nosnippet>85</a>    }
+<a href=#86 id=86 data-nosnippet>86</a>
+<a href=#87 id=87 data-nosnippet>87</a>    <span class="doccomment">/// The node at the destination's end of the route's last hop: the one
+<a href=#88 id=88 data-nosnippet>88</a>    /// that hears the destination first.
+<a href=#89 id=89 data-nosnippet>89</a>    ///
+<a href=#90 id=90 data-nosnippet>90</a>    /// A flood distance of zero is a peer heard off its own transmitter, the
+<a href=#91 id=91 data-nosnippet>91</a>    /// same as a direct route. A longer flood distance names no path, and an
+<a href=#92 id=92 data-nosnippet>92</a>    /// empty source route constrains no hop.
+<a href=#93 id=93 data-nosnippet>93</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>far_hop(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;FarHop&gt; {
+<a href=#94 id=94 data-nosnippet>94</a>        <span class="kw">match </span><span class="self">self </span>{
+<a href=#95 id=95 data-nosnippet>95</a>            <span class="self">Self</span>::Direct | <span class="self">Self</span>::Flood { flood_hops: <span class="number">0</span>, .. } =&gt; <span class="prelude-val">Some</span>(FarHop::Peer),
+<a href=#96 id=96 data-nosnippet>96</a>            <span class="self">Self</span>::Source(hints) =&gt; hints.last().copied().map(FarHop::Repeater),
+<a href=#97 id=97 data-nosnippet>97</a>            <span class="self">Self</span>::Flood { .. } =&gt; <span class="prelude-val">None</span>,
+<a href=#98 id=98 data-nosnippet>98</a>        }
+<a href=#99 id=99 data-nosnippet>99</a>    }
+<a href=#100 id=100 data-nosnippet>100</a>}
+<a href=#101 id=101 data-nosnippet>101</a>
+<a href=#102 id=102 data-nosnippet>102</a><span class="doccomment">/// Who hears a route's destination first; see [`CachedRoute::far_hop`].
+<a href=#103 id=103 data-nosnippet>103</a></span><span class="attr">#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+<a href=#104 id=104 data-nosnippet>104</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">enum </span>FarHop {
+<a href=#105 id=105 data-nosnippet>105</a>    <span class="doccomment">/// This node, directly.
+<a href=#106 id=106 data-nosnippet>106</a>    </span>Peer,
+<a href=#107 id=107 data-nosnippet>107</a>    <span class="doccomment">/// The repeater named by the route's last hint.
+<a href=#108 id=108 data-nosnippet>108</a>    </span>Repeater(RouterHint),
+<a href=#109 id=109 data-nosnippet>109</a>}
+<a href=#110 id=110 data-nosnippet>110</a>
+<a href=#111 id=111 data-nosnippet>111</a><span class="doccomment">/// Shared metadata tracked for a remote peer.
+<a href=#112 id=112 data-nosnippet>112</a></span><span class="attr">#[derive(Clone, Debug, PartialEq, Eq)]
+<a href=#113 id=113 data-nosnippet>113</a></span><span class="kw">pub struct </span>PeerInfo {
+<a href=#114 id=114 data-nosnippet>114</a>    <span class="doccomment">/// Full public key.
+<a href=#115 id=115 data-nosnippet>115</a>    </span><span class="kw">pub </span>public_key: PublicKey,
+<a href=#116 id=116 data-nosnippet>116</a>    <span class="doccomment">/// Whether this peer was explicitly configured by the local application.
+<a href=#117 id=117 data-nosnippet>117</a>    </span><span class="kw">pub </span>pinned: bool,
+<a href=#118 id=118 data-nosnippet>118</a>    <span class="doccomment">/// Most recent learned route, if any.
+<a href=#119 id=119 data-nosnippet>119</a>    </span><span class="kw">pub </span>route: <span class="prelude-ty">Option</span>&lt;CachedRoute&gt;,
+<a href=#120 id=120 data-nosnippet>120</a>    <span class="doccomment">/// Revision of the selected route. Use registry route methods to mutate it.
+<a href=#121 id=121 data-nosnippet>121</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) route_revision: u64,
+<a href=#122 id=122 data-nosnippet>122</a>    <span class="doccomment">/// How the selected route scored on the latest evidence for it (see
+<a href=#123 id=123 data-nosnippet>123</a>    /// [`crate::route_score`]). `None` for a route nothing has measured: a
+<a href=#124 id=124 data-nosnippet>124</a>    /// flood distance, or a route installed by hand.
+<a href=#125 id=125 data-nosnippet>125</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) route_score: <span class="prelude-ty">Option</span>&lt;i16&gt;,
+<a href=#126 id=126 data-nosnippet>126</a>    <span class="doccomment">/// When an acknowledgment last came back for a send on the selected
+<a href=#127 id=127 data-nosnippet>127</a>    /// route.
+<a href=#128 id=128 data-nosnippet>128</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) route_confirmed_ms: <span class="prelude-ty">Option</span>&lt;u64&gt;,
+<a href=#129 id=129 data-nosnippet>129</a>    <span class="doccomment">/// How the selected route's last hop was most recently measured: the
+<a href=#130 id=130 data-nosnippet>130</a>    /// link between the peer and whoever hears it first (see
+<a href=#131 id=131 data-nosnippet>131</a>    /// [`CachedRoute::far_hop`]). `None` when nothing has measured it.
+<a href=#132 id=132 data-nosnippet>132</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) route_last_hop: <span class="prelude-ty">Option</span>&lt;TraceSignalEntry&gt;,
+<a href=#133 id=133 data-nosnippet>133</a>    <span class="doccomment">/// The selected route was chosen by the application
+<a href=#134 id=134 data-nosnippet>134</a>    /// ([`PeerRegistry::hold_route`]) rather than learned. It stays so after
+<a href=#135 id=135 data-nosnippet>135</a>    /// the hold ends, until a learned route replaces it.
+<a href=#136 id=136 data-nosnippet>136</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) route_hand_set: bool,
+<a href=#137 id=137 data-nosnippet>137</a>    <span class="doccomment">/// The peer advertises itself as mobile.
+<a href=#138 id=138 data-nosnippet>138</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) mobile: bool,
+<a href=#139 id=139 data-nosnippet>139</a>    <span class="doccomment">/// One recently failed route, suppressed only for passive route learning.
+<a href=#140 id=140 data-nosnippet>140</a>    </span>failed_route: <span class="prelude-ty">Option</span>&lt;(CachedRoute, u64)&gt;,
+<a href=#141 id=141 data-nosnippet>141</a>    <span class="doccomment">/// When a packet from this peer last reached us without flooding
+<a href=#142 id=142 data-nosnippet>142</a>    /// (`FHOPS_ACC` of zero): proof the peer holds a working path here.
+<a href=#143 id=143 data-nosnippet>143</a>    /// Kept in wrapping whole seconds, offset by one so the first second
+<a href=#144 id=144 data-nosnippet>144</a>    /// after boot is representable: every peer entry lives in the MAC's static, and a
+<a href=#145 id=145 data-nosnippet>145</a>    /// `u64` here costs a constrained board its stack headroom.
+<a href=#146 id=146 data-nosnippet>146</a>    </span>unflooded_arrival_s: <span class="prelude-ty">Option</span>&lt;NonZeroU32&gt;,
+<a href=#147 id=147 data-nosnippet>147</a>    <span class="doccomment">/// The peer's latest packet reached us by flooding, and nothing traced
+<a href=#148 id=148 data-nosnippet>148</a>    /// has gone back since: the next packet to it owes a trace route.
+<a href=#149 id=149 data-nosnippet>149</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) trace_owed: bool,
+<a href=#150 id=150 data-nosnippet>150</a>    <span class="doccomment">/// Most recent observation timestamp.
+<a href=#151 id=151 data-nosnippet>151</a>    </span><span class="kw">pub </span>last_seen_ms: u64,
+<a href=#152 id=152 data-nosnippet>152</a>    <span class="doccomment">/// Highest RX frame counter loaded from persistent storage at boot.
+<a href=#153 id=153 data-nosnippet>153</a>    ///
+<a href=#154 id=154 data-nosnippet>154</a>    /// Non-zero means a stored boundary was found. When pairwise keys are
+<a href=#155 id=155 data-nosnippet>155</a>    /// first installed for this peer, the replay window is initialized to
+<a href=#156 id=156 data-nosnippet>156</a>    /// this value so that frames from before the reboot are rejected.
+<a href=#157 id=157 data-nosnippet>157</a>    </span><span class="kw">pub </span>initial_rx_counter: u32,
+<a href=#158 id=158 data-nosnippet>158</a>}
+<a href=#159 id=159 data-nosnippet>159</a>
+<a href=#160 id=160 data-nosnippet>160</a><span class="kw">impl </span>PeerInfo {
+<a href=#161 id=161 data-nosnippet>161</a>    <span class="kw">fn </span>new(public_key: PublicKey, pinned: bool, last_seen_ms: u64) -&gt; <span class="self">Self </span>{
+<a href=#162 id=162 data-nosnippet>162</a>        <span class="self">Self </span>{
+<a href=#163 id=163 data-nosnippet>163</a>            public_key,
+<a href=#164 id=164 data-nosnippet>164</a>            pinned,
+<a href=#165 id=165 data-nosnippet>165</a>            route: <span class="prelude-val">None</span>,
+<a href=#166 id=166 data-nosnippet>166</a>            route_revision: <span class="number">0</span>,
+<a href=#167 id=167 data-nosnippet>167</a>            route_score: <span class="prelude-val">None</span>,
+<a href=#168 id=168 data-nosnippet>168</a>            route_confirmed_ms: <span class="prelude-val">None</span>,
+<a href=#169 id=169 data-nosnippet>169</a>            route_last_hop: <span class="prelude-val">None</span>,
+<a href=#170 id=170 data-nosnippet>170</a>            route_hand_set: <span class="bool-val">false</span>,
+<a href=#171 id=171 data-nosnippet>171</a>            mobile: <span class="bool-val">false</span>,
+<a href=#172 id=172 data-nosnippet>172</a>            failed_route: <span class="prelude-val">None</span>,
+<a href=#173 id=173 data-nosnippet>173</a>            unflooded_arrival_s: <span class="prelude-val">None</span>,
+<a href=#174 id=174 data-nosnippet>174</a>            trace_owed: <span class="bool-val">false</span>,
+<a href=#175 id=175 data-nosnippet>175</a>            last_seen_ms,
+<a href=#176 id=176 data-nosnippet>176</a>            initial_rx_counter: <span class="number">0</span>,
+<a href=#177 id=177 data-nosnippet>177</a>        }
+<a href=#178 id=178 data-nosnippet>178</a>    }
+<a href=#179 id=179 data-nosnippet>179</a>
+<a href=#180 id=180 data-nosnippet>180</a>    <span class="doccomment">/// How the selected route's last hop was most recently measured, if it
+<a href=#181 id=181 data-nosnippet>181</a>    /// was. A point-to-point entry marks a hop with no radio in it.
+<a href=#182 id=182 data-nosnippet>182</a>    </span><span class="kw">pub fn </span>route_last_hop(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;TraceSignalEntry&gt; {
+<a href=#183 id=183 data-nosnippet>183</a>        <span class="self">self</span>.route_last_hop
+<a href=#184 id=184 data-nosnippet>184</a>    }
+<a href=#185 id=185 data-nosnippet>185</a>
+<a href=#186 id=186 data-nosnippet>186</a>    <span class="doccomment">/// Whether the peer advertises itself as mobile.
+<a href=#187 id=187 data-nosnippet>187</a>    </span><span class="kw">pub fn </span>is_mobile(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
+<a href=#188 id=188 data-nosnippet>188</a>        <span class="self">self</span>.mobile
+<a href=#189 id=189 data-nosnippet>189</a>    }
+<a href=#190 id=190 data-nosnippet>190</a>
+<a href=#191 id=191 data-nosnippet>191</a>    <span class="doccomment">/// How the selected route scored on the latest evidence for it, in
+<a href=#192 id=192 data-nosnippet>192</a>    /// centibels; higher is better. `None` when nothing has measured it.
+<a href=#193 id=193 data-nosnippet>193</a>    </span><span class="kw">pub fn </span>route_score(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;i16&gt; {
+<a href=#194 id=194 data-nosnippet>194</a>        <span class="self">self</span>.route_score
+<a href=#195 id=195 data-nosnippet>195</a>    }
+<a href=#196 id=196 data-nosnippet>196</a>
+<a href=#197 id=197 data-nosnippet>197</a>    <span class="doccomment">/// When an acknowledgment last came back for a send on the selected
+<a href=#198 id=198 data-nosnippet>198</a>    /// route.
+<a href=#199 id=199 data-nosnippet>199</a>    </span><span class="kw">pub fn </span>route_confirmed_ms(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;u64&gt; {
+<a href=#200 id=200 data-nosnippet>200</a>        <span class="self">self</span>.route_confirmed_ms
+<a href=#201 id=201 data-nosnippet>201</a>    }
+<a href=#202 id=202 data-nosnippet>202</a>
+<a href=#203 id=203 data-nosnippet>203</a>    <span class="doccomment">/// Select `route`, forgetting what was known about the one it replaces.
+<a href=#204 id=204 data-nosnippet>204</a>    </span><span class="kw">fn </span>select_route(<span class="kw-2">&amp;mut </span><span class="self">self</span>, selection: RouteSelection, revision: u64) {
+<a href=#205 id=205 data-nosnippet>205</a>        <span class="self">self</span>.route = selection.route;
+<a href=#206 id=206 data-nosnippet>206</a>        <span class="self">self</span>.route_score = selection.score;
+<a href=#207 id=207 data-nosnippet>207</a>        <span class="self">self</span>.route_last_hop = selection.last_hop;
+<a href=#208 id=208 data-nosnippet>208</a>        <span class="self">self</span>.route_hand_set = selection.hand_set;
+<a href=#209 id=209 data-nosnippet>209</a>        <span class="self">self</span>.route_confirmed_ms = <span class="prelude-val">None</span>;
+<a href=#210 id=210 data-nosnippet>210</a>        <span class="self">self</span>.route_revision = revision;
+<a href=#211 id=211 data-nosnippet>211</a>    }
+<a href=#212 id=212 data-nosnippet>212</a>}
+<a href=#213 id=213 data-nosnippet>213</a>
+<a href=#214 id=214 data-nosnippet>214</a><span class="doccomment">/// A route about to become a peer's selected route, with what is known
+<a href=#215 id=215 data-nosnippet>215</a>/// about it.
+<a href=#216 id=216 data-nosnippet>216</a></span><span class="attr">#[derive(Default)]
+<a href=#217 id=217 data-nosnippet>217</a></span><span class="kw">struct </span>RouteSelection {
+<a href=#218 id=218 data-nosnippet>218</a>    route: <span class="prelude-ty">Option</span>&lt;CachedRoute&gt;,
+<a href=#219 id=219 data-nosnippet>219</a>    score: <span class="prelude-ty">Option</span>&lt;i16&gt;,
+<a href=#220 id=220 data-nosnippet>220</a>    last_hop: <span class="prelude-ty">Option</span>&lt;TraceSignalEntry&gt;,
+<a href=#221 id=221 data-nosnippet>221</a>    hand_set: bool,
+<a href=#222 id=222 data-nosnippet>222</a>}
+<a href=#223 id=223 data-nosnippet>223</a>
+<a href=#224 id=224 data-nosnippet>224</a><span class="kw">impl </span>RouteSelection {
+<a href=#225 id=225 data-nosnippet>225</a>    <span class="doccomment">/// No route at all.
+<a href=#226 id=226 data-nosnippet>226</a>    </span><span class="kw">fn </span>none() -&gt; <span class="self">Self </span>{
+<a href=#227 id=227 data-nosnippet>227</a>        <span class="self">Self</span>::default()
 <a href=#228 id=228 data-nosnippet>228</a>    }
 <a href=#229 id=229 data-nosnippet>229</a>
-<a href=#230 id=230 data-nosnippet>230</a>    <span class="doccomment">/// Remove a peer, freeing its slot for reuse.
-<a href=#231 id=231 data-nosnippet>231</a>    ///
-<a href=#232 id=232 data-nosnippet>232</a>    /// The registry is dense — a `PeerId` is an index — so removal swap-moves
-<a href=#233 id=233 data-nosnippet>233</a>    /// the last entry into the freed slot. The returned record names that
-<a href=#234 id=234 data-nosnippet>234</a>    /// move so the caller can re-key any state held under the moved peer's
-<a href=#235 id=235 data-nosnippet>235</a>    /// old identifier.
-<a href=#236 id=236 data-nosnippet>236</a>    </span><span class="kw">pub fn </span>remove(<span class="kw-2">&amp;mut </span><span class="self">self</span>, id: PeerId) -&gt; <span class="prelude-ty">Option</span>&lt;PeerRemoval&gt; {
-<a href=#237 id=237 data-nosnippet>237</a>        <span class="kw">let </span>index = id.<span class="number">0 </span><span class="kw">as </span>usize;
-<a href=#238 id=238 data-nosnippet>238</a>        <span class="kw">if </span>index &gt;= <span class="self">self</span>.peers.len() {
-<a href=#239 id=239 data-nosnippet>239</a>            <span class="kw">return </span><span class="prelude-val">None</span>;
-<a href=#240 id=240 data-nosnippet>240</a>        }
-<a href=#241 id=241 data-nosnippet>241</a>        <span class="kw">let </span>last = <span class="self">self</span>.peers.len() - <span class="number">1</span>;
-<a href=#242 id=242 data-nosnippet>242</a>        <span class="kw">let </span>removed = <span class="self">self</span>.peers.swap_remove(index);
-<a href=#243 id=243 data-nosnippet>243</a>        <span class="kw">let </span>moved = (<span class="macro">index !</span>= last).then_some((PeerId(last <span class="kw">as </span>u8), id));
-<a href=#244 id=244 data-nosnippet>244</a>        <span class="prelude-val">Some</span>(PeerRemoval {
-<a href=#245 id=245 data-nosnippet>245</a>            removed_key: removed.public_key,
-<a href=#246 id=246 data-nosnippet>246</a>            moved,
-<a href=#247 id=247 data-nosnippet>247</a>        })
-<a href=#248 id=248 data-nosnippet>248</a>    }
+<a href=#230 id=230 data-nosnippet>230</a>    <span class="doccomment">/// A route nothing has measured, installed from outside the MAC.
+<a href=#231 id=231 data-nosnippet>231</a>    </span><span class="kw">fn </span>installed(route: CachedRoute, hand_set: bool) -&gt; <span class="self">Self </span>{
+<a href=#232 id=232 data-nosnippet>232</a>        <span class="self">Self </span>{
+<a href=#233 id=233 data-nosnippet>233</a>            route: <span class="prelude-val">Some</span>(route),
+<a href=#234 id=234 data-nosnippet>234</a>            hand_set,
+<a href=#235 id=235 data-nosnippet>235</a>            ..<span class="self">Self</span>::default()
+<a href=#236 id=236 data-nosnippet>236</a>        }
+<a href=#237 id=237 data-nosnippet>237</a>    }
+<a href=#238 id=238 data-nosnippet>238</a>
+<a href=#239 id=239 data-nosnippet>239</a>    <span class="doccomment">/// A route a received frame taught.
+<a href=#240 id=240 data-nosnippet>240</a>    </span><span class="kw">fn </span>learned(candidate: RouteCandidate) -&gt; <span class="self">Self </span>{
+<a href=#241 id=241 data-nosnippet>241</a>        <span class="self">Self </span>{
+<a href=#242 id=242 data-nosnippet>242</a>            route: <span class="prelude-val">Some</span>(candidate.route),
+<a href=#243 id=243 data-nosnippet>243</a>            score: candidate.score,
+<a href=#244 id=244 data-nosnippet>244</a>            last_hop: candidate.last_hop,
+<a href=#245 id=245 data-nosnippet>245</a>            hand_set: <span class="bool-val">false</span>,
+<a href=#246 id=246 data-nosnippet>246</a>        }
+<a href=#247 id=247 data-nosnippet>247</a>    }
+<a href=#248 id=248 data-nosnippet>248</a>}
 <a href=#249 id=249 data-nosnippet>249</a>
-<a href=#250 id=250 data-nosnippet>250</a>    <span class="doccomment">/// Update the cached route for `id`.
-<a href=#251 id=251 data-nosnippet>251</a>    </span><span class="kw">pub fn </span>update_route(<span class="kw-2">&amp;mut </span><span class="self">self</span>, id: PeerId, route: CachedRoute) {
-<a href=#252 id=252 data-nosnippet>252</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(peer) = <span class="self">self</span>.get_mut(id) {
-<a href=#253 id=253 data-nosnippet>253</a>            peer.route = <span class="prelude-val">Some</span>(route);
-<a href=#254 id=254 data-nosnippet>254</a>        }
-<a href=#255 id=255 data-nosnippet>255</a>    }
-<a href=#256 id=256 data-nosnippet>256</a>
-<a href=#257 id=257 data-nosnippet>257</a>    <span class="doccomment">/// Forget the cached route for `id`, returning whether one was held.
-<a href=#258 id=258 data-nosnippet>258</a>    ///
-<a href=#259 id=259 data-nosnippet>259</a>    /// The peer itself stays registered; subsequent sends fall back to the
-<a href=#260 id=260 data-nosnippet>260</a>    /// default delivery mode until a fresh inbound packet teaches a route.
-<a href=#261 id=261 data-nosnippet>261</a>    </span><span class="kw">pub fn </span>clear_route(<span class="kw-2">&amp;mut </span><span class="self">self</span>, id: PeerId) -&gt; bool {
-<a href=#262 id=262 data-nosnippet>262</a>        <span class="self">self</span>.get_mut(id)
-<a href=#263 id=263 data-nosnippet>263</a>            .map(|peer| peer.route.take().is_some())
-<a href=#264 id=264 data-nosnippet>264</a>            .unwrap_or(<span class="bool-val">false</span>)
-<a href=#265 id=265 data-nosnippet>265</a>    }
-<a href=#266 id=266 data-nosnippet>266</a>
-<a href=#267 id=267 data-nosnippet>267</a>    <span class="doccomment">/// Refresh the last-seen timestamp for `id`.
-<a href=#268 id=268 data-nosnippet>268</a>    </span><span class="kw">pub fn </span>touch(<span class="kw-2">&amp;mut </span><span class="self">self</span>, id: PeerId, now_ms: u64) {
-<a href=#269 id=269 data-nosnippet>269</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(peer) = <span class="self">self</span>.get_mut(id) {
-<a href=#270 id=270 data-nosnippet>270</a>            peer.last_seen_ms = now_ms;
-<a href=#271 id=271 data-nosnippet>271</a>        }
-<a href=#272 id=272 data-nosnippet>272</a>    }
-<a href=#273 id=273 data-nosnippet>273</a>}
-<a href=#274 id=274 data-nosnippet>274</a>
-<a href=#275 id=275 data-nosnippet>275</a><span class="doccomment">/// Per-peer secure transport state.
-<a href=#276 id=276 data-nosnippet>276</a></span><span class="attr">#[derive(Clone)]
-<a href=#277 id=277 data-nosnippet>277</a></span><span class="kw">pub struct </span>PeerCryptoState {
-<a href=#278 id=278 data-nosnippet>278</a>    <span class="doccomment">/// Pairwise encryption and MIC keys.
-<a href=#279 id=279 data-nosnippet>279</a>    </span><span class="kw">pub </span>pairwise_keys: PairwiseKeys,
-<a href=#280 id=280 data-nosnippet>280</a>    <span class="doccomment">/// Replay state for traffic from this peer.
-<a href=#281 id=281 data-nosnippet>281</a>    </span><span class="kw">pub </span>replay_window: ReplayWindow,
-<a href=#282 id=282 data-nosnippet>282</a>    <span class="doccomment">/// Highest `last_accepted` value written to persistent storage.
-<a href=#283 id=283 data-nosnippet>283</a>    /// Updated by `service_rx_counter_persistence` after each flush.
-<a href=#284 id=284 data-nosnippet>284</a>    </span><span class="kw">pub </span>persisted_rx_counter: u32,
-<a href=#285 id=285 data-nosnippet>285</a>    <span class="doccomment">/// Set when `last_accepted` has advanced `COUNTER_PERSIST_BLOCK_SIZE`
-<a href=#286 id=286 data-nosnippet>286</a>    /// beyond `persisted_rx_counter`. Cleared after the next flush.
-<a href=#287 id=287 data-nosnippet>287</a>    </span><span class="kw">pub </span>needs_rx_persist: bool,
-<a href=#288 id=288 data-nosnippet>288</a>}
-<a href=#289 id=289 data-nosnippet>289</a>
-<a href=#290 id=290 data-nosnippet>290</a><span class="doccomment">/// Fixed-capacity map of per-peer secure transport state.
-<a href=#291 id=291 data-nosnippet>291</a></span><span class="attr">#[derive(Clone)]
-<a href=#292 id=292 data-nosnippet>292</a></span><span class="kw">pub struct </span>PeerCryptoMap&lt;<span class="kw">const </span>N: usize&gt; {
-<a href=#293 id=293 data-nosnippet>293</a>    entries: LinearMap&lt;PeerId, PeerCryptoState, N&gt;,
-<a href=#294 id=294 data-nosnippet>294</a>}
-<a href=#295 id=295 data-nosnippet>295</a>
-<a href=#296 id=296 data-nosnippet>296</a><span class="kw">impl</span>&lt;<span class="kw">const </span>N: usize&gt; Default <span class="kw">for </span>PeerCryptoMap&lt;N&gt; {
-<a href=#297 id=297 data-nosnippet>297</a>    <span class="kw">fn </span>default() -&gt; <span class="self">Self </span>{
-<a href=#298 id=298 data-nosnippet>298</a>        <span class="self">Self</span>::new()
-<a href=#299 id=299 data-nosnippet>299</a>    }
-<a href=#300 id=300 data-nosnippet>300</a>}
-<a href=#301 id=301 data-nosnippet>301</a>
-<a href=#302 id=302 data-nosnippet>302</a><span class="kw">impl</span>&lt;<span class="kw">const </span>N: usize&gt; PeerCryptoMap&lt;N&gt; {
-<a href=#303 id=303 data-nosnippet>303</a>    <span class="doccomment">/// Create an empty peer-crypto map.
-<a href=#304 id=304 data-nosnippet>304</a>    </span><span class="kw">pub fn </span>new() -&gt; <span class="self">Self </span>{
-<a href=#305 id=305 data-nosnippet>305</a>        <span class="self">Self </span>{
-<a href=#306 id=306 data-nosnippet>306</a>            entries: LinearMap::new(),
-<a href=#307 id=307 data-nosnippet>307</a>        }
-<a href=#308 id=308 data-nosnippet>308</a>    }
-<a href=#309 id=309 data-nosnippet>309</a>
-<a href=#310 id=310 data-nosnippet>310</a>    <span class="doccomment">/// Borrow one peer state.
-<a href=#311 id=311 data-nosnippet>311</a>    </span><span class="kw">pub fn </span>get(<span class="kw-2">&amp;</span><span class="self">self</span>, id: <span class="kw-2">&amp;</span>PeerId) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>PeerCryptoState&gt; {
-<a href=#312 id=312 data-nosnippet>312</a>        <span class="self">self</span>.entries.get(id)
-<a href=#313 id=313 data-nosnippet>313</a>    }
-<a href=#314 id=314 data-nosnippet>314</a>
-<a href=#315 id=315 data-nosnippet>315</a>    <span class="doccomment">/// Mutably borrow one peer state.
-<a href=#316 id=316 data-nosnippet>316</a>    </span><span class="kw">pub fn </span>get_mut(<span class="kw-2">&amp;mut </span><span class="self">self</span>, id: <span class="kw-2">&amp;</span>PeerId) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;mut </span>PeerCryptoState&gt; {
-<a href=#317 id=317 data-nosnippet>317</a>        <span class="self">self</span>.entries.get_mut(id)
-<a href=#318 id=318 data-nosnippet>318</a>    }
-<a href=#319 id=319 data-nosnippet>319</a>
-<a href=#320 id=320 data-nosnippet>320</a>    <span class="doccomment">/// Insert or replace state for a peer.
-<a href=#321 id=321 data-nosnippet>321</a>    </span><span class="kw">pub fn </span>insert(
-<a href=#322 id=322 data-nosnippet>322</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
-<a href=#323 id=323 data-nosnippet>323</a>        id: PeerId,
-<a href=#324 id=324 data-nosnippet>324</a>        state: PeerCryptoState,
-<a href=#325 id=325 data-nosnippet>325</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;PeerCryptoState&gt;, CapacityError&gt; {
-<a href=#326 id=326 data-nosnippet>326</a>        <span class="self">self</span>.entries.insert(id, state).map_err(|<span class="kw">_</span>| CapacityError)
-<a href=#327 id=327 data-nosnippet>327</a>    }
-<a href=#328 id=328 data-nosnippet>328</a>
-<a href=#329 id=329 data-nosnippet>329</a>    <span class="doccomment">/// Remove state for a peer.
-<a href=#330 id=330 data-nosnippet>330</a>    </span><span class="kw">pub fn </span>remove(<span class="kw-2">&amp;mut </span><span class="self">self</span>, id: <span class="kw-2">&amp;</span>PeerId) -&gt; <span class="prelude-ty">Option</span>&lt;PeerCryptoState&gt; {
-<a href=#331 id=331 data-nosnippet>331</a>        <span class="self">self</span>.entries.remove(id)
-<a href=#332 id=332 data-nosnippet>332</a>    }
-<a href=#333 id=333 data-nosnippet>333</a>
-<a href=#334 id=334 data-nosnippet>334</a>    <span class="doccomment">/// Iterate over all peer crypto entries.
-<a href=#335 id=335 data-nosnippet>335</a>    </span><span class="kw">pub fn </span>iter(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Iterator&lt;Item = (<span class="kw-2">&amp;</span>PeerId, <span class="kw-2">&amp;</span>PeerCryptoState)&gt; {
-<a href=#336 id=336 data-nosnippet>336</a>        <span class="self">self</span>.entries.iter()
-<a href=#337 id=337 data-nosnippet>337</a>    }
-<a href=#338 id=338 data-nosnippet>338</a>
-<a href=#339 id=339 data-nosnippet>339</a>    <span class="doccomment">/// Iterate mutably over all peer crypto entries.
-<a href=#340 id=340 data-nosnippet>340</a>    </span><span class="kw">pub fn </span>iter_mut(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Iterator&lt;Item = (<span class="kw-2">&amp;</span>PeerId, <span class="kw-2">&amp;mut </span>PeerCryptoState)&gt; {
-<a href=#341 id=341 data-nosnippet>341</a>        <span class="self">self</span>.entries.iter_mut()
-<a href=#342 id=342 data-nosnippet>342</a>    }
-<a href=#343 id=343 data-nosnippet>343</a>}
-<a href=#344 id=344 data-nosnippet>344</a>
-<a href=#345 id=345 data-nosnippet>345</a><span class="doccomment">/// Replay state for a sender known only by hint.
-<a href=#346 id=346 data-nosnippet>346</a></span><span class="attr">#[derive(Clone)]
-<a href=#347 id=347 data-nosnippet>347</a></span><span class="kw">pub struct </span>HintReplayState {
-<a href=#348 id=348 data-nosnippet>348</a>    <span class="doccomment">/// Replay window for the hint-only sender.
-<a href=#349 id=349 data-nosnippet>349</a>    </span><span class="kw">pub </span>window: ReplayWindow,
-<a href=#350 id=350 data-nosnippet>350</a>    <span class="doccomment">/// Most recent observation timestamp.
-<a href=#351 id=351 data-nosnippet>351</a>    </span><span class="kw">pub </span>last_seen_ms: u64,
-<a href=#352 id=352 data-nosnippet>352</a>}
-<a href=#353 id=353 data-nosnippet>353</a>
-<a href=#354 id=354 data-nosnippet>354</a><span class="doccomment">/// Shared state for one multicast channel.
-<a href=#355 id=355 data-nosnippet>355</a></span><span class="attr">#[derive(Clone)]
-<a href=#356 id=356 data-nosnippet>356</a></span><span class="kw">pub struct </span>ChannelState&lt;<span class="kw">const </span>RN: usize = <span class="number">8</span>, <span class="kw">const </span>HN: usize = <span class="number">8</span>&gt; {
-<a href=#357 id=357 data-nosnippet>357</a>    <span class="doccomment">/// Raw channel key.
-<a href=#358 id=358 data-nosnippet>358</a>    </span><span class="kw">pub </span>channel_key: ChannelKey,
-<a href=#359 id=359 data-nosnippet>359</a>    <span class="doccomment">/// Derived transport keys and identifier.
-<a href=#360 id=360 data-nosnippet>360</a>    </span><span class="kw">pub </span>derived: DerivedChannelKeys,
-<a href=#361 id=361 data-nosnippet>361</a>    <span class="doccomment">/// Replay windows for peers resolved to full identities.
-<a href=#362 id=362 data-nosnippet>362</a>    </span><span class="kw">pub </span>replay: LinearMap&lt;PeerId, ReplayWindow, RN&gt;,
-<a href=#363 id=363 data-nosnippet>363</a>    <span class="doccomment">/// Replay windows for senders known only by hint.
-<a href=#364 id=364 data-nosnippet>364</a>    </span><span class="kw">pub </span>hint_replay: LinearMap&lt;NodeHint, HintReplayState, HN&gt;,
-<a href=#365 id=365 data-nosnippet>365</a>}
-<a href=#366 id=366 data-nosnippet>366</a>
-<a href=#367 id=367 data-nosnippet>367</a><span class="kw">impl</span>&lt;<span class="kw">const </span>RN: usize, <span class="kw">const </span>HN: usize&gt; ChannelState&lt;RN, HN&gt; {
-<a href=#368 id=368 data-nosnippet>368</a>    <span class="doccomment">/// Create a new channel-state record.
-<a href=#369 id=369 data-nosnippet>369</a>    </span><span class="kw">pub fn </span>new(channel_key: ChannelKey, derived: DerivedChannelKeys) -&gt; <span class="self">Self </span>{
-<a href=#370 id=370 data-nosnippet>370</a>        <span class="self">Self </span>{
-<a href=#371 id=371 data-nosnippet>371</a>            channel_key,
-<a href=#372 id=372 data-nosnippet>372</a>            derived,
-<a href=#373 id=373 data-nosnippet>373</a>            replay: LinearMap::new(),
-<a href=#374 id=374 data-nosnippet>374</a>            hint_replay: LinearMap::new(),
-<a href=#375 id=375 data-nosnippet>375</a>        }
-<a href=#376 id=376 data-nosnippet>376</a>    }
-<a href=#377 id=377 data-nosnippet>377</a>}
-<a href=#378 id=378 data-nosnippet>378</a>
-<a href=#379 id=379 data-nosnippet>379</a><span class="doccomment">/// Fixed-capacity channel table shared by the MAC coordinator.
-<a href=#380 id=380 data-nosnippet>380</a></span><span class="attr">#[derive(Clone)]
-<a href=#381 id=381 data-nosnippet>381</a></span><span class="kw">pub struct </span>ChannelTable&lt;<span class="kw">const </span>N: usize, <span class="kw">const </span>RN: usize = <span class="number">8</span>, <span class="kw">const </span>HN: usize = <span class="number">8</span>&gt; {
-<a href=#382 id=382 data-nosnippet>382</a>    channels: Vec&lt;ChannelState&lt;RN, HN&gt;, N&gt;,
-<a href=#383 id=383 data-nosnippet>383</a>}
-<a href=#384 id=384 data-nosnippet>384</a>
-<a href=#385 id=385 data-nosnippet>385</a><span class="kw">impl</span>&lt;<span class="kw">const </span>N: usize, <span class="kw">const </span>RN: usize, <span class="kw">const </span>HN: usize&gt; Default <span class="kw">for </span>ChannelTable&lt;N, RN, HN&gt; {
-<a href=#386 id=386 data-nosnippet>386</a>    <span class="kw">fn </span>default() -&gt; <span class="self">Self </span>{
-<a href=#387 id=387 data-nosnippet>387</a>        <span class="self">Self</span>::new()
-<a href=#388 id=388 data-nosnippet>388</a>    }
-<a href=#389 id=389 data-nosnippet>389</a>}
-<a href=#390 id=390 data-nosnippet>390</a>
-<a href=#391 id=391 data-nosnippet>391</a><span class="kw">impl</span>&lt;<span class="kw">const </span>N: usize, <span class="kw">const </span>RN: usize, <span class="kw">const </span>HN: usize&gt; ChannelTable&lt;N, RN, HN&gt; {
-<a href=#392 id=392 data-nosnippet>392</a>    <span class="doccomment">/// Create an empty channel table.
-<a href=#393 id=393 data-nosnippet>393</a>    </span><span class="kw">pub fn </span>new() -&gt; <span class="self">Self </span>{
-<a href=#394 id=394 data-nosnippet>394</a>        <span class="self">Self </span>{
-<a href=#395 id=395 data-nosnippet>395</a>            channels: Vec::new(),
-<a href=#396 id=396 data-nosnippet>396</a>        }
-<a href=#397 id=397 data-nosnippet>397</a>    }
-<a href=#398 id=398 data-nosnippet>398</a>
-<a href=#399 id=399 data-nosnippet>399</a>    <span class="doccomment">/// Return the number of configured channels.
-<a href=#400 id=400 data-nosnippet>400</a>    </span><span class="kw">pub fn </span>len(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
-<a href=#401 id=401 data-nosnippet>401</a>        <span class="self">self</span>.channels.len()
-<a href=#402 id=402 data-nosnippet>402</a>    }
-<a href=#403 id=403 data-nosnippet>403</a>
-<a href=#404 id=404 data-nosnippet>404</a>    <span class="doccomment">/// Return whether no channels are configured.
-<a href=#405 id=405 data-nosnippet>405</a>    </span><span class="kw">pub fn </span>is_empty(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
-<a href=#406 id=406 data-nosnippet>406</a>        <span class="self">self</span>.channels.is_empty()
-<a href=#407 id=407 data-nosnippet>407</a>    }
-<a href=#408 id=408 data-nosnippet>408</a>
-<a href=#409 id=409 data-nosnippet>409</a>    <span class="doccomment">/// Iterate over channels whose derived identifier matches `id`.
-<a href=#410 id=410 data-nosnippet>410</a>    </span><span class="kw">pub fn </span>lookup_by_id(<span class="kw-2">&amp;</span><span class="self">self</span>, id: <span class="kw-2">&amp;</span>ChannelId) -&gt; <span class="kw">impl </span>Iterator&lt;Item = <span class="kw-2">&amp;</span>ChannelState&lt;RN, HN&gt;&gt; {
-<a href=#411 id=411 data-nosnippet>411</a>        <span class="self">self</span>.channels
-<a href=#412 id=412 data-nosnippet>412</a>            .iter()
-<a href=#413 id=413 data-nosnippet>413</a>            .filter(<span class="kw">move </span>|channel| channel.derived.channel_id == <span class="kw-2">*</span>id)
-<a href=#414 id=414 data-nosnippet>414</a>    }
-<a href=#415 id=415 data-nosnippet>415</a>
-<a href=#416 id=416 data-nosnippet>416</a>    <span class="doccomment">/// Mutably borrow the first channel whose derived identifier matches `id`.
-<a href=#417 id=417 data-nosnippet>417</a>    </span><span class="kw">pub fn </span>get_mut_by_id(<span class="kw-2">&amp;mut </span><span class="self">self</span>, id: <span class="kw-2">&amp;</span>ChannelId) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;mut </span>ChannelState&lt;RN, HN&gt;&gt; {
-<a href=#418 id=418 data-nosnippet>418</a>        <span class="self">self</span>.channels
-<a href=#419 id=419 data-nosnippet>419</a>            .iter_mut()
-<a href=#420 id=420 data-nosnippet>420</a>            .find(|channel| channel.derived.channel_id == <span class="kw-2">*</span>id)
-<a href=#421 id=421 data-nosnippet>421</a>    }
-<a href=#422 id=422 data-nosnippet>422</a>
-<a href=#423 id=423 data-nosnippet>423</a>    <span class="doccomment">/// Mutably iterate over all channel states.
-<a href=#424 id=424 data-nosnippet>424</a>    </span><span class="kw">pub fn </span>iter_mut(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Iterator&lt;Item = <span class="kw-2">&amp;mut </span>ChannelState&lt;RN, HN&gt;&gt; {
-<a href=#425 id=425 data-nosnippet>425</a>        <span class="self">self</span>.channels.iter_mut()
-<a href=#426 id=426 data-nosnippet>426</a>    }
-<a href=#427 id=427 data-nosnippet>427</a>
-<a href=#428 id=428 data-nosnippet>428</a>    <span class="doccomment">/// Remove the channel holding this exact key, discarding its replay
-<a href=#429 id=429 data-nosnippet>429</a>    /// state with it (re-adding the key later starts at first contact).
-<a href=#430 id=430 data-nosnippet>430</a>    /// Returns whether a channel was removed.
-<a href=#431 id=431 data-nosnippet>431</a>    </span><span class="kw">pub fn </span>remove_by_key(<span class="kw-2">&amp;mut </span><span class="self">self</span>, key: <span class="kw-2">&amp;</span>ChannelKey) -&gt; bool {
-<a href=#432 id=432 data-nosnippet>432</a>        <span class="kw">let </span><span class="prelude-val">Some</span>(index) = <span class="self">self
-<a href=#433 id=433 data-nosnippet>433</a>            </span>.channels
+<a href=#250 id=250 data-nosnippet>250</a><span class="doccomment">/// A learned path waiting beside a held route; see [`RouteHold::candidate`].
+<a href=#251 id=251 data-nosnippet>251</a></span><span class="attr">#[derive(Clone, Debug, PartialEq, Eq)]
+<a href=#252 id=252 data-nosnippet>252</a></span><span class="kw">pub struct </span>RouteCandidate {
+<a href=#253 id=253 data-nosnippet>253</a>    <span class="doccomment">/// The path.
+<a href=#254 id=254 data-nosnippet>254</a>    </span><span class="kw">pub </span>route: CachedRoute,
+<a href=#255 id=255 data-nosnippet>255</a>    <span class="doccomment">/// How it scored on what the frame that taught it measured.
+<a href=#256 id=256 data-nosnippet>256</a>    </span><span class="kw">pub </span>score: <span class="prelude-ty">Option</span>&lt;i16&gt;,
+<a href=#257 id=257 data-nosnippet>257</a>    <span class="doccomment">/// How its last hop was measured, if it was.
+<a href=#258 id=258 data-nosnippet>258</a>    </span><span class="kw">pub </span>last_hop: <span class="prelude-ty">Option</span>&lt;TraceSignalEntry&gt;,
+<a href=#259 id=259 data-nosnippet>259</a>}
+<a href=#260 id=260 data-nosnippet>260</a>
+<a href=#261 id=261 data-nosnippet>261</a><span class="kw">impl </span>From&lt;RouteOffer&gt; <span class="kw">for </span>RouteCandidate {
+<a href=#262 id=262 data-nosnippet>262</a>    <span class="kw">fn </span>from(offer: RouteOffer) -&gt; <span class="self">Self </span>{
+<a href=#263 id=263 data-nosnippet>263</a>        <span class="self">Self </span>{
+<a href=#264 id=264 data-nosnippet>264</a>            route: offer.route,
+<a href=#265 id=265 data-nosnippet>265</a>            score: offer.score,
+<a href=#266 id=266 data-nosnippet>266</a>            last_hop: offer.last_hop,
+<a href=#267 id=267 data-nosnippet>267</a>        }
+<a href=#268 id=268 data-nosnippet>268</a>    }
+<a href=#269 id=269 data-nosnippet>269</a>}
+<a href=#270 id=270 data-nosnippet>270</a>
+<a href=#271 id=271 data-nosnippet>271</a><span class="doccomment">/// A route the application chose for a peer, kept in place until a deadline.
+<a href=#272 id=272 data-nosnippet>272</a>///
+<a href=#273 id=273 data-nosnippet>273</a>/// While the hold is in force no learned path replaces the route and no
+<a href=#274 id=274 data-nosnippet>274</a>/// failure retires it. A send that misses its acknowledgment still falls
+<a href=#275 id=275 data-nosnippet>275</a>/// back to a flood, and what that teaches is kept beside the route as a
+<a href=#276 id=276 data-nosnippet>276</a>/// candidate the application may adopt.
+<a href=#277 id=277 data-nosnippet>277</a></span><span class="attr">#[derive(Clone, Debug, PartialEq, Eq)]
+<a href=#278 id=278 data-nosnippet>278</a></span><span class="kw">pub struct </span>RouteHold {
+<a href=#279 id=279 data-nosnippet>279</a>    <span class="doccomment">/// When the hold ends, on the MAC's clock.
+<a href=#280 id=280 data-nosnippet>280</a>    </span><span class="kw">pub </span>until_ms: u64,
+<a href=#281 id=281 data-nosnippet>281</a>    <span class="doccomment">/// Flood budget past the end of the held route: what a send on it
+<a href=#282 id=282 data-nosnippet>282</a>    /// spends once its hints are consumed, or from the start for a direct
+<a href=#283 id=283 data-nosnippet>283</a>    /// route. Replaces the slack [`crate::established_route_slack`] would
+<a href=#284 id=284 data-nosnippet>284</a>    /// grant while the hold lasts; zero floods nothing. An ack along the
+<a href=#285 id=285 data-nosnippet>285</a>    /// route spends whichever of the two is larger.
+<a href=#286 id=286 data-nosnippet>286</a>    </span><span class="kw">pub </span>flood_hops: u8,
+<a href=#287 id=287 data-nosnippet>287</a>    <span class="doccomment">/// Consecutive sends on the held route that missed their acknowledgment
+<a href=#288 id=288 data-nosnippet>288</a>    /// and were then acknowledged through the flood fallback.
+<a href=#289 id=289 data-nosnippet>289</a>    </span><span class="kw">pub </span>fallback_acks: u8,
+<a href=#290 id=290 data-nosnippet>290</a>    <span class="doccomment">/// The best path learned while the hold was in force.
+<a href=#291 id=291 data-nosnippet>291</a>    </span><span class="kw">pub </span>candidate: <span class="prelude-ty">Option</span>&lt;RouteCandidate&gt;,
+<a href=#292 id=292 data-nosnippet>292</a>}
+<a href=#293 id=293 data-nosnippet>293</a>
+<a href=#294 id=294 data-nosnippet>294</a><span class="doccomment">/// A snapshot of the route to one peer, for an application to present.
+<a href=#295 id=295 data-nosnippet>295</a></span><span class="attr">#[derive(Clone, Debug, PartialEq, Eq)]
+<a href=#296 id=296 data-nosnippet>296</a></span><span class="kw">pub struct </span>PeerRouteStatus {
+<a href=#297 id=297 data-nosnippet>297</a>    <span class="doccomment">/// The route the next send will use, if any.
+<a href=#298 id=298 data-nosnippet>298</a>    </span><span class="kw">pub </span>route: <span class="prelude-ty">Option</span>&lt;CachedRoute&gt;,
+<a href=#299 id=299 data-nosnippet>299</a>    <span class="doccomment">/// How much longer the route is held; `None` when it is not.
+<a href=#300 id=300 data-nosnippet>300</a>    </span><span class="kw">pub </span>hold_remaining_ms: <span class="prelude-ty">Option</span>&lt;u64&gt;,
+<a href=#301 id=301 data-nosnippet>301</a>    <span class="doccomment">/// See [`RouteHold::flood_hops`]; `None` when nothing is held.
+<a href=#302 id=302 data-nosnippet>302</a>    </span><span class="kw">pub </span>hold_flood_hops: <span class="prelude-ty">Option</span>&lt;u8&gt;,
+<a href=#303 id=303 data-nosnippet>303</a>    <span class="doccomment">/// See [`RouteHold::fallback_acks`]; zero when nothing is held.
+<a href=#304 id=304 data-nosnippet>304</a>    </span><span class="kw">pub </span>fallback_acks: u8,
+<a href=#305 id=305 data-nosnippet>305</a>    <span class="doccomment">/// See [`RouteHold::candidate`].
+<a href=#306 id=306 data-nosnippet>306</a>    </span><span class="kw">pub </span>candidate: <span class="prelude-ty">Option</span>&lt;CachedRoute&gt;,
+<a href=#307 id=307 data-nosnippet>307</a>    <span class="doccomment">/// How long ago an acknowledgment last came back for a send on the
+<a href=#308 id=308 data-nosnippet>308</a>    /// route.
+<a href=#309 id=309 data-nosnippet>309</a>    </span><span class="kw">pub </span>confirmed_age_ms: <span class="prelude-ty">Option</span>&lt;u64&gt;,
+<a href=#310 id=310 data-nosnippet>310</a>}
+<a href=#311 id=311 data-nosnippet>311</a>
+<a href=#312 id=312 data-nosnippet>312</a><span class="doccomment">/// What became of a route whose send went unacknowledged.
+<a href=#313 id=313 data-nosnippet>313</a></span><span class="attr">#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+<a href=#314 id=314 data-nosnippet>314</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">enum </span>RouteFailure {
+<a href=#315 id=315 data-nosnippet>315</a>    <span class="doccomment">/// The route was not the one the send used, or there was none.
+<a href=#316 id=316 data-nosnippet>316</a>    </span>Unrelated,
+<a href=#317 id=317 data-nosnippet>317</a>    <span class="doccomment">/// The route was retired and held off from passive learning.
+<a href=#318 id=318 data-nosnippet>318</a>    </span>Retired,
+<a href=#319 id=319 data-nosnippet>319</a>    <span class="doccomment">/// The route is held, so it stays.
+<a href=#320 id=320 data-nosnippet>320</a>    </span>Held,
+<a href=#321 id=321 data-nosnippet>321</a>}
+<a href=#322 id=322 data-nosnippet>322</a>
+<a href=#323 id=323 data-nosnippet>323</a><span class="doccomment">/// How a send to a peer with a held route ended.
+<a href=#324 id=324 data-nosnippet>324</a></span><span class="attr">#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+<a href=#325 id=325 data-nosnippet>325</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">enum </span>HeldRouteOutcome {
+<a href=#326 id=326 data-nosnippet>326</a>    <span class="doccomment">/// The held route itself carried the exchange.
+<a href=#327 id=327 data-nosnippet>327</a>    </span>RouteAcked,
+<a href=#328 id=328 data-nosnippet>328</a>    <span class="doccomment">/// The held route missed, and the flood fallback was acknowledged.
+<a href=#329 id=329 data-nosnippet>329</a>    </span>FallbackAcked,
+<a href=#330 id=330 data-nosnippet>330</a>}
+<a href=#331 id=331 data-nosnippet>331</a>
+<a href=#332 id=332 data-nosnippet>332</a><span class="doccomment">/// Evidence for a route, as one received frame offers it.
+<a href=#333 id=333 data-nosnippet>333</a></span><span class="attr">#[derive(Clone, Debug, PartialEq, Eq)]
+<a href=#334 id=334 data-nosnippet>334</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>RouteOffer {
+<a href=#335 id=335 data-nosnippet>335</a>    <span class="kw">pub </span>route: CachedRoute,
+<a href=#336 id=336 data-nosnippet>336</a>    <span class="doccomment">/// How the path scored on what the frame measured. `None` for a flood
+<a href=#337 id=337 data-nosnippet>337</a>    /// distance, which names no path to score.
+<a href=#338 id=338 data-nosnippet>338</a>    </span><span class="kw">pub </span>score: <span class="prelude-ty">Option</span>&lt;i16&gt;,
+<a href=#339 id=339 data-nosnippet>339</a>    <span class="doccomment">/// The sender declared its own route failed and is rediscovering, so
+<a href=#340 id=340 data-nosnippet>340</a>    /// whatever this node held is suspect too.
+<a href=#341 id=341 data-nosnippet>341</a>    </span><span class="kw">pub </span>supersedes: bool,
+<a href=#342 id=342 data-nosnippet>342</a>    <span class="doccomment">/// The path is the one an acknowledgment came back on.
+<a href=#343 id=343 data-nosnippet>343</a>    </span><span class="kw">pub </span>acknowledgment: bool,
+<a href=#344 id=344 data-nosnippet>344</a>    <span class="doccomment">/// How the frame measured the route's last hop (see
+<a href=#345 id=345 data-nosnippet>345</a>    /// [`CachedRoute::far_hop`]), if it did.
+<a href=#346 id=346 data-nosnippet>346</a>    </span><span class="kw">pub </span>last_hop: <span class="prelude-ty">Option</span>&lt;TraceSignalEntry&gt;,
+<a href=#347 id=347 data-nosnippet>347</a>}
+<a href=#348 id=348 data-nosnippet>348</a>
+<a href=#349 id=349 data-nosnippet>349</a><span class="doccomment">/// Outcome of inserting or updating an auto-learned peer.
+<a href=#350 id=350 data-nosnippet>350</a></span><span class="attr">#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+<a href=#351 id=351 data-nosnippet>351</a></span><span class="kw">pub struct </span>AutoPeerUpdate {
+<a href=#352 id=352 data-nosnippet>352</a>    <span class="doccomment">/// Slot assigned to the peer.
+<a href=#353 id=353 data-nosnippet>353</a>    </span><span class="kw">pub </span>peer_id: PeerId,
+<a href=#354 id=354 data-nosnippet>354</a>    <span class="doccomment">/// Previous peer key displaced from this slot, if any.
+<a href=#355 id=355 data-nosnippet>355</a>    </span><span class="kw">pub </span>evicted_key: <span class="prelude-ty">Option</span>&lt;PublicKey&gt;,
+<a href=#356 id=356 data-nosnippet>356</a>}
+<a href=#357 id=357 data-nosnippet>357</a>
+<a href=#358 id=358 data-nosnippet>358</a><span class="doccomment">/// Outcome of removing a peer from the registry.
+<a href=#359 id=359 data-nosnippet>359</a></span><span class="attr">#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+<a href=#360 id=360 data-nosnippet>360</a></span><span class="kw">pub struct </span>PeerRemoval {
+<a href=#361 id=361 data-nosnippet>361</a>    <span class="doccomment">/// Public key of the removed peer.
+<a href=#362 id=362 data-nosnippet>362</a>    </span><span class="kw">pub </span>removed_key: PublicKey,
+<a href=#363 id=363 data-nosnippet>363</a>    <span class="doccomment">/// When removal swap-moved the last entry into the freed slot: that
+<a href=#364 id=364 data-nosnippet>364</a>    /// entry's `(old, new)` identifiers. Every `PeerId`-keyed structure must
+<a href=#365 id=365 data-nosnippet>365</a>    /// be re-keyed accordingly.
+<a href=#366 id=366 data-nosnippet>366</a>    </span><span class="kw">pub </span>moved: <span class="prelude-ty">Option</span>&lt;(PeerId, PeerId)&gt;,
+<a href=#367 id=367 data-nosnippet>367</a>}
+<a href=#368 id=368 data-nosnippet>368</a>
+<a href=#369 id=369 data-nosnippet>369</a><span class="doccomment">/// Fixed-capacity registry of remote peers.
+<a href=#370 id=370 data-nosnippet>370</a>///
+<a href=#371 id=371 data-nosnippet>371</a>/// `H` bounds how many peers may have a held route at once (see
+<a href=#372 id=372 data-nosnippet>372</a>/// [`PeerRegistry::hold_route`]). Holds live beside the peer table rather
+<a href=#373 id=373 data-nosnippet>373</a>/// than in it, so a node that never holds a route sets `H` to zero and
+<a href=#374 id=374 data-nosnippet>374</a>/// spends nothing on them.
+<a href=#375 id=375 data-nosnippet>375</a></span><span class="attr">#[derive(Clone, Debug)]
+<a href=#376 id=376 data-nosnippet>376</a></span><span class="kw">pub struct </span>PeerRegistry&lt;<span class="kw">const </span>N: usize, <span class="kw">const </span>H: usize = <span class="number">0</span>&gt; {
+<a href=#377 id=377 data-nosnippet>377</a>    peers: Vec&lt;PeerInfo, N&gt;,
+<a href=#378 id=378 data-nosnippet>378</a>    holds: Vec&lt;(PeerId, RouteHold), H&gt;,
+<a href=#379 id=379 data-nosnippet>379</a>    next_route_revision: u64,
+<a href=#380 id=380 data-nosnippet>380</a>}
+<a href=#381 id=381 data-nosnippet>381</a>
+<a href=#382 id=382 data-nosnippet>382</a><span class="kw">impl</span>&lt;<span class="kw">const </span>N: usize, <span class="kw">const </span>H: usize&gt; Default <span class="kw">for </span>PeerRegistry&lt;N, H&gt; {
+<a href=#383 id=383 data-nosnippet>383</a>    <span class="kw">fn </span>default() -&gt; <span class="self">Self </span>{
+<a href=#384 id=384 data-nosnippet>384</a>        <span class="self">Self</span>::new()
+<a href=#385 id=385 data-nosnippet>385</a>    }
+<a href=#386 id=386 data-nosnippet>386</a>}
+<a href=#387 id=387 data-nosnippet>387</a>
+<a href=#388 id=388 data-nosnippet>388</a><span class="kw">impl</span>&lt;<span class="kw">const </span>N: usize, <span class="kw">const </span>H: usize&gt; PeerRegistry&lt;N, H&gt; {
+<a href=#389 id=389 data-nosnippet>389</a>    <span class="doccomment">/// Create an empty peer registry.
+<a href=#390 id=390 data-nosnippet>390</a>    </span><span class="kw">pub fn </span>new() -&gt; <span class="self">Self </span>{
+<a href=#391 id=391 data-nosnippet>391</a>        <span class="self">Self </span>{
+<a href=#392 id=392 data-nosnippet>392</a>            peers: Vec::new(),
+<a href=#393 id=393 data-nosnippet>393</a>            holds: Vec::new(),
+<a href=#394 id=394 data-nosnippet>394</a>            next_route_revision: <span class="number">0</span>,
+<a href=#395 id=395 data-nosnippet>395</a>        }
+<a href=#396 id=396 data-nosnippet>396</a>    }
+<a href=#397 id=397 data-nosnippet>397</a>
+<a href=#398 id=398 data-nosnippet>398</a>    <span class="doccomment">/// The hold on `id`'s route, if one is still in force at `now_ms`.
+<a href=#399 id=399 data-nosnippet>399</a>    </span><span class="kw">pub fn </span>route_hold(<span class="kw-2">&amp;</span><span class="self">self</span>, id: PeerId, now_ms: u64) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>RouteHold&gt; {
+<a href=#400 id=400 data-nosnippet>400</a>        <span class="self">self</span>.holds
+<a href=#401 id=401 data-nosnippet>401</a>            .iter()
+<a href=#402 id=402 data-nosnippet>402</a>            .find(|(held, hold)| <span class="kw-2">*</span>held == id &amp;&amp; now_ms &lt; hold.until_ms)
+<a href=#403 id=403 data-nosnippet>403</a>            .map(|(<span class="kw">_</span>, hold)| hold)
+<a href=#404 id=404 data-nosnippet>404</a>    }
+<a href=#405 id=405 data-nosnippet>405</a>
+<a href=#406 id=406 data-nosnippet>406</a>    <span class="doccomment">/// Where `id`'s hold sits, if it is in force at `now_ms`. A hold that
+<a href=#407 id=407 data-nosnippet>407</a>    /// has run out is dropped here; the route itself stays, an ordinary
+<a href=#408 id=408 data-nosnippet>408</a>    /// route the next measured path replaces.
+<a href=#409 id=409 data-nosnippet>409</a>    </span><span class="kw">fn </span>hold_index(<span class="kw-2">&amp;mut </span><span class="self">self</span>, id: PeerId, now_ms: u64) -&gt; <span class="prelude-ty">Option</span>&lt;usize&gt; {
+<a href=#410 id=410 data-nosnippet>410</a>        <span class="kw">let </span>index = <span class="self">self</span>.holds.iter().position(|(held, <span class="kw">_</span>)| <span class="kw-2">*</span>held == id)<span class="question-mark">?</span>;
+<a href=#411 id=411 data-nosnippet>411</a>        <span class="kw">if </span>now_ms &lt; <span class="self">self</span>.holds[index].<span class="number">1</span>.until_ms {
+<a href=#412 id=412 data-nosnippet>412</a>            <span class="kw">return </span><span class="prelude-val">Some</span>(index);
+<a href=#413 id=413 data-nosnippet>413</a>        }
+<a href=#414 id=414 data-nosnippet>414</a>        <span class="self">self</span>.holds.swap_remove(index);
+<a href=#415 id=415 data-nosnippet>415</a>        <span class="prelude-val">None
+<a href=#416 id=416 data-nosnippet>416</a>    </span>}
+<a href=#417 id=417 data-nosnippet>417</a>
+<a href=#418 id=418 data-nosnippet>418</a>    <span class="kw">fn </span>drop_hold(<span class="kw-2">&amp;mut </span><span class="self">self</span>, id: PeerId) {
+<a href=#419 id=419 data-nosnippet>419</a>        <span class="self">self</span>.holds.retain(|(held, <span class="kw">_</span>)| <span class="kw-2">*</span><span class="macro">held !</span>= id);
+<a href=#420 id=420 data-nosnippet>420</a>    }
+<a href=#421 id=421 data-nosnippet>421</a>
+<a href=#422 id=422 data-nosnippet>422</a>    <span class="doccomment">/// Iterate over peers whose derived hint matches `hint`.
+<a href=#423 id=423 data-nosnippet>423</a>    </span><span class="kw">pub fn </span>lookup_by_hint(<span class="kw-2">&amp;</span><span class="self">self</span>, hint: <span class="kw-2">&amp;</span>NodeHint) -&gt; <span class="kw">impl </span>Iterator&lt;Item = (PeerId, <span class="kw-2">&amp;</span>PeerInfo)&gt; {
+<a href=#424 id=424 data-nosnippet>424</a>        <span class="self">self</span>.peers
+<a href=#425 id=425 data-nosnippet>425</a>            .iter()
+<a href=#426 id=426 data-nosnippet>426</a>            .enumerate()
+<a href=#427 id=427 data-nosnippet>427</a>            .filter(<span class="kw">move </span>|(<span class="kw">_</span>, peer)| peer.public_key.hint() == <span class="kw-2">*</span>hint)
+<a href=#428 id=428 data-nosnippet>428</a>            .map(|(index, peer)| (PeerId(index <span class="kw">as </span>u8), peer))
+<a href=#429 id=429 data-nosnippet>429</a>    }
+<a href=#430 id=430 data-nosnippet>430</a>
+<a href=#431 id=431 data-nosnippet>431</a>    <span class="doccomment">/// Look up a peer by full public key.
+<a href=#432 id=432 data-nosnippet>432</a>    </span><span class="kw">pub fn </span>lookup_by_key(<span class="kw-2">&amp;</span><span class="self">self</span>, key: <span class="kw-2">&amp;</span>PublicKey) -&gt; <span class="prelude-ty">Option</span>&lt;(PeerId, <span class="kw-2">&amp;</span>PeerInfo)&gt; {
+<a href=#433 id=433 data-nosnippet>433</a>        <span class="self">self</span>.peers
 <a href=#434 id=434 data-nosnippet>434</a>            .iter()
-<a href=#435 id=435 data-nosnippet>435</a>            .position(|channel| channel.channel_key.<span class="number">0 </span>== key.<span class="number">0</span>)
-<a href=#436 id=436 data-nosnippet>436</a>        <span class="kw">else </span>{
-<a href=#437 id=437 data-nosnippet>437</a>            <span class="kw">return </span><span class="bool-val">false</span>;
-<a href=#438 id=438 data-nosnippet>438</a>        };
-<a href=#439 id=439 data-nosnippet>439</a>        <span class="self">self</span>.channels.swap_remove(index);
-<a href=#440 id=440 data-nosnippet>440</a>        <span class="bool-val">true
-<a href=#441 id=441 data-nosnippet>441</a>    </span>}
-<a href=#442 id=442 data-nosnippet>442</a>
-<a href=#443 id=443 data-nosnippet>443</a>    <span class="doccomment">/// Add or replace a channel entry.
-<a href=#444 id=444 data-nosnippet>444</a>    </span><span class="kw">pub fn </span>try_add(
-<a href=#445 id=445 data-nosnippet>445</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
-<a href=#446 id=446 data-nosnippet>446</a>        key: ChannelKey,
-<a href=#447 id=447 data-nosnippet>447</a>        derived: DerivedChannelKeys,
-<a href=#448 id=448 data-nosnippet>448</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;(), CapacityError&gt; {
-<a href=#449 id=449 data-nosnippet>449</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(channel) = <span class="self">self</span>.get_mut_by_id(<span class="kw-2">&amp;</span>derived.channel_id) {
-<a href=#450 id=450 data-nosnippet>450</a>            channel.channel_key = key;
-<a href=#451 id=451 data-nosnippet>451</a>            channel.derived = derived;
-<a href=#452 id=452 data-nosnippet>452</a>            <span class="kw">return </span><span class="prelude-val">Ok</span>(());
-<a href=#453 id=453 data-nosnippet>453</a>        }
-<a href=#454 id=454 data-nosnippet>454</a>
-<a href=#455 id=455 data-nosnippet>455</a>        <span class="self">self</span>.channels
-<a href=#456 id=456 data-nosnippet>456</a>            .push(ChannelState::new(key, derived))
-<a href=#457 id=457 data-nosnippet>457</a>            .map_err(|<span class="kw">_</span>| CapacityError)
-<a href=#458 id=458 data-nosnippet>458</a>    }
-<a href=#459 id=459 data-nosnippet>459</a>}
+<a href=#435 id=435 data-nosnippet>435</a>            .enumerate()
+<a href=#436 id=436 data-nosnippet>436</a>            .find(|(<span class="kw">_</span>, peer)| peer.public_key == <span class="kw-2">*</span>key)
+<a href=#437 id=437 data-nosnippet>437</a>            .map(|(index, peer)| (PeerId(index <span class="kw">as </span>u8), peer))
+<a href=#438 id=438 data-nosnippet>438</a>    }
+<a href=#439 id=439 data-nosnippet>439</a>
+<a href=#440 id=440 data-nosnippet>440</a>    <span class="doccomment">/// Iterate over all registered peers.
+<a href=#441 id=441 data-nosnippet>441</a>    </span><span class="kw">pub fn </span>iter(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Iterator&lt;Item = (PeerId, <span class="kw-2">&amp;</span>PeerInfo)&gt; {
+<a href=#442 id=442 data-nosnippet>442</a>        <span class="self">self</span>.peers
+<a href=#443 id=443 data-nosnippet>443</a>            .iter()
+<a href=#444 id=444 data-nosnippet>444</a>            .enumerate()
+<a href=#445 id=445 data-nosnippet>445</a>            .map(|(index, peer)| (PeerId(index <span class="kw">as </span>u8), peer))
+<a href=#446 id=446 data-nosnippet>446</a>    }
+<a href=#447 id=447 data-nosnippet>447</a>
+<a href=#448 id=448 data-nosnippet>448</a>    <span class="doccomment">/// Borrow peer metadata by identifier.
+<a href=#449 id=449 data-nosnippet>449</a>    </span><span class="kw">pub fn </span>get(<span class="kw-2">&amp;</span><span class="self">self</span>, id: PeerId) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>PeerInfo&gt; {
+<a href=#450 id=450 data-nosnippet>450</a>        <span class="self">self</span>.peers.get(id.<span class="number">0 </span><span class="kw">as </span>usize)
+<a href=#451 id=451 data-nosnippet>451</a>    }
+<a href=#452 id=452 data-nosnippet>452</a>
+<a href=#453 id=453 data-nosnippet>453</a>    <span class="doccomment">/// Mutably borrow peer metadata by identifier.
+<a href=#454 id=454 data-nosnippet>454</a>    </span><span class="kw">pub fn </span>get_mut(<span class="kw-2">&amp;mut </span><span class="self">self</span>, id: PeerId) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;mut </span>PeerInfo&gt; {
+<a href=#455 id=455 data-nosnippet>455</a>        <span class="self">self</span>.peers.get_mut(id.<span class="number">0 </span><span class="kw">as </span>usize)
+<a href=#456 id=456 data-nosnippet>456</a>    }
+<a href=#457 id=457 data-nosnippet>457</a>
+<a href=#458 id=458 data-nosnippet>458</a>    <span class="doccomment">/// Insert or refresh an explicitly configured peer entry.
+<a href=#459 id=459 data-nosnippet>459</a>    </span><span class="kw">pub fn </span>try_insert_or_update(<span class="kw-2">&amp;mut </span><span class="self">self</span>, key: PublicKey) -&gt; <span class="prelude-ty">Result</span>&lt;PeerId, CapacityError&gt; {
+<a href=#460 id=460 data-nosnippet>460</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>((id, peer)) = <span class="self">self
+<a href=#461 id=461 data-nosnippet>461</a>            </span>.peers
+<a href=#462 id=462 data-nosnippet>462</a>            .iter_mut()
+<a href=#463 id=463 data-nosnippet>463</a>            .enumerate()
+<a href=#464 id=464 data-nosnippet>464</a>            .find(|(<span class="kw">_</span>, peer)| peer.public_key == key)
+<a href=#465 id=465 data-nosnippet>465</a>        {
+<a href=#466 id=466 data-nosnippet>466</a>            peer.public_key = key;
+<a href=#467 id=467 data-nosnippet>467</a>            peer.pinned = <span class="bool-val">true</span>;
+<a href=#468 id=468 data-nosnippet>468</a>            <span class="kw">return </span><span class="prelude-val">Ok</span>(PeerId(id <span class="kw">as </span>u8));
+<a href=#469 id=469 data-nosnippet>469</a>        }
+<a href=#470 id=470 data-nosnippet>470</a>
+<a href=#471 id=471 data-nosnippet>471</a>        <span class="self">self</span>.peers
+<a href=#472 id=472 data-nosnippet>472</a>            .push(PeerInfo::new(key, <span class="bool-val">true</span>, <span class="number">0</span>))
+<a href=#473 id=473 data-nosnippet>473</a>            .map_err(|<span class="kw">_</span>| CapacityError)<span class="question-mark">?</span>;
+<a href=#474 id=474 data-nosnippet>474</a>        <span class="prelude-val">Ok</span>(PeerId((<span class="self">self</span>.peers.len() - <span class="number">1</span>) <span class="kw">as </span>u8))
+<a href=#475 id=475 data-nosnippet>475</a>    }
+<a href=#476 id=476 data-nosnippet>476</a>
+<a href=#477 id=477 data-nosnippet>477</a>    <span class="doccomment">/// Insert or refresh an opportunistically learned peer entry.
+<a href=#478 id=478 data-nosnippet>478</a>    ///
+<a href=#479 id=479 data-nosnippet>479</a>    /// When the registry is full, this may recycle the oldest non-pinned entry in place
+<a href=#480 id=480 data-nosnippet>480</a>    /// rather than failing. Explicitly configured (`pinned`) peers are never displaced.
+<a href=#481 id=481 data-nosnippet>481</a>    </span><span class="kw">pub fn </span>try_insert_or_update_auto(
+<a href=#482 id=482 data-nosnippet>482</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
+<a href=#483 id=483 data-nosnippet>483</a>        key: PublicKey,
+<a href=#484 id=484 data-nosnippet>484</a>        now_ms: u64,
+<a href=#485 id=485 data-nosnippet>485</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;AutoPeerUpdate, CapacityError&gt; {
+<a href=#486 id=486 data-nosnippet>486</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>((id, peer)) = <span class="self">self
+<a href=#487 id=487 data-nosnippet>487</a>            </span>.peers
+<a href=#488 id=488 data-nosnippet>488</a>            .iter_mut()
+<a href=#489 id=489 data-nosnippet>489</a>            .enumerate()
+<a href=#490 id=490 data-nosnippet>490</a>            .find(|(<span class="kw">_</span>, peer)| peer.public_key == key)
+<a href=#491 id=491 data-nosnippet>491</a>        {
+<a href=#492 id=492 data-nosnippet>492</a>            peer.last_seen_ms = now_ms;
+<a href=#493 id=493 data-nosnippet>493</a>            <span class="kw">return </span><span class="prelude-val">Ok</span>(AutoPeerUpdate {
+<a href=#494 id=494 data-nosnippet>494</a>                peer_id: PeerId(id <span class="kw">as </span>u8),
+<a href=#495 id=495 data-nosnippet>495</a>                evicted_key: <span class="prelude-val">None</span>,
+<a href=#496 id=496 data-nosnippet>496</a>            });
+<a href=#497 id=497 data-nosnippet>497</a>        }
+<a href=#498 id=498 data-nosnippet>498</a>
+<a href=#499 id=499 data-nosnippet>499</a>        <span class="kw">if </span><span class="self">self</span>.peers.len() &lt; N {
+<a href=#500 id=500 data-nosnippet>500</a>            <span class="self">self</span>.peers
+<a href=#501 id=501 data-nosnippet>501</a>                .push(PeerInfo::new(key, <span class="bool-val">false</span>, now_ms))
+<a href=#502 id=502 data-nosnippet>502</a>                .map_err(|<span class="kw">_</span>| CapacityError)<span class="question-mark">?</span>;
+<a href=#503 id=503 data-nosnippet>503</a>            <span class="kw">return </span><span class="prelude-val">Ok</span>(AutoPeerUpdate {
+<a href=#504 id=504 data-nosnippet>504</a>                peer_id: PeerId((<span class="self">self</span>.peers.len() - <span class="number">1</span>) <span class="kw">as </span>u8),
+<a href=#505 id=505 data-nosnippet>505</a>                evicted_key: <span class="prelude-val">None</span>,
+<a href=#506 id=506 data-nosnippet>506</a>            });
+<a href=#507 id=507 data-nosnippet>507</a>        }
+<a href=#508 id=508 data-nosnippet>508</a>
+<a href=#509 id=509 data-nosnippet>509</a>        <span class="kw">let </span><span class="prelude-val">Some</span>((index, oldest)) = <span class="self">self
+<a href=#510 id=510 data-nosnippet>510</a>            </span>.peers
+<a href=#511 id=511 data-nosnippet>511</a>            .iter()
+<a href=#512 id=512 data-nosnippet>512</a>            .enumerate()
+<a href=#513 id=513 data-nosnippet>513</a>            .filter(|(index, peer)| {
+<a href=#514 id=514 data-nosnippet>514</a>                !peer.pinned &amp;&amp; <span class="self">self</span>.route_hold(PeerId(<span class="kw-2">*</span>index <span class="kw">as </span>u8), now_ms).is_none()
+<a href=#515 id=515 data-nosnippet>515</a>            })
+<a href=#516 id=516 data-nosnippet>516</a>            .min_by_key(|(<span class="kw">_</span>, peer)| peer.last_seen_ms)
+<a href=#517 id=517 data-nosnippet>517</a>        <span class="kw">else </span>{
+<a href=#518 id=518 data-nosnippet>518</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(CapacityError);
+<a href=#519 id=519 data-nosnippet>519</a>        };
+<a href=#520 id=520 data-nosnippet>520</a>
+<a href=#521 id=521 data-nosnippet>521</a>        <span class="kw">let </span>evicted_key = oldest.public_key;
+<a href=#522 id=522 data-nosnippet>522</a>        <span class="self">self</span>.drop_hold(PeerId(index <span class="kw">as </span>u8));
+<a href=#523 id=523 data-nosnippet>523</a>        <span class="self">self</span>.peers[index] = PeerInfo::new(key, <span class="bool-val">false</span>, now_ms);
+<a href=#524 id=524 data-nosnippet>524</a>        <span class="prelude-val">Ok</span>(AutoPeerUpdate {
+<a href=#525 id=525 data-nosnippet>525</a>            peer_id: PeerId(index <span class="kw">as </span>u8),
+<a href=#526 id=526 data-nosnippet>526</a>            evicted_key: <span class="prelude-val">Some</span>(evicted_key),
+<a href=#527 id=527 data-nosnippet>527</a>        })
+<a href=#528 id=528 data-nosnippet>528</a>    }
+<a href=#529 id=529 data-nosnippet>529</a>
+<a href=#530 id=530 data-nosnippet>530</a>    <span class="doccomment">/// Remove a peer, freeing its slot for reuse.
+<a href=#531 id=531 data-nosnippet>531</a>    ///
+<a href=#532 id=532 data-nosnippet>532</a>    /// The registry is dense—a `PeerId` is an index—so removal swap-moves
+<a href=#533 id=533 data-nosnippet>533</a>    /// the last entry into the freed slot. The returned record names that
+<a href=#534 id=534 data-nosnippet>534</a>    /// move so the caller can re-key any state held under the moved peer's
+<a href=#535 id=535 data-nosnippet>535</a>    /// old identifier.
+<a href=#536 id=536 data-nosnippet>536</a>    </span><span class="kw">pub fn </span>remove(<span class="kw-2">&amp;mut </span><span class="self">self</span>, id: PeerId) -&gt; <span class="prelude-ty">Option</span>&lt;PeerRemoval&gt; {
+<a href=#537 id=537 data-nosnippet>537</a>        <span class="kw">let </span>index = id.<span class="number">0 </span><span class="kw">as </span>usize;
+<a href=#538 id=538 data-nosnippet>538</a>        <span class="kw">if </span>index &gt;= <span class="self">self</span>.peers.len() {
+<a href=#539 id=539 data-nosnippet>539</a>            <span class="kw">return </span><span class="prelude-val">None</span>;
+<a href=#540 id=540 data-nosnippet>540</a>        }
+<a href=#541 id=541 data-nosnippet>541</a>        <span class="kw">let </span>last = <span class="self">self</span>.peers.len() - <span class="number">1</span>;
+<a href=#542 id=542 data-nosnippet>542</a>        <span class="kw">let </span>removed = <span class="self">self</span>.peers.swap_remove(index);
+<a href=#543 id=543 data-nosnippet>543</a>        <span class="kw">let </span>moved = (<span class="macro">index !</span>= last).then_some((PeerId(last <span class="kw">as </span>u8), id));
+<a href=#544 id=544 data-nosnippet>544</a>        <span class="self">self</span>.drop_hold(id);
+<a href=#545 id=545 data-nosnippet>545</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>((old, new)) = moved {
+<a href=#546 id=546 data-nosnippet>546</a>            <span class="kw">for </span>(held, <span class="kw">_</span>) <span class="kw">in </span><span class="self">self</span>.holds.iter_mut().filter(|(held, <span class="kw">_</span>)| <span class="kw-2">*</span>held == old) {
+<a href=#547 id=547 data-nosnippet>547</a>                <span class="kw-2">*</span>held = new;
+<a href=#548 id=548 data-nosnippet>548</a>            }
+<a href=#549 id=549 data-nosnippet>549</a>        }
+<a href=#550 id=550 data-nosnippet>550</a>        <span class="prelude-val">Some</span>(PeerRemoval {
+<a href=#551 id=551 data-nosnippet>551</a>            removed_key: removed.public_key,
+<a href=#552 id=552 data-nosnippet>552</a>            moved,
+<a href=#553 id=553 data-nosnippet>553</a>        })
+<a href=#554 id=554 data-nosnippet>554</a>    }
+<a href=#555 id=555 data-nosnippet>555</a>
+<a href=#556 id=556 data-nosnippet>556</a>    <span class="kw">fn </span>next_revision(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; u64 {
+<a href=#557 id=557 data-nosnippet>557</a>        <span class="self">self</span>.next_route_revision = <span class="self">self</span>.next_route_revision.wrapping_add(<span class="number">1</span>).max(<span class="number">1</span>);
+<a href=#558 id=558 data-nosnippet>558</a>        <span class="self">self</span>.next_route_revision
+<a href=#559 id=559 data-nosnippet>559</a>    }
+<a href=#560 id=560 data-nosnippet>560</a>
+<a href=#561 id=561 data-nosnippet>561</a>    <span class="doccomment">/// Explicitly restore a route, overriding any passive-learning holdoff.
+<a href=#562 id=562 data-nosnippet>562</a>    ///
+<a href=#563 id=563 data-nosnippet>563</a>    /// Nothing has measured a route installed this way, so the first
+<a href=#564 id=564 data-nosnippet>564</a>    /// received frame that offers a scored path replaces it. It is a learned
+<a href=#565 id=565 data-nosnippet>565</a>    /// route put back, not one chosen by hand.
+<a href=#566 id=566 data-nosnippet>566</a>    </span><span class="kw">pub fn </span>update_route(<span class="kw-2">&amp;mut </span><span class="self">self</span>, id: PeerId, route: CachedRoute) {
+<a href=#567 id=567 data-nosnippet>567</a>        <span class="kw">let </span>revision = <span class="self">self</span>.next_revision();
+<a href=#568 id=568 data-nosnippet>568</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(peer) = <span class="self">self</span>.get_mut(id) {
+<a href=#569 id=569 data-nosnippet>569</a>            peer.select_route(RouteSelection::installed(route, <span class="bool-val">false</span>), revision);
+<a href=#570 id=570 data-nosnippet>570</a>            peer.failed_route = <span class="prelude-val">None</span>;
+<a href=#571 id=571 data-nosnippet>571</a>        }
+<a href=#572 id=572 data-nosnippet>572</a>        <span class="self">self</span>.drop_hold(id);
+<a href=#573 id=573 data-nosnippet>573</a>    }
+<a href=#574 id=574 data-nosnippet>574</a>
+<a href=#575 id=575 data-nosnippet>575</a>    <span class="doccomment">/// Record whether `id` advertises itself as mobile. `false` when the
+<a href=#576 id=576 data-nosnippet>576</a>    /// peer is unknown.
+<a href=#577 id=577 data-nosnippet>577</a>    </span><span class="kw">pub fn </span>set_mobile(<span class="kw-2">&amp;mut </span><span class="self">self</span>, id: PeerId, mobile: bool) -&gt; bool {
+<a href=#578 id=578 data-nosnippet>578</a>        <span class="self">self</span>.get_mut(id).map(|peer| peer.mobile = mobile).is_some()
+<a href=#579 id=579 data-nosnippet>579</a>    }
+<a href=#580 id=580 data-nosnippet>580</a>
+<a href=#581 id=581 data-nosnippet>581</a>    <span class="doccomment">/// Install `route` and hold it until `until_ms`, spending `flood_hops`
+<a href=#582 id=582 data-nosnippet>582</a>    /// past its end (see [`RouteHold::flood_hops`]).
+<a href=#583 id=583 data-nosnippet>583</a>    ///
+<a href=#584 id=584 data-nosnippet>584</a>    /// Until then no learned path replaces it and no missed acknowledgment
+<a href=#585 id=585 data-nosnippet>585</a>    /// retires it; a send that misses still falls back to a flood. After the
+<a href=#586 id=586 data-nosnippet>586</a>    /// deadline it is an ordinary unscored route, which the next measured
+<a href=#587 id=587 data-nosnippet>587</a>    /// path replaces. Installing a route restarts the hold and its record.
+<a href=#588 id=588 data-nosnippet>588</a>    ///
+<a href=#589 id=589 data-nosnippet>589</a>    /// The route counts as chosen by hand until a learned one replaces it,
+<a href=#590 id=590 data-nosnippet>590</a>    /// so once the hold and its allowance are over, no send along it
+<a href=#591 id=591 data-nosnippet>591</a>    /// carries flood slack past its end.
+<a href=#592 id=592 data-nosnippet>592</a>    ///
+<a href=#593 id=593 data-nosnippet>593</a>    /// `false`, changing nothing, when the peer is unknown or `H` holds are
+<a href=#594 id=594 data-nosnippet>594</a>    /// already in force for other peers.
+<a href=#595 id=595 data-nosnippet>595</a>    </span><span class="kw">pub fn </span>hold_route(
+<a href=#596 id=596 data-nosnippet>596</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
+<a href=#597 id=597 data-nosnippet>597</a>        id: PeerId,
+<a href=#598 id=598 data-nosnippet>598</a>        route: CachedRoute,
+<a href=#599 id=599 data-nosnippet>599</a>        flood_hops: u8,
+<a href=#600 id=600 data-nosnippet>600</a>        until_ms: u64,
+<a href=#601 id=601 data-nosnippet>601</a>        now_ms: u64,
+<a href=#602 id=602 data-nosnippet>602</a>    ) -&gt; bool {
+<a href=#603 id=603 data-nosnippet>603</a>        <span class="kw">if </span><span class="self">self</span>.get(id).is_none() {
+<a href=#604 id=604 data-nosnippet>604</a>            <span class="kw">return </span><span class="bool-val">false</span>;
+<a href=#605 id=605 data-nosnippet>605</a>        }
+<a href=#606 id=606 data-nosnippet>606</a>        <span class="kw">let </span>hold = RouteHold {
+<a href=#607 id=607 data-nosnippet>607</a>            until_ms,
+<a href=#608 id=608 data-nosnippet>608</a>            flood_hops,
+<a href=#609 id=609 data-nosnippet>609</a>            fallback_acks: <span class="number">0</span>,
+<a href=#610 id=610 data-nosnippet>610</a>            candidate: <span class="prelude-val">None</span>,
+<a href=#611 id=611 data-nosnippet>611</a>        };
+<a href=#612 id=612 data-nosnippet>612</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(index) = <span class="self">self</span>.holds.iter().position(|(held, <span class="kw">_</span>)| <span class="kw-2">*</span>held == id) {
+<a href=#613 id=613 data-nosnippet>613</a>            <span class="self">self</span>.holds[index].<span class="number">1 </span>= hold;
+<a href=#614 id=614 data-nosnippet>614</a>        } <span class="kw">else </span>{
+<a href=#615 id=615 data-nosnippet>615</a>            <span class="self">self</span>.holds.retain(|(<span class="kw">_</span>, held)| now_ms &lt; held.until_ms);
+<a href=#616 id=616 data-nosnippet>616</a>            <span class="kw">if </span><span class="self">self</span>.holds.push((id, hold)).is_err() {
+<a href=#617 id=617 data-nosnippet>617</a>                <span class="kw">return </span><span class="bool-val">false</span>;
+<a href=#618 id=618 data-nosnippet>618</a>            }
+<a href=#619 id=619 data-nosnippet>619</a>        }
+<a href=#620 id=620 data-nosnippet>620</a>        <span class="kw">let </span>revision = <span class="self">self</span>.next_revision();
+<a href=#621 id=621 data-nosnippet>621</a>        <span class="kw">let </span>peer = <span class="self">self</span>.get_mut(id).expect(<span class="string">"peer was just found"</span>);
+<a href=#622 id=622 data-nosnippet>622</a>        peer.select_route(RouteSelection::installed(route, <span class="bool-val">true</span>), revision);
+<a href=#623 id=623 data-nosnippet>623</a>        peer.failed_route = <span class="prelude-val">None</span>;
+<a href=#624 id=624 data-nosnippet>624</a>        <span class="bool-val">true
+<a href=#625 id=625 data-nosnippet>625</a>    </span>}
+<a href=#626 id=626 data-nosnippet>626</a>
+<a href=#627 id=627 data-nosnippet>627</a>    <span class="doccomment">/// Replace a held route with the best path learned while it was held,
+<a href=#628 id=628 data-nosnippet>628</a>    /// ending the hold. `false` when there is no hold or nothing was learned.
+<a href=#629 id=629 data-nosnippet>629</a>    </span><span class="kw">pub fn </span>adopt_candidate(<span class="kw-2">&amp;mut </span><span class="self">self</span>, id: PeerId, now_ms: u64) -&gt; bool {
+<a href=#630 id=630 data-nosnippet>630</a>        <span class="kw">let </span><span class="prelude-val">Some</span>(index) = <span class="self">self</span>.hold_index(id, now_ms) <span class="kw">else </span>{
+<a href=#631 id=631 data-nosnippet>631</a>            <span class="kw">return </span><span class="bool-val">false</span>;
+<a href=#632 id=632 data-nosnippet>632</a>        };
+<a href=#633 id=633 data-nosnippet>633</a>        <span class="kw">let </span><span class="prelude-val">Some</span>(candidate) = <span class="self">self</span>.holds[index].<span class="number">1</span>.candidate.take() <span class="kw">else </span>{
+<a href=#634 id=634 data-nosnippet>634</a>            <span class="kw">return </span><span class="bool-val">false</span>;
+<a href=#635 id=635 data-nosnippet>635</a>        };
+<a href=#636 id=636 data-nosnippet>636</a>        <span class="self">self</span>.holds.swap_remove(index);
+<a href=#637 id=637 data-nosnippet>637</a>        <span class="kw">let </span>revision = <span class="self">self</span>.next_revision();
+<a href=#638 id=638 data-nosnippet>638</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(peer) = <span class="self">self</span>.get_mut(id) {
+<a href=#639 id=639 data-nosnippet>639</a>            peer.select_route(RouteSelection::learned(candidate), revision);
+<a href=#640 id=640 data-nosnippet>640</a>        }
+<a href=#641 id=641 data-nosnippet>641</a>        <span class="bool-val">true
+<a href=#642 id=642 data-nosnippet>642</a>    </span>}
+<a href=#643 id=643 data-nosnippet>643</a>
+<a href=#644 id=644 data-nosnippet>644</a>    <span class="doccomment">/// Record how a send to a peer with a held route ended.
+<a href=#645 id=645 data-nosnippet>645</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>note_held_outcome(
+<a href=#646 id=646 data-nosnippet>646</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
+<a href=#647 id=647 data-nosnippet>647</a>        key: <span class="kw-2">&amp;</span>PublicKey,
+<a href=#648 id=648 data-nosnippet>648</a>        outcome: HeldRouteOutcome,
+<a href=#649 id=649 data-nosnippet>649</a>        now_ms: u64,
+<a href=#650 id=650 data-nosnippet>650</a>    ) {
+<a href=#651 id=651 data-nosnippet>651</a>        <span class="kw">let </span><span class="prelude-val">Some</span>((id, <span class="kw">_</span>)) = <span class="self">self</span>.lookup_by_key(key) <span class="kw">else </span>{
+<a href=#652 id=652 data-nosnippet>652</a>            <span class="kw">return</span>;
+<a href=#653 id=653 data-nosnippet>653</a>        };
+<a href=#654 id=654 data-nosnippet>654</a>        <span class="kw">let </span><span class="prelude-val">Some</span>(index) = <span class="self">self</span>.hold_index(id, now_ms) <span class="kw">else </span>{
+<a href=#655 id=655 data-nosnippet>655</a>            <span class="kw">return</span>;
+<a href=#656 id=656 data-nosnippet>656</a>        };
+<a href=#657 id=657 data-nosnippet>657</a>        <span class="kw">let </span>hold = <span class="kw-2">&amp;mut </span><span class="self">self</span>.holds[index].<span class="number">1</span>;
+<a href=#658 id=658 data-nosnippet>658</a>        hold.fallback_acks = <span class="kw">match </span>outcome {
+<a href=#659 id=659 data-nosnippet>659</a>            HeldRouteOutcome::RouteAcked =&gt; <span class="number">0</span>,
+<a href=#660 id=660 data-nosnippet>660</a>            HeldRouteOutcome::FallbackAcked =&gt; hold.fallback_acks.saturating_add(<span class="number">1</span>),
+<a href=#661 id=661 data-nosnippet>661</a>        };
+<a href=#662 id=662 data-nosnippet>662</a>    }
+<a href=#663 id=663 data-nosnippet>663</a>
+<a href=#664 id=664 data-nosnippet>664</a>    <span class="doccomment">/// Weigh the route one received frame offers against the one held,
+<a href=#665 id=665 data-nosnippet>665</a>    /// without immediately resurrecting a failed path.
+<a href=#666 id=666 data-nosnippet>666</a>    ///
+<a href=#667 id=667 data-nosnippet>667</a>    /// - The path already held is not replaced but re-scored: the newest
+<a href=#668 id=668 data-nosnippet>668</a>    ///   measurement of it is the one that says what it is worth now. An
+<a href=#669 id=669 data-nosnippet>669</a>    ///   identical observation is not fresh outbound success, so it does
+<a href=#670 id=670 data-nosnippet>670</a>    ///   not count as confirmation.
+<a href=#671 id=671 data-nosnippet>671</a>    /// - A path displaces a flood distance, which only stands in for a path
+<a href=#672 id=672 data-nosnippet>672</a>    ///   not yet known; a flood distance never displaces a path.
+<a href=#673 id=673 data-nosnippet>673</a>    /// - A scored path displaces one nothing has measured.
+<a href=#674 id=674 data-nosnippet>674</a>    /// - Otherwise the offer has to score clearly better, and better still
+<a href=#675 id=675 data-nosnippet>675</a>    ///   when an acknowledgment has recently vouched for the route held.
+<a href=#676 id=676 data-nosnippet>676</a>    ///
+<a href=#677 id=677 data-nosnippet>677</a>    /// Whatever becomes of the route, an offer that measured the same last
+<a href=#678 id=678 data-nosnippet>678</a>    /// hop as the route held refreshes its reading: that link is the same
+<a href=#679 id=679 data-nosnippet>679</a>    /// link however the frame traveled after it.
+<a href=#680 id=680 data-nosnippet>680</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>offer_route(<span class="kw-2">&amp;mut </span><span class="self">self</span>, id: PeerId, offer: RouteOffer, now_ms: u64) {
+<a href=#681 id=681 data-nosnippet>681</a>        <span class="kw">let </span><span class="prelude-val">Some</span>(peer) = <span class="self">self</span>.get_mut(id) <span class="kw">else </span>{
+<a href=#682 id=682 data-nosnippet>682</a>            <span class="kw">return</span>;
+<a href=#683 id=683 data-nosnippet>683</a>        };
+<a href=#684 id=684 data-nosnippet>684</a>        <span class="kw">if </span>offer.last_hop.is_some()
+<a href=#685 id=685 data-nosnippet>685</a>            &amp;&amp; offer.route.far_hop().is_some()
+<a href=#686 id=686 data-nosnippet>686</a>            &amp;&amp; peer.route.as_ref().and_then(CachedRoute::far_hop) == offer.route.far_hop()
+<a href=#687 id=687 data-nosnippet>687</a>        {
+<a href=#688 id=688 data-nosnippet>688</a>            peer.route_last_hop = offer.last_hop;
+<a href=#689 id=689 data-nosnippet>689</a>        }
+<a href=#690 id=690 data-nosnippet>690</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>((failed, until)) = <span class="kw-2">&amp;</span>peer.failed_route {
+<a href=#691 id=691 data-nosnippet>691</a>            <span class="kw">if </span>now_ms &lt; <span class="kw-2">*</span>until
+<a href=#692 id=692 data-nosnippet>692</a>                &amp;&amp; (failed == <span class="kw-2">&amp;</span>offer.route
+<a href=#693 id=693 data-nosnippet>693</a>                    || (failed.hop_count() == <span class="number">1 </span>&amp;&amp; offer.route.hop_count() == <span class="number">1</span>))
+<a href=#694 id=694 data-nosnippet>694</a>            {
+<a href=#695 id=695 data-nosnippet>695</a>                <span class="kw">return</span>;
+<a href=#696 id=696 data-nosnippet>696</a>            }
+<a href=#697 id=697 data-nosnippet>697</a>            <span class="kw">if </span>now_ms &gt;= <span class="kw-2">*</span>until {
+<a href=#698 id=698 data-nosnippet>698</a>                peer.failed_route = <span class="prelude-val">None</span>;
+<a href=#699 id=699 data-nosnippet>699</a>            }
+<a href=#700 id=700 data-nosnippet>700</a>        }
+<a href=#701 id=701 data-nosnippet>701</a>        <span class="kw">if </span>peer.route.as_ref() == <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>offer.route) {
+<a href=#702 id=702 data-nosnippet>702</a>            <span class="kw">if </span>offer.score.is_some() {
+<a href=#703 id=703 data-nosnippet>703</a>                peer.route_score = offer.score;
+<a href=#704 id=704 data-nosnippet>704</a>            }
+<a href=#705 id=705 data-nosnippet>705</a>            <span class="kw">return</span>;
+<a href=#706 id=706 data-nosnippet>706</a>        }
+<a href=#707 id=707 data-nosnippet>707</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(index) = <span class="self">self</span>.hold_index(id, now_ms) {
+<a href=#708 id=708 data-nosnippet>708</a>            <span class="comment">// A held route stays, whatever the offer; a path it teaches is
+<a href=#709 id=709 data-nosnippet>709</a>            // kept as the candidate the application may switch to. Even a
+<a href=#710 id=710 data-nosnippet>710</a>            // superseding offer only proposes: the person chose this route.
+<a href=#711 id=711 data-nosnippet>711</a>            </span><span class="kw">let </span>hold = <span class="kw-2">&amp;mut </span><span class="self">self</span>.holds[index].<span class="number">1</span>;
+<a href=#712 id=712 data-nosnippet>712</a>            hold.candidate = better_candidate(hold.candidate.take(), offer);
+<a href=#713 id=713 data-nosnippet>713</a>            <span class="kw">return</span>;
+<a href=#714 id=714 data-nosnippet>714</a>        }
+<a href=#715 id=715 data-nosnippet>715</a>        <span class="kw">let </span>peer = <span class="self">self</span>.get_mut(id).expect(<span class="string">"peer was just found"</span>);
+<a href=#716 id=716 data-nosnippet>716</a>        <span class="kw">let </span>confirmed = peer
+<a href=#717 id=717 data-nosnippet>717</a>            .route_confirmed_ms
+<a href=#718 id=718 data-nosnippet>718</a>            .is_some_and(|at| now_ms.saturating_sub(at) &lt;= <span class="kw">crate</span>::route_score::CONFIRMATION_TTL_MS);
+<a href=#719 id=719 data-nosnippet>719</a>        <span class="kw">let </span>replace = offer.supersedes
+<a href=#720 id=720 data-nosnippet>720</a>            || <span class="kw">match </span>(<span class="kw-2">&amp;</span>peer.route, offer.score) {
+<a href=#721 id=721 data-nosnippet>721</a>                (<span class="prelude-val">None </span>| <span class="prelude-val">Some</span>(CachedRoute::Flood { .. }), <span class="kw">_</span>) =&gt; <span class="bool-val">true</span>,
+<a href=#722 id=722 data-nosnippet>722</a>                (<span class="prelude-val">Some</span>(<span class="kw">_</span>), <span class="prelude-val">None</span>) =&gt; <span class="bool-val">false</span>,
+<a href=#723 id=723 data-nosnippet>723</a>                (<span class="prelude-val">Some</span>(current), <span class="prelude-val">Some</span>(score)) =&gt; <span class="kw">match </span>peer.route_score {
+<a href=#724 id=724 data-nosnippet>724</a>                    <span class="prelude-val">Some</span>(held) =&gt; <span class="kw">crate</span>::route_score::displaces(score, held, confirmed),
+<a href=#725 id=725 data-nosnippet>725</a>                    <span class="comment">// Nothing scored the route in use: it was installed by
+<a href=#726 id=726 data-nosnippet>726</a>                    // hand or restored, and any measured path replaces it.
+<a href=#727 id=727 data-nosnippet>727</a>                    // An acknowledgment's way back replaces only a direct
+<a href=#728 id=728 data-nosnippet>728</a>                    // route, which is often just an observation of the
+<a href=#729 id=729 data-nosnippet>729</a>                    // peer's transmitter and says nothing about whether the
+<a href=#730 id=730 data-nosnippet>730</a>                    // peer hears us. A longer route the ack answered is not
+<a href=#731 id=731 data-nosnippet>731</a>                    // contradicted by a different way back.
+<a href=#732 id=732 data-nosnippet>732</a>                    </span><span class="prelude-val">None </span>=&gt; !offer.acknowledgment || current.hop_count() &lt;= <span class="number">1</span>,
+<a href=#733 id=733 data-nosnippet>733</a>                },
+<a href=#734 id=734 data-nosnippet>734</a>            };
+<a href=#735 id=735 data-nosnippet>735</a>        <span class="kw">if </span>!replace {
+<a href=#736 id=736 data-nosnippet>736</a>            <span class="kw">return</span>;
+<a href=#737 id=737 data-nosnippet>737</a>        }
+<a href=#738 id=738 data-nosnippet>738</a>        <span class="kw">let </span>revision = <span class="self">self</span>.next_revision();
+<a href=#739 id=739 data-nosnippet>739</a>        <span class="kw">let </span>peer = <span class="self">self</span>.get_mut(id).expect(<span class="string">"peer was just found"</span>);
+<a href=#740 id=740 data-nosnippet>740</a>        peer.select_route(RouteSelection::learned(offer.into()), revision);
+<a href=#741 id=741 data-nosnippet>741</a>    }
+<a href=#742 id=742 data-nosnippet>742</a>
+<a href=#743 id=743 data-nosnippet>743</a>    <span class="doccomment">/// Forget a route explicitly; passive learning remains allowed.
+<a href=#744 id=744 data-nosnippet>744</a>    </span><span class="kw">pub fn </span>clear_route(<span class="kw-2">&amp;mut </span><span class="self">self</span>, id: PeerId) -&gt; bool {
+<a href=#745 id=745 data-nosnippet>745</a>        <span class="kw">let </span>revision = <span class="self">self</span>.next_revision();
+<a href=#746 id=746 data-nosnippet>746</a>        <span class="self">self</span>.drop_hold(id);
+<a href=#747 id=747 data-nosnippet>747</a>        <span class="self">self</span>.get_mut(id)
+<a href=#748 id=748 data-nosnippet>748</a>            .map(|peer| {
+<a href=#749 id=749 data-nosnippet>749</a>                <span class="kw">let </span>held = peer.route.is_some();
+<a href=#750 id=750 data-nosnippet>750</a>                peer.select_route(RouteSelection::none(), revision);
+<a href=#751 id=751 data-nosnippet>751</a>                peer.failed_route = <span class="prelude-val">None</span>;
+<a href=#752 id=752 data-nosnippet>752</a>                held
+<a href=#753 id=753 data-nosnippet>753</a>            })
+<a href=#754 id=754 data-nosnippet>754</a>            .unwrap_or(<span class="bool-val">false</span>)
+<a href=#755 id=755 data-nosnippet>755</a>    }
+<a href=#756 id=756 data-nosnippet>756</a>
+<a href=#757 id=757 data-nosnippet>757</a>    <span class="doccomment">/// Retire only the cached route used by the failed on-air attempt.
+<a href=#758 id=758 data-nosnippet>758</a>    ///
+<a href=#759 id=759 data-nosnippet>759</a>    /// A held route is not retired: the caller still falls back to a flood,
+<a href=#760 id=760 data-nosnippet>760</a>    /// and the route stays for the next send.
+<a href=#761 id=761 data-nosnippet>761</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>fail_route(
+<a href=#762 id=762 data-nosnippet>762</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
+<a href=#763 id=763 data-nosnippet>763</a>        key: <span class="kw-2">&amp;</span>PublicKey,
+<a href=#764 id=764 data-nosnippet>764</a>        revision: u64,
+<a href=#765 id=765 data-nosnippet>765</a>        now_ms: u64,
+<a href=#766 id=766 data-nosnippet>766</a>    ) -&gt; RouteFailure {
+<a href=#767 id=767 data-nosnippet>767</a>        <span class="kw">let </span><span class="prelude-val">Some</span>((id, peer)) = <span class="self">self</span>.lookup_by_key(key) <span class="kw">else </span>{
+<a href=#768 id=768 data-nosnippet>768</a>            <span class="kw">return </span>RouteFailure::Unrelated;
+<a href=#769 id=769 data-nosnippet>769</a>        };
+<a href=#770 id=770 data-nosnippet>770</a>        <span class="kw">if </span>revision == <span class="number">0 </span>|| peer.<span class="macro">route_revision !</span>= revision {
+<a href=#771 id=771 data-nosnippet>771</a>            <span class="kw">return </span>RouteFailure::Unrelated;
+<a href=#772 id=772 data-nosnippet>772</a>        }
+<a href=#773 id=773 data-nosnippet>773</a>        <span class="kw">if </span><span class="self">self</span>.hold_index(id, now_ms).is_some() {
+<a href=#774 id=774 data-nosnippet>774</a>            <span class="kw">return </span>RouteFailure::Held;
+<a href=#775 id=775 data-nosnippet>775</a>        }
+<a href=#776 id=776 data-nosnippet>776</a>        <span class="kw">let </span>next_revision = <span class="self">self</span>.next_revision();
+<a href=#777 id=777 data-nosnippet>777</a>        <span class="kw">let </span>peer = <span class="self">self</span>.get_mut(id).expect(<span class="string">"peer was just found"</span>);
+<a href=#778 id=778 data-nosnippet>778</a>        <span class="kw">match </span>peer.route.take() {
+<a href=#779 id=779 data-nosnippet>779</a>            <span class="prelude-val">Some</span>(route) =&gt; {
+<a href=#780 id=780 data-nosnippet>780</a>                peer.failed_route = <span class="prelude-val">Some</span>((route, now_ms.saturating_add(FAILED_ROUTE_HOLDOFF_MS)));
+<a href=#781 id=781 data-nosnippet>781</a>                peer.select_route(RouteSelection::none(), next_revision);
+<a href=#782 id=782 data-nosnippet>782</a>                RouteFailure::Retired
+<a href=#783 id=783 data-nosnippet>783</a>            }
+<a href=#784 id=784 data-nosnippet>784</a>            <span class="prelude-val">None </span>=&gt; RouteFailure::Unrelated,
+<a href=#785 id=785 data-nosnippet>785</a>        }
+<a href=#786 id=786 data-nosnippet>786</a>    }
+<a href=#787 id=787 data-nosnippet>787</a>
+<a href=#788 id=788 data-nosnippet>788</a>    <span class="doccomment">/// A matching ACK protects this route from older outstanding failures,
+<a href=#789 id=789 data-nosnippet>789</a>    /// and credits it against new candidates for a while.
+<a href=#790 id=790 data-nosnippet>790</a>    ///
+<a href=#791 id=791 data-nosnippet>791</a>    /// It confirms the whole send policy, including its optional flood
+<a href=#792 id=792 data-nosnippet>792</a>    /// tail, which is why the credit is not a guarantee: the tail may be
+<a href=#793 id=793 data-nosnippet>793</a>    /// what delivered the exchange.
+<a href=#794 id=794 data-nosnippet>794</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>confirm_route(<span class="kw-2">&amp;mut </span><span class="self">self</span>, key: <span class="kw-2">&amp;</span>PublicKey, revision: u64, now_ms: u64) {
+<a href=#795 id=795 data-nosnippet>795</a>        <span class="kw">let </span><span class="prelude-val">Some</span>((id, peer)) = <span class="self">self</span>.lookup_by_key(key) <span class="kw">else </span>{
+<a href=#796 id=796 data-nosnippet>796</a>            <span class="kw">return</span>;
+<a href=#797 id=797 data-nosnippet>797</a>        };
+<a href=#798 id=798 data-nosnippet>798</a>        <span class="kw">if </span>revision == <span class="number">0 </span>|| peer.<span class="macro">route_revision !</span>= revision || peer.route.is_none() {
+<a href=#799 id=799 data-nosnippet>799</a>            <span class="kw">return</span>;
+<a href=#800 id=800 data-nosnippet>800</a>        }
+<a href=#801 id=801 data-nosnippet>801</a>        <span class="kw">let </span>next_revision = <span class="self">self</span>.next_revision();
+<a href=#802 id=802 data-nosnippet>802</a>        <span class="kw">let </span>peer = <span class="self">self</span>.get_mut(id).expect(<span class="string">"peer was just found"</span>);
+<a href=#803 id=803 data-nosnippet>803</a>        peer.route_revision = next_revision;
+<a href=#804 id=804 data-nosnippet>804</a>        peer.route_confirmed_ms = <span class="prelude-val">Some</span>(now_ms);
+<a href=#805 id=805 data-nosnippet>805</a>    }
+<a href=#806 id=806 data-nosnippet>806</a>
+<a href=#807 id=807 data-nosnippet>807</a>    <span class="doccomment">/// Record how a packet from `id` reached us: by flooding or not.
+<a href=#808 id=808 data-nosnippet>808</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>note_arrival(<span class="kw-2">&amp;mut </span><span class="self">self</span>, id: PeerId, flooded: bool, now_ms: u64) {
+<a href=#809 id=809 data-nosnippet>809</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(peer) = <span class="self">self</span>.get_mut(id) {
+<a href=#810 id=810 data-nosnippet>810</a>            <span class="kw">if </span>!flooded {
+<a href=#811 id=811 data-nosnippet>811</a>                peer.unflooded_arrival_s = <span class="prelude-val">Some</span>(arrival_seconds(now_ms));
+<a href=#812 id=812 data-nosnippet>812</a>            }
+<a href=#813 id=813 data-nosnippet>813</a>            peer.trace_owed = flooded;
+<a href=#814 id=814 data-nosnippet>814</a>        }
+<a href=#815 id=815 data-nosnippet>815</a>    }
+<a href=#816 id=816 data-nosnippet>816</a>
+<a href=#817 id=817 data-nosnippet>817</a>    <span class="doccomment">/// Whether a packet from `id` reached us without flooding within the
+<a href=#818 id=818 data-nosnippet>818</a>    /// last `window_ms` before `now_ms`.
+<a href=#819 id=819 data-nosnippet>819</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>arrived_unflooded_within(<span class="kw-2">&amp;</span><span class="self">self</span>, id: PeerId, window_ms: u64, now_ms: u64) -&gt; bool {
+<a href=#820 id=820 data-nosnippet>820</a>        <span class="self">self</span>.get(id)
+<a href=#821 id=821 data-nosnippet>821</a>            .and_then(|peer| peer.unflooded_arrival_s)
+<a href=#822 id=822 data-nosnippet>822</a>            .is_some_and(|at| {
+<a href=#823 id=823 data-nosnippet>823</a>                <span class="kw">let </span>elapsed_s = arrival_seconds(now_ms).get().wrapping_sub(at.get());
+<a href=#824 id=824 data-nosnippet>824</a>                u64::from(elapsed_s) * <span class="number">1000 </span>&lt; window_ms
+<a href=#825 id=825 data-nosnippet>825</a>            })
+<a href=#826 id=826 data-nosnippet>826</a>    }
+<a href=#827 id=827 data-nosnippet>827</a>
+<a href=#828 id=828 data-nosnippet>828</a>    <span class="doccomment">/// A packet carrying a trace route went to `id`, settling what a flooded
+<a href=#829 id=829 data-nosnippet>829</a>    /// arrival owed it.
+<a href=#830 id=830 data-nosnippet>830</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>note_trace_sent(<span class="kw-2">&amp;mut </span><span class="self">self</span>, id: PeerId) {
+<a href=#831 id=831 data-nosnippet>831</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(peer) = <span class="self">self</span>.get_mut(id) {
+<a href=#832 id=832 data-nosnippet>832</a>            peer.trace_owed = <span class="bool-val">false</span>;
+<a href=#833 id=833 data-nosnippet>833</a>        }
+<a href=#834 id=834 data-nosnippet>834</a>    }
+<a href=#835 id=835 data-nosnippet>835</a>
+<a href=#836 id=836 data-nosnippet>836</a>    <span class="doccomment">/// Refresh the last-seen timestamp for `id`.
+<a href=#837 id=837 data-nosnippet>837</a>    </span><span class="kw">pub fn </span>touch(<span class="kw-2">&amp;mut </span><span class="self">self</span>, id: PeerId, now_ms: u64) {
+<a href=#838 id=838 data-nosnippet>838</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(peer) = <span class="self">self</span>.get_mut(id) {
+<a href=#839 id=839 data-nosnippet>839</a>            peer.last_seen_ms = now_ms;
+<a href=#840 id=840 data-nosnippet>840</a>        }
+<a href=#841 id=841 data-nosnippet>841</a>    }
+<a href=#842 id=842 data-nosnippet>842</a>}
+<a href=#843 id=843 data-nosnippet>843</a>
+<a href=#844 id=844 data-nosnippet>844</a><span class="doccomment">/// The better of a held route's candidate and a new offer.
+<a href=#845 id=845 data-nosnippet>845</a>///
+<a href=#846 id=846 data-nosnippet>846</a>/// A flood distance names no path to switch to. A measured path beats one
+<a href=#847 id=847 data-nosnippet>847</a>/// nothing has measured; between two measured paths the newcomer must clear
+<a href=#848 id=848 data-nosnippet>848</a>/// the usual switching margin.
+<a href=#849 id=849 data-nosnippet>849</a></span><span class="kw">fn </span>better_candidate(
+<a href=#850 id=850 data-nosnippet>850</a>    candidate: <span class="prelude-ty">Option</span>&lt;RouteCandidate&gt;,
+<a href=#851 id=851 data-nosnippet>851</a>    offer: RouteOffer,
+<a href=#852 id=852 data-nosnippet>852</a>) -&gt; <span class="prelude-ty">Option</span>&lt;RouteCandidate&gt; {
+<a href=#853 id=853 data-nosnippet>853</a>    <span class="kw">if </span><span class="macro">matches!</span>(offer.route, CachedRoute::Flood { .. }) {
+<a href=#854 id=854 data-nosnippet>854</a>        <span class="kw">return </span>candidate;
+<a href=#855 id=855 data-nosnippet>855</a>    }
+<a href=#856 id=856 data-nosnippet>856</a>    <span class="kw">let </span><span class="prelude-val">Some</span>(candidate) = candidate <span class="kw">else </span>{
+<a href=#857 id=857 data-nosnippet>857</a>        <span class="kw">return </span><span class="prelude-val">Some</span>(offer.into());
+<a href=#858 id=858 data-nosnippet>858</a>    };
+<a href=#859 id=859 data-nosnippet>859</a>    <span class="kw">if </span>candidate.route == offer.route {
+<a href=#860 id=860 data-nosnippet>860</a>        <span class="kw">return </span><span class="prelude-val">Some</span>(RouteCandidate {
+<a href=#861 id=861 data-nosnippet>861</a>            score: offer.score.or(candidate.score),
+<a href=#862 id=862 data-nosnippet>862</a>            last_hop: offer.last_hop.or(candidate.last_hop),
+<a href=#863 id=863 data-nosnippet>863</a>            ..candidate
+<a href=#864 id=864 data-nosnippet>864</a>        });
+<a href=#865 id=865 data-nosnippet>865</a>    }
+<a href=#866 id=866 data-nosnippet>866</a>    <span class="kw">let </span>replace = <span class="kw">match </span>(candidate.score, offer.score) {
+<a href=#867 id=867 data-nosnippet>867</a>        (<span class="kw">_</span>, <span class="prelude-val">None</span>) =&gt; <span class="bool-val">false</span>,
+<a href=#868 id=868 data-nosnippet>868</a>        (<span class="prelude-val">None</span>, <span class="prelude-val">Some</span>(<span class="kw">_</span>)) =&gt; <span class="bool-val">true</span>,
+<a href=#869 id=869 data-nosnippet>869</a>        (<span class="prelude-val">Some</span>(held), <span class="prelude-val">Some</span>(new)) =&gt; <span class="kw">crate</span>::route_score::displaces(new, held, <span class="bool-val">false</span>),
+<a href=#870 id=870 data-nosnippet>870</a>    };
+<a href=#871 id=871 data-nosnippet>871</a>    <span class="prelude-val">Some</span>(<span class="kw">if </span>replace { offer.into() } <span class="kw">else </span>{ candidate })
+<a href=#872 id=872 data-nosnippet>872</a>}
+<a href=#873 id=873 data-nosnippet>873</a>
+<a href=#874 id=874 data-nosnippet>874</a><span class="doccomment">/// Per-peer secure transport state.
+<a href=#875 id=875 data-nosnippet>875</a></span><span class="attr">#[derive(Clone)]
+<a href=#876 id=876 data-nosnippet>876</a></span><span class="kw">pub struct </span>PeerCryptoState {
+<a href=#877 id=877 data-nosnippet>877</a>    <span class="doccomment">/// Pairwise encryption and MIC keys.
+<a href=#878 id=878 data-nosnippet>878</a>    </span><span class="kw">pub </span>pairwise_keys: PairwiseKeys,
+<a href=#879 id=879 data-nosnippet>879</a>    <span class="doccomment">/// Replay state for traffic from this peer.
+<a href=#880 id=880 data-nosnippet>880</a>    </span><span class="kw">pub </span>replay_window: ReplayWindow,
+<a href=#881 id=881 data-nosnippet>881</a>    <span class="doccomment">/// Highest `last_accepted` value written to persistent storage.
+<a href=#882 id=882 data-nosnippet>882</a>    /// Updated by `service_rx_counter_persistence` after each flush.
+<a href=#883 id=883 data-nosnippet>883</a>    </span><span class="kw">pub </span>persisted_rx_counter: u32,
+<a href=#884 id=884 data-nosnippet>884</a>    <span class="doccomment">/// Set when `last_accepted` has advanced `COUNTER_PERSIST_BLOCK_SIZE`
+<a href=#885 id=885 data-nosnippet>885</a>    /// beyond `persisted_rx_counter`. Cleared after the next flush.
+<a href=#886 id=886 data-nosnippet>886</a>    </span><span class="kw">pub </span>needs_rx_persist: bool,
+<a href=#887 id=887 data-nosnippet>887</a>}
+<a href=#888 id=888 data-nosnippet>888</a>
+<a href=#889 id=889 data-nosnippet>889</a><span class="doccomment">/// Fixed-capacity map of per-peer secure transport state.
+<a href=#890 id=890 data-nosnippet>890</a></span><span class="attr">#[derive(Clone)]
+<a href=#891 id=891 data-nosnippet>891</a></span><span class="kw">pub struct </span>PeerCryptoMap&lt;<span class="kw">const </span>N: usize&gt; {
+<a href=#892 id=892 data-nosnippet>892</a>    entries: LinearMap&lt;PeerId, PeerCryptoState, N&gt;,
+<a href=#893 id=893 data-nosnippet>893</a>}
+<a href=#894 id=894 data-nosnippet>894</a>
+<a href=#895 id=895 data-nosnippet>895</a><span class="kw">impl</span>&lt;<span class="kw">const </span>N: usize&gt; Default <span class="kw">for </span>PeerCryptoMap&lt;N&gt; {
+<a href=#896 id=896 data-nosnippet>896</a>    <span class="kw">fn </span>default() -&gt; <span class="self">Self </span>{
+<a href=#897 id=897 data-nosnippet>897</a>        <span class="self">Self</span>::new()
+<a href=#898 id=898 data-nosnippet>898</a>    }
+<a href=#899 id=899 data-nosnippet>899</a>}
+<a href=#900 id=900 data-nosnippet>900</a>
+<a href=#901 id=901 data-nosnippet>901</a><span class="kw">impl</span>&lt;<span class="kw">const </span>N: usize&gt; PeerCryptoMap&lt;N&gt; {
+<a href=#902 id=902 data-nosnippet>902</a>    <span class="doccomment">/// Create an empty peer-crypto map.
+<a href=#903 id=903 data-nosnippet>903</a>    </span><span class="kw">pub fn </span>new() -&gt; <span class="self">Self </span>{
+<a href=#904 id=904 data-nosnippet>904</a>        <span class="self">Self </span>{
+<a href=#905 id=905 data-nosnippet>905</a>            entries: LinearMap::new(),
+<a href=#906 id=906 data-nosnippet>906</a>        }
+<a href=#907 id=907 data-nosnippet>907</a>    }
+<a href=#908 id=908 data-nosnippet>908</a>
+<a href=#909 id=909 data-nosnippet>909</a>    <span class="doccomment">/// Borrow one peer state.
+<a href=#910 id=910 data-nosnippet>910</a>    </span><span class="kw">pub fn </span>get(<span class="kw-2">&amp;</span><span class="self">self</span>, id: <span class="kw-2">&amp;</span>PeerId) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>PeerCryptoState&gt; {
+<a href=#911 id=911 data-nosnippet>911</a>        <span class="self">self</span>.entries.get(id)
+<a href=#912 id=912 data-nosnippet>912</a>    }
+<a href=#913 id=913 data-nosnippet>913</a>
+<a href=#914 id=914 data-nosnippet>914</a>    <span class="doccomment">/// Mutably borrow one peer state.
+<a href=#915 id=915 data-nosnippet>915</a>    </span><span class="kw">pub fn </span>get_mut(<span class="kw-2">&amp;mut </span><span class="self">self</span>, id: <span class="kw-2">&amp;</span>PeerId) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;mut </span>PeerCryptoState&gt; {
+<a href=#916 id=916 data-nosnippet>916</a>        <span class="self">self</span>.entries.get_mut(id)
+<a href=#917 id=917 data-nosnippet>917</a>    }
+<a href=#918 id=918 data-nosnippet>918</a>
+<a href=#919 id=919 data-nosnippet>919</a>    <span class="doccomment">/// Insert or replace state for a peer.
+<a href=#920 id=920 data-nosnippet>920</a>    </span><span class="kw">pub fn </span>insert(
+<a href=#921 id=921 data-nosnippet>921</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
+<a href=#922 id=922 data-nosnippet>922</a>        id: PeerId,
+<a href=#923 id=923 data-nosnippet>923</a>        state: PeerCryptoState,
+<a href=#924 id=924 data-nosnippet>924</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;PeerCryptoState&gt;, CapacityError&gt; {
+<a href=#925 id=925 data-nosnippet>925</a>        <span class="self">self</span>.entries.insert(id, state).map_err(|<span class="kw">_</span>| CapacityError)
+<a href=#926 id=926 data-nosnippet>926</a>    }
+<a href=#927 id=927 data-nosnippet>927</a>
+<a href=#928 id=928 data-nosnippet>928</a>    <span class="doccomment">/// Remove state for a peer.
+<a href=#929 id=929 data-nosnippet>929</a>    </span><span class="kw">pub fn </span>remove(<span class="kw-2">&amp;mut </span><span class="self">self</span>, id: <span class="kw-2">&amp;</span>PeerId) -&gt; <span class="prelude-ty">Option</span>&lt;PeerCryptoState&gt; {
+<a href=#930 id=930 data-nosnippet>930</a>        <span class="self">self</span>.entries.remove(id)
+<a href=#931 id=931 data-nosnippet>931</a>    }
+<a href=#932 id=932 data-nosnippet>932</a>
+<a href=#933 id=933 data-nosnippet>933</a>    <span class="doccomment">/// Iterate over all peer crypto entries.
+<a href=#934 id=934 data-nosnippet>934</a>    </span><span class="kw">pub fn </span>iter(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Iterator&lt;Item = (<span class="kw-2">&amp;</span>PeerId, <span class="kw-2">&amp;</span>PeerCryptoState)&gt; {
+<a href=#935 id=935 data-nosnippet>935</a>        <span class="self">self</span>.entries.iter()
+<a href=#936 id=936 data-nosnippet>936</a>    }
+<a href=#937 id=937 data-nosnippet>937</a>
+<a href=#938 id=938 data-nosnippet>938</a>    <span class="doccomment">/// Iterate mutably over all peer crypto entries.
+<a href=#939 id=939 data-nosnippet>939</a>    </span><span class="kw">pub fn </span>iter_mut(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Iterator&lt;Item = (<span class="kw-2">&amp;</span>PeerId, <span class="kw-2">&amp;mut </span>PeerCryptoState)&gt; {
+<a href=#940 id=940 data-nosnippet>940</a>        <span class="self">self</span>.entries.iter_mut()
+<a href=#941 id=941 data-nosnippet>941</a>    }
+<a href=#942 id=942 data-nosnippet>942</a>}
+<a href=#943 id=943 data-nosnippet>943</a>
+<a href=#944 id=944 data-nosnippet>944</a><span class="doccomment">/// Replay state for a sender known only by hint.
+<a href=#945 id=945 data-nosnippet>945</a></span><span class="attr">#[derive(Clone)]
+<a href=#946 id=946 data-nosnippet>946</a></span><span class="kw">pub struct </span>HintReplayState {
+<a href=#947 id=947 data-nosnippet>947</a>    <span class="doccomment">/// Replay window for the hint-only sender.
+<a href=#948 id=948 data-nosnippet>948</a>    </span><span class="kw">pub </span>window: ReplayWindow,
+<a href=#949 id=949 data-nosnippet>949</a>    <span class="doccomment">/// Most recent observation timestamp.
+<a href=#950 id=950 data-nosnippet>950</a>    </span><span class="kw">pub </span>last_seen_ms: u64,
+<a href=#951 id=951 data-nosnippet>951</a>}
+<a href=#952 id=952 data-nosnippet>952</a>
+<a href=#953 id=953 data-nosnippet>953</a><span class="doccomment">/// Shared state for one multicast channel.
+<a href=#954 id=954 data-nosnippet>954</a></span><span class="attr">#[derive(Clone)]
+<a href=#955 id=955 data-nosnippet>955</a></span><span class="kw">pub struct </span>ChannelState&lt;<span class="kw">const </span>RN: usize = <span class="number">8</span>, <span class="kw">const </span>HN: usize = <span class="number">8</span>&gt; {
+<a href=#956 id=956 data-nosnippet>956</a>    <span class="doccomment">/// Raw channel key.
+<a href=#957 id=957 data-nosnippet>957</a>    </span><span class="kw">pub </span>channel_key: ChannelKey,
+<a href=#958 id=958 data-nosnippet>958</a>    <span class="doccomment">/// Derived transport keys and identifier.
+<a href=#959 id=959 data-nosnippet>959</a>    </span><span class="kw">pub </span>derived: DerivedChannelKeys,
+<a href=#960 id=960 data-nosnippet>960</a>    <span class="doccomment">/// Replay windows for peers resolved to full identities.
+<a href=#961 id=961 data-nosnippet>961</a>    </span><span class="kw">pub </span>replay: LinearMap&lt;PeerId, ReplayWindow, RN&gt;,
+<a href=#962 id=962 data-nosnippet>962</a>    <span class="doccomment">/// Replay windows for senders known only by hint.
+<a href=#963 id=963 data-nosnippet>963</a>    </span><span class="kw">pub </span>hint_replay: LinearMap&lt;NodeHint, HintReplayState, HN&gt;,
+<a href=#964 id=964 data-nosnippet>964</a>}
+<a href=#965 id=965 data-nosnippet>965</a>
+<a href=#966 id=966 data-nosnippet>966</a><span class="kw">impl</span>&lt;<span class="kw">const </span>RN: usize, <span class="kw">const </span>HN: usize&gt; ChannelState&lt;RN, HN&gt; {
+<a href=#967 id=967 data-nosnippet>967</a>    <span class="doccomment">/// Create a new channel-state record.
+<a href=#968 id=968 data-nosnippet>968</a>    </span><span class="kw">pub fn </span>new(channel_key: ChannelKey, derived: DerivedChannelKeys) -&gt; <span class="self">Self </span>{
+<a href=#969 id=969 data-nosnippet>969</a>        <span class="self">Self </span>{
+<a href=#970 id=970 data-nosnippet>970</a>            channel_key,
+<a href=#971 id=971 data-nosnippet>971</a>            derived,
+<a href=#972 id=972 data-nosnippet>972</a>            replay: LinearMap::new(),
+<a href=#973 id=973 data-nosnippet>973</a>            hint_replay: LinearMap::new(),
+<a href=#974 id=974 data-nosnippet>974</a>        }
+<a href=#975 id=975 data-nosnippet>975</a>    }
+<a href=#976 id=976 data-nosnippet>976</a>}
+<a href=#977 id=977 data-nosnippet>977</a>
+<a href=#978 id=978 data-nosnippet>978</a><span class="doccomment">/// Fixed-capacity channel table shared by the MAC coordinator.
+<a href=#979 id=979 data-nosnippet>979</a></span><span class="attr">#[derive(Clone)]
+<a href=#980 id=980 data-nosnippet>980</a></span><span class="kw">pub struct </span>ChannelTable&lt;<span class="kw">const </span>N: usize, <span class="kw">const </span>RN: usize = <span class="number">8</span>, <span class="kw">const </span>HN: usize = <span class="number">8</span>&gt; {
+<a href=#981 id=981 data-nosnippet>981</a>    channels: Vec&lt;ChannelState&lt;RN, HN&gt;, N&gt;,
+<a href=#982 id=982 data-nosnippet>982</a>}
+<a href=#983 id=983 data-nosnippet>983</a>
+<a href=#984 id=984 data-nosnippet>984</a><span class="kw">impl</span>&lt;<span class="kw">const </span>N: usize, <span class="kw">const </span>RN: usize, <span class="kw">const </span>HN: usize&gt; Default <span class="kw">for </span>ChannelTable&lt;N, RN, HN&gt; {
+<a href=#985 id=985 data-nosnippet>985</a>    <span class="kw">fn </span>default() -&gt; <span class="self">Self </span>{
+<a href=#986 id=986 data-nosnippet>986</a>        <span class="self">Self</span>::new()
+<a href=#987 id=987 data-nosnippet>987</a>    }
+<a href=#988 id=988 data-nosnippet>988</a>}
+<a href=#989 id=989 data-nosnippet>989</a>
+<a href=#990 id=990 data-nosnippet>990</a><span class="kw">impl</span>&lt;<span class="kw">const </span>N: usize, <span class="kw">const </span>RN: usize, <span class="kw">const </span>HN: usize&gt; ChannelTable&lt;N, RN, HN&gt; {
+<a href=#991 id=991 data-nosnippet>991</a>    <span class="doccomment">/// Create an empty channel table.
+<a href=#992 id=992 data-nosnippet>992</a>    </span><span class="kw">pub fn </span>new() -&gt; <span class="self">Self </span>{
+<a href=#993 id=993 data-nosnippet>993</a>        <span class="self">Self </span>{
+<a href=#994 id=994 data-nosnippet>994</a>            channels: Vec::new(),
+<a href=#995 id=995 data-nosnippet>995</a>        }
+<a href=#996 id=996 data-nosnippet>996</a>    }
+<a href=#997 id=997 data-nosnippet>997</a>
+<a href=#998 id=998 data-nosnippet>998</a>    <span class="doccomment">/// Return the number of configured channels.
+<a href=#999 id=999 data-nosnippet>999</a>    </span><span class="kw">pub fn </span>len(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
+<a href=#1000 id=1000 data-nosnippet>1000</a>        <span class="self">self</span>.channels.len()
+<a href=#1001 id=1001 data-nosnippet>1001</a>    }
+<a href=#1002 id=1002 data-nosnippet>1002</a>
+<a href=#1003 id=1003 data-nosnippet>1003</a>    <span class="doccomment">/// Return whether no channels are configured.
+<a href=#1004 id=1004 data-nosnippet>1004</a>    </span><span class="kw">pub fn </span>is_empty(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
+<a href=#1005 id=1005 data-nosnippet>1005</a>        <span class="self">self</span>.channels.is_empty()
+<a href=#1006 id=1006 data-nosnippet>1006</a>    }
+<a href=#1007 id=1007 data-nosnippet>1007</a>
+<a href=#1008 id=1008 data-nosnippet>1008</a>    <span class="doccomment">/// Iterate over channels whose derived identifier matches `id`.
+<a href=#1009 id=1009 data-nosnippet>1009</a>    </span><span class="kw">pub fn </span>lookup_by_id(<span class="kw-2">&amp;</span><span class="self">self</span>, id: <span class="kw-2">&amp;</span>ChannelId) -&gt; <span class="kw">impl </span>Iterator&lt;Item = <span class="kw-2">&amp;</span>ChannelState&lt;RN, HN&gt;&gt; {
+<a href=#1010 id=1010 data-nosnippet>1010</a>        <span class="self">self</span>.channels
+<a href=#1011 id=1011 data-nosnippet>1011</a>            .iter()
+<a href=#1012 id=1012 data-nosnippet>1012</a>            .filter(<span class="kw">move </span>|channel| channel.derived.channel_id == <span class="kw-2">*</span>id)
+<a href=#1013 id=1013 data-nosnippet>1013</a>    }
+<a href=#1014 id=1014 data-nosnippet>1014</a>
+<a href=#1015 id=1015 data-nosnippet>1015</a>    <span class="doccomment">/// Mutably borrow the first channel whose derived identifier matches `id`.
+<a href=#1016 id=1016 data-nosnippet>1016</a>    </span><span class="kw">pub fn </span>get_mut_by_id(<span class="kw-2">&amp;mut </span><span class="self">self</span>, id: <span class="kw-2">&amp;</span>ChannelId) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;mut </span>ChannelState&lt;RN, HN&gt;&gt; {
+<a href=#1017 id=1017 data-nosnippet>1017</a>        <span class="self">self</span>.channels
+<a href=#1018 id=1018 data-nosnippet>1018</a>            .iter_mut()
+<a href=#1019 id=1019 data-nosnippet>1019</a>            .find(|channel| channel.derived.channel_id == <span class="kw-2">*</span>id)
+<a href=#1020 id=1020 data-nosnippet>1020</a>    }
+<a href=#1021 id=1021 data-nosnippet>1021</a>
+<a href=#1022 id=1022 data-nosnippet>1022</a>    <span class="doccomment">/// Mutably iterate over all channel states.
+<a href=#1023 id=1023 data-nosnippet>1023</a>    </span><span class="kw">pub fn </span>iter_mut(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Iterator&lt;Item = <span class="kw-2">&amp;mut </span>ChannelState&lt;RN, HN&gt;&gt; {
+<a href=#1024 id=1024 data-nosnippet>1024</a>        <span class="self">self</span>.channels.iter_mut()
+<a href=#1025 id=1025 data-nosnippet>1025</a>    }
+<a href=#1026 id=1026 data-nosnippet>1026</a>
+<a href=#1027 id=1027 data-nosnippet>1027</a>    <span class="doccomment">/// Remove the channel holding this exact key, discarding its replay
+<a href=#1028 id=1028 data-nosnippet>1028</a>    /// state with it (re-adding the key later starts at first contact).
+<a href=#1029 id=1029 data-nosnippet>1029</a>    /// Returns whether a channel was removed.
+<a href=#1030 id=1030 data-nosnippet>1030</a>    </span><span class="kw">pub fn </span>remove_by_key(<span class="kw-2">&amp;mut </span><span class="self">self</span>, key: <span class="kw-2">&amp;</span>ChannelKey) -&gt; bool {
+<a href=#1031 id=1031 data-nosnippet>1031</a>        <span class="kw">let </span><span class="prelude-val">Some</span>(index) = <span class="self">self
+<a href=#1032 id=1032 data-nosnippet>1032</a>            </span>.channels
+<a href=#1033 id=1033 data-nosnippet>1033</a>            .iter()
+<a href=#1034 id=1034 data-nosnippet>1034</a>            .position(|channel| channel.channel_key.<span class="number">0 </span>== key.<span class="number">0</span>)
+<a href=#1035 id=1035 data-nosnippet>1035</a>        <span class="kw">else </span>{
+<a href=#1036 id=1036 data-nosnippet>1036</a>            <span class="kw">return </span><span class="bool-val">false</span>;
+<a href=#1037 id=1037 data-nosnippet>1037</a>        };
+<a href=#1038 id=1038 data-nosnippet>1038</a>        <span class="self">self</span>.channels.swap_remove(index);
+<a href=#1039 id=1039 data-nosnippet>1039</a>        <span class="bool-val">true
+<a href=#1040 id=1040 data-nosnippet>1040</a>    </span>}
+<a href=#1041 id=1041 data-nosnippet>1041</a>
+<a href=#1042 id=1042 data-nosnippet>1042</a>    <span class="doccomment">/// Add or replace a channel entry.
+<a href=#1043 id=1043 data-nosnippet>1043</a>    </span><span class="kw">pub fn </span>try_add(
+<a href=#1044 id=1044 data-nosnippet>1044</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
+<a href=#1045 id=1045 data-nosnippet>1045</a>        key: ChannelKey,
+<a href=#1046 id=1046 data-nosnippet>1046</a>        derived: DerivedChannelKeys,
+<a href=#1047 id=1047 data-nosnippet>1047</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;(), CapacityError&gt; {
+<a href=#1048 id=1048 data-nosnippet>1048</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(channel) = <span class="self">self</span>.get_mut_by_id(<span class="kw-2">&amp;</span>derived.channel_id) {
+<a href=#1049 id=1049 data-nosnippet>1049</a>            channel.channel_key = key;
+<a href=#1050 id=1050 data-nosnippet>1050</a>            channel.derived = derived;
+<a href=#1051 id=1051 data-nosnippet>1051</a>            <span class="kw">return </span><span class="prelude-val">Ok</span>(());
+<a href=#1052 id=1052 data-nosnippet>1052</a>        }
+<a href=#1053 id=1053 data-nosnippet>1053</a>
+<a href=#1054 id=1054 data-nosnippet>1054</a>        <span class="self">self</span>.channels
+<a href=#1055 id=1055 data-nosnippet>1055</a>            .push(ChannelState::new(key, derived))
+<a href=#1056 id=1056 data-nosnippet>1056</a>            .map_err(|<span class="kw">_</span>| CapacityError)
+<a href=#1057 id=1057 data-nosnippet>1057</a>    }
+<a href=#1058 id=1058 data-nosnippet>1058</a>}
+<a href=#1059 id=1059 data-nosnippet>1059</a>
+<a href=#1060 id=1060 data-nosnippet>1060</a><span class="attr">#[cfg(test)]
+<a href=#1061 id=1061 data-nosnippet>1061</a></span><span class="kw">mod </span>tests {
+<a href=#1062 id=1062 data-nosnippet>1062</a>    <span class="kw">use </span>super::<span class="kw-2">*</span>;
+<a href=#1063 id=1063 data-nosnippet>1063</a>
+<a href=#1064 id=1064 data-nosnippet>1064</a>    <span class="doccomment">/// The distance a cached route reports agrees with what a received
+<a href=#1065 id=1065 data-nosnippet>1065</a>    /// frame reports for the same path: a direct peer is one hop, and each
+<a href=#1066 id=1066 data-nosnippet>1066</a>    /// repeater hint or flood hop adds one to the leg no count covers.
+<a href=#1067 id=1067 data-nosnippet>1067</a>    </span><span class="attr">#[test]
+<a href=#1068 id=1068 data-nosnippet>1068</a>    </span><span class="kw">fn </span>hop_count_is_one_more_than_what_the_route_names() {
+<a href=#1069 id=1069 data-nosnippet>1069</a>        <span class="macro">assert_eq!</span>(CachedRoute::Direct.hop_count(), <span class="number">1</span>);
+<a href=#1070 id=1070 data-nosnippet>1070</a>        <span class="macro">assert_eq!</span>(CachedRoute::source(<span class="kw-2">&amp;</span>[]).unwrap().hop_count(), <span class="number">1</span>);
+<a href=#1071 id=1071 data-nosnippet>1071</a>        <span class="macro">assert_eq!</span>(
+<a href=#1072 id=1072 data-nosnippet>1072</a>            CachedRoute::source(<span class="kw-2">&amp;</span>[RouterHint([<span class="number">1</span>, <span class="number">2</span>]), RouterHint([<span class="number">3</span>, <span class="number">4</span>])])
+<a href=#1073 id=1073 data-nosnippet>1073</a>                .unwrap()
+<a href=#1074 id=1074 data-nosnippet>1074</a>                .hop_count(),
+<a href=#1075 id=1075 data-nosnippet>1075</a>            <span class="number">3
+<a href=#1076 id=1076 data-nosnippet>1076</a>        </span>);
+<a href=#1077 id=1077 data-nosnippet>1077</a>        <span class="macro">assert_eq!</span>(CachedRoute::flood(<span class="number">0</span>, <span class="kw-2">&amp;</span>[]).unwrap().hop_count(), <span class="number">1</span>);
+<a href=#1078 id=1078 data-nosnippet>1078</a>        <span class="macro">assert_eq!</span>(
+<a href=#1079 id=1079 data-nosnippet>1079</a>            CachedRoute::flood(<span class="number">2</span>, <span class="kw-2">&amp;</span>[[<span class="number">0x68</span>, <span class="number">0xAC</span>]]).unwrap().hop_count(),
+<a href=#1080 id=1080 data-nosnippet>1080</a>            <span class="number">3
+<a href=#1081 id=1081 data-nosnippet>1081</a>        </span>);
+<a href=#1082 id=1082 data-nosnippet>1082</a>        <span class="macro">assert_eq!</span>(
+<a href=#1083 id=1083 data-nosnippet>1083</a>            CachedRoute::flood(u8::MAX, <span class="kw-2">&amp;</span>[]).unwrap().hop_count(),
+<a href=#1084 id=1084 data-nosnippet>1084</a>            u8::MAX
+<a href=#1085 id=1085 data-nosnippet>1085</a>        );
+<a href=#1086 id=1086 data-nosnippet>1086</a>    }
+<a href=#1087 id=1087 data-nosnippet>1087</a>}
+<a href=#1088 id=1088 data-nosnippet>1088</a>
+<a href=#1089 id=1089 data-nosnippet>1089</a><span class="doccomment">/// `now_ms` as the whole seconds an arrival is recorded in, plus one. The
+<a href=#1090 id=1090 data-nosnippet>1090</a>/// count wraps, and is only ever compared by wrapping difference; the one
+<a href=#1091 id=1091 data-nosnippet>1091</a>/// second in every wrap that lands on zero is recorded a second late.
+<a href=#1092 id=1092 data-nosnippet>1092</a></span><span class="kw">fn </span>arrival_seconds(now_ms: u64) -&gt; NonZeroU32 {
+<a href=#1093 id=1093 data-nosnippet>1093</a>    NonZeroU32::new(((now_ms / <span class="number">1000</span>) <span class="kw">as </span>u32).wrapping_add(<span class="number">1</span>)).unwrap_or(NonZeroU32::MIN)
+<a href=#1094 id=1094 data-nosnippet>1094</a>}
 </code></pre></div></section></main></body></html>

@@ -4,7 +4,7 @@
 <a href=#4 id=4 data-nosnippet>4</a>//! 3.3 V rail (P1.06) and a sensor-enable line (P0.04), both active-high.
 <a href=#5 id=5 data-nosnippet>5</a>//! It is a phototransistor loaded to ground, so the node voltage rises
 <a href=#6 id=6 data-nosnippet>6</a>//! with illuminance from a small dark offset and rails once the load
-<a href=#7 id=7 data-nosnippet>7</a>//! resistor saturates — the transfer function is a straight line between
+<a href=#7 id=7 data-nosnippet>7</a>//! resistor saturates—the transfer function is a straight line between
 <a href=#8 id=8 data-nosnippet>8</a>//! those two ends.
 <a href=#9 id=9 data-nosnippet>9</a>//!
 <a href=#10 id=10 data-nosnippet>10</a>//! The SAADC and the sensor rail are owned by
@@ -30,12 +30,12 @@
 <a href=#30 id=30 data-nosnippet>30</a>// | 8965.086   | 185 lux    | the fit below   |
 <a href=#31 id=31 data-nosnippet>31</a>// | 13478.391  | flashlight | the hard rail   |
 <a href=#32 id=32 data-nosnippet>32</a>//
-<a href=#33 id=33 data-nosnippet>33</a>// The response is linear across the usable range — verified against the
-<a href=#34 id=34 data-nosnippet>34</a>// meter after fitting — so one slope through the origin describes it.
+<a href=#33 id=33 data-nosnippet>33</a>// The response is linear across the usable range—verified against the
+<a href=#34 id=34 data-nosnippet>34</a>// meter after fitting—so one slope through the origin describes it.
 <a href=#35 id=35 data-nosnippet>35</a>//
 <a href=#36 id=36 data-nosnippet>36</a>// The substantive correction to what was inherited from Seeed: **this
 <a href=#37 id=37 data-nosnippet>37</a>// sensor has essentially no dark current.** 0.2 counts is 44 µV. Seeed's
-<a href=#38 id=38 data-nosnippet>38</a>// 80 mV floor — 364 counts at this resolution — is a software noise
+<a href=#38 id=38 data-nosnippet>38</a>// 80 mV floor—364 counts at this resolution—is a software noise
 <a href=#39 id=39 data-nosnippet>39</a>// guard, not a property of the part, and subtracting it was discarding
 <a href=#40 id=40 data-nosnippet>40</a>// the entire bottom of the range, which is precisely the region an
 <a href=#41 id=41 data-nosnippet>41</a>// indicator-brightness policy works in.
@@ -69,13 +69,13 @@
 <a href=#69 id=69 data-nosnippet>69</a></span><span class="kw">pub const </span>SATURATION_RAW: u32 = <span class="number">12_288</span>;
 <a href=#70 id=70 data-nosnippet>70</a>
 <a href=#71 id=71 data-nosnippet>71</a><span class="doccomment">/// Millilux per count above [`DARK_OFFSET_RAW`], as the fraction
-<a href=#72 id=72 data-nosnippet>72</a>/// `SLOPE_MLUX_NUM / SLOPE_MLUX_DEN` — **20.636 mlux per count**.
+<a href=#72 id=72 data-nosnippet>72</a>/// `SLOPE_MLUX_NUM / SLOPE_MLUX_DEN`—**20.636 mlux per count**.
 <a href=#73 id=73 data-nosnippet>73</a>///
 <a href=#74 id=74 data-nosnippet>74</a>/// Fitted through the origin from the 185 lux point:
 <a href=#75 id=75 data-nosnippet>75</a>/// `185000 / 8965.086 = 20.636`.
 <a href=#76 id=76 data-nosnippet>76</a>///
 <a href=#77 id=77 data-nosnippet>77</a>/// A fraction rather than a whole number of millilux because rounding the
-<a href=#78 id=78 data-nosnippet>78</a>/// slope to an integer would discard a percent or two of the answer —
+<a href=#78 id=78 data-nosnippet>78</a>/// slope to an integer would discard a percent or two of the answer—
 <a href=#79 id=79 data-nosnippet>79</a>/// more than the sub-count resolution the sampling in [`crate::power`]
 <a href=#80 id=80 data-nosnippet>80</a>/// exists to buy.
 <a href=#81 id=81 data-nosnippet>81</a></span><span class="kw">pub const </span>SLOPE_MLUX_NUM: u32 = <span class="number">20_636</span>;
@@ -85,8 +85,8 @@
 <a href=#85 id=85 data-nosnippet>85</a>///
 <a href=#86 id=86 data-nosnippet>86</a>/// Takes the **sum** and the number of conversions in it rather than a
 <a href=#87 id=87 data-nosnippet>87</a>/// pre-computed mean, because the mean of a run of counts is fractional
-<a href=#88 id=88 data-nosnippet>88</a>/// and a mean rounded to whole counts throws that away. Both divisions —
-<a href=#89 id=89 data-nosnippet>89</a>/// by the conversion count and by the slope's denominator — are therefore
+<a href=#88 id=88 data-nosnippet>88</a>/// and a mean rounded to whole counts throws that away. Both divisions—
+<a href=#89 id=89 data-nosnippet>89</a>/// by the conversion count and by the slope's denominator—are therefore
 <a href=#90 id=90 data-nosnippet>90</a>/// done last, against the scaled sum.
 <a href=#91 id=91 data-nosnippet>91</a>///
 <a href=#92 id=92 data-nosnippet>92</a>/// Clamped at both ends: below the dark offset the sensor is reporting
@@ -107,18 +107,18 @@
 <a href=#107 id=107 data-nosnippet>107</a>    scaled.min(u64::from(u32::MAX)) <span class="kw">as </span>u32
 <a href=#108 id=108 data-nosnippet>108</a>}
 <a href=#109 id=109 data-nosnippet>109</a>
-<a href=#110 id=110 data-nosnippet>110</a><span class="doccomment">/// The largest value this board can report — the reading at
+<a href=#110 id=110 data-nosnippet>110</a><span class="doccomment">/// The largest value this board can report—the reading at
 <a href=#111 id=111 data-nosnippet>111</a>/// [`SATURATION_RAW`], about 253 lux.
 <a href=#112 id=112 data-nosnippet>112</a>///
 <a href=#113 id=113 data-nosnippet>113</a>/// A ceiling, not a measurement: everything from a bright room to direct
 <a href=#114 id=114 data-nosnippet>114</a>/// sunlight lands on it. The part is a dark-end instrument, and at the
-<a href=#115 id=115 data-nosnippet>115</a>/// dark end it is a good one — one count is 21 mlux, so full moonlight
+<a href=#115 id=115 data-nosnippet>115</a>/// dark end it is a good one—one count is 21 mlux, so full moonlight
 <a href=#116 id=116 data-nosnippet>116</a>/// (~300 mlux) sits about 15 counts up with a 4 mlux noise floor beneath
 <a href=#117 id=117 data-nosnippet>117</a>/// it. Anything wanting a daylight figure needs a different sensor.
 <a href=#118 id=118 data-nosnippet>118</a></span><span class="kw">pub const </span>MAX_REPORTABLE_MLUX: u32 =
 <a href=#119 id=119 data-nosnippet>119</a>    (SATURATION_RAW - DARK_OFFSET_RAW) * SLOPE_MLUX_NUM / SLOPE_MLUX_DEN;
 <a href=#120 id=120 data-nosnippet>120</a>
-<a href=#121 id=121 data-nosnippet>121</a><span class="doccomment">/// Convert one SAADC count on AIN5 to millilux — [`millilux_from_sum`]
+<a href=#121 id=121 data-nosnippet>121</a><span class="doccomment">/// Convert one SAADC count on AIN5 to millilux—[`millilux_from_sum`]
 <a href=#122 id=122 data-nosnippet>122</a>/// for a single conversion.
 <a href=#123 id=123 data-nosnippet>123</a></span><span class="kw">pub fn </span>raw_to_millilux(raw: u16) -&gt; u32 {
 <a href=#124 id=124 data-nosnippet>124</a>    millilux_from_sum(u32::from(raw), <span class="number">1</span>)
@@ -137,7 +137,7 @@
 <a href=#137 id=137 data-nosnippet>137</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">static </span>LIGHT_SAMPLE_REPLY: Signal&lt;ThreadModeRawMutex, u32&gt; = Signal::new();
 <a href=#138 id=138 data-nosnippet>138</a>
 <a href=#139 id=139 data-nosnippet>139</a>    <span class="doccomment">/// The most recent measurement, however it was triggered, in
-<a href=#140 id=140 data-nosnippet>140</a>    /// millilux. `u32::MAX` until one exists — that cannot be a reading,
+<a href=#140 id=140 data-nosnippet>140</a>    /// millilux. `u32::MAX` until one exists—that cannot be a reading,
 <a href=#141 id=141 data-nosnippet>141</a>    /// because the conversion tops out at
 <a href=#142 id=142 data-nosnippet>142</a>    /// [`MAX_REPORTABLE_MLUX`](super::MAX_REPORTABLE_MLUX).
 <a href=#143 id=143 data-nosnippet>143</a>    </span><span class="kw">static </span>AMBIENT_MILLILUX: AtomicU32 = AtomicU32::new(u32::MAX);
@@ -146,7 +146,7 @@
 <a href=#146 id=146 data-nosnippet>146</a>    /// for it; `None` until the first one completes.
 <a href=#147 id=147 data-nosnippet>147</a>    ///
 <a href=#148 id=148 data-nosnippet>148</a>    /// This is the consumer side of [`request_sample`], but every
-<a href=#149 id=149 data-nosnippet>149</a>    /// measurement lands here — an on-demand [`sample_illuminance`] for a
+<a href=#149 id=149 data-nosnippet>149</a>    /// measurement lands here—an on-demand [`sample_illuminance`] for a
 <a href=#150 id=150 data-nosnippet>150</a>    /// protocol read refreshes it too.
 <a href=#151 id=151 data-nosnippet>151</a>    </span><span class="kw">pub fn </span>ambient_millilux() -&gt; <span class="prelude-ty">Option</span>&lt;u32&gt; {
 <a href=#152 id=152 data-nosnippet>152</a>        <span class="kw">match </span>AMBIENT_MILLILUX.load(Ordering::Acquire) {
@@ -163,7 +163,7 @@
 <a href=#163 id=163 data-nosnippet>163</a>
 <a href=#164 id=164 data-nosnippet>164</a>    <span class="doccomment">/// Ask for a measurement without waiting for it: the result appears
 <a href=#165 id=165 data-nosnippet>165</a>    /// in [`ambient_millilux`] once taken. For callers that must not
-<a href=#166 id=166 data-nosnippet>166</a>    /// block on the monitor — the LED task requests from inside the
+<a href=#166 id=166 data-nosnippet>166</a>    /// block on the monitor—the LED task requests from inside the
 <a href=#167 id=167 data-nosnippet>167</a>    /// select loop that also answers the sampler's blanking handshake.
 <a href=#168 id=168 data-nosnippet>168</a>    ///
 <a href=#169 id=169 data-nosnippet>169</a>    /// The request latches, so duplicates coalesce, and the reply signal
@@ -174,8 +174,8 @@
 <a href=#174 id=174 data-nosnippet>174</a>        LIGHT_SAMPLE_REQUEST.signal(());
 <a href=#175 id=175 data-nosnippet>175</a>    }
 <a href=#176 id=176 data-nosnippet>176</a>
-<a href=#177 id=177 data-nosnippet>177</a>    <span class="doccomment">/// Ask [`run_battery_monitor`](crate::power::run_battery_monitor) —
-<a href=#178 id=178 data-nosnippet>178</a>    /// the sole SAADC and sensor-rail owner — for a fresh illuminance
+<a href=#177 id=177 data-nosnippet>177</a>    <span class="doccomment">/// Ask [`run_battery_monitor`](crate::power::run_battery_monitor)—
+<a href=#178 id=178 data-nosnippet>178</a>    /// the sole SAADC and sensor-rail owner—for a fresh illuminance
 <a href=#179 id=179 data-nosnippet>179</a>    /// measurement in millilux and wait for it.
 <a href=#180 id=180 data-nosnippet>180</a>    ///
 <a href=#181 id=181 data-nosnippet>181</a>    /// Single-consumer, like the monitor itself. Never completes once the
@@ -215,7 +215,7 @@
 <a href=#215 id=215 data-nosnippet>215</a>    }
 <a href=#216 id=216 data-nosnippet>216</a>
 <a href=#217 id=217 data-nosnippet>217</a>    <span class="doccomment">/// Whatever the constants are set to, the conversion must never
-<a href=#218 id=218 data-nosnippet>218</a>    /// overflow or wrap — the sum of a full run at full scale is the
+<a href=#218 id=218 data-nosnippet>218</a>    /// overflow or wrap—the sum of a full run at full scale is the
 <a href=#219 id=219 data-nosnippet>219</a>    /// worst case the sampler can hand it.
 <a href=#220 id=220 data-nosnippet>220</a>    </span><span class="attr">#[test]
 <a href=#221 id=221 data-nosnippet>221</a>    </span><span class="kw">fn </span>a_full_scale_run_does_not_overflow() {
@@ -231,7 +231,7 @@
 <a href=#231 id=231 data-nosnippet>231</a>    </span><span class="attr">#[test]
 <a href=#232 id=232 data-nosnippet>232</a>    </span><span class="kw">fn </span>the_average_keeps_resolution_below_one_count() {
 <a href=#233 id=233 data-nosnippet>233</a>        <span class="kw">let </span>base = DARK_OFFSET_RAW + <span class="number">100</span>;
-<a href=#234 id=234 data-nosnippet>234</a>        <span class="comment">// Twenty conversions at `base`, three at `base + 1` — a mean of
+<a href=#234 id=234 data-nosnippet>234</a>        <span class="comment">// Twenty conversions at `base`, three at `base + 1`—a mean of
 <a href=#235 id=235 data-nosnippet>235</a>        // 100.13 counts above dark, which whole counts cannot express.
 <a href=#236 id=236 data-nosnippet>236</a>        </span><span class="kw">let </span>sum = <span class="number">20 </span>* base + <span class="number">3 </span>* (base + <span class="number">1</span>);
 <a href=#237 id=237 data-nosnippet>237</a>        <span class="kw">let </span>averaged = millilux_from_sum(sum, <span class="number">23</span>);

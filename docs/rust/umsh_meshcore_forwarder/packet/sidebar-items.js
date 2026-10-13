@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["MAX_FRAME_LEN","MAX_PATH_LEN","MAX_PAYLOAD_LEN","PACKET_HASH_LEN","VERSION_1"],"enum":["ParseError","RouteType"],"fn":["encode","header","packet_hash"],"mod":["payload_type"],"struct":["Packet"],"type":["Frame","PacketHash"]};

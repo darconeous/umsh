@@ -2,8 +2,8 @@
 <p>This is the part that would otherwise be copied into every firmware:
 power the receiver when it is wanted, read its UART, hand each
 completed fix upward, and put it back to sleep when it is not. It is
-generic over the three things that actually differ between boards —
-the byte stream, the power sequencing, and what is done with a fix —
+generic over the three things that actually differ between boards—
+the byte stream, the power sequencing, and what is done with a fix—
 so a new board contributes those and nothing else.</p>
 <p><code>#[embassy_executor::task]</code> functions cannot be generic, so a firmware
 still writes a task shim; the shim is a handful of lines that

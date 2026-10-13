@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"constant":["REGION_STRING_MAX_LEN"],"mod":["duty","session"]};
+window.SIDEBAR_ITEMS = {"constant":["MESHCORE_REGION_NAME_MAX_LEN","REGION_STRING_MAX_LEN"],"mod":["bridge","duty","known_networks","lan_bearer","net","session"]};

@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-e3fe62b3.js";
+            window.path_to_searchindex_js = "searchindex-6c34194f.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-8b6941ec.js"></script>
+        <script src="toc-e4cb2f86.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -228,6 +228,10 @@ survives a change of host.</p>
 <tr><td>4838</td><td><code>PROP_STAT_FORWARDED</code></td><td>Get, Set</td><td>Packets this device chose to forward</td></tr>
 <tr><td>4839</td><td><code>PROP_STAT_FORWARD_DROPPED</code></td><td>Get, Set</td><td>Forwarding candidates rejected by policy</td></tr>
 <tr><td>4840</td><td><code>PROP_STAT_FORWARD_CANCELLED</code></td><td>Get, Set</td><td>Queued forwards cancelled after an acknowledgement</td></tr>
+<tr><td>4841</td><td><code>PROP_STAT_MESHCORE_SEEN</code></td><td>Get, Set</td><td>MeshCore packets received</td></tr>
+<tr><td>4842</td><td><code>PROP_STAT_MESHCORE_FORWARDED_ROUTED</code></td><td>Get, Set</td><td>MeshCore packets forwarded along their source route</td></tr>
+<tr><td>4843</td><td><code>PROP_STAT_MESHCORE_FORWARDED_FLOOD</code></td><td>Get, Set</td><td>MeshCore packets flooded</td></tr>
+<tr><td>4844</td><td><code>PROP_STAT_MESHCORE_DECLINED</code></td><td>Get, Set</td><td>MeshCore packets neither forwarded nor duplicates</td></tr>
 </tbody>
 </table>
 </div>
@@ -245,9 +249,9 @@ survives a change of host.</p>
 <li>Value Type: BOOL</li>
 <li>Post-Reset Value: 0 (false)</li>
 </ul>
-<p>Set to 1 if the PHY is enabled, set to 0 otherwise. May be directly enabled to
-bypass higher-level packet processing in order to implement things like packet
-sniffers.</p>
+<p>Set to 1 if the PHY is enabled, set to 0 otherwise. Enabling the PHY bypasses
+nothing: a device with a node of its own brings up whatever that node is
+configured to do, forwarding included.</p>
 <h3 id="prop-phy-freq"><a class="header" href="#prop-phy-freq">PROP 35: <code>PROP_PHY_FREQ</code></a></h3>
 <ul>
 <li>Type: Single-Value, Read-Write</li>
@@ -461,6 +465,26 @@ and packets received while forwarding is disabled are also excluded. Requires
 <h3 id="prop-stat-forward-cancelled"><a class="header" href="#prop-stat-forward-cancelled">PROP 4840: <code>PROP_STAT_FORWARD_CANCELLED</code></a></h3>
 <p>Queued forwards cancelled because the destination’s acknowledgement was
 overheard before transmission. Requires <code>CAP_STATS</code> and <code>CAP_REPEATER</code>.</p>
+<h3 id="prop-stat-meshcore-seen"><a class="header" href="#prop-stat-meshcore-seen">PROP 4841: <code>PROP_STAT_MESHCORE_SEEN</code></a></h3>
+<p>MeshCore packets received while <a href="ulcp-device.html#meshcore-forwarding">MeshCore
+forwarding</a> is running. Every one is also
+counted in exactly one of <code>PROP_STAT_MESHCORE_FORWARDED_ROUTED</code>,
+<code>PROP_STAT_MESHCORE_FORWARDED_FLOOD</code>, or <code>PROP_STAT_MESHCORE_DECLINED</code>, or is a
+duplicate. Copies of this device’s own transmissions are not received packets.
+Requires <code>CAP_STATS</code> and <code>CAP_MESHCORE_FORWARDER</code>.</p>
+<h3 id="prop-stat-meshcore-forwarded-routed"><a class="header" href="#prop-stat-meshcore-forwarded-routed">PROP 4842: <code>PROP_STAT_MESHCORE_FORWARDED_ROUTED</code></a></h3>
+<p>MeshCore packets this device chose to forward along their source route. The
+counter records the forwarding decision; successful physical transmissions are
+counted by <code>PROP_STAT_TX_PACKETS</code>. Requires <code>CAP_STATS</code> and
+<code>CAP_MESHCORE_FORWARDER</code>.</p>
+<h3 id="prop-stat-meshcore-forwarded-flood"><a class="header" href="#prop-stat-meshcore-forwarded-flood">PROP 4843: <code>PROP_STAT_MESHCORE_FORWARDED_FLOOD</code></a></h3>
+<p>MeshCore packets this device chose to flood, counted at the decision as above.
+Requires <code>CAP_STATS</code> and <code>CAP_MESHCORE_FORWARDER</code>.</p>
+<h3 id="prop-stat-meshcore-declined"><a class="header" href="#prop-stat-meshcore-declined">PROP 4844: <code>PROP_STAT_MESHCORE_DECLINED</code></a></h3>
+<p>MeshCore packets this device neither forwarded nor recognized as duplicates:
+declined by MeshCore’s own forwarding rules or by the region policy, below
+the configured signal thresholds, malformed, or dropped for want of queue
+space. Requires <code>CAP_STATS</code> and <code>CAP_MESHCORE_FORWARDER</code>.</p>
 
                     </main>
 

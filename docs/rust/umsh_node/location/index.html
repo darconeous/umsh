@@ -3,9 +3,9 @@
 Each byte refines the location to a 16×16 sub-grid of the parent cell, with the
 high nibble indexing latitude and the low nibble indexing longitude.</p>
 <p>The encoding has a useful truncation property: dropping trailing bytes gives the
-correct lower-precision encoding of the same position — no recomputation needed.</p>
+correct lower-precision encoding of the same position—no recomputation needed.</p>
 <p>Every coordinate pair in this module is <code>(latitude, longitude)</code>, in that
-order, without exception — parameters, return tuples, and rendered text alike.</p>
+order, without exception—parameters, return tuples, and rendered text alike.</p>
 <h2 id="encoding"><a class="doc-anchor" href="#encoding">§</a>Encoding</h2>
 <p>For a given precision N (1–7 bytes), two 4N-bit indices are computed:</p>
 <div class="example-wrap"><pre class="language-text"><code>lat_index = floor((lat +  90) × 16^N / 180)

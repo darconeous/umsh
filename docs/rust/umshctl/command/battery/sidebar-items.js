@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["FAILURE_BACKOFF_CAP"],"fn":["parse_interval","result_json","run"],"struct":["BatteryArgs"]};

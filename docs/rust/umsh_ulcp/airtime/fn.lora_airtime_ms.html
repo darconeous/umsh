@@ -5,10 +5,10 @@
     payload_bytes: <a class="primitive" href="https://doc.rust-lang.org/nightly/core/primitive.usize.html">usize</a>,
 ) -&gt; <a class="primitive" href="https://doc.rust-lang.org/nightly/core/primitive.u32.html">u32</a></code></pre><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>Conservative LoRa on-air time estimate in milliseconds.</p>
 <p>Standard LoRa airtime formula with explicit header, CRC on, and
-auto-LDRO; the preamble of 8 + 4.25 symbols is approximated as 12.
-Numeric twin of <code>umsh_radio_loraphy::airtime_ms</code> (which takes
-<code>lora-modulation</code> enums), generalized over the coding-rate
-denominator (<code>5</code> for CR 4/5 through <code>8</code> for CR 4/8).</p>
+auto-LDRO; the preamble of 8 + 4.25 symbols is approximated as 12,
+which under-prices a longer transmit preamble. Device-side airtime
+uses <a href="fn.lora_airtime_ms_with_preamble.html" title="fn umsh_ulcp::airtime::lora_airtime_ms_with_preamble"><code>lora_airtime_ms_with_preamble</code></a>. The coding rate is given by
+its denominator (<code>5</code> for CR 4/5 through <code>8</code> for CR 4/8).</p>
 <p>Out-of-range inputs are clamped rather than rejected: this is an
 estimate for scheduling and duty accounting, not a validator.</p>
 </div></details></section></div></main></body></html>

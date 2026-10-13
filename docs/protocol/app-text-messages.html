@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-e3fe62b3.js";
+            window.path_to_searchindex_js = "searchindex-6c34194f.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-8b6941ec.js"></script>
+        <script src="toc-e4cb2f86.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -189,6 +189,7 @@ This section is an early work in progress and this protocol may change significa
 <li>Duplicates of a zero-length flag option—Sequence Reset, Channel Group Resend—are idempotent.</li>
 </ul>
 <p>Repeated unrecognized options remain ignorable.</p>
+<p>A recognized option whose value the receiver cannot decode is ignored, with two exceptions. A message whose Message Sequence cannot be decoded is dropped. A message whose Message Type is unrecognized or undecodable, or whose Regarding or Editing is undecodable or of the wrong width for the conversation, is not displayed, but its sequence position is accounted for as with <a href="#message-type">Message Unavailable</a>.</p>
 <div class="table-wrapper">
 <table>
 <thead>

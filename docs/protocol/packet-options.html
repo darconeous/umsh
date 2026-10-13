@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-e3fe62b3.js";
+            window.path_to_searchindex_js = "searchindex-6c34194f.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-8b6941ec.js"></script>
+        <script src="toc-e4cb2f86.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -202,6 +202,7 @@
 <li><strong>Critical</strong> (bit 0 set): if unrecognized, the packet must be dropped</li>
 <li><strong>Non-Critical</strong> (bit 0 clear): if unrecognized, the option is ignored and the node continues processing</li>
 </ul>
+<p>A recognized critical option whose value the node cannot interpret, such as one of the wrong length, is handled as unrecognized.</p>
 <h2 id="dynamic-vs-static"><a class="header" href="#dynamic-vs-static">Dynamic vs. Static</a></h2>
 <p>These determine whether an option is covered by the MIC:</p>
 <ul>
@@ -235,7 +236,7 @@
 <ul>
 <li>Semantics: if present, repeaters prepend their own repeater hint before retransmitting.</li>
 <li>If absent, no trace-route information is added automatically.</li>
-<li>If more than one option with this number is present, the packet MUST be dropped.</li>
+<li>A sender MUST NOT include more than one. A receiver reads the first and ignores the rest, and a forwarder carries only the first.</li>
 <li>Value layout: see <a href="#trace-route-option-value">Trace Route Option Value</a>.</li>
 <li>If implemented, Trace Signal (option 10) <strong>MUST</strong> also be implemented.</li>
 </ul>
@@ -246,7 +247,7 @@
 <h3 id="source-route-option-3"><a class="header" href="#source-route-option-3">Source Route (option 3)</a></h3>
 <ul>
 <li>Semantics: contains an ordered list of repeater hints designating the forwarding path.</li>
-<li>If more than one option with this number is present, the packet MUST be dropped.</li>
+<li>A sender MUST NOT include more than one. A packet carrying more than one is handled as carrying an unrecognized critical option.</li>
 <li>Repeater behavior:
 <ul>
 <li>Only the repeater matching the first hint may forward the packet.</li>
@@ -272,7 +273,7 @@
 <h3 id="minimum-rssi-option-5"><a class="header" href="#minimum-rssi-option-5">Minimum RSSI (option 5)</a></h3>
 <ul>
 <li>Type: unsigned 1-byte integer, interpreted as a negative dBm value</li>
-<li>If more than one option with this number is present, the packet MUST be dropped.</li>
+<li>A sender MUST NOT include more than one. A packet carrying more than one is handled as carrying an unrecognized critical option.</li>
 <li>Semantics: packet must be received with at least this RSSI to be flood-forwarded. This option does not apply to source-routed hops.</li>
 <li>Example: value <code>130</code> means <code>-130 dBm</code></li>
 <li>If present with no value (length 0), default is <code>-100 dBm</code> (THIS VALUE IS SUBJECT TO CHANGE)</li>
@@ -281,13 +282,13 @@
 <h3 id="route-retry-option-6"><a class="header" href="#route-retry-option-6">Route Retry (option 6)</a></h3>
 <ul>
 <li>
-<p>Type: zero-length flag</p>
+<p>Type: flag. A sender includes it with no value; a receiver treats the option as present whatever its value, and a forwarder carries the value unchanged.</p>
 </li>
 <li>
 <p>Semantics: indicates that the originator is re-attempting forwarding of the same logical packet after a route it had assumed was considered failed.</p>
 </li>
 <li>
-<p>If more than one option with this number is present, the packet MUST be dropped.</p>
+<p>A sender MUST NOT include more than one. A receiver reads the first and ignores the rest, and a forwarder carries only the first.</p>
 </li>
 <li>
 <p>This option is intended for sender-originated route recovery, not for ordinary first transmission.</p>
@@ -327,24 +328,28 @@
 </li>
 </ul>
 <h3 id="ack-mic-option-8"><a class="header" href="#ack-mic-option-8">Ack MIC (option 8)</a></h3>
-<p>This option represents a piggy-backed MAC ack that, when received, behaves as if it was an ack for the referenced packet, instead of sending both a MAC ack and an application-level response in two separate packets.</p>
+<p>This option is a piggy-backed acknowledgement: a packet carrying it acknowledges the packet whose <code>ack_mic</code> it names, exactly as a MAC ack for that packet would. A destination that answers an ack-requested packet with a unicast or blind unicast of its own MAY include the option in the answer, whether or not it also sends the standalone MAC ack. The original sender takes whichever of the two arrives first as the acknowledgement; the other then matches no outstanding packet and is discarded.</p>
 <ul>
 <li>Type: 4-byte ack MIC—the first 4 bytes of the acknowledged packet’s on-wire MIC (see <a href="security.html#ack-tag-construction">Ack Tag Construction</a>).</li>
 </ul>
-<p>The option carries only the correlation handle, not a keyed ack tag: the packet carrying the option is itself authenticated to the original sender, so its own MIC already proves the acknowledgement is genuine. The <code>ack_mic</code> value simply identifies which outstanding request the reply acknowledges.</p>
+<p>The option carries only the correlation handle, not a keyed ack tag: the packet carrying the option is itself authenticated to the original sender, so its own MIC already proves the acknowledgement is genuine. The <code>ack_mic</code> value simply identifies which outstanding request the reply acknowledges. The original sender accepts the option only on a packet authenticated as coming from the destination of the packet it names.</p>
+<p>The option is a courtesy to the original sender. A sender that cannot fit it into a frame omits it.</p>
 <p>Because the option sits in the plaintext options block, forwarders read it under the same terms as a standalone MAC ack, including for <a href="repeater-operation.html#ack-cancellation">ack cancellation</a>.</p>
 <h3 id="minimum-snr-option-9"><a class="header" href="#minimum-snr-option-9">Minimum SNR (option 9)</a></h3>
 <ul>
 <li>Type: signed 1-byte integer, in dB</li>
 <li>Semantics: packet must be received with at least this SNR to be flood-forwarded. This option does not apply to source-routed hops.</li>
 <li>If present with no value (length 0), default is <code>-3 dB</code>. (THIS VALUE IS SUBJECT TO CHANGE)</li>
-<li>If more than one option with this number is present, the packet MUST be dropped.</li>
+<li>A sender MUST NOT include more than one. A packet carrying more than one is handled as carrying an unrecognized critical option.</li>
 <li>If a repeater has a locally configured minimum SNR, it must use the higher of the packet’s minimum SNR and the repeater’s configured minimum SNR.</li>
 </ul>
 <h3 id="trace-signal-option-10"><a class="header" href="#trace-signal-option-10">Trace Signal (option 10)</a></h3>
+<ul>
+<li>A sender MUST NOT include more than one. A receiver reads the first and ignores the rest, and a forwarder carries only the first.</li>
+</ul>
 <p>This option works very much like the Trace Route option, except that repeaters append signal quality information instead of router hints.</p>
 <p>When this option is present, each repeater that will repeat the packet must first prepend the signal quality metrics for the packet they received to the value of this option. The signal quality metrics are two bytes: the first byte is the <strong>negative</strong> RSSI in dBm (so -90 becomes 90, for example), and the second is the signed SNR in cB (centibells, or 1/10ths of a dB).</p>
-<p>A hop that measured neither field—one whose radio reports no signal quality, or one that received the packet over a point-to-point link rather than the air—prepends two zero bytes. An RSSI byte of zero is 0 dBm at the receiver, which no link this protocol runs over produces, so it cannot be read as a measurement. Such a hop still prepends an entry: the one-to-one pairing with the Trace Route option is what makes any entry in the list attributable, and a hop that skipped its own would misattribute every entry before it.</p>
+<p>A hop that received the packet over a point-to-point link rather than the air—a <a href="internet-bridging.html">bridge</a>, for example—prepends two zero bytes. The zero entry marks a hop with no radio in it, so it has no signal to report and does not lose packets to fading. A repeater that received the packet over the air never writes it: a reading of 0 dBm or stronger is carried as an RSSI byte of 1. Such a hop still prepends an entry: the one-to-one pairing with the Trace Route option is what makes any entry in the list attributable, and a hop that skipped its own would misattribute every entry before it.</p>
 <h3 id="region-code-option-11"><a class="header" href="#region-code-option-11">Region Code (option 11)</a></h3>
 <ul>
 <li>Type: 2-byte region identifier</li>

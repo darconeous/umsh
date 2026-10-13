@@ -7,8 +7,8 @@ This map is the RAM image behind that contract: <code>store</code> upserts
 here, and <code>flush</code> serializes the <em>whole</em> map into a single
 <a href="../proto/index.html" title="mod umsh_journal_store::proto"><code>proto</code></a> record in the firmware’s counter journal.
 Whole-map records keep the journal machinery identical to the other
-journals — newest generation wins, one committed record is the
-entire persisted state — at a size (≤ ~600 bytes) far under the
+journals—newest generation wins, one committed record is the
+entire persisted state—at a size (≤ ~600 bytes) far under the
 record payload bound.</p>
 <p>Contexts are the MAC’s own key formats: the raw 32-byte identity
 public key for TX boundaries and <code>mac.rx:</code> + public key (39 bytes)

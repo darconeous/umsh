@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"constant":["RELOAD_SCAN"],"fn":["capture","capture_args","duplicate","expect_interface","is_extcap_invocation","point_at","reload","resolve_target","rf_override","run"],"mod":["protocol"],"struct":["ExtcapArgs","Silenced"]};
+window.SIDEBAR_ITEMS = {"constant":["RELOAD_SCAN"],"fn":["boolflag","capture","capture_args","capture_lan","duplicate","expect_interface","is_extcap_invocation","network_interfaces","point_at","reload","resolve_target","rf_override","run"],"mod":["protocol"],"struct":["ExtcapArgs","Silenced"]};

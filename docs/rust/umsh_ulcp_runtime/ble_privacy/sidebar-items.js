@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["ADVERTISING_INTERVAL_US","COMPANY_ID","FAST_ADVERTISING_INTERVAL_US","RPA_TIMEOUT_SECS","STARTUP_FAST_ADVERTISING_MS"],"fn":["advertisement","name_visible","pairing_window_ms","utf8_prefix_len"],"mod":["model"],"struct":["AdvertisementData","PairingDeadline","RestartBackoff"]};

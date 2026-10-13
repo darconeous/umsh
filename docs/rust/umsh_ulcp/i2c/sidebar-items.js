@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["ADDRESS_MAX","NAME_MAX_LEN","RESULT_OVERHEAD","SCAN_DEFAULT_FIRST","SCAN_DEFAULT_LAST"],"enum":["I2cError","Op","OpKind"],"fn":["buses","devices","encode_result","encode_scan","encode_transfer"],"struct":["BusInfo","DeviceInfo","Ops","ScanRequest","TransferRequest","TransferShape"]};

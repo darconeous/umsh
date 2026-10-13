@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["AMPLIFIER_ENABLE","GPS_ENABLE","GPS_RESET","HAPTIC_ENABLE","KEYBOARD_ENABLE","KEYBOARD_RESET","RADIO_ENABLE"],"enum":["Charge","TerminationError"],"fn":["battery_poll_fields","battery_poll_interval_ms","decode_reading"],"struct":["Battery","Expander","GaugeDiagnostics","LowBattery","Reading","TerminationLimit"]};

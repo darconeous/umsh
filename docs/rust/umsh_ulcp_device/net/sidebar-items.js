@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["MAX_RESOLVERS"],"enum":["ResolverError"],"struct":["IpConfig","Resolvers","SelectedNetwork","WifiConfig"]};

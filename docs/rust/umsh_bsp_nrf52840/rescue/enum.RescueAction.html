@@ -4,7 +4,7 @@
 }</code></pre><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>What a watcher decided to do as a result of an input event.</p>
 </div></details><h2 id="variants" class="variants section-header">Variants<a href="#variants" class="anchor">§</a></h2><div class="variants"><section id="variant.None" class="variant"><a href="#variant.None" class="anchor">§</a><h3 class="code-header">None</h3></section><div class="docblock"><p>No action this event.</p>
 </div><section id="variant.TriggerDfu" class="variant"><a href="#variant.TriggerDfu" class="anchor">§</a><h3 class="code-header">TriggerDfu</h3></section><div class="docblock"><p>Caller should immediately enter DFU mode. The watcher does not
-pick a mode — the caller decides between
+pick a mode—the caller decides between
 [<code>bsp::enter_dfu_uf2()</code>] (GPREGRET=0x57, exposes CDC + UF2 mass
 storage; what the MeshCore / Adafruit web flashers expect and
 what <code>adafruit-nrfutil --touch 1200</code> triggers in the Adafruit

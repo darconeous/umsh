@@ -2,7 +2,7 @@
 <p>On nRF52840 a region of RAM can be marked as <code>noinit</code> so its
 contents survive a soft reset (warm boot, watchdog, panic-driven
 <code>SCB::sys_reset()</code>). This module provides the framing layer for
-that region — it lives here in <code>umsh-bsp-nrf52840</code> because every
+that region—it lives here in <code>umsh-bsp-nrf52840</code> because every
 nRF52840-based board (T1000-E, T-Echo, …) shares this mechanism.</p>
 <p>The <a href="struct.PanicSlot.html" title="struct umsh_bsp_nrf52840::panic_persist::PanicSlot"><code>PanicSlot</code></a> API operates on a borrowed <code>&amp;'static mut [u8]</code>,
 so the framing is purely portable and unit-testable on the host.

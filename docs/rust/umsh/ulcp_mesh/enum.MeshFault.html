@@ -3,8 +3,8 @@
     RequestTooLarge(<a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.usize.html">usize</a>),
     Radio(<a class="struct" href="https://doc.rust-lang.org/nightly/alloc/string/struct.String.html" title="struct alloc::string::String">String</a>),
 }</code></pre><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>Why an exchange produced no frame to hand back.</p>
-<p>A fault is per-request, not terminal — the link stays usable for the
-next command — except <a href="enum.MeshFault.html#variant.Radio" title="variant umsh::ulcp_mesh::MeshFault::Radio"><code>MeshFault::Radio</code></a>, which ends the session
+<p>A fault is per-request, not terminal—the link stays usable for the
+next command—except <a href="enum.MeshFault.html#variant.Radio" title="variant umsh::ulcp_mesh::MeshFault::Radio"><code>MeshFault::Radio</code></a>, which ends the session
 because the radio underneath it is gone.</p>
 </div></details><h2 id="variants" class="variants section-header">Variants<a href="#variants" class="anchor">§</a></h2><div class="variants"><section id="variant.Exchange" class="variant"><a href="#variant.Exchange" class="anchor">§</a><h3 class="code-header">Exchange(<a class="struct" href="https://doc.rust-lang.org/nightly/alloc/string/struct.String.html" title="struct alloc::string::String">String</a>)</h3></section><div class="docblock"><p>The exchange failed, already rendered as prose for whoever is
 holding the tool.</p>

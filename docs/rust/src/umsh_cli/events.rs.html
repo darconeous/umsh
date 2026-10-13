@@ -2,7 +2,7 @@
 <a href=#2 id=2 data-nosnippet>2</a>//! `CliSession::service_events`.
 <a href=#3 id=3 data-nosnippet>3</a>//!
 <a href=#4 id=4 data-nosnippet>4</a>//! All variants store bounded data; `OwnedMacCommand` (which contains an
-<a href=#5 id=5 data-nosnippet>5</a>//! unbounded `Vec&lt;u8&gt;`) is never used as a blanket carrier — only the MAC
+<a href=#5 id=5 data-nosnippet>5</a>//! unbounded `Vec&lt;u8&gt;`) is never used as a blanket carrier—only the MAC
 <a href=#6 id=6 data-nosnippet>6</a>//! commands the CLI actually cares about get dedicated variants.
 <a href=#7 id=7 data-nosnippet>7</a>
 <a href=#8 id=8 data-nosnippet>8</a></span><span class="kw">use </span>heapless::{String, Vec};
@@ -36,7 +36,7 @@
 <a href=#36 id=36 data-nosnippet>36</a>        name: <span class="prelude-ty">Option</span>&lt;String&lt;<span class="number">32</span>&gt;&gt;,
 <a href=#37 id=37 data-nosnippet>37</a>    },
 <a href=#38 id=38 data-nosnippet>38</a>    Beacon {
-<a href=#39 id=39 data-nosnippet>39</a>        <span class="doccomment">/// 3-byte source hint from the packet header — always present.
+<a href=#39 id=39 data-nosnippet>39</a>        <span class="doccomment">/// 3-byte source hint from the packet header—always present.
 <a href=#40 id=40 data-nosnippet>40</a>        </span>hint: NodeHint,
 <a href=#41 id=41 data-nosnippet>41</a>        <span class="doccomment">/// Full source pubkey, when the beacon carried it (some senders only
 <a href=#42 id=42 data-nosnippet>42</a>        /// include the hint to save airtime).

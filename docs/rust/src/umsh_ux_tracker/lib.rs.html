@@ -9,13 +9,13 @@
 <a href=#9 id=9 data-nosnippet>9</a>//!
 <a href=#10 id=10 data-nosnippet>10</a>//! The crate provides only **mechanism**, not policy:
 <a href=#11 id=11 data-nosnippet>11</a>//!
-<a href=#12 id=12 data-nosnippet>12</a>//! - [`button`] — recognize Single / Double / Triple / Long button
+<a href=#12 id=12 data-nosnippet>12</a>//! - [`button`]—recognize Single / Double / Triple / Long button
 <a href=#13 id=13 data-nosnippet>13</a>//!   events from raw debounced edges + a monotonic-millisecond clock.
-<a href=#14 id=14 data-nosnippet>14</a>//! - [`led`] — drive a single-LED heartbeat with one-shot sequences
+<a href=#14 id=14 data-nosnippet>14</a>//! - [`led`]—drive a single-LED heartbeat with one-shot sequences
 <a href=#15 id=15 data-nosnippet>15</a>//!   layered on top (power-on, power-off, location-advert, …).
-<a href=#16 id=16 data-nosnippet>16</a>//! - [`buzzer`] — play short tone melodies on a piezo buzzer with
+<a href=#16 id=16 data-nosnippet>16</a>//! - [`buzzer`]—play short tone melodies on a piezo buzzer with
 <a href=#17 id=17 data-nosnippet>17</a>//!   silence-mode support.
-<a href=#18 id=18 data-nosnippet>18</a>//! - [`power`] — vocabulary ([`PowerIntent`](power::PowerIntent),
+<a href=#18 id=18 data-nosnippet>18</a>//! - [`power`]—vocabulary ([`PowerIntent`](power::PowerIntent),
 <a href=#19 id=19 data-nosnippet>19</a>//!   [`PowerIntentSource`](power::PowerIntentSource)) shared by every
 <a href=#20 id=20 data-nosnippet>20</a>//!   source that wants to take the device out of normal operation,
 <a href=#21 id=21 data-nosnippet>21</a>//!   plus a [`LowBatteryDetector`](power::LowBatteryDetector) that
@@ -28,8 +28,8 @@
 <a href=#28 id=28 data-nosnippet>28</a>//!
 <a href=#29 id=29 data-nosnippet>29</a>//! Devices in a different class (handheld with screen + speaker +
 <a href=#30 id=30 data-nosnippet>30</a>//! keyboard, headless mesh nodes) need their own `umsh-ux-&lt;class&gt;`
-<a href=#31 id=31 data-nosnippet>31</a>//! crate because the abstractions here — single-LED heartbeat,
-<a href=#32 id=32 data-nosnippet>32</a>//! piezo-tone melodies, gesture-on-one-button — do not generalize
+<a href=#31 id=31 data-nosnippet>31</a>//! crate because the abstractions here—single-LED heartbeat,
+<a href=#32 id=32 data-nosnippet>32</a>//! piezo-tone melodies, gesture-on-one-button—do not generalize
 <a href=#33 id=33 data-nosnippet>33</a>//! meaningfully across classes.
 <a href=#34 id=34 data-nosnippet>34</a>//!
 <a href=#35 id=35 data-nosnippet>35</a>//! See `docs/firmware-architecture.md` for the broader BSP / UX / App

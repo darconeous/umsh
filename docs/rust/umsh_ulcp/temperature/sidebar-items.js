@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["NAME_MAX_BYTES","UNKNOWN"],"enum":["Error"],"fn":["encode_names","encode_readings","names","readings","valid_name"]};

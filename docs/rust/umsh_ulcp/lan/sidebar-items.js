@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["DEFAULT_GROUP","DEFAULT_INGRESS_LIMIT","DEFAULT_PORT","GROUP_LEN"],"enum":["State"],"struct":["Group"]};

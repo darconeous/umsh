@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["lora_airtime_ms"]};
+window.SIDEBAR_ITEMS = {"fn":["lora_airtime_ms","lora_airtime_ms_with_preamble"]};

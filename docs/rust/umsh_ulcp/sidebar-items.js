@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"mod":["airtime","alert","battery","ble","describe","frame","gatt","gnss","hdlc","host","ids","items","meta","profiles","pui","reply","sint","stats","status"]};
+window.SIDEBAR_ITEMS = {"mod":["airtime","alert","announce","battery","battery_diagnostics","battery_gauge_config","battery_gauge_telemetry","ble","bridge","describe","dfu","frame","gatt","gnss","hdlc","host","i2c","ids","ip","items","lan","meta","profiles","pui","reply","sint","stats","status","temperature","uint","wifi"]};

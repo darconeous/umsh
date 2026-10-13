@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["BASELINE_COMMIT","DIRECT_DELAY_FACTOR_MILLI","FLOOD_DELAY_FACTOR_MILLI","FLOOD_MAX","FLOOD_MAX_ADVERT","FLOOD_MAX_UNSCOPED","MAX_REGIONS","SEEN_CAPACITY","UNMEASURED_TRACE_SNR"],"enum":["Declined","Heard","Verdict"],"fn":["identity_allowed"],"mod":["packet","region"],"struct":["Counters","Forwarder","Settings"],"trait":["Environment"]};

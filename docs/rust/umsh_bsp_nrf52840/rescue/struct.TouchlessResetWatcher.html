@@ -4,7 +4,7 @@
 the port at 1200 baud and then drops DTR, return
 <a href="enum.RescueAction.html#variant.TriggerDfu" title="variant umsh_bsp_nrf52840::rescue::RescueAction::TriggerDfu"><code>RescueAction::TriggerDfu</code></a> so the caller can put the
 device into serial DFU mode.</p>
-<p>The watcher self-suppresses after firing — once
+<p>The watcher self-suppresses after firing—once
 <a href="struct.TouchlessResetWatcher.html#method.fired" title="method umsh_bsp_nrf52840::rescue::TouchlessResetWatcher::fired"><code>TouchlessResetWatcher::fired</code></a> is true, subsequent events return
 <code>None</code> until <a href="struct.TouchlessResetWatcher.html#method.reset" title="method umsh_bsp_nrf52840::rescue::TouchlessResetWatcher::reset"><code>TouchlessResetWatcher::reset</code></a> is called. In normal
 operation the BSP’s <code>enter_dfu_serial()</code> diverges so the

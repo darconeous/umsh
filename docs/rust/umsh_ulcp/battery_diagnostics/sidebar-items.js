@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["BQ27220","KEYS"],"enum":["Value","VoltageRequest"],"fn":["index","unit"],"struct":["Fields","Sample"]};

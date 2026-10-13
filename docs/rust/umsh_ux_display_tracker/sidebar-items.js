@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["button_timings"],"mod":["attention","gate","menu","screen"]};
+window.SIDEBAR_ITEMS = {"fn":["button_timings"],"mod":["attention","boot","gate","menu","screen","wifi"]};

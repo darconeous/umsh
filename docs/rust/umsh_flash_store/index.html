@@ -16,7 +16,7 @@ prefix decided at the call site:</p>
 </tbody></table>
 </div><h3 id="cpu-stall-warning"><a class="doc-anchor" href="#cpu-stall-warning">§</a>CPU stall warning</h3>
 <p>Page erases block the executor for a long time on every backend we
-use — the nRF52840 NVMC halts the CPU for ~85 ms, and the ESP32
+use—the nRF52840 NVMC halts the CPU for ~85 ms, and the ESP32
 suspends the flash cache for the duration of the write. No amount of
 async scheduling can preempt either. Callers MUST batch writes; the
 MAC’s TX-side <code>COUNTER_PERSIST_BLOCK_SIZE = 128</code> and the RX-side
@@ -27,7 +27,7 @@ should be debounced at the application layer.</p>
 <a href="struct.KeyValueView.html" title="struct umsh_flash_store::KeyValueView"><code>KeyValueView</code></a>, <a href="struct.CounterView.html" title="struct umsh_flash_store::CounterView"><code>CounterView</code></a>, <a href="struct.PeerView.html" title="struct umsh_flash_store::PeerView"><code>PeerView</code></a>, and <a href="struct.ChannelView.html" title="struct umsh_flash_store::ChannelView"><code>ChannelView</code></a>
 are zero-cost view types that each hold a <code>&amp;'static FlashStore</code>. They
 exist as separate types because the <code>umsh-hal</code> traits both define
-<code>load</code> and <code>store</code> methods — implementing both on a single type would
+<code>load</code> and <code>store</code> methods—implementing both on a single type would
 force every caller to disambiguate via UFCS. Keep them split.</p>
 </div></details><h2 id="structs" class="section-header">Structs<a href="#structs" class="anchor">§</a></h2><dl class="item-table"><dt><a class="struct" href="struct.ChannelView.html" title="struct umsh_flash_store::ChannelView">Channel<wbr>View</a></dt><dd>View implementing [<code>umsh_hal::ChannelStore</code>] on top of a shared
 <a href="struct.FlashStore.html" title="struct umsh_flash_store::FlashStore"><code>FlashStore</code></a>.</dd><dt><a class="struct" href="struct.CounterView.html" title="struct umsh_flash_store::CounterView">Counter<wbr>View</a></dt><dd>View implementing [<code>umsh_hal::CounterStore</code>] on top of a shared

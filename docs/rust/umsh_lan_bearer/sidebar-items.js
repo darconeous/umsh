@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["DEFAULT_GROUP","DEFAULT_PORT","MAX_FRAME","MULTICAST_TTL","SERVICE_TYPE"],"enum":["Datagram"],"fn":["classify","parse_group"],"mod":["dnssd","radio","socket","txt"]};

@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"constant":["CLEAR_BONDS_WARNING","FACTORY_RESET_WARNING"],"enum":["AlertOp","BleOp","IdentityOp","PairState"],"fn":["alert","ble","clear","display","factory_reset","identity","name","pin","reboot","reset","restore","save"]};
+window.SIDEBAR_ITEMS = {"constant":["CLEAR_BONDS_WARNING","FACTORY_RESET_WARNING"],"enum":["AlertOp","BleOp","DfuModeArg","IdentityOp","PairState"],"fn":["alert","ble","clear","confirm_dfu","dfu","display","factory_reset","identity","name","pin","reboot","reset","restore","save"]};

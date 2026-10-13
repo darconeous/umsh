@@ -5,7 +5,7 @@
 }</code></pre><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>Which battery measurements the platform is <em>capable</em> of reporting
 through <code>PROP_BATTERY</code>. Fixed for the life of a session: these bits
 bound the field-flags octet of every snapshot.</p>
-<p>An individual sample may populate fewer fields than are advertised —
+<p>An individual sample may populate fewer fields than are advertised—
 a level estimated from resting terminal voltage has no value while the
 pack is charging, and the spec would rather see the field omitted than
 a number the device knows to be wrong. The reverse is refused: a

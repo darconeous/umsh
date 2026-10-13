@@ -9,14 +9,14 @@ single-core target where no thread can race on the cell.</p>
 <p><a href="struct.SyncNoinit.html#method.as_bytes_mut" title="method umsh_bsp_nrf52840::panic_persist::SyncNoinit::as_bytes_mut"><code>as_bytes_mut</code></a> forms a <code>&amp;mut [u8]</code> over memory
 the compiler believes is uninitialized, which is formally UB: uninit
 is not a valid <code>u8</code>. A retained region always holds real bits after a
-reset, but the abstract machine cannot express that — it has no
+reset, but the abstract machine cannot express that—it has no
 notion of the previous boot, so bytes written then read as never
 written. Making this formally sound needs a <code>freeze</code> operation stable
 Rust does not expose, so no construction available here is sound;
 the choice is only about which shape to prefer.</p>
-<p>The reads that touch never-written bytes are the record validators —
+<p>The reads that touch never-written bytes are the record validators—
 <a href="struct.PanicSlot.html#method.read" title="method umsh_bsp_nrf52840::panic_persist::PanicSlot::read"><code>PanicSlot::read</code></a>’s magic compare, and the equivalent checks in the
-firmware’s breadcrumb and capture regions — on a cold boot. They are
+firmware’s breadcrumb and capture regions—on a cold boot. They are
 already written to treat the region as arbitrary: magic, length bound
 and Fletcher-16 all have to pass before any byte is believed.</p>
 <p>The failure mode that would matter is LLVM folding a load from the
@@ -27,14 +27,14 @@ been the shape of retained-panic crates for years without incident.</p>
 <p>Two things not to do:</p>
 <ul>
 <li><strong>Do not give the cell a concrete initializer</strong> (<code>UnsafeCell::new([0; N])</code>) to silence the uninit question. <code>.uninit</code> is a <code>NOLOAD</code>
-section, so the initializer never reaches RAM — but the compiler
+section, so the initializer never reaches RAM—but the compiler
 now believes the region is zero at startup and may constant-fold
 the magic comparison to <code>false</code>, silently killing the feature.</li>
 <li><strong>Do not swap the return type for <code>&amp;mut [MaybeUninit&lt;u8&gt;]</code></strong> as a
 fix. It removes the UB at acquisition and on the write path, but
 every validator read then needs <code>assume_init</code> on the same
-never-written bytes. The UB relocates to the read path — the one
-that runs at boot on every device — and buys nothing.</li>
+never-written bytes. The UB relocates to the read path—the one
+that runs at boot on every device—and buys nothing.</li>
 </ul>
 </div></details><h2 id="fields" class="fields section-header">Tuple Fields<a href="#fields" class="anchor">§</a></h2><span id="structfield.0" class="structfield section-header"><a href="#structfield.0" class="anchor field">§</a><code>0: <a class="struct" href="https://doc.rust-lang.org/nightly/core/cell/struct.UnsafeCell.html" title="struct core::cell::UnsafeCell">UnsafeCell</a>&lt;<a class="union" href="https://doc.rust-lang.org/nightly/core/mem/maybe_uninit/union.MaybeUninit.html" title="union core::mem::maybe_uninit::MaybeUninit">MaybeUninit</a>&lt;T&gt;&gt;</code></span><h2 id="implementations" class="section-header">Implementations<a href="#implementations" class="anchor">§</a></h2><div id="implementations-list"><details class="toggle implementors-toggle" open><summary><section id="impl-SyncNoinit%3CT%3E" class="impl"><a class="src rightside" href="../../src/umsh_bsp_nrf52840/panic_persist.rs.html#79-112">Source</a><a href="#impl-SyncNoinit%3CT%3E" class="anchor">§</a><h3 class="code-header">impl&lt;T&gt; <a class="struct" href="struct.SyncNoinit.html" title="struct umsh_bsp_nrf52840::panic_persist::SyncNoinit">SyncNoinit</a>&lt;T&gt;</h3></section></summary><div class="impl-items"><section id="method.uninit" class="method"><a class="src rightside" href="../../src/umsh_bsp_nrf52840/panic_persist.rs.html#80-82">Source</a><h4 class="code-header">pub const fn <a href="#method.uninit" class="fn">uninit</a>() -&gt; Self</h4></section><details class="toggle method-toggle" open><summary><section id="method.as_bytes_mut" class="method"><a class="src rightside" href="../../src/umsh_bsp_nrf52840/panic_persist.rs.html#107-111">Source</a><h4 class="code-header">pub unsafe fn <a href="#method.as_bytes_mut" class="fn">as_bytes_mut</a>(&amp;self) -&gt; &amp;'static mut [<a class="primitive" href="https://doc.rust-lang.org/nightly/core/primitive.u8.html">u8</a>]</h4></section></summary><div class="docblock"><p>Return a <code>&amp;'static mut [u8]</code> slice over the inner value.</p>
 <h5 id="safety"><a class="doc-anchor" href="#safety">§</a>Safety</h5>

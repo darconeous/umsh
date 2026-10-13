@@ -57,7 +57,7 @@
 <a href=#57 id=57 data-nosnippet>57</a>    }
 <a href=#58 id=58 data-nosnippet>58</a>
 <a href=#59 id=59 data-nosnippet>59</a>    <span class="doccomment">/// `None` for a body that is malformed rather than merely
-<a href=#60 id=60 data-nosnippet>60</a>    /// unexpected — too short to hold a length, or claiming more data
+<a href=#60 id=60 data-nosnippet>60</a>    /// unexpected—too short to hold a length, or claiming more data
 <a href=#61 id=61 data-nosnippet>61</a>    /// than it carries.
 <a href=#62 id=62 data-nosnippet>62</a>    </span><span class="kw">pub fn </span>parse(body: <span class="kw-2">&amp;</span>[u8]) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="self">Self</span>&gt; {
 <a href=#63 id=63 data-nosnippet>63</a>        <span class="kw">let </span>(length, rest) = body.split_at_checked(<span class="number">2</span>)<span class="question-mark">?</span>;
@@ -224,7 +224,7 @@
 <a href=#224 id=224 data-nosnippet>224</a>///
 <a href=#225 id=225 data-nosnippet>225</a>/// The session is the caller's to name: pass the generation read right
 <a href=#226 id=226 data-nosnippet>226</a>/// after the `clear` that opened it, so clearing the queue again is what
-<a href=#227 id=227 data-nosnippet>227</a>/// ends this pump — and a pump that is spawned but not yet polled cannot
+<a href=#227 id=227 data-nosnippet>227</a>/// ends this pump—and a pump that is spawned but not yet polled cannot
 <a href=#228 id=228 data-nosnippet>228</a>/// adopt a successor's session in the meantime.
 <a href=#229 id=229 data-nosnippet>229</a></span><span class="kw">pub async fn </span>pump_writer&lt;W: AsyncWrite + Unpin&gt;(
 <a href=#230 id=230 data-nosnippet>230</a>    writer: <span class="kw-2">&amp;mut </span>TunnelWriter&lt;W&gt;,
@@ -300,8 +300,8 @@
 <a href=#300 id=300 data-nosnippet>300</a></span><span class="kw">pub enum </span>ReadError {
 <a href=#301 id=301 data-nosnippet>301</a>    <span class="doccomment">/// The peer closed the connection, or the stream failed.
 <a href=#302 id=302 data-nosnippet>302</a>    </span>Closed(std::io::Error),
-<a href=#303 id=303 data-nosnippet>303</a>    <span class="doccomment">/// Nothing at all arrived within the idle timeout — not even a
-<a href=#304 id=304 data-nosnippet>304</a>    /// keepalive — so the peer's relay has stopped even if its TLS
+<a href=#303 id=303 data-nosnippet>303</a>    <span class="doccomment">/// Nothing at all arrived within the idle timeout—not even a
+<a href=#304 id=304 data-nosnippet>304</a>    /// keepalive—so the peer's relay has stopped even if its TLS
 <a href=#305 id=305 data-nosnippet>305</a>    /// session has not.
 <a href=#306 id=306 data-nosnippet>306</a>    </span>Idle,
 <a href=#307 id=307 data-nosnippet>307</a>}

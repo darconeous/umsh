@@ -9,7 +9,7 @@ exercised without a runtime. The dispatch loop that maps intents to
 </div></details><h2 id="structs" class="section-header">Structs<a href="#structs" class="anchor">§</a></h2><dl class="item-table"><dt><a class="struct" href="struct.LowBatteryDetector.html" title="struct umsh_ux_tracker::power::LowBatteryDetector">LowBattery<wbr>Detector</a></dt><dd>Tracks consecutive low-battery samples and emits a <a href="enum.PowerIntent.html#variant.PowerOff" title="variant umsh_ux_tracker::power::PowerIntent::PowerOff"><code>PowerIntent::PowerOff</code></a>
 once the streak crosses the configured threshold while the device is
 not USB-powered.</dd></dl><h2 id="enums" class="section-header">Enums<a href="#enums" class="anchor">§</a></h2><dl class="item-table"><dt><a class="enum" href="enum.PowerIntent.html" title="enum umsh_ux_tracker::power::PowerIntent">Power<wbr>Intent</a></dt><dd>Things the firmware can decide to do that take the device out of its
-normal operating state. All variants are terminal — the calling task
+normal operating state. All variants are terminal—the calling task
 must assume the device will be reset or powered off shortly after
 the intent is delivered.</dd><dt><a class="enum" href="enum.PowerIntentSource.html" title="enum umsh_ux_tracker::power::PowerIntentSource">Power<wbr>Intent<wbr>Source</a></dt><dd>Why a <a href="enum.PowerIntent.html" title="enum umsh_ux_tracker::power::PowerIntent"><code>PowerIntent</code></a> was submitted. Useful for logging and
 post-mortem reporting via the persisted panic / event log.</dd></dl></section></div></main></body></html>

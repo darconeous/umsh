@@ -3,8 +3,8 @@
 <a href=#3 id=3 data-nosnippet>3</a>//! Shared code needs to emit the same diagnostic lines the firmwares
 <a href=#4 id=4 data-nosnippet>4</a>//! already print, but each board owns its own sink: the nRF images
 <a href=#5 id=5 data-nosnippet>5</a>//! multiplex a USB-serial debug channel, the ESP32 image writes to its
-<a href=#6 id=6 data-nosnippet>6</a>//! UART. Rather than thread a logger through every signature — most of
-<a href=#7 id=7 data-nosnippet>7</a>//! which are `static`-backed tasks with no place to put one — a board
+<a href=#6 id=6 data-nosnippet>6</a>//! UART. Rather than thread a logger through every signature—most of
+<a href=#7 id=7 data-nosnippet>7</a>//! which are `static`-backed tasks with no place to put one—a board
 <a href=#8 id=8 data-nosnippet>8</a>//! installs its sink once at boot and the shared modules call
 <a href=#9 id=9 data-nosnippet>9</a>//! [`debug_log`] freely.
 <a href=#10 id=10 data-nosnippet>10</a>//!
@@ -22,7 +22,7 @@
 <a href=#22 id=22 data-nosnippet>22</a>/// Deliberately not a critical-section mutex. [`debug_log`] is called from
 <a href=#23 id=23 data-nosnippet>23</a>/// the device node's per-packet receive tap, on the same boards whose BLE
 <a href=#24 id=24 data-nosnippet>24</a>/// controller is the entire reason for the `node-thread-mode-mutex`
-<a href=#25 id=25 data-nosnippet>25</a>/// feature — taking a critical section once per received packet is exactly
+<a href=#25 id=25 data-nosnippet>25</a>/// feature—taking a critical section once per received packet is exactly
 <a href=#26 id=26 data-nosnippet>26</a>/// the cost that feature exists to keep out of the radio path, and it
 <a href=#27 id=27 data-nosnippet>27</a>/// would be paid even when the board's sink discards the line.
 <a href=#28 id=28 data-nosnippet>28</a>///

@@ -2,8 +2,8 @@
 <a href=#2 id=2 data-nosnippet>2</a>//! whether it is known at all.
 <a href=#3 id=3 data-nosnippet>3</a>//!
 <a href=#4 id=4 data-nosnippet>4</a>//! A device of this class has a monotonic timer and, usually, nothing
-<a href=#5 id=5 data-nosnippet>5</a>//! else. Wall-clock time arrives from outside — a GNSS fix, a
-<a href=#6 id=6 data-nosnippet>6</a>//! battery-backed real-time clock, a host that was asked — and is held as
+<a href=#5 id=5 data-nosnippet>5</a>//! else. Wall-clock time arrives from outside—a GNSS fix, a
+<a href=#6 id=6 data-nosnippet>6</a>//! battery-backed real-time clock, a host that was asked—and is held as
 <a href=#7 id=7 data-nosnippet>7</a>//! an *offset* from the monotonic timer rather than as a counter of its
 <a href=#8 id=8 data-nosnippet>8</a>//! own, so it costs nothing to maintain and cannot drift relative to
 <a href=#9 id=9 data-nosnippet>9</a>//! everything else the device schedules.
@@ -13,7 +13,7 @@
 <a href=#13 id=13 data-nosnippet>13</a>//!
 <a href=#14 id=14 data-nosnippet>14</a>//! * **Not knowing is a state.** [`WallClockState::now`] returns `None`
 <a href=#15 id=15 data-nosnippet>15</a>//!   until something sets the clock. Callers must not substitute zero, a
-<a href=#16 id=16 data-nosnippet>16</a>//!   build timestamp, or any other plausible-looking value — a device
+<a href=#16 id=16 data-nosnippet>16</a>//!   build timestamp, or any other plausible-looking value—a device
 <a href=#17 id=17 data-nosnippet>17</a>//!   that does not know the time **must not** display one.
 <a href=#18 id=18 data-nosnippet>18</a>//! * **Sources outrank each other.** [`WallClockState::apply`] holds the
 <a href=#19 id=19 data-nosnippet>19</a>//!   whole precedence rule, so no caller has to remember it and no two
@@ -25,7 +25,7 @@
 <a href=#25 id=25 data-nosnippet>25</a>
 <a href=#26 id=26 data-nosnippet>26</a>/// Where a wall-clock reading came from.
 <a href=#27 id=27 data-nosnippet>27</a>///
-<a href=#28 id=28 data-nosnippet>28</a>/// The ordering is not a precedence ranking — see
+<a href=#28 id=28 data-nosnippet>28</a>/// The ordering is not a precedence ranking—see
 <a href=#29 id=29 data-nosnippet>29</a>/// [`WallClockState::apply`], where the rule depends on more than the
 <a href=#30 id=30 data-nosnippet>30</a>/// source alone.
 <a href=#31 id=31 data-nosnippet>31</a></span><span class="attr">#[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -108,7 +108,7 @@
 <a href=#108 id=108 data-nosnippet>108</a>    /// at zero on a device whose wall clock is in 2026.
 <a href=#109 id=109 data-nosnippet>109</a>    </span>offset_ms: <span class="prelude-ty">Option</span>&lt;i64&gt;,
 <a href=#110 id=110 data-nosnippet>110</a>    <span class="doccomment">/// Minutes east of UTC (`PROP_TZ_OFFSET`). Always known, even while
-<a href=#111 id=111 data-nosnippet>111</a>    /// the time is not — see the module documentation.
+<a href=#111 id=111 data-nosnippet>111</a>    /// the time is not—see the module documentation.
 <a href=#112 id=112 data-nosnippet>112</a>    </span>tz_offset_min: i16,
 <a href=#113 id=113 data-nosnippet>113</a>    <span class="doccomment">/// Where the current reading came from, or `None` while unset.
 <a href=#114 id=114 data-nosnippet>114</a>    </span>source: <span class="prelude-ty">Option</span>&lt;TimeSource&gt;,
@@ -153,8 +153,8 @@
 <a href=#153 id=153 data-nosnippet>153</a>        <span class="prelude-val">Some</span>(millis <span class="kw">as </span>u64)
 <a href=#154 id=154 data-nosnippet>154</a>    }
 <a href=#155 id=155 data-nosnippet>155</a>
-<a href=#156 id=156 data-nosnippet>156</a>    <span class="doccomment">/// The local wall-clock reading in seconds — the time shifted by the
-<a href=#157 id=157 data-nosnippet>157</a>    /// configured zone — or `None` when the time is unknown.
+<a href=#156 id=156 data-nosnippet>156</a>    <span class="doccomment">/// The local wall-clock reading in seconds—the time shifted by the
+<a href=#157 id=157 data-nosnippet>157</a>    /// configured zone—or `None` when the time is unknown.
 <a href=#158 id=158 data-nosnippet>158</a>    ///
 <a href=#159 id=159 data-nosnippet>159</a>    /// A reading for presentation, not an instant: it does not name a
 <a href=#160 id=160 data-nosnippet>160</a>    /// point in time on its own, and nothing should send it anywhere.
@@ -205,7 +205,7 @@
 <a href=#205 id=205 data-nosnippet>205</a>    ///
 <a href=#206 id=206 data-nosnippet>206</a>    /// * [`TimeSource::Manual`] always applies. The operator is the more
 <a href=#207 id=207 data-nosnippet>207</a>    ///   authoritative source by definition, including while the receiver
-<a href=#208 id=208 data-nosnippet>208</a>    ///   is distrusted — distrusting the sky is *why* somebody would set
+<a href=#208 id=208 data-nosnippet>208</a>    ///   is distrusted—distrusting the sky is *why* somebody would set
 <a href=#209 id=209 data-nosnippet>209</a>    ///   the clock by hand.
 <a href=#210 id=210 data-nosnippet>210</a>    /// * [`TimeSource::GnssFix`] applies whenever the receiver is
 <a href=#211 id=211 data-nosnippet>211</a>    ///   trusted, overwriting whatever was there. Every fix re-synchronizes
@@ -217,7 +217,7 @@
 <a href=#217 id=217 data-nosnippet>217</a>    ///   that is already in hand.
 <a href=#218 id=218 data-nosnippet>218</a>    /// * [`TimeSource::ExternalRtc`] applies only when the clock is
 <a href=#219 id=219 data-nosnippet>219</a>    ///   unset, for the same reason, but is not subject to the receiver
-<a href=#220 id=220 data-nosnippet>220</a>    ///   trust flag — it is not the receiver.
+<a href=#220 id=220 data-nosnippet>220</a>    ///   trust flag—it is not the receiver.
 <a href=#221 id=221 data-nosnippet>221</a>    </span><span class="kw">pub const fn </span>apply(
 <a href=#222 id=222 data-nosnippet>222</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
 <a href=#223 id=223 data-nosnippet>223</a>        epoch: u32,
@@ -317,7 +317,7 @@
 <a href=#317 id=317 data-nosnippet>317</a>    /// What a display arms its redraw timer on. Computed in UTC, which
 <a href=#318 id=318 data-nosnippet>318</a>    /// costs nothing in correctness: every real time-zone offset is a
 <a href=#319 id=319 data-nosnippet>319</a>    /// whole number of minutes, so the local minute always turns over
-<a href=#320 id=320 data-nosnippet>320</a>    /// with the UTC one — including in the half- and quarter-hour zones.
+<a href=#320 id=320 data-nosnippet>320</a>    /// with the UTC one—including in the half- and quarter-hour zones.
 <a href=#321 id=321 data-nosnippet>321</a>    </span><span class="kw">pub fn </span>millis_to_next_minute() -&gt; <span class="prelude-ty">Option</span>&lt;u32&gt; {
 <a href=#322 id=322 data-nosnippet>322</a>        <span class="kw">let </span>monotonic = Instant::now().as_millis();
 <a href=#323 id=323 data-nosnippet>323</a>        <span class="kw">let </span>millis = CLOCK.lock(|cell| cell.get().now_ms(monotonic))<span class="question-mark">?</span>;
@@ -479,41 +479,61 @@
 <a href=#479 id=479 data-nosnippet>479</a>    }
 <a href=#480 id=480 data-nosnippet>480</a>
 <a href=#481 id=481 data-nosnippet>481</a>    <span class="attr">#[test]
-<a href=#482 id=482 data-nosnippet>482</a>    </span><span class="kw">fn </span>only_real_movement_is_worth_announcing() {
+<a href=#482 id=482 data-nosnippet>482</a>    </span><span class="kw">fn </span>retained_time_restores_without_gnss_trust_but_corrections_require_it() {
 <a href=#483 id=483 data-nosnippet>483</a>        <span class="kw">let </span><span class="kw-2">mut </span>clock = WallClockState::UNKNOWN;
-<a href=#484 id=484 data-nosnippet>484</a>        <span class="macro">assert!</span>(clock.apply(T0, UP, TimeSource::Manual, <span class="bool-val">true</span>).is_notable());
-<a href=#485 id=485 data-nosnippet>485</a>        <span class="comment">// A receiver agreeing with the clock to within a second or two
-<a href=#486 id=486 data-nosnippet>486</a>        // still applies; it is just not news.
-<a href=#487 id=487 data-nosnippet>487</a>        </span><span class="kw">let </span>update = clock.apply(T0 + <span class="number">1</span>, UP, TimeSource::GnssFix, <span class="bool-val">true</span>);
-<a href=#488 id=488 data-nosnippet>488</a>        <span class="macro">assert_eq!</span>(update, Update::Unchanged);
-<a href=#489 id=489 data-nosnippet>489</a>        <span class="macro">assert!</span>(!update.is_notable());
-<a href=#490 id=490 data-nosnippet>490</a>        <span class="macro">assert!</span>(update.applied());
-<a href=#491 id=491 data-nosnippet>491</a>        <span class="macro">assert_eq!</span>(clock.now(UP), <span class="prelude-val">Some</span>(T0 + <span class="number">1</span>));
-<a href=#492 id=492 data-nosnippet>492</a>
-<a href=#493 id=493 data-nosnippet>493</a>        <span class="kw">let </span>update = clock.apply(T0 + <span class="number">1 </span>+ NOTABLE_STEP_SECS, UP, TimeSource::GnssFix, <span class="bool-val">true</span>);
-<a href=#494 id=494 data-nosnippet>494</a>        <span class="macro">assert!</span>(update.is_notable());
-<a href=#495 id=495 data-nosnippet>495</a>        <span class="comment">// Backwards counts the same as forwards.
-<a href=#496 id=496 data-nosnippet>496</a>        </span><span class="kw">let </span>update = clock.apply(T0, UP, TimeSource::GnssFix, <span class="bool-val">true</span>);
-<a href=#497 id=497 data-nosnippet>497</a>        <span class="macro">assert!</span>(update.is_notable());
-<a href=#498 id=498 data-nosnippet>498</a>        <span class="macro">assert!</span>(!Update::Refused.applied());
+<a href=#484 id=484 data-nosnippet>484</a>        <span class="macro">assert_eq!</span>(
+<a href=#485 id=485 data-nosnippet>485</a>            clock.apply(T0, UP, TimeSource::ExternalRtc, <span class="bool-val">false</span>),
+<a href=#486 id=486 data-nosnippet>486</a>            Update::Set
+<a href=#487 id=487 data-nosnippet>487</a>        );
+<a href=#488 id=488 data-nosnippet>488</a>        <span class="macro">assert_eq!</span>(clock.now(UP + <span class="number">60_000</span>), <span class="prelude-val">Some</span>(T0 + <span class="number">60</span>));
+<a href=#489 id=489 data-nosnippet>489</a>        <span class="macro">assert_eq!</span>(
+<a href=#490 id=490 data-nosnippet>490</a>            clock.apply(T0 + <span class="number">90</span>, UP + <span class="number">60_000</span>, TimeSource::GnssFix, <span class="bool-val">false</span>),
+<a href=#491 id=491 data-nosnippet>491</a>            Update::Refused
+<a href=#492 id=492 data-nosnippet>492</a>        );
+<a href=#493 id=493 data-nosnippet>493</a>        <span class="macro">assert_eq!</span>(clock.now(UP + <span class="number">60_000</span>), <span class="prelude-val">Some</span>(T0 + <span class="number">60</span>));
+<a href=#494 id=494 data-nosnippet>494</a>        <span class="macro">assert_eq!</span>(
+<a href=#495 id=495 data-nosnippet>495</a>            clock.apply(T0 + <span class="number">90</span>, UP + <span class="number">60_000</span>, TimeSource::GnssFix, <span class="bool-val">true</span>),
+<a href=#496 id=496 data-nosnippet>496</a>            Update::Stepped { previous: T0 + <span class="number">60 </span>}
+<a href=#497 id=497 data-nosnippet>497</a>        );
+<a href=#498 id=498 data-nosnippet>498</a>        <span class="macro">assert_eq!</span>(clock.source(), <span class="prelude-val">Some</span>(TimeSource::GnssFix));
 <a href=#499 id=499 data-nosnippet>499</a>    }
 <a href=#500 id=500 data-nosnippet>500</a>
 <a href=#501 id=501 data-nosnippet>501</a>    <span class="attr">#[test]
-<a href=#502 id=502 data-nosnippet>502</a>    </span><span class="kw">fn </span>an_absurd_offset_reads_as_unknown_rather_than_wrapping() {
-<a href=#503 id=503 data-nosnippet>503</a>        <span class="comment">// A clock set near the end of the representable range, then left
-<a href=#504 id=504 data-nosnippet>504</a>        // to run past it, has nothing honest to report.
-<a href=#505 id=505 data-nosnippet>505</a>        </span><span class="kw">let </span><span class="kw-2">mut </span>clock = WallClockState::UNKNOWN;
-<a href=#506 id=506 data-nosnippet>506</a>        clock.apply(u32::MAX, <span class="number">0</span>, TimeSource::Manual, <span class="bool-val">true</span>);
-<a href=#507 id=507 data-nosnippet>507</a>        <span class="macro">assert_eq!</span>(clock.now(<span class="number">0</span>), <span class="prelude-val">Some</span>(u32::MAX));
-<a href=#508 id=508 data-nosnippet>508</a>        <span class="macro">assert_eq!</span>(clock.now(<span class="number">60_000</span>), <span class="prelude-val">None</span>);
-<a href=#509 id=509 data-nosnippet>509</a>    }
-<a href=#510 id=510 data-nosnippet>510</a>
-<a href=#511 id=511 data-nosnippet>511</a>    <span class="attr">#[test]
-<a href=#512 id=512 data-nosnippet>512</a>    </span><span class="kw">fn </span>receiver_derived_sources_are_the_ones_trust_governs() {
-<a href=#513 id=513 data-nosnippet>513</a>        <span class="macro">assert!</span>(TimeSource::GnssFix.is_receiver_derived());
-<a href=#514 id=514 data-nosnippet>514</a>        <span class="macro">assert!</span>(TimeSource::GnssRtc.is_receiver_derived());
-<a href=#515 id=515 data-nosnippet>515</a>        <span class="macro">assert!</span>(!TimeSource::Manual.is_receiver_derived());
-<a href=#516 id=516 data-nosnippet>516</a>        <span class="macro">assert!</span>(!TimeSource::ExternalRtc.is_receiver_derived());
-<a href=#517 id=517 data-nosnippet>517</a>    }
-<a href=#518 id=518 data-nosnippet>518</a>}
+<a href=#502 id=502 data-nosnippet>502</a>    </span><span class="kw">fn </span>only_real_movement_is_worth_announcing() {
+<a href=#503 id=503 data-nosnippet>503</a>        <span class="kw">let </span><span class="kw-2">mut </span>clock = WallClockState::UNKNOWN;
+<a href=#504 id=504 data-nosnippet>504</a>        <span class="macro">assert!</span>(clock.apply(T0, UP, TimeSource::Manual, <span class="bool-val">true</span>).is_notable());
+<a href=#505 id=505 data-nosnippet>505</a>        <span class="comment">// A receiver agreeing with the clock to within a second or two
+<a href=#506 id=506 data-nosnippet>506</a>        // still applies; it is just not news.
+<a href=#507 id=507 data-nosnippet>507</a>        </span><span class="kw">let </span>update = clock.apply(T0 + <span class="number">1</span>, UP, TimeSource::GnssFix, <span class="bool-val">true</span>);
+<a href=#508 id=508 data-nosnippet>508</a>        <span class="macro">assert_eq!</span>(update, Update::Unchanged);
+<a href=#509 id=509 data-nosnippet>509</a>        <span class="macro">assert!</span>(!update.is_notable());
+<a href=#510 id=510 data-nosnippet>510</a>        <span class="macro">assert!</span>(update.applied());
+<a href=#511 id=511 data-nosnippet>511</a>        <span class="macro">assert_eq!</span>(clock.now(UP), <span class="prelude-val">Some</span>(T0 + <span class="number">1</span>));
+<a href=#512 id=512 data-nosnippet>512</a>
+<a href=#513 id=513 data-nosnippet>513</a>        <span class="kw">let </span>update = clock.apply(T0 + <span class="number">1 </span>+ NOTABLE_STEP_SECS, UP, TimeSource::GnssFix, <span class="bool-val">true</span>);
+<a href=#514 id=514 data-nosnippet>514</a>        <span class="macro">assert!</span>(update.is_notable());
+<a href=#515 id=515 data-nosnippet>515</a>        <span class="comment">// Backwards counts the same as forwards.
+<a href=#516 id=516 data-nosnippet>516</a>        </span><span class="kw">let </span>update = clock.apply(T0, UP, TimeSource::GnssFix, <span class="bool-val">true</span>);
+<a href=#517 id=517 data-nosnippet>517</a>        <span class="macro">assert!</span>(update.is_notable());
+<a href=#518 id=518 data-nosnippet>518</a>        <span class="macro">assert!</span>(!Update::Refused.applied());
+<a href=#519 id=519 data-nosnippet>519</a>    }
+<a href=#520 id=520 data-nosnippet>520</a>
+<a href=#521 id=521 data-nosnippet>521</a>    <span class="attr">#[test]
+<a href=#522 id=522 data-nosnippet>522</a>    </span><span class="kw">fn </span>an_absurd_offset_reads_as_unknown_rather_than_wrapping() {
+<a href=#523 id=523 data-nosnippet>523</a>        <span class="comment">// A clock set near the end of the representable range, then left
+<a href=#524 id=524 data-nosnippet>524</a>        // to run past it, has nothing honest to report.
+<a href=#525 id=525 data-nosnippet>525</a>        </span><span class="kw">let </span><span class="kw-2">mut </span>clock = WallClockState::UNKNOWN;
+<a href=#526 id=526 data-nosnippet>526</a>        clock.apply(u32::MAX, <span class="number">0</span>, TimeSource::Manual, <span class="bool-val">true</span>);
+<a href=#527 id=527 data-nosnippet>527</a>        <span class="macro">assert_eq!</span>(clock.now(<span class="number">0</span>), <span class="prelude-val">Some</span>(u32::MAX));
+<a href=#528 id=528 data-nosnippet>528</a>        <span class="macro">assert_eq!</span>(clock.now(<span class="number">60_000</span>), <span class="prelude-val">None</span>);
+<a href=#529 id=529 data-nosnippet>529</a>    }
+<a href=#530 id=530 data-nosnippet>530</a>
+<a href=#531 id=531 data-nosnippet>531</a>    <span class="attr">#[test]
+<a href=#532 id=532 data-nosnippet>532</a>    </span><span class="kw">fn </span>receiver_derived_sources_are_the_ones_trust_governs() {
+<a href=#533 id=533 data-nosnippet>533</a>        <span class="macro">assert!</span>(TimeSource::GnssFix.is_receiver_derived());
+<a href=#534 id=534 data-nosnippet>534</a>        <span class="macro">assert!</span>(TimeSource::GnssRtc.is_receiver_derived());
+<a href=#535 id=535 data-nosnippet>535</a>        <span class="macro">assert!</span>(!TimeSource::Manual.is_receiver_derived());
+<a href=#536 id=536 data-nosnippet>536</a>        <span class="macro">assert!</span>(!TimeSource::ExternalRtc.is_receiver_derived());
+<a href=#537 id=537 data-nosnippet>537</a>    }
+<a href=#538 id=538 data-nosnippet>538</a>}
 </code></pre></div></section></main></body></html>

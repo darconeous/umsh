@@ -10,10 +10,10 @@ return it to its off state.</p>
 <p>For boards where the receiver’s own real-time-clock domain is the only
 clock that survives a power cycle. The domain cannot speak a UART on
 its own, so reading it mechanically requires bringing the main domain
-up — but what is being read is a clock, and everything positional seen
+up—but what is being read is a clock, and everything positional seen
 along the way is discarded.</p>
 <p>Returns the first instant the receiver reports, or <code>None</code> if it
-reports none within <a href="constant.RTC_READ_TIMEOUT_MS.html" title="constant umsh_gnss::pump::RTC_READ_TIMEOUT_MS"><code>RTC_READ_TIMEOUT_MS</code></a> — which is what a receiver
+reports none within <a href="constant.RTC_READ_TIMEOUT_MS.html" title="constant umsh_gnss::pump::RTC_READ_TIMEOUT_MS"><code>RTC_READ_TIMEOUT_MS</code></a>—which is what a receiver
 that lost its backup power looks like.</p>
 <p>The caller decides whether to believe the answer: this is governed by
 <code>PROP_GNSS_TIME_TRUST</code>, not by <code>PROP_GNSS_ENABLED</code>.</p>

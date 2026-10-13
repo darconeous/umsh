@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["accesses_device_name"],"struct":["Borrowed","ControllerState","Guarded"]};

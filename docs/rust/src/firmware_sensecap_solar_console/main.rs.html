@@ -1,4 +1,4 @@
-<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `firmware/sensecap-solar-console/src/main.rs`."><title>main.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../static.files/rustdoc-80aa586b.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="firmware_sensecap_solar_console" data-themes="" data-resource-suffix="" data-rustdoc-version="1.94.0-nightly (fcf67da03 2025-12-18)" data-channel="nightly" data-search-js="search-9e2438ea.js" data-stringdex-js="stringdex-a3946164.js" data-settings-js="settings-c38705f0.js" ><script src="../../static.files/storage-e2aeef58.js"></script><script defer src="../../static.files/src-script-813739b1.js"></script><script defer src="../../src-files.js"></script><script defer src="../../static.files/main-3e30299d.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-ffcac47a.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><section id="main-content" class="content"><div class="main-heading"><h1><div class="sub-heading">firmware_sensecap_solar_console/</div>main.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap digits-3"><pre class="rust"><code><a href=#1 id=1 data-nosnippet>1</a><span class="comment">// SenseCAP Solar Node P1 / P1-Pro bringup firmware — Phase 1.
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `firmware/sensecap-solar-console/src/main.rs`."><title>main.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../static.files/rustdoc-80aa586b.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="firmware_sensecap_solar_console" data-themes="" data-resource-suffix="" data-rustdoc-version="1.94.0-nightly (fcf67da03 2025-12-18)" data-channel="nightly" data-search-js="search-9e2438ea.js" data-stringdex-js="stringdex-a3946164.js" data-settings-js="settings-c38705f0.js" ><script src="../../static.files/storage-e2aeef58.js"></script><script defer src="../../static.files/src-script-813739b1.js"></script><script defer src="../../src-files.js"></script><script defer src="../../static.files/main-3e30299d.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-ffcac47a.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><section id="main-content" class="content"><div class="main-heading"><h1><div class="sub-heading">firmware_sensecap_solar_console/</div>main.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap digits-3"><pre class="rust"><code><a href=#1 id=1 data-nosnippet>1</a><span class="comment">// SenseCAP Solar Node P1 / P1-Pro bringup firmware—Phase 1.
 <a href=#2 id=2 data-nosnippet>2</a>//
 <a href=#3 id=3 data-nosnippet>3</a>// This is the *stripped* first-boot binary. Its job is
 <a href=#4 id=4 data-nosnippet>4</a>// to prove the board comes up safely and to identify the LEDs / buttons
@@ -13,7 +13,7 @@
 <a href=#13 id=13 data-nosnippet>13</a>//        - RADIO_RXEN (P0.05) LOW  — safety contract: RXEN low before any
 <a href=#14 id=14 data-nosnippet>14</a>//          radio work and until lora-phy owns it (no radio here yet).
 <a href=#15 id=15 data-nosnippet>15</a>//        - GNSS_ENABLE (P1.05) LOW — hold the L76K powered down.
-<a href=#16 id=16 data-nosnippet>16</a>//        - GNSS_RESET candidate (P1.03) is NEVER driven — left untouched.
+<a href=#16 id=16 data-nosnippet>16</a>//        - GNSS_RESET candidate (P1.03) is NEVER driven—left untouched.
 <a href=#17 id=17 data-nosnippet>17</a>//        - Battery-divider gate (P0.14) is NOT touched in Phase 1; the
 <a href=#18 id=18 data-nosnippet>18</a>//          gate polarity is verified in Phase 2 before we drive it.
 <a href=#19 id=19 data-nosnippet>19</a>//   4. Bring up USB-CDC with the CdcAcmRescue escape hatch + panic replay.
@@ -24,10 +24,10 @@
 <a href=#24 id=24 data-nosnippet>24</a>//   - LED_A (P0.15) = white, active-high; LED_B (P0.19) = blue, active-high.
 <a href=#25 id=25 data-nosnippet>25</a>//   - USER_BUTTON (P1.01) and the "PWR" button (P1.07) are both active-low
 <a href=#26 id=26 data-nosnippet>26</a>//     on internal pull-ups (LOW pressed, HIGH released). PWR is a soft
-<a href=#27 id=27 data-nosnippet>27</a>//     momentary button — pressing it does not cut the MCU rail.
+<a href=#27 id=27 data-nosnippet>27</a>//     momentary button—pressing it does not cut the MCU rail.
 <a href=#28 id=28 data-nosnippet>28</a>//
 <a href=#29 id=29 data-nosnippet>29</a>// Identification session (single-char commands, echoed back as reports):
-<a href=#30 id=30 data-nosnippet>30</a>//   '1'  toggle LED_A (P0.15) — the white user LED
+<a href=#30 id=30 data-nosnippet>30</a>//   '1'  toggle LED_A (P0.15)—the white user LED
 <a href=#31 id=31 data-nosnippet>31</a>//   '?'  help + current LED_A / button states
 <a href=#32 id=32 data-nosnippet>32</a>//   USER_BUTTON (P1.01) and PWR (P1.07) edges auto-report.
 <a href=#33 id=33 data-nosnippet>33</a>//
@@ -93,7 +93,7 @@
 <a href=#93 id=93 data-nosnippet>93</a>    <span class="comment">// ─── CDC output helper ───────────────────────────────────────────────────
 <a href=#94 id=94 data-nosnippet>94</a>
 <a href=#95 id=95 data-nosnippet>95</a>    </span><span class="doccomment">/// Write a line (with trailing CRLF) to the CDC sender in &lt;=64-byte
-<a href=#96 id=96 data-nosnippet>96</a>    /// USB packets. Best-effort — drops on a closed endpoint.
+<a href=#96 id=96 data-nosnippet>96</a>    /// USB packets. Best-effort—drops on a closed endpoint.
 <a href=#97 id=97 data-nosnippet>97</a>    </span><span class="kw">async fn </span>write_line(tx: <span class="kw-2">&amp;mut </span>SolarSender, s: <span class="kw-2">&amp;</span>str) {
 <a href=#98 id=98 data-nosnippet>98</a>        <span class="kw">for </span>chunk <span class="kw">in </span>s.as_bytes().chunks(<span class="number">64</span>) {
 <a href=#99 id=99 data-nosnippet>99</a>            <span class="kw">let _ </span>= tx.write_packet(chunk).<span class="kw">await</span>;
@@ -102,7 +102,7 @@
 <a href=#102 id=102 data-nosnippet>102</a>    }
 <a href=#103 id=103 data-nosnippet>103</a>
 <a href=#104 id=104 data-nosnippet>104</a>    <span class="kw">const </span>HELP: <span class="kw-2">&amp;</span>str = <span class="string">"\
-<a href=#105 id=105 data-nosnippet>105</a>SenseCAP Solar Node bringup (Phase 1) — GPIO identification\r
+<a href=#105 id=105 data-nosnippet>105</a>SenseCAP Solar Node bringup (Phase 1)—GPIO identification\r
 <a href=#106 id=106 data-nosnippet>106</a>  1  toggle LED_A (P0.15, white user LED)\r
 <a href=#107 id=107 data-nosnippet>107</a>  ?  this help + current pin states\r
 <a href=#108 id=108 data-nosnippet>108</a>LED_B (P0.19, blue) blinks as the heartbeat.\r
@@ -121,7 +121,7 @@
 <a href=#121 id=121 data-nosnippet>121</a>        prev_panic_buf: <span class="kw-2">&amp;</span><span class="lifetime">'static </span>[u8; <span class="number">256</span>],
 <a href=#122 id=122 data-nosnippet>122</a>        prev_panic_len: usize,
 <a href=#123 id=123 data-nosnippet>123</a>    ) {
-<a href=#124 id=124 data-nosnippet>124</a>        <span class="comment">// Wait for the host to open the CDC port before writing the banner —
+<a href=#124 id=124 data-nosnippet>124</a>        <span class="comment">// Wait for the host to open the CDC port before writing the banner—
 <a href=#125 id=125 data-nosnippet>125</a>        // otherwise the writes silently vanish into a closed IN endpoint.
 <a href=#126 id=126 data-nosnippet>126</a>        </span>rx.wait_connection().<span class="kw">await</span>;
 <a href=#127 id=127 data-nosnippet>127</a>
@@ -277,39 +277,41 @@
 <a href=#277 id=277 data-nosnippet>277</a>        <span class="comment">// ── USB-CDC stack ─────────────────────────────────────────────────────
 <a href=#278 id=278 data-nosnippet>278</a>        </span><span class="kw">let </span>driver = Driver::new(p.USBD, Irqs, HardwareVbusDetect::new(Irqs));
 <a href=#279 id=279 data-nosnippet>279</a>
-<a href=#280 id=280 data-nosnippet>280</a>        <span class="comment">// USB IDs per the plan: VID 0x2886 / PID 0x0059 (Seeed XIAO family).
-<a href=#281 id=281 data-nosnippet>281</a>        </span><span class="kw">let </span><span class="kw-2">mut </span>config = Config::new(<span class="number">0x2886</span>, <span class="number">0x0059</span>);
-<a href=#282 id=282 data-nosnippet>282</a>        config.manufacturer = <span class="prelude-val">Some</span>(<span class="string">"UMSH"</span>);
-<a href=#283 id=283 data-nosnippet>283</a>        config.product = <span class="prelude-val">Some</span>(<span class="string">"SenseCAP Solar Node Bringup"</span>);
-<a href=#284 id=284 data-nosnippet>284</a>        config.serial_number = <span class="prelude-val">Some</span>(<span class="string">"sensecap-solar-console"</span>);
-<a href=#285 id=285 data-nosnippet>285</a>        config.max_power = <span class="number">100</span>;
-<a href=#286 id=286 data-nosnippet>286</a>        config.max_packet_size_0 = <span class="number">64</span>;
-<a href=#287 id=287 data-nosnippet>287</a>
-<a href=#288 id=288 data-nosnippet>288</a>        <span class="kw">static </span>CONFIG_DESC: StaticCell&lt;[u8; <span class="number">256</span>]&gt; = StaticCell::new();
-<a href=#289 id=289 data-nosnippet>289</a>        <span class="kw">static </span>BOS_DESC: StaticCell&lt;[u8; <span class="number">256</span>]&gt; = StaticCell::new();
-<a href=#290 id=290 data-nosnippet>290</a>        <span class="kw">static </span>MSOS_DESC: StaticCell&lt;[u8; <span class="number">0</span>]&gt; = StaticCell::new();
-<a href=#291 id=291 data-nosnippet>291</a>        <span class="kw">static </span>CONTROL_BUF: StaticCell&lt;[u8; <span class="number">64</span>]&gt; = StaticCell::new();
-<a href=#292 id=292 data-nosnippet>292</a>        <span class="kw">static </span>STATE: StaticCell&lt;State&gt; = StaticCell::new();
-<a href=#293 id=293 data-nosnippet>293</a>
-<a href=#294 id=294 data-nosnippet>294</a>        <span class="kw">let </span><span class="kw-2">mut </span>builder = Builder::new(
-<a href=#295 id=295 data-nosnippet>295</a>            driver,
-<a href=#296 id=296 data-nosnippet>296</a>            config,
-<a href=#297 id=297 data-nosnippet>297</a>            CONFIG_DESC.init([<span class="number">0</span>; <span class="number">256</span>]),
-<a href=#298 id=298 data-nosnippet>298</a>            BOS_DESC.init([<span class="number">0</span>; <span class="number">256</span>]),
-<a href=#299 id=299 data-nosnippet>299</a>            MSOS_DESC.init([<span class="number">0</span>; <span class="number">0</span>]),
-<a href=#300 id=300 data-nosnippet>300</a>            CONTROL_BUF.init([<span class="number">0</span>; <span class="number">64</span>]),
-<a href=#301 id=301 data-nosnippet>301</a>        );
-<a href=#302 id=302 data-nosnippet>302</a>
-<a href=#303 id=303 data-nosnippet>303</a>        <span class="kw">let </span>class = CdcAcmClass::new(<span class="kw-2">&amp;mut </span>builder, STATE.init(State::new()), <span class="number">64</span>);
-<a href=#304 id=304 data-nosnippet>304</a>        <span class="kw">let </span><span class="kw-2">mut </span>usb = builder.build();
-<a href=#305 id=305 data-nosnippet>305</a>
-<a href=#306 id=306 data-nosnippet>306</a>        <span class="kw">let </span>(tx, raw_rx, ctrl) = class.split_with_control();
-<a href=#307 id=307 data-nosnippet>307</a>        <span class="kw">let </span>rx = CdcAcmRescue::new(raw_rx, ctrl);
-<a href=#308 id=308 data-nosnippet>308</a>
-<a href=#309 id=309 data-nosnippet>309</a>        spawner
-<a href=#310 id=310 data-nosnippet>310</a>            .spawn(ident_task(tx, rx, led_a, btn1, btn2, prev_panic_buf, prev_panic_len).unwrap());
-<a href=#311 id=311 data-nosnippet>311</a>
-<a href=#312 id=312 data-nosnippet>312</a>        join(usb.run(), heartbeat(led_b, wdt_handle)).<span class="kw">await</span>;
-<a href=#313 id=313 data-nosnippet>313</a>    }
-<a href=#314 id=314 data-nosnippet>314</a>}
+<a href=#280 id=280 data-nosnippet>280</a>        <span class="comment">// Mirrors `umsh_bsp_sensecap_solar::USB`. Referencing it would link
+<a href=#281 id=281 data-nosnippet>281</a>        // the BSP, which this harness otherwise does not, and that needs an
+<a href=#282 id=282 data-nosnippet>282</a>        // allocator.
+<a href=#283 id=283 data-nosnippet>283</a>        </span><span class="kw">let </span><span class="kw-2">mut </span>config = Config::new(<span class="number">0x2886</span>, <span class="number">0x0059</span>);
+<a href=#284 id=284 data-nosnippet>284</a>        config.manufacturer = <span class="prelude-val">Some</span>(<span class="string">"UMSH"</span>);
+<a href=#285 id=285 data-nosnippet>285</a>        config.product = <span class="prelude-val">Some</span>(<span class="string">"SenseCAP Solar Node Bringup"</span>);
+<a href=#286 id=286 data-nosnippet>286</a>        config.serial_number = <span class="prelude-val">Some</span>(<span class="string">"sensecap-solar-console"</span>);
+<a href=#287 id=287 data-nosnippet>287</a>        config.max_power = <span class="number">100</span>;
+<a href=#288 id=288 data-nosnippet>288</a>        config.max_packet_size_0 = <span class="number">64</span>;
+<a href=#289 id=289 data-nosnippet>289</a>
+<a href=#290 id=290 data-nosnippet>290</a>        <span class="kw">static </span>CONFIG_DESC: StaticCell&lt;[u8; <span class="number">256</span>]&gt; = StaticCell::new();
+<a href=#291 id=291 data-nosnippet>291</a>        <span class="kw">static </span>BOS_DESC: StaticCell&lt;[u8; <span class="number">256</span>]&gt; = StaticCell::new();
+<a href=#292 id=292 data-nosnippet>292</a>        <span class="kw">static </span>MSOS_DESC: StaticCell&lt;[u8; <span class="number">0</span>]&gt; = StaticCell::new();
+<a href=#293 id=293 data-nosnippet>293</a>        <span class="kw">static </span>CONTROL_BUF: StaticCell&lt;[u8; <span class="number">64</span>]&gt; = StaticCell::new();
+<a href=#294 id=294 data-nosnippet>294</a>        <span class="kw">static </span>STATE: StaticCell&lt;State&gt; = StaticCell::new();
+<a href=#295 id=295 data-nosnippet>295</a>
+<a href=#296 id=296 data-nosnippet>296</a>        <span class="kw">let </span><span class="kw-2">mut </span>builder = Builder::new(
+<a href=#297 id=297 data-nosnippet>297</a>            driver,
+<a href=#298 id=298 data-nosnippet>298</a>            config,
+<a href=#299 id=299 data-nosnippet>299</a>            CONFIG_DESC.init([<span class="number">0</span>; <span class="number">256</span>]),
+<a href=#300 id=300 data-nosnippet>300</a>            BOS_DESC.init([<span class="number">0</span>; <span class="number">256</span>]),
+<a href=#301 id=301 data-nosnippet>301</a>            MSOS_DESC.init([<span class="number">0</span>; <span class="number">0</span>]),
+<a href=#302 id=302 data-nosnippet>302</a>            CONTROL_BUF.init([<span class="number">0</span>; <span class="number">64</span>]),
+<a href=#303 id=303 data-nosnippet>303</a>        );
+<a href=#304 id=304 data-nosnippet>304</a>
+<a href=#305 id=305 data-nosnippet>305</a>        <span class="kw">let </span>class = CdcAcmClass::new(<span class="kw-2">&amp;mut </span>builder, STATE.init(State::new()), <span class="number">64</span>);
+<a href=#306 id=306 data-nosnippet>306</a>        <span class="kw">let </span><span class="kw-2">mut </span>usb = builder.build();
+<a href=#307 id=307 data-nosnippet>307</a>
+<a href=#308 id=308 data-nosnippet>308</a>        <span class="kw">let </span>(tx, raw_rx, ctrl) = class.split_with_control();
+<a href=#309 id=309 data-nosnippet>309</a>        <span class="kw">let </span>rx = CdcAcmRescue::new(raw_rx, ctrl);
+<a href=#310 id=310 data-nosnippet>310</a>
+<a href=#311 id=311 data-nosnippet>311</a>        spawner
+<a href=#312 id=312 data-nosnippet>312</a>            .spawn(ident_task(tx, rx, led_a, btn1, btn2, prev_panic_buf, prev_panic_len).unwrap());
+<a href=#313 id=313 data-nosnippet>313</a>
+<a href=#314 id=314 data-nosnippet>314</a>        join(usb.run(), heartbeat(led_b, wdt_handle)).<span class="kw">await</span>;
+<a href=#315 id=315 data-nosnippet>315</a>    }
+<a href=#316 id=316 data-nosnippet>316</a>}
 </code></pre></div></section></main></body></html>

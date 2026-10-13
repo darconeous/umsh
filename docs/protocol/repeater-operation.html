@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-e3fe62b3.js";
+            window.path_to_searchindex_js = "searchindex-6c34194f.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-8b6941ec.js"></script>
+        <script src="toc-e4cb2f86.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -351,6 +351,7 @@
 </ul>
 <p>A packet that arrives carrying an <strong>empty</strong> source-route option matched no hint at this repeater, so it takes the flood path: steps 7 through 9 apply in full. This is how a hybrid route transitions to flooding—the transition is observed by the repeater <em>after</em> the one that emptied the route, not performed by it.</p>
 <p>A <a href="internet-bridging.html">bridge</a> rewrites nothing of its own: a repeater at each end of it forwards the packet by this procedure, so a crossing applies these rules twice.</p>
+<p>A node with <a href="lan-bearer.html#forwarding-across-bearers">bearers</a> beside its radio applies this procedure once per packet, and offers the one rewritten packet to each egress its forwarding table allows.</p>
 <h2 id="forwarding-confirmation"><a class="header" href="#forwarding-confirmation">Forwarding Confirmation</a></h2>
 <p>Repeaters do not generate MAC acks—acks are generated only by the <a href="packet-types.html#mac-ack-packet">final destination</a>. Instead, a node can passively confirm that a transmitted or forwarded packet was received by listening for a subsequent retransmission of the same packet (or it’s ack).</p>
 <p>This applies to:</p>
@@ -358,14 +359,14 @@
 <li><strong>Source-routed packets</strong>: Each forwarding hop listens for the next hop—the node matching the next source-route hint—to retransmit.</li>
 <li><strong>Flood originators</strong>: The originating node listens for any node to retransmit.</li>
 <li><strong>Flood repeaters</strong>: Intermediate flood-forwarding nodes MUST NOT retry. Multiple nodes may forward the same flood packet, and a repeater has no designated next hop to listen for; retrying would increase congestion without improving reliability.</li>
-<li><strong>Routed MAC acks</strong>: An ack that carries a source route or flood budget is a routed send like any other; the destination that produced it listens for the first hop to carry it onward and retries on silence. Retrying the ack first is what spares the sender a full data retransmission when only the ack’s first hop failed.</li>
+<li><strong>Routed MAC acks</strong>: An ack that carries a source route or flood budget is a routed send like any other; the destination that produced it listens for the first hop to carry it onward and retries on silence. Retrying the ack first is what spares the sender a full data retransmission when only the ack’s first hop failed. Once the destination sends a packet carrying an <a href="packet-options.html#ack-mic-option-8">Ack MIC option</a> for the same packet, it stops retrying an ack that has already been transmitted: repeaters <a href="#ack-cancellation">drop their forwards of that ack</a> on hearing the option, and the packet carrying it is confirmed and retried in its own right.</li>
 </ul>
 <p>Confirmation, and the retry ladder below, apply whether or not the packet requests an ACK. An ack-requested sender goes on to await the ACK once forwarding is confirmed; a sender that requested no ACK is finished the moment it hears the packet carried onward, and if the retry budget runs out without that, the send simply ends—there is no failure signal to wait for. A point-to-point packet with no flood budget and no source route travels straight to its destination, confirms nothing, and MUST be transmitted exactly once.</p>
 <p>After transmitting, the node listens for the same packet—identified by its <a href="#duplicate-suppression">cache key</a>—to be retransmitted. This confirmation timeout MUST be large enough to cover the worst-case forwarding delay allowed by <a href="channel-access.html#flood-forwarding-contention-window">Channel Access</a>, plus the airtime of the forwarded frame itself, plus a guard margin. A safe default is:</p>
-<pre><code class="language-text">confirm_timeout = 2 × T_frame + W_max + W_jitter + D_ack
+<pre><code class="language-text">confirm_timeout = 2 × T_frame + W_max + 2 × W_jitter + D_ack
 </code></pre>
-<p>where <code>W_max</code> and <code>W_jitter</code> bound the intentional forwarding delay permitted for the path and <code>D_ack</code> is the <a href="channel-access.html#ack-protection-interval">ACK protection interval</a> when it applies. With the suggested defaults <code>W_max = T_frame/2</code>, <code>W_jitter = T_frame/10</code>, and <code>D_ack = 0.25 × T_frame</code>, this yields <code>confirm_timeout = 2.85 × T_frame</code>.</p>
-<p>If the packet is heard before <code>confirm_timeout</code> expires, forwarding is confirmed.</p>
+<p>where <code>W_max + 2 × W_jitter</code> bounds the intentional forwarding delay permitted for the path, including the wait of a repeater that heard the packet below the contention band, and <code>D_ack</code> is the <a href="channel-access.html#ack-protection-interval">ACK protection interval</a> when it applies. With the suggested defaults <code>W_max = T_frame/2</code>, <code>W_jitter = T_frame/10</code>, and <code>D_ack = 0.25 × T_frame</code>, this yields <code>confirm_timeout = 2.95 × T_frame</code>.</p>
+<p>If the packet is heard before <code>confirm_timeout</code> expires, forwarding is confirmed. A copy received from a <a href="lan-bearer.html#channel-access">bearer</a> does not confirm.</p>
 <p>If <code>confirm_timeout</code> expires without a retransmission, the node SHOULD schedule a retry after a jittered delay:</p>
 <pre><code class="language-text">retry_delay = uniform_random(0, T_frame)
 </code></pre>
@@ -373,6 +374,7 @@
 <p>A node MUST NOT retry more than 3 times.</p>
 <h3 id="ack-cancellation"><a class="header" href="#ack-cancellation">Ack Cancellation</a></h3>
 <p>A MAC ack echoes the acknowledged packet’s <code>ack_mic</code>—the first four bytes of its on-wire MIC—which any forwarder can read without keys, and which survives the mutations repeaters perform. A repeater that overhears a MAC ack (or an <a href="packet-options.html#ack-mic-option-8">Ack MIC option</a>) whose <code>ack_mic</code> matches the MIC prefix of a queued, not-yet-transmitted forward of an ack-eliciting packet (UNAR or BUAR) SHOULD cancel that forward: the destination provably has the packet, and repeating it spends airtime on nothing. The <a href="channel-access.html#ack-protection-interval">ACK protection interval</a> puts the ack on the air ahead of pending forwards precisely so that this observation is available.</p>
+<p>An overheard Ack MIC option also SHOULD cancel a queued, not-yet-transmitted forward of a MAC ack carrying the same <code>ack_mic</code>. The packet carrying the option delivers that acknowledgement to the same node, so the standalone ack has nothing left to deliver. An overheard MAC ack never cancels another ack’s forward: an ack’s trailer opens with the four bytes it echoes, so a second copy would cancel the first.</p>
 <p>Cancellation acts on the queue, not on the future. It removes whatever matching forward is queued at that moment—a <a href="packet-options.html#route-retry-option-6">Route Retry</a> copy included—and records nothing. A Route Retry copy received <em>after</em> a cancellation is a separate forwarding identity under <a href="#duplicate-suppression">duplicate suppression</a> and is forwarded normally: the origin resorts to it precisely because the ack never reached it, and carrying the copy prompts the destination to acknowledge again. That copy is in turn cancelable by another overheard ack.</p>
 <p>The duplicate-cache entry for a cancelled forward remains. The packet was handled; a later copy of the same attempt is still a duplicate.</p>
 <p>A repeater cannot verify the keyed <code>ack_tag</code> half of the trailer, so cancellation rests on the public <code>ack_mic</code> alone. The <a href="security.html#ack-tag-construction">forgery this exposes</a> suppresses at most one queued forward per overheard ack and is bounded by the Route Retry path.</p>
@@ -408,9 +410,9 @@
 </ul>
 <p>For flood-forwarding repeaters that have accepted a packet for forwarding but have not yet transmitted it, overhearing another forwarding of the same packet SHOULD normally cause a bounded deferral rather than an immediate transmission. A safe default is:</p>
 <ol>
-<li>recalculate a forwarding delay using the contention-window procedure in <a href="channel-access.html#flood-forwarding-contention-window">Channel Access</a></li>
+<li>on each of the first two overheard copies, recalculate a forwarding delay using the contention-window procedure in <a href="channel-access.html#flood-forwarding-contention-window">Channel Access</a></li>
 <li>restart the waiting period</li>
-<li>after 3 such deferrals, abandon the pending forward</li>
+<li>on overhearing a third copy, abandon the pending forward</li>
 </ol>
 <p>This behavior is still provisional and should be validated empirically. The intent is to reduce near-simultaneous forwarding while still allowing a second or third repeater to contribute if an earlier forward was not widely heard.</p>
 <h2 id="routing-implications"><a class="header" href="#routing-implications">Routing Implications</a></h2>

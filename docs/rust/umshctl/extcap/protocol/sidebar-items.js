@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"constant":["CALL_RADIO","DLT_LORATAP","INTERFACE"],"fn":["config","dlts","interfaces","radio_value_auto","radio_values","sanitize"]};
+window.SIDEBAR_ITEMS = {"constant":["CALL_RADIO","DLT_IPV4","DLT_LORATAP","INTERFACE","LAN_INTERFACE"],"fn":["config","dlts","interfaces","is_radio_call","lan_config","radio_value_auto","radio_values","sanitize"]};

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"mod":["alert","display","gauge","input","input_power","power","rtc"]};

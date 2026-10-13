@@ -100,7 +100,7 @@
 <a href=#100 id=100 data-nosnippet>100</a>    /// spells but a region may not use, is rejected, so that named regions
 <a href=#101 id=101 data-nosnippet>101</a>    /// cannot be mistaken for short codes.
 <a href=#102 id=102 data-nosnippet>102</a>    ///
-<a href=#103 id=103 data-nosnippet>103</a>    /// An all-letter code is exclusive — no named region can derive it — and
+<a href=#103 id=103 data-nosnippet>103</a>    /// An all-letter code is exclusive—no named region can derive it—and
 <a href=#104 id=104 data-nosnippet>104</a>    /// so reads back as itself. One bearing a digit encodes just as
 <a href=#105 id=105 data-nosnippet>105</a>    /// faithfully but shares its space with the hashes, so it does not.
 <a href=#106 id=106 data-nosnippet>106</a>    </span><span class="kw">pub fn </span>from_short_code(code: <span class="kw-2">&amp;</span>str) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, RegionCodeError&gt; {
@@ -198,8 +198,8 @@
 <a href=#198 id=198 data-nosnippet>198</a>///
 <a href=#199 id=199 data-nosnippet>199</a>/// The three lengths land in three consecutive blocks, longest first, so
 <a href=#200 id=200 data-nosnippet>200</a>/// that adding the shorter ones left every code already assigned where it
-<a href=#201 id=201 data-nosnippet>201</a>/// was. Anything that is not all letters — a code bearing a digit among
-<a href=#202 id=202 data-nosnippet>202</a>/// them, or one already outside the letter space — is returned unchanged.
+<a href=#201 id=201 data-nosnippet>201</a>/// was. Anything that is not all letters—a code bearing a digit among
+<a href=#202 id=202 data-nosnippet>202</a>/// them, or one already outside the letter space—is returned unchanged.
 <a href=#203 id=203 data-nosnippet>203</a></span><span class="kw">fn </span>transform_letter_chunk(encoded: u16) -&gt; u16 {
 <a href=#204 id=204 data-nosnippet>204</a>    <span class="kw">let </span>a = encoded / <span class="number">1600</span>;
 <a href=#205 id=205 data-nosnippet>205</a>    <span class="kw">let </span>b = (encoded / <span class="number">40</span>) % <span class="number">40</span>;
@@ -247,7 +247,7 @@
 <a href=#247 id=247 data-nosnippet>247</a>/// three ASCII letters or digits is a short code, and anything else is a
 <a href=#248 id=248 data-nosnippet>248</a>/// region name. The derivation is total over every string of one to
 <a href=#249 id=249 data-nosnippet>249</a>/// [`REGION_NAME_MAX_LEN`] bytes: a string that merely looks like a literal
-<a href=#250 id=250 data-nosnippet>250</a>/// code — `0x12`, `0xzz` — is not one, and is hashed as the name it is
+<a href=#250 id=250 data-nosnippet>250</a>/// code—`0x12`, `0xzz`—is not one, and is hashed as the name it is
 <a href=#251 id=251 data-nosnippet>251</a>/// (packet-options.md § Region Code Encoding).
 <a href=#252 id=252 data-nosnippet>252</a></span><span class="kw">impl </span>FromStr <span class="kw">for </span>RegionCode {
 <a href=#253 id=253 data-nosnippet>253</a>    <span class="kw">type </span><span class="prelude-val">Err </span>= RegionCodeError;
@@ -363,7 +363,7 @@
 <a href=#363 id=363 data-nosnippet>363</a>
 <a href=#364 id=364 data-nosnippet>364</a>    <span class="attr">#[test]
 <a href=#365 id=365 data-nosnippet>365</a>    </span><span class="kw">fn </span>encodes_short_codes_bearing_digits_without_making_them_readable() {
-<a href=#366 id=366 data-nosnippet>366</a>        <span class="comment">// These are encodable, injective and stable — but not vacated, so
+<a href=#366 id=366 data-nosnippet>366</a>        <span class="comment">// These are encodable, injective and stable—but not vacated, so
 <a href=#367 id=367 data-nosnippet>367</a>        // they share their space with the hashes and never render.
 <a href=#368 id=368 data-nosnippet>368</a>        </span><span class="kw">for </span>input <span class="kw">in </span>[<span class="string">"W7"</span>, <span class="string">"5"</span>, <span class="string">"0A1"</span>] {
 <a href=#369 id=369 data-nosnippet>369</a>            <span class="kw">let </span>code = RegionCode::from_short_code(input).unwrap();
@@ -432,7 +432,7 @@
 <a href=#432 id=432 data-nosnippet>432</a>
 <a href=#433 id=433 data-nosnippet>433</a>    <span class="attr">#[test]
 <a href=#434 id=434 data-nosnippet>434</a>    </span><span class="kw">fn </span>transforms_a_named_region_that_lands_on_two_letters() {
-<a href=#435 id=435 data-nosnippet>435</a>        <span class="comment">// SHA-256("wasatch front") begins 0x5FA0, which decodes to `OL` —
+<a href=#435 id=435 data-nosnippet>435</a>        <span class="comment">// SHA-256("wasatch front") begins 0x5FA0, which decodes to `OL`—
 <a href=#436 id=436 data-nosnippet>436</a>        // vacated now that two letters are a short code of their own
 <a href=#437 id=437 data-nosnippet>437</a>        // (packet-options.md § Region Code Encoding).
 <a href=#438 id=438 data-nosnippet>438</a>        </span><span class="macro">assert_eq!</span>(transform_letter_chunk(<span class="number">0x5FA0</span>), <span class="number">0xEEDF</span>);
@@ -517,7 +517,7 @@
 <a href=#517 id=517 data-nosnippet>517</a>        <span class="comment">// Only `0x` plus exactly four hex digits spells a code. Everything
 <a href=#518 id=518 data-nosnippet>518</a>        // else is a name, which keeps the derivation total: there is no such
 <a href=#519 id=519 data-nosnippet>519</a>        // thing as a string with no region.
-<a href=#520 id=520 data-nosnippet>520</a>        // `0x` and `0x1` are short codes — one to three alphanumerics — so
+<a href=#520 id=520 data-nosnippet>520</a>        // `0x` and `0x1` are short codes—one to three alphanumerics—so
 <a href=#521 id=521 data-nosnippet>521</a>        // they are not among these.
 <a href=#522 id=522 data-nosnippet>522</a>        </span><span class="kw">for </span>input <span class="kw">in </span>[<span class="string">"0x12345"</span>, <span class="string">"0xzz"</span>, <span class="string">"0x 12"</span>, <span class="string">"0x+1"</span>] {
 <a href=#523 id=523 data-nosnippet>523</a>            <span class="macro">assert_eq!</span>(

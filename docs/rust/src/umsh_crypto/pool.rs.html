@@ -1,7 +1,7 @@
 <!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `crates/umsh-crypto/src/pool.rs`."><title>pool.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../static.files/rustdoc-80aa586b.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="umsh_crypto" data-themes="" data-resource-suffix="" data-rustdoc-version="1.94.0-nightly (fcf67da03 2025-12-18)" data-channel="nightly" data-search-js="search-9e2438ea.js" data-stringdex-js="stringdex-a3946164.js" data-settings-js="settings-c38705f0.js" ><script src="../../static.files/storage-e2aeef58.js"></script><script defer src="../../static.files/src-script-813739b1.js"></script><script defer src="../../src-files.js"></script><script defer src="../../static.files/main-3e30299d.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-ffcac47a.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><section id="main-content" class="content"><div class="main-heading"><h1><div class="sub-heading">umsh_crypto/</div>pool.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap digits-3"><pre class="rust"><code><a href=#1 id=1 data-nosnippet>1</a><span class="doccomment">//! Persisted entropy pool: a flash-seeded, hash-ratcheted CSPRNG.
 <a href=#2 id=2 data-nosnippet>2</a>//!
 <a href=#3 id=3 data-nosnippet>3</a>//! The pool exists for platforms whose hardware entropy source is not
-<a href=#4 id=4 data-nosnippet>4</a>//! always available — on the ESP32 the TRNG is only trustworthy while
+<a href=#4 id=4 data-nosnippet>4</a>//! always available—on the ESP32 the TRNG is only trustworthy while
 <a href=#5 id=5 data-nosnippet>5</a>//! the RF subsystem is up, which used to chain the RNG's lifetime to
 <a href=#6 id=6 data-nosnippet>6</a>//! the BLE controller's. A seed stored in flash breaks that chain: the
 <a href=#7 id=7 data-nosnippet>7</a>//! pool is cryptographically strong from the first instruction of boot,
@@ -12,14 +12,14 @@
 <a href=#12 id=12 data-nosnippet>12</a>//!
 <a href=#13 id=13 data-nosnippet>13</a>//! 1. Read the stored seed `S` and build the pool with
 <a href=#14 id=14 data-nosnippet>14</a>//!    [`EntropyPool::from_seed`]. The working key is `HKDF(S, salt)`
-<a href=#15 id=15 data-nosnippet>15</a>//!    with per-boot salt (chip id, reset reason) — flash never holds
+<a href=#15 id=15 data-nosnippet>15</a>//!    with per-boot salt (chip id, reset reason)—flash never holds
 <a href=#16 id=16 data-nosnippet>16</a>//!    the working key, and a flash image taken later reveals nothing
 <a href=#17 id=17 data-nosnippet>17</a>//!    about this session's outputs.
 <a href=#18 id=18 data-nosnippet>18</a>//! 2. Before the first draw, write [`next_seed`](EntropyPool::next_seed)
 <a href=#19 id=19 data-nosnippet>19</a>//!    to flash and, once the write is confirmed, call
 <a href=#20 id=20 data-nosnippet>20</a>//!    [`seed_committed`](EntropyPool::seed_committed).
 <a href=#21 id=21 data-nosnippet>21</a>//! 3. Draw. [`draw`](EntropyPool::draw) refuses until step 2 has
-<a href=#22 id=22 data-nosnippet>22</a>//!    happened — that ordering is the whole crash-safety story. A boot
+<a href=#22 id=22 data-nosnippet>22</a>//!    happened—that ordering is the whole crash-safety story. A boot
 <a href=#23 id=23 data-nosnippet>23</a>//!    that dies before the commit replays a working key that never
 <a href=#24 id=24 data-nosnippet>24</a>//!    emitted a byte, which is harmless; a boot that dies after it
 <a href=#25 id=25 data-nosnippet>25</a>//!    ratchets forward next time. No boot counter is needed.
@@ -33,7 +33,7 @@
 <a href=#33 id=33 data-nosnippet>33</a>//! [`mix`](EntropyPool::mix) folds harvested entropy into the working
 <a href=#34 id=34 data-nosnippet>34</a>//! key whenever a hardware source happens to be live. Mixing is what
 <a href=#35 id=35 data-nosnippet>35</a>//! heals a compromised or cloned seed file, so callers should persist a
-<a href=#36 id=36 data-nosnippet>36</a>//! fresh [`next_seed`](EntropyPool::next_seed) afterwards — but mixing
+<a href=#36 id=36 data-nosnippet>36</a>//! fresh [`next_seed`](EntropyPool::next_seed) afterwards—but mixing
 <a href=#37 id=37 data-nosnippet>37</a>//! never *invalidates* the commit, because replay safety comes from the
 <a href=#38 id=38 data-nosnippet>38</a>//! boot-time ratchet, not from the stored seed tracking the live key.
 <a href=#39 id=39 data-nosnippet>39</a>//!
@@ -130,7 +130,7 @@
 <a href=#130 id=130 data-nosnippet>130</a>    <span class="doccomment">/// Fold harvested entropy into the working key.
 <a href=#131 id=131 data-nosnippet>131</a>    ///
 <a href=#132 id=132 data-nosnippet>132</a>    /// Hash mixing means adversary-known input cannot reduce the pool's
-<a href=#133 id=133 data-nosnippet>133</a>    /// entropy, only fail to add any — so anything cheap is fair game.
+<a href=#133 id=133 data-nosnippet>133</a>    /// entropy, only fail to add any—so anything cheap is fair game.
 <a href=#134 id=134 data-nosnippet>134</a>    /// Marks the pool dirty: the stored seed no longer reflects the
 <a href=#135 id=135 data-nosnippet>135</a>    /// best key we have, and the caller should persist a fresh
 <a href=#136 id=136 data-nosnippet>136</a>    /// [`next_seed`](Self::next_seed) when convenient.
@@ -242,7 +242,7 @@
 <a href=#242 id=242 data-nosnippet>242</a>        <span class="kw">let </span><span class="kw-2">mut </span>sink = [<span class="number">0u8</span>; <span class="number">32</span>];
 <a href=#243 id=243 data-nosnippet>243</a>        p2.draw(<span class="string">b"a"</span>, <span class="kw-2">&amp;mut </span>sink).unwrap();
 <a href=#244 id=244 data-nosnippet>244</a>        <span class="comment">// p2's live key has ratcheted, but the seed written at commit
-<a href=#245 id=245 data-nosnippet>245</a>        // time is what counts — recompute from a fresh twin.
+<a href=#245 id=245 data-nosnippet>245</a>        // time is what counts—recompute from a fresh twin.
 <a href=#246 id=246 data-nosnippet>246</a>        </span><span class="macro">assert_eq!</span>(pool(<span class="kw-2">&amp;</span>[<span class="number">4</span>; <span class="number">32</span>], <span class="string">b"salt"</span>).next_seed(), persisted);
 <a href=#247 id=247 data-nosnippet>247</a>    }
 <a href=#248 id=248 data-nosnippet>248</a>
@@ -282,16 +282,28 @@
 <a href=#282 id=282 data-nosnippet>282</a>    }
 <a href=#283 id=283 data-nosnippet>283</a>
 <a href=#284 id=284 data-nosnippet>284</a>    <span class="attr">#[test]
-<a href=#285 id=285 data-nosnippet>285</a>    </span><span class="kw">fn </span>mixed_streams_diverge_from_unmixed() {
-<a href=#286 id=286 data-nosnippet>286</a>        <span class="kw">let </span><span class="kw-2">mut </span>a = pool(<span class="kw-2">&amp;</span>[<span class="number">9</span>; <span class="number">32</span>], <span class="string">b"salt"</span>);
-<a href=#287 id=287 data-nosnippet>287</a>        <span class="kw">let </span><span class="kw-2">mut </span>b = pool(<span class="kw-2">&amp;</span>[<span class="number">9</span>; <span class="number">32</span>], <span class="string">b"salt"</span>);
-<a href=#288 id=288 data-nosnippet>288</a>        a.seed_committed();
-<a href=#289 id=289 data-nosnippet>289</a>        b.seed_committed();
-<a href=#290 id=290 data-nosnippet>290</a>        b.mix(<span class="string">b"entropy"</span>);
-<a href=#291 id=291 data-nosnippet>291</a>        <span class="kw">let </span>(<span class="kw-2">mut </span>oa, <span class="kw-2">mut </span>ob) = ([<span class="number">0u8</span>; <span class="number">32</span>], [<span class="number">0u8</span>; <span class="number">32</span>]);
-<a href=#292 id=292 data-nosnippet>292</a>        a.draw(<span class="string">b"x"</span>, <span class="kw-2">&amp;mut </span>oa).unwrap();
-<a href=#293 id=293 data-nosnippet>293</a>        b.draw(<span class="string">b"x"</span>, <span class="kw-2">&amp;mut </span>ob).unwrap();
-<a href=#294 id=294 data-nosnippet>294</a>        <span class="macro">assert_ne!</span>(oa, ob);
-<a href=#295 id=295 data-nosnippet>295</a>    }
-<a href=#296 id=296 data-nosnippet>296</a>}
+<a href=#285 id=285 data-nosnippet>285</a>    </span><span class="kw">fn </span>mixing_and_refreshing_do_not_bypass_the_boot_commit() {
+<a href=#286 id=286 data-nosnippet>286</a>        <span class="kw">let </span><span class="kw-2">mut </span>p = pool(<span class="kw-2">&amp;</span>[<span class="number">8</span>; <span class="number">32</span>], <span class="string">b"salt"</span>);
+<a href=#287 id=287 data-nosnippet>287</a>        p.mix(<span class="string">b"fresh hardware entropy"</span>);
+<a href=#288 id=288 data-nosnippet>288</a>        p.seed_refreshed();
+<a href=#289 id=289 data-nosnippet>289</a>        <span class="kw">let </span><span class="kw-2">mut </span>out = [<span class="number">0xa5</span>; <span class="number">32</span>];
+<a href=#290 id=290 data-nosnippet>290</a>        <span class="macro">assert_eq!</span>(p.draw(<span class="string">b"x"</span>, <span class="kw-2">&amp;mut </span>out), <span class="prelude-val">Err</span>(DrawBeforeCommit));
+<a href=#291 id=291 data-nosnippet>291</a>        <span class="macro">assert_eq!</span>(out, [<span class="number">0xa5</span>; <span class="number">32</span>]);
+<a href=#292 id=292 data-nosnippet>292</a>        p.seed_committed();
+<a href=#293 id=293 data-nosnippet>293</a>        <span class="macro">assert_eq!</span>(p.draw(<span class="string">b"x"</span>, <span class="kw-2">&amp;mut </span>out), <span class="prelude-val">Ok</span>(()));
+<a href=#294 id=294 data-nosnippet>294</a>    }
+<a href=#295 id=295 data-nosnippet>295</a>
+<a href=#296 id=296 data-nosnippet>296</a>    <span class="attr">#[test]
+<a href=#297 id=297 data-nosnippet>297</a>    </span><span class="kw">fn </span>mixed_streams_diverge_from_unmixed() {
+<a href=#298 id=298 data-nosnippet>298</a>        <span class="kw">let </span><span class="kw-2">mut </span>a = pool(<span class="kw-2">&amp;</span>[<span class="number">9</span>; <span class="number">32</span>], <span class="string">b"salt"</span>);
+<a href=#299 id=299 data-nosnippet>299</a>        <span class="kw">let </span><span class="kw-2">mut </span>b = pool(<span class="kw-2">&amp;</span>[<span class="number">9</span>; <span class="number">32</span>], <span class="string">b"salt"</span>);
+<a href=#300 id=300 data-nosnippet>300</a>        a.seed_committed();
+<a href=#301 id=301 data-nosnippet>301</a>        b.seed_committed();
+<a href=#302 id=302 data-nosnippet>302</a>        b.mix(<span class="string">b"entropy"</span>);
+<a href=#303 id=303 data-nosnippet>303</a>        <span class="kw">let </span>(<span class="kw-2">mut </span>oa, <span class="kw-2">mut </span>ob) = ([<span class="number">0u8</span>; <span class="number">32</span>], [<span class="number">0u8</span>; <span class="number">32</span>]);
+<a href=#304 id=304 data-nosnippet>304</a>        a.draw(<span class="string">b"x"</span>, <span class="kw-2">&amp;mut </span>oa).unwrap();
+<a href=#305 id=305 data-nosnippet>305</a>        b.draw(<span class="string">b"x"</span>, <span class="kw-2">&amp;mut </span>ob).unwrap();
+<a href=#306 id=306 data-nosnippet>306</a>        <span class="macro">assert_ne!</span>(oa, ob);
+<a href=#307 id=307 data-nosnippet>307</a>    }
+<a href=#308 id=308 data-nosnippet>308</a>}
 </code></pre></div></section></main></body></html>

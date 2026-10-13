@@ -19,9 +19,9 @@ about a millisecond.</p>
     current_default_region: <a class="enum" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="struct" href="https://doc.rust-lang.org/nightly/alloc/vec/struct.Vec.html" title="struct alloc::vec::Vec">Vec</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.u8.html">u8</a>&gt;&gt;,
 ) -&gt; <a class="enum" href="https://doc.rust-lang.org/nightly/core/result/enum.Result.html" title="enum core::result::Result">Result</a>&lt;<a class="struct" href="struct.MobileRegionProposalRecord.html" title="struct umsh_mobile_core::MobileRegionProposalRecord">MobileRegionProposalRecord</a>, <a class="enum" href="enum.MobileRegionError.html" title="enum umsh_mobile_core::MobileRegionError">MobileRegionError</a>&gt;</h4></section></summary><div class="docblock"><p>Propose a region configuration for a position, against what the
 device currently holds.</p>
-<p>The proposal samples the position’s uncertainty — an identity
+<p>The proposal samples the position’s uncertainty—an identity
 cell’s center and four corners, or a measured fix’s center and
-the four cardinal points of its accuracy circle — and suggests
+the four cardinal points of its accuracy circle—and suggests
 every region any sample hit. A node whose position straddles a
 boundary should usually forward both sides, the same reasoning
 that gives the database its expansion margins; the non-unanimous

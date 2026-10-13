@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["RegionOp","RepeaterOp"],"fn":["format_region","format_regions","print_enabled","region_codes","run","set_enabled"]};
+window.SIDEBAR_ITEMS = {"constant":["RESERVED_IDENTITY"],"enum":["MeshCoreOp","MeshCoreRegionOp","RegionOp","RepeaterOp"],"fn":["format_meshcore_regions","format_region","format_regions","identity_allowed","parse_policy","print_enabled","region_codes","run","set_enabled"]};

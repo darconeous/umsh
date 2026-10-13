@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-e3fe62b3.js";
+            window.path_to_searchindex_js = "searchindex-6c34194f.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-8b6941ec.js"></script>
+        <script src="toc-e4cb2f86.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -200,6 +200,7 @@
 <tr><td>14</td><td><a href="ulcp-saved-state.html#cmd-restore"><code>CMD_RESTORE</code></a></td><td>Host-&gt;Device</td><td><code>CAP_SAVE</code></td></tr>
 <tr><td>15</td><td><a href="ulcp-saved-state.html#cmd-factory-reset"><code>CMD_FACTORY_RESET</code></a></td><td>Host-&gt;Device</td><td>—</td></tr>
 <tr><td>16</td><td><a href="ulcp-core.html#cmd-reboot"><code>CMD_REBOOT</code></a></td><td>Host-&gt;Device</td><td><code>CAP_REBOOT</code></td></tr>
+<tr><td>17</td><td><a href="ulcp-core.html#cmd-dfu"><code>CMD_DFU</code></a></td><td>Host-&gt;Device</td><td>—</td></tr>
 <tr><td>19</td><td><a href="ulcp-device.html#cmd-announce"><code>CMD_ANNOUNCE</code></a></td><td>Host-&gt;Device</td><td><code>CAP_ADVERT</code></td></tr>
 <tr><td>21</td><td><a href="ulcp-core.html#cmd-prop-multi-get"><code>CMD_PROP_MULTI_GET</code></a></td><td>Host-&gt;Device</td><td><code>CAP_CMD_MULTI</code></td></tr>
 <tr><td>22</td><td><a href="ulcp-core.html#cmd-prop-multi-set"><code>CMD_PROP_MULTI_SET</code></a></td><td>Host-&gt;Device</td><td><code>CAP_CMD_MULTI</code></td></tr>
@@ -211,7 +212,7 @@
 </tbody>
 </table>
 </div>
-<p>Command identifiers are 7-bit; 17–18, 20, and 28–127 are unassigned.</p>
+<p>Command identifiers are 7-bit; 18, 20, and 28–127 are unassigned.</p>
 <h2 id="properties-and-streams"><a class="header" href="#properties-and-streams">Properties and Streams</a></h2>
 <p>Identifiers are allocated by state class; see
 <a href="ulcp-core.html#property-allocation">Property Allocation</a>.</p>
@@ -269,6 +270,7 @@
 <tr><td>92</td><td><a href="ulcp-device.html#prop-gnss-precision"><code>PROP_GNSS_PRECISION</code></a></td><td>Get</td><td><code>CAP_GNSS</code></td></tr>
 <tr><td>93</td><td><a href="ulcp-device.html#prop-gnss-satellites"><code>PROP_GNSS_SATELLITES</code></a></td><td>Get</td><td><code>CAP_GNSS</code></td></tr>
 <tr><td>94</td><td><a href="ulcp-device.html#prop-illuminance"><code>PROP_ILLUMINANCE</code></a></td><td>Get</td><td><code>CAP_ILLUMINANCE</code></td></tr>
+<tr><td>95</td><td><a href="ulcp-device.html#prop-temperatures"><code>PROP_TEMPERATURES</code></a></td><td>Get</td><td><code>CAP_TEMPERATURE</code></td></tr>
 <tr><td>96</td><td><a href="ulcp-host.html#prop-host-key"><code>PROP_HOST_KEY</code></a></td><td>Get, Set</td><td><code>CAP_HOST_FILTER</code></td></tr>
 <tr><td>97</td><td><a href="ulcp-host.html#prop-host-channel-keys"><code>PROP_HOST_CHANNEL_KEYS</code></a></td><td>Get, Set, Insert, Remove</td><td><code>CAP_HOST_KEYS</code></td></tr>
 <tr><td>98</td><td><a href="ulcp-host.html#prop-host-peer-keys"><code>PROP_HOST_PEER_KEYS</code></a></td><td>Get, Set, Insert, Remove</td><td><code>CAP_HOST_KEYS</code></td></tr>
@@ -291,6 +293,15 @@
 <tr><td>4838</td><td><a href="ulcp-radio.html#prop-stat-forwarded"><code>PROP_STAT_FORWARDED</code></a></td><td>Get, Set</td><td><code>CAP_STATS</code>, <code>CAP_REPEATER</code></td></tr>
 <tr><td>4839</td><td><a href="ulcp-radio.html#prop-stat-forward-dropped"><code>PROP_STAT_FORWARD_DROPPED</code></a></td><td>Get, Set</td><td><code>CAP_STATS</code>, <code>CAP_REPEATER</code></td></tr>
 <tr><td>4840</td><td><a href="ulcp-radio.html#prop-stat-forward-cancelled"><code>PROP_STAT_FORWARD_CANCELLED</code></a></td><td>Get, Set</td><td><code>CAP_STATS</code>, <code>CAP_REPEATER</code></td></tr>
+<tr><td>4841</td><td><a href="ulcp-radio.html#prop-stat-meshcore-seen"><code>PROP_STAT_MESHCORE_SEEN</code></a></td><td>Get, Set</td><td><code>CAP_STATS</code>, <code>CAP_MESHCORE_FORWARDER</code></td></tr>
+<tr><td>4842</td><td><a href="ulcp-radio.html#prop-stat-meshcore-forwarded-routed"><code>PROP_STAT_MESHCORE_FORWARDED_ROUTED</code></a></td><td>Get, Set</td><td><code>CAP_STATS</code>, <code>CAP_MESHCORE_FORWARDER</code></td></tr>
+<tr><td>4843</td><td><a href="ulcp-radio.html#prop-stat-meshcore-forwarded-flood"><code>PROP_STAT_MESHCORE_FORWARDED_FLOOD</code></a></td><td>Get, Set</td><td><code>CAP_STATS</code>, <code>CAP_MESHCORE_FORWARDER</code></td></tr>
+<tr><td>4844</td><td><a href="ulcp-radio.html#prop-stat-meshcore-declined"><code>PROP_STAT_MESHCORE_DECLINED</code></a></td><td>Get, Set</td><td><code>CAP_STATS</code>, <code>CAP_MESHCORE_FORWARDER</code></td></tr>
+<tr><td>4845</td><td><a href="ulcp-lan-bearer.html#counters"><code>PROP_STAT_LAN_RX</code></a></td><td>Get, Set</td><td><code>CAP_STATS</code>, <code>CAP_LAN_BEARER</code></td></tr>
+<tr><td>4846</td><td><a href="ulcp-lan-bearer.html#counters"><code>PROP_STAT_LAN_RX_LIMITED</code></a></td><td>Get, Set</td><td><code>CAP_STATS</code>, <code>CAP_LAN_BEARER</code></td></tr>
+<tr><td>4847</td><td><a href="ulcp-lan-bearer.html#counters"><code>PROP_STAT_LAN_RX_MALFORMED</code></a></td><td>Get, Set</td><td><code>CAP_STATS</code>, <code>CAP_LAN_BEARER</code></td></tr>
+<tr><td>4848</td><td><a href="ulcp-lan-bearer.html#counters"><code>PROP_STAT_LAN_EXPORTED</code></a></td><td>Get, Set</td><td><code>CAP_STATS</code>, <code>CAP_LAN_BEARER</code></td></tr>
+<tr><td>4849</td><td><a href="ulcp-lan-bearer.html#counters"><code>PROP_STAT_LAN_EXPORT_DROPPED</code></a></td><td>Get, Set</td><td><code>CAP_STATS</code>, <code>CAP_LAN_BEARER</code></td></tr>
 <tr><td>4864</td><td><a href="ulcp-ble.html#prop-ble-pairing-pin"><code>PROP_BLE_PAIRING_PIN</code></a></td><td>Set</td><td>BLE transport</td></tr>
 <tr><td>4865</td><td><a href="app-node-management.html#prop-dev-admins"><code>PROP_DEV_ADMINS</code></a></td><td>Get, Set, Insert, Remove</td><td><code>CAP_ADMIN</code></td></tr>
 <tr><td>4866</td><td><a href="ulcp-device.html#prop-time"><code>PROP_TIME</code></a></td><td>Get, Set, Is</td><td><code>CAP_TIME</code></td></tr>
@@ -303,6 +314,7 @@
 <tr><td>4873</td><td><a href="ulcp-ble.html#prop-ble-link"><code>PROP_BLE_LINK</code></a></td><td>Get, Is</td><td><code>CAP_BLE</code></td></tr>
 <tr><td>4874</td><td><a href="ulcp-ble.html#prop-ble-pairing"><code>PROP_BLE_PAIRING</code></a></td><td>Get, Set, Is</td><td><code>CAP_BLE</code></td></tr>
 <tr><td>4875</td><td><a href="ulcp-device.html#prop-display-motion-wake-enabled"><code>PROP_DISPLAY_MOTION_WAKE_ENABLED</code></a></td><td>Get, Set, Is</td><td><code>CAP_DISPLAY_MOTION_WAKE</code></td></tr>
+<tr><td>4876</td><td><a href="ulcp-device.html#prop-temperature-names"><code>PROP_TEMPERATURE_NAMES</code></a></td><td>Get</td><td><code>CAP_TEMPERATURE</code></td></tr>
 <tr><td>4880</td><td><a href="ulcp-wifi.html#prop-wifi-enabled"><code>PROP_WIFI_ENABLED</code></a></td><td>Get, Set, Is</td><td><code>CAP_WIFI</code></td></tr>
 <tr><td>4881</td><td><a href="ulcp-wifi.html#prop-wifi-networks"><code>PROP_WIFI_NETWORKS</code></a></td><td>Get, Set, Insert, Remove</td><td><code>CAP_WIFI</code></td></tr>
 <tr><td>4882</td><td><a href="ulcp-wifi.html#prop-wifi-network"><code>PROP_WIFI_NETWORK</code></a></td><td>Get, Set, Is</td><td><code>CAP_WIFI</code></td></tr>
@@ -345,6 +357,13 @@
 <tr><td>4958</td><td><a href="ulcp-device.html#prop-battery-gauge-telemetry"><code>PROP_BATTERY_GAUGE_TELEMETRY</code></a></td><td>Get, Is</td><td>Optional with <code>CAP_BATTERY</code>; live counters, temperatures, and estimates</td></tr>
 <tr><td>4960</td><td><a href="ulcp-i2c.html#prop-i2c-buses"><code>PROP_I2C_BUSES</code></a></td><td>Get, Is</td><td><code>CAP_I2C</code></td></tr>
 <tr><td>4961</td><td><a href="ulcp-i2c.html#prop-i2c-devices"><code>PROP_I2C_DEVICES</code></a></td><td>Get, Is</td><td><code>CAP_I2C</code></td></tr>
+<tr><td>4976</td><td><a href="ulcp-device.html#prop-meshcore-forwarding-enabled"><code>PROP_MESHCORE_FORWARDING_ENABLED</code></a></td><td>Get, Set</td><td><code>CAP_MESHCORE_FORWARDER</code></td></tr>
+<tr><td>4977</td><td><a href="ulcp-device.html#prop-meshcore-region-policy"><code>PROP_MESHCORE_REGION_POLICY</code></a></td><td>Get, Set</td><td><code>CAP_MESHCORE_FORWARDER</code></td></tr>
+<tr><td>4978</td><td><a href="ulcp-device.html#prop-meshcore-regions"><code>PROP_MESHCORE_REGIONS</code></a></td><td>Get, Set, Insert, Remove</td><td><code>CAP_MESHCORE_FORWARDER</code></td></tr>
+<tr><td>4992</td><td><a href="ulcp-lan-bearer.html#prop-lan-bearer-enabled"><code>PROP_LAN_BEARER_ENABLED</code></a></td><td>Get, Set</td><td><code>CAP_LAN_BEARER</code></td></tr>
+<tr><td>4993</td><td><a href="ulcp-lan-bearer.html#prop-lan-bearer-group"><code>PROP_LAN_BEARER_GROUP</code></a></td><td>Get, Set</td><td><code>CAP_LAN_BEARER</code></td></tr>
+<tr><td>4994</td><td><a href="ulcp-lan-bearer.html#prop-lan-bearer-ingress-limit"><code>PROP_LAN_BEARER_INGRESS_LIMIT</code></a></td><td>Get, Set</td><td><code>CAP_LAN_BEARER</code></td></tr>
+<tr><td>4995</td><td><a href="ulcp-lan-bearer.html#prop-lan-bearer-state"><code>PROP_LAN_BEARER_STATE</code></a></td><td>Get, Is</td><td><code>CAP_LAN_BEARER</code></td></tr>
 </tbody>
 </table>
 </div>
@@ -388,6 +407,9 @@ is in <a href="ulcp-core.html#capabilities">Capabilities</a>.</p>
 <tr><td>58</td><td><code>CAP_BRIDGE_CLIENT</code></td><td><a href="ulcp-bridge.html#capabilities">Bridge Client</a></td></tr>
 <tr><td>59</td><td><code>CAP_DISPLAY_MOTION_WAKE</code></td><td><a href="ulcp-device.html#display-motion-wake">Device Services</a></td></tr>
 <tr><td>60</td><td><code>CAP_I2C</code></td><td><a href="ulcp-i2c.html#capabilities">I2C Bus Access</a></td></tr>
+<tr><td>61</td><td><code>CAP_TEMPERATURE</code></td><td><a href="ulcp-device.html#capabilities">Device Domain</a></td></tr>
+<tr><td>62</td><td><code>CAP_MESHCORE_FORWARDER</code></td><td><a href="ulcp-device.html#capabilities">Device Domain</a></td></tr>
+<tr><td>63</td><td><code>CAP_LAN_BEARER</code></td><td><a href="ulcp-lan-bearer.html#capabilities">LAN Bearer</a></td></tr>
 <tr><td>515</td><td><code>CAP_PHY_LORA</code></td><td><a href="ulcp-radio.html#capabilities">Radio Control</a></td></tr>
 </tbody>
 </table>
@@ -444,6 +466,7 @@ reserved for them.</p>
 <tr><td>Charge states</td><td>0 discharging, 1 charging, 2 charged, 3 not charging</td><td><a href="ulcp-device.html#prop-battery"><code>PROP_BATTERY</code></a></td></tr>
 <tr><td>Alert states</td><td>0 <code>ALERT_NONE</code>, 1 <code>ALERT_LOCATE</code></td><td><a href="ulcp-device.html#prop-alert"><code>PROP_ALERT</code></a></td></tr>
 <tr><td>Fix quality</td><td>0 none, 1 two-dimensional, 2 three-dimensional</td><td><a href="ulcp-device.html#prop-gnss-fix"><code>PROP_GNSS_FIX</code></a></td></tr>
+<tr><td>MeshCore region policies</td><td>0 open, 1 scoped only, 2 ignore</td><td><a href="ulcp-device.html#prop-meshcore-region-policy"><code>PROP_MESHCORE_REGION_POLICY</code></a></td></tr>
 <tr><td>Transmit flags</td><td>bit 0 <code>TX_FLAG_NOCCA</code>, bit 1 <code>TX_FLAG_NODUTY</code></td><td><a href="ulcp-transport.html#str-radio-raw"><code>STR_PHY_RAW</code></a></td></tr>
 <tr><td>Receive flags</td><td>bit 0 <code>RX_FLAG_BUFFERED</code>, bit 1 <code>RX_FLAG_ACKED</code>, bit 2 <code>RX_FLAG_SELF_TX</code></td><td><a href="ulcp-transport.html#buffered-metadata">Extended Recv Metadata</a></td></tr>
 <tr><td>Session reset reasons</td><td>0 attached, 1 <code>CMD_RST</code>, 2 <code>CMD_RESTORE</code></td><td><a href="ulcp-core.html#cmd-session-reset"><code>CMD_SESSION_RESET</code></a></td></tr>

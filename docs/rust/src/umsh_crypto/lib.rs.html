@@ -317,7 +317,7 @@
 <a href=#317 id=317 data-nosnippet>317</a>        ChannelId(out)
 <a href=#318 id=318 data-nosnippet>318</a>    }
 <a href=#319 id=319 data-nosnippet>319</a>
-<a href=#320 id=320 data-nosnippet>320</a>    <span class="doccomment">/// Derive three bytes for presentation — a deterministic color a user
+<a href=#320 id=320 data-nosnippet>320</a>    <span class="doccomment">/// Derive three bytes for presentation—a deterministic color a user
 <a href=#321 id=321 data-nosnippet>321</a>    /// interface can give a channel.
 <a href=#322 id=322 data-nosnippet>322</a>    ///
 <a href=#323 id=323 data-nosnippet>323</a>    /// This is the channel-identifier derivation run one byte longer, so the
@@ -330,7 +330,7 @@
 <a href=#330 id=330 data-nosnippet>330</a>        out
 <a href=#331 id=331 data-nosnippet>331</a>    }
 <a href=#332 id=332 data-nosnippet>332</a>
-<a href=#333 id=333 data-nosnippet>333</a>    <span class="doccomment">/// Derive the channel tag — a local identity wide enough to tell apart two
+<a href=#333 id=333 data-nosnippet>333</a>    <span class="doccomment">/// Derive the channel tag—a local identity wide enough to tell apart two
 <a href=#334 id=334 data-nosnippet>334</a>    /// channels whose keys derive the same channel identifier.
 <a href=#335 id=335 data-nosnippet>335</a>    ///
 <a href=#336 id=336 data-nosnippet>336</a>    /// Same derivation as the channel identifier, run to sixteen bytes, so the
@@ -395,7 +395,7 @@
 <a href=#395 id=395 data-nosnippet>395</a>    ///
 <a href=#396 id=396 data-nosnippet>396</a>    /// The name is canonicalized first, per the spec (multicast-channels.md
 <a href=#397 id=397 data-nosnippet>397</a>    /// § Named Channels): it must be ASCII, and ASCII letters are folded to
-<a href=#398 id=398 data-nosnippet>398</a>    /// lowercase before derivation — so `Public`, `public`, and `PUBLIC` all
+<a href=#398 id=398 data-nosnippet>398</a>    /// lowercase before derivation—so `Public`, `public`, and `PUBLIC` all
 <a href=#399 id=399 data-nosnippet>399</a>    /// derive the same key. Non-ASCII names are rejected (UTF-8 case-folding
 <a href=#400 id=400 data-nosnippet>400</a>    /// is deferred by the spec). Names longer than
 <a href=#401 id=401 data-nosnippet>401</a>    /// [`MAX_CHANNEL_NAME_LEN`] are rejected as an implementation limit of
@@ -608,7 +608,7 @@
 <a href=#608 id=608 data-nosnippet>608</a>    ///
 <a href=#609 id=609 data-nosnippet>609</a>    /// - **`ack_mic`** = the first 4 bytes of `full_tag`. Because the on-wire
 <a href=#610 id=610 data-nosnippet>610</a>    ///   MIC is a prefix-truncation of the full tag, this equals the first
-<a href=#611 id=611 data-nosnippet>611</a>    ///   4 bytes of the acknowledged packet's on-wire MIC — a *public*
+<a href=#611 id=611 data-nosnippet>611</a>    ///   4 bytes of the acknowledged packet's on-wire MIC—a *public*
 <a href=#612 id=612 data-nosnippet>612</a>    ///   correlation handle any node that received the original packet
 <a href=#613 id=613 data-nosnippet>613</a>    ///   (including forwarding repeaters) can compute.
 <a href=#614 id=614 data-nosnippet>614</a>    /// - **`ack_tag`** = `truncate_4( AES-256-ECB(k_enc, full_tag) )`. A keyed
@@ -647,7 +647,7 @@
 <a href=#647 id=647 data-nosnippet>647</a>
 <a href=#648 id=648 data-nosnippet>648</a>    <span class="doccomment">/// Construct the CTR IV from MIC bytes and SECINFO bytes.
 <a href=#649 id=649 data-nosnippet>649</a>    ///
-<a href=#650 id=650 data-nosnippet>650</a>    /// With a 16-byte MIC the IV is the masked MIC alone — exactly the
+<a href=#650 id=650 data-nosnippet>650</a>    /// With a 16-byte MIC the IV is the masked MIC alone—exactly the
 <a href=#651 id=651 data-nosnippet>651</a>    /// initial counter `Q` from RFC 5297 §2.6; shorter MICs are padded
 <a href=#652 id=652 data-nosnippet>652</a>    /// from the SECINFO bytes, so the IV construction of a received
 <a href=#653 id=653 data-nosnippet>653</a>    /// packet must locate SECINFO exactly (see [`sec_info_bytes_range`]).
@@ -672,7 +672,7 @@
 <a href=#672 id=672 data-nosnippet>672</a>}
 <a href=#673 id=673 data-nosnippet>673</a>
 <a href=#674 id=674 data-nosnippet>674</a><span class="doccomment">/// HKDF-SHA256 over any [`Sha256Provider`], for callers that have no
-<a href=#675 id=675 data-nosnippet>675</a>/// [`CryptoEngine`] — the entropy pool derives keys before any AES
+<a href=#675 id=675 data-nosnippet>675</a>/// [`CryptoEngine`]—the entropy pool derives keys before any AES
 <a href=#676 id=676 data-nosnippet>676</a>/// provider exists.
 <a href=#677 id=677 data-nosnippet>677</a></span><span class="kw">pub fn </span>hkdf_sha256&lt;S: Sha256Provider&gt;(
 <a href=#678 id=678 data-nosnippet>678</a>    sha: <span class="kw-2">&amp;</span>S,
@@ -730,7 +730,7 @@
 <a href=#730 id=730 data-nosnippet>730</a>
 <a href=#731 id=731 data-nosnippet>731</a><span class="doccomment">/// The on-wire SECINFO byte range of a parsed secure packet. In every
 <a href=#732 id=732 data-nosnippet>732</a>/// secure layout (unicast, multicast, blind unicast) SECINFO
-<a href=#733 id=733 data-nosnippet>733</a>/// immediately precedes the options block — not the body, which the
+<a href=#733 id=733 data-nosnippet>733</a>/// immediately precedes the options block—not the body, which the
 <a href=#734 id=734 data-nosnippet>734</a>/// options end marker or a blind address block may separate from it.
 <a href=#735 id=735 data-nosnippet>735</a></span><span class="kw">fn </span>sec_info_bytes_range(header: <span class="kw-2">&amp;</span>PacketHeader) -&gt; <span class="prelude-ty">Result</span>&lt;Range&lt;usize&gt;, CryptoError&gt; {
 <a href=#736 id=736 data-nosnippet>736</a>    <span class="kw">let </span>sec_info = header.sec_info.ok_or(CryptoError::InvalidPacket)<span class="question-mark">?</span>;
@@ -1019,7 +1019,7 @@
 <a href=#1019 id=1019 data-nosnippet>1019</a>        <span class="macro">assert_eq!</span>(engine.aes_cmac(<span class="kw-2">&amp;</span>key, <span class="kw-2">&amp;</span>[<span class="kw-2">&amp;</span>msg]), expected);
 <a href=#1020 id=1020 data-nosnippet>1020</a>    }
 <a href=#1021 id=1021 data-nosnippet>1021</a>
-<a href=#1022 id=1022 data-nosnippet>1022</a>    <span class="doccomment">/// NIST SP 800-38A Section F.5.5 — AES-256 CTR mode, single block.
+<a href=#1022 id=1022 data-nosnippet>1022</a>    <span class="doccomment">/// NIST SP 800-38A Section F.5.5—AES-256 CTR mode, single block.
 <a href=#1023 id=1023 data-nosnippet>1023</a>    </span><span class="attr">#[cfg(feature = <span class="string">"software-crypto"</span>)]
 <a href=#1024 id=1024 data-nosnippet>1024</a>    #[test]
 <a href=#1025 id=1025 data-nosnippet>1025</a>    </span><span class="kw">fn </span>aes_ctr_matches_nist_sp800_38a_block_1() {
@@ -1031,7 +1031,7 @@
 <a href=#1031 id=1031 data-nosnippet>1031</a>        <span class="macro">assert_eq!</span>(data, hex_vec(<span class="string">"601ec313775789a5b7a7f504bbf3d228"</span>));
 <a href=#1032 id=1032 data-nosnippet>1032</a>    }
 <a href=#1033 id=1033 data-nosnippet>1033</a>
-<a href=#1034 id=1034 data-nosnippet>1034</a>    <span class="doccomment">/// NIST SP 800-38A Section F.5.5 — AES-256 CTR mode, 4 blocks.
+<a href=#1034 id=1034 data-nosnippet>1034</a>    <span class="doccomment">/// NIST SP 800-38A Section F.5.5—AES-256 CTR mode, 4 blocks.
 <a href=#1035 id=1035 data-nosnippet>1035</a>    /// Verifies counter increment across multiple blocks.
 <a href=#1036 id=1036 data-nosnippet>1036</a>    </span><span class="attr">#[cfg(feature = <span class="string">"software-crypto"</span>)]
 <a href=#1037 id=1037 data-nosnippet>1037</a>    #[test]
@@ -1055,7 +1055,7 @@
 <a href=#1055 id=1055 data-nosnippet>1055</a>        <span class="macro">assert_eq!</span>(data, expected);
 <a href=#1056 id=1056 data-nosnippet>1056</a>    }
 <a href=#1057 id=1057 data-nosnippet>1057</a>
-<a href=#1058 id=1058 data-nosnippet>1058</a>    <span class="doccomment">/// NIST SP 800-38A Section F.5.6 — CTR decrypt (symmetric operation).
+<a href=#1058 id=1058 data-nosnippet>1058</a>    <span class="doccomment">/// NIST SP 800-38A Section F.5.6—CTR decrypt (symmetric operation).
 <a href=#1059 id=1059 data-nosnippet>1059</a>    </span><span class="attr">#[cfg(feature = <span class="string">"software-crypto"</span>)]
 <a href=#1060 id=1060 data-nosnippet>1060</a>    #[test]
 <a href=#1061 id=1061 data-nosnippet>1061</a>    </span><span class="kw">fn </span>aes_ctr_decrypt_matches_nist_sp800_38a() {
@@ -1131,7 +1131,7 @@
 <a href=#1131 id=1131 data-nosnippet>1131</a>        }
 <a href=#1132 id=1132 data-nosnippet>1132</a>    }
 <a href=#1133 id=1133 data-nosnippet>1133</a>
-<a href=#1134 id=1134 data-nosnippet>1134</a>    <span class="doccomment">/// RFC 5297 Appendix A.1 — deterministic authenticated encryption.
+<a href=#1134 id=1134 data-nosnippet>1134</a>    <span class="doccomment">/// RFC 5297 Appendix A.1—deterministic authenticated encryption.
 <a href=#1135 id=1135 data-nosnippet>1135</a>    /// Exercises the single-AD path and S2V's dbl-and-pad branch (the
 <a href=#1136 id=1136 data-nosnippet>1136</a>    /// 14-byte plaintext is shorter than a block).
 <a href=#1137 id=1137 data-nosnippet>1137</a>    </span><span class="attr">#[cfg(feature = <span class="string">"software-crypto"</span>)]
@@ -1157,7 +1157,7 @@
 <a href=#1157 id=1157 data-nosnippet>1157</a>        <span class="macro">assert_eq!</span>(data, hex_vec(<span class="string">"40c02b9690c4dc04daef7f6afe5c"</span>));
 <a href=#1158 id=1158 data-nosnippet>1158</a>    }
 <a href=#1159 id=1159 data-nosnippet>1159</a>
-<a href=#1160 id=1160 data-nosnippet>1160</a>    <span class="doccomment">/// RFC 5297 Appendix A.2 — nonce-based authenticated encryption.
+<a href=#1160 id=1160 data-nosnippet>1160</a>    <span class="doccomment">/// RFC 5297 Appendix A.2—nonce-based authenticated encryption.
 <a href=#1161 id=1161 data-nosnippet>1161</a>    /// Exercises multiple S2V components and the xorend branch (the
 <a href=#1162 id=1162 data-nosnippet>1162</a>    /// 47-byte plaintext spans multiple blocks).
 <a href=#1163 id=1163 data-nosnippet>1163</a>    </span><span class="attr">#[cfg(feature = <span class="string">"software-crypto"</span>)]
@@ -1384,7 +1384,7 @@
 <a href=#1384 id=1384 data-nosnippet>1384</a>    }
 <a href=#1385 id=1385 data-nosnippet>1385</a>
 <a href=#1386 id=1386 data-nosnippet>1386</a>    <span class="doccomment">/// Regression: with a MIC shorter than 16 bytes the CTR IV includes
-<a href=#1387 id=1387 data-nosnippet>1387</a>    /// SECINFO bytes, and SECINFO precedes the options block — not the
+<a href=#1387 id=1387 data-nosnippet>1387</a>    /// SECINFO bytes, and SECINFO precedes the options block—not the
 <a href=#1388 id=1388 data-nosnippet>1388</a>    /// body, which the options end marker separates from it. The IV of
 <a href=#1389 id=1389 data-nosnippet>1389</a>    /// a received packet must be built from the true SECINFO position
 <a href=#1390 id=1390 data-nosnippet>1390</a>    /// or decryption diverges from sealing.
@@ -1672,7 +1672,7 @@
 <a href=#1672 id=1672 data-nosnippet>1672</a>    </span><span class="kw">fn </span>software_identity_generate_produces_valid_key() {
 <a href=#1673 id=1673 data-nosnippet>1673</a>        <span class="kw">use </span>rand_core::{CryptoRng, RngCore};
 <a href=#1674 id=1674 data-nosnippet>1674</a>
-<a href=#1675 id=1675 data-nosnippet>1675</a>        <span class="comment">// Minimal deterministic RNG for testing — counter-based, not cryptographically
+<a href=#1675 id=1675 data-nosnippet>1675</a>        <span class="comment">// Minimal deterministic RNG for testing—counter-based, not cryptographically
 <a href=#1676 id=1676 data-nosnippet>1676</a>        // strong, but sufficient to exercise the generate() code path.
 <a href=#1677 id=1677 data-nosnippet>1677</a>        </span><span class="kw">struct </span>CounterRng(u64);
 <a href=#1678 id=1678 data-nosnippet>1678</a>        <span class="kw">impl </span>RngCore <span class="kw">for </span>CounterRng {
@@ -1907,7 +1907,7 @@
 <a href=#1907 id=1907 data-nosnippet>1907</a>    #[test]
 <a href=#1908 id=1908 data-nosnippet>1908</a>    </span><span class="kw">fn </span>is_valid_ed25519_public_key_accepts_real_key() {
 <a href=#1909 id=1909 data-nosnippet>1909</a>        <span class="comment">// Any verifying key produced by a SigningKey is by construction a
-<a href=#1910 id=1910 data-nosnippet>1910</a>        // valid Ed25519 point — the validator must accept it.
+<a href=#1910 id=1910 data-nosnippet>1910</a>        // valid Ed25519 point—the validator must accept it.
 <a href=#1911 id=1911 data-nosnippet>1911</a>        </span><span class="kw">let </span>identity = SoftwareIdentity::from_secret_bytes(<span class="kw-2">&amp;</span>[<span class="number">0x11</span>; <span class="number">32</span>]);
 <a href=#1912 id=1912 data-nosnippet>1912</a>        <span class="macro">assert!</span>(is_valid_ed25519_public_key(identity.public_key()));
 <a href=#1913 id=1913 data-nosnippet>1913</a>    }
@@ -1917,7 +1917,7 @@
 <a href=#1917 id=1917 data-nosnippet>1917</a>    </span><span class="kw">fn </span>is_valid_ed25519_public_key_rejects_non_curve_bytes() {
 <a href=#1918 id=1918 data-nosnippet>1918</a>        <span class="comment">// Y = 2 (little-endian) is not on the Ed25519 curve: the
 <a href=#1919 id=1919 data-nosnippet>1919</a>        // recovered x^2 from the curve equation has no square root in
-<a href=#1920 id=1920 data-nosnippet>1920</a>        // GF(2^255 - 19). Confirm the validator rejects it — this is
+<a href=#1920 id=1920 data-nosnippet>1920</a>        // GF(2^255 - 19). Confirm the validator rejects it—this is
 <a href=#1921 id=1921 data-nosnippet>1921</a>        // the exact failure mode a user typo trips when they paste a
 <a href=#1922 id=1922 data-nosnippet>1922</a>        // mistyped hex pubkey on the CLI.
 <a href=#1923 id=1923 data-nosnippet>1923</a>        </span><span class="kw">let </span><span class="kw-2">mut </span>bytes = [<span class="number">0u8</span>; <span class="number">32</span>];

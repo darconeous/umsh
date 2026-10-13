@@ -3,8 +3,8 @@
 <a href=#3 id=3 data-nosnippet>3</a>//! This is the part that would otherwise be copied into every firmware:
 <a href=#4 id=4 data-nosnippet>4</a>//! power the receiver when it is wanted, read its UART, hand each
 <a href=#5 id=5 data-nosnippet>5</a>//! completed fix upward, and put it back to sleep when it is not. It is
-<a href=#6 id=6 data-nosnippet>6</a>//! generic over the three things that actually differ between boards —
-<a href=#7 id=7 data-nosnippet>7</a>//! the byte stream, the power sequencing, and what is done with a fix —
+<a href=#6 id=6 data-nosnippet>6</a>//! generic over the three things that actually differ between boards—
+<a href=#7 id=7 data-nosnippet>7</a>//! the byte stream, the power sequencing, and what is done with a fix—
 <a href=#8 id=8 data-nosnippet>8</a>//! so a new board contributes those and nothing else.
 <a href=#9 id=9 data-nosnippet>9</a>//!
 <a href=#10 id=10 data-nosnippet>10</a>//! `#[embassy_executor::task]` functions cannot be generic, so a firmware
@@ -34,8 +34,8 @@
 <a href=#34 id=34 data-nosnippet>34</a>
 <a href=#35 id=35 data-nosnippet>35</a><span class="doccomment">/// The exact `embedded-io-async` [`run`] is generic over.
 <a href=#36 id=36 data-nosnippet>36</a>///
-<a href=#37 id=37 data-nosnippet>37</a>/// Re-exported because a consumer that wraps its UART — to count bytes
-<a href=#38 id=38 data-nosnippet>38</a>/// during bringup, to inject a fault — has to implement *this* crate's
+<a href=#37 id=37 data-nosnippet>37</a>/// Re-exported because a consumer that wraps its UART—to count bytes
+<a href=#38 id=38 data-nosnippet>38</a>/// during bringup, to inject a fault—has to implement *this* crate's
 <a href=#39 id=39 data-nosnippet>39</a>/// `Read`, and a workspace can easily hold two versions of it. Without
 <a href=#40 id=40 data-nosnippet>40</a>/// this the wrapper compiles and then fails the bound with an error that
 <a href=#41 id=41 data-nosnippet>41</a>/// points at the impl and says it does not exist.
@@ -49,7 +49,7 @@
 <a href=#49 id=49 data-nosnippet>49</a>/// up, in milliseconds.
 <a href=#50 id=50 data-nosnippet>50</a>///
 <a href=#51 id=51 data-nosnippet>51</a>/// A receiver whose backup domain stayed powered emits a dated `RMC`
-<a href=#52 id=52 data-nosnippet>52</a>/// within a second or two of its main domain coming up — it is reading
+<a href=#52 id=52 data-nosnippet>52</a>/// within a second or two of its main domain coming up—it is reading
 <a href=#53 id=53 data-nosnippet>53</a>/// its own clock, not searching for satellites. Ten seconds is generous
 <a href=#54 id=54 data-nosnippet>54</a>/// enough to cover a slow start and short enough that a receiver which
 <a href=#55 id=55 data-nosnippet>55</a>/// has lost its clock does not hold up a boot.
@@ -81,7 +81,7 @@
 <a href=#81 id=81 data-nosnippet>81</a>    <span class="doccomment">/// Put the receiver in the lowest power state this board can reach.
 <a href=#82 id=82 data-nosnippet>82</a>    ///
 <a href=#83 id=83 data-nosnippet>83</a>    /// On a board whose receiver holds the only surviving real-time
-<a href=#84 id=84 data-nosnippet>84</a>    /// clock, that state keeps the backup domain alive — which is not an
+<a href=#84 id=84 data-nosnippet>84</a>    /// clock, that state keeps the backup domain alive—which is not an
 <a href=#85 id=85 data-nosnippet>85</a>    /// exception to "off means off" so much as a statement that the
 <a href=#86 id=86 data-nosnippet>86</a>    /// domain in question is a clock rather than a receiver.
 <a href=#87 id=87 data-nosnippet>87</a>    </span><span class="kw">async fn </span>power_off(<span class="kw-2">&amp;mut </span><span class="self">self</span>);
@@ -98,7 +98,7 @@
 <a href=#98 id=98 data-nosnippet>98</a>    <span class="doccomment">/// One completed fix cycle.
 <a href=#99 id=99 data-nosnippet>99</a>    ///
 <a href=#100 id=100 data-nosnippet>100</a>    /// Called for every cycle, including the empty ones a searching
-<a href=#101 id=101 data-nosnippet>101</a>    /// receiver produces — "still nothing" is a fact worth having, and a
+<a href=#101 id=101 data-nosnippet>101</a>    /// receiver produces—"still nothing" is a fact worth having, and a
 <a href=#102 id=102 data-nosnippet>102</a>    /// sink that only heard about successes could not tell a receiver
 <a href=#103 id=103 data-nosnippet>103</a>    /// that is searching from one that is not running.
 <a href=#104 id=104 data-nosnippet>104</a>    </span><span class="kw">async fn </span>fix(<span class="kw-2">&amp;mut </span><span class="self">self</span>, fix: <span class="kw-2">&amp;</span>Fix);
@@ -154,7 +154,7 @@
 <a href=#154 id=154 data-nosnippet>154</a>
 <a href=#155 id=155 data-nosnippet>155</a>    <span class="comment">// Park the receiver before anything else. The pump owns its power
 <a href=#156 id=156 data-nosnippet>156</a>    // state from here on, and whatever state it was left in belongs to
-<a href=#157 id=157 data-nosnippet>157</a>    // whoever ran before — a bootloader, a previous image, or a reset
+<a href=#157 id=157 data-nosnippet>157</a>    // whoever ran before—a bootloader, a previous image, or a reset
 <a href=#158 id=158 data-nosnippet>158</a>    // that did not reach the pin.
 <a href=#159 id=159 data-nosnippet>159</a>    </span>power.power_off().<span class="kw">await</span>;
 <a href=#160 id=160 data-nosnippet>160</a>
@@ -208,11 +208,11 @@
 <a href=#208 id=208 data-nosnippet>208</a>/// For boards where the receiver's own real-time-clock domain is the only
 <a href=#209 id=209 data-nosnippet>209</a>/// clock that survives a power cycle. The domain cannot speak a UART on
 <a href=#210 id=210 data-nosnippet>210</a>/// its own, so reading it mechanically requires bringing the main domain
-<a href=#211 id=211 data-nosnippet>211</a>/// up — but what is being read is a clock, and everything positional seen
+<a href=#211 id=211 data-nosnippet>211</a>/// up—but what is being read is a clock, and everything positional seen
 <a href=#212 id=212 data-nosnippet>212</a>/// along the way is discarded.
 <a href=#213 id=213 data-nosnippet>213</a>///
 <a href=#214 id=214 data-nosnippet>214</a>/// Returns the first instant the receiver reports, or `None` if it
-<a href=#215 id=215 data-nosnippet>215</a>/// reports none within [`RTC_READ_TIMEOUT_MS`] — which is what a receiver
+<a href=#215 id=215 data-nosnippet>215</a>/// reports none within [`RTC_READ_TIMEOUT_MS`]—which is what a receiver
 <a href=#216 id=216 data-nosnippet>216</a>/// that lost its backup power looks like.
 <a href=#217 id=217 data-nosnippet>217</a>///
 <a href=#218 id=218 data-nosnippet>218</a>/// The caller decides whether to believe the answer: this is governed by

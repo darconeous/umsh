@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"mod":["panic_persist","rescue"]};
+window.SIDEBAR_ITEMS = {"mod":["panic_persist","rescue","usb"]};

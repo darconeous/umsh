@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["encode_value","format_value","get","letter","malformed","nearest","number","report","resolve","same_name","scalar","set","spell"],"struct":["PropArg"]};
+window.SIDEBAR_ITEMS = {"fn":["batchable","encode_value","format_value","get","letter","malformed","nearest","number","report","resolve","same_name","scalar","set","spell"],"struct":["PropArg"]};

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["ConfigError"],"fn":["enable_full_access","exit_configuration_update","has_separate_temperature","inspect_configuration"]};

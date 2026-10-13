@@ -8,7 +8,7 @@
     pub supported_regions: <a class="enum" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="struct" href="https://doc.rust-lang.org/nightly/alloc/vec/struct.Vec.html" title="struct alloc::vec::Vec">Vec</a>&lt;<a class="struct" href="https://doc.rust-lang.org/nightly/alloc/string/struct.String.html" title="struct alloc::string::String">String</a>&gt;&gt;,
     pub clock: <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.fn.html">fn</a>() -&gt; <a class="enum" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.u32.html">u32</a>&gt;,
 }</code></pre><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>This node’s own identity, used to answer Identity Requests.</p>
-<p>Holds descriptive fields only — <strong>no signing key</strong>. Config-like fields
+<p>Holds descriptive fields only—<strong>no signing key</strong>. Config-like fields
 (<code>role</code>, <code>capabilities</code>, <code>name</code>, <code>supported_regions</code>) are typically set once
 at bring-up; live fields (<code>location</code>, <code>altitude_m</code>) can be refreshed at any
 time via <a href="../struct.LocalNode.html#method.update_identity_profile" title="method umsh_node::LocalNode::update_identity_profile"><code>LocalNode::update_identity_profile</code></a>,
@@ -22,7 +22,7 @@ fit (node-identity.md § Supported Regions).</p>
 </div><span id="structfield.clock" class="structfield section-header"><a href="#structfield.clock" class="anchor field">§</a><code>clock: <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.fn.html">fn</a>() -&gt; <a class="enum" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.u32.html">u32</a>&gt;</code></span><div class="docblock"><p>Where identity option 3 comes from: the current Unix time, or
 <code>None</code> on a node that does not know what time it is.</p>
 <p>A source rather than a value, because option 3 dates the <em>payload</em>
-and every payload is built fresh — a stored number would be the
+and every payload is built fresh—a stored number would be the
 time some earlier payload was built. It lives here so that the one
 canonical builder stamps every framing identically; a node with no
 clock keeps the default and simply omits the option.</p>

@@ -7,7 +7,7 @@
 <a href=#7 id=7 data-nosnippet>7</a>//! not that the part is missing (hardware doc §5.3). So a board brings
 <a href=#8 id=8 data-nosnippet>8</a>//! this driver up before it probes anything else.
 <a href=#9 id=9 data-nosnippet>9</a>//!
-<a href=#10 id=10 data-nosnippet>10</a>//! The surface here is deliberately narrow — rails, charging, telemetry,
+<a href=#10 id=10 data-nosnippet>10</a>//! The surface here is deliberately narrow—rails, charging, telemetry,
 <a href=#11 id=11 data-nosnippet>11</a>//! interrupts, and the power key. The AXP2101 does considerably more
 <a href=#12 id=12 data-nosnippet>12</a>//! (JEITA profiles, watchdogs, sleep sequencing, backup-battery
 <a href=#13 id=13 data-nosnippet>13</a>//! charging); none of it is reachable through UMSH, so none of it is
@@ -98,7 +98,7 @@
 <a href=#98 id=98 data-nosnippet>98</a>///
 <a href=#99 id=99 data-nosnippet>99</a>/// - **DCDC1**, the MCU core supply on every board UMSH supports.
 <a href=#100 id=100 data-nosnippet>100</a>///   Clearing its bit switches off the processor doing the clearing, so
-<a href=#101 id=101 data-nosnippet>101</a>///   no value of this type can name it — the mistake is unrepresentable
+<a href=#101 id=101 data-nosnippet>101</a>///   no value of this type can name it—the mistake is unrepresentable
 <a href=#102 id=102 data-nosnippet>102</a>///   rather than runtime-guarded.
 <a href=#103 id=103 data-nosnippet>103</a>/// - **CPUSLDO**, whose load is unattributed on the boards we have. An
 <a href=#104 id=104 data-nosnippet>104</a>///   output nobody has traced is not an output to switch off blind.
@@ -242,7 +242,7 @@
 <a href=#242 id=242 data-nosnippet>242</a><span class="doccomment">/// Who drives the charge LED.
 <a href=#243 id=243 data-nosnippet>243</a></span><span class="attr">#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 <a href=#244 id=244 data-nosnippet>244</a></span><span class="kw">pub enum </span>ChargeLed {
-<a href=#245 id=245 data-nosnippet>245</a>    <span class="doccomment">/// The charger drives it — the board's default, and what LILYGO
+<a href=#245 id=245 data-nosnippet>245</a>    <span class="doccomment">/// The charger drives it—the board's default, and what LILYGO
 <a href=#246 id=246 data-nosnippet>246</a>    /// ships. Prefer this: the LED is wired to the PMIC's charge logic,
 <a href=#247 id=247 data-nosnippet>247</a>    /// not to a free GPIO, so firmware "status LED" use of it is a lie
 <a href=#248 id=248 data-nosnippet>248</a>    /// about what the light means (hardware doc §6.4, §14.5).
@@ -262,7 +262,7 @@
 <a href=#262 id=262 data-nosnippet>262</a>
 <a href=#263 id=263 data-nosnippet>263</a><span class="kw">impl </span>IrqMask {
 <a href=#264 id=264 data-nosnippet>264</a>    <span class="kw">pub const </span>NONE: IrqMask = IrqMask(<span class="number">0</span>);
-<a href=#265 id=265 data-nosnippet>265</a>    <span class="doccomment">/// Every bit the part defines — used to clear stale status at boot.
+<a href=#265 id=265 data-nosnippet>265</a>    <span class="doccomment">/// Every bit the part defines—used to clear stale status at boot.
 <a href=#266 id=266 data-nosnippet>266</a>    </span><span class="kw">pub const </span>ALL: IrqMask = IrqMask(<span class="number">0x00FF_FFFF</span>);
 <a href=#267 id=267 data-nosnippet>267</a>
 <a href=#268 id=268 data-nosnippet>268</a>    <span class="comment">// Register 0x41.
@@ -418,7 +418,7 @@
 <a href=#418 id=418 data-nosnippet>418</a>        <span class="prelude-val">Ok</span>(decode_rail_mv(<span class="self">self</span>.read(rail.voltage_reg()).<span class="kw">await</span><span class="question-mark">?</span>))
 <a href=#419 id=419 data-nosnippet>419</a>    }
 <a href=#420 id=420 data-nosnippet>420</a>
-<a href=#421 id=421 data-nosnippet>421</a>    <span class="doccomment">/// Set a rail's voltage and switch it on, in that order — bringing a
+<a href=#421 id=421 data-nosnippet>421</a>    <span class="doccomment">/// Set a rail's voltage and switch it on, in that order—bringing a
 <a href=#422 id=422 data-nosnippet>422</a>    /// rail up at whatever the previous session left configured can
 <a href=#423 id=423 data-nosnippet>423</a>    /// overvolt what is behind it.
 <a href=#424 id=424 data-nosnippet>424</a>    </span><span class="kw">pub async fn </span>enable_rail_at(<span class="kw-2">&amp;mut </span><span class="self">self</span>, rail: Rail, millivolts: u16) -&gt; <span class="prelude-ty">Result</span>&lt;(), I::Error&gt; {
@@ -428,7 +428,7 @@
 <a href=#428 id=428 data-nosnippet>428</a>
 <a href=#429 id=429 data-nosnippet>429</a>    <span class="doccomment">/// Switch off an output this board does not use.
 <a href=#430 id=430 data-nosnippet>430</a>    ///
-<a href=#431 id=431 data-nosnippet>431</a>    /// Read-modify-write, so the neighboring bits — DCDC1's included —
+<a href=#431 id=431 data-nosnippet>431</a>    /// Read-modify-write, so the neighboring bits—DCDC1's included—
 <a href=#432 id=432 data-nosnippet>432</a>    /// come back unchanged.
 <a href=#433 id=433 data-nosnippet>433</a>    </span><span class="kw">pub async fn </span>disable_unused(<span class="kw-2">&amp;mut </span><span class="self">self</span>, output: UnusedOutput) -&gt; <span class="prelude-ty">Result</span>&lt;(), I::Error&gt; {
 <a href=#434 id=434 data-nosnippet>434</a>        <span class="kw">let </span>(register, bit) = output.enable_bit();
@@ -527,178 +527,208 @@
 <a href=#527 id=527 data-nosnippet>527</a>        <span class="prelude-val">Ok</span>(())
 <a href=#528 id=528 data-nosnippet>528</a>    }
 <a href=#529 id=529 data-nosnippet>529</a>
-<a href=#530 id=530 data-nosnippet>530</a>    <span class="doccomment">/// Switch the TS (battery thermistor) ADC channel on or off.
-<a href=#531 id=531 data-nosnippet>531</a>    ///
-<a href=#532 id=532 data-nosnippet>532</a>    /// Only for a board that has confirmed its TS pin is populated. Two
-<a href=#533 id=533 data-nosnippet>533</a>    /// things are unproven here and both want a board to answer them:
-<a href=#534 id=534 data-nosnippet>534</a>    /// whether the part gates the charger's response to TS separately
-<a href=#535 id=535 data-nosnippet>535</a>    /// from this ADC channel, and whether the populated part is a real
-<a href=#536 id=536 data-nosnippet>536</a>    /// NTC or the fixed resistor often fitted in its place to keep the
-<a href=#537 id=537 data-nosnippet>537</a>    /// charger from folding back. A reading that tracks ambient
-<a href=#538 id=538 data-nosnippet>538</a>    /// temperature settles the second; a reading that sits still does
-<a href=#539 id=539 data-nosnippet>539</a>    /// not.
-<a href=#540 id=540 data-nosnippet>540</a>    </span><span class="kw">pub async fn </span>set_thermistor_measurement(<span class="kw-2">&amp;mut </span><span class="self">self</span>, on: bool) -&gt; <span class="prelude-ty">Result</span>&lt;(), I::Error&gt; {
-<a href=#541 id=541 data-nosnippet>541</a>        <span class="self">self</span>.set_bit(reg::ADC_CHANNEL_CTRL, reg::ADC_CH_TS, on)
-<a href=#542 id=542 data-nosnippet>542</a>            .<span class="kw">await
-<a href=#543 id=543 data-nosnippet>543</a>    </span>}
-<a href=#544 id=544 data-nosnippet>544</a>
-<a href=#545 id=545 data-nosnippet>545</a>    <span class="doccomment">/// Raw TS ADC counts.
-<a href=#546 id=546 data-nosnippet>546</a>    ///
-<a href=#547 id=547 data-nosnippet>547</a>    /// Deliberately unscaled: unlike the voltage channels this one is
-<a href=#548 id=548 data-nosnippet>548</a>    /// not 1 mV/LSB, and inventing a conversion before a board has been
-<a href=#549 id=549 data-nosnippet>549</a>    /// warmed up and watched would be a temperature reading nobody had
-<a href=#550 id=550 data-nosnippet>550</a>    /// checked. Compare successive values, do not display this.
-<a href=#551 id=551 data-nosnippet>551</a>    </span><span class="kw">pub async fn </span>thermistor_raw(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;u16, I::Error&gt; {
-<a href=#552 id=552 data-nosnippet>552</a>        <span class="self">self</span>.read_adc(reg::ADC_TS_H, reg::ADC_TS_L, reg::ADC_H6_MASK)
-<a href=#553 id=553 data-nosnippet>553</a>            .<span class="kw">await
-<a href=#554 id=554 data-nosnippet>554</a>    </span>}
-<a href=#555 id=555 data-nosnippet>555</a>
-<a href=#556 id=556 data-nosnippet>556</a>    <span class="kw">pub async fn </span>battery_present(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;bool, I::Error&gt; {
-<a href=#557 id=557 data-nosnippet>557</a>        <span class="self">self</span>.get_bit(reg::STATUS1, reg::STATUS1_BATTERY_PRESENT)
-<a href=#558 id=558 data-nosnippet>558</a>            .<span class="kw">await
-<a href=#559 id=559 data-nosnippet>559</a>    </span>}
-<a href=#560 id=560 data-nosnippet>560</a>
-<a href=#561 id=561 data-nosnippet>561</a>    <span class="kw">pub async fn </span>vbus_present(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;bool, I::Error&gt; {
-<a href=#562 id=562 data-nosnippet>562</a>        <span class="self">self</span>.get_bit(reg::STATUS1, reg::STATUS1_VBUS_GOOD).<span class="kw">await
-<a href=#563 id=563 data-nosnippet>563</a>    </span>}
-<a href=#564 id=564 data-nosnippet>564</a>
-<a href=#565 id=565 data-nosnippet>565</a>    <span class="doccomment">/// Battery voltage in millivolts, or `None` with no cell attached —
-<a href=#566 id=566 data-nosnippet>566</a>    /// the ADC reads a meaningless value rather than nothing.
-<a href=#567 id=567 data-nosnippet>567</a>    </span><span class="kw">pub async fn </span>battery_millivolts(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;u16&gt;, I::Error&gt; {
-<a href=#568 id=568 data-nosnippet>568</a>        <span class="kw">if </span>!<span class="self">self</span>.battery_present().<span class="kw">await</span><span class="question-mark">? </span>{
-<a href=#569 id=569 data-nosnippet>569</a>            <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>);
-<a href=#570 id=570 data-nosnippet>570</a>        }
-<a href=#571 id=571 data-nosnippet>571</a>        <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(
-<a href=#572 id=572 data-nosnippet>572</a>            <span class="self">self</span>.read_adc(reg::ADC_VBAT_H, reg::ADC_VBAT_L, reg::ADC_H5_MASK)
-<a href=#573 id=573 data-nosnippet>573</a>                .<span class="kw">await</span><span class="question-mark">?</span>,
-<a href=#574 id=574 data-nosnippet>574</a>        ))
-<a href=#575 id=575 data-nosnippet>575</a>    }
-<a href=#576 id=576 data-nosnippet>576</a>
-<a href=#577 id=577 data-nosnippet>577</a>    <span class="doccomment">/// VBUS voltage in millivolts, or `None` when nothing is plugged in.
-<a href=#578 id=578 data-nosnippet>578</a>    </span><span class="kw">pub async fn </span>vbus_millivolts(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;u16&gt;, I::Error&gt; {
-<a href=#579 id=579 data-nosnippet>579</a>        <span class="kw">if </span>!<span class="self">self</span>.vbus_present().<span class="kw">await</span><span class="question-mark">? </span>{
-<a href=#580 id=580 data-nosnippet>580</a>            <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>);
-<a href=#581 id=581 data-nosnippet>581</a>        }
-<a href=#582 id=582 data-nosnippet>582</a>        <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(
-<a href=#583 id=583 data-nosnippet>583</a>            <span class="self">self</span>.read_adc(reg::ADC_VBUS_H, reg::ADC_VBUS_L, reg::ADC_H6_MASK)
-<a href=#584 id=584 data-nosnippet>584</a>                .<span class="kw">await</span><span class="question-mark">?</span>,
-<a href=#585 id=585 data-nosnippet>585</a>        ))
-<a href=#586 id=586 data-nosnippet>586</a>    }
-<a href=#587 id=587 data-nosnippet>587</a>
-<a href=#588 id=588 data-nosnippet>588</a>    <span class="doccomment">/// System voltage in millivolts.
-<a href=#589 id=589 data-nosnippet>589</a>    </span><span class="kw">pub async fn </span>system_millivolts(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;u16, I::Error&gt; {
-<a href=#590 id=590 data-nosnippet>590</a>        <span class="self">self</span>.read_adc(reg::ADC_VSYS_H, reg::ADC_VSYS_L, reg::ADC_H6_MASK)
-<a href=#591 id=591 data-nosnippet>591</a>            .<span class="kw">await
-<a href=#592 id=592 data-nosnippet>592</a>    </span>}
-<a href=#593 id=593 data-nosnippet>593</a>
-<a href=#594 id=594 data-nosnippet>594</a>    <span class="doccomment">/// Fuel-gauge state of charge, whole percent.
-<a href=#595 id=595 data-nosnippet>595</a>    ///
-<a href=#596 id=596 data-nosnippet>596</a>    /// `None` with no cell attached, and also when the gauge reports a
-<a href=#597 id=597 data-nosnippet>597</a>    /// value outside 0–100 — it returns 0xFF until it has learned the
-<a href=#598 id=598 data-nosnippet>598</a>    /// pack, which a caller must not show as 255%.
-<a href=#599 id=599 data-nosnippet>599</a>    </span><span class="kw">pub async fn </span>battery_percent(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;u8&gt;, I::Error&gt; {
-<a href=#600 id=600 data-nosnippet>600</a>        <span class="kw">if </span>!<span class="self">self</span>.battery_present().<span class="kw">await</span><span class="question-mark">? </span>{
-<a href=#601 id=601 data-nosnippet>601</a>            <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>);
-<a href=#602 id=602 data-nosnippet>602</a>        }
-<a href=#603 id=603 data-nosnippet>603</a>        <span class="kw">let </span>raw = <span class="self">self</span>.read(reg::BAT_PERCENT_DATA).<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#604 id=604 data-nosnippet>604</a>        <span class="prelude-val">Ok</span>(<span class="kw">if </span>raw &lt;= <span class="number">100 </span>{ <span class="prelude-val">Some</span>(raw) } <span class="kw">else </span>{ <span class="prelude-val">None </span>})
+<a href=#530 id=530 data-nosnippet>530</a>    <span class="doccomment">/// Enable continuous acquisition of the internal die temperature.
+<a href=#531 id=531 data-nosnippet>531</a>    </span><span class="kw">pub async fn </span>set_die_temperature_measurement(<span class="kw-2">&amp;mut </span><span class="self">self</span>, on: bool) -&gt; <span class="prelude-ty">Result</span>&lt;(), I::Error&gt; {
+<a href=#532 id=532 data-nosnippet>532</a>        <span class="self">self</span>.set_bit(reg::ADC_CHANNEL_CTRL, reg::ADC_CH_TDIE, on)
+<a href=#533 id=533 data-nosnippet>533</a>            .<span class="kw">await
+<a href=#534 id=534 data-nosnippet>534</a>    </span>}
+<a href=#535 id=535 data-nosnippet>535</a>
+<a href=#536 id=536 data-nosnippet>536</a>    <span class="doccomment">/// Latest die ADC acquisition, in tenths of a kelvin. Disabled, saturated,
+<a href=#537 id=537 data-nosnippet>537</a>    /// and nonphysical conversions are unavailable. This does not enable the
+<a href=#538 id=538 data-nosnippet>538</a>    /// channel or read the external TS input.
+<a href=#539 id=539 data-nosnippet>539</a>    </span><span class="kw">pub async fn </span>die_temperature(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;u16&gt;, I::Error&gt; {
+<a href=#540 id=540 data-nosnippet>540</a>        <span class="kw">if </span>!<span class="self">self
+<a href=#541 id=541 data-nosnippet>541</a>            </span>.get_bit(reg::ADC_CHANNEL_CTRL, reg::ADC_CH_TDIE)
+<a href=#542 id=542 data-nosnippet>542</a>            .<span class="kw">await</span><span class="question-mark">?
+<a href=#543 id=543 data-nosnippet>543</a>        </span>{
+<a href=#544 id=544 data-nosnippet>544</a>            <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>);
+<a href=#545 id=545 data-nosnippet>545</a>        }
+<a href=#546 id=546 data-nosnippet>546</a>        <span class="kw">let </span>raw = <span class="self">self
+<a href=#547 id=547 data-nosnippet>547</a>            </span>.read_adc(reg::ADC_TDIE_H, reg::ADC_TDIE_L, reg::ADC_H6_MASK)
+<a href=#548 id=548 data-nosnippet>548</a>            .<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#549 id=549 data-nosnippet>549</a>        <span class="kw">if </span>raw == <span class="number">0 </span>|| raw == <span class="number">0x3fff </span>{
+<a href=#550 id=550 data-nosnippet>550</a>            <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>);
+<a href=#551 id=551 data-nosnippet>551</a>        }
+<a href=#552 id=552 data-nosnippet>552</a>        <span class="comment">// XPowersLib AXP2101 conversion: 22 C + (7274 - raw) / 20.
+<a href=#553 id=553 data-nosnippet>553</a>        // In twentieths of kelvin: 5903 + 7274 - raw. Round only once.
+<a href=#554 id=554 data-nosnippet>554</a>        </span><span class="kw">let </span>kelvin_twentieths = <span class="number">13177 </span>- i32::from(raw);
+<a href=#555 id=555 data-nosnippet>555</a>        <span class="prelude-val">Ok</span>(u16::try_from((kelvin_twentieths + <span class="number">1</span>) / <span class="number">2</span>)
+<a href=#556 id=556 data-nosnippet>556</a>            .ok()
+<a href=#557 id=557 data-nosnippet>557</a>            .filter(|<span class="kw">_</span>| kelvin_twentieths &gt;= <span class="number">0</span>))
+<a href=#558 id=558 data-nosnippet>558</a>    }
+<a href=#559 id=559 data-nosnippet>559</a>
+<a href=#560 id=560 data-nosnippet>560</a>    <span class="doccomment">/// Switch the TS (battery thermistor) ADC channel on or off.
+<a href=#561 id=561 data-nosnippet>561</a>    ///
+<a href=#562 id=562 data-nosnippet>562</a>    /// Only for a board that has confirmed its TS pin is populated. Two
+<a href=#563 id=563 data-nosnippet>563</a>    /// things are unproven here and both want a board to answer them:
+<a href=#564 id=564 data-nosnippet>564</a>    /// whether the part gates the charger's response to TS separately
+<a href=#565 id=565 data-nosnippet>565</a>    /// from this ADC channel, and whether the populated part is a real
+<a href=#566 id=566 data-nosnippet>566</a>    /// NTC or the fixed resistor often fitted in its place to keep the
+<a href=#567 id=567 data-nosnippet>567</a>    /// charger from folding back. A reading that tracks ambient
+<a href=#568 id=568 data-nosnippet>568</a>    /// temperature settles the second; a reading that sits still does
+<a href=#569 id=569 data-nosnippet>569</a>    /// not.
+<a href=#570 id=570 data-nosnippet>570</a>    </span><span class="kw">pub async fn </span>set_thermistor_measurement(<span class="kw-2">&amp;mut </span><span class="self">self</span>, on: bool) -&gt; <span class="prelude-ty">Result</span>&lt;(), I::Error&gt; {
+<a href=#571 id=571 data-nosnippet>571</a>        <span class="self">self</span>.set_bit(reg::ADC_CHANNEL_CTRL, reg::ADC_CH_TS, on)
+<a href=#572 id=572 data-nosnippet>572</a>            .<span class="kw">await
+<a href=#573 id=573 data-nosnippet>573</a>    </span>}
+<a href=#574 id=574 data-nosnippet>574</a>
+<a href=#575 id=575 data-nosnippet>575</a>    <span class="doccomment">/// Raw TS ADC counts.
+<a href=#576 id=576 data-nosnippet>576</a>    ///
+<a href=#577 id=577 data-nosnippet>577</a>    /// Deliberately unscaled: unlike the voltage channels this one is
+<a href=#578 id=578 data-nosnippet>578</a>    /// not 1 mV/LSB, and inventing a conversion before a board has been
+<a href=#579 id=579 data-nosnippet>579</a>    /// warmed up and watched would be a temperature reading nobody had
+<a href=#580 id=580 data-nosnippet>580</a>    /// checked. Compare successive values, do not display this.
+<a href=#581 id=581 data-nosnippet>581</a>    </span><span class="kw">pub async fn </span>thermistor_raw(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;u16, I::Error&gt; {
+<a href=#582 id=582 data-nosnippet>582</a>        <span class="self">self</span>.read_adc(reg::ADC_TS_H, reg::ADC_TS_L, reg::ADC_H6_MASK)
+<a href=#583 id=583 data-nosnippet>583</a>            .<span class="kw">await
+<a href=#584 id=584 data-nosnippet>584</a>    </span>}
+<a href=#585 id=585 data-nosnippet>585</a>
+<a href=#586 id=586 data-nosnippet>586</a>    <span class="kw">pub async fn </span>battery_present(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;bool, I::Error&gt; {
+<a href=#587 id=587 data-nosnippet>587</a>        <span class="self">self</span>.get_bit(reg::STATUS1, reg::STATUS1_BATTERY_PRESENT)
+<a href=#588 id=588 data-nosnippet>588</a>            .<span class="kw">await
+<a href=#589 id=589 data-nosnippet>589</a>    </span>}
+<a href=#590 id=590 data-nosnippet>590</a>
+<a href=#591 id=591 data-nosnippet>591</a>    <span class="kw">pub async fn </span>vbus_present(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;bool, I::Error&gt; {
+<a href=#592 id=592 data-nosnippet>592</a>        <span class="self">self</span>.get_bit(reg::STATUS1, reg::STATUS1_VBUS_GOOD).<span class="kw">await
+<a href=#593 id=593 data-nosnippet>593</a>    </span>}
+<a href=#594 id=594 data-nosnippet>594</a>
+<a href=#595 id=595 data-nosnippet>595</a>    <span class="doccomment">/// Battery voltage in millivolts, or `None` with no cell attached—
+<a href=#596 id=596 data-nosnippet>596</a>    /// the ADC reads a meaningless value rather than nothing.
+<a href=#597 id=597 data-nosnippet>597</a>    </span><span class="kw">pub async fn </span>battery_millivolts(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;u16&gt;, I::Error&gt; {
+<a href=#598 id=598 data-nosnippet>598</a>        <span class="kw">if </span>!<span class="self">self</span>.battery_present().<span class="kw">await</span><span class="question-mark">? </span>{
+<a href=#599 id=599 data-nosnippet>599</a>            <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>);
+<a href=#600 id=600 data-nosnippet>600</a>        }
+<a href=#601 id=601 data-nosnippet>601</a>        <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(
+<a href=#602 id=602 data-nosnippet>602</a>            <span class="self">self</span>.read_adc(reg::ADC_VBAT_H, reg::ADC_VBAT_L, reg::ADC_H5_MASK)
+<a href=#603 id=603 data-nosnippet>603</a>                .<span class="kw">await</span><span class="question-mark">?</span>,
+<a href=#604 id=604 data-nosnippet>604</a>        ))
 <a href=#605 id=605 data-nosnippet>605</a>    }
 <a href=#606 id=606 data-nosnippet>606</a>
-<a href=#607 id=607 data-nosnippet>607</a>    <span class="comment">// ── Interrupts ──
-<a href=#608 id=608 data-nosnippet>608</a>
-<a href=#609 id=609 data-nosnippet>609</a>    </span><span class="doccomment">/// Clear every latched IRQ status bit.
-<a href=#610 id=610 data-nosnippet>610</a>    ///
-<a href=#611 id=611 data-nosnippet>611</a>    /// Do this before enabling interrupts at boot: the part latches
-<a href=#612 id=612 data-nosnippet>612</a>    /// events from before the MCU was running, and an unhandled latched
-<a href=#613 id=613 data-nosnippet>613</a>    /// bit holds the IRQ line asserted so no edge ever arrives.
-<a href=#614 id=614 data-nosnippet>614</a>    </span><span class="kw">pub async fn </span>clear_all_irqs(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;(), I::Error&gt; {
-<a href=#615 id=615 data-nosnippet>615</a>        <span class="kw">for </span>register <span class="kw">in </span>reg::INTSTS {
-<a href=#616 id=616 data-nosnippet>616</a>            <span class="self">self</span>.write(register, <span class="number">0xFF</span>).<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#617 id=617 data-nosnippet>617</a>        }
-<a href=#618 id=618 data-nosnippet>618</a>        <span class="prelude-val">Ok</span>(())
-<a href=#619 id=619 data-nosnippet>619</a>    }
-<a href=#620 id=620 data-nosnippet>620</a>
-<a href=#621 id=621 data-nosnippet>621</a>    <span class="doccomment">/// Replace the enabled-interrupt set.
-<a href=#622 id=622 data-nosnippet>622</a>    </span><span class="kw">pub async fn </span>set_irq_enabled(<span class="kw-2">&amp;mut </span><span class="self">self</span>, mask: IrqMask) -&gt; <span class="prelude-ty">Result</span>&lt;(), I::Error&gt; {
-<a href=#623 id=623 data-nosnippet>623</a>        <span class="kw">for </span>(register, byte) <span class="kw">in </span>reg::INTEN.iter().zip(mask.bytes()) {
-<a href=#624 id=624 data-nosnippet>624</a>            <span class="self">self</span>.write(<span class="kw-2">*</span>register, byte).<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#625 id=625 data-nosnippet>625</a>        }
-<a href=#626 id=626 data-nosnippet>626</a>        <span class="prelude-val">Ok</span>(())
-<a href=#627 id=627 data-nosnippet>627</a>    }
-<a href=#628 id=628 data-nosnippet>628</a>
-<a href=#629 id=629 data-nosnippet>629</a>    <span class="doccomment">/// Read the latched interrupt status without clearing it.
-<a href=#630 id=630 data-nosnippet>630</a>    </span><span class="kw">pub async fn </span>irq_status(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;IrqMask, I::Error&gt; {
-<a href=#631 id=631 data-nosnippet>631</a>        <span class="kw">let </span><span class="kw-2">mut </span>bytes = [<span class="number">0u8</span>; <span class="number">3</span>];
-<a href=#632 id=632 data-nosnippet>632</a>        <span class="kw">for </span>(slot, register) <span class="kw">in </span>bytes.iter_mut().zip(reg::INTSTS) {
-<a href=#633 id=633 data-nosnippet>633</a>            <span class="kw-2">*</span>slot = <span class="self">self</span>.read(register).<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#634 id=634 data-nosnippet>634</a>        }
-<a href=#635 id=635 data-nosnippet>635</a>        <span class="prelude-val">Ok</span>(IrqMask::from_bytes(bytes))
-<a href=#636 id=636 data-nosnippet>636</a>    }
-<a href=#637 id=637 data-nosnippet>637</a>
-<a href=#638 id=638 data-nosnippet>638</a>    <span class="doccomment">/// Read the latched interrupt status and clear exactly the bits that
-<a href=#639 id=639 data-nosnippet>639</a>    /// were read, so an event arriving mid-call is not lost.
-<a href=#640 id=640 data-nosnippet>640</a>    </span><span class="kw">pub async fn </span>take_irqs(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;IrqMask, I::Error&gt; {
-<a href=#641 id=641 data-nosnippet>641</a>        <span class="kw">let </span><span class="kw-2">mut </span>bytes = [<span class="number">0u8</span>; <span class="number">3</span>];
-<a href=#642 id=642 data-nosnippet>642</a>        <span class="kw">for </span>(slot, register) <span class="kw">in </span>bytes.iter_mut().zip(reg::INTSTS) {
-<a href=#643 id=643 data-nosnippet>643</a>            <span class="kw-2">*</span>slot = <span class="self">self</span>.read(register).<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#644 id=644 data-nosnippet>644</a>        }
-<a href=#645 id=645 data-nosnippet>645</a>        <span class="kw">for </span>(register, byte) <span class="kw">in </span>reg::INTSTS.iter().zip(bytes) {
-<a href=#646 id=646 data-nosnippet>646</a>            <span class="kw">if </span><span class="macro">byte !</span>= <span class="number">0 </span>{
-<a href=#647 id=647 data-nosnippet>647</a>                <span class="self">self</span>.write(<span class="kw-2">*</span>register, byte).<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#648 id=648 data-nosnippet>648</a>            }
-<a href=#649 id=649 data-nosnippet>649</a>        }
-<a href=#650 id=650 data-nosnippet>650</a>        <span class="prelude-val">Ok</span>(IrqMask::from_bytes(bytes))
-<a href=#651 id=651 data-nosnippet>651</a>    }
-<a href=#652 id=652 data-nosnippet>652</a>
-<a href=#653 id=653 data-nosnippet>653</a>    <span class="comment">// ── Power key ──
-<a href=#654 id=654 data-nosnippet>654</a>
-<a href=#655 id=655 data-nosnippet>655</a>    </span><span class="doccomment">/// How long the POWER key must be held to power the board on.
-<a href=#656 id=656 data-nosnippet>656</a>    </span><span class="kw">pub async fn </span>set_power_on_press(<span class="kw-2">&amp;mut </span><span class="self">self</span>, press: PowerOnPress) -&gt; <span class="prelude-ty">Result</span>&lt;(), I::Error&gt; {
-<a href=#657 id=657 data-nosnippet>657</a>        <span class="self">self</span>.update(reg::IRQ_OFF_ON_LEVEL_CTRL, reg::PRESS_ON_MASK, press <span class="kw">as </span>u8)
-<a href=#658 id=658 data-nosnippet>658</a>            .<span class="kw">await
-<a href=#659 id=659 data-nosnippet>659</a>    </span>}
-<a href=#660 id=660 data-nosnippet>660</a>
-<a href=#661 id=661 data-nosnippet>661</a>    <span class="doccomment">/// How long the POWER key must be held to force the board off. This
-<a href=#662 id=662 data-nosnippet>662</a>    /// is the PMIC's own hard power-off, independent of any firmware
-<a href=#663 id=663 data-nosnippet>663</a>    /// gesture.
-<a href=#664 id=664 data-nosnippet>664</a>    </span><span class="kw">pub async fn </span>set_power_off_press(<span class="kw-2">&amp;mut </span><span class="self">self</span>, press: PowerOffPress) -&gt; <span class="prelude-ty">Result</span>&lt;(), I::Error&gt; {
-<a href=#665 id=665 data-nosnippet>665</a>        <span class="self">self</span>.update(
-<a href=#666 id=666 data-nosnippet>666</a>            reg::IRQ_OFF_ON_LEVEL_CTRL,
-<a href=#667 id=667 data-nosnippet>667</a>            reg::PRESS_OFF_MASK,
-<a href=#668 id=668 data-nosnippet>668</a>            (press <span class="kw">as </span>u8) &lt;&lt; reg::PRESS_OFF_SHIFT,
-<a href=#669 id=669 data-nosnippet>669</a>        )
-<a href=#670 id=670 data-nosnippet>670</a>        .<span class="kw">await
-<a href=#671 id=671 data-nosnippet>671</a>    </span>}
-<a href=#672 id=672 data-nosnippet>672</a>
-<a href=#673 id=673 data-nosnippet>673</a>    <span class="doccomment">/// Ask the PMIC to cut power.
-<a href=#674 id=674 data-nosnippet>674</a>    ///
-<a href=#675 id=675 data-nosnippet>675</a>    /// Returns once the request is written; the rails fall shortly after,
-<a href=#676 id=676 data-nosnippet>676</a>    /// so a caller must not expect execution to continue meaningfully.
-<a href=#677 id=677 data-nosnippet>677</a>    /// The board comes back with a POWER key press — no firmware runs in
-<a href=#678 id=678 data-nosnippet>678</a>    /// between.
-<a href=#679 id=679 data-nosnippet>679</a>    </span><span class="kw">pub async fn </span>power_off(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;(), I::Error&gt; {
-<a href=#680 id=680 data-nosnippet>680</a>        <span class="self">self</span>.set_bit(reg::COMMON_CONFIG, reg::COMMON_CONFIG_SOFT_POWEROFF, <span class="bool-val">true</span>)
-<a href=#681 id=681 data-nosnippet>681</a>            .<span class="kw">await
-<a href=#682 id=682 data-nosnippet>682</a>    </span>}
-<a href=#683 id=683 data-nosnippet>683</a>}
+<a href=#607 id=607 data-nosnippet>607</a>    <span class="doccomment">/// VBUS voltage in millivolts, or `None` when nothing is plugged in.
+<a href=#608 id=608 data-nosnippet>608</a>    </span><span class="kw">pub async fn </span>vbus_millivolts(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;u16&gt;, I::Error&gt; {
+<a href=#609 id=609 data-nosnippet>609</a>        <span class="kw">if </span>!<span class="self">self</span>.vbus_present().<span class="kw">await</span><span class="question-mark">? </span>{
+<a href=#610 id=610 data-nosnippet>610</a>            <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>);
+<a href=#611 id=611 data-nosnippet>611</a>        }
+<a href=#612 id=612 data-nosnippet>612</a>        <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(
+<a href=#613 id=613 data-nosnippet>613</a>            <span class="self">self</span>.read_adc(reg::ADC_VBUS_H, reg::ADC_VBUS_L, reg::ADC_H6_MASK)
+<a href=#614 id=614 data-nosnippet>614</a>                .<span class="kw">await</span><span class="question-mark">?</span>,
+<a href=#615 id=615 data-nosnippet>615</a>        ))
+<a href=#616 id=616 data-nosnippet>616</a>    }
+<a href=#617 id=617 data-nosnippet>617</a>
+<a href=#618 id=618 data-nosnippet>618</a>    <span class="doccomment">/// System voltage in millivolts.
+<a href=#619 id=619 data-nosnippet>619</a>    </span><span class="kw">pub async fn </span>system_millivolts(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;u16, I::Error&gt; {
+<a href=#620 id=620 data-nosnippet>620</a>        <span class="self">self</span>.read_adc(reg::ADC_VSYS_H, reg::ADC_VSYS_L, reg::ADC_H6_MASK)
+<a href=#621 id=621 data-nosnippet>621</a>            .<span class="kw">await
+<a href=#622 id=622 data-nosnippet>622</a>    </span>}
+<a href=#623 id=623 data-nosnippet>623</a>
+<a href=#624 id=624 data-nosnippet>624</a>    <span class="doccomment">/// Fuel-gauge state of charge, whole percent.
+<a href=#625 id=625 data-nosnippet>625</a>    ///
+<a href=#626 id=626 data-nosnippet>626</a>    /// `None` with no cell attached, and also when the gauge reports a
+<a href=#627 id=627 data-nosnippet>627</a>    /// value outside 0–100—it returns 0xFF until it has learned the
+<a href=#628 id=628 data-nosnippet>628</a>    /// pack, which a caller must not show as 255%.
+<a href=#629 id=629 data-nosnippet>629</a>    </span><span class="kw">pub async fn </span>battery_percent(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;u8&gt;, I::Error&gt; {
+<a href=#630 id=630 data-nosnippet>630</a>        <span class="kw">if </span>!<span class="self">self</span>.battery_present().<span class="kw">await</span><span class="question-mark">? </span>{
+<a href=#631 id=631 data-nosnippet>631</a>            <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>);
+<a href=#632 id=632 data-nosnippet>632</a>        }
+<a href=#633 id=633 data-nosnippet>633</a>        <span class="kw">let </span>raw = <span class="self">self</span>.read(reg::BAT_PERCENT_DATA).<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#634 id=634 data-nosnippet>634</a>        <span class="prelude-val">Ok</span>(<span class="kw">if </span>raw &lt;= <span class="number">100 </span>{ <span class="prelude-val">Some</span>(raw) } <span class="kw">else </span>{ <span class="prelude-val">None </span>})
+<a href=#635 id=635 data-nosnippet>635</a>    }
+<a href=#636 id=636 data-nosnippet>636</a>
+<a href=#637 id=637 data-nosnippet>637</a>    <span class="comment">// ── Interrupts ──
+<a href=#638 id=638 data-nosnippet>638</a>
+<a href=#639 id=639 data-nosnippet>639</a>    </span><span class="doccomment">/// Clear every latched IRQ status bit.
+<a href=#640 id=640 data-nosnippet>640</a>    ///
+<a href=#641 id=641 data-nosnippet>641</a>    /// Do this before enabling interrupts at boot: the part latches
+<a href=#642 id=642 data-nosnippet>642</a>    /// events from before the MCU was running, and an unhandled latched
+<a href=#643 id=643 data-nosnippet>643</a>    /// bit holds the IRQ line asserted so no edge ever arrives.
+<a href=#644 id=644 data-nosnippet>644</a>    </span><span class="kw">pub async fn </span>clear_all_irqs(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;(), I::Error&gt; {
+<a href=#645 id=645 data-nosnippet>645</a>        <span class="kw">for </span>register <span class="kw">in </span>reg::INTSTS {
+<a href=#646 id=646 data-nosnippet>646</a>            <span class="self">self</span>.write(register, <span class="number">0xFF</span>).<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#647 id=647 data-nosnippet>647</a>        }
+<a href=#648 id=648 data-nosnippet>648</a>        <span class="prelude-val">Ok</span>(())
+<a href=#649 id=649 data-nosnippet>649</a>    }
+<a href=#650 id=650 data-nosnippet>650</a>
+<a href=#651 id=651 data-nosnippet>651</a>    <span class="doccomment">/// Replace the enabled-interrupt set.
+<a href=#652 id=652 data-nosnippet>652</a>    </span><span class="kw">pub async fn </span>set_irq_enabled(<span class="kw-2">&amp;mut </span><span class="self">self</span>, mask: IrqMask) -&gt; <span class="prelude-ty">Result</span>&lt;(), I::Error&gt; {
+<a href=#653 id=653 data-nosnippet>653</a>        <span class="kw">for </span>(register, byte) <span class="kw">in </span>reg::INTEN.iter().zip(mask.bytes()) {
+<a href=#654 id=654 data-nosnippet>654</a>            <span class="self">self</span>.write(<span class="kw-2">*</span>register, byte).<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#655 id=655 data-nosnippet>655</a>        }
+<a href=#656 id=656 data-nosnippet>656</a>        <span class="prelude-val">Ok</span>(())
+<a href=#657 id=657 data-nosnippet>657</a>    }
+<a href=#658 id=658 data-nosnippet>658</a>
+<a href=#659 id=659 data-nosnippet>659</a>    <span class="doccomment">/// Read the latched interrupt status without clearing it.
+<a href=#660 id=660 data-nosnippet>660</a>    </span><span class="kw">pub async fn </span>irq_status(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;IrqMask, I::Error&gt; {
+<a href=#661 id=661 data-nosnippet>661</a>        <span class="kw">let </span><span class="kw-2">mut </span>bytes = [<span class="number">0u8</span>; <span class="number">3</span>];
+<a href=#662 id=662 data-nosnippet>662</a>        <span class="kw">for </span>(slot, register) <span class="kw">in </span>bytes.iter_mut().zip(reg::INTSTS) {
+<a href=#663 id=663 data-nosnippet>663</a>            <span class="kw-2">*</span>slot = <span class="self">self</span>.read(register).<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#664 id=664 data-nosnippet>664</a>        }
+<a href=#665 id=665 data-nosnippet>665</a>        <span class="prelude-val">Ok</span>(IrqMask::from_bytes(bytes))
+<a href=#666 id=666 data-nosnippet>666</a>    }
+<a href=#667 id=667 data-nosnippet>667</a>
+<a href=#668 id=668 data-nosnippet>668</a>    <span class="doccomment">/// Read the latched interrupt status and clear exactly the bits that
+<a href=#669 id=669 data-nosnippet>669</a>    /// were read, so an event arriving mid-call is not lost.
+<a href=#670 id=670 data-nosnippet>670</a>    </span><span class="kw">pub async fn </span>take_irqs(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;IrqMask, I::Error&gt; {
+<a href=#671 id=671 data-nosnippet>671</a>        <span class="kw">let </span><span class="kw-2">mut </span>bytes = [<span class="number">0u8</span>; <span class="number">3</span>];
+<a href=#672 id=672 data-nosnippet>672</a>        <span class="kw">for </span>(slot, register) <span class="kw">in </span>bytes.iter_mut().zip(reg::INTSTS) {
+<a href=#673 id=673 data-nosnippet>673</a>            <span class="kw-2">*</span>slot = <span class="self">self</span>.read(register).<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#674 id=674 data-nosnippet>674</a>        }
+<a href=#675 id=675 data-nosnippet>675</a>        <span class="kw">for </span>(register, byte) <span class="kw">in </span>reg::INTSTS.iter().zip(bytes) {
+<a href=#676 id=676 data-nosnippet>676</a>            <span class="kw">if </span><span class="macro">byte !</span>= <span class="number">0 </span>{
+<a href=#677 id=677 data-nosnippet>677</a>                <span class="self">self</span>.write(<span class="kw-2">*</span>register, byte).<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#678 id=678 data-nosnippet>678</a>            }
+<a href=#679 id=679 data-nosnippet>679</a>        }
+<a href=#680 id=680 data-nosnippet>680</a>        <span class="prelude-val">Ok</span>(IrqMask::from_bytes(bytes))
+<a href=#681 id=681 data-nosnippet>681</a>    }
+<a href=#682 id=682 data-nosnippet>682</a>
+<a href=#683 id=683 data-nosnippet>683</a>    <span class="comment">// ── Power key ──
 <a href=#684 id=684 data-nosnippet>684</a>
-<a href=#685 id=685 data-nosnippet>685</a><span class="doccomment">/// POWER-key hold needed to switch the board on.
-<a href=#686 id=686 data-nosnippet>686</a></span><span class="attr">#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-<a href=#687 id=687 data-nosnippet>687</a>#[repr(u8)]
-<a href=#688 id=688 data-nosnippet>688</a></span><span class="kw">pub enum </span>PowerOnPress {
-<a href=#689 id=689 data-nosnippet>689</a>    Ms128 = <span class="number">0</span>,
-<a href=#690 id=690 data-nosnippet>690</a>    Ms512 = <span class="number">1</span>,
-<a href=#691 id=691 data-nosnippet>691</a>    S1 = <span class="number">2</span>,
-<a href=#692 id=692 data-nosnippet>692</a>    S2 = <span class="number">3</span>,
-<a href=#693 id=693 data-nosnippet>693</a>}
-<a href=#694 id=694 data-nosnippet>694</a>
-<a href=#695 id=695 data-nosnippet>695</a><span class="doccomment">/// POWER-key hold needed to force the board off.
-<a href=#696 id=696 data-nosnippet>696</a></span><span class="attr">#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-<a href=#697 id=697 data-nosnippet>697</a>#[repr(u8)]
-<a href=#698 id=698 data-nosnippet>698</a></span><span class="kw">pub enum </span>PowerOffPress {
-<a href=#699 id=699 data-nosnippet>699</a>    S4 = <span class="number">0</span>,
-<a href=#700 id=700 data-nosnippet>700</a>    S6 = <span class="number">1</span>,
-<a href=#701 id=701 data-nosnippet>701</a>    S8 = <span class="number">2</span>,
-<a href=#702 id=702 data-nosnippet>702</a>    S10 = <span class="number">3</span>,
-<a href=#703 id=703 data-nosnippet>703</a>}
+<a href=#685 id=685 data-nosnippet>685</a>    </span><span class="doccomment">/// How long the POWER key must be held to power the board on.
+<a href=#686 id=686 data-nosnippet>686</a>    </span><span class="kw">pub async fn </span>set_power_on_press(<span class="kw-2">&amp;mut </span><span class="self">self</span>, press: PowerOnPress) -&gt; <span class="prelude-ty">Result</span>&lt;(), I::Error&gt; {
+<a href=#687 id=687 data-nosnippet>687</a>        <span class="self">self</span>.update(reg::IRQ_OFF_ON_LEVEL_CTRL, reg::PRESS_ON_MASK, press <span class="kw">as </span>u8)
+<a href=#688 id=688 data-nosnippet>688</a>            .<span class="kw">await
+<a href=#689 id=689 data-nosnippet>689</a>    </span>}
+<a href=#690 id=690 data-nosnippet>690</a>
+<a href=#691 id=691 data-nosnippet>691</a>    <span class="doccomment">/// How long the POWER key must be held to force the board off. This
+<a href=#692 id=692 data-nosnippet>692</a>    /// is the PMIC's own hard power-off, independent of any firmware
+<a href=#693 id=693 data-nosnippet>693</a>    /// gesture.
+<a href=#694 id=694 data-nosnippet>694</a>    </span><span class="kw">pub async fn </span>set_power_off_press(<span class="kw-2">&amp;mut </span><span class="self">self</span>, press: PowerOffPress) -&gt; <span class="prelude-ty">Result</span>&lt;(), I::Error&gt; {
+<a href=#695 id=695 data-nosnippet>695</a>        <span class="self">self</span>.update(
+<a href=#696 id=696 data-nosnippet>696</a>            reg::IRQ_OFF_ON_LEVEL_CTRL,
+<a href=#697 id=697 data-nosnippet>697</a>            reg::PRESS_OFF_MASK,
+<a href=#698 id=698 data-nosnippet>698</a>            (press <span class="kw">as </span>u8) &lt;&lt; reg::PRESS_OFF_SHIFT,
+<a href=#699 id=699 data-nosnippet>699</a>        )
+<a href=#700 id=700 data-nosnippet>700</a>        .<span class="kw">await
+<a href=#701 id=701 data-nosnippet>701</a>    </span>}
+<a href=#702 id=702 data-nosnippet>702</a>
+<a href=#703 id=703 data-nosnippet>703</a>    <span class="doccomment">/// Ask the PMIC to cut power.
+<a href=#704 id=704 data-nosnippet>704</a>    ///
+<a href=#705 id=705 data-nosnippet>705</a>    /// Returns once the request is written; the rails fall shortly after,
+<a href=#706 id=706 data-nosnippet>706</a>    /// so a caller must not expect execution to continue meaningfully.
+<a href=#707 id=707 data-nosnippet>707</a>    /// The board comes back with a POWER key press—no firmware runs in
+<a href=#708 id=708 data-nosnippet>708</a>    /// between.
+<a href=#709 id=709 data-nosnippet>709</a>    </span><span class="kw">pub async fn </span>power_off(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;(), I::Error&gt; {
+<a href=#710 id=710 data-nosnippet>710</a>        <span class="self">self</span>.set_bit(reg::COMMON_CONFIG, reg::COMMON_CONFIG_SOFT_POWEROFF, <span class="bool-val">true</span>)
+<a href=#711 id=711 data-nosnippet>711</a>            .<span class="kw">await
+<a href=#712 id=712 data-nosnippet>712</a>    </span>}
+<a href=#713 id=713 data-nosnippet>713</a>}
+<a href=#714 id=714 data-nosnippet>714</a>
+<a href=#715 id=715 data-nosnippet>715</a><span class="doccomment">/// POWER-key hold needed to switch the board on.
+<a href=#716 id=716 data-nosnippet>716</a></span><span class="attr">#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+<a href=#717 id=717 data-nosnippet>717</a>#[repr(u8)]
+<a href=#718 id=718 data-nosnippet>718</a></span><span class="kw">pub enum </span>PowerOnPress {
+<a href=#719 id=719 data-nosnippet>719</a>    Ms128 = <span class="number">0</span>,
+<a href=#720 id=720 data-nosnippet>720</a>    Ms512 = <span class="number">1</span>,
+<a href=#721 id=721 data-nosnippet>721</a>    S1 = <span class="number">2</span>,
+<a href=#722 id=722 data-nosnippet>722</a>    S2 = <span class="number">3</span>,
+<a href=#723 id=723 data-nosnippet>723</a>}
+<a href=#724 id=724 data-nosnippet>724</a>
+<a href=#725 id=725 data-nosnippet>725</a><span class="doccomment">/// POWER-key hold needed to force the board off.
+<a href=#726 id=726 data-nosnippet>726</a></span><span class="attr">#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+<a href=#727 id=727 data-nosnippet>727</a>#[repr(u8)]
+<a href=#728 id=728 data-nosnippet>728</a></span><span class="kw">pub enum </span>PowerOffPress {
+<a href=#729 id=729 data-nosnippet>729</a>    S4 = <span class="number">0</span>,
+<a href=#730 id=730 data-nosnippet>730</a>    S6 = <span class="number">1</span>,
+<a href=#731 id=731 data-nosnippet>731</a>    S8 = <span class="number">2</span>,
+<a href=#732 id=732 data-nosnippet>732</a>    S10 = <span class="number">3</span>,
+<a href=#733 id=733 data-nosnippet>733</a>}
 </code></pre></div></section></main></body></html>

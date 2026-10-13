@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"mod":["admin_responder","ble_security","counter_map","device_node","driver","duty_gate","gnss","journal","log","node_counters","radio_mux","transport_policy"]};
+window.SIDEBAR_ITEMS = {"mod":["admin_responder","ble_controller","ble_privacy","ble_security","counter_map","device_node","driver","duty_gate","gnss","i2c","journal","lan_bearer","log","meshcore","node_counters","radio_mux","reply_completion","reseed","temperature","transport_policy","wifi_journal"]};

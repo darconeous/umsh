@@ -3,14 +3,14 @@
 independent of the CLI session:</p>
 <ul>
 <li>
-<p><a href="struct.TouchlessResetWatcher.html" title="struct umsh_bsp_nrf52840::rescue::TouchlessResetWatcher"><code>TouchlessResetWatcher</code></a> — watches CDC control requests for the
+<p><a href="struct.TouchlessResetWatcher.html" title="struct umsh_bsp_nrf52840::rescue::TouchlessResetWatcher"><code>TouchlessResetWatcher</code></a>—watches CDC control requests for the
 1200-baud touchless reset (host opens port at 1200 baud and then
 drops DTR). This is how <code>flasher.meshcore.co.uk</code> and
 <code>adafruit-nrfutil --touch 1200</code> trigger DFU. The Adafruit nRF52
 bootloader does <strong>not</strong> implement this; firmware is responsible.</p>
 </li>
 <li>
-<p><a href="struct.EscapeWatcher.html" title="struct umsh_bsp_nrf52840::rescue::EscapeWatcher"><code>EscapeWatcher</code></a> — observes the inbound byte stream and fires
+<p><a href="struct.EscapeWatcher.html" title="struct umsh_bsp_nrf52840::rescue::EscapeWatcher"><code>EscapeWatcher</code></a>—observes the inbound byte stream and fires
 when the magic sequence <code>Ctrl-C Ctrl-C Ctrl-C dfu\r</code> appears.
 Used when the CLI parser is wedged (panicked task, deadlocked
 channel, mis-parsed mode) so a human at a terminal can still
@@ -20,7 +20,7 @@ force DFU.</p>
 <p>Both mechanisms run <em>below</em> the CLI parser so a hung or
 mis-configured CLI can’t block them. The escape watcher
 deliberately observes without consuming, so the CLI parser still
-sees all bytes — Ctrl-C continues to mean “abort” to the CLI even
+sees all bytes—Ctrl-C continues to mean “abort” to the CLI even
 while the rescue prefix accumulates.</p>
 </div></details><h2 id="structs" class="section-header">Structs<a href="#structs" class="anchor">§</a></h2><dl class="item-table"><dt><a class="struct" href="struct.EscapeWatcher.html" title="struct umsh_bsp_nrf52840::rescue::EscapeWatcher">Escape<wbr>Watcher</a></dt><dd>Observes inbound CDC bytes for the rescue prefix
 <code>Ctrl-C Ctrl-C Ctrl-C dfu</code> followed by <code>\r</code> or <code>\n</code>. On match,

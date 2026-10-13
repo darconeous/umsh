@@ -5,10 +5,10 @@
 <a href=#5 id=5 data-nosnippet>5</a>//! high nibble indexing latitude and the low nibble indexing longitude.
 <a href=#6 id=6 data-nosnippet>6</a>//!
 <a href=#7 id=7 data-nosnippet>7</a>//! The encoding has a useful truncation property: dropping trailing bytes gives the
-<a href=#8 id=8 data-nosnippet>8</a>//! correct lower-precision encoding of the same position — no recomputation needed.
+<a href=#8 id=8 data-nosnippet>8</a>//! correct lower-precision encoding of the same position—no recomputation needed.
 <a href=#9 id=9 data-nosnippet>9</a>//!
 <a href=#10 id=10 data-nosnippet>10</a>//! Every coordinate pair in this module is `(latitude, longitude)`, in that
-<a href=#11 id=11 data-nosnippet>11</a>//! order, without exception — parameters, return tuples, and rendered text alike.
+<a href=#11 id=11 data-nosnippet>11</a>//! order, without exception—parameters, return tuples, and rendered text alike.
 <a href=#12 id=12 data-nosnippet>12</a>//!
 <a href=#13 id=13 data-nosnippet>13</a>//! # Encoding
 <a href=#14 id=14 data-nosnippet>14</a>//!
@@ -121,7 +121,7 @@
 <a href=#121 id=121 data-nosnippet>121</a>    /// degrees, exactly and without floating point.
 <a href=#122 id=122 data-nosnippet>122</a>    ///
 <a href=#123 id=123 data-nosnippet>123</a>    /// This is the constructor to use for a position that arrived as
-<a href=#124 id=124 data-nosnippet>124</a>    /// decimal digits — a GNSS receiver's `ddmm.mmmm` fields, most of
+<a href=#124 id=124 data-nosnippet>124</a>    /// decimal digits—a GNSS receiver's `ddmm.mmmm` fields, most of
 <a href=#125 id=125 data-nosnippet>125</a>    /// all. [`from_lat_lon`](Self::from_lat_lon) has to round the value
 <a href=#126 id=126 data-nosnippet>126</a>    /// into a binary float first, which at 6–7 byte precision can land it
 <a href=#127 id=127 data-nosnippet>127</a>    /// in the neighbouring cell; this cannot, at any precision, with or
@@ -186,7 +186,7 @@
 <a href=#186 id=186 data-nosnippet>186</a>        <span class="kw">let </span>len = <span class="self">self</span>.len.min(precision.min(MAX_PRECISION));
 <a href=#187 id=187 data-nosnippet>187</a>        <span class="comment">// Bytes past `len` are cleared, not merely ignored. Every
 <a href=#188 id=188 data-nosnippet>188</a>        // constructor maintains that invariant, and the derived
-<a href=#189 id=189 data-nosnippet>189</a>        // `PartialEq`/`Hash` compare the whole array — so a `clamped`
+<a href=#189 id=189 data-nosnippet>189</a>        // `PartialEq`/`Hash` compare the whole array—so a `clamped`
 <a href=#190 id=190 data-nosnippet>190</a>        // value that kept its dropped tail would fail to equal the
 <a href=#191 id=191 data-nosnippet>191</a>        // identical encoding built any other way, and callers that
 <a href=#192 id=192 data-nosnippet>192</a>        // compare cells to decide whether a position has moved would see
@@ -394,7 +394,7 @@
 <a href=#394 id=394 data-nosnippet>394</a>    }
 <a href=#395 id=395 data-nosnippet>395</a>
 <a href=#396 id=396 data-nosnippet>396</a>    <span class="doccomment">/// The integer path agrees with the float one wherever the float one
-<a href=#397 id=397 data-nosnippet>397</a>    /// is trustworthy — precisions 1 through 5, which is exactly the
+<a href=#397 id=397 data-nosnippet>397</a>    /// is trustworthy—precisions 1 through 5, which is exactly the
 <a href=#398 id=398 data-nosnippet>398</a>    /// range `from_lat_lon` documents as reliable under `f32`.
 <a href=#399 id=399 data-nosnippet>399</a>    </span><span class="attr">#[test]
 <a href=#400 id=400 data-nosnippet>400</a>    </span><span class="kw">fn </span>from_e7_agrees_with_the_float_path_where_that_path_is_sound() {

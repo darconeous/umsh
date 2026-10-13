@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["continuable","produce","trailing","trailing_offset"]};
+window.SIDEBAR_ITEMS = {"fn":["continuable","trailing","trailing_offset"]};

@@ -8,7 +8,7 @@
 }</code></pre><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>Why a local PFS negotiation step failed. Surfaced to applications via
 <a href="struct.LocalNode.html#method.on_pfs_failed" title="method umsh_node::LocalNode::on_pfs_failed"><code>LocalNode::on_pfs_failed</code></a> so a failed/stalled negotiation reports a
 reason instead of silently doing nothing.</p>
-</div></details><h2 id="variants" class="variants section-header">Variants<a href="#variants" class="anchor">§</a></h2><div class="variants"><section id="variant.Capacity" class="variant"><a href="#variant.Capacity" class="anchor">§</a><h3 class="code-header">Capacity</h3></section><div class="docblock"><p>No free identity or peer slot to activate the ephemeral session —
+</div></details><h2 id="variants" class="variants section-header">Variants<a href="#variants" class="anchor">§</a></h2><div class="variants"><section id="variant.Capacity" class="variant"><a href="#variant.Capacity" class="anchor">§</a><h3 class="code-header">Capacity</h3></section><div class="docblock"><p>No free identity or peer slot to activate the ephemeral session—
 e.g. the MAC <code>IDENTITIES</code>/peer table is exhausted, or more concurrent
 PFS sessions were requested than there are ephemeral identity slots.</p>
 </div><section id="variant.SessionMissing" class="variant"><a href="#variant.SessionMissing" class="anchor">§</a><h3 class="code-header">SessionMissing</h3></section><div class="docblock"><p>A PFS response or teardown referenced a session that does not exist.</p>

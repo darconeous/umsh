@@ -151,43 +151,64 @@
 <a href=#151 id=151 data-nosnippet>151</a>    }
 <a href=#152 id=152 data-nosnippet>152</a>
 <a href=#153 id=153 data-nosnippet>153</a>    <span class="attr">#[test]
-<a href=#154 id=154 data-nosnippet>154</a>    </span><span class="kw">fn </span>no_session_has_no_output_destination_or_accepted_frames() {
-<a href=#155 id=155 data-nosnippet>155</a>        <span class="kw">let </span>state = SessionArbitration::new(<span class="number">7</span>);
-<a href=#156 id=156 data-nosnippet>156</a>        <span class="macro">assert_eq!</span>(state.destination(), <span class="prelude-val">None</span>);
-<a href=#157 id=157 data-nosnippet>157</a>        <span class="macro">assert!</span>(!state.accepts_frame(Transport::Usb));
-<a href=#158 id=158 data-nosnippet>158</a>        <span class="macro">assert!</span>(!state.accepts_frame(Transport::Ble));
+<a href=#154 id=154 data-nosnippet>154</a>    </span><span class="kw">fn </span>usb_unplug_allows_ble_and_late_usb_detach_preserves_ble() {
+<a href=#155 id=155 data-nosnippet>155</a>        <span class="kw">let </span><span class="kw-2">mut </span>state = SessionArbitration::new(<span class="number">0</span>);
+<a href=#156 id=156 data-nosnippet>156</a>        state.attach(Transport::Usb);
+<a href=#157 id=157 data-nosnippet>157</a>        <span class="macro">assert!</span>(!state.advertising_allowed());
+<a href=#158 id=158 data-nosnippet>158</a>        <span class="macro">assert!</span>(state.detach(Transport::Usb));
 <a href=#159 id=159 data-nosnippet>159</a>        <span class="macro">assert!</span>(state.advertising_allowed());
-<a href=#160 id=160 data-nosnippet>160</a>    }
+<a href=#160 id=160 data-nosnippet>160</a>        <span class="macro">assert!</span>(!state.accepts_frame(Transport::Usb));
 <a href=#161 id=161 data-nosnippet>161</a>
-<a href=#162 id=162 data-nosnippet>162</a>    <span class="attr">#[test]
-<a href=#163 id=163 data-nosnippet>163</a>    </span><span class="kw">fn </span>generation_wrap_still_invalidates_previous_session() {
-<a href=#164 id=164 data-nosnippet>164</a>        <span class="kw">let </span><span class="kw-2">mut </span>state = SessionArbitration::new(u32::MAX);
-<a href=#165 id=165 data-nosnippet>165</a>        <span class="macro">assert!</span>(!state.is_current(<span class="number">0</span>));
-<a href=#166 id=166 data-nosnippet>166</a>        state.attach(Transport::Ble);
-<a href=#167 id=167 data-nosnippet>167</a>        <span class="macro">assert_eq!</span>(state.destination(), <span class="prelude-val">Some</span>((Transport::Ble, <span class="number">0</span>)));
-<a href=#168 id=168 data-nosnippet>168</a>        <span class="macro">assert!</span>(state.is_current(<span class="number">0</span>));
+<a href=#162 id=162 data-nosnippet>162</a>        state.attach(Transport::Ble);
+<a href=#163 id=163 data-nosnippet>163</a>        <span class="kw">let </span>ble_generation = state.generation();
+<a href=#164 id=164 data-nosnippet>164</a>        <span class="macro">assert!</span>(!state.detach(Transport::Usb));
+<a href=#165 id=165 data-nosnippet>165</a>        <span class="macro">assert!</span>(state.accepts_frame(Transport::Ble));
+<a href=#166 id=166 data-nosnippet>166</a>        <span class="macro">assert!</span>(state.advertising_allowed());
+<a href=#167 id=167 data-nosnippet>167</a>        <span class="macro">assert_eq!</span>(state.generation(), ble_generation);
+<a href=#168 id=168 data-nosnippet>168</a>
 <a href=#169 id=169 data-nosnippet>169</a>        state.attach(Transport::Usb);
-<a href=#170 id=170 data-nosnippet>170</a>        <span class="macro">assert_eq!</span>(state.generation(), <span class="number">1</span>);
-<a href=#171 id=171 data-nosnippet>171</a>        <span class="macro">assert!</span>(!state.is_current(<span class="number">0</span>));
+<a href=#170 id=170 data-nosnippet>170</a>        <span class="macro">assert!</span>(!state.advertising_allowed());
+<a href=#171 id=171 data-nosnippet>171</a>        <span class="macro">assert!</span>(!state.accepts_frame(Transport::Ble));
 <a href=#172 id=172 data-nosnippet>172</a>    }
 <a href=#173 id=173 data-nosnippet>173</a>
 <a href=#174 id=174 data-nosnippet>174</a>    <span class="attr">#[test]
-<a href=#175 id=175 data-nosnippet>175</a>    </span><span class="kw">fn </span>generation_checked_stops_between_transport_writes() {
-<a href=#176 id=176 data-nosnippet>176</a>        <span class="kw">let </span>generation = Cell::new(<span class="number">4</span>);
-<a href=#177 id=177 data-nosnippet>177</a>        <span class="kw">let </span><span class="kw-2">mut </span>writes = generation_checked([<span class="string">"one"</span>, <span class="string">"two"</span>, <span class="string">"three"</span>], <span class="number">4</span>, || generation.get());
-<a href=#178 id=178 data-nosnippet>178</a>        <span class="macro">assert_eq!</span>(writes.next(), <span class="prelude-val">Some</span>(<span class="string">"one"</span>));
-<a href=#179 id=179 data-nosnippet>179</a>
-<a href=#180 id=180 data-nosnippet>180</a>        <span class="comment">// Models displacement while the first async write is awaiting its
-<a href=#181 id=181 data-nosnippet>181</a>        // completion. The next chunk/segment must never be returned.
-<a href=#182 id=182 data-nosnippet>182</a>        </span>generation.set(<span class="number">5</span>);
-<a href=#183 id=183 data-nosnippet>183</a>        <span class="macro">assert_eq!</span>(writes.next(), <span class="prelude-val">None</span>);
-<a href=#184 id=184 data-nosnippet>184</a>        <span class="macro">assert!</span>(writes.stale());
-<a href=#185 id=185 data-nosnippet>185</a>    }
-<a href=#186 id=186 data-nosnippet>186</a>
-<a href=#187 id=187 data-nosnippet>187</a>    <span class="attr">#[test]
-<a href=#188 id=188 data-nosnippet>188</a>    </span><span class="kw">fn </span>generation_checked_yields_every_write_for_current_session() {
-<a href=#189 id=189 data-nosnippet>189</a>        <span class="kw">let </span>writes: heapless::Vec&lt;<span class="kw">_</span>, <span class="number">4</span>&gt; = generation_checked(<span class="number">0</span>..<span class="number">4</span>, <span class="number">9</span>, || <span class="number">9</span>).collect();
-<a href=#190 id=190 data-nosnippet>190</a>        <span class="macro">assert_eq!</span>(writes.as_slice(), <span class="kw-2">&amp;</span>[<span class="number">0</span>, <span class="number">1</span>, <span class="number">2</span>, <span class="number">3</span>]);
-<a href=#191 id=191 data-nosnippet>191</a>    }
-<a href=#192 id=192 data-nosnippet>192</a>}
+<a href=#175 id=175 data-nosnippet>175</a>    </span><span class="kw">fn </span>no_session_has_no_output_destination_or_accepted_frames() {
+<a href=#176 id=176 data-nosnippet>176</a>        <span class="kw">let </span>state = SessionArbitration::new(<span class="number">7</span>);
+<a href=#177 id=177 data-nosnippet>177</a>        <span class="macro">assert_eq!</span>(state.destination(), <span class="prelude-val">None</span>);
+<a href=#178 id=178 data-nosnippet>178</a>        <span class="macro">assert!</span>(!state.accepts_frame(Transport::Usb));
+<a href=#179 id=179 data-nosnippet>179</a>        <span class="macro">assert!</span>(!state.accepts_frame(Transport::Ble));
+<a href=#180 id=180 data-nosnippet>180</a>        <span class="macro">assert!</span>(state.advertising_allowed());
+<a href=#181 id=181 data-nosnippet>181</a>    }
+<a href=#182 id=182 data-nosnippet>182</a>
+<a href=#183 id=183 data-nosnippet>183</a>    <span class="attr">#[test]
+<a href=#184 id=184 data-nosnippet>184</a>    </span><span class="kw">fn </span>generation_wrap_still_invalidates_previous_session() {
+<a href=#185 id=185 data-nosnippet>185</a>        <span class="kw">let </span><span class="kw-2">mut </span>state = SessionArbitration::new(u32::MAX);
+<a href=#186 id=186 data-nosnippet>186</a>        <span class="macro">assert!</span>(!state.is_current(<span class="number">0</span>));
+<a href=#187 id=187 data-nosnippet>187</a>        state.attach(Transport::Ble);
+<a href=#188 id=188 data-nosnippet>188</a>        <span class="macro">assert_eq!</span>(state.destination(), <span class="prelude-val">Some</span>((Transport::Ble, <span class="number">0</span>)));
+<a href=#189 id=189 data-nosnippet>189</a>        <span class="macro">assert!</span>(state.is_current(<span class="number">0</span>));
+<a href=#190 id=190 data-nosnippet>190</a>        state.attach(Transport::Usb);
+<a href=#191 id=191 data-nosnippet>191</a>        <span class="macro">assert_eq!</span>(state.generation(), <span class="number">1</span>);
+<a href=#192 id=192 data-nosnippet>192</a>        <span class="macro">assert!</span>(!state.is_current(<span class="number">0</span>));
+<a href=#193 id=193 data-nosnippet>193</a>    }
+<a href=#194 id=194 data-nosnippet>194</a>
+<a href=#195 id=195 data-nosnippet>195</a>    <span class="attr">#[test]
+<a href=#196 id=196 data-nosnippet>196</a>    </span><span class="kw">fn </span>generation_checked_stops_between_transport_writes() {
+<a href=#197 id=197 data-nosnippet>197</a>        <span class="kw">let </span>generation = Cell::new(<span class="number">4</span>);
+<a href=#198 id=198 data-nosnippet>198</a>        <span class="kw">let </span><span class="kw-2">mut </span>writes = generation_checked([<span class="string">"one"</span>, <span class="string">"two"</span>, <span class="string">"three"</span>], <span class="number">4</span>, || generation.get());
+<a href=#199 id=199 data-nosnippet>199</a>        <span class="macro">assert_eq!</span>(writes.next(), <span class="prelude-val">Some</span>(<span class="string">"one"</span>));
+<a href=#200 id=200 data-nosnippet>200</a>
+<a href=#201 id=201 data-nosnippet>201</a>        <span class="comment">// Models displacement while the first async write is awaiting its
+<a href=#202 id=202 data-nosnippet>202</a>        // completion. The next chunk/segment must never be returned.
+<a href=#203 id=203 data-nosnippet>203</a>        </span>generation.set(<span class="number">5</span>);
+<a href=#204 id=204 data-nosnippet>204</a>        <span class="macro">assert_eq!</span>(writes.next(), <span class="prelude-val">None</span>);
+<a href=#205 id=205 data-nosnippet>205</a>        <span class="macro">assert!</span>(writes.stale());
+<a href=#206 id=206 data-nosnippet>206</a>    }
+<a href=#207 id=207 data-nosnippet>207</a>
+<a href=#208 id=208 data-nosnippet>208</a>    <span class="attr">#[test]
+<a href=#209 id=209 data-nosnippet>209</a>    </span><span class="kw">fn </span>generation_checked_yields_every_write_for_current_session() {
+<a href=#210 id=210 data-nosnippet>210</a>        <span class="kw">let </span>writes: heapless::Vec&lt;<span class="kw">_</span>, <span class="number">4</span>&gt; = generation_checked(<span class="number">0</span>..<span class="number">4</span>, <span class="number">9</span>, || <span class="number">9</span>).collect();
+<a href=#211 id=211 data-nosnippet>211</a>        <span class="macro">assert_eq!</span>(writes.as_slice(), <span class="kw-2">&amp;</span>[<span class="number">0</span>, <span class="number">1</span>, <span class="number">2</span>, <span class="number">3</span>]);
+<a href=#212 id=212 data-nosnippet>212</a>    }
+<a href=#213 id=213 data-nosnippet>213</a>}
 </code></pre></div></section></main></body></html>

@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-e3fe62b3.js";
+            window.path_to_searchindex_js = "searchindex-6c34194f.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-8b6941ec.js"></script>
+        <script src="toc-e4cb2f86.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -643,7 +643,7 @@ accordingly to the status code for the error.</p>
 </code></pre>
 <p>Figure: Structure of <code>CMD_SAVE</code></p>
 <p>Save state. Commands the device to atomically write the current device domain
-and host domain to non-volatile storage as described in (#saved-state),
+to non-volatile storage as described in (#saved-state),
 replacing any existing snapshot. The command payload SHOULD be empty and
 MUST be ignored.</p>
 <p>The response is a <code>CMD_PROP_IS</code> for <code>PROP_LAST_STATUS</code> with the command’s
@@ -1201,11 +1201,14 @@ does not produce excessive ULCP traffic.</p>
 </ul>
 <p>The first of the device-behavior settings (property identifiers 70–95).
 When true, the <strong>device identity</strong> acts as an
-autonomous mesh repeater: its on-board node forwards overheard routable
-frames according to <a href="repeater-operation.html">Repeater Operation</a>, and it
-sets the repeater capability bit in its <a href="node-identity.html">node
-identity</a>. When false, the device identity does not
-forward and the bit is clear.</p>
+autonomous mesh repeater: its on-board node forwards the routable UMSH
+frames it receives—off the air, from a <a href="lan-bearer.html">LAN bearer</a>, or over
+<a href="#prop-mac-backhaul">backhaul</a>—according to <a href="repeater-operation.html">Repeater
+Operation</a> and <a href="lan-bearer.html#forwarding-across-bearers">Forwarding Across
+Bearers</a>, and it sets the repeater
+capability bit in its <a href="node-identity.html">node identity</a>. When false, the
+device identity forwards nothing on any medium—it sends only its own traffic
+and its attached host’s—and the bit is clear.</p>
 <p>The capability bit is a statement of fact and <strong>MUST</strong> track the live
 forwarding state. The advertised <em>role</em> is a separate matter: it is
 configuration, set through <code>PROP_IDENT_ROLE</code> (see (#prop-ident-role)),
@@ -1473,17 +1476,19 @@ the host identity. Encrypted blind unicast addressed to the host is
 matched through its channel filter (its destination hint is concealed on
 the wire); the device MAY additionally use a provisioned channel key to
 decrypt the address block and narrow the match.</p>
-<p>Two kinds of returning traffic identify themselves only by the MIC of a frame
-the host previously sent, so no destination or channel filter can address
-them: a <a href="packet-types.html#mac-ack-packet">MAC Ack</a> carries no destination hint
-and its public <code>ack_mic</code> is the first 4 bytes of the acknowledged frame’s
-MIC, and a repeater’s onward copy of a host frame keeps the host’s MIC while
-its destination hint names the remote peer. The device therefore records the
-leading 4 MIC bytes of each frame it transmits on the host’s behalf and
+<p>Two kinds of returning traffic identify themselves only by the trailer of a
+frame the host previously sent, so no destination or channel filter can
+address them: a <a href="packet-types.html#mac-ack-packet">MAC Ack</a> carries no
+destination hint and its public <code>ack_mic</code> is the first 4 bytes of the
+acknowledged frame’s MIC, and a repeater’s onward copy of a host frame keeps
+the host’s trailer while any destination hint it carries names the remote
+peer. The device therefore records the leading 4 trailer bytes of each frame
+it transmits on the host’s behalf—for a MAC Ack, its <code>ack_mic</code>—and
 implicitly accepts any received frame whose trailer opens with a recorded
-value—for a MAC Ack this matches the returning acknowledgement, and for
-other packet types it matches the host’s own send being carried onward, which
-the host’s forwarding-confirmation machinery must overhear to stop
+value. For a MAC Ack the host sent, this matches the ack being carried
+onward; for any other frame, it matches both the returning acknowledgement
+and the frame being carried onward. The host’s forwarding-confirmation
+machinery must overhear every onward copy, acks included, to stop
 retransmitting. These records evict lazily, so multiple echoes of one send—
 acks arriving over different return routes, repeats from different
 repeaters—are all delivered. A MAC Ack whose <code>ack_mic</code> matches no recorded

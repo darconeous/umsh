@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-e3fe62b3.js";
+            window.path_to_searchindex_js = "searchindex-6c34194f.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-8b6941ec.js"></script>
+        <script src="toc-e4cb2f86.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -177,7 +177,7 @@
                         <h1 id="ulcp-minimum-requirements"><a class="header" href="#ulcp-minimum-requirements">ULCP: Minimum Requirements</a></h1>
 <p>This chapter is the conformance statement for ULCP. A device that meets
 the requirements below is a ULCP device; everything past them is optional
-and is discovered through <code>PROP_CAPS</code>.</p>
+and is discovered through <code>PROP_CAPS</code> or a command’s defined refusal.</p>
 <p>There are no protocol levels, tiers, or profiles. A host that wants a
 plain frame pipe and a host that wants a fully provisioned companion
 radio speak the same protocol to the same devices and differ only in
@@ -208,6 +208,7 @@ use TID zero.</p>
 <tr><td>6</td><td><code>CMD_PROP_IS</code></td><td>Always</td></tr>
 <tr><td>9</td><td><code>CMD_STR_SEND</code></td><td>Always</td></tr>
 <tr><td>10</td><td><code>CMD_STR_RECV</code></td><td>Always</td></tr>
+<tr><td>17</td><td><code>CMD_DFU</code></td><td>Always; unsupported methods return <code>STATUS_UNIMPLEMENTED</code></td></tr>
 </tbody>
 </table>
 </div>
@@ -223,6 +224,14 @@ when the capability is not advertised, as <strong>MUST</strong>
 <code>CMD_CLEAR</code> and <code>CMD_FACTORY_RESET</code>
 are available regardless of capabilities (see
 <a href="ulcp-saved-state.html">Saved State</a>).</p>
+<p>DFU implementations <strong>MUST</strong> validate the optional mode, require a nonzero
+direct TID, finish fallible preparation before success, and wait for the
+matching response’s transmission before handing off to the bootloader.
+Transmission failure or timeout <strong>MUST</strong> cancel the handoff and invalidate
+retained success. Tests must cover stale completions, administrative
+retries, and replay-counter persistence failures; a build alone does not
+qualify a bootloader’s supported DFU methods. See
+<a href="ulcp-core.html#cmd-dfu"><code>CMD_DFU</code></a>.</p>
 <h2 id="properties"><a class="header" href="#properties">Properties</a></h2>
 <div class="table-wrapper">
 <table>
@@ -278,6 +287,7 @@ requires.</p>
 <tr><td><a href="ulcp-wifi.html">Wi-Fi</a></td><td><code>CAP_WIFI_SCAN</code>, <code>CAP_WIFI</code>, <code>CAP_WIFI_AP</code></td></tr>
 <tr><td><a href="ulcp-ip.html">IP Connectivity</a></td><td><code>CAP_IPV4</code>, <code>CAP_IPV6</code></td></tr>
 <tr><td><a href="ulcp-bridge.html">Bridge Client</a></td><td><code>CAP_BRIDGE_CLIENT</code></td></tr>
+<tr><td><a href="ulcp-lan-bearer.html">LAN Bearer</a></td><td><code>CAP_LAN_BEARER</code></td></tr>
 <tr><td><a href="ulcp-i2c.html">I2C Bus Access</a></td><td><code>CAP_I2C</code></td></tr>
 </tbody>
 </table>

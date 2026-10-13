@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["Source"],"fn":["quarter_celsius_to_tenths_kelvin"],"struct":["Sensors"],"trait":["Reader"]};

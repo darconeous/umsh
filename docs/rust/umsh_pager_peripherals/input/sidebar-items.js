@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["BACKSPACE_EVENT","KEYBOARD_ADDRESS"],"enum":["KeyEvent"],"struct":["Debounce","Keyboard","PressLatch","Quadrature"]};

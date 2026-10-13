@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-e3fe62b3.js";
+            window.path_to_searchindex_js = "searchindex-6c34194f.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-8b6941ec.js"></script>
+        <script src="toc-e4cb2f86.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -227,7 +227,7 @@ untouched.</p>
 <tr><td>33</td><td><code>CAP_HOST_RX_QUEUE</code></td><td><code>CAP_HOST_FILTER</code></td><td>The inbound queue, its properties, <code>CMD_QUEUE_DRAIN</code>, the buffered-frame metadata, and the mute tables</td></tr>
 <tr><td>34</td><td><code>CAP_HOST_KEYS</code></td><td><code>CAP_HOST_FILTER</code></td><td><code>PROP_HOST_CHANNEL_KEYS</code> and <code>PROP_HOST_PEER_KEYS</code></td></tr>
 <tr><td>35</td><td><code>CAP_HOST_AUTO_ACK</code></td><td><code>CAP_HOST_KEYS</code>, <code>CAP_HOST_RX_QUEUE</code></td><td><code>PROP_HOST_AUTO_ACK</code> and acknowledgement delegation</td></tr>
-<tr><td>48</td><td><code>CAP_MAC_BACKHAUL</code></td><td><code>CAP_REPEATER</code></td><td><code>PROP_MAC_BACKHAUL</code> and the point-to-point link to the device’s node</td></tr>
+<tr><td>48</td><td><code>CAP_MAC_BACKHAUL</code></td><td><code>CAP_DEV_IDENTITY</code></td><td><code>PROP_MAC_BACKHAUL</code> and the point-to-point link to the device’s node</td></tr>
 </tbody>
 </table>
 </div>
@@ -596,17 +596,19 @@ the host identity. Encrypted blind unicast addressed to the host is
 matched through its channel filter (its destination hint is concealed on
 the wire); the device MAY additionally use a provisioned channel key to
 decrypt the address block and narrow the match.</p>
-<p>Two kinds of returning traffic identify themselves only by the MIC of a frame
-the host previously sent, so no destination or channel filter can address
-them: a <a href="packet-types.html#mac-ack-packet">MAC Ack</a> carries no destination hint
-and its public <code>ack_mic</code> is the first 4 bytes of the acknowledged frame’s
-MIC, and a repeater’s onward copy of a host frame keeps the host’s MIC while
-its destination hint names the remote peer. The device therefore records the
-leading 4 MIC bytes of each frame it transmits on the host’s behalf and
+<p>Two kinds of returning traffic identify themselves only by the trailer of a
+frame the host previously sent, so no destination or channel filter can
+address them: a <a href="packet-types.html#mac-ack-packet">MAC Ack</a> carries no
+destination hint and its public <code>ack_mic</code> is the first 4 bytes of the
+acknowledged frame’s MIC, and a repeater’s onward copy of a host frame keeps
+the host’s trailer while any destination hint it carries names the remote
+peer. The device therefore records the leading 4 trailer bytes of each frame
+it transmits on the host’s behalf—for a MAC Ack, its <code>ack_mic</code>—and
 implicitly accepts any received frame whose trailer opens with a recorded
-value—for a MAC Ack this matches the returning acknowledgement, and for
-other packet types it matches the host’s own send being carried onward, which
-the host’s forwarding-confirmation machinery must overhear to stop
+value. For a MAC Ack the host sent, this matches the ack being carried
+onward; for any other frame, it matches both the returning acknowledgement
+and the frame being carried onward. The host’s forwarding-confirmation
+machinery must overhear every onward copy, acks included, to stop
 retransmitting. These records evict lazily, so multiple echoes of one send—
 acks arriving over different return routes, repeats from different
 repeaters—are all delivered. A MAC Ack whose <code>ack_mic</code> matches no recorded
@@ -722,7 +724,7 @@ the oldest entry when full; a frame that nevertheless cannot be stored
 the sender keeps retrying until the host returns.</li>
 </ol>
 <p>A delegated ACK also requires that no unconsumed source-route hints remain. An early overheard copy may be queued without an ACK; the first eligible duplicate can then supply the ACK without another queue entry. <code>RX_FLAG_ACKED</code> requires successful radio transmission.</p>
-<p>Delegated ACKs follow the <a href="beacons.html#scoping-flood-hops-to-a-known-route">return-path guidance</a>, mirror a requested trace, and preserve the request’s region codes on both flooded and source-routed returns.</p>
+<p>Delegated ACKs follow the <a href="beacons.html#scoping-flood-hops-to-a-known-route">return-path guidance</a>, carry a trace route <a href="beacons.html#when-to-include-a-trace-route">when one is due</a>, and preserve the request’s region codes on both flooded and source-routed returns.</p>
 <p><strong>Duplicates.</strong> An authenticated frame that replay detection identifies as
 a previously accepted frame—typically a retransmission whose original
 ack was lost—is not queued again, but the device <strong>MAY</strong> retransmit its
@@ -769,18 +771,27 @@ the ack’s source route; the trace is accumulated most-recent first, so it
 already reads in return order. An empty trace is a direct neighbor and
 gets a direct ack.</li>
 <li>A frame carrying no trace but a flood hop count gets <code>FHOPS_REM</code>
-initialized from its <code>FHOPS_ACC</code>, with any region-code options replayed.</li>
+initialized from its <code>FHOPS_ACC</code>, with any region-code options replayed.
+An <code>FHOPS_ACC</code> of zero is a direct neighbor.</li>
 <li>A frame carrying a source-route option and no trace—including an
 emptied option, which the last repeater keeps for provenance—spent flood
 hops only past the route’s end, so its <code>FHOPS_ACC</code> is not a distance. The
-ack floods at a default budget of 5 flood hops, or at <code>FHOPS_ACC</code> if that
-is larger.</li>
+ack floods at a default budget of 5 flood hops, or at one more than
+<code>FHOPS_ACC</code> if that is larger.</li>
 <li>A frame with neither option and no flood hop count was heard off the
 sender’s own transmitter and is acknowledged directly.</li>
 </ul>
-<p>An ack a repeater may carry mirrors the frame’s trace-route request, so the
-sender learns the return path from the only frame an ack-only exchange gives
-it.</p>
+<p>Each way back carries the <a href="beacons.html#scoping-flood-hops-to-a-known-route">margin</a>
+its last hop earns, judged from the acknowledged frame alone, since the
+device knows nothing else about the sender: the reception itself for a
+direct neighbor, the earliest trace-signal entry for a traced path, and no
+measurement for a flood distance. A re-ack of a duplicate (see
+<strong>Duplicates</strong> above) always carries the margin. An ack with no margin and
+no route is sent with no flood hop count and no trace route, which could
+only arrive empty.</p>
+<p>An ack a repeater may carry includes a trace route when the frame arrived with
+<code>FHOPS_ACC</code> greater than zero or carried a trace route of its own, so the sender
+learns the return path from the only frame an ack-only exchange gives it.</p>
 <p>Delegated ack transmissions use the device’s normal transmit path and are
 subject to the configured duty-cycle limit; the device <strong>MUST NOT</strong> exceed the
 limit to send an ack. An ack that cannot be sent leaves the queued frame

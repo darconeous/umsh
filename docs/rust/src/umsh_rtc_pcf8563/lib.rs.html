@@ -2,7 +2,7 @@
 <a href=#2 id=2 data-nosnippet>2</a>//! `embedded-hal-async` I²C.
 <a href=#3 id=3 data-nosnippet>3</a>//!
 <a href=#4 id=4 data-nosnippet>4</a>//! Time only: read the clock, set the clock. Alarms, the timer, and
-<a href=#5 id=5 data-nosnippet>5</a>//! CLKOUT are not transcribed — no UMSH board wires them to anything
+<a href=#5 id=5 data-nosnippet>5</a>//! CLKOUT are not transcribed—no UMSH board wires them to anything
 <a href=#6 id=6 data-nosnippet>6</a>//! yet, and the alarm interrupt's polarity and open-drain behavior want
 <a href=#7 id=7 data-nosnippet>7</a>//! hardware validation before anything depends on them.
 <a href=#8 id=8 data-nosnippet>8</a>//!
@@ -16,7 +16,7 @@
 <a href=#16 id=16 data-nosnippet>16</a>//!
 <a href=#17 id=17 data-nosnippet>17</a>//! # Not knowing is a state
 <a href=#18 id=18 data-nosnippet>18</a>//!
-<a href=#19 id=19 data-nosnippet>19</a>//! The part latches a voltage-low flag when its oscillator has stopped —
+<a href=#19 id=19 data-nosnippet>19</a>//! The part latches a voltage-low flag when its oscillator has stopped—
 <a href=#20 id=20 data-nosnippet>20</a>//! a dead backup cell, a first power-up. In that condition it does not
 <a href=#21 id=21 data-nosnippet>21</a>//! report *no* time, it reports whatever its registers hold. So
 <a href=#22 id=22 data-nosnippet>22</a>//! [`Pcf8563::read`] answers `None` on that flag rather than handing up
@@ -29,7 +29,7 @@
 <a href=#29 id=29 data-nosnippet>29</a>//! means 19xx, and the disagreement is old enough that both conventions
 <a href=#30 id=30 data-nosnippet>30</a>//! exist in shipping hardware. UMSH sidesteps it: this driver reads and
 <a href=#31 id=31 data-nosnippet>31</a>//! writes 2000–2099 only, writes the century bit as zero, and ignores it
-<a href=#32 id=32 data-nosnippet>32</a>//! on read. Nothing is lost — the clock's `u32` epoch runs out in 2106
+<a href=#32 id=32 data-nosnippet>32</a>//! on read. Nothing is lost—the clock's `u32` epoch runs out in 2106
 <a href=#33 id=33 data-nosnippet>33</a>//! and the plausibility floor already refuses anything before 2020.
 <a href=#34 id=34 data-nosnippet>34</a>
 <a href=#35 id=35 data-nosnippet>35</a></span><span class="attr">#![no_std]
@@ -100,8 +100,8 @@
 <a href=#100 id=100 data-nosnippet>100</a>
 <a href=#101 id=101 data-nosnippet>101</a><span class="doccomment">/// Day of week, 0 = Sunday, as the part numbers them.
 <a href=#102 id=102 data-nosnippet>102</a>///
-<a href=#103 id=103 data-nosnippet>103</a>/// The PCF8563 keeps this field but never derives it — it only counts
-<a href=#104 id=104 data-nosnippet>104</a>/// the register up — so a writer has to compute it or the field drifts
+<a href=#103 id=103 data-nosnippet>103</a>/// The PCF8563 keeps this field but never derives it—it only counts
+<a href=#104 id=104 data-nosnippet>104</a>/// the register up—so a writer has to compute it or the field drifts
 <a href=#105 id=105 data-nosnippet>105</a>/// into nonsense.
 <a href=#106 id=106 data-nosnippet>106</a></span><span class="kw">const fn </span>weekday_from_unix(seconds: u32) -&gt; u8 {
 <a href=#107 id=107 data-nosnippet>107</a>    <span class="comment">// 1970-01-01 was a Thursday.

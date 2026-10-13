@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["DEFAULT_PORT","HOST_MAX"],"enum":["Reason","State"],"fn":["valid_host"],"struct":["Link"]};

@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-e3fe62b3.js";
+            window.path_to_searchindex_js = "searchindex-6c34194f.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-8b6941ec.js"></script>
+        <script src="toc-e4cb2f86.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -181,6 +181,7 @@
 <li><strong>optional bytes</strong>: command-specific payload</li>
 </ul>
 <p>Support for MAC commands is optional.</p>
+<p>A receiver reads the fields a command defines and ignores any bytes that follow them. A command shorter than its defined fields, or with an unrecognized identifier, is ignored.</p>
 <p>MAC commands are addressed to a single node. Unless a command’s definition provides rules for multicast or broadcast use, as <a href="#identity-request-1">Identity Request</a> does, a node ignores a command that arrives by multicast or broadcast.</p>
 <p>A node answering a command carries its response the way the request was carried, as <a href="payload-format.html#response-carriage">Response Carriage</a> defines.</p>
 <h2 id="command-registry"><a class="header" href="#command-registry">Command Registry</a></h2>
@@ -274,10 +275,9 @@ the requester nothing: a broadcast solicitation leaves no route behind at the
 requester, and the response reaches it with its own Route option consumed and its
 <code>FHOPS_ACC</code> counting only the tail of the path. Without a trace on the response
 the requester ends the exchange holding no route to the node it just identified.
-This is the general rule for a response to a traced packet (<a href="beacons.html#path-discovery">Path
-Discovery</a>) rather than an exception to the advice
-against tracing a source-routed packet: the path a response is steered down is
-the requester’s own trace, not a route either side already held.</p>
+A broadcast solicitation names no responder, so even one that arrived without
+flooding gives the requester no path to whoever answers it; the response traces
+regardless of the <a href="beacons.html#when-to-include-a-trace-route">general rule</a>.</p>
 <p>A repeater consumes its own hint while forwarding, not while receiving, so a
 request whose Route option still names a repeater is one that repeater drops.
 Asking a named router to identify itself therefore means steering the request to
@@ -369,7 +369,7 @@ Non-filter options (such as NONCE) do not participate in this matching.</p>
 </thead>
 <tbody>
 <tr><td>Ephemeral node address</td><td style="text-align: right">32 bytes</td><td>Sender’s newly generated ephemeral node address (Ed25519 public key) for this session</td></tr>
-<tr><td>Session duration</td><td style="text-align: right">2 bytes</td><td>Requested session lifetime in minutes (0 = no expiration)</td></tr>
+<tr><td>Session duration</td><td style="text-align: right">2 bytes</td><td>Requested session lifetime in minutes; MUST NOT be 0</td></tr>
 </tbody>
 </table>
 </div>
@@ -382,10 +382,11 @@ Non-filter options (such as NONCE) do not participate in this matching.</p>
 </thead>
 <tbody>
 <tr><td>Ephemeral node address</td><td style="text-align: right">32 bytes</td><td>Responder’s newly generated ephemeral node address (Ed25519 public key) for this session</td></tr>
-<tr><td>Session duration</td><td style="text-align: right">2 bytes</td><td>Accepted session lifetime in minutes</td></tr>
+<tr><td>Session duration</td><td style="text-align: right">2 bytes</td><td>Accepted session lifetime in minutes; MUST NOT be 0</td></tr>
 </tbody>
 </table>
 </div>
+<p>The responder MAY accept a shorter lifetime than was requested, and both parties hold the session to the accepted one. A node that receives a duration of 0 treats it as a finite lifetime of its own choosing; a responder answers with that lifetime.</p>
 <h2 id="end-pfs-session-8"><a class="header" href="#end-pfs-session-8">End PFS Session (8)</a></h2>
 <p>Terminates an active PFS session. May be sent by either party. Upon receipt, both sides securely erase the private keys for their ephemeral addresses and revert to using their long-term keys. See <a href="security.html#session-lifetime">Session Lifetime</a> for all conditions under which a session ends.</p>
 <p>No command-specific payload. The sender and recipient are identified by the packet’s addressing fields.</p>

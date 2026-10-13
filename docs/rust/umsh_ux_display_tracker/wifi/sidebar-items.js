@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["MAX_SAVED_NETWORKS"],"enum":["WifiState"],"struct":["NetworkName","WifiMenu"]};

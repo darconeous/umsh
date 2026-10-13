@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["radio_mux"],"static":["MUX_MODE"],"struct":["MuxMode"]};
+window.SIDEBAR_ITEMS = {"fn":["radio_mux","radio_mux_with_bridge"],"static":["MUX_MODE"],"struct":["BridgeAttachment","MuxMode"],"trait":["BridgePort"]};

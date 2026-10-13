@@ -7,7 +7,7 @@
 <p>The only one that carries a date, and therefore the only one that can
 establish what day it is. A receiver emits RMC with <code>status = V</code>
 (void) while searching, sometimes already carrying a valid time from
-its own real-time clock — which is exactly the case the
+its own real-time clock—which is exactly the case the
 <a href="struct.Rmc.html#structfield.valid" title="field umsh_gnss::nmea::Rmc::valid"><code>valid</code></a> flag separates from a real fix.</p>
 </div></details><h2 id="fields" class="fields section-header">Fields<a href="#fields" class="anchor">§</a></h2><span id="structfield.valid" class="structfield section-header"><a href="#structfield.valid" class="anchor field">§</a><code>valid: <a class="primitive" href="https://doc.rust-lang.org/nightly/core/primitive.bool.html">bool</a></code></span><div class="docblock"><p>Whether the receiver reports the position as valid (<code>A</code>, not <code>V</code>).</p>
 </div><span id="structfield.time" class="structfield section-header"><a href="#structfield.time" class="anchor field">§</a><code>time: <a class="enum" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="struct" href="../epoch/struct.DateTime.html" title="struct umsh_gnss::epoch::DateTime">DateTime</a>&gt;</code></span><div class="docblock"><p>UTC instant, when both the time and date fields were present and

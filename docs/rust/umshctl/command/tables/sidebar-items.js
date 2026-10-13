@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["TableOp"],"fn":["digest_text","run"]};
+window.SIDEBAR_ITEMS = {"enum":["TableOp"],"fn":["item_text","run"]};

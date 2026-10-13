@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["PhyOp"],"fn":["lora_parts","power_part","report","run","set_enabled"]};
+window.SIDEBAR_ITEMS = {"constant":["RF_KEYS"],"enum":["PhyOp"],"fn":["report","rf_parts","rf_parts_of","run","set_enabled"]};
