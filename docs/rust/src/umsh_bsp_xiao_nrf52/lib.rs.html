@@ -74,74 +74,65 @@
 <a href=#74 id=74 data-nosnippet>74</a>//!
 <a href=#75 id=75 data-nosnippet>75</a>//! ## Pairing without a button
 <a href=#76 id=76 data-nosnippet>76</a>//!
-<a href=#77 id=77 data-nosnippet>77</a>//! The missing force-pairing gesture is the one absence that would
-<a href=#78 id=78 data-nosnippet>78</a>//! otherwise be fatal rather than merely inconvenient: with pairing mode
-<a href=#79 id=79 data-nosnippet>79</a>//! normally opening only when no bonds exist, the first host to bond
-<a href=#80 id=80 data-nosnippet>80</a>//! would own the radio permanently, and nothing short of a full security
-<a href=#81 id=81 data-nosnippet>81</a>//! wipe over that host's own link could ever let a second one in.
+<a href=#77 id=77 data-nosnippet>77</a>//! As on every board, a pairing window opens at boot only while no bonds
+<a href=#78 id=78 data-nosnippet>78</a>//! are retained. The missing force-pairing gesture costs nothing more:
+<a href=#79 id=79 data-nosnippet>79</a>//! once bonded, another host is let in by writing `PROP_BLE_PAIRING`
+<a href=#80 id=80 data-nosnippet>80</a>//! from a bonded host or from any host over USB-CDC. A board whose last
+<a href=#81 id=81 data-nosnippet>81</a>//! bonded host is lost is recovered the same way, over USB.
 <a href=#82 id=82 data-nosnippet>82</a>//!
-<a href=#83 id=83 data-nosnippet>83</a>//! So the firmware for this board builds with `boot-pairing-window`: a
-<a href=#84 id=84 data-nosnippet>84</a>//! **BLE pairing window opens on every boot**, lasting five minutes with
-<a href=#85 id=85 data-nosnippet>85</a>//! no bonds or two minutes with retained bonds.
-<a href=#86 id=86 data-nosnippet>86</a>//! Pressing RESET is the physical-presence ceremony here, standing in for
-<a href=#87 id=87 data-nosnippet>87</a>//! the button hold the other boards use. A configured PIN still gates the
-<a href=#88 id=88 data-nosnippet>88</a>//! pairing itself and the repeated-failure lockout still applies, so the
-<a href=#89 id=89 data-nosnippet>89</a>//! window enables attempts rather than granting access.
-<a href=#90 id=90 data-nosnippet>90</a>//!
-<a href=#91 id=91 data-nosnippet>91</a>//! This is an interim measure, not a designed answer—it trades a
-<a href=#92 id=92 data-nosnippet>92</a>//! recurring 20 s exposure on every reset for not locking users out, and
-<a href=#93 id=93 data-nosnippet>93</a>//! a board whose reset button is reachable by anyone is a board whose
-<a href=#94 id=94 data-nosnippet>94</a>//! pairing window is reachable by anyone. Revisit alongside the
-<a href=#95 id=95 data-nosnippet>95</a>//! retrofitted-button profile.
-<a href=#96 id=96 data-nosnippet>96</a>//!
-<a href=#97 id=97 data-nosnippet>97</a>//! `P0.02` is left as a **disconnected** input in this configuration. It
-<a href=#98 id=98 data-nosnippet>98</a>//! has no external pull of any kind, and a floating pin with the input
-<a href=#99 id=99 data-nosnippet>99</a>//! buffer connected sits near mid-rail and burns current through it—
-<a href=#100 id=100 data-nosnippet>100</a>//! which on a board chasing a &lt; 5 µA standby figure is not a rounding
-<a href=#101 id=101 data-nosnippet>101</a>//! error.
-<a href=#102 id=102 data-nosnippet>102</a>//!
-<a href=#103 id=103 data-nosnippet>103</a>//! ## If K1 is retrofitted
-<a href=#104 id=104 data-nosnippet>104</a>//!
-<a href=#105 id=105 data-nosnippet>105</a>//! Soldering a switch into K1 is the intended way to add a button, and
-<a href=#106 id=106 data-nosnippet>106</a>//! it is a supported thing to want—but it is not what this crate
-<a href=#107 id=107 data-nosnippet>107</a>//! builds today, and the requirements are sharp enough to record here
-<a href=#108 id=108 data-nosnippet>108</a>//! for whoever adds it:
-<a href=#109 id=109 data-nosnippet>109</a>//!
-<a href=#110 id=110 data-nosnippet>110</a>//! - **The internal pull-up is mandatory**, not belt-and-braces: R2 is
-<a href=#111 id=111 data-nosnippet>111</a>//!   absent, so nothing else holds `P0.02` high.
-<a href=#112 id=112 data-nosnippet>112</a>//! - Active low, and debounce generously—a bare mechanical switch with
-<a href=#113 id=113 data-nosnippet>113</a>//!   no hardware RC bounces freely.
-<a href=#114 id=114 data-nosnippet>114</a>//! - Arming System OFF wake means `SENSE_LOW` **with the pull-up
-<a href=#115 id=115 data-nosnippet>115</a>//!   retained**. MeshCore's `XiaoNrf52Board::powerOff()` passes
-<a href=#116 id=116 data-nosnippet>116</a>//!   `NRF_GPIO_PIN_NOPULL` here, which is correct only where an external
-<a href=#117 id=117 data-nosnippet>117</a>//!   pull-up exists; on this carrier it leaves the pin floating into a
-<a href=#118 id=118 data-nosnippet>118</a>//!   low detector, and the board wakes spuriously or immediately.
-<a href=#119 id=119 data-nosnippet>119</a>//! - `P0.02` is mutually exclusive with the L76K's standby line, so a
-<a href=#120 id=120 data-nosnippet>120</a>//!   button build and a GNSS build cannot be the same build.
+<a href=#83 id=83 data-nosnippet>83</a>//! The firmware's `boot-pairing-window` feature, which opens a window on
+<a href=#84 id=84 data-nosnippet>84</a>//! every boot so that RESET stands in for the gesture, is deliberately
+<a href=#85 id=85 data-nosnippet>85</a>//! off here: a board whose reset button is reachable by anyone would be a
+<a href=#86 id=86 data-nosnippet>86</a>//! board whose pairing window is reachable by anyone.
+<a href=#87 id=87 data-nosnippet>87</a>//!
+<a href=#88 id=88 data-nosnippet>88</a>//! `P0.02` is left as a **disconnected** input in this configuration. It
+<a href=#89 id=89 data-nosnippet>89</a>//! has no external pull of any kind, and a floating pin with the input
+<a href=#90 id=90 data-nosnippet>90</a>//! buffer connected sits near mid-rail and burns current through it—
+<a href=#91 id=91 data-nosnippet>91</a>//! which on a board chasing a &lt; 5 µA standby figure is not a rounding
+<a href=#92 id=92 data-nosnippet>92</a>//! error.
+<a href=#93 id=93 data-nosnippet>93</a>//!
+<a href=#94 id=94 data-nosnippet>94</a>//! ## If K1 is retrofitted
+<a href=#95 id=95 data-nosnippet>95</a>//!
+<a href=#96 id=96 data-nosnippet>96</a>//! Soldering a switch into K1 is the intended way to add a button, and
+<a href=#97 id=97 data-nosnippet>97</a>//! it is a supported thing to want—but it is not what this crate
+<a href=#98 id=98 data-nosnippet>98</a>//! builds today, and the requirements are sharp enough to record here
+<a href=#99 id=99 data-nosnippet>99</a>//! for whoever adds it:
+<a href=#100 id=100 data-nosnippet>100</a>//!
+<a href=#101 id=101 data-nosnippet>101</a>//! - **The internal pull-up is mandatory**, not belt-and-braces: R2 is
+<a href=#102 id=102 data-nosnippet>102</a>//!   absent, so nothing else holds `P0.02` high.
+<a href=#103 id=103 data-nosnippet>103</a>//! - Active low, and debounce generously—a bare mechanical switch with
+<a href=#104 id=104 data-nosnippet>104</a>//!   no hardware RC bounces freely.
+<a href=#105 id=105 data-nosnippet>105</a>//! - Arming System OFF wake means `SENSE_LOW` **with the pull-up
+<a href=#106 id=106 data-nosnippet>106</a>//!   retained**. MeshCore's `XiaoNrf52Board::powerOff()` passes
+<a href=#107 id=107 data-nosnippet>107</a>//!   `NRF_GPIO_PIN_NOPULL` here, which is correct only where an external
+<a href=#108 id=108 data-nosnippet>108</a>//!   pull-up exists; on this carrier it leaves the pin floating into a
+<a href=#109 id=109 data-nosnippet>109</a>//!   low detector, and the board wakes spuriously or immediately.
+<a href=#110 id=110 data-nosnippet>110</a>//! - `P0.02` is mutually exclusive with the L76K's standby line, so a
+<a href=#111 id=111 data-nosnippet>111</a>//!   button build and a GNSS build cannot be the same build.
+<a href=#112 id=112 data-nosnippet>112</a>
+<a href=#113 id=113 data-nosnippet>113</a></span><span class="attr">#[cfg(target_os = <span class="string">"none"</span>)]
+<a href=#114 id=114 data-nosnippet>114</a></span><span class="kw">pub mod </span>platform;
+<a href=#115 id=115 data-nosnippet>115</a>
+<a href=#116 id=116 data-nosnippet>116</a><span class="attr">#[cfg(target_os = <span class="string">"none"</span>)]
+<a href=#117 id=117 data-nosnippet>117</a></span><span class="kw">pub mod </span>power;
+<a href=#118 id=118 data-nosnippet>118</a>
+<a href=#119 id=119 data-nosnippet>119</a><span class="attr">#[cfg(target_os = <span class="string">"none"</span>)]
+<a href=#120 id=120 data-nosnippet>120</a></span><span class="kw">pub mod </span>shutdown;
 <a href=#121 id=121 data-nosnippet>121</a>
-<a href=#122 id=122 data-nosnippet>122</a></span><span class="attr">#[cfg(target_os = <span class="string">"none"</span>)]
-<a href=#123 id=123 data-nosnippet>123</a></span><span class="kw">pub mod </span>platform;
-<a href=#124 id=124 data-nosnippet>124</a>
-<a href=#125 id=125 data-nosnippet>125</a><span class="attr">#[cfg(target_os = <span class="string">"none"</span>)]
-<a href=#126 id=126 data-nosnippet>126</a></span><span class="kw">pub mod </span>power;
-<a href=#127 id=127 data-nosnippet>127</a>
-<a href=#128 id=128 data-nosnippet>128</a><span class="attr">#[cfg(target_os = <span class="string">"none"</span>)]
-<a href=#129 id=129 data-nosnippet>129</a></span><span class="kw">pub mod </span>shutdown;
-<a href=#130 id=130 data-nosnippet>130</a>
-<a href=#131 id=131 data-nosnippet>131</a><span class="attr">#[cfg(target_os = <span class="string">"none"</span>)]
-<a href=#132 id=132 data-nosnippet>132</a></span><span class="kw">pub use </span>platform::{XiaoNrf52Mac, XiaoNrf52Platform};
-<a href=#133 id=133 data-nosnippet>133</a><span class="attr">#[cfg(target_os = <span class="string">"none"</span>)]
-<a href=#134 id=134 data-nosnippet>134</a></span><span class="kw">pub use </span>power::PowerSignaler;
-<a href=#135 id=135 data-nosnippet>135</a>
-<a href=#136 id=136 data-nosnippet>136</a><span class="attr">#[cfg(all(target_os = <span class="string">"none"</span>, feature = <span class="string">"ulcp-i2c"</span>))]
-<a href=#137 id=137 data-nosnippet>137</a></span><span class="kw">pub mod </span>i2c;
-<a href=#138 id=138 data-nosnippet>138</a>
-<a href=#139 id=139 data-nosnippet>139</a><span class="doccomment">/// Seeed's application IDs for the plain XIAO nRF52840. Retail kits ship
-<a href=#140 id=140 data-nosnippet>140</a>/// the Sense bootloader (`2886:0045`) on plain hardware; this names the hardware.
-<a href=#141 id=141 data-nosnippet>141</a></span><span class="kw">pub const </span>USB: umsh_bsp_nrf52840::usb::UsbIdentity = umsh_bsp_nrf52840::usb::UsbIdentity {
-<a href=#142 id=142 data-nosnippet>142</a>    vid: <span class="number">0x2886</span>,
-<a href=#143 id=143 data-nosnippet>143</a>    pid: <span class="number">0x8044</span>,
-<a href=#144 id=144 data-nosnippet>144</a>    product: <span class="string">"XIAO nRF52 UMSH Radio"</span>,
-<a href=#145 id=145 data-nosnippet>145</a>    serial_number: <span class="string">"xiao-nrf52"</span>,
-<a href=#146 id=146 data-nosnippet>146</a>};
+<a href=#122 id=122 data-nosnippet>122</a><span class="attr">#[cfg(target_os = <span class="string">"none"</span>)]
+<a href=#123 id=123 data-nosnippet>123</a></span><span class="kw">pub use </span>platform::{XiaoNrf52Mac, XiaoNrf52Platform};
+<a href=#124 id=124 data-nosnippet>124</a><span class="attr">#[cfg(target_os = <span class="string">"none"</span>)]
+<a href=#125 id=125 data-nosnippet>125</a></span><span class="kw">pub use </span>power::PowerSignaler;
+<a href=#126 id=126 data-nosnippet>126</a>
+<a href=#127 id=127 data-nosnippet>127</a><span class="attr">#[cfg(all(target_os = <span class="string">"none"</span>, feature = <span class="string">"ulcp-i2c"</span>))]
+<a href=#128 id=128 data-nosnippet>128</a></span><span class="kw">pub mod </span>i2c;
+<a href=#129 id=129 data-nosnippet>129</a>
+<a href=#130 id=130 data-nosnippet>130</a><span class="doccomment">/// Seeed's application IDs for the plain XIAO nRF52840. Retail kits ship
+<a href=#131 id=131 data-nosnippet>131</a>/// the Sense bootloader (`2886:0045`) on plain hardware; this names the hardware.
+<a href=#132 id=132 data-nosnippet>132</a></span><span class="kw">pub const </span>USB: umsh_bsp_nrf52840::usb::UsbIdentity = umsh_bsp_nrf52840::usb::UsbIdentity {
+<a href=#133 id=133 data-nosnippet>133</a>    vid: <span class="number">0x2886</span>,
+<a href=#134 id=134 data-nosnippet>134</a>    pid: <span class="number">0x8044</span>,
+<a href=#135 id=135 data-nosnippet>135</a>    product: <span class="string">"XIAO nRF52 UMSH Radio"</span>,
+<a href=#136 id=136 data-nosnippet>136</a>    serial_number: <span class="string">"xiao-nrf52"</span>,
+<a href=#137 id=137 data-nosnippet>137</a>};
 </code></pre></div></section></main></body></html>

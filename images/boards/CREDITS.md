@@ -16,6 +16,7 @@ and feature callouts, which would be misleading on this site.
 | `wio-tracker-l1.jpg` | Seeed Studio | [Wio Tracker L1 Pro](https://www.seeedstudio.com/Wio-Tracker-L1-Pro-p-6454.html)—the assembled variant; the plain L1 ships as a bare board |
 | `sensecap-solar.jpg` | Seeed Studio | [SenseCAP Solar Node P1 Pro](https://www.seeedstudio.com/SenseCAP-Solar-Node-P1-Pro-for-Meshtastic-LoRa-p-6412.html) |
 | `xiao-nrf52.jpg` | Seeed Studio | [XIAO nRF52840 + Wio-SX1262 Kit](https://www.seeedstudio.com/XIAO-nRF52840-Wio-SX1262-Kit-for-Meshtastic-p-6400.html) |
+| `xiao-esp32s3.jpg` | Seeed Studio | [Wio-SX1262 with XIAO ESP32S3](https://www.seeedstudio.com/Wio-SX1262-with-XIAO-ESP32S3-p-5982.html) |
 | `heltec-v3.png` | Heltec | [WiFi LoRa 32 V3](https://heltec.org/project/wifi-lora-32-v3/) |
 | `heltec-v2.png` | Heltec | [WiFi LoRa 32 V2](https://heltec.org/project/wifi-lora-32v2/)—[front product photo](https://heltec.org/wp-content/uploads/2024/07/wifi-lora-32-v2-1.png) |
 | `tbeam-supreme.jpg` | LilyGO | [T-Beam SUPREME](https://lilygo.cc/en-us/products/t-beam-supreme)—the gallery's front-and-back shot, whose radio module reads `SX1262`, so it pictures the variant UMSH supports rather than the LR1121 one |
@@ -25,6 +26,9 @@ The iOS `board-heltec-v2` and `board-tlora-pager` image sets use these same
 sources, fitted to the accessory picker's 180×120-point canvas at 2× and 3×.
 The website preserves the supplied product images; the app versions are resized
 onto transparent canvases.
+
+The iOS `board-xiao-esp32s3` image set is cut out from the same Seeed Studio
+photograph as `xiao-esp32s3.jpg`, onto a transparent canvas.
 
 ## Hero composite
 

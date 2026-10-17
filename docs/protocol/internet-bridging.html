@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-6c34194f.js";
+            window.path_to_searchindex_js = "searchindex-84dd6577.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-e4cb2f86.js"></script>
+        <script src="toc-7fd6cf8e.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -412,8 +412,9 @@ receive metadata. The integrated client preserves HDLC-Lite framing, TLS 1.3,
 and the <code>umsh-bridge/1</code> ALPN offer. Its eight-frame queues discard the oldest
 frame under pressure and expire queued frames after ten seconds. A connection
 boundary discards both queues and the partial HDLC decoder state.</p>
-<p>A device may run an integrated client and a <a href="lan-bearer.html">LAN bearer</a>
-together. Both receive every frame the radio transmits, and both hand their
+<p>A device may run an integrated client and be in an
+<a href="ip-multicast.html">IP multicast group</a> at once. Both receive every frame the
+radio transmits, and both hand their
 frames to the node as receptions, so the node’s repeater is the one
 forwarding decision between them: a frame from either crosses to the other by
 being repeated on the radio. With its repeater disabled the node carries
@@ -460,15 +461,15 @@ the bridge touches, and a binding that meets
 possession also carries whatever key provisioning and administrative
 authority the device offers.</p>
 <h2 id="lan-interfaces"><a class="header" href="#lan-interfaces">LAN Interfaces</a></h2>
-<p>A participant <strong>MAY</strong> join a <a href="lan-bearer.html">LAN bearer</a> group as an
-interface: the server beside its radio and its clients, a client beside
+<p>A participant <strong>MAY</strong> join an <a href="ip-multicast.html">IP multicast group</a> as
+an interface: the server beside its radio and its clients, a client beside
 or instead of its radio. Each datagram from the group is a frame arriving
 on that interface, carrying no measurements, and each frame sent to the
 interface is one datagram.</p>
 <p>No repeater stands between the group and the bridge. A frame from the
-group comes either from a bridging radio, whose node has already forwarded
-it, or from an endpoint, whose frame no repeater has seen; a crossing from
-an endpoint spends one flood hop, as for a host interface. Nothing on the
+group comes either from a bridge, whose node has already forwarded it, or
+from another node, whose frame no repeater has seen; a crossing from such a
+node spends one flood hop, as for a host interface. Nothing on the
 bridge’s side stops a frame circulating between two participants on one
 LAN, or between a participant and its own multicast echo, so a participant
 <strong>MUST</strong> carry a frame across a LAN interface at most once, in either
@@ -601,7 +602,7 @@ participant’s node transmits.</p>
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                             </a>
 
-                            <a rel="next prefetch" href="lan-bearer.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="security-considerations.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                             </a>
 
@@ -615,7 +616,7 @@ participant’s node transmits.</p>
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                     </a>
 
-                    <a rel="next prefetch" href="lan-bearer.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="security-considerations.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                     </a>
             </nav>

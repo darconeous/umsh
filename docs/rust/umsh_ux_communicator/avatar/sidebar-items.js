@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["BuiltinChannel","Outline","PeerShape"],"static":["CIRCLE_26","CIRCLE_28","CIRCLE_34","HEXAGON_26","HEXAGON_28","HEXAGON_34","SQUARE_26","SQUARE_28","SQUARE_34","TRIANGLE_26","TRIANGLE_28","TRIANGLE_34"],"struct":["AvatarStyle"]};

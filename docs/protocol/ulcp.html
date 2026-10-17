@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-6c34194f.js";
+            window.path_to_searchindex_js = "searchindex-84dd6577.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-e4cb2f86.js"></script>
+        <script src="toc-7fd6cf8e.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -198,7 +198,7 @@ commands, and properties: <a href="ulcp-radio.html">Radio Control</a>,
 <a href="ulcp-saved-state.html">Saved State</a>,
 <a href="ulcp-host.html">Tethered Host Services</a>, <a href="ulcp-wifi.html">Wi-Fi</a>,
 <a href="ulcp-ip.html">IP Connectivity</a>, <a href="ulcp-bridge.html">Bridge Client</a>,
-<a href="ulcp-lan-bearer.html">LAN Bearer</a>, and <a href="ulcp-i2c.html">I2C Bus Access</a></li>
+<a href="ulcp-ip-multicast.html">IP Multicast</a>, and <a href="ulcp-i2c.html">I2C Bus Access</a></li>
 <li><a href="ulcp-conformance.html">Minimum Requirements</a> states what a device has to
 implement to be a ULCP device, and the
 <a href="ulcp-index.html">Command and Property Index</a> locates every numeric
@@ -446,8 +446,8 @@ link is.</p>
 <p>The device’s own node connected to an <a href="internet-bridging.html">internet bridge</a>
 over IP: where to connect, which server key to trust, whether the client
 is enabled, and what state the connection is in.</p>
-<h3 id="lan-bearer"><a class="header" href="#lan-bearer"><a href="ulcp-lan-bearer.html">LAN Bearer</a></a></h3>
-<p>The device’s own node joined to a <a href="lan-bearer.html">LAN bearer</a>: whether
+<h3 id="ip-multicast"><a class="header" href="#ip-multicast"><a href="ulcp-ip-multicast.html">IP Multicast</a></a></h3>
+<p>The device’s own node joined to an <a href="ip-multicast.html">IP multicast group</a>: whether
 it is enabled, which multicast group it joins, how many frames from the
 network it takes, and whether it has joined.</p>
 <h3 id="i2c-bus-access"><a class="header" href="#i2c-bus-access"><a href="ulcp-i2c.html">I2C Bus Access</a></a></h3>
@@ -495,6 +495,8 @@ command and property namespace. The same frames run over:</p>
 <li>UART / USB-CDC serial, using HDLC-Lite framing</li>
 <li>BLE, using the GATT frame transport of
 <a href="ulcp-ble.html">ULCP over BLE</a></li>
+<li>a <a href="ulcp-core.html#local-sockets">local socket</a> between processes on one
+host, using HDLC-Lite framing</li>
 <li>any other reliable, ordered, flow-controlled local transport</li>
 </ul>
 <p>The key structural ideas:</p>
@@ -515,7 +517,8 @@ framing or the version.</p>
 <p>Whatever the transport, ULCP is a privileged interface: an
 attached host commands transmission with arbitrary content, timing, and
 power, and provisioning moves real key material onto the device. On serial
-transports this is protected by physical possession; the BLE binding
+transports this is protected by physical possession, and on a local
+socket by access to the socket; the BLE binding
 specifies an equivalent barrier
 (see <a href="ulcp-ble.html#ble-security">Security</a>), and key provisioning
 must never be carried over a transport that provides less.</p>

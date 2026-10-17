@@ -36,10 +36,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-6c34194f.js";
+            window.path_to_searchindex_js = "searchindex-84dd6577.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-e4cb2f86.js"></script>
+        <script src="toc-7fd6cf8e.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -1369,7 +1369,7 @@ non-local chatter. Moreso than other types of bridges, internet bridges MUST lim
 them: the flood hop count is bounded by the two hops a crossing spends, and deployments SHOULD
 rate-limit each participant and MAY clamp the hop count further.</p>
 </blockquote>
-<p>A client–server tunnel realization of an internet bridge is specified in <a href="#internet-bridging">Internet Bridging</a>. Repeaters sharing a local network bridge over it as described in <a href="#lan-bearer-2">LAN Bearer</a>.</p>
+<p>A client–server tunnel realization of an internet bridge is specified in <a href="#internet-bridging">Internet Bridging</a>. A node with a LoRa radio and its repeater enabled that joins an <a href="#umsh-over-ip-multicast">IP multicast group</a> is a bridge between the group and its LoRa channel.</p>
 <h2 id="forwarding-confirmation-and-recovery"><a class="header" href="#forwarding-confirmation-and-recovery">Forwarding Confirmation and Recovery</a></h2>
 <p>UMSH provides hop-by-hop forwarding confirmation for both source-routed and flood-originated packets. After transmitting, a node listens for the next hop to retransmit the same packet. If no retransmission is heard within a timeout, the node retries after a short jittered delay (up to 3 retries). The original sender does not currently receive any notification of a forwarding failure when source routing.</p>
 <p>If a cached route fails entirely (noticed because of a timeout), the sender can fall back to flood routing for the same logical packet using the <strong>route retry option</strong>, which allows repeaters to forward it even if they already suppressed the original attempt.</p>
@@ -1381,7 +1381,7 @@ rate-limit each participant and MAY clamp the hop count further.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="packet-processing"><a class="header" href="#packet-processing">Packet Processing</a></h1>
 <p>This chapter describes how a receiving node processes an incoming packet. This procedure applies to all nodes, not just repeaters. Repeater-specific forwarding logic is described separately in <a href="#repeater-operation">Repeater Operation</a>.</p>
-<p>A packet enters this procedure however it reached the node. Most arrive off the air, but a node whose radio is shared with another stack also receives what that stack transmits, and a node reachable over a point-to-point link—a <a href="#prop-mac-backhaul">backhauled host</a>, for instance—receives what arrives across it. A node with a <a href="#forwarding-across-bearers">bearer</a>, such as a LAN, receives what other participants send on it. Such a packet is processed exactly as a received one, with one difference: it carries no signal measurements, so anything defined in terms of how well the packet was heard does not apply to it.</p>
+<p>A packet enters this procedure however it reached the node. Most arrive off the air, but a node whose radio is shared with another stack also receives what that stack transmits, and a node reachable over a point-to-point link—a <a href="#prop-mac-backhaul">backhauled host</a>, for instance—receives what arrives across it. A node with a LoRa radio that is also in an <a href="#nodes-with-a-lora-radio">IP multicast group</a> receives what other nodes send to the group. Such a packet is processed exactly as a received one, with one difference: it carries no signal measurements, so anything defined in terms of how well the packet was heard does not apply to it.</p>
 <h2 id="receive-procedure"><a class="header" href="#receive-procedure">Receive Procedure</a></h2>
 <ol>
 <li>
@@ -1614,7 +1614,7 @@ delay   = D_ack + W + uniform_random(0, W_jitter)
 </ul>
 <p>After computing the delay, the repeater waits. Other packets SHOULD continue to be forwarded while waiting, assuming the channel is clear.</p>
 <p>If the repeater overhears the same packet forwarded by another node (identified by MIC in the duplicate cache) before the delay expires, it SHOULD defer rather than transmit. A safe default is to recalculate a new delay using the same <code>W_min</code>/<code>W_max</code> limits—including <code>D_ack</code> when it applies, since the overheard copy may itself elicit an immediate ACK from the destination—and restart the waiting period. The first two overheard copies each defer the pending forward this way; on overhearing a third copy, the repeater SHOULD abandon the pending forward.</p>
-<p>Only a copy received over the radio defers. A packet received from a <a href="#channel-access-2">bearer</a>, heard by every radio on that bearer at once, contends with a window drawn uniformly from <code>[W_min, W_max]</code>.</p>
+<p>Only a copy received over the radio defers. A packet received from an <a href="#channel-access-2">IP multicast group</a>, heard by every bridge in the group at once, contends with a window drawn uniformly from <code>[W_min, W_max]</code>.</p>
 <p>If the repeater instead overhears a MAC ack whose <code>ack_mic</code> matches the pending packet’s MIC prefix, it SHOULD <a href="#ack-cancellation">cancel the pending forward outright</a> rather than defer: the destination provably has the packet.</p>
 <p>This deferral behavior is intended only for the first local forwarding decision after reception. Once a repeater has actually transmitted its own copy, any later retransmission behavior is governed by <a href="#forwarding-confirmation">Repeater Operation</a>.</p>
 <p>Nodes waiting for implicit forwarding confirmation MUST size their confirmation timeout to include this full forwarding-delay window. A safe default is to allow:</p>
@@ -1809,7 +1809,7 @@ delay   = D_ack + W + uniform_random(0, W_jitter)
 </ul>
 <p>A packet that arrives carrying an <strong>empty</strong> source-route option matched no hint at this repeater, so it takes the flood path: steps 7 through 9 apply in full. This is how a hybrid route transitions to flooding—the transition is observed by the repeater <em>after</em> the one that emptied the route, not performed by it.</p>
 <p>A <a href="#internet-bridging">bridge</a> rewrites nothing of its own: a repeater at each end of it forwards the packet by this procedure, so a crossing applies these rules twice.</p>
-<p>A node with <a href="#forwarding-across-bearers">bearers</a> beside its radio applies this procedure once per packet, and offers the one rewritten packet to each egress its forwarding table allows.</p>
+<p>A bridge in an <a href="#nodes-with-a-lora-radio">IP multicast group</a> applies this procedure once to a packet received from the group, as to one heard on its radio.</p>
 <h2 id="forwarding-confirmation"><a class="header" href="#forwarding-confirmation">Forwarding Confirmation</a></h2>
 <p>Repeaters do not generate MAC acks—acks are generated only by the <a href="#mac-ack-packet">final destination</a>. Instead, a node can passively confirm that a transmitted or forwarded packet was received by listening for a subsequent retransmission of the same packet (or it’s ack).</p>
 <p>This applies to:</p>
@@ -1824,7 +1824,7 @@ delay   = D_ack + W + uniform_random(0, W_jitter)
 <pre><code class="language-text">confirm_timeout = 2 × T_frame + W_max + 2 × W_jitter + D_ack
 </code></pre>
 <p>where <code>W_max + 2 × W_jitter</code> bounds the intentional forwarding delay permitted for the path, including the wait of a repeater that heard the packet below the contention band, and <code>D_ack</code> is the <a href="#ack-protection-interval">ACK protection interval</a> when it applies. With the suggested defaults <code>W_max = T_frame/2</code>, <code>W_jitter = T_frame/10</code>, and <code>D_ack = 0.25 × T_frame</code>, this yields <code>confirm_timeout = 2.95 × T_frame</code>.</p>
-<p>If the packet is heard before <code>confirm_timeout</code> expires, forwarding is confirmed. A copy received from a <a href="#channel-access-2">bearer</a> does not confirm.</p>
+<p>If the packet is heard before <code>confirm_timeout</code> expires, forwarding is confirmed. A copy received from an <a href="#channel-access-2">IP multicast group</a> confirms as one heard on the air does.</p>
 <p>If <code>confirm_timeout</code> expires without a retransmission, the node SHOULD schedule a retry after a jittered delay:</p>
 <pre><code class="language-text">retry_delay = uniform_random(0, T_frame)
 </code></pre>
@@ -2023,6 +2023,233 @@ these periods are the advertisement-policy properties.</p>
 <li>a newly observed route is not necessarily better and may require local policy before replacing the old route</li>
 </ul>
 <p>If this idea is ever standardized, meshes should converge on the same probing policy and parameter values so that behavior remains predictable across implementations. Any such policy should be treated as provisional until it has been evaluated on real radios in mobile conditions.</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="umsh-over-ip-multicast"><a class="header" href="#umsh-over-ip-multicast">UMSH over IP Multicast</a></h1>
+<p>UMSH can be used over IP multicast the way it is used over LoRa. A frame sent
+to a multicast group on a local network is heard by every node in the group,
+as a frame transmitted on a LoRa channel is heard by every node in range, and
+the group carries UMSH as a LoRa channel does: nodes on it address one
+another, flood, route, acknowledge, and share
+<a href="#channels-1">channels</a> by the same rules. Phones and computers on
+one network form a UMSH mesh among themselves, with no LoRa radio anywhere.</p>
+<p>A node with a LoRa radio may join the group too. With its repeater enabled it
+is a <a href="#bridging">bridge</a> between the group and its LoRa
+channel, as described in <a href="#nodes-with-a-lora-radio">Nodes With a LoRa Radio</a>,
+so that the nodes on the network and the nodes within reach of its radio
+share one mesh. The group needs no LoRa radio to work.</p>
+<h2 id="why-a-multicast-group"><a class="header" href="#why-a-multicast-group">Why a Multicast Group</a></h2>
+<p>A multicast group gives a local network an independent UMSH segment that
+works as soon as a node joins it. There is no server to set up and no
+connection to establish or authenticate: a node needs only the group’s
+address and port, which have defaults, and from then on it hears every other
+node in the group and is heard by them. Nothing at the transport needs
+authenticating, because UMSH <a href="#security--cryptography">secures its frames</a> end to end and
+a node trusts a frame on its contents, never on where it arrived from.</p>
+<p>The group can be this simple because it is the kind of medium UMSH is
+designed for. UMSH frames are sent to a medium, not to a peer:</p>
+<ul>
+<li><strong>A frame names no link-layer receiver.</strong> A unicast frame is addressed by
+a hint of its destination’s public key, and a
+<a href="#channels-1">multicast channel</a> frame by its channel. It is
+transmitted once, every node in range hears it, and the node it is meant
+for recognizes it by its cryptographic contents.</li>
+<li><strong>A sender needs no picture of the network.</strong> A frame sent with no route
+reaches every node in
+<a href="#direct-single-hop-delivery">direct range</a>; beyond
+that, a flood carries it, and routes are learned from the traffic itself.
+Every node in the group is in direct range of every other, so a frame
+reaches its destination with no route at all.</li>
+</ul>
+<p>Over unicast, the same segment would need each node to find its peers and
+send every frame once per peer, or a server for every node to connect to and
+relay through. Either is something to set up and keep running that the
+group does without.</p>
+<p>A multicast group is appropriate only because UMSH is a low-bandwidth
+protocol. Its frames are at most 255 octets, and its rates are set by LoRa:
+well under a kilobyte per second. Every datagram sent to the group reaches
+every host in it and, on Wi-Fi, is sent to every station at a low basic
+rate. That cost is negligible at UMSH’s rates; a protocol that carried
+pictures or video would not belong in a multicast group, and UMSH is not
+designed to carry either.</p>
+<h2 id="transport"><a class="header" href="#transport">Transport</a></h2>
+<p>Frames travel in UDP datagrams sent to an IPv4 multicast group. The default
+group is
+<code>239.255.134.121</code>, in the administratively scoped range, and the default port
+is 15056. A deployment MAY configure another IPv4 multicast group and another
+nonzero port; every node that is to hear the others uses the same pair.</p>
+<p>Every node sends from the group’s port as well as to it, and listens on it;
+several nodes on one host share it.</p>
+<p>A node joins the group on the interface it uses for the local network and
+sends to the group from that interface, with a multicast TTL of 16 unless
+configured otherwise. How far the group reaches is the network’s decision:
+routers forward a multicast group only where they are configured to, and
+<code>239.255.0.0/16</code> is scoped to the organization. A network that routes the
+group between its subnets joins their nodes into one group.</p>
+<h3 id="echoes"><a class="header" href="#echoes">Echoes</a></h3>
+<p>A node in a multicast group hears its own datagrams when multicast loopback,
+or an access point repeating a station’s multicast, hands them back. A node
+MAY drop a datagram whose source address and port are its own, which on a
+host with several nodes also drops the others’. A node that is alone on its
+host MAY instead disable multicast loopback.</p>
+<h3 id="point-to-point"><a class="header" href="#point-to-point">Point-to-Point</a></h3>
+<p>A unicast address MAY be configured in place of the group, naming the one
+peer of a point-to-point link. The node joins nothing, sends to the peer at
+the group’s port, and drops every datagram whose source address and port are
+not the peer’s. Each end names the other, on the same port.</p>
+<h2 id="datagram-format"><a class="header" href="#datagram-format">Datagram Format</a></h2>
+<p>A datagram carries exactly one frame, with no header: the frame exactly as it
+is transmitted over LoRa.</p>
+<ul>
+<li>A sender <strong>MUST NOT</strong> send a datagram that is empty or larger than 255
+octets.</li>
+<li>A receiver drops, with accounting, a datagram that is empty or larger than
+255 octets, and handles any other as a frame received over LoRa.</li>
+</ul>
+<p>The sender of a frame is not identified in the datagram, and nothing about
+the datagram’s source address is carried onward.</p>
+<p>A datagram is a <strong>group reception</strong>. It was heard by every node in the
+group, and measured by none of them: it carries no RSSI or SNR, and the
+<a href="#forwarding-procedure">signal-quality thresholds</a> do
+not apply to it.</p>
+<h2 id="traffic"><a class="header" href="#traffic">Traffic</a></h2>
+<p>A node sends a datagram only when it transmits a frame: one it originates,
+an acknowledgment, or, on a node with a LoRa radio, a frame its radio
+transmits. There is no keepalive, membership, or routing exchange of the
+group’s own.</p>
+<p>Every node in the group hears every datagram, so one datagram delivers a
+frame to the whole group. A frame reaches the group again when a bridge
+repeats it onto LoRa, and what a radio sends to the group is bounded by its
+airtime and its <a href="#channel-access-1">duty cycle</a>.</p>
+<p>A node whose only medium is the group <strong>SHOULD NOT</strong> repeat. Every node it
+could reach has already heard the frame, so a repeat spends a flood hop and
+sends one more datagram to every host in the group while carrying the frame
+to no one new. A network on which a multicast datagram does not reach every
+node, such as an ad hoc Wi-Fi network whose nodes are not all in range of one
+another, is the exception: there a repeater carries frames to nodes the
+sender cannot reach.</p>
+<h2 id="discovery"><a class="header" href="#discovery">Discovery</a></h2>
+<p>Nodes advertise themselves with DNS-SD over multicast DNS, under the service
+type <code>_umsh._udp</code>. A bridge <strong>SHOULD</strong> advertise; other nodes MAY.</p>
+<ul>
+<li>The instance name is the node’s device name.</li>
+<li>The SRV port is the group’s port.</li>
+<li>The TXT record carries the keys below.</li>
+</ul>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Key</th><th>Value</th><th>Present</th></tr>
+</thead>
+<tbody>
+<tr><td><code>v</code></td><td>TXT schema version: <code>1</code></td><td>Always</td></tr>
+<tr><td><code>grp</code></td><td>The group address, dotted decimal with no leading zeros</td><td>Always</td></tr>
+<tr><td><code>id</code></td><td>The node’s public key, as 44 base58 characters</td><td>Always</td></tr>
+<tr><td><code>f</code></td><td>LoRa center frequency, in Hz</td><td>When the node has a LoRa radio with its PHY enabled</td></tr>
+<tr><td><code>bw</code></td><td>LoRa bandwidth, in Hz</td><td>With <code>f</code></td></tr>
+<tr><td><code>sf</code></td><td>LoRa spreading factor</td><td>With <code>f</code></td></tr>
+<tr><td><code>cr</code></td><td>LoRa coding rate denominator, 5 to 8</td><td>With <code>f</code></td></tr>
+<tr><td><code>rep</code></td><td><code>1</code> if the node repeats LoRa to LoRa, else <code>0</code></td><td>With <code>f</code></td></tr>
+<tr><td><code>ib</code></td><td><code>1</code> if an <a href="#internet-bridging">internet bridge</a> link is up</td><td>Optional</td></tr>
+</tbody>
+</table>
+</div>
+<p>Numbers are decimal with no leading zeros. A node updates its record when any
+value changes.</p>
+<p>A node reading a record ignores keys it does not recognize, treats a missing
+optional key as false, and ignores a record whose <code>v</code> it does not recognize.
+Discovery is only discovery: frames travel over the group whatever the
+records say, and a node learns from them which LoRa meshes the group reaches
+and on which settings, before it sends anything.</p>
+<h2 id="nodes-with-a-lora-radio"><a class="header" href="#nodes-with-a-lora-radio">Nodes With a LoRa Radio</a></h2>
+<p>A node with a LoRa radio that joins the group is attached to both its LoRa
+channel, called <em>the air</em> below, and the group:</p>
+<ul>
+<li><strong>What arrives from the group is a reception.</strong> The node handles it as it
+handles a frame heard on its radio, recording that it arrived from the
+group, and applies the
+<a href="#forwarding-procedure">forwarding procedure</a> to it
+once. With its repeater enabled the node may repeat it on its radio; with
+its repeater disabled it forwards nothing, whatever the frame arrived on.</li>
+<li><strong>What the radio transmits goes to the group.</strong> Each frame the node’s
+radio puts on the air is sent to the group, its repeats included. A frame
+the radio does not transmit—a repeat abandoned to a better-placed
+repeater, or canceled by an overheard acknowledgment—does not reach the
+group.</li>
+</ul>
+<p>A node whose repeater is disabled is therefore a member of the group and
+nothing more; only a node with its repeater enabled is a bridge.</p>
+<p>A frame a node on the group originates spends one flood hop at each bridge
+that carries it onto the air. A frame heard on the air and carried back onto
+the air by way of the group spends one hop at the bridge that hears it and
+repeats it, which is what reaches the group, and one at each bridge that
+receives it from the group and repeats it. A repeat returns to the group,
+where every node has already seen the frame and suppresses it as a
+duplicate.</p>
+<p>A bridge that repeats a group reception prepends a
+<a href="#trace-signal-option-10">Trace Signal</a> entry of two zero
+bytes, the entry for a hop that measured nothing.</p>
+<p>The <a href="#channel-access-1">duty cycle</a> a radio spends repeating group receptions
+counts against its limit like any other forward. Copies sent to the group
+spend no radio airtime.</p>
+<h3 id="ingress-limit"><a class="header" href="#ingress-limit">Ingress Limit</a></h3>
+<p>A bridge <strong>MUST</strong> bound the rate at which it accepts group receptions, so
+that a busy network cannot spend the radio’s airtime faster than its operator
+allows. A token bucket of frames per minute is recommended.
+Receptions over the limit are dropped with accounting.</p>
+<h3 id="channel-access-2"><a class="header" href="#channel-access-2">Channel Access</a></h3>
+<p>Every bridge in the group receives each datagram at once, so bridges on the
+same LoRa channel would carry it onto the air together. Group receptions
+therefore contend, and only what is heard over the air says anything about
+the air.</p>
+<ul>
+<li><strong>Group receptions contend.</strong> A group reception carries no measurement to
+rank bridges by. Its
+<a href="#flood-forwarding-contention-window">flood contention window</a>
+is drawn uniformly from <code>[W_min, W_max]</code>, and the jitter and <code>D_ack</code> are
+added as for any other forward.</li>
+<li><strong>Only the air defers.</strong> Only a copy received over the radio defers or
+abandons a pending forward. A copy received from the group says nothing
+about who has transmitted on the radio’s channel, and is a duplicate and
+nothing more.</li>
+<li><strong>A group copy confirms.</strong> A copy received from the group is a frame some
+radio transmitted, and satisfies
+<a href="#forwarding-confirmation">forwarding confirmation</a> as
+a copy overheard on the air does.</li>
+<li><strong>Ack cancellation is unchanged.</strong> An overheard acknowledgment
+<a href="#ack-cancellation">cancels</a> a matching pending forward
+whatever it arrived on: it proves delivery either way.</li>
+</ul>
+<p>Bridges on one LoRa channel that hear the same group reception draw different
+windows. The first to transmit is overheard by the others, which defer as
+they would for any repeat they overheard.</p>
+<h2 id="security-considerations"><a class="header" href="#security-considerations">Security Considerations</a></h2>
+<ul>
+<li><strong>Frames are protected end to end.</strong> A UMSH frame that carries security
+information is authenticated, and encrypted where it is marked encrypted,
+by the node that sends it, before it reaches any medium. The group adds no
+protection and removes none: what crosses the network is what crosses the
+air, and a node trusts a frame on its contents, never on where it arrived
+from.</li>
+<li><strong>Anyone on the network hears the group.</strong> A listener on the network
+learns what a LoRa receiver in range of the same nodes would.</li>
+<li><strong>Anyone on the network can send to the group.</strong> The group is as open as
+a LoRa channel is to anyone with a radio. A frame that fails
+authentication is dropped by the node it is addressed to. Where bridges are present, the
+ingress limit and the duty-cycle limit bound what injected traffic costs
+the air.</li>
+<li><strong>The group reaches as far as the network routes it.</strong> The default group
+is administratively scoped. A network that routes it between subnets has
+extended the group, and any bridges in it, to everyone the routing
+reaches.</li>
+<li><strong>DNS-SD records are public.</strong> A record reveals a node’s public key and,
+for a node with a LoRa radio, its LoRa settings—which its transmissions
+already reveal to anyone in range—to everyone on the network.</li>
+<li><strong>Bridges join meshes.</strong> The cautions in
+<a href="#bridging">Routing Overview § Bridging</a> apply: a bridge
+in the group puts the flood traffic of every LoRa mesh reachable through
+the group on its own mesh’s airtime. Region policy and the flood hop budget
+are the tools for keeping that local.</li>
+</ul>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="payload-format"><a class="header" href="#payload-format">Payload Format</a></h1>
 <p>The UMSH payload carries higher-layer content—either a network-layer protocol (e.g., 6LoWPAN), a third-party application protocol (e.g., CoAP), or one of the UMSH-defined application protocols (e.g., text messages, chat rooms). The MAC layer treats the payload opaquely; it does not interpret, fragment, or reassemble payload content (see <a href="#layer-separation">Layer Separation</a>).</p>
@@ -3240,7 +3467,7 @@ commands, and properties: <a href="#ulcp-radio-control">Radio Control</a>,
 <a href="#ulcp-saved-state">Saved State</a>,
 <a href="#ulcp-tethered-host-services">Tethered Host Services</a>, <a href="#ulcp-wi-fi">Wi-Fi</a>,
 <a href="#ulcp-ip-connectivity">IP Connectivity</a>, <a href="#bridge-client-1">Bridge Client</a>,
-<a href="#lan-bearer-1">LAN Bearer</a>, and <a href="#ulcp-i2c-bus-access">I2C Bus Access</a></li>
+<a href="#ip-multicast-1">IP Multicast</a>, and <a href="#ulcp-i2c-bus-access">I2C Bus Access</a></li>
 <li><a href="#ulcp-minimum-requirements">Minimum Requirements</a> states what a device has to
 implement to be a ULCP device, and the
 <a href="#ulcp-command-and-property-index">Command and Property Index</a> locates every numeric
@@ -3488,8 +3715,8 @@ link is.</p>
 <p>The device’s own node connected to an <a href="#internet-bridging">internet bridge</a>
 over IP: where to connect, which server key to trust, whether the client
 is enabled, and what state the connection is in.</p>
-<h3 id="lan-bearer"><a class="header" href="#lan-bearer"><a href="#lan-bearer-1">LAN Bearer</a></a></h3>
-<p>The device’s own node joined to a <a href="#lan-bearer-2">LAN bearer</a>: whether
+<h3 id="ip-multicast"><a class="header" href="#ip-multicast"><a href="#ip-multicast-1">IP Multicast</a></a></h3>
+<p>The device’s own node joined to an <a href="#umsh-over-ip-multicast">IP multicast group</a>: whether
 it is enabled, which multicast group it joins, how many frames from the
 network it takes, and whether it has joined.</p>
 <h3 id="i2c-bus-access"><a class="header" href="#i2c-bus-access"><a href="#ulcp-i2c-bus-access">I2C Bus Access</a></a></h3>
@@ -3537,6 +3764,8 @@ command and property namespace. The same frames run over:</p>
 <li>UART / USB-CDC serial, using HDLC-Lite framing</li>
 <li>BLE, using the GATT frame transport of
 <a href="#ulcp-over-ble">ULCP over BLE</a></li>
+<li>a <a href="#local-sockets">local socket</a> between processes on one
+host, using HDLC-Lite framing</li>
 <li>any other reliable, ordered, flow-controlled local transport</li>
 </ul>
 <p>The key structural ideas:</p>
@@ -3557,7 +3786,8 @@ framing or the version.</p>
 <p>Whatever the transport, ULCP is a privileged interface: an
 attached host commands transmission with arbitrary content, timing, and
 power, and provisioning moves real key material onto the device. On serial
-transports this is protected by physical possession; the BLE binding
+transports this is protected by physical possession, and on a local
+socket by access to the socket; the BLE binding
 specifies an equivalent barrier
 (see <a href="#ble-security">Security</a>), and key provisioning
 must never be carried over a transport that provides less.</p>
@@ -3701,6 +3931,8 @@ exactly as used by Spinel.</li>
 <a href="#ulcp-over-ble">ULCP over BLE</a>.</li>
 <li>A reliable, in-order byte stream standing in for a serial link—a TCP
 connection to a bridged port, say—uses the same HDLC-Lite framing.</li>
+<li>A local stream socket between two processes on one host—a Unix domain
+socket—uses HDLC-Lite as well; see <a href="#local-sockets">Local Sockets</a>.</li>
 </ul>
 <p>In this chapter, the <strong>device</strong> is the side that owns the transceiver and
 the <strong>host</strong> is the side that attaches to it over the local link (see
@@ -3840,7 +4072,8 @@ in the <a href="#ulcp-command-and-property-index">Command and Property Index</a>
 </table>
 </div>
 <p>The multi-property commands (21–23) are gated by <code>CAP_CMD_MULTI</code>,
-<code>CMD_REBOOT</code> by <code>CAP_REBOOT</code>, <code>CMD_ANNOUNCE</code> by <code>CAP_ADVERT</code>, and the
+<code>CMD_REBOOT</code>, <code>CMD_DFU</code>, and <code>CMD_FACTORY_RESET</code> by <code>CAP_REBOOT</code>,
+<code>CMD_ANNOUNCE</code> by <code>CAP_ADVERT</code>, and the
 bus-access commands (25–27) by <code>CAP_I2C</code> (see
 <a href="#capabilities-1">Capabilities</a>); everything else is unconditional.</p>
 <h3 id="cmd-noop"><a class="header" href="#cmd-noop">CMD 0: (Host -&gt; Device) <code>CMD_NOP</code></a></h3>
@@ -4052,8 +4285,10 @@ or one <code>UINT8</code> selecting the DFU method:</p>
 <p>An empty payload selects Default. The default is fixed by the platform,
 independent of the command’s transport. XIAO nRF52 and SenseCAP Solar use
 BLE; T-Echo, T1000-E, and Wio Tracker L1 use UF2.
-Other mode values are undefined. There is no capability or discovery
-property for this command; the device decides whether its supported
+Other mode values are undefined. Entering the bootloader is a restart into
+it, so this command is only available on devices advertising <code>CAP_REBOOT</code>;
+a device without it answers <code>STATUS_UNIMPLEMENTED</code>. There is no discovery
+property for the methods; the device decides whether its supported
 bootloader can enter the requested mode.</p>
 <p>The device answers with <code>CMD_PROP_IS(PROP_LAST_STATUS)</code>:</p>
 <div class="table-wrapper">
@@ -4548,6 +4783,7 @@ use are listed in the
 <li><strong>USB-CDC</strong>—assertion and deassertion of DTR on the ULCP
 interface.</li>
 <li><strong>TCP</strong>—establishment and closure of the connection.</li>
+<li><strong>Local socket</strong>—establishment and closure of the connection.</li>
 <li><strong>Bare UART</strong>—implementation-defined. A device with no way to detect
 host presence MAY treat the host as permanently attached, in which case
 it never enters detached operation and offline assistance
@@ -4602,6 +4838,22 @@ starting over. A host that receives one runs this procedure again.</p>
 current device- and host-domain state, and begins detached operation:
 accepted frames are queued rather than delivered, and acknowledgement
 delegation (if enabled) becomes active.</p>
+<h3 id="local-sockets"><a class="header" href="#local-sockets">Local Sockets</a></h3>
+<p>A device that runs as a process—a virtual radio hosted beside the
+application that attaches to it—may serve ULCP on a local stream socket,
+such as a Unix domain socket:</p>
+<ul>
+<li><strong>Framing:</strong> HDLC-Lite, as on a serial link.</li>
+<li><strong>Attach and detach:</strong> a connection opening is an attach, and its
+closing is a detach.</li>
+<li><strong>One host at a time:</strong> a new connection replaces the current one,
+which the device closes first. A host that went away without closing
+never holds the device against its successor.</li>
+<li><strong>Security binding:</strong> access to the socket. The device <strong>MUST</strong> place
+the socket where the operating system lets only the processes entitled
+to the device reach it—a file in a directory private to those
+processes—which stands in for physical possession.</li>
+</ul>
 <h2 id="provisioning-security"><a class="header" href="#provisioning-security">Provisioning Security</a></h2>
 <p>Provisioning moves real key material onto the device, within the limits of the
 <a href="#security-boundary">security boundary</a>: channel keys and
@@ -4625,6 +4877,7 @@ earlier host’s keys.</li>
 for the key tables, and any set of <code>PROP_DEV_PRIVATE_KEY</code>—<strong>MUST NOT</strong>
 be carried over a transport that does not meet the requirements of the
 transport’s security binding: physical possession for serial transports,
+access to the socket for a <a href="#local-sockets">local socket</a>,
 or an encrypted bonded LESC link as specified in
 <a href="#ble-security">ULCP over BLE</a>.</li>
 <li>A compromised or stolen device exposes the provisioned channels, the
@@ -4873,14 +5126,15 @@ grants:</p>
 <tr><td>60</td><td><code>CAP_I2C</code></td><td>—</td><td><a href="#capabilities-11">I2C Bus Access</a></td></tr>
 <tr><td>61</td><td><code>CAP_TEMPERATURE</code></td><td>—</td><td><a href="#capabilities-4">Device Domain</a></td></tr>
 <tr><td>62</td><td><code>CAP_MESHCORE_FORWARDER</code></td><td><code>CAP_REPEATER</code></td><td><a href="#capabilities-4">Device Domain</a></td></tr>
-<tr><td>63</td><td><code>CAP_LAN_BEARER</code></td><td><code>CAP_DEV_IDENTITY</code>, <code>CAP_IPV4</code></td><td><a href="#capabilities-10">LAN Bearer</a></td></tr>
+<tr><td>63</td><td><code>CAP_LAN_BEARER</code></td><td>—</td><td><a href="#capabilities-10">IP Multicast</a></td></tr>
 <tr><td>515</td><td><code>CAP_PHY_LORA</code></td><td>—</td><td><a href="#capabilities-2">Radio Control</a></td></tr>
 </tbody>
 </table>
 </div>
 <p>A device <strong>MUST NOT</strong> advertise a capability without also advertising the
 capabilities it requires. Apart from the multi-property commands, which
-<code>CAP_CMD_MULTI</code> gates, <code>CMD_REBOOT</code>, which <code>CAP_REBOOT</code> gates,
+<code>CAP_CMD_MULTI</code> gates, <code>CMD_REBOOT</code>, <code>CMD_DFU</code>, and
+<code>CMD_FACTORY_RESET</code>, which <code>CAP_REBOOT</code> gates,
 <code>CMD_ANNOUNCE</code>, which <code>CAP_ADVERT</code> gates, and the bus-access commands,
 which <code>CAP_I2C</code> gates, the
 commands and status codes defined in this chapter are unconditional and
@@ -6286,10 +6540,10 @@ and the master switch for the repeater policy in
 configurable while forwarding is disabled and take effect when it is
 enabled. When true, the <strong>device identity</strong> acts as an
 autonomous mesh repeater: its on-board node forwards the routable UMSH
-frames it receives—off the air, from a <a href="#lan-bearer-2">LAN bearer</a>, or over
+frames it receives—off the air, from an <a href="#umsh-over-ip-multicast">IP multicast group</a>, or over
 <a href="#prop-mac-backhaul">backhaul</a>—according to <a href="#repeater-operation">Repeater
-Operation</a> and <a href="#forwarding-across-bearers">Forwarding Across
-Bearers</a>, and it sets the repeater
+Operation</a> and <a href="#nodes-with-a-lora-radio">Nodes With a LoRa
+Radio</a>, and it sets the repeater
 capability bit in its <a href="#node-identity">node identity</a>. When false, the
 device identity forwards nothing on any medium—it sends only its own traffic
 and its attached host’s—and the bit is clear.</p>
@@ -7547,7 +7801,9 @@ TID is therefore irrelevant.</p>
 <p>Because clearing the bonds invalidates the encrypted link the command
 arrived on, a host that issues <code>CMD_FACTORY_RESET</code> over a bonded transport
 should also discard its own pairing to the radio.</p>
-<p>This command is available regardless of capabilities.</p>
+<p>This command is only available on devices advertising <code>CAP_REBOOT</code>, since
+it ends in one. A device without it answers <code>STATUS_UNIMPLEMENTED</code>—the
+only response this command ever produces.</p>
 <h2 id="properties-3"><a class="header" href="#properties-3">Properties</a></h2>
 <div class="table-wrapper">
 <table>
@@ -9647,7 +9903,7 @@ takes SNTP.</li>
 own access point is not one of these interfaces; see
 <a href="#prop-wifi-ap-config"><code>PROP_WIFI_AP_CONFIG</code></a>.</li>
 <li><strong>mDNS.</strong> A service the device offers rather than a property of its
-stack. A device running a <a href="#discovery">LAN bearer</a>
+stack. A device in an <a href="#discovery">IP multicast group</a>
 advertises over it.</li>
 </ul>
 <div style="break-before: page; page-break-before: always;"></div>
@@ -9732,19 +9988,29 @@ discards queued frames. Each connection starts with empty queues and decoder
 state. Invalid writes leave the old value intact. Connection failures are
 reported through <code>PROP_BRIDGE_LINK</code>, not by delaying a configuration response.</p>
 <div style="break-before: page; page-break-before: always;"></div>
-<h1 id="lan-bearer-1"><a class="header" href="#lan-bearer-1">LAN Bearer</a></h1>
-<p>A device with a <a href="#lan-bearer-2">LAN bearer</a> joins its node to a multicast
-group on the local network. With
+<h1 id="ip-multicast-1"><a class="header" href="#ip-multicast-1">IP Multicast</a></h1>
+<p>A device with this capability sends what it transmits to an
+<a href="#umsh-over-ip-multicast">IP multicast group</a> on the local network and receives what
+is sent there. It is one of two kinds:</p>
+<ul>
+<li>A <strong>forwarding device</strong> has a LoRa radio and a node beside the group, and
+advertises <code>CAP_REPEATER</code>. With
 <a href="#prop-mac-repeater-enabled"><code>PROP_MAC_REPEATER_ENABLED</code></a> set,
-its node forwards between that group and its radio, as the
-<a href="#the-forwarding-decision">forwarding table</a> describes; without
-it, the node sends only its own traffic and its host’s to the group.
-Configuration belongs to the device domain and is independent of the
-attached host. Enabling the bearer does not enable Wi-Fi, change IP
+its node is a bridge between the group and its radio, as
+<a href="#nodes-with-a-lora-radio">Nodes With a LoRa Radio</a>
+describes; without it, the node sends only its own traffic and its host’s
+to the group.</li>
+<li>A <strong>virtual radio</strong> has no LoRa radio: the group is its PHY, and
+<code>PROP_PHY_ENABLED</code> turns it on and off.</li>
+</ul>
+<p>Configuration belongs to the device domain and is independent of the
+attached host. Joining the group does not enable Wi-Fi, change IP
 configuration, or change <code>PROP_MAC_REPEATER_ENABLED</code>.</p>
 <h2 id="capabilities-10"><a class="header" href="#capabilities-10">Capabilities</a></h2>
-<p><code>CAP_LAN_BEARER</code> (63) requires <code>CAP_DEV_IDENTITY</code> and <code>CAP_IPV4</code>. It requires all
-four properties below, and, with <code>CAP_STATS</code>, the five counters.</p>
+<p><code>CAP_LAN_BEARER</code> (63) requires no other capability. It requires
+<code>PROP_LAN_BEARER_GROUP</code> and <code>PROP_LAN_BEARER_STATE</code>. A forwarding device also
+requires <code>PROP_LAN_BEARER_ENABLED</code> and <code>PROP_LAN_BEARER_INGRESS_LIMIT</code>, and,
+with <code>CAP_STATS</code>, the five counters; a virtual radio has none of these.</p>
 <h2 id="prop-lan-bearer-enabled"><a class="header" href="#prop-lan-bearer-enabled">PROP_LAN_BEARER_ENABLED</a></h2>
 <p>Property 4992; Get/Set; BOOL. Defaults to false. A write changes the desired
 state immediately; it does not wait for the device to join the group.</p>
@@ -9752,12 +10018,12 @@ state immediately; it does not wait for the device to join the group.</p>
 <p>Property 4993; Get/Set; six octets: an IPv4 address in network order,
 followed by a UINT16 port. Defaults to <code>239.255.134.121</code> port 15056. An
 address in <code>224.0.0.0/4</code> is a multicast group; any other is the peer of a
-<a href="#point-to-point">point-to-point</a> link. A write of an empty value
-returns it to the default; a read always reports the group in effect. A write
-of <code>0.0.0.0</code>, <code>255.255.255.255</code>, a zero port, or any other length is refused
-with <code>STATUS_INVALID_ARGUMENT</code>.</p>
+<a href="#point-to-point">point-to-point</a> link. A write of an empty
+value returns it to the default; a read always reports the group in effect.
+A write of <code>0.0.0.0</code>, <code>255.255.255.255</code>, a zero port, or any other length is
+refused with <code>STATUS_INVALID_ARGUMENT</code>.</p>
 <h2 id="prop-lan-bearer-ingress-limit"><a class="header" href="#prop-lan-bearer-ingress-limit">PROP_LAN_BEARER_INGRESS_LIMIT</a></h2>
-<p>Property 4994; Get/Set; UINT16. The most bearer receptions per minute the
+<p>Property 4994; Get/Set; UINT16. The most group receptions per minute the
 device hands to its node; see <a href="#ingress-limit">Ingress Limit</a>.
 Defaults to 120. A write of an empty value returns it to the default; a read
 always reports the limit in effect. Zero is invalid. The device MAY admit a
@@ -9771,15 +10037,15 @@ attached host.</p>
 <tr><th>Value</th><th>Meaning</th></tr>
 </thead>
 <tbody>
-<tr><td>0</td><td>Disabled</td></tr>
+<tr><td>0</td><td>Disabled: membership in the group, or a virtual radio’s PHY, is off</td></tr>
 <tr><td>1</td><td>Active: joined to the group and carrying frames</td></tr>
 <tr><td>2</td><td>No network: enabled, with no IPv4 network to join the group on</td></tr>
 </tbody>
 </table>
 </div>
-<p>While the state is not Active, the node offers nothing to the bearer.</p>
+<p>While the state is not Active, nothing is sent to the group.</p>
 <h2 id="counters"><a class="header" href="#counters">Counters</a></h2>
-<p>Under <code>CAP_STATS</code>, with the semantics of the other
+<p>On a forwarding device under <code>CAP_STATS</code>, with the semantics of the other
 <a href="#statistics">statistics</a>: cumulative <code>UINT32_LE</code> values, reset
 by writing four zero octets.</p>
 <div class="table-wrapper">
@@ -9797,24 +10063,29 @@ by writing four zero octets.</p>
 </table>
 </div>
 <h2 id="persistence-and-lifecycle-1"><a class="header" href="#persistence-and-lifecycle-1">Persistence and lifecycle</a></h2>
-<p>The three configuration properties are saved by <code>CMD_SAVE</code> in the device
-snapshot. A group or ingress limit at its default is saved as the default,
-not as its value, so that the device follows the default of whatever firmware
-it later runs. <code>CMD_CLEAR</code> erases saved configuration without changing live
-configuration; <code>CMD_RST</code> follows the normal saved-state restore rules.
-Attach and detach do not change these properties or interrupt the bearer.
-Authorized mesh administrators may write them through the existing
-device-management binding.</p>
+<p>The configuration properties a device has are saved by <code>CMD_SAVE</code> in the
+device snapshot. A group or ingress limit at its default is saved as the
+default, not as its value, so that the device follows the default of whatever
+firmware it later runs. <code>CMD_CLEAR</code> erases saved configuration without
+changing live configuration; <code>CMD_RST</code> follows the normal saved-state restore
+rules. Attach and detach do not change these properties or interrupt
+membership in the group. Authorized mesh administrators may write them
+through the existing device-management binding.</p>
 <p>Changing the group leaves the old one and joins the new one. Losing the
 network discards frames waiting to be sent, and the device rejoins the group
 when the network returns.</p>
 <h2 id="virtual-radios"><a class="header" href="#virtual-radios">Virtual Radios</a></h2>
-<p>A <a href="#participants">virtual radio</a> uses no identifiers of its own.
-It declares the host-side capabilities a companion radio does—the raw
-stream, host filters and keys, auto-acknowledgment, the inbound queue, and
-saved state—and none of the repeater, Wi-Fi, or hardware ones, since it has
-no node. Its radio properties describe a LoRa channel it does not itself
-transmit on; their values set the frame time the host’s MAC times against.</p>
+<p>A virtual radio’s physical layer is the <a href="#umsh-over-ip-multicast">group</a> rather than
+a LoRa radio: what it transmits is sent to the group, and what it receives is
+every datagram from the group, delivered to its host with no measurements.
+Its host is a node in the group.</p>
+<p>A virtual radio uses no identifiers of its own. It declares <code>CAP_LAN_BEARER</code>
+and the host-side capabilities a companion radio does—the raw stream, host
+filters and keys, auto-acknowledgment, the inbound queue, and saved
+state—and none of the repeater, Wi-Fi, or hardware ones, since it has no
+node. It needs no device identity: what it sends to the group is its host’s.
+Its radio properties describe a LoRa channel it does not itself transmit on;
+their values set the frame time the host’s MAC times against.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="ulcp-i2c-bus-access"><a class="header" href="#ulcp-i2c-bus-access">ULCP: I2C Bus Access</a></h1>
 <p>A host drives the device’s I2C peripherals directly: one transaction at
@@ -10116,10 +10387,12 @@ nothing to apply them to and rejects them under the ordinary property
 rules. <code>CMD_QUEUE_DRAIN</code>, <code>CMD_SAVE</code>, and <code>CMD_RESTORE</code> belong to their
 subsystems’ capabilities and <strong>MUST</strong> fail with <code>STATUS_UNIMPLEMENTED</code>
 when the capability is not advertised, as <strong>MUST</strong>
-<a href="#cmd-reboot"><code>CMD_REBOOT</code></a> without <code>CAP_REBOOT</code> and
+<a href="#cmd-reboot"><code>CMD_REBOOT</code></a>,
+<a href="#cmd-dfu"><code>CMD_DFU</code></a>, and
+<a href="#cmd-factory-reset"><code>CMD_FACTORY_RESET</code></a> without
+<code>CAP_REBOOT</code> and
 <a href="#cmd-announce"><code>CMD_ANNOUNCE</code></a> without <code>CAP_ADVERT</code>;
-<code>CMD_CLEAR</code> and <code>CMD_FACTORY_RESET</code>
-are available regardless of capabilities (see
+<code>CMD_CLEAR</code> is available regardless of capabilities (see
 <a href="#ulcp-saved-state">Saved State</a>).</p>
 <p>DFU implementations <strong>MUST</strong> validate the optional mode, require a nonzero
 direct TID, finish fallible preparation before success, and wait for the
@@ -10184,7 +10457,7 @@ requires.</p>
 <tr><td><a href="#ulcp-wi-fi">Wi-Fi</a></td><td><code>CAP_WIFI_SCAN</code>, <code>CAP_WIFI</code>, <code>CAP_WIFI_AP</code></td></tr>
 <tr><td><a href="#ulcp-ip-connectivity">IP Connectivity</a></td><td><code>CAP_IPV4</code>, <code>CAP_IPV6</code></td></tr>
 <tr><td><a href="#bridge-client-1">Bridge Client</a></td><td><code>CAP_BRIDGE_CLIENT</code></td></tr>
-<tr><td><a href="#lan-bearer-1">LAN Bearer</a></td><td><code>CAP_LAN_BEARER</code></td></tr>
+<tr><td><a href="#ip-multicast-1">IP Multicast</a></td><td><code>CAP_LAN_BEARER</code></td></tr>
 <tr><td><a href="#ulcp-i2c-bus-access">I2C Bus Access</a></td><td><code>CAP_I2C</code></td></tr>
 </tbody>
 </table>
@@ -10269,9 +10542,9 @@ it can do.</p>
 <tr><td>12</td><td><a href="#cmd-save"><code>CMD_SAVE</code></a></td><td>Host-&gt;Device</td><td><code>CAP_SAVE</code></td></tr>
 <tr><td>13</td><td><a href="#cmd-clear"><code>CMD_CLEAR</code></a></td><td>Host-&gt;Device</td><td>—</td></tr>
 <tr><td>14</td><td><a href="#cmd-restore"><code>CMD_RESTORE</code></a></td><td>Host-&gt;Device</td><td><code>CAP_SAVE</code></td></tr>
-<tr><td>15</td><td><a href="#cmd-factory-reset"><code>CMD_FACTORY_RESET</code></a></td><td>Host-&gt;Device</td><td>—</td></tr>
+<tr><td>15</td><td><a href="#cmd-factory-reset"><code>CMD_FACTORY_RESET</code></a></td><td>Host-&gt;Device</td><td><code>CAP_REBOOT</code></td></tr>
 <tr><td>16</td><td><a href="#cmd-reboot"><code>CMD_REBOOT</code></a></td><td>Host-&gt;Device</td><td><code>CAP_REBOOT</code></td></tr>
-<tr><td>17</td><td><a href="#cmd-dfu"><code>CMD_DFU</code></a></td><td>Host-&gt;Device</td><td>—</td></tr>
+<tr><td>17</td><td><a href="#cmd-dfu"><code>CMD_DFU</code></a></td><td>Host-&gt;Device</td><td><code>CAP_REBOOT</code></td></tr>
 <tr><td>19</td><td><a href="#cmd-announce"><code>CMD_ANNOUNCE</code></a></td><td>Host-&gt;Device</td><td><code>CAP_ADVERT</code></td></tr>
 <tr><td>21</td><td><a href="#cmd-prop-multi-get"><code>CMD_PROP_MULTI_GET</code></a></td><td>Host-&gt;Device</td><td><code>CAP_CMD_MULTI</code></td></tr>
 <tr><td>22</td><td><a href="#cmd-prop-multi-set"><code>CMD_PROP_MULTI_SET</code></a></td><td>Host-&gt;Device</td><td><code>CAP_CMD_MULTI</code></td></tr>
@@ -10368,11 +10641,11 @@ it can do.</p>
 <tr><td>4842</td><td><a href="#prop-stat-meshcore-forwarded-routed"><code>PROP_STAT_MESHCORE_FORWARDED_ROUTED</code></a></td><td>Get, Set</td><td><code>CAP_STATS</code>, <code>CAP_MESHCORE_FORWARDER</code></td></tr>
 <tr><td>4843</td><td><a href="#prop-stat-meshcore-forwarded-flood"><code>PROP_STAT_MESHCORE_FORWARDED_FLOOD</code></a></td><td>Get, Set</td><td><code>CAP_STATS</code>, <code>CAP_MESHCORE_FORWARDER</code></td></tr>
 <tr><td>4844</td><td><a href="#prop-stat-meshcore-declined"><code>PROP_STAT_MESHCORE_DECLINED</code></a></td><td>Get, Set</td><td><code>CAP_STATS</code>, <code>CAP_MESHCORE_FORWARDER</code></td></tr>
-<tr><td>4845</td><td><a href="#counters"><code>PROP_STAT_LAN_RX</code></a></td><td>Get, Set</td><td><code>CAP_STATS</code>, <code>CAP_LAN_BEARER</code></td></tr>
-<tr><td>4846</td><td><a href="#counters"><code>PROP_STAT_LAN_RX_LIMITED</code></a></td><td>Get, Set</td><td><code>CAP_STATS</code>, <code>CAP_LAN_BEARER</code></td></tr>
-<tr><td>4847</td><td><a href="#counters"><code>PROP_STAT_LAN_RX_MALFORMED</code></a></td><td>Get, Set</td><td><code>CAP_STATS</code>, <code>CAP_LAN_BEARER</code></td></tr>
-<tr><td>4848</td><td><a href="#counters"><code>PROP_STAT_LAN_EXPORTED</code></a></td><td>Get, Set</td><td><code>CAP_STATS</code>, <code>CAP_LAN_BEARER</code></td></tr>
-<tr><td>4849</td><td><a href="#counters"><code>PROP_STAT_LAN_EXPORT_DROPPED</code></a></td><td>Get, Set</td><td><code>CAP_STATS</code>, <code>CAP_LAN_BEARER</code></td></tr>
+<tr><td>4845</td><td><a href="#counters"><code>PROP_STAT_LAN_RX</code></a></td><td>Get, Set</td><td><code>CAP_STATS</code>, <code>CAP_LAN_BEARER</code>, <code>CAP_REPEATER</code></td></tr>
+<tr><td>4846</td><td><a href="#counters"><code>PROP_STAT_LAN_RX_LIMITED</code></a></td><td>Get, Set</td><td><code>CAP_STATS</code>, <code>CAP_LAN_BEARER</code>, <code>CAP_REPEATER</code></td></tr>
+<tr><td>4847</td><td><a href="#counters"><code>PROP_STAT_LAN_RX_MALFORMED</code></a></td><td>Get, Set</td><td><code>CAP_STATS</code>, <code>CAP_LAN_BEARER</code>, <code>CAP_REPEATER</code></td></tr>
+<tr><td>4848</td><td><a href="#counters"><code>PROP_STAT_LAN_EXPORTED</code></a></td><td>Get, Set</td><td><code>CAP_STATS</code>, <code>CAP_LAN_BEARER</code>, <code>CAP_REPEATER</code></td></tr>
+<tr><td>4849</td><td><a href="#counters"><code>PROP_STAT_LAN_EXPORT_DROPPED</code></a></td><td>Get, Set</td><td><code>CAP_STATS</code>, <code>CAP_LAN_BEARER</code>, <code>CAP_REPEATER</code></td></tr>
 <tr><td>4864</td><td><a href="#prop-ble-pairing-pin"><code>PROP_BLE_PAIRING_PIN</code></a></td><td>Set</td><td>BLE transport</td></tr>
 <tr><td>4865</td><td><a href="#prop-dev-admins"><code>PROP_DEV_ADMINS</code></a></td><td>Get, Set, Insert, Remove</td><td><code>CAP_ADMIN</code></td></tr>
 <tr><td>4866</td><td><a href="#prop-time"><code>PROP_TIME</code></a></td><td>Get, Set, Is</td><td><code>CAP_TIME</code></td></tr>
@@ -10431,9 +10704,9 @@ it can do.</p>
 <tr><td>4976</td><td><a href="#prop-meshcore-forwarding-enabled"><code>PROP_MESHCORE_FORWARDING_ENABLED</code></a></td><td>Get, Set</td><td><code>CAP_MESHCORE_FORWARDER</code></td></tr>
 <tr><td>4977</td><td><a href="#prop-meshcore-region-policy"><code>PROP_MESHCORE_REGION_POLICY</code></a></td><td>Get, Set</td><td><code>CAP_MESHCORE_FORWARDER</code></td></tr>
 <tr><td>4978</td><td><a href="#prop-meshcore-regions"><code>PROP_MESHCORE_REGIONS</code></a></td><td>Get, Set, Insert, Remove</td><td><code>CAP_MESHCORE_FORWARDER</code></td></tr>
-<tr><td>4992</td><td><a href="#prop-lan-bearer-enabled"><code>PROP_LAN_BEARER_ENABLED</code></a></td><td>Get, Set</td><td><code>CAP_LAN_BEARER</code></td></tr>
+<tr><td>4992</td><td><a href="#prop-lan-bearer-enabled"><code>PROP_LAN_BEARER_ENABLED</code></a></td><td>Get, Set</td><td><code>CAP_LAN_BEARER</code>, <code>CAP_REPEATER</code></td></tr>
 <tr><td>4993</td><td><a href="#prop-lan-bearer-group"><code>PROP_LAN_BEARER_GROUP</code></a></td><td>Get, Set</td><td><code>CAP_LAN_BEARER</code></td></tr>
-<tr><td>4994</td><td><a href="#prop-lan-bearer-ingress-limit"><code>PROP_LAN_BEARER_INGRESS_LIMIT</code></a></td><td>Get, Set</td><td><code>CAP_LAN_BEARER</code></td></tr>
+<tr><td>4994</td><td><a href="#prop-lan-bearer-ingress-limit"><code>PROP_LAN_BEARER_INGRESS_LIMIT</code></a></td><td>Get, Set</td><td><code>CAP_LAN_BEARER</code>, <code>CAP_REPEATER</code></td></tr>
 <tr><td>4995</td><td><a href="#prop-lan-bearer-state"><code>PROP_LAN_BEARER_STATE</code></a></td><td>Get, Is</td><td><code>CAP_LAN_BEARER</code></td></tr>
 </tbody>
 </table>
@@ -10480,7 +10753,7 @@ is in <a href="#capabilities-1">Capabilities</a>.</p>
 <tr><td>60</td><td><code>CAP_I2C</code></td><td><a href="#capabilities-11">I2C Bus Access</a></td></tr>
 <tr><td>61</td><td><code>CAP_TEMPERATURE</code></td><td><a href="#capabilities-4">Device Domain</a></td></tr>
 <tr><td>62</td><td><code>CAP_MESHCORE_FORWARDER</code></td><td><a href="#capabilities-4">Device Domain</a></td></tr>
-<tr><td>63</td><td><code>CAP_LAN_BEARER</code></td><td><a href="#capabilities-10">LAN Bearer</a></td></tr>
+<tr><td>63</td><td><code>CAP_LAN_BEARER</code></td><td><a href="#capabilities-10">IP Multicast</a></td></tr>
 <tr><td>515</td><td><code>CAP_PHY_LORA</code></td><td><a href="#capabilities-2">Radio Control</a></td></tr>
 </tbody>
 </table>
@@ -10797,7 +11070,8 @@ with it for room.</p>
     { "id": "heltec-v2", "model_id": 6, "name": "WiFi LoRa 32 V2", "vendor": "Heltec", "photo": "board-heltec-v2" },
     { "id": "heltec-v3", "model_id": 7, "name": "WiFi LoRa 32 V3", "vendor": "Heltec", "photo": "board-heltec-v3" },
     { "id": "tbeam-supreme", "model_id": 8, "name": "T-Beam Supreme", "vendor": "LilyGO", "photo": "board-tbeam-supreme" },
-    { "id": "tlora-pager", "model_id": 9, "name": "T-LoRa Pager", "vendor": "LilyGO", "photo": "board-tlora-pager" }
+    { "id": "tlora-pager", "model_id": 9, "name": "T-LoRa Pager", "vendor": "LilyGO", "photo": "board-tlora-pager" },
+    { "id": "xiao-esp32s3", "model_id": 10, "name": "XIAO ESP32S3 + Wio-SX1262 Kit", "vendor": "Seeed Studio", "photo": "board-xiao-esp32s3" }
   ]
 }
 </code></pre>
@@ -13003,10 +13277,10 @@ does not produce excessive ULCP traffic.</p>
 <p>The first of the device-behavior settings (property identifiers 70–95).
 When true, the <strong>device identity</strong> acts as an
 autonomous mesh repeater: its on-board node forwards the routable UMSH
-frames it receives—off the air, from a <a href="#lan-bearer-2">LAN bearer</a>, or over
+frames it receives—off the air, from an <a href="#umsh-over-ip-multicast">IP multicast group</a>, or over
 <a href="#prop-mac-backhaul-1">backhaul</a>—according to <a href="#repeater-operation">Repeater
-Operation</a> and <a href="#forwarding-across-bearers">Forwarding Across
-Bearers</a>, and it sets the repeater
+Operation</a> and <a href="#nodes-with-a-lora-radio">Nodes With a LoRa
+Radio</a>, and it sets the repeater
 capability bit in its <a href="#node-identity">node identity</a>. When false, the
 device identity forwards nothing on any medium—it sends only its own traffic
 and its attached host’s—and the bit is clear.</p>
@@ -13857,7 +14131,7 @@ parts from different exports; the envelope MIC remains the integrity
 mechanism.</p>
 <p>A core export fits in two to three modest QR symbols. Full exports are not
 intended for QR presentation.</p>
-<h2 id="security-considerations"><a class="header" href="#security-considerations">Security Considerations</a></h2>
+<h2 id="security-considerations-1"><a class="header" href="#security-considerations-1">Security Considerations</a></h2>
 <p><strong>The passphrase is the floor.</strong> Argon2id raises the cost of guessing but
 cannot rescue a weak passphrase, and the artifact is exposed to offline
 attack wherever it is stored. Applications should communicate this when the
@@ -14118,8 +14392,9 @@ receive metadata. The integrated client preserves HDLC-Lite framing, TLS 1.3,
 and the <code>umsh-bridge/1</code> ALPN offer. Its eight-frame queues discard the oldest
 frame under pressure and expire queued frames after ten seconds. A connection
 boundary discards both queues and the partial HDLC decoder state.</p>
-<p>A device may run an integrated client and a <a href="#lan-bearer-2">LAN bearer</a>
-together. Both receive every frame the radio transmits, and both hand their
+<p>A device may run an integrated client and be in an
+<a href="#umsh-over-ip-multicast">IP multicast group</a> at once. Both receive every frame the
+radio transmits, and both hand their
 frames to the node as receptions, so the node’s repeater is the one
 forwarding decision between them: a frame from either crosses to the other by
 being repeated on the radio. With its repeater disabled the node carries
@@ -14166,15 +14441,15 @@ the bridge touches, and a binding that meets
 possession also carries whatever key provisioning and administrative
 authority the device offers.</p>
 <h2 id="lan-interfaces"><a class="header" href="#lan-interfaces">LAN Interfaces</a></h2>
-<p>A participant <strong>MAY</strong> join a <a href="#lan-bearer-2">LAN bearer</a> group as an
-interface: the server beside its radio and its clients, a client beside
+<p>A participant <strong>MAY</strong> join an <a href="#umsh-over-ip-multicast">IP multicast group</a> as
+an interface: the server beside its radio and its clients, a client beside
 or instead of its radio. Each datagram from the group is a frame arriving
 on that interface, carrying no measurements, and each frame sent to the
 interface is one datagram.</p>
 <p>No repeater stands between the group and the bridge. A frame from the
-group comes either from a bridging radio, whose node has already forwarded
-it, or from an endpoint, whose frame no repeater has seen; a crossing from
-an endpoint spends one flood hop, as for a host interface. Nothing on the
+group comes either from a bridge, whose node has already forwarded it, or
+from another node, whose frame no repeater has seen; a crossing from such a
+node spends one flood hop, as for a host interface. Nothing on the
 bridge’s side stops a frame circulating between two participants on one
 LAN, or between a participant and its own multicast echo, so a participant
 <strong>MUST</strong> carry a frame across a LAN interface at most once, in either
@@ -14273,7 +14548,7 @@ reaches the whole bridge and is reachable from it. This is the right
 configuration for a device that should benefit from a bridge without
 spending its segment’s airtime on other people’s traffic.</li>
 </ul>
-<h2 id="security-considerations-1"><a class="header" href="#security-considerations-1">Security Considerations</a></h2>
+<h2 id="security-considerations-2"><a class="header" href="#security-considerations-2">Security Considerations</a></h2>
 <p>TLS provides tunnel authentication, integrity, and replay protection;
 the shared secret or pinned credential is the sole admission control.
 UMSH frames are already end-to-end authenticated and encrypted at the
@@ -14298,207 +14573,6 @@ node transmits, so promiscuous delivery grants it nothing beyond the
 repeats it exists to carry. Operators should still treat the server as
 privileged infrastructure: it observes the metadata of every frame every
 participant’s node transmits.</p>
-<div style="break-before: page; page-break-before: always;"></div>
-<h1 id="lan-bearer-2"><a class="header" href="#lan-bearer-2">LAN Bearer</a></h1>
-<blockquote class="blockquote-tag blockquote-tag-note">
-<p class="blockquote-tag-title"><svg viewbox="0 0 16 16" width="18" height="18"><path d="M0 8a8 8 0 1 1 16 0A8 8 0 0 1 0 8Zm8-6.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13ZM6.5 7.75A.75.75 0 0 1 7.25 7h1a.75.75 0 0 1 .75.75v2.75h.25a.75.75 0 0 1 0 1.5h-2a.75.75 0 0 1 0-1.5h.25v-2h-.25a.75.75 0 0 1-.75-.75ZM8 6a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z"></path></svg>Note</p>
-<p>This section is an early work in progress and this protocol may change significantly.</p>
-</blockquote>
-<p>The LAN bearer carries UMSH frames between the participants on one local
-network, using IPv4 multicast. Repeaters on the network join their LoRa
-meshes to it, so that two meshes on different LoRa settings, or two radios out of
-range of each other, are joined by the network they share. Hosts with no
-radio of their own join it too, and reach every mesh a radio on the network
-carries.</p>
-<p>A multicast group is used because every participant hears every other with
-no server, no configuration beyond the group, and no state about who else is
-present.</p>
-<h2 id="participants"><a class="header" href="#participants">Participants</a></h2>
-<ul>
-<li>A <strong>bridging radio</strong> has a LoRa radio and a node whose repeater is enabled,
-and forwards between the two by the rules in
-<a href="#forwarding-across-bearers">Forwarding Across Bearers</a>. A radio whose
-repeater is disabled sends only its own traffic and its host’s to the group,
-as an endpoint does.</li>
-<li>An <strong>endpoint</strong> has a node and no LoRa radio. It sends its own traffic to
-the group and receives what is sent there. A desktop tool or a phone on the
-network is an endpoint.</li>
-<li>A <strong>virtual radio</strong> is a <a href="#local-control-protocol-ulcp">ULCP</a> device whose physical layer is the
-group: what it transmits is sent to the group, and what it receives is
-every datagram from the group, delivered to its host with no measurements.
-It has no node and no repeater of its own. Its host is an endpoint that
-reaches the group through it, exactly as a host reaches the air through a
-LoRa radio.</li>
-</ul>
-<h2 id="transport"><a class="header" href="#transport">Transport</a></h2>
-<p>The bearer is UDP over IPv4 multicast. The default group is
-<code>239.255.134.121</code>, in the administratively scoped range, and the default port
-is 15056. A deployment MAY configure another IPv4 multicast group and another
-nonzero port; every participant that is to hear the others uses the same
-pair.</p>
-<p>Every participant sends from the group’s port as well as to it, and listens
-on it; several participants on one host share it.</p>
-<p>A participant joins the group on the interface it uses for the local network
-and sends to the group from that interface, with a multicast TTL of 16 unless
-configured otherwise. How far the group reaches is the network’s decision:
-routers forward a multicast group only where they are configured to, and
-<code>239.255.0.0/16</code> is scoped to the organization. A network that routes the
-group between its subnets joins their participants into one bearer.</p>
-<h3 id="point-to-point"><a class="header" href="#point-to-point">Point-to-Point</a></h3>
-<p>A unicast address MAY be configured in place of the group, naming the one
-peer of a point-to-point link. The participant joins nothing, sends to the
-peer at the group’s port, and drops every datagram whose source address and
-port are not the peer’s. Each end names the other, on the same port.</p>
-<h3 id="echoes"><a class="header" href="#echoes">Echoes</a></h3>
-<p>A participant in a multicast group hears its own datagrams when multicast
-loopback, or an access point repeating a station’s multicast, hands them
-back. A participant MAY drop a datagram whose source address and port are its
-own, which on a host with several participants also drops the others’. A
-participant that is alone on its host MAY instead disable multicast loopback.</p>
-<h2 id="datagram-format"><a class="header" href="#datagram-format">Datagram Format</a></h2>
-<p>A datagram carries exactly one frame, with no header. The frame is the
-packet as it would be transmitted over the air: UMSH frames and
-<a href="#comparison-with-meshcore">MeshCore</a> v1 frames are told apart by the version
-bits in their first octet, as on LoRa.</p>
-<ul>
-<li>A sender <strong>MUST NOT</strong> send a datagram that is empty or larger than 255
-octets.</li>
-<li>A receiver drops, with accounting, a datagram that is empty, larger than
-255 octets, or whose version bits name no protocol it recognizes.</li>
-<li>A participant that does not carry MeshCore v1 frames ignores them.</li>
-</ul>
-<p>The sender of a frame is not identified in the datagram, and nothing about
-the datagram’s source address is carried onward.</p>
-<p>A datagram is a <strong>bearer reception</strong>. It was heard by every participant on
-the network, and measured by none of them: it carries no RSSI or SNR, and
-the <a href="#forwarding-procedure">signal-quality thresholds</a>
-do not apply to it.</p>
-<h2 id="discovery"><a class="header" href="#discovery">Discovery</a></h2>
-<p>Participants advertise themselves with DNS-SD over multicast DNS, under the
-service type <code>_umsh._udp</code>. A bridging radio <strong>SHOULD</strong> advertise; other
-participants MAY.</p>
-<ul>
-<li>The instance name is the participant’s device name.</li>
-<li>The SRV port is the group’s port.</li>
-<li>The TXT record carries the keys below.</li>
-</ul>
-<div class="table-wrapper">
-<table>
-<thead>
-<tr><th>Key</th><th>Value</th><th>Present</th></tr>
-</thead>
-<tbody>
-<tr><td><code>v</code></td><td>TXT schema version: <code>1</code></td><td>Always</td></tr>
-<tr><td><code>grp</code></td><td>The group address, dotted decimal with no leading zeros</td><td>Always</td></tr>
-<tr><td><code>id</code></td><td>The node’s public key, as 44 base58 characters</td><td>Always</td></tr>
-<tr><td><code>f</code></td><td>LoRa center frequency, in Hz</td><td>When the participant has a LoRa radio with its PHY enabled</td></tr>
-<tr><td><code>bw</code></td><td>LoRa bandwidth, in Hz</td><td>With <code>f</code></td></tr>
-<tr><td><code>sf</code></td><td>LoRa spreading factor</td><td>With <code>f</code></td></tr>
-<tr><td><code>cr</code></td><td>LoRa coding rate denominator, 5 to 8</td><td>With <code>f</code></td></tr>
-<tr><td><code>rep</code></td><td><code>1</code> if the node repeats LoRa to LoRa, else <code>0</code></td><td>With <code>f</code></td></tr>
-<tr><td><code>mc</code></td><td><code>1</code> if the node forwards MeshCore v1</td><td>Optional</td></tr>
-<tr><td><code>ib</code></td><td><code>1</code> if an <a href="#internet-bridging">internet bridge</a> link is up</td><td>Optional</td></tr>
-</tbody>
-</table>
-</div>
-<p>Numbers are decimal with no leading zeros. A participant updates its record
-when any value changes.</p>
-<p>A client ignores keys it does not recognize, treats a missing optional key
-as false, and ignores a record whose <code>v</code> it does not recognize. Discovery is
-only discovery: frames travel over the group whatever the records say, and a
-client learns from them which LoRa meshes the network reaches and on which
-settings, before it sends anything.</p>
-<h2 id="forwarding-across-bearers"><a class="header" href="#forwarding-across-bearers">Forwarding Across Bearers</a></h2>
-<p>A node MAY have one or more <strong>bearers</strong> beside its radio: shared media, such
-as a LAN, on which every other participant hears what the node sends. A
-bearer works as <a href="#prop-mac-backhaul">backhaul</a> does:</p>
-<ul>
-<li><strong>What arrives on a bearer is a reception.</strong> The node handles it as it
-handles a packet heard on its radio, recording which bearer it arrived
-on, and applies the
-<a href="#forwarding-procedure">forwarding procedure</a> to it
-once. With its repeater enabled the node may repeat it on its radio; with
-its repeater disabled it forwards nothing, whatever the packet arrived on.</li>
-<li><strong>What the radio transmits goes to every bearer.</strong> Each frame the node’s
-radio puts on the air is sent to each bearer the node participates in:
-its own packets and acknowledgments, its repeats, and the transmissions
-of any other stack sharing the radio. A frame the radio does not
-transmit—a repeat abandoned to a better-placed repeater, or cancelled by
-an overheard acknowledgment—does not reach the bearer.</li>
-</ul>
-<p>Enabling a bearer therefore makes the node a participant on it, not a
-forwarder: a node whose repeater is disabled sends only its own traffic,
-and its host’s, to the bearer.</p>
-<p>A crossing between two bridging radios spends two flood hops: one at the
-radio that hears the packet and repeats it, which is what reaches the
-bearer, and one at the radio that receives it from the bearer and repeats
-it. A packet a bridging radio originates spends one. A repeat returns to
-the bearer it came from, where every participant has already seen the
-packet and suppresses it as a duplicate.</p>
-<p>A bearer reception adds a <a href="#trace-signal-option-10">Trace Signal</a>
-entry recording that nothing was measured, as a point-to-point reception
-does.</p>
-<p>The <a href="#channel-access-1">duty cycle</a> a radio spends carrying bearer
-receptions counts against its limit like any other forward. Copies sent to
-a bearer spend no radio airtime.</p>
-<h3 id="ingress-limit"><a class="header" href="#ingress-limit">Ingress Limit</a></h3>
-<p>A bridging radio <strong>MUST</strong> bound the rate at which it hands bearer receptions
-to its node, so that a busy network cannot spend the radio’s airtime faster
-than its operator allows. A token bucket of frames per minute is
-recommended. Receptions over the limit are dropped with accounting.</p>
-<h2 id="channel-access-2"><a class="header" href="#channel-access-2">Channel Access</a></h2>
-<p>Every bridging radio on a network receives each datagram at once, so radios
-on the same LoRa channel would carry it onto the air together. Bearer
-receptions therefore contend, and only what is heard over the air says
-anything about the air.</p>
-<ul>
-<li><strong>Bearer receptions contend.</strong> A bearer reception carries no measurement
-to rank radios by. Its
-<a href="#flood-forwarding-contention-window">flood contention window</a>
-is drawn uniformly from <code>[W_min, W_max]</code>, and the jitter and <code>D_ack</code> are
-added as for any other forward. A packet received over a point-to-point
-link keeps its zero window.</li>
-<li><strong>Only the air defers.</strong> Only a copy received over the radio defers or
-abandons a pending forward. A copy received from a bearer or a
-point-to-point link says nothing about who has transmitted on the radio’s
-channel, and is a duplicate and nothing more.</li>
-<li><strong>A bearer copy confirms.</strong> A copy received from a bearer is a frame some
-radio transmitted, and satisfies
-<a href="#forwarding-confirmation">forwarding confirmation</a>
-as a copy overheard on the air does.</li>
-<li><strong>Ack cancellation is unchanged.</strong> An overheard acknowledgment
-<a href="#ack-cancellation">cancels</a> a matching pending forward
-whatever it arrived on: it proves delivery either way.</li>
-</ul>
-<p>Two radios on one LoRa channel that both hear a bearer reception draw
-different windows. The first to transmit is overheard by the second, which
-defers as it would for any repeat it overheard.</p>
-<h2 id="security-considerations-2"><a class="header" href="#security-considerations-2">Security Considerations</a></h2>
-<ul>
-<li><strong>The bearer adds no protection and removes none.</strong> UMSH frames are
-authenticated, and encrypted where their payload type calls for it,
-before they reach any medium. What crosses the LAN is what crosses the
-air.</li>
-<li><strong>The bearer reaches as far as the network routes the group.</strong> A network
-that routes it between subnets has extended the bearer, and the radios on
-it, to everyone the routing reaches.</li>
-<li><strong>Anyone on the network can send to the group.</strong> A participant on the LAN
-can inject frames into every mesh a bridging radio on it carries, as anyone
-with a LoRa radio can inject frames into the mesh around them, at a higher
-offered rate. The ingress limit and the duty-cycle limit bound what that
-costs the air.</li>
-<li><strong>Anyone on the network hears the group.</strong> The LAN carries what the radios
-on it hear and transmit; a listener on the LAN learns what a LoRa receiver
-near each of those radios would.</li>
-<li><strong>DNS-SD records</strong> reveal a radio’s public key and LoRa settings, which its
-transmissions already reveal to anyone in range, to everyone on the
-network.</li>
-<li><strong>Bridging joins meshes.</strong> The cautions in
-<a href="#bridging">Routing Overview § Bridging</a> apply: a
-bridging radio puts every mesh’s flood traffic on the others’ airtime.
-Region policy and the flood hop budget are the tools for keeping that
-local.</li>
-</ul>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="security-considerations-3"><a class="header" href="#security-considerations-3">Security Considerations</a></h1>
 <p>This chapter consolidates the security properties, limitations, and implementation guidance that are distributed throughout the specification. It is intended as a reference for implementers and reviewers evaluating UMSH’s security posture.</p>

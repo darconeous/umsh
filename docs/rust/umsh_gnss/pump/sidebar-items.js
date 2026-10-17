@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"constant":["RTC_READ_TIMEOUT_MS"],"fn":["rtc_read_once","run"],"trait":["Enable","Power","Sink"]};
+window.SIDEBAR_ITEMS = {"constant":["LISTEN_MS","QUIET_MS","RTC_READ_TIMEOUT_MS"],"fn":["rtc_read_once","run"],"trait":["Awake","Enable","Power","Sink"]};

@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-6c34194f.js";
+            window.path_to_searchindex_js = "searchindex-84dd6577.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-e4cb2f86.js"></script>
+        <script src="toc-7fd6cf8e.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -193,6 +193,8 @@ exactly as used by Spinel.</li>
 <a href="ulcp-ble.html">ULCP over BLE</a>.</li>
 <li>A reliable, in-order byte stream standing in for a serial link—a TCP
 connection to a bridged port, say—uses the same HDLC-Lite framing.</li>
+<li>A local stream socket between two processes on one host—a Unix domain
+socket—uses HDLC-Lite as well; see <a href="#local-sockets">Local Sockets</a>.</li>
 </ul>
 <p>In this chapter, the <strong>device</strong> is the side that owns the transceiver and
 the <strong>host</strong> is the side that attaches to it over the local link (see
@@ -332,7 +334,8 @@ in the <a href="ulcp-index.html">Command and Property Index</a>.</p>
 </table>
 </div>
 <p>The multi-property commands (21–23) are gated by <code>CAP_CMD_MULTI</code>,
-<code>CMD_REBOOT</code> by <code>CAP_REBOOT</code>, <code>CMD_ANNOUNCE</code> by <code>CAP_ADVERT</code>, and the
+<code>CMD_REBOOT</code>, <code>CMD_DFU</code>, and <code>CMD_FACTORY_RESET</code> by <code>CAP_REBOOT</code>,
+<code>CMD_ANNOUNCE</code> by <code>CAP_ADVERT</code>, and the
 bus-access commands (25–27) by <code>CAP_I2C</code> (see
 <a href="#capabilities">Capabilities</a>); everything else is unconditional.</p>
 <h3 id="cmd-noop"><a class="header" href="#cmd-noop">CMD 0: (Host -&gt; Device) <code>CMD_NOP</code></a></h3>
@@ -544,8 +547,10 @@ or one <code>UINT8</code> selecting the DFU method:</p>
 <p>An empty payload selects Default. The default is fixed by the platform,
 independent of the command’s transport. XIAO nRF52 and SenseCAP Solar use
 BLE; T-Echo, T1000-E, and Wio Tracker L1 use UF2.
-Other mode values are undefined. There is no capability or discovery
-property for this command; the device decides whether its supported
+Other mode values are undefined. Entering the bootloader is a restart into
+it, so this command is only available on devices advertising <code>CAP_REBOOT</code>;
+a device without it answers <code>STATUS_UNIMPLEMENTED</code>. There is no discovery
+property for the methods; the device decides whether its supported
 bootloader can enter the requested mode.</p>
 <p>The device answers with <code>CMD_PROP_IS(PROP_LAST_STATUS)</code>:</p>
 <div class="table-wrapper">
@@ -1040,6 +1045,7 @@ use are listed in the
 <li><strong>USB-CDC</strong>—assertion and deassertion of DTR on the ULCP
 interface.</li>
 <li><strong>TCP</strong>—establishment and closure of the connection.</li>
+<li><strong>Local socket</strong>—establishment and closure of the connection.</li>
 <li><strong>Bare UART</strong>—implementation-defined. A device with no way to detect
 host presence MAY treat the host as permanently attached, in which case
 it never enters detached operation and offline assistance
@@ -1094,6 +1100,22 @@ starting over. A host that receives one runs this procedure again.</p>
 current device- and host-domain state, and begins detached operation:
 accepted frames are queued rather than delivered, and acknowledgement
 delegation (if enabled) becomes active.</p>
+<h3 id="local-sockets"><a class="header" href="#local-sockets">Local Sockets</a></h3>
+<p>A device that runs as a process—a virtual radio hosted beside the
+application that attaches to it—may serve ULCP on a local stream socket,
+such as a Unix domain socket:</p>
+<ul>
+<li><strong>Framing:</strong> HDLC-Lite, as on a serial link.</li>
+<li><strong>Attach and detach:</strong> a connection opening is an attach, and its
+closing is a detach.</li>
+<li><strong>One host at a time:</strong> a new connection replaces the current one,
+which the device closes first. A host that went away without closing
+never holds the device against its successor.</li>
+<li><strong>Security binding:</strong> access to the socket. The device <strong>MUST</strong> place
+the socket where the operating system lets only the processes entitled
+to the device reach it—a file in a directory private to those
+processes—which stands in for physical possession.</li>
+</ul>
 <h2 id="provisioning-security"><a class="header" href="#provisioning-security">Provisioning Security</a></h2>
 <p>Provisioning moves real key material onto the device, within the limits of the
 <a href="ulcp.html#security-boundary">security boundary</a>: channel keys and
@@ -1117,6 +1139,7 @@ earlier host’s keys.</li>
 for the key tables, and any set of <code>PROP_DEV_PRIVATE_KEY</code>—<strong>MUST NOT</strong>
 be carried over a transport that does not meet the requirements of the
 transport’s security binding: physical possession for serial transports,
+access to the socket for a <a href="#local-sockets">local socket</a>,
 or an encrypted bonded LESC link as specified in
 <a href="ulcp-ble.html#ble-security">ULCP over BLE</a>.</li>
 <li>A compromised or stolen device exposes the provisioned channels, the
@@ -1365,14 +1388,15 @@ grants:</p>
 <tr><td>60</td><td><code>CAP_I2C</code></td><td>—</td><td><a href="ulcp-i2c.html#capabilities">I2C Bus Access</a></td></tr>
 <tr><td>61</td><td><code>CAP_TEMPERATURE</code></td><td>—</td><td><a href="ulcp-device.html#capabilities">Device Domain</a></td></tr>
 <tr><td>62</td><td><code>CAP_MESHCORE_FORWARDER</code></td><td><code>CAP_REPEATER</code></td><td><a href="ulcp-device.html#capabilities">Device Domain</a></td></tr>
-<tr><td>63</td><td><code>CAP_LAN_BEARER</code></td><td><code>CAP_DEV_IDENTITY</code>, <code>CAP_IPV4</code></td><td><a href="ulcp-lan-bearer.html#capabilities">LAN Bearer</a></td></tr>
+<tr><td>63</td><td><code>CAP_LAN_BEARER</code></td><td>—</td><td><a href="ulcp-ip-multicast.html#capabilities">IP Multicast</a></td></tr>
 <tr><td>515</td><td><code>CAP_PHY_LORA</code></td><td>—</td><td><a href="ulcp-radio.html#capabilities">Radio Control</a></td></tr>
 </tbody>
 </table>
 </div>
 <p>A device <strong>MUST NOT</strong> advertise a capability without also advertising the
 capabilities it requires. Apart from the multi-property commands, which
-<code>CAP_CMD_MULTI</code> gates, <code>CMD_REBOOT</code>, which <code>CAP_REBOOT</code> gates,
+<code>CAP_CMD_MULTI</code> gates, <code>CMD_REBOOT</code>, <code>CMD_DFU</code>, and
+<code>CMD_FACTORY_RESET</code>, which <code>CAP_REBOOT</code> gates,
 <code>CMD_ANNOUNCE</code>, which <code>CAP_ADVERT</code> gates, and the bus-access commands,
 which <code>CAP_I2C</code> gates, the
 commands and status codes defined in this chapter are unconditional and

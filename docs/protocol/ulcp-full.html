@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-6c34194f.js";
+            window.path_to_searchindex_js = "searchindex-84dd6577.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-e4cb2f86.js"></script>
+        <script src="toc-7fd6cf8e.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -1202,10 +1202,10 @@ does not produce excessive ULCP traffic.</p>
 <p>The first of the device-behavior settings (property identifiers 70–95).
 When true, the <strong>device identity</strong> acts as an
 autonomous mesh repeater: its on-board node forwards the routable UMSH
-frames it receives—off the air, from a <a href="lan-bearer.html">LAN bearer</a>, or over
+frames it receives—off the air, from an <a href="ip-multicast.html">IP multicast group</a>, or over
 <a href="#prop-mac-backhaul">backhaul</a>—according to <a href="repeater-operation.html">Repeater
-Operation</a> and <a href="lan-bearer.html#forwarding-across-bearers">Forwarding Across
-Bearers</a>, and it sets the repeater
+Operation</a> and <a href="ip-multicast.html#nodes-with-a-lora-radio">Nodes With a LoRa
+Radio</a>, and it sets the repeater
 capability bit in its <a href="node-identity.html">node identity</a>. When false, the
 device identity forwards nothing on any medium—it sends only its own traffic
 and its attached host’s—and the bit is clear.</p>

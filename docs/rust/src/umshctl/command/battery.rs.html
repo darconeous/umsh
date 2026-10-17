@@ -35,7 +35,7 @@
 <a href=#35 id=35 data-nosnippet>35</a>    </span><span class="attr">#[arg(long)]
 <a href=#36 id=36 data-nosnippet>36</a>    </span><span class="kw">pub </span>gauge_telemetry: bool,
 <a href=#37 id=37 data-nosnippet>37</a>    <span class="doccomment">/// Properties to read; default is the scalar battery group (without gauge configuration).
-<a href=#38 id=38 data-nosnippet>38</a>    </span><span class="attr">#[arg(long, value_delimiter = <span class="string">','</span>)]
+<a href=#38 id=38 data-nosnippet>38</a>    </span><span class="attr">#[arg(long, value_delimiter = <span class="string">','</span>, hide_possible_values = <span class="bool-val">true</span>)]
 <a href=#39 id=39 data-nosnippet>39</a>    </span><span class="kw">pub </span>properties: Vec&lt;PropArg&gt;,
 <a href=#40 id=40 data-nosnippet>40</a>    <span class="doccomment">/// Stop after this many polls (with --watch).
 <a href=#41 id=41 data-nosnippet>41</a>    </span><span class="attr">#[arg(long, requires = <span class="string">"watch"</span>, value_parser = <span class="macro">clap::value_parser!</span>(u32).range(<span class="number">1</span>..))]

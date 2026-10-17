@@ -104,6 +104,9 @@ const WARNINGS = {
   "xiao-nrf52": [
     "Only if you flash with a downloaded UF2 file instead of this page: a UF2 built for a different board is silently ignored—the copy looks like it worked, and nothing changes. Flashing from this page rejects a mismatched image with an error.",
   ],
+  "xiao-esp32s3": [
+    "If this board previously ran different firmware, flashing clears whatever settings that firmware had stored on it.",
+  ],
 };
 
 /**

@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["Announce"],"fn":["absorb","announcer","clear","configure","enabled","policy","snapshot","to_snapshot","wait_configured"],"struct":["EnableSource","FixSink","Outcome","Policy"],"type":["Announcer"]};
+window.SIDEBAR_ITEMS = {"enum":["Announce"],"fn":["absorb","announcer","clear","configure","enabled","fix_ui_changed","has_fix","policy","snapshot","to_snapshot","wait_configured"],"struct":["EnableSource","FixSink","Outcome","Policy"],"type":["Announcer"]};

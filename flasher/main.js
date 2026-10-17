@@ -5,16 +5,17 @@
  *   nRF52840—reboot into the Adafruit bootloader (or let the user do it by
  *              hand), then speak legacy Nordic serial DFU at 115200.
  *   ESP32-S3—hand the port to esptool-js, which drives the ROM bootloader
- *              itself over DTR/RTS.
+ *              itself over DTR/RTS. A board whose ROM comes up as a new
+ *              port is picked again, as an nRF52840 in update mode is.
  *
  * Everything the page fetches is same-origin, which is what lets the template
  * keep a strict Content-Security-Policy.
  */
 
 import { loadBoards, boardFromQuery, imagesFor, isNrf, isEsp, warningsFor, updateModeFor } from "./boards.js";
-import { SerialLink, SerialLostError, describePort, touch1200, sleep } from "./serial.js";
+import { SerialLink, SerialLostError, describePort, touch1200, findNewPort, sleep } from "./serial.js";
 import { NrfDfu, parseDfuPackage, DfuPackageError } from "./nrf-dfu.js";
-import { flashEsp } from "./esp-flash.js";
+import { flashEsp, EspPortChangedError, isUsbSerialJtag, ESPRESSIF_PORT_FILTERS } from "./esp-flash.js";
 import {
   fetchLatestManifest,
   manifestBoard,
@@ -44,7 +45,8 @@ const state = {
   artifact: null,
   artifactLabel: "",
   busy: false,
-  /** Set once a 1200-baud touch has been done and we need the new port. */
+  /** Set once the board has restarted into its bootloader as a new port,
+   *  and the user has to pick it. */
   awaitingBootloader: false,
 };
 
@@ -248,7 +250,7 @@ function renderFlashStep() {
 
   if (state.awaitingBootloader) {
     actions.append(
-      button("Continue", "btn btn--primary", () => run(flashOverSerial)),
+      button("Continue", "btn btn--primary", () => run(isEsp(board) ? flashEspOverNewPort : flashOverSerial)),
       button("Start over", "btn btn--ghost", () => {
         state.awaitingBootloader = false;
         setStatus("");
@@ -339,11 +341,12 @@ async function flashNrf() {
 
   setStatus("Restarting the radio into update mode…");
   log(`Touching ${describePort(port)} at 1200 baud.`);
+  const known = await navigator.serial.getPorts();
   await touch1200(port);
 
   // If this browser has flashed the radio before, its update-mode port is
   // already granted and there is nothing to ask the user for.
-  const successor = await findReenumeratedPort(port);
+  const successor = await findNewPort(known, isUpdateModePort);
   if (successor) {
     log(`Found the radio's update-mode port (${describePort(successor)}) without asking.`);
     await flashPort(successor);
@@ -354,23 +357,6 @@ async function flashNrf() {
   setStatus(
     "The radio restarted into update mode, so it shows up as a new entry in the port list. Click Continue and pick it again—same radio, possibly a different name. If a small USB drive popped up too, just ignore it.",
   );
-}
-
-/**
- * After the touch, the radio drops off USB and returns as a different device.
- * If the browser already trusts that device from an earlier flash, use it
- * directly; if anything is ambiguous, fall back to asking.
- */
-async function findReenumeratedPort(oldPort) {
-  for (let poll = 0; poll < 8; poll++) {
-    await sleep(500);
-    const ports = await navigator.serial.getPorts();
-    if (ports.includes(oldPort)) continue; // still re-enumerating, or the touch did nothing
-    const candidates = ports.filter(isUpdateModePort);
-    if (candidates.length === 1) return candidates[0];
-    if (candidates.length > 1) return null;
-  }
-  return null;
 }
 
 async function flashOverSerial() {
@@ -443,12 +429,51 @@ async function flashEspBoard() {
   const port = await requestPort();
   if (!port) return;
 
+  const known = await navigator.serial.getPorts();
+  try {
+    await flashEspPort(port);
+    return;
+  } catch (error) {
+    if (!(error instanceof EspPortChangedError)) throw error;
+  }
+
+  // Arduino firmware on TinyUSB restarts into the ROM when asked to connect,
+  // and the ROM is a different USB device. If this browser already trusts it
+  // from an earlier flash, carry on; otherwise the user has to pick it.
+  log(`${describePort(port)} disconnected; looking for the board's ROM.`);
+  const successor = await findNewPort(known, isUsbSerialJtag);
+  if (successor) {
+    log(`Found the board's ROM (${describePort(successor)}) without asking.`);
+    await flashEspPort(successor);
+    return;
+  }
+
+  state.awaitingBootloader = true;
+  setStatus("The board restarted to take the update and now shows up as a new port. Click Continue and pick it.");
+}
+
+async function flashEspOverNewPort() {
+  setStatus("Pick your board in the list the browser just opened, then press Connect.");
+  const port = await requestPort({ filters: ESPRESSIF_PORT_FILTERS });
+  if (!port) return;
+  try {
+    await flashEspPort(port);
+  } catch (error) {
+    // Gone again, so whatever comes back starts from the top.
+    if (error instanceof EspPortChangedError) state.awaitingBootloader = false;
+    throw error;
+  }
+}
+
+async function flashEspPort(port) {
+  await ensureArtifact();
   await flashEsp(port, {
     image: state.artifact.image,
     onProgress: showProgress,
     onStage: showStage,
     log,
   });
+  state.awaitingBootloader = false;
   finish("Done. The board has restarted with the new firmware.");
 }
 
@@ -474,9 +499,9 @@ async function ensureArtifact() {
 /* ── Plumbing ───────────────────────────────────────────────────────────── */
 
 /** Returns null when the user dismisses the port picker, which is not an error. */
-async function requestPort() {
+async function requestPort(options = {}) {
   try {
-    return await navigator.serial.requestPort();
+    return await navigator.serial.requestPort(options);
   } catch (error) {
     if (error?.name === "NotFoundError" || error?.name === "AbortError") {
       setStatus("Nothing was flashed—the picker was closed. Click the button again and choose your radio from the list.");

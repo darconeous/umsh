@@ -856,83 +856,84 @@
 <a href=#856 id=856 data-nosnippet>856</a>    /// `PROP_MESHCORE_REGION_POLICY`, `PROP_MESHCORE_REGIONS`). Requires
 <a href=#857 id=857 data-nosnippet>857</a>    /// [`REPEATER`].
 <a href=#858 id=858 data-nosnippet>858</a>    </span><span class="kw">pub const </span>MESHCORE_FORWARDER: u32 = <span class="number">62</span>;
-<a href=#859 id=859 data-nosnippet>859</a>    <span class="doccomment">/// `CAP_LAN_BEARER`: the device's node participates in an IP
-<a href=#860 id=860 data-nosnippet>860</a>    /// multicast group on its local network (`PROP_LAN_BEARER_ENABLED`,
-<a href=#861 id=861 data-nosnippet>861</a>    /// `PROP_LAN_BEARER_GROUP`, `PROP_LAN_BEARER_INGRESS_LIMIT`,
-<a href=#862 id=862 data-nosnippet>862</a>    /// `PROP_LAN_BEARER_STATE`). Requires [`DEV_IDENTITY`] and [`IPV4`].
-<a href=#863 id=863 data-nosnippet>863</a>    </span><span class="kw">pub const </span>LAN_BEARER: u32 = <span class="number">63</span>;
-<a href=#864 id=864 data-nosnippet>864</a>}
-<a href=#865 id=865 data-nosnippet>865</a>
-<a href=#866 id=866 data-nosnippet>866</a><span class="doccomment">/// Whether a property is writable by a mesh administrator.
-<a href=#867 id=867 data-nosnippet>867</a>///
-<a href=#868 id=868 data-nosnippet>868</a>/// Gates mutation only—`CMD_PROP_SET`/`INSERT`/`REMOVE`. Reads are
-<a href=#869 id=869 data-nosnippet>869</a>/// never gated: an administrator may `CMD_PROP_GET` anything, and a
-<a href=#870 id=870 data-nosnippet>870</a>/// property the device does not serve fails on its own terms.
-<a href=#871 id=871 data-nosnippet>871</a>///
-<a href=#872 id=872 data-nosnippet>872</a>/// The unwritable set is small and named explicitly by the spec rather
-<a href=#873 id=873 data-nosnippet>873</a>/// than derived, because "device domain" is not a property of the key: a
-<a href=#874 id=874 data-nosnippet>874</a>/// host-domain table and a device-domain one differ only by which half of
-<a href=#875 id=875 data-nosnippet>875</a>/// the device they configure. A device answers writes to all of these with
-<a href=#876 id=876 data-nosnippet>876</a>/// `STATUS_NOT_PERMITTED`—the property exists, and the binding is what
-<a href=#877 id=877 data-nosnippet>877</a>/// refused it.
-<a href=#878 id=878 data-nosnippet>878</a></span><span class="kw">pub fn </span>admin_writable(key: u32) -&gt; bool {
-<a href=#879 id=879 data-nosnippet>879</a>    !<span class="macro">matches!</span>(
-<a href=#880 id=880 data-nosnippet>880</a>        key,
-<a href=#881 id=881 data-nosnippet>881</a>        <span class="comment">// The host domain in full: the assistance the device owes to
-<a href=#882 id=882 data-nosnippet>882</a>        // whatever host it serves is that host's business.
-<a href=#883 id=883 data-nosnippet>883</a>        </span>prop::HOST_KEY
-<a href=#884 id=884 data-nosnippet>884</a>            | prop::HOST_CHANNEL_KEYS
-<a href=#885 id=885 data-nosnippet>885</a>            | prop::HOST_PEER_KEYS
-<a href=#886 id=886 data-nosnippet>886</a>            | prop::HOST_RX_FILTERS
-<a href=#887 id=887 data-nosnippet>887</a>            | prop::HOST_AUTO_ACK
-<a href=#888 id=888 data-nosnippet>888</a>            | prop::HOST_RX_QUEUE_COUNT
-<a href=#889 id=889 data-nosnippet>889</a>            | prop::HOST_RX_QUEUE_CAPACITY
-<a href=#890 id=890 data-nosnippet>890</a>            | prop::HOST_RX_QUEUE_DROPPED
-<a href=#891 id=891 data-nosnippet>891</a>            | prop::HOST_MUTED_CHANNELS
-<a href=#892 id=892 data-nosnippet>892</a>            | prop::HOST_MUTED_PEERS
-<a href=#893 id=893 data-nosnippet>893</a>            <span class="comment">// Session state: an exchange is not an attach, so there is no
-<a href=#894 id=894 data-nosnippet>894</a>            // session for it to configure. `PROP_MAC_BACKHAUL` is the
-<a href=#895 id=895 data-nosnippet>895</a>            // exception: which side of the radio multiplexer the tethered
-<a href=#896 id=896 data-nosnippet>896</a>            // host sits on is worth flipping from across the mesh, so an
-<a href=#897 id=897 data-nosnippet>897</a>            // administrator may write it even though the host's next
-<a href=#898 id=898 data-nosnippet>898</a>            // attach resets it.
-<a href=#899 id=899 data-nosnippet>899</a>            </span>| prop::MAC_PROMISCUOUS
-<a href=#900 id=900 data-nosnippet>900</a>            <span class="comment">// A device identity cannot be installed over the mesh.
-<a href=#901 id=901 data-nosnippet>901</a>            </span>| prop::DEV_PRIVATE_KEY
-<a href=#902 id=902 data-nosnippet>902</a>    )
-<a href=#903 id=903 data-nosnippet>903</a>}
-<a href=#904 id=904 data-nosnippet>904</a>
-<a href=#905 id=905 data-nosnippet>905</a><span class="doccomment">/// Value used in `PROP_PHY_DUTY_LIMIT` to disable duty-cycle limiting.
-<a href=#906 id=906 data-nosnippet>906</a></span><span class="kw">pub const </span>DUTY_LIMIT_DISABLED: u16 = <span class="number">0xFFFF</span>;
-<a href=#907 id=907 data-nosnippet>907</a>
-<a href=#908 id=908 data-nosnippet>908</a><span class="doccomment">/// Shortest accepted `PROP_ADVERT_INTERVAL` / `PROP_BEACON_INTERVAL`, in
-<a href=#909 id=909 data-nosnippet>909</a>/// seconds.
-<a href=#910 id=910 data-nosnippet>910</a>///
-<a href=#911 id=911 data-nosnippet>911</a>/// An absolute floor, and one a device may only ever round *up* from:
-<a href=#912 id=912 data-nosnippet>912</a>/// scheduling jitter delays an announcement and never brings it forward,
-<a href=#913 id=913 data-nosnippet>913</a>/// so no configuration can put an unsolicited broadcast on the air more
-<a href=#914 id=914 data-nosnippet>914</a>/// often than this. The duty ledger remains the airtime control; this is
-<a href=#915 id=915 data-nosnippet>915</a>/// what keeps a mistyped interval from spending the whole budget on
-<a href=#916 id=916 data-nosnippet>916</a>/// announcements before anything else can speak.
-<a href=#917 id=917 data-nosnippet>917</a></span><span class="kw">pub const </span>MIN_AUTO_ANNOUNCE_INTERVAL_S: u32 = <span class="number">20 </span>* <span class="number">60</span>;
-<a href=#918 id=918 data-nosnippet>918</a>
-<a href=#919 id=919 data-nosnippet>919</a><span class="doccomment">/// Longest accepted `PROP_ADVERT_INTERVAL` / `PROP_BEACON_INTERVAL`, in
-<a href=#920 id=920 data-nosnippet>920</a>/// seconds.
-<a href=#921 id=921 data-nosnippet>921</a>///
-<a href=#922 id=922 data-nosnippet>922</a>/// A ceiling on how stale the mesh's picture of a node may get while that
-<a href=#923 id=923 data-nosnippet>923</a>/// node still considers itself to be announcing. Past a day the schedule
-<a href=#924 id=924 data-nosnippet>924</a>/// has stopped being one, and 0 says so more honestly.
-<a href=#925 id=925 data-nosnippet>925</a></span><span class="kw">pub const </span>MAX_AUTO_ANNOUNCE_INTERVAL_S: u32 = <span class="number">24 </span>* <span class="number">60 </span>* <span class="number">60</span>;
-<a href=#926 id=926 data-nosnippet>926</a>
-<a href=#927 id=927 data-nosnippet>927</a><span class="doccomment">/// Default `PROP_ADVERT_INTERVAL`, in seconds.
-<a href=#928 id=928 data-nosnippet>928</a></span><span class="kw">pub const </span>DEFAULT_ADVERT_INTERVAL_S: u32 = <span class="number">4 </span>* <span class="number">60 </span>* <span class="number">60</span>;
-<a href=#929 id=929 data-nosnippet>929</a>
-<a href=#930 id=930 data-nosnippet>930</a><span class="doccomment">/// Default `PROP_BEACON_INTERVAL`, in seconds.
-<a href=#931 id=931 data-nosnippet>931</a></span><span class="kw">pub const </span>DEFAULT_BEACON_INTERVAL_S: u32 = <span class="number">60 </span>* <span class="number">60</span>;
-<a href=#932 id=932 data-nosnippet>932</a>
-<a href=#933 id=933 data-nosnippet>933</a><span class="doccomment">/// Largest flood budget a `CMD_ANNOUNCE` request may ask for.
-<a href=#934 id=934 data-nosnippet>934</a>///
-<a href=#935 id=935 data-nosnippet>935</a>/// `FHOPS_REM` is a nibble, so this is what the field can hold rather
-<a href=#936 id=936 data-nosnippet>936</a>/// than a policy of its own.
-<a href=#937 id=937 data-nosnippet>937</a></span><span class="kw">pub const </span>MAX_ANNOUNCE_FLOOD_HOPS: u8 = <span class="number">15</span>;
+<a href=#859 id=859 data-nosnippet>859</a>    <span class="doccomment">/// `CAP_LAN_BEARER`: the device participates in an IP multicast group
+<a href=#860 id=860 data-nosnippet>860</a>    /// on its local network (`PROP_LAN_BEARER_GROUP`,
+<a href=#861 id=861 data-nosnippet>861</a>    /// `PROP_LAN_BEARER_STATE`). A device that also advertises
+<a href=#862 id=862 data-nosnippet>862</a>    /// [`REPEATER`] forwards between the group and its LoRa radio, and has
+<a href=#863 id=863 data-nosnippet>863</a>    /// `PROP_LAN_BEARER_ENABLED` and `PROP_LAN_BEARER_INGRESS_LIMIT` too.
+<a href=#864 id=864 data-nosnippet>864</a>    </span><span class="kw">pub const </span>LAN_BEARER: u32 = <span class="number">63</span>;
+<a href=#865 id=865 data-nosnippet>865</a>}
+<a href=#866 id=866 data-nosnippet>866</a>
+<a href=#867 id=867 data-nosnippet>867</a><span class="doccomment">/// Whether a property is writable by a mesh administrator.
+<a href=#868 id=868 data-nosnippet>868</a>///
+<a href=#869 id=869 data-nosnippet>869</a>/// Gates mutation only—`CMD_PROP_SET`/`INSERT`/`REMOVE`. Reads are
+<a href=#870 id=870 data-nosnippet>870</a>/// never gated: an administrator may `CMD_PROP_GET` anything, and a
+<a href=#871 id=871 data-nosnippet>871</a>/// property the device does not serve fails on its own terms.
+<a href=#872 id=872 data-nosnippet>872</a>///
+<a href=#873 id=873 data-nosnippet>873</a>/// The unwritable set is small and named explicitly by the spec rather
+<a href=#874 id=874 data-nosnippet>874</a>/// than derived, because "device domain" is not a property of the key: a
+<a href=#875 id=875 data-nosnippet>875</a>/// host-domain table and a device-domain one differ only by which half of
+<a href=#876 id=876 data-nosnippet>876</a>/// the device they configure. A device answers writes to all of these with
+<a href=#877 id=877 data-nosnippet>877</a>/// `STATUS_NOT_PERMITTED`—the property exists, and the binding is what
+<a href=#878 id=878 data-nosnippet>878</a>/// refused it.
+<a href=#879 id=879 data-nosnippet>879</a></span><span class="kw">pub fn </span>admin_writable(key: u32) -&gt; bool {
+<a href=#880 id=880 data-nosnippet>880</a>    !<span class="macro">matches!</span>(
+<a href=#881 id=881 data-nosnippet>881</a>        key,
+<a href=#882 id=882 data-nosnippet>882</a>        <span class="comment">// The host domain in full: the assistance the device owes to
+<a href=#883 id=883 data-nosnippet>883</a>        // whatever host it serves is that host's business.
+<a href=#884 id=884 data-nosnippet>884</a>        </span>prop::HOST_KEY
+<a href=#885 id=885 data-nosnippet>885</a>            | prop::HOST_CHANNEL_KEYS
+<a href=#886 id=886 data-nosnippet>886</a>            | prop::HOST_PEER_KEYS
+<a href=#887 id=887 data-nosnippet>887</a>            | prop::HOST_RX_FILTERS
+<a href=#888 id=888 data-nosnippet>888</a>            | prop::HOST_AUTO_ACK
+<a href=#889 id=889 data-nosnippet>889</a>            | prop::HOST_RX_QUEUE_COUNT
+<a href=#890 id=890 data-nosnippet>890</a>            | prop::HOST_RX_QUEUE_CAPACITY
+<a href=#891 id=891 data-nosnippet>891</a>            | prop::HOST_RX_QUEUE_DROPPED
+<a href=#892 id=892 data-nosnippet>892</a>            | prop::HOST_MUTED_CHANNELS
+<a href=#893 id=893 data-nosnippet>893</a>            | prop::HOST_MUTED_PEERS
+<a href=#894 id=894 data-nosnippet>894</a>            <span class="comment">// Session state: an exchange is not an attach, so there is no
+<a href=#895 id=895 data-nosnippet>895</a>            // session for it to configure. `PROP_MAC_BACKHAUL` is the
+<a href=#896 id=896 data-nosnippet>896</a>            // exception: which side of the radio multiplexer the tethered
+<a href=#897 id=897 data-nosnippet>897</a>            // host sits on is worth flipping from across the mesh, so an
+<a href=#898 id=898 data-nosnippet>898</a>            // administrator may write it even though the host's next
+<a href=#899 id=899 data-nosnippet>899</a>            // attach resets it.
+<a href=#900 id=900 data-nosnippet>900</a>            </span>| prop::MAC_PROMISCUOUS
+<a href=#901 id=901 data-nosnippet>901</a>            <span class="comment">// A device identity cannot be installed over the mesh.
+<a href=#902 id=902 data-nosnippet>902</a>            </span>| prop::DEV_PRIVATE_KEY
+<a href=#903 id=903 data-nosnippet>903</a>    )
+<a href=#904 id=904 data-nosnippet>904</a>}
+<a href=#905 id=905 data-nosnippet>905</a>
+<a href=#906 id=906 data-nosnippet>906</a><span class="doccomment">/// Value used in `PROP_PHY_DUTY_LIMIT` to disable duty-cycle limiting.
+<a href=#907 id=907 data-nosnippet>907</a></span><span class="kw">pub const </span>DUTY_LIMIT_DISABLED: u16 = <span class="number">0xFFFF</span>;
+<a href=#908 id=908 data-nosnippet>908</a>
+<a href=#909 id=909 data-nosnippet>909</a><span class="doccomment">/// Shortest accepted `PROP_ADVERT_INTERVAL` / `PROP_BEACON_INTERVAL`, in
+<a href=#910 id=910 data-nosnippet>910</a>/// seconds.
+<a href=#911 id=911 data-nosnippet>911</a>///
+<a href=#912 id=912 data-nosnippet>912</a>/// An absolute floor, and one a device may only ever round *up* from:
+<a href=#913 id=913 data-nosnippet>913</a>/// scheduling jitter delays an announcement and never brings it forward,
+<a href=#914 id=914 data-nosnippet>914</a>/// so no configuration can put an unsolicited broadcast on the air more
+<a href=#915 id=915 data-nosnippet>915</a>/// often than this. The duty ledger remains the airtime control; this is
+<a href=#916 id=916 data-nosnippet>916</a>/// what keeps a mistyped interval from spending the whole budget on
+<a href=#917 id=917 data-nosnippet>917</a>/// announcements before anything else can speak.
+<a href=#918 id=918 data-nosnippet>918</a></span><span class="kw">pub const </span>MIN_AUTO_ANNOUNCE_INTERVAL_S: u32 = <span class="number">20 </span>* <span class="number">60</span>;
+<a href=#919 id=919 data-nosnippet>919</a>
+<a href=#920 id=920 data-nosnippet>920</a><span class="doccomment">/// Longest accepted `PROP_ADVERT_INTERVAL` / `PROP_BEACON_INTERVAL`, in
+<a href=#921 id=921 data-nosnippet>921</a>/// seconds.
+<a href=#922 id=922 data-nosnippet>922</a>///
+<a href=#923 id=923 data-nosnippet>923</a>/// A ceiling on how stale the mesh's picture of a node may get while that
+<a href=#924 id=924 data-nosnippet>924</a>/// node still considers itself to be announcing. Past a day the schedule
+<a href=#925 id=925 data-nosnippet>925</a>/// has stopped being one, and 0 says so more honestly.
+<a href=#926 id=926 data-nosnippet>926</a></span><span class="kw">pub const </span>MAX_AUTO_ANNOUNCE_INTERVAL_S: u32 = <span class="number">24 </span>* <span class="number">60 </span>* <span class="number">60</span>;
+<a href=#927 id=927 data-nosnippet>927</a>
+<a href=#928 id=928 data-nosnippet>928</a><span class="doccomment">/// Default `PROP_ADVERT_INTERVAL`, in seconds.
+<a href=#929 id=929 data-nosnippet>929</a></span><span class="kw">pub const </span>DEFAULT_ADVERT_INTERVAL_S: u32 = <span class="number">4 </span>* <span class="number">60 </span>* <span class="number">60</span>;
+<a href=#930 id=930 data-nosnippet>930</a>
+<a href=#931 id=931 data-nosnippet>931</a><span class="doccomment">/// Default `PROP_BEACON_INTERVAL`, in seconds.
+<a href=#932 id=932 data-nosnippet>932</a></span><span class="kw">pub const </span>DEFAULT_BEACON_INTERVAL_S: u32 = <span class="number">60 </span>* <span class="number">60</span>;
+<a href=#933 id=933 data-nosnippet>933</a>
+<a href=#934 id=934 data-nosnippet>934</a><span class="doccomment">/// Largest flood budget a `CMD_ANNOUNCE` request may ask for.
+<a href=#935 id=935 data-nosnippet>935</a>///
+<a href=#936 id=936 data-nosnippet>936</a>/// `FHOPS_REM` is a nibble, so this is what the field can hold rather
+<a href=#937 id=937 data-nosnippet>937</a>/// than a policy of its own.
+<a href=#938 id=938 data-nosnippet>938</a></span><span class="kw">pub const </span>MAX_ANNOUNCE_FLOOD_HOPS: u8 = <span class="number">15</span>;
 </code></pre></div></section></main></body></html>

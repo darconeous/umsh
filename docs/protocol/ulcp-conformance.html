@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-6c34194f.js";
+            window.path_to_searchindex_js = "searchindex-84dd6577.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-e4cb2f86.js"></script>
+        <script src="toc-7fd6cf8e.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -219,10 +219,12 @@ nothing to apply them to and rejects them under the ordinary property
 rules. <code>CMD_QUEUE_DRAIN</code>, <code>CMD_SAVE</code>, and <code>CMD_RESTORE</code> belong to their
 subsystems’ capabilities and <strong>MUST</strong> fail with <code>STATUS_UNIMPLEMENTED</code>
 when the capability is not advertised, as <strong>MUST</strong>
-<a href="ulcp-core.html#cmd-reboot"><code>CMD_REBOOT</code></a> without <code>CAP_REBOOT</code> and
+<a href="ulcp-core.html#cmd-reboot"><code>CMD_REBOOT</code></a>,
+<a href="ulcp-core.html#cmd-dfu"><code>CMD_DFU</code></a>, and
+<a href="ulcp-saved-state.html#cmd-factory-reset"><code>CMD_FACTORY_RESET</code></a> without
+<code>CAP_REBOOT</code> and
 <a href="ulcp-device.html#cmd-announce"><code>CMD_ANNOUNCE</code></a> without <code>CAP_ADVERT</code>;
-<code>CMD_CLEAR</code> and <code>CMD_FACTORY_RESET</code>
-are available regardless of capabilities (see
+<code>CMD_CLEAR</code> is available regardless of capabilities (see
 <a href="ulcp-saved-state.html">Saved State</a>).</p>
 <p>DFU implementations <strong>MUST</strong> validate the optional mode, require a nonzero
 direct TID, finish fallible preparation before success, and wait for the
@@ -287,7 +289,7 @@ requires.</p>
 <tr><td><a href="ulcp-wifi.html">Wi-Fi</a></td><td><code>CAP_WIFI_SCAN</code>, <code>CAP_WIFI</code>, <code>CAP_WIFI_AP</code></td></tr>
 <tr><td><a href="ulcp-ip.html">IP Connectivity</a></td><td><code>CAP_IPV4</code>, <code>CAP_IPV6</code></td></tr>
 <tr><td><a href="ulcp-bridge.html">Bridge Client</a></td><td><code>CAP_BRIDGE_CLIENT</code></td></tr>
-<tr><td><a href="ulcp-lan-bearer.html">LAN Bearer</a></td><td><code>CAP_LAN_BEARER</code></td></tr>
+<tr><td><a href="ulcp-ip-multicast.html">IP Multicast</a></td><td><code>CAP_LAN_BEARER</code></td></tr>
 <tr><td><a href="ulcp-i2c.html">I2C Bus Access</a></td><td><code>CAP_I2C</code></td></tr>
 </tbody>
 </table>

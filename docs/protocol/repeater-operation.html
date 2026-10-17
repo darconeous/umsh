@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-6c34194f.js";
+            window.path_to_searchindex_js = "searchindex-84dd6577.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-e4cb2f86.js"></script>
+        <script src="toc-7fd6cf8e.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -351,7 +351,7 @@
 </ul>
 <p>A packet that arrives carrying an <strong>empty</strong> source-route option matched no hint at this repeater, so it takes the flood path: steps 7 through 9 apply in full. This is how a hybrid route transitions to flooding—the transition is observed by the repeater <em>after</em> the one that emptied the route, not performed by it.</p>
 <p>A <a href="internet-bridging.html">bridge</a> rewrites nothing of its own: a repeater at each end of it forwards the packet by this procedure, so a crossing applies these rules twice.</p>
-<p>A node with <a href="lan-bearer.html#forwarding-across-bearers">bearers</a> beside its radio applies this procedure once per packet, and offers the one rewritten packet to each egress its forwarding table allows.</p>
+<p>A bridge in an <a href="ip-multicast.html#nodes-with-a-lora-radio">IP multicast group</a> applies this procedure once to a packet received from the group, as to one heard on its radio.</p>
 <h2 id="forwarding-confirmation"><a class="header" href="#forwarding-confirmation">Forwarding Confirmation</a></h2>
 <p>Repeaters do not generate MAC acks—acks are generated only by the <a href="packet-types.html#mac-ack-packet">final destination</a>. Instead, a node can passively confirm that a transmitted or forwarded packet was received by listening for a subsequent retransmission of the same packet (or it’s ack).</p>
 <p>This applies to:</p>
@@ -366,7 +366,7 @@
 <pre><code class="language-text">confirm_timeout = 2 × T_frame + W_max + 2 × W_jitter + D_ack
 </code></pre>
 <p>where <code>W_max + 2 × W_jitter</code> bounds the intentional forwarding delay permitted for the path, including the wait of a repeater that heard the packet below the contention band, and <code>D_ack</code> is the <a href="channel-access.html#ack-protection-interval">ACK protection interval</a> when it applies. With the suggested defaults <code>W_max = T_frame/2</code>, <code>W_jitter = T_frame/10</code>, and <code>D_ack = 0.25 × T_frame</code>, this yields <code>confirm_timeout = 2.95 × T_frame</code>.</p>
-<p>If the packet is heard before <code>confirm_timeout</code> expires, forwarding is confirmed. A copy received from a <a href="lan-bearer.html#channel-access">bearer</a> does not confirm.</p>
+<p>If the packet is heard before <code>confirm_timeout</code> expires, forwarding is confirmed. A copy received from an <a href="ip-multicast.html#channel-access">IP multicast group</a> confirms as one heard on the air does.</p>
 <p>If <code>confirm_timeout</code> expires without a retransmission, the node SHOULD schedule a retry after a jittered delay:</p>
 <pre><code class="language-text">retry_delay = uniform_random(0, T_frame)
 </code></pre>

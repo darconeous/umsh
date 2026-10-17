@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"constant":["FRAME_BYTES","HEIGHT","STRIPE_BYTES","STRIPE_ROWS","WIDTH"],"enum":["Error"],"struct":["Framebuffer","St7796"]};
+window.SIDEBAR_ITEMS = {"constant":["FRAME_BYTES","HEIGHT","STRIPES","STRIPE_BYTES","STRIPE_ROWS","WIDTH"],"enum":["Error"],"struct":["Binary","Framebuffer","SentStripes","St7796"]};

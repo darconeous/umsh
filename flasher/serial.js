@@ -162,6 +162,31 @@ export function describePort(port) {
 }
 
 /**
+ * Wait for a board that has just restarted as a different USB device to show
+ * up as a port this page may already use: one the browser trusts from an
+ * earlier flash.
+ *
+ * `known` is `getPorts()` from before the restart. A device that leaves USB
+ * and comes back is a new port object, so a candidate must be absent from it:
+ * that keeps another board with the same IDs, already plugged in, from being
+ * mistaken for this one. Resolves null when nothing turns up, or when more
+ * than one port does—both cases where the user has to choose.
+ */
+export async function findNewPort(
+  known,
+  matches,
+  { getPorts = () => navigator.serial.getPorts(), polls = 8, intervalMs = 500 } = {},
+) {
+  for (let poll = 0; poll < polls; poll++) {
+    await sleep(intervalMs);
+    const candidates = (await getPorts()).filter((port) => !known.includes(port) && matches(port));
+    if (candidates.length === 1) return candidates[0];
+    if (candidates.length > 1) return null;
+  }
+  return null;
+}
+
+/**
  * The 1200-baud touch: reboot a running UMSH radio into its bootloader.
  *
  * `TouchlessResetWatcher` in `crates/umsh-bsp-nrf52840/src/rescue.rs` triggers

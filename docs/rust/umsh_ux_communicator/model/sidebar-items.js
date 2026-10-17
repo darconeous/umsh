@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["MAX_CHATS"],"enum":["Section"],"struct":["ChatSummary","State","StatusStrip"]};

@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-6c34194f.js";
+            window.path_to_searchindex_js = "searchindex-84dd6577.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-e4cb2f86.js"></script>
+        <script src="toc-7fd6cf8e.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -494,7 +494,9 @@ TID is therefore irrelevant.</p>
 <p>Because clearing the bonds invalidates the encrypted link the command
 arrived on, a host that issues <code>CMD_FACTORY_RESET</code> over a bonded transport
 should also discard its own pairing to the radio.</p>
-<p>This command is available regardless of capabilities.</p>
+<p>This command is only available on devices advertising <code>CAP_REBOOT</code>, since
+it ends in one. A device without it answers <code>STATUS_UNIMPLEMENTED</code>—the
+only response this command ever produces.</p>
 <h2 id="properties"><a class="header" href="#properties">Properties</a></h2>
 <div class="table-wrapper">
 <table>

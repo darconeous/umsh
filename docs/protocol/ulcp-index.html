@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-6c34194f.js";
+            window.path_to_searchindex_js = "searchindex-84dd6577.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-e4cb2f86.js"></script>
+        <script src="toc-7fd6cf8e.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -198,9 +198,9 @@
 <tr><td>12</td><td><a href="ulcp-saved-state.html#cmd-save"><code>CMD_SAVE</code></a></td><td>Host-&gt;Device</td><td><code>CAP_SAVE</code></td></tr>
 <tr><td>13</td><td><a href="ulcp-saved-state.html#cmd-clear"><code>CMD_CLEAR</code></a></td><td>Host-&gt;Device</td><td>—</td></tr>
 <tr><td>14</td><td><a href="ulcp-saved-state.html#cmd-restore"><code>CMD_RESTORE</code></a></td><td>Host-&gt;Device</td><td><code>CAP_SAVE</code></td></tr>
-<tr><td>15</td><td><a href="ulcp-saved-state.html#cmd-factory-reset"><code>CMD_FACTORY_RESET</code></a></td><td>Host-&gt;Device</td><td>—</td></tr>
+<tr><td>15</td><td><a href="ulcp-saved-state.html#cmd-factory-reset"><code>CMD_FACTORY_RESET</code></a></td><td>Host-&gt;Device</td><td><code>CAP_REBOOT</code></td></tr>
 <tr><td>16</td><td><a href="ulcp-core.html#cmd-reboot"><code>CMD_REBOOT</code></a></td><td>Host-&gt;Device</td><td><code>CAP_REBOOT</code></td></tr>
-<tr><td>17</td><td><a href="ulcp-core.html#cmd-dfu"><code>CMD_DFU</code></a></td><td>Host-&gt;Device</td><td>—</td></tr>
+<tr><td>17</td><td><a href="ulcp-core.html#cmd-dfu"><code>CMD_DFU</code></a></td><td>Host-&gt;Device</td><td><code>CAP_REBOOT</code></td></tr>
 <tr><td>19</td><td><a href="ulcp-device.html#cmd-announce"><code>CMD_ANNOUNCE</code></a></td><td>Host-&gt;Device</td><td><code>CAP_ADVERT</code></td></tr>
 <tr><td>21</td><td><a href="ulcp-core.html#cmd-prop-multi-get"><code>CMD_PROP_MULTI_GET</code></a></td><td>Host-&gt;Device</td><td><code>CAP_CMD_MULTI</code></td></tr>
 <tr><td>22</td><td><a href="ulcp-core.html#cmd-prop-multi-set"><code>CMD_PROP_MULTI_SET</code></a></td><td>Host-&gt;Device</td><td><code>CAP_CMD_MULTI</code></td></tr>
@@ -297,11 +297,11 @@
 <tr><td>4842</td><td><a href="ulcp-radio.html#prop-stat-meshcore-forwarded-routed"><code>PROP_STAT_MESHCORE_FORWARDED_ROUTED</code></a></td><td>Get, Set</td><td><code>CAP_STATS</code>, <code>CAP_MESHCORE_FORWARDER</code></td></tr>
 <tr><td>4843</td><td><a href="ulcp-radio.html#prop-stat-meshcore-forwarded-flood"><code>PROP_STAT_MESHCORE_FORWARDED_FLOOD</code></a></td><td>Get, Set</td><td><code>CAP_STATS</code>, <code>CAP_MESHCORE_FORWARDER</code></td></tr>
 <tr><td>4844</td><td><a href="ulcp-radio.html#prop-stat-meshcore-declined"><code>PROP_STAT_MESHCORE_DECLINED</code></a></td><td>Get, Set</td><td><code>CAP_STATS</code>, <code>CAP_MESHCORE_FORWARDER</code></td></tr>
-<tr><td>4845</td><td><a href="ulcp-lan-bearer.html#counters"><code>PROP_STAT_LAN_RX</code></a></td><td>Get, Set</td><td><code>CAP_STATS</code>, <code>CAP_LAN_BEARER</code></td></tr>
-<tr><td>4846</td><td><a href="ulcp-lan-bearer.html#counters"><code>PROP_STAT_LAN_RX_LIMITED</code></a></td><td>Get, Set</td><td><code>CAP_STATS</code>, <code>CAP_LAN_BEARER</code></td></tr>
-<tr><td>4847</td><td><a href="ulcp-lan-bearer.html#counters"><code>PROP_STAT_LAN_RX_MALFORMED</code></a></td><td>Get, Set</td><td><code>CAP_STATS</code>, <code>CAP_LAN_BEARER</code></td></tr>
-<tr><td>4848</td><td><a href="ulcp-lan-bearer.html#counters"><code>PROP_STAT_LAN_EXPORTED</code></a></td><td>Get, Set</td><td><code>CAP_STATS</code>, <code>CAP_LAN_BEARER</code></td></tr>
-<tr><td>4849</td><td><a href="ulcp-lan-bearer.html#counters"><code>PROP_STAT_LAN_EXPORT_DROPPED</code></a></td><td>Get, Set</td><td><code>CAP_STATS</code>, <code>CAP_LAN_BEARER</code></td></tr>
+<tr><td>4845</td><td><a href="ulcp-ip-multicast.html#counters"><code>PROP_STAT_LAN_RX</code></a></td><td>Get, Set</td><td><code>CAP_STATS</code>, <code>CAP_LAN_BEARER</code>, <code>CAP_REPEATER</code></td></tr>
+<tr><td>4846</td><td><a href="ulcp-ip-multicast.html#counters"><code>PROP_STAT_LAN_RX_LIMITED</code></a></td><td>Get, Set</td><td><code>CAP_STATS</code>, <code>CAP_LAN_BEARER</code>, <code>CAP_REPEATER</code></td></tr>
+<tr><td>4847</td><td><a href="ulcp-ip-multicast.html#counters"><code>PROP_STAT_LAN_RX_MALFORMED</code></a></td><td>Get, Set</td><td><code>CAP_STATS</code>, <code>CAP_LAN_BEARER</code>, <code>CAP_REPEATER</code></td></tr>
+<tr><td>4848</td><td><a href="ulcp-ip-multicast.html#counters"><code>PROP_STAT_LAN_EXPORTED</code></a></td><td>Get, Set</td><td><code>CAP_STATS</code>, <code>CAP_LAN_BEARER</code>, <code>CAP_REPEATER</code></td></tr>
+<tr><td>4849</td><td><a href="ulcp-ip-multicast.html#counters"><code>PROP_STAT_LAN_EXPORT_DROPPED</code></a></td><td>Get, Set</td><td><code>CAP_STATS</code>, <code>CAP_LAN_BEARER</code>, <code>CAP_REPEATER</code></td></tr>
 <tr><td>4864</td><td><a href="ulcp-ble.html#prop-ble-pairing-pin"><code>PROP_BLE_PAIRING_PIN</code></a></td><td>Set</td><td>BLE transport</td></tr>
 <tr><td>4865</td><td><a href="app-node-management.html#prop-dev-admins"><code>PROP_DEV_ADMINS</code></a></td><td>Get, Set, Insert, Remove</td><td><code>CAP_ADMIN</code></td></tr>
 <tr><td>4866</td><td><a href="ulcp-device.html#prop-time"><code>PROP_TIME</code></a></td><td>Get, Set, Is</td><td><code>CAP_TIME</code></td></tr>
@@ -360,10 +360,10 @@
 <tr><td>4976</td><td><a href="ulcp-device.html#prop-meshcore-forwarding-enabled"><code>PROP_MESHCORE_FORWARDING_ENABLED</code></a></td><td>Get, Set</td><td><code>CAP_MESHCORE_FORWARDER</code></td></tr>
 <tr><td>4977</td><td><a href="ulcp-device.html#prop-meshcore-region-policy"><code>PROP_MESHCORE_REGION_POLICY</code></a></td><td>Get, Set</td><td><code>CAP_MESHCORE_FORWARDER</code></td></tr>
 <tr><td>4978</td><td><a href="ulcp-device.html#prop-meshcore-regions"><code>PROP_MESHCORE_REGIONS</code></a></td><td>Get, Set, Insert, Remove</td><td><code>CAP_MESHCORE_FORWARDER</code></td></tr>
-<tr><td>4992</td><td><a href="ulcp-lan-bearer.html#prop-lan-bearer-enabled"><code>PROP_LAN_BEARER_ENABLED</code></a></td><td>Get, Set</td><td><code>CAP_LAN_BEARER</code></td></tr>
-<tr><td>4993</td><td><a href="ulcp-lan-bearer.html#prop-lan-bearer-group"><code>PROP_LAN_BEARER_GROUP</code></a></td><td>Get, Set</td><td><code>CAP_LAN_BEARER</code></td></tr>
-<tr><td>4994</td><td><a href="ulcp-lan-bearer.html#prop-lan-bearer-ingress-limit"><code>PROP_LAN_BEARER_INGRESS_LIMIT</code></a></td><td>Get, Set</td><td><code>CAP_LAN_BEARER</code></td></tr>
-<tr><td>4995</td><td><a href="ulcp-lan-bearer.html#prop-lan-bearer-state"><code>PROP_LAN_BEARER_STATE</code></a></td><td>Get, Is</td><td><code>CAP_LAN_BEARER</code></td></tr>
+<tr><td>4992</td><td><a href="ulcp-ip-multicast.html#prop-lan-bearer-enabled"><code>PROP_LAN_BEARER_ENABLED</code></a></td><td>Get, Set</td><td><code>CAP_LAN_BEARER</code>, <code>CAP_REPEATER</code></td></tr>
+<tr><td>4993</td><td><a href="ulcp-ip-multicast.html#prop-lan-bearer-group"><code>PROP_LAN_BEARER_GROUP</code></a></td><td>Get, Set</td><td><code>CAP_LAN_BEARER</code></td></tr>
+<tr><td>4994</td><td><a href="ulcp-ip-multicast.html#prop-lan-bearer-ingress-limit"><code>PROP_LAN_BEARER_INGRESS_LIMIT</code></a></td><td>Get, Set</td><td><code>CAP_LAN_BEARER</code>, <code>CAP_REPEATER</code></td></tr>
+<tr><td>4995</td><td><a href="ulcp-ip-multicast.html#prop-lan-bearer-state"><code>PROP_LAN_BEARER_STATE</code></a></td><td>Get, Is</td><td><code>CAP_LAN_BEARER</code></td></tr>
 </tbody>
 </table>
 </div>
@@ -409,7 +409,7 @@ is in <a href="ulcp-core.html#capabilities">Capabilities</a>.</p>
 <tr><td>60</td><td><code>CAP_I2C</code></td><td><a href="ulcp-i2c.html#capabilities">I2C Bus Access</a></td></tr>
 <tr><td>61</td><td><code>CAP_TEMPERATURE</code></td><td><a href="ulcp-device.html#capabilities">Device Domain</a></td></tr>
 <tr><td>62</td><td><code>CAP_MESHCORE_FORWARDER</code></td><td><a href="ulcp-device.html#capabilities">Device Domain</a></td></tr>
-<tr><td>63</td><td><code>CAP_LAN_BEARER</code></td><td><a href="ulcp-lan-bearer.html#capabilities">LAN Bearer</a></td></tr>
+<tr><td>63</td><td><code>CAP_LAN_BEARER</code></td><td><a href="ulcp-ip-multicast.html#capabilities">IP Multicast</a></td></tr>
 <tr><td>515</td><td><code>CAP_PHY_LORA</code></td><td><a href="ulcp-radio.html#capabilities">Radio Control</a></td></tr>
 </tbody>
 </table>

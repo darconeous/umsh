@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"struct":["LanBearerConfig"]};
+window.SIDEBAR_ITEMS = {"enum":["LanBearerRole"],"struct":["LanBearerConfig"]};

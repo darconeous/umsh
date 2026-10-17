@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-6c34194f.js";
+            window.path_to_searchindex_js = "searchindex-84dd6577.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-e4cb2f86.js"></script>
+        <script src="toc-7fd6cf8e.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -248,7 +248,7 @@ delay   = D_ack + W + uniform_random(0, W_jitter)
 </ul>
 <p>After computing the delay, the repeater waits. Other packets SHOULD continue to be forwarded while waiting, assuming the channel is clear.</p>
 <p>If the repeater overhears the same packet forwarded by another node (identified by MIC in the duplicate cache) before the delay expires, it SHOULD defer rather than transmit. A safe default is to recalculate a new delay using the same <code>W_min</code>/<code>W_max</code> limits—including <code>D_ack</code> when it applies, since the overheard copy may itself elicit an immediate ACK from the destination—and restart the waiting period. The first two overheard copies each defer the pending forward this way; on overhearing a third copy, the repeater SHOULD abandon the pending forward.</p>
-<p>Only a copy received over the radio defers. A packet received from a <a href="lan-bearer.html#channel-access">bearer</a>, heard by every radio on that bearer at once, contends with a window drawn uniformly from <code>[W_min, W_max]</code>.</p>
+<p>Only a copy received over the radio defers. A packet received from an <a href="ip-multicast.html#channel-access">IP multicast group</a>, heard by every bridge in the group at once, contends with a window drawn uniformly from <code>[W_min, W_max]</code>.</p>
 <p>If the repeater instead overhears a MAC ack whose <code>ack_mic</code> matches the pending packet’s MIC prefix, it SHOULD <a href="repeater-operation.html#ack-cancellation">cancel the pending forward outright</a> rather than defer: the destination provably has the packet.</p>
 <p>This deferral behavior is intended only for the first local forwarding decision after reception. Once a repeater has actually transmitted its own copy, any later retransmission behavior is governed by <a href="repeater-operation.html#forwarding-confirmation">Repeater Operation</a>.</p>
 <p>Nodes waiting for implicit forwarding confirmation MUST size their confirmation timeout to include this full forwarding-delay window. A safe default is to allow:</p>
