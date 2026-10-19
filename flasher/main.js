@@ -125,6 +125,16 @@ function selectBoard(board) {
   picker.replaceChildren(...images.map((image) => new Option(image.name, image.id)));
   picker.hidden = images.length < 2;
 
+  const photo = elements["flasher-photo"];
+  if (board?.photo) {
+    photo.src = new URL(board.photo, new URL(photo.dataset.base.replace(/\/?$/, "/"), location.href)).href;
+    photo.alt = `${board.vendor} ${board.name}`;
+  } else {
+    photo.removeAttribute("src");
+    photo.alt = "";
+  }
+  photo.hidden = !board?.photo;
+
   const url = new URL(location.href);
   if (board) url.searchParams.set("board", board.id);
   else url.searchParams.delete("board");
