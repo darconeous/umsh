@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-84dd6577.js";
+            window.path_to_searchindex_js = "searchindex-b0f5292e.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-7fd6cf8e.js"></script>
@@ -302,6 +302,7 @@
 <tr><td>4847</td><td><a href="ulcp-ip-multicast.html#counters"><code>PROP_STAT_LAN_RX_MALFORMED</code></a></td><td>Get, Set</td><td><code>CAP_STATS</code>, <code>CAP_LAN_BEARER</code>, <code>CAP_REPEATER</code></td></tr>
 <tr><td>4848</td><td><a href="ulcp-ip-multicast.html#counters"><code>PROP_STAT_LAN_EXPORTED</code></a></td><td>Get, Set</td><td><code>CAP_STATS</code>, <code>CAP_LAN_BEARER</code>, <code>CAP_REPEATER</code></td></tr>
 <tr><td>4849</td><td><a href="ulcp-ip-multicast.html#counters"><code>PROP_STAT_LAN_EXPORT_DROPPED</code></a></td><td>Get, Set</td><td><code>CAP_STATS</code>, <code>CAP_LAN_BEARER</code>, <code>CAP_REPEATER</code></td></tr>
+<tr><td>4850</td><td><a href="ulcp-radio.html#prop-stat-rx-own-hint"><code>PROP_STAT_RX_OWN_HINT</code></a></td><td>Get, Set</td><td><code>CAP_STATS</code>, <code>CAP_REPEATER</code></td></tr>
 <tr><td>4864</td><td><a href="ulcp-ble.html#prop-ble-pairing-pin"><code>PROP_BLE_PAIRING_PIN</code></a></td><td>Set</td><td>BLE transport</td></tr>
 <tr><td>4865</td><td><a href="app-node-management.html#prop-dev-admins"><code>PROP_DEV_ADMINS</code></a></td><td>Get, Set, Insert, Remove</td><td><code>CAP_ADMIN</code></td></tr>
 <tr><td>4866</td><td><a href="ulcp-device.html#prop-time"><code>PROP_TIME</code></a></td><td>Get, Set, Is</td><td><code>CAP_TIME</code></td></tr>
@@ -315,6 +316,9 @@
 <tr><td>4874</td><td><a href="ulcp-ble.html#prop-ble-pairing"><code>PROP_BLE_PAIRING</code></a></td><td>Get, Set, Is</td><td><code>CAP_BLE</code></td></tr>
 <tr><td>4875</td><td><a href="ulcp-device.html#prop-display-motion-wake-enabled"><code>PROP_DISPLAY_MOTION_WAKE_ENABLED</code></a></td><td>Get, Set, Is</td><td><code>CAP_DISPLAY_MOTION_WAKE</code></td></tr>
 <tr><td>4876</td><td><a href="ulcp-device.html#prop-temperature-names"><code>PROP_TEMPERATURE_NAMES</code></a></td><td>Get</td><td><code>CAP_TEMPERATURE</code></td></tr>
+<tr><td>4877</td><td><a href="ulcp-device.html#prop-display-brightness"><code>PROP_DISPLAY_BRIGHTNESS</code></a></td><td>Get, Set, Is</td><td><code>CAP_DISPLAY_BRIGHTNESS</code></td></tr>
+<tr><td>4878</td><td><a href="ulcp-device.html#prop-keyboard-light"><code>PROP_KEYBOARD_LIGHT</code></a></td><td>Get, Set, Is</td><td><code>CAP_KEYBOARD</code></td></tr>
+<tr><td>4879</td><td><a href="ulcp-device.html#prop-keyboard-aids"><code>PROP_KEYBOARD_AIDS</code></a></td><td>Get, Set, Is</td><td><code>CAP_KEYBOARD</code></td></tr>
 <tr><td>4880</td><td><a href="ulcp-wifi.html#prop-wifi-enabled"><code>PROP_WIFI_ENABLED</code></a></td><td>Get, Set, Is</td><td><code>CAP_WIFI</code></td></tr>
 <tr><td>4881</td><td><a href="ulcp-wifi.html#prop-wifi-networks"><code>PROP_WIFI_NETWORKS</code></a></td><td>Get, Set, Insert, Remove</td><td><code>CAP_WIFI</code></td></tr>
 <tr><td>4882</td><td><a href="ulcp-wifi.html#prop-wifi-network"><code>PROP_WIFI_NETWORK</code></a></td><td>Get, Set, Is</td><td><code>CAP_WIFI</code></td></tr>
@@ -410,6 +414,8 @@ is in <a href="ulcp-core.html#capabilities">Capabilities</a>.</p>
 <tr><td>61</td><td><code>CAP_TEMPERATURE</code></td><td><a href="ulcp-device.html#capabilities">Device Domain</a></td></tr>
 <tr><td>62</td><td><code>CAP_MESHCORE_FORWARDER</code></td><td><a href="ulcp-device.html#capabilities">Device Domain</a></td></tr>
 <tr><td>63</td><td><code>CAP_LAN_BEARER</code></td><td><a href="ulcp-ip-multicast.html#capabilities">IP Multicast</a></td></tr>
+<tr><td>64</td><td><code>CAP_DISPLAY_BRIGHTNESS</code></td><td><a href="ulcp-device.html#capabilities">Device Domain</a></td></tr>
+<tr><td>65</td><td><code>CAP_KEYBOARD</code></td><td><a href="ulcp-device.html#capabilities">Device Domain</a></td></tr>
 <tr><td>515</td><td><code>CAP_PHY_LORA</code></td><td><a href="ulcp-radio.html#capabilities">Radio Control</a></td></tr>
 </tbody>
 </table>
@@ -465,6 +471,7 @@ reserved for them.</p>
 <tr><td>Filter types</td><td>0 <code>FILTER_DEST_HINT</code>, 1 <code>FILTER_CHANNEL_ID</code>, 2 <code>FILTER_PKT_TYPE</code></td><td><a href="ulcp-host.html#prop-host-rx-filters"><code>PROP_HOST_RX_FILTERS</code></a></td></tr>
 <tr><td>Charge states</td><td>0 discharging, 1 charging, 2 charged, 3 not charging</td><td><a href="ulcp-device.html#prop-battery"><code>PROP_BATTERY</code></a></td></tr>
 <tr><td>Alert states</td><td>0 <code>ALERT_NONE</code>, 1 <code>ALERT_LOCATE</code></td><td><a href="ulcp-device.html#prop-alert"><code>PROP_ALERT</code></a></td></tr>
+<tr><td>Keyboard aids</td><td>bit 0 <code>KEYBOARD_AID_CAPITALIZE</code>, bit 1 <code>KEYBOARD_AID_PERIOD</code></td><td><a href="ulcp-device.html#prop-keyboard-aids"><code>PROP_KEYBOARD_AIDS</code></a></td></tr>
 <tr><td>Fix quality</td><td>0 none, 1 two-dimensional, 2 three-dimensional</td><td><a href="ulcp-device.html#prop-gnss-fix"><code>PROP_GNSS_FIX</code></a></td></tr>
 <tr><td>MeshCore region policies</td><td>0 open, 1 scoped only, 2 ignore</td><td><a href="ulcp-device.html#prop-meshcore-region-policy"><code>PROP_MESHCORE_REGION_POLICY</code></a></td></tr>
 <tr><td>Transmit flags</td><td>bit 0 <code>TX_FLAG_NOCCA</code>, bit 1 <code>TX_FLAG_NODUTY</code></td><td><a href="ulcp-transport.html#str-radio-raw"><code>STR_PHY_RAW</code></a></td></tr>

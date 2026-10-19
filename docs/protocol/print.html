@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-84dd6577.js";
+            window.path_to_searchindex_js = "searchindex-b0f5292e.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-7fd6cf8e.js"></script>
@@ -853,6 +853,7 @@ unicast semantics without encryption.</p>
 <p>The option carries only the correlation handle, not a keyed ack tag: the packet carrying the option is itself authenticated to the original sender, so its own MIC already proves the acknowledgement is genuine. The <code>ack_mic</code> value simply identifies which outstanding request the reply acknowledges. The original sender accepts the option only on a packet authenticated as coming from the destination of the packet it names.</p>
 <p>The option is a courtesy to the original sender. A sender that cannot fit it into a frame omits it.</p>
 <p>Because the option sits in the plaintext options block, forwarders read it under the same terms as a standalone MAC ack, including for <a href="#ack-cancellation">ack cancellation</a>.</p>
+<p>On a <a href="#verify-frame-12">Verify Frame</a> the option names the packet to be verified instead of acknowledging it: the sender holds that packet but has not accepted it, so the original sender MUST NOT treat the option as an acknowledgement (see <a href="#counter-resynchronization">Counter Resynchronization</a>). Forwarders still apply ack cancellation, since the named packet has reached its destination.</p>
 <h3 id="minimum-snr-option-9"><a class="header" href="#minimum-snr-option-9">Minimum SNR (option 9)</a></h3>
 <ul>
 <li>Type: signed 1-byte integer, in dB</li>
@@ -1096,7 +1097,17 @@ to avoid wearing out the underlying storage medium if it has a limited
 number of writes.</p>
 </blockquote>
 <h4 id="counter-resynchronization"><a class="header" href="#counter-resynchronization">Counter Resynchronization</a></h4>
-<p>On first contact with a new peer, the received frame counter is accepted at face value and recorded as the baseline for future replay detection. If a known peer’s frame counter subsequently falls outside the forward window—for example, after the peer reboots and loses its persisted counter—the receiver MAY use the Echo Request MAC command (including a nonce, see <a href="#echo-request">MAC Commands</a>) to determine the peer’s current counter value and re-establish a valid baseline.</p>
+<p>On first contact with a new peer, the received frame counter is accepted at face value and recorded as the baseline for future replay detection.</p>
+<p>An authenticated packet from a known peer whose frame counter is far outside the window means the two nodes disagree about that counter—for example, because the peer rebooted and lost its persisted counter. Far outside means past the forward window, or far enough behind the baseline that reordering cannot explain it (the suggested threshold is <strong>1024</strong>). The receiver MAY then re-establish a baseline with one of the two exchanges below. It SHOULD send at most one such probe to a peer every <strong>5 seconds</strong>, and a <a href="#verify-frame-12">Verify Frame</a> or <a href="#frame-verified-13">Frame Verified</a> never prompts one.</p>
+<p>When the packet requested an acknowledgement, the receiver—the requester—holds it without acknowledging it and sends Verify Frame to the peer, naming the packet in an <a href="#ack-mic-option-8">Ack MIC option</a>. The peer—the responder—proceeds as follows:</p>
+<ol>
+<li>It matches the option against the acknowledgement-requested packets it sent to the requester that are still awaiting acknowledgement. If none matches, it ignores the Verify Frame.</li>
+<li>It stops retransmitting the matched packet and answers with Frame Verified, which requests an acknowledgement.</li>
+<li>When Frame Verified is acknowledged, it treats the matched packet as acknowledged. If Frame Verified is never acknowledged, the matched packet has failed.</li>
+</ol>
+<p>The responder processes a Verify Frame whose own counter falls outside its window for the requester, since the match with an outstanding packet already shows the request is fresh. When Frame Verified is acknowledged, it adopts that counter as the requester’s new baseline. A Verify Frame whose counter falls within the window is subject to the ordinary replay rules.</p>
+<p>When a Frame Verified arrives echoing the nonce of a Verify Frame for a packet the requester still holds, the requester adopts its frame counter as the peer’s new baseline, whatever the value. It then delivers the held packet and acknowledges Frame Verified; that acknowledgement stands for the held packet too, which is not acknowledged separately. A requester that no longer holds the packet discards Frame Verified without acknowledging it, so the responder reports the packet as failed. The requester MUST choose nonces so that a Frame Verified recorded from an earlier exchange cannot match a later one.</p>
+<p>When the packet did not request an acknowledgement, the peer has nothing outstanding to match, so the receiver MAY instead send an <a href="#echo-request-4">Echo Request</a> carrying a nonce. An Echo Response echoing it establishes the response’s frame counter as the peer’s new baseline. The packet that prompted the probe is dropped.</p>
 <h3 id="salt"><a class="header" href="#salt">Salt</a></h3>
 <p>The optional 2-byte salt is chosen randomly to reduce the likelihood of a nonce collision.</p>
 <h2 id="cryptographic-processing"><a class="header" href="#cryptographic-processing">Cryptographic Processing</a></h2>
@@ -1445,6 +1456,7 @@ rate-limit each participant and MAY clamp the hop count further.</p>
 <li>Apply the <a href="#replay-detection">replay-detection rules</a>.</li>
 <li>If the packet is accepted as new and requests an ACK, the receiving node (i.e., the final destination) computes the <a href="#ack-tag-construction">ack MIC and ack tag</a>—the first 4 bytes of the original packet’s MIC and a 4-byte keyed value from the full 16-byte S2V output and pairwise <code>K_enc</code>—prepares a MAC Ack packet, and adds it to the outbound queue. Repeaters do not generate acks—see <a href="#mac-ack-packet">MAC Ack Packet</a>.</li>
 <li>If the authenticated packet is a previously received packet within the bounded <a href="#duplicate-acknowledgement-window">duplicate-acknowledgement window</a>, the receiver MAY prepare and queue its ACK again. This does not make the packet new or advance its replay state. Unless duplicate suppression is delegated to a host MAC, stop after queueing the ACK and do not process the application payload again.</li>
+<li>A <a href="#verify-frame-12">Verify Frame</a> or <a href="#frame-verified-13">Frame Verified</a> whose counter falls outside the window is processed as <a href="#counter-resynchronization">Counter Resynchronization</a> describes rather than dropped.</li>
 <li>Otherwise, if replay detection rejects the packet, drop it without acknowledging it.</li>
 </ul>
 </li>
@@ -2536,6 +2548,8 @@ are the tools for keeping that local.</li>
 <tr><td style="text-align: right">9</td><td>No-op</td><td>Request</td></tr>
 <tr><td style="text-align: right">10</td><td>Peer Repeaters Request</td><td>Request</td></tr>
 <tr><td style="text-align: right">11</td><td>Peer Repeaters Response</td><td>Response</td></tr>
+<tr><td style="text-align: right">12</td><td>Verify Frame</td><td>Request</td></tr>
+<tr><td style="text-align: right">13</td><td>Frame Verified</td><td>Response</td></tr>
 </tbody>
 </table>
 </div>
@@ -2728,7 +2742,7 @@ Non-filter options (such as NONCE) do not participate in this matching.</p>
 type that requests an ACK.</p>
 <h2 id="peer-repeaters-request-10"><a class="header" href="#peer-repeaters-request-10">Peer Repeaters Request (10)</a></h2>
 <p>Asks the destination—typically a repeater—for its list of known peer repeaters.</p>
-<p>The list is the responder’s repeater neighborhood: the repeaters it has heard from their own transmitters. A repeater enters it in one of two ways. Forwarding a frame the responder receives is one—a repeater prepends its router hint to the frame’s <a href="#trace-route-option-2">Trace Route</a>, so the first hint names the repeater whose transmission was just heard. Advertising is the other—a <a href="#node-identity">node identity</a> claiming the repeater role or capability, heard directly rather than forwarded. Frames heard from nodes that are not repeaters, and identities that arrived through a repeater, put nothing in the list. A neighbor need not be on the air: a repeater reached over a point-to-point link, such as an attached host, is listed the same way and simply carries no signal measurements.</p>
+<p>The list is the responder’s repeater neighborhood: the repeaters it has heard from their own transmitters. A repeater enters it in one of two ways. Forwarding a frame the responder receives is one—a repeater prepends its router hint to the frame’s <a href="#trace-route-option-2">Trace Route</a>, so the first hint names the repeater whose transmission was just heard. Advertising is the other—a <a href="#node-identity">node identity</a> claiming the repeater role or capability, heard directly rather than forwarded. Frames heard from nodes that are not repeaters, and identities that arrived through a repeater, put nothing in the list. Nor does anything naming the responder itself: a trace that begins with its own router hint, or its own identity. A neighbor need not be on the air: a repeater reached over a point-to-point link, such as an attached host, is listed the same way and simply carries no signal measurements.</p>
 <p>The command-specific payload is a CoAP-style option list, using the delta-length encoding defined in <a href="#attribute-encoding">Packet Options</a>:</p>
 <div class="table-wrapper">
 <table>
@@ -2780,6 +2794,32 @@ type that requests an ACK.</p>
 </table>
 </div>
 <p>An option whose value the responder does not know is omitted. Entries carry region codes rather than the strings the <a href="#supported-regions-option-4">identity option</a> carries—the entry format is tighter on space, and the string form of a code, when one is wanted, is available from the peer’s own identity.</p>
+<h2 id="verify-frame-12"><a class="header" href="#verify-frame-12">Verify Frame (12)</a></h2>
+<p>Asks the destination to vouch for a packet it sent to the requester whose frame counter the requester could not accept. See <a href="#counter-resynchronization">Counter Resynchronization</a> for when it is sent and what each side does with the answer.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Field</th><th style="text-align: right">Size</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td>Nonce</td><td style="text-align: right">4 bytes</td><td>Chosen by the requester; the responder echoes it in Frame Verified</td></tr>
+</tbody>
+</table>
+</div>
+<p>The packet carrying the command MUST include an <a href="#ack-mic-option-8">Ack MIC option</a> naming the packet to verify, and does not request an acknowledgement. A responder ignores a Verify Frame without the option.</p>
+<h2 id="frame-verified-13"><a class="header" href="#frame-verified-13">Frame Verified (13)</a></h2>
+<p>Answers a Verify Frame naming a packet the responder sent and is still waiting to have acknowledged.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Field</th><th style="text-align: right">Size</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td>Nonce</td><td style="text-align: right">4 bytes</td><td>Copied from the Verify Frame</td></tr>
+</tbody>
+</table>
+</div>
+<p>The packet carrying the command MUST request an acknowledgement. Its acknowledgement acknowledges the verified packet as well.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="node-management"><a class="header" href="#node-management">Node Management</a></h1>
 <blockquote>
@@ -3270,6 +3310,8 @@ length of the message. All instances of this option and their values SHALL be
 ignored by the receiver.</p>
 <h2 id="message-body"><a class="header" href="#message-body">Message Body</a></h2>
 <p>The message body is a UTF-8 string.</p>
+<h3 id="channel-invitations"><a class="header" href="#channel-invitations">Channel Invitations</a></h3>
+<p>A basic text message whose entire body, ignoring leading and trailing whitespace, is a <a href="#channel-uris">channel URI</a> invites its recipients to that channel. A receiver that recognizes the URI MAY present the message as an invitation to join; one that does not displays the body as text.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="chat-rooms"><a class="header" href="#chat-rooms">Chat Rooms</a></h1>
 <blockquote>
@@ -3508,6 +3550,8 @@ node exists even when no phone is attached and can be used for:</p>
 <li>diagnostics</li>
 <li>repeater or bridge behavior</li>
 <li>announcing the presence or capabilities of the device</li>
+<li>on a device with a messaging interface of its own, the messaging
+identity of whoever carries it</li>
 </ul>
 <p>By default, such a node need not advertise itself with ordinary beacons. Its
 private key is either generated on the device itself (preferred) or installed
@@ -4831,6 +4875,17 @@ while attached, updating its view of the affected property accordingly:
 device state can change for reasons the host did not initiate, and
 publication of the new authoritative value is how the protocol reports
 that.</p>
+<p>A request from another binding is one such reason. Whatever a request
+changes, the device <strong>MUST</strong> publish to everyone else listening—an
+attached host, and the device’s <a href="#device-interface">own interface</a>—
+whether the request came from one of them or from a <a href="#node-management">Node
+Management</a> administrator. Each property the
+answer reports goes out unsolicited, one at a time, as the answer
+reported it; the status that closes the request goes to the requester
+alone. This holds for every property: a property’s <em>Asynchronous
+Updates</em> entry describes the changes the device makes for its own
+reasons. A fire-and-forget request (TID 0) on a local binding is not
+answered, and what it changes need not be published.</p>
 <p>The same applies to <a href="#cmd-session-reset"><code>CMD_SESSION_RESET</code></a>, which
 reports the one change no property notification can: the session itself
 starting over. A host that receives one runs this procedure again.</p>
@@ -4854,6 +4909,32 @@ the socket where the operating system lets only the processes entitled
 to the device reach it—a file in a directory private to those
 processes—which stands in for physical possession.</li>
 </ul>
+<h2 id="device-interface"><a class="header" href="#device-interface">The Device’s Own Interface</a></h2>
+<p>A device with a settings interface of its own—a screen and keyboard, or a
+menu—may administer its own session in process, with the commands a host
+uses. The interface is a binding of its own:</p>
+<ul>
+<li><strong>Authority.</strong> Whoever is holding the device has physical possession,
+which is a serial link’s security binding (see <a href="#provisioning-security">Provisioning
+Security</a>). The interface may provision key
+material, the device identity’s private key included.</li>
+<li><strong>Reach.</strong> The device domain. Session state, the host domain, the raw
+PHY stream, and the receive queue belong to whichever host is tethered,
+and the device answers the interface’s writes to them with
+<code>STATUS_NOT_PERMITTED</code>, as it answers an
+<a href="#authorization">administrator’s</a>.</li>
+<li><strong>A local binding.</strong> The device answers every request that carries a
+non-zero TID exactly once.</li>
+<li><strong>Not an attach.</strong> Its requests reset no session state, emit no
+<code>CMD_SESSION_RESET</code>, and displace no attached host.</li>
+<li><strong>Publications.</strong> The interface hears everything the device publishes,
+whether or not a host is attached, including what an attached host or
+an administrator changes. What the interface changes reaches an attached
+host the same way (see <a href="#attach-sync">Attach, Detach, and
+Synchronization</a>).</li>
+</ul>
+<p>What the interface changes is saved as anything set at the device is (see
+<a href="#changes-made-at-the-device">Changes Made at the Device</a>).</p>
 <h2 id="provisioning-security"><a class="header" href="#provisioning-security">Provisioning Security</a></h2>
 <p>Provisioning moves real key material onto the device, within the limits of the
 <a href="#security-boundary">security boundary</a>: channel keys and
@@ -5127,6 +5208,8 @@ grants:</p>
 <tr><td>61</td><td><code>CAP_TEMPERATURE</code></td><td>—</td><td><a href="#capabilities-4">Device Domain</a></td></tr>
 <tr><td>62</td><td><code>CAP_MESHCORE_FORWARDER</code></td><td><code>CAP_REPEATER</code></td><td><a href="#capabilities-4">Device Domain</a></td></tr>
 <tr><td>63</td><td><code>CAP_LAN_BEARER</code></td><td>—</td><td><a href="#capabilities-10">IP Multicast</a></td></tr>
+<tr><td>64</td><td><code>CAP_DISPLAY_BRIGHTNESS</code></td><td>—</td><td><a href="#capabilities-4">Device Domain</a></td></tr>
+<tr><td>65</td><td><code>CAP_KEYBOARD</code></td><td>—</td><td><a href="#capabilities-4">Device Domain</a></td></tr>
 <tr><td>515</td><td><code>CAP_PHY_LORA</code></td><td>—</td><td><a href="#capabilities-2">Radio Control</a></td></tr>
 </tbody>
 </table>
@@ -5200,6 +5283,7 @@ survives a change of host.</p>
 <tr><td>4842</td><td><code>PROP_STAT_MESHCORE_FORWARDED_ROUTED</code></td><td>Get, Set</td><td>MeshCore packets forwarded along their source route</td></tr>
 <tr><td>4843</td><td><code>PROP_STAT_MESHCORE_FORWARDED_FLOOD</code></td><td>Get, Set</td><td>MeshCore packets flooded</td></tr>
 <tr><td>4844</td><td><code>PROP_STAT_MESHCORE_DECLINED</code></td><td>Get, Set</td><td>MeshCore packets neither forwarded nor duplicates</td></tr>
+<tr><td>4850</td><td><code>PROP_STAT_RX_OWN_HINT</code></td><td>Get, Set</td><td>Received packets whose trace names this device as the last hop</td></tr>
 </tbody>
 </table>
 </div>
@@ -5453,6 +5537,16 @@ Requires <code>CAP_STATS</code> and <code>CAP_MESHCORE_FORWARDER</code>.</p>
 declined by MeshCore’s own forwarding rules or by the region policy, below
 the configured signal thresholds, malformed, or dropped for want of queue
 space. Requires <code>CAP_STATS</code> and <code>CAP_MESHCORE_FORWARDER</code>.</p>
+<h3 id="prop-stat-rx-own-hint"><a class="header" href="#prop-stat-rx-own-hint">PROP 4850: <code>PROP_STAT_RX_OWN_HINT</code></a></h3>
+<p>Packets received over the air whose <a href="#trace-route-option-2">trace route</a>
+begins with this device’s own router hint. A radio cannot receive its own
+transmission, so each is a copy of one of this device’s repeats retransmitted
+without a hop being added, or a packet repeated by another node sharing this
+device’s router hint. Packets received over a point-to-point link or a shared
+IP bearer are not counted. None of these names a neighbor, and a device does
+not list itself in a <a href="#peer-repeaters-response-11">Peer Repeaters
+Response</a>. Requires <code>CAP_STATS</code> and
+<code>CAP_REPEATER</code>.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="ulcp-frame-transport"><a class="header" href="#ulcp-frame-transport">ULCP: Frame Transport</a></h1>
 <p>Frame transport is the data plane: the host transmits and receives raw,
@@ -5657,6 +5751,13 @@ management, diagnostics, repeater forwarding (see
 and (in future revisions) periodic advertisement behavior. Its Ed25519
 private key is held by the device and is never readable through this
 protocol.</p>
+<p>On a device with a messaging interface of its own (see <a href="#device-interface">The Device’s Own
+Interface</a>), the device identity is also
+the messaging identity of whoever carries the device: its conversations
+are held under it, and its peers address it. Such a device advertises
+the <code>TXT</code> capability bit (see <a href="#capability-bitmap">Capability
+Bitmap</a>) and derives its role as
+<code>Chat</code> (see <a href="#prop-ident-role"><code>PROP_IDENT_ROLE</code></a>).</p>
 <p><strong>A device identity always exists.</strong> A device advertising
 <code>CAP_DEV_IDENTITY</code> that finds no stored keypair at power-on <strong>MUST</strong>
 generate one from a cryptographic random source and persist it before
@@ -5676,6 +5777,28 @@ key agreement and needs only peer <em>public</em> keys (see <a href="#prop-dev-p
 That is the opposite of the host identity, for which the device holds no
 private key and every pairwise key must be provisioned explicitly (see
 <a href="#ulcp-tethered-host-services">Tethered Host Services</a>).</p>
+<h3 id="lists-held-by-the-devices-store"><a class="header" href="#lists-held-by-the-devices-store">Lists Held by the Device’s Store</a></h3>
+<p>A device with a messaging interface of its own keeps a store for its
+conversations, and that store <strong>MAY</strong> also keep the device identity’s
+lists, <a href="#prop-dev-peers"><code>PROP_DEV_PEERS</code></a> and
+<a href="#prop-dev-channel-keys"><code>PROP_DEV_CHANNEL_KEYS</code></a>: whom its carrier talks
+with and on which channels belong with the conversations, not with the
+radio’s configuration.</p>
+<p>Lists the store keeps are persisted as they change, as the device
+identity is, and are outside the saved snapshot (see <a href="#saved-state-1">Saved
+State</a>):</p>
+<ul>
+<li><code>CMD_SAVE</code> does not record them, and
+<a href="#cmd-restore"><code>CMD_RESTORE</code></a> leaves them as they
+are.</li>
+<li><code>CMD_RST</code> restores them as last stored.</li>
+<li><a href="#cmd-clear"><code>CMD_CLEAR</code></a> erases them with the rest
+of the persisted provisioning, and leaves the conversations.</li>
+</ul>
+<p>With none stored, <code>PROP_DEV_PEERS</code> is empty and <code>PROP_DEV_CHANNEL_KEYS</code>
+holds the channels the messaging interface starts out on: the
+<a href="#default-channels">default channels</a>, <code>public</code> and
+<code>EMERGENCY</code>.</p>
 <h2 id="capabilities-4"><a class="header" href="#capabilities-4">Capabilities</a></h2>
 <div class="table-wrapper">
 <table>
@@ -5696,6 +5819,8 @@ private key and every pairwise key must be provisioned explicitly (see
 <tr><td>59</td><td><code>CAP_DISPLAY_MOTION_WAKE</code></td><td>—</td><td>Orientation-qualified display wake and <code>PROP_DISPLAY_MOTION_WAKE_ENABLED</code></td></tr>
 <tr><td>61</td><td><code>CAP_TEMPERATURE</code></td><td>—</td><td><code>PROP_TEMPERATURES</code> and <code>PROP_TEMPERATURE_NAMES</code>; the inventory may initially be empty</td></tr>
 <tr><td>62</td><td><code>CAP_MESHCORE_FORWARDER</code></td><td><code>CAP_REPEATER</code></td><td><a href="#meshcore-forwarding">MeshCore forwarding</a>: <code>PROP_MESHCORE_FORWARDING_ENABLED</code>, <code>PROP_MESHCORE_REGION_POLICY</code>, <code>PROP_MESHCORE_REGIONS</code>; with <code>CAP_STATS</code>, the <a href="#prop-stat-meshcore-seen">MeshCore counters</a></td></tr>
+<tr><td>64</td><td><code>CAP_DISPLAY_BRIGHTNESS</code></td><td>—</td><td>A screen whose brightness can be set, and <a href="#prop-display-brightness"><code>PROP_DISPLAY_BRIGHTNESS</code></a></td></tr>
+<tr><td>65</td><td><code>CAP_KEYBOARD</code></td><td>—</td><td>A keyboard of the device’s own: <a href="#prop-keyboard-light"><code>PROP_KEYBOARD_LIGHT</code></a>, <a href="#prop-keyboard-aids"><code>PROP_KEYBOARD_AIDS</code></a></td></tr>
 </tbody>
 </table>
 </div>
@@ -5858,6 +5983,10 @@ device range, alongside the wall clock at 4866–4867.</p>
 <tr><td>94</td><td><code>PROP_ILLUMINANCE</code></td><td>Get</td><td>Ambient illuminance in millilux</td></tr>
 <tr><td>95</td><td><code>PROP_TEMPERATURES</code></td><td>Get</td><td>Ordered temperature readings in tenths of kelvin</td></tr>
 <tr><td>4876</td><td><code>PROP_TEMPERATURE_NAMES</code></td><td>Get</td><td>Ordered temperature sensor names</td></tr>
+<tr><td>4875</td><td><code>PROP_DISPLAY_MOTION_WAKE_ENABLED</code></td><td>Get, Set, Is</td><td>Whether movement wakes the display</td></tr>
+<tr><td>4877</td><td><code>PROP_DISPLAY_BRIGHTNESS</code></td><td>Get, Set, Is</td><td>Screen brightness</td></tr>
+<tr><td>4878</td><td><code>PROP_KEYBOARD_LIGHT</code></td><td>Get, Set, Is</td><td>Whether the keyboard is lit while the screen is</td></tr>
+<tr><td>4879</td><td><code>PROP_KEYBOARD_AIDS</code></td><td>Get, Set, Is</td><td>Typing aids in effect</td></tr>
 <tr><td>4866</td><td><code>PROP_TIME</code></td><td>Get, Set, Is</td><td>Wall clock, or empty when unknown</td></tr>
 <tr><td>4867</td><td><code>PROP_TZ_OFFSET</code></td><td>Get, Set</td><td>Local time-zone offset from UTC</td></tr>
 <tr><td>4868</td><td><code>PROP_GNSS_IDENT_UPDATE</code></td><td>Get, Set</td><td>Whether fixes update the advertised node identity</td></tr>
@@ -5942,7 +6071,9 @@ requirements as all key provisioning (see <a href="#provisioning-security">Provi
 <li>Item Form: 32 octets (the channel key)</li>
 <li>Reported Form: 16 octets (the derived channel identifier)</li>
 <li>Remove Selector: the 32-octet channel key</li>
-<li>Post-Reset Value: Empty, or restored from saved state</li>
+<li>Post-Reset Value: Empty, or restored from saved state or from the
+device’s store (see <a href="#lists-held-by-the-devices-store">Lists Held by the Device’s
+Store</a>)</li>
 </ul>
 <p>The set of <a href="#channel-keys">channel keys</a> belonging to
 the <strong>device identity</strong>—channels the radio’s own node participates in
@@ -5968,7 +6099,9 @@ host only through the host’s own filtering.</p>
 <li>Required: <code>CAP_DEV_IDENTITY</code></li>
 <li>Item Form: 32 octets (the peer’s Ed25519 public key)</li>
 <li>Remove Selector: the 32-octet public key</li>
-<li>Post-Reset Value: Empty, or restored from saved state</li>
+<li>Post-Reset Value: Empty, or restored from saved state or from the
+device’s store (see <a href="#lists-held-by-the-devices-store">Lists Held by the Device’s
+Store</a>)</li>
 </ul>
 <p>The <strong>device identity’s</strong> peer list: the set of peer public keys the
 device node recognizes and may communicate with securely. Because the device
@@ -6600,8 +6733,10 @@ event.</p>
 Primary Role</a>).</p>
 <p>An <strong>empty</strong> value—the factory default—means the device derives the
 role from what it is actually doing: <code>Repeater</code> while
-<code>PROP_MAC_REPEATER_ENABLED</code> is set, <code>Tracker</code> otherwise. Any other value
-is advertised verbatim.</p>
+<code>PROP_MAC_REPEATER_ENABLED</code> is set, <code>Tracker</code> otherwise. On a device
+whose device identity is a messaging identity (see <a href="#device-identity">The Device
+Identity</a>), it derives <code>Chat</code> whether or not the device
+forwards. Any other value is advertised verbatim.</p>
 <p>Role and forwarding are deliberately separate. Forwarding is a fact,
 reported through the repeater capability bit; the role is how the device
 presents itself, which is the operator’s choice. Deriving it by default
@@ -7455,9 +7590,9 @@ accelerometer power: another consumer may still need movement detection when
 this property is false. It is included in <code>CMD_SAVE</code>, restored with the device
 configuration, and has a platform default of true after clearing saved state.
 <code>CMD_RST</code> follows the existing saved-state restore rules. A saved snapshot
-missing the property uses the platform default. A local toggle updates an
-existing saved snapshot, following the other local switches; it does not create
-a snapshot when none exists.</p>
+missing the property uses the platform default. A local toggle is saved as
+<a href="#changes-made-at-the-device">Changes Made at the Device</a>
+describes.</p>
 <p>The display wakes only from its fully lapsed state. Movement while active or
 dim consumes the episode without refreshing the attention timeout. Disabling
 the property cancels pending motion wakes. Explicit shutdown retains the
@@ -7480,6 +7615,59 @@ samples; small oscillations do not accumulate. This check belongs to the display
 policy and does not suppress native movement observations for other consumers.
 Exceptionally slow pickups, or pickups completed before verification begins,
 may not qualify. This does not identify every kind of bed or pocket movement.</p>
+<h2 id="display-brightness-and-keyboard"><a class="header" href="#display-brightness-and-keyboard">Display Brightness and Keyboard</a></h2>
+<p>A device with a screen and keyboard of its own exposes their settings in
+the device domain, so they are saved with the rest of its configuration
+and reachable from wherever it is administered.</p>
+<h3 id="prop-display-brightness"><a class="header" href="#prop-display-brightness">PROP 4877: <code>PROP_DISPLAY_BRIGHTNESS</code></a></h3>
+<ul>
+<li>Type: Single-Value, Read-Write</li>
+<li>Asynchronous Updates: Yes</li>
+<li>Required: <code>CAP_DISPLAY_BRIGHTNESS</code></li>
+<li>Value Type: UINT8</li>
+<li>Post-Reset Value: device-defined, or restored from saved state</li>
+</ul>
+<p>The screen’s brightness. 255 is the brightest the screen goes, and 0 the
+dimmest level that is not off: brightness never turns a screen dark. On a
+screen that is readable unlit, such as e-paper under a front light, 0
+turns the light off.</p>
+<p>The levels in between are the device’s to map onto its screen, and it
+reports the value written.</p>
+<h3 id="prop-keyboard-light"><a class="header" href="#prop-keyboard-light">PROP 4878: <code>PROP_KEYBOARD_LIGHT</code></a></h3>
+<ul>
+<li>Type: Single-Value, Read-Write</li>
+<li>Asynchronous Updates: Yes</li>
+<li>Required: <code>CAP_KEYBOARD</code></li>
+<li>Value Type: BOOL</li>
+<li>Post-Reset Value: 1 (true), or restored from saved state</li>
+</ul>
+<p>Whether the keyboard is lit while the screen is. A dark screen leaves the
+keyboard dark either way.</p>
+<h3 id="prop-keyboard-aids"><a class="header" href="#prop-keyboard-aids">PROP 4879: <code>PROP_KEYBOARD_AIDS</code></a></h3>
+<ul>
+<li>Type: Single-Value, Read-Write</li>
+<li>Asynchronous Updates: Yes</li>
+<li>Required: <code>CAP_KEYBOARD</code></li>
+<li>Value Type: UINT8</li>
+<li>Post-Reset Value: 3 (every aid), or restored from saved state</li>
+</ul>
+<p>The typing aids in effect, as a bitmap:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Bit</th><th>Name</th><th>Aid</th></tr>
+</thead>
+<tbody>
+<tr><td>0 (<code>0x01</code>)</td><td><code>KEYBOARD_AID_CAPITALIZE</code></td><td>The first letter of a sentence is capitalized.</td></tr>
+<tr><td>1 (<code>0x02</code>)</td><td><code>KEYBOARD_AID_PERIOD</code></td><td>Two spaces typed after a word become a period and a space.</td></tr>
+</tbody>
+</table>
+</div>
+<p>The other bits are reserved and <strong>MUST</strong> be zero. A write that sets one is
+answered <code>STATUS_INVALID_ARGUMENT</code>.</p>
+<p>All three properties are included in <code>CMD_SAVE</code>, and are asynchronous
+because the device’s own controls change them (see <a href="#changes-made-at-the-device">Changes Made at the
+Device</a>).</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="ulcp-saved-state"><a class="header" href="#ulcp-saved-state">ULCP: Saved State</a></h1>
 <p>A radio that only works while a phone is talking to it is a peripheral. A
@@ -7522,7 +7710,9 @@ excluded for a different reason: it is independently persisted the
 moment it is installed or generated (see <a href="#prop-dev-private-key"><code>PROP_DEV_PRIVATE_KEY</code></a>) and is
 changed only by explicit provisioning or <code>CMD_CLEAR</code>—neither
 <code>CMD_RESTORE</code> nor a reboot can revert the device identity to an earlier
-key.</p>
+key. Device lists a device’s own store keeps are excluded on the same
+grounds (see <a href="#lists-held-by-the-devices-store">Lists Held by the Device’s
+Store</a>).</p>
 <p>Traffic statistics (<code>PROP_STAT_*</code>) are also excluded. They are live
 hardware history since boot or the last explicit counter reset, not
 configuration a snapshot can restore.</p>
@@ -7570,7 +7760,8 @@ as a series of property-update publications; hosts handle both.</p>
 </li>
 <li>
 <p><a href="#cmd-clear"><code>CMD_CLEAR</code></a> erases the snapshot and all other
-persisted provisioning, including the device identity private key. It
+persisted provisioning, including the device identity private key and
+any device lists the device’s own store keeps. It
 does not modify live (in-RAM) state; a subsequent <code>CMD_RST</code> completes a
 factory reset. Transport-level state such as BLE bonds is not affected.</p>
 </li>
@@ -7580,12 +7771,14 @@ snapshot, which is not simply whether one exists—see
 <a href="#snapshot-integrity">Snapshot Integrity</a>.</p>
 </li>
 </ul>
-<p>Saving is explicit rather than automatic: nothing is written to
-non-volatile storage when properties change (the exceptions are the device
-identity and <code>PROP_BLE_PAIRING_PIN</code>). This gives the host control over
-flash wear and a well-defined “known good” configuration, and it means a
-radio never persists provisioning its host did not deliberately ask to
-keep.</p>
+<p>Saving is explicit rather than automatic: nothing a host or an
+administrator changes is written to non-volatile storage until it asks
+(the device identity, <code>PROP_BLE_PAIRING_PIN</code>, and device lists a device’s
+own store keeps are persisted as they are set). This gives the host control over flash wear and a well-defined
+“known good” configuration, and it means a radio never persists
+provisioning its host did not deliberately ask to keep. A change made at
+the device follows its own rules (see <a href="#changes-made-at-the-device">Changes Made at the
+Device</a>).</p>
 <p>Two consequences deserve emphasis:</p>
 <ul>
 <li><strong>Post-reset values come from the snapshot.</strong> <code>CMD_RST</code> reverts
@@ -7638,6 +7831,25 @@ anything the older writer did not record, and <strong>MUST</strong> ignore conte
 does not recognize. Firmware downgrade is out of scope: an older image
 reading a newer snapshot has no defined behavior, and saving from a
 downgraded image is destructive by design.</p>
+<h3 id="changes-made-at-the-device"><a class="header" href="#changes-made-at-the-device">Changes Made at the Device</a></h3>
+<p>A device’s own controls—a switch, a menu, or a settings interface of its
+own (see <a href="#device-interface">The Device’s Own Interface</a>)—
+change saved properties with no host asking. Such a change:</p>
+<ul>
+<li><strong>updates an existing snapshot</strong> that is in effect (<code>PROP_SAVED</code>
+reports 1), so what was set at the device is still set after a reboot;</li>
+<li><strong>never creates one.</strong> A device with nothing saved saves nothing: a
+snapshot made from a button press would persist every other live value
+with it. A device that rejected its newest generation at boot
+(<code>PROP_SAVED</code> reports 2 or 3) writes nothing either, since the write
+would bury the condition <code>PROP_SAVED</code> reports.</li>
+</ul>
+<p>The change applies live in every case.</p>
+<p>A device with a full settings interface <strong>MAY</strong> save as a host would: a
+snapshot at first boot, so that one always exists, and <code>CMD_SAVE</code> after a
+change whose loss would matter, such as its name or radio configuration.
+Either save captures the whole device domain, including any change an
+attached host or administrator made and did not save.</p>
 <h2 id="commands-3"><a class="header" href="#commands-3">Commands</a></h2>
 <div class="table-wrapper">
 <table>
@@ -7680,9 +7892,12 @@ it fails with <code>STATUS_UNIMPLEMENTED</code>.</p>
 <p>Figure: Structure of <code>CMD_CLEAR</code></p>
 <p>Clear saved state. Commands the device to erase from non-volatile storage the
 saved snapshot and all other persisted provisioning, including the device
-identity private key. Live (in-RAM) state is unaffected; transport-level
-state such as BLE bonds and <code>PROP_BLE_PAIRING_PIN</code> is also unaffected. A
-<code>CMD_CLEAR</code> followed by <code>CMD_RST</code> restores factory protocol behavior.</p>
+identity private key and any device lists its own store keeps (see <a href="#lists-held-by-the-devices-store">Lists
+Held by the Device’s Store</a>).
+Live (in-RAM) state is unaffected; transport-level state such as BLE bonds
+and <code>PROP_BLE_PAIRING_PIN</code> is also unaffected, as are the conversations of a
+device’s own messaging interface. A <code>CMD_CLEAR</code> followed by <code>CMD_RST</code>
+restores factory protocol behavior.</p>
 <p>Because a device identity always exists (see <a href="#device-identity">The Device Identity</a>), the
 <code>CMD_RST</code> that completes the sequence <strong>MUST</strong> generate and persist a new
 one rather than leave the device with none—the same thing a factory-fresh
@@ -7718,7 +7933,8 @@ restore has nothing to revert it to. The inbound queue contents,
 per-peer replay baselines, filters and delegation policy all survive
 unconditionally;</li>
 <li>independently persisted state outside the snapshot—the device
-identity keypair and <code>PROP_BLE_PAIRING_PIN</code>—is not affected; and</li>
+identity keypair, <code>PROP_BLE_PAIRING_PIN</code>, and device lists the device’s
+own store keeps—is not affected; and</li>
 <li>the saved snapshot itself is not modified.</li>
 </ul>
 <p><strong>A restore never enables the PHY under an identity the snapshot was not
@@ -7785,13 +8001,14 @@ emitted.</p>
 <p>Return the radio to a blank factory state. Commands the device to erase
 <strong>every</strong> piece of mutable state it holds—both the persisted state
 <code>CMD_CLEAR</code> erases (the saved snapshot, all persisted provisioning, and
-the device identity private key) <strong>and</strong> the transport-level state
-<code>CMD_CLEAR</code> deliberately preserves: all BLE bonds and the configured
-<code>PROP_BLE_PAIRING_PIN</code>—and then reboot. After the reboot the radio is
+the device identity private key) <strong>and</strong> the state <code>CMD_CLEAR</code>
+deliberately preserves: all BLE bonds, the configured
+<code>PROP_BLE_PAIRING_PIN</code>, and the conversations of a device’s own messaging
+interface—and then reboot. After the reboot the radio is
 indistinguishable from one that has never been provisioned or paired.</p>
 <p>This differs from <code>CMD_CLEAR</code> + <code>CMD_RST</code> in two ways: it also clears
-transport-level pairing state (bonds and PIN), and it performs a hardware
-reboot rather than only a protocol-session reset.</p>
+transport-level pairing state (bonds and PIN) and conversations, and it
+performs a hardware reboot rather than only a protocol-session reset.</p>
 <p>The command payload SHOULD be empty and MUST be ignored. Unlike every
 other command, <code>CMD_FACTORY_RESET</code> <strong>has no response</strong>: the device wipes its
 storage and reboots, which drops the transport link. A host treats the
@@ -10451,7 +10668,7 @@ requires.</p>
 </thead>
 <tbody>
 <tr><td><a href="#ulcp-radio-control">Radio Control</a> beyond the required properties</td><td><code>CAP_PHY_LORA</code>, <code>CAP_PHY_DUTY_LIMIT</code>, <code>CAP_STATS</code></td></tr>
-<tr><td><a href="#ulcp-device-domain">Device Domain</a></td><td><code>CAP_DEV_IDENTITY</code>, <code>CAP_DEV_NAME</code>, <code>CAP_BATTERY</code>, <code>CAP_REPEATER</code>, <code>CAP_IDENT</code>, <code>CAP_ALERT</code>, <code>CAP_TIME</code>, <code>CAP_GNSS</code>, <code>CAP_ADVERT</code>, <code>CAP_ILLUMINANCE</code>, <code>CAP_DISPLAY_MOTION_WAKE</code></td></tr>
+<tr><td><a href="#ulcp-device-domain">Device Domain</a></td><td><code>CAP_DEV_IDENTITY</code>, <code>CAP_DEV_NAME</code>, <code>CAP_BATTERY</code>, <code>CAP_REPEATER</code>, <code>CAP_IDENT</code>, <code>CAP_ALERT</code>, <code>CAP_TIME</code>, <code>CAP_GNSS</code>, <code>CAP_ADVERT</code>, <code>CAP_ILLUMINANCE</code>, <code>CAP_DISPLAY_MOTION_WAKE</code>, <code>CAP_DISPLAY_BRIGHTNESS</code>, <code>CAP_KEYBOARD</code></td></tr>
 <tr><td><a href="#ulcp-saved-state">Saved State</a></td><td><code>CAP_SAVE</code></td></tr>
 <tr><td><a href="#ulcp-tethered-host-services">Tethered Host Services</a></td><td><code>CAP_HOST_FILTER</code>, <code>CAP_HOST_KEYS</code>, <code>CAP_HOST_RX_QUEUE</code>, <code>CAP_HOST_AUTO_ACK</code>, <code>CAP_MAC_BACKHAUL</code></td></tr>
 <tr><td><a href="#ulcp-wi-fi">Wi-Fi</a></td><td><code>CAP_WIFI_SCAN</code>, <code>CAP_WIFI</code>, <code>CAP_WIFI_AP</code></td></tr>
@@ -10646,6 +10863,7 @@ it can do.</p>
 <tr><td>4847</td><td><a href="#counters"><code>PROP_STAT_LAN_RX_MALFORMED</code></a></td><td>Get, Set</td><td><code>CAP_STATS</code>, <code>CAP_LAN_BEARER</code>, <code>CAP_REPEATER</code></td></tr>
 <tr><td>4848</td><td><a href="#counters"><code>PROP_STAT_LAN_EXPORTED</code></a></td><td>Get, Set</td><td><code>CAP_STATS</code>, <code>CAP_LAN_BEARER</code>, <code>CAP_REPEATER</code></td></tr>
 <tr><td>4849</td><td><a href="#counters"><code>PROP_STAT_LAN_EXPORT_DROPPED</code></a></td><td>Get, Set</td><td><code>CAP_STATS</code>, <code>CAP_LAN_BEARER</code>, <code>CAP_REPEATER</code></td></tr>
+<tr><td>4850</td><td><a href="#prop-stat-rx-own-hint"><code>PROP_STAT_RX_OWN_HINT</code></a></td><td>Get, Set</td><td><code>CAP_STATS</code>, <code>CAP_REPEATER</code></td></tr>
 <tr><td>4864</td><td><a href="#prop-ble-pairing-pin"><code>PROP_BLE_PAIRING_PIN</code></a></td><td>Set</td><td>BLE transport</td></tr>
 <tr><td>4865</td><td><a href="#prop-dev-admins"><code>PROP_DEV_ADMINS</code></a></td><td>Get, Set, Insert, Remove</td><td><code>CAP_ADMIN</code></td></tr>
 <tr><td>4866</td><td><a href="#prop-time"><code>PROP_TIME</code></a></td><td>Get, Set, Is</td><td><code>CAP_TIME</code></td></tr>
@@ -10659,6 +10877,9 @@ it can do.</p>
 <tr><td>4874</td><td><a href="#prop-ble-pairing"><code>PROP_BLE_PAIRING</code></a></td><td>Get, Set, Is</td><td><code>CAP_BLE</code></td></tr>
 <tr><td>4875</td><td><a href="#prop-display-motion-wake-enabled"><code>PROP_DISPLAY_MOTION_WAKE_ENABLED</code></a></td><td>Get, Set, Is</td><td><code>CAP_DISPLAY_MOTION_WAKE</code></td></tr>
 <tr><td>4876</td><td><a href="#prop-temperature-names"><code>PROP_TEMPERATURE_NAMES</code></a></td><td>Get</td><td><code>CAP_TEMPERATURE</code></td></tr>
+<tr><td>4877</td><td><a href="#prop-display-brightness"><code>PROP_DISPLAY_BRIGHTNESS</code></a></td><td>Get, Set, Is</td><td><code>CAP_DISPLAY_BRIGHTNESS</code></td></tr>
+<tr><td>4878</td><td><a href="#prop-keyboard-light"><code>PROP_KEYBOARD_LIGHT</code></a></td><td>Get, Set, Is</td><td><code>CAP_KEYBOARD</code></td></tr>
+<tr><td>4879</td><td><a href="#prop-keyboard-aids"><code>PROP_KEYBOARD_AIDS</code></a></td><td>Get, Set, Is</td><td><code>CAP_KEYBOARD</code></td></tr>
 <tr><td>4880</td><td><a href="#prop-wifi-enabled"><code>PROP_WIFI_ENABLED</code></a></td><td>Get, Set, Is</td><td><code>CAP_WIFI</code></td></tr>
 <tr><td>4881</td><td><a href="#prop-wifi-networks"><code>PROP_WIFI_NETWORKS</code></a></td><td>Get, Set, Insert, Remove</td><td><code>CAP_WIFI</code></td></tr>
 <tr><td>4882</td><td><a href="#prop-wifi-network"><code>PROP_WIFI_NETWORK</code></a></td><td>Get, Set, Is</td><td><code>CAP_WIFI</code></td></tr>
@@ -10754,6 +10975,8 @@ is in <a href="#capabilities-1">Capabilities</a>.</p>
 <tr><td>61</td><td><code>CAP_TEMPERATURE</code></td><td><a href="#capabilities-4">Device Domain</a></td></tr>
 <tr><td>62</td><td><code>CAP_MESHCORE_FORWARDER</code></td><td><a href="#capabilities-4">Device Domain</a></td></tr>
 <tr><td>63</td><td><code>CAP_LAN_BEARER</code></td><td><a href="#capabilities-10">IP Multicast</a></td></tr>
+<tr><td>64</td><td><code>CAP_DISPLAY_BRIGHTNESS</code></td><td><a href="#capabilities-4">Device Domain</a></td></tr>
+<tr><td>65</td><td><code>CAP_KEYBOARD</code></td><td><a href="#capabilities-4">Device Domain</a></td></tr>
 <tr><td>515</td><td><code>CAP_PHY_LORA</code></td><td><a href="#capabilities-2">Radio Control</a></td></tr>
 </tbody>
 </table>
@@ -10809,6 +11032,7 @@ reserved for them.</p>
 <tr><td>Filter types</td><td>0 <code>FILTER_DEST_HINT</code>, 1 <code>FILTER_CHANNEL_ID</code>, 2 <code>FILTER_PKT_TYPE</code></td><td><a href="#prop-host-rx-filters"><code>PROP_HOST_RX_FILTERS</code></a></td></tr>
 <tr><td>Charge states</td><td>0 discharging, 1 charging, 2 charged, 3 not charging</td><td><a href="#prop-battery"><code>PROP_BATTERY</code></a></td></tr>
 <tr><td>Alert states</td><td>0 <code>ALERT_NONE</code>, 1 <code>ALERT_LOCATE</code></td><td><a href="#prop-alert"><code>PROP_ALERT</code></a></td></tr>
+<tr><td>Keyboard aids</td><td>bit 0 <code>KEYBOARD_AID_CAPITALIZE</code>, bit 1 <code>KEYBOARD_AID_PERIOD</code></td><td><a href="#prop-keyboard-aids"><code>PROP_KEYBOARD_AIDS</code></a></td></tr>
 <tr><td>Fix quality</td><td>0 none, 1 two-dimensional, 2 three-dimensional</td><td><a href="#prop-gnss-fix"><code>PROP_GNSS_FIX</code></a></td></tr>
 <tr><td>MeshCore region policies</td><td>0 open, 1 scoped only, 2 ignore</td><td><a href="#prop-meshcore-region-policy"><code>PROP_MESHCORE_REGION_POLICY</code></a></td></tr>
 <tr><td>Transmit flags</td><td>bit 0 <code>TX_FLAG_NOCCA</code>, bit 1 <code>TX_FLAG_NODUTY</code></td><td><a href="#str-radio-raw"><code>STR_PHY_RAW</code></a></td></tr>

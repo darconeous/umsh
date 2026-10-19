@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["BUNDLE_MAX"],"enum":["Event","Freshness","Refusal","WriteOutcome"],"struct":["Model","Radio","WriteId"]};

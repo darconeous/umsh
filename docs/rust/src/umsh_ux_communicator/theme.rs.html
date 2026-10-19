@@ -21,23 +21,68 @@
 <a href=#21 id=21 data-nosnippet>21</a><span class="kw">pub const </span>TEXT_SECONDARY: Rgb565 = rgb(<span class="number">0x9AA3AE</span>);
 <a href=#22 id=22 data-nosnippet>22</a><span class="kw">pub const </span>TEXT_TERTIARY: Rgb565 = rgb(<span class="number">0x7F8995</span>);
 <a href=#23 id=23 data-nosnippet>23</a><span class="kw">pub const </span>ACCENT: Rgb565 = rgb(<span class="number">0x4DA3FF</span>);
-<a href=#24 id=24 data-nosnippet>24</a><span class="kw">pub const </span>FOCUS: Rgb565 = rgb(<span class="number">0x18304D</span>);
-<a href=#25 id=25 data-nosnippet>25</a><span class="kw">pub const </span>OUTBOUND: Rgb565 = rgb(<span class="number">0x2A62C9</span>);
-<a href=#26 id=26 data-nosnippet>26</a><span class="kw">pub const </span>INBOUND: Rgb565 = rgb(<span class="number">0x23272E</span>);
-<a href=#27 id=27 data-nosnippet>27</a><span class="kw">pub const </span>GREEN: Rgb565 = rgb(<span class="number">0x3DD68C</span>);
-<a href=#28 id=28 data-nosnippet>28</a><span class="kw">pub const </span>AMBER: Rgb565 = rgb(<span class="number">0xF5B544</span>);
-<a href=#29 id=29 data-nosnippet>29</a><span class="kw">pub const </span>RED: Rgb565 = rgb(<span class="number">0xFF6B5E</span>);
-<a href=#30 id=30 data-nosnippet>30</a><span class="kw">pub const </span>FIELD: Rgb565 = rgb(<span class="number">0x161A20</span>);
-<a href=#31 id=31 data-nosnippet>31</a><span class="kw">pub const </span>MENU: Rgb565 = rgb(<span class="number">0x1B2027</span>);
-<a href=#32 id=32 data-nosnippet>32</a><span class="kw">pub const </span>MENU_LINE: Rgb565 = rgb(<span class="number">0x2E3540</span>);
-<a href=#33 id=33 data-nosnippet>33</a>
-<a href=#34 id=34 data-nosnippet>34</a><span class="doccomment">/// Body text: about 2.3 mm on the Pager's panel.
-<a href=#35 id=35 data-nosnippet>35</a></span><span class="kw">pub const </span>BODY: u32 = <span class="number">20</span>;
-<a href=#36 id=36 data-nosnippet>36</a><span class="doccomment">/// Secondary lines such as chat previews.
-<a href=#37 id=37 data-nosnippet>37</a></span><span class="kw">pub const </span>SECONDARY: u32 = <span class="number">17</span>;
-<a href=#38 id=38 data-nosnippet>38</a><span class="doccomment">/// The smallest type anywhere: timestamps, labels, the status strip.
-<a href=#39 id=39 data-nosnippet>39</a></span><span class="kw">pub const </span>SMALL: u32 = <span class="number">16</span>;
-<a href=#40 id=40 data-nosnippet>40</a>
-<a href=#41 id=41 data-nosnippet>41</a><span class="kw">pub const </span>WIDTH: u32 = <span class="number">480</span>;
-<a href=#42 id=42 data-nosnippet>42</a><span class="kw">pub const </span>HEIGHT: u32 = <span class="number">222</span>;
+<a href=#24 id=24 data-nosnippet>24</a><span class="doccomment">/// The accent where anyone can read what is written: an open channel.
+<a href=#25 id=25 data-nosnippet>25</a></span><span class="kw">pub const </span>ACCENT_OPEN: Rgb565 = GREEN;
+<a href=#26 id=26 data-nosnippet>26</a><span class="doccomment">/// The accent where what is written goes under forward secrecy.
+<a href=#27 id=27 data-nosnippet>27</a></span><span class="kw">pub const </span>ACCENT_SECRET: Rgb565 = rgb(<span class="number">0xA585FF</span>);
+<a href=#28 id=28 data-nosnippet>28</a><span class="kw">pub const </span>FOCUS: Rgb565 = rgb(<span class="number">0x18304D</span>);
+<a href=#29 id=29 data-nosnippet>29</a><span class="doccomment">/// My messages where only those holding the key can read them.
+<a href=#30 id=30 data-nosnippet>30</a></span><span class="kw">pub const </span>OUTBOUND: Rgb565 = rgb(<span class="number">0x2A62C9</span>);
+<a href=#31 id=31 data-nosnippet>31</a><span class="doccomment">/// My messages in an open channel, which anyone can read.
+<a href=#32 id=32 data-nosnippet>32</a></span><span class="kw">pub const </span>OUTBOUND_OPEN: Rgb565 = rgb(<span class="number">0x1E7B45</span>);
+<a href=#33 id=33 data-nosnippet>33</a><span class="doccomment">/// My messages sent under a session with forward secrecy.
+<a href=#34 id=34 data-nosnippet>34</a></span><span class="kw">pub const </span>OUTBOUND_SECRET: Rgb565 = rgb(<span class="number">0x7045CC</span>);
+<a href=#35 id=35 data-nosnippet>35</a><span class="kw">pub const </span>INBOUND: Rgb565 = rgb(<span class="number">0x23272E</span>);
+<a href=#36 id=36 data-nosnippet>36</a><span class="doccomment">/// A reply's quote inside one of my bubbles: its bar, whom it quotes, and
+<a href=#37 id=37 data-nosnippet>37</a>/// what.
+<a href=#38 id=38 data-nosnippet>38</a></span><span class="kw">pub const </span>QUOTE_BAR_MINE: Rgb565 = rgb(<span class="number">0xCFE0FF</span>);
+<a href=#39 id=39 data-nosnippet>39</a><span class="kw">pub const </span>QUOTE_NAME_MINE: Rgb565 = rgb(<span class="number">0xE4EDFF</span>);
+<a href=#40 id=40 data-nosnippet>40</a><span class="kw">pub const </span>QUOTE_TEXT_MINE: Rgb565 = rgb(<span class="number">0xC9D8F5</span>);
+<a href=#41 id=41 data-nosnippet>41</a><span class="doccomment">/// The same, in tints of [`OUTBOUND_SECRET`].
+<a href=#42 id=42 data-nosnippet>42</a></span><span class="kw">pub const </span>QUOTE_BAR_SECRET: Rgb565 = rgb(<span class="number">0xDDD0FF</span>);
+<a href=#43 id=43 data-nosnippet>43</a><span class="kw">pub const </span>QUOTE_NAME_SECRET: Rgb565 = rgb(<span class="number">0xECE4FF</span>);
+<a href=#44 id=44 data-nosnippet>44</a><span class="kw">pub const </span>QUOTE_TEXT_SECRET: Rgb565 = rgb(<span class="number">0xD6CCF5</span>);
+<a href=#45 id=45 data-nosnippet>45</a><span class="doccomment">/// The faintest of the dots in the place of a message on its way again.
+<a href=#46 id=46 data-nosnippet>46</a></span><span class="kw">pub const </span>GAP_DOT: Rgb565 = rgb(<span class="number">0x4B535E</span>);
+<a href=#47 id=47 data-nosnippet>47</a><span class="kw">pub const </span>GREEN: Rgb565 = rgb(<span class="number">0x3DD68C</span>);
+<a href=#48 id=48 data-nosnippet>48</a><span class="kw">pub const </span>AMBER: Rgb565 = rgb(<span class="number">0xF5B544</span>);
+<a href=#49 id=49 data-nosnippet>49</a><span class="kw">pub const </span>RED: Rgb565 = rgb(<span class="number">0xFF6B5E</span>);
+<a href=#50 id=50 data-nosnippet>50</a><span class="kw">pub const </span>FIELD: Rgb565 = rgb(<span class="number">0x161A20</span>);
+<a href=#51 id=51 data-nosnippet>51</a><span class="doccomment">/// A field while it is edited, while it is edited in an open channel, and
+<a href=#52 id=52 data-nosnippet>52</a>/// while what it sends goes under forward secrecy.
+<a href=#53 id=53 data-nosnippet>53</a></span><span class="kw">pub const </span>ACTIVE_FIELD: Rgb565 = rgb(<span class="number">0x1A2333</span>);
+<a href=#54 id=54 data-nosnippet>54</a><span class="kw">pub const </span>ACTIVE_FIELD_OPEN: Rgb565 = rgb(<span class="number">0x152B1F</span>);
+<a href=#55 id=55 data-nosnippet>55</a><span class="kw">pub const </span>ACTIVE_FIELD_SECRET: Rgb565 = rgb(<span class="number">0x221A36</span>);
+<a href=#56 id=56 data-nosnippet>56</a><span class="doccomment">/// A switch that is off, and its knob.
+<a href=#57 id=57 data-nosnippet>57</a></span><span class="kw">pub const </span>SWITCH_OFF: Rgb565 = rgb(<span class="number">0x3A414B</span>);
+<a href=#58 id=58 data-nosnippet>58</a><span class="kw">pub const </span>KNOB_OFF: Rgb565 = rgb(<span class="number">0xC9CED6</span>);
+<a href=#59 id=59 data-nosnippet>59</a><span class="doccomment">/// A card that is not focused.
+<a href=#60 id=60 data-nosnippet>60</a></span><span class="kw">pub const </span>PANEL: Rgb565 = rgb(<span class="number">0x11151A</span>);
+<a href=#61 id=61 data-nosnippet>61</a><span class="kw">pub const </span>MENU: Rgb565 = rgb(<span class="number">0x1B2027</span>);
+<a href=#62 id=62 data-nosnippet>62</a><span class="doccomment">/// The Alt key's orange, which its legends and its strip icon share.
+<a href=#63 id=63 data-nosnippet>63</a></span><span class="kw">pub const </span>ALT: Rgb565 = rgb(<span class="number">0xF5A524</span>);
+<a href=#64 id=64 data-nosnippet>64</a><span class="doccomment">/// A glance: a brief card for a setting changed from the keyboard.
+<a href=#65 id=65 data-nosnippet>65</a></span><span class="kw">pub const </span>GLANCE: Rgb565 = rgb(<span class="number">0x1E2631</span>);
+<a href=#66 id=66 data-nosnippet>66</a><span class="kw">pub const </span>GLANCE_LINE: Rgb565 = rgb(<span class="number">0x34414F</span>);
+<a href=#67 id=67 data-nosnippet>67</a><span class="doccomment">/// A level bar's unlit steps.
+<a href=#68 id=68 data-nosnippet>68</a></span><span class="kw">pub const </span>LEVEL_OFF: Rgb565 = rgb(<span class="number">0x3A414B</span>);
+<a href=#69 id=69 data-nosnippet>69</a><span class="kw">pub const </span>MENU_LINE: Rgb565 = rgb(<span class="number">0x2E3540</span>);
+<a href=#70 id=70 data-nosnippet>70</a><span class="doccomment">/// Behind each reaction in the actions menu's palette.
+<a href=#71 id=71 data-nosnippet>71</a></span><span class="kw">pub const </span>REACTION_PAD: Rgb565 = rgb(<span class="number">0x2A313B</span>);
+<a href=#72 id=72 data-nosnippet>72</a><span class="doccomment">/// A reaction chip of someone else's; mine is in [`OUTBOUND`], or
+<a href=#73 id=73 data-nosnippet>73</a>/// [`OUTBOUND_OPEN`] in an open channel.
+<a href=#74 id=74 data-nosnippet>74</a></span><span class="kw">pub const </span>CHIP_THEIRS: Rgb565 = rgb(<span class="number">0x323A45</span>);
+<a href=#75 id=75 data-nosnippet>75</a><span class="doccomment">/// A banner for a message that arrived elsewhere, and its edge.
+<a href=#76 id=76 data-nosnippet>76</a></span><span class="kw">pub const </span>BANNER: Rgb565 = rgb(<span class="number">0x1E2631</span>);
+<a href=#77 id=77 data-nosnippet>77</a><span class="kw">pub const </span>BANNER_LINE: Rgb565 = rgb(<span class="number">0x34414F</span>);
+<a href=#78 id=78 data-nosnippet>78</a>
+<a href=#79 id=79 data-nosnippet>79</a><span class="doccomment">/// Body text: about 2.3 mm on the Pager's panel.
+<a href=#80 id=80 data-nosnippet>80</a></span><span class="kw">pub const </span>BODY: u32 = <span class="number">20</span>;
+<a href=#81 id=81 data-nosnippet>81</a><span class="doccomment">/// Secondary lines such as chat previews.
+<a href=#82 id=82 data-nosnippet>82</a></span><span class="kw">pub const </span>SECONDARY: u32 = <span class="number">17</span>;
+<a href=#83 id=83 data-nosnippet>83</a><span class="doccomment">/// The smallest type anywhere: timestamps, labels, the status strip.
+<a href=#84 id=84 data-nosnippet>84</a></span><span class="kw">pub const </span>SMALL: u32 = <span class="number">16</span>;
+<a href=#85 id=85 data-nosnippet>85</a>
+<a href=#86 id=86 data-nosnippet>86</a><span class="kw">pub const </span>WIDTH: u32 = <span class="number">480</span>;
+<a href=#87 id=87 data-nosnippet>87</a><span class="kw">pub const </span>HEIGHT: u32 = <span class="number">222</span>;
 </code></pre></div></section></main></body></html>

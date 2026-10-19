@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["Arrival","Busy","Request"],"struct":["Ticket"],"trait":["Exchange"]};

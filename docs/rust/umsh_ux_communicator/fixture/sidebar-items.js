@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["state"]};
+window.SIDEBAR_ITEMS = {"fn":["state"],"struct":["Store"]};

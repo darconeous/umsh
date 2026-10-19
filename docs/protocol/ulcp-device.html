@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-84dd6577.js";
+            window.path_to_searchindex_js = "searchindex-b0f5292e.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-7fd6cf8e.js"></script>
@@ -193,6 +193,13 @@ management, diagnostics, repeater forwarding (see
 and (in future revisions) periodic advertisement behavior. Its Ed25519
 private key is held by the device and is never readable through this
 protocol.</p>
+<p>On a device with a messaging interface of its own (see <a href="ulcp-core.html#device-interface">The Device’s Own
+Interface</a>), the device identity is also
+the messaging identity of whoever carries the device: its conversations
+are held under it, and its peers address it. Such a device advertises
+the <code>TXT</code> capability bit (see <a href="node-identity.html#capability-bitmap">Capability
+Bitmap</a>) and derives its role as
+<code>Chat</code> (see <a href="#prop-ident-role"><code>PROP_IDENT_ROLE</code></a>).</p>
 <p><strong>A device identity always exists.</strong> A device advertising
 <code>CAP_DEV_IDENTITY</code> that finds no stored keypair at power-on <strong>MUST</strong>
 generate one from a cryptographic random source and persist it before
@@ -212,6 +219,28 @@ key agreement and needs only peer <em>public</em> keys (see <a href="ulcp-device
 That is the opposite of the host identity, for which the device holds no
 private key and every pairwise key must be provisioned explicitly (see
 <a href="ulcp-host.html">Tethered Host Services</a>).</p>
+<h3 id="lists-held-by-the-devices-store"><a class="header" href="#lists-held-by-the-devices-store">Lists Held by the Device’s Store</a></h3>
+<p>A device with a messaging interface of its own keeps a store for its
+conversations, and that store <strong>MAY</strong> also keep the device identity’s
+lists, <a href="#prop-dev-peers"><code>PROP_DEV_PEERS</code></a> and
+<a href="#prop-dev-channel-keys"><code>PROP_DEV_CHANNEL_KEYS</code></a>: whom its carrier talks
+with and on which channels belong with the conversations, not with the
+radio’s configuration.</p>
+<p>Lists the store keeps are persisted as they change, as the device
+identity is, and are outside the saved snapshot (see <a href="ulcp-saved-state.html#saved-state">Saved
+State</a>):</p>
+<ul>
+<li><code>CMD_SAVE</code> does not record them, and
+<a href="ulcp-saved-state.html#cmd-restore"><code>CMD_RESTORE</code></a> leaves them as they
+are.</li>
+<li><code>CMD_RST</code> restores them as last stored.</li>
+<li><a href="ulcp-saved-state.html#cmd-clear"><code>CMD_CLEAR</code></a> erases them with the rest
+of the persisted provisioning, and leaves the conversations.</li>
+</ul>
+<p>With none stored, <code>PROP_DEV_PEERS</code> is empty and <code>PROP_DEV_CHANNEL_KEYS</code>
+holds the channels the messaging interface starts out on: the
+<a href="multicast-channels.html#default-channels">default channels</a>, <code>public</code> and
+<code>EMERGENCY</code>.</p>
 <h2 id="capabilities"><a class="header" href="#capabilities">Capabilities</a></h2>
 <div class="table-wrapper">
 <table>
@@ -232,6 +261,8 @@ private key and every pairwise key must be provisioned explicitly (see
 <tr><td>59</td><td><code>CAP_DISPLAY_MOTION_WAKE</code></td><td>—</td><td>Orientation-qualified display wake and <code>PROP_DISPLAY_MOTION_WAKE_ENABLED</code></td></tr>
 <tr><td>61</td><td><code>CAP_TEMPERATURE</code></td><td>—</td><td><code>PROP_TEMPERATURES</code> and <code>PROP_TEMPERATURE_NAMES</code>; the inventory may initially be empty</td></tr>
 <tr><td>62</td><td><code>CAP_MESHCORE_FORWARDER</code></td><td><code>CAP_REPEATER</code></td><td><a href="#meshcore-forwarding">MeshCore forwarding</a>: <code>PROP_MESHCORE_FORWARDING_ENABLED</code>, <code>PROP_MESHCORE_REGION_POLICY</code>, <code>PROP_MESHCORE_REGIONS</code>; with <code>CAP_STATS</code>, the <a href="ulcp-radio.html#prop-stat-meshcore-seen">MeshCore counters</a></td></tr>
+<tr><td>64</td><td><code>CAP_DISPLAY_BRIGHTNESS</code></td><td>—</td><td>A screen whose brightness can be set, and <a href="#prop-display-brightness"><code>PROP_DISPLAY_BRIGHTNESS</code></a></td></tr>
+<tr><td>65</td><td><code>CAP_KEYBOARD</code></td><td>—</td><td>A keyboard of the device’s own: <a href="#prop-keyboard-light"><code>PROP_KEYBOARD_LIGHT</code></a>, <a href="#prop-keyboard-aids"><code>PROP_KEYBOARD_AIDS</code></a></td></tr>
 </tbody>
 </table>
 </div>
@@ -394,6 +425,10 @@ device range, alongside the wall clock at 4866–4867.</p>
 <tr><td>94</td><td><code>PROP_ILLUMINANCE</code></td><td>Get</td><td>Ambient illuminance in millilux</td></tr>
 <tr><td>95</td><td><code>PROP_TEMPERATURES</code></td><td>Get</td><td>Ordered temperature readings in tenths of kelvin</td></tr>
 <tr><td>4876</td><td><code>PROP_TEMPERATURE_NAMES</code></td><td>Get</td><td>Ordered temperature sensor names</td></tr>
+<tr><td>4875</td><td><code>PROP_DISPLAY_MOTION_WAKE_ENABLED</code></td><td>Get, Set, Is</td><td>Whether movement wakes the display</td></tr>
+<tr><td>4877</td><td><code>PROP_DISPLAY_BRIGHTNESS</code></td><td>Get, Set, Is</td><td>Screen brightness</td></tr>
+<tr><td>4878</td><td><code>PROP_KEYBOARD_LIGHT</code></td><td>Get, Set, Is</td><td>Whether the keyboard is lit while the screen is</td></tr>
+<tr><td>4879</td><td><code>PROP_KEYBOARD_AIDS</code></td><td>Get, Set, Is</td><td>Typing aids in effect</td></tr>
 <tr><td>4866</td><td><code>PROP_TIME</code></td><td>Get, Set, Is</td><td>Wall clock, or empty when unknown</td></tr>
 <tr><td>4867</td><td><code>PROP_TZ_OFFSET</code></td><td>Get, Set</td><td>Local time-zone offset from UTC</td></tr>
 <tr><td>4868</td><td><code>PROP_GNSS_IDENT_UPDATE</code></td><td>Get, Set</td><td>Whether fixes update the advertised node identity</td></tr>
@@ -478,7 +513,9 @@ requirements as all key provisioning (see <a href="ulcp-core.html#provisioning-s
 <li>Item Form: 32 octets (the channel key)</li>
 <li>Reported Form: 16 octets (the derived channel identifier)</li>
 <li>Remove Selector: the 32-octet channel key</li>
-<li>Post-Reset Value: Empty, or restored from saved state</li>
+<li>Post-Reset Value: Empty, or restored from saved state or from the
+device’s store (see <a href="#lists-held-by-the-devices-store">Lists Held by the Device’s
+Store</a>)</li>
 </ul>
 <p>The set of <a href="multicast-channels.html#channel-keys">channel keys</a> belonging to
 the <strong>device identity</strong>—channels the radio’s own node participates in
@@ -504,7 +541,9 @@ host only through the host’s own filtering.</p>
 <li>Required: <code>CAP_DEV_IDENTITY</code></li>
 <li>Item Form: 32 octets (the peer’s Ed25519 public key)</li>
 <li>Remove Selector: the 32-octet public key</li>
-<li>Post-Reset Value: Empty, or restored from saved state</li>
+<li>Post-Reset Value: Empty, or restored from saved state or from the
+device’s store (see <a href="#lists-held-by-the-devices-store">Lists Held by the Device’s
+Store</a>)</li>
 </ul>
 <p>The <strong>device identity’s</strong> peer list: the set of peer public keys the
 device node recognizes and may communicate with securely. Because the device
@@ -1136,8 +1175,10 @@ event.</p>
 Primary Role</a>).</p>
 <p>An <strong>empty</strong> value—the factory default—means the device derives the
 role from what it is actually doing: <code>Repeater</code> while
-<code>PROP_MAC_REPEATER_ENABLED</code> is set, <code>Tracker</code> otherwise. Any other value
-is advertised verbatim.</p>
+<code>PROP_MAC_REPEATER_ENABLED</code> is set, <code>Tracker</code> otherwise. On a device
+whose device identity is a messaging identity (see <a href="#device-identity">The Device
+Identity</a>), it derives <code>Chat</code> whether or not the device
+forwards. Any other value is advertised verbatim.</p>
 <p>Role and forwarding are deliberately separate. Forwarding is a fact,
 reported through the repeater capability bit; the role is how the device
 presents itself, which is the operator’s choice. Deriving it by default
@@ -1991,9 +2032,9 @@ accelerometer power: another consumer may still need movement detection when
 this property is false. It is included in <code>CMD_SAVE</code>, restored with the device
 configuration, and has a platform default of true after clearing saved state.
 <code>CMD_RST</code> follows the existing saved-state restore rules. A saved snapshot
-missing the property uses the platform default. A local toggle updates an
-existing saved snapshot, following the other local switches; it does not create
-a snapshot when none exists.</p>
+missing the property uses the platform default. A local toggle is saved as
+<a href="ulcp-saved-state.html#changes-made-at-the-device">Changes Made at the Device</a>
+describes.</p>
 <p>The display wakes only from its fully lapsed state. Movement while active or
 dim consumes the episode without refreshing the attention timeout. Disabling
 the property cancels pending motion wakes. Explicit shutdown retains the
@@ -2016,6 +2057,59 @@ samples; small oscillations do not accumulate. This check belongs to the display
 policy and does not suppress native movement observations for other consumers.
 Exceptionally slow pickups, or pickups completed before verification begins,
 may not qualify. This does not identify every kind of bed or pocket movement.</p>
+<h2 id="display-brightness-and-keyboard"><a class="header" href="#display-brightness-and-keyboard">Display Brightness and Keyboard</a></h2>
+<p>A device with a screen and keyboard of its own exposes their settings in
+the device domain, so they are saved with the rest of its configuration
+and reachable from wherever it is administered.</p>
+<h3 id="prop-display-brightness"><a class="header" href="#prop-display-brightness">PROP 4877: <code>PROP_DISPLAY_BRIGHTNESS</code></a></h3>
+<ul>
+<li>Type: Single-Value, Read-Write</li>
+<li>Asynchronous Updates: Yes</li>
+<li>Required: <code>CAP_DISPLAY_BRIGHTNESS</code></li>
+<li>Value Type: UINT8</li>
+<li>Post-Reset Value: device-defined, or restored from saved state</li>
+</ul>
+<p>The screen’s brightness. 255 is the brightest the screen goes, and 0 the
+dimmest level that is not off: brightness never turns a screen dark. On a
+screen that is readable unlit, such as e-paper under a front light, 0
+turns the light off.</p>
+<p>The levels in between are the device’s to map onto its screen, and it
+reports the value written.</p>
+<h3 id="prop-keyboard-light"><a class="header" href="#prop-keyboard-light">PROP 4878: <code>PROP_KEYBOARD_LIGHT</code></a></h3>
+<ul>
+<li>Type: Single-Value, Read-Write</li>
+<li>Asynchronous Updates: Yes</li>
+<li>Required: <code>CAP_KEYBOARD</code></li>
+<li>Value Type: BOOL</li>
+<li>Post-Reset Value: 1 (true), or restored from saved state</li>
+</ul>
+<p>Whether the keyboard is lit while the screen is. A dark screen leaves the
+keyboard dark either way.</p>
+<h3 id="prop-keyboard-aids"><a class="header" href="#prop-keyboard-aids">PROP 4879: <code>PROP_KEYBOARD_AIDS</code></a></h3>
+<ul>
+<li>Type: Single-Value, Read-Write</li>
+<li>Asynchronous Updates: Yes</li>
+<li>Required: <code>CAP_KEYBOARD</code></li>
+<li>Value Type: UINT8</li>
+<li>Post-Reset Value: 3 (every aid), or restored from saved state</li>
+</ul>
+<p>The typing aids in effect, as a bitmap:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Bit</th><th>Name</th><th>Aid</th></tr>
+</thead>
+<tbody>
+<tr><td>0 (<code>0x01</code>)</td><td><code>KEYBOARD_AID_CAPITALIZE</code></td><td>The first letter of a sentence is capitalized.</td></tr>
+<tr><td>1 (<code>0x02</code>)</td><td><code>KEYBOARD_AID_PERIOD</code></td><td>Two spaces typed after a word become a period and a space.</td></tr>
+</tbody>
+</table>
+</div>
+<p>The other bits are reserved and <strong>MUST</strong> be zero. A write that sets one is
+answered <code>STATUS_INVALID_ARGUMENT</code>.</p>
+<p>All three properties are included in <code>CMD_SAVE</code>, and are asynchronous
+because the device’s own controls change them (see <a href="ulcp-saved-state.html#changes-made-at-the-device">Changes Made at the
+Device</a>).</p>
 
                     </main>
 

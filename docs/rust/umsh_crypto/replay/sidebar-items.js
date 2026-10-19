@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"constant":["RECENT_MIC_CAPACITY","REPLAY_BACKTRACK_SLOTS","REPLAY_STALE_MS"],"enum":["ReplayVerdict"],"struct":["RecentMic","ReplayWindow"]};
+window.SIDEBAR_ITEMS = {"constant":["RECENT_MIC_CAPACITY","REPLAY_BACKTRACK_SLOTS","REPLAY_FORWARD_WINDOW","REPLAY_STALE_MS"],"enum":["ReplayVerdict"],"struct":["RecentMic","ReplayWindow"]};

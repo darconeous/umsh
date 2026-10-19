@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-84dd6577.js";
+            window.path_to_searchindex_js = "searchindex-b0f5292e.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-7fd6cf8e.js"></script>
@@ -335,6 +335,7 @@
 <p>The option carries only the correlation handle, not a keyed ack tag: the packet carrying the option is itself authenticated to the original sender, so its own MIC already proves the acknowledgement is genuine. The <code>ack_mic</code> value simply identifies which outstanding request the reply acknowledges. The original sender accepts the option only on a packet authenticated as coming from the destination of the packet it names.</p>
 <p>The option is a courtesy to the original sender. A sender that cannot fit it into a frame omits it.</p>
 <p>Because the option sits in the plaintext options block, forwarders read it under the same terms as a standalone MAC ack, including for <a href="repeater-operation.html#ack-cancellation">ack cancellation</a>.</p>
+<p>On a <a href="mac-commands.html#verify-frame-12">Verify Frame</a> the option names the packet to be verified instead of acknowledging it: the sender holds that packet but has not accepted it, so the original sender MUST NOT treat the option as an acknowledgement (see <a href="security.html#counter-resynchronization">Counter Resynchronization</a>). Forwarders still apply ack cancellation, since the named packet has reached its destination.</p>
 <h3 id="minimum-snr-option-9"><a class="header" href="#minimum-snr-option-9">Minimum SNR (option 9)</a></h3>
 <ul>
 <li>Type: signed 1-byte integer, in dB</li>

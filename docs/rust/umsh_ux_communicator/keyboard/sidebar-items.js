@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["DOUBLE_TAP_MS","PICKER"],"enum":["Field","Latch","Modifier","Spaced"],"fn":["starts_sentence"],"struct":["Aids","Keyboard"]};

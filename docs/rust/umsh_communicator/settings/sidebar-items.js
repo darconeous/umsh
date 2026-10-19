@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["AIRTIME_READ_MS","DEFAULT_BRIGHTNESS","SAVE_DELAY_MS"],"struct":["Settings"]};

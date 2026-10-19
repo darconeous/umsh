@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["INBOX_FRAMES","SECRECY_MINUTES","TICK_MS"],"enum":["Arrival","Command","Secrecy"],"fn":["listen","run"],"struct":["Inbox"]};

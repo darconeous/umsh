@@ -513,25 +513,39 @@
 <a href=#513 id=513 data-nosnippet>513</a>    }
 <a href=#514 id=514 data-nosnippet>514</a>}
 <a href=#515 id=515 data-nosnippet>515</a>
-<a href=#516 id=516 data-nosnippet>516</a><span class="doccomment">/// Refresh a minimal snapshot once per minute normally. A visible diagnostics
-<a href=#517 id=517 data-nosnippet>517</a>/// page, unknown voltage, or battery voltage near shutdown needs quicker reads.
-<a href=#518 id=518 data-nosnippet>518</a></span><span class="kw">pub fn </span>battery_poll_interval_ms(reading: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Reading&gt;, details_visible: bool) -&gt; u64 {
-<a href=#519 id=519 data-nosnippet>519</a>    <span class="kw">if </span>details_visible
-<a href=#520 id=520 data-nosnippet>520</a>        || reading.is_none_or(|r| r.voltage_mv.is_none_or(|mv| !r.vbus &amp;&amp; mv &lt;= <span class="number">3500</span>))
-<a href=#521 id=521 data-nosnippet>521</a>    {
-<a href=#522 id=522 data-nosnippet>522</a>        <span class="number">1000
-<a href=#523 id=523 data-nosnippet>523</a>    </span>} <span class="kw">else </span>{
-<a href=#524 id=524 data-nosnippet>524</a>        <span class="number">60_000
-<a href=#525 id=525 data-nosnippet>525</a>    </span>}
-<a href=#526 id=526 data-nosnippet>526</a>}
-<a href=#527 id=527 data-nosnippet>527</a>
-<a href=#528 id=528 data-nosnippet>528</a><span class="doccomment">/// Periodic reads stay minimal unless a diagnostics page is actually visible.
-<a href=#529 id=529 data-nosnippet>529</a></span><span class="kw">pub fn </span>battery_poll_fields(details_visible: bool) -&gt; umsh_ulcp::battery_diagnostics::Fields {
-<a href=#530 id=530 data-nosnippet>530</a>    <span class="kw">use </span>umsh_ulcp::{battery_diagnostics::Fields, ids::prop};
-<a href=#531 id=531 data-nosnippet>531</a>    <span class="kw">if </span>details_visible {
-<a href=#532 id=532 data-nosnippet>532</a>        Fields::ALL
-<a href=#533 id=533 data-nosnippet>533</a>    } <span class="kw">else </span>{
-<a href=#534 id=534 data-nosnippet>534</a>        Fields::SNAPSHOT.union(Fields::for_key(prop::BATTERY_EXT_POWER_PRESENT))
-<a href=#535 id=535 data-nosnippet>535</a>    }
-<a href=#536 id=536 data-nosnippet>536</a>}
+<a href=#516 id=516 data-nosnippet>516</a><span class="doccomment">/// Who is looking at the battery, which sets how fresh its readings must be.
+<a href=#517 id=517 data-nosnippet>517</a></span><span class="attr">#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+<a href=#518 id=518 data-nosnippet>518</a></span><span class="kw">pub enum </span>BatteryWatch {
+<a href=#519 id=519 data-nosnippet>519</a>    <span class="doccomment">/// The panel is dark.
+<a href=#520 id=520 data-nosnippet>520</a>    </span>Dark,
+<a href=#521 id=521 data-nosnippet>521</a>    <span class="doccomment">/// The panel is lit, and its status shows the battery.
+<a href=#522 id=522 data-nosnippet>522</a>    </span>Lit,
+<a href=#523 id=523 data-nosnippet>523</a>    <span class="doccomment">/// A diagnostics page is visible.
+<a href=#524 id=524 data-nosnippet>524</a>    </span>Details,
+<a href=#525 id=525 data-nosnippet>525</a>}
+<a href=#526 id=526 data-nosnippet>526</a>
+<a href=#527 id=527 data-nosnippet>527</a><span class="doccomment">/// Refresh a minimal snapshot every few seconds while the panel is lit and
+<a href=#528 id=528 data-nosnippet>528</a>/// once per minute while it is dark. A visible diagnostics page, unknown
+<a href=#529 id=529 data-nosnippet>529</a>/// voltage, or battery voltage near shutdown needs quicker reads.
+<a href=#530 id=530 data-nosnippet>530</a></span><span class="kw">pub fn </span>battery_poll_interval_ms(reading: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Reading&gt;, watch: BatteryWatch) -&gt; u64 {
+<a href=#531 id=531 data-nosnippet>531</a>    <span class="kw">if </span>watch == BatteryWatch::Details
+<a href=#532 id=532 data-nosnippet>532</a>        || reading.is_none_or(|r| r.voltage_mv.is_none_or(|mv| !r.vbus &amp;&amp; mv &lt;= <span class="number">3500</span>))
+<a href=#533 id=533 data-nosnippet>533</a>    {
+<a href=#534 id=534 data-nosnippet>534</a>        <span class="number">1000
+<a href=#535 id=535 data-nosnippet>535</a>    </span>} <span class="kw">else if </span>watch == BatteryWatch::Lit {
+<a href=#536 id=536 data-nosnippet>536</a>        <span class="number">5000
+<a href=#537 id=537 data-nosnippet>537</a>    </span>} <span class="kw">else </span>{
+<a href=#538 id=538 data-nosnippet>538</a>        <span class="number">60_000
+<a href=#539 id=539 data-nosnippet>539</a>    </span>}
+<a href=#540 id=540 data-nosnippet>540</a>}
+<a href=#541 id=541 data-nosnippet>541</a>
+<a href=#542 id=542 data-nosnippet>542</a><span class="doccomment">/// Periodic reads stay minimal unless a diagnostics page is actually visible.
+<a href=#543 id=543 data-nosnippet>543</a></span><span class="kw">pub fn </span>battery_poll_fields(details_visible: bool) -&gt; umsh_ulcp::battery_diagnostics::Fields {
+<a href=#544 id=544 data-nosnippet>544</a>    <span class="kw">use </span>umsh_ulcp::{battery_diagnostics::Fields, ids::prop};
+<a href=#545 id=545 data-nosnippet>545</a>    <span class="kw">if </span>details_visible {
+<a href=#546 id=546 data-nosnippet>546</a>        Fields::ALL
+<a href=#547 id=547 data-nosnippet>547</a>    } <span class="kw">else </span>{
+<a href=#548 id=548 data-nosnippet>548</a>        Fields::SNAPSHOT.union(Fields::for_key(prop::BATTERY_EXT_POWER_PRESENT))
+<a href=#549 id=549 data-nosnippet>549</a>    }
+<a href=#550 id=550 data-nosnippet>550</a>}
 </code></pre></div></section></main></body></html>

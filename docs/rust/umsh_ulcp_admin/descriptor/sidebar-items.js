@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["COVERED","DEVICE_NAME_MAX"],"enum":["Access","Kind","Value"],"fn":["decode","descriptor"],"struct":["Descriptor"]};

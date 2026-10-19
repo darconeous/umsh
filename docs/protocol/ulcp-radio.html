@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-84dd6577.js";
+            window.path_to_searchindex_js = "searchindex-b0f5292e.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-7fd6cf8e.js"></script>
@@ -232,6 +232,7 @@ survives a change of host.</p>
 <tr><td>4842</td><td><code>PROP_STAT_MESHCORE_FORWARDED_ROUTED</code></td><td>Get, Set</td><td>MeshCore packets forwarded along their source route</td></tr>
 <tr><td>4843</td><td><code>PROP_STAT_MESHCORE_FORWARDED_FLOOD</code></td><td>Get, Set</td><td>MeshCore packets flooded</td></tr>
 <tr><td>4844</td><td><code>PROP_STAT_MESHCORE_DECLINED</code></td><td>Get, Set</td><td>MeshCore packets neither forwarded nor duplicates</td></tr>
+<tr><td>4850</td><td><code>PROP_STAT_RX_OWN_HINT</code></td><td>Get, Set</td><td>Received packets whose trace names this device as the last hop</td></tr>
 </tbody>
 </table>
 </div>
@@ -485,6 +486,16 @@ Requires <code>CAP_STATS</code> and <code>CAP_MESHCORE_FORWARDER</code>.</p>
 declined by MeshCore’s own forwarding rules or by the region policy, below
 the configured signal thresholds, malformed, or dropped for want of queue
 space. Requires <code>CAP_STATS</code> and <code>CAP_MESHCORE_FORWARDER</code>.</p>
+<h3 id="prop-stat-rx-own-hint"><a class="header" href="#prop-stat-rx-own-hint">PROP 4850: <code>PROP_STAT_RX_OWN_HINT</code></a></h3>
+<p>Packets received over the air whose <a href="packet-options.html#trace-route-option-2">trace route</a>
+begins with this device’s own router hint. A radio cannot receive its own
+transmission, so each is a copy of one of this device’s repeats retransmitted
+without a hop being added, or a packet repeated by another node sharing this
+device’s router hint. Packets received over a point-to-point link or a shared
+IP bearer are not counted. None of these names a neighbor, and a device does
+not list itself in a <a href="mac-commands.html#peer-repeaters-response-11">Peer Repeaters
+Response</a>. Requires <code>CAP_STATS</code> and
+<code>CAP_REPEATER</code>.</p>
 
                     </main>
 

@@ -1,0 +1,155 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `crates/umsh-ux-communicator/src/ui/peer.rs`."><title>peer.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../../static.files/rustdoc-80aa586b.css"><meta name="rustdoc-vars" data-root-path="../../../" data-static-root-path="../../../static.files/" data-current-crate="umsh_ux_communicator" data-themes="" data-resource-suffix="" data-rustdoc-version="1.94.0-nightly (fcf67da03 2025-12-18)" data-channel="nightly" data-search-js="search-9e2438ea.js" data-stringdex-js="stringdex-a3946164.js" data-settings-js="settings-c38705f0.js" ><script src="../../../static.files/storage-e2aeef58.js"></script><script defer src="../../../static.files/src-script-813739b1.js"></script><script defer src="../../../src-files.js"></script><script defer src="../../../static.files/main-3e30299d.js"></script><noscript><link rel="stylesheet" href="../../../static.files/noscript-ffcac47a.css"></noscript><link rel="alternate icon" type="image/png" href="../../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><section id="main-content" class="content"><div class="main-heading"><h1><div class="sub-heading">umsh_ux_communicator/ui/</div>peer.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap digits-3"><pre class="rust"><code><a href=#1 id=1 data-nosnippet>1</a><span class="doccomment">//! A saved peer: who they are, their whole address, then one focusable list
+<a href=#2 id=2 data-nosnippet>2</a>//! of actions and readouts that the wheel scrolls through. Forget is last
+<a href=#3 id=3 data-nosnippet>3</a>//! and asks to confirm. Backspace goes back.
+<a href=#4 id=4 data-nosnippet>4</a>
+<a href=#5 id=5 data-nosnippet>5</a></span><span class="kw">use </span>buoyant::event::{Key, KeyResponse};
+<a href=#6 id=6 data-nosnippet>6</a><span class="kw">use </span>buoyant::focus::BoundaryBehavior;
+<a href=#7 id=7 data-nosnippet>7</a><span class="kw">use </span>buoyant::view::prelude::<span class="kw-2">*</span>;
+<a href=#8 id=8 data-nosnippet>8</a><span class="kw">use </span>embedded_graphics::pixelcolor::Rgb565;
+<a href=#9 id=9 data-nosnippet>9</a><span class="kw">use </span>heapless::String;
+<a href=#10 id=10 data-nosnippet>10</a>
+<a href=#11 id=11 data-nosnippet>11</a><span class="kw">use </span><span class="kw">super</span>::label;
+<a href=#12 id=12 data-nosnippet>12</a><span class="kw">use </span><span class="kw">super</span>::member::detail_head;
+<a href=#13 id=13 data-nosnippet>13</a><span class="kw">use </span><span class="kw">super</span>::setting::{End, card, choice, row};
+<a href=#14 id=14 data-nosnippet>14</a><span class="kw">use </span><span class="kw">crate</span>::model::{PeerDetail, PeerSummary, State, hops_text};
+<a href=#15 id=15 data-nosnippet>15</a><span class="kw">use </span><span class="kw">crate</span>::nav::keys;
+<a href=#16 id=16 data-nosnippet>16</a><span class="kw">use </span>crate::{font, theme};
+<a href=#17 id=17 data-nosnippet>17</a>
+<a href=#18 id=18 data-nosnippet>18</a><span class="kw">const </span>ROW: u32 = <span class="number">34</span>;
+<a href=#19 id=19 data-nosnippet>19</a><span class="kw">const </span>ADDRESS: u32 = <span class="number">22</span>;
+<a href=#20 id=20 data-nosnippet>20</a><span class="doccomment">/// The confirmation's width.
+<a href=#21 id=21 data-nosnippet>21</a></span><span class="kw">const </span>CONFIRM_WIDTH: u32 = <span class="number">300</span>;
+<a href=#22 id=22 data-nosnippet>22</a>
+<a href=#23 id=23 data-nosnippet>23</a><span class="kw">pub fn </span>view(
+<a href=#24 id=24 data-nosnippet>24</a>    summary: <span class="kw-2">&amp;</span>PeerSummary,
+<a href=#25 id=25 data-nosnippet>25</a>    detail: <span class="kw-2">&amp;</span>PeerDetail,
+<a href=#26 id=26 data-nosnippet>26</a>    confirm: bool,
+<a href=#27 id=27 data-nosnippet>27</a>    requested: bool,
+<a href=#28 id=28 data-nosnippet>28</a>) -&gt; <span class="kw">impl </span>View&lt;Rgb565, State&gt; + <span class="kw">use</span>&lt;&gt; {
+<a href=#29 id=29 data-nosnippet>29</a>    <span class="kw">let </span><span class="kw-2">mut </span>about: String&lt;<span class="number">48</span>&gt; = String::new();
+<a href=#30 id=30 data-nosnippet>30</a>    <span class="kw">_ </span>= about.push_str(<span class="string">"Saved peer"</span>);
+<a href=#31 id=31 data-nosnippet>31</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(hops) = summary.hops {
+<a href=#32 id=32 data-nosnippet>32</a>        <span class="kw">_ </span>= about.push_str(<span class="string">" \u{B7} "</span>);
+<a href=#33 id=33 data-nosnippet>33</a>        <span class="kw">_ </span>= about.push_str(<span class="kw-2">&amp;</span>hops_text(hops));
+<a href=#34 id=34 data-nosnippet>34</a>    }
+<a href=#35 id=35 data-nosnippet>35</a>    <span class="kw">let </span>name = summary.name.clone();
+<a href=#36 id=36 data-nosnippet>36</a>    <span class="kw">super</span>::list(
+<a href=#37 id=37 data-nosnippet>37</a>        VStack::new((
+<a href=#38 id=38 data-nosnippet>38</a>            detail_head(<span class="kw-2">&amp;</span>summary.avatar, <span class="kw-2">&amp;</span>summary.name, <span class="kw-2">&amp;</span>about),
+<a href=#39 id=39 data-nosnippet>39</a>            label::&lt;<span class="number">44</span>&gt;(
+<a href=#40 id=40 data-nosnippet>40</a>                <span class="kw-2">&amp;</span>detail.address,
+<a href=#41 id=41 data-nosnippet>41</a>                <span class="kw-2">&amp;</span>font::REGULAR,
+<a href=#42 id=42 data-nosnippet>42</a>                theme::SMALL,
+<a href=#43 id=43 data-nosnippet>43</a>                theme::TEXT_SECONDARY,
+<a href=#44 id=44 data-nosnippet>44</a>            )
+<a href=#45 id=45 data-nosnippet>45</a>            .padding(Edges::Leading, <span class="number">10</span>)
+<a href=#46 id=46 data-nosnippet>46</a>            .flex_infinite_width(HorizontalAlignment::Leading)
+<a href=#47 id=47 data-nosnippet>47</a>            .frame()
+<a href=#48 id=48 data-nosnippet>48</a>            .with_height(ADDRESS),
+<a href=#49 id=49 data-nosnippet>49</a>            row(
+<a href=#50 id=50 data-nosnippet>50</a>                <span class="string">"Message"</span>,
+<a href=#51 id=51 data-nosnippet>51</a>                keys::PEER_MESSAGE,
+<a href=#52 id=52 data-nosnippet>52</a>                State::message_peer,
+<a href=#53 id=53 data-nosnippet>53</a>                End::Chevron,
+<a href=#54 id=54 data-nosnippet>54</a>                <span class="bool-val">false</span>,
+<a href=#55 id=55 data-nosnippet>55</a>                ROW,
+<a href=#56 id=56 data-nosnippet>56</a>            ),
+<a href=#57 id=57 data-nosnippet>57</a>            row(
+<a href=#58 id=58 data-nosnippet>58</a>                <span class="string">"Route"</span>,
+<a href=#59 id=59 data-nosnippet>59</a>                keys::PEER_ROUTE,
+<a href=#60 id=60 data-nosnippet>60</a>                |<span class="kw">_</span>| {},
+<a href=#61 id=61 data-nosnippet>61</a>                detail.route.as_deref().map_or(End::Nothing, End::value),
+<a href=#62 id=62 data-nosnippet>62</a>                <span class="bool-val">false</span>,
+<a href=#63 id=63 data-nosnippet>63</a>                ROW,
+<a href=#64 id=64 data-nosnippet>64</a>            ),
+<a href=#65 id=65 data-nosnippet>65</a>            row(
+<a href=#66 id=66 data-nosnippet>66</a>                <span class="string">"Last heard"</span>,
+<a href=#67 id=67 data-nosnippet>67</a>                keys::PEER_HEARD,
+<a href=#68 id=68 data-nosnippet>68</a>                |<span class="kw">_</span>| {},
+<a href=#69 id=69 data-nosnippet>69</a>                End::value(<span class="kw-2">&amp;</span>detail.heard),
+<a href=#70 id=70 data-nosnippet>70</a>                <span class="bool-val">false</span>,
+<a href=#71 id=71 data-nosnippet>71</a>                ROW,
+<a href=#72 id=72 data-nosnippet>72</a>            ),
+<a href=#73 id=73 data-nosnippet>73</a>            row(
+<a href=#74 id=74 data-nosnippet>74</a>                <span class="string">"Forward secrecy"</span>,
+<a href=#75 id=75 data-nosnippet>75</a>                keys::PEER_SECRECY,
+<a href=#76 id=76 data-nosnippet>76</a>                State::toggle_forward_secrecy,
+<a href=#77 id=77 data-nosnippet>77</a>                End::Switch(detail.forward_secrecy),
+<a href=#78 id=78 data-nosnippet>78</a>                <span class="bool-val">false</span>,
+<a href=#79 id=79 data-nosnippet>79</a>                ROW,
+<a href=#80 id=80 data-nosnippet>80</a>            ),
+<a href=#81 id=81 data-nosnippet>81</a>            row(
+<a href=#82 id=82 data-nosnippet>82</a>                <span class="string">"Ping"</span>,
+<a href=#83 id=83 data-nosnippet>83</a>                keys::PEER_PING,
+<a href=#84 id=84 data-nosnippet>84</a>                State::ping_peer,
+<a href=#85 id=85 data-nosnippet>85</a>                detail.ping.as_deref().map_or(End::Chevron, End::value),
+<a href=#86 id=86 data-nosnippet>86</a>                <span class="bool-val">false</span>,
+<a href=#87 id=87 data-nosnippet>87</a>                ROW,
+<a href=#88 id=88 data-nosnippet>88</a>            ),
+<a href=#89 id=89 data-nosnippet>89</a>            row(
+<a href=#90 id=90 data-nosnippet>90</a>                <span class="string">"Refresh identity"</span>,
+<a href=#91 id=91 data-nosnippet>91</a>                keys::PEER_IDENTITY,
+<a href=#92 id=92 data-nosnippet>92</a>                State::request_peer_identity,
+<a href=#93 id=93 data-nosnippet>93</a>                <span class="kw">if </span>requested {
+<a href=#94 id=94 data-nosnippet>94</a>                    End::value(<span class="string">"Requested"</span>)
+<a href=#95 id=95 data-nosnippet>95</a>                } <span class="kw">else </span>{
+<a href=#96 id=96 data-nosnippet>96</a>                    End::Nothing
+<a href=#97 id=97 data-nosnippet>97</a>                },
+<a href=#98 id=98 data-nosnippet>98</a>                <span class="bool-val">false</span>,
+<a href=#99 id=99 data-nosnippet>99</a>                ROW,
+<a href=#100 id=100 data-nosnippet>100</a>            ),
+<a href=#101 id=101 data-nosnippet>101</a>            row(
+<a href=#102 id=102 data-nosnippet>102</a>                <span class="string">"Forget"</span>,
+<a href=#103 id=103 data-nosnippet>103</a>                keys::PEER_FORGET,
+<a href=#104 id=104 data-nosnippet>104</a>                State::ask_forget,
+<a href=#105 id=105 data-nosnippet>105</a>                End::Nothing,
+<a href=#106 id=106 data-nosnippet>106</a>                <span class="bool-val">true</span>,
+<a href=#107 id=107 data-nosnippet>107</a>                ROW,
+<a href=#108 id=108 data-nosnippet>108</a>            ),
+<a href=#109 id=109 data-nosnippet>109</a>        ))
+<a href=#110 id=110 data-nosnippet>110</a>        .with_spacing(<span class="number">0</span>),
+<a href=#111 id=111 data-nosnippet>111</a>    )
+<a href=#112 id=112 data-nosnippet>112</a>    .with_scroll_step(ROW)
+<a href=#113 id=113 data-nosnippet>113</a>    .bound_focus(BoundaryBehavior::Stop)
+<a href=#114 id=114 data-nosnippet>114</a>    .on_key(|key, s: <span class="kw-2">&amp;mut </span>State| <span class="kw">match </span>key {
+<a href=#115 id=115 data-nosnippet>115</a>        Key::Backspace =&gt; {
+<a href=#116 id=116 data-nosnippet>116</a>            s.back();
+<a href=#117 id=117 data-nosnippet>117</a>            KeyResponse::Handled
+<a href=#118 id=118 data-nosnippet>118</a>        }
+<a href=#119 id=119 data-nosnippet>119</a>        <span class="kw">_ </span>=&gt; KeyResponse::Ignored,
+<a href=#120 id=120 data-nosnippet>120</a>    })
+<a href=#121 id=121 data-nosnippet>121</a>    .popover(confirm.then_some(name).as_ref(), confirmation)
+<a href=#122 id=122 data-nosnippet>122</a>}
+<a href=#123 id=123 data-nosnippet>123</a>
+<a href=#124 id=124 data-nosnippet>124</a><span class="doccomment">/// Forget, confirmed, or Cancel, which is focused.
+<a href=#125 id=125 data-nosnippet>125</a></span><span class="comment">// Kept out of line, as `setting::row` is and for the same back-end failure,
+<a href=#126 id=126 data-nosnippet>126</a>// here on `State::forget_peer`'s address once `root_view` took the setup
+<a href=#127 id=127 data-nosnippet>127</a>// screens.
+<a href=#128 id=128 data-nosnippet>128</a></span><span class="attr">#[inline(never)]
+<a href=#129 id=129 data-nosnippet>129</a></span><span class="kw">fn </span>confirmation(name: <span class="kw-2">&amp;</span>String&lt;<span class="number">32</span>&gt;) -&gt; <span class="kw">impl </span>View&lt;Rgb565, State&gt; + <span class="kw">use</span>&lt;&gt; {
+<a href=#130 id=130 data-nosnippet>130</a>    <span class="kw">let </span><span class="kw-2">mut </span>forget: String&lt;<span class="number">48</span>&gt; = String::new();
+<a href=#131 id=131 data-nosnippet>131</a>    <span class="kw">_ </span>= core::fmt::write(<span class="kw-2">&amp;mut </span>forget, <span class="macro">format_args!</span>(<span class="string">"Forget {name}"</span>));
+<a href=#132 id=132 data-nosnippet>132</a>    card(
+<a href=#133 id=133 data-nosnippet>133</a>        VStack::new((
+<a href=#134 id=134 data-nosnippet>134</a>            choice(
+<a href=#135 id=135 data-nosnippet>135</a>                forget,
+<a href=#136 id=136 data-nosnippet>136</a>                keys::FORGET_CONFIRM,
+<a href=#137 id=137 data-nosnippet>137</a>                State::forget_peer,
+<a href=#138 id=138 data-nosnippet>138</a>                theme::RED,
+<a href=#139 id=139 data-nosnippet>139</a>                <span class="prelude-val">None</span>,
+<a href=#140 id=140 data-nosnippet>140</a>            ),
+<a href=#141 id=141 data-nosnippet>141</a>            choice(
+<a href=#142 id=142 data-nosnippet>142</a>                String::try_from(<span class="string">"Cancel"</span>).unwrap_or_default(),
+<a href=#143 id=143 data-nosnippet>143</a>                keys::FORGET_CANCEL,
+<a href=#144 id=144 data-nosnippet>144</a>                State::cancel_forget,
+<a href=#145 id=145 data-nosnippet>145</a>                theme::TEXT,
+<a href=#146 id=146 data-nosnippet>146</a>                <span class="prelude-val">None</span>,
+<a href=#147 id=147 data-nosnippet>147</a>            ),
+<a href=#148 id=148 data-nosnippet>148</a>        ))
+<a href=#149 id=149 data-nosnippet>149</a>        .with_spacing(<span class="number">0</span>),
+<a href=#150 id=150 data-nosnippet>150</a>        CONFIRM_WIDTH,
+<a href=#151 id=151 data-nosnippet>151</a>        HorizontalAlignment::Center,
+<a href=#152 id=152 data-nosnippet>152</a>        State::cancel_forget,
+<a href=#153 id=153 data-nosnippet>153</a>    )
+<a href=#154 id=154 data-nosnippet>154</a>}
+</code></pre></div></section></main></body></html>

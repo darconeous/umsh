@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-84dd6577.js";
+            window.path_to_searchindex_js = "searchindex-b0f5292e.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-7fd6cf8e.js"></script>
@@ -1093,6 +1093,17 @@ while attached, updating its view of the affected property accordingly:
 device state can change for reasons the host did not initiate, and
 publication of the new authoritative value is how the protocol reports
 that.</p>
+<p>A request from another binding is one such reason. Whatever a request
+changes, the device <strong>MUST</strong> publish to everyone else listening—an
+attached host, and the device’s <a href="#device-interface">own interface</a>—
+whether the request came from one of them or from a <a href="app-node-management.html">Node
+Management</a> administrator. Each property the
+answer reports goes out unsolicited, one at a time, as the answer
+reported it; the status that closes the request goes to the requester
+alone. This holds for every property: a property’s <em>Asynchronous
+Updates</em> entry describes the changes the device makes for its own
+reasons. A fire-and-forget request (TID 0) on a local binding is not
+answered, and what it changes need not be published.</p>
 <p>The same applies to <a href="#cmd-session-reset"><code>CMD_SESSION_RESET</code></a>, which
 reports the one change no property notification can: the session itself
 starting over. A host that receives one runs this procedure again.</p>
@@ -1116,6 +1127,32 @@ the socket where the operating system lets only the processes entitled
 to the device reach it—a file in a directory private to those
 processes—which stands in for physical possession.</li>
 </ul>
+<h2 id="device-interface"><a class="header" href="#device-interface">The Device’s Own Interface</a></h2>
+<p>A device with a settings interface of its own—a screen and keyboard, or a
+menu—may administer its own session in process, with the commands a host
+uses. The interface is a binding of its own:</p>
+<ul>
+<li><strong>Authority.</strong> Whoever is holding the device has physical possession,
+which is a serial link’s security binding (see <a href="#provisioning-security">Provisioning
+Security</a>). The interface may provision key
+material, the device identity’s private key included.</li>
+<li><strong>Reach.</strong> The device domain. Session state, the host domain, the raw
+PHY stream, and the receive queue belong to whichever host is tethered,
+and the device answers the interface’s writes to them with
+<code>STATUS_NOT_PERMITTED</code>, as it answers an
+<a href="app-node-management.html#authorization">administrator’s</a>.</li>
+<li><strong>A local binding.</strong> The device answers every request that carries a
+non-zero TID exactly once.</li>
+<li><strong>Not an attach.</strong> Its requests reset no session state, emit no
+<code>CMD_SESSION_RESET</code>, and displace no attached host.</li>
+<li><strong>Publications.</strong> The interface hears everything the device publishes,
+whether or not a host is attached, including what an attached host or
+an administrator changes. What the interface changes reaches an attached
+host the same way (see <a href="#attach-sync">Attach, Detach, and
+Synchronization</a>).</li>
+</ul>
+<p>What the interface changes is saved as anything set at the device is (see
+<a href="ulcp-saved-state.html#changes-made-at-the-device">Changes Made at the Device</a>).</p>
 <h2 id="provisioning-security"><a class="header" href="#provisioning-security">Provisioning Security</a></h2>
 <p>Provisioning moves real key material onto the device, within the limits of the
 <a href="ulcp.html#security-boundary">security boundary</a>: channel keys and
@@ -1389,6 +1426,8 @@ grants:</p>
 <tr><td>61</td><td><code>CAP_TEMPERATURE</code></td><td>—</td><td><a href="ulcp-device.html#capabilities">Device Domain</a></td></tr>
 <tr><td>62</td><td><code>CAP_MESHCORE_FORWARDER</code></td><td><code>CAP_REPEATER</code></td><td><a href="ulcp-device.html#capabilities">Device Domain</a></td></tr>
 <tr><td>63</td><td><code>CAP_LAN_BEARER</code></td><td>—</td><td><a href="ulcp-ip-multicast.html#capabilities">IP Multicast</a></td></tr>
+<tr><td>64</td><td><code>CAP_DISPLAY_BRIGHTNESS</code></td><td>—</td><td><a href="ulcp-device.html#capabilities">Device Domain</a></td></tr>
+<tr><td>65</td><td><code>CAP_KEYBOARD</code></td><td>—</td><td><a href="ulcp-device.html#capabilities">Device Domain</a></td></tr>
 <tr><td>515</td><td><code>CAP_PHY_LORA</code></td><td>—</td><td><a href="ulcp-radio.html#capabilities">Radio Control</a></td></tr>
 </tbody>
 </table>

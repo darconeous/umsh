@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["EncodeError","ParseError","TextReceiveIssue","TextSendError"],"fn":["parse_text_payload"],"mod":["codec","engine","model","text_message","validate"],"struct":["MulticastTextChatWrapper","OwnedExtensionOptions","OwnedTextMessage","UnicastTextChatWrapper"]};
+window.SIDEBAR_ITEMS = {"enum":["EncodeError","ParseError","TextSendError"],"mod":["chat","codec","engine","model","node_adapter","text_message","validate"],"struct":["OwnedExtensionOptions","OwnedTextMessage"]};

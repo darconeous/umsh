@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["Input"],"fn":["apply"]};
+window.SIDEBAR_ITEMS = {"enum":["Input"],"fn":["apply","events"]};

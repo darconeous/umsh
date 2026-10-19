@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"constant":["SIZE"],"fn":["bench","headless","main","window"]};
+window.SIDEBAR_ITEMS = {"constant":["INPUT_MS","SIZE"],"enum":["Backend"],"fn":["advance","bench","expire","headless","main","pager_key","store","tap","window"],"mod":["flash","mesh","node"]};

@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-84dd6577.js";
+            window.path_to_searchindex_js = "searchindex-b0f5292e.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-7fd6cf8e.js"></script>
@@ -284,7 +284,17 @@ to avoid wearing out the underlying storage medium if it has a limited
 number of writes.</p>
 </blockquote>
 <h4 id="counter-resynchronization"><a class="header" href="#counter-resynchronization">Counter Resynchronization</a></h4>
-<p>On first contact with a new peer, the received frame counter is accepted at face value and recorded as the baseline for future replay detection. If a known peer’s frame counter subsequently falls outside the forward window—for example, after the peer reboots and loses its persisted counter—the receiver MAY use the Echo Request MAC command (including a nonce, see <a href="mac-commands.html#echo-request">MAC Commands</a>) to determine the peer’s current counter value and re-establish a valid baseline.</p>
+<p>On first contact with a new peer, the received frame counter is accepted at face value and recorded as the baseline for future replay detection.</p>
+<p>An authenticated packet from a known peer whose frame counter is far outside the window means the two nodes disagree about that counter—for example, because the peer rebooted and lost its persisted counter. Far outside means past the forward window, or far enough behind the baseline that reordering cannot explain it (the suggested threshold is <strong>1024</strong>). The receiver MAY then re-establish a baseline with one of the two exchanges below. It SHOULD send at most one such probe to a peer every <strong>5 seconds</strong>, and a <a href="mac-commands.html#verify-frame-12">Verify Frame</a> or <a href="mac-commands.html#frame-verified-13">Frame Verified</a> never prompts one.</p>
+<p>When the packet requested an acknowledgement, the receiver—the requester—holds it without acknowledging it and sends Verify Frame to the peer, naming the packet in an <a href="packet-options.html#ack-mic-option-8">Ack MIC option</a>. The peer—the responder—proceeds as follows:</p>
+<ol>
+<li>It matches the option against the acknowledgement-requested packets it sent to the requester that are still awaiting acknowledgement. If none matches, it ignores the Verify Frame.</li>
+<li>It stops retransmitting the matched packet and answers with Frame Verified, which requests an acknowledgement.</li>
+<li>When Frame Verified is acknowledged, it treats the matched packet as acknowledged. If Frame Verified is never acknowledged, the matched packet has failed.</li>
+</ol>
+<p>The responder processes a Verify Frame whose own counter falls outside its window for the requester, since the match with an outstanding packet already shows the request is fresh. When Frame Verified is acknowledged, it adopts that counter as the requester’s new baseline. A Verify Frame whose counter falls within the window is subject to the ordinary replay rules.</p>
+<p>When a Frame Verified arrives echoing the nonce of a Verify Frame for a packet the requester still holds, the requester adopts its frame counter as the peer’s new baseline, whatever the value. It then delivers the held packet and acknowledges Frame Verified; that acknowledgement stands for the held packet too, which is not acknowledged separately. A requester that no longer holds the packet discards Frame Verified without acknowledging it, so the responder reports the packet as failed. The requester MUST choose nonces so that a Frame Verified recorded from an earlier exchange cannot match a later one.</p>
+<p>When the packet did not request an acknowledgement, the peer has nothing outstanding to match, so the receiver MAY instead send an <a href="mac-commands.html#echo-request-4">Echo Request</a> carrying a nonce. An Echo Response echoing it establishes the response’s frame counter as the peer’s new baseline. The packet that prompted the probe is dropped.</p>
 <h3 id="salt"><a class="header" href="#salt">Salt</a></h3>
 <p>The optional 2-byte salt is chosen randomly to reduce the likelihood of a nonce collision.</p>
 <h2 id="cryptographic-processing"><a class="header" href="#cryptographic-processing">Cryptographic Processing</a></h2>

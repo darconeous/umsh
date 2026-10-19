@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["Change","ChatComposeError","ChatOutput","ChatReceiveError","TextSource","TransmitUpdate"],"struct":["ArchiveDelete","ArchiveLookup","ArchiveWrite","BatchMismatch","ChannelRegistry","ChatFacade","Delivery","Drain","Insert","Mutation","Outbound","PendingBatch","Seeds","SenderResolution"]};

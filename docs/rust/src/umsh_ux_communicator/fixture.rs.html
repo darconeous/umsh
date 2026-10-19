@@ -1,97 +1,1727 @@
-<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `crates/umsh-ux-communicator/src/fixture.rs`."><title>fixture.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../static.files/rustdoc-80aa586b.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="umsh_ux_communicator" data-themes="" data-resource-suffix="" data-rustdoc-version="1.94.0-nightly (fcf67da03 2025-12-18)" data-channel="nightly" data-search-js="search-9e2438ea.js" data-stringdex-js="stringdex-a3946164.js" data-settings-js="settings-c38705f0.js" ><script src="../../static.files/storage-e2aeef58.js"></script><script defer src="../../static.files/src-script-813739b1.js"></script><script defer src="../../src-files.js"></script><script defer src="../../static.files/main-3e30299d.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-ffcac47a.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><section id="main-content" class="content"><div class="main-heading"><h1><div class="sub-heading">umsh_ux_communicator/</div>fixture.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap digits-2"><pre class="rust"><code><a href=#1 id=1 data-nosnippet>1</a><span class="doccomment">//! Stand-in content until a real node backs the interface: the chats from
-<a href=#2 id=2 data-nosnippet>2</a>//! the T-LoRa Pager mockup, so a render compares directly with it.
-<a href=#3 id=3 data-nosnippet>3</a>
-<a href=#4 id=4 data-nosnippet>4</a></span><span class="kw">use </span><span class="kw">crate</span>::avatar::{AvatarStyle, BuiltinChannel, PeerShape};
-<a href=#5 id=5 data-nosnippet>5</a><span class="kw">use </span><span class="kw">crate</span>::model::{ChatSummary, State, StatusStrip};
-<a href=#6 id=6 data-nosnippet>6</a><span class="kw">use </span>heapless::String;
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `crates/umsh-ux-communicator/src/fixture.rs`."><title>fixture.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../static.files/rustdoc-80aa586b.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="umsh_ux_communicator" data-themes="" data-resource-suffix="" data-rustdoc-version="1.94.0-nightly (fcf67da03 2025-12-18)" data-channel="nightly" data-search-js="search-9e2438ea.js" data-stringdex-js="stringdex-a3946164.js" data-settings-js="settings-c38705f0.js" ><script src="../../static.files/storage-e2aeef58.js"></script><script defer src="../../static.files/src-script-813739b1.js"></script><script defer src="../../src-files.js"></script><script defer src="../../static.files/main-3e30299d.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-ffcac47a.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><section id="main-content" class="content"><div class="main-heading"><h1><div class="sub-heading">umsh_ux_communicator/</div>fixture.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap digits-4"><pre class="rust"><code><a href=#1 id=1 data-nosnippet>1</a><span class="doccomment">//! Stand-in content until a real node backs the interface: the chats from
+<a href=#2 id=2 data-nosnippet>2</a>//! the T-LoRa Pager mockup, so a render compares directly with it. It
+<a href=#3 id=3 data-nosnippet>3</a>//! behaves as a node does: what changes is announced as events, and its
+<a href=#4 id=4 data-nosnippet>4</a>//! messages arrive and its identities are answered on timers of its own.
+<a href=#5 id=5 data-nosnippet>5</a>
+<a href=#6 id=6 data-nosnippet>6</a></span><span class="kw">use </span>core::cell::{Cell, RefCell, RefMut};
 <a href=#7 id=7 data-nosnippet>7</a>
-<a href=#8 id=8 data-nosnippet>8</a><span class="kw">fn </span>s&lt;<span class="kw">const </span>N: usize&gt;(text: <span class="kw-2">&amp;</span>str) -&gt; String&lt;N&gt; {
-<a href=#9 id=9 data-nosnippet>9</a>    String::try_from(text).expect(<span class="string">"fixture text fits"</span>)
-<a href=#10 id=10 data-nosnippet>10</a>}
-<a href=#11 id=11 data-nosnippet>11</a>
-<a href=#12 id=12 data-nosnippet>12</a><span class="kw">fn </span>chat(
-<a href=#13 id=13 data-nosnippet>13</a>    avatar: AvatarStyle,
-<a href=#14 id=14 data-nosnippet>14</a>    name: <span class="kw-2">&amp;</span>str,
-<a href=#15 id=15 data-nosnippet>15</a>    preview: <span class="kw-2">&amp;</span>str,
-<a href=#16 id=16 data-nosnippet>16</a>    age: <span class="kw-2">&amp;</span>str,
-<a href=#17 id=17 data-nosnippet>17</a>    unread: bool,
-<a href=#18 id=18 data-nosnippet>18</a>    muted: bool,
-<a href=#19 id=19 data-nosnippet>19</a>    draft: bool,
-<a href=#20 id=20 data-nosnippet>20</a>) -&gt; ChatSummary {
-<a href=#21 id=21 data-nosnippet>21</a>    ChatSummary {
-<a href=#22 id=22 data-nosnippet>22</a>        avatar,
-<a href=#23 id=23 data-nosnippet>23</a>        name: s(name),
-<a href=#24 id=24 data-nosnippet>24</a>        preview: s(preview),
-<a href=#25 id=25 data-nosnippet>25</a>        age: s(age),
-<a href=#26 id=26 data-nosnippet>26</a>        unread,
-<a href=#27 id=27 data-nosnippet>27</a>        muted,
-<a href=#28 id=28 data-nosnippet>28</a>        draft,
-<a href=#29 id=29 data-nosnippet>29</a>    }
-<a href=#30 id=30 data-nosnippet>30</a>}
-<a href=#31 id=31 data-nosnippet>31</a>
-<a href=#32 id=32 data-nosnippet>32</a><span class="kw">pub fn </span>state() -&gt; State {
-<a href=#33 id=33 data-nosnippet>33</a>    <span class="kw">let </span><span class="kw-2">mut </span>state = State {
-<a href=#34 id=34 data-nosnippet>34</a>        status: StatusStrip {
-<a href=#35 id=35 data-nosnippet>35</a>            device_name: s(<span class="string">"Juniper"</span>),
-<a href=#36 id=36 data-nosnippet>36</a>            time: s(<span class="string">"14:32"</span>),
-<a href=#37 id=37 data-nosnippet>37</a>            battery_segments: <span class="number">3</span>,
-<a href=#38 id=38 data-nosnippet>38</a>            charging: <span class="bool-val">false</span>,
-<a href=#39 id=39 data-nosnippet>39</a>            phone_linked: <span class="bool-val">true</span>,
-<a href=#40 id=40 data-nosnippet>40</a>            gnss: <span class="bool-val">true</span>,
-<a href=#41 id=41 data-nosnippet>41</a>            silent: <span class="bool-val">false</span>,
-<a href=#42 id=42 data-nosnippet>42</a>        },
-<a href=#43 id=43 data-nosnippet>43</a>        ..State::default()
-<a href=#44 id=44 data-nosnippet>44</a>    };
-<a href=#45 id=45 data-nosnippet>45</a>    <span class="kw">let </span>chats = [
-<a href=#46 id=46 data-nosnippet>46</a>        chat(
-<a href=#47 id=47 data-nosnippet>47</a>            AvatarStyle::peer([<span class="number">235</span>, <span class="number">187</span>, <span class="number">21</span>], <span class="string">"kBkQ"</span>, PeerShape::Circle),
-<a href=#48 id=48 data-nosnippet>48</a>            <span class="string">"Ridge Medic"</span>,
-<a href=#49 id=49 data-nosnippet>49</a>            <span class="string">"On my way, save me some hot coffee"</span>,
-<a href=#50 id=50 data-nosnippet>50</a>            <span class="string">"2m"</span>,
-<a href=#51 id=51 data-nosnippet>51</a>            <span class="bool-val">false</span>,
-<a href=#52 id=52 data-nosnippet>52</a>            <span class="bool-val">false</span>,
-<a href=#53 id=53 data-nosnippet>53</a>            <span class="bool-val">true</span>,
-<a href=#54 id=54 data-nosnippet>54</a>        ),
-<a href=#55 id=55 data-nosnippet>55</a>        chat(
-<a href=#56 id=56 data-nosnippet>56</a>            AvatarStyle::channel(<span class="prelude-val">None</span>, <span class="string">"Trail Crew"</span>, [<span class="number">203</span>, <span class="number">24</span>, <span class="number">112</span>]),
-<a href=#57 id=57 data-nosnippet>57</a>            <span class="string">"Trail Crew"</span>,
-<a href=#58 id=58 data-nosnippet>58</a>            <span class="string">"Sam: Will wait 10 min"</span>,
-<a href=#59 id=59 data-nosnippet>59</a>            <span class="string">"9m"</span>,
-<a href=#60 id=60 data-nosnippet>60</a>            <span class="bool-val">true</span>,
-<a href=#61 id=61 data-nosnippet>61</a>            <span class="bool-val">false</span>,
-<a href=#62 id=62 data-nosnippet>62</a>            <span class="bool-val">false</span>,
-<a href=#63 id=63 data-nosnippet>63</a>        ),
-<a href=#64 id=64 data-nosnippet>64</a>        chat(
-<a href=#65 id=65 data-nosnippet>65</a>            AvatarStyle::peer([<span class="number">179</span>, <span class="number">246</span>, <span class="number">158</span>], <span class="string">"YmRG"</span>, PeerShape::Circle),
-<a href=#66 id=66 data-nosnippet>66</a>            <span class="string">"Pat Okafor"</span>,
-<a href=#67 id=67 data-nosnippet>67</a>            <span class="string">"You: Bring the spare antenna?"</span>,
-<a href=#68 id=68 data-nosnippet>68</a>            <span class="string">"41m"</span>,
-<a href=#69 id=69 data-nosnippet>69</a>            <span class="bool-val">false</span>,
-<a href=#70 id=70 data-nosnippet>70</a>            <span class="bool-val">false</span>,
-<a href=#71 id=71 data-nosnippet>71</a>            <span class="bool-val">false</span>,
-<a href=#72 id=72 data-nosnippet>72</a>        ),
-<a href=#73 id=73 data-nosnippet>73</a>        chat(
-<a href=#74 id=74 data-nosnippet>74</a>            AvatarStyle::channel(<span class="prelude-val">Some</span>(BuiltinChannel::Public), <span class="string">"public"</span>, [<span class="number">0</span>, <span class="number">0</span>, <span class="number">0</span>]),
-<a href=#75 id=75 data-nosnippet>75</a>            <span class="string">"public"</span>,
-<a href=#76 id=76 data-nosnippet>76</a>            <span class="string">"Kit: Anyone near Mill Creek?"</span>,
-<a href=#77 id=77 data-nosnippet>77</a>            <span class="string">"1h"</span>,
-<a href=#78 id=78 data-nosnippet>78</a>            <span class="bool-val">false</span>,
-<a href=#79 id=79 data-nosnippet>79</a>            <span class="bool-val">true</span>,
-<a href=#80 id=80 data-nosnippet>80</a>            <span class="bool-val">false</span>,
-<a href=#81 id=81 data-nosnippet>81</a>        ),
-<a href=#82 id=82 data-nosnippet>82</a>        chat(
-<a href=#83 id=83 data-nosnippet>83</a>            AvatarStyle::peer([<span class="number">94</span>, <span class="number">10</span>, <span class="number">224</span>], <span class="string">"H1x*"</span>, PeerShape::Circle),
-<a href=#84 id=84 data-nosnippet>84</a>            <span class="string">"Jo Reyes"</span>,
-<a href=#85 id=85 data-nosnippet>85</a>            <span class="string">"Thanks!"</span>,
-<a href=#86 id=86 data-nosnippet>86</a>            <span class="string">"3h"</span>,
-<a href=#87 id=87 data-nosnippet>87</a>            <span class="bool-val">false</span>,
-<a href=#88 id=88 data-nosnippet>88</a>            <span class="bool-val">false</span>,
-<a href=#89 id=89 data-nosnippet>89</a>            <span class="bool-val">false</span>,
-<a href=#90 id=90 data-nosnippet>90</a>        ),
-<a href=#91 id=91 data-nosnippet>91</a>    ];
-<a href=#92 id=92 data-nosnippet>92</a>    <span class="kw">for </span>c <span class="kw">in </span>chats {
-<a href=#93 id=93 data-nosnippet>93</a>        <span class="kw">let _ </span>= state.chats.push(c);
-<a href=#94 id=94 data-nosnippet>94</a>    }
-<a href=#95 id=95 data-nosnippet>95</a>    state
-<a href=#96 id=96 data-nosnippet>96</a>}
+<a href=#8 id=8 data-nosnippet>8</a><span class="kw">use </span><span class="kw">crate</span>::avatar::{AvatarStyle, BuiltinChannel, PeerShape};
+<a href=#9 id=9 data-nosnippet>9</a><span class="kw">use </span><span class="kw">crate</span>::model::{
+<a href=#10 id=10 data-nosnippet>10</a>    Bluetooth, ChannelAccess, ChannelEntry, ChatId, ChatKind, ChatSummary, Chats, Delivery,
+<a href=#11 id=11 data-nosnippet>11</a>    Details, Direction, EventQueue, Gnss, Heard, Invite, KeyboardSettings, MAX_CHATS, MAX_HEARD,
+<a href=#12 id=12 data-nosnippet>12</a>    MAX_PEERS, MESSAGE_LEN, Member, Message, MessageId, Messages, Node, NodeEvent, Parts,
+<a href=#13 id=13 data-nosnippet>13</a>    PeerDetail, PeerEntry, PeerId, PeerSummary, Peers, Presence, Profile, Quote, RadioSettings,
+<a href=#14 id=14 data-nosnippet>14</a>    Reacted, Reaction, Reactions, Reactor, Sender, Setting, ShareUri, Shareable, State,
+<a href=#15 id=15 data-nosnippet>15</a>    StatusStrip, TRANSMIT_POWER, brightness_at, push_newest, word_match,
+<a href=#16 id=16 data-nosnippet>16</a>};
+<a href=#17 id=17 data-nosnippet>17</a><span class="kw">use </span><span class="kw">crate</span>::text::{DraftText, SharedText, TextHeap};
+<a href=#18 id=18 data-nosnippet>18</a><span class="kw">use </span>buoyant::view::{EditBuffer, EditText <span class="kw">as _</span>};
+<a href=#19 id=19 data-nosnippet>19</a><span class="kw">use </span>heapless::{String, Vec};
+<a href=#20 id=20 data-nosnippet>20</a><span class="kw">use </span>umsh_ulcp::profiles::VETTED;
+<a href=#21 id=21 data-nosnippet>21</a>
+<a href=#22 id=22 data-nosnippet>22</a><span class="kw">fn </span>s&lt;<span class="kw">const </span>N: usize&gt;(text: <span class="kw-2">&amp;</span>str) -&gt; String&lt;N&gt; {
+<a href=#23 id=23 data-nosnippet>23</a>    String::try_from(text).expect(<span class="string">"fixture text fits"</span>)
+<a href=#24 id=24 data-nosnippet>24</a>}
+<a href=#25 id=25 data-nosnippet>25</a>
+<a href=#26 id=26 data-nosnippet>26</a><span class="doccomment">/// The mockup's time, 14:32, in Unix seconds: the fixture's clock starts
+<a href=#27 id=27 data-nosnippet>27</a>/// here, on a minute.
+<a href=#28 id=28 data-nosnippet>28</a></span><span class="kw">const </span>STARTED: u32 = <span class="number">1_792_247_520</span>;
+<a href=#29 id=29 data-nosnippet>29</a>
+<a href=#30 id=30 data-nosnippet>30</a><span class="doccomment">/// How long an identity asked for takes to arrive, in milliseconds.
+<a href=#31 id=31 data-nosnippet>31</a></span><span class="kw">const </span>IDENTITY_DELAY: u64 = <span class="number">2000</span>;
+<a href=#32 id=32 data-nosnippet>32</a><span class="doccomment">/// How long after an arrival, when arrivals are paced, the next comes.
+<a href=#33 id=33 data-nosnippet>33</a></span><span class="kw">const </span>ARRIVAL_SPACING: u64 = <span class="number">40_000</span>;
+<a href=#34 id=34 data-nosnippet>34</a>
+<a href=#35 id=35 data-nosnippet>35</a><span class="doccomment">/// A channel member as the channel shows them: a name the mockup gives
+<a href=#36 id=36 data-nosnippet>36</a>/// them, or their hint when nothing better is known.
+<a href=#37 id=37 data-nosnippet>37</a></span><span class="kw">fn </span>member(name: <span class="kw-2">&amp;</span>str) -&gt; Sender {
+<a href=#38 id=38 data-nosnippet>38</a>    <span class="kw">let </span>(color, hint, shape, <span class="kw">_</span>) = member_traits(name);
+<a href=#39 id=39 data-nosnippet>39</a>    Sender {
+<a href=#40 id=40 data-nosnippet>40</a>        name: s(name),
+<a href=#41 id=41 data-nosnippet>41</a>        avatar: AvatarStyle::peer(color, hint, shape),
+<a href=#42 id=42 data-nosnippet>42</a>    }
+<a href=#43 id=43 data-nosnippet>43</a>}
+<a href=#44 id=44 data-nosnippet>44</a>
+<a href=#45 id=45 data-nosnippet>45</a><span class="doccomment">/// The channel member `name`'s color, hint, shape, and address. Those with
+<a href=#46 id=46 data-nosnippet>46</a>/// names have made their identity known; the one shown by their hint has
+<a href=#47 id=47 data-nosnippet>47</a>/// not.
+<a href=#48 id=48 data-nosnippet>48</a></span><span class="kw">fn </span>member_traits(name: <span class="kw-2">&amp;</span>str) -&gt; ([u8; <span class="number">3</span>], <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str, PeerShape, <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span><span class="lifetime">'static </span>str&gt;) {
+<a href=#49 id=49 data-nosnippet>49</a>    <span class="kw">match </span>name {
+<a href=#50 id=50 data-nosnippet>50</a>        <span class="string">"Sam" </span>=&gt; (
+<a href=#51 id=51 data-nosnippet>51</a>            [<span class="number">218</span>, <span class="number">50</span>, <span class="number">133</span>],
+<a href=#52 id=52 data-nosnippet>52</a>            <span class="string">"j3DC"</span>,
+<a href=#53 id=53 data-nosnippet>53</a>            PeerShape::Circle,
+<a href=#54 id=54 data-nosnippet>54</a>            <span class="prelude-val">Some</span>(<span class="string">"j3DCtP9oDcDsv6D8njFcSGvuiLjrAbbY2fru5HBh9gBk"</span>),
+<a href=#55 id=55 data-nosnippet>55</a>        ),
+<a href=#56 id=56 data-nosnippet>56</a>        <span class="string">"Kit" </span>| <span class="string">"Kit Moreno" </span>=&gt; (
+<a href=#57 id=57 data-nosnippet>57</a>            [<span class="number">187</span>, <span class="number">150</span>, <span class="number">80</span>],
+<a href=#58 id=58 data-nosnippet>58</a>            <span class="string">"iMyA"</span>,
+<a href=#59 id=59 data-nosnippet>59</a>            PeerShape::Circle,
+<a href=#60 id=60 data-nosnippet>60</a>            <span class="prelude-val">Some</span>(<span class="string">"iMyAmdi5uCtG278cpgWezD7WJ2nkTBYa8B92BXfWwRYR"</span>),
+<a href=#61 id=61 data-nosnippet>61</a>        ),
+<a href=#62 id=62 data-nosnippet>62</a>        <span class="string">"Lee Park" </span>=&gt; (
+<a href=#63 id=63 data-nosnippet>63</a>            [<span class="number">120</span>, <span class="number">140</span>, <span class="number">92</span>],
+<a href=#64 id=64 data-nosnippet>64</a>            <span class="string">"R9f2"</span>,
+<a href=#65 id=65 data-nosnippet>65</a>            PeerShape::Circle,
+<a href=#66 id=66 data-nosnippet>66</a>            <span class="prelude-val">Some</span>(<span class="string">"R9f2wQe8LxV3nTGk5ZbYcJhAs7mPdU1oKrN4tFiHvXyE"</span>),
+<a href=#67 id=67 data-nosnippet>67</a>        ),
+<a href=#68 id=68 data-nosnippet>68</a>        <span class="string">"Ranger Station" </span>=&gt; (
+<a href=#69 id=69 data-nosnippet>69</a>            [<span class="number">104</span>, <span class="number">44</span>, <span class="number">156</span>],
+<a href=#70 id=70 data-nosnippet>70</a>            <span class="string">"aExj"</span>,
+<a href=#71 id=71 data-nosnippet>71</a>            PeerShape::Circle,
+<a href=#72 id=72 data-nosnippet>72</a>            <span class="prelude-val">Some</span>(<span class="string">"aExjT6pRw2KsL9mQvBzN3cYhG8dUoF5iAeZ1tXkPnWr7"</span>),
+<a href=#73 id=73 data-nosnippet>73</a>        ),
+<a href=#74 id=74 data-nosnippet>74</a>        <span class="kw">_ </span>=&gt; ([<span class="number">245</span>, <span class="number">212</span>, <span class="number">31</span>], <span class="string">"4Fz*"</span>, PeerShape::Hexagon, <span class="prelude-val">None</span>),
+<a href=#75 id=75 data-nosnippet>75</a>    }
+<a href=#76 id=76 data-nosnippet>76</a>}
+<a href=#77 id=77 data-nosnippet>77</a>
+<a href=#78 id=78 data-nosnippet>78</a><span class="doccomment">/// The member known by their hint until asked, and who they turn out to be.
+<a href=#79 id=79 data-nosnippet>79</a></span><span class="kw">const </span>UNIDENTIFIED: <span class="kw-2">&amp;</span>str = <span class="string">"Member 4Fz*"</span>;
+<a href=#80 id=80 data-nosnippet>80</a><span class="kw">const </span>IDENTIFIED: (<span class="kw-2">&amp;</span>str, <span class="kw-2">&amp;</span>str) = (<span class="string">"Robin Hale"</span>, <span class="string">"4FzRC8jVNGDYhYCXKWyHDHzm8MakqsCxtGBGDpQdZDtk"</span>);
+<a href=#81 id=81 data-nosnippet>81</a>
+<a href=#82 id=82 data-nosnippet>82</a><span class="doccomment">/// What is known of the channel member `name`, who is `identified` when
+<a href=#83 id=83 data-nosnippet>83</a>/// their identity has arrived.
+<a href=#84 id=84 data-nosnippet>84</a></span><span class="kw">fn </span>member_card(name: <span class="kw-2">&amp;</span>str, identified: bool) -&gt; Member {
+<a href=#85 id=85 data-nosnippet>85</a>    <span class="kw">let </span>(color, hint, shape, address) = member_traits(name);
+<a href=#86 id=86 data-nosnippet>86</a>    <span class="kw">if </span>name == UNIDENTIFIED &amp;&amp; identified {
+<a href=#87 id=87 data-nosnippet>87</a>        <span class="kw">let </span>(name, address) = IDENTIFIED;
+<a href=#88 id=88 data-nosnippet>88</a>        <span class="kw">let </span>hint = <span class="kw-2">&amp;</span>address[..<span class="number">4</span>];
+<a href=#89 id=89 data-nosnippet>89</a>        <span class="kw">return </span>Member {
+<a href=#90 id=90 data-nosnippet>90</a>            sender: Sender {
+<a href=#91 id=91 data-nosnippet>91</a>                name: s(name),
+<a href=#92 id=92 data-nosnippet>92</a>                avatar: AvatarStyle::peer(color, hint, shape),
+<a href=#93 id=93 data-nosnippet>93</a>            },
+<a href=#94 id=94 data-nosnippet>94</a>            hint: s(hint),
+<a href=#95 id=95 data-nosnippet>95</a>            address: <span class="prelude-val">Some</span>(s(address)),
+<a href=#96 id=96 data-nosnippet>96</a>            heard: s(<span class="string">"2m"</span>),
+<a href=#97 id=97 data-nosnippet>97</a>            saved: <span class="bool-val">false</span>,
+<a href=#98 id=98 data-nosnippet>98</a>        };
+<a href=#99 id=99 data-nosnippet>99</a>    }
+<a href=#100 id=100 data-nosnippet>100</a>    Member {
+<a href=#101 id=101 data-nosnippet>101</a>        sender: member(name),
+<a href=#102 id=102 data-nosnippet>102</a>        hint: s(hint),
+<a href=#103 id=103 data-nosnippet>103</a>        address: address.map(s),
+<a href=#104 id=104 data-nosnippet>104</a>        heard: s(<span class="string">"2m"</span>),
+<a href=#105 id=105 data-nosnippet>105</a>        saved: <span class="bool-val">false</span>,
+<a href=#106 id=106 data-nosnippet>106</a>    }
+<a href=#107 id=107 data-nosnippet>107</a>}
+<a href=#108 id=108 data-nosnippet>108</a>
+<a href=#109 id=109 data-nosnippet>109</a><span class="doccomment">/// A chat as the fixture keeps it.
+<a href=#110 id=110 data-nosnippet>110</a></span><span class="kw">struct </span>ChatRow {
+<a href=#111 id=111 data-nosnippet>111</a>    id: ChatId,
+<a href=#112 id=112 data-nosnippet>112</a>    avatar: AvatarStyle,
+<a href=#113 id=113 data-nosnippet>113</a>    name: String&lt;<span class="number">32</span>&gt;,
+<a href=#114 id=114 data-nosnippet>114</a>    kind: ChatKind,
+<a href=#115 id=115 data-nosnippet>115</a>    unread: bool,
+<a href=#116 id=116 data-nosnippet>116</a>    muted: bool,
+<a href=#117 id=117 data-nosnippet>117</a>    <span class="doccomment">/// When it was last active, in Unix seconds.
+<a href=#118 id=118 data-nosnippet>118</a>    </span>activity: u32,
+<a href=#119 id=119 data-nosnippet>119</a>    draft: <span class="prelude-ty">Option</span>&lt;SharedText&gt;,
+<a href=#120 id=120 data-nosnippet>120</a>}
+<a href=#121 id=121 data-nosnippet>121</a>
+<a href=#122 id=122 data-nosnippet>122</a><span class="doccomment">/// How long before the fixture starts the mockup's chats were last
+<a href=#123 id=123 data-nosnippet>123</a>/// active, in seconds.
+<a href=#124 id=124 data-nosnippet>124</a></span><span class="kw">fn </span>quiet_for(chat: ChatId) -&gt; u32 {
+<a href=#125 id=125 data-nosnippet>125</a>    <span class="kw">match </span>chat {
+<a href=#126 id=126 data-nosnippet>126</a>        <span class="number">1 </span>=&gt; <span class="number">2 </span>* <span class="number">60</span>,
+<a href=#127 id=127 data-nosnippet>127</a>        <span class="number">2 </span>=&gt; <span class="number">9 </span>* <span class="number">60</span>,
+<a href=#128 id=128 data-nosnippet>128</a>        <span class="number">3 </span>=&gt; <span class="number">41 </span>* <span class="number">60</span>,
+<a href=#129 id=129 data-nosnippet>129</a>        <span class="number">4 </span>=&gt; <span class="number">60 </span>* <span class="number">60</span>,
+<a href=#130 id=130 data-nosnippet>130</a>        <span class="number">5 </span>=&gt; <span class="number">3 </span>* <span class="number">60 </span>* <span class="number">60</span>,
+<a href=#131 id=131 data-nosnippet>131</a>        <span class="number">6 </span>=&gt; <span class="number">5 </span>* <span class="number">60 </span>* <span class="number">60</span>,
+<a href=#132 id=132 data-nosnippet>132</a>        <span class="kw">_ </span>=&gt; <span class="number">6 </span>* <span class="number">60 </span>* <span class="number">60</span>,
+<a href=#133 id=133 data-nosnippet>133</a>    }
+<a href=#134 id=134 data-nosnippet>134</a>}
+<a href=#135 id=135 data-nosnippet>135</a>
+<a href=#136 id=136 data-nosnippet>136</a><span class="doccomment">/// The mockup's chats, most recently active first, with their drafts kept
+<a href=#137 id=137 data-nosnippet>137</a>/// on `heap`.
+<a href=#138 id=138 data-nosnippet>138</a></span><span class="kw">fn </span>mockup_chats(heap: TextHeap) -&gt; [ChatRow; <span class="number">7</span>] {
+<a href=#139 id=139 data-nosnippet>139</a>    <span class="kw">let </span>row = |id, avatar, name, kind, unread, muted, draft: <span class="kw-2">&amp;</span>str| ChatRow {
+<a href=#140 id=140 data-nosnippet>140</a>        id,
+<a href=#141 id=141 data-nosnippet>141</a>        avatar,
+<a href=#142 id=142 data-nosnippet>142</a>        name: s(name),
+<a href=#143 id=143 data-nosnippet>143</a>        kind,
+<a href=#144 id=144 data-nosnippet>144</a>        unread,
+<a href=#145 id=145 data-nosnippet>145</a>        muted,
+<a href=#146 id=146 data-nosnippet>146</a>        activity: STARTED - quiet_for(id),
+<a href=#147 id=147 data-nosnippet>147</a>        draft: (!draft.is_empty())
+<a href=#148 id=148 data-nosnippet>148</a>            .then(|| SharedText::new(heap, draft))
+<a href=#149 id=149 data-nosnippet>149</a>            .flatten(),
+<a href=#150 id=150 data-nosnippet>150</a>    };
+<a href=#151 id=151 data-nosnippet>151</a>    <span class="kw">let </span>peer = |hops| ChatKind::Peer { hops: <span class="prelude-val">Some</span>(hops) };
+<a href=#152 id=152 data-nosnippet>152</a>    <span class="kw">let </span>channel = |access| ChatKind::Channel { access };
+<a href=#153 id=153 data-nosnippet>153</a>    [
+<a href=#154 id=154 data-nosnippet>154</a>        row(
+<a href=#155 id=155 data-nosnippet>155</a>            <span class="number">1</span>,
+<a href=#156 id=156 data-nosnippet>156</a>            AvatarStyle::peer([<span class="number">235</span>, <span class="number">187</span>, <span class="number">21</span>], <span class="string">"kBkQ"</span>, PeerShape::Circle),
+<a href=#157 id=157 data-nosnippet>157</a>            <span class="string">"Ridge Medic"</span>,
+<a href=#158 id=158 data-nosnippet>158</a>            peer(<span class="number">2</span>),
+<a href=#159 id=159 data-nosnippet>159</a>            <span class="bool-val">false</span>,
+<a href=#160 id=160 data-nosnippet>160</a>            <span class="bool-val">false</span>,
+<a href=#161 id=161 data-nosnippet>161</a>            <span class="string">"On my way, save me some hot coffee"</span>,
+<a href=#162 id=162 data-nosnippet>162</a>        ),
+<a href=#163 id=163 data-nosnippet>163</a>        row(
+<a href=#164 id=164 data-nosnippet>164</a>            <span class="number">2</span>,
+<a href=#165 id=165 data-nosnippet>165</a>            AvatarStyle::channel(<span class="prelude-val">None</span>, <span class="string">"Trail Crew"</span>, [<span class="number">203</span>, <span class="number">24</span>, <span class="number">112</span>]),
+<a href=#166 id=166 data-nosnippet>166</a>            <span class="string">"Trail Crew"</span>,
+<a href=#167 id=167 data-nosnippet>167</a>            channel(ChannelAccess::Private),
+<a href=#168 id=168 data-nosnippet>168</a>            <span class="bool-val">true</span>,
+<a href=#169 id=169 data-nosnippet>169</a>            <span class="bool-val">false</span>,
+<a href=#170 id=170 data-nosnippet>170</a>            <span class="string">""</span>,
+<a href=#171 id=171 data-nosnippet>171</a>        ),
+<a href=#172 id=172 data-nosnippet>172</a>        row(
+<a href=#173 id=173 data-nosnippet>173</a>            <span class="number">3</span>,
+<a href=#174 id=174 data-nosnippet>174</a>            AvatarStyle::peer([<span class="number">179</span>, <span class="number">246</span>, <span class="number">158</span>], <span class="string">"YmRG"</span>, PeerShape::Circle),
+<a href=#175 id=175 data-nosnippet>175</a>            <span class="string">"Pat Okafor"</span>,
+<a href=#176 id=176 data-nosnippet>176</a>            peer(<span class="number">1</span>),
+<a href=#177 id=177 data-nosnippet>177</a>            <span class="bool-val">false</span>,
+<a href=#178 id=178 data-nosnippet>178</a>            <span class="bool-val">false</span>,
+<a href=#179 id=179 data-nosnippet>179</a>            <span class="string">""</span>,
+<a href=#180 id=180 data-nosnippet>180</a>        ),
+<a href=#181 id=181 data-nosnippet>181</a>        row(
+<a href=#182 id=182 data-nosnippet>182</a>            <span class="number">4</span>,
+<a href=#183 id=183 data-nosnippet>183</a>            AvatarStyle::channel(<span class="prelude-val">Some</span>(BuiltinChannel::Public), <span class="string">"Public"</span>, [<span class="number">0</span>, <span class="number">0</span>, <span class="number">0</span>]),
+<a href=#184 id=184 data-nosnippet>184</a>            <span class="string">"Public"</span>,
+<a href=#185 id=185 data-nosnippet>185</a>            channel(ChannelAccess::Named),
+<a href=#186 id=186 data-nosnippet>186</a>            <span class="bool-val">false</span>,
+<a href=#187 id=187 data-nosnippet>187</a>            <span class="bool-val">true</span>,
+<a href=#188 id=188 data-nosnippet>188</a>            <span class="string">""</span>,
+<a href=#189 id=189 data-nosnippet>189</a>        ),
+<a href=#190 id=190 data-nosnippet>190</a>        row(
+<a href=#191 id=191 data-nosnippet>191</a>            <span class="number">5</span>,
+<a href=#192 id=192 data-nosnippet>192</a>            AvatarStyle::peer([<span class="number">94</span>, <span class="number">10</span>, <span class="number">224</span>], <span class="string">"H1x*"</span>, PeerShape::Circle),
+<a href=#193 id=193 data-nosnippet>193</a>            <span class="string">"Jo Reyes"</span>,
+<a href=#194 id=194 data-nosnippet>194</a>            peer(<span class="number">3</span>),
+<a href=#195 id=195 data-nosnippet>195</a>            <span class="bool-val">false</span>,
+<a href=#196 id=196 data-nosnippet>196</a>            <span class="bool-val">false</span>,
+<a href=#197 id=197 data-nosnippet>197</a>            <span class="string">""</span>,
+<a href=#198 id=198 data-nosnippet>198</a>        ),
+<a href=#199 id=199 data-nosnippet>199</a>        row(
+<a href=#200 id=200 data-nosnippet>200</a>            <span class="number">6</span>,
+<a href=#201 id=201 data-nosnippet>201</a>            AvatarStyle::channel(<span class="prelude-val">Some</span>(BuiltinChannel::Emergency), <span class="string">"EMERGENCY"</span>, [<span class="number">0</span>, <span class="number">0</span>, <span class="number">0</span>]),
+<a href=#202 id=202 data-nosnippet>202</a>            <span class="string">"EMERGENCY"</span>,
+<a href=#203 id=203 data-nosnippet>203</a>            channel(ChannelAccess::Clear),
+<a href=#204 id=204 data-nosnippet>204</a>            <span class="bool-val">false</span>,
+<a href=#205 id=205 data-nosnippet>205</a>            <span class="bool-val">false</span>,
+<a href=#206 id=206 data-nosnippet>206</a>            <span class="string">""</span>,
+<a href=#207 id=207 data-nosnippet>207</a>        ),
+<a href=#208 id=208 data-nosnippet>208</a>        row(
+<a href=#209 id=209 data-nosnippet>209</a>            STATES,
+<a href=#210 id=210 data-nosnippet>210</a>            AvatarStyle::peer([<span class="number">218</span>, <span class="number">50</span>, <span class="number">133</span>], <span class="string">"j3DC"</span>, PeerShape::Circle),
+<a href=#211 id=211 data-nosnippet>211</a>            <span class="string">"Sam"</span>,
+<a href=#212 id=212 data-nosnippet>212</a>            peer(<span class="number">2</span>),
+<a href=#213 id=213 data-nosnippet>213</a>            <span class="bool-val">false</span>,
+<a href=#214 id=214 data-nosnippet>214</a>            <span class="bool-val">false</span>,
+<a href=#215 id=215 data-nosnippet>215</a>            <span class="string">""</span>,
+<a href=#216 id=216 data-nosnippet>216</a>        ),
+<a href=#217 id=217 data-nosnippet>217</a>    ]
+<a href=#218 id=218 data-nosnippet>218</a>}
+<a href=#219 id=219 data-nosnippet>219</a>
+<a href=#220 id=220 data-nosnippet>220</a><span class="doccomment">/// The chat that shows what can become of a message on its way: since
+<a href=#221 id=221 data-nosnippet>221</a>/// yesterday, with Sam.
+<a href=#222 id=222 data-nosnippet>222</a></span><span class="kw">const </span>STATES: ChatId = <span class="number">7</span>;
+<a href=#223 id=223 data-nosnippet>223</a>
+<a href=#224 id=224 data-nosnippet>224</a><span class="doccomment">/// Who sent a message.
+<a href=#225 id=225 data-nosnippet>225</a></span><span class="attr">#[derive(Clone, Copy)]
+<a href=#226 id=226 data-nosnippet>226</a></span><span class="kw">enum </span>From {
+<a href=#227 id=227 data-nosnippet>227</a>    Me,
+<a href=#228 id=228 data-nosnippet>228</a>    <span class="doccomment">/// The peer of a peer chat.
+<a href=#229 id=229 data-nosnippet>229</a>    </span>Peer,
+<a href=#230 id=230 data-nosnippet>230</a>    <span class="doccomment">/// A member of a channel.
+<a href=#231 id=231 data-nosnippet>231</a>    </span>Member(<span class="kw-2">&amp;</span><span class="lifetime">'static </span>str),
+<a href=#232 id=232 data-nosnippet>232</a>}
+<a href=#233 id=233 data-nosnippet>233</a>
+<a href=#234 id=234 data-nosnippet>234</a><span class="doccomment">/// The messages of `chat`, oldest first.
+<a href=#235 id=235 data-nosnippet>235</a></span><span class="kw">fn </span>messages(chat: ChatId) -&gt; <span class="kw-2">&amp;</span><span class="lifetime">'static </span>[(From, <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str)] {
+<a href=#236 id=236 data-nosnippet>236</a>    <span class="kw">match </span>chat {
+<a href=#237 id=237 data-nosnippet>237</a>        <span class="number">1 </span>=&gt; <span class="kw-2">&amp;</span>[
+<a href=#238 id=238 data-nosnippet>238</a>            (
+<a href=#239 id=239 data-nosnippet>239</a>                From::Peer,
+<a href=#240 id=240 data-nosnippet>240</a>                <span class="string">"At the north junction yet? Sam says the creek is high"</span>,
+<a href=#241 id=241 data-nosnippet>241</a>            ),
+<a href=#242 id=242 data-nosnippet>242</a>            (From::Me, <span class="string">"Just passed it. ETA 20 min."</span>),
+<a href=#243 id=243 data-nosnippet>243</a>            (From::Peer, <span class="string">"See you at the hut"</span>),
+<a href=#244 id=244 data-nosnippet>244</a>        ],
+<a href=#245 id=245 data-nosnippet>245</a>        <span class="number">2 </span>=&gt; <span class="kw-2">&amp;</span>[
+<a href=#246 id=246 data-nosnippet>246</a>            (From::Member(<span class="string">"Sam"</span>), <span class="string">"At the saddle"</span>),
+<a href=#247 id=247 data-nosnippet>247</a>            (From::Member(<span class="string">"Member 4Fz*"</span>), <span class="string">"Two of us behind you"</span>),
+<a href=#248 id=248 data-nosnippet>248</a>            (From::Member(<span class="string">"Sam"</span>), <span class="string">"Will wait 10 min"</span>),
+<a href=#249 id=249 data-nosnippet>249</a>        ],
+<a href=#250 id=250 data-nosnippet>250</a>        <span class="number">3 </span>=&gt; <span class="kw-2">&amp;</span>[
+<a href=#251 id=251 data-nosnippet>251</a>            (From::Peer, <span class="string">"Is Bald Knob back up?"</span>),
+<a href=#252 id=252 data-nosnippet>252</a>            (From::Me, <span class="string">"Not yet, Saturday."</span>),
+<a href=#253 id=253 data-nosnippet>253</a>            (From::Me, <span class="string">"Bring the spare antenna?"</span>),
+<a href=#254 id=254 data-nosnippet>254</a>        ],
+<a href=#255 id=255 data-nosnippet>255</a>        <span class="number">4 </span>=&gt; <span class="kw-2">&amp;</span>[(From::Member(<span class="string">"Kit"</span>), <span class="string">"Anyone near Mill Creek?"</span>)],
+<a href=#256 id=256 data-nosnippet>256</a>        <span class="number">6 </span>=&gt; <span class="kw-2">&amp;</span>[
+<a href=#257 id=257 data-nosnippet>257</a>            (From::Member(<span class="string">"Kit Moreno"</span>), <span class="string">"Heard a slide near mile 3?"</span>),
+<a href=#258 id=258 data-nosnippet>258</a>            (From::Member(<span class="string">"Lee Park"</span>), <span class="string">"Rockslide on FS 42 at mile 3"</span>),
+<a href=#259 id=259 data-nosnippet>259</a>            (From::Member(<span class="string">"Ranger Station"</span>), <span class="string">"Copy. Crew on the way."</span>),
+<a href=#260 id=260 data-nosnippet>260</a>        ],
+<a href=#261 id=261 data-nosnippet>261</a>        <span class="number">5 </span>=&gt; <span class="kw-2">&amp;</span>[
+<a href=#262 id=262 data-nosnippet>262</a>            (From::Me, <span class="string">"Which channel is base camp on?"</span>),
+<a href=#263 id=263 data-nosnippet>263</a>            (From::Peer, <span class="string">"This one:"</span>),
+<a href=#264 id=264 data-nosnippet>264</a>            <span class="comment">// An invitation, and nothing besides.
+<a href=#265 id=265 data-nosnippet>265</a>            </span>(From::Peer, <span class="string">""</span>),
+<a href=#266 id=266 data-nosnippet>266</a>            (
+<a href=#267 id=267 data-nosnippet>267</a>                From::Peer,
+<a href=#268 id=268 data-nosnippet>268</a>                <span class="string">"Hut is open and the stove works. Water from the spring is fine if you \
+<a href=#269 id=269 data-nosnippet>269</a>                 filter it. Snow starts about 200 m above the hut, so leave the trail \
+<a href=#270 id=270 data-nosnippet>270</a>                 runners and bring boots. The bunk room sleeps six; we have four, so there \
+<a href=#271 id=271 data-nosnippet>271</a>                 is room for you and Sam. Radio check at 19:00 on the usual channel."</span>,
+<a href=#272 id=272 data-nosnippet>272</a>            ),
+<a href=#273 id=273 data-nosnippet>273</a>            (From::Peer, <span class="string">"Thanks!"</span>),
+<a href=#274 id=274 data-nosnippet>274</a>        ],
+<a href=#275 id=275 data-nosnippet>275</a>        STATES =&gt; <span class="kw-2">&amp;</span>[
+<a href=#276 id=276 data-nosnippet>276</a>            (From::Me, <span class="string">"Leaving at 7"</span>),
+<a href=#277 id=277 data-nosnippet>277</a>            (From::Peer, <span class="string">"Stove is lit"</span>),
+<a href=#278 id=278 data-nosnippet>278</a>            (From::Peer, <span class="string">"Coffee in ten"</span>),
+<a href=#279 id=279 data-nosnippet>279</a>            <span class="comment">// Taken back.
+<a href=#280 id=280 data-nosnippet>280</a>            </span>(From::Peer, <span class="string">""</span>),
+<a href=#281 id=281 data-nosnippet>281</a>            <span class="comment">// Asked for again.
+<a href=#282 id=282 data-nosnippet>282</a>            </span>(From::Peer, <span class="string">""</span>),
+<a href=#283 id=283 data-nosnippet>283</a>            (From::Peer, <span class="string">"It covers the north side now"</span>),
+<a href=#284 id=284 data-nosnippet>284</a>            <span class="comment">// Not to come.
+<a href=#285 id=285 data-nosnippet>285</a>            </span>(From::Peer, <span class="string">""</span>),
+<a href=#286 id=286 data-nosnippet>286</a>            (From::Me, <span class="string">"How is the trail past the creek?"</span>),
+<a href=#287 id=287 data-nosnippet>287</a>            (From::Peer, <span class="string">"Washed out past the second crossing"</span>),
+<a href=#288 id=288 data-nosnippet>288</a>            (From::Peer, <span class="string">"Snow starts above the hut, so bring boots"</span>),
+<a href=#289 id=289 data-nosnippet>289</a>        ],
+<a href=#290 id=290 data-nosnippet>290</a>        <span class="kw">_ </span>=&gt; <span class="kw-2">&amp;</span>[],
+<a href=#291 id=291 data-nosnippet>291</a>    }
+<a href=#292 id=292 data-nosnippet>292</a>}
+<a href=#293 id=293 data-nosnippet>293</a>
+<a href=#294 id=294 data-nosnippet>294</a><span class="doccomment">/// The channel a message of the fixture's invites to, and its link, which
+<a href=#295 id=295 data-nosnippet>295</a>/// is the whole of what the message says.
+<a href=#296 id=296 data-nosnippet>296</a></span><span class="kw">fn </span>invite(heap: TextHeap, chat: ChatId, index: usize) -&gt; <span class="prelude-ty">Option</span>&lt;(Invite, ShareUri)&gt; {
+<a href=#297 id=297 data-nosnippet>297</a>    <span class="kw">if </span><span class="macro">chat !</span>= <span class="number">5 </span>|| <span class="macro">index !</span>= <span class="number">2 </span>{
+<a href=#298 id=298 data-nosnippet>298</a>        <span class="kw">return </span><span class="prelude-val">None</span>;
+<a href=#299 id=299 data-nosnippet>299</a>    }
+<a href=#300 id=300 data-nosnippet>300</a>    <span class="kw">let </span>invite = Invite {
+<a href=#301 id=301 data-nosnippet>301</a>        name: SharedText::new(heap, <span class="string">"Base Camp"</span>)<span class="question-mark">?</span>,
+<a href=#302 id=302 data-nosnippet>302</a>        builtin: <span class="prelude-val">None</span>,
+<a href=#303 id=303 data-nosnippet>303</a>        tint: [<span class="number">46</span>, <span class="number">125</span>, <span class="number">196</span>],
+<a href=#304 id=304 data-nosnippet>304</a>        access: ChannelAccess::Private,
+<a href=#305 id=305 data-nosnippet>305</a>        key: umsh_core::base58::decode(JOINED_KEY.as_bytes()).ok()<span class="question-mark">?</span>,
+<a href=#306 id=306 data-nosnippet>306</a>    };
+<a href=#307 id=307 data-nosnippet>307</a>    <span class="prelude-val">Some</span>((invite, private_uri(JOINED_KEY, <span class="string">"Base Camp"</span>)<span class="question-mark">?</span>))
+<a href=#308 id=308 data-nosnippet>308</a>}
+<a href=#309 id=309 data-nosnippet>309</a>
+<a href=#310 id=310 data-nosnippet>310</a><span class="doccomment">/// Others' reactions to a message of the fixture's, one each.
+<a href=#311 id=311 data-nosnippet>311</a></span><span class="kw">fn </span>their_reactions(chat: ChatId, index: usize) -&gt; <span class="kw-2">&amp;</span><span class="lifetime">'static </span>[(From, Reaction)] {
+<a href=#312 id=312 data-nosnippet>312</a>    <span class="kw">match </span>(chat, index) {
+<a href=#313 id=313 data-nosnippet>313</a>        (<span class="number">1</span>, <span class="number">1</span>) =&gt; <span class="kw-2">&amp;</span>[(From::Peer, Reaction::Heart)],
+<a href=#314 id=314 data-nosnippet>314</a>        (<span class="number">2</span>, <span class="number">1</span>) =&gt; <span class="kw-2">&amp;</span>[
+<a href=#315 id=315 data-nosnippet>315</a>            (From::Member(<span class="string">"Sam"</span>), Reaction::ThumbsUp),
+<a href=#316 id=316 data-nosnippet>316</a>            (From::Member(<span class="string">"Member 4Fz*"</span>), Reaction::Exclaim),
+<a href=#317 id=317 data-nosnippet>317</a>        ],
+<a href=#318 id=318 data-nosnippet>318</a>        <span class="kw">_ </span>=&gt; <span class="kw-2">&amp;</span>[],
+<a href=#319 id=319 data-nosnippet>319</a>    }
+<a href=#320 id=320 data-nosnippet>320</a>}
+<a href=#321 id=321 data-nosnippet>321</a>
+<a href=#322 id=322 data-nosnippet>322</a><span class="doccomment">/// Messages that arrive after the fixture starts, in order.
+<a href=#323 id=323 data-nosnippet>323</a></span><span class="kw">const </span>ARRIVALS: [(ChatId, From, <span class="kw-2">&amp;</span>str); <span class="number">3</span>] = [
+<a href=#324 id=324 data-nosnippet>324</a>    (
+<a href=#325 id=325 data-nosnippet>325</a>        <span class="number">2</span>,
+<a href=#326 id=326 data-nosnippet>326</a>        From::Member(<span class="string">"Sam"</span>),
+<a href=#327 id=327 data-nosnippet>327</a>        <span class="string">"Will wait 10 min at the saddle, then we head down"</span>,
+<a href=#328 id=328 data-nosnippet>328</a>    ),
+<a href=#329 id=329 data-nosnippet>329</a>    (<span class="number">3</span>, From::Peer, <span class="string">"Got the antenna. Bringing two."</span>),
+<a href=#330 id=330 data-nosnippet>330</a>    (<span class="number">5</span>, From::Peer, <span class="string">"Are you on the ridge yet?"</span>),
+<a href=#331 id=331 data-nosnippet>331</a>];
+<a href=#332 id=332 data-nosnippet>332</a>
+<a href=#333 id=333 data-nosnippet>333</a><span class="doccomment">/// How far a message of the fixture's got.
+<a href=#334 id=334 data-nosnippet>334</a></span><span class="kw">fn </span>delivery(chat: ChatId, index: usize) -&gt; Delivery {
+<a href=#335 id=335 data-nosnippet>335</a>    <span class="kw">if </span>(chat, index) == (<span class="number">3</span>, <span class="number">2</span>) || (chat, index) == (STATES, <span class="number">7</span>) {
+<a href=#336 id=336 data-nosnippet>336</a>        Delivery::Unconfirmed
+<a href=#337 id=337 data-nosnippet>337</a>    } <span class="kw">else </span>{
+<a href=#338 id=338 data-nosnippet>338</a>        Delivery::Delivered
+<a href=#339 id=339 data-nosnippet>339</a>    }
+<a href=#340 id=340 data-nosnippet>340</a>}
+<a href=#341 id=341 data-nosnippet>341</a>
+<a href=#342 id=342 data-nosnippet>342</a><span class="doccomment">/// What became of one of the fixture's messages, besides arriving whole.
+<a href=#343 id=343 data-nosnippet>343</a></span><span class="attr">#[derive(Clone, Copy)]
+<a href=#344 id=344 data-nosnippet>344</a></span><span class="kw">struct </span>Condition {
+<a href=#345 id=345 data-nosnippet>345</a>    presence: Presence,
+<a href=#346 id=346 data-nosnippet>346</a>    edited: bool,
+<a href=#347 id=347 data-nosnippet>347</a>    deleted: bool,
+<a href=#348 id=348 data-nosnippet>348</a>    late: bool,
+<a href=#349 id=349 data-nosnippet>349</a>    forward_secret: bool,
+<a href=#350 id=350 data-nosnippet>350</a>    <span class="doccomment">/// The message it replies to, by its place.
+<a href=#351 id=351 data-nosnippet>351</a>    </span>reply: <span class="prelude-ty">Option</span>&lt;usize&gt;,
+<a href=#352 id=352 data-nosnippet>352</a>    parts: <span class="prelude-ty">Option</span>&lt;Parts&gt;,
+<a href=#353 id=353 data-nosnippet>353</a>}
+<a href=#354 id=354 data-nosnippet>354</a>
+<a href=#355 id=355 data-nosnippet>355</a><span class="kw">fn </span>condition(chat: ChatId, index: usize) -&gt; Condition {
+<a href=#356 id=356 data-nosnippet>356</a>    <span class="kw">let </span><span class="kw-2">mut </span>condition = Condition {
+<a href=#357 id=357 data-nosnippet>357</a>        presence: Presence::Present,
+<a href=#358 id=358 data-nosnippet>358</a>        edited: <span class="bool-val">false</span>,
+<a href=#359 id=359 data-nosnippet>359</a>        deleted: <span class="bool-val">false</span>,
+<a href=#360 id=360 data-nosnippet>360</a>        late: <span class="bool-val">false</span>,
+<a href=#361 id=361 data-nosnippet>361</a>        forward_secret: <span class="bool-val">false</span>,
+<a href=#362 id=362 data-nosnippet>362</a>        reply: <span class="prelude-val">None</span>,
+<a href=#363 id=363 data-nosnippet>363</a>        parts: <span class="prelude-val">None</span>,
+<a href=#364 id=364 data-nosnippet>364</a>    };
+<a href=#365 id=365 data-nosnippet>365</a>    <span class="kw">if </span>chat == STATES {
+<a href=#366 id=366 data-nosnippet>366</a>        <span class="kw">match </span>index {
+<a href=#367 id=367 data-nosnippet>367</a>            <span class="number">2 </span>=&gt; condition.edited = <span class="bool-val">true</span>,
+<a href=#368 id=368 data-nosnippet>368</a>            <span class="number">3 </span>=&gt; condition.deleted = <span class="bool-val">true</span>,
+<a href=#369 id=369 data-nosnippet>369</a>            <span class="number">4 </span>=&gt; condition.presence = Presence::PendingRepair,
+<a href=#370 id=370 data-nosnippet>370</a>            <span class="number">5 </span>=&gt; condition.late = <span class="bool-val">true</span>,
+<a href=#371 id=371 data-nosnippet>371</a>            <span class="number">6 </span>=&gt; condition.presence = Presence::Unavailable,
+<a href=#372 id=372 data-nosnippet>372</a>            <span class="number">7 </span>=&gt; condition.forward_secret = <span class="bool-val">true</span>,
+<a href=#373 id=373 data-nosnippet>373</a>            <span class="number">8 </span>=&gt; condition.reply = <span class="prelude-val">Some</span>(<span class="number">7</span>),
+<a href=#374 id=374 data-nosnippet>374</a>            <span class="number">9 </span>=&gt; {
+<a href=#375 id=375 data-nosnippet>375</a>                condition.parts = <span class="prelude-val">Some</span>(Parts {
+<a href=#376 id=376 data-nosnippet>376</a>                    count: <span class="number">3</span>,
+<a href=#377 id=377 data-nosnippet>377</a>                    received: <span class="number">0b011</span>,
+<a href=#378 id=378 data-nosnippet>378</a>                    lost: <span class="number">0</span>,
+<a href=#379 id=379 data-nosnippet>379</a>                });
+<a href=#380 id=380 data-nosnippet>380</a>            }
+<a href=#381 id=381 data-nosnippet>381</a>            <span class="kw">_ </span>=&gt; {}
+<a href=#382 id=382 data-nosnippet>382</a>        }
+<a href=#383 id=383 data-nosnippet>383</a>    }
+<a href=#384 id=384 data-nosnippet>384</a>    condition
+<a href=#385 id=385 data-nosnippet>385</a>}
+<a href=#386 id=386 data-nosnippet>386</a>
+<a href=#387 id=387 data-nosnippet>387</a><span class="doccomment">/// What a reply quotes of `message`, in the chat called `chat_name`.
+<a href=#388 id=388 data-nosnippet>388</a></span><span class="kw">fn </span>quote_of(heap: TextHeap, message: <span class="kw-2">&amp;</span>Message, chat_name: <span class="kw-2">&amp;</span>str) -&gt; <span class="prelude-ty">Option</span>&lt;Quote&gt; {
+<a href=#389 id=389 data-nosnippet>389</a>    <span class="kw">let </span>name = <span class="kw">match </span>(message.direction, <span class="kw-2">&amp;</span>message.sender) {
+<a href=#390 id=390 data-nosnippet>390</a>        (Direction::Outbound, <span class="kw">_</span>) =&gt; <span class="prelude-val">None</span>,
+<a href=#391 id=391 data-nosnippet>391</a>        (Direction::Inbound, <span class="prelude-val">Some</span>(sender)) =&gt; <span class="prelude-val">Some</span>(SharedText::new(heap, <span class="kw-2">&amp;</span>sender.name)<span class="question-mark">?</span>),
+<a href=#392 id=392 data-nosnippet>392</a>        (Direction::Inbound, <span class="prelude-val">None</span>) =&gt; <span class="prelude-val">Some</span>(SharedText::new(heap, chat_name)<span class="question-mark">?</span>),
+<a href=#393 id=393 data-nosnippet>393</a>    };
+<a href=#394 id=394 data-nosnippet>394</a>    <span class="prelude-val">Some</span>(Quote {
+<a href=#395 id=395 data-nosnippet>395</a>        name,
+<a href=#396 id=396 data-nosnippet>396</a>        text: message.text.clone(),
+<a href=#397 id=397 data-nosnippet>397</a>    })
+<a href=#398 id=398 data-nosnippet>398</a>}
+<a href=#399 id=399 data-nosnippet>399</a>
+<a href=#400 id=400 data-nosnippet>400</a><span class="doccomment">/// Where the fixture's own messages are numbered: by chat, then by place.
+<a href=#401 id=401 data-nosnippet>401</a></span><span class="kw">fn </span>mockup_id(chat: ChatId, index: usize) -&gt; MessageId {
+<a href=#402 id=402 data-nosnippet>402</a>    (chat &lt;&lt; <span class="number">8</span>) | index <span class="kw">as </span>MessageId
+<a href=#403 id=403 data-nosnippet>403</a>}
+<a href=#404 id=404 data-nosnippet>404</a>
+<a href=#405 id=405 data-nosnippet>405</a><span class="doccomment">/// Where messages sent or received since the fixture started are numbered
+<a href=#406 id=406 data-nosnippet>406</a>/// from, above its own.
+<a href=#407 id=407 data-nosnippet>407</a></span><span class="kw">const </span>FIRST_KEPT: MessageId = <span class="number">0x1_0000</span>;
+<a href=#408 id=408 data-nosnippet>408</a>
+<a href=#409 id=409 data-nosnippet>409</a><span class="doccomment">/// The fixture's message, with its text kept on `heap`, when there is room.
+<a href=#410 id=410 data-nosnippet>410</a></span><span class="kw">fn </span>mockup_message(
+<a href=#411 id=411 data-nosnippet>411</a>    heap: TextHeap,
+<a href=#412 id=412 data-nosnippet>412</a>    chat: ChatId,
+<a href=#413 id=413 data-nosnippet>413</a>    index: usize,
+<a href=#414 id=414 data-nosnippet>414</a>    (from, text): (From, <span class="kw-2">&amp;</span>str),
+<a href=#415 id=415 data-nosnippet>415</a>) -&gt; <span class="prelude-ty">Option</span>&lt;Message&gt; {
+<a href=#416 id=416 data-nosnippet>416</a>    <span class="macro">assert!</span>(text.len() &lt;= MESSAGE_LEN, <span class="string">"fixture message fits"</span>);
+<a href=#417 id=417 data-nosnippet>417</a>    <span class="kw">let </span>count = messages(chat).len();
+<a href=#418 id=418 data-nosnippet>418</a>    <span class="comment">// A minute apart, the last when its chat was last active, but for the
+<a href=#419 id=419 data-nosnippet>419</a>    // first of the states, the evening before.
+<a href=#420 id=420 data-nosnippet>420</a>    </span><span class="kw">let </span><span class="kw-2">mut </span>time = STARTED - quiet_for(chat) - <span class="number">60 </span>* (count - <span class="number">1 </span>- index) <span class="kw">as </span>u32;
+<a href=#421 id=421 data-nosnippet>421</a>    <span class="kw">if </span>chat == STATES &amp;&amp; index == <span class="number">0 </span>{
+<a href=#422 id=422 data-nosnippet>422</a>        time -= <span class="number">13 </span>* <span class="number">60 </span>* <span class="number">60</span>;
+<a href=#423 id=423 data-nosnippet>423</a>    }
+<a href=#424 id=424 data-nosnippet>424</a>    <span class="kw">let </span>condition = condition(chat, index);
+<a href=#425 id=425 data-nosnippet>425</a>    <span class="kw">let </span>reply = <span class="kw">match </span>condition.reply {
+<a href=#426 id=426 data-nosnippet>426</a>        <span class="prelude-val">Some</span>(quoted) =&gt; {
+<a href=#427 id=427 data-nosnippet>427</a>            <span class="kw">let </span>message = mockup_message(heap, chat, quoted, <span class="kw-2">*</span>messages(chat).get(quoted)<span class="question-mark">?</span>)<span class="question-mark">?</span>;
+<a href=#428 id=428 data-nosnippet>428</a>            <span class="kw">let </span>chat_name = mockup_chats(heap)
+<a href=#429 id=429 data-nosnippet>429</a>                .into_iter()
+<a href=#430 id=430 data-nosnippet>430</a>                .find(|row| row.id == chat)
+<a href=#431 id=431 data-nosnippet>431</a>                .map(|row| row.name)
+<a href=#432 id=432 data-nosnippet>432</a>                .unwrap_or_default();
+<a href=#433 id=433 data-nosnippet>433</a>            quote_of(heap, <span class="kw-2">&amp;</span>message, <span class="kw-2">&amp;</span>chat_name)
+<a href=#434 id=434 data-nosnippet>434</a>        }
+<a href=#435 id=435 data-nosnippet>435</a>        <span class="prelude-val">None </span>=&gt; <span class="prelude-val">None</span>,
+<a href=#436 id=436 data-nosnippet>436</a>    };
+<a href=#437 id=437 data-nosnippet>437</a>    <span class="kw">let </span>(invite, text) = <span class="kw">match </span>invite(heap, chat, index) {
+<a href=#438 id=438 data-nosnippet>438</a>        <span class="prelude-val">Some</span>((invite, uri)) =&gt; (<span class="prelude-val">Some</span>(invite), SharedText::new(heap, <span class="kw-2">&amp;</span>uri)<span class="question-mark">?</span>),
+<a href=#439 id=439 data-nosnippet>439</a>        <span class="prelude-val">None </span>=&gt; (<span class="prelude-val">None</span>, SharedText::new(heap, text)<span class="question-mark">?</span>),
+<a href=#440 id=440 data-nosnippet>440</a>    };
+<a href=#441 id=441 data-nosnippet>441</a>    <span class="prelude-val">Some</span>(Message {
+<a href=#442 id=442 data-nosnippet>442</a>        id: mockup_id(chat, index),
+<a href=#443 id=443 data-nosnippet>443</a>        direction: <span class="kw">match </span>from {
+<a href=#444 id=444 data-nosnippet>444</a>            From::Me =&gt; Direction::Outbound,
+<a href=#445 id=445 data-nosnippet>445</a>            From::Peer | From::Member(<span class="kw">_</span>) =&gt; Direction::Inbound,
+<a href=#446 id=446 data-nosnippet>446</a>        },
+<a href=#447 id=447 data-nosnippet>447</a>        sender: <span class="kw">match </span>from {
+<a href=#448 id=448 data-nosnippet>448</a>            From::Member(name) =&gt; <span class="prelude-val">Some</span>(member(name)),
+<a href=#449 id=449 data-nosnippet>449</a>            From::Me | From::Peer =&gt; <span class="prelude-val">None</span>,
+<a href=#450 id=450 data-nosnippet>450</a>        },
+<a href=#451 id=451 data-nosnippet>451</a>        text,
+<a href=#452 id=452 data-nosnippet>452</a>        delivery: delivery(chat, index),
+<a href=#453 id=453 data-nosnippet>453</a>        reactions: their_reactions(chat, index)
+<a href=#454 id=454 data-nosnippet>454</a>            .iter()
+<a href=#455 id=455 data-nosnippet>455</a>            .map(|<span class="kw-2">&amp;</span>(<span class="kw">_</span>, reaction)| Reacted {
+<a href=#456 id=456 data-nosnippet>456</a>                reaction,
+<a href=#457 id=457 data-nosnippet>457</a>                count: <span class="number">1</span>,
+<a href=#458 id=458 data-nosnippet>458</a>                mine: <span class="bool-val">false</span>,
+<a href=#459 id=459 data-nosnippet>459</a>            })
+<a href=#460 id=460 data-nosnippet>460</a>            .collect::&lt;Reactions&gt;(),
+<a href=#461 id=461 data-nosnippet>461</a>        invite,
+<a href=#462 id=462 data-nosnippet>462</a>        reply,
+<a href=#463 id=463 data-nosnippet>463</a>        time: <span class="prelude-val">Some</span>(time),
+<a href=#464 id=464 data-nosnippet>464</a>        presence: condition.presence,
+<a href=#465 id=465 data-nosnippet>465</a>        edited: condition.edited,
+<a href=#466 id=466 data-nosnippet>466</a>        deleted: condition.deleted,
+<a href=#467 id=467 data-nosnippet>467</a>        late: condition.late,
+<a href=#468 id=468 data-nosnippet>468</a>        forward_secret: condition.forward_secret,
+<a href=#469 id=469 data-nosnippet>469</a>        parts: condition.parts,
+<a href=#470 id=470 data-nosnippet>470</a>    })
+<a href=#471 id=471 data-nosnippet>471</a>}
+<a href=#472 id=472 data-nosnippet>472</a>
+<a href=#473 id=473 data-nosnippet>473</a><span class="doccomment">/// How many messages sent or received since it started the fixture keeps,
+<a href=#474 id=474 data-nosnippet>474</a>/// across all chats, and how many of each thing made since.
+<a href=#475 id=475 data-nosnippet>475</a></span><span class="kw">const </span>KEPT: usize = <span class="number">8</span>;
+<a href=#476 id=476 data-nosnippet>476</a><span class="doccomment">/// How many chats the fixture keeps: its own, and those made since.
+<a href=#477 id=477 data-nosnippet>477</a></span><span class="kw">const </span>CHATS: usize = <span class="number">7 </span>+ <span class="number">2 </span>* KEPT;
+<a href=#478 id=478 data-nosnippet>478</a><span class="doccomment">/// How many events wait for the interface before they overflow.
+<a href=#479 id=479 data-nosnippet>479</a></span><span class="kw">const </span>EVENTS: usize = <span class="number">16</span>;
+<a href=#480 id=480 data-nosnippet>480</a>
+<a href=#481 id=481 data-nosnippet>481</a><span class="doccomment">/// The fixture's messages, and the ones sent or received since it started,
+<a href=#482 id=482 data-nosnippet>482</a>/// with their text kept on a heap of the device's choosing.
+<a href=#483 id=483 data-nosnippet>483</a></span><span class="kw">pub struct </span>Store {
+<a href=#484 id=484 data-nosnippet>484</a>    heap: TextHeap,
+<a href=#485 id=485 data-nosnippet>485</a>    <span class="doccomment">/// The chats, most recently active first: the mockup's, until it is
+<a href=#486 id=486 data-nosnippet>486</a>    /// first read, and those made since.
+<a href=#487 id=487 data-nosnippet>487</a>    </span>chats: RefCell&lt;Vec&lt;ChatRow, CHATS&gt;&gt;,
+<a href=#488 id=488 data-nosnippet>488</a>    chats_made: Cell&lt;bool&gt;,
+<a href=#489 id=489 data-nosnippet>489</a>    kept: RefCell&lt;Vec&lt;(ChatId, Message), KEPT&gt;&gt;,
+<a href=#490 id=490 data-nosnippet>490</a>    <span class="doccomment">/// How many of the fixture's arrivals have arrived.
+<a href=#491 id=491 data-nosnippet>491</a>    </span>arrived: Cell&lt;usize&gt;,
+<a href=#492 id=492 data-nosnippet>492</a>    <span class="doccomment">/// My reactions, by message.
+<a href=#493 id=493 data-nosnippet>493</a>    </span>mine: RefCell&lt;Vec&lt;(MessageId, Reaction), KEPT&gt;&gt;,
+<a href=#494 id=494 data-nosnippet>494</a>    <span class="doccomment">/// Unconfirmed messages sent again, and those of them sent again
+<a href=#495 id=495 data-nosnippet>495</a>    /// without forward secrecy.
+<a href=#496 id=496 data-nosnippet>496</a>    </span>retried: RefCell&lt;Vec&lt;MessageId, KEPT&gt;&gt;,
+<a href=#497 id=497 data-nosnippet>497</a>    without_secrecy: RefCell&lt;Vec&lt;MessageId, KEPT&gt;&gt;,
+<a href=#498 id=498 data-nosnippet>498</a>    next: Cell&lt;MessageId&gt;,
+<a href=#499 id=499 data-nosnippet>499</a>    <span class="doccomment">/// The unidentified member's identity has been asked for, and has
+<a href=#500 id=500 data-nosnippet>500</a>    /// arrived.
+<a href=#501 id=501 data-nosnippet>501</a>    </span>asked: Cell&lt;bool&gt;,
+<a href=#502 id=502 data-nosnippet>502</a>    identified: Cell&lt;bool&gt;,
+<a href=#503 id=503 data-nosnippet>503</a>    <span class="doccomment">/// Members saved as peers, by address, in the order they were saved.
+<a href=#504 id=504 data-nosnippet>504</a>    </span>saved: RefCell&lt;Vec&lt;(String&lt;<span class="number">44</span>&gt;, PeerSummary), KEPT&gt;&gt;,
+<a href=#505 id=505 data-nosnippet>505</a>    <span class="doccomment">/// Direct chats made with members, by address.
+<a href=#506 id=506 data-nosnippet>506</a>    </span>direct: RefCell&lt;Vec&lt;String&lt;<span class="number">44</span>&gt;, KEPT&gt;&gt;,
+<a href=#507 id=507 data-nosnippet>507</a>    <span class="doccomment">/// Channels joined since, by name, and who can read them.
+<a href=#508 id=508 data-nosnippet>508</a>    </span>joined: RefCell&lt;Vec&lt;(String&lt;<span class="number">32</span>&gt;, ChannelAccess), KEPT&gt;&gt;,
+<a href=#509 id=509 data-nosnippet>509</a>    <span class="doccomment">/// Peers with forward secrecy turned on, peers pinged, and peers forgotten.
+<a href=#510 id=510 data-nosnippet>510</a>    </span>secrecy: RefCell&lt;Vec&lt;PeerId, KEPT&gt;&gt;,
+<a href=#511 id=511 data-nosnippet>511</a>    pinged: RefCell&lt;Vec&lt;PeerId, KEPT&gt;&gt;,
+<a href=#512 id=512 data-nosnippet>512</a>    forgotten: RefCell&lt;Vec&lt;PeerId, KEPT&gt;&gt;,
+<a href=#513 id=513 data-nosnippet>513</a>    <span class="doccomment">/// This node's name, once it is given one.
+<a href=#514 id=514 data-nosnippet>514</a>    </span>name: RefCell&lt;<span class="prelude-ty">Option</span>&lt;String&lt;<span class="number">24</span>&gt;&gt;&gt;,
+<a href=#515 id=515 data-nosnippet>515</a>    <span class="doccomment">/// The radio's settings.
+<a href=#516 id=516 data-nosnippet>516</a>    </span>profile: Cell&lt;Profile&gt;,
+<a href=#517 id=517 data-nosnippet>517</a>    forwarding: Cell&lt;bool&gt;,
+<a href=#518 id=518 data-nosnippet>518</a>    share_location: Cell&lt;bool&gt;,
+<a href=#519 id=519 data-nosnippet>519</a>    transmit_power: Cell&lt;i8&gt;,
+<a href=#520 id=520 data-nosnippet>520</a>    keyboard: Cell&lt;KeyboardSettings&gt;,
+<a href=#521 id=521 data-nosnippet>521</a>    brightness: Cell&lt;u8&gt;,
+<a href=#522 id=522 data-nosnippet>522</a>    events: RefCell&lt;EventQueue&lt;EVENTS&gt;&gt;,
+<a href=#523 id=523 data-nosnippet>523</a>    <span class="doccomment">/// The board's clock, in milliseconds, as it last told the fixture. The
+<a href=#524 id=524 data-nosnippet>524</a>    /// fixture's own clock runs from [`STARTED`] with it.
+<a href=#525 id=525 data-nosnippet>525</a>    </span>now: Cell&lt;u64&gt;,
+<a href=#526 id=526 data-nosnippet>526</a>    <span class="doccomment">/// When, on the board's clock, the next arrival and the identity asked
+<a href=#527 id=527 data-nosnippet>527</a>    /// for come.
+<a href=#528 id=528 data-nosnippet>528</a>    </span>arrival_at: Cell&lt;<span class="prelude-ty">Option</span>&lt;u64&gt;&gt;,
+<a href=#529 id=529 data-nosnippet>529</a>    identity_at: Cell&lt;<span class="prelude-ty">Option</span>&lt;u64&gt;&gt;,
+<a href=#530 id=530 data-nosnippet>530</a>}
+<a href=#531 id=531 data-nosnippet>531</a>
+<a href=#532 id=532 data-nosnippet>532</a><span class="kw">impl </span>Store {
+<a href=#533 id=533 data-nosnippet>533</a>    <span class="attr">#[must_use]
+<a href=#534 id=534 data-nosnippet>534</a>    </span><span class="kw">pub const fn </span>new(heap: TextHeap) -&gt; <span class="self">Self </span>{
+<a href=#535 id=535 data-nosnippet>535</a>        <span class="self">Self </span>{
+<a href=#536 id=536 data-nosnippet>536</a>            heap,
+<a href=#537 id=537 data-nosnippet>537</a>            chats: RefCell::new(Vec::new()),
+<a href=#538 id=538 data-nosnippet>538</a>            chats_made: Cell::new(<span class="bool-val">false</span>),
+<a href=#539 id=539 data-nosnippet>539</a>            kept: RefCell::new(Vec::new()),
+<a href=#540 id=540 data-nosnippet>540</a>            arrived: Cell::new(<span class="number">0</span>),
+<a href=#541 id=541 data-nosnippet>541</a>            mine: RefCell::new(Vec::new()),
+<a href=#542 id=542 data-nosnippet>542</a>            retried: RefCell::new(Vec::new()),
+<a href=#543 id=543 data-nosnippet>543</a>            without_secrecy: RefCell::new(Vec::new()),
+<a href=#544 id=544 data-nosnippet>544</a>            next: Cell::new(FIRST_KEPT),
+<a href=#545 id=545 data-nosnippet>545</a>            asked: Cell::new(<span class="bool-val">false</span>),
+<a href=#546 id=546 data-nosnippet>546</a>            identified: Cell::new(<span class="bool-val">false</span>),
+<a href=#547 id=547 data-nosnippet>547</a>            saved: RefCell::new(Vec::new()),
+<a href=#548 id=548 data-nosnippet>548</a>            direct: RefCell::new(Vec::new()),
+<a href=#549 id=549 data-nosnippet>549</a>            joined: RefCell::new(Vec::new()),
+<a href=#550 id=550 data-nosnippet>550</a>            secrecy: RefCell::new(Vec::new()),
+<a href=#551 id=551 data-nosnippet>551</a>            pinged: RefCell::new(Vec::new()),
+<a href=#552 id=552 data-nosnippet>552</a>            forgotten: RefCell::new(Vec::new()),
+<a href=#553 id=553 data-nosnippet>553</a>            name: RefCell::new(<span class="prelude-val">None</span>),
+<a href=#554 id=554 data-nosnippet>554</a>            profile: Cell::new(Profile::Vetted(<span class="number">0</span>)),
+<a href=#555 id=555 data-nosnippet>555</a>            forwarding: Cell::new(<span class="bool-val">true</span>),
+<a href=#556 id=556 data-nosnippet>556</a>            share_location: Cell::new(<span class="bool-val">false</span>),
+<a href=#557 id=557 data-nosnippet>557</a>            transmit_power: Cell::new(<span class="number">22</span>),
+<a href=#558 id=558 data-nosnippet>558</a>            keyboard: Cell::new(KeyboardSettings {
+<a href=#559 id=559 data-nosnippet>559</a>                capitalize: <span class="bool-val">true</span>,
+<a href=#560 id=560 data-nosnippet>560</a>                period: <span class="bool-val">true</span>,
+<a href=#561 id=561 data-nosnippet>561</a>                light: <span class="bool-val">true</span>,
+<a href=#562 id=562 data-nosnippet>562</a>            }),
+<a href=#563 id=563 data-nosnippet>563</a>            brightness: Cell::new(brightness_at(<span class="number">5</span>)),
+<a href=#564 id=564 data-nosnippet>564</a>            events: RefCell::new(EventQueue::new()),
+<a href=#565 id=565 data-nosnippet>565</a>            now: Cell::new(<span class="number">0</span>),
+<a href=#566 id=566 data-nosnippet>566</a>            arrival_at: Cell::new(<span class="prelude-val">None</span>),
+<a href=#567 id=567 data-nosnippet>567</a>            identity_at: Cell::new(<span class="prelude-val">None</span>),
+<a href=#568 id=568 data-nosnippet>568</a>        }
+<a href=#569 id=569 data-nosnippet>569</a>    }
+<a href=#570 id=570 data-nosnippet>570</a>}
+<a href=#571 id=571 data-nosnippet>571</a>
+<a href=#572 id=572 data-nosnippet>572</a><span class="doccomment">/// A node heard nearby but not saved.
+<a href=#573 id=573 data-nosnippet>573</a></span><span class="kw">struct </span>HeardNode {
+<a href=#574 id=574 data-nosnippet>574</a>    address: <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str,
+<a href=#575 id=575 data-nosnippet>575</a>    color: [u8; <span class="number">3</span>],
+<a href=#576 id=576 data-nosnippet>576</a>    shape: PeerShape,
+<a href=#577 id=577 data-nosnippet>577</a>    name: <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str,
+<a href=#578 id=578 data-nosnippet>578</a>    distance: <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str,
+<a href=#579 id=579 data-nosnippet>579</a>    age: <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str,
+<a href=#580 id=580 data-nosnippet>580</a>}
+<a href=#581 id=581 data-nosnippet>581</a>
+<a href=#582 id=582 data-nosnippet>582</a><span class="doccomment">/// Nodes heard nearby but not saved, most recently heard first. Find's
+<a href=#583 id=583 data-nosnippet>583</a>/// mockup board has these two.
+<a href=#584 id=584 data-nosnippet>584</a></span><span class="kw">const </span>HEARD: [HeardNode; <span class="number">2</span>] = [
+<a href=#585 id=585 data-nosnippet>585</a>    HeardNode {
+<a href=#586 id=586 data-nosnippet>586</a>        address: <span class="string">"8UQWMASi45ub7Qe4ZE36UT5G6cU4ud8Fhhe4deS4F3cw"</span>,
+<a href=#587 id=587 data-nosnippet>587</a>        color: [<span class="number">61</span>, <span class="number">214</span>, <span class="number">140</span>],
+<a href=#588 id=588 data-nosnippet>588</a>        shape: PeerShape::Triangle,
+<a href=#589 id=589 data-nosnippet>589</a>        name: <span class="string">"Riverbend Camp"</span>,
+<a href=#590 id=590 data-nosnippet>590</a>        distance: <span class="string">"Nearby"</span>,
+<a href=#591 id=591 data-nosnippet>591</a>        age: <span class="string">"12m"</span>,
+<a href=#592 id=592 data-nosnippet>592</a>    },
+<a href=#593 id=593 data-nosnippet>593</a>    HeardNode {
+<a href=#594 id=594 data-nosnippet>594</a>        address: <span class="string">"6aNt9KTAb8dLcukC7edhDQ7cn5d4gEYkbUrMWeWQLGsC"</span>,
+<a href=#595 id=595 data-nosnippet>595</a>        color: [<span class="number">26</span>, <span class="number">92</span>, <span class="number">64</span>],
+<a href=#596 id=596 data-nosnippet>596</a>        shape: PeerShape::Circle,
+<a href=#597 id=597 data-nosnippet>597</a>        name: <span class="string">"Ridge Runner"</span>,
+<a href=#598 id=598 data-nosnippet>598</a>        distance: <span class="string">"2 hops"</span>,
+<a href=#599 id=599 data-nosnippet>599</a>        age: <span class="string">"1d"</span>,
+<a href=#600 id=600 data-nosnippet>600</a>    },
+<a href=#601 id=601 data-nosnippet>601</a>];
+<a href=#602 id=602 data-nosnippet>602</a>
+<a href=#603 id=603 data-nosnippet>603</a><span class="doccomment">/// One of the fixture's saved peers.
+<a href=#604 id=604 data-nosnippet>604</a></span><span class="kw">struct </span>SavedPeer {
+<a href=#605 id=605 data-nosnippet>605</a>    address: <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str,
+<a href=#606 id=606 data-nosnippet>606</a>    color: [u8; <span class="number">3</span>],
+<a href=#607 id=607 data-nosnippet>607</a>    hint: <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str,
+<a href=#608 id=608 data-nosnippet>608</a>    name: <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str,
+<a href=#609 id=609 data-nosnippet>609</a>    hops: <span class="prelude-ty">Option</span>&lt;u8&gt;,
+<a href=#610 id=610 data-nosnippet>610</a>    signal: <span class="prelude-ty">Option</span>&lt;u8&gt;,
+<a href=#611 id=611 data-nosnippet>611</a>    <span class="doccomment">/// How long ago they were last heard, as the Peers list says it and as
+<a href=#612 id=612 data-nosnippet>612</a>    /// their screen does.
+<a href=#613 id=613 data-nosnippet>613</a>    </span>heard: <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str,
+<a href=#614 id=614 data-nosnippet>614</a>    heard_long: <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str,
+<a href=#615 id=615 data-nosnippet>615</a>    <span class="doccomment">/// How they are reached.
+<a href=#616 id=616 data-nosnippet>616</a>    </span>route: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span><span class="lifetime">'static </span>str&gt;,
+<a href=#617 id=617 data-nosnippet>617</a>    <span class="doccomment">/// The chat with them, when there is one.
+<a href=#618 id=618 data-nosnippet>618</a>    </span>chat: <span class="prelude-ty">Option</span>&lt;ChatId&gt;,
+<a href=#619 id=619 data-nosnippet>619</a>}
+<a href=#620 id=620 data-nosnippet>620</a>
+<a href=#621 id=621 data-nosnippet>621</a><span class="doccomment">/// The fixture's saved peers, most recently heard first, numbered from 1.
+<a href=#622 id=622 data-nosnippet>622</a></span><span class="kw">const </span>PEERS: [SavedPeer; <span class="number">4</span>] = [
+<a href=#623 id=623 data-nosnippet>623</a>    SavedPeer {
+<a href=#624 id=624 data-nosnippet>624</a>        address: <span class="string">"YmRGmitsDJy13p2eiuxziZph6qDZFS1pcN1uaofYjM45"</span>,
+<a href=#625 id=625 data-nosnippet>625</a>        color: [<span class="number">179</span>, <span class="number">246</span>, <span class="number">158</span>],
+<a href=#626 id=626 data-nosnippet>626</a>        hint: <span class="string">"YmRG"</span>,
+<a href=#627 id=627 data-nosnippet>627</a>        name: <span class="string">"Pat Okafor"</span>,
+<a href=#628 id=628 data-nosnippet>628</a>        hops: <span class="prelude-val">Some</span>(<span class="number">1</span>),
+<a href=#629 id=629 data-nosnippet>629</a>        signal: <span class="prelude-val">Some</span>(<span class="number">3</span>),
+<a href=#630 id=630 data-nosnippet>630</a>        heard: <span class="string">"5m"</span>,
+<a href=#631 id=631 data-nosnippet>631</a>        heard_long: <span class="string">"5 min ago"</span>,
+<a href=#632 id=632 data-nosnippet>632</a>        route: <span class="prelude-val">Some</span>(<span class="string">"Direct \u{B7} \u{2212}97 dBm"</span>),
+<a href=#633 id=633 data-nosnippet>633</a>        chat: <span class="prelude-val">Some</span>(<span class="number">3</span>),
+<a href=#634 id=634 data-nosnippet>634</a>    },
+<a href=#635 id=635 data-nosnippet>635</a>    SavedPeer {
+<a href=#636 id=636 data-nosnippet>636</a>        address: <span class="string">"H1xBRrvv1ExLhX3wqH3LdU7ew8dkovDZsgMuCcPZXa7y"</span>,
+<a href=#637 id=637 data-nosnippet>637</a>        color: [<span class="number">94</span>, <span class="number">10</span>, <span class="number">224</span>],
+<a href=#638 id=638 data-nosnippet>638</a>        hint: <span class="string">"H1x*"</span>,
+<a href=#639 id=639 data-nosnippet>639</a>        name: <span class="string">"Jo Reyes"</span>,
+<a href=#640 id=640 data-nosnippet>640</a>        hops: <span class="prelude-val">Some</span>(<span class="number">3</span>),
+<a href=#641 id=641 data-nosnippet>641</a>        signal: <span class="prelude-val">None</span>,
+<a href=#642 id=642 data-nosnippet>642</a>        heard: <span class="string">"1h"</span>,
+<a href=#643 id=643 data-nosnippet>643</a>        heard_long: <span class="string">"1 hr ago"</span>,
+<a href=#644 id=644 data-nosnippet>644</a>        route: <span class="prelude-val">Some</span>(<span class="string">"3 hops"</span>),
+<a href=#645 id=645 data-nosnippet>645</a>        chat: <span class="prelude-val">Some</span>(<span class="number">5</span>),
+<a href=#646 id=646 data-nosnippet>646</a>    },
+<a href=#647 id=647 data-nosnippet>647</a>    SavedPeer {
+<a href=#648 id=648 data-nosnippet>648</a>        address: <span class="string">"hhaevhk7fePTPDkBgW55Sd5Zh9oy3bC5ueFrUxcVUtYg"</span>,
+<a href=#649 id=649 data-nosnippet>649</a>        color: [<span class="number">178</span>, <span class="number">186</span>, <span class="number">92</span>],
+<a href=#650 id=650 data-nosnippet>650</a>        hint: <span class="string">"hhae"</span>,
+<a href=#651 id=651 data-nosnippet>651</a>        name: <span class="string">"Rick Alvarez"</span>,
+<a href=#652 id=652 data-nosnippet>652</a>        hops: <span class="prelude-val">Some</span>(<span class="number">3</span>),
+<a href=#653 id=653 data-nosnippet>653</a>        signal: <span class="prelude-val">None</span>,
+<a href=#654 id=654 data-nosnippet>654</a>        heard: <span class="string">"3h"</span>,
+<a href=#655 id=655 data-nosnippet>655</a>        heard_long: <span class="string">"3 hr ago"</span>,
+<a href=#656 id=656 data-nosnippet>656</a>        route: <span class="prelude-val">Some</span>(<span class="string">"3 hops"</span>),
+<a href=#657 id=657 data-nosnippet>657</a>        chat: <span class="prelude-val">None</span>,
+<a href=#658 id=658 data-nosnippet>658</a>    },
+<a href=#659 id=659 data-nosnippet>659</a>    SavedPeer {
+<a href=#660 id=660 data-nosnippet>660</a>        address: <span class="string">"Dc7qZiXV4uuYKB4TvuRhW2XFUgdP5v986FkCyhq9FAyq"</span>,
+<a href=#661 id=661 data-nosnippet>661</a>        color: [<span class="number">64</span>, <span class="number">160</span>, <span class="number">200</span>],
+<a href=#662 id=662 data-nosnippet>662</a>        hint: <span class="string">"Dc7q"</span>,
+<a href=#663 id=663 data-nosnippet>663</a>        name: <span class="string">"Dana Cho"</span>,
+<a href=#664 id=664 data-nosnippet>664</a>        hops: <span class="prelude-val">Some</span>(<span class="number">2</span>),
+<a href=#665 id=665 data-nosnippet>665</a>        signal: <span class="prelude-val">None</span>,
+<a href=#666 id=666 data-nosnippet>666</a>        heard: <span class="string">"4h"</span>,
+<a href=#667 id=667 data-nosnippet>667</a>        heard_long: <span class="string">"4 hr ago"</span>,
+<a href=#668 id=668 data-nosnippet>668</a>        route: <span class="prelude-val">Some</span>(<span class="string">"2 hops"</span>),
+<a href=#669 id=669 data-nosnippet>669</a>        chat: <span class="prelude-val">None</span>,
+<a href=#670 id=670 data-nosnippet>670</a>    },
+<a href=#671 id=671 data-nosnippet>671</a>];
+<a href=#672 id=672 data-nosnippet>672</a>
+<a href=#673 id=673 data-nosnippet>673</a><span class="doccomment">/// How a node URI begins.
+<a href=#674 id=674 data-nosnippet>674</a></span><span class="kw">const </span>PEER_INVITATION: <span class="kw-2">&amp;</span>str = <span class="string">"umsh:n:"</span>;
+<a href=#675 id=675 data-nosnippet>675</a>
+<a href=#676 id=676 data-nosnippet>676</a><span class="doccomment">/// Where direct chats made with members are numbered from, above the
+<a href=#677 id=677 data-nosnippet>677</a>/// fixture's own chats.
+<a href=#678 id=678 data-nosnippet>678</a></span><span class="kw">const </span>FIRST_DIRECT: ChatId = <span class="number">0x100</span>;
+<a href=#679 id=679 data-nosnippet>679</a><span class="doccomment">/// Where members saved as peers are numbered from, above the fixture's own
+<a href=#680 id=680 data-nosnippet>680</a>/// peers.
+<a href=#681 id=681 data-nosnippet>681</a></span><span class="kw">const </span>FIRST_SAVED: PeerId = <span class="number">0x100</span>;
+<a href=#682 id=682 data-nosnippet>682</a><span class="doccomment">/// Where channels joined since are numbered from.
+<a href=#683 id=683 data-nosnippet>683</a></span><span class="kw">const </span>FIRST_JOINED: ChatId = <span class="number">0x200</span>;
+<a href=#684 id=684 data-nosnippet>684</a><span class="kw">const </span>CHANNEL_INVITATION: <span class="kw-2">&amp;</span>str = <span class="string">"umsh:ck:"</span>;
+<a href=#685 id=685 data-nosnippet>685</a>
+<a href=#686 id=686 data-nosnippet>686</a><span class="doccomment">/// This node's address, as the mockup's Share screen shows it.
+<a href=#687 id=687 data-nosnippet>687</a></span><span class="kw">const </span>ADDRESS: <span class="kw-2">&amp;</span>str = <span class="string">"Geb9QfXhe5f1vXHcFDnXbvcXShxAFhAxaRp1jr5Bqe3L"</span>;
+<a href=#688 id=688 data-nosnippet>688</a><span class="doccomment">/// Private channels' keys: Trail Crew's, and any joined from an invitation.
+<a href=#689 id=689 data-nosnippet>689</a></span><span class="kw">const </span>TRAIL_CREW_KEY: <span class="kw-2">&amp;</span>str = <span class="string">"5BFn8YGKJ6pZR4qV3tW7mNhDrXsCxEaL9kUv2wAjT8bP"</span>;
+<a href=#690 id=690 data-nosnippet>690</a><span class="kw">const </span>JOINED_KEY: <span class="kw-2">&amp;</span>str = <span class="string">"8xQvW3mZr7KpN2sTfYhB6cLdJ4gE9aUoRiV5tHnXkM1w"</span>;
+<a href=#691 id=691 data-nosnippet>691</a>
+<a href=#692 id=692 data-nosnippet>692</a><span class="doccomment">/// As much of `text` as a name holds.
+<a href=#693 id=693 data-nosnippet>693</a></span><span class="kw">fn </span>cut&lt;<span class="kw">const </span>N: usize&gt;(text: <span class="kw-2">&amp;</span>str) -&gt; String&lt;N&gt; {
+<a href=#694 id=694 data-nosnippet>694</a>    <span class="kw">let </span><span class="kw-2">mut </span>name = String::new();
+<a href=#695 id=695 data-nosnippet>695</a>    <span class="kw">for </span>c <span class="kw">in </span>text.chars() {
+<a href=#696 id=696 data-nosnippet>696</a>        <span class="kw">if </span>name.push(c).is_err() {
+<a href=#697 id=697 data-nosnippet>697</a>            <span class="kw">break</span>;
+<a href=#698 id=698 data-nosnippet>698</a>        }
+<a href=#699 id=699 data-nosnippet>699</a>    }
+<a href=#700 id=700 data-nosnippet>700</a>    name
+<a href=#701 id=701 data-nosnippet>701</a>}
+<a href=#702 id=702 data-nosnippet>702</a>
+<a href=#703 id=703 data-nosnippet>703</a><span class="doccomment">/// A channel's name as its key is derived from: ASCII folded to lowercase.
+<a href=#704 id=704 data-nosnippet>704</a></span><span class="kw">fn </span>folded(name: <span class="kw-2">&amp;</span>str) -&gt; String&lt;<span class="number">32</span>&gt; {
+<a href=#705 id=705 data-nosnippet>705</a>    <span class="kw">let </span><span class="kw-2">mut </span>folded = cut(name);
+<a href=#706 id=706 data-nosnippet>706</a>    folded.make_ascii_lowercase();
+<a href=#707 id=707 data-nosnippet>707</a>    folded
+<a href=#708 id=708 data-nosnippet>708</a>}
+<a href=#709 id=709 data-nosnippet>709</a>
+<a href=#710 id=710 data-nosnippet>710</a><span class="doccomment">/// A URI parameter's value with its percent-encoding undone; what does not
+<a href=#711 id=711 data-nosnippet>711</a>/// decode to text stays as it was typed.
+<a href=#712 id=712 data-nosnippet>712</a></span><span class="kw">fn </span>decoded(value: <span class="kw-2">&amp;</span>str) -&gt; String&lt;<span class="number">32</span>&gt; {
+<a href=#713 id=713 data-nosnippet>713</a>    <span class="kw">let </span><span class="kw-2">mut </span>bytes: Vec&lt;u8, <span class="number">32</span>&gt; = Vec::new();
+<a href=#714 id=714 data-nosnippet>714</a>    <span class="kw">let </span><span class="kw-2">mut </span>rest = value.as_bytes();
+<a href=#715 id=715 data-nosnippet>715</a>    <span class="kw">while let </span><span class="prelude-val">Some</span>((<span class="kw-2">&amp;</span>byte, tail)) = rest.split_first() {
+<a href=#716 id=716 data-nosnippet>716</a>        <span class="kw">let </span>escaped = <span class="kw">match </span>(byte, tail) {
+<a href=#717 id=717 data-nosnippet>717</a>            (<span class="string">b'%'</span>, [high, low, after @ ..]) =&gt; core::str::from_utf8(<span class="kw-2">&amp;</span>[<span class="kw-2">*</span>high, <span class="kw-2">*</span>low])
+<a href=#718 id=718 data-nosnippet>718</a>                .ok()
+<a href=#719 id=719 data-nosnippet>719</a>                .and_then(|hex| u8::from_str_radix(hex, <span class="number">16</span>).ok())
+<a href=#720 id=720 data-nosnippet>720</a>                .map(|byte| (byte, after)),
+<a href=#721 id=721 data-nosnippet>721</a>            <span class="kw">_ </span>=&gt; <span class="prelude-val">None</span>,
+<a href=#722 id=722 data-nosnippet>722</a>        };
+<a href=#723 id=723 data-nosnippet>723</a>        <span class="kw">let </span>(byte, tail) = escaped.unwrap_or((byte, tail));
+<a href=#724 id=724 data-nosnippet>724</a>        <span class="kw">if </span>bytes.push(byte).is_err() {
+<a href=#725 id=725 data-nosnippet>725</a>            <span class="kw">break</span>;
+<a href=#726 id=726 data-nosnippet>726</a>        }
+<a href=#727 id=727 data-nosnippet>727</a>        rest = tail;
+<a href=#728 id=728 data-nosnippet>728</a>    }
+<a href=#729 id=729 data-nosnippet>729</a>    core::str::from_utf8(<span class="kw-2">&amp;</span>bytes).map_or_else(|<span class="kw">_</span>| cut(value), cut)
+<a href=#730 id=730 data-nosnippet>730</a>}
+<a href=#731 id=731 data-nosnippet>731</a>
+<a href=#732 id=732 data-nosnippet>732</a><span class="doccomment">/// A channel avatar's color, from its name.
+<a href=#733 id=733 data-nosnippet>733</a></span><span class="kw">fn </span>tint(name: <span class="kw-2">&amp;</span>str) -&gt; [u8; <span class="number">3</span>] {
+<a href=#734 id=734 data-nosnippet>734</a>    <span class="kw">let </span>hash = name.bytes().fold(<span class="number">0x811C_9DC5_u32</span>, |h, b| {
+<a href=#735 id=735 data-nosnippet>735</a>        (h ^ u32::from(b)).wrapping_mul(<span class="number">0x0100_0193</span>)
+<a href=#736 id=736 data-nosnippet>736</a>    });
+<a href=#737 id=737 data-nosnippet>737</a>    <span class="kw">let </span>[r, g, b, <span class="kw">_</span>] = hash.to_be_bytes();
+<a href=#738 id=738 data-nosnippet>738</a>    [r, g, b]
+<a href=#739 id=739 data-nosnippet>739</a>}
+<a href=#740 id=740 data-nosnippet>740</a>
+<a href=#741 id=741 data-nosnippet>741</a><span class="doccomment">/// `name` as a URI parameter: what is not a letter, a digit, or `-._~` is
+<a href=#742 id=742 data-nosnippet>742</a>/// percent-encoded.
+<a href=#743 id=743 data-nosnippet>743</a></span><span class="kw">fn </span>push_encoded(uri: <span class="kw-2">&amp;mut </span>ShareUri, name: <span class="kw-2">&amp;</span>str) -&gt; <span class="prelude-ty">Option</span>&lt;()&gt; {
+<a href=#744 id=744 data-nosnippet>744</a>    <span class="kw">for </span>byte <span class="kw">in </span>name.bytes() {
+<a href=#745 id=745 data-nosnippet>745</a>        <span class="kw">if </span>byte.is_ascii_alphanumeric() || <span class="string">b"-._~"</span>.contains(<span class="kw-2">&amp;</span>byte) {
+<a href=#746 id=746 data-nosnippet>746</a>            uri.push(char::from(byte)).ok()<span class="question-mark">?</span>;
+<a href=#747 id=747 data-nosnippet>747</a>        } <span class="kw">else </span>{
+<a href=#748 id=748 data-nosnippet>748</a>            core::fmt::write(uri, <span class="macro">format_args!</span>(<span class="string">"%{byte:02X}"</span>)).ok()<span class="question-mark">?</span>;
+<a href=#749 id=749 data-nosnippet>749</a>        }
+<a href=#750 id=750 data-nosnippet>750</a>    }
+<a href=#751 id=751 data-nosnippet>751</a>    <span class="prelude-val">Some</span>(())
+<a href=#752 id=752 data-nosnippet>752</a>}
+<a href=#753 id=753 data-nosnippet>753</a>
+<a href=#754 id=754 data-nosnippet>754</a><span class="kw">fn </span>private_uri(key: <span class="kw-2">&amp;</span>str, name: <span class="kw-2">&amp;</span>str) -&gt; <span class="prelude-ty">Option</span>&lt;ShareUri&gt; {
+<a href=#755 id=755 data-nosnippet>755</a>    <span class="kw">let </span><span class="kw-2">mut </span>uri = ShareUri::new();
+<a href=#756 id=756 data-nosnippet>756</a>    core::fmt::write(<span class="kw-2">&amp;mut </span>uri, <span class="macro">format_args!</span>(<span class="string">"umsh:ck:{key}?n="</span>)).ok()<span class="question-mark">?</span>;
+<a href=#757 id=757 data-nosnippet>757</a>    push_encoded(<span class="kw-2">&amp;mut </span>uri, name)<span class="question-mark">?</span>;
+<a href=#758 id=758 data-nosnippet>758</a>    <span class="prelude-val">Some</span>(uri)
+<a href=#759 id=759 data-nosnippet>759</a>}
+<a href=#760 id=760 data-nosnippet>760</a>
+<a href=#761 id=761 data-nosnippet>761</a><span class="kw">impl </span>Store {
+<a href=#762 id=762 data-nosnippet>762</a>    <span class="doccomment">/// The chats, the mockup's made the first time they are read.
+<a href=#763 id=763 data-nosnippet>763</a>    </span><span class="kw">fn </span>rows(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; RefMut&lt;<span class="lifetime">'_</span>, Vec&lt;ChatRow, CHATS&gt;&gt; {
+<a href=#764 id=764 data-nosnippet>764</a>        <span class="kw">let </span><span class="kw-2">mut </span>rows = <span class="self">self</span>.chats.borrow_mut();
+<a href=#765 id=765 data-nosnippet>765</a>        <span class="kw">if </span>!<span class="self">self</span>.chats_made.replace(<span class="bool-val">true</span>) {
+<a href=#766 id=766 data-nosnippet>766</a>            <span class="kw">for </span>row <span class="kw">in </span>mockup_chats(<span class="self">self</span>.heap) {
+<a href=#767 id=767 data-nosnippet>767</a>                <span class="kw">_ </span>= rows.push(row);
+<a href=#768 id=768 data-nosnippet>768</a>            }
+<a href=#769 id=769 data-nosnippet>769</a>        }
+<a href=#770 id=770 data-nosnippet>770</a>        rows
+<a href=#771 id=771 data-nosnippet>771</a>    }
+<a href=#772 id=772 data-nosnippet>772</a>
+<a href=#773 id=773 data-nosnippet>773</a>    <span class="kw">fn </span>queue(<span class="kw-2">&amp;</span><span class="self">self</span>, event: NodeEvent) {
+<a href=#774 id=774 data-nosnippet>774</a>        <span class="self">self</span>.events.borrow_mut().push(event);
+<a href=#775 id=775 data-nosnippet>775</a>    }
+<a href=#776 id=776 data-nosnippet>776</a>
+<a href=#777 id=777 data-nosnippet>777</a>    <span class="doccomment">/// The fixture's clock: the mockup's time, moved on with the board's.
+<a href=#778 id=778 data-nosnippet>778</a>    </span><span class="attr">#[must_use]
+<a href=#779 id=779 data-nosnippet>779</a>    </span><span class="kw">pub fn </span>time(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; u32 {
+<a href=#780 id=780 data-nosnippet>780</a>        STARTED + (<span class="self">self</span>.now.get() / <span class="number">1000</span>) <span class="kw">as </span>u32
+<a href=#781 id=781 data-nosnippet>781</a>    }
+<a href=#782 id=782 data-nosnippet>782</a>
+<a href=#783 id=783 data-nosnippet>783</a>    <span class="doccomment">/// Milliseconds until the fixture's clock reaches the next minute.
+<a href=#784 id=784 data-nosnippet>784</a>    </span><span class="attr">#[must_use]
+<a href=#785 id=785 data-nosnippet>785</a>    </span><span class="kw">pub fn </span>millis_to_next_minute(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; u64 {
+<a href=#786 id=786 data-nosnippet>786</a>        <span class="number">60_000 </span>- <span class="self">self</span>.now.get() % <span class="number">60_000
+<a href=#787 id=787 data-nosnippet>787</a>    </span>}
+<a href=#788 id=788 data-nosnippet>788</a>
+<a href=#789 id=789 data-nosnippet>789</a>    <span class="doccomment">/// Moves the fixture on to `now` on the board's clock, in milliseconds:
+<a href=#790 id=790 data-nosnippet>790</a>    /// its clock, and what it has to do by then. An identity asked for
+<a href=#791 id=791 data-nosnippet>791</a>    /// arrives a moment after the first time it is moved on.
+<a href=#792 id=792 data-nosnippet>792</a>    </span><span class="kw">pub fn </span>advance(<span class="kw-2">&amp;</span><span class="self">self</span>, now: u64) {
+<a href=#793 id=793 data-nosnippet>793</a>        <span class="self">self</span>.now.set(now);
+<a href=#794 id=794 data-nosnippet>794</a>        <span class="kw">if </span><span class="self">self</span>.identity_asked() {
+<a href=#795 id=795 data-nosnippet>795</a>            <span class="kw">match </span><span class="self">self</span>.identity_at.get() {
+<a href=#796 id=796 data-nosnippet>796</a>                <span class="prelude-val">None </span>=&gt; <span class="self">self</span>.identity_at.set(<span class="prelude-val">Some</span>(now + IDENTITY_DELAY)),
+<a href=#797 id=797 data-nosnippet>797</a>                <span class="prelude-val">Some</span>(at) <span class="kw">if </span>at &lt;= now =&gt; <span class="kw">_ </span>= <span class="self">self</span>.answer_identity(),
+<a href=#798 id=798 data-nosnippet>798</a>                <span class="prelude-val">Some</span>(<span class="kw">_</span>) =&gt; {}
+<a href=#799 id=799 data-nosnippet>799</a>            }
+<a href=#800 id=800 data-nosnippet>800</a>        }
+<a href=#801 id=801 data-nosnippet>801</a>        <span class="kw">if </span><span class="self">self</span>.arrival_at.get().is_some_and(|at| at &lt;= now) {
+<a href=#802 id=802 data-nosnippet>802</a>            <span class="self">self</span>.arrival_at.set(<span class="prelude-val">None</span>);
+<a href=#803 id=803 data-nosnippet>803</a>            <span class="kw">if </span><span class="self">self</span>.arrive() {
+<a href=#804 id=804 data-nosnippet>804</a>                <span class="self">self</span>.pace_arrivals(now + ARRIVAL_SPACING);
+<a href=#805 id=805 data-nosnippet>805</a>            }
+<a href=#806 id=806 data-nosnippet>806</a>        }
+<a href=#807 id=807 data-nosnippet>807</a>    }
+<a href=#808 id=808 data-nosnippet>808</a>
+<a href=#809 id=809 data-nosnippet>809</a>    <span class="doccomment">/// When, on the board's clock, the fixture next has something to do.
+<a href=#810 id=810 data-nosnippet>810</a>    </span><span class="attr">#[must_use]
+<a href=#811 id=811 data-nosnippet>811</a>    </span><span class="kw">pub fn </span>next_deadline(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;u64&gt; {
+<a href=#812 id=812 data-nosnippet>812</a>        <span class="kw">match </span>(<span class="self">self</span>.arrival_at.get(), <span class="self">self</span>.identity_at.get()) {
+<a href=#813 id=813 data-nosnippet>813</a>            (<span class="prelude-val">Some</span>(a), <span class="prelude-val">Some</span>(b)) =&gt; <span class="prelude-val">Some</span>(a.min(b)),
+<a href=#814 id=814 data-nosnippet>814</a>            (a, b) =&gt; a.or(b),
+<a href=#815 id=815 data-nosnippet>815</a>        }
+<a href=#816 id=816 data-nosnippet>816</a>    }
+<a href=#817 id=817 data-nosnippet>817</a>
+<a href=#818 id=818 data-nosnippet>818</a>    <span class="doccomment">/// The next message arrives at `at` on the board's clock, and each one
+<a href=#819 id=819 data-nosnippet>819</a>    /// after it a while later, while any are left.
+<a href=#820 id=820 data-nosnippet>820</a>    </span><span class="kw">pub fn </span>pace_arrivals(<span class="kw-2">&amp;</span><span class="self">self</span>, at: u64) {
+<a href=#821 id=821 data-nosnippet>821</a>        <span class="kw">if </span><span class="self">self</span>.arrived.get() &lt; ARRIVALS.len() {
+<a href=#822 id=822 data-nosnippet>822</a>            <span class="self">self</span>.arrival_at.set(<span class="prelude-val">Some</span>(at));
+<a href=#823 id=823 data-nosnippet>823</a>        }
+<a href=#824 id=824 data-nosnippet>824</a>    }
+<a href=#825 id=825 data-nosnippet>825</a>
+<a href=#826 id=826 data-nosnippet>826</a>    <span class="doccomment">/// The next message to arrive, one of those on the T-LoRa Pager
+<a href=#827 id=827 data-nosnippet>827</a>    /// mockup's wake screen, arrives now, and is kept as the newest message
+<a href=#828 id=828 data-nosnippet>828</a>    /// of its chat. Returns whether one was left to.
+<a href=#829 id=829 data-nosnippet>829</a>    </span><span class="kw">pub fn </span>arrive(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
+<a href=#830 id=830 data-nosnippet>830</a>        <span class="kw">let </span>index = <span class="self">self</span>.arrived.get();
+<a href=#831 id=831 data-nosnippet>831</a>        <span class="kw">let </span><span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>(chat, from, text)) = ARRIVALS.get(index) <span class="kw">else </span>{
+<a href=#832 id=832 data-nosnippet>832</a>            <span class="kw">return </span><span class="bool-val">false</span>;
+<a href=#833 id=833 data-nosnippet>833</a>        };
+<a href=#834 id=834 data-nosnippet>834</a>        <span class="self">self</span>.arrived.set(index + <span class="number">1</span>);
+<a href=#835 id=835 data-nosnippet>835</a>        <span class="self">self</span>.receive(chat, from, text);
+<a href=#836 id=836 data-nosnippet>836</a>        <span class="bool-val">true
+<a href=#837 id=837 data-nosnippet>837</a>    </span>}
+<a href=#838 id=838 data-nosnippet>838</a>
+<a href=#839 id=839 data-nosnippet>839</a>    <span class="doccomment">/// A message saying `text` arrives in `chat`, from the peer at its
+<a href=#840 id=840 data-nosnippet>840</a>    /// other end or, in a channel, from the last of its members to speak.
+<a href=#841 id=841 data-nosnippet>841</a>    </span><span class="kw">pub fn </span>arrive_in(<span class="kw-2">&amp;</span><span class="self">self</span>, chat: ChatId, text: <span class="kw-2">&amp;</span>str) {
+<a href=#842 id=842 data-nosnippet>842</a>        <span class="kw">let </span>from = <span class="kw">if </span><span class="self">self</span>.is_channel(chat) {
+<a href=#843 id=843 data-nosnippet>843</a>            messages(chat)
+<a href=#844 id=844 data-nosnippet>844</a>                .iter()
+<a href=#845 id=845 data-nosnippet>845</a>                .rev()
+<a href=#846 id=846 data-nosnippet>846</a>                .find(|(from, <span class="kw">_</span>)| <span class="macro">matches!</span>(from, From::Member(<span class="kw">_</span>)))
+<a href=#847 id=847 data-nosnippet>847</a>                .map_or(From::Member(<span class="string">"Sam"</span>), |<span class="kw-2">&amp;</span>(from, <span class="kw">_</span>)| from)
+<a href=#848 id=848 data-nosnippet>848</a>        } <span class="kw">else </span>{
+<a href=#849 id=849 data-nosnippet>849</a>            From::Peer
+<a href=#850 id=850 data-nosnippet>850</a>        };
+<a href=#851 id=851 data-nosnippet>851</a>        <span class="self">self</span>.receive(chat, from, text);
+<a href=#852 id=852 data-nosnippet>852</a>    }
+<a href=#853 id=853 data-nosnippet>853</a>
+<a href=#854 id=854 data-nosnippet>854</a>    <span class="doccomment">/// Keeps `text`, from `from`, as the newest message of `chat`, which is
+<a href=#855 id=855 data-nosnippet>855</a>    /// unread now, and announces it.
+<a href=#856 id=856 data-nosnippet>856</a>    </span><span class="kw">fn </span>receive(<span class="kw-2">&amp;</span><span class="self">self</span>, chat: ChatId, from: From, text: <span class="kw-2">&amp;</span>str) {
+<a href=#857 id=857 data-nosnippet>857</a>        <span class="kw">let </span><span class="prelude-val">Some</span>(message) = <span class="self">self</span>.keep(chat, from, text, <span class="prelude-val">None</span>, <span class="bool-val">false</span>) <span class="kw">else </span>{
+<a href=#858 id=858 data-nosnippet>858</a>            <span class="kw">return</span>;
+<a href=#859 id=859 data-nosnippet>859</a>        };
+<a href=#860 id=860 data-nosnippet>860</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(<span class="kw-2">mut </span>row) = <span class="self">self</span>.touch(chat) {
+<a href=#861 id=861 data-nosnippet>861</a>            row.unread = <span class="bool-val">true</span>;
+<a href=#862 id=862 data-nosnippet>862</a>        }
+<a href=#863 id=863 data-nosnippet>863</a>        <span class="self">self</span>.queue(NodeEvent::Arrived {
+<a href=#864 id=864 data-nosnippet>864</a>            chat,
+<a href=#865 id=865 data-nosnippet>865</a>            message: message.id,
+<a href=#866 id=866 data-nosnippet>866</a>        });
+<a href=#867 id=867 data-nosnippet>867</a>    }
+<a href=#868 id=868 data-nosnippet>868</a>
+<a href=#869 id=869 data-nosnippet>869</a>    <span class="doccomment">/// An identity has been asked for and has not yet arrived.
+<a href=#870 id=870 data-nosnippet>870</a>    </span><span class="attr">#[must_use]
+<a href=#871 id=871 data-nosnippet>871</a>    </span><span class="kw">pub fn </span>identity_asked(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
+<a href=#872 id=872 data-nosnippet>872</a>        <span class="self">self</span>.asked.get() &amp;&amp; !<span class="self">self</span>.identified.get()
+<a href=#873 id=873 data-nosnippet>873</a>    }
+<a href=#874 id=874 data-nosnippet>874</a>
+<a href=#875 id=875 data-nosnippet>875</a>    <span class="doccomment">/// The identity asked for arrives now, if one was asked for, and
+<a href=#876 id=876 data-nosnippet>876</a>    /// returns whether one was.
+<a href=#877 id=877 data-nosnippet>877</a>    </span><span class="kw">pub fn </span>answer_identity(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
+<a href=#878 id=878 data-nosnippet>878</a>        <span class="kw">let </span>answered = <span class="self">self</span>.identity_asked();
+<a href=#879 id=879 data-nosnippet>879</a>        <span class="kw">if </span>answered {
+<a href=#880 id=880 data-nosnippet>880</a>            <span class="self">self</span>.identified.set(<span class="bool-val">true</span>);
+<a href=#881 id=881 data-nosnippet>881</a>            <span class="self">self</span>.identity_at.set(<span class="prelude-val">None</span>);
+<a href=#882 id=882 data-nosnippet>882</a>            <span class="self">self</span>.queue(NodeEvent::IdentitiesLearned);
+<a href=#883 id=883 data-nosnippet>883</a>        }
+<a href=#884 id=884 data-nosnippet>884</a>        answered
+<a href=#885 id=885 data-nosnippet>885</a>    }
+<a href=#886 id=886 data-nosnippet>886</a>
+<a href=#887 id=887 data-nosnippet>887</a>    <span class="doccomment">/// The radio is set, by other means than this interface, to settings
+<a href=#888 id=888 data-nosnippet>888</a>    /// no profile has: as an attached host could set it.
+<a href=#889 id=889 data-nosnippet>889</a>    </span><span class="kw">pub fn </span>set_custom_radio(<span class="kw-2">&amp;</span><span class="self">self</span>) {
+<a href=#890 id=890 data-nosnippet>890</a>        <span class="self">self</span>.profile.set(Profile::Custom);
+<a href=#891 id=891 data-nosnippet>891</a>        <span class="self">self</span>.queue(NodeEvent::SettingsChanged);
+<a href=#892 id=892 data-nosnippet>892</a>    }
+<a href=#893 id=893 data-nosnippet>893</a>
+<a href=#894 id=894 data-nosnippet>894</a>    <span class="doccomment">/// What is known of the channel member `name`.
+<a href=#895 id=895 data-nosnippet>895</a>    </span><span class="kw">fn </span>card(<span class="kw-2">&amp;</span><span class="self">self</span>, name: <span class="kw-2">&amp;</span>str) -&gt; Member {
+<a href=#896 id=896 data-nosnippet>896</a>        <span class="kw">let </span><span class="kw-2">mut </span>member = member_card(name, <span class="self">self</span>.identified.get());
+<a href=#897 id=897 data-nosnippet>897</a>        member.saved = member
+<a href=#898 id=898 data-nosnippet>898</a>            .address
+<a href=#899 id=899 data-nosnippet>899</a>            .as_ref()
+<a href=#900 id=900 data-nosnippet>900</a>            .is_some_and(|address| <span class="self">self</span>.saved_peer(address).is_some());
+<a href=#901 id=901 data-nosnippet>901</a>        member
+<a href=#902 id=902 data-nosnippet>902</a>    }
+<a href=#903 id=903 data-nosnippet>903</a>
+<a href=#904 id=904 data-nosnippet>904</a>    <span class="doccomment">/// The member saved at `address`, while they are saved.
+<a href=#905 id=905 data-nosnippet>905</a>    </span><span class="kw">fn </span>saved_peer(<span class="kw-2">&amp;</span><span class="self">self</span>, address: <span class="kw-2">&amp;</span>str) -&gt; <span class="prelude-ty">Option</span>&lt;PeerId&gt; {
+<a href=#906 id=906 data-nosnippet>906</a>        <span class="kw">let </span>index = <span class="self">self</span>.saved.borrow().iter().position(|(a, <span class="kw">_</span>)| a == address)<span class="question-mark">?</span>;
+<a href=#907 id=907 data-nosnippet>907</a>        <span class="kw">let </span>peer = FIRST_SAVED + index <span class="kw">as </span>PeerId;
+<a href=#908 id=908 data-nosnippet>908</a>        (!<span class="self">self</span>.forgotten.borrow().contains(<span class="kw-2">&amp;</span>peer)).then_some(peer)
+<a href=#909 id=909 data-nosnippet>909</a>    }
+<a href=#910 id=910 data-nosnippet>910</a>
+<a href=#911 id=911 data-nosnippet>911</a>    <span class="doccomment">/// Whether `chat` is a channel.
+<a href=#912 id=912 data-nosnippet>912</a>    </span><span class="kw">fn </span>is_channel(<span class="kw-2">&amp;</span><span class="self">self</span>, chat: ChatId) -&gt; bool {
+<a href=#913 id=913 data-nosnippet>913</a>        <span class="self">self</span>.rows()
+<a href=#914 id=914 data-nosnippet>914</a>            .iter()
+<a href=#915 id=915 data-nosnippet>915</a>            .find(|row| row.id == chat)
+<a href=#916 id=916 data-nosnippet>916</a>            .is_some_and(|row| <span class="macro">matches!</span>(row.kind, ChatKind::Channel { .. }))
+<a href=#917 id=917 data-nosnippet>917</a>    }
+<a href=#918 id=918 data-nosnippet>918</a>
+<a href=#919 id=919 data-nosnippet>919</a>    <span class="doccomment">/// Moves `chat` to the top, active now, and returns it.
+<a href=#920 id=920 data-nosnippet>920</a>    </span><span class="kw">fn </span>touch(<span class="kw-2">&amp;</span><span class="self">self</span>, chat: ChatId) -&gt; <span class="prelude-ty">Option</span>&lt;RefMut&lt;<span class="lifetime">'_</span>, ChatRow&gt;&gt; {
+<a href=#921 id=921 data-nosnippet>921</a>        <span class="kw">let </span>time = <span class="self">self</span>.time();
+<a href=#922 id=922 data-nosnippet>922</a>        <span class="kw">let </span><span class="kw-2">mut </span>rows = <span class="self">self</span>.rows();
+<a href=#923 id=923 data-nosnippet>923</a>        <span class="kw">let </span>index = rows.iter().position(|row| row.id == chat)<span class="question-mark">?</span>;
+<a href=#924 id=924 data-nosnippet>924</a>        <span class="kw">let </span><span class="kw-2">mut </span>row = rows.remove(index);
+<a href=#925 id=925 data-nosnippet>925</a>        row.activity = time;
+<a href=#926 id=926 data-nosnippet>926</a>        <span class="kw">_ </span>= rows.insert(<span class="number">0</span>, row);
+<a href=#927 id=927 data-nosnippet>927</a>        <span class="prelude-val">Some</span>(RefMut::map(rows, |rows| <span class="kw-2">&amp;mut </span>rows[<span class="number">0</span>]))
+<a href=#928 id=928 data-nosnippet>928</a>    }
+<a href=#929 id=929 data-nosnippet>929</a>
+<a href=#930 id=930 data-nosnippet>930</a>    <span class="doccomment">/// Lists a chat made now, first.
+<a href=#931 id=931 data-nosnippet>931</a>    </span><span class="kw">fn </span>make_chat(<span class="kw-2">&amp;</span><span class="self">self</span>, id: ChatId, avatar: AvatarStyle, name: <span class="kw-2">&amp;</span>str, kind: ChatKind) {
+<a href=#932 id=932 data-nosnippet>932</a>        <span class="kw">let </span>row = ChatRow {
+<a href=#933 id=933 data-nosnippet>933</a>            id,
+<a href=#934 id=934 data-nosnippet>934</a>            avatar,
+<a href=#935 id=935 data-nosnippet>935</a>            name: cut(name),
+<a href=#936 id=936 data-nosnippet>936</a>            kind,
+<a href=#937 id=937 data-nosnippet>937</a>            unread: <span class="bool-val">false</span>,
+<a href=#938 id=938 data-nosnippet>938</a>            muted: <span class="bool-val">false</span>,
+<a href=#939 id=939 data-nosnippet>939</a>            activity: <span class="self">self</span>.time(),
+<a href=#940 id=940 data-nosnippet>940</a>            draft: <span class="prelude-val">None</span>,
+<a href=#941 id=941 data-nosnippet>941</a>        };
+<a href=#942 id=942 data-nosnippet>942</a>        <span class="kw">let </span><span class="kw-2">mut </span>rows = <span class="self">self</span>.rows();
+<a href=#943 id=943 data-nosnippet>943</a>        <span class="kw">if </span>rows.is_full() {
+<a href=#944 id=944 data-nosnippet>944</a>            rows.pop();
+<a href=#945 id=945 data-nosnippet>945</a>        }
+<a href=#946 id=946 data-nosnippet>946</a>        <span class="kw">_ </span>= rows.insert(<span class="number">0</span>, row);
+<a href=#947 id=947 data-nosnippet>947</a>        drop(rows);
+<a href=#948 id=948 data-nosnippet>948</a>        <span class="self">self</span>.queue(NodeEvent::ChatChanged(id));
+<a href=#949 id=949 data-nosnippet>949</a>    }
+<a href=#950 id=950 data-nosnippet>950</a>
+<a href=#951 id=951 data-nosnippet>951</a>    <span class="doccomment">/// The chat of the channel joined since as `name`, numbered the first
+<a href=#952 id=952 data-nosnippet>952</a>    /// time it is joined, and whether it is new.
+<a href=#953 id=953 data-nosnippet>953</a>    </span><span class="kw">fn </span>joined_id(<span class="kw-2">&amp;</span><span class="self">self</span>, name: <span class="kw-2">&amp;</span>str, access: ChannelAccess) -&gt; <span class="prelude-ty">Option</span>&lt;(ChatId, bool)&gt; {
+<a href=#954 id=954 data-nosnippet>954</a>        <span class="kw">let </span><span class="kw-2">mut </span>joined = <span class="self">self</span>.joined.borrow_mut();
+<a href=#955 id=955 data-nosnippet>955</a>        <span class="kw">let </span>(index, new) = <span class="kw">match </span>joined.iter().position(|(n, <span class="kw">_</span>)| n.as_str() == name) {
+<a href=#956 id=956 data-nosnippet>956</a>            <span class="prelude-val">Some</span>(index) =&gt; (index, <span class="bool-val">false</span>),
+<a href=#957 id=957 data-nosnippet>957</a>            <span class="prelude-val">None </span>=&gt; {
+<a href=#958 id=958 data-nosnippet>958</a>                joined.push((cut(name), access)).ok()<span class="question-mark">?</span>;
+<a href=#959 id=959 data-nosnippet>959</a>                (joined.len() - <span class="number">1</span>, <span class="bool-val">true</span>)
+<a href=#960 id=960 data-nosnippet>960</a>            }
+<a href=#961 id=961 data-nosnippet>961</a>        };
+<a href=#962 id=962 data-nosnippet>962</a>        <span class="prelude-val">Some</span>((FIRST_JOINED + index <span class="kw">as </span>ChatId, new))
+<a href=#963 id=963 data-nosnippet>963</a>    }
+<a href=#964 id=964 data-nosnippet>964</a>
+<a href=#965 id=965 data-nosnippet>965</a>    <span class="doccomment">/// `row` as the list shows it.
+<a href=#966 id=966 data-nosnippet>966</a>    </span><span class="kw">fn </span>summary(<span class="kw-2">&amp;</span><span class="self">self</span>, row: <span class="kw-2">&amp;</span>ChatRow) -&gt; ChatSummary {
+<a href=#967 id=967 data-nosnippet>967</a>        <span class="kw">let </span><span class="kw-2">mut </span>summary = ChatSummary::new(row.id, row.avatar.clone(), <span class="kw-2">&amp;</span>row.name, <span class="self">self</span>.heap);
+<a href=#968 id=968 data-nosnippet>968</a>        summary.kind = row.kind;
+<a href=#969 id=969 data-nosnippet>969</a>        summary.unread = row.unread;
+<a href=#970 id=970 data-nosnippet>970</a>        summary.muted = row.muted;
+<a href=#971 id=971 data-nosnippet>971</a>        summary.last_activity = <span class="prelude-val">Some</span>(row.activity);
+<a href=#972 id=972 data-nosnippet>972</a>        <span class="comment">// The chat of message states holds a session with forward secrecy.
+<a href=#973 id=973 data-nosnippet>973</a>        </span>summary.forward_secret = row.id == STATES;
+<a href=#974 id=974 data-nosnippet>974</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(last) = <span class="self">self</span>.last_message(row.id) {
+<a href=#975 id=975 data-nosnippet>975</a>            summary.preview(<span class="kw-2">&amp;</span>last);
+<a href=#976 id=976 data-nosnippet>976</a>        }
+<a href=#977 id=977 data-nosnippet>977</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(draft) = <span class="kw-2">&amp;</span>row.draft {
+<a href=#978 id=978 data-nosnippet>978</a>            <span class="kw">let </span><span class="kw-2">mut </span>text = DraftText::new(<span class="self">self</span>.heap);
+<a href=#979 id=979 data-nosnippet>979</a>            <span class="kw">_ </span>= text.splice(<span class="number">0</span>..<span class="number">0</span>, draft);
+<a href=#980 id=980 data-nosnippet>980</a>            summary.draft = EditBuffer::with_text(text);
+<a href=#981 id=981 data-nosnippet>981</a>        }
+<a href=#982 id=982 data-nosnippet>982</a>        summary
+<a href=#983 id=983 data-nosnippet>983</a>    }
+<a href=#984 id=984 data-nosnippet>984</a>
+<a href=#985 id=985 data-nosnippet>985</a>    <span class="doccomment">/// The newest message of `chat`.
+<a href=#986 id=986 data-nosnippet>986</a>    </span><span class="kw">fn </span>last_message(<span class="kw-2">&amp;</span><span class="self">self</span>, chat: ChatId) -&gt; <span class="prelude-ty">Option</span>&lt;Message&gt; {
+<a href=#987 id=987 data-nosnippet>987</a>        <span class="kw">let </span>kept = <span class="self">self
+<a href=#988 id=988 data-nosnippet>988</a>            </span>.kept
+<a href=#989 id=989 data-nosnippet>989</a>            .borrow()
+<a href=#990 id=990 data-nosnippet>990</a>            .iter()
+<a href=#991 id=991 data-nosnippet>991</a>            .rev()
+<a href=#992 id=992 data-nosnippet>992</a>            .find(|(c, <span class="kw">_</span>)| <span class="kw-2">*</span>c == chat)
+<a href=#993 id=993 data-nosnippet>993</a>            .map(|(<span class="kw">_</span>, message)| message.clone());
+<a href=#994 id=994 data-nosnippet>994</a>        <span class="kw">let </span><span class="kw-2">mut </span>message = kept.or_else(|| {
+<a href=#995 id=995 data-nosnippet>995</a>            <span class="kw">let </span>all = messages(chat);
+<a href=#996 id=996 data-nosnippet>996</a>            <span class="kw">let </span>last = all.len().checked_sub(<span class="number">1</span>)<span class="question-mark">?</span>;
+<a href=#997 id=997 data-nosnippet>997</a>            mockup_message(<span class="self">self</span>.heap, chat, last, all[last])
+<a href=#998 id=998 data-nosnippet>998</a>        })<span class="question-mark">?</span>;
+<a href=#999 id=999 data-nosnippet>999</a>        <span class="self">self</span>.overlay(<span class="kw-2">&amp;mut </span>message);
+<a href=#1000 id=1000 data-nosnippet>1000</a>        <span class="prelude-val">Some</span>(message)
+<a href=#1001 id=1001 data-nosnippet>1001</a>    }
+<a href=#1002 id=1002 data-nosnippet>1002</a>
+<a href=#1003 id=1003 data-nosnippet>1003</a>    <span class="doccomment">/// Applies to `message` what has happened to it since the fixture
+<a href=#1004 id=1004 data-nosnippet>1004</a>    /// started: my reaction, a retry, and its sender identified.
+<a href=#1005 id=1005 data-nosnippet>1005</a>    </span><span class="kw">fn </span>overlay(<span class="kw-2">&amp;</span><span class="self">self</span>, message: <span class="kw-2">&amp;mut </span>Message) {
+<a href=#1006 id=1006 data-nosnippet>1006</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>(<span class="kw">_</span>, reaction)) = <span class="self">self</span>.mine.borrow().iter().find(|(id, <span class="kw">_</span>)| <span class="kw-2">*</span>id == message.id) {
+<a href=#1007 id=1007 data-nosnippet>1007</a>            message.set_my_reaction(<span class="prelude-val">Some</span>(reaction));
+<a href=#1008 id=1008 data-nosnippet>1008</a>        }
+<a href=#1009 id=1009 data-nosnippet>1009</a>        <span class="kw">if </span><span class="self">self</span>.retried.borrow().contains(<span class="kw-2">&amp;</span>message.id) {
+<a href=#1010 id=1010 data-nosnippet>1010</a>            message.delivery = Delivery::Sending;
+<a href=#1011 id=1011 data-nosnippet>1011</a>        }
+<a href=#1012 id=1012 data-nosnippet>1012</a>        <span class="kw">if </span><span class="self">self</span>.without_secrecy.borrow().contains(<span class="kw-2">&amp;</span>message.id) {
+<a href=#1013 id=1013 data-nosnippet>1013</a>            message.forward_secret = <span class="bool-val">false</span>;
+<a href=#1014 id=1014 data-nosnippet>1014</a>        }
+<a href=#1015 id=1015 data-nosnippet>1015</a>        <span class="kw">if </span><span class="self">self</span>.identified.get()
+<a href=#1016 id=1016 data-nosnippet>1016</a>            &amp;&amp; <span class="kw">let </span><span class="prelude-val">Some</span>(sender) = message.sender.as_mut().filter(|s| s.name == UNIDENTIFIED)
+<a href=#1017 id=1017 data-nosnippet>1017</a>        {
+<a href=#1018 id=1018 data-nosnippet>1018</a>            <span class="kw-2">*</span>sender = <span class="self">self</span>.card(UNIDENTIFIED).sender;
+<a href=#1019 id=1019 data-nosnippet>1019</a>        }
+<a href=#1020 id=1020 data-nosnippet>1020</a>    }
+<a href=#1021 id=1021 data-nosnippet>1021</a>
+<a href=#1022 id=1022 data-nosnippet>1022</a>    <span class="doccomment">/// Keeps `text`, from `from`, in reply to `reply_to`, as the newest
+<a href=#1023 id=1023 data-nosnippet>1023</a>    /// message of `chat`.
+<a href=#1024 id=1024 data-nosnippet>1024</a>    </span><span class="kw">fn </span>keep(
+<a href=#1025 id=1025 data-nosnippet>1025</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
+<a href=#1026 id=1026 data-nosnippet>1026</a>        chat: ChatId,
+<a href=#1027 id=1027 data-nosnippet>1027</a>        from: From,
+<a href=#1028 id=1028 data-nosnippet>1028</a>        text: <span class="kw-2">&amp;</span>str,
+<a href=#1029 id=1029 data-nosnippet>1029</a>        reply_to: <span class="prelude-ty">Option</span>&lt;MessageId&gt;,
+<a href=#1030 id=1030 data-nosnippet>1030</a>        forward_secret: bool,
+<a href=#1031 id=1031 data-nosnippet>1031</a>    ) -&gt; <span class="prelude-ty">Option</span>&lt;Message&gt; {
+<a href=#1032 id=1032 data-nosnippet>1032</a>        <span class="kw">let </span>reply = <span class="kw">match </span>reply_to {
+<a href=#1033 id=1033 data-nosnippet>1033</a>            <span class="prelude-val">Some</span>(id) =&gt; {
+<a href=#1034 id=1034 data-nosnippet>1034</a>                <span class="kw">let </span>quoted = <span class="self">self</span>.message(chat, id)<span class="question-mark">?</span>;
+<a href=#1035 id=1035 data-nosnippet>1035</a>                <span class="kw">let </span>chat_name = <span class="self">self</span>.chat(chat).map(|chat| chat.name).unwrap_or_default();
+<a href=#1036 id=1036 data-nosnippet>1036</a>                quote_of(<span class="self">self</span>.heap, <span class="kw-2">&amp;</span>quoted, <span class="kw-2">&amp;</span>chat_name)
+<a href=#1037 id=1037 data-nosnippet>1037</a>            }
+<a href=#1038 id=1038 data-nosnippet>1038</a>            <span class="prelude-val">None </span>=&gt; <span class="prelude-val">None</span>,
+<a href=#1039 id=1039 data-nosnippet>1039</a>        };
+<a href=#1040 id=1040 data-nosnippet>1040</a>        <span class="kw">let </span>message = Message {
+<a href=#1041 id=1041 data-nosnippet>1041</a>            id: <span class="self">self</span>.next.get(),
+<a href=#1042 id=1042 data-nosnippet>1042</a>            direction: <span class="kw">match </span>from {
+<a href=#1043 id=1043 data-nosnippet>1043</a>                From::Me =&gt; Direction::Outbound,
+<a href=#1044 id=1044 data-nosnippet>1044</a>                From::Peer | From::Member(<span class="kw">_</span>) =&gt; Direction::Inbound,
+<a href=#1045 id=1045 data-nosnippet>1045</a>            },
+<a href=#1046 id=1046 data-nosnippet>1046</a>            sender: <span class="kw">match </span>from {
+<a href=#1047 id=1047 data-nosnippet>1047</a>                From::Member(name) =&gt; <span class="prelude-val">Some</span>(member(name)),
+<a href=#1048 id=1048 data-nosnippet>1048</a>                From::Me | From::Peer =&gt; <span class="prelude-val">None</span>,
+<a href=#1049 id=1049 data-nosnippet>1049</a>            },
+<a href=#1050 id=1050 data-nosnippet>1050</a>            text: SharedText::new(<span class="self">self</span>.heap, text)<span class="question-mark">?</span>,
+<a href=#1051 id=1051 data-nosnippet>1051</a>            delivery: <span class="kw">match </span>from {
+<a href=#1052 id=1052 data-nosnippet>1052</a>                <span class="comment">// A channel's sends have no acknowledgment to wait for.
+<a href=#1053 id=1053 data-nosnippet>1053</a>                </span>From::Me <span class="kw">if </span><span class="self">self</span>.is_channel(chat) =&gt; Delivery::Sent,
+<a href=#1054 id=1054 data-nosnippet>1054</a>                From::Me =&gt; Delivery::Sending,
+<a href=#1055 id=1055 data-nosnippet>1055</a>                From::Peer | From::Member(<span class="kw">_</span>) =&gt; Delivery::Delivered,
+<a href=#1056 id=1056 data-nosnippet>1056</a>            },
+<a href=#1057 id=1057 data-nosnippet>1057</a>            reactions: Reactions::new(),
+<a href=#1058 id=1058 data-nosnippet>1058</a>            invite: <span class="prelude-val">None</span>,
+<a href=#1059 id=1059 data-nosnippet>1059</a>            reply,
+<a href=#1060 id=1060 data-nosnippet>1060</a>            time: <span class="prelude-val">Some</span>(<span class="self">self</span>.time()),
+<a href=#1061 id=1061 data-nosnippet>1061</a>            presence: Presence::Present,
+<a href=#1062 id=1062 data-nosnippet>1062</a>            edited: <span class="bool-val">false</span>,
+<a href=#1063 id=1063 data-nosnippet>1063</a>            deleted: <span class="bool-val">false</span>,
+<a href=#1064 id=1064 data-nosnippet>1064</a>            late: <span class="bool-val">false</span>,
+<a href=#1065 id=1065 data-nosnippet>1065</a>            forward_secret,
+<a href=#1066 id=1066 data-nosnippet>1066</a>            parts: <span class="prelude-val">None</span>,
+<a href=#1067 id=1067 data-nosnippet>1067</a>        };
+<a href=#1068 id=1068 data-nosnippet>1068</a>        <span class="self">self</span>.next.set(message.id + <span class="number">1</span>);
+<a href=#1069 id=1069 data-nosnippet>1069</a>        <span class="kw">let </span><span class="kw-2">mut </span>kept = <span class="self">self</span>.kept.borrow_mut();
+<a href=#1070 id=1070 data-nosnippet>1070</a>        <span class="kw">if </span>kept.is_full() {
+<a href=#1071 id=1071 data-nosnippet>1071</a>            kept.remove(<span class="number">0</span>);
+<a href=#1072 id=1072 data-nosnippet>1072</a>        }
+<a href=#1073 id=1073 data-nosnippet>1073</a>        <span class="kw">_ </span>= kept.push((chat, message.clone()));
+<a href=#1074 id=1074 data-nosnippet>1074</a>        <span class="prelude-val">Some</span>(message)
+<a href=#1075 id=1075 data-nosnippet>1075</a>    }
+<a href=#1076 id=1076 data-nosnippet>1076</a>
+<a href=#1077 id=1077 data-nosnippet>1077</a>    <span class="doccomment">/// Sets a setting with `set`, which says whether it was taken, and
+<a href=#1078 id=1078 data-nosnippet>1078</a>    /// announces the outcome.
+<a href=#1079 id=1079 data-nosnippet>1079</a>    </span><span class="kw">fn </span>setting(<span class="kw-2">&amp;</span><span class="self">self</span>, setting: Setting, set: <span class="kw">impl </span>FnOnce() -&gt; bool) {
+<a href=#1080 id=1080 data-nosnippet>1080</a>        <span class="self">self</span>.queue(<span class="kw">if </span>set() {
+<a href=#1081 id=1081 data-nosnippet>1081</a>            NodeEvent::SettingsChanged
+<a href=#1082 id=1082 data-nosnippet>1082</a>        } <span class="kw">else </span>{
+<a href=#1083 id=1083 data-nosnippet>1083</a>            NodeEvent::SettingRefused(setting)
+<a href=#1084 id=1084 data-nosnippet>1084</a>        });
+<a href=#1085 id=1085 data-nosnippet>1085</a>    }
+<a href=#1086 id=1086 data-nosnippet>1086</a>}
+<a href=#1087 id=1087 data-nosnippet>1087</a>
+<a href=#1088 id=1088 data-nosnippet>1088</a><span class="kw">impl </span>core::fmt::Debug <span class="kw">for </span>Store {
+<a href=#1089 id=1089 data-nosnippet>1089</a>    <span class="kw">fn </span>fmt(<span class="kw-2">&amp;</span><span class="self">self</span>, f: <span class="kw-2">&amp;mut </span>core::fmt::Formatter&lt;<span class="lifetime">'_</span>&gt;) -&gt; core::fmt::Result {
+<a href=#1090 id=1090 data-nosnippet>1090</a>        f.debug_struct(<span class="string">"Store"</span>)
+<a href=#1091 id=1091 data-nosnippet>1091</a>            .field(<span class="string">"kept"</span>, <span class="kw-2">&amp;</span><span class="self">self</span>.kept)
+<a href=#1092 id=1092 data-nosnippet>1092</a>            .field(<span class="string">"arrived"</span>, <span class="kw-2">&amp;</span><span class="self">self</span>.arrived)
+<a href=#1093 id=1093 data-nosnippet>1093</a>            .field(<span class="string">"mine"</span>, <span class="kw-2">&amp;</span><span class="self">self</span>.mine)
+<a href=#1094 id=1094 data-nosnippet>1094</a>            .field(<span class="string">"retried"</span>, <span class="kw-2">&amp;</span><span class="self">self</span>.retried)
+<a href=#1095 id=1095 data-nosnippet>1095</a>            .field(<span class="string">"next"</span>, <span class="kw-2">&amp;</span><span class="self">self</span>.next)
+<a href=#1096 id=1096 data-nosnippet>1096</a>            .field(<span class="string">"events"</span>, <span class="kw-2">&amp;</span><span class="self">self</span>.events)
+<a href=#1097 id=1097 data-nosnippet>1097</a>            .finish_non_exhaustive()
+<a href=#1098 id=1098 data-nosnippet>1098</a>    }
+<a href=#1099 id=1099 data-nosnippet>1099</a>}
+<a href=#1100 id=1100 data-nosnippet>1100</a>
+<a href=#1101 id=1101 data-nosnippet>1101</a><span class="kw">impl </span>Node <span class="kw">for </span>Store {
+<a href=#1102 id=1102 data-nosnippet>1102</a>    <span class="kw">fn </span>next_event(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;NodeEvent&gt; {
+<a href=#1103 id=1103 data-nosnippet>1103</a>        <span class="self">self</span>.events.borrow_mut().pop()
+<a href=#1104 id=1104 data-nosnippet>1104</a>    }
+<a href=#1105 id=1105 data-nosnippet>1105</a>
+<a href=#1106 id=1106 data-nosnippet>1106</a>    <span class="kw">fn </span>chats(<span class="kw-2">&amp;</span><span class="self">self</span>, into: <span class="kw-2">&amp;mut </span>Chats) {
+<a href=#1107 id=1107 data-nosnippet>1107</a>        <span class="kw">for </span>row <span class="kw">in </span><span class="self">self</span>.rows().iter().take(MAX_CHATS) {
+<a href=#1108 id=1108 data-nosnippet>1108</a>            <span class="kw">_ </span>= into.push(<span class="self">self</span>.summary(row));
+<a href=#1109 id=1109 data-nosnippet>1109</a>        }
+<a href=#1110 id=1110 data-nosnippet>1110</a>    }
+<a href=#1111 id=1111 data-nosnippet>1111</a>
+<a href=#1112 id=1112 data-nosnippet>1112</a>    <span class="kw">fn </span>chat(<span class="kw-2">&amp;</span><span class="self">self</span>, chat: ChatId) -&gt; <span class="prelude-ty">Option</span>&lt;ChatSummary&gt; {
+<a href=#1113 id=1113 data-nosnippet>1113</a>        <span class="kw">let </span>rows = <span class="self">self</span>.rows();
+<a href=#1114 id=1114 data-nosnippet>1114</a>        <span class="kw">let </span>row = rows.iter().find(|row| row.id == chat)<span class="question-mark">?</span>;
+<a href=#1115 id=1115 data-nosnippet>1115</a>        <span class="prelude-val">Some</span>(<span class="self">self</span>.summary(row))
+<a href=#1116 id=1116 data-nosnippet>1116</a>    }
+<a href=#1117 id=1117 data-nosnippet>1117</a>
+<a href=#1118 id=1118 data-nosnippet>1118</a>    <span class="kw">fn </span>peers(<span class="kw-2">&amp;</span><span class="self">self</span>, into: <span class="kw-2">&amp;mut </span>Peers) {
+<a href=#1119 id=1119 data-nosnippet>1119</a>        <span class="kw">let </span>forgotten = <span class="self">self</span>.forgotten.borrow();
+<a href=#1120 id=1120 data-nosnippet>1120</a>        <span class="kw">let </span>saved = <span class="self">self</span>.saved.borrow();
+<a href=#1121 id=1121 data-nosnippet>1121</a>        <span class="comment">// Members saved since were heard just now, and come first.
+<a href=#1122 id=1122 data-nosnippet>1122</a>        </span><span class="kw">let </span>members = saved
+<a href=#1123 id=1123 data-nosnippet>1123</a>            .iter()
+<a href=#1124 id=1124 data-nosnippet>1124</a>            .rev()
+<a href=#1125 id=1125 data-nosnippet>1125</a>            .map(|(<span class="kw">_</span>, summary)| summary.clone())
+<a href=#1126 id=1126 data-nosnippet>1126</a>            .filter(|summary| !forgotten.contains(<span class="kw-2">&amp;</span>summary.id));
+<a href=#1127 id=1127 data-nosnippet>1127</a>        <span class="kw">let </span>mockup = (<span class="number">1</span>..).zip(PEERS.iter()).map(|(id, peer)| PeerSummary {
+<a href=#1128 id=1128 data-nosnippet>1128</a>            id,
+<a href=#1129 id=1129 data-nosnippet>1129</a>            avatar: AvatarStyle::peer(peer.color, peer.hint, PeerShape::Circle),
+<a href=#1130 id=1130 data-nosnippet>1130</a>            name: s(peer.name),
+<a href=#1131 id=1131 data-nosnippet>1131</a>            hops: peer.hops,
+<a href=#1132 id=1132 data-nosnippet>1132</a>            signal: peer.signal,
+<a href=#1133 id=1133 data-nosnippet>1133</a>            heard: s(peer.heard),
+<a href=#1134 id=1134 data-nosnippet>1134</a>        });
+<a href=#1135 id=1135 data-nosnippet>1135</a>        <span class="kw">for </span>summary <span class="kw">in </span>members
+<a href=#1136 id=1136 data-nosnippet>1136</a>            .chain(mockup.filter(|summary| !forgotten.contains(<span class="kw-2">&amp;</span>summary.id)))
+<a href=#1137 id=1137 data-nosnippet>1137</a>            .take(MAX_PEERS)
+<a href=#1138 id=1138 data-nosnippet>1138</a>        {
+<a href=#1139 id=1139 data-nosnippet>1139</a>            <span class="kw">_ </span>= into.push(summary);
+<a href=#1140 id=1140 data-nosnippet>1140</a>        }
+<a href=#1141 id=1141 data-nosnippet>1141</a>    }
+<a href=#1142 id=1142 data-nosnippet>1142</a>
+<a href=#1143 id=1143 data-nosnippet>1143</a>    <span class="kw">fn </span>load(<span class="kw-2">&amp;</span><span class="self">self</span>, chat: ChatId, into: <span class="kw-2">&amp;mut </span>Messages) {
+<a href=#1144 id=1144 data-nosnippet>1144</a>        <span class="kw">for </span>(index, <span class="kw-2">&amp;</span>entry) <span class="kw">in </span>messages(chat).iter().enumerate() {
+<a href=#1145 id=1145 data-nosnippet>1145</a>            <span class="kw">if let </span><span class="prelude-val">Some</span>(message) = mockup_message(<span class="self">self</span>.heap, chat, index, entry) {
+<a href=#1146 id=1146 data-nosnippet>1146</a>                push_newest(into, message);
+<a href=#1147 id=1147 data-nosnippet>1147</a>            }
+<a href=#1148 id=1148 data-nosnippet>1148</a>        }
+<a href=#1149 id=1149 data-nosnippet>1149</a>        <span class="kw">for </span>(<span class="kw">_</span>, kept) <span class="kw">in </span><span class="self">self</span>.kept.borrow().iter().filter(|(c, <span class="kw">_</span>)| <span class="kw-2">*</span>c == chat) {
+<a href=#1150 id=1150 data-nosnippet>1150</a>            push_newest(into, kept.clone());
+<a href=#1151 id=1151 data-nosnippet>1151</a>        }
+<a href=#1152 id=1152 data-nosnippet>1152</a>        <span class="kw">for </span>message <span class="kw">in </span>into.iter_mut() {
+<a href=#1153 id=1153 data-nosnippet>1153</a>            <span class="self">self</span>.overlay(message);
+<a href=#1154 id=1154 data-nosnippet>1154</a>        }
+<a href=#1155 id=1155 data-nosnippet>1155</a>    }
+<a href=#1156 id=1156 data-nosnippet>1156</a>
+<a href=#1157 id=1157 data-nosnippet>1157</a>    <span class="kw">fn </span>message(<span class="kw-2">&amp;</span><span class="self">self</span>, chat: ChatId, message: MessageId) -&gt; <span class="prelude-ty">Option</span>&lt;Message&gt; {
+<a href=#1158 id=1158 data-nosnippet>1158</a>        <span class="kw">let </span><span class="kw-2">mut </span>found = <span class="kw">if </span>message &gt;= FIRST_KEPT {
+<a href=#1159 id=1159 data-nosnippet>1159</a>            <span class="kw">let </span>kept = <span class="self">self</span>.kept.borrow();
+<a href=#1160 id=1160 data-nosnippet>1160</a>            kept.iter()
+<a href=#1161 id=1161 data-nosnippet>1161</a>                .find(|(c, m)| <span class="kw-2">*</span>c == chat &amp;&amp; m.id == message)
+<a href=#1162 id=1162 data-nosnippet>1162</a>                .map(|(<span class="kw">_</span>, m)| m.clone())<span class="question-mark">?
+<a href=#1163 id=1163 data-nosnippet>1163</a>        </span>} <span class="kw">else </span>{
+<a href=#1164 id=1164 data-nosnippet>1164</a>            <span class="kw">let </span>index = (message &amp; <span class="number">0xFF</span>) <span class="kw">as </span>usize;
+<a href=#1165 id=1165 data-nosnippet>1165</a>            <span class="kw">if </span>mockup_id(chat, index) != message {
+<a href=#1166 id=1166 data-nosnippet>1166</a>                <span class="kw">return </span><span class="prelude-val">None</span>;
+<a href=#1167 id=1167 data-nosnippet>1167</a>            }
+<a href=#1168 id=1168 data-nosnippet>1168</a>            mockup_message(<span class="self">self</span>.heap, chat, index, <span class="kw-2">*</span>messages(chat).get(index)<span class="question-mark">?</span>)<span class="question-mark">?
+<a href=#1169 id=1169 data-nosnippet>1169</a>        </span>};
+<a href=#1170 id=1170 data-nosnippet>1170</a>        <span class="self">self</span>.overlay(<span class="kw-2">&amp;mut </span>found);
+<a href=#1171 id=1171 data-nosnippet>1171</a>        <span class="prelude-val">Some</span>(found)
+<a href=#1172 id=1172 data-nosnippet>1172</a>    }
+<a href=#1173 id=1173 data-nosnippet>1173</a>
+<a href=#1174 id=1174 data-nosnippet>1174</a>    <span class="kw">fn </span>opened(<span class="kw-2">&amp;</span><span class="self">self</span>, chat: ChatId) {
+<a href=#1175 id=1175 data-nosnippet>1175</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(row) = <span class="self">self</span>.rows().iter_mut().find(|row| row.id == chat) {
+<a href=#1176 id=1176 data-nosnippet>1176</a>            row.unread = <span class="bool-val">false</span>;
+<a href=#1177 id=1177 data-nosnippet>1177</a>        }
+<a href=#1178 id=1178 data-nosnippet>1178</a>    }
+<a href=#1179 id=1179 data-nosnippet>1179</a>
+<a href=#1180 id=1180 data-nosnippet>1180</a>    <span class="kw">fn </span>save_draft(<span class="kw-2">&amp;</span><span class="self">self</span>, chat: ChatId, text: <span class="kw-2">&amp;</span>str) {
+<a href=#1181 id=1181 data-nosnippet>1181</a>        <span class="kw">let </span>draft = (!text.trim().is_empty())
+<a href=#1182 id=1182 data-nosnippet>1182</a>            .then(|| SharedText::new(<span class="self">self</span>.heap, text))
+<a href=#1183 id=1183 data-nosnippet>1183</a>            .flatten();
+<a href=#1184 id=1184 data-nosnippet>1184</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(row) = <span class="self">self</span>.rows().iter_mut().find(|row| row.id == chat) {
+<a href=#1185 id=1185 data-nosnippet>1185</a>            row.draft = draft;
+<a href=#1186 id=1186 data-nosnippet>1186</a>        }
+<a href=#1187 id=1187 data-nosnippet>1187</a>    }
+<a href=#1188 id=1188 data-nosnippet>1188</a>
+<a href=#1189 id=1189 data-nosnippet>1189</a>    <span class="kw">fn </span>send(
+<a href=#1190 id=1190 data-nosnippet>1190</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
+<a href=#1191 id=1191 data-nosnippet>1191</a>        chat: ChatId,
+<a href=#1192 id=1192 data-nosnippet>1192</a>        text: <span class="kw-2">&amp;</span>str,
+<a href=#1193 id=1193 data-nosnippet>1193</a>        reply_to: <span class="prelude-ty">Option</span>&lt;MessageId&gt;,
+<a href=#1194 id=1194 data-nosnippet>1194</a>        forward_secret: bool,
+<a href=#1195 id=1195 data-nosnippet>1195</a>    ) -&gt; <span class="prelude-ty">Option</span>&lt;Message&gt; {
+<a href=#1196 id=1196 data-nosnippet>1196</a>        <span class="kw">let </span>message = <span class="self">self</span>.keep(chat, From::Me, text, reply_to, forward_secret)<span class="question-mark">?</span>;
+<a href=#1197 id=1197 data-nosnippet>1197</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(<span class="kw-2">mut </span>row) = <span class="self">self</span>.touch(chat) {
+<a href=#1198 id=1198 data-nosnippet>1198</a>            row.draft = <span class="prelude-val">None</span>;
+<a href=#1199 id=1199 data-nosnippet>1199</a>        }
+<a href=#1200 id=1200 data-nosnippet>1200</a>        <span class="self">self</span>.queue(NodeEvent::ChatChanged(chat));
+<a href=#1201 id=1201 data-nosnippet>1201</a>        <span class="prelude-val">Some</span>(message)
+<a href=#1202 id=1202 data-nosnippet>1202</a>    }
+<a href=#1203 id=1203 data-nosnippet>1203</a>
+<a href=#1204 id=1204 data-nosnippet>1204</a>    <span class="kw">fn </span>react(<span class="kw-2">&amp;</span><span class="self">self</span>, chat: ChatId, message: MessageId, reaction: <span class="prelude-ty">Option</span>&lt;Reaction&gt;) {
+<a href=#1205 id=1205 data-nosnippet>1205</a>        <span class="kw">let </span><span class="kw-2">mut </span>mine = <span class="self">self</span>.mine.borrow_mut();
+<a href=#1206 id=1206 data-nosnippet>1206</a>        mine.retain(|(id, <span class="kw">_</span>)| <span class="kw-2">*</span><span class="macro">id !</span>= message);
+<a href=#1207 id=1207 data-nosnippet>1207</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(reaction) = reaction {
+<a href=#1208 id=1208 data-nosnippet>1208</a>            <span class="kw">if </span>mine.is_full() {
+<a href=#1209 id=1209 data-nosnippet>1209</a>                mine.remove(<span class="number">0</span>);
+<a href=#1210 id=1210 data-nosnippet>1210</a>            }
+<a href=#1211 id=1211 data-nosnippet>1211</a>            <span class="kw">_ </span>= mine.push((message, reaction));
+<a href=#1212 id=1212 data-nosnippet>1212</a>        }
+<a href=#1213 id=1213 data-nosnippet>1213</a>        drop(mine);
+<a href=#1214 id=1214 data-nosnippet>1214</a>        <span class="self">self</span>.queue(NodeEvent::MessageChanged { chat, message });
+<a href=#1215 id=1215 data-nosnippet>1215</a>    }
+<a href=#1216 id=1216 data-nosnippet>1216</a>
+<a href=#1217 id=1217 data-nosnippet>1217</a>    <span class="kw">fn </span>retry(<span class="kw-2">&amp;</span><span class="self">self</span>, chat: ChatId, message: MessageId) -&gt; bool {
+<a href=#1218 id=1218 data-nosnippet>1218</a>        <span class="kw">let </span><span class="kw-2">mut </span>retried = <span class="self">self</span>.retried.borrow_mut();
+<a href=#1219 id=1219 data-nosnippet>1219</a>        <span class="kw">if </span>!retried.contains(<span class="kw-2">&amp;</span>message) {
+<a href=#1220 id=1220 data-nosnippet>1220</a>            <span class="kw">if </span>retried.is_full() {
+<a href=#1221 id=1221 data-nosnippet>1221</a>                retried.remove(<span class="number">0</span>);
+<a href=#1222 id=1222 data-nosnippet>1222</a>            }
+<a href=#1223 id=1223 data-nosnippet>1223</a>            <span class="kw">_ </span>= retried.push(message);
+<a href=#1224 id=1224 data-nosnippet>1224</a>        }
+<a href=#1225 id=1225 data-nosnippet>1225</a>        drop(retried);
+<a href=#1226 id=1226 data-nosnippet>1226</a>        <span class="self">self</span>.queue(NodeEvent::MessageChanged { chat, message });
+<a href=#1227 id=1227 data-nosnippet>1227</a>        <span class="bool-val">true
+<a href=#1228 id=1228 data-nosnippet>1228</a>    </span>}
+<a href=#1229 id=1229 data-nosnippet>1229</a>
+<a href=#1230 id=1230 data-nosnippet>1230</a>    <span class="kw">fn </span>retry_without_secrecy(<span class="kw-2">&amp;</span><span class="self">self</span>, chat: ChatId, message: MessageId) -&gt; bool {
+<a href=#1231 id=1231 data-nosnippet>1231</a>        <span class="kw">let </span><span class="kw-2">mut </span>without = <span class="self">self</span>.without_secrecy.borrow_mut();
+<a href=#1232 id=1232 data-nosnippet>1232</a>        <span class="kw">if </span>!without.contains(<span class="kw-2">&amp;</span>message) {
+<a href=#1233 id=1233 data-nosnippet>1233</a>            <span class="kw">if </span>without.is_full() {
+<a href=#1234 id=1234 data-nosnippet>1234</a>                without.remove(<span class="number">0</span>);
+<a href=#1235 id=1235 data-nosnippet>1235</a>            }
+<a href=#1236 id=1236 data-nosnippet>1236</a>            <span class="kw">_ </span>= without.push(message);
+<a href=#1237 id=1237 data-nosnippet>1237</a>        }
+<a href=#1238 id=1238 data-nosnippet>1238</a>        drop(without);
+<a href=#1239 id=1239 data-nosnippet>1239</a>        <span class="self">self</span>.retry(chat, message)
+<a href=#1240 id=1240 data-nosnippet>1240</a>    }
+<a href=#1241 id=1241 data-nosnippet>1241</a>
+<a href=#1242 id=1242 data-nosnippet>1242</a>    <span class="kw">fn </span>member(<span class="kw-2">&amp;</span><span class="self">self</span>, chat: ChatId, message: MessageId) -&gt; <span class="prelude-ty">Option</span>&lt;Member&gt; {
+<a href=#1243 id=1243 data-nosnippet>1243</a>        <span class="kw">let </span>name = <span class="kw">if </span>message &gt;= FIRST_KEPT {
+<a href=#1244 id=1244 data-nosnippet>1244</a>            <span class="kw">let </span>kept = <span class="self">self</span>.kept.borrow();
+<a href=#1245 id=1245 data-nosnippet>1245</a>            <span class="kw">let </span>(<span class="kw">_</span>, kept) = kept.iter().find(|(<span class="kw">_</span>, m)| m.id == message)<span class="question-mark">?</span>;
+<a href=#1246 id=1246 data-nosnippet>1246</a>            kept.sender.as_ref()<span class="question-mark">?</span>.name.clone()
+<a href=#1247 id=1247 data-nosnippet>1247</a>        } <span class="kw">else </span>{
+<a href=#1248 id=1248 data-nosnippet>1248</a>            <span class="kw">match </span>messages(chat).get((message &amp; <span class="number">0xFF</span>) <span class="kw">as </span>usize)<span class="question-mark">? </span>{
+<a href=#1249 id=1249 data-nosnippet>1249</a>                (From::Member(name), <span class="kw">_</span>) =&gt; s(name),
+<a href=#1250 id=1250 data-nosnippet>1250</a>                <span class="kw">_ </span>=&gt; <span class="kw">return </span><span class="prelude-val">None</span>,
+<a href=#1251 id=1251 data-nosnippet>1251</a>            }
+<a href=#1252 id=1252 data-nosnippet>1252</a>        };
+<a href=#1253 id=1253 data-nosnippet>1253</a>        <span class="prelude-val">Some</span>(<span class="self">self</span>.card(<span class="kw-2">&amp;</span>name))
+<a href=#1254 id=1254 data-nosnippet>1254</a>    }
+<a href=#1255 id=1255 data-nosnippet>1255</a>
+<a href=#1256 id=1256 data-nosnippet>1256</a>    <span class="kw">fn </span>request_identity(<span class="kw-2">&amp;</span><span class="self">self</span>, _chat: ChatId, _message: MessageId) {
+<a href=#1257 id=1257 data-nosnippet>1257</a>        <span class="comment">// Only the unidentified member has an identity to come.
+<a href=#1258 id=1258 data-nosnippet>1258</a>        </span><span class="self">self</span>.asked.set(<span class="bool-val">true</span>);
+<a href=#1259 id=1259 data-nosnippet>1259</a>    }
+<a href=#1260 id=1260 data-nosnippet>1260</a>
+<a href=#1261 id=1261 data-nosnippet>1261</a>    <span class="kw">fn </span>direct_chat(<span class="kw-2">&amp;</span><span class="self">self</span>, address: <span class="kw-2">&amp;</span>str, name: <span class="kw-2">&amp;</span>str, avatar: <span class="kw-2">&amp;</span>AvatarStyle) -&gt; <span class="prelude-ty">Option</span>&lt;ChatSummary&gt; {
+<a href=#1262 id=1262 data-nosnippet>1262</a>        <span class="comment">// A saved peer the fixture already has a chat with.
+<a href=#1263 id=1263 data-nosnippet>1263</a>        </span><span class="kw">if let </span><span class="prelude-val">Some</span>(chat) = PEERS
+<a href=#1264 id=1264 data-nosnippet>1264</a>            .iter()
+<a href=#1265 id=1265 data-nosnippet>1265</a>            .find(|peer| peer.address == address)
+<a href=#1266 id=1266 data-nosnippet>1266</a>            .and_then(|peer| peer.chat)
+<a href=#1267 id=1267 data-nosnippet>1267</a>        {
+<a href=#1268 id=1268 data-nosnippet>1268</a>            <span class="kw">return </span><span class="self">self</span>.chat(chat);
+<a href=#1269 id=1269 data-nosnippet>1269</a>        }
+<a href=#1270 id=1270 data-nosnippet>1270</a>        <span class="kw">let </span><span class="kw-2">mut </span>direct = <span class="self">self</span>.direct.borrow_mut();
+<a href=#1271 id=1271 data-nosnippet>1271</a>        <span class="kw">let </span>chat = <span class="kw">match </span>direct.iter().position(|a| a == address) {
+<a href=#1272 id=1272 data-nosnippet>1272</a>            <span class="prelude-val">Some</span>(index) =&gt; FIRST_DIRECT + index <span class="kw">as </span>ChatId,
+<a href=#1273 id=1273 data-nosnippet>1273</a>            <span class="prelude-val">None </span>=&gt; {
+<a href=#1274 id=1274 data-nosnippet>1274</a>                direct.push(String::try_from(address).ok()<span class="question-mark">?</span>).ok()<span class="question-mark">?</span>;
+<a href=#1275 id=1275 data-nosnippet>1275</a>                <span class="kw">let </span>chat = FIRST_DIRECT + (direct.len() - <span class="number">1</span>) <span class="kw">as </span>ChatId;
+<a href=#1276 id=1276 data-nosnippet>1276</a>                drop(direct);
+<a href=#1277 id=1277 data-nosnippet>1277</a>                <span class="self">self</span>.make_chat(chat, avatar.clone(), name, ChatKind::Peer { hops: <span class="prelude-val">None </span>});
+<a href=#1278 id=1278 data-nosnippet>1278</a>                chat
+<a href=#1279 id=1279 data-nosnippet>1279</a>            }
+<a href=#1280 id=1280 data-nosnippet>1280</a>        };
+<a href=#1281 id=1281 data-nosnippet>1281</a>        <span class="self">self</span>.chat(chat)
+<a href=#1282 id=1282 data-nosnippet>1282</a>    }
+<a href=#1283 id=1283 data-nosnippet>1283</a>
+<a href=#1284 id=1284 data-nosnippet>1284</a>    <span class="kw">fn </span>peer_detail(<span class="kw-2">&amp;</span><span class="self">self</span>, peer: PeerId) -&gt; <span class="prelude-ty">Option</span>&lt;PeerDetail&gt; {
+<a href=#1285 id=1285 data-nosnippet>1285</a>        <span class="kw">if </span><span class="self">self</span>.forgotten.borrow().contains(<span class="kw-2">&amp;</span>peer) {
+<a href=#1286 id=1286 data-nosnippet>1286</a>            <span class="kw">return </span><span class="prelude-val">None</span>;
+<a href=#1287 id=1287 data-nosnippet>1287</a>        }
+<a href=#1288 id=1288 data-nosnippet>1288</a>        <span class="kw">let </span>(address, route, heard) = <span class="kw">match </span>peer.checked_sub(<span class="number">1</span>).and_then(|i| PEERS.get(i <span class="kw">as </span>usize))
+<a href=#1289 id=1289 data-nosnippet>1289</a>        {
+<a href=#1290 id=1290 data-nosnippet>1290</a>            <span class="prelude-val">Some</span>(saved) =&gt; (s(saved.address), saved.route.map(s), saved.heard_long),
+<a href=#1291 id=1291 data-nosnippet>1291</a>            <span class="comment">// A member saved since the fixture started.
+<a href=#1292 id=1292 data-nosnippet>1292</a>            </span><span class="prelude-val">None </span>=&gt; {
+<a href=#1293 id=1293 data-nosnippet>1293</a>                <span class="kw">let </span>saved = <span class="self">self</span>.saved.borrow();
+<a href=#1294 id=1294 data-nosnippet>1294</a>                <span class="kw">let </span>index = peer.checked_sub(FIRST_SAVED)<span class="question-mark">? </span><span class="kw">as </span>usize;
+<a href=#1295 id=1295 data-nosnippet>1295</a>                (saved.get(index)<span class="question-mark">?</span>.<span class="number">0</span>.clone(), <span class="prelude-val">None</span>, <span class="string">"2 min ago"</span>)
+<a href=#1296 id=1296 data-nosnippet>1296</a>            }
+<a href=#1297 id=1297 data-nosnippet>1297</a>        };
+<a href=#1298 id=1298 data-nosnippet>1298</a>        <span class="prelude-val">Some</span>(PeerDetail {
+<a href=#1299 id=1299 data-nosnippet>1299</a>            address,
+<a href=#1300 id=1300 data-nosnippet>1300</a>            route,
+<a href=#1301 id=1301 data-nosnippet>1301</a>            heard: s(heard),
+<a href=#1302 id=1302 data-nosnippet>1302</a>            forward_secrecy: <span class="self">self</span>.secrecy.borrow().contains(<span class="kw-2">&amp;</span>peer),
+<a href=#1303 id=1303 data-nosnippet>1303</a>            <span class="comment">// A ping is answered at once.
+<a href=#1304 id=1304 data-nosnippet>1304</a>            </span>ping: <span class="self">self</span>.pinged.borrow().contains(<span class="kw-2">&amp;</span>peer).then(|| s(<span class="string">"1.4 s"</span>)),
+<a href=#1305 id=1305 data-nosnippet>1305</a>        })
+<a href=#1306 id=1306 data-nosnippet>1306</a>    }
+<a href=#1307 id=1307 data-nosnippet>1307</a>
+<a href=#1308 id=1308 data-nosnippet>1308</a>    <span class="kw">fn </span>set_forward_secrecy(<span class="kw-2">&amp;</span><span class="self">self</span>, peer: PeerId, on: bool) {
+<a href=#1309 id=1309 data-nosnippet>1309</a>        <span class="kw">let </span><span class="kw-2">mut </span>secrecy = <span class="self">self</span>.secrecy.borrow_mut();
+<a href=#1310 id=1310 data-nosnippet>1310</a>        secrecy.retain(|p| <span class="kw-2">*</span><span class="macro">p !</span>= peer);
+<a href=#1311 id=1311 data-nosnippet>1311</a>        <span class="kw">if </span>on {
+<a href=#1312 id=1312 data-nosnippet>1312</a>            <span class="kw">_ </span>= secrecy.push(peer);
+<a href=#1313 id=1313 data-nosnippet>1313</a>        }
+<a href=#1314 id=1314 data-nosnippet>1314</a>        drop(secrecy);
+<a href=#1315 id=1315 data-nosnippet>1315</a>        <span class="self">self</span>.queue(NodeEvent::PeerChanged(peer));
+<a href=#1316 id=1316 data-nosnippet>1316</a>    }
+<a href=#1317 id=1317 data-nosnippet>1317</a>
+<a href=#1318 id=1318 data-nosnippet>1318</a>    <span class="kw">fn </span>ping(<span class="kw-2">&amp;</span><span class="self">self</span>, peer: PeerId) {
+<a href=#1319 id=1319 data-nosnippet>1319</a>        <span class="kw">let </span><span class="kw-2">mut </span>pinged = <span class="self">self</span>.pinged.borrow_mut();
+<a href=#1320 id=1320 data-nosnippet>1320</a>        <span class="kw">if </span>!pinged.contains(<span class="kw-2">&amp;</span>peer) {
+<a href=#1321 id=1321 data-nosnippet>1321</a>            <span class="kw">_ </span>= pinged.push(peer);
+<a href=#1322 id=1322 data-nosnippet>1322</a>        }
+<a href=#1323 id=1323 data-nosnippet>1323</a>        drop(pinged);
+<a href=#1324 id=1324 data-nosnippet>1324</a>        <span class="self">self</span>.queue(NodeEvent::PingAnswered(peer));
+<a href=#1325 id=1325 data-nosnippet>1325</a>    }
+<a href=#1326 id=1326 data-nosnippet>1326</a>
+<a href=#1327 id=1327 data-nosnippet>1327</a>    <span class="kw">fn </span>utc_offset_min(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; i16 {
+<a href=#1328 id=1328 data-nosnippet>1328</a>        <span class="number">0
+<a href=#1329 id=1329 data-nosnippet>1329</a>    </span>}
+<a href=#1330 id=1330 data-nosnippet>1330</a>
+<a href=#1331 id=1331 data-nosnippet>1331</a>    <span class="doccomment">/// Saved peers' identities are what the fixture has: asking changes
+<a href=#1332 id=1332 data-nosnippet>1332</a>    /// nothing.
+<a href=#1333 id=1333 data-nosnippet>1333</a>    </span><span class="kw">fn </span>request_peer_identity(<span class="kw-2">&amp;</span><span class="self">self</span>, peer: PeerId) {
+<a href=#1334 id=1334 data-nosnippet>1334</a>        <span class="self">self</span>.queue(NodeEvent::PeerChanged(peer));
+<a href=#1335 id=1335 data-nosnippet>1335</a>    }
+<a href=#1336 id=1336 data-nosnippet>1336</a>
+<a href=#1337 id=1337 data-nosnippet>1337</a>    <span class="kw">fn </span>forget_peer(<span class="kw-2">&amp;</span><span class="self">self</span>, peer: PeerId) {
+<a href=#1338 id=1338 data-nosnippet>1338</a>        <span class="kw">let </span><span class="kw-2">mut </span>forgotten = <span class="self">self</span>.forgotten.borrow_mut();
+<a href=#1339 id=1339 data-nosnippet>1339</a>        <span class="kw">if </span>!forgotten.contains(<span class="kw-2">&amp;</span>peer) {
+<a href=#1340 id=1340 data-nosnippet>1340</a>            <span class="kw">_ </span>= forgotten.push(peer);
+<a href=#1341 id=1341 data-nosnippet>1341</a>        }
+<a href=#1342 id=1342 data-nosnippet>1342</a>        drop(forgotten);
+<a href=#1343 id=1343 data-nosnippet>1343</a>        <span class="self">self</span>.queue(NodeEvent::PeerRemoved(peer));
+<a href=#1344 id=1344 data-nosnippet>1344</a>    }
+<a href=#1345 id=1345 data-nosnippet>1345</a>
+<a href=#1346 id=1346 data-nosnippet>1346</a>    <span class="kw">fn </span>find_heard(<span class="kw-2">&amp;</span><span class="self">self</span>, query: <span class="kw-2">&amp;</span>str) -&gt; Vec&lt;Heard, MAX_HEARD&gt; {
+<a href=#1347 id=1347 data-nosnippet>1347</a>        HEARD
+<a href=#1348 id=1348 data-nosnippet>1348</a>            .iter()
+<a href=#1349 id=1349 data-nosnippet>1349</a>            .filter(|node| word_match(node.name, query).is_some())
+<a href=#1350 id=1350 data-nosnippet>1350</a>            .map(|node| Heard {
+<a href=#1351 id=1351 data-nosnippet>1351</a>                address: s(node.address),
+<a href=#1352 id=1352 data-nosnippet>1352</a>                avatar: AvatarStyle::peer(node.color, <span class="kw-2">&amp;</span>node.address[..<span class="number">4</span>], node.shape),
+<a href=#1353 id=1353 data-nosnippet>1353</a>                name: s(node.name),
+<a href=#1354 id=1354 data-nosnippet>1354</a>                distance: s(node.distance),
+<a href=#1355 id=1355 data-nosnippet>1355</a>                age: s(node.age),
+<a href=#1356 id=1356 data-nosnippet>1356</a>            })
+<a href=#1357 id=1357 data-nosnippet>1357</a>            .take(MAX_HEARD)
+<a href=#1358 id=1358 data-nosnippet>1358</a>            .collect()
+<a href=#1359 id=1359 data-nosnippet>1359</a>    }
+<a href=#1360 id=1360 data-nosnippet>1360</a>
+<a href=#1361 id=1361 data-nosnippet>1361</a>    <span class="kw">fn </span>address(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; String&lt;<span class="number">44</span>&gt; {
+<a href=#1362 id=1362 data-nosnippet>1362</a>        s(ADDRESS)
+<a href=#1363 id=1363 data-nosnippet>1363</a>    }
+<a href=#1364 id=1364 data-nosnippet>1364</a>
+<a href=#1365 id=1365 data-nosnippet>1365</a>    <span class="kw">fn </span>share_uri(<span class="kw-2">&amp;</span><span class="self">self</span>, what: Shareable) -&gt; <span class="prelude-ty">Option</span>&lt;ShareUri&gt; {
+<a href=#1366 id=1366 data-nosnippet>1366</a>        <span class="kw">match </span>what {
+<a href=#1367 id=1367 data-nosnippet>1367</a>            Shareable::Identity =&gt; {
+<a href=#1368 id=1368 data-nosnippet>1368</a>                <span class="kw">let </span><span class="kw-2">mut </span>uri = ShareUri::new();
+<a href=#1369 id=1369 data-nosnippet>1369</a>                core::fmt::write(<span class="kw-2">&amp;mut </span>uri, <span class="macro">format_args!</span>(<span class="string">"umsh:n:{ADDRESS}"</span>)).ok()<span class="question-mark">?</span>;
+<a href=#1370 id=1370 data-nosnippet>1370</a>                <span class="prelude-val">Some</span>(uri)
+<a href=#1371 id=1371 data-nosnippet>1371</a>            }
+<a href=#1372 id=1372 data-nosnippet>1372</a>            Shareable::Channel(<span class="number">2</span>) =&gt; private_uri(TRAIL_CREW_KEY, <span class="string">"Trail Crew"</span>),
+<a href=#1373 id=1373 data-nosnippet>1373</a>            Shareable::Channel(<span class="number">4</span>) =&gt; ShareUri::try_from(<span class="string">"umsh:cs:public"</span>).ok(),
+<a href=#1374 id=1374 data-nosnippet>1374</a>            Shareable::Channel(<span class="number">6</span>) =&gt; ShareUri::try_from(<span class="string">"umsh:cs:emergency"</span>).ok(),
+<a href=#1375 id=1375 data-nosnippet>1375</a>            Shareable::Channel(chat) =&gt; {
+<a href=#1376 id=1376 data-nosnippet>1376</a>                <span class="kw">let </span>index = chat.checked_sub(FIRST_JOINED)<span class="question-mark">? </span><span class="kw">as </span>usize;
+<a href=#1377 id=1377 data-nosnippet>1377</a>                <span class="kw">let </span>joined = <span class="self">self</span>.joined.borrow();
+<a href=#1378 id=1378 data-nosnippet>1378</a>                <span class="kw">let </span>(name, access) = joined.get(index)<span class="question-mark">?</span>;
+<a href=#1379 id=1379 data-nosnippet>1379</a>                <span class="kw">match </span>access {
+<a href=#1380 id=1380 data-nosnippet>1380</a>                    ChannelAccess::Private =&gt; private_uri(JOINED_KEY, name),
+<a href=#1381 id=1381 data-nosnippet>1381</a>                    <span class="kw">_ </span>=&gt; {
+<a href=#1382 id=1382 data-nosnippet>1382</a>                        <span class="kw">let </span><span class="kw-2">mut </span>uri = ShareUri::new();
+<a href=#1383 id=1383 data-nosnippet>1383</a>                        core::fmt::write(<span class="kw-2">&amp;mut </span>uri, <span class="macro">format_args!</span>(<span class="string">"umsh:cs:"</span>)).ok()<span class="question-mark">?</span>;
+<a href=#1384 id=1384 data-nosnippet>1384</a>                        push_encoded(<span class="kw-2">&amp;mut </span>uri, <span class="kw-2">&amp;</span>folded(name))<span class="question-mark">?</span>;
+<a href=#1385 id=1385 data-nosnippet>1385</a>                        <span class="prelude-val">Some</span>(uri)
+<a href=#1386 id=1386 data-nosnippet>1386</a>                    }
+<a href=#1387 id=1387 data-nosnippet>1387</a>                }
+<a href=#1388 id=1388 data-nosnippet>1388</a>            }
+<a href=#1389 id=1389 data-nosnippet>1389</a>        }
+<a href=#1390 id=1390 data-nosnippet>1390</a>    }
+<a href=#1391 id=1391 data-nosnippet>1391</a>
+<a href=#1392 id=1392 data-nosnippet>1392</a>    <span class="kw">fn </span>avatar(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; AvatarStyle {
+<a href=#1393 id=1393 data-nosnippet>1393</a>        AvatarStyle::peer([<span class="number">150</span>, <span class="number">156</span>, <span class="number">166</span>], <span class="kw-2">&amp;</span>ADDRESS[..<span class="number">4</span>], PeerShape::Circle)
+<a href=#1394 id=1394 data-nosnippet>1394</a>    }
+<a href=#1395 id=1395 data-nosnippet>1395</a>
+<a href=#1396 id=1396 data-nosnippet>1396</a>    <span class="kw">fn </span>device_name(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; String&lt;<span class="number">24</span>&gt; {
+<a href=#1397 id=1397 data-nosnippet>1397</a>        <span class="self">self</span>.name.borrow().clone().unwrap_or_else(|| s(<span class="string">"Juniper"</span>))
+<a href=#1398 id=1398 data-nosnippet>1398</a>    }
+<a href=#1399 id=1399 data-nosnippet>1399</a>
+<a href=#1400 id=1400 data-nosnippet>1400</a>    <span class="kw">fn </span>set_name(<span class="kw-2">&amp;</span><span class="self">self</span>, name: <span class="kw-2">&amp;</span>str) {
+<a href=#1401 id=1401 data-nosnippet>1401</a>        <span class="self">self</span>.setting(Setting::Name, || {
+<a href=#1402 id=1402 data-nosnippet>1402</a>            <span class="kw-2">*</span><span class="self">self</span>.name.borrow_mut() = <span class="prelude-val">Some</span>(cut(name));
+<a href=#1403 id=1403 data-nosnippet>1403</a>            <span class="bool-val">true
+<a href=#1404 id=1404 data-nosnippet>1404</a>        </span>});
+<a href=#1405 id=1405 data-nosnippet>1405</a>    }
+<a href=#1406 id=1406 data-nosnippet>1406</a>
+<a href=#1407 id=1407 data-nosnippet>1407</a>    <span class="kw">fn </span>profile_count(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
+<a href=#1408 id=1408 data-nosnippet>1408</a>        VETTED.len()
+<a href=#1409 id=1409 data-nosnippet>1409</a>    }
+<a href=#1410 id=1410 data-nosnippet>1410</a>
+<a href=#1411 id=1411 data-nosnippet>1411</a>    <span class="kw">fn </span>profile(<span class="kw-2">&amp;</span><span class="self">self</span>, index: usize) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span><span class="lifetime">'static </span>str&gt; {
+<a href=#1412 id=1412 data-nosnippet>1412</a>        VETTED.get(index).map(|profile| profile.name)
+<a href=#1413 id=1413 data-nosnippet>1413</a>    }
+<a href=#1414 id=1414 data-nosnippet>1414</a>
+<a href=#1415 id=1415 data-nosnippet>1415</a>    <span class="kw">fn </span>set_profile(<span class="kw-2">&amp;</span><span class="self">self</span>, index: usize) {
+<a href=#1416 id=1416 data-nosnippet>1416</a>        <span class="self">self</span>.setting(Setting::Profile, || {
+<a href=#1417 id=1417 data-nosnippet>1417</a>            <span class="kw">let </span>vetted = index &lt; VETTED.len();
+<a href=#1418 id=1418 data-nosnippet>1418</a>            <span class="kw">if </span>vetted {
+<a href=#1419 id=1419 data-nosnippet>1419</a>                <span class="self">self</span>.profile.set(Profile::Vetted(index));
+<a href=#1420 id=1420 data-nosnippet>1420</a>            }
+<a href=#1421 id=1421 data-nosnippet>1421</a>            vetted
+<a href=#1422 id=1422 data-nosnippet>1422</a>        });
+<a href=#1423 id=1423 data-nosnippet>1423</a>    }
+<a href=#1424 id=1424 data-nosnippet>1424</a>
+<a href=#1425 id=1425 data-nosnippet>1425</a>    <span class="kw">fn </span>radio(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; RadioSettings {
+<a href=#1426 id=1426 data-nosnippet>1426</a>        RadioSettings {
+<a href=#1427 id=1427 data-nosnippet>1427</a>            profile: <span class="self">self</span>.profile.get(),
+<a href=#1428 id=1428 data-nosnippet>1428</a>            forwarding: <span class="self">self</span>.forwarding.get(),
+<a href=#1429 id=1429 data-nosnippet>1429</a>            share_location: <span class="self">self</span>.share_location.get(),
+<a href=#1430 id=1430 data-nosnippet>1430</a>            transmit_power: <span class="self">self</span>.transmit_power.get(),
+<a href=#1431 id=1431 data-nosnippet>1431</a>            airtime: <span class="number">3</span>,
+<a href=#1432 id=1432 data-nosnippet>1432</a>        }
+<a href=#1433 id=1433 data-nosnippet>1433</a>    }
+<a href=#1434 id=1434 data-nosnippet>1434</a>
+<a href=#1435 id=1435 data-nosnippet>1435</a>    <span class="kw">fn </span>set_forwarding(<span class="kw-2">&amp;</span><span class="self">self</span>, on: bool) {
+<a href=#1436 id=1436 data-nosnippet>1436</a>        <span class="self">self</span>.setting(Setting::Forwarding, || {
+<a href=#1437 id=1437 data-nosnippet>1437</a>            <span class="self">self</span>.forwarding.set(on);
+<a href=#1438 id=1438 data-nosnippet>1438</a>            <span class="bool-val">true
+<a href=#1439 id=1439 data-nosnippet>1439</a>        </span>});
+<a href=#1440 id=1440 data-nosnippet>1440</a>    }
+<a href=#1441 id=1441 data-nosnippet>1441</a>
+<a href=#1442 id=1442 data-nosnippet>1442</a>    <span class="kw">fn </span>set_share_location(<span class="kw-2">&amp;</span><span class="self">self</span>, on: bool) {
+<a href=#1443 id=1443 data-nosnippet>1443</a>        <span class="self">self</span>.setting(Setting::ShareLocation, || {
+<a href=#1444 id=1444 data-nosnippet>1444</a>            <span class="self">self</span>.share_location.set(on);
+<a href=#1445 id=1445 data-nosnippet>1445</a>            <span class="bool-val">true
+<a href=#1446 id=1446 data-nosnippet>1446</a>        </span>});
+<a href=#1447 id=1447 data-nosnippet>1447</a>    }
+<a href=#1448 id=1448 data-nosnippet>1448</a>
+<a href=#1449 id=1449 data-nosnippet>1449</a>    <span class="kw">fn </span>set_transmit_power(<span class="kw-2">&amp;</span><span class="self">self</span>, dbm: i8) {
+<a href=#1450 id=1450 data-nosnippet>1450</a>        <span class="self">self</span>.setting(Setting::TransmitPower, || {
+<a href=#1451 id=1451 data-nosnippet>1451</a>            <span class="kw">let </span>usable = TRANSMIT_POWER.contains(<span class="kw-2">&amp;</span>dbm);
+<a href=#1452 id=1452 data-nosnippet>1452</a>            <span class="kw">if </span>usable {
+<a href=#1453 id=1453 data-nosnippet>1453</a>                <span class="self">self</span>.transmit_power.set(dbm);
+<a href=#1454 id=1454 data-nosnippet>1454</a>            }
+<a href=#1455 id=1455 data-nosnippet>1455</a>            usable
+<a href=#1456 id=1456 data-nosnippet>1456</a>        });
+<a href=#1457 id=1457 data-nosnippet>1457</a>    }
+<a href=#1458 id=1458 data-nosnippet>1458</a>
+<a href=#1459 id=1459 data-nosnippet>1459</a>    <span class="kw">fn </span>keyboard(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; KeyboardSettings {
+<a href=#1460 id=1460 data-nosnippet>1460</a>        <span class="self">self</span>.keyboard.get()
+<a href=#1461 id=1461 data-nosnippet>1461</a>    }
+<a href=#1462 id=1462 data-nosnippet>1462</a>
+<a href=#1463 id=1463 data-nosnippet>1463</a>    <span class="kw">fn </span>set_keyboard(<span class="kw-2">&amp;</span><span class="self">self</span>, settings: KeyboardSettings) {
+<a href=#1464 id=1464 data-nosnippet>1464</a>        <span class="self">self</span>.setting(Setting::Keyboard, || {
+<a href=#1465 id=1465 data-nosnippet>1465</a>            <span class="self">self</span>.keyboard.set(settings);
+<a href=#1466 id=1466 data-nosnippet>1466</a>            <span class="bool-val">true
+<a href=#1467 id=1467 data-nosnippet>1467</a>        </span>});
+<a href=#1468 id=1468 data-nosnippet>1468</a>    }
+<a href=#1469 id=1469 data-nosnippet>1469</a>
+<a href=#1470 id=1470 data-nosnippet>1470</a>    <span class="kw">fn </span>brightness(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; u8 {
+<a href=#1471 id=1471 data-nosnippet>1471</a>        <span class="self">self</span>.brightness.get()
+<a href=#1472 id=1472 data-nosnippet>1472</a>    }
+<a href=#1473 id=1473 data-nosnippet>1473</a>
+<a href=#1474 id=1474 data-nosnippet>1474</a>    <span class="kw">fn </span>set_brightness(<span class="kw-2">&amp;</span><span class="self">self</span>, brightness: u8) {
+<a href=#1475 id=1475 data-nosnippet>1475</a>        <span class="self">self</span>.setting(Setting::Brightness, || {
+<a href=#1476 id=1476 data-nosnippet>1476</a>            <span class="self">self</span>.brightness.set(brightness);
+<a href=#1477 id=1477 data-nosnippet>1477</a>            <span class="bool-val">true
+<a href=#1478 id=1478 data-nosnippet>1478</a>        </span>});
+<a href=#1479 id=1479 data-nosnippet>1479</a>    }
+<a href=#1480 id=1480 data-nosnippet>1480</a>
+<a href=#1481 id=1481 data-nosnippet>1481</a>    <span class="kw">fn </span>inspect_peer(<span class="kw-2">&amp;</span><span class="self">self</span>, text: <span class="kw-2">&amp;</span>str) -&gt; PeerEntry {
+<a href=#1482 id=1482 data-nosnippet>1482</a>        <span class="kw">use </span>umsh_core::NodeHint;
+<a href=#1483 id=1483 data-nosnippet>1483</a>        <span class="kw">use </span>umsh_core::base58::{ENCODED_LEN, prefix_bounds};
+<a href=#1484 id=1484 data-nosnippet>1484</a>
+<a href=#1485 id=1485 data-nosnippet>1485</a>        <span class="kw">let </span>text = text.trim();
+<a href=#1486 id=1486 data-nosnippet>1486</a>        <span class="kw">if </span>text.is_empty() {
+<a href=#1487 id=1487 data-nosnippet>1487</a>            <span class="kw">return </span>PeerEntry::Empty;
+<a href=#1488 id=1488 data-nosnippet>1488</a>        }
+<a href=#1489 id=1489 data-nosnippet>1489</a>        <span class="comment">// An invitation carries the address, and may carry an identity after
+<a href=#1490 id=1490 data-nosnippet>1490</a>        // it, whose name a node would read; the fixture does not.
+<a href=#1491 id=1491 data-nosnippet>1491</a>        </span><span class="kw">let </span>(digits, name) = <span class="kw">match </span>text.strip_prefix(PEER_INVITATION) {
+<a href=#1492 id=1492 data-nosnippet>1492</a>            <span class="prelude-val">Some</span>(rest) =&gt; (
+<a href=#1493 id=1493 data-nosnippet>1493</a>                rest.split_once(<span class="string">':'</span>).map_or(rest, |(digits, <span class="kw">_</span>)| digits),
+<a href=#1494 id=1494 data-nosnippet>1494</a>                <span class="prelude-val">None</span>,
+<a href=#1495 id=1495 data-nosnippet>1495</a>            ),
+<a href=#1496 id=1496 data-nosnippet>1496</a>            <span class="comment">// An invitation still being typed.
+<a href=#1497 id=1497 data-nosnippet>1497</a>            </span><span class="prelude-val">None </span><span class="kw">if </span>PEER_INVITATION.starts_with(text) =&gt; {
+<a href=#1498 id=1498 data-nosnippet>1498</a>                <span class="kw">return </span>PeerEntry::Partial {
+<a href=#1499 id=1499 data-nosnippet>1499</a>                    avatar: <span class="prelude-val">None</span>,
+<a href=#1500 id=1500 data-nosnippet>1500</a>                    hint: String::new(),
+<a href=#1501 id=1501 data-nosnippet>1501</a>                    missing: ENCODED_LEN <span class="kw">as </span>u8,
+<a href=#1502 id=1502 data-nosnippet>1502</a>                };
+<a href=#1503 id=1503 data-nosnippet>1503</a>            }
+<a href=#1504 id=1504 data-nosnippet>1504</a>            <span class="prelude-val">None </span>=&gt; (text, <span class="prelude-val">None</span>),
+<a href=#1505 id=1505 data-nosnippet>1505</a>        };
+<a href=#1506 id=1506 data-nosnippet>1506</a>        <span class="kw">if </span>digits.is_empty() {
+<a href=#1507 id=1507 data-nosnippet>1507</a>            <span class="kw">return </span>PeerEntry::Partial {
+<a href=#1508 id=1508 data-nosnippet>1508</a>                avatar: <span class="prelude-val">None</span>,
+<a href=#1509 id=1509 data-nosnippet>1509</a>                hint: String::new(),
+<a href=#1510 id=1510 data-nosnippet>1510</a>                missing: ENCODED_LEN <span class="kw">as </span>u8,
+<a href=#1511 id=1511 data-nosnippet>1511</a>            };
+<a href=#1512 id=1512 data-nosnippet>1512</a>        }
+<a href=#1513 id=1513 data-nosnippet>1513</a>        <span class="kw">let </span><span class="prelude-val">Ok</span>((low, high)) = prefix_bounds(digits.as_bytes()) <span class="kw">else </span>{
+<a href=#1514 id=1514 data-nosnippet>1514</a>            <span class="kw">return </span>PeerEntry::Invalid;
+<a href=#1515 id=1515 data-nosnippet>1515</a>        };
+<a href=#1516 id=1516 data-nosnippet>1516</a>        <span class="kw">let </span>bytes = [low[<span class="number">0</span>], low[<span class="number">1</span>], low[<span class="number">2</span>]];
+<a href=#1517 id=1517 data-nosnippet>1517</a>        <span class="kw">let </span><span class="kw-2">mut </span>hint: String&lt;<span class="number">8</span>&gt; = String::new();
+<a href=#1518 id=1518 data-nosnippet>1518</a>        <span class="kw">_ </span>= core::fmt::write(<span class="kw-2">&amp;mut </span>hint, <span class="macro">format_args!</span>(<span class="string">"{}"</span>, NodeHint(bytes)));
+<a href=#1519 id=1519 data-nosnippet>1519</a>        <span class="kw">if </span>digits.len() == ENCODED_LEN {
+<a href=#1520 id=1520 data-nosnippet>1520</a>            <span class="comment">// The whole address settles every character of the hint.
+<a href=#1521 id=1521 data-nosnippet>1521</a>            </span><span class="kw">let </span>hint: String&lt;<span class="number">8</span>&gt; = s(<span class="kw-2">&amp;</span>digits[..<span class="number">4</span>]);
+<a href=#1522 id=1522 data-nosnippet>1522</a>            <span class="kw">let </span>avatar = AvatarStyle::peer(bytes, <span class="kw-2">&amp;</span>hint, PeerShape::Hexagon);
+<a href=#1523 id=1523 data-nosnippet>1523</a>            <span class="kw">return </span>PeerEntry::Complete {
+<a href=#1524 id=1524 data-nosnippet>1524</a>                avatar,
+<a href=#1525 id=1525 data-nosnippet>1525</a>                hint,
+<a href=#1526 id=1526 data-nosnippet>1526</a>                address: s(digits),
+<a href=#1527 id=1527 data-nosnippet>1527</a>                name,
+<a href=#1528 id=1528 data-nosnippet>1528</a>            };
+<a href=#1529 id=1529 data-nosnippet>1529</a>        }
+<a href=#1530 id=1530 data-nosnippet>1530</a>        <span class="comment">// A peer known by nothing but their address is drawn as a hexagon.
+<a href=#1531 id=1531 data-nosnippet>1531</a>        </span><span class="kw">let </span>avatar = AvatarStyle::peer(bytes, <span class="kw-2">&amp;</span>hint, PeerShape::Hexagon);
+<a href=#1532 id=1532 data-nosnippet>1532</a>        <span class="comment">// The avatar shows once the characters settle the hint.
+<a href=#1533 id=1533 data-nosnippet>1533</a>        </span><span class="kw">let </span>settled = low[..<span class="number">3</span>] == high[..<span class="number">3</span>];
+<a href=#1534 id=1534 data-nosnippet>1534</a>        PeerEntry::Partial {
+<a href=#1535 id=1535 data-nosnippet>1535</a>            avatar: settled.then_some(avatar),
+<a href=#1536 id=1536 data-nosnippet>1536</a>            hint: <span class="kw">if </span>settled { hint } <span class="kw">else </span>{ String::new() },
+<a href=#1537 id=1537 data-nosnippet>1537</a>            missing: (ENCODED_LEN - digits.len()) <span class="kw">as </span>u8,
+<a href=#1538 id=1538 data-nosnippet>1538</a>        }
+<a href=#1539 id=1539 data-nosnippet>1539</a>    }
+<a href=#1540 id=1540 data-nosnippet>1540</a>
+<a href=#1541 id=1541 data-nosnippet>1541</a>    <span class="kw">fn </span>join(<span class="kw-2">&amp;</span><span class="self">self</span>, invite: <span class="kw-2">&amp;</span>Invite, name: <span class="kw-2">&amp;</span>str) -&gt; <span class="prelude-ty">Option</span>&lt;ChatSummary&gt; {
+<a href=#1542 id=1542 data-nosnippet>1542</a>        <span class="kw">let </span>(chat, new) = <span class="self">self</span>.joined_id(<span class="kw-2">&amp;</span>invite.name, invite.access)<span class="question-mark">?</span>;
+<a href=#1543 id=1543 data-nosnippet>1543</a>        <span class="kw">if </span>new {
+<a href=#1544 id=1544 data-nosnippet>1544</a>            <span class="kw">let </span>kind = ChatKind::Channel {
+<a href=#1545 id=1545 data-nosnippet>1545</a>                access: invite.access,
+<a href=#1546 id=1546 data-nosnippet>1546</a>            };
+<a href=#1547 id=1547 data-nosnippet>1547</a>            <span class="self">self</span>.make_chat(chat, invite.avatar(), name, kind);
+<a href=#1548 id=1548 data-nosnippet>1548</a>        }
+<a href=#1549 id=1549 data-nosnippet>1549</a>        <span class="self">self</span>.chat(chat)
+<a href=#1550 id=1550 data-nosnippet>1550</a>    }
+<a href=#1551 id=1551 data-nosnippet>1551</a>
+<a href=#1552 id=1552 data-nosnippet>1552</a>    <span class="kw">fn </span>inspect_channel(<span class="kw-2">&amp;</span><span class="self">self</span>, text: <span class="kw-2">&amp;</span>str) -&gt; ChannelEntry {
+<a href=#1553 id=1553 data-nosnippet>1553</a>        <span class="kw">use </span>umsh_core::base58::{ENCODED_LEN, prefix_bounds};
+<a href=#1554 id=1554 data-nosnippet>1554</a>
+<a href=#1555 id=1555 data-nosnippet>1555</a>        <span class="kw">let </span>text = text.trim();
+<a href=#1556 id=1556 data-nosnippet>1556</a>        <span class="kw">if </span>text.is_empty() {
+<a href=#1557 id=1557 data-nosnippet>1557</a>            <span class="kw">return </span>ChannelEntry::Empty;
+<a href=#1558 id=1558 data-nosnippet>1558</a>        }
+<a href=#1559 id=1559 data-nosnippet>1559</a>        <span class="kw">let </span>missing = |key: <span class="kw-2">&amp;</span>str| ChannelEntry::Partial {
+<a href=#1560 id=1560 data-nosnippet>1560</a>            missing: (ENCODED_LEN - key.len()) <span class="kw">as </span>u8,
+<a href=#1561 id=1561 data-nosnippet>1561</a>        };
+<a href=#1562 id=1562 data-nosnippet>1562</a>        <span class="kw">match </span>text.strip_prefix(CHANNEL_INVITATION) {
+<a href=#1563 id=1563 data-nosnippet>1563</a>            <span class="prelude-val">Some</span>(rest) =&gt; {
+<a href=#1564 id=1564 data-nosnippet>1564</a>                <span class="kw">let </span>key = rest.split_once(<span class="string">'?'</span>).map_or(rest, |(key, <span class="kw">_</span>)| key);
+<a href=#1565 id=1565 data-nosnippet>1565</a>                <span class="kw">if </span>key.is_empty() {
+<a href=#1566 id=1566 data-nosnippet>1566</a>                    missing(key)
+<a href=#1567 id=1567 data-nosnippet>1567</a>                } <span class="kw">else if </span>key.len() &gt; ENCODED_LEN || prefix_bounds(key.as_bytes()).is_err() {
+<a href=#1568 id=1568 data-nosnippet>1568</a>                    ChannelEntry::Invalid
+<a href=#1569 id=1569 data-nosnippet>1569</a>                } <span class="kw">else if </span>key.len() == ENCODED_LEN {
+<a href=#1570 id=1570 data-nosnippet>1570</a>                    ChannelEntry::Private
+<a href=#1571 id=1571 data-nosnippet>1571</a>                } <span class="kw">else </span>{
+<a href=#1572 id=1572 data-nosnippet>1572</a>                    missing(key)
+<a href=#1573 id=1573 data-nosnippet>1573</a>                }
+<a href=#1574 id=1574 data-nosnippet>1574</a>            }
+<a href=#1575 id=1575 data-nosnippet>1575</a>            <span class="comment">// An invitation still being typed.
+<a href=#1576 id=1576 data-nosnippet>1576</a>            </span><span class="prelude-val">None </span><span class="kw">if </span>CHANNEL_INVITATION.starts_with(text) &amp;&amp; text.contains(<span class="string">':'</span>) =&gt; missing(<span class="string">""</span>),
+<a href=#1577 id=1577 data-nosnippet>1577</a>            <span class="comment">// A name is any ASCII without the invitation's colon.
+<a href=#1578 id=1578 data-nosnippet>1578</a>            </span><span class="prelude-val">None </span><span class="kw">if </span>text.is_ascii() &amp;&amp; !text.contains(<span class="string">':'</span>) =&gt; ChannelEntry::Named,
+<a href=#1579 id=1579 data-nosnippet>1579</a>            <span class="prelude-val">None </span>=&gt; ChannelEntry::Invalid,
+<a href=#1580 id=1580 data-nosnippet>1580</a>        }
+<a href=#1581 id=1581 data-nosnippet>1581</a>    }
+<a href=#1582 id=1582 data-nosnippet>1582</a>
+<a href=#1583 id=1583 data-nosnippet>1583</a>    <span class="kw">fn </span>add_channel(<span class="kw-2">&amp;</span><span class="self">self</span>, text: <span class="kw-2">&amp;</span>str) -&gt; <span class="prelude-ty">Option</span>&lt;ChatSummary&gt; {
+<a href=#1584 id=1584 data-nosnippet>1584</a>        <span class="kw">let </span>text = text.trim();
+<a href=#1585 id=1585 data-nosnippet>1585</a>        <span class="kw">let </span>(name, access): (String&lt;<span class="number">32</span>&gt;, <span class="kw">_</span>) = <span class="kw">match </span><span class="self">self</span>.inspect_channel(text) {
+<a href=#1586 id=1586 data-nosnippet>1586</a>            ChannelEntry::Named =&gt; <span class="kw">match </span>folded(text).as_str() {
+<a href=#1587 id=1587 data-nosnippet>1587</a>                <span class="comment">// Joined from the start.
+<a href=#1588 id=1588 data-nosnippet>1588</a>                </span><span class="string">"public" </span>=&gt; <span class="kw">return </span><span class="self">self</span>.chat(<span class="number">4</span>),
+<a href=#1589 id=1589 data-nosnippet>1589</a>                <span class="string">"emergency" </span>=&gt; <span class="kw">return </span><span class="self">self</span>.chat(<span class="number">6</span>),
+<a href=#1590 id=1590 data-nosnippet>1590</a>                <span class="kw">_ </span>=&gt; (cut(text), ChannelAccess::Named),
+<a href=#1591 id=1591 data-nosnippet>1591</a>            },
+<a href=#1592 id=1592 data-nosnippet>1592</a>            ChannelEntry::Private =&gt; {
+<a href=#1593 id=1593 data-nosnippet>1593</a>                <span class="kw">let </span>rest = <span class="kw-2">&amp;</span>text[CHANNEL_INVITATION.len()..];
+<a href=#1594 id=1594 data-nosnippet>1594</a>                <span class="kw">let </span>(key, query) = rest.split_once(<span class="string">'?'</span>).unwrap_or((rest, <span class="string">""</span>));
+<a href=#1595 id=1595 data-nosnippet>1595</a>                <span class="kw">let </span>name = query
+<a href=#1596 id=1596 data-nosnippet>1596</a>                    .split(<span class="string">';'</span>)
+<a href=#1597 id=1597 data-nosnippet>1597</a>                    .find_map(|p| p.strip_prefix(<span class="string">"n="</span>))
+<a href=#1598 id=1598 data-nosnippet>1598</a>                    .map(decoded)
+<a href=#1599 id=1599 data-nosnippet>1599</a>                    .filter(|n| !n.is_empty());
+<a href=#1600 id=1600 data-nosnippet>1600</a>                <span class="kw">let </span>name = name.unwrap_or_else(|| {
+<a href=#1601 id=1601 data-nosnippet>1601</a>                    <span class="kw">let </span><span class="kw-2">mut </span>name: String&lt;<span class="number">32</span>&gt; = String::new();
+<a href=#1602 id=1602 data-nosnippet>1602</a>                    <span class="kw">_ </span>= core::fmt::write(<span class="kw-2">&amp;mut </span>name, <span class="macro">format_args!</span>(<span class="string">"Channel {}"</span>, <span class="kw-2">&amp;</span>key[..<span class="number">4</span>]));
+<a href=#1603 id=1603 data-nosnippet>1603</a>                    name
+<a href=#1604 id=1604 data-nosnippet>1604</a>                });
+<a href=#1605 id=1605 data-nosnippet>1605</a>                (name, ChannelAccess::Private)
+<a href=#1606 id=1606 data-nosnippet>1606</a>            }
+<a href=#1607 id=1607 data-nosnippet>1607</a>            <span class="kw">_ </span>=&gt; <span class="kw">return </span><span class="prelude-val">None</span>,
+<a href=#1608 id=1608 data-nosnippet>1608</a>        };
+<a href=#1609 id=1609 data-nosnippet>1609</a>        <span class="kw">let </span>(chat, new) = <span class="self">self</span>.joined_id(<span class="kw-2">&amp;</span>name, access)<span class="question-mark">?</span>;
+<a href=#1610 id=1610 data-nosnippet>1610</a>        <span class="kw">if </span>new {
+<a href=#1611 id=1611 data-nosnippet>1611</a>            <span class="kw">let </span>avatar = AvatarStyle::channel(<span class="prelude-val">None</span>, <span class="kw-2">&amp;</span>name, tint(<span class="kw-2">&amp;</span>name));
+<a href=#1612 id=1612 data-nosnippet>1612</a>            <span class="self">self</span>.make_chat(chat, avatar, <span class="kw-2">&amp;</span>name, ChatKind::Channel { access });
+<a href=#1613 id=1613 data-nosnippet>1613</a>        }
+<a href=#1614 id=1614 data-nosnippet>1614</a>        <span class="self">self</span>.chat(chat)
+<a href=#1615 id=1615 data-nosnippet>1615</a>    }
+<a href=#1616 id=1616 data-nosnippet>1616</a>
+<a href=#1617 id=1617 data-nosnippet>1617</a>    <span class="kw">fn </span>save_peer(<span class="kw-2">&amp;</span><span class="self">self</span>, member: <span class="kw-2">&amp;</span>Member) -&gt; <span class="prelude-ty">Option</span>&lt;PeerSummary&gt; {
+<a href=#1618 id=1618 data-nosnippet>1618</a>        <span class="kw">let </span>address = member.address.as_ref()<span class="question-mark">?</span>;
+<a href=#1619 id=1619 data-nosnippet>1619</a>        <span class="kw">let </span><span class="kw-2">mut </span>saved = <span class="self">self</span>.saved.borrow_mut();
+<a href=#1620 id=1620 data-nosnippet>1620</a>        <span class="kw">let </span>summary = <span class="kw">match </span>saved.iter().position(|(a, <span class="kw">_</span>)| a == address) {
+<a href=#1621 id=1621 data-nosnippet>1621</a>            <span class="prelude-val">Some</span>(index) =&gt; saved[index].<span class="number">1</span>.clone(),
+<a href=#1622 id=1622 data-nosnippet>1622</a>            <span class="prelude-val">None </span>=&gt; {
+<a href=#1623 id=1623 data-nosnippet>1623</a>                <span class="kw">let </span>summary = PeerSummary {
+<a href=#1624 id=1624 data-nosnippet>1624</a>                    id: FIRST_SAVED + saved.len() <span class="kw">as </span>PeerId,
+<a href=#1625 id=1625 data-nosnippet>1625</a>                    avatar: member.sender.avatar.clone(),
+<a href=#1626 id=1626 data-nosnippet>1626</a>                    name: s(<span class="kw-2">&amp;</span>member.sender.name),
+<a href=#1627 id=1627 data-nosnippet>1627</a>                    hops: <span class="prelude-val">None</span>,
+<a href=#1628 id=1628 data-nosnippet>1628</a>                    signal: <span class="prelude-val">None</span>,
+<a href=#1629 id=1629 data-nosnippet>1629</a>                    heard: member.heard.clone(),
+<a href=#1630 id=1630 data-nosnippet>1630</a>                };
+<a href=#1631 id=1631 data-nosnippet>1631</a>                saved.push((address.clone(), summary.clone())).ok()<span class="question-mark">?</span>;
+<a href=#1632 id=1632 data-nosnippet>1632</a>                summary
+<a href=#1633 id=1633 data-nosnippet>1633</a>            }
+<a href=#1634 id=1634 data-nosnippet>1634</a>        };
+<a href=#1635 id=1635 data-nosnippet>1635</a>        drop(saved);
+<a href=#1636 id=1636 data-nosnippet>1636</a>        <span class="self">self</span>.forgotten.borrow_mut().retain(|p| <span class="kw-2">*</span><span class="macro">p !</span>= summary.id);
+<a href=#1637 id=1637 data-nosnippet>1637</a>        <span class="self">self</span>.queue(NodeEvent::PeerChanged(summary.id));
+<a href=#1638 id=1638 data-nosnippet>1638</a>        <span class="prelude-val">Some</span>(summary)
+<a href=#1639 id=1639 data-nosnippet>1639</a>    }
+<a href=#1640 id=1640 data-nosnippet>1640</a>
+<a href=#1641 id=1641 data-nosnippet>1641</a>    <span class="kw">fn </span>details(<span class="kw-2">&amp;</span><span class="self">self</span>, chat: ChatId, message: MessageId) -&gt; <span class="prelude-ty">Option</span>&lt;Details&gt; {
+<a href=#1642 id=1642 data-nosnippet>1642</a>        <span class="comment">// Sent or received since the fixture started, or the fixture's own.
+<a href=#1643 id=1643 data-nosnippet>1643</a>        </span><span class="kw">let </span>(outbound, time) = <span class="kw">if </span>message &gt;= FIRST_KEPT {
+<a href=#1644 id=1644 data-nosnippet>1644</a>            <span class="kw">let </span>kept = <span class="self">self</span>.kept.borrow();
+<a href=#1645 id=1645 data-nosnippet>1645</a>            <span class="kw">let </span>(<span class="kw">_</span>, kept) = kept.iter().find(|(<span class="kw">_</span>, m)| m.id == message)<span class="question-mark">?</span>;
+<a href=#1646 id=1646 data-nosnippet>1646</a>            (kept.direction == Direction::Outbound, <span class="string">"14:32"</span>)
+<a href=#1647 id=1647 data-nosnippet>1647</a>        } <span class="kw">else </span>{
+<a href=#1648 id=1648 data-nosnippet>1648</a>            <span class="kw">let </span>(from, <span class="kw">_</span>) = <span class="kw-2">*</span>messages(chat).get((message &amp; <span class="number">0xFF</span>) <span class="kw">as </span>usize)<span class="question-mark">?</span>;
+<a href=#1649 id=1649 data-nosnippet>1649</a>            <span class="kw">match </span>from {
+<a href=#1650 id=1650 data-nosnippet>1650</a>                From::Me =&gt; (<span class="bool-val">true</span>, <span class="string">"14:27"</span>),
+<a href=#1651 id=1651 data-nosnippet>1651</a>                From::Peer | From::Member(<span class="kw">_</span>) =&gt; (<span class="bool-val">false</span>, <span class="string">"14:29"</span>),
+<a href=#1652 id=1652 data-nosnippet>1652</a>            }
+<a href=#1653 id=1653 data-nosnippet>1653</a>        };
+<a href=#1654 id=1654 data-nosnippet>1654</a>        <span class="kw">let </span><span class="kw-2">mut </span>details = <span class="kw">if </span>outbound {
+<a href=#1655 id=1655 data-nosnippet>1655</a>            Details {
+<a href=#1656 id=1656 data-nosnippet>1656</a>                time: s(time),
+<a href=#1657 id=1657 data-nosnippet>1657</a>                ..Details::default()
+<a href=#1658 id=1658 data-nosnippet>1658</a>            }
+<a href=#1659 id=1659 data-nosnippet>1659</a>        } <span class="kw">else </span>{
+<a href=#1660 id=1660 data-nosnippet>1660</a>            Details {
+<a href=#1661 id=1661 data-nosnippet>1661</a>                time: s(time),
+<a href=#1662 id=1662 data-nosnippet>1662</a>                hops: <span class="prelude-val">Some</span>(<span class="number">3</span>),
+<a href=#1663 id=1663 data-nosnippet>1663</a>                route: s(<span class="string">"Gh* \u{203A} 4Tn"</span>),
+<a href=#1664 id=1664 data-nosnippet>1664</a>                rssi: <span class="prelude-val">Some</span>(-<span class="number">97</span>),
+<a href=#1665 id=1665 data-nosnippet>1665</a>                snr: <span class="prelude-val">Some</span>(<span class="number">65</span>),
+<a href=#1666 id=1666 data-nosnippet>1666</a>                authenticated: <span class="bool-val">true</span>,
+<a href=#1667 id=1667 data-nosnippet>1667</a>                ..Details::default()
+<a href=#1668 id=1668 data-nosnippet>1668</a>            }
+<a href=#1669 id=1669 data-nosnippet>1669</a>        };
+<a href=#1670 id=1670 data-nosnippet>1670</a>        <span class="kw">let </span>index = (message &amp; <span class="number">0xFF</span>) <span class="kw">as </span>usize;
+<a href=#1671 id=1671 data-nosnippet>1671</a>        <span class="kw">let </span>theirs = <span class="kw">if </span>message &lt; FIRST_KEPT {
+<a href=#1672 id=1672 data-nosnippet>1672</a>            their_reactions(chat, index)
+<a href=#1673 id=1673 data-nosnippet>1673</a>        } <span class="kw">else </span>{
+<a href=#1674 id=1674 data-nosnippet>1674</a>            <span class="kw-2">&amp;</span>[]
+<a href=#1675 id=1675 data-nosnippet>1675</a>        };
+<a href=#1676 id=1676 data-nosnippet>1676</a>        <span class="kw">for </span><span class="kw-2">&amp;</span>(from, reaction) <span class="kw">in </span>theirs {
+<a href=#1677 id=1677 data-nosnippet>1677</a>            <span class="kw">let </span>(name, avatar) = <span class="kw">match </span>from {
+<a href=#1678 id=1678 data-nosnippet>1678</a>                From::Member(name) =&gt; (name, member(name).avatar),
+<a href=#1679 id=1679 data-nosnippet>1679</a>                From::Me | From::Peer =&gt; {
+<a href=#1680 id=1680 data-nosnippet>1680</a>                    <span class="kw">let </span>summary = <span class="self">self</span>.chat(chat)<span class="question-mark">?</span>;
+<a href=#1681 id=1681 data-nosnippet>1681</a>                    <span class="kw">let </span>name = SharedText::new(<span class="self">self</span>.heap, <span class="kw-2">&amp;</span>summary.name)<span class="question-mark">?</span>;
+<a href=#1682 id=1682 data-nosnippet>1682</a>                    <span class="kw">_ </span>= details.reactors.push(Reactor {
+<a href=#1683 id=1683 data-nosnippet>1683</a>                        name: <span class="prelude-val">Some</span>(name),
+<a href=#1684 id=1684 data-nosnippet>1684</a>                        avatar: summary.avatar,
+<a href=#1685 id=1685 data-nosnippet>1685</a>                        reaction,
+<a href=#1686 id=1686 data-nosnippet>1686</a>                    });
+<a href=#1687 id=1687 data-nosnippet>1687</a>                    <span class="kw">continue</span>;
+<a href=#1688 id=1688 data-nosnippet>1688</a>                }
+<a href=#1689 id=1689 data-nosnippet>1689</a>            };
+<a href=#1690 id=1690 data-nosnippet>1690</a>            <span class="kw">_ </span>= details.reactors.push(Reactor {
+<a href=#1691 id=1691 data-nosnippet>1691</a>                name: <span class="prelude-val">Some</span>(SharedText::new(<span class="self">self</span>.heap, name)<span class="question-mark">?</span>),
+<a href=#1692 id=1692 data-nosnippet>1692</a>                avatar,
+<a href=#1693 id=1693 data-nosnippet>1693</a>                reaction,
+<a href=#1694 id=1694 data-nosnippet>1694</a>            });
+<a href=#1695 id=1695 data-nosnippet>1695</a>        }
+<a href=#1696 id=1696 data-nosnippet>1696</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>(<span class="kw">_</span>, reaction)) = <span class="self">self</span>.mine.borrow().iter().find(|(id, <span class="kw">_</span>)| <span class="kw-2">*</span>id == message) {
+<a href=#1697 id=1697 data-nosnippet>1697</a>            <span class="kw">_ </span>= details.reactors.push(Reactor {
+<a href=#1698 id=1698 data-nosnippet>1698</a>                name: <span class="prelude-val">None</span>,
+<a href=#1699 id=1699 data-nosnippet>1699</a>                avatar: <span class="self">self</span>.avatar(),
+<a href=#1700 id=1700 data-nosnippet>1700</a>                reaction,
+<a href=#1701 id=1701 data-nosnippet>1701</a>            });
+<a href=#1702 id=1702 data-nosnippet>1702</a>        }
+<a href=#1703 id=1703 data-nosnippet>1703</a>        <span class="prelude-val">Some</span>(details)
+<a href=#1704 id=1704 data-nosnippet>1704</a>    }
+<a href=#1705 id=1705 data-nosnippet>1705</a>}
+<a href=#1706 id=1706 data-nosnippet>1706</a>
+<a href=#1707 id=1707 data-nosnippet>1707</a><span class="doccomment">/// The mockup's chats and peers, read from `store`, as the interface
+<a href=#1708 id=1708 data-nosnippet>1708</a>/// starts on them.
+<a href=#1709 id=1709 data-nosnippet>1709</a></span><span class="kw">pub fn </span>state(store: <span class="kw-2">&amp;</span><span class="lifetime">'static </span>Store) -&gt; State {
+<a href=#1710 id=1710 data-nosnippet>1710</a>    <span class="kw">let </span><span class="kw-2">mut </span>state = State::new(store);
+<a href=#1711 id=1711 data-nosnippet>1711</a>    state.status = StatusStrip {
+<a href=#1712 id=1712 data-nosnippet>1712</a>        device_name: store.device_name(),
+<a href=#1713 id=1713 data-nosnippet>1713</a>        time: s(<span class="string">"14:32"</span>),
+<a href=#1714 id=1714 data-nosnippet>1714</a>        battery_segments: <span class="number">3</span>,
+<a href=#1715 id=1715 data-nosnippet>1715</a>        charging: <span class="bool-val">false</span>,
+<a href=#1716 id=1716 data-nosnippet>1716</a>        bluetooth: <span class="prelude-val">Some</span>(Bluetooth::Connected),
+<a href=#1717 id=1717 data-nosnippet>1717</a>        wifi: <span class="prelude-val">None</span>,
+<a href=#1718 id=1718 data-nosnippet>1718</a>        gnss: <span class="prelude-val">Some</span>(Gnss::Fixed),
+<a href=#1719 id=1719 data-nosnippet>1719</a>        silent: <span class="bool-val">false</span>,
+<a href=#1720 id=1720 data-nosnippet>1720</a>        battery_low: <span class="bool-val">false</span>,
+<a href=#1721 id=1721 data-nosnippet>1721</a>    };
+<a href=#1722 id=1722 data-nosnippet>1722</a>    state.set_wall_time(<span class="prelude-val">Some</span>(store.time()));
+<a href=#1723 id=1723 data-nosnippet>1723</a>    state.reload();
+<a href=#1724 id=1724 data-nosnippet>1724</a>    state.focus_list();
+<a href=#1725 id=1725 data-nosnippet>1725</a>    state
+<a href=#1726 id=1726 data-nosnippet>1726</a>}
 </code></pre></div></section></main></body></html>

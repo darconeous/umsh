@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-84dd6577.js";
+            window.path_to_searchindex_js = "searchindex-b0f5292e.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-7fd6cf8e.js"></script>
@@ -340,6 +340,8 @@ length of the message. All instances of this option and their values SHALL be
 ignored by the receiver.</p>
 <h2 id="message-body"><a class="header" href="#message-body">Message Body</a></h2>
 <p>The message body is a UTF-8 string.</p>
+<h3 id="channel-invitations"><a class="header" href="#channel-invitations">Channel Invitations</a></h3>
+<p>A basic text message whose entire body, ignoring leading and trailing whitespace, is a <a href="uri-formats.html#channel-uris">channel URI</a> invites its recipients to that channel. A receiver that recognizes the URI MAY present the message as an invitation to join; one that does not displays the body as text.</p>
 
                     </main>
 

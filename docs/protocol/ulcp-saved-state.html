@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-84dd6577.js";
+            window.path_to_searchindex_js = "searchindex-b0f5292e.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-7fd6cf8e.js"></script>
@@ -215,7 +215,9 @@ excluded for a different reason: it is independently persisted the
 moment it is installed or generated (see <a href="ulcp-device.html#prop-dev-private-key"><code>PROP_DEV_PRIVATE_KEY</code></a>) and is
 changed only by explicit provisioning or <code>CMD_CLEAR</code>—neither
 <code>CMD_RESTORE</code> nor a reboot can revert the device identity to an earlier
-key.</p>
+key. Device lists a device’s own store keeps are excluded on the same
+grounds (see <a href="ulcp-device.html#lists-held-by-the-devices-store">Lists Held by the Device’s
+Store</a>).</p>
 <p>Traffic statistics (<code>PROP_STAT_*</code>) are also excluded. They are live
 hardware history since boot or the last explicit counter reset, not
 configuration a snapshot can restore.</p>
@@ -263,7 +265,8 @@ as a series of property-update publications; hosts handle both.</p>
 </li>
 <li>
 <p><a href="ulcp-saved-state.html#cmd-clear"><code>CMD_CLEAR</code></a> erases the snapshot and all other
-persisted provisioning, including the device identity private key. It
+persisted provisioning, including the device identity private key and
+any device lists the device’s own store keeps. It
 does not modify live (in-RAM) state; a subsequent <code>CMD_RST</code> completes a
 factory reset. Transport-level state such as BLE bonds is not affected.</p>
 </li>
@@ -273,12 +276,14 @@ snapshot, which is not simply whether one exists—see
 <a href="ulcp-saved-state.html#snapshot-integrity">Snapshot Integrity</a>.</p>
 </li>
 </ul>
-<p>Saving is explicit rather than automatic: nothing is written to
-non-volatile storage when properties change (the exceptions are the device
-identity and <code>PROP_BLE_PAIRING_PIN</code>). This gives the host control over
-flash wear and a well-defined “known good” configuration, and it means a
-radio never persists provisioning its host did not deliberately ask to
-keep.</p>
+<p>Saving is explicit rather than automatic: nothing a host or an
+administrator changes is written to non-volatile storage until it asks
+(the device identity, <code>PROP_BLE_PAIRING_PIN</code>, and device lists a device’s
+own store keeps are persisted as they are set). This gives the host control over flash wear and a well-defined
+“known good” configuration, and it means a radio never persists
+provisioning its host did not deliberately ask to keep. A change made at
+the device follows its own rules (see <a href="#changes-made-at-the-device">Changes Made at the
+Device</a>).</p>
 <p>Two consequences deserve emphasis:</p>
 <ul>
 <li><strong>Post-reset values come from the snapshot.</strong> <code>CMD_RST</code> reverts
@@ -331,6 +336,25 @@ anything the older writer did not record, and <strong>MUST</strong> ignore conte
 does not recognize. Firmware downgrade is out of scope: an older image
 reading a newer snapshot has no defined behavior, and saving from a
 downgraded image is destructive by design.</p>
+<h3 id="changes-made-at-the-device"><a class="header" href="#changes-made-at-the-device">Changes Made at the Device</a></h3>
+<p>A device’s own controls—a switch, a menu, or a settings interface of its
+own (see <a href="ulcp-core.html#device-interface">The Device’s Own Interface</a>)—
+change saved properties with no host asking. Such a change:</p>
+<ul>
+<li><strong>updates an existing snapshot</strong> that is in effect (<code>PROP_SAVED</code>
+reports 1), so what was set at the device is still set after a reboot;</li>
+<li><strong>never creates one.</strong> A device with nothing saved saves nothing: a
+snapshot made from a button press would persist every other live value
+with it. A device that rejected its newest generation at boot
+(<code>PROP_SAVED</code> reports 2 or 3) writes nothing either, since the write
+would bury the condition <code>PROP_SAVED</code> reports.</li>
+</ul>
+<p>The change applies live in every case.</p>
+<p>A device with a full settings interface <strong>MAY</strong> save as a host would: a
+snapshot at first boot, so that one always exists, and <code>CMD_SAVE</code> after a
+change whose loss would matter, such as its name or radio configuration.
+Either save captures the whole device domain, including any change an
+attached host or administrator made and did not save.</p>
 <h2 id="commands"><a class="header" href="#commands">Commands</a></h2>
 <div class="table-wrapper">
 <table>
@@ -373,9 +397,12 @@ it fails with <code>STATUS_UNIMPLEMENTED</code>.</p>
 <p>Figure: Structure of <code>CMD_CLEAR</code></p>
 <p>Clear saved state. Commands the device to erase from non-volatile storage the
 saved snapshot and all other persisted provisioning, including the device
-identity private key. Live (in-RAM) state is unaffected; transport-level
-state such as BLE bonds and <code>PROP_BLE_PAIRING_PIN</code> is also unaffected. A
-<code>CMD_CLEAR</code> followed by <code>CMD_RST</code> restores factory protocol behavior.</p>
+identity private key and any device lists its own store keeps (see <a href="ulcp-device.html#lists-held-by-the-devices-store">Lists
+Held by the Device’s Store</a>).
+Live (in-RAM) state is unaffected; transport-level state such as BLE bonds
+and <code>PROP_BLE_PAIRING_PIN</code> is also unaffected, as are the conversations of a
+device’s own messaging interface. A <code>CMD_CLEAR</code> followed by <code>CMD_RST</code>
+restores factory protocol behavior.</p>
 <p>Because a device identity always exists (see <a href="ulcp-device.html#device-identity">The Device Identity</a>), the
 <code>CMD_RST</code> that completes the sequence <strong>MUST</strong> generate and persist a new
 one rather than leave the device with none—the same thing a factory-fresh
@@ -411,7 +438,8 @@ restore has nothing to revert it to. The inbound queue contents,
 per-peer replay baselines, filters and delegation policy all survive
 unconditionally;</li>
 <li>independently persisted state outside the snapshot—the device
-identity keypair and <code>PROP_BLE_PAIRING_PIN</code>—is not affected; and</li>
+identity keypair, <code>PROP_BLE_PAIRING_PIN</code>, and device lists the device’s
+own store keeps—is not affected; and</li>
 <li>the saved snapshot itself is not modified.</li>
 </ul>
 <p><strong>A restore never enables the PHY under an identity the snapshot was not
@@ -478,13 +506,14 @@ emitted.</p>
 <p>Return the radio to a blank factory state. Commands the device to erase
 <strong>every</strong> piece of mutable state it holds—both the persisted state
 <code>CMD_CLEAR</code> erases (the saved snapshot, all persisted provisioning, and
-the device identity private key) <strong>and</strong> the transport-level state
-<code>CMD_CLEAR</code> deliberately preserves: all BLE bonds and the configured
-<code>PROP_BLE_PAIRING_PIN</code>—and then reboot. After the reboot the radio is
+the device identity private key) <strong>and</strong> the state <code>CMD_CLEAR</code>
+deliberately preserves: all BLE bonds, the configured
+<code>PROP_BLE_PAIRING_PIN</code>, and the conversations of a device’s own messaging
+interface—and then reboot. After the reboot the radio is
 indistinguishable from one that has never been provisioned or paired.</p>
 <p>This differs from <code>CMD_CLEAR</code> + <code>CMD_RST</code> in two ways: it also clears
-transport-level pairing state (bonds and PIN), and it performs a hardware
-reboot rather than only a protocol-session reset.</p>
+transport-level pairing state (bonds and PIN) and conversations, and it
+performs a hardware reboot rather than only a protocol-session reset.</p>
 <p>The command payload SHOULD be empty and MUST be ignored. Unlike every
 other command, <code>CMD_FACTORY_RESET</code> <strong>has no response</strong>: the device wipes its
 storage and reboots, which drops the transport link. A host treats the

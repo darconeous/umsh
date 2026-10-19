@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-84dd6577.js";
+            window.path_to_searchindex_js = "searchindex-b0f5292e.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-7fd6cf8e.js"></script>
@@ -203,6 +203,8 @@
 <tr><td style="text-align: right">9</td><td>No-op</td><td>Request</td></tr>
 <tr><td style="text-align: right">10</td><td>Peer Repeaters Request</td><td>Request</td></tr>
 <tr><td style="text-align: right">11</td><td>Peer Repeaters Response</td><td>Response</td></tr>
+<tr><td style="text-align: right">12</td><td>Verify Frame</td><td>Request</td></tr>
+<tr><td style="text-align: right">13</td><td>Frame Verified</td><td>Response</td></tr>
 </tbody>
 </table>
 </div>
@@ -395,7 +397,7 @@ Non-filter options (such as NONCE) do not participate in this matching.</p>
 type that requests an ACK.</p>
 <h2 id="peer-repeaters-request-10"><a class="header" href="#peer-repeaters-request-10">Peer Repeaters Request (10)</a></h2>
 <p>Asks the destination—typically a repeater—for its list of known peer repeaters.</p>
-<p>The list is the responder’s repeater neighborhood: the repeaters it has heard from their own transmitters. A repeater enters it in one of two ways. Forwarding a frame the responder receives is one—a repeater prepends its router hint to the frame’s <a href="packet-options.html#trace-route-option-2">Trace Route</a>, so the first hint names the repeater whose transmission was just heard. Advertising is the other—a <a href="node-identity.html">node identity</a> claiming the repeater role or capability, heard directly rather than forwarded. Frames heard from nodes that are not repeaters, and identities that arrived through a repeater, put nothing in the list. A neighbor need not be on the air: a repeater reached over a point-to-point link, such as an attached host, is listed the same way and simply carries no signal measurements.</p>
+<p>The list is the responder’s repeater neighborhood: the repeaters it has heard from their own transmitters. A repeater enters it in one of two ways. Forwarding a frame the responder receives is one—a repeater prepends its router hint to the frame’s <a href="packet-options.html#trace-route-option-2">Trace Route</a>, so the first hint names the repeater whose transmission was just heard. Advertising is the other—a <a href="node-identity.html">node identity</a> claiming the repeater role or capability, heard directly rather than forwarded. Frames heard from nodes that are not repeaters, and identities that arrived through a repeater, put nothing in the list. Nor does anything naming the responder itself: a trace that begins with its own router hint, or its own identity. A neighbor need not be on the air: a repeater reached over a point-to-point link, such as an attached host, is listed the same way and simply carries no signal measurements.</p>
 <p>The command-specific payload is a CoAP-style option list, using the delta-length encoding defined in <a href="packet-options.html#attribute-encoding">Packet Options</a>:</p>
 <div class="table-wrapper">
 <table>
@@ -447,6 +449,32 @@ type that requests an ACK.</p>
 </table>
 </div>
 <p>An option whose value the responder does not know is omitted. Entries carry region codes rather than the strings the <a href="node-identity.html#supported-regions-option-4">identity option</a> carries—the entry format is tighter on space, and the string form of a code, when one is wanted, is available from the peer’s own identity.</p>
+<h2 id="verify-frame-12"><a class="header" href="#verify-frame-12">Verify Frame (12)</a></h2>
+<p>Asks the destination to vouch for a packet it sent to the requester whose frame counter the requester could not accept. See <a href="security.html#counter-resynchronization">Counter Resynchronization</a> for when it is sent and what each side does with the answer.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Field</th><th style="text-align: right">Size</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td>Nonce</td><td style="text-align: right">4 bytes</td><td>Chosen by the requester; the responder echoes it in Frame Verified</td></tr>
+</tbody>
+</table>
+</div>
+<p>The packet carrying the command MUST include an <a href="packet-options.html#ack-mic-option-8">Ack MIC option</a> naming the packet to verify, and does not request an acknowledgement. A responder ignores a Verify Frame without the option.</p>
+<h2 id="frame-verified-13"><a class="header" href="#frame-verified-13">Frame Verified (13)</a></h2>
+<p>Answers a Verify Frame naming a packet the responder sent and is still waiting to have acknowledged.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Field</th><th style="text-align: right">Size</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td>Nonce</td><td style="text-align: right">4 bytes</td><td>Copied from the Verify Frame</td></tr>
+</tbody>
+</table>
+</div>
+<p>The packet carrying the command MUST request an acknowledgement. Its acknowledgement acknowledges the verified packet as well.</p>
 
                     </main>
 

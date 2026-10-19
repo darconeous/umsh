@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["SIZE"],"enum":["FileFlashError"],"struct":["FileFlash"]};

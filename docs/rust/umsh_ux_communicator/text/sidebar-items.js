@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"struct":["DraftText","SharedText"],"type":["TextHeap"]};

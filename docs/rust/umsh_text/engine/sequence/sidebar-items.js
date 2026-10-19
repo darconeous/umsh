@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["SerialClass"],"fn":["classify","serial_delta"],"struct":["EditRing","InboundStream","MessageHandle","OutboundStream","PendingRepair","RefRing","SeenWindow","StreamKey"]};
+window.SIDEBAR_ITEMS = {"constant":["REF_WINDOW"],"enum":["SerialClass"],"fn":["classify","serial_delta"],"struct":["EditRing","InboundStream","MessageHandle","OutboundStream","PendingRepair","RefRing","SeenWindow","StreamKey"]};

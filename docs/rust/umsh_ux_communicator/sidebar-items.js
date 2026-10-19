@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"mod":["avatar","fixture","font","icon","input","model","theme","ui"]};
+window.SIDEBAR_ITEMS = {"mod":["avatar","fixture","font","icon","input","keyboard","model","nav","qr","text","theme","ui"]};
