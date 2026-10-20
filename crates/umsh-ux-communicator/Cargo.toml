@@ -26,7 +26,7 @@ fixture = ["dep:umsh-core", "dep:umsh-ulcp"]
 # in storage the app chooses, images held by value, and building an app in
 # place. Branch `umsh` of
 # darconeous/buoyant.
-buoyant = { git = "https://github.com/darconeous/buoyant", rev = "ede058aaab17df2594b3fd49ceaa5f65ae07c74c", default-features = false, features = ["embedded-graphics"] }
+buoyant = { git = "https://github.com/darconeous/buoyant", rev = "3e898cf267c128e9814d79bccc3e8ff98326771a", default-features = false, features = ["embedded-graphics"] }
 embedded-graphics = { version = "0.8", default-features = false }
 heapless = { version = "0.9", default-features = false }
 libm = "0.2"
