@@ -9,7 +9,7 @@ use crate::avatar::{AvatarStyle, BuiltinChannel};
 use crate::clock::Local;
 use crate::keyboard::{Aids, Keyboard};
 use crate::lock::Lock;
-use crate::nav::{Screen, keys};
+use crate::nav::{Screen, Unsent, keys};
 use crate::text::{DraftText, SharedText, TextHeap};
 
 /// The most chats the list holds at once.
@@ -696,8 +696,9 @@ pub struct Details {
     pub rssi: Option<i16>,
     /// Signal-to-noise, in tenths of a dB.
     pub snr: Option<i16>,
-    /// Its sender's signature checked out.
-    pub authenticated: bool,
+    /// It came, or for mine was to go, under a session with forward
+    /// secrecy.
+    pub forward_secret: bool,
     /// Who reacted to it, and how, in the order they did.
     pub reactors: Vec<Reactor, MAX_REACTORS>,
 }
@@ -1015,6 +1016,10 @@ pub trait Node {
     /// Sends `message` in `chat`, which is unconfirmed, again. Returns whether
     /// it is on its way.
     fn retry(&self, chat: ChatId, message: MessageId) -> bool;
+
+    /// Deletes my `message` in `chat` for everyone. What becomes of it
+    /// comes as [`NodeEvent::MessageChanged`].
+    fn delete_message(&self, chat: ChatId, message: MessageId);
 
     /// Sends `message` in `chat`, which was to go under a session with
     /// forward secrecy and is unconfirmed, again without one. Returns
@@ -1604,7 +1609,7 @@ impl State {
         };
         if target.forward_secret {
             if let Some(Screen::Conversation { unsent, focus, .. }) = self.screens.last_mut() {
-                *unsent = Some(message);
+                *unsent = Some(Unsent::Resend(message));
                 focus.request(keys::RESEND);
             }
             return;
@@ -1612,22 +1617,24 @@ impl State {
         self.resend_now(message, false);
     }
 
-    /// The unconfirmed `message` of the open chat.
-    fn unconfirmed(&mut self, message: MessageId) -> Option<&mut Message> {
+    /// The unconfirmed `message` of the open chat. One deleted is gone,
+    /// confirmed or not.
+    pub(crate) fn unconfirmed(&mut self, message: MessageId) -> Option<&mut Message> {
         self.conversation
             .as_mut()?
             .messages
             .iter_mut()
-            .find(|m| m.id == message && m.delivery == Delivery::Unconfirmed)
+            .find(|m| m.id == message && m.delivery == Delivery::Unconfirmed && !m.deleted)
     }
 
-    /// Closes the choices of how to send again, focusing the message they
-    /// were opened on, and returns that message.
+    /// Closes what is open over an unconfirmed message: the choices of how
+    /// to send it again, or its Delete's confirmation. Focuses the message
+    /// and returns it.
     pub fn cancel_resend(&mut self) -> Option<MessageId> {
         let Some(Screen::Conversation { unsent, focus, .. }) = self.screens.last_mut() else {
             return None;
         };
-        let message = unsent.take()?;
+        let message = unsent.take()?.message();
         focus.request(keys::message(message));
         Some(message)
     }

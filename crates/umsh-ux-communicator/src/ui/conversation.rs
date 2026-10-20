@@ -23,7 +23,7 @@ use crate::model::{
     ChannelAccess, ChatId, ChatKind, Delivery, Direction, Draft, MAX_MESSAGES, Message, MessageId,
     Messages, Parts, Presence, Quote, Reacted, Reaction, Reactions, Rule, State, hops_text,
 };
-use crate::nav::{Screen, keys};
+use crate::nav::{Screen, Unsent, keys};
 use crate::text::{DraftText, SharedText};
 use crate::{font, icon, theme};
 use buoyant::font::PrerenderedFont;
@@ -107,6 +107,9 @@ pub fn view(state: &State, chat: ChatId) -> impl View<Rgb565, State> + use<> {
     // member's message offers its sender.
     let over = find(actions)
         .map(|m| {
+            if m.delivery == Delivery::Unconfirmed && !m.deleted {
+                return Over::Unconfirmed;
+            }
             let join = m.invite.as_ref().map(|invite| {
                 let mut text = MenuText::new();
                 _ = core::fmt::write(&mut text, format_args!("Join {}", invite.name.as_str()));
@@ -114,7 +117,10 @@ pub fn view(state: &State, chat: ChatId) -> impl View<Rgb565, State> + use<> {
             });
             Over::Actions(m.my_reaction(), m.sender.is_some(), join)
         })
-        .or(unsent.map(|_| Over::Resend));
+        .or(unsent.map(|unsent| match unsent {
+            Unsent::Resend(_) => Over::Resend,
+            Unsent::ConfirmDelete(_) => Over::ConfirmDelete,
+        }));
     let quoted = find(reply).map(|message| quote(message, summary.map_or("", |s| &s.name)));
     let kind = summary.map(|s| s.kind);
     let channel = matches!(kind, Some(ChatKind::Channel { .. }));
@@ -178,7 +184,9 @@ pub fn view(state: &State, chat: ChatId) -> impl View<Rgb565, State> + use<> {
     .popover(over.as_ref(), |over| {
         buoyant::match_view!(over, {
             Over::Actions(mine, member, join) => actions_menu(*mine, *member, join.clone()),
+            Over::Unconfirmed => unconfirmed_menu(),
             Over::Resend => resend_choices(),
+            Over::ConfirmDelete => delete_choices(),
         })
     })
 }
@@ -189,8 +197,41 @@ enum Over {
     /// A message's actions: my reaction, whether a member sent it, and the
     /// channel it invites to.
     Actions(Option<Reaction>, bool, Option<MenuText>),
+    /// An unconfirmed message's actions.
+    Unconfirmed,
     /// How to send again a message that was to go under forward secrecy.
     Resend,
+    /// Deleting an unconfirmed message, asking to be confirmed.
+    ConfirmDelete,
+}
+
+/// Deleting an unconfirmed message, asking to be confirmed, Cancel
+/// focused.
+#[inline(never)]
+fn delete_choices() -> impl View<Rgb565, State> + use<> {
+    let text = |text: &str| heapless::String::try_from(text).unwrap_or_default();
+    card(
+        VStack::new((
+            choice(
+                text("Delete for everyone"),
+                keys::DELETE_MESSAGE_CONFIRM,
+                State::delete_message,
+                theme::RED,
+                None,
+            ),
+            choice(
+                text("Cancel"),
+                keys::DELETE_MESSAGE_CANCEL,
+                |s| _ = s.cancel_resend(),
+                theme::TEXT,
+                None,
+            ),
+        ))
+        .with_spacing(0),
+        RESEND_WIDTH,
+        HorizontalAlignment::Center,
+        |s| _ = s.cancel_resend(),
+    )
 }
 
 /// How to send again a message that was to go under forward secrecy.
@@ -304,9 +345,11 @@ fn history(
     let count = messages.len();
     ScrollView::new(
         ForEach::<MAX_MESSAGES>::new_vertical(&INDICES[..count], move |&i| {
-            let delivery = Some(i) == newest_sent
-                || Some(i) == newest_delivered
-                || messages[i].delivery == Delivery::Unconfirmed;
+            // A deleted one has nothing left to deliver.
+            let delivery = !messages[i].deleted
+                && (Some(i) == newest_sent
+                    || Some(i) == newest_delivered
+                    || messages[i].delivery == Delivery::Unconfirmed);
             item(&messages, i, delivery, acting_on, channel, open, times)
         })
         .keyed(move |&i| keys::message(ids[i])),
@@ -525,17 +568,9 @@ fn bubble(message: &Message, acting_on: bool, open: bool) -> impl View<Rgb565, S
         forward_secret: message.forward_secret,
         ringed: acting_on,
     };
-    // Pressing a message opens its actions; pressing an unconfirmed one
-    // sends it again.
-    let unconfirmed = message.delivery == Delivery::Unconfirmed;
+    // Pressing a message opens its actions.
     Button::new(
-        move |s: &mut State| {
-            if unconfirmed {
-                s.retry(id);
-            } else {
-                s.open_actions(id);
-            }
-        },
+        move |s: &mut State| s.open_actions(id),
         move |button: ButtonState| {
             let mut look = look.clone();
             look.ringed |= button.is_focused();
@@ -1377,9 +1412,7 @@ const PAD: u32 = 34;
 const ITEM: u32 = 32;
 const ITEM_INSET: u32 = 5;
 
-/// What pressing a message gives: reactions first, then Reply and Details,
-/// at the top of the screen beside the history. Backspace closes it, and
-/// typing closes it and goes to the composer.
+/// What pressing a message gives: reactions first, then Reply and Details.
 fn actions_menu(
     mine: Option<Reaction>,
     member: bool,
@@ -1408,7 +1441,7 @@ fn actions_menu(
         .focus_key(keys::reaction(reaction))
     };
     let [heart, up, down, laugh, exclaim, question] = Reaction::ALL;
-    VStack::new((
+    let content = VStack::new((
         HStack::new((
             pad(heart),
             pad(up),
@@ -1444,38 +1477,68 @@ fn actions_menu(
             State::details_from_actions,
         ),
     ))
-    .with_spacing(0)
-    .padding(Edges::Bottom, 6)
-    .frame()
-    .with_width(MENU_WIDTH)
-    .background(
-        Alignment::Center,
-        ZStack::new((
-            RoundedRectangle::new(12)
-                .foreground_color(Rgb565::BLACK)
-                .offset(1, 3),
-            RoundedRectangle::new(12).foreground_color(theme::MENU),
-            RoundedRectangle::new(12)
-                .stroked(1)
-                .foreground_color(theme::MENU_LINE),
-        )),
+    .with_spacing(0);
+    menu_frame(content)
+}
+
+/// What pressing an unconfirmed message gives: Retry, Details, and Delete.
+#[inline(never)]
+fn unconfirmed_menu() -> impl View<Rgb565, State> + use<> {
+    menu_frame(
+        VStack::new((
+            menu_item(menu_text("Retry"), keys::RETRY, State::retry_from_actions)
+                .padding(Edges::Top, 6),
+            menu_item(
+                menu_text("Details"),
+                keys::DETAILS,
+                State::details_from_actions,
+            ),
+            danger_item(
+                menu_text("Delete"),
+                keys::DELETE_MESSAGE,
+                State::ask_delete_message,
+            ),
+        ))
+        .with_spacing(0),
     )
-    .padding(Edges::Top, HEADER + 6)
-    .padding(Edges::Trailing, SIDE)
-    .flex_infinite_width(HorizontalAlignment::Trailing)
-    .flex_infinite_height(VerticalAlignment::Top)
-    .on_key(|key, s: &mut State| match key {
-        Key::Backspace => {
-            s.close_actions();
-            KeyResponse::Handled
-        }
-        Key::Character(_) | Key::Enter => {
-            s.close_actions();
-            s.focus().request(keys::COMPOSER);
-            KeyResponse::Redirect
-        }
-        _ => KeyResponse::Ignored,
-    })
+}
+
+/// A message's menu around `content`, at the top of the screen beside the
+/// history. Backspace closes it, and typing closes it and goes to the
+/// composer.
+fn menu_frame<V: View<Rgb565, State>>(content: V) -> impl View<Rgb565, State> + use<V> {
+    content
+        .padding(Edges::Bottom, 6)
+        .frame()
+        .with_width(MENU_WIDTH)
+        .background(
+            Alignment::Center,
+            ZStack::new((
+                RoundedRectangle::new(12)
+                    .foreground_color(Rgb565::BLACK)
+                    .offset(1, 3),
+                RoundedRectangle::new(12).foreground_color(theme::MENU),
+                RoundedRectangle::new(12)
+                    .stroked(1)
+                    .foreground_color(theme::MENU_LINE),
+            )),
+        )
+        .padding(Edges::Top, HEADER + 6)
+        .padding(Edges::Trailing, SIDE)
+        .flex_infinite_width(HorizontalAlignment::Trailing)
+        .flex_infinite_height(VerticalAlignment::Top)
+        .on_key(|key, s: &mut State| match key {
+            Key::Backspace => {
+                s.close_actions();
+                KeyResponse::Handled
+            }
+            Key::Character(_) | Key::Enter => {
+                s.close_actions();
+                s.focus().request(keys::COMPOSER);
+                KeyResponse::Redirect
+            }
+            _ => KeyResponse::Ignored,
+        })
 }
 
 /// A fixed action's label.
@@ -1489,10 +1552,28 @@ fn menu_item(
     key: buoyant::focus::FocusKey,
     action: fn(&mut State),
 ) -> impl View<Rgb565, State> + use<> {
+    item_in(text, key, action, theme::TEXT)
+}
+
+/// One of the menu's actions that cannot be taken back, in red.
+fn danger_item(
+    text: MenuText,
+    key: buoyant::focus::FocusKey,
+    action: fn(&mut State),
+) -> impl View<Rgb565, State> + use<> {
+    item_in(text, key, action, theme::RED)
+}
+
+fn item_in(
+    text: MenuText,
+    key: buoyant::focus::FocusKey,
+    action: fn(&mut State),
+    color: Rgb565,
+) -> impl View<Rgb565, State> + use<> {
     Button::new(action, move |button: ButtonState| {
         let focused = button.is_focused();
         let face = if focused { &font::BOLD } else { &font::REGULAR };
-        label::<40>(&text, face, theme::BODY, theme::TEXT)
+        label::<40>(&text, face, theme::BODY, color)
             .hint_background_color(if focused { theme::FOCUS } else { theme::MENU })
             .padding(Edges::Leading, 11)
             .flex_infinite_width(HorizontalAlignment::Leading)

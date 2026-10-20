@@ -17,7 +17,8 @@ use umsh_core::{ChannelKey, ChannelTag, NodeHint, PublicKey, base58};
 use umsh_text::chat::{Change, ChatFacade, ChatOutput, Seeds};
 use umsh_text::engine::sequence::MessageHandle;
 use umsh_text::engine::{
-    self, ArchiveKey, ArchiveResult, ComposeIntent, EngineConfig, MAX_FRAME, RegardingRef,
+    self, ArchiveKey, ArchiveResult, ComposeIntent, ComposeRef, EngineConfig, MAX_FRAME,
+    RegardingRef,
 };
 use umsh_text::node_adapter::{
     Departed, Departure, InboundText, Sent, TransmitPolicy, TransmitQueue,
@@ -364,6 +365,7 @@ impl<S: ChatStore> Chats<S> {
             snr_centibels: inbound.rx.snr_centibels,
             hop_count: inbound.rx.hop_count,
             authenticated: inbound.rx.source_authenticated,
+            forward_secret: inbound.rx.forward_secret,
         };
         self.settle(Some(link), now_ms, time, events);
     }
@@ -574,6 +576,46 @@ impl<S: ChatStore> Chats<S> {
         };
         let forward_secret = self.holds_secrecy(&conversation);
         _ = self.compose(conversation, intent, forward_secret, now_ms, time, events);
+    }
+
+    /// Deletes my `message` in `chat` for everyone: its body goes, and the
+    /// deletion is sent. Returns whether it was composed.
+    pub fn delete_message(
+        &mut self,
+        chat: model::ChatId,
+        message: model::MessageId,
+        now_ms: u64,
+        time: Option<u32>,
+        events: &mut dyn FnMut(NodeEvent),
+    ) -> bool {
+        let Some(conversation) = self.conversation(chat) else {
+            return false;
+        };
+        let Ok(Some(record)) = self.store.message(MessageId(message)) else {
+            return false;
+        };
+        if record.chat.0 != chat || record.direction != engine::Direction::Outbound {
+            return false;
+        }
+        let original = match (self.handle_of(record.id), record.wire_id) {
+            (Some(handle), _) => ComposeRef::Handle(handle),
+            (None, Some(message_id)) => ComposeRef::Wire {
+                message_id,
+                epoch: record.epoch,
+            },
+            (None, None) => return false,
+        };
+        self.retrying.remove(&record.id);
+        let forward_secret = self.holds_secrecy(&conversation);
+        self.compose(
+            conversation,
+            ComposeIntent::Delete { original },
+            forward_secret,
+            now_ms,
+            time,
+            events,
+        )
+        .is_some()
     }
 
     /// Sends `message` in `chat`, which was to go under a session with
@@ -963,7 +1005,11 @@ impl<S: ChatStore> Chats<S> {
             details.hops = link.hop_count;
             details.rssi = link.rssi_dbm;
             details.snr = link.snr_centibels;
-            details.authenticated = link.authenticated;
+            details.forward_secret = link.forward_secret;
+        }
+        // Mine went under forward secrecy if it went at all.
+        if record.direction == engine::Direction::Outbound {
+            details.forward_secret = record.flags.forward_secret;
         }
         let conversation = self.conversation(chat)?;
         let reactors: Vec<_> = self.store.reactors(MessageId(message)).collect();

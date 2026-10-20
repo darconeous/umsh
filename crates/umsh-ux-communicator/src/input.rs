@@ -193,14 +193,17 @@ where
             let mut state = app.state_mut();
             state.prepare_typing();
             let typed = state.keyboard.letter(plain, alt);
-            press(app, Key::Character(typed));
+            if accepts(&state, typed) {
+                press(app, Key::Character(typed));
+            }
         }
         Input::Space => {
             let mut state = app.state_mut();
             state.prepare_typing();
             let aids = state.node.keyboard().aids();
             match state.keyboard.space(now, aids) {
-                Spaced::Space => press(app, Key::Character(' ')),
+                Spaced::Space if accepts(&state, ' ') => press(app, Key::Character(' ')),
+                Spaced::Space => {}
                 Spaced::Period => {
                     // The space just typed becomes the period's.
                     press(app, Key::Backspace);
@@ -220,10 +223,18 @@ where
             app.state_mut().keyboard.modifier(modifier, down, now);
         }
         Input::Character(c) => {
-            app.state_mut().keyboard.other();
-            press(app, Key::Character(c));
+            let mut state = app.state_mut();
+            state.keyboard.other();
+            if accepts(&state, c) {
+                press(app, Key::Character(c));
+            }
         }
     }
+}
+
+/// Whether the focused field, if there is one, takes `c`.
+fn accepts(state: &State, c: char) -> bool {
+    state.keyboard.field().is_none_or(|field| field.accepts(c))
 }
 
 /// An input while the character picker is open: the wheel walks it, a

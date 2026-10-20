@@ -81,7 +81,7 @@ const SPECS: &[Spec] = &[
         name: "CLOCK",
         file: SANS,
         weight: 700.0,
-        sizes: &[56, 72],
+        sizes: &[46, 56, 72],
         only: Some("0123456789:"),
     },
 ];

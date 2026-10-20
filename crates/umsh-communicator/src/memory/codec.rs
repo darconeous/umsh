@@ -156,7 +156,7 @@ pub(super) fn record(disk: &Disk, key: &RecordKey, out: &mut Vec<u8>) -> bool {
                 out.option(link.rssi_dbm, Out::i16);
                 out.option(link.snr_centibels, Out::i16);
                 out.option(link.hop_count, Out::u8);
-                out.flag(link.authenticated);
+                out.u8(u8::from(link.authenticated) | u8::from(link.forward_secret) << 1);
             });
             out.option(record.time, Out::u32);
             out.u32(message.revision);
@@ -391,11 +391,16 @@ fn message(id: u32, input: &mut In<'_>) -> Option<MessageEntry> {
         failed: input.u16()?,
     };
     let link = input.option(|input| {
+        let rssi_dbm = input.option(In::i16)?;
+        let snr_centibels = input.option(In::i16)?;
+        let hop_count = input.option(In::u8)?;
+        let flags = input.u8()?;
         Some(LinkInfo {
-            rssi_dbm: input.option(In::i16)?,
-            snr_centibels: input.option(In::i16)?,
-            hop_count: input.option(In::u8)?,
-            authenticated: input.flag()?,
+            rssi_dbm,
+            snr_centibels,
+            hop_count,
+            authenticated: flags & 1 != 0,
+            forward_secret: flags & 2 != 0,
         })
     })?;
     let time = input.option(In::u32)?;

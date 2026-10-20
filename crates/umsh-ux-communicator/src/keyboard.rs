@@ -43,7 +43,8 @@ pub enum Field {
     Name,
     /// Search text, codes, addresses, and invitations, typed as they are.
     Literal,
-    /// A number, typed from the top row in symbol lock.
+    /// A number, typed from the top row in symbol lock, which nothing
+    /// releases.
     Number,
 }
 
@@ -64,6 +65,15 @@ impl Field {
     #[must_use]
     pub const fn symbols(self) -> bool {
         matches!(self, Self::Number)
+    }
+
+    /// Whether `c` can be typed into the field.
+    #[must_use]
+    pub fn accepts(self, c: char) -> bool {
+        match self {
+            Self::Number => c.is_ascii_digit() || c == '-',
+            Self::Prose | Self::Name | Self::Literal => true,
+        }
     }
 }
 
@@ -221,7 +231,10 @@ impl Keyboard {
                 key.down = true;
                 key.used = false;
             }
-        } else if core::mem::take(&mut key.down) && !key.used {
+        } else if core::mem::take(&mut key.down)
+            && !key.used
+            && !self.field.is_some_and(Field::symbols)
+        {
             self.tap(modifier, now);
         }
     }
@@ -301,7 +314,10 @@ impl Keyboard {
             self.run = Run::None;
             return Spaced::Light;
         }
-        if self.alt.down || self.alt.latch == Latch::Once {
+        // A number field has nothing to pick.
+        if (self.alt.down || self.alt.latch == Latch::Once)
+            && !self.field.is_some_and(Field::symbols)
+        {
             self.alt.applied();
             self.run = Run::AltSpace(now);
             return Spaced::Picker;
@@ -554,10 +570,23 @@ mod tests {
         assert_eq!(k.latches(), (Latch::Off, Latch::Locked));
         assert_eq!(k.letter('w', Some('2')), '2');
         k.activity(true);
-        tap(&mut k, Modifier::Alt, 0);
-        assert_eq!(k.latches(), (Latch::Off, Latch::Off));
         k.activity(false);
         assert_eq!(k.latches(), (Latch::Off, Latch::Locked));
+    }
+
+    #[test]
+    fn nothing_releases_a_number_fields_symbol_lock() {
+        let mut k = Keyboard::default();
+        k.focus(Some(Field::Number));
+        k.activity(true);
+        tap(&mut k, Modifier::Alt, 0);
+        tap(&mut k, Modifier::Shift, 100);
+        assert_eq!(k.latches(), (Latch::Off, Latch::Locked));
+        assert_eq!(k.letter('w', Some('2')), '2');
+        k.modifier(Modifier::Alt, true, 150);
+        assert_eq!(k.space(200, ON), Spaced::Space, "no picker");
+        assert!(Field::Number.accepts('7') && Field::Number.accepts('-'));
+        assert!(!Field::Number.accepts('w') && !Field::Number.accepts(' '));
     }
 
     #[test]

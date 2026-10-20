@@ -505,6 +505,8 @@ pub struct Store {
     /// without forward secrecy.
     retried: RefCell<Vec<MessageId, KEPT>>,
     without_secrecy: RefCell<Vec<MessageId, KEPT>>,
+    /// Mine, deleted for everyone.
+    deleted: RefCell<Vec<MessageId, KEPT>>,
     next: Cell<MessageId>,
     /// The unidentified member's identity has been asked for, and has
     /// arrived.
@@ -556,6 +558,7 @@ impl Store {
             mine: RefCell::new(Vec::new()),
             retried: RefCell::new(Vec::new()),
             without_secrecy: RefCell::new(Vec::new()),
+            deleted: RefCell::new(Vec::new()),
             next: Cell::new(FIRST_KEPT),
             asked: Cell::new(false),
             identified: Cell::new(false),
@@ -1034,6 +1037,9 @@ impl Store {
         if self.without_secrecy.borrow().contains(&message.id) {
             message.forward_secret = false;
         }
+        if self.deleted.borrow().contains(&message.id) {
+            message.deleted = true;
+        }
         if self.identified.get()
             && let Some(sender) = message.sender.as_mut().filter(|s| s.name == UNIDENTIFIED)
         {
@@ -1247,6 +1253,18 @@ impl Node for Store {
         drop(retried);
         self.queue(NodeEvent::MessageChanged { chat, message });
         true
+    }
+
+    fn delete_message(&self, chat: ChatId, message: MessageId) {
+        let mut deleted = self.deleted.borrow_mut();
+        if !deleted.contains(&message) {
+            if deleted.is_full() {
+                deleted.remove(0);
+            }
+            _ = deleted.push(message);
+        }
+        drop(deleted);
+        self.queue(NodeEvent::MessageChanged { chat, message });
     }
 
     fn retry_without_secrecy(&self, chat: ChatId, message: MessageId) -> bool {
@@ -1774,10 +1792,11 @@ impl Node for Store {
                 route: s("Gh* \u{203A} 4Tn"),
                 rssi: Some(-97),
                 snr: Some(65),
-                authenticated: true,
                 ..Details::default()
             }
         };
+        // Sam's chat is the one under forward secrecy.
+        details.forward_secret = chat == STATES;
         let index = (message & 0xFF) as usize;
         let theirs = if message < FIRST_KEPT {
             their_reactions(chat, index)

@@ -32,10 +32,13 @@ static INDICES: [usize; MAX_REACTORS] = {
     a
 };
 
-/// `time` is when the message was sent or received, in local time.
+/// `time` is when the message was sent or received, in local time. A
+/// message in a direct chat (`direct`) says whether it had forward secrecy;
+/// one received in a channel, that its sender is not verified.
 pub fn view(
     details: &Details,
     inbound: bool,
+    direct: bool,
     time: Option<String<8>>,
 ) -> impl View<Rgb565, State> + use<> {
     let details = details.clone();
@@ -45,7 +48,7 @@ pub fn view(
             // One focusable block, which the wheel scrolls a row at a time.
             Button::new(
                 |_: &mut State| {},
-                move |_| rows(&details, inbound, time.as_ref()),
+                move |_| rows(&details, inbound, direct, time.as_ref()),
             )
             .focus_key(keys::DETAIL_LIST),
         )
@@ -66,6 +69,7 @@ pub fn view(
 fn rows(
     details: &Details,
     inbound: bool,
+    direct: bool,
     time: Option<&String<8>>,
 ) -> impl View<Rgb565, State> + use<> {
     let text = |value: core::fmt::Arguments| {
@@ -95,13 +99,15 @@ fn rows(
             let value = text(format_args!("{sign}{}.{} dB", tenths / 10, tenths % 10));
             row("Signal-to-noise", &value, false)
         }),
-        inbound.then(|| {
-            let source = if details.authenticated {
-                "Authenticated"
-            } else {
-                "Not authenticated"
-            };
-            row("Source", source, false)
+        // A channel message only claims its sender: anyone who holds the
+        // channel's key could have sent it.
+        (inbound && !direct).then(|| row("Sender", "Not verified", false)),
+        direct.then(|| {
+            row(
+                "Forward secrecy",
+                if details.forward_secret { "Yes" } else { "No" },
+                false,
+            )
         }),
         (!details.reactors.is_empty()).then(|| {
             label::<16>(

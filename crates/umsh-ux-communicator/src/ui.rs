@@ -13,7 +13,7 @@ use buoyant::view::prelude::*;
 use buoyant::view::scroll_view::ScrollBarVisibility;
 use embedded_graphics::pixelcolor::Rgb565;
 
-use crate::model::{Ending, Overlay, Section, State};
+use crate::model::{ChatKind, Ending, Overlay, Section, State};
 use crate::nav::{MemberFrom, Screen, keys};
 use crate::{font, theme};
 
@@ -116,6 +116,11 @@ fn screens(state: &State) -> impl View<Rgb565, State> + use<> {
             Screen::Details { message, details, .. } => details::view(
                 details,
                 state.inbound(*message),
+                state
+                    .conversation
+                    .as_ref()
+                    .and_then(|c| state.chat(c.chat))
+                    .is_some_and(|s| matches!(s.kind, ChatKind::Peer { .. })),
                 details
                     .time
                     .map(|time| state.local(time).time(state.hour24())),

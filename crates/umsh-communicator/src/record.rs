@@ -156,6 +156,8 @@ pub struct LinkInfo {
     pub hop_count: Option<u8>,
     /// The frame authenticated its source.
     pub authenticated: bool,
+    /// It came under a session with forward secrecy.
+    pub forward_secret: bool,
 }
 
 /// One message in a chat.
