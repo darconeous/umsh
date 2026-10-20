@@ -526,6 +526,10 @@ impl<P: LocalPort, S: ChatStore> Node for CommunicatorNode<P, S> {
         self.settings.borrow().radio()
     }
 
+    fn set_radio_enabled(&self, on: bool) {
+        self.change(Setting::Radio, |settings| settings.set_radio_enabled(on));
+    }
+
     fn set_forwarding(&self, on: bool) {
         self.change(Setting::Forwarding, |settings| settings.set_forwarding(on));
     }
@@ -560,5 +564,31 @@ impl<P: LocalPort, S: ChatStore> Node for CommunicatorNode<P, S> {
         self.change(Setting::Brightness, |settings| {
             settings.set_brightness(brightness)
         });
+    }
+
+    fn bluetooth_enabled(&self) -> Option<bool> {
+        self.settings.borrow().bluetooth_enabled()
+    }
+
+    fn set_bluetooth_enabled(&self, on: bool) {
+        self.change(Setting::Bluetooth, |settings| {
+            settings.set_bluetooth_enabled(on)
+        });
+    }
+
+    fn set_pairing(&self, open: bool) {
+        self.change(Setting::Pairing, |settings| settings.set_pairing(open));
+    }
+
+    fn clear_pairings(&self) {
+        self.change(Setting::Pairing, Settings::clear_pairings);
+    }
+
+    fn gnss_enabled(&self) -> Option<bool> {
+        self.settings.borrow().gnss_enabled()
+    }
+
+    fn set_gnss_enabled(&self, on: bool) {
+        self.change(Setting::Gnss, |settings| settings.set_gnss_enabled(on));
     }
 }

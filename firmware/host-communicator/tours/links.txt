@@ -1,0 +1,16 @@
+# Device's Bluetooth and GNSS.
+backspace
+turn 2
+press
+turn 7
+shot device-links
+press
+shot bluetooth
+turn 5
+press
+shot bluetooth-clear
+backspace
+backspace
+turn 1
+press
+shot gnss

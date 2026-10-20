@@ -75,16 +75,25 @@ pub fn view(state: &State) -> impl View<Rgb565, State> + use<> {
                 State::open_clock,
                 super::clock::summary(state),
             ),
-            category(
-                "Phone link",
-                keys::PHONE_LINK,
-                |_| {},
-                if state.status.bluetooth == Some(Bluetooth::Connected) {
-                    "Connected"
-                } else {
-                    ""
-                },
-            ),
+            VStack::new((
+                state.node.bluetooth_enabled().map(|_| {
+                    category(
+                        "Bluetooth",
+                        keys::BLUETOOTH,
+                        State::open_bluetooth,
+                        if state.status.bluetooth == Some(Bluetooth::Connected) {
+                            "Connected"
+                        } else {
+                            ""
+                        },
+                    )
+                }),
+                state
+                    .node
+                    .gnss_enabled()
+                    .map(|_| category("GNSS", keys::GNSS, State::open_gnss, "")),
+            ))
+            .with_spacing(0),
             category("Maintenance", keys::MAINTENANCE, |_| {}, ""),
             row(
                 m,
@@ -162,6 +171,8 @@ pub fn page(state: &State, page: &DevicePage) -> impl View<Rgb565, State> + use<
         DevicePage::Keyboard { settings } => super::typing::settings(m, settings),
         DevicePage::TransmitPower { text } => super::typing::transmit_power(m, text),
         DevicePage::Clock { page } => super::clock::page(state, page),
+        DevicePage::Bluetooth { confirm } => super::links::bluetooth(state, *confirm),
+        DevicePage::Gnss => super::links::gnss(state),
     })
 }
 
@@ -182,6 +193,15 @@ fn radio(
         header(m, "Radio", None, None),
         super::list(
             VStack::new((
+                row(
+                    m,
+                    "Radio",
+                    keys::RADIO_ENABLED,
+                    State::toggle_radio,
+                    End::Switch(settings.enabled),
+                    false,
+                    ROW,
+                ),
                 row(
                     m,
                     "Profile",

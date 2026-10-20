@@ -90,12 +90,11 @@ fn tapping_the_back_arrow_goes_back_and_the_trackball_never_lands_on_it() {
         click(&mut app, Input::Move(Arrow::Up), tick(100));
     }
     assert!(matches!(app.state().screen(), Screen::Conversation { .. }));
-    // Near the far corner of its place, well off the arrow itself.
+    // Off the arrow itself, toward the far corner of the place a finger
+    // is taken to cover.
     let m = &BOARD.metrics;
-    let at = (
-        m.back.expect("the T-Deck has touch") as i16 - 3,
-        (m.strip + m.header) as i16 - 3,
-    );
+    let reach = m.touch_target.expect("the T-Deck has touch") as i16 / 2;
+    let at = (reach + 6, (m.strip + m.header) as i16 - 3);
     input::apply(&mut app, touch(Started, at), tick(1000));
     input::apply(&mut app, touch(Ended, at), tick(100));
     assert!(matches!(app.state().screen(), Screen::Chats { .. }));
@@ -150,4 +149,40 @@ fn a_tap_outside_a_menu_closes_it_and_chooses_nothing() {
     assert_eq!(chat_menu(app.state()), None);
     assert!(matches!(app.state().screen(), Screen::Chats { .. }));
     assert_eq!(focus(app.state()), Some(keys::chat(PAT)));
+}
+
+/// A drag moves the history, never focus, through its coast too.
+#[test]
+fn a_flick_through_the_history_selects_nothing() {
+    use input::TouchPhase::{Ended, Moved, Started};
+    use std::time::Duration;
+    let mut app = app!();
+    run(&mut app, &[Input::Turn(2), Input::Press]);
+    assert_in_conversation(app.state(), PAT);
+    let was = focus(app.state());
+    let mut ms = 10_000u64;
+    let mut at = |app: &mut App<_, State, _>, step: u64| {
+        ms += step;
+        app.set_time(Duration::from_millis(ms));
+        ms
+    };
+    let (x, y) = (100, 60);
+    let now = at(&mut app, 0);
+    input::apply(&mut app, touch(Started, (x, y)), now);
+    for step in 1..=5 {
+        let now = at(&mut app, 20);
+        input::apply(&mut app, touch(Moved, (x, y + 25 * step)), now);
+    }
+    let now = at(&mut app, 20);
+    input::apply(&mut app, touch(Ended, (x, y + 125)), now);
+    let mut seen = vec![focus(app.state())];
+    for _ in 0..100 {
+        let now = at(&mut app, 20);
+        input::expire(&mut app, now);
+        app.finalize_view();
+        if seen.last() != Some(&focus(app.state())) {
+            seen.push(focus(app.state()));
+        }
+    }
+    assert_eq!(seen, [was]);
 }

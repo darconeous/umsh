@@ -110,11 +110,28 @@ pub mod keys {
     pub const RADIO: FocusKey = FocusKey(DEVICE | 2);
     pub const ALERTS: FocusKey = FocusKey(DEVICE | 3);
     pub const DISPLAY: FocusKey = FocusKey(DEVICE | 4);
-    pub const PHONE_LINK: FocusKey = FocusKey(DEVICE | 5);
+    pub const BLUETOOTH: FocusKey = FocusKey(DEVICE | 5);
     pub const MAINTENANCE: FocusKey = FocusKey(DEVICE | 6);
     pub const SHUT_DOWN: FocusKey = FocusKey(DEVICE | 7);
     pub const KEYBOARD: FocusKey = FocusKey(DEVICE | 8);
     pub const CLOCK: FocusKey = FocusKey(DEVICE | 9);
+    pub const GNSS: FocusKey = FocusKey(DEVICE | 10);
+    /// The Bluetooth screen's rows, in order, and Clear pairings'
+    /// confirmation.
+    pub const BLUETOOTH_ENABLED: FocusKey = FocusKey(0x1E00_0000);
+    pub const BLUETOOTH_STATUS: FocusKey = FocusKey(0x1E00_0001);
+    pub const PAIRED: FocusKey = FocusKey(0x1E00_0002);
+    pub const PAIRING: FocusKey = FocusKey(0x1E00_0003);
+    pub const PAIRING_PIN: FocusKey = FocusKey(0x1E00_0004);
+    pub const CLEAR_PAIRINGS: FocusKey = FocusKey(0x1E00_0005);
+    pub const CLEAR_PAIRINGS_CONFIRM: FocusKey = FocusKey(0x1E00_0006);
+    pub const CLEAR_PAIRINGS_CANCEL: FocusKey = FocusKey(0x1E00_0007);
+    /// The GNSS screen's switch and readouts, in order.
+    pub const GNSS_ENABLED: FocusKey = FocusKey(0x1F00_0000);
+    pub const GNSS_FIX: FocusKey = FocusKey(0x1F00_0001);
+    pub const GNSS_POSITION: FocusKey = FocusKey(0x1F00_0002);
+    pub const GNSS_ALTITUDE: FocusKey = FocusKey(0x1F00_0003);
+    pub const GNSS_SATELLITES: FocusKey = FocusKey(0x1F00_0004);
     /// The Clock screen's rows, in order.
     pub const CLOCK_AUTOMATIC: FocusKey = FocusKey(0x1A00_0000);
     pub const CLOCK_TIME: FocusKey = FocusKey(0x1A00_0001);
@@ -154,7 +171,9 @@ pub mod keys {
     /// Shut down's confirmation.
     pub const SHUT_DOWN_CONFIRM: FocusKey = FocusKey(0x1600_0000);
     pub const SHUT_DOWN_CANCEL: FocusKey = FocusKey(0x1600_0001);
-    /// The Radio screen's Profile, its switches, and its readout.
+    /// The Radio screen's switch, its Profile, its other switches, and its
+    /// readout.
+    pub const RADIO_ENABLED: FocusKey = FocusKey(0x0E00_0005);
     pub const PROFILE: FocusKey = FocusKey(0x0E00_0000);
     pub const FORWARDING: FocusKey = FocusKey(0x0E00_0002);
     pub const SHARE_LOCATION: FocusKey = FocusKey(0x0E00_0003);
@@ -382,6 +401,11 @@ pub enum DevicePage {
     TransmitPower { text: PowerText },
     /// The clock's settings, and the screens they open.
     Clock { page: ClockPage },
+    /// Bluetooth's settings and what it is doing; while `confirm`,
+    /// clearing the pairings asks to be confirmed.
+    Bluetooth { confirm: bool },
+    /// The GNSS receiver's switch and its solution.
+    Gnss,
 }
 
 /// A screen a new device starts on.
@@ -945,14 +969,86 @@ impl State {
             .unwrap_or(Shareable::Identity)
     }
 
-    /// Shows the radio's settings, Profile focused.
+    /// Shows the radio's settings, its switch focused.
     pub fn open_radio(&mut self) {
         _ = self.screens.push(Screen::Device {
             page: DevicePage::Radio {
                 settings: self.node.radio(),
             },
-            focus: FocusState::requesting(keys::PROFILE),
+            focus: FocusState::requesting(keys::RADIO_ENABLED),
         });
+    }
+
+    pub fn toggle_radio(&mut self) {
+        if let Some(settings) = self.shown_radio() {
+            self.node.set_radio_enabled(!settings.enabled);
+            self.refresh_settings();
+        }
+    }
+
+    /// Shows Bluetooth's settings, its switch focused.
+    pub fn open_bluetooth(&mut self) {
+        _ = self.screens.push(Screen::Device {
+            page: DevicePage::Bluetooth { confirm: false },
+            focus: FocusState::requesting(keys::BLUETOOTH_ENABLED),
+        });
+    }
+
+    pub fn toggle_bluetooth(&mut self) {
+        if let Some(on) = self.node.bluetooth_enabled() {
+            self.node.set_bluetooth_enabled(!on);
+        }
+    }
+
+    /// Opens a window for a phone to pair, or closes it. What is shown
+    /// changes at once; the board's next reading says how it went.
+    pub fn toggle_pairing(&mut self) {
+        let open = !self.links.bluetooth.pairing;
+        self.node.set_pairing(open);
+        self.links.bluetooth.pairing = open;
+    }
+
+    /// Asks to confirm forgetting every paired phone, Cancel focused.
+    pub fn ask_clear_pairings(&mut self) {
+        if let Some(Screen::Device {
+            page: DevicePage::Bluetooth { confirm },
+            focus,
+        }) = self.screens.last_mut()
+        {
+            *confirm = true;
+            *focus = FocusState::requesting(keys::CLEAR_PAIRINGS_CANCEL);
+        }
+    }
+
+    pub fn clear_pairings(&mut self) {
+        self.node.clear_pairings();
+        self.links.bluetooth.paired = self.links.bluetooth.paired.map(|_| 0);
+        self.cancel_clear_pairings();
+    }
+
+    pub fn cancel_clear_pairings(&mut self) {
+        if let Some(Screen::Device {
+            page: DevicePage::Bluetooth { confirm },
+            focus,
+        }) = self.screens.last_mut()
+        {
+            *confirm = false;
+            *focus = FocusState::requesting(keys::CLEAR_PAIRINGS);
+        }
+    }
+
+    /// Shows the GNSS receiver's switch and solution, its switch focused.
+    pub fn open_gnss(&mut self) {
+        _ = self.screens.push(Screen::Device {
+            page: DevicePage::Gnss,
+            focus: FocusState::requesting(keys::GNSS_ENABLED),
+        });
+    }
+
+    pub fn toggle_gnss(&mut self) {
+        if let Some(on) = self.node.gnss_enabled() {
+            self.node.set_gnss_enabled(!on);
+        }
     }
 
     /// Reads the settings shown from the node again: this node's name, and

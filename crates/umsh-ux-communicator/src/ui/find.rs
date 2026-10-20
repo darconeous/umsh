@@ -53,7 +53,11 @@ pub fn view(state: &State, text: &FindText) -> impl View<Rgb565, State> + use<> 
     let items = found.len();
     let back = super::conversation::back(m, State::end_find);
     // The field starts after the way out, where touch has one.
-    let leading = if back.is_some() { 0 } else { FIELD_INSET };
+    let leading = if back.is_some() {
+        super::conversation::ARROW_GAP
+    } else {
+        FIELD_INSET
+    };
     VStack::new((
         HStack::new((
             back,

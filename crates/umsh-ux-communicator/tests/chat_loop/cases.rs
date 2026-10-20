@@ -1520,6 +1520,8 @@ where
     assert_eq!(app.state().section, Section::Device);
     assert_eq!(focus(app.state()), Some(keys::IDENTITY));
     run(app, &[Input::Turn(2), Input::Press]);
+    assert_eq!(focus(app.state()), Some(keys::RADIO_ENABLED));
+    run(app, &[Input::Turn(1)]);
     assert_eq!(focus(app.state()), Some(keys::PROFILE));
 }
 
@@ -1845,7 +1847,7 @@ fn the_strip_counts_thirds_centered_on_their_levels() {
 fn shut_down_asks_first_and_then_ends_input() {
     let mut app = app!();
     run(&mut app, &[Input::Backspace, Input::Turn(2), Input::Press]);
-    run(&mut app, &[Input::Turn(9)]);
+    run(&mut app, &[Input::Turn(10)]);
     assert_eq!(focus(app.state()), Some(keys::SHUT_DOWN));
     // Cancel is focused, and Backspace cancels too.
     run(&mut app, &[Input::Press]);
@@ -2573,4 +2575,88 @@ fn rolling_does_nothing_while_locked() {
     );
     assert!(app.state().lock.locked);
     assert_eq!(app.state().lock.steps, 0);
+}
+
+#[test]
+fn the_radio_turns_off_and_on_from_its_page() {
+    let mut app = app!();
+    run(&mut app, &[Input::Backspace, Input::Turn(2), Input::Press]);
+    run(&mut app, &[Input::Turn(2), Input::Press]);
+    assert_eq!(focus(app.state()), Some(keys::RADIO_ENABLED));
+    assert!(radio(app.state()).enabled);
+    run(&mut app, &[Input::Press]);
+    assert!(!radio(app.state()).enabled);
+    assert!(!app.state().node.radio().enabled);
+    run(&mut app, &[Input::Press]);
+    assert!(radio(app.state()).enabled);
+}
+
+/// Device's Bluetooth, open.
+fn open_bluetooth<V, F>(app: &mut App<V, State, F>)
+where
+    V: ViewLayout<State>,
+    V::FocusTree: DefaultFocus,
+    V::Renderables: AnimatedJoin,
+    F: Fn(&State) -> V,
+{
+    run(app, &[Input::Backspace, Input::Turn(2), Input::Press]);
+    run(app, &[Input::Turn(7)]);
+    assert_eq!(focus(app.state()), Some(keys::BLUETOOTH));
+    run(app, &[Input::Press]);
+    assert_eq!(focus(app.state()), Some(keys::BLUETOOTH_ENABLED));
+}
+
+#[test]
+fn bluetooth_turns_off_and_its_rows_go_with_it() {
+    let mut app = app!();
+    open_bluetooth(&mut app);
+    run(&mut app, &[Input::Turn(1)]);
+    assert_eq!(focus(app.state()), Some(keys::BLUETOOTH_STATUS));
+    run(&mut app, &[Input::Turn(-1), Input::Press]);
+    assert_eq!(app.state().node.bluetooth_enabled(), Some(false));
+    // Nothing below the switch is left to land on.
+    run(&mut app, &[Input::Turn(1)]);
+    assert_eq!(focus(app.state()), Some(keys::BLUETOOTH_ENABLED));
+    run(&mut app, &[Input::Press]);
+    assert_eq!(app.state().node.bluetooth_enabled(), Some(true));
+}
+
+#[test]
+fn pairing_opens_shows_its_pin_and_pairings_clear_once_confirmed() {
+    let mut app = app!();
+    open_bluetooth(&mut app);
+    run(&mut app, &[Input::Turn(3)]);
+    assert_eq!(focus(app.state()), Some(keys::PAIRING));
+    run(&mut app, &[Input::Press]);
+    assert!(app.state().links.bluetooth.pairing);
+    // The board reads the window open, and the PIN to give.
+    app.state_mut().links.bluetooth.pin = Some(4_321);
+    app.finalize_view();
+    run(&mut app, &[Input::Turn(1)]);
+    assert_eq!(focus(app.state()), Some(keys::PAIRING_PIN));
+    run(&mut app, &[Input::Turn(1), Input::Press]);
+    assert_eq!(focus(app.state()), Some(keys::CLEAR_PAIRINGS_CANCEL));
+    // Backspace cancels, and nothing is forgotten.
+    run(&mut app, &[Input::Backspace]);
+    assert_eq!(focus(app.state()), Some(keys::CLEAR_PAIRINGS));
+    assert_eq!(app.state().links.bluetooth.paired, Some(1));
+    run(&mut app, &[Input::Press, Input::Turn(-1), Input::Press]);
+    assert_eq!(focus(app.state()), Some(keys::CLEAR_PAIRINGS));
+    assert_eq!(app.state().links.bluetooth.paired, Some(0));
+}
+
+#[test]
+fn gnss_shows_its_fix_while_on() {
+    let mut app = app!();
+    run(&mut app, &[Input::Backspace, Input::Turn(2), Input::Press]);
+    run(&mut app, &[Input::Turn(8)]);
+    assert_eq!(focus(app.state()), Some(keys::GNSS));
+    run(&mut app, &[Input::Press]);
+    assert_eq!(focus(app.state()), Some(keys::GNSS_ENABLED));
+    run(&mut app, &[Input::Turn(4)]);
+    assert_eq!(focus(app.state()), Some(keys::GNSS_SATELLITES));
+    run(&mut app, &[Input::Turn(-4), Input::Press]);
+    assert_eq!(app.state().node.gnss_enabled(), Some(false));
+    run(&mut app, &[Input::Turn(1)]);
+    assert_eq!(focus(app.state()), Some(keys::GNSS_ENABLED));
 }

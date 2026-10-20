@@ -240,8 +240,7 @@ fn alone(
     .padding(Edges::Top, m.strip)
 }
 
-/// The time and date while the clock is known, and the clock with word
-/// that it is not otherwise.
+/// The time and date while the clock is known; nothing otherwise.
 fn when(
     m: &'static Metrics,
     now: Option<Local>,
@@ -278,19 +277,7 @@ fn when(
             .with_spacing(4)
             .with_alignment(HorizontalAlignment::Center)
         },
-        None => VStack::new((
-            Image::new(&icon::CLOCK)
-                .as_template()
-                .foreground_color(theme::TEXT_SECONDARY),
-            line(
-                "Clock not set",
-                &font::SEMIBOLD,
-                m.secondary,
-                theme::TEXT_SECONDARY,
-            ),
-        ))
-        .with_spacing(8)
-        .with_alignment(HorizontalAlignment::Center),
+        None => EmptyView,
     })
 }
 

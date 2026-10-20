@@ -8,12 +8,13 @@ use core::cell::{Cell, RefCell, RefMut};
 use crate::avatar::{AvatarStyle, BuiltinChannel, PeerShape};
 use crate::board::Board;
 use crate::model::{
-    Bluetooth, ChannelAccess, ChannelEntry, ChatId, ChatKind, ChatSummary, Chats, ClockSettings,
-    ClockSource, Delivery, Details, Direction, EventQueue, Gnss, Heard, Invite, KeyboardSettings,
-    MAX_CHATS, MAX_HEARD, MAX_PEERS, MESSAGE_LEN, Member, Message, MessageId, Messages, Node,
-    NodeEvent, Parts, PeerDetail, PeerEntry, PeerId, PeerSummary, Peers, Presence, Profile, Quote,
-    RadioSettings, Reacted, Reaction, Reactions, Reactor, Rule, Sender, Setting, ShareUri,
-    Shareable, State, StatusStrip, TRANSMIT_POWER, brightness_at, push_newest, word_match,
+    Bluetooth, BluetoothReading, ChannelAccess, ChannelEntry, ChatId, ChatKind, ChatSummary, Chats,
+    ClockSettings, ClockSource, Delivery, Details, Direction, EventQueue, Fix, Gnss, GnssReading,
+    Heard, Invite, KeyboardSettings, Links, MAX_CHATS, MAX_HEARD, MAX_PEERS, MESSAGE_LEN, Member,
+    Message, MessageId, Messages, Node, NodeEvent, Parts, PeerDetail, PeerEntry, PeerId,
+    PeerSummary, Peers, Presence, Profile, Quote, RadioSettings, Reacted, Reaction, Reactions,
+    Reactor, Rule, Sender, Setting, ShareUri, Shareable, State, StatusStrip, TRANSMIT_POWER,
+    brightness_at, push_newest, word_match,
 };
 use crate::text::{DraftText, SharedText, TextHeap};
 use buoyant::view::{EditBuffer, EditText as _};
@@ -526,6 +527,7 @@ pub struct Store {
     /// This node's name, once it is given one.
     name: RefCell<Option<String<24>>>,
     /// The radio's settings.
+    radio_enabled: Cell<bool>,
     profile: Cell<Profile>,
     forwarding: Cell<bool>,
     share_location: Cell<bool>,
@@ -533,6 +535,9 @@ pub struct Store {
     keyboard: Cell<KeyboardSettings>,
     clock: Cell<ClockSettings>,
     brightness: Cell<u8>,
+    /// Bluetooth and the GNSS receiver, on or off.
+    bluetooth: Cell<bool>,
+    gnss: Cell<bool>,
     events: RefCell<EventQueue<EVENTS>>,
     /// The board's clock, in milliseconds, as it last told the fixture. The
     /// fixture's own clock runs from [`STARTED`] with it.
@@ -570,6 +575,7 @@ impl Store {
             pinged: RefCell::new(Vec::new()),
             forgotten: RefCell::new(Vec::new()),
             name: RefCell::new(None),
+            radio_enabled: Cell::new(true),
             profile: Cell::new(Profile::Vetted(0)),
             forwarding: Cell::new(true),
             share_location: Cell::new(false),
@@ -585,6 +591,8 @@ impl Store {
                 light: true,
             }),
             brightness: Cell::new(brightness_at(5)),
+            bluetooth: Cell::new(true),
+            gnss: Cell::new(true),
             events: RefCell::new(EventQueue::new()),
             now: Cell::new(0),
             set_by: Cell::new(0),
@@ -1555,12 +1563,20 @@ impl Node for Store {
 
     fn radio(&self) -> RadioSettings {
         RadioSettings {
+            enabled: self.radio_enabled.get(),
             profile: self.profile.get(),
             forwarding: self.forwarding.get(),
             share_location: self.share_location.get(),
             transmit_power: self.transmit_power.get(),
             airtime: 3,
         }
+    }
+
+    fn set_radio_enabled(&self, on: bool) {
+        self.setting(Setting::Radio, || {
+            self.radio_enabled.set(on);
+            true
+        });
     }
 
     fn set_forwarding(&self, on: bool) {
@@ -1605,6 +1621,36 @@ impl Node for Store {
     fn set_brightness(&self, brightness: u8) {
         self.setting(Setting::Brightness, || {
             self.brightness.set(brightness);
+            true
+        });
+    }
+
+    fn bluetooth_enabled(&self) -> Option<bool> {
+        Some(self.bluetooth.get())
+    }
+
+    fn set_bluetooth_enabled(&self, on: bool) {
+        self.setting(Setting::Bluetooth, || {
+            self.bluetooth.set(on);
+            true
+        });
+    }
+
+    fn set_pairing(&self, _open: bool) {
+        self.setting(Setting::Pairing, || true);
+    }
+
+    fn clear_pairings(&self) {
+        self.setting(Setting::Pairing, || true);
+    }
+
+    fn gnss_enabled(&self) -> Option<bool> {
+        Some(self.gnss.get())
+    }
+
+    fn set_gnss_enabled(&self, on: bool) {
+        self.setting(Setting::Gnss, || {
+            self.gnss.set(on);
             true
         });
     }
@@ -1849,6 +1895,21 @@ pub fn state(store: &'static Store, board: &'static Board) -> State {
         gnss: Some(Gnss::Fixed),
         silent: false,
         battery_low: false,
+    };
+    state.links = Links {
+        bluetooth: BluetoothReading {
+            connected: true,
+            paired: Some(1),
+            pairing: false,
+            pin: None,
+        },
+        gnss: GnssReading {
+            fix: Fix::ThreeD,
+            position: Some((46_852_450, -121_760_550)),
+            altitude: Some(1_646),
+            used: 9,
+            in_view: Some(14),
+        },
     };
     state.set_wall_time(Some(store.time()));
     state.reload();

@@ -30,6 +30,7 @@ mod details;
 mod device;
 mod find;
 mod join;
+mod links;
 mod lock;
 mod member;
 mod peer;

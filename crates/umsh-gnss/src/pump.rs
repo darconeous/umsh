@@ -167,7 +167,7 @@ pub trait Enable {
 /// only when [`QUIET_MS`] pass with no completed cycle, and released at
 /// the next cycle or after [`LISTEN_MS`]. A read error is a stretch of
 /// garbled or lost bytes—a byte cut short by sleep, an overrun while the
-/// executor was busy—and costs only the sentence it fell in.
+/// executor was busy—and costs only the cycle it fell in.
 pub async fn run<R, P, E, S, D, A>(
     mut uart: R,
     mut power: P,
@@ -234,9 +234,9 @@ where
                             }
                         }
                     }
-                    // Drop the sentence the error fell in and pick up at
-                    // the next one.
-                    Either::First(Err(_)) => driver.reset(),
+                    // Drop the cycle the error fell in and pick up at the
+                    // next one.
+                    Either::First(Err(_)) => driver.resync(),
                     Either::Second(()) => {
                         if !enable.enabled() {
                             return;
@@ -572,14 +572,17 @@ mod tests {
         )
     }
 
+    /// The error came before any of the first cycle arrived, but nothing
+    /// says what the lost bytes were: the first cycle goes with it, and
+    /// the second is reported.
     #[test]
-    fn a_read_error_costs_only_its_sentence() {
+    fn a_read_error_costs_only_its_cycle() {
         let log = Log::default();
         poll_until_stalled(async {
             let _ = run(
                 GarbledUart {
                     failed: false,
-                    then: MockUart::new(&fix_cycle()),
+                    then: MockUart::new(&std::format!("{}{}", fix_cycle(), fix_cycle())),
                 },
                 MockPower(log.clone()),
                 MockEnable::new(&[true]),

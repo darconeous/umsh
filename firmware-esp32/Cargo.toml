@@ -69,7 +69,11 @@ opt-level = 3
 
 [profile.release]
 codegen-units = 1
-debug = 2
+# File and line only, which is what a panic report and `addr2line` need.
+# Full debug info names every type, and a Buoyant view's type spells out
+# every view inside it: the names alone ran to hundreds of megabytes, held
+# in memory through LTO.
+debug = "line-tables-only"
 debug-assertions = false
 incremental = false
 lto = "fat"

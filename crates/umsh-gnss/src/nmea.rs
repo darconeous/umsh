@@ -144,6 +144,9 @@ pub struct Assembler {
     /// Set when the line overran; the rest of it is discarded and the
     /// next `$` starts fresh.
     overrun: bool,
+    /// Set when a line was lost since [`take_dropped`](Self::take_dropped)
+    /// last looked: one that overran, or whose checksum failed.
+    dropped: bool,
 }
 
 impl Default for Assembler {
@@ -160,6 +163,7 @@ impl Assembler {
             len: 0,
             started: false,
             overrun: false,
+            dropped: false,
         }
     }
 
@@ -170,6 +174,7 @@ impl Assembler {
         self.len = 0;
         self.started = false;
         self.overrun = false;
+        self.dropped = false;
     }
 
     /// Feed one byte, yielding a parsed sentence when one completes.
@@ -181,6 +186,10 @@ impl Assembler {
     pub fn push(&mut self, byte: u8) -> Option<Sentence> {
         match byte {
             b'$' => {
+                // A line cut short by the next one's start is lost too.
+                if self.started && (self.len > 0 || self.overrun) {
+                    self.dropped = true;
+                }
                 self.len = 0;
                 self.started = true;
                 self.overrun = false;
@@ -188,10 +197,16 @@ impl Assembler {
             }
             b'\r' | b'\n' => {
                 let complete = self.started && !self.overrun && self.len > 0;
-                let parsed = complete.then(|| parse(&self.buf[..self.len])).flatten();
+                let parsed = complete
+                    .then(|| verify_checksum(&self.buf[..self.len]))
+                    .flatten();
+                if self.started && parsed.is_none() {
+                    self.dropped = true;
+                }
+                let sentence = parsed.and_then(parse_payload);
                 self.len = 0;
                 self.started = false;
-                parsed
+                sentence
             }
             _ => {
                 if !self.started || self.overrun {
@@ -209,12 +224,26 @@ impl Assembler {
             }
         }
     }
+
+    /// Whether a line was lost since this was last asked—one that
+    /// overran, or whose checksum failed—clearing the answer.
+    ///
+    /// A torn line from before the first `$` is not counted: it was never
+    /// heard to begin with. Neither is a well-formed sentence of a type
+    /// this parser has no use for.
+    pub fn take_dropped(&mut self) -> bool {
+        core::mem::take(&mut self.dropped)
+    }
 }
 
 /// Parse one sentence body: everything between the `$` and the line
 /// terminator, checksum included.
 pub fn parse(body: &[u8]) -> Option<Sentence> {
-    let payload = verify_checksum(body)?;
+    parse_payload(verify_checksum(body)?)
+}
+
+/// Parse a sentence whose checksum has been verified and stripped.
+fn parse_payload(payload: &[u8]) -> Option<Sentence> {
     let mut fields = Fields::split(payload);
     let kind = fields.next()?;
     // The talker prefix is two characters—`GP`, `GN`, `GA`, `BD`, `GL`
@@ -862,6 +891,28 @@ mod tests {
         assert_eq!(parse_fixed(b"", 2), None);
         assert_eq!(parse_fixed(b"1.2x", 1), None);
         assert_eq!(parse_fixed(b"x", 0), None);
+    }
+
+    /// A lost line is reported once; a torn leading line, which was never
+    /// heard to begin with, and a sentence of an unused type are not lost.
+    #[test]
+    fn lost_lines_are_reported_once() {
+        let mut assembler = Assembler::new();
+        feed(&mut assembler, "038,N,01131.000,E*11\r\n");
+        assert!(!assembler.take_dropped(), "a torn leading line counted");
+        feed(
+            &mut assembler,
+            "$GPVTG,054.7,T,034.4,M,005.5,N,010.2,K*48\r\n",
+        );
+        assert!(!assembler.take_dropped(), "an unused sentence counted");
+
+        feed(&mut assembler, "$GPRMC,123519,A*00\r\n");
+        assert!(assembler.take_dropped(), "a bad checksum went unreported");
+        assert!(!assembler.take_dropped(), "reported twice");
+
+        feed(&mut assembler, "$GPRMC,1235");
+        feed(&mut assembler, &line("GPGSA,A,3,04,,,,,,,,,,,,2.5,1.3,2.1"));
+        assert!(assembler.take_dropped(), "a line cut short went unreported");
     }
 
     /// The assembler recovers cleanly across a receiver power cycle.

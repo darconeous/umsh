@@ -27,7 +27,7 @@ impl Board {
             small: 16,
             title: 26,
             header: 30,
-            back: None,
+            back: false,
             touch_target: None,
         },
         controls: Controls {
@@ -51,7 +51,7 @@ impl Board {
             small: 12,
             title: 20,
             header: 36,
-            back: Some(44),
+            back: true,
             touch_target: Some(48),
         },
         controls: Controls {
@@ -81,10 +81,10 @@ pub struct Metrics {
     pub title: u32,
     /// A screen's header, under the status strip.
     pub header: u32,
-    /// The width of the place to touch for Back, at a header's start, on a
+    /// Whether a header starts with an arrow to touch for Back, as on a
     /// board that has touch. Elsewhere the keys have Back, and no arrow
     /// stands for it.
-    pub back: Option<u32>,
+    pub back: bool,
     /// The least a finger is taken to cover, on a board with touch: a
     /// smaller target takes a touch this near it, as though it were this
     /// size, with nothing drawn any larger.

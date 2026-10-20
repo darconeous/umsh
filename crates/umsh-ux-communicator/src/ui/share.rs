@@ -31,7 +31,7 @@ const fn tall(m: &Metrics) -> u32 {
 /// The header, with the way back, on a board with touch: the keys' Back
 /// is no sign of one on screen.
 const fn header(m: &Metrics) -> u32 {
-    if m.back.is_some() { m.header } else { 0 }
+    if m.back { m.header } else { 0 }
 }
 const QUIET: u32 = 2;
 const INSET: u32 = 8;
@@ -145,7 +145,6 @@ pub fn view(state: &State) -> impl View<Rgb565, State> + use<> {
     };
     VStack::new((
         m.back
-            .is_some()
             .then(|| super::conversation::header(m, "Share", None, None)),
         VStack::new((
             HStack::new((

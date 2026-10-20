@@ -373,17 +373,25 @@ const ICONS: &[(&str, u32, f32, &[Layer])] = &[
         "PEERS",
         28,
         1.5,
+        // Clear of the square's edges on every side, the circles' strokes
+        // included.
         &[
-            stroke("M0 -6 L-7 5 L7 5 Z", 1.2),
-            cut("M-2.6 -6 A2.6 2.6 0 1 0 2.6 -6 A2.6 2.6 0 1 0 -2.6 -6 Z"),
-            cut("M-9.6 5 A2.6 2.6 0 1 0 -4.4 5 A2.6 2.6 0 1 0 -9.6 5 Z"),
-            cut("M4.4 5 A2.6 2.6 0 1 0 9.6 5 A2.6 2.6 0 1 0 4.4 5 Z"),
+            stroke("M0 -5.5 L-5.5 5.5 L5.5 5.5 Z", 1.2),
+            cut("M-2.6 -5.5 A2.6 2.6 0 1 0 2.6 -5.5 A2.6 2.6 0 1 0 -2.6 -5.5 Z"),
+            cut("M-8.1 5.5 A2.6 2.6 0 1 0 -2.9 5.5 A2.6 2.6 0 1 0 -8.1 5.5 Z"),
+            cut("M2.9 5.5 A2.6 2.6 0 1 0 8.1 5.5 A2.6 2.6 0 1 0 2.9 5.5 Z"),
             stroke(
-                "M-2.6 -6 A2.6 2.6 0 1 0 2.6 -6 A2.6 2.6 0 1 0 -2.6 -6 Z",
+                "M-2.6 -5.5 A2.6 2.6 0 1 0 2.6 -5.5 A2.6 2.6 0 1 0 -2.6 -5.5 Z",
                 1.4,
             ),
-            stroke("M-9.6 5 A2.6 2.6 0 1 0 -4.4 5 A2.6 2.6 0 1 0 -9.6 5 Z", 1.4),
-            stroke("M4.4 5 A2.6 2.6 0 1 0 9.6 5 A2.6 2.6 0 1 0 4.4 5 Z", 1.4),
+            stroke(
+                "M-8.1 5.5 A2.6 2.6 0 1 0 -2.9 5.5 A2.6 2.6 0 1 0 -8.1 5.5 Z",
+                1.4,
+            ),
+            stroke(
+                "M2.9 5.5 A2.6 2.6 0 1 0 8.1 5.5 A2.6 2.6 0 1 0 2.9 5.5 Z",
+                1.4,
+            ),
         ],
     ),
     (
@@ -571,35 +579,32 @@ const ICONS: &[(&str, u32, f32, &[Layer])] = &[
         ],
     ),
     // The lock screen's: the padlock before its hint, shut until the wheel
-    // has turned far enough and open while a press unlocks; and the clock
-    // in place of the time while the time is not known.
+    // has turned far enough and open while a press unlocks.
     (
         "PADLOCK",
-        18,
+        20,
         1.1,
         &[
             stroke(
-                "M-3.5 -0.75 V-3.75 Q-3.5 -7.75 0 -7.75 Q3.5 -7.75 3.5 -3.75 V-0.75",
+                "M-3.5 0.05 V-2.95 Q-3.5 -6.95 0 -6.95 Q3.5 -6.95 3.5 -2.95 V0.05",
                 1.4,
             ),
             fill(
-                "M-4 -0.75 H4 Q5.5 -0.75 5.5 0.75 V6.25 Q5.5 7.75 4 7.75 H-4 \
-                 Q-5.5 7.75 -5.5 6.25 V0.75 Q-5.5 -0.75 -4 -0.75 Z",
+                "M-4 0.05 H4 Q5.5 0.05 5.5 1.55 V7.05 Q5.5 8.55 4 8.55 H-4 Q-5.5 8.55 -5.5 7.05 V1.55 Q-5.5 0.05 -4 0.05 Z",
             ),
         ],
     ),
     (
         "PADLOCK_OPEN",
-        18,
+        20,
         1.1,
         &[
             stroke(
-                "M-3.5 -0.75 V-4.75 Q-3.5 -8.75 0 -8.75 Q3.5 -8.75 3.5 -4.75 V-3.25",
+                "M-3.5 0.05 V-3.95 Q-3.5 -7.95 0 -7.95 Q3.5 -7.95 3.5 -3.95 V-2.45",
                 1.4,
             ),
             fill(
-                "M-4 -0.75 H4 Q5.5 -0.75 5.5 0.75 V6.25 Q5.5 7.75 4 7.75 H-4 \
-                 Q-5.5 7.75 -5.5 6.25 V0.75 Q-5.5 -0.75 -4 -0.75 Z",
+                "M-4 0.05 H4 Q5.5 0.05 5.5 1.55 V7.05 Q5.5 8.55 4 8.55 H-4 Q-5.5 8.55 -5.5 7.05 V1.55 Q-5.5 0.05 -4 0.05 Z",
             ),
         ],
     ),
@@ -607,15 +612,6 @@ const ICONS: &[(&str, u32, f32, &[Layer])] = &[
     ("DOWN", 12, 1.0, &[stroke("M-4 -2 L0 2 L4 -2", 1.6)]),
     // Over and under a part of the date and time being changed.
     ("UP", 12, 1.0, &[stroke("M-4 2 L0 -2 L4 2", 1.6)]),
-    (
-        "CLOCK",
-        40,
-        2.4,
-        &[
-            stroke("M-7 0 A7 7 0 1 0 7 0 A7 7 0 1 0 -7 0 Z", 1.3),
-            stroke("M0 -4 V0 L3 2", 1.3),
-        ],
-    ),
     // A battery with only its last cell left: the banner's at 22, and the
     // screen's when it is empty at five times that.
     ("BATTERY_LOW", 22, 1.0, BATTERY),

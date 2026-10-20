@@ -13,6 +13,13 @@
 //! honestly missing one. A receiver that emits RMC first rather than last
 //! simply attaches the previous second's altitude to it, which is a
 //! second of staleness in a field that changes slowly.
+//!
+//! **A cycle that lost a line is discarded whole.** A sentence that
+//! failed its checksum, overran, or fell in a read error took part of the
+//! answer with it, and which part is unknowable: a lost GGA reads as no
+//! fix, a lost GSV as satellites gone from the sky. Reporting what was
+//! left would make the fix flicker with every lost byte; skipping the
+//! cycle costs one second of it.
 
 use crate::DateTime;
 use crate::nmea::{Assembler, Gsv, Sentence};
@@ -20,9 +27,9 @@ use crate::nmea::{Assembler, Gsv, Sentence};
 /// How many constellations' satellite counts are summed.
 ///
 /// A multi-constellation receiver emits one GSV burst per constellation.
-/// Four covers GPS, GLONASS, Galileo and BeiDou together; a fifth is
-/// ignored rather than displacing one, so the count is a floor.
-const MAX_CONSTELLATIONS: usize = 4;
+/// Six covers GPS, GLONASS, Galileo, BeiDou, QZSS and NavIC together; a
+/// seventh is ignored rather than displacing one, so the count is a floor.
+const MAX_CONSTELLATIONS: usize = 6;
 
 /// The quality of a position solution.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -109,6 +116,8 @@ struct Cycle {
     constellations: [Constellation; MAX_CONSTELLATIONS],
     constellation_count: usize,
     saw_gsv: bool,
+    /// Whether a line was lost during the cycle.
+    damaged: bool,
 }
 
 impl Cycle {
@@ -172,6 +181,7 @@ impl Driver {
                 }; MAX_CONSTELLATIONS],
                 constellation_count: 0,
                 saw_gsv: false,
+                damaged: false,
             },
         }
     }
@@ -186,10 +196,23 @@ impl Driver {
         self.cycle = Cycle::default();
     }
 
+    /// Drop the line in progress after bytes were lost—a read error, an
+    /// overrun—along with the cycle it belonged to.
+    ///
+    /// Unlike [`reset`](Self::reset), the receiver is still where it was:
+    /// the cycles after this one are whole, and are reported.
+    pub fn resync(&mut self) {
+        self.assembler.reset();
+        self.cycle.damaged = true;
+    }
+
     /// Feed one byte, yielding a fix when a cycle completes.
     pub fn push(&mut self, byte: u8) -> Option<Fix> {
-        let sentence = self.assembler.push(byte)?;
-        match sentence {
+        let sentence = self.assembler.push(byte);
+        if self.assembler.take_dropped() {
+            self.cycle.damaged = true;
+        }
+        match sentence? {
             Sentence::Gga(gga) => {
                 self.cycle.gga_quality = gga.quality;
                 self.cycle.gga_sats_used = gga.sats_used;
@@ -200,11 +223,12 @@ impl Driver {
                 None
             }
             Sentence::Gsa(gsa) => {
-                self.cycle.gsa_fix_mode = gsa.fix_mode;
-                // A receiver reporting no dilution has no dilution to
-                // report, so this clears rather than holding the last
-                // cycle's figure.
-                self.cycle.hdop_centi = gsa.hdop_centi;
+                // A multi-constellation receiver emits one GSA per
+                // constellation, each listing only its own satellites. The
+                // solution is one, so the best dimension any of them
+                // reports is the solution's.
+                self.cycle.gsa_fix_mode = self.cycle.gsa_fix_mode.max(gsa.fix_mode);
+                self.cycle.hdop_centi = self.cycle.hdop_centi.or(gsa.hdop_centi);
                 None
             }
             Sentence::Gsv(gsv) => {
@@ -213,6 +237,9 @@ impl Driver {
             }
             Sentence::Rmc(rmc) => {
                 let cycle = core::mem::take(&mut self.cycle);
+                if cycle.damaged {
+                    return None;
+                }
                 // RMC and GGA both carry a position and normally agree.
                 // Preferring RMC's is arbitrary but consistent; taking
                 // GGA's when RMC has none covers the cycle where a fix
@@ -515,6 +542,118 @@ mod tests {
         assert_eq!(fix.sats_in_view, Some(5));
     }
 
+    /// A u-blox receiver counts QZSS as a constellation of its own, a
+    /// fifth burst after GPS, GLONASS, Galileo and BeiDou.
+    #[test]
+    fn five_constellations_are_all_counted() {
+        let mut driver = Driver::new();
+        for body in [
+            "GPGSV,1,1,04,03,03,111,00",
+            "GLGSV,1,1,03,65,12,034,00",
+            "GAGSV,1,1,02,07,45,120,00",
+            "GBGSV,1,1,05,19,45,120,00",
+            "GQGSV,1,1,01,02,45,120,00",
+        ] {
+            feed(&mut driver, body);
+        }
+        let fix = feed(&mut driver, "GPRMC,,V,,,,,,,,,,N").expect("no fix emitted");
+        assert_eq!(fix.sats_in_view, Some(15));
+    }
+
+    /// A multi-constellation receiver emits one GSA per constellation. One
+    /// with no satellites in the solution says nothing about its dimension.
+    #[test]
+    fn the_best_gsa_of_a_cycle_gives_the_dimension() {
+        let mut driver = Driver::new();
+        feed(
+            &mut driver,
+            "GNGGA,123519,4807.038,N,01131.000,E,1,08,0.9,545.4,M,46.9,M,,",
+        );
+        feed(&mut driver, "GNGSA,A,3,04,05,09,12,,,,,,,,,2.5,1.3,2.1,1");
+        feed(&mut driver, "GNGSA,A,1,,,,,,,,,,,,,,,,2");
+        let fix = feed(
+            &mut driver,
+            "GNRMC,123519,A,4807.038,N,01131.000,E,,,230326,,",
+        )
+        .expect("no fix emitted");
+        assert_eq!(fix.quality, FixQuality::ThreeD);
+        assert_eq!(fix.altitude_m, Some(545));
+        assert_eq!(fix.hdop_centi, Some(130));
+    }
+
+    /// A lost GGA would read as no fix, and a lost GSV as satellites gone
+    /// from the sky. What remains of the cycle is not reported at all, and
+    /// the cycle after it is reported whole.
+    #[test]
+    fn a_cycle_that_lost_a_line_is_not_reported() {
+        let mut driver = Driver::new();
+        feed(
+            &mut driver,
+            "GPGGA,123519,4807.038,N,01131.000,E,1,08,0.9,545.4,M,46.9,M,,",
+        );
+        // A byte lost from the middle of a GSV: its checksum fails.
+        for byte in b"$GPGSV,3,1,11,03,03,111,0*74\r\n" {
+            assert_eq!(driver.push(*byte), None);
+        }
+        feed(&mut driver, "GPGSA,A,3,04,05,,09,12,,,24,,,,,2.5,1.3,2.1");
+        assert_eq!(
+            feed(
+                &mut driver,
+                "GPRMC,123519,A,4807.038,N,01131.000,E,,,230326,,"
+            ),
+            None,
+            "a damaged cycle was reported"
+        );
+        assert_eq!(three_d_cycle(&mut driver).quality, FixQuality::ThreeD);
+    }
+
+    /// A line cut short by the start of the next lost its tail just as
+    /// surely as one whose checksum failed.
+    #[test]
+    fn a_line_cut_short_by_the_next_damages_its_cycle() {
+        let mut driver = Driver::new();
+        for byte in b"$GPGGA,123519,4807.0" {
+            driver.push(*byte);
+        }
+        assert_eq!(
+            feed(
+                &mut driver,
+                "GPRMC,123519,A,4807.038,N,01131.000,E,,,230326,,"
+            ),
+            None
+        );
+    }
+
+    /// A read error drops the line in progress and the cycle it fell in,
+    /// and nothing after.
+    #[test]
+    fn resyncing_costs_only_the_cycle_in_progress() {
+        let mut driver = Driver::new();
+        feed(
+            &mut driver,
+            "GPGGA,123519,4807.038,N,01131.000,E,1,08,0.9,545.4,M,46.9,M,,",
+        );
+        for byte in b"$GPGSA,A,3,04" {
+            driver.push(*byte);
+        }
+        driver.resync();
+        // The rest of the line the error fell in, which no longer has a
+        // start.
+        for byte in b",05,,09,12,,,24,,,,,2.5,1.3,2.1*39\r\n" {
+            driver.push(*byte);
+        }
+        assert_eq!(
+            feed(
+                &mut driver,
+                "GPRMC,123519,A,4807.038,N,01131.000,E,,,230326,,"
+            ),
+            None
+        );
+        let fix = three_d_cycle(&mut driver);
+        assert_eq!(fix.altitude_m, Some(545));
+        assert_eq!(fix.sats_used, 8);
+    }
+
     /// A receiver that reports no GSV at all is not reporting zero
     /// satellites in view; it is not reporting.
     #[test]
@@ -558,9 +697,9 @@ mod tests {
     }
 
     /// Garbage between sentences is the normal condition of a UART that
-    /// just came up, and must cost at most the sentence it landed in.
+    /// just came up, and must cost at most the cycle it landed in.
     #[test]
-    fn a_corrupt_sentence_costs_only_itself() {
+    fn a_corrupt_sentence_costs_only_its_cycle() {
         let mut driver = Driver::new();
         for byte in b"\x00\xff$GPGGA,tor" {
             driver.push(*byte);
@@ -570,11 +709,14 @@ mod tests {
             "GPGGA,123519,4807.038,N,01131.000,E,1,08,0.9,545.4,M,46.9,M,,",
         );
         feed(&mut driver, "GPGSA,A,3,04,05,,,,,,,,,,,2.5,1.3,2.1");
-        let fix = feed(
-            &mut driver,
-            "GPRMC,123519,A,4807.038,N,01131.000,E,,,230326,,",
-        )
-        .expect("no fix emitted");
+        assert_eq!(
+            feed(
+                &mut driver,
+                "GPRMC,123519,A,4807.038,N,01131.000,E,,,230326,,"
+            ),
+            None
+        );
+        let fix = three_d_cycle(&mut driver);
         assert_eq!(fix.quality, FixQuality::ThreeD);
         assert_eq!(fix.altitude_m, Some(545));
     }

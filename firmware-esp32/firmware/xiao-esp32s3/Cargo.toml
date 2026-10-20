@@ -119,6 +119,7 @@ board-tdeck = [
     "wired-usb-serial-jtag",
     "usb-presence-sof",
     "battery-adc-rail",
+    "gnss",
 ]
 board-tbeam-supreme = [
     "ulcp-i2c",

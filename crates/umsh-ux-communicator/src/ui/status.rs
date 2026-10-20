@@ -12,8 +12,9 @@ use crate::model::{Bluetooth, Gnss, State, StatusStrip, Wifi};
 use crate::{font, icon, theme};
 
 /// The strip; on first run, the battery alone, there being no name or
-/// time yet to show. The battery shows only where its charge is known. Shift's and Alt's states come first among the
-/// indicators, in the keyboard's order. The time is the local time, while
+/// time yet to show. The battery shows only where its charge is known.
+/// Shift's and Alt's states come first among the indicators, in the
+/// keyboard's order. The time is the local time, while
 /// the clock is known; the lock screen leaves it out to show it larger.
 pub fn view(
     m: &'static Metrics,
@@ -103,7 +104,9 @@ fn bluetooth(state: Bluetooth) -> impl View<Rgb565, State> + use<> {
 }
 
 /// A battery outline with up to three charge segments, and its terminal,
-/// amber while the charge is `low`.
+/// amber while the charge is `low`. The segments keep [`CELL_GAP`] from
+/// the outline's inside on every side, and from each other; the terminal
+/// stands level with them.
 fn battery(segments: u8, low: bool) -> impl View<Rgb565, State> + use<> {
     let outline = if low {
         theme::AMBER
@@ -117,22 +120,33 @@ fn battery(segments: u8, low: bool) -> impl View<Rgb565, State> + use<> {
             } else {
                 theme::CHROME
             })
-            .frame_sized(5, 7)
-            .offset(4 + 6 * i32::from(i), 0)
+            .frame_sized(CELL_WIDTH, CELL_HEIGHT)
+            .offset(
+                (1 + CELL_GAP + (CELL_WIDTH + CELL_GAP) * u32::from(i)) as i32,
+                0,
+            )
     };
     ZStack::new((
         RoundedRectangle::new(3)
             .stroked(1)
             .foreground_color(outline)
-            .frame_sized(25, 12),
+            .frame_sized(BATTERY_WIDTH, BATTERY_HEIGHT),
         segment(0),
         segment(1),
         segment(2),
         Rectangle
             .foreground_color(outline)
-            .frame_sized(2, 5)
-            .offset(26, 0),
+            .frame_sized(2, CELL_HEIGHT)
+            .offset(BATTERY_WIDTH as i32 + 1, 0),
     ))
     .with_alignment(Alignment::Leading)
-    .frame_sized(28, 12)
+    .frame_sized(BATTERY_WIDTH + 3, BATTERY_HEIGHT)
 }
+
+/// The battery's outline, its stroke included.
+const BATTERY_WIDTH: u32 = 1 + 3 * CELL_WIDTH + 4 * CELL_GAP + 1;
+const BATTERY_HEIGHT: u32 = 1 + CELL_GAP + CELL_HEIGHT + CELL_GAP + 1;
+const CELL_WIDTH: u32 = 5;
+const CELL_HEIGHT: u32 = 6;
+/// Around the charge segments, and between them.
+const CELL_GAP: u32 = 2;

@@ -9,8 +9,9 @@ repository.workspace = true
 # The communicator on ESP32-S3—the shared session driver from
 # `umsh-ulcp-runtime` behind this board's transports (HDLC on the native
 # USB-Serial-JTAG port, UlcpService GATT on the esp-radio controller),
-# with the SX1262 and ST7789 sharing SPI, and the keyboard, trackball,
-# touch panel, and the Plus's GNSS found at boot.
+# with the SX1262 and ST7789 sharing SPI, the keyboard, trackball, and
+# touch panel found at boot, and a GNSS receiver on the UART0 pins: the
+# Plus's own, or one on the original's Grove port.
 
 [features]
 ulcp-i2c = ["umsh-ulcp-runtime/i2c", "umsh-bsp-tdeck/ulcp-i2c"]
@@ -109,6 +110,7 @@ board-tdeck = [
     "wired-usb-serial-jtag",
     "usb-presence-sof",
     "battery-adc-rail",
+    "gnss",
 ]
 board-tbeam-supreme = [
     "ulcp-i2c",

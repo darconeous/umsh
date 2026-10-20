@@ -15,8 +15,13 @@
 //! change made here (`ulcp-saved-state.md`, Changes Made at the Device),
 //! but never makes one. So the first boot saves one, and a change whose
 //! loss would matter—the name, the radio—is followed by a save when the
-//! device has none in effect. Brightness and the keyboard never ask for
-//! one.
+//! device has none in effect. Brightness, the keyboard, and pairing never
+//! ask for one.
+//!
+//! **The radio.** A reset leaves the radio off until a host turns it on
+//! (`ulcp-radio.md`). A communicator is its own host, so its first boot
+//! turns the radio on before saving; from then on the radio is as it was
+//! last left.
 //!
 //! **Peers and channels.** The device's store keeps `PROP_DEV_PEERS` and
 //! `PROP_DEV_CHANNEL_KEYS` outside the snapshot, so changing them asks for
@@ -26,7 +31,7 @@
 //! [`ChannelCrypto::starting_keys`](crate::ChannelCrypto::starting_keys)).
 
 use umsh_core::ChannelTag;
-use umsh_ulcp::ids::{keyboard_aids, prop, saved};
+use umsh_ulcp::ids::{cap, keyboard_aids, prop, saved};
 use umsh_ulcp::profiles::VETTED;
 use umsh_ulcp_admin::descriptor::Value;
 use umsh_ulcp_admin::{
@@ -214,7 +219,11 @@ impl<P: LocalPort> Settings<P> {
             return false;
         }
         self.boot_checked = true;
-        self.model.saved() == Some(saved::NONE) && self.model.save().is_ok()
+        if self.model.saved() != Some(saved::NONE) {
+            return false;
+        }
+        _ = self.model.set_radio_enabled(true);
+        self.model.save().is_ok()
     }
 
     /// A change that would matter if it were lost is saved, unless the
@@ -248,6 +257,31 @@ impl<P: LocalPort> Settings<P> {
     pub fn set_transmit_power(&mut self, dbm: i8) -> bool {
         let write = self.model.set_tx_power_dbm(dbm);
         self.written(Setting::TransmitPower, write)
+    }
+
+    pub fn set_radio_enabled(&mut self, on: bool) -> bool {
+        let write = self.model.set_radio_enabled(on);
+        self.written(Setting::Radio, write)
+    }
+
+    pub fn set_bluetooth_enabled(&mut self, on: bool) -> bool {
+        let write = self.model.set_bluetooth_enabled(on);
+        self.written(Setting::Bluetooth, write)
+    }
+
+    pub fn set_pairing(&mut self, open: bool) -> bool {
+        let write = self.model.set_pairing(open);
+        self.written(Setting::Pairing, write)
+    }
+
+    pub fn clear_pairings(&mut self) -> bool {
+        let write = self.model.clear_pairings();
+        self.written(Setting::Pairing, write)
+    }
+
+    pub fn set_gnss_enabled(&mut self, on: bool) -> bool {
+        let write = self.model.set_gnss_enabled(on);
+        self.written(Setting::Gnss, write)
     }
 
     pub fn set_forwarding(&mut self, on: bool) -> bool {
@@ -445,6 +479,7 @@ impl<P: LocalPort> Settings<P> {
             (u32::from(duty) * 100 / u32::from(u16::MAX)) as u8
         });
         RadioSettings {
+            enabled: self.bool(prop::PHY_ENABLED).unwrap_or(false),
             profile,
             forwarding: self.bool(prop::MAC_REPEATER_ENABLED).unwrap_or(false),
             share_location: self.bool(prop::GNSS_IDENT_UPDATE).unwrap_or(false),
@@ -454,6 +489,20 @@ impl<P: LocalPort> Settings<P> {
             },
             airtime,
         }
+    }
+
+    /// Whether Bluetooth is on, where the device has it.
+    pub fn bluetooth_enabled(&self) -> Option<bool> {
+        self.model
+            .has_cap(cap::BLE)?
+            .then(|| self.bool(prop::BLE_ENABLED).unwrap_or(true))
+    }
+
+    /// Whether the GNSS receiver is on, where the device has one.
+    pub fn gnss_enabled(&self) -> Option<bool> {
+        self.model
+            .has_cap(cap::GNSS)?
+            .then(|| self.bool(prop::GNSS_ENABLED).unwrap_or(false))
     }
 
     pub fn keyboard(&self) -> KeyboardSettings {
@@ -509,6 +558,6 @@ impl<P: LocalPort> Settings<P> {
 const fn matters(setting: Setting) -> bool {
     !matches!(
         setting,
-        Setting::Keyboard | Setting::Brightness | Setting::Time
+        Setting::Keyboard | Setting::Brightness | Setting::Time | Setting::Pairing
     )
 }

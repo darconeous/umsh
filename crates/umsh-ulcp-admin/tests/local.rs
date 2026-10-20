@@ -241,7 +241,7 @@ fn writes_the_device_cannot_take_never_leave() {
         model.insert(prop::DEV_PEERS, &[0; 16]),
         Err(Refusal::BadLength)
     );
-    assert_eq!(model.set(prop::BLE_ENABLED, &[1]), Err(Refusal::NotCovered));
+    assert_eq!(model.set(prop::ALERT, &[1]), Err(Refusal::NotCovered));
     assert!(!model.busy());
     assert!(exchange.port().sent.is_empty());
 }
@@ -367,10 +367,12 @@ fn lost_publications_leave_everything_to_read_again() {
 }
 
 #[test]
-fn publications_the_model_does_not_cover_pass_it_by() {
+fn a_switch_turned_at_the_device_is_taken_in_without_asking() {
     let (mut model, mut exchange) = device();
+    let was = model.bluetooth_enabled().expect("read with the rest");
     exchange.port_mut().sim.toggle_ble();
     model.pump(&mut exchange, 2_000);
-    assert!(events(&mut model).is_empty());
+    assert_eq!(events(&mut model), [Event::Changed(prop::BLE_ENABLED)]);
+    assert_eq!(model.bluetooth_enabled(), Some(!was));
     assert!(exchange.port().sent.is_empty());
 }

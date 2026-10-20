@@ -28,7 +28,7 @@ use crate::descriptor::{self, Access, COVERED, Descriptor, Kind, Value};
 use crate::exchange::{Arrival, Busy, Exchange, Request, Ticket};
 
 /// The most properties one `CMD_PROP_MULTI_GET` asks for.
-pub const BUNDLE_MAX: usize = 24;
+pub const BUNDLE_MAX: usize = 32;
 
 /// How far the cache can be trusted for one property.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -980,6 +980,43 @@ impl Model {
         self.set(prop::PHY_DUTY_LIMIT, &limit.to_le_bytes())
     }
 
+    /// `PROP_PHY_ENABLED`: whether the radio is on.
+    pub fn radio_enabled(&self) -> Option<bool> {
+        self.bool(prop::PHY_ENABLED)
+    }
+
+    pub fn set_radio_enabled(&mut self, enabled: bool) -> Result<WriteId, Refusal> {
+        self.set(prop::PHY_ENABLED, &[u8::from(enabled)])
+    }
+
+    /// `PROP_BLE_ENABLED`: whether Bluetooth is on.
+    pub fn bluetooth_enabled(&self) -> Option<bool> {
+        self.bool(prop::BLE_ENABLED)
+    }
+
+    pub fn set_bluetooth_enabled(&mut self, enabled: bool) -> Result<WriteId, Refusal> {
+        self.set(prop::BLE_ENABLED, &[u8::from(enabled)])
+    }
+
+    /// `PROP_BLE_PAIRING`: opens the pairing window, or closes it.
+    pub fn set_pairing(&mut self, open: bool) -> Result<WriteId, Refusal> {
+        self.set(prop::BLE_PAIRING, &[u8::from(open)])
+    }
+
+    /// `PROP_BLE_BOND_COUNT` set to zero: forgets every paired phone.
+    pub fn clear_pairings(&mut self) -> Result<WriteId, Refusal> {
+        self.set(prop::BLE_BOND_COUNT, &[0])
+    }
+
+    /// `PROP_GNSS_ENABLED`: whether the receiver is on.
+    pub fn gnss_enabled(&self) -> Option<bool> {
+        self.bool(prop::GNSS_ENABLED)
+    }
+
+    pub fn set_gnss_enabled(&mut self, enabled: bool) -> Result<WriteId, Refusal> {
+        self.set(prop::GNSS_ENABLED, &[u8::from(enabled)])
+    }
+
     /// `PROP_MAC_REPEATER_ENABLED`: forwarding.
     pub fn forwarding(&self) -> Option<bool> {
         self.bool(prop::MAC_REPEATER_ENABLED)
@@ -1401,7 +1438,7 @@ mod tests {
         let (mut model, mut script) = with_caps(&[cap::DEV_IDENTITY, cap::REPEATER]);
         script.publish(prop_is(prop::MAC_REPEATER_ENABLED, &[1]));
         // Not covered: passed by.
-        script.publish(prop_is(prop::BLE_ENABLED, &[1]));
+        script.publish(prop_is(prop::ALERT, &[1]));
         model.pump(&mut script, 5);
         assert_eq!(model.forwarding(), Some(true));
         assert_eq!(

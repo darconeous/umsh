@@ -173,6 +173,13 @@ pub const COVERED: &[Descriptor] = &[
     ),
     // The radio's local settings.
     scalar(
+        prop::PHY_ENABLED,
+        PropertyType::Bool,
+        None,
+        Access::ReadWrite,
+        1,
+    ),
+    scalar(
         prop::PHY_TX_POWER,
         PropertyType::I8,
         None,
@@ -205,6 +212,35 @@ pub const COVERED: &[Descriptor] = &[
         prop::GNSS_IDENT_UPDATE,
         PropertyType::Bool,
         Some(cap::GNSS),
+        Access::ReadWrite,
+        1,
+    ),
+    // The links beside the radio.
+    scalar(
+        prop::GNSS_ENABLED,
+        PropertyType::Bool,
+        Some(cap::GNSS),
+        Access::ReadWrite,
+        1,
+    ),
+    scalar(
+        prop::BLE_ENABLED,
+        PropertyType::Bool,
+        Some(cap::BLE),
+        Access::ReadWrite,
+        1,
+    ),
+    scalar(
+        prop::BLE_PAIRING,
+        PropertyType::Bool,
+        Some(cap::BLE),
+        Access::ReadWrite,
+        1,
+    ),
+    scalar(
+        prop::BLE_BOND_COUNT,
+        PropertyType::U8,
+        Some(cap::BLE),
         Access::ReadWrite,
         1,
     ),

@@ -120,6 +120,49 @@ pub enum Gnss {
     Fixed,
 }
 
+/// What the board reads of its links, for the screens that show them.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Links {
+    pub bluetooth: BluetoothReading,
+    pub gnss: GnssReading,
+}
+
+/// Bluetooth as it stands.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct BluetoothReading {
+    /// A phone is connected.
+    pub connected: bool,
+    /// How many phones are paired, where the board keeps its own pairings.
+    pub paired: Option<u8>,
+    /// A pairing window is open.
+    pub pairing: bool,
+    /// The PIN a phone pairing now must give.
+    pub pin: Option<u32>,
+}
+
+/// The GNSS receiver's solution as it stands.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct GnssReading {
+    pub fix: Fix,
+    /// Latitude and longitude, in millionths of a degree.
+    pub position: Option<(i32, i32)>,
+    /// Meters above the ellipsoid, with a three-dimensional fix.
+    pub altitude: Option<i32>,
+    /// Satellites in the solution.
+    pub used: u8,
+    /// Satellites in view, where the receiver says.
+    pub in_view: Option<u8>,
+}
+
+/// How much of a position the receiver has.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Fix {
+    #[default]
+    None,
+    TwoD,
+    ThreeD,
+}
+
 /// A chat as the list knows it, whether or not it is open.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ChatSummary {
@@ -290,6 +333,8 @@ pub enum Profile {
 /// The radio's settings, and how much of its airtime it has spent.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RadioSettings {
+    /// The radio is on.
+    pub enabled: bool,
     /// What it sends and listens on, which nodes must share to hear one
     /// another.
     pub profile: Profile,
@@ -781,6 +826,10 @@ pub enum Setting {
     Brightness,
     Clock,
     Time,
+    Bluetooth,
+    Pairing,
+    Gnss,
+    Radio,
 }
 
 /// What changed in the node without the interface asking. An event names
@@ -1068,6 +1117,9 @@ pub trait Node {
     /// The radio's settings as they stand.
     fn radio(&self) -> RadioSettings;
 
+    /// Turns the radio on or off.
+    fn set_radio_enabled(&self, on: bool);
+
     fn set_forwarding(&self, on: bool);
 
     fn set_share_location(&self, on: bool);
@@ -1084,6 +1136,22 @@ pub trait Node {
     fn brightness(&self) -> u8;
 
     fn set_brightness(&self, brightness: u8);
+
+    /// Whether Bluetooth is on. `None` where the board has none.
+    fn bluetooth_enabled(&self) -> Option<bool>;
+
+    fn set_bluetooth_enabled(&self, on: bool);
+
+    /// Opens a window for a phone to pair, or closes it.
+    fn set_pairing(&self, open: bool);
+
+    /// Forgets every paired phone.
+    fn clear_pairings(&self);
+
+    /// Whether the GNSS receiver is on. `None` where the board has none.
+    fn gnss_enabled(&self) -> Option<bool>;
+
+    fn set_gnss_enabled(&self, on: bool);
 }
 
 /// At or below this charge, in percent, the battery is low.
@@ -1149,6 +1217,8 @@ pub enum Section {
 /// Everything the interface draws from.
 pub struct State {
     pub status: StatusStrip,
+    /// What the board last read of its links.
+    pub links: Links,
     pub section: Section,
     /// Newest first.
     pub chats: Chats,
@@ -1298,6 +1368,7 @@ impl State {
         _ = screens.push(Screen::chats());
         Self {
             status: StatusStrip::default(),
+            links: Links::default(),
             section: Section::default(),
             chats: Vec::new(),
             peers: Vec::new(),

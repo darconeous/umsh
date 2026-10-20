@@ -928,6 +928,15 @@ const BATTERY_LEVEL_STEP: u8 = 5;
 #[cfg(feature = "battery-telemetry")]
 static BATTERY_UI_CHANGED: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 
+/// How often the battery is read on its own.
+#[cfg(all(feature = "battery-adc", not(feature = "battery-adc-rail")))]
+const BATTERY_PERIOD: Duration = Duration::from_secs(60);
+/// On the rail, external power coming or going shows only in a reading,
+/// which costs well under a millisecond: it is read often enough for the
+/// screen to follow a plug at once.
+#[cfg(feature = "battery-adc-rail")]
+const BATTERY_PERIOD: Duration = Duration::from_secs(1);
+
 /// Owns the ADC divider. Samples on a slow cadence for the OLED and
 /// immediately on session request (`Effect::SampleBattery`).
 #[cfg(feature = "battery-adc")]
@@ -937,9 +946,12 @@ async fn battery_task(mut sampler: BatterySampler) {
     // Level last announced; `None` until the first sample, which always
     // announces.
     let mut announced: Option<u8> = None;
+    // Whether the rail was last on external power.
+    #[cfg(feature = "battery-adc-rail")]
+    let mut external = false;
     loop {
         let requested = matches!(
-            select(Timer::after_secs(60), BATTERY_REQUEST.wait()).await,
+            select(Timer::after(BATTERY_PERIOD), BATTERY_REQUEST.wait()).await,
             Either::Second(())
         );
         // V2: ADC2 belongs to the radio while the BLE controller is up
@@ -967,6 +979,18 @@ async fn battery_task(mut sampler: BatterySampler) {
         };
         BATTERY_MV.store(mv, Ordering::Release);
         BATTERY_LEVEL.store(battery_level_from_mv(mv).unwrap_or(0xFF), Ordering::Release);
+        // Power plugged in lights the screen to say so, as a phone's does.
+        #[cfg(feature = "battery-adc-rail")]
+        {
+            let was = core::mem::replace(
+                &mut external,
+                board::battery::Rail::classify(mv) == board::battery::Rail::External,
+            );
+            if external && !was {
+                BATTERY_UI_CHANGED.signal(());
+                UI_WAKE.signal(());
+            }
+        }
         #[cfg(feature = "battery-adc-rail")]
         BATTERY_CHARGE.store(
             match board::battery::Rail::classify(mv) {
@@ -1805,6 +1829,38 @@ type GnssTxPin = esp_hal::peripherals::GPIO8<'static>;
 type GnssRxPin = esp_hal::peripherals::GPIO4<'static>;
 #[cfg(feature = "board-tlora-pager")]
 type GnssTxPin = esp_hal::peripherals::GPIO12<'static>;
+#[cfg(feature = "board-tdeck")]
+type GnssRxPin = esp_hal::peripherals::GPIO44<'static>;
+#[cfg(feature = "board-tdeck")]
+type GnssTxPin = esp_hal::peripherals::GPIO43<'static>;
+
+/// The rates the receiver may talk at. Where there is more than one, which
+/// it uses is found by listening, the one it was last heard at first.
+#[cfg(all(feature = "gnss", feature = "board-tdeck"))]
+const GNSS_BAUDS: &[u32] = &board::GNSS_BAUDS;
+#[cfg(all(feature = "gnss", not(feature = "board-tdeck")))]
+const GNSS_BAUDS: &[u32] = &[board::GNSS_BAUD];
+
+/// How long to listen at one rate for a sentence: a receiver sends at
+/// least one a second.
+#[cfg(feature = "gnss")]
+const GNSS_LISTEN: Duration = Duration::from_millis(2_000);
+
+/// How full the GNSS UART's 128-byte FIFO gets before it is drained.
+///
+/// Low, so that most of the FIFO is left for the time the executor spends
+/// elsewhere: a frame's paint outlasts the 64 bytes the read buffer would
+/// otherwise leave, at 38400 baud, and an overrun costs the cycle.
+#[cfg(feature = "gnss")]
+const GNSS_RX_THRESHOLD: u16 = 16;
+
+/// The GNSS UART's configuration at `baud`.
+#[cfg(feature = "gnss")]
+fn gnss_uart_config(baud: u32) -> UartConfig {
+    UartConfig::default()
+        .with_baudrate(baud)
+        .with_rx(esp_hal::uart::RxConfig::default().with_fifo_full_threshold(GNSS_RX_THRESHOLD))
+}
 
 #[cfg(feature = "gnss")]
 #[embassy_executor::task]
@@ -1821,6 +1877,7 @@ async fn gnss_task(
     let slot = core::cell::RefCell::new(GnssUartSlot {
         boot: Some((uart1, rx, tx)),
         open: None,
+        baud: GNSS_BAUDS[0],
     });
     umsh_gnss::pump::run(
         GnssPort { slot: &slot },
@@ -1866,6 +1923,8 @@ struct GnssUartSlot {
     /// steal (see `open_port`).
     boot: Option<(esp_hal::peripherals::UART1<'static>, GnssRxPin, GnssTxPin)>,
     open: Option<Uart<'static, Async>>,
+    /// The rate the receiver was last heard at, or the first to try.
+    baud: u32,
 }
 
 #[cfg(feature = "gnss")]
@@ -1887,7 +1946,7 @@ impl GnssUartSlot {
             }
         });
         self.open = Some(
-            Uart::new(uart1, UartConfig::default().with_baudrate(board::GNSS_BAUD))
+            Uart::new(uart1, gnss_uart_config(self.baud))
                 .unwrap()
                 .with_rx(rx)
                 .with_tx(tx)
@@ -1955,11 +2014,76 @@ impl umsh_gnss::pump::Power for GnssPower<'_> {
     async fn power_on(&mut self) {
         self.slot.borrow_mut().open_port();
         self.inner.power_on().await;
+        if GNSS_BAUDS.len() > 1 {
+            find_gnss_baud(self.slot).await;
+        }
     }
 
     async fn power_off(&mut self) {
         self.inner.power_off().await;
         self.slot.borrow_mut().close_port();
+    }
+}
+
+/// Listens for the receiver at each of [`GNSS_BAUDS`], the rate it was
+/// last heard at first, and stays at the first that carries a sentence.
+/// Hearing none, it stays at that first rate and listens again at the
+/// next power-up: a receiver can be plugged in later.
+///
+/// The `RefMut` is held across the reads, sound for the reason
+/// [`GnssPort`] gives.
+#[cfg(feature = "gnss")]
+#[allow(clippy::await_holding_refcell_ref)]
+async fn find_gnss_baud(slot: &core::cell::RefCell<GnssUartSlot>) {
+    // Light sleep stops the UART: stay awake to hear it.
+    let _awake = esp_hal::rtc_cntl::WakeLock::new();
+    let mut slot = slot.borrow_mut();
+    let last = slot.baud;
+    let rates =
+        core::iter::once(last).chain(GNSS_BAUDS.iter().copied().filter(|&baud| baud != last));
+    for baud in rates {
+        let Some(uart) = slot.open.as_mut() else {
+            return;
+        };
+        if uart.apply_config(&gnss_uart_config(baud)).is_err() {
+            continue;
+        }
+        if hears_a_sentence(uart).await {
+            if baud != last {
+                debug_log(format_args!("gnss: receiver heard at {baud} baud"));
+            }
+            slot.baud = baud;
+            return;
+        }
+    }
+    if let Some(uart) = slot.open.as_mut() {
+        _ = uart.apply_config(&gnss_uart_config(last));
+    }
+}
+
+/// Whether a whole, checksummed sentence arrives within [`GNSS_LISTEN`].
+#[cfg(feature = "gnss")]
+async fn hears_a_sentence(uart: &mut Uart<'static, Async>) -> bool {
+    let mut assembler = umsh_gnss::nmea::Assembler::new();
+    let mut buf = [0u8; 64];
+    let deadline = Instant::now() + GNSS_LISTEN;
+    loop {
+        let Some(left) = deadline.checked_duration_since(Instant::now()) else {
+            return false;
+        };
+        match with_timeout(left, embedded_io_async::Read::read(uart, &mut buf)).await {
+            Ok(Ok(read)) => {
+                if buf[..read]
+                    .iter()
+                    .any(|&byte| assembler.push(byte).is_some())
+                {
+                    return true;
+                }
+            }
+            // At the wrong rate, framing errors are what is heard.
+            Ok(Err(_)) => {}
+            Err(_) => return false,
+        }
     }
 }
 
@@ -3740,8 +3864,21 @@ async fn main(spawner: Spawner) {
         }
     }
     #[cfg(feature = "board-tdeck")]
-    if let Some((panel, splash)) = boot_display {
-        spawner.spawn(communicator::task(panel, splash, chat_node).unwrap());
+    {
+        // The Plus's own receiver, or one on the original's Grove port,
+        // on the same UART0 pins (§12). Either is powered with the board.
+        spawner.spawn(
+            gnss_task(
+                peripherals.UART1,
+                peripherals.GPIO44,
+                peripherals.GPIO43,
+                board::gnss::Gnss,
+            )
+            .unwrap(),
+        );
+        if let Some((panel, splash)) = boot_display {
+            spawner.spawn(communicator::task(panel, splash, chat_node).unwrap());
+        }
     }
 
     // ── OLED, then hand the panel to its task ────────────────────────────

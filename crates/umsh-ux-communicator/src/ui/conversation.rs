@@ -34,6 +34,10 @@ use buoyant::render::AreaColors;
 
 /// A header's title from the screen's edge, where no arrow stands before it.
 const LEADING: u32 = 10;
+/// The back arrow from the screen's edge.
+const ARROW_INSET: u32 = 4;
+/// Between the back arrow and what follows it.
+pub(super) const ARROW_GAP: u32 = 6;
 const AVATAR: u32 = 26;
 /// The composer's band, and its field inside it.
 const COMPOSER_INSET: u32 = 3;
@@ -336,7 +340,8 @@ pub(super) fn header(
         ))
         .with_spacing(6),
     ))
-    .padding(Edges::Leading, if m.back.is_some() { 0 } else { LEADING })
+    .with_spacing(ARROW_GAP)
+    .padding(Edges::Leading, if m.back { 0 } else { LEADING })
     .frame()
     .with_height(m.header)
     .overlay(
@@ -349,13 +354,13 @@ pub(super) fn header(
 }
 
 /// The way back, doing `act`, for touch alone, where the board has touch:
-/// the keys have Back. The arrow stands in the middle of its place, which
-/// is the header's height.
+/// the keys have Back. Its place is the header's height; a finger near it
+/// takes it as a minimum touch target.
 pub(super) fn back(
     m: &'static Metrics,
     act: fn(&mut State),
 ) -> Option<impl View<Rgb565, State> + use<>> {
-    m.back.map(|width| {
+    m.back.then(|| {
         Button::new(act, move |button: ButtonState| {
             Image::new(&icon::BACK)
                 .as_template()
@@ -364,8 +369,8 @@ pub(super) fn back(
                 } else {
                     theme::TEXT_TERTIARY
                 })
+                .padding(Edges::Leading, ARROW_INSET)
                 .frame()
-                .with_width(width)
                 .with_height(m.header)
                 // All of it takes the touch, not the arrow alone.
                 .content_shape(Rectangle)

@@ -17,7 +17,7 @@ pub const SPI_MOSI: u8 = 41;
 pub const SPI_MISO: u8 = 38;
 /// The module's PSRAM, on the octal bus.
 pub const PSRAM_MODE: esp_hal::psram::PsramMode = esp_hal::psram::PsramMode::OctalSpi;
-/// The GNSS module's rates on the Plus, in the order they are tried: the
+/// The GNSS receiver's rates, in the order they are tried: the Plus's
 /// u-blox MIA-M10Q's, then the L76K's (§12).
 pub const GNSS_BAUDS: [u32; 2] = [38400, 9600];
 

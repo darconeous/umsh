@@ -20,7 +20,8 @@ use umsh_ux_communicator::buoyant::render_target::{
 use umsh_ux_communicator::buoyant::view::View;
 use umsh_ux_communicator::input::{self, Input};
 use umsh_ux_communicator::model::{
-    Bluetooth, ClockSource, Gnss, Node as _, State, Wifi, brightness_level,
+    Bluetooth, BluetoothReading, ClockSource, Fix, Gnss, GnssReading, Links, Node as _, State,
+    Wifi, brightness_level,
 };
 use umsh_ux_communicator::{theme, ui};
 use umsh_ux_display_tracker::attention::{Attention, AttentionConfig, DisplayKind, Transition};
@@ -301,6 +302,10 @@ async fn interface(
             let mut state = app.state_mut();
             (state.status.bluetooth, state.status.wifi, state.status.gnss) = read;
         }
+        let readings = link_readings();
+        if app.state().links != readings {
+            app.state_mut().links = readings;
+        }
         // Taken in while the panel is still dark, so that a message
         // arriving then is listed for the screen it wakes to.
         if input::events(app, now()) {
@@ -418,6 +423,46 @@ fn links() -> (Option<Bluetooth>, Option<Wifi>, Option<Gnss>) {
     #[cfg(not(feature = "gnss"))]
     let gnss = None;
     (bluetooth, wifi, gnss)
+}
+
+/// What Bluetooth and the GNSS receiver are doing, for the screens that
+/// show more than the strip does.
+fn link_readings() -> Links {
+    use umsh_ux_display_tracker::screen::{LinkState, PairingState};
+    let ble = ble::panel();
+    let bluetooth = BluetoothReading {
+        connected: matches!(ble.link, LinkState::Connected | LinkState::Attached),
+        paired: Some(ble.bonds),
+        pairing: matches!(ble.pairing, PairingState::Open { .. }),
+        pin: match ble.pairing {
+            PairingState::Open { pin } => pin,
+            _ => None,
+        },
+    };
+    #[cfg(feature = "gnss")]
+    let gnss = {
+        use umsh_ulcp::gnss::FixKind;
+        let snapshot = umsh_ulcp_runtime::gnss::snapshot();
+        let location = snapshot.location();
+        GnssReading {
+            fix: match snapshot.fix {
+                FixKind::TwoD => Fix::TwoD,
+                FixKind::ThreeD => Fix::ThreeD,
+                _ => Fix::None,
+            },
+            position: (!location.is_empty()).then(|| {
+                let (latitude, longitude) =
+                    umsh_node::location::NodeLocation::from_bytes(location).center();
+                ((latitude * 1e6) as i32, (longitude * 1e6) as i32)
+            }),
+            altitude: snapshot.altitude_m,
+            used: snapshot.sats_used,
+            in_view: snapshot.sats_in_view,
+        }
+    };
+    #[cfg(not(feature = "gnss"))]
+    let gnss = GnssReading::default();
+    Links { bluetooth, gnss }
 }
 
 /// When the clock next turns to a new minute, while it is known.
