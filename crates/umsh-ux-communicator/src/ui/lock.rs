@@ -21,8 +21,10 @@ use crate::model::{Age, State, age};
 use crate::text::SharedText;
 use crate::{font, icon, theme};
 
-/// The time's size beside the cards, and alone in the middle.
+/// The time's size beside the cards, smaller there with AM or PM after it,
+/// and alone in the middle.
 const TIME: u32 = 56;
+const TIME_HALVES: u32 = 46;
 const TIME_ALONE: u32 = 72;
 /// The column of cards: from the screen's top, from the bar, and each
 /// card.
@@ -144,7 +146,7 @@ fn beside_cards(
     };
     ZStack::new((
         VStack::new((
-            when(m, now, h24, TIME),
+            when(m, now, h24, if h24 { TIME } else { TIME_HALVES }),
             unread_badge(m, unread).padding(Edges::Top, 10),
         ))
         .with_spacing(0)
@@ -433,4 +435,48 @@ fn hint(m: &'static Metrics, steps: bool, ready: bool) -> impl View<Rgb565, Stat
     .with_height(HINT_HEIGHT)
     .with_alignment(Alignment::Center)
     .padding(Edges::Top, hint_y(m))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// How wide `text` is in `font` at `size`.
+    fn width(text: &str, font: &PrerenderedFont, size: u32) -> u32 {
+        let face = font.face(size);
+        text.chars()
+            .filter_map(|c| face.glyph(c).or(face.fallback.as_ref()))
+            .map(|glyph| u32::from(glyph.advance))
+            .sum()
+    }
+
+    #[test]
+    fn the_widest_time_fits_beside_the_cards() {
+        use crate::board::{Board, Unlock};
+        for board in [&Board::PAGER, &Board::TDECK] {
+            let m = &board.metrics;
+            let bar = board.controls.unlock == Unlock::TurnThenPress;
+            // Where the cards go under the time, there is nothing to clear.
+            if !cards_beside(m, bar) {
+                continue;
+            }
+            let half = width("PM", &font::BOLD, m.body).max(width("AM", &font::BOLD, m.body));
+            let widest = (0..24 * 60)
+                .flat_map(|minute| [true, false].map(|h24| (minute, h24)))
+                .map(|(minute, h24)| {
+                    let (face, am_pm) = Local { day: 0, minute }.face(h24);
+                    let size = if h24 { TIME } else { TIME_HALVES };
+                    width(&face, &font::CLOCK, size) + am_pm.map_or(0, |_| 6 + half)
+                })
+                .max()
+                .unwrap();
+            // Clear of the cards by a little.
+            let cards = cards_x(m, bar);
+            assert!(
+                COLUMN_X + widest + 6 <= cards,
+                "{widest} wide, {} room",
+                cards - COLUMN_X
+            );
+        }
+    }
 }

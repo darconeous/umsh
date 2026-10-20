@@ -16,7 +16,7 @@ use umsh_ux_communicator::model::{
     Glance, Node as _, NodeEvent, Notice, Profile, Reaction, Rule, Section, Shareable, State,
     brightness_level,
 };
-use umsh_ux_communicator::nav::{ChatMenu, DevicePage, MemberFrom, Screen, keys};
+use umsh_ux_communicator::nav::{ChatMenu, DevicePage, MemberFrom, Screen, Unsent, keys};
 use umsh_ux_communicator::{fixture, ui, zones};
 
 /// The fixture's chats, in list order.
@@ -565,6 +565,16 @@ fn details_open_from_the_actions_and_back_returns_to_the_message() {
 /// Pat Okafor's last message, which went unconfirmed.
 const ANTENNA: u32 = (PAT << 8) | 2;
 
+fn message(state: &State, message: u32) -> umsh_ux_communicator::model::Message {
+    let conversation = state.conversation.as_ref().expect("a chat is open");
+    conversation
+        .messages
+        .iter()
+        .find(|m| m.id == message)
+        .expect("the message")
+        .clone()
+}
+
 fn delivery(state: &State, message: u32) -> Delivery {
     let conversation = state.conversation.as_ref().expect("a chat is open");
     conversation
@@ -587,14 +597,23 @@ where
 }
 
 #[test]
-fn pressing_an_unconfirmed_message_sends_it_again() {
+fn an_unconfirmed_message_offers_retry_first() {
     let mut app = app!();
     run(&mut app, &[Input::Turn(2), Input::Press]);
     assert_in_conversation(app.state(), PAT);
     run(&mut app, &[Input::Turn(-1)]);
     assert_eq!(focus(app.state()), Some(keys::message(ANTENNA)));
     assert_eq!(delivery(app.state(), ANTENNA), Delivery::Unconfirmed);
+    // A press opens its actions, and sends nothing.
     run(&mut app, &[Input::Press]);
+    assert_eq!(actions(app.state()), Some(ANTENNA));
+    assert_eq!(focus(app.state()), Some(keys::RETRY));
+    assert_eq!(delivery(app.state(), ANTENNA), Delivery::Unconfirmed);
+    // Backspace closes them; Retry sends it again.
+    run(&mut app, &[Input::Backspace]);
+    assert_eq!(actions(app.state()), None);
+    assert_eq!(delivery(app.state(), ANTENNA), Delivery::Unconfirmed);
+    run(&mut app, &[Input::Press, Input::Press]);
     assert_eq!(delivery(app.state(), ANTENNA), Delivery::Sending);
     assert_eq!(actions(app.state()), None);
     // On its way again, it is a message like any other.
@@ -608,6 +627,39 @@ fn pressing_an_unconfirmed_message_sends_it_again() {
     assert_eq!(delivery(app.state(), ANTENNA), Delivery::Sending);
 }
 
+#[test]
+fn deleting_an_unconfirmed_message_asks_first() {
+    let mut app = app!();
+    run(&mut app, &[Input::Turn(2), Input::Press, Input::Turn(-1)]);
+    assert_eq!(focus(app.state()), Some(keys::message(ANTENNA)));
+    run(&mut app, &[Input::Press, Input::Turn(2)]);
+    assert_eq!(focus(app.state()), Some(keys::DELETE_MESSAGE));
+    run(&mut app, &[Input::Press]);
+    assert_eq!(actions(app.state()), None);
+    assert_eq!(unsent(app.state()), Some(ANTENNA));
+    assert_eq!(focus(app.state()), Some(keys::DELETE_MESSAGE_CANCEL));
+    // Cancel keeps it.
+    run(&mut app, &[Input::Press]);
+    assert_eq!(unsent(app.state()), None);
+    assert_eq!(focus(app.state()), Some(keys::message(ANTENNA)));
+    assert!(!message(app.state(), ANTENNA).deleted);
+
+    run(
+        &mut app,
+        &[
+            Input::Press,
+            Input::Turn(2),
+            Input::Press,
+            Input::Turn(-1),
+            Input::Press,
+        ],
+    );
+    assert_eq!(unsent(app.state()), None);
+    assert!(message(app.state(), ANTENNA).deleted);
+    // What stands in for it takes no focus.
+    assert_eq!(focus(app.state()), Some(keys::COMPOSER));
+}
+
 /// The fixture's chat of message states, which holds a session with
 /// forward secrecy, and my message in it that went unconfirmed under one.
 const STATES: u32 = 7;
@@ -615,7 +667,7 @@ const SECRET: u32 = (STATES << 8) | 7;
 
 fn unsent(state: &State) -> Option<u32> {
     match state.screen() {
-        Screen::Conversation { unsent, .. } => *unsent,
+        Screen::Conversation { unsent, .. } => unsent.map(Unsent::message),
         _ => None,
     }
 }
@@ -646,7 +698,7 @@ fn an_unconfirmed_message_under_forward_secrecy_asks_before_going_without() {
     assert_eq!(delivery(app.state(), SECRET), Delivery::Unconfirmed);
 
     // Going without, it is mine like any other.
-    run(&mut app, &[Input::Press]);
+    run(&mut app, &[Input::Press, Input::Press]);
     assert_eq!(unsent(app.state()), Some(SECRET));
     run(&mut app, &[Input::Turn(1), Input::Press]);
     assert_eq!(unsent(app.state()), None);
@@ -2049,10 +2101,59 @@ fn a_keyboard_with_its_own_symbols_types_transmit_power_as_it_is() {
     assert_eq!(focus(app.state()), Some(keys::POWER_FIELD));
     // No symbol lock to show: the keyboard's own Sym layer types digits.
     assert_eq!(app.state().keyboard.latches(), (Latch::Off, Latch::Off));
-    run(&mut app, &typed("1"));
+    // What is not part of a number types nothing.
+    run(&mut app, &typed("1x "));
     assert!(matches!(
         app.state().screen(),
         Screen::Device { page: DevicePage::TransmitPower { text }, .. } if text.text() == "221"
+    ));
+}
+
+#[test]
+fn transmit_power_takes_only_a_number() {
+    // Symbol lock is the legends keyboard's: the other is just above.
+    if BOARD.controls.keyboard != KeyboardKind::Legends {
+        return;
+    }
+    let mut app = app!();
+    open_radio(&mut app);
+    run(&mut app, &[Input::Turn(1), Input::Press]);
+    let tap = |modifier| {
+        [
+            Input::Modifier {
+                modifier,
+                down: true,
+            },
+            Input::Modifier {
+                modifier,
+                down: false,
+            },
+        ]
+    };
+    // Alt and Shift leave symbol lock on; what is not part of a number,
+    // from a key without one, Space, or a host's keyboard, types nothing.
+    run(&mut app, &tap(Modifier::Alt));
+    run(&mut app, &tap(Modifier::Shift));
+    assert_eq!(app.state().keyboard.latches(), (Latch::Off, Latch::Locked));
+    run(
+        &mut app,
+        &[
+            Input::Key {
+                plain: 'a',
+                alt: Some('*'),
+            },
+            Input::Space,
+            Input::Character('x'),
+            Input::Key {
+                plain: 'f',
+                alt: Some('-'),
+            },
+            key('w'),
+        ],
+    );
+    assert!(matches!(
+        app.state().screen(),
+        Screen::Device { page: DevicePage::TransmitPower { text }, .. } if text.text() == "22-2"
     ));
 }
 

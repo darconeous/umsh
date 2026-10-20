@@ -1025,6 +1025,7 @@ fn rx(hop_count: u8) -> RxSummary {
         hop_count: Some(hop_count),
         route_hints: Vec::new(),
         source_authenticated: true,
+        forward_secret: false,
         buffered_age_s: 0,
     }
 }

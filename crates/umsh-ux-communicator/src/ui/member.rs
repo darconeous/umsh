@@ -22,6 +22,8 @@ use crate::{font, icon, theme};
 const HEAD: u32 = 62;
 /// The address line under the head.
 const ADDRESS: u32 = 22;
+/// The warning that the sender is not verified.
+const WARNING: u32 = 28;
 const AVATAR: u32 = 44;
 const AVATAR_X: u32 = 10;
 const ROW: u32 = 36;
@@ -53,41 +55,48 @@ pub fn view(
             None,
             None,
         ),
-        head(m, member, channel),
-        (!known).then(|| {
-            action(
-                m,
-                "Request identity",
-                keys::REQUEST_IDENTITY,
-                State::request_identity,
-                if requested {
-                    End::Value("Requested")
-                } else {
-                    End::Nothing
-                },
-            )
-        }),
-        known.then(|| {
-            action(
-                m,
-                "Message",
-                keys::MESSAGE_MEMBER,
-                State::message_member,
-                End::Chevron,
-            )
-        }),
-        (known && !member.saved).then(|| {
-            action(
-                m,
-                "Save peer",
-                keys::SAVE_PEER,
-                State::save_member,
-                End::Nothing,
-            )
-        }),
-        // Once known, the address under the head shows the hint.
-        (!known).then(|| row(m, "Hint", &member.hint, false)),
-        (!known).then(|| row(m, "Address", "Not yet known", true)),
+        super::list(
+            VStack::new((
+                head(m, member, channel),
+                // A channel message only claims its sender.
+                channel.is_some().then(|| unverified(m)),
+                (!known).then(|| {
+                    action(
+                        m,
+                        "Request identity",
+                        keys::REQUEST_IDENTITY,
+                        State::request_identity,
+                        if requested {
+                            End::Value("Requested")
+                        } else {
+                            End::Nothing
+                        },
+                    )
+                }),
+                known.then(|| {
+                    action(
+                        m,
+                        "Message",
+                        keys::MESSAGE_MEMBER,
+                        State::message_member,
+                        End::Chevron,
+                    )
+                }),
+                (known && !member.saved).then(|| {
+                    action(
+                        m,
+                        "Save peer",
+                        keys::SAVE_PEER,
+                        State::save_member,
+                        End::Nothing,
+                    )
+                }),
+                // Once known, the address under the head shows the hint.
+                (!known).then(|| row(m, "Hint", &member.hint, false)),
+                (!known).then(|| row(m, "Address", "Not yet known", true)),
+            ))
+            .with_spacing(0),
+        ),
     ))
     .with_spacing(0)
     .bound_focus(BoundaryBehavior::Stop)
@@ -98,6 +107,26 @@ pub fn view(
         }
         _ => KeyResponse::Ignored,
     })
+}
+
+/// That anyone in the channel could have sent what they are said to have.
+fn unverified(m: &'static Metrics) -> impl View<Rgb565, State> + use<> {
+    HStack::new((
+        Image::new(&icon::WARNING)
+            .as_template()
+            .foreground_color(theme::AMBER),
+        label::<48>(
+            "Anyone in the channel could have sent this.",
+            &font::MEDIUM,
+            m.secondary,
+            theme::AMBER,
+        ),
+    ))
+    .with_spacing(6)
+    .padding(Edges::Leading, AVATAR_X - 1)
+    .flex_infinite_width(HorizontalAlignment::Leading)
+    .frame()
+    .with_height(WARNING)
 }
 
 /// Their avatar and name, where and when they were last heard, and their

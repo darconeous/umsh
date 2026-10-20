@@ -33,11 +33,14 @@ static INDICES: [usize; MAX_REACTORS] = {
     a
 };
 
-/// `time` is when the message was sent or received, in local time.
+/// `time` is when the message was sent or received, in local time. A
+/// message in a direct chat (`direct`) says whether it had forward secrecy;
+/// one received in a channel, that its sender is not verified.
 pub fn view(
     m: &'static Metrics,
     details: &Details,
     inbound: bool,
+    direct: bool,
     time: Option<String<8>>,
 ) -> impl View<Rgb565, State> + use<> {
     let details = details.clone();
@@ -47,7 +50,7 @@ pub fn view(
             // One focusable block, which the wheel scrolls a row at a time.
             Button::new(
                 |_: &mut State| {},
-                move |_| rows(m, &details, inbound, time.as_ref()),
+                move |_| rows(m, &details, inbound, direct, time.as_ref()),
             )
             .focus_key(keys::DETAIL_LIST),
         )
@@ -69,6 +72,7 @@ fn rows(
     m: &'static Metrics,
     details: &Details,
     inbound: bool,
+    direct: bool,
     time: Option<&String<8>>,
 ) -> impl View<Rgb565, State> + use<> {
     let text = |value: core::fmt::Arguments| {
@@ -98,13 +102,16 @@ fn rows(
             let value = text(format_args!("{sign}{}.{} dB", tenths / 10, tenths % 10));
             row(m, "Signal-to-noise", &value, false)
         }),
-        inbound.then(|| {
-            let source = if details.authenticated {
-                "Authenticated"
-            } else {
-                "Not authenticated"
-            };
-            row(m, "Source", source, false)
+        // A channel message only claims its sender: anyone who holds the
+        // channel's key could have sent it.
+        (inbound && !direct).then(|| row(m, "Sender", "Not verified", false)),
+        direct.then(|| {
+            row(
+                m,
+                "Forward secrecy",
+                if details.forward_secret { "Yes" } else { "No" },
+                false,
+            )
         }),
         (!details.reactors.is_empty()).then(|| {
             label::<16>("Reactions", &font::BOLD, m.small, theme::TEXT_SECONDARY)

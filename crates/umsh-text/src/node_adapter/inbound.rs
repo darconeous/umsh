@@ -68,6 +68,8 @@ pub struct RxSummary {
     /// which is usable directly as a source route back.
     pub route_hints: Vec<RouterHint>,
     pub source_authenticated: bool,
+    /// It came under a session with forward secrecy.
+    pub forward_secret: bool,
     /// Seconds the frame spent queued on the radio before delivery; zero
     /// for a live reception.
     pub buffered_age_s: u32,
@@ -82,6 +84,7 @@ impl RxSummary {
             hop_count: packet.hop_count(),
             route_hints: packet.trace_route_hints().collect(),
             source_authenticated: packet.source_authenticated(),
+            forward_secret: packet.forward_secret(),
             buffered_age_s: packet.rx().buffered_age_s(),
         }
     }

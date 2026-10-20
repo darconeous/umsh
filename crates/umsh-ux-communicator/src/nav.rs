@@ -12,7 +12,7 @@ use heapless::String;
 pub use crate::clock_settings::{ClockPage, DateParts, Part, ZoneFind};
 use crate::keyboard::Field;
 use crate::model::{
-    ChannelEntry, ChatId, ChatKind, ChatSummary, Delivery, Details, Found, FoundKind, Invite,
+    ChannelEntry, ChatId, ChatKind, ChatSummary, Details, Found, FoundKind, Invite,
     KeyboardSettings, MAX_CHATS, MAX_FOUND, Member, MessageId, PeerDetail, PeerEntry, PeerId,
     Profile, RadioSettings, Reaction, Section, Shareable, State, TRANSMIT_POWER, word_match,
 };
@@ -59,6 +59,9 @@ pub mod keys {
     pub const VIEW_MEMBER: FocusKey = FocusKey(ACTION | 0x102);
     /// The actions menu's Join, on a message carrying an invitation.
     pub const JOIN: FocusKey = FocusKey(ACTION | 0x103);
+    /// The actions menu's Retry and Delete, on an unconfirmed message.
+    pub const RETRY: FocusKey = FocusKey(ACTION | 0x104);
+    pub const DELETE_MESSAGE: FocusKey = FocusKey(ACTION | 0x105);
     /// What the details screen shows, which the wheel scrolls through.
     pub const DETAIL_LIST: FocusKey = FocusKey(0x0600_0000);
     /// The member screen's Request identity, Message, and Save peer.
@@ -145,6 +148,9 @@ pub mod keys {
     pub const RESEND: FocusKey = FocusKey(0x1900_0000);
     pub const RESEND_WITHOUT_SECRECY: FocusKey = FocusKey(0x1900_0001);
     pub const RESEND_CANCEL: FocusKey = FocusKey(0x1900_0002);
+    /// Deleting a message, asking to be confirmed.
+    pub const DELETE_MESSAGE_CONFIRM: FocusKey = FocusKey(0x1900_0003);
+    pub const DELETE_MESSAGE_CANCEL: FocusKey = FocusKey(0x1900_0004);
     /// Shut down's confirmation.
     pub const SHUT_DOWN_CONFIRM: FocusKey = FocusKey(0x1600_0000);
     pub const SHUT_DOWN_CANCEL: FocusKey = FocusKey(0x1600_0001);
@@ -330,6 +336,24 @@ impl ChatMenu {
     }
 }
 
+/// What is open over an unconfirmed message.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Unsent {
+    /// How to send again one that was to go under forward secrecy.
+    Resend(MessageId),
+    /// Its Delete, asking to be confirmed.
+    ConfirmDelete(MessageId),
+}
+
+impl Unsent {
+    #[must_use]
+    pub const fn message(self) -> MessageId {
+        match self {
+            Self::Resend(message) | Self::ConfirmDelete(message) => message,
+        }
+    }
+}
+
 /// Where the member screen was opened from.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MemberFrom {
@@ -392,9 +416,8 @@ pub enum Screen {
         actions: Option<MessageId>,
         /// The message the draft replies to.
         reply: Option<MessageId>,
-        /// The unconfirmed message, which was to go under forward secrecy,
-        /// whose choices of how to send it again are open.
-        unsent: Option<MessageId>,
+        /// What is open over an unconfirmed message.
+        unsent: Option<Unsent>,
     },
     /// How a message reached this device.
     Details {
@@ -688,10 +711,12 @@ impl State {
     }
 
     /// Opens the actions menu of `message` in the conversation shown, with
-    /// Reply focused.
+    /// Reply focused; Retry, on an unconfirmed one.
     pub fn open_actions(&mut self, message: MessageId) {
         // An invitation offers joining first.
-        let first = if self.invite(message).is_some() {
+        let first = if self.unconfirmed(message).is_some() {
+            keys::RETRY
+        } else if self.invite(message).is_some() {
             keys::JOIN
         } else {
             keys::REPLY
@@ -1219,8 +1244,7 @@ impl State {
         true
     }
 
-    /// Opens what pressing the focused message does: its actions, or for
-    /// one unconfirmed, sending it again.
+    /// Opens what pressing the focused message does: its actions.
     fn hold_message(&mut self) -> bool {
         let Some(Screen::Conversation {
             focus,
@@ -1234,19 +1258,15 @@ impl State {
         let Some(key) = focus.current() else {
             return false;
         };
-        let Some((id, unconfirmed)) = self.conversation.as_ref().and_then(|c| {
+        let Some(id) = self.conversation.as_ref().and_then(|c| {
             c.messages
                 .iter()
                 .find(|m| keys::message(m.id) == key)
-                .map(|m| (m.id, m.delivery == Delivery::Unconfirmed))
+                .map(|m| m.id)
         }) else {
             return false;
         };
-        if unconfirmed {
-            self.retry(id);
-        } else {
-            self.open_actions(id);
-        }
+        self.open_actions(id);
         true
     }
 
@@ -1437,6 +1457,41 @@ impl State {
         let message = actions.take()?;
         focus.request(keys::message(message));
         Some(message)
+    }
+
+    /// Sends again the unconfirmed message whose actions menu is open.
+    pub fn retry_from_actions(&mut self) {
+        if let Some(message) = self.close_actions() {
+            self.retry(message);
+        }
+    }
+
+    /// Asks to confirm deleting the unconfirmed message whose actions menu
+    /// is open, Cancel focused.
+    pub fn ask_delete_message(&mut self) {
+        let Some(message) = self.close_actions() else {
+            return;
+        };
+        if let Some(Screen::Conversation { unsent, focus, .. }) = self.screens.last_mut() {
+            *unsent = Some(Unsent::ConfirmDelete(message));
+            focus.request(keys::DELETE_MESSAGE_CANCEL);
+        }
+    }
+
+    /// Deletes for everyone the message whose deletion was confirmed.
+    pub fn delete_message(&mut self) {
+        let chat = self.conversation.as_ref().map(|c| c.chat);
+        let Some(Screen::Conversation { unsent, focus, .. }) = self.screens.last_mut() else {
+            return;
+        };
+        let Some(Unsent::ConfirmDelete(message)) = *unsent else {
+            return;
+        };
+        *unsent = None;
+        focus.request(keys::message(message));
+        if let Some(chat) = chat {
+            self.node.delete_message(chat, message);
+        }
     }
 
     /// Reacts to the message whose actions menu is open, and closes it.

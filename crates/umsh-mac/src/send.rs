@@ -1076,6 +1076,8 @@ pub struct ReceivedPacketRef<'a> {
     from_key: Option<PublicKey>,
     from_hint: Option<NodeHint>,
     source_authenticated: bool,
+    /// Its sender spoke under a session with forward secrecy.
+    forward_secret: bool,
     channel: Option<ChannelInfoRef<'a>>,
     rx: RxMetadata,
 }
@@ -1109,6 +1111,7 @@ impl<'a> ReceivedPacketRef<'a> {
             from_key,
             from_hint,
             source_authenticated,
+            forward_secret: false,
             channel,
             rx,
         }
@@ -1184,6 +1187,7 @@ impl<'a> ReceivedPacketRef<'a> {
         Self {
             from_key: Some(key),
             from_hint: Some(key.hint()),
+            forward_secret: true,
             ..self.clone()
         }
     }
@@ -1194,6 +1198,12 @@ impl<'a> ReceivedPacketRef<'a> {
 
     pub fn source_authenticated(&self) -> bool {
         self.source_authenticated
+    }
+
+    /// Whether its sender spoke under a session with forward secrecy, as
+    /// [`attributed_to`](Self::attributed_to) says.
+    pub fn forward_secret(&self) -> bool {
+        self.forward_secret
     }
 
     /// Local radio observations captured when this frame was received.

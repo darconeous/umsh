@@ -212,6 +212,7 @@ where
                     hop_count: pong.hop_count,
                     route_hints: pong.route_hints.clone(),
                     source_authenticated: true,
+                    forward_secret: false,
                     buffered_age_s: 0,
                 },
             });

@@ -307,6 +307,7 @@ impl Rig {
             snr_centibels: Some(55),
             hop_count: Some(1),
             authenticated: true,
+            forward_secret: false,
         };
         let committed = self
             .drain(store, Some(link))

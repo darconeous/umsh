@@ -350,6 +350,73 @@ async fn what_is_said_under_forward_secrecy_lands_in_the_same_chat() {
                 bobs_chat
             );
             assert_eq!(say(&bob, &alice, bobs_chat, "On my way").await, chat.id);
+
+            // Each side's details say which messages had forward secrecy.
+            let secrecy = |board: &Board, chat| {
+                let mut messages = Messages::new();
+                board.node.load(chat, &mut messages);
+                messages
+                    .iter()
+                    .map(|m| {
+                        let details = board.node.details(chat, m.id).unwrap();
+                        (m.text.to_string(), details.forward_secret)
+                    })
+                    .collect::<Vec<_>>()
+            };
+            let expected = [
+                ("Leaving now".to_string(), false),
+                ("Meet at the ridge".to_string(), true),
+                ("On my way".to_string(), true),
+            ];
+            assert_eq!(secrecy(&alice, chat.id), expected);
+            assert_eq!(secrecy(&bob, bobs_chat), expected);
+        })
+        .await;
+}
+
+/// A message I delete is gone for everyone: a stand-in takes its place on
+/// both sides.
+#[tokio::test(flavor = "current_thread")]
+async fn a_message_i_delete_is_deleted_for_my_peer_too() {
+    LocalSet::new()
+        .run_until(async {
+            let network = SimulatedNetwork::new();
+            let near = network.add_radio_with_config(255, 20);
+            let far = network.add_radio_with_config(255, 20);
+            network.connect_bidirectional(near.id(), far.id());
+            let alice = board(near, [0x11; 32]).await;
+            let bob = board(far, [0x22; 32]).await;
+            let chat = alice
+                .node
+                .direct_chat(&address(&bob.key), "Bob", &alice.node.avatar())
+                .unwrap();
+            while bob.node.next_event().is_some() {}
+
+            let sent = alice
+                .node
+                .send(chat.id, "Wrong ridge", None, false)
+                .unwrap();
+            let mut arrived = None;
+            until("the message did not arrive", || {
+                while let Some(event) = bob.node.next_event() {
+                    if let NodeEvent::Arrived { chat, message } = event {
+                        arrived = Some((chat, message));
+                    }
+                }
+                arrived.is_some()
+            })
+            .await;
+            let (bobs_chat, theirs) = arrived.unwrap();
+
+            alice.node.delete_message(chat.id, sent.id);
+            assert!(alice.node.message(chat.id, sent.id).unwrap().deleted);
+            until("the deletion did not arrive", || {
+                while bob.node.next_event().is_some() {}
+                bob.node
+                    .message(bobs_chat, theirs)
+                    .is_some_and(|m| m.deleted)
+            })
+            .await;
         })
         .await;
 }

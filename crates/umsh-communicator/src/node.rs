@@ -350,6 +350,13 @@ impl<P: LocalPort, S: ChatStore> Node for CommunicatorNode<P, S> {
         self.wake();
     }
 
+    fn delete_message(&self, chat: ChatId, message: MessageId) {
+        self.with_chats(|chats, now_ms, time, events| {
+            chats.delete_message(chat, message, now_ms, time, events);
+        });
+        self.wake();
+    }
+
     fn retry(&self, chat: ChatId, message: MessageId) -> bool {
         let queued = self.with_chats(|chats, now_ms, time, events| {
             chats.retry(chat, message, now_ms, time, events)
