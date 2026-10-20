@@ -619,6 +619,7 @@ pub async fn heartbeat_task(
     }
     DEVICE_CTL.shutdown();
     ui::end_farewell().await;
+    settle_saved_state().await;
     // Journal writes are synchronous on this executor; no flash operation can
     // be suspended halfway here. MAC counters are persisted before transmission.
     // Inputs are reborrowed only for the terminal shutdown path; never driven.

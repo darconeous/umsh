@@ -22,10 +22,11 @@
 
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
-use embassy_futures::select::{Either, Either4, select, select4};
+use embassy_futures::select::{Either3, Either4, select, select3, select4};
 use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_sync::channel::Channel;
-use embassy_time::{Instant, Timer};
+use embassy_sync::signal::Signal;
+use embassy_time::{Duration, Instant, Timer};
 
 use umsh_crypto::software::SoftwareIdentity;
 use umsh_crypto::{AesProvider, NodeIdentity as _, Sha256Provider};
@@ -41,7 +42,7 @@ use umsh_ulcp_device::listeners::{Mirrors, Writes};
 use umsh_ulcp_device::{
     Effect, I2C_DATA_MAX, IdentitySource, MAX_CHANNEL_KEYS, MAX_DEV_ADMINS, MAX_DEV_PEERS,
     MAX_REPEATER_REGIONS, NETWORK_TABLE_MAX, QueuedNotice, REGION_STRING_MAX_LEN, RadioRxInfo,
-    Resolvers, SNAPSHOT_MAX, SavedStatus, Session, TxOutcome, TxPower,
+    Resolvers, SNAPSHOT_MAX, Session, TxOutcome, TxPower,
 };
 
 use crate::transport_policy::{SessionArbitration, Transport};
@@ -1003,6 +1004,8 @@ pub struct DeviceRuntime<M: RawMutex + 'static, const RX: usize, const TX: usize
     /// that has one. With it, the session publishes whether or not a host
     /// is attached, and every publication reaches the interface too.
     pub device: Option<&'static DeviceLink<M>>,
+    /// How the board's power-off has the saved snapshot written first.
+    pub snapshot: &'static SnapshotControl<M>,
 }
 
 /// Collects frames emitted synchronously by the session, then flushes
@@ -1360,20 +1363,67 @@ async fn apply_effect<A, S, const TXQ: usize, M, const RX: usize, const TX: usiz
     }
 }
 
-/// Keep the saved snapshot in step with a change the device made on its
-/// own—a switch the operator flipped at the board, a network picked from
-/// its menu—so the change survives the next reboot.
-///
-/// Only a [`SavedStatus::Current`] snapshot is kept in step. A device
-/// with nothing saved gets nothing saved: manufacturing a snapshot from
-/// a button press would persist every other live-only value with it. A
-/// device that rejected its newest generation at boot (`Fallback` or
-/// `Unreadable`) must not write one either: the write would become the
-/// newest generation, bury the rejected record under defaults or stale
-/// values, and clear the fault `PROP_SAVED` exists to report. The
-/// change still applies live in both cases; only a host's `CMD_SAVE`
-/// writes over a fault.
-async fn persist_device_change<A, S, const TXQ: usize, E>(
+/// How long the device's own changes must have been quiet before the
+/// snapshot they moved is written. A write erases a flash page, which on
+/// some boards stalls the whole chip for tens of milliseconds: waiting
+/// keeps it off an interface that is still answering the change, and a
+/// burst of switches or a turn of the brightness costs one write.
+const DEVICE_CHANGE_SAVE_DELAY: Duration = Duration::from_secs(10);
+
+/// The way a board on its way to power off has the driver write what the
+/// saved snapshot is owed at once, rather than once the device's own
+/// changes have been quiet for a while.
+pub struct SnapshotControl<M: RawMutex> {
+    request: Signal<M, ()>,
+    done: Signal<M, ()>,
+}
+
+impl<M: RawMutex> SnapshotControl<M> {
+    pub const fn new() -> Self {
+        Self {
+            request: Signal::new(),
+            done: Signal::new(),
+        }
+    }
+
+    /// Writes any change made at the device that the saved snapshot is
+    /// still owed, and returns once flash holds it, or at once when
+    /// nothing is owed. A board calls it under a timeout of its own, so
+    /// that a switch flipped just before it powers off is still flipped
+    /// when it comes back.
+    pub async fn settle(&self) {
+        self.done.reset();
+        self.request.signal(());
+        self.done.wait().await;
+    }
+}
+
+impl<M: RawMutex> Default for SnapshotControl<M> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Keeps a current snapshot in step with a change the device made on its
+/// own—a switch the operator flipped at the board, a setting changed
+/// through its own interface—and puts off writing it until the device's
+/// changes have been quiet for [`DEVICE_CHANGE_SAVE_DELAY`]. `due` is
+/// when the write is.
+fn note_device_change<A, S, const TXQ: usize>(
+    session: &mut Session<A, S, TXQ>,
+    due: &mut Option<Instant>,
+) where
+    A: AesProvider,
+    S: Sha256Provider,
+{
+    if session.note_device_change() {
+        *due = Some(Instant::now() + DEVICE_CHANGE_SAVE_DELAY);
+    }
+}
+
+/// Writes the snapshot [`note_device_change`] kept in step, if flash does
+/// not hold it yet.
+async fn write_device_changes<A, S, const TXQ: usize, E>(
     session: &mut Session<A, S, TXQ>,
     snapshot_buf: &mut [u8],
     env: &mut E,
@@ -1382,11 +1432,10 @@ async fn persist_device_change<A, S, const TXQ: usize, E>(
     S: Sha256Provider,
     E: DeviceEnv,
 {
-    if session.saved_status() == SavedStatus::Current
-        && let Some(len) = session.encode_snapshot(snapshot_buf)
+    if let Some(len) = session.unwritten_snapshot(snapshot_buf)
         && env.persist_snapshot(&snapshot_buf[..len]).await.is_ok()
     {
-        session.note_snapshot_saved();
+        session.note_snapshot_written();
     }
 }
 
@@ -1869,6 +1918,9 @@ where
                 emitter.flush(sink).await;
             }
             Some(Effect::Dfu { tid, mode }) => {
+                // The update restarts the device: what the snapshot is
+                // owed goes first.
+                write_device_changes(session, snapshot_buf, env).await;
                 let prepared = env.prepare_dfu(mode).await;
                 if let Ok(mode) = prepared {
                     let seconds = if matches!(sink, ReplySink::Admin { .. }) {
@@ -1902,6 +1954,7 @@ where
                 // back as itself. Never returns, and answers nothing—
                 // the reboot drops the link.
                 env.trace(format_args!("CMD_REBOOT: restarting"));
+                write_device_changes(session, snapshot_buf, env).await;
                 env.reboot().await
             }
             other => apply_effect(session, other, rt, env).await,
@@ -2092,6 +2145,9 @@ where
     sync_dev_domain(&session, &mut dev_domain_synced, &mut env);
     env.boot_settings_ready();
 
+    // When the snapshot is written for the device's own changes, while
+    // one is owed.
+    let mut save_due: Option<Instant> = None;
     loop {
         // Resolve the next event in its own statement so the select's
         // futures—one of which mutably borrows `env`—are dropped
@@ -2120,11 +2176,21 @@ where
                     None => core::future::pending().await,
                 }
             };
+            // The snapshot's write for the device's own changes, once
+            // they have been quiet, or at once for a board powering off.
+            let save = async {
+                match save_due {
+                    Some(at) => {
+                        select(Timer::at(at), rt.snapshot.request.wait()).await;
+                    }
+                    None => rt.snapshot.request.wait().await,
+                }
+            };
             select4(
                 rt.input.receive(),
                 rt.radio.rx.receive(),
                 tx_done,
-                select(env.publish_event(), alert_deadline),
+                select3(env.publish_event(), alert_deadline, save),
             )
             .await
         };
@@ -2199,7 +2265,7 @@ where
                     apply_effect(&session, effect, &rt, &mut env).await;
                     // Keep an existing snapshot in step, so a switch the
                     // operator flipped is still flipped after a reboot.
-                    persist_device_change(session, snapshot_buf, &mut env).await;
+                    note_device_change(session, &mut save_due);
                     crate::log::debug_log(format_args!(
                         "ulcp: {:?} {} at the device",
                         setting,
@@ -2213,7 +2279,7 @@ where
                     .choose_wifi_network(network.as_bytes(), &mut |frame| emitter.push(frame));
                 emitter.flush(&mut ReplySink::host(&arbitration, &rt)).await;
                 if result.is_ok() {
-                    persist_device_change(session, snapshot_buf, &mut env).await;
+                    note_device_change(session, &mut save_due);
                 }
                 env.wifi_selection_result(result);
             }
@@ -2226,7 +2292,7 @@ where
                     // Persisted like a toggle: the gesture is the device's
                     // own control for the property, and a radio rescued by
                     // it should stay rescued across the next reboot.
-                    persist_device_change(session, snapshot_buf, &mut env).await;
+                    note_device_change(session, &mut save_due);
                     crate::log::debug_log(format_args!(
                         "ulcp: Bluetooth forced ON by the power-on gesture"
                     ));
@@ -2308,7 +2374,7 @@ where
                     // A change made at the device keeps an existing
                     // snapshot in step, as a switch flipped there does.
                     if Writes::with(&frame, |key| session.snapshots(key)).saved {
-                        persist_device_change(session, snapshot_buf, &mut env).await;
+                        note_device_change(session, &mut save_due);
                     }
                     finish_dfu(&mut env, dfu).await;
                 } else {
@@ -2352,7 +2418,7 @@ where
                 emitter.flush(&mut ReplySink::host(&arbitration, &rt)).await;
                 apply_effect(&session, effect, &rt, &mut env).await;
             }
-            Either4::Fourth(Either::First(event)) => {
+            Either4::Fourth(Either3::First(event)) => {
                 // The board decided this is worth announcing; publish it
                 // unsolicited. Dropped silently while no host is
                 // attached, and no effect can result—a publication is
@@ -2422,7 +2488,12 @@ where
                 }
                 emitter.flush(&mut ReplySink::host(&arbitration, &rt)).await;
             }
-            Either4::Fourth(Either::Second(())) => {
+            Either4::Fourth(Either3::Third(())) => {
+                save_due = None;
+                write_device_changes(session, snapshot_buf, &mut env).await;
+                rt.snapshot.done.signal(());
+            }
+            Either4::Fourth(Either3::Second(())) => {
                 // The alert outlived its deadline: stop the indication
                 // and publish the transition the host did not command.
                 let effect = session

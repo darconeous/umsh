@@ -115,6 +115,7 @@ pub async fn heartbeat_task(mut rtc: Rtc<'static>, mut sleep: esp_rtos::sleep::D
     crate::input_gate::shutdown().await;
     DEVICE_CTL.shutdown();
     ui::end_farewell().await;
+    settle_saved_state().await;
     // The press is reborrowed only for the terminal shutdown path; never
     // driven. Arming the wake under a held press would wake at once.
     let press = Input::new(

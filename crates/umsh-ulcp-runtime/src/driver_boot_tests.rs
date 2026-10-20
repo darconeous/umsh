@@ -7,7 +7,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use umsh_crypto::CryptoEngine;
 use umsh_crypto::software::{SoftwareAes, SoftwareSha256};
-use umsh_ulcp_device::{DutyLedger, RadioSettings, SessionConfig};
+use umsh_ulcp_device::{DutyLedger, RadioSettings, SavedStatus, SessionConfig};
 
 type TestSession = Session<SoftwareAes, SoftwareSha256, 1>;
 
@@ -177,6 +177,7 @@ fn transport_readiness_follows_restore_name_and_settings_on_every_boot_path() {
             out: Box::leak(Box::new(TransportChannels::new())),
             session_gen: Box::leak(Box::new(AtomicU32::new(0))),
             device: None,
+            snapshot: Box::leak(Box::new(SnapshotControl::new())),
         };
         let mut session = session("Default radio");
         let mut storage = [0; SNAPSHOT_MAX];
@@ -230,6 +231,7 @@ fn dfu_preparation_and_matching_transmission_precede_handoff() {
         out: Box::leak(Box::new(TransportChannels::new())),
         session_gen: Box::leak(Box::new(AtomicU32::new(42))),
         device: None,
+        snapshot: Box::leak(Box::new(SnapshotControl::new())),
     };
     let events = Rc::new(RefCell::new(std::vec::Vec::new()));
     let mut env = Env {
@@ -363,7 +365,7 @@ fn stored_identity_must_match_its_own_secret() {
 /// A change the device makes on its own is persisted only over a
 /// snapshot that is current: never onto a device with nothing saved,
 /// and never over a generation boot rejected, where the write would
-/// bury the fault `PROP_SAVED` reports.
+/// bury the fault `PROP_SAVED` reports. Written once, it is owed no more.
 #[test]
 fn device_changes_persist_only_over_a_current_snapshot() {
     use embassy_futures::block_on;
@@ -394,19 +396,27 @@ fn device_changes_persist_only_over_a_current_snapshot() {
         };
         let mut snapshot = [0; SNAPSHOT_MAX];
         assert_eq!(session.toggle_ble(&mut |_| {}), Some(false));
-        block_on(persist_device_change(&mut session, &mut snapshot, &mut env));
+        let mut due = None;
+        note_device_change(&mut session, &mut due);
+        assert_eq!(due.is_some(), persists, "{expected_status:?}");
+        block_on(write_device_changes(&mut session, &mut snapshot, &mut env));
         assert_eq!(
             events.borrow().contains(&Event::SnapshotPersisted),
             persists,
             "{expected_status:?}"
         );
         assert_eq!(session.saved_status(), expected_status);
+        events.borrow_mut().clear();
+        block_on(write_device_changes(&mut session, &mut snapshot, &mut env));
+        assert!(!events.borrow().contains(&Event::SnapshotPersisted));
     }
 }
 
 /// A change made through the device's own interface keeps a current
 /// snapshot in step, as a switch flipped at the device does. A read, or a
-/// write of something the snapshot does not hold, writes nothing.
+/// write of something the snapshot does not hold, owes nothing. What is
+/// owed is not written while the interface is answered, but later, or at
+/// once when the board settles it on its way off.
 #[test]
 fn device_interface_writes_keep_a_current_snapshot_in_step() {
     use umsh_ulcp::{frame, ids::prop};
@@ -421,8 +431,10 @@ fn device_interface_writes_keep_a_current_snapshot_in_step() {
         out: Box::leak(Box::new(TransportChannels::new())),
         session_gen: Box::leak(Box::new(AtomicU32::new(0))),
         device: Some(link),
+        snapshot: Box::leak(Box::new(SnapshotControl::new())),
     };
     let input = rt.input;
+    let snapshot = rt.snapshot;
     let events = Rc::new(RefCell::new(std::vec::Vec::new()));
     let env = Env {
         events: events.clone(),
@@ -442,25 +454,44 @@ fn device_interface_writes_keep_a_current_snapshot_in_step() {
         env
     ));
     let mut cx = Context::from_waker(Waker::noop());
-    let mut request = |frame: &[u8]| {
-        assert!(
-            input
-                .try_send(InEvent::Device(FrameBuf::from_slice(frame).unwrap()))
-                .is_ok()
-        );
-        assert!(run.as_mut().poll(&mut cx).is_pending());
-        while link.try_receive().is_some() {}
+    // Serves `frame` from the device's own interface, if there is one,
+    // then, when `settled`, has what the snapshot is owed written as a
+    // board on its way off would. Returns whether the snapshot was written.
+    let mut step = |frame: Option<&[u8]>, settled: bool| {
+        if let Some(frame) = frame {
+            assert!(
+                input
+                    .try_send(InEvent::Device(FrameBuf::from_slice(frame).unwrap()))
+                    .is_ok()
+            );
+            assert!(run.as_mut().poll(&mut cx).is_pending());
+            while link.try_receive().is_some() {}
+        }
+        if settled {
+            let mut settle = core::pin::pin!(snapshot.settle());
+            assert!(settle.as_mut().poll(&mut cx).is_pending());
+            assert!(run.as_mut().poll(&mut cx).is_pending());
+            assert!(settle.as_mut().poll(&mut cx).is_ready());
+        }
         let persisted = events.borrow().contains(&Event::SnapshotPersisted);
         events.borrow_mut().clear();
         persisted
     };
     let mut buf = [0u8; 64];
     let len = frame::prop_get(&mut buf, 1, prop::DEV_NAME).unwrap();
-    assert!(!request(&buf[..len]), "a read");
+    assert!(!step(Some(&buf[..len]), true), "a read");
     let len = frame::prop_set(&mut buf, 2, prop::HOST_AUTO_ACK, &[1]).unwrap();
-    assert!(!request(&buf[..len]), "a write the snapshot does not hold");
+    assert!(
+        !step(Some(&buf[..len]), true),
+        "a write the snapshot does not hold"
+    );
     let len = frame::prop_set(&mut buf, 3, prop::DEV_NAME, b"Pocket").unwrap();
-    assert!(request(&buf[..len]), "a saved setting");
+    assert!(
+        !step(Some(&buf[..len]), false),
+        "a saved setting, as it is answered"
+    );
+    assert!(step(None, true), "a saved setting, settled");
+    assert!(!step(None, true), "nothing more is owed");
 }
 
 /// On a device whose own store keeps the device lists, a change to one
@@ -480,6 +511,7 @@ fn held_lists_reach_the_store_and_not_the_snapshot() {
         out: Box::leak(Box::new(TransportChannels::new())),
         session_gen: Box::leak(Box::new(AtomicU32::new(0))),
         device: Some(link),
+        snapshot: Box::leak(Box::new(SnapshotControl::new())),
     };
     let input = rt.input;
     let events = Rc::new(RefCell::new(std::vec::Vec::new()));
@@ -537,6 +569,7 @@ fn the_device_interface_is_answered_on_its_link_and_hears_every_publication() {
         out: Box::leak(Box::new(TransportChannels::new())),
         session_gen: Box::leak(Box::new(AtomicU32::new(0))),
         device: Some(link),
+        snapshot: Box::leak(Box::new(SnapshotControl::new())),
     };
     let input = rt.input;
     let out = rt.out;

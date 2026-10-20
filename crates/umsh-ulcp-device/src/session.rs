@@ -3312,6 +3312,9 @@ pub struct Session<A: AesProvider, S: Sha256Provider, const TX: usize = 1> {
     /// the firmware keeps the flash journal in sync through the
     /// save/clear/wipe effects.
     saved: Option<SavedState>,
+    /// Whether `saved` moved for a change made at the device and has not
+    /// reached flash yet (see [`Session::note_device_change`]).
+    saved_unwritten: bool,
     /// Whether any stored generation was rejected at boot. Latched for
     /// the life of the boot: a device running on generation N−1, or on
     /// nothing at all because every generation was unreadable, must stay
@@ -3592,6 +3595,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             device_interface: false,
             link_secure: false,
             saved: None,
+            saved_unwritten: false,
             snapshot_rejected: false,
             dev_key: None,
             dev_key_persisted: None,
@@ -6082,6 +6086,51 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     /// what the operator did.
     pub fn note_snapshot_saved(&mut self) {
         self.saved = Some(self.capture());
+        self.saved_unwritten = false;
+    }
+
+    /// Keep a current snapshot in step with a change made at the
+    /// device—a switch the operator flipped at the board, or a setting
+    /// changed through its own interface—so that the change survives the
+    /// next reboot. Returns whether a write to flash is now owed.
+    ///
+    /// The copy `CMD_RST` and `CMD_RESTORE` answer from moves at once.
+    /// The write itself is the caller's to make when it suits, from
+    /// [`Session::unwritten_snapshot`], and to report with
+    /// [`Session::note_snapshot_written`]: a burst of changes then costs
+    /// one write rather than one each.
+    ///
+    /// Only a [`SavedStatus::Current`] snapshot is kept in step. A device
+    /// with nothing saved gets nothing saved: manufacturing a snapshot
+    /// from a button press would persist every other live-only value with
+    /// it. A device that rejected its newest generation at boot
+    /// (`Fallback` or `Unreadable`) must not write one either: the write
+    /// would become the newest generation, bury the rejected record under
+    /// defaults or stale values, and clear the fault `PROP_SAVED` exists
+    /// to report. The change still applies live in both cases; only a
+    /// host's `CMD_SAVE` writes over a fault.
+    pub fn note_device_change(&mut self) -> bool {
+        if self.saved_status() != SavedStatus::Current {
+            return false;
+        }
+        self.saved = Some(self.capture());
+        self.saved_unwritten = true;
+        true
+    }
+
+    /// The snapshot [`Session::note_device_change`] kept in step and flash
+    /// does not hold yet, encoded into `out`, which must hold
+    /// [`SNAPSHOT_MAX`] bytes. `None` when nothing is owed.
+    pub fn unwritten_snapshot(&self, out: &mut [u8]) -> Option<usize> {
+        self.saved
+            .as_ref()
+            .filter(|_| self.saved_unwritten)?
+            .encode(out)
+    }
+
+    /// The snapshot [`Session::unwritten_snapshot`] encoded reached flash.
+    pub fn note_snapshot_written(&mut self) {
+        self.saved_unwritten = false;
     }
 
     /// Complete the durable erase requested via [`Effect::ClearSaved`],
@@ -6092,6 +6141,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         match result {
             Ok(()) => {
                 self.saved = None;
+                self.saved_unwritten = false;
                 self.dev_key_persisted = None;
                 if let Some(held) = &mut self.held {
                     held.kept = None;
@@ -17756,6 +17806,39 @@ mod tests {
             parse_prop_is(&emitted[0]),
             (TID_UNSOLICITED, prop::BLE_ENABLED, vec![1])
         );
+    }
+
+    /// A change made at the device moves the saved copy at once and owes
+    /// flash a write of it until the write is reported. Nothing is owed
+    /// on a device with nothing saved.
+    #[test]
+    fn a_change_at_the_device_is_owed_to_flash_until_written() {
+        let mut out = [0u8; SNAPSHOT_MAX];
+        let mut bare = test_session();
+        bare.toggle_ble(&mut |_: &[u8]| {});
+        assert!(!bare.note_device_change());
+        assert_eq!(bare.unwritten_snapshot(&mut out), None);
+
+        let mut session = test_session();
+        let len = session.encode_snapshot(&mut out).unwrap();
+        let saved = out[..len].to_vec();
+        session.restore_at_boot(&saved).unwrap();
+        assert_eq!(session.unwritten_snapshot(&mut out), None);
+        let was = session.ble_enabled();
+        session.toggle_ble(&mut |_: &[u8]| {});
+        assert!(session.note_device_change());
+        let len = session.unwritten_snapshot(&mut out).unwrap();
+        let mut rebooted = test_session();
+        rebooted.restore_at_boot(&out[..len]).unwrap();
+        assert_eq!(rebooted.ble_enabled(), !was, "the write holds the change");
+        session.note_snapshot_written();
+        assert_eq!(session.unwritten_snapshot(&mut out), None);
+
+        // A host's save writes everything: nothing more is owed.
+        session.toggle_ble(&mut |_: &[u8]| {});
+        assert!(session.note_device_change());
+        session.respond_save(1, Ok(()), &mut |_: &[u8]| {});
+        assert_eq!(session.unwritten_snapshot(&mut out), None);
     }
 
     // ─── The mesh administrative binding ─────────────────────────────

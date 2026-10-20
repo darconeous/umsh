@@ -1027,6 +1027,19 @@ mod firmware {
     /// Runtime radio settings pushed by the session to the runner.
     static DEVICE_CTL: DeviceControl<ThreadModeRawMutex> = DeviceControl::new();
 
+    /// How the shutdown sequence has the session write what the saved
+    /// snapshot is owed for changes made at the device.
+    static SNAPSHOT_CTL: driver::SnapshotControl<ThreadModeRawMutex> =
+        driver::SnapshotControl::new();
+
+    /// Writes what the saved snapshot is owed, so that a switch flipped
+    /// just before the board turns off is still flipped when it comes
+    /// back. Bounded, so that a wedged session cannot keep a board on that
+    /// was asked to turn off.
+    async fn settle_saved_state() {
+        let _ = embassy_time::with_timeout(Duration::from_secs(2), SNAPSHOT_CTL.settle()).await;
+    }
+
     #[cfg(feature = "t1000e")]
     pub(super) async fn sample_radio_temperature() -> Option<u16> {
         embassy_time::with_timeout(Duration::from_secs(2), DEVICE_CTL.sample_temperature())
@@ -3799,6 +3812,7 @@ mod firmware {
                 out: &OUT_CH,
                 session_gen: &SESSION_GEN,
                 device: None,
+                snapshot: &SNAPSHOT_CTL,
             },
             BoardDeviceEnv {
                 // Owned outside Session: reconnects and CMD_RST retain indices.
@@ -5186,7 +5200,9 @@ mod firmware {
     #[cfg(feature = "t1000e")]
     #[embassy_executor::task]
     async fn t1000e_shutdown_task() -> ! {
-        umsh_bsp_t1000e::shutdown::run().await
+        umsh_bsp_t1000e::power::SHUTDOWN_SIGNAL.wait().await;
+        settle_saved_state().await;
+        umsh_bsp_t1000e::shutdown::run_after_request().await
     }
 
     #[cfg(feature = "t1000e")]
@@ -5258,7 +5274,9 @@ mod firmware {
     #[cfg(feature = "board-xiao-nrf52")]
     #[embassy_executor::task]
     async fn xiao_shutdown_task() -> ! {
-        umsh_bsp_xiao_nrf52::shutdown::run().await
+        let reason = umsh_bsp_xiao_nrf52::power::SHUTDOWN_SIGNAL.wait().await;
+        settle_saved_state().await;
+        umsh_bsp_xiao_nrf52::shutdown::enter_off(reason)
     }
 
     /// T-Echo battery monitor task: SAADC only. The divider is hard-wired
@@ -5323,6 +5341,7 @@ mod firmware {
             Timer::after(Duration::from_secs(5)),
         )
         .await;
+        settle_saved_state().await;
 
         wio_enter_off(reason).await
     }
@@ -5617,7 +5636,9 @@ mod firmware {
     #[cfg(feature = "power-button")]
     #[embassy_executor::task]
     async fn sensecap_shutdown_task() -> ! {
-        umsh_bsp_sensecap_solar::shutdown::run().await
+        let reason = umsh_bsp_sensecap_solar::power::SHUTDOWN_SIGNAL.wait().await;
+        settle_saved_state().await;
+        umsh_bsp_sensecap_solar::shutdown::enter_off(reason).await
     }
 
     /// Controlled power-off: put the e-paper controller to sleep, tri-state
@@ -5643,6 +5664,7 @@ mod firmware {
             Timer::after(Duration::from_secs(5)),
         )
         .await;
+        settle_saved_state().await;
 
         // Finish the RTC write before the teardown removes its I2C
         // pull-ups. A stuck bus must not prevent low-battery shutdown.

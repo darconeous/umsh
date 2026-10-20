@@ -610,6 +610,19 @@ static MUX_CLIENTS: [&RadioCh; 3] = [
 /// Runtime radio settings pushed by the session to the runner.
 static DEVICE_CTL: DeviceControl<CriticalSectionRawMutex> = DeviceControl::new();
 
+/// How the shutdown sequence has the session write what the saved
+/// snapshot is owed for changes made at the device.
+static SNAPSHOT_CTL: driver::SnapshotControl<CriticalSectionRawMutex> =
+    driver::SnapshotControl::new();
+
+/// Writes what the saved snapshot is owed, so that a switch flipped just
+/// before the board turns off is still flipped when it comes back. Bounded,
+/// so that a wedged session cannot keep a board on that was asked to turn
+/// off.
+async fn settle_saved_state() {
+    let _ = with_timeout(Duration::from_secs(2), SNAPSHOT_CTL.settle()).await;
+}
+
 /// The one traffic ledger for the whole device.
 ///
 /// The mux is where every real transmit and every off-air reception passes
@@ -2598,6 +2611,7 @@ async fn device_task(
             device: Some(&DEVICE_LINK),
             #[cfg(not(feature = "communicator"))]
             device: None,
+            snapshot: &SNAPSHOT_CTL,
         },
         BoardDeviceEnv {
             #[cfg(feature = "chip-esp32s3")]
@@ -2801,6 +2815,7 @@ async fn shutdown(
     embassy_futures::join::join(ui::farewell(cause), led.power_off()).await;
     #[cfg(not(feature = "status-led"))]
     ui::farewell(cause).await;
+    settle_saved_state().await;
 
     // `button_task` owns the button for the life of the board.
     // Temporarily duplicate its input to await release; neither handle
@@ -2884,6 +2899,7 @@ async fn shutdown(cause: ShutdownCause, rtc: &mut Rtc<'static>, pmic: &'static S
     debug_log(format_args!("shutdown: {cause:?}"));
     DEVICE_CTL.shutdown();
     ui::farewell(cause).await;
+    settle_saved_state().await;
 
     // GPIO0 is stolen rather than handed over: `button_task` holds an
     // `Input` on it for the life of the board. Both uses are read-only,
