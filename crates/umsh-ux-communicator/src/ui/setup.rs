@@ -12,6 +12,7 @@ use super::add_peer::field_look;
 use super::label;
 use super::member::detail_head;
 use super::setting::{End, row};
+use crate::board::Metrics;
 use crate::model::State;
 use crate::nav::{NameText, SetupPage, keys};
 use crate::{font, theme};
@@ -20,7 +21,9 @@ const TOP: u32 = 6;
 const LABEL: u32 = 22;
 const INSET: u32 = 8;
 /// The field's text: the screen less the field's inset and padding.
-const TEXT_WIDTH: u32 = theme::WIDTH - 2 * INSET - 24;
+const fn text_width(m: &Metrics) -> u32 {
+    m.width - 2 * INSET - 24
+}
 const CARET: u32 = 3;
 const NOTE: u32 = 26;
 const ROW: u32 = 36;
@@ -35,6 +38,7 @@ pub fn view(state: &State, page: &SetupPage) -> impl View<Rgb565, State> + use<>
 
 /// The welcome, and what to call this node.
 fn name(state: &State, text: &NameText) -> impl View<Rgb565, State> + use<> {
+    let m = state.metrics();
     let address = state.node.address();
     let mut about: String<48> = String::new();
     _ = core::fmt::write(
@@ -42,11 +46,11 @@ fn name(state: &State, text: &NameText) -> impl View<Rgb565, State> + use<> {
         format_args!("This device is {}", address.get(..4).unwrap_or("")),
     );
     VStack::new((
-        detail_head(&state.node.avatar(), "Welcome to UMSH", &about),
+        detail_head(m, &state.node.avatar(), "Welcome to UMSH", &about, false),
         label::<24>(
             "What to call you",
             &font::BOLD,
-            theme::SMALL,
+            m.small,
             theme::TEXT_SECONDARY,
         )
         .padding(Edges::Leading, 10)
@@ -54,18 +58,18 @@ fn name(state: &State, text: &NameText) -> impl View<Rgb565, State> + use<> {
         .frame()
         .with_height(LABEL),
         TextField::new(text, &font::REGULAR, State::name_text_mut)
-            .with_font_size(theme::BODY)
+            .with_font_size(m.body)
             .with_max_lines(1)
             .with_caret_width(CARET)
             .on_submit(State::continue_setup)
             .on_active(State::field_active)
-            .with_label(|status, area| field_look(status, area, TEXT_WIDTH))
+            .with_label(|status, area| field_look(status, area, text_width(m)))
             .focus_key(keys::NAME_FIELD)
             .padding(Edges::Horizontal, INSET),
         label::<32>(
             "Nearby nodes see this name.",
             &font::MEDIUM,
-            theme::SMALL,
+            m.small,
             theme::TEXT_TERTIARY,
         )
         .padding(Edges::Leading, 10)
@@ -73,6 +77,7 @@ fn name(state: &State, text: &NameText) -> impl View<Rgb565, State> + use<> {
         .frame()
         .with_height(NOTE),
         row(
+            m,
             "Continue",
             keys::CONTINUE,
             State::continue_setup,

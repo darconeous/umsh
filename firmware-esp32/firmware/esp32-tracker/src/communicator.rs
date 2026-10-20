@@ -1,5 +1,5 @@
-//! The communicator interface on the Pager's panel, in place of the
-//! tracker's menus, over the communicator's node. The node reaches the
+//! The communicator interface on a keyboard board's panel, in place of
+//! the tracker's menus, over the communicator's node. The node reaches the
 //! device's settings through the session's device link, and its chats are
 //! fed what the device node receives. The interface task reports what each
 //! frame costs: layout, painting, the panel transfer, and the least stack
@@ -12,19 +12,24 @@ use heap::InPsram;
 use umsh_communicator::task::Inbox;
 use umsh_communicator::{Clock, CommunicatorNode};
 use umsh_ulcp_admin::local::driver::DriverPort;
+use umsh_ux_communicator::board::Board;
 use umsh_ux_communicator::buoyant::app::App;
 use umsh_ux_communicator::buoyant::render_target::{
     EmbeddedGraphicsRenderTarget, RenderTarget as _,
 };
 use umsh_ux_communicator::buoyant::view::View;
 use umsh_ux_communicator::input::{self, Input};
-use umsh_ux_communicator::keyboard::Modifier;
 use umsh_ux_communicator::model::{
     Bluetooth, ClockSource, Gnss, Node as _, State, Wifi, brightness_level,
 };
 use umsh_ux_communicator::{theme, ui};
 use umsh_ux_display_tracker::attention::{Attention, AttentionConfig, DisplayKind, Transition};
-use umsh_ux_display_tracker::menu::{KeyModifier, UiInput};
+
+/// The board the interface runs on.
+#[cfg(feature = "board-tlora-pager")]
+const BOARD: &Board = &Board::PAGER;
+#[cfg(feature = "board-tdeck")]
+const BOARD: &Board = &Board::TDECK;
 
 /// How often an animation advances.
 const FRAME: Duration = Duration::from_millis(16);
@@ -39,8 +44,11 @@ const SHUTTING_DOWN: Duration = Duration::from_millis(1500);
 /// The empty battery's blink before the power path opens: how many times,
 /// and how long it is lit and dark each time. Inside the two seconds
 /// [`ui::end_farewell`](crate::ui::end_farewell) waits.
+#[cfg(feature = "battery-cutoff")]
 const EMPTY_BLINKS: u8 = 3;
+#[cfg(feature = "battery-cutoff")]
 const EMPTY_LIT: Duration = Duration::from_millis(300);
+#[cfg(feature = "battery-cutoff")]
 const EMPTY_DARK: Duration = Duration::from_millis(200);
 
 /// The communicator's node, over the session's device link, with its
@@ -87,6 +95,9 @@ pub(crate) static CLOCK: Clocks = Clocks;
 /// What the device node received for the chats.
 pub(crate) static INBOX: Inbox<CriticalSectionRawMutex> = Inbox::new();
 
+/// The board's controls, past the input gate.
+pub(crate) static INPUT: Channel<CriticalSectionRawMutex, Input, 16> = Channel::new();
+
 /// The chats have changed, and the node holds events for the interface.
 static CHATS_CHANGED: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 
@@ -118,7 +129,7 @@ async fn interface(
     mut splash: umsh_ux_display_tracker::boot::BootSplash,
     node: &'static Node,
 ) {
-    let epoch = pager::input::interactive().await;
+    let epoch = input_gate::interactive().await;
     if let Some(deadline) = splash.next_deadline() {
         Timer::at(Instant::from_millis(deadline)).await;
     }
@@ -134,7 +145,7 @@ async fn interface(
         App::new_in(
             slot,
             state(node),
-            embedded_graphics::prelude::Size::new(theme::WIDTH, theme::HEIGHT).into(),
+            BOARD.metrics.size().into(),
             ui::root_view,
         )
     });
@@ -163,7 +174,7 @@ async fn interface(
     display.set_keyboard_light(lights.1);
     let mut animating = draw(&mut display, app, start, &mut costs).await;
     let _ = display.set_display_on(true).await;
-    pager::input::shown(epoch);
+    input_gate::shown(epoch);
     // The panel dims, then goes dark, after a while without input, as the
     // tracker's does. An input against a fading or dark panel only wakes
     // it: the input layer reads `SCREEN_FADED` and consumes the gesture.
@@ -201,10 +212,10 @@ async fn interface(
         .fold(tick, |at, deadline| at.min(Instant::from_millis(deadline)));
         let now = || Instant::now().as_millis();
         let woken = select4(
-            UI_INPUT_CH.receive(),
+            INPUT.receive(),
             select3(
                 UI_WAKE.wait(),
-                pager::input::LOCK_BUTTON.wait(),
+                input_gate::LOCK.wait(),
                 umsh_hal::wall_clock::changed(),
             ),
             Timer::at(wake_at),
@@ -227,9 +238,9 @@ async fn interface(
                 // frames only skips frames.
                 let began = Instant::now();
                 let mut next = Some(first);
-                while let Some(ui) = next {
-                    input::apply(app, translate(ui), now());
-                    next = UI_INPUT_CH.try_receive().ok();
+                while let Some(input) = next {
+                    input::apply(app, input, now());
+                    next = INPUT.try_receive().ok();
                 }
                 costs.layout = costs.layout.max(Instant::now() - began);
                 mark(app.state(), Phase::Input);
@@ -240,7 +251,7 @@ async fn interface(
                 attention.wake(now())
             }
             Either4::Second(Either3::First(())) => attention.wake(now()),
-            // The lock button locks a lit screen to the lock screen,
+            // The lock control locks a lit screen to the lock screen,
             // darkens the lock screen, and lights a dark one to it.
             Either4::Second(Either3::Second(()))
                 if attention.accepts_redraw() && !app.state().lock.locked =>
@@ -272,7 +283,7 @@ async fn interface(
             Either4::Fourth(Either4::Fourth(())) => None,
         };
         if app.state().next_deadline().is_some_and(|at| at <= now()) {
-            app.state_mut().expire(now());
+            input::expire(app, now());
         }
         // What an input changed goes out, and what the session sent comes
         // in as events, taken just below.
@@ -293,6 +304,7 @@ async fn interface(
         // Taken in while the panel is still dark, so that a message
         // arriving then is listed for the screen it wakes to.
         if input::events(app, now()) {
+            #[cfg(feature = "board-tlora-pager")]
             pager::alert::tick();
             if let Some(woke) = attention.wake(now()) {
                 transition = Some(woke);
@@ -313,11 +325,11 @@ async fn interface(
                 }
                 // A fresh frame goes in before the panel lights, so a stale
                 // one is never seen.
-                let epoch = pager::input::interactive().await;
+                let epoch = input_gate::interactive().await;
                 animating = draw(&mut display, app, start, &mut costs).await;
                 let _ = display.set_brightness(Brightness::level(lights.0)).await;
                 if display.set_display_on(true).await.is_ok() {
-                    pager::input::shown(epoch);
+                    input_gate::shown(epoch);
                 }
                 continue;
             }
@@ -326,9 +338,9 @@ async fn interface(
                 let _ = display.set_brightness(dimmed).await;
             }
             Some(Transition::Lapsed) => {
-                let before = pager::input::activity();
+                let before = input_gate::activity();
                 if display.set_display_on(false).await.is_ok() {
-                    pager::input::dark(before);
+                    input_gate::dark(before);
                 }
                 app.state_mut().screen_off(now());
             }
@@ -359,7 +371,7 @@ async fn prime(node: &Node) {
 
 /// The interface's state over `node`, on the Chats screen.
 fn state(node: &'static Node) -> State {
-    let mut state = State::new(node);
+    let mut state = State::new(node, BOARD);
     state.status.device_name = node.device_name();
     (state.status.bluetooth, state.status.wifi, state.status.gnss) = links();
     state.set_wall_time(umsh_hal::wall_clock::now());
@@ -447,6 +459,7 @@ where
             let _ = display.set_display_on(true).await;
             Timer::after(SHUTTING_DOWN).await;
         }
+        #[cfg(feature = "battery-cutoff")]
         ShutdownCause::BatteryEmpty => {
             for _ in 0..EMPTY_BLINKS {
                 for (lit, hold) in [(true, EMPTY_LIT), (false, EMPTY_DARK)] {
@@ -461,29 +474,9 @@ where
             }
         }
     }
-    let _ = display.set_display_on(false).await;
+    let _ = display.sleep().await;
     DISPLAY_SHUTDOWN_DONE.signal(());
     core::future::pending().await
-}
-
-fn translate(input: UiInput) -> Input {
-    match input {
-        UiInput::Forward => Input::Turn(1),
-        UiInput::Backward => Input::Turn(-1),
-        UiInput::Select => Input::Press,
-        UiInput::Released => Input::Release,
-        UiInput::Back => Input::Backspace,
-        UiInput::Enter => Input::Enter,
-        UiInput::Key { plain, alt } => Input::Key { plain, alt },
-        UiInput::Space => Input::Space,
-        UiInput::Modifier { modifier, down } => Input::Modifier {
-            modifier: match modifier {
-                KeyModifier::Shift => Modifier::Shift,
-                KeyModifier::Alt => Modifier::Alt,
-            },
-            down,
-        },
-    }
 }
 
 /// The frames since the last report, and the worst of each stage. Reported

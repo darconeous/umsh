@@ -1,0 +1,316 @@
+[package]
+name = "firmware-tdeck"
+description = "LILYGO T-Deck and T-Deck Plus ULCP communicator firmware over native USB and BLE GATT"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+# The communicator on ESP32-S3—the shared session driver from
+# `umsh-ulcp-runtime` behind this board's transports (HDLC on the native
+# USB-Serial-JTAG port, UlcpService GATT on the esp-radio controller),
+# with the SX1262 and ST7789 sharing SPI, and the keyboard, trackball,
+# touch panel, and the Plus's GNSS found at boot.
+
+[features]
+ulcp-i2c = ["umsh-ulcp-runtime/i2c", "umsh-bsp-tdeck/ulcp-i2c"]
+# Buffer a dark-screen battery-current window and report it on wired traffic.
+# Does not enable BLE debug or change radio/charger settings.
+input-qualification = []
+# Explicit feasibility probe; normal images do not load or enable the sensor.
+motion-qualification = ["ble-debug"]
+# The BLE transport: the GATT host, its bond journal, and the controller.
+# An image built without it has no Bluetooth at all, and harvests its
+# hardware entropy through Wi-Fi instead.
+ble = [
+    "dep:trouble-host",
+    "dep:bt-hci",
+    "esp-radio/ble",
+    "umsh-ulcp-runtime/ble-host",
+    "umsh-bsp-esp32/ble",
+    "umsh-bsp-tdeck/ble",
+]
+wifi = ["esp-radio/wifi", "dep:esp-wifi-sys-esp32s3", "dep:esp-phy", "dep:embassy-net", "umsh-ulcp-runtime/wifi"]
+# Wi-Fi and BLE in one image share the radio through the coexistence
+# arbiter, which esp-radio builds only when both are present.
+coex = ["wifi", "ble", "esp-radio/coex"]
+# The autonomous bridge client. Its buffers go in PSRAM where there is
+# some and are trimmed to fit internal RAM where there is not.
+bridge-client = ["wifi", "dep:umsh-bridge-client", "dep:embedded-tls", "umsh-ulcp-runtime/bridge-client", "embassy-net/tcp", "embassy-net/dns"]
+psram = []
+# Mix a draw from the SAR ADC entropy source into the pool at every boot.
+# For images whose ADC1 is free at that point.
+entropy-sar-adc = []
+# Forwards MeshCore v1 traffic beside UMSH, as a third radio client.
+# For images plausibly left in place as infrastructure.
+meshcore-forwarder = ["umsh-ulcp-runtime/meshcore-forwarder"]
+# The LAN bearer: the device node's frames over IP multicast on the
+# station's network, and the DNS-SD record that describes them. The
+# T-Beam Supreme and the XIAO ESP32S3 carry it by default.
+lan-bearer = [
+    "wifi",
+    "dep:umsh-lan-bearer",
+    "dep:edge-mdns",
+    "umsh-ulcp-runtime/lan-bearer",
+    "embassy-net/udp",
+    "embassy-net/multicast",
+]
+# Board identity. Exactly one is on; it selects the BSP module, the pin
+# and peripheral wiring, the radio's power and band limits, and the
+# static capacities the board's RAM budget allows. Pager raw-I2C support is
+# selected by `default` separately, so the same board can be checked without
+# that optional host interface. The feature table is kept in step across
+# the ESP32 device images by `scripts/check_esp32_manifests.py`.
+default = ["board-tdeck", "ble", "ulcp-i2c", "psram", "coex", "bridge-client", "communicator"]
+board-heltec-v2 = [
+    "ulcp-i2c",
+    "chip-esp32",
+    "radio-sx127x",
+    "vext-gates-battery",
+    "display-ssd1306",
+    "battery-adc",
+    "status-led",
+    "power-off-deep-sleep",
+]
+board-heltec-v3 = [
+    "ulcp-i2c",
+    "chip-esp32s3",
+    "radio-sx126x",
+    "vext",
+    "display-ssd1306",
+    "battery-adc",
+    "status-led",
+    "power-off-deep-sleep",
+]
+board-tlora-pager = [
+    "chip-esp32s3",
+    "radio-sx126x",
+    "display-st7796",
+    "input-gate",
+    "wired-usb-serial-jtag",
+    "gnss",
+    "external-rtc",
+    "battery-cutoff",
+]
+board-xiao-esp32s3 = [
+    "ulcp-i2c",
+    "chip-esp32s3",
+    "radio-sx126x",
+    "radio-rxen",
+    "status-led",
+    "power-off-deep-sleep",
+    "usb-presence-sof",
+]
+board-tdeck = [
+    "chip-esp32s3",
+    "radio-sx126x",
+    "display-st7789",
+    "input-gate",
+    "wired-usb-serial-jtag",
+    "usb-presence-sof",
+    "battery-adc-rail",
+]
+board-tbeam-supreme = [
+    "ulcp-i2c",
+    "chip-esp32s3",
+    "radio-sx126x",
+    "pmic-axp2101",
+    "display-sh1106",
+    "wired-usb-serial-jtag",
+    "gnss",
+    "rtc-pcf8563",
+]
+
+# ─── Capability features (shared code shape, board-portable) ───
+# Which Espressif part this is. Separate from the board features because
+# it is silicon, not wiring: the classic ESP32 is dual-core and names its
+# per-CPU reset reasons accordingly, has no super-watchdog, and carries
+# roughly half the S3's data RAM. The esp-* dependency tables select the
+# matching chip feature on each esp-hal family crate.
+chip-esp32 = []
+chip-esp32s3 = []
+# SX127x family: no BUSY handshake, a single DIO line carries every IRQ,
+# and the RF switch is driven by the radio's own RXTX output—so the
+# interface variant takes one fewer pin than the SX126x's.
+radio-sx127x = []
+# SX126x family: BUSY handshake, DIO1 for IRQs, DIO2 drives the RF switch
+# and DIO3 the TCXO supply.
+radio-sx126x = []
+# A GPIO-switched `Vext` rail powers the panel. The display task owns it
+# and drops it on the way into power-off.
+vext = []
+# The `Vext` rail gates the battery divider as well as the panel, so the
+# battery sampler and the display share one owned rail handle and a
+# battery reading forces the rail up. Boards with an independent divider
+# gate leave this off.
+vext-gates-battery = ["vext"]
+# The firmware can measure the battery: `PROP_BATTERY` reports it and the
+# panel draws it. A board without this still advertises `CAP_BATTERY`,
+# answering with the empty value.
+battery-telemetry = []
+# The board turns itself off when its battery runs empty, which nothing
+# else on it does first.
+battery-cutoff = ["battery-telemetry"]
+# Battery voltage through a SAR ADC divider, the level estimated from it.
+# No charge state reaches the MCU.
+battery-adc = ["battery-telemetry"]
+# The ADC reads the board's supply rail rather than the cell: above any
+# cell's voltage is external power, and the cell cannot be read.
+battery-adc-rail = ["battery-adc"]
+# Power comes through an AXP2101 PMIC instead of MCU GPIOs: rails are
+# brought up over I²C before any peripheral is probed, the battery is
+# read from the PMIC's gauge (no SAADC divider), the charge LED belongs
+# to the charger, and "off" is a PMIC power-off rather than deep sleep.
+# Replaces Vext, the battery sampler, and the status LED wholesale.
+pmic-axp2101 = ["battery-telemetry"]
+# One firmware-owned status LED: the heartbeat, the pairing blink, action
+# confirmations, and the locate alert (`CAP_ALERT`).
+status-led = []
+# Power-off is deep sleep, and the user button wakes the board.
+power-off-deep-sleep = []
+# The RF switch takes a receive-enable line from the MCU; DIO2 still
+# drives the transmit side.
+radio-rxen = []
+# A panel, whichever driver runs it. Without one the board is headless and
+# `ui_headless.rs` stands in for `ui.rs`.
+display = []
+# SSD1306 panel through the `ssd1306` crate, with a reset GPIO and the
+# full power-up sequence after every `Vext` cycle.
+display-ssd1306 = ["display"]
+# SH1106 panel (shared `umsh-display-sh1106` driver) instead of the
+# ssd1306 crate: the I²C address is probed (0x3D first—0x3C may be a
+# magnetometer), and there is no reset GPIO—the panel's rail is its
+# reset.
+display-sh1106 = ["display"]
+# The wired ULCP transport is the chip's native USB-Serial-JTAG port
+# rather than UART0 behind an external USB-UART bridge. Writes are
+# bounded: with no host attached the FIFO drains nowhere, and an unbound
+# write would wedge the session.
+wired-usb-serial-jtag = []
+# No VBUS sense reaches the MCU, so whether a host is on the wire is read
+# from the USB start-of-frame stream instead.
+usb-presence-sof = ["wired-usb-serial-jtag"]
+# On-board GNSS receiver on UART1, powered through the pump's rail/wake
+# gate; positioning flows through `umsh-ulcp-runtime`'s gnss feature. Its
+# time sets the wall clock.
+gnss = ["wall-clock"]
+# PCF8563 wall-clock RTC: time is restored at boot (TimeSource::
+# ExternalRtc) and written back on manual set and trusted GNSS time.
+rtc-pcf8563 = ["external-rtc"]
+external-rtc = ["wall-clock"]
+# The board keeps a wall clock (`CAP_TIME`): set by a host, a GNSS fix, or
+# the user, and held through power-off only with `external-rtc`.
+wall-clock = []
+# A color panel on a MIPI DCS controller (ST7789, ST7796), drawn in a
+# PSRAM frame and sent in stripes.
+display-dcs = ["display"]
+display-st7796 = ["display-dcs"]
+display-st7789 = ["display-dcs"]
+# Lit-panel input capture handed to wake-enabled waits while dark, and
+# what a gesture means while the panel fades: the keyboard boards.
+input-gate = []
+
+# The communicator interface (`umsh-ux-communicator`) in place of the
+# tracker's menus, for a board with a color screen and a keyboard, over the
+# communicator's node (`umsh-communicator`), which reaches the device's
+# settings through its own ULCP session. While it is being brought up it
+# logs what it costs.
+communicator = [
+    "display",
+    "wall-clock",
+    "dep:umsh-ux-communicator",
+    "dep:umsh-communicator",
+    "dep:umsh-ulcp-admin",
+    "umsh-ulcp-runtime/communicator",
+]
+# Multiplex driver diagnostics as ASCII lines onto the wired output
+# stream (HDLC hosts resynchronize past them).
+debug-log = []
+# Mirror of the nRF firmware's ble-debug: the diagnostic stream, the BLE
+# host's security trace, and advertising kept open regardless of
+# transport arbitration so the BLE path stays reachable while debugging.
+ble-debug = ["debug-log", "ble", "trouble-host/security-debug"]
+
+[[bin]]
+name = "firmware-tdeck"
+# The protocol, security, transport-arbitration, and BLE implementation
+# live in the shared ESP32 tracker sources. Board differences are
+# selected by the capability + `board-tbeam-supreme` features above.
+path = "../esp32-tracker/src/main.rs"
+
+[dependencies]
+embedded-hal-async = "1"
+umsh-bridge-client = { path = "../../../crates/umsh-bridge-client", optional = true }
+umsh-lan-bearer = { path = "../../../crates/umsh-lan-bearer", optional = true }
+# Only its message handling: the socket and the group are the LAN
+# bearer task's own.
+edge-mdns = { version = "0.7", default-features = false, optional = true }
+embedded-tls = { version = "=0.19.0", default-features = false, optional = true }
+embassy-net = { version = "0.8", default-features = false, optional = true, features = ["medium-ethernet", "proto-ipv4", "dhcpv4", "dhcpv4-hostname"] }
+umsh-bsp-esp32 = { path = "../../crates/umsh-bsp-esp32", features = ["esp32s3", "panic-handler"] }
+umsh-bsp-tdeck = { path = "../../crates/umsh-bsp-tdeck" }
+umsh-ulcp = { path = "../../../crates/umsh-ulcp", default-features = false }
+umsh-ulcp-device = { path = "../../../crates/umsh-ulcp-device", default-features = false }
+# Board-agnostic device runtime shared with the T-Echo/T-1000E images:
+# session driver, radio mux, transport policy, pairing policy, counter
+# map, and the GNSS positioning runtime. Raw bus access is feature-gated above.
+umsh-ulcp-runtime = { path = "../../../crates/umsh-ulcp-runtime", features = ["device-node", "gnss"] }
+umsh-crypto = { path = "../../../crates/umsh-crypto", default-features = false, features = ["software-crypto"] }
+umsh-gnss = { path = "../../../crates/umsh-gnss" }
+umsh-hal = { path = "../../../crates/umsh-hal", default-features = false, features = ["embassy"] }
+umsh-journal-store = { path = "../../../crates/umsh-journal-store" }
+umsh-tdeck-peripherals = { path = "../../../crates/umsh-tdeck-peripherals" }
+critical-section = "1"
+umsh-radio-loraphy = { path = "../../../crates/umsh-radio-loraphy", default-features = false }
+umsh-ux-tracker = { path = "../../../crates/umsh-ux-tracker" }
+umsh-ux-display-tracker = { path = "../../../crates/umsh-ux-display-tracker", features = ["screen"] }
+umsh-ux-communicator = { path = "../../../crates/umsh-ux-communicator", optional = true }
+umsh-communicator = { path = "../../../crates/umsh-communicator", optional = true, features = ["software-crypto", "flash"] }
+umsh-ulcp-admin = { path = "../../../crates/umsh-ulcp-admin", optional = true, features = ["driver"] }
+# The device node: a full on-board MAC/node stack for the device
+# identity (device_node.rs), sharing the radio through the mux.
+umsh-core = { path = "../../../crates/umsh-core", default-features = false }
+umsh-mac = { path = "../../../crates/umsh-mac", default-features = false, features = ["software-crypto"] }
+umsh-node = { path = "../../../crates/umsh-node", default-features = false, features = ["alloc", "software-crypto"] }
+umsh-sync = { path = "../../../crates/umsh-sync", default-features = false }
+
+bt-hci = { version = "0.9", default-features = false, optional = true }
+# 0.8 matches the shared driver's FrameBuf and the journal payload types;
+# the trouble 0.7 GATT server characteristics are built on 0.9.
+heapless = { version = "0.8", default-features = false }
+heapless09 = { package = "heapless", version = "0.9", default-features = false }
+# 0.6 for the 0.8-embassy-sync shared-bus `I2cDevice`; see the BSP's
+# manifest for why the older line does not work here.
+embassy-embedded-hal = { version = "0.6", default-features = false }
+embassy-executor = { version = "0.10", default-features = false }
+embassy-futures = { version = "0.1", default-features = false }
+embassy-sync = { version = "0.8", default-features = false }
+embassy-time = { version = "0.5", default-features = false }
+embedded-graphics = { version = "0.8", default-features = false }
+embedded-hal-bus = { version = "0.3", default-features = false, features = ["async"] }
+embedded-io-async = { version = "0.7", default-features = false }
+# Raw flash over the internal SPI NOR (journal backing). The chip feature
+# and `embedded-storage` impl come from umsh-bsp-esp32's esp-storage
+# dependency via feature unification.
+esp-storage = { version = "0.10", default-features = false, features = ["critical-section", "embedded-storage"] }
+# umsh-node / umsh-sync use `alloc`. Its heap is not the global allocator:
+# `heap.rs` is, routing the communicator's allocations to PSRAM.
+esp-alloc = { version = "0.11", default-features = false, features = ["compat"] }
+esp-bootloader-esp-idf = { version = "0.6", features = ["esp32s3"] }
+esp-hal = { version = "1.2", features = ["esp32s3", "unstable"] }
+esp-println = { version = "0.18", features = ["esp32s3"] }
+esp-radio = { version = "1.0.0-beta.2", features = ["esp32s3", "unstable"] }
+# WPA3 threshold adapter; must resolve to esp-radio's same upstream blob ABI.
+esp-wifi-sys-esp32s3 = { version = "=0.3.0", optional = true }
+# Holds the RF front end on across a hardware-entropy read.
+esp-phy = { version = "0.3", features = ["esp32s3"], optional = true }
+esp-rtos = { version = "0.4", features = ["esp32s3", "embassy", "esp-radio", "esp-alloc"] }
+# Resolves to the darconeous/lora-rs fork via the workspace [patch].
+lora-phy = { version = "3.0.2-alpha", default-features = false }
+# Device-identity generation and the device node's CSPRNG: ChaCha20
+# seeded from the RF-gated hardware TRNG at boot.
+rand = { version = "0.10", default-features = false }
+rand_chacha = { version = "0.3", default-features = false }
+rand_core = { version = "0.6", default-features = false }
+static_cell = "2"
+trouble-host = { version = "0.7", default-features = false, features = ["derive", "peripheral", "gatt", "security", "default-packet-pool", "default-packet-pool-mtu-255"], optional = true }

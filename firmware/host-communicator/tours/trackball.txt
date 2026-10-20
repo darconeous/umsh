@@ -1,0 +1,8 @@
+# The trackball: rolling through the list, to the rail, and into a section.
+move down 2
+shot list-rolled
+move left
+move down
+shot rail-rolled
+move right
+shot peers-entered

@@ -518,6 +518,8 @@ Firmware from 2024-12-25 accepts two-byte writes:
 
 The firmware's `0x01` case falls through into the `0x02` handler (no `break`);
 with a two-byte write the second read finds no data and nothing changes.
+`setup()` starts the I²C target before it sets up the light and writes the
+boot duty, so a `01` that arrives as soon as the C3 first answers can be undone.
 Keyboards shipped earlier (issue #32) ignore both commands unless reflashed.
 
 ### 8.8 Power

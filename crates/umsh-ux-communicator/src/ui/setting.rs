@@ -8,6 +8,7 @@ use embedded_graphics::pixelcolor::Rgb565;
 use heapless::String;
 
 use super::label;
+use crate::board::Metrics;
 use crate::model::State;
 use crate::{font, icon, theme};
 
@@ -21,6 +22,8 @@ const KNOB_INSET: u32 = 3;
 const SWITCH_MOTION: Animation = Animation::ease_in_out(core::time::Duration::from_millis(180));
 /// A choice in a card, and the room its check mark takes.
 const CHOICE: u32 = 34;
+/// A card's least margin from the screen's edges.
+const CARD_MARGIN: u32 = 10;
 const CHECK: u32 = 26;
 
 /// A row's value: room for a radio profile's name.
@@ -64,7 +67,8 @@ fn value(text: &str) -> Value {
 
 /// A row `height` tall: an action, or a readout that takes focus so the
 /// wheel can pass through it. `danger` sets its name in red.
-pub(super) fn row<A: Fn(&mut State)>(
+pub(super) fn row<A: Fn(&mut State) + Clone>(
+    m: &'static Metrics,
     name: &'static str,
     key: FocusKey,
     act: A,
@@ -72,7 +76,7 @@ pub(super) fn row<A: Fn(&mut State)>(
     danger: bool,
     height: u32,
 ) -> impl View<Rgb565, State> + use<A> {
-    marked_row(name, key, act, end, danger, height, None)
+    marked_row(m, name, key, act, end, danger, height, None)
 }
 
 /// A row as [`row`] draws it, with a column before its name for a check
@@ -82,7 +86,9 @@ pub(super) fn row<A: Fn(&mut State)>(
 // toolchain's Xtensa back end fail with `Cannot select:
 // XtensaISD::PCREL_WRAPPER TargetConstantPool` (rustc 1.95.0-nightly esp).
 #[inline(never)]
-pub(super) fn marked_row<A: Fn(&mut State)>(
+#[allow(clippy::too_many_arguments)]
+pub(super) fn marked_row<A: Fn(&mut State) + Clone>(
+    m: &'static Metrics,
     name: &'static str,
     key: FocusKey,
     act: A,
@@ -98,6 +104,7 @@ pub(super) fn marked_row<A: Fn(&mut State)>(
         End::ValueChevron(value) => (Some(value), true, None),
         End::Switch(on) => (None, false, Some(on)),
     };
+    let flip = act.clone();
     Button::new(act, move |button: ButtonState| {
         let focused = button.is_focused();
         let face = if focused { &font::BOLD } else { &font::REGULAR };
@@ -112,18 +119,13 @@ pub(super) fn marked_row<A: Fn(&mut State)>(
             }),
             // Static, so drawn as it is rather than copied. Unchecked, the
             // name keeps the check mark's room and its spacing.
-            super::line(name, face, theme::BODY, color).padding(
+            super::line(name, face, m.body, color).padding(
                 Edges::Leading,
                 if checked == Some(false) { CHECK } else { 0 },
             ),
             Spacer::default(),
             value.as_ref().map(|value| {
-                label::<32>(
-                    value,
-                    &font::REGULAR,
-                    theme::SECONDARY,
-                    theme::TEXT_SECONDARY,
-                )
+                label::<32>(value, &font::REGULAR, m.secondary, theme::TEXT_SECONDARY)
             }),
             chevron.then(|| {
                 Image::new(&icon::CHEVRON)
@@ -167,6 +169,14 @@ pub(super) fn marked_row<A: Fn(&mut State)>(
         )
     })
     .focus_key(key)
+    // A switch takes the arrows: toward off, and toward on.
+    .on_key(move |key, s: &mut State| match (key, switch) {
+        (Key::LeftArrow, Some(true)) | (Key::RightArrow, Some(false)) => {
+            flip(s);
+            KeyResponse::Handled
+        }
+        _ => KeyResponse::Ignored,
+    })
 }
 
 /// An on/off setting: where the knob sits and the fill say which. Changed,
@@ -200,9 +210,10 @@ fn switch_look(on: bool) -> impl View<Rgb565, State> + use<> {
     .frame_sized(SWITCH_WIDTH, SWITCH_HEIGHT)
 }
 
-/// Choices in a card `width` wide, over the middle of the screen at its
-/// `alignment`. Backspace does `cancel`.
+/// Choices in a card `width` wide, or as wide as the screen leaves, over
+/// the middle of the screen at its `alignment`. Backspace does `cancel`.
 pub(super) fn card<V: View<Rgb565, State>>(
+    m: &'static Metrics,
     choices: V,
     width: u32,
     alignment: HorizontalAlignment,
@@ -211,7 +222,7 @@ pub(super) fn card<V: View<Rgb565, State>>(
     choices
         .padding(Edges::Vertical, 5)
         .frame()
-        .with_width(width)
+        .with_width(width.min(m.width - 2 * CARD_MARGIN))
         .background(
             Alignment::Center,
             ZStack::new((
@@ -224,7 +235,7 @@ pub(super) fn card<V: View<Rgb565, State>>(
                     .foreground_color(theme::MENU_LINE),
             )),
         )
-        .padding(Edges::Horizontal, 10)
+        .padding(Edges::Horizontal, CARD_MARGIN)
         .flex_infinite_width(alignment)
         .flex_infinite_height(VerticalAlignment::Center)
         .on_key(move |key, s: &mut State| match key {
@@ -239,6 +250,7 @@ pub(super) fn card<V: View<Rgb565, State>>(
 /// One of a card's choices. `checked` marks the current one of choices that
 /// show which is current; `None` leaves no room for the mark.
 pub(super) fn choice(
+    m: &'static Metrics,
     text: String<48>,
     key: FocusKey,
     act: fn(&mut State),
@@ -259,7 +271,7 @@ pub(super) fn choice(
                     .frame()
                     .with_width(CHECK)
             }),
-            label::<48>(&text, face, theme::BODY, color),
+            label::<48>(&text, face, m.body, color),
         ))
         .with_spacing(0)
         .hint_background_color(if focused { theme::FOCUS } else { theme::MENU })

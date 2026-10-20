@@ -236,6 +236,19 @@ impl Layout {
         overflow: Overflow::ScrollBar,
         controls: Controls::Rotary,
     };
+    /// 320×240 TFT: nine rows of `FONT_10X20`. The T-Deck's ST7789, whose
+    /// trackball is a four-way pad with a center press.
+    pub const TFT_320X240: Self = Self {
+        font: &FONT_10X20,
+        left: 5,
+        top: 3,
+        row_pitch: 24,
+        rows: 9,
+        size: Size::new(320, 240),
+        battery: BatteryIconMetrics::EPD,
+        overflow: Overflow::ScrollBar,
+        controls: Controls::Dpad,
+    };
     /// 128×64 OLED: five rows of `FONT_6X10`. Shared by the Wio Tracker
     /// L1's SH1106 and the Heltec V3's SSD1306.
     pub const OLED_128X64: Self = Self {
@@ -549,6 +562,7 @@ impl ClockModel {
 const LOGO_OLED: &[u8; 480] = include_bytes!("../assets/umsh-128x30.raw");
 const LOGO_EPD: &[u8; 1175] = include_bytes!("../assets/umsh-200x47.raw");
 const LOGO_TFT: &[u8; 6720] = include_bytes!("../assets/umsh-480x112.raw");
+const LOGO_TFT_320: &[u8; 3000] = include_bytes!("../assets/umsh-320x75.raw");
 
 /// The same full-width logo and version for boot and Settings > About.
 /// No header, title, or navigation hints accompany this frame.
@@ -559,6 +573,8 @@ where
     let _ = target.clear(BinaryColor::Off);
     let (bytes, width, height, gap): (&[u8], u32, u32, u32) = if layout.size.width >= 480 {
         (LOGO_TFT, 480, 112, 8)
+    } else if layout.size.width >= 320 {
+        (LOGO_TFT_320, 320, 75, 8)
     } else if layout.size.width >= 200 {
         (LOGO_EPD, 200, 47, 8)
     } else {
@@ -2464,6 +2480,7 @@ mod tests {
             (Layout::OLED_128X64, LOGO_OLED.as_slice(), 30u32, 4u32),
             (Layout::EPD_200X200, LOGO_EPD.as_slice(), 47u32, 8u32),
             (Layout::TFT_480X222, LOGO_TFT.as_slice(), 112u32, 8u32),
+            (Layout::TFT_320X240, LOGO_TFT_320.as_slice(), 75u32, 8u32),
         ] {
             let width = layout.size.width;
             assert_eq!(bytes.len(), (width * height / 8) as usize);

@@ -1,0 +1,7 @@
+# A message's details.
+press
+turn -3
+press
+turn 1
+press
+shot details

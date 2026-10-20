@@ -133,10 +133,10 @@ pub fn lan_buffers() -> &'static mut super::lan::Buffers {
     }
 }
 
-#[cfg(feature = "board-tlora-pager")]
-pub fn display_frame() -> &'static mut [u8; umsh_pager_peripherals::display::FRAME_BYTES] {
+#[cfg(feature = "display-dcs")]
+pub fn display_frame() -> &'static mut [u8; crate::board::display::FRAME_BYTES] {
     unsafe {
-        let ptr = storage::<[u8; umsh_pager_peripherals::display::FRAME_BYTES]>();
+        let ptr = storage::<[u8; crate::board::display::FRAME_BYTES]>();
         ptr.write_bytes(0, 1);
         &mut *ptr
     }

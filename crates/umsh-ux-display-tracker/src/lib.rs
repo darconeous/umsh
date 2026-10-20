@@ -20,6 +20,9 @@
 //!   one (send the menu home).
 //! - [`gate`]—what a gesture means when the screen is dark, an alert
 //!   is running, the boot splash is visible, or the panel is mid-refresh.
+//! - [`input_power`]—the handoff between input and a panel that goes
+//!   dark: which gesture wakes it, and when it may sleep again. Used
+//!   by the keyboard boards as well as this class.
 //! - [`boot`]—the boot splash's two seconds of visible time, independent
 //!   of the About page that shares its artwork.
 //! - [`screen`]—what a frame looks like: the rows, what they say, and
@@ -46,6 +49,7 @@
 pub mod attention;
 pub mod boot;
 pub mod gate;
+pub mod input_power;
 pub mod menu;
 #[cfg(feature = "screen")]
 pub mod screen;

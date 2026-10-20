@@ -69,8 +69,8 @@ RELEASE_BOARDS = {
         "esp": {
             "chip": "esp32s3",
             "offset": "0x0",
-            "flash_size": "4MB",
-            "partition_table": "partitions-umsh.csv",
+            "flash_size": "16MB",
+            "partition_table": "partitions-umsh-communicator.csv",
         },
     },
     "techo": {"chip": "nrf52840", "elf": "firmware-techo"},

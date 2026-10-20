@@ -146,9 +146,9 @@ espflash save-image --chip esp32s3 --merge --skip-padding -s 4mb \
 size. Every released Espressif board fits 8 MiB or more and no image on that
 table claims past `0x310000`; widening it is a separate, deliberate change.
 
-The T-LoRa Pager is the exception. Its image outgrows the shared table, so it
-has its own, `partitions-umsh-tlora-pager.csv`, laid out over its 16 MB with
-`umsh` at `0xFF0000`, and it is built with `-s 16mb`. The Makefile's
+The communicator boards are the exception. Their images outgrow the shared
+table, so they have their own, `partitions-umsh-communicator.csv`, laid out
+over their 16 MB with `umsh` at `0xFF0000`, and they are built with `-s 16mb`. The Makefile's
 `esp32_layout` picks each board's table and size.
 
 `--skip-padding` is load-bearing. Without it espflash pads the image out to

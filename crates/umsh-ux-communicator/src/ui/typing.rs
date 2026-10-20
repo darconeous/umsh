@@ -13,7 +13,8 @@ use heapless::String;
 use super::add_peer::field_look;
 use super::conversation::header;
 use super::setting::{End, row};
-use super::{STRIP, label, line};
+use super::{label, line};
+use crate::board::{Board, Metrics};
 use crate::keyboard::{Field, PICKER};
 use crate::model::{BRIGHTNESS_LEVELS, Glance, KeyboardSettings, State};
 use crate::nav::{PowerText, keys};
@@ -23,26 +24,56 @@ const ROW: u32 = 36;
 /// The label above a field, and the field's inset.
 const LABEL: u32 = 24;
 const INSET: u32 = 8;
-const POWER_WIDTH: u32 = theme::WIDTH - 2 * INSET - 24;
+const fn power_width(m: &Metrics) -> u32 {
+    m.width - 2 * INSET - 24
+}
 
-/// The picker: its inset from the screen's edges, its cells, and how many
-/// a row holds.
+/// The picker: its inset from the screen's edges, and its grid's inset in
+/// it.
 const PICKER_INSET: u32 = 6;
-const CELL: u32 = 41;
-const COLUMNS: usize = 11;
+const GRID_INSET: u32 = 12;
+
+/// A cell of the picker: a character at body size, with room around it.
+const fn cell(m: &Metrics) -> u32 {
+    2 * m.body + 1
+}
+
+/// How many cells a row of the picker holds.
+#[must_use]
+pub const fn picker_columns(m: &Metrics) -> usize {
+    ((m.width - 2 * PICKER_INSET - 2 * GRID_INSET) / cell(m)) as usize
+}
+/// The most rows the picker takes. Its grid is built for no more, so the
+/// render tree stays small enough for the stack; every board's row holds
+/// at least half the characters.
+const PICKER_ROWS: usize = 2;
+const _: () = {
+    let boards = [&Board::PAGER, &Board::TDECK];
+    let mut i = 0;
+    while i < boards.len() {
+        assert!(PICKER.len().div_ceil(picker_columns(&boards[i].metrics)) <= PICKER_ROWS);
+        i += 1;
+    }
+};
 /// Where the picker lies over a conversation: under its header.
 const HEADER: u32 = 34;
 
 /// A glance's height, and its top on the screen: a little below the
 /// middle.
 const GLANCE_HEIGHT: u32 = 56;
-const GLANCE_TOP: u32 = (theme::HEIGHT - GLANCE_HEIGHT) / 2 + 8;
+const fn glance_top(m: &Metrics) -> u32 {
+    (m.height - GLANCE_HEIGHT) / 2 + 8
+}
 
 /// The keyboard's settings.
-pub fn settings(settings: &KeyboardSettings) -> impl View<Rgb565, State> + use<> {
+pub fn settings(
+    m: &'static Metrics,
+    settings: &KeyboardSettings,
+) -> impl View<Rgb565, State> + use<> {
     VStack::new((
-        header("Keyboard", None, None),
+        header(m, "Keyboard", None, None),
         row(
+            m,
             "Capitalize sentences",
             keys::CAPITALIZE,
             State::toggle_capitalize,
@@ -51,6 +82,7 @@ pub fn settings(settings: &KeyboardSettings) -> impl View<Rgb565, State> + use<>
             ROW,
         ),
         row(
+            m,
             "Period on double space",
             keys::PERIOD,
             State::toggle_period,
@@ -59,6 +91,7 @@ pub fn settings(settings: &KeyboardSettings) -> impl View<Rgb565, State> + use<>
             ROW,
         ),
         row(
+            m,
             "Keyboard light",
             keys::KEYBOARD_LIGHT,
             State::toggle_keyboard_light,
@@ -74,13 +107,13 @@ pub fn settings(settings: &KeyboardSettings) -> impl View<Rgb565, State> + use<>
 }
 
 /// The radio's transmit power, typed in dBm. Enter sets it.
-pub fn transmit_power(text: &PowerText) -> impl View<Rgb565, State> + use<> {
+pub fn transmit_power(m: &'static Metrics, text: &PowerText) -> impl View<Rgb565, State> + use<> {
     VStack::new((
-        header("Radio", None, None),
+        header(m, "Radio", None, None),
         label::<16>(
             "Transmit power",
             &font::BOLD,
-            theme::SMALL,
+            m.small,
             theme::TEXT_SECONDARY,
         )
         .padding(Edges::Leading, 10)
@@ -88,14 +121,14 @@ pub fn transmit_power(text: &PowerText) -> impl View<Rgb565, State> + use<> {
         .frame()
         .with_height(LABEL),
         TextField::new(text, &font::REGULAR, State::power_text_mut)
-            .with_font_size(theme::BODY)
+            .with_font_size(m.body)
             .on_submit(State::submit_transmit_power)
             .on_active(State::field_active)
-            .with_label(|status, area| field_look(status, area, POWER_WIDTH))
+            .with_label(|status, area| field_look(status, area, power_width(m)))
             .focus_key(keys::POWER_FIELD)
             .overlay(
                 Alignment::Trailing,
-                line("dBm", &font::MEDIUM, theme::SECONDARY, theme::TEXT_TERTIARY)
+                line("dBm", &font::MEDIUM, m.secondary, theme::TEXT_TERTIARY)
                     .padding(Edges::Trailing, 12),
             )
             .padding(Edges::Horizontal, INSET),
@@ -120,10 +153,11 @@ fn back(key: Key, s: &mut State) -> KeyResponse {
 /// conversation it lies under the header, so the composer below stays in
 /// view; over any other field, at the bottom of the screen.
 pub fn picker(state: &State, at: u8) -> impl View<Rgb565, State> + use<> {
+    let m = state.metrics();
     let over_conversation = state.keyboard.field() == Some(Field::Prose);
-    Lazy::new(at, grid)
+    Lazy::new((at, m), grid)
         .padding(Edges::Horizontal, PICKER_INSET)
-        .padding(Edges::Top, STRIP + HEADER + 4)
+        .padding(Edges::Top, m.strip + HEADER + 4)
         .flex_infinite_height(if over_conversation {
             VerticalAlignment::Top
         } else {
@@ -134,7 +168,7 @@ pub fn picker(state: &State, at: u8) -> impl View<Rgb565, State> + use<> {
 
 /// The picker's grid, built from its data each time it is drawn
 /// ([`Lazy`]): a cell for every character is more than the screen keeps.
-fn grid(&at: &u8) -> impl View<Rgb565, ()> + use<> {
+fn grid(&(at, m): &(u8, &'static Metrics)) -> impl View<Rgb565, ()> + use<> {
     static ALL: [u8; PICKER.len()] = {
         let mut all = [0; PICKER.len()];
         let mut i = 0;
@@ -144,14 +178,15 @@ fn grid(&at: &u8) -> impl View<Rgb565, ()> + use<> {
         }
         all
     };
+    let size = cell(m);
     let cell = move |&i: &u8| {
         let mut glyph: String<4> = String::new();
         _ = glyph.push(PICKER[usize::from(i)]);
         Text::new(glyph, &font::REGULAR)
-            .with_font_size(theme::BODY)
+            .with_font_size(m.body)
             .with_line_limit(1)
             .foreground_color(theme::TEXT)
-            .frame_sized(CELL - 2, CELL - 2)
+            .frame_sized(size - 2, size - 2)
             .background(
                 Alignment::Center,
                 (i == at).then(|| {
@@ -165,21 +200,23 @@ fn grid(&at: &u8) -> impl View<Rgb565, ()> + use<> {
             )
             .padding(Edges::All, 1)
     };
-    let (first, rest) = ALL.split_at(COLUMNS.min(ALL.len()));
-    VStack::new((
-        ForEach::<COLUMNS>::new_horizontal(first, cell),
-        ForEach::<COLUMNS>::new_horizontal(rest, cell),
-    ))
-    .with_spacing(0)
+    static ROWS: [usize; PICKER_ROWS] = [0, 1];
+    let columns = picker_columns(m).max(1);
+    let rows = ALL.len().div_ceil(columns).min(PICKER_ROWS);
+    ForEach::<PICKER_ROWS>::new_vertical(&ROWS[..rows], move |&row| {
+        let start = row * columns;
+        let end = (start + columns).min(ALL.len());
+        ForEach::<{ PICKER.len() }>::new_horizontal(&ALL[start..end], cell)
+    })
     .with_alignment(HorizontalAlignment::Leading)
-    .padding(Edges::Horizontal, 12)
+    .padding(Edges::Horizontal, GRID_INSET)
     .padding(Edges::Vertical, 4)
     .flex_infinite_width(HorizontalAlignment::Leading)
     .background(Alignment::Center, card(12, theme::MENU, theme::MENU_LINE))
 }
 
 /// A setting a key changed, shown briefly with no words.
-pub fn glance(glance: Glance) -> impl View<Rgb565, State> + use<> {
+pub fn glance(m: &'static Metrics, glance: Glance) -> impl View<Rgb565, State> + use<> {
     match_view!(glance, {
         Glance::Brightness { level, .. } => HStack::new((
             Image::new(&icon::SUN)
@@ -202,7 +239,7 @@ pub fn glance(glance: Glance) -> impl View<Rgb565, State> + use<> {
         .frame_sized(96, GLANCE_HEIGHT)
         .background(Alignment::Center, card(14, theme::GLANCE, theme::GLANCE_LINE)),
     })
-    .padding(Edges::Top, GLANCE_TOP)
+    .padding(Edges::Top, glance_top(m))
     .flex_infinite_width(HorizontalAlignment::Center)
 }
 

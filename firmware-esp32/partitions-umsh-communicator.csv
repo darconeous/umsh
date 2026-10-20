@@ -1,7 +1,7 @@
-# ESP-IDF partition table for the T-LoRa Pager (16 MB flash). Images
-# for it are built with `-s 16mb`: esp-storage refuses any address past
-# the flash size in the bootloader header, so a 4 MB header would put the
-# `umsh` region out of reach.
+# ESP-IDF partition table for the communicator boards, the T-LoRa Pager
+# and the T-Deck (16 MB flash). Images for it are built with `-s 16mb`:
+# esp-storage refuses any address past the flash size in the bootloader
+# header, so a 4 MB header would put the `umsh` region out of reach.
 #
 # The communicator interface carries its fonts and art in the image, so
 # the application outgrows the shared table's 2.94 MB. The `umsh` region

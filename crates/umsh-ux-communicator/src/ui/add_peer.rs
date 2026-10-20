@@ -16,6 +16,7 @@ use heapless::String;
 use super::conversation::header;
 use super::label;
 use super::member::{End, action};
+use crate::board::Metrics;
 use crate::model::{PeerEntry, State};
 use crate::nav::{PeerText, keys};
 use crate::{font, theme};
@@ -35,24 +36,26 @@ const AVATAR: u32 = 34;
 const ROW: u32 = 36;
 
 pub fn view(state: &State, text: &PeerText) -> impl View<Rgb565, State> + use<> {
+    let m = state.metrics();
     let entry = state.peer_entry();
     let complete = matches!(entry, PeerEntry::Complete { .. });
     VStack::new((
-        header("Add peer", None, None),
+        header(m, "Add peer", None, None),
         label::<24>(
             "Address or invitation",
             &font::BOLD,
-            theme::SMALL,
+            m.small,
             theme::TEXT_SECONDARY,
         )
         .padding(Edges::Leading, 10)
         .flex_infinite_width(HorizontalAlignment::Leading)
         .frame()
         .with_height(LABEL),
-        field(text),
-        entry_line(&entry),
+        field(m, text),
+        entry_line(m, &entry),
         complete.then(|| {
             action(
+                m,
                 "Message",
                 keys::MESSAGE_PEER,
                 State::message_entry,
@@ -60,7 +63,7 @@ pub fn view(state: &State, text: &PeerText) -> impl View<Rgb565, State> + use<> 
             )
         }),
         (!complete).then(|| {
-            label::<8>("Message", &font::REGULAR, theme::BODY, theme::TEXT_TERTIARY)
+            label::<8>("Message", &font::REGULAR, m.body, theme::TEXT_TERTIARY)
                 .padding(Edges::Leading, 12)
                 .flex_infinite_width(HorizontalAlignment::Leading)
                 .frame()
@@ -78,9 +81,9 @@ pub fn view(state: &State, text: &PeerText) -> impl View<Rgb565, State> + use<> 
     })
 }
 
-fn field(text: &PeerText) -> impl View<Rgb565, State> + use<> {
+fn field(m: &'static Metrics, text: &PeerText) -> impl View<Rgb565, State> + use<> {
     TextField::new(text, &font::MONO, State::peer_text_mut)
-        .with_font_size(theme::BODY)
+        .with_font_size(m.body)
         .with_max_lines(3)
         .with_caret_width(CARET)
         // Enter messages the peer once the address is whole.
@@ -128,7 +131,7 @@ pub(super) fn field_look<B: EditText>(
 }
 
 /// Who the address belongs to as far as it goes, and what it still lacks.
-fn entry_line(entry: &PeerEntry) -> impl View<Rgb565, State> + use<> {
+fn entry_line(m: &'static Metrics, entry: &PeerEntry) -> impl View<Rgb565, State> + use<> {
     let (avatar, hint, note): (_, &str, Option<String<24>>) = match entry {
         PeerEntry::Empty => (None, "", None),
         PeerEntry::Invalid => (
@@ -155,9 +158,8 @@ fn entry_line(entry: &PeerEntry) -> impl View<Rgb565, State> + use<> {
     HStack::new((
         avatar.map(|avatar| super::avatar::view(&avatar, AVATAR)),
         VStack::new((
-            (!hint.is_empty())
-                .then(|| label::<8>(hint, &font::MONO_BOLD, theme::BODY, theme::TEXT)),
-            note.map(|note| label::<24>(&note, &font::SEMIBOLD, theme::SMALL, theme::AMBER)),
+            (!hint.is_empty()).then(|| label::<8>(hint, &font::MONO_BOLD, m.body, theme::TEXT)),
+            note.map(|note| label::<24>(&note, &font::SEMIBOLD, m.small, theme::AMBER)),
         ))
         .with_spacing(0)
         .with_alignment(HorizontalAlignment::Leading),

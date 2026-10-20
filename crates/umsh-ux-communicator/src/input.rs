@@ -3,7 +3,9 @@
 //!
 //! What an input means depends on where focus is: Backspace erases while a
 //! text field is active and is Back everywhere else, and turning the wheel
-//! moves the cursor in an active field and focus elsewhere. The screens
+//! moves the cursor in an active field and focus elsewhere. A trackball's
+//! moves are arrow keys first, for whatever is focused to take, and move
+//! focus that way when nothing does. The screens
 //! decide that through focus; this only delivers inputs, each one to an
 //! interface whose focus has settled from the last.
 //!
@@ -16,13 +18,15 @@
 //! for them.
 
 use buoyant::app::{App, Harness as _};
-use buoyant::event::Key;
-use buoyant::focus::DefaultFocus;
+use buoyant::event::{EventResult, Key};
+use buoyant::focus::{DefaultFocus, Direction};
+use buoyant::primitives::Point;
 use buoyant::render::AnimatedJoin;
 use buoyant::view::{EditBuffer, EditText, ViewLayout};
+use embedded_touch::{Phase, Tool, Touch, TouchPoint};
 
 use crate::keyboard::{Field, Modifier, PICKER, Spaced, starts_sentence};
-use crate::model::{HOLD_MS, Press, State};
+use crate::model::{HOLD_MS, Press, State, TouchHold};
 use crate::nav::keys;
 
 /// One user input.
@@ -48,9 +52,82 @@ pub enum Input {
         modifier: Modifier,
         down: bool,
     },
-    /// Text from a keyboard that applies its own modifiers, typed as it
-    /// is.
+    /// Text from a keyboard that applies its own modifiers. Only the
+    /// typing aids apply to it.
     Character(char),
+    /// A trackball rolled a step toward this arrow.
+    Move(Arrow),
+    /// A finger touched the screen, moved on it, or left it, at this point.
+    Touch {
+        phase: TouchPhase,
+        x: i16,
+        y: i16,
+    },
+}
+
+/// Where a touch is in its course.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TouchPhase {
+    Started,
+    Moved,
+    Ended,
+    /// The touch ended without its meaning anything: the panel went dark
+    /// under it, say.
+    Cancelled,
+}
+
+impl TouchPhase {
+    const fn phase(self) -> Phase {
+        match self {
+            Self::Started => Phase::Started,
+            Self::Moved => Phase::Moved,
+            Self::Ended => Phase::Ended,
+            Self::Cancelled => Phase::Cancelled,
+        }
+    }
+}
+
+/// How far a finger moves before a touch is no longer held in place.
+const TOUCH_SLOP: i32 = 6;
+
+/// Which way a trackball rolled: one of the arrow keys.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Arrow {
+    Up,
+    Down,
+    Left,
+    Right,
+}
+
+impl Arrow {
+    /// The arrow key it stands for.
+    const fn key(self) -> Key {
+        match self {
+            Self::Up => Key::UpArrow,
+            Self::Down => Key::DownArrow,
+            Self::Left => Key::LeftArrow,
+            Self::Right => Key::RightArrow,
+        }
+    }
+
+    /// The direction it moves focus.
+    const fn direction(self) -> Direction {
+        match self {
+            Self::Up => Direction::Up,
+            Self::Down => Direction::Down,
+            Self::Left => Direction::Left,
+            Self::Right => Direction::Right,
+        }
+    }
+
+    /// As a turn of the wheel: up and down, one detent.
+    const fn detents(self) -> Option<i8> {
+        match self {
+            Self::Up => Some(-1),
+            Self::Down => Some(1),
+            Self::Left | Self::Right => None,
+        }
+    }
 }
 
 /// Applies `input`, which happened at `now` on the board's clock in
@@ -67,6 +144,12 @@ where
         return;
     }
     app.state_mut().uptime = now;
+    if let Input::Touch { phase, x, y } = input {
+        touch(app, phase, Point::new(x.into(), y.into()), now);
+        app.finalize_view();
+        app.state_mut().sync_keyboard();
+        return;
+    }
     if app.state().lock.locked {
         locked(app, input, now);
         app.finalize_view();
@@ -84,7 +167,8 @@ where
 
 /// An input while locked: the wheel turns toward unlocking and a press
 /// unlocks once it has, and keys do nothing. Turned with Alt held, the
-/// wheel still sets the brightness.
+/// wheel still sets the brightness, as a trackball does rolled up or down;
+/// rolled otherwise, it does nothing.
 fn locked<V, F>(app: &mut App<V, State, F>, input: Input, now: u64)
 where
     V: ViewLayout<State>,
@@ -101,6 +185,11 @@ where
                 state.turn_to_unlock(detents, now);
             }
         }
+        Input::Move(direction) => {
+            if let Some(detents) = direction.detents().filter(|_| state.keyboard.turn()) {
+                state.adjust_brightness(detents, now);
+            }
+        }
         Input::Press => state.press_to_unlock(now),
         Input::Modifier { modifier, down } => state.keyboard.modifier(modifier, down, now),
         Input::Release
@@ -108,8 +197,89 @@ where
         | Input::Backspace
         | Input::Key { .. }
         | Input::Space
-        | Input::Character(_) => {}
+        | Input::Character(_)
+        | Input::Touch { .. } => {}
     }
+}
+
+/// A touch. Locked, the screen takes none; with the character picker open,
+/// one closes it. Held in place, a touch is a long press once
+/// [`expire`] finds its time up.
+///
+/// Only a touch whose start was taken goes on to the interface, so one that
+/// began on the lock screen does nothing once it is gone.
+fn touch<V, F>(app: &mut App<V, State, F>, phase: TouchPhase, point: Point, now: u64)
+where
+    V: ViewLayout<State>,
+    V::FocusTree: DefaultFocus,
+    V::Renderables: AnimatedJoin,
+    F: Fn(&State) -> V,
+{
+    let mut state = app.state_mut();
+    match phase {
+        TouchPhase::Started => {
+            if state.lock.locked {
+                return;
+            }
+            if state.picker.take().is_some() {
+                state.keyboard.other();
+                return;
+            }
+            state.touch = Some(TouchHold {
+                at: point,
+                hold_until: Some(now + HOLD_MS),
+            });
+        }
+        TouchPhase::Moved => {
+            let Some(hold) = state.touch.as_mut() else {
+                return;
+            };
+            let moved = point - hold.at;
+            if moved.x.abs() > TOUCH_SLOP || moved.y.abs() > TOUCH_SLOP {
+                hold.hold_until = None;
+            }
+        }
+        TouchPhase::Ended | TouchPhase::Cancelled => {
+            if state.touch.take().is_none() {
+                return;
+            }
+        }
+    }
+    state.touching = true;
+    drop(state);
+    app.send_touch(&Touch::new(
+        0,
+        TouchPoint::new(point.x, point.y),
+        phase.phase(),
+        Tool::Finger,
+    ));
+    app.state_mut().touching = false;
+}
+
+/// Lets go of whatever has had its time by `now`, as [`State::expire`]
+/// does, and makes a touch held in place a long press: focus goes to what
+/// is under it, and holds it as the wheel would. A hold that opens
+/// something takes the touch, so lifting it presses nothing.
+pub fn expire<V, F>(app: &mut App<V, State, F>, now: u64)
+where
+    V: ViewLayout<State>,
+    V::FocusTree: DefaultFocus,
+    V::Renderables: AnimatedJoin,
+    F: Fn(&State) -> V,
+{
+    if let Some(hold) = app.state().touch
+        && hold.hold_until.is_some_and(|until| until <= now)
+    {
+        app.state_mut().touch = Some(TouchHold {
+            hold_until: None,
+            ..hold
+        });
+        if app.focus_at(hold.at) && app.state_mut().hold() {
+            app.cancel_touch();
+        }
+    }
+    app.state_mut().expire(now);
+    app.finalize_view();
 }
 
 /// Takes in the events the node has waiting, oldest first, at `now` on the
@@ -220,9 +390,50 @@ where
             app.state_mut().keyboard.modifier(modifier, down, now);
         }
         Input::Character(c) => {
-            app.state_mut().keyboard.other();
-            press(app, Key::Character(c));
+            let mut state = app.state_mut();
+            state.prepare_typing();
+            let typed = state.keyboard.character(c);
+            press(app, Key::Character(typed));
         }
+        Input::Move(direction) => roll(app, direction, now),
+        // Taken before anything else, in `apply`.
+        Input::Touch { .. } => {}
+    }
+}
+
+/// A trackball's step: as the wheel's, up or down, for what Alt and the
+/// date and time take of it; then the arrow key, for whatever is focused
+/// to take; and otherwise focus moves that way.
+fn roll<V, F>(app: &mut App<V, State, F>, direction: Arrow, now: u64)
+where
+    V: ViewLayout<State>,
+    V::FocusTree: DefaultFocus,
+    V::Renderables: AnimatedJoin,
+    F: Fn(&State) -> V,
+{
+    let mut state = app.state_mut();
+    // Rolled with Alt held, up brightens and down dims.
+    if state.keyboard.turn() {
+        if let Some(detents) = direction.detents() {
+            state.adjust_brightness(detents, now);
+        }
+        return;
+    }
+    // A part of the date and time being changed: up is more, and across
+    // is done with it.
+    match direction.detents() {
+        Some(detents) if state.turn_set_time(-detents) => return,
+        Some(_) => {}
+        None => state.end_part_edit(),
+    }
+    // Rolling while the ball is down lets go of the press.
+    state.press = None;
+    let key = direction.key();
+    let taken = !matches!(app.key_down(key), EventResult::Deferred);
+    app.key_up(key);
+    if !taken {
+        app.finalize_view();
+        app.move_toward(direction.direction());
     }
 }
 
@@ -261,8 +472,22 @@ where
             state.switch_keyboard_light(now);
         }
         Input::Modifier { modifier, down } => state.keyboard.modifier(modifier, down, now),
+        // A row up or down, or a character across.
+        Input::Move(direction) => {
+            let columns = crate::ui::picker_columns(state.metrics()) as i16;
+            let step = match direction {
+                Arrow::Up => -columns,
+                Arrow::Down => columns,
+                Arrow::Left => -1,
+                Arrow::Right => 1,
+            };
+            let to = i16::from(at) + step;
+            if (0..PICKER.len() as i16).contains(&to) {
+                state.picker = Some(to as u8);
+            }
+        }
         // Filtering by name comes with the full picker.
-        Input::Release | Input::Key { .. } | Input::Character(_) => {}
+        Input::Release | Input::Key { .. } | Input::Character(_) | Input::Touch { .. } => {}
     }
 }
 

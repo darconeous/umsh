@@ -2,13 +2,16 @@
 //! when the board's lock button is pressed, and the lock screen stands in
 //! for every other screen until it is unlocked.
 //!
-//! Unlocking takes two steps a pocket is unlikely to make: turning the
-//! wheel down [`UNLOCK_STEPS`] detents, then pressing it within
-//! [`UNLOCK_WINDOW_MS`]. Turning up takes steps back. Keys do nothing while
-//! locked; what was on screen is kept, and unlocking returns to it.
+//! On a board with a wheel, unlocking takes two steps a pocket is unlikely
+//! to make: turning the wheel down [`UNLOCK_STEPS`] detents, then pressing
+//! it within [`UNLOCK_WINDOW_MS`]. Turning up takes steps back. On a board
+//! whose press is hard to make by accident, such as a trackball's, a press
+//! alone unlocks. Keys do nothing while locked; what was on screen is kept,
+//! and unlocking returns to it.
 
 use buoyant::focus::FocusKey;
 
+use crate::board::Unlock;
 use crate::model::State;
 
 /// How many detents down unlock.
@@ -100,9 +103,20 @@ impl State {
         }
     }
 
+    /// Whether a press now unlocks: once the steps are turned, or always
+    /// where a press alone unlocks.
+    #[must_use]
+    pub const fn unlock_ready(&self) -> bool {
+        matches!(self.board.controls.unlock, Unlock::Press) || self.lock.ready()
+    }
+
     /// The wheel turned `detents` on the lock screen at `now`: down toward
-    /// unlocking, up away from it.
+    /// unlocking, up away from it. Where a press alone unlocks, turning
+    /// does nothing.
     pub fn turn_to_unlock(&mut self, detents: i8, now: u64) {
+        if matches!(self.board.controls.unlock, Unlock::Press) {
+            return;
+        }
         let lock = &mut self.lock;
         lock.steps =
             (i16::from(lock.steps) + i16::from(detents)).clamp(0, i16::from(UNLOCK_STEPS)) as u8;
@@ -114,10 +128,11 @@ impl State {
     }
 
     /// The wheel was pressed on the lock screen at `now`: it unlocks if the
-    /// steps were turned in time. A press too late starts the bar over.
+    /// steps were turned in time, or where a press alone unlocks. A press
+    /// too late starts the bar over.
     pub fn press_to_unlock(&mut self, now: u64) {
         self.expire_lock(now);
-        if self.lock.ready() {
+        if self.unlock_ready() {
             self.unlock();
         }
     }

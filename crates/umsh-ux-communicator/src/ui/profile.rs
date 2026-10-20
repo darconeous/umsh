@@ -40,6 +40,7 @@ fn window(focused: usize, count: usize) -> usize {
 
 /// The list under `title`.
 pub fn view(state: &State, title: &'static str) -> impl View<Rgb565, State> + use<> {
+    let m = state.metrics();
     let focus = state.screen().focus();
     let focused = focus
         .current()
@@ -53,11 +54,12 @@ pub fn view(state: &State, title: &'static str) -> impl View<Rgb565, State> + us
         .take(WINDOW)
         .collect();
     VStack::new((
-        header(title, None, None),
+        header(m, title, None, None),
         super::list(
             ForEach::<WINDOW>::new_vertical(&INDICES[..names.len()], move |&i| {
                 let index = start + i;
                 row(
+                    m,
                     names[i],
                     keys::profile(index),
                     move |s: &mut State| s.choose_profile(index),

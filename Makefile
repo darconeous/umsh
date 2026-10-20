@@ -22,6 +22,7 @@
 	build-tbeam-supreme flash-tbeam-supreme \
 	build-tlora-pager flash-tlora-pager \
 	build-xiao-esp32s3 flash-xiao-esp32s3 \
+	build-tdeck flash-tdeck \
 	esp-toolchain-check espflash-check \
 	dfu-zip-techo dfu-zip-t1000e dfu-zip-sensecap-solar \
 	dfu-zip-wio-tracker-l1 dfu-zip-xiao-nrf52 \
@@ -369,7 +370,9 @@ ESPFLASH_PARTITIONS = --partition-table firmware-esp32/partitions-umsh.csv
 # its whole flash. The flash size goes into the bootloader header, which
 # bounds every flash access the firmware makes. Every other board gets
 # the shared table and the 4 MB it is laid out for.
-ESPFLASH_LAYOUT_tlora-pager = --partition-table firmware-esp32/partitions-umsh-tlora-pager.csv -s 16mb
+ESPFLASH_COMMUNICATOR_LAYOUT = --partition-table firmware-esp32/partitions-umsh-communicator.csv -s 16mb
+ESPFLASH_LAYOUT_tlora-pager = $(ESPFLASH_COMMUNICATOR_LAYOUT)
+ESPFLASH_LAYOUT_tdeck = $(ESPFLASH_COMMUNICATOR_LAYOUT)
 esp32_layout = $(or $(ESPFLASH_LAYOUT_$(1)),$(ESPFLASH_PARTITIONS) -s 4mb)
 
 # espup writes this on install; it puts the Xtensa GCC binaries on PATH and
@@ -499,6 +502,17 @@ build-xiao-esp32s3: esp-toolchain-check
 flash-xiao-esp32s3: espflash-check build-xiao-esp32s3
 	espflash flash --monitor $(ESPFLASH_PORT_ARG) $(ESPFLASH_PARTITIONS) \
 		$(ESP32S3_TARGET_DIR)/firmware-xiao-esp32s3
+
+# The Pager's shape: the communicator, BLE, Wi-Fi coex, and PSRAM.
+build-tdeck: esp-toolchain-check
+	$(ESP_ENV) cd firmware-esp32/firmware/tdeck && cargo build --release $(ESP32_CARGO_FLAGS)
+	$(ESP_ENV) python3 scripts/check_xtensa_stack.py $(ESP32S3_TARGET_DIR)/firmware-tdeck --reserve 32768
+
+# An image that does not answer the reset request needs download mode by
+# hand: hold the trackball down while pressing reset.
+flash-tdeck: espflash-check build-tdeck
+	espflash flash --before usb-reset --after watchdog-reset $(ESPFLASH_PORT_ARG) $(ESPFLASH_LAYOUT_tdeck) \
+		$(ESP32S3_TARGET_DIR)/firmware-tdeck
 
 # The single-file image the web flasher writes at offset 0: second-stage
 # bootloader, partition table, and application merged together.

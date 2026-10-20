@@ -1,0 +1,14 @@
+# What calls for attention: a banner, low battery, the chat menu.
+press
+arrive
+shot banner
+backspace
+wait 10
+battery 9
+shot battery-low
+wait 10
+hold
+shot chat-menu
+turn 1
+press
+shot chat-delete

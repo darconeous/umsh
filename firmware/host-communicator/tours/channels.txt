@@ -1,0 +1,9 @@
+# Channels, and adding one.
+backspace
+turn 2
+press
+turn 1
+press
+shot channels
+press
+shot add-channel

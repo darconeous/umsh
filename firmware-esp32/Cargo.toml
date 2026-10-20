@@ -12,6 +12,7 @@ members = [
     "crates/umsh-bsp-heltec-lora32-v2",
     "crates/umsh-bsp-heltec-lora32-v3",
     "crates/umsh-bsp-tbeam-supreme",
+    "crates/umsh-bsp-tdeck",
     "crates/umsh-bsp-tlora-pager",
     "crates/umsh-bsp-xiao-esp32s3",
     "firmware/heltec-v2",
@@ -19,6 +20,7 @@ members = [
     "firmware/heltec-v3",
     "firmware/heltec-v3-bridge",
     "firmware/tbeam-supreme",
+    "firmware/tdeck",
     "firmware/tlora-pager",
     "firmware/xiao-esp32s3",
 ]

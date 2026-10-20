@@ -1,0 +1,5 @@
+# An invitation in a chat.
+turn 4
+press
+turn -3
+shot invite

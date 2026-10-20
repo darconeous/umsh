@@ -271,6 +271,8 @@ const BLE_MODEL_ID: u16 = ble_privacy::model::LILYGO_T_BEAM_SUPREME;
 const BLE_MODEL_ID: u16 = ble_privacy::model::LILYGO_T_LORA_PAGER;
 #[cfg(feature = "board-xiao-esp32s3")]
 const BLE_MODEL_ID: u16 = ble_privacy::model::SEEED_XIAO_ESP32S3_KIT;
+#[cfg(feature = "board-tdeck")]
+const BLE_MODEL_ID: u16 = ble_privacy::model::LILYGO_T_DECK;
 
 /// Stable random-static BLE identity address derived from the factory
 /// eFuse MAC (top two bits forced to `11` per the random-static rule),

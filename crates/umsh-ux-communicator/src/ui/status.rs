@@ -5,16 +5,18 @@ use buoyant::view::prelude::*;
 use embedded_graphics::pixelcolor::Rgb565;
 use heapless::String;
 
-use super::{STRIP, label};
+use super::label;
+use crate::board::Metrics;
 use crate::keyboard::Latch;
 use crate::model::{Bluetooth, Gnss, State, StatusStrip, Wifi};
 use crate::{font, icon, theme};
 
 /// The strip; on first run, the battery alone, there being no name or
-/// time yet to show. Shift's and Alt's states come first among the
+/// time yet to show. The battery shows only where its charge is known. Shift's and Alt's states come first among the
 /// indicators, in the keyboard's order. The time is the local time, while
 /// the clock is known; the lock screen leaves it out to show it larger.
 pub fn view(
+    m: &'static Metrics,
     s: &StatusStrip,
     setup: bool,
     (shift, alt): (Latch, Latch),
@@ -28,7 +30,7 @@ pub fn view(
                 label::<24>(
                     &s.device_name,
                     &font::SEMIBOLD,
-                    theme::SMALL,
+                    m.small,
                     theme::TEXT_SECONDARY,
                 )
             }),
@@ -51,15 +53,18 @@ pub fn view(
                 })
             }),
             s.charging.then(|| indicator(&icon::BOLT)),
-            battery(s.battery_segments, s.battery_low),
+            // Only a charge that can be told: charging without one shows
+            // the bolt alone.
+            s.battery_percent
+                .map(|_| battery(s.battery_segments, s.battery_low)),
         ))
         .with_spacing(3)
         .padding(Edges::Horizontal, 8),
         time.filter(|_| shown)
-            .map(|time| label::<8>(&time, &font::BOLD, theme::SMALL, theme::TEXT)),
+            .map(|time| label::<8>(&time, &font::BOLD, m.small, theme::TEXT)),
     ))
     .frame()
-    .with_height(STRIP)
+    .with_height(m.strip)
     .background_color(theme::CHROME, Rectangle)
 }
 

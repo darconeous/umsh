@@ -11,6 +11,7 @@
 //!
 //! - [`button`]—recognize Single / Double / Triple / Long button
 //!   events from raw debounced edges + a monotonic-millisecond clock.
+//! - [`debounce`]—turn a sampled button level into those edges.
 //! - [`led`]—drive a single-LED heartbeat with one-shot sequences
 //!   layered on top (power-on, power-off, location-advert, …).
 //! - [`buzzer`]—play short tone melodies on a piezo buzzer with
@@ -38,6 +39,7 @@
 pub mod battery;
 pub mod button;
 pub mod buzzer;
+pub mod debounce;
 pub mod led;
 pub mod power;
 pub mod state;

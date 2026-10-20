@@ -16,6 +16,7 @@ use umsh_ulcp_admin::{LocalPort, PortBusy, PortFrame};
 use umsh_ulcp_simdev::host::HostPlatform;
 use umsh_ulcp_simdev::soft::SoftDevice;
 use umsh_ulcp_simdev::{DutyLedger, LanBearerRole, RadioSettings, SessionConfig, TimeConfig};
+use umsh_ux_communicator::board::Board;
 use umsh_ux_communicator::model::{Node as _, State, brightness_at};
 
 use crate::flash::{self, FileFlash};
@@ -152,9 +153,9 @@ pub fn open(dir: &Path, start: Instant) -> std::io::Result<&'static Node> {
     Ok(node)
 }
 
-/// The interface's state over `node`, on the Chats screen.
-pub fn state(node: &'static Node) -> State {
-    let mut state = State::new(node);
+/// The interface's state over `node`, on the Chats screen of `board`.
+pub fn state(node: &'static Node, board: &'static Board) -> State {
+    let mut state = State::new(node, board);
     state.status.device_name = node.device_name();
     state.set_wall_time(
         std::time::SystemTime::now()

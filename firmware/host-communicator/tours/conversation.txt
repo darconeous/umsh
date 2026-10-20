@@ -1,0 +1,9 @@
+# A direct chat, its history, and a message's actions.
+press
+shot conversation
+turn -1
+shot conversation-history
+press
+shot conversation-actions
+turn -1
+shot conversation-palette

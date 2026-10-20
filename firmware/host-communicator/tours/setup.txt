@@ -1,0 +1,8 @@
+# First run.
+first-run
+shot setup-name
+keys Ridge
+enter
+shot setup-profile
+press
+shot setup-zone

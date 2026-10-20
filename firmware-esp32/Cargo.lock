@@ -164,7 +164,7 @@ dependencies = [
  "embedded-io 0.7.1",
  "embedded-io-async 0.7.0",
  "futures-intrusive",
- "heapless 0.9.3",
+ "heapless 0.8.0",
 ]
 
 [[package]]
@@ -195,7 +195,7 @@ checksum = "72f5acc6cb2ba439de613abc23857ec3d78374d8ed5ac84e9d11336e87da8649"
 [[package]]
 name = "buoyant"
 version = "0.8.0-alpha.1"
-source = "git+https://github.com/darconeous/buoyant?rev=ede058aaab17df2594b3fd49ceaa5f65ae07c74c#ede058aaab17df2594b3fd49ceaa5f65ae07c74c"
+source = "git+https://github.com/darconeous/buoyant?rev=c364e728efb8e907430fb7b134eef0337a5d7245#c364e728efb8e907430fb7b134eef0337a5d7245"
 dependencies = [
  "embedded-graphics",
  "embedded-graphics-core",
@@ -1821,6 +1821,65 @@ dependencies = [
  "umsh-rtc-pcf8563",
  "umsh-sensor-bme280",
  "umsh-sync",
+ "umsh-ulcp",
+ "umsh-ulcp-admin",
+ "umsh-ulcp-device",
+ "umsh-ulcp-runtime",
+ "umsh-ux-communicator",
+ "umsh-ux-display-tracker",
+ "umsh-ux-tracker",
+]
+
+[[package]]
+name = "firmware-tdeck"
+version = "0.1.0"
+dependencies = [
+ "bt-hci",
+ "critical-section",
+ "edge-mdns",
+ "embassy-embedded-hal 0.6.0",
+ "embassy-executor",
+ "embassy-futures",
+ "embassy-net",
+ "embassy-sync 0.8.0",
+ "embassy-time",
+ "embedded-graphics",
+ "embedded-hal-async",
+ "embedded-hal-bus",
+ "embedded-io-async 0.7.0",
+ "embedded-tls",
+ "esp-alloc",
+ "esp-bootloader-esp-idf",
+ "esp-hal",
+ "esp-phy",
+ "esp-println",
+ "esp-radio",
+ "esp-rtos",
+ "esp-storage",
+ "esp-wifi-sys-esp32s3",
+ "heapless 0.8.0",
+ "heapless 0.9.3",
+ "lora-phy",
+ "rand 0.10.2",
+ "rand_chacha",
+ "rand_core 0.6.4",
+ "static_cell",
+ "trouble-host",
+ "umsh-bridge-client",
+ "umsh-bsp-esp32",
+ "umsh-bsp-tdeck",
+ "umsh-communicator",
+ "umsh-core",
+ "umsh-crypto",
+ "umsh-gnss",
+ "umsh-hal",
+ "umsh-journal-store",
+ "umsh-lan-bearer",
+ "umsh-mac",
+ "umsh-node",
+ "umsh-radio-loraphy",
+ "umsh-sync",
+ "umsh-tdeck-peripherals",
  "umsh-ulcp",
  "umsh-ulcp-admin",
  "umsh-ulcp-device",
@@ -3511,6 +3570,7 @@ version = "0.1.0"
 dependencies = [
  "critical-section",
  "embassy-embedded-hal 0.3.2",
+ "embassy-futures",
  "embassy-sync 0.8.0",
  "embassy-time",
  "embedded-hal-async",
@@ -3522,6 +3582,7 @@ dependencies = [
  "esp-storage",
  "lora-phy",
  "rand 0.10.2",
+ "umsh-display-st77xx",
  "umsh-flash-store",
 ]
 
@@ -3596,6 +3657,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "umsh-bsp-tdeck"
+version = "0.1.0"
+dependencies = [
+ "critical-section",
+ "embassy-embedded-hal 0.6.0",
+ "embassy-futures",
+ "embassy-sync 0.8.0",
+ "embassy-time",
+ "embedded-graphics",
+ "embedded-hal 1.0.0",
+ "esp-hal",
+ "lora-phy",
+ "nb 1.1.0",
+ "umsh-bsp-esp32",
+ "umsh-display-st77xx",
+ "umsh-gnss",
+ "umsh-tdeck-peripherals",
+ "umsh-ulcp",
+ "umsh-ulcp-device",
+ "umsh-ulcp-runtime",
+]
+
+[[package]]
 name = "umsh-bsp-tlora-pager"
 version = "0.1.0"
 dependencies = [
@@ -3609,6 +3693,7 @@ dependencies = [
  "esp-hal",
  "lora-phy",
  "umsh-bsp-esp32",
+ "umsh-display-st77xx",
  "umsh-gnss",
  "umsh-pager-peripherals",
  "umsh-ulcp",
@@ -3696,6 +3781,15 @@ name = "umsh-display-sh1106"
 version = "0.1.0"
 dependencies = [
  "embedded-graphics",
+ "embedded-hal-async",
+]
+
+[[package]]
+name = "umsh-display-st77xx"
+version = "0.1.0"
+dependencies = [
+ "embedded-graphics",
+ "embedded-hal 1.0.0",
  "embedded-hal-async",
 ]
 
@@ -3798,7 +3892,6 @@ dependencies = [
 name = "umsh-pager-peripherals"
 version = "0.1.0"
 dependencies = [
- "embedded-graphics",
  "embedded-hal 1.0.0",
  "embedded-hal-async",
  "umsh-gnss",
@@ -3846,6 +3939,13 @@ name = "umsh-sync"
 version = "0.1.0"
 dependencies = [
  "slab",
+]
+
+[[package]]
+name = "umsh-tdeck-peripherals"
+version = "0.1.0"
+dependencies = [
+ "embedded-hal-async",
 ]
 
 [[package]]
@@ -3930,6 +4030,7 @@ version = "0.1.0"
 dependencies = [
  "buoyant",
  "embedded-graphics",
+ "embedded-touch",
  "heapless 0.9.3",
  "libm",
  "qrcodegen-no-heap",

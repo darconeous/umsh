@@ -1,157 +1,81 @@
-//! ISR capture while interactive; wake-enabled level waits while dark.
+//! The Pager's controls: the wheel, its press, the lock button, and the
+//! keyboard. ISR capture while interactive; wake-enabled level waits while
+//! dark. What a gesture means is the input gate's.
 use super::*;
+use crate::input_gate::{
+    self, CHANGED, control, finish_gesture, hold, note_activity, send, start_gesture, wake_display,
+};
 use core::{future::Future, pin::pin, task::Poll};
 use esp_hal::rtc_cntl::WakeLock;
-use umsh_pager_peripherals::input::PressLatch;
-use umsh_pager_peripherals::input_power::{Gesture, InputPower, Mode};
+use umsh_ux_display_tracker::input_power::{Gesture, Mode};
 use umsh_ux_display_tracker::menu::KeyModifier;
+use umsh_ux_tracker::debounce::PressLatch;
 
-struct Control {
-    policy: InputPower,
-    guard: Option<WakeLock>,
-}
-static CONTROL: critical_section::Mutex<RefCell<Control>> =
-    critical_section::Mutex::new(RefCell::new(Control {
-        policy: InputPower::new(),
-        guard: None,
-    }));
-static CHANGED: Signal<CriticalSectionRawMutex, ()> = Signal::new();
-static CAPTURE_READY: Signal<CriticalSectionRawMutex, ()> = Signal::new();
-static CAPTURE_EPOCH: AtomicU32 = AtomicU32::new(0);
-static DISPLAY_READY: Signal<CriticalSectionRawMutex, ()> = Signal::new();
+/// The Pager's controls produce the tracker menus' inputs, which the
+/// communicator takes through [`to_input`].
+pub(crate) type Item = UiInput;
+
 static KEYBOARD_RETRY: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 static STOP_PRESS: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 static STOP_BOOT: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 static STOP_KEYBOARD: Signal<CriticalSectionRawMutex, ()> = Signal::new();
-static STOPPED: AtomicU32 = AtomicU32::new(0);
-static STOP_PROGRESS: Signal<CriticalSectionRawMutex, ()> = Signal::new();
-static NAVIGATION: Channel<CriticalSectionRawMutex, UiInput, 64> = Channel::new();
-static NAVIGATION_PENDING: AtomicBool = AtomicBool::new(false);
-/// The lock button (BOOT) was pressed and let go before its hold shuts
-/// the board down. A press that silenced an alert does not count.
-pub(crate) static LOCK_BUTTON: Signal<CriticalSectionRawMutex, ()> = Signal::new();
+/// The capture tasks [`stop`] ends: the wheel press, the lock button, and
+/// the keyboard.
+pub(crate) const STOPPERS: u32 = 3;
 
-pub fn discard_navigation() {
+pub(crate) fn stop() {
+    STOP_PRESS.signal(());
+    STOP_BOOT.signal(());
+    STOP_KEYBOARD.signal(());
+}
+
+/// A turn spanning an alert boundary is consumed in its entirety.
+pub(crate) fn resync() {
     critical_section::with(|cs| {
-        NAVIGATION_PENDING.store(false, Ordering::Release);
-        NAVIGATION.clear();
-        UI_INPUT_CH.clear();
         if let Some(e) = ENCODER.borrow_ref_mut(cs).as_mut() {
-            // A turn spanning an alert boundary is consumed in its entirety.
             e.ab = e.levels();
             e.decoder = Quadrature::new(e.ab);
         }
     });
 }
-pub fn alert_started() {
-    control(|c| c.policy.alert_started());
-}
-static INPUT_OVERFLOW: AtomicBool = AtomicBool::new(false);
 
-fn control<R>(f: impl FnOnce(&mut Control) -> R) -> R {
-    critical_section::with(|cs| f(&mut CONTROL.borrow_ref_mut(cs)))
-}
-
-fn hold(c: &mut Control) {
-    if c.guard.is_none() {
-        c.guard = Some(WakeLock::new());
-    }
-}
-
-pub fn activity() -> u32 {
-    control(|c| c.policy.activity())
-}
-
-pub fn dark(before_display_off: u32) {
-    let accepted = control(|c| c.policy.dark(before_display_off));
-    if accepted {
-        super::display_lit(false);
-        CHANGED.signal(());
-    } else {
-        wake_display();
-    }
-}
-
-fn wake_display() {
-    if control(|c| {
-        if !c.policy.wake() {
-            return false;
-        }
-        hold(c);
-        true
-    }) {
-        CHANGED.signal(());
-        UI_WAKE.signal(());
-    }
-}
-
-/// Called before wake rendering, including wakes originating outside input.
-pub async fn interactive() -> u32 {
-    let epoch = control(|c| {
-        c.policy.wake();
-        hold(c);
-        c.policy.epoch
-    });
-    CHANGED.signal(());
-    loop {
-        CAPTURE_READY.reset();
-        if CAPTURE_EPOCH.load(Ordering::Acquire) == epoch {
-            return epoch;
-        }
-        CAPTURE_READY.wait().await;
-    }
-}
-
-pub fn shown(epoch: u32) {
-    // Publish before allowing queued post-wake gestures through the display.
-    SCREEN_FADED.store(false, Ordering::Release);
-    control(|c| c.policy.shown(epoch));
-    super::display_lit(true);
-    DISPLAY_READY.signal(());
+/// The panel lit: a keyboard that failed is tried again at once.
+pub(crate) fn shown() {
     KEYBOARD_RETRY.signal(());
 }
 
-fn start_gesture() -> Gesture {
-    let disposition = control(|c| {
-        let disposition = c.policy.gesture(
-            BOOT_SPLASH_ACTIVE.load(Ordering::Acquire),
-            SCREEN_FADED.load(Ordering::Acquire),
-            super::alert::active(),
-        );
-        if disposition == Gesture::Wake {
-            hold(c);
-        }
-        disposition
-    });
-    if disposition == Gesture::Wake {
-        CHANGED.signal(());
-        UI_WAKE.signal(());
-    }
-    disposition
+pub(crate) fn lit(lit: bool) {
+    super::battery_lit(lit);
 }
 
-fn finish_gesture(input: UiInput, disposition: Gesture) {
-    if disposition == Gesture::CancelAlert {
-        super::alert::cancel();
-        return;
-    }
-    if super::alert::active() {
-        // The alert arrived after this gesture began. Consume it too.
-        super::alert::cancel();
-        return;
-    }
-    match disposition {
-        Gesture::CancelAlert => unreachable!(),
-        Gesture::Navigate => {
-            if NAVIGATION.try_send(input).is_err() {
-                INPUT_OVERFLOW.store(true, Ordering::Release);
-            }
-        }
-        Gesture::Splash => {
-            UI_SPLASH_DISMISS.signal(());
-            UI_WAKE.signal(());
-        }
-        Gesture::Wake | Gesture::Ignore => {}
+pub(crate) fn alert_active() -> bool {
+    super::alert::active()
+}
+
+pub(crate) fn cancel_alert() {
+    super::alert::cancel();
+}
+
+#[cfg(feature = "communicator")]
+pub(crate) fn to_input(input: UiInput) -> umsh_ux_communicator::input::Input {
+    use umsh_ux_communicator::input::Input;
+    use umsh_ux_communicator::keyboard::Modifier;
+    match input {
+        UiInput::Forward => Input::Turn(1),
+        UiInput::Backward => Input::Turn(-1),
+        UiInput::Select => Input::Press,
+        UiInput::Released => Input::Release,
+        UiInput::Back => Input::Backspace,
+        UiInput::Enter => Input::Enter,
+        UiInput::Key { plain, alt } => Input::Key { plain, alt },
+        UiInput::Space => Input::Space,
+        UiInput::Modifier { modifier, down } => Input::Modifier {
+            modifier: match modifier {
+                KeyModifier::Shift => Modifier::Shift,
+                KeyModifier::Alt => Modifier::Alt,
+            },
+            down,
+        },
     }
 }
 
@@ -216,14 +140,14 @@ fn encoder_interrupt() {
         }
         e.a.clear_interrupt();
         e.b.clear_interrupt();
-        CONTROL.borrow_ref_mut(cs).policy.note_activity();
+        note_activity();
         e.ab = e.levels();
         let input = match e.decoder.transition(e.ab) {
             1 => UiInput::Backward,
             -1 => UiInput::Forward,
             _ => return,
         };
-        if super::alert::active() {
+        if alert_active() {
             return;
         }
         finish_gesture(input, start_gesture());
@@ -236,8 +160,7 @@ pub async fn coordinator() {
         CHANGED.reset();
         let (mode, epoch) = control(|c| (c.policy.mode, c.policy.epoch));
         if mode == Mode::Interactive {
-            CAPTURE_EPOCH.store(epoch, Ordering::Release);
-            CAPTURE_READY.signal(());
+            input_gate::captured(epoch);
             CHANGED.wait().await;
             continue;
         }
@@ -247,17 +170,15 @@ pub async fn coordinator() {
             let raced = e.a.is_interrupt_set()
                 || e.b.is_interrupt_set()
                 || e.levels() != e.ab
-                || !NAVIGATION.is_empty()
-                || CONTROL.borrow_ref_mut(cs).policy.activity_since_dark();
+                || input_gate::navigation_pending()
+                || control(|c| c.policy.activity_since_dark());
             e.a.unlisten();
             e.b.unlisten();
             (e, raced)
         });
         if mode == Mode::Shutdown {
             restore(encoder, false);
-            CAPTURE_EPOCH.store(epoch, Ordering::Release);
-            CAPTURE_READY.signal(());
-            STOP_PROGRESS.signal(());
+            input_gate::coordinator_stopped(epoch);
             return;
         }
         if raced {
@@ -315,50 +236,12 @@ pub async fn coordinator() {
     }
 }
 
-#[embassy_executor::task]
-pub async fn navigation_task() {
-    loop {
-        let input = NAVIGATION.receive().await;
-        NAVIGATION_PENDING.store(true, Ordering::Release);
-        if super::alert::active() {
-            continue;
-        }
-        loop {
-            DISPLAY_READY.reset();
-            if control(|c| c.policy.display_ready || c.policy.mode == Mode::Shutdown) {
-                break;
-            }
-            DISPLAY_READY.wait().await;
-        }
-        if control(|c| c.policy.mode == Mode::Shutdown) {
-            return;
-        }
-        if INPUT_OVERFLOW.swap(false, Ordering::AcqRel) {
-            NAVIGATION.clear();
-            UI_INPUT_CH.clear();
-            debug_log(format_args!(
-                "pager: input overflow; pending navigation discarded"
-            ));
-            continue;
-        }
-        if super::alert::active() || !NAVIGATION_PENDING.swap(false, Ordering::AcqRel) {
-            continue;
-        }
-        UI_WAKE.signal(());
-        // Do not suspend with an already-dequeued input across an alert edge.
-        if UI_INPUT_CH.try_send(input).is_err() {
-            INPUT_OVERFLOW.store(true, Ordering::Release);
-        }
-    }
-}
-
 #[embassy_executor::task(pool_size = 2)]
 pub async fn button_task(mut pin: Input<'static>, boot: bool) {
     let stop = if boot { &STOP_BOOT } else { &STOP_PRESS };
     select(run_button(&mut pin, boot), stop.wait()).await;
     drop(pin);
-    STOPPED.fetch_add(1, Ordering::AcqRel);
-    STOP_PROGRESS.signal(());
+    input_gate::stopped();
 }
 
 async fn run_button(pin: &mut Input<'static>, boot: bool) {
@@ -374,7 +257,7 @@ async fn run_button(pin: &mut Input<'static>, boot: bool) {
         let now = Instant::now();
         let raw = pin.is_low();
         if !boot && raw != debounce.observed() {
-            control(|c| c.policy.note_activity());
+            note_activity();
         }
         if press_cycle.observe(raw, now.as_millis()) && !boot {
             let gate = start_gesture();
@@ -383,24 +266,22 @@ async fn run_button(pin: &mut Input<'static>, boot: bool) {
         if let Some(pressed) = debounce.sample(raw, now.as_millis()) {
             if boot {
                 if pressed {
-                    silenced = super::alert::active();
+                    silenced = alert_active();
                     if silenced {
-                        super::alert::cancel();
+                        cancel_alert();
                     }
                 } else if shutdown_at.is_some() && !silenced {
-                    LOCK_BUTTON.signal(());
+                    input_gate::LOCK.signal(());
                 }
                 shutdown_at = pressed.then_some(now + Duration::from_secs(4));
             } else if pressed {
                 let disposition = control(|c| c.policy.press_disposition());
-                delivered = disposition == Gesture::Navigate && !super::alert::active();
+                delivered = disposition == Gesture::Navigate && !alert_active();
                 finish_gesture(UiInput::Select, disposition);
             } else {
                 control(|c| c.policy.release_press());
-                if core::mem::take(&mut delivered)
-                    && NAVIGATION.try_send(UiInput::Released).is_err()
-                {
-                    INPUT_OVERFLOW.store(true, Ordering::Release);
+                if core::mem::take(&mut delivered) {
+                    send(UiInput::Released);
                 }
             }
         }
@@ -441,8 +322,7 @@ async fn run_button(pin: &mut Input<'static>, boot: bool) {
 pub async fn keyboard_task(mut irq: Input<'static>, bus: &'static board::I2cBus) {
     select(run_keyboard(&mut irq, bus), STOP_KEYBOARD.wait()).await;
     drop(irq);
-    STOPPED.fetch_add(1, Ordering::AcqRel);
-    STOP_PROGRESS.signal(());
+    input_gate::stopped();
 }
 
 /// The modifiers whose going down reached the interface, so that their
@@ -468,11 +348,10 @@ impl Modifiers {
         };
         if down {
             let gesture = start_gesture();
-            self.delivered[index] = gesture == Gesture::Navigate && !super::alert::active();
+            self.delivered[index] = gesture == Gesture::Navigate && !alert_active();
             finish_gesture(input, gesture);
-        } else if core::mem::take(&mut self.delivered[index]) && NAVIGATION.try_send(input).is_err()
-        {
-            INPUT_OVERFLOW.store(true, Ordering::Release);
+        } else if core::mem::take(&mut self.delivered[index]) {
+            send(input);
         }
     }
 }
@@ -554,139 +433,5 @@ async fn run_keyboard(irq: &mut Input<'static>, bus: &'static board::I2cBus) {
                 retry = (retry * 2).min(KEYBOARD_RETRY_MOST);
             }
         }
-    }
-}
-
-pub async fn shutdown() {
-    let epoch = control(|c| {
-        c.policy.shutdown();
-        hold(c);
-        c.policy.epoch
-    });
-    CHANGED.signal(());
-    DISPLAY_READY.signal(());
-    STOP_PRESS.signal(());
-    STOP_BOOT.signal(());
-    STOP_KEYBOARD.signal(());
-    loop {
-        STOP_PROGRESS.reset();
-        if STOPPED.load(Ordering::Acquire) == 3 && CAPTURE_EPOCH.load(Ordering::Acquire) == epoch {
-            break;
-        }
-        STOP_PROGRESS.wait().await;
-    }
-}
-
-pub fn locks_active() -> bool {
-    #[cfg(feature = "input-qualification")]
-    {
-        WakeLock::is_active()
-    }
-    #[cfg(not(feature = "input-qualification"))]
-    {
-        false
-    }
-}
-
-pub fn power_sample(current: Option<i32>, usb: bool, locks: bool) {
-    #[cfg(feature = "input-qualification")]
-    qualification::sample(current, usb, locks);
-    #[cfg(not(feature = "input-qualification"))]
-    let _ = (current, usb, locks);
-}
-
-pub fn power_report() -> Option<heapless::String<256>> {
-    #[cfg(feature = "input-qualification")]
-    {
-        qualification::report()
-    }
-    #[cfg(not(feature = "input-qualification"))]
-    {
-        None
-    }
-}
-
-pub fn power_report_sent() {
-    #[cfg(feature = "input-qualification")]
-    qualification::sent();
-}
-
-#[cfg(feature = "input-qualification")]
-mod qualification {
-    use super::*;
-    use umsh_pager_peripherals::input_power::PowerWindow;
-
-    struct Monitor {
-        epoch: u32,
-        dark_since: Option<u64>,
-        window: PowerWindow,
-        pending: bool,
-    }
-    static MONITOR: critical_section::Mutex<RefCell<Monitor>> =
-        critical_section::Mutex::new(RefCell::new(Monitor {
-            epoch: 0,
-            dark_since: None,
-            window: PowerWindow::new(),
-            pending: false,
-        }));
-
-    pub fn sample(current: Option<i32>, usb: bool, locks: bool) {
-        let (dark, epoch) = control(|c| {
-            (
-                c.policy.mode == Mode::Dark && c.policy.armed,
-                c.policy.epoch,
-            )
-        });
-        let now = Instant::now().as_millis();
-        critical_section::with(|cs| {
-            let mut m = MONITOR.borrow_ref_mut(cs);
-            if usb {
-                m.pending |= m.window.count != 0;
-                m.dark_since = None;
-                return;
-            }
-            if m.pending || m.window.complete() {
-                return;
-            }
-            if !dark {
-                m.dark_since = None;
-                return;
-            }
-            if m.dark_since.is_none() || m.epoch != epoch {
-                m.epoch = epoch;
-                m.dark_since = Some(now);
-                m.window = PowerWindow::new();
-            }
-            // Avoid the display-off transient and the fuel gauge's old average.
-            if now.saturating_sub(m.dark_since.unwrap()) < 30_000 {
-                return;
-            }
-            if let Some(current) = current {
-                m.window.sample(now, current, !locks);
-            }
-        });
-    }
-
-    pub fn report() -> Option<heapless::String<256>> {
-        critical_section::with(|cs| {
-            let m = MONITOR.borrow_ref(cs);
-            if !m.pending {
-                return None;
-            }
-            let w = &m.window;
-            let mut line = heapless::String::new();
-            write!(line, "pager input-power: n={} span_ms={} mean_ma={} min_ma={} max_ma={} unlocked={} complete={} (eligibility, not sleep residency)\r\n",
-                w.count, w.span_ms(), w.mean_ma(), w.min_ma, w.max_ma, w.unlocked, w.complete()).ok()?;
-            Some(line)
-        })
-    }
-
-    pub fn sent() {
-        critical_section::with(|cs| {
-            let mut m = MONITOR.borrow_ref_mut(cs);
-            m.pending = false;
-            m.window = PowerWindow::new();
-            m.dark_since = None;
-        });
     }
 }

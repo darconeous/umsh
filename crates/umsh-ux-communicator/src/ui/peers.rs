@@ -8,7 +8,8 @@ use buoyant::view::prelude::*;
 use embedded_graphics::pixelcolor::Rgb565;
 use heapless::Vec;
 
-use super::{RAIL, line};
+use super::line;
+use crate::board::Metrics;
 use crate::model::{MAX_PEERS, PeerSummary, State, hops_text};
 use crate::nav::keys;
 use crate::{font, icon, theme};
@@ -19,7 +20,6 @@ const ROUTE_LINE: u32 = ROW - NAME_LINE;
 pub(super) const AVATAR: u32 = 34;
 /// From the list's leading edge to the text.
 pub(super) const TEXT_X: u32 = 51;
-const LIST_WIDTH: u32 = theme::WIDTH - RAIL;
 /// The signal bars: each one's width, the space between them, and the
 /// shortest one's height and how much taller each next one is.
 const BAR: u32 = 3;
@@ -38,21 +38,31 @@ static INDICES: [usize; MAX_PEERS] = {
     a
 };
 
-pub fn view(peers: &Vec<PeerSummary, MAX_PEERS>) -> impl View<Rgb565, State> + use<> {
+pub fn view(
+    m: &'static Metrics,
+    peers: &Vec<PeerSummary, MAX_PEERS>,
+) -> impl View<Rgb565, State> + use<> {
     let rows = peers.clone();
     let ids: Vec<u32, MAX_PEERS> = peers.iter().map(|p| p.id).collect();
     let count = rows.len();
     super::list(
         VStack::new((
-            add_row("Add peer", State::open_add_peer, keys::ADD_PEER, LIST_WIDTH),
-            ForEach::<MAX_PEERS>::new_vertical(&INDICES[..count], move |&i| row(&rows[i]))
+            add_row(
+                m,
+                "Add peer",
+                State::open_add_peer,
+                keys::ADD_PEER,
+                m.beside_rail(),
+            ),
+            ForEach::<MAX_PEERS>::new_vertical(&INDICES[..count], move |&i| row(m, &rows[i]))
                 .keyed(move |&i| keys::peer(ids[i])),
         ))
         .with_spacing(0),
     )
     .bound_focus(BoundaryBehavior::Stop)
     .on_key(|key, s: &mut State| match key {
-        Key::Backspace => {
+        // Back, or the arrow toward the rail.
+        Key::Backspace | Key::LeftArrow => {
             s.focus_rail();
             KeyResponse::Handled
         }
@@ -97,6 +107,7 @@ pub(super) fn focused_row<C, V: View<Rgb565, C>>(
 
 /// The row heading a list that adds to it.
 pub(super) fn add_row(
+    m: &'static Metrics,
     name: &'static str,
     act: fn(&mut State),
     key: buoyant::focus::FocusKey,
@@ -104,7 +115,7 @@ pub(super) fn add_row(
 ) -> impl View<Rgb565, State> + use<> {
     Button::new(act, move |button: ButtonState| {
         focused_row(
-            super::line(name, &font::SEMIBOLD, theme::BODY, theme::ACCENT)
+            super::line(name, &font::SEMIBOLD, m.body, theme::ACCENT)
                 .padding(Edges::Leading, TEXT_X)
                 .flex_infinite_width(HorizontalAlignment::Leading)
                 .frame()
@@ -124,12 +135,12 @@ pub(super) fn add_row(
     .focus_key(key)
 }
 
-fn row(peer: &PeerSummary) -> impl View<Rgb565, State> + use<> {
+fn row(m: &'static Metrics, peer: &PeerSummary) -> impl View<Rgb565, State> + use<> {
     let peer = peer.clone();
     let id = peer.id;
     Button::new(
         move |s: &mut State| s.open_peer(id),
-        move |button: ButtonState| Lazy::new((peer.clone(), button.is_focused()), row_look),
+        move |button: ButtonState| Lazy::new((peer.clone(), button.is_focused(), m), row_look),
     )
 }
 
@@ -137,16 +148,18 @@ fn row(peer: &PeerSummary) -> impl View<Rgb565, State> + use<> {
 ///
 /// Built from the peer each time it is drawn ([`Lazy`]): kept in the
 /// render trees, every row's would outweigh the rest of the screen.
-fn row_look((peer, focused): &(PeerSummary, bool)) -> impl View<Rgb565, ()> + use<> {
+fn row_look(
+    (peer, focused, m): &(PeerSummary, bool, &'static Metrics),
+) -> impl View<Rgb565, ()> + use<> {
     focused_row(
         VStack::new((
             HStack::new((
-                line(peer.name.clone(), &font::SEMIBOLD, theme::BODY, theme::TEXT),
+                line(peer.name.clone(), &font::SEMIBOLD, m.body, theme::TEXT),
                 Spacer::default(),
                 line(
                     peer.heard.clone(),
                     &font::SEMIBOLD,
-                    theme::SMALL,
+                    m.small,
                     theme::TEXT_TERTIARY,
                 )
                 .fixed_size(true, false),
@@ -159,7 +172,7 @@ fn row_look((peer, focused): &(PeerSummary, bool)) -> impl View<Rgb565, ()> + us
             // middle.
             peer.hops
                 .is_some()
-                .then(|| route_line(peer).frame().with_height(ROUTE_LINE)),
+                .then(|| route_line(m, peer).frame().with_height(ROUTE_LINE)),
         ))
         .with_spacing(0)
         .with_alignment(HorizontalAlignment::Leading)
@@ -174,21 +187,16 @@ fn row_look((peer, focused): &(PeerSummary, bool)) -> impl View<Rgb565, ()> + us
                 .with_width(TEXT_X),
         ),
         *focused,
-        LIST_WIDTH,
+        m.beside_rail(),
     )
 }
 
 /// How far away the peer is, with how strongly they are heard when direct.
-fn route_line(peer: &PeerSummary) -> impl View<Rgb565, ()> + use<> {
+fn route_line(m: &Metrics, peer: &PeerSummary) -> impl View<Rgb565, ()> + use<> {
     let route = peer.hops.map(hops_text).unwrap_or_default();
     HStack::new((
         peer.signal.filter(|_| peer.hops == Some(1)).map(bars),
-        line(
-            route,
-            &font::REGULAR,
-            theme::SECONDARY,
-            theme::TEXT_TERTIARY,
-        ),
+        line(route, &font::REGULAR, m.secondary, theme::TEXT_TERTIARY),
     ))
     .with_spacing(6)
     .with_alignment(VerticalAlignment::Center)

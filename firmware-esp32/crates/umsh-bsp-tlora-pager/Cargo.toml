@@ -18,6 +18,7 @@ umsh-ulcp-device = { path = "../../../crates/umsh-ulcp-device", default-features
 umsh-ulcp-runtime = { path = "../../../crates/umsh-ulcp-runtime", default-features = false, features = ["i2c"], optional = true }
 esp-hal = { version = "1.2", default-features = false, features = ["esp32s3", "rt", "unstable"] }
 umsh-bsp-esp32 = { path = "../umsh-bsp-esp32", features = ["esp32s3"] }
+umsh-display-st77xx = { path = "../../../crates/umsh-display-st77xx" }
 umsh-pager-peripherals = { path = "../../../crates/umsh-pager-peripherals" }
 umsh-gnss = { path = "../../../crates/umsh-gnss" }
 embassy-time = "0.5"

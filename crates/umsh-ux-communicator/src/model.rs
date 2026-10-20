@@ -1,11 +1,13 @@
 //! What the screens show: plain data the device fills in from its node,
 //! chat store, and peripherals, kept separate from how it is drawn.
 
+use buoyant::primitives::Point;
 use buoyant::view::EditBuffer;
 use heapless::{String, Vec};
 pub use umsh_hal::tz::Rule;
 
 use crate::avatar::{AvatarStyle, BuiltinChannel};
+use crate::board::{Board, Metrics};
 use crate::clock::Local;
 use crate::keyboard::{Aids, Keyboard};
 use crate::lock::Lock;
@@ -1183,6 +1185,13 @@ pub struct State {
     pub glance: Option<Glance>,
     /// The wheel is down, since this press began.
     pub press: Option<Press>,
+    /// A finger is on the screen, since this touch began.
+    pub touch: Option<TouchHold>,
+    /// What is being taken in is a touch: a tap on a message selects it,
+    /// and holding it opens what a press would.
+    pub touching: bool,
+    /// The board this runs on.
+    pub board: &'static Board,
 }
 
 /// The wheel held down. What it presses is pressed when it comes back up,
@@ -1194,6 +1203,16 @@ pub struct Press {
     pub hold_until: Option<u64>,
     /// Holding it opened a menu, so letting go presses nothing.
     pub held: bool,
+}
+
+/// A finger on the screen, which a long press holds where it touched.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TouchHold {
+    /// Where it touched.
+    pub at: Point,
+    /// When holding it there is a long press, on the board's clock; `None`
+    /// once it is, or once it has moved away.
+    pub hold_until: Option<u64>,
 }
 
 /// How long the wheel is held to open a menu, in milliseconds.
@@ -1259,15 +1278,17 @@ impl core::fmt::Debug for State {
             .field("picker", &self.picker)
             .field("glance", &self.glance)
             .field("press", &self.press)
+            .field("touch", &self.touch)
+            .field("touching", &self.touching)
             .finish_non_exhaustive()
     }
 }
 
 impl State {
-    /// No chats, on the Chats screen, with chats' messages kept in `node`.
-    /// [`State::reload`] reads them.
+    /// No chats, on the Chats screen of `board`, with chats' messages kept
+    /// in `node`. [`State::reload`] reads them.
     #[must_use]
-    pub fn new(node: &'static dyn Node) -> Self {
+    pub fn new(node: &'static dyn Node, board: &'static Board) -> Self {
         let mut screens = Vec::new();
         _ = screens.push(Screen::chats());
         Self {
@@ -1287,11 +1308,20 @@ impl State {
             uptime: 0,
             arrived: Vec::new(),
             ending: None,
-            keyboard: Keyboard::default(),
+            keyboard: Keyboard::new(board.controls.keyboard),
             picker: None,
             glance: None,
             press: None,
+            touch: None,
+            touching: false,
+            board,
         }
+    }
+
+    /// The screen, and the sizes laid out on it.
+    #[must_use]
+    pub const fn metrics(&self) -> &'static Metrics {
+        &self.board.metrics
     }
 
     /// How many chats have unread messages, for the rail's badge.
@@ -1786,6 +1816,7 @@ impl State {
             self.glance.map(Glance::until),
             self.lock.deadline(),
             self.press.and_then(|p| p.hold_until),
+            self.touch.and_then(|t| t.hold_until),
         ]
         .into_iter()
         .flatten()

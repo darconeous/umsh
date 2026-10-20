@@ -441,7 +441,7 @@ checksum = "72f5acc6cb2ba439de613abc23857ec3d78374d8ed5ac84e9d11336e87da8649"
 [[package]]
 name = "buoyant"
 version = "0.8.0-alpha.1"
-source = "git+https://github.com/darconeous/buoyant?rev=ede058aaab17df2594b3fd49ceaa5f65ae07c74c#ede058aaab17df2594b3fd49ceaa5f65ae07c74c"
+source = "git+https://github.com/darconeous/buoyant?rev=c364e728efb8e907430fb7b134eef0337a5d7245#c364e728efb8e907430fb7b134eef0337a5d7245"
 dependencies = [
  "embedded-graphics",
  "embedded-graphics-core",
@@ -4757,6 +4757,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "umsh-display-st77xx"
+version = "0.1.0"
+dependencies = [
+ "embassy-futures",
+ "embedded-graphics",
+ "embedded-hal 1.0.0",
+ "embedded-hal-async",
+]
+
+[[package]]
 name = "umsh-flash-store"
 version = "0.1.0"
 dependencies = [
@@ -4899,7 +4909,6 @@ name = "umsh-pager-peripherals"
 version = "0.1.0"
 dependencies = [
  "embassy-futures",
- "embedded-graphics",
  "embedded-hal 1.0.0",
  "embedded-hal-async",
  "umsh-gnss",
@@ -4964,6 +4973,15 @@ version = "0.1.0"
 dependencies = [
  "futures",
  "slab",
+]
+
+[[package]]
+name = "umsh-tdeck-peripherals"
+version = "0.1.0"
+dependencies = [
+ "embassy-futures",
+ "embedded-hal 1.0.0",
+ "embedded-hal-async",
 ]
 
 [[package]]
@@ -5092,6 +5110,7 @@ version = "0.1.0"
 dependencies = [
  "buoyant",
  "embedded-graphics",
+ "embedded-touch",
  "heapless 0.9.3",
  "libm",
  "qrcodegen-no-heap",

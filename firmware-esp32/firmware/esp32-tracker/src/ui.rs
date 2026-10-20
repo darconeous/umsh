@@ -19,7 +19,7 @@ use umsh_ux_display_tracker::menu::{MenuItem, MenuItems, ToggleId, UiEffect, UiM
 
 /// Hand a resolved gesture to the menu: single advances, double selects,
 /// a released long hold goes back.
-#[cfg(not(feature = "board-tlora-pager"))]
+#[cfg(not(feature = "input-gate"))]
 pub(crate) async fn gesture(event: ButtonEvent) {
     let input = match event {
         ButtonEvent::Single => UiInput::Forward,
@@ -191,21 +191,16 @@ fn ui_status<'a>(name: &'a DeviceName, identity: &'a IdentityText) -> screen::St
     #[cfg(not(feature = "battery-telemetry"))]
     let mv = 0;
     // No charger telemetry reaches the MCU on the ADC boards, so their
-    // indicator says nothing about charging rather than asserting the
-    // pack is discharging; the PMIC boards know which way current flows,
-    // and unknown (no cell, or before the first sample) draws nothing
-    // rather than a guess.
+    // charge stays unknown and the indicator says nothing about charging
+    // rather than asserting the pack is discharging; the PMIC boards know
+    // which way current flows, and unknown (no cell, or before the first
+    // sample) draws nothing rather than a guess.
     #[cfg(not(feature = "battery-telemetry"))]
     let battery = screen::BatteryIndicator {
         level_percent: None,
         charge: None,
     };
-    #[cfg(feature = "battery-adc")]
-    let battery = screen::BatteryIndicator {
-        level_percent: (mv != 0).then(|| soc_from_ocv(mv)),
-        charge: None,
-    };
-    #[cfg(any(feature = "pmic-axp2101", feature = "board-tlora-pager"))]
+    #[cfg(feature = "battery-telemetry")]
     let battery = {
         let level = BATTERY_LEVEL.load(Ordering::Acquire);
         screen::BatteryIndicator {
@@ -266,9 +261,9 @@ fn ui_status<'a>(name: &'a DeviceName, identity: &'a IdentityText) -> screen::St
         // not know, which the renderer draws as nothing at all—there
         // is deliberately no fallback, because a placeholder would be an
         // indication of the current time.
-        #[cfg(not(feature = "external-rtc"))]
+        #[cfg(not(feature = "wall-clock"))]
         clock: None,
-        #[cfg(feature = "external-rtc")]
+        #[cfg(feature = "wall-clock")]
         clock: umsh_hal::wall_clock::local_hhmm().map(|(hour, minute)| screen::ClockModel {
             hour,
             minute,
@@ -301,6 +296,8 @@ fn ui_stats() -> screen::StatsModel {
 
 #[cfg(feature = "display-st7796")]
 const DISPLAY_LAYOUT: screen::Layout = screen::Layout::TFT_480X222;
+#[cfg(feature = "display-st7789")]
+const DISPLAY_LAYOUT: screen::Layout = screen::Layout::TFT_320X240;
 #[cfg(any(feature = "display-ssd1306", feature = "display-sh1106"))]
 const DISPLAY_LAYOUT: screen::Layout = screen::Layout::OLED_128X64;
 
@@ -351,9 +348,9 @@ async fn display_tick(awake: bool, pairing_delay: Option<u64>) {
 pub(crate) async fn show_boot_splash(
     display: &mut Display,
 ) -> umsh_ux_display_tracker::boot::BootSplash {
-    // Pager backlights provide immediate startup feedback, including while
-    // the panel resets and its first frame is being drawn.
-    #[cfg(not(feature = "board-tlora-pager"))]
+    // The color panels' backlights provide immediate startup feedback,
+    // including while the panel resets and its first frame is being drawn.
+    #[cfg(not(feature = "display-dcs"))]
     let _ = display.set_display_on(false).await;
     let _ = display.set_brightness(Brightness::NORMAL).await;
     let mut splash = umsh_ux_display_tracker::boot::BootSplash::new();
@@ -397,7 +394,7 @@ pub(crate) async fn display_task(
     #[cfg(feature = "vext")] mut vext: Vext,
 ) {
     #[cfg(feature = "board-tlora-pager")]
-    let pager_capture_epoch = pager::input::interactive().await;
+    let pager_capture_epoch = input_gate::interactive().await;
     let mut model = UiModel::new(board_menu_items());
     #[cfg(not(feature = "board-tlora-pager"))]
     let mut splash = show_boot_splash(&mut display).await;
@@ -416,7 +413,7 @@ pub(crate) async fn display_task(
         Instant::now().as_millis(),
     );
     #[cfg(feature = "board-tlora-pager")]
-    pager::input::shown(pager_capture_epoch);
+    input_gate::shown(pager_capture_epoch);
 
     #[cfg(feature = "board-tlora-pager")]
     let mut was_alerting = false;
@@ -659,7 +656,7 @@ pub(crate) async fn display_task(
         }
         #[cfg(feature = "board-tlora-pager")]
         let pager_capture_epoch = if matches!(transition, Some(Transition::Woke)) {
-            Some(pager::input::interactive().await)
+            Some(input_gate::interactive().await)
         } else {
             None
         };
@@ -669,11 +666,11 @@ pub(crate) async fn display_task(
                 // whatever was abandoned here.
                 model.go_home();
                 #[cfg(feature = "board-tlora-pager")]
-                let before_display_off = pager::input::activity();
+                let before_display_off = input_gate::activity();
                 let off = display.set_display_on(false).await;
                 #[cfg(feature = "board-tlora-pager")]
                 if off.is_ok() {
-                    pager::input::dark(before_display_off);
+                    input_gate::dark(before_display_off);
                 }
                 #[cfg(not(feature = "board-tlora-pager"))]
                 let _ = off;
@@ -732,7 +729,7 @@ pub(crate) async fn display_task(
             let on = display.set_display_on(true).await;
             #[cfg(feature = "board-tlora-pager")]
             if on.is_ok() {
-                pager::input::shown(pager_capture_epoch.unwrap());
+                input_gate::shown(pager_capture_epoch.unwrap());
             }
             #[cfg(not(feature = "board-tlora-pager"))]
             let _ = on;

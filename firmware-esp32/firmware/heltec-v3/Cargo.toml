@@ -84,10 +84,11 @@ board-tlora-pager = [
     "chip-esp32s3",
     "radio-sx126x",
     "display-st7796",
+    "input-gate",
     "wired-usb-serial-jtag",
     "gnss",
     "external-rtc",
-    "battery-telemetry",
+    "battery-cutoff",
 ]
 board-xiao-esp32s3 = [
     "ulcp-i2c",
@@ -97,6 +98,15 @@ board-xiao-esp32s3 = [
     "status-led",
     "power-off-deep-sleep",
     "usb-presence-sof",
+]
+board-tdeck = [
+    "chip-esp32s3",
+    "radio-sx126x",
+    "display-st7789",
+    "input-gate",
+    "wired-usb-serial-jtag",
+    "usb-presence-sof",
+    "battery-adc-rail",
 ]
 board-tbeam-supreme = [
     "ulcp-i2c",
@@ -136,9 +146,15 @@ vext-gates-battery = ["vext"]
 # panel draws it. A board without this still advertises `CAP_BATTERY`,
 # answering with the empty value.
 battery-telemetry = []
+# The board turns itself off when its battery runs empty, which nothing
+# else on it does first.
+battery-cutoff = ["battery-telemetry"]
 # Battery voltage through a SAR ADC divider, the level estimated from it.
 # No charge state reaches the MCU.
 battery-adc = ["battery-telemetry"]
+# The ADC reads the board's supply rail rather than the cell: above any
+# cell's voltage is external power, and the cell cannot be read.
+battery-adc-rail = ["battery-adc"]
 # Power comes through an AXP2101 PMIC instead of MCU GPIOs: rails are
 # brought up over I²C before any peripheral is probed, the battery is
 # read from the PMIC's gauge (no SAADC divider), the charge LED belongs
@@ -173,13 +189,24 @@ wired-usb-serial-jtag = []
 # from the USB start-of-frame stream instead.
 usb-presence-sof = ["wired-usb-serial-jtag"]
 # On-board GNSS receiver on UART1, powered through the pump's rail/wake
-# gate; positioning flows through `umsh-ulcp-runtime`'s gnss feature.
-gnss = []
+# gate; positioning flows through `umsh-ulcp-runtime`'s gnss feature. Its
+# time sets the wall clock.
+gnss = ["wall-clock"]
 # PCF8563 wall-clock RTC: time is restored at boot (TimeSource::
 # ExternalRtc) and written back on manual set and trusted GNSS time.
 rtc-pcf8563 = ["external-rtc"]
-external-rtc = []
-display-st7796 = ["display"]
+external-rtc = ["wall-clock"]
+# The board keeps a wall clock (`CAP_TIME`): set by a host, a GNSS fix, or
+# the user, and held through power-off only with `external-rtc`.
+wall-clock = []
+# A color panel on a MIPI DCS controller (ST7789, ST7796), drawn in a
+# PSRAM frame and sent in stripes.
+display-dcs = ["display"]
+display-st7796 = ["display-dcs"]
+display-st7789 = ["display-dcs"]
+# Lit-panel input capture handed to wake-enabled waits while dark, and
+# what a gesture means while the panel fades: the keyboard boards.
+input-gate = []
 
 # The communicator interface (`umsh-ux-communicator`) in place of the
 # tracker's menus, for a board with a color screen and a keyboard, over the
@@ -188,6 +215,7 @@ display-st7796 = ["display"]
 # logs what it costs.
 communicator = [
     "display",
+    "wall-clock",
     "dep:umsh-ux-communicator",
     "dep:umsh-communicator",
     "dep:umsh-ulcp-admin",

@@ -1,0 +1,14 @@
+[package]
+name = "umsh-tdeck-peripherals"
+description = "Portable peripheral drivers for the LilyGO T-Deck: trackball, keyboard, touch, and battery sense"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+embedded-hal-async.workspace = true
+
+[dev-dependencies]
+embedded-hal = "1"
+embassy-futures = "0.1"

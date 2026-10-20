@@ -4,13 +4,15 @@
 use buoyant::event::{Key, KeyResponse};
 use buoyant::focus::BoundaryBehavior;
 use buoyant::view::Lazy;
+use buoyant::view::popover::Dismissal;
 use buoyant::view::prelude::*;
 use embedded_graphics::pixelcolor::Rgb565;
 use heapless::{String, Vec};
 
+use super::line;
 use super::setting::{card, choice};
-use super::{RAIL, line};
 use crate::avatar::AvatarStyle;
+use crate::board::Metrics;
 use crate::model::{Age, ChatSummary, Chats, MAX_CHATS, State, age};
 use crate::nav::{ChatMenu, keys};
 use crate::text::DraftText;
@@ -23,7 +25,6 @@ const PREVIEW_LINE: u32 = ROW - NAME_LINE;
 const AVATAR: u32 = 34;
 /// From the list's leading edge to the text.
 const TEXT_X: u32 = 51;
-const LIST_WIDTH: u32 = theme::WIDTH - RAIL;
 /// A chat's menu, and Delete's confirmation.
 const MENU_WIDTH: u32 = 220;
 
@@ -42,6 +43,7 @@ static INDICES: [usize; MAX_CHATS] = {
 /// a chat's menu or Delete's confirmation. Backspace moves to the rail, Enter opens the
 /// focused chat, as a press does, and a letter starts Find with it.
 pub fn view(
+    m: &'static Metrics,
     chats: &Chats,
     now: Option<u32>,
     menu: Option<ChatMenu>,
@@ -54,13 +56,14 @@ pub fn view(
     super::list(
         ForEach::<MAX_CHATS>::new_vertical(&INDICES[..count], move |&i| {
             let chat = &rows[i];
-            row(chat, age(chat.last_activity, now), held == Some(chat.id))
+            row(m, chat, age(chat.last_activity, now), held == Some(chat.id))
         })
         .keyed(move |&i| keys::chat(ids[i])),
     )
     .bound_focus(BoundaryBehavior::Stop)
     .on_key(|key, s: &mut State| match key {
-        Key::Backspace => {
+        // Back, or the arrow toward the rail.
+        Key::Backspace | Key::LeftArrow => {
             s.focus_rail();
             KeyResponse::Handled
         }
@@ -78,18 +81,24 @@ pub fn view(
         }
         _ => KeyResponse::Ignored,
     })
-    .popover(menu.as_ref(), move |menu| over(*menu))
+    .popover(menu.as_ref(), move |menu| over(m, *menu))
+    // A tap outside closes it, as Backspace does.
+    .on_blur(|s: &mut State| {
+        s.close_chat_menu();
+        Dismissal::Dismiss
+    })
 }
 
 /// A chat's menu, or Delete's confirmation, Cancel focused. Backspace
 /// closes either.
 // Out of line, as `setting::row` is, against the Xtensa back end's failure.
 #[inline(never)]
-fn over(menu: ChatMenu) -> impl View<Rgb565, State> + use<> {
+fn over(m: &'static Metrics, menu: ChatMenu) -> impl View<Rgb565, State> + use<> {
     let text = |text: &str| String::try_from(text).unwrap_or_default();
     let (first, second) = match menu {
         ChatMenu::Open(_) => (
             Some(choice(
+                m,
                 text("Show peer"),
                 keys::CHAT_SHOW_PEER,
                 State::show_chat_peer,
@@ -97,6 +106,7 @@ fn over(menu: ChatMenu) -> impl View<Rgb565, State> + use<> {
                 None,
             )),
             choice(
+                m,
                 text("Delete"),
                 keys::CHAT_DELETE,
                 State::ask_delete_chat,
@@ -106,6 +116,7 @@ fn over(menu: ChatMenu) -> impl View<Rgb565, State> + use<> {
         ),
         ChatMenu::ConfirmDelete(_) => (
             Some(choice(
+                m,
                 text("Delete chat"),
                 keys::DELETE_CONFIRM,
                 State::delete_chat,
@@ -113,6 +124,7 @@ fn over(menu: ChatMenu) -> impl View<Rgb565, State> + use<> {
                 None,
             )),
             choice(
+                m,
                 text("Cancel"),
                 keys::DELETE_CANCEL,
                 State::close_chat_menu,
@@ -122,6 +134,7 @@ fn over(menu: ChatMenu) -> impl View<Rgb565, State> + use<> {
         ),
     };
     card(
+        m,
         VStack::new((first, second)).with_spacing(0),
         MENU_WIDTH,
         match menu {
@@ -132,7 +145,12 @@ fn over(menu: ChatMenu) -> impl View<Rgb565, State> + use<> {
     )
 }
 
-fn row(chat: &ChatSummary, age: Age, held: bool) -> impl View<Rgb565, State> + use<> {
+fn row(
+    m: &'static Metrics,
+    chat: &ChatSummary,
+    age: Age,
+    held: bool,
+) -> impl View<Rgb565, State> + use<> {
     let id = chat.id;
     let look = Row {
         avatar: chat.avatar.clone(),
@@ -143,6 +161,7 @@ fn row(chat: &ChatSummary, age: Age, held: bool) -> impl View<Rgb565, State> + u
         unread: chat.unread,
         muted: chat.muted,
         focused: false,
+        m,
     };
     Button::new(
         move |s: &mut State| s.open_chat(id),
@@ -165,6 +184,7 @@ struct Row {
     unread: bool,
     muted: bool,
     focused: bool,
+    m: &'static Metrics,
 }
 
 /// A chat's row: its avatar, then its name over its last message.
@@ -221,7 +241,7 @@ fn row_look(row: &Row) -> impl View<Rgb565, ()> + use<> {
         (!row.focused).then(|| {
             Rectangle
                 .foreground_color(theme::LINE)
-                .frame_sized(LIST_WIDTH - TEXT_X, 1)
+                .frame_sized(row.m.beside_rail() - TEXT_X, 1)
         }),
     )
 }
@@ -244,14 +264,14 @@ fn name_line(row: &Row) -> impl View<Rgb565, ()> + use<> {
         theme::TEXT
     };
     HStack::new((
-        line(row.name.clone(), name_face, theme::BODY, name_color),
+        line(row.name.clone(), name_face, row.m.body, name_color),
         Spacer::default(),
         row.muted.then(|| {
             Image::new(&icon::BELL_SLASH)
                 .as_template()
                 .foreground_color(theme::TEXT_TERTIARY)
         }),
-        line(row.age.clone(), &font::SEMIBOLD, theme::SMALL, age_color).fixed_size(true, false),
+        line(row.age.clone(), &font::SEMIBOLD, row.m.small, age_color).fixed_size(true, false),
     ))
     .with_spacing(4)
     .padding(Edges::Trailing, 10)
@@ -266,14 +286,14 @@ fn preview_line(row: &Row) -> impl View<Rgb565, ()> + use<> {
     };
     HStack::new((
         row.draft.is_some().then(|| {
-            line("Draft", &font::BOLD, theme::SECONDARY, theme::AMBER).fixed_size(true, false)
+            line("Draft", &font::BOLD, row.m.secondary, theme::AMBER).fixed_size(true, false)
         }),
         row.draft
             .clone()
-            .map(|draft| line(draft, &font::REGULAR, theme::SECONDARY, color)),
+            .map(|draft| line(draft, &font::REGULAR, row.m.secondary, color)),
         row.draft
             .is_none()
-            .then(|| line(row.preview.clone(), &font::REGULAR, theme::SECONDARY, color)),
+            .then(|| line(row.preview.clone(), &font::REGULAR, row.m.secondary, color)),
         Spacer::default(),
         row.unread
             .then(|| Circle.foreground_color(theme::ACCENT).frame_sized(10, 10)),

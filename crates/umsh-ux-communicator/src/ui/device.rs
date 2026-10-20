@@ -5,12 +5,14 @@
 use buoyant::event::{Key, KeyResponse};
 use buoyant::focus::BoundaryBehavior;
 use buoyant::match_view;
+use buoyant::view::popover::Dismissal;
 use buoyant::view::prelude::*;
 use embedded_graphics::pixelcolor::Rgb565;
 use heapless::String;
 
 use super::conversation::header;
 use super::setting::{End, card, choice, row};
+use crate::board::Metrics;
 use crate::model::{Bluetooth, ChatKind, RadioSettings, State};
 use crate::nav::{DevicePage, Screen, keys};
 use crate::theme;
@@ -21,6 +23,7 @@ const CONFIRM_WIDTH: u32 = 220;
 
 /// The categories, beside the rail.
 pub fn view(state: &State) -> impl View<Rgb565, State> + use<> {
+    let m = state.metrics();
     let channels = state
         .chats
         .iter()
@@ -41,7 +44,7 @@ pub fn view(state: &State) -> impl View<Rgb565, State> + use<> {
         } else {
             End::value_chevron(value)
         };
-        row(name, key, act, end, false, ROW)
+        row(m, name, key, act, end, false, ROW)
     };
     super::list(
         VStack::new((
@@ -84,6 +87,7 @@ pub fn view(state: &State) -> impl View<Rgb565, State> + use<> {
             ),
             category("Maintenance", keys::MAINTENANCE, |_| {}, ""),
             row(
+                m,
                 "Shut down",
                 keys::SHUT_DOWN,
                 State::ask_shut_down,
@@ -97,25 +101,33 @@ pub fn view(state: &State) -> impl View<Rgb565, State> + use<> {
     .with_scroll_step(ROW)
     .bound_focus(BoundaryBehavior::Stop)
     .on_key(|key, s: &mut State| match key {
-        Key::Backspace => {
+        // Back, or the arrow toward the rail.
+        Key::Backspace | Key::LeftArrow => {
             s.focus_rail();
             KeyResponse::Handled
         }
         _ => KeyResponse::Ignored,
     })
     .popover(confirm.then_some(()).as_ref(), |()| {
-        shut_down_confirmation()
+        shut_down_confirmation(m)
+    })
+    // A tap outside is Cancel.
+    .on_blur(|s: &mut State| {
+        s.cancel_shut_down();
+        Dismissal::Dismiss
     })
 }
 
 /// Shut down, confirmed, or Cancel, which is focused.
 // Out of line, as `setting::row` is, against the Xtensa back end's failure.
 #[inline(never)]
-fn shut_down_confirmation() -> impl View<Rgb565, State> + use<> {
+fn shut_down_confirmation(m: &'static Metrics) -> impl View<Rgb565, State> + use<> {
     let text = |text: &str| String::try_from(text).unwrap_or_default();
     card(
+        m,
         VStack::new((
             choice(
+                m,
                 text("Shut down"),
                 keys::SHUT_DOWN_CONFIRM,
                 State::shut_down,
@@ -123,6 +135,7 @@ fn shut_down_confirmation() -> impl View<Rgb565, State> + use<> {
                 None,
             ),
             choice(
+                m,
                 text("Cancel"),
                 keys::SHUT_DOWN_CANCEL,
                 State::cancel_shut_down,
@@ -139,20 +152,25 @@ fn shut_down_confirmation() -> impl View<Rgb565, State> + use<> {
 
 /// A screen under Device.
 pub fn page(state: &State, page: &DevicePage) -> impl View<Rgb565, State> + use<> {
+    let m = state.metrics();
     match_view!(page, {
-        DevicePage::Radio { settings } => radio(settings, state.profile_name(settings)),
+        DevicePage::Radio { settings } => radio(m, settings, state.profile_name(settings)),
         DevicePage::Share => super::share::view(state),
         DevicePage::Channels => super::channels::view(state),
         DevicePage::AddChannel { text } => super::add_channel::view(state, text),
         DevicePage::Profiles => super::profile::view(state, "Profile"),
-        DevicePage::Keyboard { settings } => super::typing::settings(settings),
-        DevicePage::TransmitPower { text } => super::typing::transmit_power(text),
+        DevicePage::Keyboard { settings } => super::typing::settings(m, settings),
+        DevicePage::TransmitPower { text } => super::typing::transmit_power(m, text),
         DevicePage::Clock { page } => super::clock::page(state, page),
     })
 }
 
 /// The radio's settings, on the radio profile called `profile`.
-fn radio(settings: &RadioSettings, profile: &str) -> impl View<Rgb565, State> + use<> {
+fn radio(
+    m: &'static Metrics,
+    settings: &RadioSettings,
+    profile: &str,
+) -> impl View<Rgb565, State> + use<> {
     let mut airtime: String<24> = String::new();
     _ = core::fmt::write(
         &mut airtime,
@@ -161,10 +179,11 @@ fn radio(settings: &RadioSettings, profile: &str) -> impl View<Rgb565, State> + 
     let mut power: String<24> = String::new();
     _ = core::fmt::write(&mut power, format_args!("{} dBm", settings.transmit_power));
     VStack::new((
-        header("Radio", None, None),
+        header(m, "Radio", None, None),
         super::list(
             VStack::new((
                 row(
+                    m,
                     "Profile",
                     keys::PROFILE,
                     State::open_profiles,
@@ -173,6 +192,7 @@ fn radio(settings: &RadioSettings, profile: &str) -> impl View<Rgb565, State> + 
                     ROW,
                 ),
                 row(
+                    m,
                     "Transmit power",
                     keys::TRANSMIT_POWER,
                     State::open_transmit_power,
@@ -181,6 +201,7 @@ fn radio(settings: &RadioSettings, profile: &str) -> impl View<Rgb565, State> + 
                     ROW,
                 ),
                 row(
+                    m,
                     "Forwarding",
                     keys::FORWARDING,
                     State::toggle_forwarding,
@@ -189,6 +210,7 @@ fn radio(settings: &RadioSettings, profile: &str) -> impl View<Rgb565, State> + 
                     ROW,
                 ),
                 row(
+                    m,
                     "Share location",
                     keys::SHARE_LOCATION,
                     State::toggle_share_location,
@@ -197,6 +219,7 @@ fn radio(settings: &RadioSettings, profile: &str) -> impl View<Rgb565, State> + 
                     ROW,
                 ),
                 row(
+                    m,
                     "Airtime",
                     keys::AIRTIME,
                     |_| {},

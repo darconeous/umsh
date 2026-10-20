@@ -314,6 +314,14 @@ impl State {
         self.screen().focus().current().and_then(keys::part_of)
     }
 
+    /// Whatever part is being changed is done with.
+    pub fn end_part_edit(&mut self) {
+        if let Some((_, editing, typed)) = self.set_time_mut() {
+            *editing = false;
+            *typed = None;
+        }
+    }
+
     /// A part was pressed: AM or PM changes over, and any other starts or
     /// stops being changed by turning.
     pub fn press_part(&mut self, part: Part) {

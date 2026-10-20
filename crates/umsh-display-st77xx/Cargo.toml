@@ -1,0 +1,15 @@
+[package]
+name = "umsh-display-st77xx"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Async ST7789/ST7796 SPI panel driver and RGB565 framebuffer shared by UMSH boards"
+
+[dependencies]
+embedded-graphics = { version = "0.8", default-features = false }
+embedded-hal = "1"
+embedded-hal-async.workspace = true
+
+[dev-dependencies]
+embassy-futures = "0.1"

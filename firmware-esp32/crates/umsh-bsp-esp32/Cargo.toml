@@ -55,3 +55,5 @@ rand = { version = "0.10.1", default-features = false }
 # the pin driving is esp-hal's.
 lora-phy = { version = "3.0.2-alpha", default-features = false }
 embedded-hal-async = "1.0"
+embassy-futures = "0.1"
+umsh-display-st77xx = { path = "../../../crates/umsh-display-st77xx" }

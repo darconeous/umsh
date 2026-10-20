@@ -22,7 +22,8 @@ struct Spec {
 
 const SANS: &str = "fonts/MPLUS1[wght]-latin.ttf";
 const MONO: &str = "fonts/MPLUSCodeLatin[wdth,wght]-latin.ttf";
-const UI_SIZES: &[u16] = &[16, 17, 20];
+/// The Pager's sizes, then the T-Deck's, whose panel is coarser.
+const UI_SIZES: &[u16] = &[12, 14, 16, 17, 20];
 
 const SPECS: &[Spec] = &[
     Spec {
@@ -51,7 +52,7 @@ const SPECS: &[Spec] = &[
         name: "BOLD",
         file: SANS,
         weight: 700.0,
-        sizes: &[10, 13, 16, 17, 20, 26],
+        sizes: &[10, 12, 13, 14, 16, 17, 20, 26],
         only: None,
     },
     Spec {
@@ -65,14 +66,14 @@ const SPECS: &[Spec] = &[
         name: "MONO",
         file: MONO,
         weight: 400.0,
-        sizes: &[16, 20],
+        sizes: &[12, 14, 16, 20],
         only: None,
     },
     Spec {
         name: "MONO_BOLD",
         file: MONO,
         weight: 700.0,
-        sizes: &[10, 13, 16, 20],
+        sizes: &[10, 13, 14, 16, 20],
         only: None,
     },
     // The lock screen's time: digits alone, large, beside the date and

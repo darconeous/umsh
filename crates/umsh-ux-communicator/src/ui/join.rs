@@ -15,6 +15,7 @@ use heapless::String;
 use super::conversation::header;
 use super::label;
 use super::member::detail_head;
+use crate::board::Metrics;
 use crate::model::{Invite, State};
 use crate::nav::{JoinName, keys};
 use crate::{font, icon, theme};
@@ -24,7 +25,11 @@ const ROW: u32 = 36;
 const INSET: u32 = 12;
 const RADIUS: u16 = 8;
 
-pub fn view(invite: &Invite, name: &JoinName) -> impl View<Rgb565, State> + use<> {
+pub fn view(
+    m: &'static Metrics,
+    invite: &Invite,
+    name: &JoinName,
+) -> impl View<Rgb565, State> + use<> {
     let (kind, warning) = if invite.access.is_open() {
         ("Public channel", "Anyone who knows the name can read it.")
     } else {
@@ -34,21 +39,21 @@ pub fn view(invite: &Invite, name: &JoinName) -> impl View<Rgb565, State> + use<
         )
     };
     VStack::new((
-        header("Join channel", None, None),
-        detail_head(&invite.avatar(), &invite.name, kind),
+        header(m, "Join channel", None, None),
+        detail_head(m, &invite.avatar(), &invite.name, kind, false),
         HStack::new((
             Image::new(&icon::WARNING)
                 .as_template()
                 .foreground_color(theme::AMBER),
-            label::<48>(warning, &font::MEDIUM, theme::SECONDARY, theme::AMBER),
+            label::<48>(warning, &font::MEDIUM, m.secondary, theme::AMBER),
         ))
         .with_spacing(6)
         .padding(Edges::Leading, 9)
         .flex_infinite_width(HorizontalAlignment::Leading)
         .frame()
         .with_height(WARNING),
-        name_row(name),
-        join_button(),
+        name_row(m, name),
+        join_button(m),
     ))
     .with_spacing(0)
     .bound_focus(BoundaryBehavior::Stop)
@@ -62,19 +67,20 @@ pub fn view(invite: &Invite, name: &JoinName) -> impl View<Rgb565, State> + use<
 }
 
 /// What the channel is to be called here, edited in place.
-fn name_row(name: &JoinName) -> impl View<Rgb565, State> + use<> {
+fn name_row(m: &'static Metrics, name: &JoinName) -> impl View<Rgb565, State> + use<> {
     let shown: String<32> = String::try_from(name.text()).unwrap_or_default();
     TextField::new(name, &font::REGULAR, State::join_name_mut)
-        .with_font_size(theme::SECONDARY)
+        .with_font_size(m.secondary)
         .with_max_lines(1)
         // Enter ends the edit.
         .on_submit(|_: &mut State| {})
         .on_active(State::field_active)
-        .with_label(move |status, area| name_look(status, area, &shown))
+        .with_label(move |status, area| name_look(m, status, area, &shown))
         .focus_key(keys::JOIN_NAME)
 }
 
 fn name_look(
+    m: &'static Metrics,
     status: TextFieldStatus,
     area: TextArea<'static, String<32>, PrerenderedFont>,
     shown: &str,
@@ -88,7 +94,7 @@ fn name_look(
         theme::BACKGROUND
     };
     HStack::new((
-        label::<8>("Name", face, theme::BODY, theme::TEXT),
+        label::<8>("Name", face, m.body, theme::TEXT),
         // Edited where it stands; otherwise set at the end, as a value is.
         editing.then(|| {
             area.colors(AreaColors {
@@ -100,12 +106,7 @@ fn name_look(
         (!editing).then(|| {
             HStack::new((
                 Spacer::default(),
-                label::<32>(
-                    shown,
-                    &font::REGULAR,
-                    theme::SECONDARY,
-                    theme::TEXT_SECONDARY,
-                ),
+                label::<32>(shown, &font::REGULAR, m.secondary, theme::TEXT_SECONDARY),
                 Image::new(&icon::CHEVRON)
                     .as_template()
                     .foreground_color(theme::TEXT_TERTIARY),
@@ -125,10 +126,10 @@ fn name_look(
 }
 
 /// Joins, and opens the channel.
-fn join_button() -> impl View<Rgb565, State> + use<> {
+fn join_button(m: &'static Metrics) -> impl View<Rgb565, State> + use<> {
     Button::new(State::join, |button: ButtonState| {
         let focused = button.is_focused();
-        label::<16>("Join channel", &font::BOLD, theme::BODY, theme::ACCENT)
+        label::<16>("Join channel", &font::BOLD, m.body, theme::ACCENT)
             .hint_background_color(if focused {
                 theme::FOCUS
             } else {

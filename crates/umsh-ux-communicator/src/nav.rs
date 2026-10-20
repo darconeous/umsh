@@ -12,7 +12,7 @@ use heapless::String;
 pub use crate::clock_settings::{ClockPage, DateParts, Part, ZoneFind};
 use crate::keyboard::Field;
 use crate::model::{
-    ChannelEntry, ChatId, ChatKind, ChatSummary, Details, Found, FoundKind, Invite,
+    ChannelEntry, ChatId, ChatKind, ChatSummary, Delivery, Details, Found, FoundKind, Invite,
     KeyboardSettings, MAX_CHATS, MAX_FOUND, Member, MessageId, PeerDetail, PeerEntry, PeerId,
     Profile, RadioSettings, Reaction, Section, Shareable, State, TRANSMIT_POWER, word_match,
 };
@@ -1184,10 +1184,19 @@ impl State {
         self.shutting_down();
     }
 
-    /// The wheel was held down long enough: opens the menu of the direct
-    /// chat focused in the Chats list, with its first choice focused.
-    /// Returns whether a menu opened.
+    /// The wheel, or a finger, was held down long enough on what is
+    /// focused: opens its menu. Returns whether one opened.
     pub(crate) fn hold(&mut self) -> bool {
+        match self.screens.last() {
+            Some(Screen::Chats { .. }) => self.hold_chat(),
+            Some(Screen::Conversation { .. }) => self.hold_message(),
+            _ => false,
+        }
+    }
+
+    /// Opens the menu of the direct chat focused in the Chats list, with its
+    /// first choice focused.
+    fn hold_chat(&mut self) -> bool {
         let Some(Screen::Chats { focus, menu, .. }) = self.screens.last() else {
             return false;
         };
@@ -1206,6 +1215,37 @@ impl State {
         if let Some(Screen::Chats { focus, menu, .. }) = self.screens.last_mut() {
             *menu = Some(ChatMenu::Open(chat));
             focus.request(keys::CHAT_SHOW_PEER);
+        }
+        true
+    }
+
+    /// Opens what pressing the focused message does: its actions, or for
+    /// one unconfirmed, sending it again.
+    fn hold_message(&mut self) -> bool {
+        let Some(Screen::Conversation {
+            focus,
+            actions: None,
+            unsent: None,
+            ..
+        }) = self.screens.last()
+        else {
+            return false;
+        };
+        let Some(key) = focus.current() else {
+            return false;
+        };
+        let Some((id, unconfirmed)) = self.conversation.as_ref().and_then(|c| {
+            c.messages
+                .iter()
+                .find(|m| keys::message(m.id) == key)
+                .map(|m| (m.id, m.delivery == Delivery::Unconfirmed))
+        }) else {
+            return false;
+        };
+        if unconfirmed {
+            self.retry(id);
+        } else {
+            self.open_actions(id);
         }
         true
     }

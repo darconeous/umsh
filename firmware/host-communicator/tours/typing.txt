@@ -1,0 +1,10 @@
+# Typing in a channel, and the character picker.
+turn 1
+press
+keys on my way
+space
+space
+shot typing
+alt
+space
+shot picker

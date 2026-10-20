@@ -1,0 +1,12 @@
+# Locking, and what arrives while locked.
+dark
+wait 2
+lit
+shot lock
+arrive
+wait 1
+arrive
+lit
+shot lock-arrivals
+turn 3
+shot lock-steps

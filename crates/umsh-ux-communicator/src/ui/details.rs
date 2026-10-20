@@ -10,6 +10,7 @@ use heapless::String;
 
 use super::conversation::header;
 use super::{label, line};
+use crate::board::Metrics;
 use crate::model::{Details, MAX_REACTORS, Reactor, State};
 use crate::nav::keys;
 use crate::{font, icon, theme};
@@ -34,18 +35,19 @@ static INDICES: [usize; MAX_REACTORS] = {
 
 /// `time` is when the message was sent or received, in local time.
 pub fn view(
+    m: &'static Metrics,
     details: &Details,
     inbound: bool,
     time: Option<String<8>>,
 ) -> impl View<Rgb565, State> + use<> {
     let details = details.clone();
     VStack::new((
-        header("Message details", None, None),
+        header(m, "Message details", None, None),
         super::list(
             // One focusable block, which the wheel scrolls a row at a time.
             Button::new(
                 |_: &mut State| {},
-                move |_| rows(&details, inbound, time.as_ref()),
+                move |_| rows(m, &details, inbound, time.as_ref()),
             )
             .focus_key(keys::DETAIL_LIST),
         )
@@ -64,6 +66,7 @@ pub fn view(
 
 /// The rows for what is known.
 fn rows(
+    m: &'static Metrics,
     details: &Details,
     inbound: bool,
     time: Option<&String<8>>,
@@ -76,24 +79,24 @@ fn rows(
     // A true minus, as the mockup sets it.
     let minus = |negative: bool| if negative { "\u{2212}" } else { "" };
     VStack::new((
-        time.map(|time| row(if inbound { "Received" } else { "Sent" }, time, false)),
+        time.map(|time| row(m, if inbound { "Received" } else { "Sent" }, time, false)),
         details
             .hops
-            .map(|hops| row("Hops", &text(format_args!("{hops}")), false)),
+            .map(|hops| row(m, "Hops", &text(format_args!("{hops}")), false)),
         (!details.route.is_empty())
-            .then(|| row("Route", &text(format_args!("{}", details.route)), false)),
+            .then(|| row(m, "Route", &text(format_args!("{}", details.route)), false)),
         details.rssi.map(|rssi| {
             let value = text(format_args!(
                 "{}{} dBm",
                 minus(rssi < 0),
                 rssi.unsigned_abs()
             ));
-            row("Signal", &value, false)
+            row(m, "Signal", &value, false)
         }),
         details.snr.map(|tenths| {
             let (sign, tenths) = (minus(tenths < 0), tenths.unsigned_abs());
             let value = text(format_args!("{sign}{}.{} dB", tenths / 10, tenths % 10));
-            row("Signal-to-noise", &value, false)
+            row(m, "Signal-to-noise", &value, false)
         }),
         inbound.then(|| {
             let source = if details.authenticated {
@@ -101,25 +104,20 @@ fn rows(
             } else {
                 "Not authenticated"
             };
-            row("Source", source, false)
+            row(m, "Source", source, false)
         }),
         (!details.reactors.is_empty()).then(|| {
-            label::<16>(
-                "Reactions",
-                &font::BOLD,
-                theme::SMALL,
-                theme::TEXT_SECONDARY,
-            )
-            .padding(Edges::Leading, INSET)
-            .flex_infinite_width(HorizontalAlignment::Leading)
-            .frame()
-            .with_height(CAPTION)
-            .with_alignment(Alignment::BottomLeading)
+            label::<16>("Reactions", &font::BOLD, m.small, theme::TEXT_SECONDARY)
+                .padding(Edges::Leading, INSET)
+                .flex_infinite_width(HorizontalAlignment::Leading)
+                .frame()
+                .with_height(CAPTION)
+                .with_alignment(Alignment::BottomLeading)
         }),
         {
             let reactors = details.reactors.clone();
             ForEach::<MAX_REACTORS>::new_vertical(&INDICES[..reactors.len()], move |&i| {
-                reactor(&reactors[i])
+                reactor(m, &reactors[i])
             })
             .with_spacing(0)
         },
@@ -130,14 +128,14 @@ fn rows(
 }
 
 /// Someone's reaction: who, and the glyph for it.
-fn reactor(reactor: &Reactor) -> impl View<Rgb565, State> + use<> {
-    let name = |text| line(text, &font::REGULAR, theme::BODY, theme::TEXT);
+fn reactor(m: &'static Metrics, reactor: &Reactor) -> impl View<Rgb565, State> + use<> {
+    let name = |text| line(text, &font::REGULAR, m.body, theme::TEXT);
     HStack::new((
         reactor.name.clone().map(name),
         reactor
             .name
             .is_none()
-            .then(|| line("You", &font::REGULAR, theme::BODY, theme::TEXT)),
+            .then(|| line("You", &font::REGULAR, m.body, theme::TEXT)),
         Spacer::default(),
         Image::new(icon::reaction(reactor.reaction, icon::Pad::Screen)),
     ))
@@ -155,6 +153,7 @@ fn reactor(reactor: &Reactor) -> impl View<Rgb565, State> + use<> {
 /// A labeled value, with a rule under it. A `muted` label is for a value
 /// not known yet.
 pub(super) fn row(
+    m: &'static Metrics,
     name: &'static str,
     value: &str,
     muted: bool,
@@ -165,14 +164,9 @@ pub(super) fn row(
         theme::TEXT
     };
     HStack::new((
-        label::<16>(name, &font::REGULAR, theme::BODY, color),
+        label::<16>(name, &font::REGULAR, m.body, color),
         Spacer::default(),
-        label::<48>(
-            value,
-            &font::REGULAR,
-            theme::SECONDARY,
-            theme::TEXT_SECONDARY,
-        ),
+        label::<48>(value, &font::REGULAR, m.secondary, theme::TEXT_SECONDARY),
     ))
     .with_spacing(8)
     .padding(Edges::Leading, INSET)

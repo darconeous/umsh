@@ -2,7 +2,8 @@
 //! match come first, then peers, saved or heard nearby, each name lit where
 //! it matches. Enter opens the top result, which is tinted while the field
 //! has focus; turning moves into the results once the edit ends. Backspace
-//! on an empty field ends the edit, and again closes Find.
+//! on an empty field ends the edit, and again closes Find; where the board
+//! has touch, an arrow before the field closes it too.
 
 use buoyant::event::{Key, KeyResponse};
 use buoyant::focus::BoundaryBehavior;
@@ -14,12 +15,12 @@ use buoyant::view::text_field::TextFieldStatus;
 use embedded_graphics::pixelcolor::Rgb565;
 use heapless::String;
 
-use super::{RAIL, label};
+use super::label;
+use crate::board::Metrics;
 use crate::model::{Found, FoundKind, MAX_FOUND, State, word_match};
 use crate::nav::{FindText, keys};
 use crate::{font, icon, theme};
 
-const LIST_WIDTH: u32 = theme::WIDTH - RAIL;
 /// The field, a pill inset from the list's edges.
 const FIELD_INSET: u32 = 6;
 const FIELD: u32 = 28;
@@ -44,22 +45,30 @@ static INDICES: [usize; MAX_FOUND] = {
 };
 
 pub fn view(state: &State, text: &FindText) -> impl View<Rgb565, State> + use<> {
+    let m = state.metrics();
     let (found, count) = state.found();
     let query: String<24> = String::try_from(text.text().trim()).unwrap_or_default();
     // Enter's target while the field has focus: tinted, with no focus bar.
     let tint = state.screen().focus().current() == Some(keys::FIND_FIELD);
     let items = found.len();
+    let back = super::conversation::back(m, State::end_find);
+    // The field starts after the way out, where touch has one.
+    let leading = if back.is_some() { 0 } else { FIELD_INSET };
     VStack::new((
-        TextField::new(text, &font::REGULAR, State::find_text_mut)
-            .with_font_size(theme::BODY)
-            .with_max_lines(1)
-            .with_caret_width(CARET)
-            .on_submit(State::open_top_found)
-            .on_active(State::field_active)
-            .with_label(move |status, area| field_look(status, area, count))
-            .focus_key(keys::FIND_FIELD)
-            .padding(Edges::Horizontal, FIELD_INSET)
-            .padding(Edges::Vertical, 3),
+        HStack::new((
+            back,
+            TextField::new(text, &font::REGULAR, State::find_text_mut)
+                .with_font_size(m.body)
+                .with_max_lines(1)
+                .with_caret_width(CARET)
+                .on_submit(State::open_top_found)
+                .on_active(State::field_active)
+                .with_label(move |status, area| field_look(m, status, area, count))
+                .focus_key(keys::FIND_FIELD)
+                .padding(Edges::Leading, leading)
+                .padding(Edges::Trailing, FIELD_INSET)
+                .padding(Edges::Vertical, 3),
+        )),
         super::list(
             ForEach::<MAX_FOUND>::new_vertical(&INDICES[..items], move |&i| {
                 let group = match (
@@ -71,7 +80,7 @@ pub fn view(state: &State, text: &FindText) -> impl View<Rgb565, State> + use<> 
                     (_, None | Some(FoundKind::Chat(_))) => Some("Peers"),
                     _ => None,
                 };
-                result(i, &found[i], &query, group, tint && i == 0)
+                result(m, i, &found[i], &query, group, tint && i == 0)
             })
             .keyed(|&i| keys::found(i)),
         ),
@@ -83,12 +92,17 @@ pub fn view(state: &State, text: &FindText) -> impl View<Rgb565, State> + use<> 
             s.end_find();
             KeyResponse::Handled
         }
+        Key::LeftArrow => {
+            s.focus_rail();
+            KeyResponse::Handled
+        }
         _ => KeyResponse::Ignored,
     })
 }
 
 /// The pill: a magnifier, what is typed, and how many it finds.
 fn field_look(
+    m: &'static Metrics,
     status: TextFieldStatus,
     area: TextArea<'static, String<24>, PrerenderedFont>,
     count: usize,
@@ -112,8 +126,7 @@ fn field_look(
         })
         .foreground_color(theme::TEXT)
         .flex_infinite_width(HorizontalAlignment::Leading),
-        label::<12>(&found, &font::MEDIUM, theme::SMALL, theme::TEXT_TERTIARY)
-            .fixed_size(true, false),
+        label::<12>(&found, &font::MEDIUM, m.small, theme::TEXT_TERTIARY).fixed_size(true, false),
     ))
     .with_spacing(6)
     .hint_background_color(fill)
@@ -134,6 +147,7 @@ fn field_look(
 
 /// A result, under its group's label when it is the group's first.
 fn result(
+    m: &'static Metrics,
     index: usize,
     found: &Found,
     query: &str,
@@ -153,7 +167,7 @@ fn result(
     );
     VStack::new((
         group.map(|group| {
-            super::line(group, &font::BOLD, theme::SMALL, theme::TEXT_SECONDARY)
+            super::line(group, &font::BOLD, m.small, theme::TEXT_SECONDARY)
                 .padding(Edges::Leading, 10)
                 .flex_infinite_width(HorizontalAlignment::Leading)
                 .frame()
@@ -169,25 +183,20 @@ fn result(
                     theme::BACKGROUND
                 };
                 HStack::new((
-                    label::<32>(&before, &font::SEMIBOLD, theme::BODY, theme::TEXT),
-                    label::<32>(&matched, &font::EXTRABOLD, theme::BODY, theme::ACCENT),
-                    label::<32>(&after, &font::SEMIBOLD, theme::BODY, theme::TEXT),
+                    label::<32>(&before, &font::SEMIBOLD, m.body, theme::TEXT),
+                    label::<32>(&matched, &font::EXTRABOLD, m.body, theme::ACCENT),
+                    label::<32>(&after, &font::SEMIBOLD, m.body, theme::TEXT),
                     (!found.distance.is_empty()).then(|| {
                         label::<12>(
                             &found.distance,
                             &font::REGULAR,
-                            theme::SECONDARY,
+                            m.secondary,
                             theme::TEXT_TERTIARY,
                         )
                         .padding(Edges::Leading, 10)
                     }),
                     Spacer::default(),
-                    label::<6>(
-                        &found.age,
-                        &font::SEMIBOLD,
-                        theme::SMALL,
-                        theme::TEXT_TERTIARY,
-                    ),
+                    label::<6>(&found.age, &font::SEMIBOLD, m.small, theme::TEXT_TERTIARY),
                 ))
                 .with_spacing(0)
                 .hint_background_color(fill)
@@ -214,7 +223,7 @@ fn result(
                     }),
                 )
                 .frame()
-                .with_width(LIST_WIDTH)
+                .with_width(m.beside_rail())
             },
         ),
     ))

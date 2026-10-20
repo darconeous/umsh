@@ -1,0 +1,4 @@
+# The Chats list, and Find.
+shot chats-list
+keys r
+shot chats-find

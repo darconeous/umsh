@@ -11,6 +11,7 @@ use super::conversation::header;
 use super::label;
 use super::peers::{AVATAR, ROW, TEXT_X, add_row, focused_row};
 use crate::avatar::AvatarStyle;
+use crate::board::Metrics;
 use crate::model::{ChannelAccess, ChatId, ChatKind, MAX_CHATS, State};
 use crate::nav::keys;
 use crate::{font, theme};
@@ -36,6 +37,7 @@ struct Channel {
 }
 
 pub fn view(state: &State) -> impl View<Rgb565, State> + use<> {
+    let m = state.metrics();
     let rows: Vec<Channel, MAX_CHATS> = state
         .chats
         .iter()
@@ -56,16 +58,17 @@ pub fn view(state: &State) -> impl View<Rgb565, State> + use<> {
     let ids: Vec<ChatId, MAX_CHATS> = rows.iter().map(|c| c.id).collect();
     let count = rows.len();
     VStack::new((
-        header("Channels", None, None),
+        header(m, "Channels", None, None),
         super::list(
             VStack::new((
                 add_row(
+                    m,
                     "Add channel",
                     State::open_add_channel,
                     keys::ADD_CHANNEL,
-                    theme::WIDTH,
+                    m.width,
                 ),
-                ForEach::<MAX_CHATS>::new_vertical(&INDICES[..count], move |&i| row(&rows[i]))
+                ForEach::<MAX_CHATS>::new_vertical(&INDICES[..count], move |&i| row(m, &rows[i]))
                     .keyed(move |&i| keys::chat(ids[i])),
             ))
             .with_spacing(0),
@@ -82,7 +85,7 @@ pub fn view(state: &State) -> impl View<Rgb565, State> + use<> {
     })
 }
 
-fn row(channel: &Channel) -> impl View<Rgb565, State> + use<> {
+fn row(m: &'static Metrics, channel: &Channel) -> impl View<Rgb565, State> + use<> {
     let channel = channel.clone();
     let id = channel.id;
     Button::new(
@@ -90,12 +93,12 @@ fn row(channel: &Channel) -> impl View<Rgb565, State> + use<> {
         move |button: ButtonState| {
             focused_row(
                 HStack::new((
-                    label::<32>(&channel.name, &font::SEMIBOLD, theme::BODY, theme::TEXT),
+                    label::<32>(&channel.name, &font::SEMIBOLD, m.body, theme::TEXT),
                     Spacer::default(),
                     super::line(
                         channel.about,
                         &font::REGULAR,
-                        theme::SECONDARY,
+                        m.secondary,
                         theme::TEXT_TERTIARY,
                     ),
                 ))
@@ -111,7 +114,7 @@ fn row(channel: &Channel) -> impl View<Rgb565, State> + use<> {
                         .with_width(TEXT_X),
                 ),
                 button.is_focused(),
-                theme::WIDTH,
+                m.width,
             )
         },
     )

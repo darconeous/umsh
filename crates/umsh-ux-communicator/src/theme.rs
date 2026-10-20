@@ -75,13 +75,3 @@ pub const CHIP_THEIRS: Rgb565 = rgb(0x323A45);
 /// A banner for a message that arrived elsewhere, and its edge.
 pub const BANNER: Rgb565 = rgb(0x1E2631);
 pub const BANNER_LINE: Rgb565 = rgb(0x34414F);
-
-/// Body text: about 2.3 mm on the Pager's panel.
-pub const BODY: u32 = 20;
-/// Secondary lines such as chat previews.
-pub const SECONDARY: u32 = 17;
-/// The smallest type anywhere: timestamps, labels, the status strip.
-pub const SMALL: u32 = 16;
-
-pub const WIDTH: u32 = 480;
-pub const HEIGHT: u32 = 222;

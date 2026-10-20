@@ -6,6 +6,7 @@
 use core::cell::{Cell, RefCell, RefMut};
 
 use crate::avatar::{AvatarStyle, BuiltinChannel, PeerShape};
+use crate::board::Board;
 use crate::model::{
     Bluetooth, ChannelAccess, ChannelEntry, ChatId, ChatKind, ChatSummary, Chats, ClockSettings,
     ClockSource, Delivery, Details, Direction, EventQueue, Gnss, Heard, Invite, KeyboardSettings,
@@ -1816,9 +1817,9 @@ impl Node for Store {
 }
 
 /// The mockup's chats and peers, read from `store`, as the interface
-/// starts on them.
-pub fn state(store: &'static Store) -> State {
-    let mut state = State::new(store);
+/// starts on them on `board`.
+pub fn state(store: &'static Store, board: &'static Board) -> State {
+    let mut state = State::new(store, board);
     state.status = StatusStrip {
         device_name: store.device_name(),
         battery_segments: 3,

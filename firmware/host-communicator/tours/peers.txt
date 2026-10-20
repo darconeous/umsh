@@ -1,0 +1,14 @@
+# Peers, Add peer, and a saved peer.
+backspace
+turn 1
+shot rail-peers
+press
+shot peers-list
+press
+shot add-peer
+backspace
+turn 1
+press
+shot peer
+turn 4
+shot peer-lower

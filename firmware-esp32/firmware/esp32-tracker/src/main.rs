@@ -62,7 +62,7 @@
 extern crate alloc;
 
 use core::fmt::Write as _;
-#[cfg(any(feature = "pmic-axp2101", feature = "board-tlora-pager"))]
+#[cfg(feature = "battery-telemetry")]
 use core::sync::atomic::AtomicU8;
 use core::sync::atomic::{AtomicBool, AtomicU16, AtomicU32, Ordering};
 
@@ -85,7 +85,9 @@ use embassy_sync::signal::Signal;
 #[cfg(feature = "battery-telemetry")]
 use embassy_sync::watch::Watch;
 use embassy_time::{Delay, Duration, Instant, Timer, with_timeout};
-#[cfg(not(feature = "board-tlora-pager"))]
+// Where the radio shares its SPI bus with a color panel, each device on it
+// is a shared-bus handle instead.
+#[cfg(not(feature = "display-dcs"))]
 use embedded_hal_bus::spi::ExclusiveDevice;
 use esp_hal::Async;
 use esp_hal::clock::CpuClock;
@@ -115,6 +117,8 @@ use umsh_bsp_heltec_lora32_v2 as board;
 use umsh_bsp_heltec_lora32_v3 as board;
 #[cfg(feature = "board-tbeam-supreme")]
 use umsh_bsp_tbeam_supreme as board;
+#[cfg(feature = "board-tdeck")]
+use umsh_bsp_tdeck as board;
 #[cfg(feature = "board-tlora-pager")]
 use umsh_bsp_tlora_pager as board;
 #[cfg(feature = "board-xiao-esp32s3")]
@@ -160,23 +164,23 @@ use umsh_ulcp::stats::StatsLedger;
 use umsh_ulcp::{Status, hdlc};
 #[cfg(feature = "gnss")]
 use umsh_ulcp_device::GnssConfig;
-#[cfg(feature = "external-rtc")]
+#[cfg(feature = "wall-clock")]
 use umsh_ulcp_device::TimeConfig;
 use umsh_ulcp_device::{BatteryFields, MAX_DEVICE_NAME_LEN, RadioSettings, SessionConfig};
 use umsh_ulcp_runtime::driver::{
     self, DeviceEnv, DeviceRuntime, InEvent, InputChannel, TransportChannels,
 };
 use umsh_ulcp_runtime::{radio_mux, transport_policy};
-#[cfg(not(feature = "board-tlora-pager"))]
+#[cfg(not(feature = "input-gate"))]
 use umsh_ux_display_tracker::gate::{Disposition, Gate, GateReason};
 use umsh_ux_display_tracker::menu::UiNotice;
 #[cfg(feature = "display")]
 use umsh_ux_display_tracker::{menu::UiInput, screen};
-#[cfg(any(feature = "pmic-axp2101", feature = "board-tlora-pager"))]
+#[cfg(feature = "battery-telemetry")]
 use umsh_ux_tracker::battery::ChargeClass;
 #[cfg(any(feature = "battery-adc", feature = "pmic-axp2101"))]
 use umsh_ux_tracker::battery::soc_from_ocv;
-#[cfg(not(feature = "board-tlora-pager"))]
+#[cfg(not(feature = "input-gate"))]
 use umsh_ux_tracker::button::{ButtonEdge, ButtonEvent, ButtonFsm};
 
 use transport_policy::{Transport, generation_checked};
@@ -191,6 +195,8 @@ mod entropy;
 #[cfg(feature = "psram")]
 mod external;
 mod heap;
+#[cfg(feature = "input-gate")]
+mod input_gate;
 #[cfg(feature = "wifi")]
 mod ip;
 mod journals;
@@ -198,6 +204,12 @@ mod journals;
 mod lan;
 #[cfg(feature = "board-tlora-pager")]
 mod pager;
+#[cfg(feature = "board-tlora-pager")]
+use pager::input as board_input;
+#[cfg(feature = "board-tdeck")]
+mod tdeck;
+#[cfg(feature = "board-tdeck")]
+use tdeck::input as board_input;
 #[cfg(feature = "status-led")]
 mod status_led;
 #[cfg(feature = "chip-esp32s3")]
@@ -206,8 +218,11 @@ mod temperature;
 // with nothing to draw on.
 #[cfg(feature = "communicator")]
 mod communicator;
-#[cfg(all(feature = "communicator", not(feature = "board-tlora-pager")))]
-compile_error!("The communicator interface runs only on the T-LoRa Pager");
+#[cfg(all(
+    feature = "communicator",
+    not(all(feature = "display-dcs", feature = "input-gate"))
+))]
+compile_error!("The communicator needs a color panel (`display-dcs`) and the input gate");
 #[cfg(all(feature = "communicator", not(feature = "psram")))]
 compile_error!("The communicator keeps its chats in PSRAM");
 #[cfg(all(feature = "debug-log", any(feature = "wifi", feature = "communicator")))]
@@ -248,12 +263,17 @@ compile_error!("`usb-presence-sof` is for boards that cannot sense VBUS");
 #[cfg(not(any(
     feature = "power-off-deep-sleep",
     feature = "pmic-axp2101",
-    feature = "board-tlora-pager"
+    feature = "board-tlora-pager",
+    feature = "board-tdeck"
 )))]
 compile_error!("no power-off path: enable `power-off-deep-sleep` or `pmic-axp2101`");
 #[cfg(all(
     feature = "power-off-deep-sleep",
-    any(feature = "pmic-axp2101", feature = "board-tlora-pager")
+    any(
+        feature = "pmic-axp2101",
+        feature = "board-tlora-pager",
+        feature = "board-tdeck"
+    )
 ))]
 compile_error!("one power-off path per board: deep sleep or the PMIC, not both");
 
@@ -322,6 +342,8 @@ const DEFAULT_DEVICE_NAME: &str = "UMSH T-Beam";
 const DEFAULT_DEVICE_NAME: &str = "UMSH Pager";
 #[cfg(feature = "board-xiao-esp32s3")]
 const DEFAULT_DEVICE_NAME: &str = "UMSH XIAO S3";
+#[cfg(feature = "board-tdeck")]
+const DEFAULT_DEVICE_NAME: &str = "UMSH T-Deck";
 
 /// `PROP_DEV_VERSION`: the stack name and the release version from the
 /// build script, in the `STACK-NAME/STACK-VERSION` form the spec
@@ -408,11 +430,19 @@ fn session_config() -> SessionConfig {
         // charger-status signal (the charge LED is charger-driven), so
         // voltage and the OCV level estimate are reported and charge
         // state is not advertised.
-        #[cfg(feature = "battery-adc")]
+        #[cfg(all(feature = "battery-adc", not(feature = "battery-adc-rail")))]
         battery: Some(BatteryFields {
             voltage: true,
             level: true,
             charge_state: false,
+        }),
+        // A divider on the supply rail: external power reads above any
+        // cell, which is all that says it is charging, and hides the cell.
+        #[cfg(feature = "battery-adc-rail")]
+        battery: Some(BatteryFields {
+            voltage: true,
+            level: true,
+            charge_state: true,
         }),
         // The AXP2101 measures its own battery terminal, runs a fuel
         // gauge, and knows which way current is flowing—the first
@@ -436,11 +466,11 @@ fn session_config() -> SessionConfig {
         alert: None,
         // No clock. A permanently-wired bench board reads the time from
         // the host it is wired to.
-        #[cfg(not(feature = "external-rtc"))]
+        #[cfg(not(feature = "wall-clock"))]
         time: None,
-        // A hardware RTC holds the time across power-off and the
-        // receiver can set it: `CAP_TIME` rests on a real clock.
-        #[cfg(feature = "external-rtc")]
+        // A wall clock a host, a receiver, or the user can set; a hardware
+        // RTC, where there is one, holds it across power-off.
+        #[cfg(feature = "wall-clock")]
         time: Some(TimeConfig),
         #[cfg(not(feature = "gnss"))]
         gnss: None,
@@ -662,9 +692,8 @@ static SCREEN_FADED: AtomicBool = AtomicBool::new(false);
 enum ShutdownCause {
     /// The user asked: the power-off hold, or the communicator's Shut down.
     Asked,
-    /// The battery stayed below its floor, with no external power. Only the
-    /// Pager watches for that.
-    #[cfg(feature = "board-tlora-pager")]
+    /// The battery stayed below its floor, with no external power.
+    #[cfg(feature = "battery-cutoff")]
     BatteryEmpty,
 }
 
@@ -686,11 +715,11 @@ static DISPLAY_SHUTDOWN_DONE: Signal<CriticalSectionRawMutex, ()> = Signal::new(
 #[cfg(feature = "battery-telemetry")]
 static BATTERY_MV: AtomicU16 = AtomicU16::new(0);
 /// Last battery level percent (0xFF = unknown). Display only.
-#[cfg(any(feature = "pmic-axp2101", feature = "board-tlora-pager"))]
+#[cfg(feature = "battery-telemetry")]
 static BATTERY_LEVEL: AtomicU8 = AtomicU8::new(0xFF);
 /// Last charge classification: 0 unknown, 1 discharging, 2 charging,
 /// 3 charged, 4 powered but not charging. Display only.
-#[cfg(any(feature = "pmic-axp2101", feature = "board-tlora-pager"))]
+#[cfg(feature = "battery-telemetry")]
 static BATTERY_CHARGE: AtomicU8 = AtomicU8::new(0);
 /// Battery request/reply pair between the session env and the sampler
 /// task, which owns the ADC (or the PMIC telemetry cadence).
@@ -709,19 +738,29 @@ static BATTERY_ANNOUNCE: Watch<CriticalSectionRawMutex, u16, 1> = Watch::new();
 #[cfg(any(feature = "pmic-axp2101", feature = "board-tlora-pager"))]
 static BATTERY_ANNOUNCE: Watch<CriticalSectionRawMutex, board_battery::Reading, 1> = Watch::new();
 
-// Keep Pager diagnostics compact enough to preserve the required stack reserve.
-// Best-effort diagnostics may be truncated; sensing never depends on logging.
-#[cfg(all(feature = "debug-log", feature = "board-tlora-pager"))]
+// Keep the communicator boards' diagnostics compact enough to preserve the
+// required stack reserve. Best-effort diagnostics may be truncated; sensing
+// never depends on logging.
+#[cfg(all(
+    feature = "debug-log",
+    any(feature = "board-tlora-pager", feature = "board-tdeck")
+))]
 const DEBUG_LINE_CAPACITY: usize = if cfg!(feature = "motion-qualification") {
     176
 } else {
     64
 };
-#[cfg(all(feature = "debug-log", not(feature = "board-tlora-pager")))]
+#[cfg(all(
+    feature = "debug-log",
+    not(any(feature = "board-tlora-pager", feature = "board-tdeck"))
+))]
 const DEBUG_LINE_CAPACITY: usize = 192;
 #[cfg(feature = "debug-log")]
 type DebugLine = heapless::String<DEBUG_LINE_CAPACITY>;
-#[cfg(all(feature = "debug-log", feature = "board-tlora-pager"))]
+#[cfg(all(
+    feature = "debug-log",
+    any(feature = "board-tlora-pager", feature = "board-tdeck")
+))]
 const DEBUG_QUEUE_CAPACITY: usize = if cfg!(feature = "motion-qualification") {
     2
 } else {
@@ -733,7 +772,11 @@ const DEBUG_QUEUE_CAPACITY: usize = if cfg!(feature = "motion-qualification") {
 const DEBUG_QUEUE_CAPACITY: usize = 8;
 #[cfg(all(
     feature = "debug-log",
-    not(any(feature = "board-tlora-pager", feature = "board-tbeam-supreme"))
+    not(any(
+        feature = "board-tlora-pager",
+        feature = "board-tdeck",
+        feature = "board-tbeam-supreme"
+    ))
 ))]
 const DEBUG_QUEUE_CAPACITY: usize = 32;
 #[cfg(feature = "debug-log")]
@@ -923,15 +966,27 @@ async fn battery_task(mut sampler: BatterySampler) {
             continue;
         };
         BATTERY_MV.store(mv, Ordering::Release);
+        BATTERY_LEVEL.store(battery_level_from_mv(mv).unwrap_or(0xFF), Ordering::Release);
+        #[cfg(feature = "battery-adc-rail")]
+        BATTERY_CHARGE.store(
+            match board::battery::Rail::classify(mv) {
+                board::battery::Rail::Battery(_) => 1,
+                board::battery::Rail::External => 2,
+                board::battery::Rail::Off => 0,
+            },
+            Ordering::Release,
+        );
         if requested {
             BATTERY_REPLY.signal(mv);
         }
         // Announce a level that has moved far enough to be worth a frame.
         // On-demand reads pass through here too, so a read that reveals a
         // move rebaselines rather than leaving a duplicate behind it.
-        // There is no charge-state trigger on this board: the charge LED
-        // is charger-driven and invisible to the MCU.
-        let level = soc_from_ocv(mv);
+        // There is no charge-state trigger on these boards: the charge LED
+        // is charger-driven and invisible to the MCU. Where the divider
+        // reads the rail, external power coming or going takes the level
+        // to or from none, which is a move.
+        let level = battery_level_from_mv(mv).unwrap_or(0xFF);
         let moved = match announced {
             Some(previous) => level.abs_diff(previous) >= BATTERY_LEVEL_STEP,
             None => true,
@@ -947,8 +1002,8 @@ async fn battery_task(mut sampler: BatterySampler) {
 
 /// The platform battery source behind `Effect::SampleBattery`: a
 /// request/reply round trip into [`battery_task`], the sole ADC owner.
-/// No charger-status signal exists on this board, so charge state is
-/// never reported (and `SessionConfig::battery` does not advertise it).
+/// No charger-status signal exists on these boards, so charge state is
+/// reported only where the reading itself shows external power.
 #[cfg(feature = "battery-adc")]
 async fn sample_battery_snapshot() -> Result<umsh_ulcp::battery::BatteryStatus, ()> {
     BATTERY_REPLY.reset();
@@ -968,10 +1023,39 @@ async fn sample_battery_snapshot() -> Result<umsh_ulcp::battery::BatteryStatus, 
 #[cfg(feature = "battery-adc")]
 fn battery_snapshot(mv: u16) -> umsh_ulcp::battery::BatteryStatus {
     umsh_ulcp::battery::BatteryStatus {
-        voltage_mv: Some(mv),
-        level_percent: Some(soc_from_ocv(mv)),
+        // On the rail, the reading is the supply on external power: still
+        // the board's voltage, though it says nothing of the cell's charge.
+        #[cfg(not(feature = "battery-adc-rail"))]
+        voltage_mv: battery_level_from_mv(mv).map(|_| mv),
+        #[cfg(feature = "battery-adc-rail")]
+        voltage_mv: (board::battery::Rail::classify(mv) != board::battery::Rail::Off).then_some(mv),
+        level_percent: battery_level_from_mv(mv),
+        #[cfg(not(feature = "battery-adc-rail"))]
         charge_state: None,
+        #[cfg(feature = "battery-adc-rail")]
+        charge_state: match board::battery::Rail::classify(mv) {
+            board::battery::Rail::Battery(_) => {
+                Some(umsh_ulcp::battery::BatteryChargeState::Discharging)
+            }
+            board::battery::Rail::External => {
+                Some(umsh_ulcp::battery::BatteryChargeState::Charging)
+            }
+            board::battery::Rail::Off => None,
+        },
     }
+}
+
+/// The cell's charge from an ADC reading. Where the divider reads the
+/// supply rail rather than the cell, a reading above any cell is external
+/// power, and says nothing about the cell.
+#[cfg(feature = "battery-adc")]
+fn battery_level_from_mv(mv: u16) -> Option<u8> {
+    #[cfg(feature = "battery-adc-rail")]
+    let mv = match board::battery::Rail::classify(mv) {
+        board::battery::Rail::Battery(mv) => mv,
+        _ => return None,
+    };
+    Some(soc_from_ocv(mv))
 }
 
 /// The level a reading supports: the PMIC gauge when it has learned the
@@ -1438,24 +1522,25 @@ impl DeviceEnv for BoardDeviceEnv {
         self.i2c.scan(request, out).await
     }
 
-    #[cfg(feature = "external-rtc")]
+    #[cfg(feature = "wall-clock")]
     async fn read_time(&mut self) -> Option<u32> {
         umsh_hal::wall_clock::now()
     }
 
     /// A host wrote `PROP_TIME`. An operator outranks every other
     /// source, and a manual set is worth persisting: it goes to the
-    /// hardware RTC too, so the board wakes up with it.
+    /// hardware RTC too, where there is one, so the board wakes up with it.
     ///
     /// The empty write returns the wall clock to not knowing. The RTC
     /// keeps its time—"the host cleared the clock" is a statement
     /// about the running device, not an instruction to destroy the
     /// hardware clock's state—so the next boot restores from it.
-    #[cfg(feature = "external-rtc")]
+    #[cfg(feature = "wall-clock")]
     async fn apply_time(&mut self, epoch: Option<u32>) {
         match epoch {
             Some(seconds) => {
                 umsh_hal::wall_clock::set_manual(seconds);
+                #[cfg(feature = "external-rtc")]
                 if let Some(rtc) = self.rtc {
                     rtc_writeback(rtc, seconds).await;
                 }
@@ -1594,7 +1679,7 @@ impl DeviceEnv for BoardDeviceEnv {
         // mirror, so a host write, a boot restore, and a `CMD_RST` all
         // reach the clock and the receiver by the same path—and
         // neither needs anything to remember to push it.
-        #[cfg(feature = "external-rtc")]
+        #[cfg(feature = "wall-clock")]
         {
             umsh_hal::wall_clock::set_tz_rule(snapshot.tz_rule);
             umsh_hal::wall_clock::set_hour24(snapshot.time_24h);
@@ -1956,10 +2041,10 @@ async fn output_pump(tx: &mut WiredTx, panic_report: Option<heapless::String<128
         if let Some(report) = pager::take_gauge_report() {
             let _ = wired_write_all(tx, report.as_bytes()).await;
         }
-        #[cfg(feature = "board-tlora-pager")]
-        if let Some(report) = pager::input::power_report() {
+        #[cfg(feature = "input-gate")]
+        if let Some(report) = input_gate::power_report() {
             if wired_write_all(tx, report.as_bytes()).await {
-                pager::input::power_report_sent();
+                input_gate::power_report_sent();
             }
         }
         let mut wire = [0u8; WIRE_MAX];
@@ -2180,11 +2265,14 @@ fn internal_session(config: SessionConfig, boot_reason: Status) -> &'static mut 
 /// (`umsh_ulcp_runtime::driver::run`)—host frames, radio
 /// receptions, transmit completions, and every session effect—over
 /// this board's channel wiring and [`BoardDeviceEnv`] couplings.
-/// Pager needs a separate constructor to bound main's frame. On T-Beam, keep
+/// The Pager and T-Deck need a separate constructor to bound main's frame. On T-Beam, keep
 /// it inlined: a separate constructor adds a ~9 KiB frame between main and the
 /// ~18 KiB future initializer, overflowing the stack despite each frame fitting.
 #[embassy_executor::task]
-#[cfg_attr(feature = "board-tlora-pager", inline(never))]
+#[cfg_attr(
+    any(feature = "board-tlora-pager", feature = "board-tdeck"),
+    inline(never)
+)]
 async fn device_task(
     boot_reason: Status,
     proto_store: SnapshotStore,
@@ -2306,7 +2394,7 @@ async fn device_task(
 /// both, since a device that has gone dark still has to be
 /// switchable-off.
 #[embassy_executor::task]
-#[cfg(not(feature = "board-tlora-pager"))]
+#[cfg(not(feature = "input-gate"))]
 async fn button_task(mut button: Input<'static>) {
     const DEBOUNCE: Duration = Duration::from_millis(30);
     let mut fsm = ButtonFsm::new(umsh_ux_display_tracker::button_timings());
@@ -2657,8 +2745,13 @@ async fn main(spawner: Spawner) {
     #[cfg_attr(not(feature = "entropy-sar-adc"), allow(unused_mut))]
     let mut peripherals = esp_hal::init(config);
     #[cfg(feature = "board-tlora-pager")]
-    let pager_boot_lights =
-        board::display::BootBacklights::new(peripherals.GPIO42, peripherals.GPIO46);
+    let boot_lights = board::display::BootBacklights::new(peripherals.GPIO42, peripherals.GPIO46);
+    // The backlight driver is on the peripheral rail, which comes first.
+    #[cfg(feature = "board-tdeck")]
+    let boot_lights = {
+        tdeck::rail_up(peripherals.GPIO10);
+        board::display::BootBacklights::new(peripherals.GPIO42)
+    };
     // No light sleep until bring-up is over. Before the wired-transport
     // driver exists nothing else holds a lock, and a settle delay would
     // otherwise sleep the chip under a USB-Serial-JTAG console mid-boot,
@@ -2688,7 +2781,8 @@ async fn main(spawner: Spawner) {
         esp_alloc::heap_allocator!(size: 40 * 1024);
         // Leave room for sleep and audio DMA/task state while preserving the
         // checked 32 KiB nested-call reserve (82 KiB total internal heap).
-        #[cfg(feature = "board-tlora-pager")]
+        // The T-Deck runs the same communicator in the same budget.
+        #[cfg(any(feature = "board-tlora-pager", feature = "board-tdeck"))]
         esp_alloc::heap_allocator!(size: 18 * 1024);
         // Keep the 20 KiB stack reserve and nested task construction headroom
         // with the upgraded radio/scheduler's internal static storage. The
@@ -2696,12 +2790,20 @@ async fn main(spawner: Spawner) {
         // bundle and task); 4 KiB comes off this arena to pay for them,
         // leaving 104 KiB in all.
         #[cfg(all(
-            not(any(feature = "board-heltec-v3", feature = "board-tlora-pager")),
+            not(any(
+                feature = "board-heltec-v3",
+                feature = "board-tlora-pager",
+                feature = "board-tdeck"
+            )),
             not(feature = "meshcore-forwarder")
         ))]
         esp_alloc::heap_allocator!(size: 44 * 1024);
         #[cfg(all(
-            not(any(feature = "board-heltec-v3", feature = "board-tlora-pager")),
+            not(any(
+                feature = "board-heltec-v3",
+                feature = "board-tlora-pager",
+                feature = "board-tdeck"
+            )),
             feature = "meshcore-forwarder",
             not(feature = "debug-log"),
             not(feature = "lan-bearer")
@@ -2711,14 +2813,22 @@ async fn main(spawner: Spawner) {
         // LAN bearer for its port, export queue, and task; the log itself
         // reports the heap minimum, which is how the cut is judged.
         #[cfg(all(
-            not(any(feature = "board-heltec-v3", feature = "board-tlora-pager")),
+            not(any(
+                feature = "board-heltec-v3",
+                feature = "board-tlora-pager",
+                feature = "board-tdeck"
+            )),
             feature = "meshcore-forwarder",
             any(feature = "debug-log", feature = "lan-bearer"),
             not(all(feature = "debug-log", feature = "lan-bearer"))
         ))]
         esp_alloc::heap_allocator!(size: 36 * 1024);
         #[cfg(all(
-            not(any(feature = "board-heltec-v3", feature = "board-tlora-pager")),
+            not(any(
+                feature = "board-heltec-v3",
+                feature = "board-tlora-pager",
+                feature = "board-tdeck"
+            )),
             feature = "meshcore-forwarder",
             feature = "debug-log",
             feature = "lan-bearer"
@@ -2824,7 +2934,7 @@ async fn main(spawner: Spawner) {
     let (pmu_bus, expander, initial_battery) =
         pager::power_up(peripherals.I2C0, peripherals.GPIO3, peripherals.GPIO2).await;
     #[cfg(feature = "board-tlora-pager")]
-    let (pager_panel_cs, radio_cs) = {
+    let (panel_cs, radio_cs) = {
         // All four shared-SPI devices must be deselected before the first
         // panel command, including the not-yet-initialized LoRa modem.
         let sd = Output::new(peripherals.GPIO21, Level::High, OutputConfig::default());
@@ -2836,36 +2946,78 @@ async fn main(spawner: Spawner) {
         )
     };
     #[cfg(feature = "board-tlora-pager")]
-    let pager_spi = pager::spi_bus(
+    let panel_spi = pager::spi_bus(
         peripherals.SPI2,
         peripherals.DMA_CH0,
         peripherals.GPIO35,
         peripherals.GPIO34,
         peripherals.GPIO33,
     );
-    #[cfg(feature = "board-tlora-pager")]
-    let pager_boot_display = {
-        let mut panel = pager::display(
-            pager_spi,
-            pager_panel_cs,
-            peripherals.GPIO37,
-            pager_boot_lights,
-        );
+    #[cfg(feature = "board-tdeck")]
+    let i2c_bus = tdeck::i2c_bus(peripherals.I2C0, peripherals.GPIO18, peripherals.GPIO8);
+    #[cfg(feature = "board-tdeck")]
+    let (panel_cs, radio_cs) = {
+        // Every device on the shared SPI bus is deselected before the
+        // first panel command, the MicroSD card included.
+        core::mem::forget(Output::new(
+            peripherals.GPIO39,
+            Level::High,
+            OutputConfig::default(),
+        ));
+        (
+            Output::new(peripherals.GPIO12, Level::High, OutputConfig::default()),
+            Output::new(peripherals.GPIO9, Level::High, OutputConfig::default()),
+        )
+    };
+    #[cfg(feature = "board-tdeck")]
+    let panel_spi = tdeck::spi_bus(
+        peripherals.SPI2,
+        peripherals.DMA_CH0,
+        peripherals.GPIO40,
+        peripherals.GPIO41,
+        peripherals.GPIO38,
+    );
+    #[cfg(feature = "display-dcs")]
+    let boot_display = {
+        #[cfg(feature = "board-tlora-pager")]
+        let mut panel = pager::display(panel_spi, panel_cs, peripherals.GPIO37, boot_lights);
+        #[cfg(feature = "board-tdeck")]
+        let mut panel = tdeck::display(panel_spi, panel_cs, peripherals.GPIO11, boot_lights);
         if panel.init().await.is_ok() {
             let splash = ui::show_boot_splash(&mut panel).await;
             Some((panel, splash))
         } else {
             let _ = panel.set_display_on(false).await;
             BOOT_SPLASH_ACTIVE.store(false, Ordering::Release);
-            debug_log(format_args!("pager: display init failed"));
+            debug_log(format_args!("display: init failed"));
             None
         }
     };
+    #[cfg(feature = "board-tdeck")]
+    {
+        tdeck::input::init_trackball(
+            peripherals.IO_MUX,
+            peripherals.GPIO3,
+            peripherals.GPIO2,
+            peripherals.GPIO15,
+            peripherals.GPIO1,
+        );
+        spawner.spawn(tdeck::input::coordinator().unwrap());
+        spawner.spawn(input_gate::navigation_task().unwrap());
+        let press = Input::new(
+            peripherals.GPIO0,
+            InputConfig::default().with_pull(Pull::Up),
+        );
+        spawner.spawn(tdeck::input::press_task(press).unwrap());
+        spawner.spawn(tdeck::input::keyboard_task(i2c_bus).unwrap());
+        spawner.spawn(tdeck::input::touch_task(i2c_bus).unwrap());
+        spawner.spawn(tdeck::heartbeat_task(rtc, sleep.deep_sleep).unwrap());
+    }
     #[cfg(feature = "board-tlora-pager")]
     {
         pager::input::init_encoder(peripherals.IO_MUX, peripherals.GPIO40, peripherals.GPIO41);
         spawner.spawn(pager::input::coordinator().unwrap());
-        spawner.spawn(pager::input::navigation_task().unwrap());
+        spawner.spawn(input_gate::navigation_task().unwrap());
         let config = InputConfig::default().with_pull(Pull::Up);
         spawner.spawn(
             pager::input::button_task(Input::new(peripherals.GPIO7, config), false).unwrap(),
@@ -2964,15 +3116,15 @@ async fn main(spawner: Spawner) {
     // The user button, read only once boot is over: on most boards it is
     // also a strapping pin. Held through boot, it can ask for the pairing
     // window before the bond journal mounts.
-    #[cfg(not(any(feature = "board-tlora-pager", feature = "board-xiao-esp32s3")))]
+    #[cfg(not(any(feature = "input-gate", feature = "board-xiao-esp32s3")))]
     let button_pin = peripherals.GPIO0;
     #[cfg(feature = "board-xiao-esp32s3")]
     let button_pin = peripherals.GPIO21;
-    #[cfg(not(feature = "board-tlora-pager"))]
+    #[cfg(not(feature = "input-gate"))]
     let mut button = Input::new(button_pin, InputConfig::default().with_pull(Pull::Up));
-    #[cfg(not(feature = "board-tlora-pager"))]
+    #[cfg(not(feature = "input-gate"))]
     let force_pairing = ui::boot_gesture(&mut button).await;
-    #[cfg(feature = "board-tlora-pager")]
+    #[cfg(feature = "input-gate")]
     let force_pairing = false;
 
     // ── Vext rail and battery ADC ────────────────────────────────────────
@@ -2999,6 +3151,8 @@ async fn main(spawner: Spawner) {
     let sampler = BatterySampler::new(peripherals.ADC1, peripherals.GPIO1, peripherals.GPIO37);
     #[cfg(feature = "board-heltec-v2")]
     let sampler = BatterySampler::new(peripherals.ADC2, peripherals.GPIO13, vext);
+    #[cfg(feature = "board-tdeck")]
+    let sampler = BatterySampler::new(peripherals.ADC1, peripherals.GPIO4);
 
     // ── Flash: discover the `umsh` partition (never hardcoded) ───────────
     let (flash, partition) = flash_store::open_partition(peripherals.FLASH)
@@ -3266,11 +3420,11 @@ async fn main(spawner: Spawner) {
     let radio_cs = Output::new(peripherals.GPIO10, Level::High, OutputConfig::default());
     #[cfg(feature = "board-xiao-esp32s3")]
     let radio_cs = Output::new(peripherals.GPIO41, Level::High, OutputConfig::default());
-    #[cfg(not(feature = "board-tlora-pager"))]
+    #[cfg(not(feature = "display-dcs"))]
     let radio_spi = ExclusiveDevice::new(spi, radio_cs, Delay).unwrap();
-    #[cfg(feature = "board-tlora-pager")]
+    #[cfg(feature = "display-dcs")]
     let radio_spi = board::SpiHandle::new(
-        pager_spi,
+        panel_spi,
         radio_cs,
         SpiConfig::default()
             .with_frequency(Rate::from_mhz(16))
@@ -3290,6 +3444,10 @@ async fn main(spawner: Spawner) {
     let radio_reset = Output::new(peripherals.GPIO47, Level::High, OutputConfig::default());
     #[cfg(feature = "board-tlora-pager")]
     let (radio_dio1, radio_busy) = (peripherals.GPIO14, peripherals.GPIO48);
+    #[cfg(feature = "board-tdeck")]
+    let radio_reset = Output::new(peripherals.GPIO17, Level::High, OutputConfig::default());
+    #[cfg(feature = "board-tdeck")]
+    let (radio_dio1, radio_busy) = (peripherals.GPIO45, peripherals.GPIO13);
 
     // SX126x: DIO1 carries the IRQs and BUSY gates every command.
     #[cfg(feature = "board-heltec-v3")]
@@ -3329,9 +3487,11 @@ async fn main(spawner: Spawner) {
     }
     .unwrap_or_else(|e| panic!("radio init failed: {e:?}"));
     // `false` selects the private-network sync word (0x12 → 0x1424),
-    // matching SessionConfig::sync_word above.
-    let lora = LoRa::new(kind, false, Delay)
+    // matching SessionConfig::sync_word above. Bounded: with no module
+    // fitted, as on some original T-Decks, BUSY never falls.
+    let lora = with_timeout(Duration::from_secs(2), LoRa::new(kind, false, Delay))
         .await
+        .unwrap_or_else(|_| panic!("radio init failed: no LoRa radio"))
         .unwrap_or_else(|e| panic!("radio init failed: {e:?}"));
     spawner.spawn(radio_task(lora).unwrap());
     spawner.spawn(radio_mux_task().unwrap());
@@ -3412,7 +3572,7 @@ async fn main(spawner: Spawner) {
     .with_scl(peripherals.GPIO6)
     .into_async();
 
-    #[cfg(not(feature = "board-tlora-pager"))]
+    #[cfg(not(any(feature = "board-tlora-pager", feature = "board-tdeck")))]
     let i2c_bus: &'static board::I2cBus = {
         static I2C_BUS: StaticCell<board::I2cBus> = StaticCell::new();
         I2C_BUS.init(Mutex::new(i2c))
@@ -3539,7 +3699,7 @@ async fn main(spawner: Spawner) {
     spawner.spawn(battery_task(sampler).unwrap());
     #[cfg(feature = "pmic-axp2101")]
     spawner.spawn(battery_task(pmic).unwrap());
-    #[cfg(not(feature = "board-tlora-pager"))]
+    #[cfg(not(feature = "input-gate"))]
     spawner.spawn(button_task(button).unwrap());
 
     // ── GNSS: UART1 to the receiver, powered by the pump ─────────────────
@@ -3572,12 +3732,16 @@ async fn main(spawner: Spawner) {
             )
             .unwrap(),
         );
-        if let Some((panel, splash)) = pager_boot_display {
+        if let Some((panel, splash)) = boot_display {
             #[cfg(not(feature = "communicator"))]
             spawner.spawn(ui::display_task(panel, splash).unwrap());
             #[cfg(feature = "communicator")]
             spawner.spawn(communicator::task(panel, splash, chat_node).unwrap());
         }
+    }
+    #[cfg(feature = "board-tdeck")]
+    if let Some((panel, splash)) = boot_display {
+        spawner.spawn(communicator::task(panel, splash, chat_node).unwrap());
     }
 
     // ── OLED, then hand the panel to its task ────────────────────────────

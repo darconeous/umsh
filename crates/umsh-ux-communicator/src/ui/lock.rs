@@ -14,6 +14,7 @@ use heapless::{String, Vec};
 
 use super::{line, status};
 use crate::avatar::AvatarStyle;
+use crate::board::{Metrics, Unlock};
 use crate::clock::Local;
 use crate::lock::UNLOCK_STEPS;
 use crate::model::{Age, State, age};
@@ -23,9 +24,10 @@ use crate::{font, icon, theme};
 /// The time's size beside the cards, and alone in the middle.
 const TIME: u32 = 56;
 const TIME_ALONE: u32 = 72;
-/// The column of cards: from the screen's top-left, and each card.
-const CARDS_X: u32 = 196;
+/// The column of cards: from the screen's top, from the bar, and each
+/// card.
 const CARDS_Y: u32 = 30;
+const CARDS_GAP: u32 = 9;
 const CARDS_HEIGHT: u32 = 160;
 const CARD_WIDTH: u32 = 254;
 const CARD_HEIGHT: u32 = 52;
@@ -37,13 +39,44 @@ const SHOWN: usize = 4;
 /// The time and the rest beside the cards, from the screen's left.
 const COLUMN_X: u32 = 14;
 const COLUMN_Y: u32 = 34;
-/// The unlock bar, right of everything, and the hint under it all.
-const BAR_X: u32 = 459;
+/// The unlock bar, right of everything, from the screen's right edge; and
+/// the hint under it all.
+const BAR_INSET: u32 = 21;
 const BAR_WIDTH: u32 = 6;
-const HINT_Y: u32 = 198;
 const HINT_HEIGHT: u32 = 24;
 /// How the bar's fill follows the wheel.
 const FILL_MOTION: Animation = Animation::ease_in_out(core::time::Duration::from_millis(120));
+
+/// Beside the cards, the time and the rest need this much at the least;
+/// with less, the cards go under them.
+const TIME_COLUMN: u32 = 180;
+
+const fn bar_x(m: &Metrics) -> u32 {
+    m.width - BAR_INSET
+}
+
+/// Where the cards end: before the bar, where there is one, and otherwise
+/// as far from the edge as the time is from the other.
+const fn cards_right(m: &Metrics, bar: bool) -> u32 {
+    if bar {
+        bar_x(m) - CARDS_GAP
+    } else {
+        m.width - COLUMN_X
+    }
+}
+
+/// Whether the cards fit beside the time.
+const fn cards_beside(m: &Metrics, bar: bool) -> bool {
+    cards_right(m, bar) >= TIME_COLUMN + CARD_WIDTH
+}
+
+const fn cards_x(m: &Metrics, bar: bool) -> u32 {
+    cards_right(m, bar) - CARD_WIDTH
+}
+
+const fn hint_y(m: &Metrics) -> u32 {
+    m.height - HINT_HEIGHT
+}
 
 /// A chat that heard something since locking, as its card shows it.
 #[derive(Clone, Debug, PartialEq)]
@@ -55,6 +88,7 @@ struct Card {
 }
 
 pub fn view(state: &State) -> impl View<Rgb565, State> + use<> {
+    let m = state.metrics();
     let now = state.wall_time.map(|time| state.local(time));
     let h24 = state.hour24();
     let uptime = (state.uptime / 1000) as u32;
@@ -78,30 +112,40 @@ pub fn view(state: &State) -> impl View<Rgb565, State> + use<> {
         .battery_percent
         .filter(|_| state.status.charging);
     let lock = state.lock;
+    // The bar counts the wheel's steps, where turning is part of unlocking.
+    let steps = matches!(state.board.controls.unlock, Unlock::TurnThenPress);
     ZStack::new((
-        status::view(&state.status, false, state.keyboard.latches(), None),
-        match_view!(cards.is_empty(), {
-            false => beside_cards(now, h24, unread, cards),
-            true => alone(now, h24, unread, charge),
+        status::view(m, &state.status, false, state.keyboard.latches(), None),
+        match_view!((cards.is_empty(), cards_beside(m, steps)), {
+            (false, true) => beside_cards(m, steps, now, h24, unread, cards),
+            (false, false) => under_cards(m, steps, now, h24, unread, cards),
+            (true, _) => alone(m, steps, now, h24, unread, charge),
         }),
-        bar(lock.steps, lock.ready()),
-        hint(lock.ready()),
+        steps.then(|| bar(m, lock.steps, lock.ready())),
+        hint(m, steps, state.unlock_ready()),
     ))
     .with_alignment(Alignment::TopLeading)
 }
 
 /// The time, the date, and the unread chats in a column beside the cards.
 fn beside_cards(
+    m: &'static Metrics,
+    bar: bool,
     now: Option<Local>,
     h24: bool,
     unread: usize,
     cards: Vec<Card, SHOWN>,
 ) -> impl View<Rgb565, State> + use<> {
-    let card = |i: usize| cards.get(i).cloned().map(|c| Lazy::new(c, card_look));
+    let card = |i: usize| {
+        cards
+            .get(i)
+            .cloned()
+            .map(|c| Lazy::new((c, m, CARD_WIDTH), card_look))
+    };
     ZStack::new((
         VStack::new((
-            when(now, h24, TIME),
-            unread_badge(unread).padding(Edges::Top, 10),
+            when(m, now, h24, TIME),
+            unread_badge(m, unread).padding(Edges::Top, 10),
         ))
         .with_spacing(0)
         .with_alignment(HorizontalAlignment::Leading)
@@ -113,14 +157,56 @@ fn beside_cards(
                 .with_alignment(HorizontalAlignment::Leading),
         )
         .frame_sized(CARD_WIDTH, CARDS_HEIGHT)
-        .padding(Edges::Leading, CARDS_X)
+        .padding(Edges::Leading, cards_x(m, bar))
         .padding(Edges::Top, CARDS_Y),
     ))
     .with_alignment(Alignment::TopLeading)
 }
 
+/// The time, the date, and the unread chats over the cards, where the
+/// cards do not fit beside them.
+fn under_cards(
+    m: &'static Metrics,
+    bar: bool,
+    now: Option<Local>,
+    h24: bool,
+    unread: usize,
+    cards: Vec<Card, SHOWN>,
+) -> impl View<Rgb565, State> + use<> {
+    let width = cards_right(m, bar) - COLUMN_X;
+    let card = |i: usize| {
+        cards
+            .get(i)
+            .cloned()
+            .map(|c| Lazy::new((c, m, width), card_look))
+    };
+    VStack::new((
+        HStack::new((
+            when(m, now, h24, TIME),
+            Spacer::default(),
+            unread_badge(m, unread),
+        ))
+        .with_alignment(VerticalAlignment::Center),
+        super::list(
+            VStack::new((card(0), card(1), card(2), card(3)))
+                .with_spacing(CARD_GAP)
+                .with_alignment(HorizontalAlignment::Leading),
+        ),
+    ))
+    .with_spacing(CARD_GAP)
+    .with_alignment(HorizontalAlignment::Leading)
+    .frame()
+    .with_width(width)
+    .with_height(hint_y(m) - m.strip - CARD_GAP)
+    .with_alignment(Alignment::Top)
+    .padding(Edges::Leading, COLUMN_X)
+    .padding(Edges::Top, m.strip + CARD_GAP)
+}
+
 /// The time and date in the middle, with nothing arrived to list.
 fn alone(
+    m: &'static Metrics,
+    bar: bool,
     now: Option<Local>,
     h24: bool,
     unread: usize,
@@ -131,30 +217,35 @@ fn alone(
         _ = core::fmt::write(&mut percent, format_args!("{charge}%"));
     }
     VStack::new((
-        when(now, h24, TIME_ALONE),
+        when(m, now, h24, TIME_ALONE),
         charge.map(|_| {
             HStack::new((
                 Image::new(&icon::BOLT)
                     .as_template()
                     .foreground_color(theme::GREEN),
-                line(percent, &font::BOLD, theme::SECONDARY, theme::GREEN),
+                line(percent, &font::BOLD, m.secondary, theme::GREEN),
             ))
             .with_spacing(4)
         }),
-        unread_badge(unread),
+        unread_badge(m, unread),
     ))
     .with_spacing(10)
     .with_alignment(HorizontalAlignment::Center)
     .frame()
-    .with_width(BAR_X - BAR_WIDTH)
-    .with_height(HINT_Y - super::STRIP)
+    .with_width(if bar { bar_x(m) - BAR_WIDTH } else { m.width })
+    .with_height(hint_y(m) - m.strip)
     .with_alignment(Alignment::Center)
-    .padding(Edges::Top, super::STRIP)
+    .padding(Edges::Top, m.strip)
 }
 
 /// The time and date while the clock is known, and the clock with word
 /// that it is not otherwise.
-fn when(now: Option<Local>, h24: bool, size: u32) -> impl View<Rgb565, State> + use<> {
+fn when(
+    m: &'static Metrics,
+    now: Option<Local>,
+    h24: bool,
+    size: u32,
+) -> impl View<Rgb565, State> + use<> {
     match_view!(now, {
         Some(local) => {
             let (face, half) = local.face(h24);
@@ -166,10 +257,10 @@ fn when(now: Option<Local>, h24: bool, size: u32) -> impl View<Rgb565, State> + 
                     // On the digits' baseline: the boxes' bottoms differ by
                     // how far each face's line reaches below it.
                     half.map(|half| {
-                        line(half, &font::BOLD, theme::BODY, theme::TEXT).padding(
+                        line(half, &font::BOLD, m.body, theme::TEXT).padding(
                             Edges::Bottom,
                             below_baseline(&font::CLOCK, size)
-                                .saturating_sub(below_baseline(&font::BOLD, theme::BODY)),
+                                .saturating_sub(below_baseline(&font::BOLD, m.body)),
                         )
                     }),
                 ))
@@ -178,7 +269,7 @@ fn when(now: Option<Local>, h24: bool, size: u32) -> impl View<Rgb565, State> + 
                 line(
                     local.long_date(),
                     &font::REGULAR,
-                    theme::SECONDARY,
+                    m.secondary,
                     theme::TEXT_SECONDARY,
                 ),
             ))
@@ -192,7 +283,7 @@ fn when(now: Option<Local>, h24: bool, size: u32) -> impl View<Rgb565, State> + 
             line(
                 "Clock not set",
                 &font::SEMIBOLD,
-                theme::SECONDARY,
+                m.secondary,
                 theme::TEXT_SECONDARY,
             ),
         ))
@@ -209,7 +300,7 @@ fn below_baseline(font: &PrerenderedFont, size: u32) -> u32 {
 
 /// The chats with unread messages, counted on a badge beside the Chats
 /// glyph. Nothing while there are none.
-fn unread_badge(unread: usize) -> impl View<Rgb565, State> + use<> {
+fn unread_badge(m: &'static Metrics, unread: usize) -> impl View<Rgb565, State> + use<> {
     let mut count: String<4> = String::new();
     _ = core::fmt::write(&mut count, format_args!("{unread}"));
     (unread > 0).then(|| {
@@ -217,7 +308,7 @@ fn unread_badge(unread: usize) -> impl View<Rgb565, State> + use<> {
             Image::new(&icon::CHATS)
                 .as_template()
                 .foreground_color(theme::TEXT_SECONDARY),
-            line(count, &font::BOLD, theme::SMALL, Rgb565::new(31, 63, 31))
+            line(count, &font::BOLD, m.small, Rgb565::new(31, 63, 31))
                 .hint_background_color(theme::RED)
                 .padding(Edges::Horizontal, 7)
                 .frame()
@@ -233,22 +324,17 @@ fn unread_badge(unread: usize) -> impl View<Rgb565, State> + use<> {
 
 /// One chat that heard something: its avatar, name, age, and the newest
 /// message on one line.
-fn card_look(card: &Card) -> impl View<Rgb565, ()> + use<> {
+fn card_look((card, m, width): &(Card, &'static Metrics, u32)) -> impl View<Rgb565, ()> + use<> {
     HStack::new((
         super::avatar::view(&card.avatar, CARD_AVATAR),
         VStack::new((
             HStack::new((
-                line(
-                    card.name.clone(),
-                    &font::BOLD,
-                    theme::SECONDARY,
-                    theme::TEXT,
-                ),
+                line(card.name.clone(), &font::BOLD, m.secondary, theme::TEXT),
                 Spacer::default(),
                 line(
                     card.age.clone(),
                     &font::SEMIBOLD,
-                    theme::SMALL,
+                    m.small,
                     theme::TEXT_TERTIARY,
                 )
                 .fixed_size(true, false),
@@ -257,7 +343,7 @@ fn card_look(card: &Card) -> impl View<Rgb565, ()> + use<> {
             line(
                 card.text.clone(),
                 &font::REGULAR,
-                theme::SMALL,
+                m.small,
                 theme::TEXT_SECONDARY,
             ),
         ))
@@ -268,7 +354,7 @@ fn card_look(card: &Card) -> impl View<Rgb565, ()> + use<> {
     .padding(Edges::Leading, 8)
     .padding(Edges::Trailing, 10)
     .hint_background_color(theme::PANEL)
-    .frame_sized(CARD_WIDTH, CARD_HEIGHT)
+    .frame_sized(*width, CARD_HEIGHT)
     .background(
         Alignment::Center,
         ZStack::new((
@@ -283,7 +369,7 @@ fn card_look(card: &Card) -> impl View<Rgb565, ()> + use<> {
 /// The bar along the right edge, filled as far as the wheel has turned
 /// toward unlocking, green once a press unlocks, and the way to turn under
 /// it.
-fn bar(steps: u8, ready: bool) -> impl View<Rgb565, State> + use<> {
+fn bar(m: &'static Metrics, steps: u8, ready: bool) -> impl View<Rgb565, State> + use<> {
     let color = if ready { theme::GREEN } else { theme::ACCENT };
     let filled = CARDS_HEIGHT * u32::from(steps) / u32::from(UNLOCK_STEPS);
     let arrow = if steps > 0 {
@@ -308,13 +394,21 @@ fn bar(steps: u8, ready: bool) -> impl View<Rgb565, State> + use<> {
             .foreground_color(arrow),
     ))
     .with_spacing(2)
-    .padding(Edges::Leading, BAR_X - 3)
+    .padding(Edges::Leading, bar_x(m) - 3)
     .padding(Edges::Top, CARDS_Y)
 }
 
-/// How to unlock, along the bottom, or that a press now does.
-fn hint(ready: bool) -> impl View<Rgb565, State> + use<> {
-    let (image, text, face, color) = if ready {
+/// How to unlock, along the bottom, or that a press now does. Where there
+/// are no steps to turn, a press always does, and says so plainly.
+fn hint(m: &'static Metrics, steps: bool, ready: bool) -> impl View<Rgb565, State> + use<> {
+    let (image, text, face, color) = if !steps {
+        (
+            &icon::PADLOCK,
+            "Press to unlock",
+            &font::MEDIUM,
+            theme::TEXT_TERTIARY,
+        )
+    } else if ready {
         (
             &icon::PADLOCK_OPEN,
             "Press to unlock",
@@ -331,12 +425,12 @@ fn hint(ready: bool) -> impl View<Rgb565, State> + use<> {
     };
     HStack::new((
         Image::new(image).as_template().foreground_color(color),
-        line(text, face, theme::SMALL, color),
+        line(text, face, m.small, color),
     ))
     .with_spacing(4)
     .frame()
-    .with_width(theme::WIDTH)
+    .with_width(m.width)
     .with_height(HINT_HEIGHT)
     .with_alignment(Alignment::Center)
-    .padding(Edges::Top, HINT_Y)
+    .padding(Edges::Top, hint_y(m))
 }

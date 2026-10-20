@@ -320,6 +320,7 @@ jobs:
             build-tbeam-supreme,
             build-tlora-pager,
             build-xiao-esp32s3,
+            build-tdeck,
           ]
     steps:
       - uses: actions/checkout@v4

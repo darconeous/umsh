@@ -12,6 +12,7 @@ use heapless::{String, Vec};
 use super::conversation::header;
 use super::setting::{End, marked_row, row};
 use super::{label, line};
+use crate::board::Metrics;
 use crate::clock_settings::{ClockPage, DateParts, Part, ZoneFind, matching};
 use crate::model::{ClockSource, State, age};
 use crate::nav::keys;
@@ -24,6 +25,10 @@ const PART: u32 = 40;
 const PART_GAP: u32 = 6;
 const GROUP_GAP: u32 = 26;
 const PART_TOP: u32 = 30;
+/// The colon between the hour and the minute, about as wide as drawn.
+const COLON: u32 = 8;
+/// The least room left at the screen's edges.
+const INSET: u32 = 8;
 /// The most zones the list holds at once, around the focused one.
 const WINDOW: usize = 12;
 
@@ -57,6 +62,7 @@ pub fn summary(state: &State) -> &'static str {
 
 /// The settings.
 fn main(state: &State) -> impl View<Rgb565, State> + use<> {
+    let m = state.metrics();
     let clock = state.clock;
     let hour24 = clock.hour24;
     let mut now: String<32> = String::new();
@@ -90,11 +96,12 @@ fn main(state: &State) -> impl View<Rgb565, State> + use<> {
     });
     let zone = zones::name(&clock.zone);
     VStack::new((
-        header("Clock", None, None),
+        header(m, "Clock", None, None),
         super::list(
             VStack::new((
                 clock.automatic.map(|on| {
                     row(
+                        m,
                         "Set automatically",
                         keys::CLOCK_AUTOMATIC,
                         State::toggle_clock_automatic,
@@ -104,6 +111,7 @@ fn main(state: &State) -> impl View<Rgb565, State> + use<> {
                     )
                 }),
                 row(
+                    m,
                     "Date and time",
                     keys::CLOCK_TIME,
                     State::open_set_time,
@@ -116,6 +124,7 @@ fn main(state: &State) -> impl View<Rgb565, State> + use<> {
                     ROW,
                 ),
                 row(
+                    m,
                     "Time zone",
                     keys::CLOCK_ZONE,
                     State::open_zones,
@@ -124,6 +133,7 @@ fn main(state: &State) -> impl View<Rgb565, State> + use<> {
                     ROW,
                 ),
                 row(
+                    m,
                     "24-hour time",
                     keys::CLOCK_24H,
                     State::toggle_hour24,
@@ -133,6 +143,7 @@ fn main(state: &State) -> impl View<Rgb565, State> + use<> {
                 ),
                 source.map(|source| {
                     row(
+                        m,
                         "Last set from",
                         keys::CLOCK_SOURCE,
                         |_| {},
@@ -163,6 +174,7 @@ fn back(key: Key, s: &mut State) -> KeyResponse {
 
 /// The date and time, set a part at a time, in the zone named under them.
 fn set_time(state: &State, parts: &DateParts, editing: bool) -> impl View<Rgb565, State> + use<> {
+    let m = state.metrics();
     let hour24 = state.clock.hour24;
     let focused = state.screen().focus().current().and_then(keys::part_of);
     let text = |value: core::fmt::Arguments| {
@@ -178,11 +190,14 @@ fn set_time(state: &State, parts: &DateParts, editing: bool) -> impl View<Rgb565
             hour => hour,
         }
     };
+    // The parts' widths, in the Pager's pixels at its size of 26.
+    let scaled = |width: u32| width * m.title / 26;
     let part = |p: Part, value: String<6>, width: u32| {
         part_button(
+            m,
             p,
             value,
-            width,
+            scaled(width),
             focused == Some(p),
             editing && focused == Some(p),
         )
@@ -200,60 +215,66 @@ fn set_time(state: &State, parts: &DateParts, editing: bool) -> impl View<Rgb565
             zones::offset_text(offset)
         ),
     );
+    let date = HStack::new((
+        part(
+            Part::Month,
+            text(format_args!(
+                "{}",
+                crate::clock::MONTHS[usize::from(parts.month) - 1]
+            )),
+            66,
+        ),
+        part(Part::Day, text(format_args!("{}", parts.day)), 50),
+        part(Part::Year, text(format_args!("{}", parts.year)), 78),
+    ))
+    .with_spacing(PART_GAP);
+    let time = HStack::new((
+        part(
+            Part::Hour,
+            if hour24 {
+                text(format_args!("{hour:02}"))
+            } else {
+                text(format_args!("{hour}"))
+            },
+            50,
+        ),
+        line(":", &font::BOLD, m.title, theme::TEXT_SECONDARY),
+        part(Part::Minute, text(format_args!("{:02}", parts.minute)), 50),
+        (!hour24).then(|| {
+            part(
+                Part::Half,
+                text(format_args!(
+                    "{}",
+                    if parts.hour < 12 { "AM" } else { "PM" }
+                )),
+                58,
+            )
+        }),
+    ))
+    .with_spacing(PART_GAP);
+    // The time beside the date where both fit across, and under it where
+    // they do not.
+    let across = scaled(66 + 50 + 78 + 50 + 50 + if hour24 { 0 } else { 58 })
+        + PART_GAP * if hour24 { 6 } else { 7 }
+        + COLON
+        + GROUP_GAP;
+    let (beside, under) = if across <= m.width - 2 * INSET {
+        (Some(time), None)
+    } else {
+        (None, Some(time))
+    };
     VStack::new((
-        header("Date and time", None, None),
-        HStack::new((
-            HStack::new((
-                part(
-                    Part::Month,
-                    text(format_args!(
-                        "{}",
-                        crate::clock::MONTHS[usize::from(parts.month) - 1]
-                    )),
-                    66,
-                ),
-                part(Part::Day, text(format_args!("{}", parts.day)), 50),
-                part(Part::Year, text(format_args!("{}", parts.year)), 78),
-            ))
-            .with_spacing(PART_GAP),
-            HStack::new((
-                part(
-                    Part::Hour,
-                    if hour24 {
-                        text(format_args!("{hour:02}"))
-                    } else {
-                        text(format_args!("{hour}"))
-                    },
-                    50,
-                ),
-                line(":", &font::BOLD, 26, theme::TEXT_SECONDARY),
-                part(Part::Minute, text(format_args!("{:02}", parts.minute)), 50),
-                (!hour24).then(|| {
-                    part(
-                        Part::Half,
-                        text(format_args!(
-                            "{}",
-                            if parts.hour < 12 { "AM" } else { "PM" }
-                        )),
-                        58,
-                    )
-                }),
-            ))
-            .with_spacing(PART_GAP),
-        ))
-        .with_spacing(GROUP_GAP)
-        .flex_infinite_width(HorizontalAlignment::Center)
-        .padding(Edges::Top, PART_TOP),
-        label::<40>(
-            &zone,
-            &font::REGULAR,
-            theme::SECONDARY,
-            theme::TEXT_SECONDARY,
-        )
-        .flex_infinite_width(HorizontalAlignment::Center)
-        .padding(Edges::Top, 22),
+        header(m, "Date and time", None, None),
+        VStack::new((HStack::new((date, beside)).with_spacing(GROUP_GAP), under))
+            .with_spacing(PART_GAP)
+            .flex_infinite_width(HorizontalAlignment::Center)
+            .padding(Edges::Top, PART_TOP),
+        label::<40>(&zone, &font::REGULAR, m.secondary, theme::TEXT_SECONDARY)
+            .flex_infinite_width(HorizontalAlignment::Center)
+            .padding(Edges::Top, 22),
         Spacer::default(),
         row(
+            m,
             "Set",
             keys::SET_TIME,
             State::submit_set_time,
@@ -282,6 +303,7 @@ fn set_time(state: &State, parts: &DateParts, editing: bool) -> impl View<Rgb565
 // Out of line, as `setting::row` is, against the Xtensa back end's failure.
 #[inline(never)]
 fn part_button(
+    m: &'static Metrics,
     part: Part,
     value: String<6>,
     width: u32,
@@ -302,9 +324,9 @@ fn part_button(
             };
             VStack::new((
                 arrow(&icon::UP),
-                line(value.clone(), &font::BOLD, 26, theme::TEXT)
+                line(value.clone(), &font::BOLD, m.title, theme::TEXT)
                     .hint_background_color(if focused { theme::FOCUS } else { theme::PANEL })
-                    .frame_sized(width, PART)
+                    .frame_sized(width, PART * m.title / 26)
                     .background(
                         Alignment::Center,
                         ZStack::new((
@@ -337,6 +359,7 @@ pub fn zone_list(
     find: &ZoneFind,
     title: &'static str,
 ) -> impl View<Rgb565, State> + use<> {
+    let m = state.metrics();
     let shown = matching(find);
     let current = zones::find(&state.clock.zone);
     let focus = state.screen().focus();
@@ -364,9 +387,9 @@ pub fn zone_list(
         .collect();
     let find = find.clone();
     VStack::new((
-        header(title, None, None),
+        header(m, title, None, None),
         (!find.is_empty()).then(|| {
-            label::<16>(&find, &font::BOLD, theme::SECONDARY, theme::ACCENT)
+            label::<16>(&find, &font::BOLD, m.secondary, theme::ACCENT)
                 .padding(Edges::Leading, 12)
                 .flex_infinite_width(HorizontalAlignment::Leading)
                 .frame()
@@ -376,6 +399,7 @@ pub fn zone_list(
             ForEach::<WINDOW>::new_vertical(&INDICES[..window.len()], move |&i| {
                 let index = usize::from(window[i]);
                 marked_row(
+                    m,
                     ZONES[index].name,
                     keys::zone(index),
                     move |s: &mut State| s.choose_zone(index),

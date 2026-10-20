@@ -34,11 +34,11 @@ pub fn set(active: bool) {
         return;
     }
     if active {
-        super::input::alert_started();
+        crate::input_gate::alert_started();
     } else {
         phase(false);
     }
-    super::input::discard_navigation();
+    crate::input_gate::discard_navigation();
     CHANGED.signal(());
     DISPLAY_CHANGED.signal(());
 }

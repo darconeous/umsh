@@ -4,23 +4,27 @@
 
 use buoyant::event::{Key, KeyResponse};
 use buoyant::focus::BoundaryBehavior;
+use buoyant::view::popover::Dismissal;
 use buoyant::view::prelude::*;
 use embedded_graphics::pixelcolor::Rgb565;
 use heapless::String;
 
-use super::label;
 use super::member::detail_head;
 use super::setting::{End, card, choice, row};
+use crate::board::Metrics;
 use crate::model::{PeerDetail, PeerSummary, State, hops_text};
 use crate::nav::keys;
 use crate::{font, theme};
 
 const ROW: u32 = 34;
 const ADDRESS: u32 = 22;
+/// The address's inset from the screen's edges.
+const INSET: u32 = 10;
 /// The confirmation's width.
 const CONFIRM_WIDTH: u32 = 300;
 
 pub fn view(
+    m: &'static Metrics,
     summary: &PeerSummary,
     detail: &PeerDetail,
     confirm: bool,
@@ -35,18 +39,18 @@ pub fn view(
     let name = summary.name.clone();
     super::list(
         VStack::new((
-            detail_head(&summary.avatar, &summary.name, &about),
-            label::<44>(
+            detail_head(m, &summary.avatar, &summary.name, &about, true),
+            super::address(
                 &detail.address,
                 &font::REGULAR,
-                theme::SMALL,
+                m.small,
                 theme::TEXT_SECONDARY,
+                m.width - 2 * INSET,
+                ADDRESS,
             )
-            .padding(Edges::Leading, 10)
-            .flex_infinite_width(HorizontalAlignment::Leading)
-            .frame()
-            .with_height(ADDRESS),
+            .padding(Edges::Leading, INSET),
             row(
+                m,
                 "Message",
                 keys::PEER_MESSAGE,
                 State::message_peer,
@@ -55,6 +59,7 @@ pub fn view(
                 ROW,
             ),
             row(
+                m,
                 "Route",
                 keys::PEER_ROUTE,
                 |_| {},
@@ -63,6 +68,7 @@ pub fn view(
                 ROW,
             ),
             row(
+                m,
                 "Last heard",
                 keys::PEER_HEARD,
                 |_| {},
@@ -71,6 +77,7 @@ pub fn view(
                 ROW,
             ),
             row(
+                m,
                 "Forward secrecy",
                 keys::PEER_SECRECY,
                 State::toggle_forward_secrecy,
@@ -79,6 +86,7 @@ pub fn view(
                 ROW,
             ),
             row(
+                m,
                 "Ping",
                 keys::PEER_PING,
                 State::ping_peer,
@@ -87,6 +95,7 @@ pub fn view(
                 ROW,
             ),
             row(
+                m,
                 "Refresh identity",
                 keys::PEER_IDENTITY,
                 State::request_peer_identity,
@@ -99,6 +108,7 @@ pub fn view(
                 ROW,
             ),
             row(
+                m,
                 "Forget",
                 keys::PEER_FORGET,
                 State::ask_forget,
@@ -118,7 +128,14 @@ pub fn view(
         }
         _ => KeyResponse::Ignored,
     })
-    .popover(confirm.then_some(name).as_ref(), confirmation)
+    .popover(confirm.then_some(name).as_ref(), move |name| {
+        confirmation(m, name)
+    })
+    // A tap outside is Cancel.
+    .on_blur(|s: &mut State| {
+        s.cancel_forget();
+        Dismissal::Dismiss
+    })
 }
 
 /// Forget, confirmed, or Cancel, which is focused.
@@ -126,12 +143,14 @@ pub fn view(
 // here on `State::forget_peer`'s address once `root_view` took the setup
 // screens.
 #[inline(never)]
-fn confirmation(name: &String<32>) -> impl View<Rgb565, State> + use<> {
+fn confirmation(m: &'static Metrics, name: &String<32>) -> impl View<Rgb565, State> + use<> {
     let mut forget: String<48> = String::new();
     _ = core::fmt::write(&mut forget, format_args!("Forget {name}"));
     card(
+        m,
         VStack::new((
             choice(
+                m,
                 forget,
                 keys::FORGET_CONFIRM,
                 State::forget_peer,
@@ -139,6 +158,7 @@ fn confirmation(name: &String<32>) -> impl View<Rgb565, State> + use<> {
                 None,
             ),
             choice(
+                m,
                 String::try_from("Cancel").unwrap_or_default(),
                 keys::FORGET_CANCEL,
                 State::cancel_forget,

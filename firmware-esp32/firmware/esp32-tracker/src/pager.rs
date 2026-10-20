@@ -5,7 +5,7 @@ use esp_hal::gpio::Io;
 use esp_hal::peripherals;
 use esp_hal::ram;
 use umsh_pager_peripherals::{
-    input::{Debounce, KeyEvent, Keyboard, Modifier, Quadrature},
+    input::{KeyEvent, Keyboard, Modifier, Quadrature},
     power::{
         Battery, BatteryWatch, Expander, LowBattery, battery_poll_fields, battery_poll_interval_ms,
     },
@@ -13,6 +13,7 @@ use umsh_pager_peripherals::{
 use umsh_ulcp::battery_diagnostics::{
     Fields as BatteryFieldsRequested, Sample as BatterySample, Value as BatteryValue,
 };
+use umsh_ux_tracker::debounce::Debounce;
 
 #[path = "pager_alert.rs"]
 pub mod alert;
@@ -145,41 +146,10 @@ pub fn set_battery_details_visible(visible: bool) {
     }
 }
 
-/// The panel has lit or gone dark. Lighting it reads the battery at once,
-/// and runs the CPU at full speed until it goes dark, so that drawing is
-/// quick; dark, the CPU returns to [`CPU_CLOCK`].
-fn display_lit(lit: bool) {
-    set_cpu_clock(if lit { CpuClock::max() } else { CPU_CLOCK });
+/// The panel has lit or gone dark. Lighting it reads the battery at once.
+fn battery_lit(lit: bool) {
     if BATTERY_DISPLAY_LIT.swap(lit, Ordering::AcqRel) != lit {
         BATTERY_WATCH_CHANGED.signal(());
-    }
-}
-
-/// Moves the CPU to `clock` while running. The PLL stays at 480 MHz, so APB
-/// and every peripheral on it keep their timing; the clock tree raises the
-/// core voltage before a faster clock and lowers it after a slower one.
-fn set_cpu_clock(clock: CpuClock) {
-    use esp_hal::clock::ll::{
-        ClockTree, CpuClkConfig, CpuPllDivOutConfig, configure_cpu_clk, configure_cpu_pll_div_out,
-    };
-    let divided = match clock {
-        CpuClock::_80MHz => CpuPllDivOutConfig::_80,
-        CpuClock::_160MHz => CpuPllDivOutConfig::_160,
-        _ => CpuPllDivOutConfig::_240,
-    };
-    let changed = ClockTree::with(|clocks| {
-        let changed = clocks.cpu_pll_div_out() != Some(divided);
-        if changed {
-            configure_cpu_pll_div_out(clocks, divided);
-            configure_cpu_clk(clocks, CpuClkConfig::Pll);
-        }
-        changed
-    });
-    if changed {
-        debug_log(format_args!(
-            "pager: CPU {} MHz",
-            esp_hal::clock::cpu_clock().as_mhz()
-        ));
     }
 }
 
@@ -193,7 +163,7 @@ fn battery_watch() -> BatteryWatch {
     }
 }
 #[repr(C, align(4))]
-struct Stripe([u8; umsh_pager_peripherals::display::STRIPE_BYTES]);
+struct Stripe([u8; board::display::STRIPE_BYTES]);
 static STRIPE: StaticCell<Stripe> = StaticCell::new();
 
 pub async fn power_up(
@@ -356,7 +326,7 @@ pub fn display(
         lights,
         external::display_frame(),
         &mut STRIPE
-            .init_with(|| Stripe([0; umsh_pager_peripherals::display::STRIPE_BYTES]))
+            .init_with(|| Stripe([0; board::display::STRIPE_BYTES]))
             .0,
     )
 }
@@ -476,7 +446,7 @@ pub async fn battery_task(bus: &'static board::I2cBus, initial: board_battery::R
         // Host requests and the periodic UI/safety pass share this limit.
         Timer::at(next_acquisition).await;
         next_acquisition = Instant::now() + Duration::from_millis(500);
-        let input_locks = input::locks_active();
+        let input_locks = crate::input_gate::locks_active();
         let result = battery.sample(fields, &mut SampleDelay).await;
         let gauge_ready = result.is_ok();
         let sampled_at = Instant::now();
@@ -522,7 +492,7 @@ pub async fn battery_task(bus: &'static board::I2cBus, initial: board_battery::R
             });
         }
         if periodic {
-            input::power_sample(
+            crate::input_gate::power_sample(
                 match sample.get(umsh_ulcp::ids::prop::BATTERY_CURRENT) {
                     Ok(Some(BatteryValue::Current(v))) => Some(v),
                     _ => None,
@@ -634,7 +604,7 @@ pub async fn heartbeat_task(
     debug_log(format_args!("shutdown: {cause:?}"));
     ui::begin_farewell(cause);
     alert::shutdown().await;
-    input::shutdown().await;
+    crate::input_gate::shutdown().await;
     #[cfg(not(feature = "motion-qualification"))]
     {
         rtc.rwdt.feed();

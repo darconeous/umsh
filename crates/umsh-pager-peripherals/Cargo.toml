@@ -9,7 +9,6 @@ repository.workspace = true
 [dependencies]
 embedded-hal = "1"
 embedded-hal-async.workspace = true
-embedded-graphics = { version = "0.8", default-features = false }
 umsh-gnss = { path = "../umsh-gnss", default-features = false }
 umsh-ulcp = { path = "../umsh-ulcp" }
 

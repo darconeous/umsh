@@ -12,6 +12,7 @@
 //! - [`lock`]: locking, and the lock screen's way back.
 //! - [`ui`]: the screens themselves, as Buoyant views.
 //! - [`input`]: the inputs a board reports, and what they mean.
+//! - [`board`]: the board's screen and controls, as the interface needs them.
 //! - [`text`]: message text, shared by the screens rather than copied.
 //! - [`avatar`]: peer and channel avatars, following the iOS rules.
 //! - [`font`], [`icon`], [`theme`]: typefaces, icons, colors, and sizes.
@@ -25,6 +26,7 @@ pub use buoyant;
 pub use heapless;
 
 pub mod avatar;
+pub mod board;
 pub mod clock;
 pub mod clock_settings;
 #[cfg(feature = "fixture")]

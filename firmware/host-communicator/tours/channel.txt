@@ -1,0 +1,9 @@
+# A channel, and a member's page.
+turn 1
+press
+shot channel
+turn -1
+press
+turn 1
+press
+shot member

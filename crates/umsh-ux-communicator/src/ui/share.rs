@@ -8,25 +8,60 @@ use buoyant::view::scroll_view::{ScrollBarVisibility, ScrollDirection};
 use embedded_graphics::pixelcolor::Rgb565;
 use heapless::{String, Vec};
 
-use super::{STRIP, label};
+use super::label;
+use crate::board::Metrics;
 use crate::model::{ChannelAccess, ChatKind, MAX_CHATS, Shareable, State};
 use crate::nav::keys;
 use crate::qr::{Owned, QrImage};
 use crate::{font, icon, theme};
 
-/// The room the code takes, with its quiet zone in modules.
-const ROOM: u32 = theme::HEIGHT - STRIP - 8;
+/// The room the code takes: the screen's height where Shows fits beside
+/// it, and otherwise what the name and its lines leave. The quiet zone is
+/// in modules.
+const fn room(m: &Metrics) -> u32 {
+    if shows_beside(m) {
+        tall(m)
+    } else {
+        m.width - INSET - GAP - TRAILING - NARROW_COLUMN
+    }
+}
+const fn tall(m: &Metrics) -> u32 {
+    m.below_strip() - header(m) - 8
+}
+/// The header, with the way back, on a board with touch: the keys' Back
+/// is no sign of one on screen.
+const fn header(m: &Metrics) -> u32 {
+    if m.back.is_some() { m.header } else { 0 }
+}
 const QUIET: u32 = 2;
 const INSET: u32 = 8;
 const GAP: u32 = 12;
 const TRAILING: u32 = 4;
+/// The least Shows takes beside the code; where it has less, it goes under
+/// the code, and the column beside the code is this wide.
+const SHOWS_BESIDE: u32 = 200;
+const NARROW_COLUMN: u32 = 156;
 /// The name, each line under it, and Shows.
 const NAME: u32 = 40;
 const LINE: u32 = 20;
 const ROW: u32 = 36;
 const RADIUS: u16 = 8;
-/// Shows' width: the rest of the screen beside the code.
-const COLUMN: u32 = theme::WIDTH - INSET - ROOM - GAP - TRAILING;
+/// Whether Shows fits beside the code at the screen's full height.
+const fn shows_beside(m: &Metrics) -> bool {
+    m.width - INSET - tall(m) - GAP - TRAILING >= SHOWS_BESIDE
+}
+/// The column beside the code.
+const fn column(m: &Metrics) -> u32 {
+    m.width - INSET - room(m) - GAP - TRAILING
+}
+/// Shows' width: the column beside the code, or the screen under it.
+const fn shows_width(m: &Metrics) -> u32 {
+    if shows_beside(m) {
+        column(m)
+    } else {
+        m.width - INSET - TRAILING
+    }
+}
 /// How many things there are to show: this node and every chat.
 const SHAREABLES: usize = MAX_CHATS + 1;
 
@@ -42,6 +77,7 @@ static INDICES: [usize; SHAREABLES] = {
 };
 
 pub fn view(state: &State) -> impl View<Rgb565, State> + use<> {
+    let m = state.metrics();
     let shown = state.shared();
     let items = state.shareables();
     let last = items.len().saturating_sub(1);
@@ -85,39 +121,57 @@ pub fn view(state: &State) -> impl View<Rgb565, State> + use<> {
     let code = state
         .node
         .share_uri(shown)
-        .and_then(|uri| QrImage::encode(&uri, ROOM, QUIET));
+        .and_then(|uri| QrImage::encode(&uri, room(m), QUIET));
     let mono = matches!(shown, Shareable::Identity);
-    HStack::new((
-        card(code),
+    // Turned in place: each place is a row as wide as Shows, and the row
+    // focused scrolls into view.
+    let width = shows_width(m);
+    let turned = ScrollView::new(
+        ForEach::<SHAREABLES>::new_horizontal(&INDICES[..items.len()], move |&i| {
+            shows(m, width, i > 0, i < last, values[i].clone())
+        })
+        .keyed(move |&i| keys::share(items[i])),
+    )
+    .with_direction(ScrollDirection::Horizontal)
+    .with_bar_visibility(ScrollBarVisibility::Never)
+    .frame()
+    .with_width(width)
+    .with_height(ROW)
+    .padding(Edges::Top, 8);
+    let (beside, under) = if shows_beside(m) {
+        (Some(turned), None)
+    } else {
+        (None, Some(turned))
+    };
+    VStack::new((
+        m.back
+            .is_some()
+            .then(|| super::conversation::header(m, "Share", None, None)),
         VStack::new((
-            label::<32>(&name, &font::BOLD, theme::BODY, theme::TEXT)
-                .frame()
-                .with_height(NAME),
-            lines.first().map(|line| about(line, mono)),
-            lines.get(1).map(|line| about(line, mono)),
-            // Turned in place: each place is a row as wide as the column,
-            // and the row focused scrolls into view.
-            ScrollView::new(
-                ForEach::<SHAREABLES>::new_horizontal(&INDICES[..items.len()], move |&i| {
-                    shows(COLUMN, i > 0, i < last, values[i].clone())
-                })
-                .keyed(move |&i| keys::share(items[i])),
-            )
-            .with_direction(ScrollDirection::Horizontal)
-            .with_bar_visibility(ScrollBarVisibility::Never)
-            .frame()
-            .with_width(COLUMN)
-            .with_height(ROW)
-            .padding(Edges::Top, 8),
+            HStack::new((
+                card(m, code),
+                VStack::new((
+                    label::<32>(&name, &font::BOLD, m.body, theme::TEXT)
+                        .frame()
+                        .with_height(NAME),
+                    lines.first().map(|line| about(m, line, mono)),
+                    lines.get(1).map(|line| about(m, line, mono)),
+                    beside,
+                ))
+                .with_spacing(0)
+                .with_alignment(HorizontalAlignment::Leading)
+                .flex_infinite_width(HorizontalAlignment::Leading),
+            ))
+            .with_spacing(GAP)
+            .with_alignment(VerticalAlignment::Top),
+            under,
         ))
         .with_spacing(0)
         .with_alignment(HorizontalAlignment::Leading)
-        .flex_infinite_width(HorizontalAlignment::Leading),
+        .padding(Edges::Leading, INSET)
+        .padding(Edges::Trailing, TRAILING),
     ))
-    .with_spacing(GAP)
-    .with_alignment(VerticalAlignment::Top)
-    .padding(Edges::Leading, INSET)
-    .padding(Edges::Trailing, TRAILING)
+    .with_spacing(0)
     .bound_focus(BoundaryBehavior::Stop)
     .on_key(|key, s: &mut State| match key {
         Key::Backspace => {
@@ -130,11 +184,11 @@ pub fn view(state: &State) -> impl View<Rgb565, State> + use<> {
 
 /// A line under the name: the address, set in monospace so its two halves
 /// line up, or what kind of channel it is.
-fn about(line: &str, mono: bool) -> impl View<Rgb565, State> + use<> {
+fn about(m: &'static Metrics, line: &str, mono: bool) -> impl View<Rgb565, State> + use<> {
     label::<24>(
         line,
         if mono { &font::MONO } else { &font::REGULAR },
-        theme::SMALL,
+        m.small,
         theme::TEXT_SECONDARY,
     )
     .frame()
@@ -144,7 +198,7 @@ fn about(line: &str, mono: bool) -> impl View<Rgb565, State> + use<> {
 /// The code on its light card, centered in the room it has.
 /// The room is the same whatever the code's size, so what is beside it stays
 /// put as Shows turns.
-fn card(code: Option<QrImage>) -> impl View<Rgb565, State> + use<> {
+fn card(m: &'static Metrics, code: Option<QrImage>) -> impl View<Rgb565, State> + use<> {
     code.map(|code| {
         let quiet = QUIET * code.scale();
         Image::new(Owned(code))
@@ -155,13 +209,18 @@ fn card(code: Option<QrImage>) -> impl View<Rgb565, State> + use<> {
             )
     })
     .frame()
-    .with_width(ROOM)
-    .with_height(theme::HEIGHT - STRIP)
+    .with_width(room(m))
+    .with_height(if shows_beside(m) {
+        m.below_strip()
+    } else {
+        room(m)
+    })
 }
 
 /// Shows at one of the places it turns to, with arrows toward the places
 /// on either side.
 fn shows(
+    m: &'static Metrics,
     width: u32,
     before: bool,
     after: bool,
@@ -179,10 +238,10 @@ fn shows(
                 })
             };
             HStack::new((
-                label::<8>("Shows", &font::BOLD, theme::BODY, theme::TEXT),
+                label::<8>("Shows", &font::BOLD, m.body, theme::TEXT),
                 Spacer::default(),
                 arrow(&icon::BACK, before),
-                label::<32>(&value, &font::BOLD, theme::SECONDARY, theme::TEXT),
+                label::<32>(&value, &font::BOLD, m.secondary, theme::TEXT),
                 arrow(&icon::CHEVRON, after),
             ))
             .with_spacing(6)

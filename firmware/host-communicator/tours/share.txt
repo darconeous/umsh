@@ -1,0 +1,8 @@
+# Sharing this node and a channel.
+backspace
+turn 2
+press
+press
+shot share-identity
+turn 1
+shot share-channel

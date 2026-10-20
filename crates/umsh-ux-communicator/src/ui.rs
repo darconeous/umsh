@@ -13,6 +13,7 @@ use buoyant::view::prelude::*;
 use buoyant::view::scroll_view::ScrollBarVisibility;
 use embedded_graphics::pixelcolor::Rgb565;
 
+use crate::board::Metrics;
 use crate::model::{Ending, Overlay, Section, State};
 use crate::nav::{MemberFrom, Screen, keys};
 use crate::{font, theme};
@@ -41,10 +42,8 @@ mod share;
 mod status;
 mod typing;
 
-/// Height of the status strip.
-pub const STRIP: u32 = 22;
-/// Width of the rail beside the top-level lists.
-pub const RAIL: u32 = 66;
+pub use typing::picker_columns;
+
 /// How much of the content past the focused row a list keeps in view, so
 /// that the next row shows cut by the edge where there is one.
 const LOOK_AHEAD: u32 = 12;
@@ -71,6 +70,9 @@ where
 {
     app.set_roles(Role::Button | Role::TextEntry);
     app.set_focus_binding(State::focus);
+    if let Some(side) = app.state().metrics().touch_target {
+        app.set_min_touch_target(buoyant::primitives::Size::new(side, side));
+    }
     // Focus settles where the state asks, before the first input.
     app.finalize_view();
 }
@@ -101,8 +103,10 @@ pub fn root_view(state: &State) -> impl View<Rgb565, State> + use<> {
 
 /// The strip and the screen on top, while unlocked.
 fn screens(state: &State) -> impl View<Rgb565, State> + use<> {
+    let m = state.metrics();
     ZStack::new((
         status::view(
+            m,
             &state.status,
             state.in_setup(),
             state.keyboard.latches(),
@@ -113,7 +117,7 @@ fn screens(state: &State) -> impl View<Rgb565, State> + use<> {
         match_view!(state.screen(), {
             Screen::Chats { .. } => chats_screen(state),
             Screen::Conversation { chat, .. } => conversation::view(state, *chat),
-            Screen::Details { message, details, .. } => details::view(
+            Screen::Details { message, details, .. } => details::view(m,
                 details,
                 state.inbound(*message),
                 details
@@ -125,7 +129,7 @@ fn screens(state: &State) -> impl View<Rgb565, State> + use<> {
                 member,
                 requested,
                 ..
-            } => member::view(
+            } => member::view(m,
                 member,
                 *requested,
                 match from {
@@ -139,7 +143,7 @@ fn screens(state: &State) -> impl View<Rgb565, State> + use<> {
                     MemberFrom::Chat(_) => None,
                 },
             ),
-            Screen::Join { invite, name, .. } => join::view(invite, name),
+            Screen::Join { invite, name, .. } => join::view(m, invite, name),
             Screen::AddPeer { text, .. } => add_peer::view(state, text),
             Screen::Peer {
                 peer,
@@ -149,11 +153,11 @@ fn screens(state: &State) -> impl View<Rgb565, State> + use<> {
                 ..
             } => state
                 .peer(*peer)
-                .map(|summary| peer::view(summary, detail, *confirm, *requested)),
+                .map(|summary| peer::view(m, summary, detail, *confirm, *requested)),
             Screen::Device { page, .. } => device::page(state, page),
             Screen::Setup { page, .. } => setup::view(state, page),
         })
-        .padding(Edges::Top, STRIP),
+        .padding(Edges::Top, m.strip),
     ))
     .with_alignment(Alignment::TopLeading)
 }
@@ -162,29 +166,30 @@ fn screens(state: &State) -> impl View<Rgb565, State> + use<> {
 /// picker, none of which takes focus; or, over even the strip, what the
 /// screen says as the board turns off.
 fn overlay_view(state: &State, overlay: Overlay) -> impl View<Rgb565, State> + use<> {
+    let m = state.metrics();
     match_view!(overlay, {
-        Overlay::Ending(end) => ending(end),
+        Overlay::Ending(end) => ending(state.metrics(), end),
         Overlay::Picker(at) => typing::picker(state, at),
-        Overlay::Glance(glance) => typing::glance(glance),
+        Overlay::Glance(glance) => typing::glance(m, glance),
         Overlay::Banner(notice) => banner::view(state, notice),
     })
 }
 
 /// What the screen says as the board turns off.
-fn ending(ending: Ending) -> impl View<Rgb565, State> + use<> {
+fn ending(m: &'static Metrics, ending: Ending) -> impl View<Rgb565, State> + use<> {
     match_view!(ending, {
-        Ending::ShuttingDown => shutting_down(),
+        Ending::ShuttingDown => shutting_down(m),
         Ending::BatteryEmpty { lit } => empty_battery(lit),
     })
 }
 
 /// A card over the screen, as the board turns off as asked.
-fn shutting_down() -> impl View<Rgb565, State> + use<> {
+fn shutting_down(m: &'static Metrics) -> impl View<Rgb565, State> + use<> {
     VStack::new((
         Image::new(&crate::icon::POWER)
             .as_template()
             .foreground_color(theme::TEXT_SECONDARY),
-        line("Shutting down", &font::SEMIBOLD, theme::BODY, theme::TEXT),
+        line("Shutting down", &font::SEMIBOLD, m.body, theme::TEXT),
     ))
     .with_spacing(10)
     .padding(Edges::Vertical, 20)
@@ -222,6 +227,7 @@ fn empty_battery(lit: bool) -> impl View<Rgb565, State> + use<> {
 /// The rail and the list beside it. Turning on the rail shows each section
 /// as it is reached; Find, while it is open, takes the Chats list's place.
 fn chats_screen(state: &State) -> impl View<Rgb565, State> + use<> {
+    let m = state.metrics();
     let focus = state.screen().focus().current();
     let shown = focus.and_then(keys::section).unwrap_or(state.section);
     let find = match state.screen() {
@@ -239,14 +245,14 @@ fn chats_screen(state: &State) -> impl View<Rgb565, State> + use<> {
         (Section::Device, _) => List::Device,
     };
     ZStack::new((
-        rail::view(shown, state.unread_chats()),
+        rail::view(m, shown, state.unread_chats()),
         match_view!(list, {
-            List::Chats => chats::view(&state.chats, state.wall_time, menu),
+            List::Chats => chats::view(m, &state.chats, state.wall_time, menu),
             List::Find => find.map(|text| find::view(state, text)),
-            List::Peers => peers::view(&state.peers),
+            List::Peers => peers::view(m, &state.peers),
             List::Device => device::view(state),
         })
-        .padding(Edges::Leading, RAIL),
+        .padding(Edges::Leading, m.rail),
     ))
     .with_alignment(Alignment::TopLeading)
 }
@@ -289,4 +295,53 @@ fn line<T: AsRef<str> + Clone, C>(
         .with_font_size(size)
         .with_line_limit(1)
         .foreground_color(color)
+}
+
+/// An address, in the fewest lines of equal length that each fit in
+/// `width`, each line `height` tall: whole on a wide screen, and broken
+/// evenly where it does not fit.
+fn address(
+    text: &str,
+    face: &'static PrerenderedFont,
+    size: u32,
+    color: Rgb565,
+    width: u32,
+    height: u32,
+) -> impl View<Rgb565, State> + use<> {
+    const MOST: usize = 3;
+    let glyphs = face.face(size);
+    let advance = |s: &str| -> u32 {
+        s.chars()
+            .map(|c| glyphs.glyph(c).map_or(0, |g| u32::from(g.advance)))
+            .sum()
+    };
+    let count = text.chars().count();
+    let split = |lines: usize| {
+        let each = count.div_ceil(lines).max(1);
+        let mut parts: heapless::Vec<heapless::String<44>, MOST> = heapless::Vec::new();
+        let mut chars = text.chars();
+        for _ in 0..lines {
+            let part: heapless::String<44> = chars.by_ref().take(each).collect();
+            if !part.is_empty() {
+                _ = parts.push(part);
+            }
+        }
+        parts
+    };
+    let mut parts = split(1);
+    for lines in 2..=MOST {
+        if parts.iter().all(|p| advance(p) <= width) {
+            break;
+        }
+        parts = split(lines);
+    }
+    let part = |i: usize| {
+        parts.get(i).cloned().map(|p| {
+            line(p, face, size, color)
+                .flex_infinite_width(HorizontalAlignment::Leading)
+                .frame()
+                .with_height(height)
+        })
+    };
+    VStack::new((part(0), part(1), part(2))).with_spacing(0)
 }

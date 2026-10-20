@@ -12,6 +12,7 @@ use super::add_peer::field_look;
 use super::conversation::header;
 use super::label;
 use super::member::{End, action};
+use crate::board::Metrics;
 use crate::model::{ChannelEntry, State};
 use crate::nav::{ChannelText, keys};
 use crate::{font, theme};
@@ -20,21 +21,24 @@ use crate::{font, theme};
 const LABEL: u32 = 24;
 const INSET: u32 = 8;
 /// The field's text: the screen less the field's inset and padding.
-const TEXT_WIDTH: u32 = theme::WIDTH - 2 * INSET - 24;
+const fn text_width(m: &Metrics) -> u32 {
+    m.width - 2 * INSET - 24
+}
 const CARET: u32 = 3;
 /// The line under the field, and the row under that.
 const NOTE: u32 = 30;
 const ROW: u32 = 36;
 
 pub fn view(state: &State, text: &ChannelText) -> impl View<Rgb565, State> + use<> {
+    let m = state.metrics();
     let entry = state.channel_entry();
     let joinable = matches!(entry, ChannelEntry::Named | ChannelEntry::Private);
     VStack::new((
-        header("Add channel", None, None),
+        header(m, "Add channel", None, None),
         label::<32>(
             "Channel name or invitation",
             &font::BOLD,
-            theme::SMALL,
+            m.small,
             theme::TEXT_SECONDARY,
         )
         .padding(Edges::Leading, 10)
@@ -42,19 +46,27 @@ pub fn view(state: &State, text: &ChannelText) -> impl View<Rgb565, State> + use
         .frame()
         .with_height(LABEL),
         TextField::new(text, &font::MONO, State::channel_text_mut)
-            .with_font_size(theme::BODY)
+            .with_font_size(m.body)
             .with_max_lines(3)
             .with_caret_width(CARET)
             // Enter joins once the text names a channel.
             .on_submit(State::add_channel)
             .on_active(State::field_active)
-            .with_label(|status, area| field_look(status, area, TEXT_WIDTH))
+            .with_label(|status, area| field_look(status, area, text_width(m)))
             .focus_key(keys::CHANNEL_FIELD)
             .padding(Edges::Horizontal, INSET),
-        note(entry),
-        joinable.then(|| action("Join", keys::JOIN_ENTRY, State::add_channel, End::Nothing)),
+        note(m, entry),
+        joinable.then(|| {
+            action(
+                m,
+                "Join",
+                keys::JOIN_ENTRY,
+                State::add_channel,
+                End::Nothing,
+            )
+        }),
         (!joinable).then(|| {
-            label::<8>("Join", &font::REGULAR, theme::BODY, theme::TEXT_TERTIARY)
+            label::<8>("Join", &font::REGULAR, m.body, theme::TEXT_TERTIARY)
                 .padding(Edges::Leading, 12)
                 .flex_infinite_width(HorizontalAlignment::Leading)
                 .frame()
@@ -73,7 +85,7 @@ pub fn view(state: &State, text: &ChannelText) -> impl View<Rgb565, State> + use
 }
 
 /// What the text names, and what it still lacks.
-fn note(entry: ChannelEntry) -> impl View<Rgb565, State> + use<> {
+fn note(m: &'static Metrics, entry: ChannelEntry) -> impl View<Rgb565, State> + use<> {
     let mut text: String<40> = String::new();
     let color = match entry {
         ChannelEntry::Empty => theme::TEXT_SECONDARY,
@@ -102,7 +114,7 @@ fn note(entry: ChannelEntry) -> impl View<Rgb565, State> + use<> {
             theme::TEXT_SECONDARY
         }
     };
-    label::<40>(&text, &font::SEMIBOLD, theme::SMALL, color)
+    label::<40>(&text, &font::SEMIBOLD, m.small, color)
         .padding(Edges::Leading, 10)
         .flex_infinite_width(HorizontalAlignment::Leading)
         .frame()

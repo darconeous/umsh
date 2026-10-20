@@ -1,0 +1,9 @@
+# Radio, and its profiles.
+backspace
+turn 2
+press
+turn 2
+press
+shot radio
+press
+shot profiles

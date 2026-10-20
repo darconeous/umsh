@@ -1,0 +1,19 @@
+# Clock, setting the time, and the zones.
+backspace
+turn 2
+press
+turn 6
+press
+shot clock
+press
+turn 1
+press
+shot set-time
+press
+shot set-time-editing
+backspace
+backspace
+shot clock-manual
+turn 1
+press
+shot zones

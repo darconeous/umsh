@@ -1,28 +1,36 @@
-//! A communicator on the host. The screen is a window at the T-LoRa
-//! Pager's 480x222; the keyboard is the Pager's keyboard.
+//! A communicator on the host. The screen is a window the size of a
+//! board's: the T-LoRa Pager's 480x222, or with `--board tdeck` the
+//! T-Deck's 320x240. The keyboard is the Pager's keyboard.
 //!
 //! Interactive (needs the `window` feature):
 //!
-//!     host-communicator
-//!     host-communicator --node DIR
+//!     host-communicator [--board pager|tdeck]
+//!     host-communicator [--board pager|tdeck] --node DIR
 //!
 //! The first shows the fixture's chats. The second runs the communicator's
 //! node, as the Pager does, with its settings served by a soft device that
 //! keeps its saved state and identity under DIR, and a device node on the
 //! LAN bearer.
 //!
-//! Up and Down arrows or the mouse wheel turn the wheel; the Right arrow or
-//! a click presses it. Escape is the lock button. Return, Backspace, Space, and the letters are the
-//! Pager's; Shift is CAP, and Alt the orange key.
+//! On the Pager, Up and Down arrows or the mouse wheel turn the wheel; the
+//! Right arrow or a click presses it. Escape is the lock button. Return,
+//! Backspace, Space, and the letters are the Pager's; Shift is CAP, and Alt
+//! the orange key.
+//!
+//! On the T-Deck, the arrows roll the trackball and Control presses it.
+//! Escape locks, as the screen going dark would. The keyboard types
+//! characters, with Shift applied as the T-Deck's keyboard applies its own.
 //! With the fixture, Tab brings its next message in, as if it arrived. An
 //! identity asked for arrives two seconds later, as the fixture's own
 //! clock has it.
 //!
 //! Headless, for scripted runs and comparisons with the mockup:
 //!
-//!     host-communicator [--node DIR] --script steps.txt --out shots/
+//!     host-communicator [--board B] [--node DIR] --script steps.txt --out shots/
 //!
-//! Each script line is one step: `turn N` (negative is up), `press`,
+//! Each script line is one step: `turn N` (negative is up), `move up`,
+//! `move down`, `move left`, or `move right` with a count after it if more
+//! than one (the trackball), `press`,
 //! `enter`, `backspace`, `type TEXT` (typed as it is), `keys TEXT` (pressed
 //! as Pager keys, so the modifiers and typing aids act on them), `space`,
 //! `shift` and `alt` (tapped), `alt-down` and `alt-up`, `airtime SECONDS`
@@ -40,7 +48,7 @@
 //!
 //! Timing, and something for a profiler to watch:
 //!
-//!     host-communicator --bench N
+//!     host-communicator [--board B] --bench N
 //!
 //! Turns the wheel N times, down the list and back, and reports the mean
 //! layout and paint time of a frame.
@@ -60,15 +68,13 @@ use buoyant::render::AnimatedJoin;
 use buoyant::render_target::{EmbeddedGraphicsRenderTarget, RenderTarget as _};
 use buoyant::view::ViewLayout;
 use embedded_graphics::pixelcolor::Rgb565;
-use embedded_graphics::prelude::*;
 use embedded_graphics_simulator::{OutputSettings, SimulatorDisplay};
 use umsh_pager_peripherals::input::alt_legend;
-use umsh_ux_communicator::input::{self, Input};
+use umsh_ux_communicator::board::Board;
+use umsh_ux_communicator::input::{self, Arrow, Input};
 use umsh_ux_communicator::keyboard::Modifier;
 use umsh_ux_communicator::model::{HOLD_MS, NodeEvent, State};
 use umsh_ux_communicator::{fixture, theme, ui};
-
-const SIZE: Size = Size::new(theme::WIDTH, theme::HEIGHT);
 
 /// Where the fixture's chats keep their messages, for the life of the run.
 fn store() -> &'static fixture::Store {
@@ -103,8 +109,7 @@ where
     F: Fn(&State) -> V,
 {
     if app.state().next_deadline().is_some_and(|at| at <= now) {
-        app.state_mut().expire(now);
-        app.finalize_view();
+        umsh_ux_communicator::input::expire(app, now);
     }
 }
 
@@ -116,10 +121,10 @@ enum Backend {
 }
 
 impl Backend {
-    fn state(self) -> State {
+    fn state(self, board: &'static Board) -> State {
         match self {
-            Self::Fixture(store) => fixture::state(store),
-            Self::Node(node) => node::state(node),
+            Self::Fixture(store) => fixture::state(store, board),
+            Self::Node(node) => node::state(node, board),
         }
     }
 
@@ -149,7 +154,26 @@ impl Backend {
 }
 
 fn main() -> ExitCode {
-    let args: Vec<String> = std::env::args().skip(1).collect();
+    let mut args: Vec<String> = std::env::args().skip(1).collect();
+    let board = match args.iter().position(|a| a == "--board") {
+        Some(at) if at + 1 < args.len() => {
+            let name = args.remove(at + 1);
+            args.remove(at);
+            match name.as_str() {
+                "pager" => &Board::PAGER,
+                "tdeck" => &Board::TDECK,
+                other => {
+                    eprintln!("host-communicator: no board {other:?}; pager or tdeck");
+                    return ExitCode::from(2);
+                }
+            }
+        }
+        Some(_) => {
+            eprintln!("host-communicator: --board needs a name");
+            return ExitCode::from(2);
+        }
+        None => &Board::PAGER,
+    };
     let (backend, dir, args) = match args.as_slice() {
         [node_flag, dir, rest @ ..] if node_flag == "--node" => {
             match node::open(Path::new(dir), std::time::Instant::now()) {
@@ -176,12 +200,12 @@ fn main() -> ExitCode {
                 },
                 _ => None,
             };
-            window(backend, mesh)
+            window(board, backend, mesh)
         }
         [script_flag, script, out_flag, out]
             if script_flag == "--script" && out_flag == "--out" =>
         {
-            match headless(Path::new(script), &PathBuf::from(out), backend) {
+            match headless(board, Path::new(script), &PathBuf::from(out), backend) {
                 Ok(()) => ExitCode::SUCCESS,
                 Err(e) => {
                     eprintln!("host-communicator: {e}");
@@ -191,7 +215,7 @@ fn main() -> ExitCode {
         }
         [bench_flag, count] if bench_flag == "--bench" => match count.parse() {
             Ok(count) => {
-                bench(count);
+                bench(board, count);
                 ExitCode::SUCCESS
             }
             Err(_) => {
@@ -201,18 +225,19 @@ fn main() -> ExitCode {
         },
         _ => {
             eprintln!(
-                "usage: host-communicator [--node DIR] [--script FILE --out DIR | --bench N]"
+                "usage: host-communicator [--board pager|tdeck] [--node DIR] [--script FILE --out DIR | --bench N]"
             );
             ExitCode::from(2)
         }
     }
 }
 
-fn bench(count: u32) {
+fn bench(board: &'static Board, count: u32) {
     use std::time::{Duration, Instant};
 
-    let mut display: SimulatorDisplay<Rgb565> = SimulatorDisplay::new(SIZE);
-    let mut app = App::new(fixture::state(store()), SIZE.into(), ui::root_view);
+    let size = board.metrics.size();
+    let mut display: SimulatorDisplay<Rgb565> = SimulatorDisplay::new(size);
+    let mut app = App::new(fixture::state(store(), board), size.into(), ui::root_view);
     ui::bind(&mut app);
     let (mut layout, mut paint) = (Duration::ZERO, Duration::ZERO);
     for turn in 0..count {
@@ -235,12 +260,18 @@ fn bench(count: u32) {
     );
 }
 
-fn headless(script: &Path, out: &Path, backend: Backend) -> Result<(), String> {
+fn headless(
+    board: &'static Board,
+    script: &Path,
+    out: &Path,
+    backend: Backend,
+) -> Result<(), String> {
     let steps =
         std::fs::read_to_string(script).map_err(|e| format!("{}: {e}", script.display()))?;
     std::fs::create_dir_all(out).map_err(|e| format!("{}: {e}", out.display()))?;
-    let mut display: SimulatorDisplay<Rgb565> = SimulatorDisplay::new(SIZE);
-    let mut app = App::new(backend.state(), SIZE.into(), ui::root_view);
+    let size = board.metrics.size();
+    let mut display: SimulatorDisplay<Rgb565> = SimulatorDisplay::new(size);
+    let mut app = App::new(backend.state(board), size.into(), ui::root_view);
     ui::bind(&mut app);
     // The board's clock: each input takes a moment, and `wait` moves it on.
     let mut clock = 0;
@@ -256,6 +287,28 @@ fn headless(script: &Path, out: &Path, backend: Backend) -> Result<(), String> {
                 vec![Input::Turn(rest.parse().map_err(|_| {
                     format!("line {}: turn needs a count", number + 1)
                 })?)]
+            }
+            "move" => {
+                let mut words = rest.split_whitespace();
+                let arrow = match words.next() {
+                    Some("up") => Arrow::Up,
+                    Some("down") => Arrow::Down,
+                    Some("left") => Arrow::Left,
+                    Some("right") => Arrow::Right,
+                    _ => {
+                        return Err(format!(
+                            "line {}: move needs up, down, left, or right",
+                            number + 1
+                        ));
+                    }
+                };
+                let count: usize = match words.next() {
+                    Some(count) => count
+                        .parse()
+                        .map_err(|_| format!("line {}: move takes a count", number + 1))?,
+                    None => 1,
+                };
+                vec![Input::Move(arrow); count]
             }
             "press" => vec![Input::Press, Input::Release],
             // Down long enough to open a menu, then up.
@@ -399,7 +452,7 @@ fn tap(modifier: Modifier) -> [Input; 2] {
 }
 
 #[cfg(feature = "window")]
-fn window(backend: Backend, mesh: Option<mesh::Mesh>) -> ExitCode {
+fn window(board: &'static Board, backend: Backend, mesh: Option<mesh::Mesh>) -> ExitCode {
     use embedded_graphics_simulator::sdl2::{Keycode, MouseButton};
     use embedded_graphics_simulator::{SimulatorEvent, Window};
 
@@ -419,11 +472,14 @@ fn window(backend: Backend, mesh: Option<mesh::Mesh>) -> ExitCode {
             ..OutputSettings::default()
         },
     );
-    let mut display: SimulatorDisplay<Rgb565> = SimulatorDisplay::new(SIZE);
+    // The T-Deck's trackball and keyboard, or the Pager's wheel and keys.
+    let tdeck = board == &Board::TDECK;
+    let size = board.metrics.size();
+    let mut display: SimulatorDisplay<Rgb565> = SimulatorDisplay::new(size);
     let mut target = EmbeddedGraphicsRenderTarget::new_hinted(&mut display, theme::BACKGROUND);
     window.update(target.display());
     let start = std::time::Instant::now();
-    let mut app = App::new(backend.state(), SIZE.into(), ui::root_view);
+    let mut app = App::new(backend.state(board), size.into(), ui::root_view);
     ui::bind(&mut app);
     loop {
         app.set_time(start.elapsed());
@@ -432,6 +488,26 @@ fn window(backend: Backend, mesh: Option<mesh::Mesh>) -> ExitCode {
         for event in window.events() {
             let input = match event {
                 SimulatorEvent::Quit => return ExitCode::SUCCESS,
+                SimulatorEvent::KeyDown {
+                    keycode,
+                    keymod,
+                    repeat,
+                } if tdeck => tdeck_key(keycode, keymod, repeat).or_else(|| {
+                    match keycode {
+                        Keycode::Tab => backend.tab(),
+                        Keycode::Escape => {
+                            app.state_mut().lock();
+                            app.finalize_view();
+                        }
+                        _ => {}
+                    }
+                    None
+                }),
+                SimulatorEvent::KeyUp {
+                    keycode: Keycode::LCtrl | Keycode::RCtrl,
+                    ..
+                } if tdeck => Some(Input::Release),
+                SimulatorEvent::KeyUp { .. } if tdeck => None,
                 SimulatorEvent::KeyDown {
                     keycode, repeat, ..
                 } => match keycode {
@@ -508,8 +584,48 @@ fn window(backend: Backend, mesh: Option<mesh::Mesh>) -> ExitCode {
     }
 }
 
+/// What a host key does on the T-Deck: the arrows roll the trackball,
+/// Control presses it, and the rest type as its keyboard does.
+#[cfg(feature = "window")]
+fn tdeck_key(
+    key: embedded_graphics_simulator::sdl2::Keycode,
+    keymod: embedded_graphics_simulator::sdl2::Mod,
+    repeat: bool,
+) -> Option<Input> {
+    use embedded_graphics_simulator::sdl2::{Keycode, Mod};
+    let input = match key {
+        Keycode::Up => Input::Move(Arrow::Up),
+        Keycode::Down => Input::Move(Arrow::Down),
+        Keycode::Left => Input::Move(Arrow::Left),
+        Keycode::Right => Input::Move(Arrow::Right),
+        // Its keyboard does not repeat, and the ball's press is one press.
+        _ if repeat => return None,
+        Keycode::LCtrl | Keycode::RCtrl => Input::Press,
+        Keycode::Return => Input::Enter,
+        Keycode::Backspace => Input::Backspace,
+        Keycode::Space => Input::Space,
+        other => {
+            let name = other.name();
+            let mut chars = name.chars();
+            let (Some(c), None) = (chars.next(), chars.next()) else {
+                return None;
+            };
+            if !c.is_ascii_alphanumeric() {
+                return None;
+            }
+            let shift = keymod.intersects(Mod::LSHIFTMOD | Mod::RSHIFTMOD);
+            Input::Character(if shift {
+                c.to_ascii_uppercase()
+            } else {
+                c.to_ascii_lowercase()
+            })
+        }
+    };
+    Some(input)
+}
+
 #[cfg(not(feature = "window"))]
-fn window(_backend: Backend, _mesh: Option<mesh::Mesh>) -> ExitCode {
+fn window(_board: &'static Board, _backend: Backend, _mesh: Option<mesh::Mesh>) -> ExitCode {
     eprintln!("host-communicator: built without the window feature; use --script");
     ExitCode::from(2)
 }

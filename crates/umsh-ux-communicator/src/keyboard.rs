@@ -6,6 +6,11 @@
 //! only of keys with a legend of their own and one under Alt, and of the
 //! text it is typed into only what it is told: which field is focused,
 //! whether it is being edited, and where its cursor is.
+//!
+//! A keyboard that applies its own modifiers reports characters instead,
+//! and the aids alone apply to them.
+
+use crate::board::KeyboardKind;
 
 /// What the character picker offers, while it offers only what the keys
 /// cannot type.
@@ -141,9 +146,19 @@ pub struct Keyboard {
     /// The field's length and cursor when capitals were last decided.
     settled: Option<(usize, usize)>,
     run: Run,
+    kind: KeyboardKind,
 }
 
 impl Keyboard {
+    /// The keyboard of a board whose keyboard reports as `kind` does.
+    #[must_use]
+    pub fn new(kind: KeyboardKind) -> Self {
+        Self {
+            kind,
+            ..Self::default()
+        }
+    }
+
     /// Shift's and Alt's states, for the status strip.
     #[must_use]
     pub fn latches(&self) -> (Latch, Latch) {
@@ -199,7 +214,9 @@ impl Keyboard {
                 ..Key::default()
             };
         }
-        if self.field.is_some_and(Field::symbols) {
+        // A keyboard that applies its own modifiers has its own symbol
+        // layer, which is the user's to choose.
+        if self.kind == KeyboardKind::Legends && self.field.is_some_and(Field::symbols) {
             self.alt.latch = Latch::Locked;
         }
         self.automatic = false;
@@ -283,6 +300,24 @@ impl Keyboard {
             plain.to_ascii_uppercase()
         } else {
             plain
+        };
+        if typed.is_alphabetic() {
+            self.run = Run::Letter;
+        }
+        typed
+    }
+
+    /// A keyboard that applies its own modifiers typed `c`: what it types.
+    /// A capital armed at the start of a sentence makes a lowercase letter
+    /// one, and goes with the first character either way.
+    pub fn character(&mut self, c: char) -> char {
+        self.run = Run::None;
+        let typed = if self.automatic && self.shift.latch == Latch::Once {
+            self.shift.applied();
+            self.automatic = false;
+            c.to_ascii_uppercase()
+        } else {
+            c
         };
         if typed.is_alphabetic() {
             self.run = Run::Letter;

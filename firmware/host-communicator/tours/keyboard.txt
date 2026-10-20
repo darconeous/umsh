@@ -1,0 +1,7 @@
+# Keyboard settings.
+backspace
+turn 2
+press
+turn 5
+press
+shot keyboard

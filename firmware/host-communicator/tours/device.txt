@@ -1,0 +1,7 @@
+# The Device list.
+backspace
+turn 2
+press
+shot device-list
+turn 9
+shot device-lower
