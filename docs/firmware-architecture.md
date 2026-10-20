@@ -49,6 +49,7 @@ Heltec V3's entry, not a board of its own.
 | Heltec V3 | ESP32-S3 | `heltec-v3-bridge` | UART, Wi-Fi | 1599/270 KiB (3008/512) | bridge verified on hardware; qualification open |
 | Heltec V2 | ESP32 | `heltec-v2` | BLE, UART | 1260/191 KiB (3008/see below) | bringup complete, hw validation open |
 | T-LoRa Pager SX1262 | ESP32-S3 | `tlora-pager` | BLE, native USB, Wi-Fi | 4 MiB image layout; PSRAM | hardware qualification in progress |
+| T-Deck / T-Deck Plus | ESP32-S3 | `tdeck` | BLE, native USB, Wi-Fi | 16 MiB image layout; octal PSRAM | hardware-accepted |
 | XIAO ESP32S3 kit | ESP32-S3 | `xiao-esp32s3` | BLE, native USB, Wi-Fi | 4 MiB image layout; octal PSRAM | hardware-accepted; Wi-Fi unrun |
 
 The Pager shares the ESP32 tracker entry point. Its BSP serializes ST7796

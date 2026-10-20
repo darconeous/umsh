@@ -127,6 +127,18 @@ RELEASE_BOARDS = {
             "partition_table": "partitions-umsh.csv",
         },
     },
+    "tdeck": {
+        "chip": "esp32s3",
+        "elf": "firmware-tdeck",
+        "name": "LILYGO T-Deck",
+        "flash_methods": ["esp-serial"],
+        "esp": {
+            "chip": "esp32s3",
+            "offset": "0x0",
+            "flash_size": "16MB",
+            "partition_table": "partitions-umsh-communicator.csv",
+        },
+    },
     "xiao-esp32s3": {
         "chip": "esp32s3",
         "elf": "firmware-xiao-esp32s3",

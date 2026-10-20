@@ -99,6 +99,7 @@ bringup harnesses, not products.
 | `heltec-v3-bridge` | ESP32-S3 | `.bin` (merged, written at `0x0`; Heltec V3, Wi-Fi and bridge client, no BLE) |
 | `tbeam-supreme` | ESP32-S3 | `.bin` (merged, written at `0x0`) |
 | `tlora-pager` | ESP32-S3 | `.bin` (merged, written at `0x0`; SX1262 only) |
+| `tdeck` | ESP32-S3 | `.bin` (merged, written at `0x0`; T-Deck and T-Deck Plus, SX1262 only) |
 | `xiao-esp32s3` | ESP32-S3 | `.bin` (merged, written at `0x0`) |
 
 Named `umsh-<image>-<version>.<ext>`. An image id is the board's id, except

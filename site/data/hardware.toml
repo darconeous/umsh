@@ -16,7 +16,8 @@
 #   proven    — brought up and exercised on real hardware
 #   partial   — bringup verified on hardware, shipping image not yet run
 #   untested  — code complete, never run on the board
-#   planned   — documented, not implemented
+#   planned   — documented, not implemented; no [boards.flash] table and no
+#               downloadable firmware
 
 # Categories render in this order on the hardware page.
 [[categories]]
@@ -335,21 +336,32 @@ quirks = [
   "The initial image uses the existing 4 MB UMSH layout; additional fitted flash is unused.",
 ]
 
-# Planned boards have no [boards.flash] table or downloadable firmware.
 [[boards]]
 id = "tdeck"
 name = "T-Deck"
 vendor = "LilyGO"
 category = "messenger"
-status = "planned"
-status_note = "Not started yet."
+status = "proven"
+status_note = "The keyboard, trackball, touch screen, and GNSS have all been exercised."
 blurb = """
-Another keyboard handheld in the same class, with a trackball beside the \
-keyboard instead of an encoder."""
+A keyboard handheld with a touch screen and a trackball. It sends and \
+receives messages on its own, no phone needed. The T-Deck Plus runs the \
+same firmware."""
 mcu = "Espressif ESP32-S3"
 radio = "Semtech SX1262"
-gnss = "None on the base board; the Plus adds a module"
-display = "2.8\" IPS, 320×240"
+gnss = "Built into the Plus; the T-Deck takes one on its Grove port"
+display = "2.8\" IPS touch screen, 320×240"
 battery = "LiPo via JST connector"
 extras = "QWERTY keyboard, trackball, speaker"
 vendor_url = "https://lilygo.cc/products/t-deck"
+photo = "tdeck.jpg"
+
+[boards.flash]
+make_target = "flash-tdeck"
+methods = ["esp-serial"]
+chip = "ESP32-S3"
+dfu_entry = "Connect native USB. If automatic entry fails, hold the trackball down, press and release the reset button on the left side, then release the trackball."
+quirks = [
+  "The version without a LoRa radio is not supported.",
+  "Builds require Espressif's Xtensa Rust toolchain, installed with <code>espup</code>.",
+]

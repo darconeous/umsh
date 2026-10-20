@@ -125,7 +125,7 @@ RELEASE_BOARDS_NRF52 = techo t1000e sensecap-solar wio-tracker-l1 xiao-nrf52
 # not here—it is a classic ESP32 and has no working image yet.
 # heltec-v3-bridge is a second image for the Heltec V3, not another board.
 RELEASE_BOARDS_ESP32 = heltec-v3 heltec-v3-bridge tbeam-supreme tlora-pager \
-	xiao-esp32s3
+	tdeck xiao-esp32s3
 
 build-techo-console:
 	cd firmware/techo-console && cargo build --release
