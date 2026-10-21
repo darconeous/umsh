@@ -47,7 +47,7 @@ pub mod conformance;
 pub use batch::{Batch, Change, CommitStep, Committed, Subject};
 pub use durable::{Durable, Volatile};
 #[cfg(feature = "flash")]
-pub use flash::{FlashMap, FlashMapStore, RamFlash, RamFlashError};
+pub use flash::{FlashMap, FlashMapStore, RamFlash, RamFlashError, claim_partition};
 pub use ids::{ChatId, MessageId, PeerId};
 pub use memory::{MemoryStore, Quota};
 pub use reaction::{Reacted, Reaction, Reactions};

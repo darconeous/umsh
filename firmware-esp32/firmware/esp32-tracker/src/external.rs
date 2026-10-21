@@ -142,6 +142,30 @@ pub fn display_frame() -> &'static mut [u8; crate::board::display::FRAME_BYTES] 
     }
 }
 
+/// Erase what another firmware left in the chat partition, if anything,
+/// yielding after each sector: over the whole partition the erase takes
+/// seconds, and the executor—the watchdog's feed among it—has to run
+/// throughout. A partition already this store's, or never used, is left
+/// as it is. On failure, the mount after it clears the partition itself.
+#[cfg(feature = "communicator")]
+pub async fn claim_chat_partition(
+    flash: &'static umsh_bsp_esp32::flash_store::Flash,
+    partition: core::ops::Range<u32>,
+) {
+    let started = embassy_time::Instant::now();
+    let mut bounced = umsh_bsp_esp32::flash_store::Bounced::new(flash);
+    match umsh_communicator::claim_partition(&mut bounced, partition, embassy_futures::yield_now)
+        .await
+    {
+        Ok(false) => {}
+        Ok(true) => esp_println::println!(
+            "chats: erased another firmware's data in {} ms",
+            started.elapsed().as_millis()
+        ),
+        Err(e) => esp_println::println!("chats: could not erase another firmware's data: {e:?}"),
+    }
+}
+
 /// The communicator's node: its handles and queues, touched only by the
 /// communicator's tasks. The settings it caches and its chats grow on the
 /// heap, and its messages' text is kept here. Its chats are read from

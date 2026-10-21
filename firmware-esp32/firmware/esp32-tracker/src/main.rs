@@ -3863,6 +3863,8 @@ async fn main(spawner: Spawner) {
     // chat store keeps, for the chat task the device node's bring-up
     // starts, and for the interface below.
     #[cfg(feature = "communicator")]
+    external::claim_chat_partition(flash, chat_partition.clone()).await;
+    #[cfg(feature = "communicator")]
     let chat_node =
         heap::in_psram(|| external::communicator_node(chat_seeds, flash, chat_partition.clone()));
 

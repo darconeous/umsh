@@ -23,6 +23,12 @@
 //! not this store's, and nothing past it is read. An erased header is a
 //! partition never used, and is written once the map in it mounts.
 //!
+//! Erasing what another firmware left takes seconds over a whole partition,
+//! more than a device can spend without letting anything else run. Before
+//! mounting, [`claim_partition`] does it a sector at a time with a pause
+//! between, and writes the header last, so that one interrupted is begun
+//! again rather than mistaken for this store.
+//!
 //! The map's calls are asynchronous, but over a blocking flash driver each
 //! finishes on its first poll. The store polls each once, and treats one
 //! that has not finished as a failed write.
@@ -60,6 +66,66 @@ enum Header {
     Erased,
     /// Anything else: not this store, or not in this format.
     Foreign,
+}
+
+/// What the header sector at `at` says of its partition.
+async fn read_header<F: ReadNorFlash>(flash: &mut F, at: u32) -> Result<Header, StoreError> {
+    let mut bytes = alloc::vec![0u8; HEADER.len().next_multiple_of(F::READ_SIZE)];
+    flash
+        .read(at, &mut bytes)
+        .await
+        .map_err(|_| StoreError::Io)?;
+    Ok(if bytes.iter().all(|&byte| byte == 0xFF) {
+        Header::Erased
+    } else if bytes.starts_with(&HEADER) {
+        Header::Ours
+    } else {
+        Header::Foreign
+    })
+}
+
+/// Write the header into the erased sector at `at`.
+async fn write_header<F: NorFlash>(flash: &mut F, at: u32) -> Result<(), StoreError> {
+    let mut bytes = alloc::vec![0xFF; HEADER.len().next_multiple_of(F::WRITE_SIZE)];
+    bytes[..HEADER.len()].copy_from_slice(&HEADER);
+    flash.write(at, &bytes).await.map_err(|_| StoreError::Io)
+}
+
+/// Make `range` of `flash` this store's before it is mounted, if it holds
+/// what another firmware left: erase the map's part a sector at a time,
+/// awaiting `pause` after each, then the header's sector, and write the
+/// header. Whether anything was erased.
+///
+/// A partition that is erased, or already this store's, is left as it is.
+/// One interrupted partway still has the other firmware's header, so the
+/// next call begins again.
+pub async fn claim_partition<F, P>(
+    flash: &mut F,
+    range: Range<u32>,
+    mut pause: impl FnMut() -> P,
+) -> Result<bool, StoreError>
+where
+    F: NorFlash,
+    P: Future<Output = ()>,
+{
+    let at = range.start;
+    if read_header(flash, at).await? != Header::Foreign {
+        return Ok(false);
+    }
+    let sector = F::ERASE_SIZE as u32;
+    for start in (at + sector..range.end).step_by(sector as usize) {
+        flash
+            .erase(start, start + sector)
+            .await
+            .map_err(|_| StoreError::Io)?;
+        pause().await;
+    }
+    flash
+        .erase(at, at + sector)
+        .await
+        .map_err(|_| StoreError::Io)?;
+    write_header(flash, at).await?;
+    Ok(true)
 }
 
 /// Slots whose place in flash the map remembers, so that recycling a page
@@ -128,24 +194,14 @@ impl<F: NorFlash> FlashMap<F> {
 
     /// What the header sector says of the partition.
     fn header(&mut self) -> Result<Header, StoreError> {
-        let mut bytes = alloc::vec![0u8; HEADER.len().next_multiple_of(F::READ_SIZE)];
         let at = self.header;
-        now(self.map().flash().read(at, &mut bytes))?.map_err(|_| StoreError::Io)?;
-        Ok(if bytes.iter().all(|&byte| byte == 0xFF) {
-            Header::Erased
-        } else if bytes.starts_with(&HEADER) {
-            Header::Ours
-        } else {
-            Header::Foreign
-        })
+        now(read_header(self.map().flash(), at))?
     }
 
     /// Write the header into its erased sector.
     fn write_header(&mut self) -> Result<(), StoreError> {
-        let mut bytes = alloc::vec![0xFF; HEADER.len().next_multiple_of(F::WRITE_SIZE)];
-        bytes[..HEADER.len()].copy_from_slice(&HEADER);
         let at = self.header;
-        now(self.map().flash().write(at, &bytes))?.map_err(|_| StoreError::Io)
+        now(write_header(self.map().flash(), at))?
     }
 
     fn store(&mut self, slot: u32, item: &[u8]) -> Result<(), StoreError> {
@@ -539,6 +595,75 @@ mod tests {
         let mut store = mount(RamFlash::new(SIZE));
         let flash = store.durable_mut().flash_mut();
         assert_eq!(flash.spent(), HEADER.len() / RamFlash::WRITE_SIZE);
+        assert!(flash.bytes().starts_with(&HEADER));
+    }
+
+    /// Claim `flash`, counting the pauses between sectors.
+    fn claim(flash: &mut RamFlash) -> (Result<bool, StoreError>, usize) {
+        let mut pauses = 0;
+        let claimed = now(claim_partition(flash, 0..SIZE as u32, || {
+            pauses += 1;
+            core::future::ready(())
+        }))
+        .unwrap();
+        (claimed, pauses)
+    }
+
+    /// Claimed, a partition that held something else is erased a sector at
+    /// a time, a pause after each, and mounts with nothing more erased.
+    #[test]
+    fn a_claimed_partition_is_erased_with_a_pause_after_each_sector() {
+        let mut flash = foreign();
+        assert_eq!(
+            claim(&mut flash),
+            (Ok(true), SIZE / RamFlash::ERASE_SIZE - 1)
+        );
+        assert!(flash.bytes().starts_with(&HEADER));
+        assert!(
+            flash.bytes()[RamFlash::ERASE_SIZE..]
+                .iter()
+                .all(|&byte| byte == 0xFF)
+        );
+        let spent = flash.spent();
+        let mut store = mount(flash);
+        assert_eq!(store.durable_mut().flash_mut().spent(), spent);
+    }
+
+    /// A partition never used, or already this store's, is left as it is.
+    #[test]
+    fn claiming_leaves_an_erased_or_own_partition_alone() {
+        let mut flash = RamFlash::new(SIZE);
+        assert_eq!(claim(&mut flash), (Ok(false), 0));
+        assert_eq!(flash.spent(), 0);
+
+        let mut store = Flash.fresh();
+        let mut rig = Rig::new();
+        let (_, id) = rig.say(&mut store, direct(), "kept");
+        let mut flash = RamFlash::from_bytes(store.durable_mut().flash_mut().bytes().to_vec());
+        assert_eq!(claim(&mut flash), (Ok(false), 0));
+        assert_eq!(flash.spent(), 0);
+        assert_eq!(
+            mount(flash).message(id).unwrap(),
+            store.message(id).unwrap()
+        );
+    }
+
+    /// A claim cut short keeps the other firmware's header, so it is not
+    /// mistaken for this store's, and the next claim begins again.
+    #[test]
+    fn an_interrupted_claim_begins_again() {
+        let mut flash = foreign();
+        flash.fail_after(10);
+        assert_eq!(claim(&mut flash).0, Err(StoreError::Io));
+        flash.power_on();
+        assert!(!flash.bytes().starts_with(&HEADER));
+        let mut map = FlashMap::new(
+            RamFlash::from_bytes(flash.bytes().to_vec()),
+            0..SIZE as u32,
+            buffer(),
+        );
+        assert_eq!(map.read(&mut |_, _| {}), Err(StoreError::Corrupt));
+        assert_eq!(claim(&mut flash).0, Ok(true));
         assert!(flash.bytes().starts_with(&HEADER));
     }
 
