@@ -213,10 +213,14 @@ impl ChatSummary {
             }
             (Direction::Inbound, None) => {}
         }
-        match &message.invite {
-            Some(invite) => {
+        match &message.card {
+            Some(Card::Channel(invite)) => {
                 push_cut(&mut self.preview, "Channel invite: ");
                 push_cut(&mut self.preview, &invite.name);
+            }
+            Some(Card::Contact(contact)) => {
+                push_cut(&mut self.preview, "Contact: ");
+                push_cut(&mut self.preview, &contact.name);
             }
             None => push_cut(&mut self.preview, &message.text),
         }
@@ -320,6 +324,8 @@ pub enum Shareable {
 
 /// A link that shares a node or a channel, such as `umsh:n:…`.
 pub type ShareUri = String<96>;
+/// A link that shares a node: its address and its own signed identity.
+pub type ContactUri = String<320>;
 
 /// Which of the node's radio profiles the radio is on.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -542,6 +548,101 @@ pub struct Member {
     pub saved: bool,
 }
 
+/// How many devices Nearby lists.
+pub const MAX_NEARBY: usize = 16;
+
+/// Names a device listed on Nearby for as long as Add peer is open.
+pub type NearbyId = u32;
+
+/// A device listed on Nearby. It says what kind of device it is and the
+/// color it shows for this visit, and nothing of whose it is.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct NearbyDevice {
+    pub id: NearbyId,
+    /// Its model id (`boards.json`).
+    pub model: u16,
+    /// Its color's hue step, one of 256 around the OKLCH circle.
+    pub hue: u8,
+    /// How near it seems, 0 (far) to 3 (close), when the bearer reports
+    /// signal strength.
+    pub nearness: Option<u8>,
+}
+
+/// Why an exchange ended without contacts crossing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ExchangeEnd {
+    /// The other holder declined.
+    NotNow,
+    /// The other device is in another exchange.
+    Busy,
+    /// A holder found the codes different.
+    Different,
+    /// The other holder backed out.
+    Left,
+    /// No answer in time.
+    TimedOut,
+    /// Something did not check out.
+    Failed,
+}
+
+/// Where a contact exchange stands.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Exchange {
+    /// Add peer is not open.
+    Closed,
+    /// Add peer is open and its session is being set up.
+    Opening,
+    /// Listed on Nearby, nothing in progress.
+    Idle,
+    /// We asked `with`; waiting for an answer.
+    Asking(NearbyDevice),
+    /// `with` asked us; waiting for our holder.
+    Asked(NearbyDevice),
+    /// We agreed; waiting for `with` to go on.
+    Accepted(NearbyDevice),
+    /// Both hold `code`. `sent` once our holder pressed Same.
+    Comparing {
+        with: NearbyDevice,
+        code: u32,
+        sent: bool,
+    },
+    Ended(ExchangeEnd),
+    /// Contacts crossed: who the other device says it is. Nothing is saved.
+    Exchanged(Member),
+}
+
+/// What Add peer shows: our own color, the devices nearby, and the
+/// exchange in progress.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MeetState {
+    /// Our color's hue step for this visit, once the session is up.
+    pub own_hue: Option<u8>,
+    /// The devices heard, oldest first.
+    pub devices: Vec<NearbyDevice, MAX_NEARBY>,
+    /// The device the exchange is with, or was until it ended.
+    pub with: Option<NearbyDevice>,
+    pub exchange: Exchange,
+}
+
+impl MeetState {
+    /// Add peer closed.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            own_hue: None,
+            devices: Vec::new(),
+            with: None,
+            exchange: Exchange::Closed,
+        }
+    }
+}
+
+impl Default for MeetState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Which way a message went.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Direction {
@@ -633,9 +734,9 @@ pub struct Message {
     pub text: SharedText,
     pub delivery: Delivery,
     pub reactions: Reactions,
-    /// The channel it invites to, when its whole text is the channel's
-    /// link: an invitation says nothing besides.
-    pub invite: Option<Invite>,
+    /// The channel it invites to or the node it introduces, when its whole
+    /// text is that one's link: a card says nothing besides.
+    pub card: Option<Card>,
     /// What it replies to, as it quotes it.
     pub reply: Option<Quote>,
     /// When it was sent or received, in Unix seconds, when the clock was
@@ -693,7 +794,42 @@ impl Invite {
     }
 }
 
+/// What a message whose whole text is a link offers, shown as a card.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Card {
+    Channel(Invite),
+    Contact(Contact),
+}
+
+/// A node a message introduces by its link.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Contact {
+    pub key: [u8; 32],
+    /// What it is called here, else what its link calls it, else its
+    /// address's first characters.
+    pub name: SharedText,
+    pub avatar: AvatarStyle,
+}
+
 impl Message {
+    /// The channel it invites to.
+    #[must_use]
+    pub fn invite(&self) -> Option<&Invite> {
+        match &self.card {
+            Some(Card::Channel(invite)) => Some(invite),
+            _ => None,
+        }
+    }
+
+    /// The node it introduces.
+    #[must_use]
+    pub fn contact(&self) -> Option<&Contact> {
+        match &self.card {
+            Some(Card::Contact(contact)) => Some(contact),
+            _ => None,
+        }
+    }
+
     /// My reaction, if I have reacted.
     #[must_use]
     pub fn my_reaction(&self) -> Option<Reaction> {
@@ -869,6 +1005,8 @@ pub enum NodeEvent {
     Airtime {
         wait: Option<u16>,
     },
+    /// What Add peer shows changed: read it with [`Node::meet`].
+    MeetChanged,
     /// Events were lost: everything shown is to be read again.
     Resync,
 }
@@ -890,6 +1028,7 @@ impl NodeEvent {
             Self::SettingRefused(setting) => (9, setting as u32),
             Self::Airtime { .. } => (10, 0),
             Self::Resync => (11, 0),
+            Self::MeetChanged => (12, 0),
         }
     }
 }
@@ -1009,6 +1148,19 @@ pub trait Node {
     /// What `text`, typed as an address or a peer invitation, names so far.
     fn inspect_peer(&self, text: &str) -> PeerEntry;
 
+    /// What is known of the node `text` names, a node's link or its bare
+    /// address. A link's identity is kept as heard, never saved, and as
+    /// only its key's own word when its key signed it. `None` for anything
+    /// else.
+    fn known_member(&self, text: &str) -> Option<Member>;
+
+    /// The saved peer at `address`, when they are saved.
+    fn saved_peer(&self, address: &str) -> Option<PeerId>;
+
+    /// The link that shares the saved peer `peer`: their address, with
+    /// their own signed identity when one is kept.
+    fn contact_uri(&self, peer: PeerId) -> Option<ContactUri>;
+
     /// What is known of the saved peer `peer`.
     fn peer_detail(&self, peer: PeerId) -> Option<PeerDetail>;
 
@@ -1058,6 +1210,33 @@ pub trait Node {
     /// Keeps `member`, whose identity is known, among my peers, and returns
     /// them as the Peers list shows them. `None` when there is no room.
     fn save_peer(&self, member: &Member) -> Option<PeerSummary>;
+
+    // ─── Contact exchange ────────────────────────────────────────────
+
+    /// Opens Add peer under a session key never used before, keeping the
+    /// devices already listed. Each attempt opens its own: after an
+    /// exchange ends, for any reason, Add peer is opened again.
+    fn open_meet(&self);
+
+    /// Closes Add peer, backing out of any exchange in progress.
+    fn close_meet(&self);
+
+    /// What Add peer shows, read into `state`. Changes come as
+    /// [`NodeEvent::MeetChanged`].
+    fn meet(&self, state: &mut MeetState);
+
+    /// Asks `device` to exchange contacts. Returns whether it was asked.
+    fn ask_to_exchange(&self, device: NearbyId) -> bool;
+
+    /// Answers the device that asked.
+    fn answer_exchange(&self, accept: bool);
+
+    /// Our holder compared the codes. Same sends our contact; Different
+    /// ends the exchange and drops whatever arrived.
+    fn confirm_code(&self, same: bool);
+
+    /// Backs out of the exchange in progress, staying on Nearby.
+    fn cancel_exchange(&self);
 
     /// Joins the channel `invite` invites to, called `name` here, and returns
     /// its chat: the one already joined, if it is. `None` when there is no
@@ -1265,6 +1444,8 @@ pub struct State {
     /// What is being taken in is a touch: a tap on a message selects it,
     /// and holding it opens what a press would.
     pub touching: bool,
+    /// What Add peer shows, while it is open.
+    pub meet: MeetState,
     /// The board this runs on.
     pub board: &'static Board,
 }
@@ -1355,6 +1536,7 @@ impl core::fmt::Debug for State {
             .field("press", &self.press)
             .field("touch", &self.touch)
             .field("touching", &self.touching)
+            .field("meet", &self.meet)
             .finish_non_exhaustive()
     }
 }
@@ -1390,6 +1572,7 @@ impl State {
             press: None,
             touch: None,
             touching: false,
+            meet: MeetState::default(),
             board,
         }
     }
@@ -1536,6 +1719,7 @@ impl State {
         self.refresh_settings();
         self.refresh_peer();
         self.refresh_members();
+        self.node.meet(&mut self.meet);
     }
 
     /// Takes in `event`, from the node, at `now` on the board's clock.
@@ -1561,6 +1745,7 @@ impl State {
             NodeEvent::PingAnswered(_) => self.refresh_peer(),
             NodeEvent::SettingsChanged | NodeEvent::SettingRefused(_) => self.refresh_settings(),
             NodeEvent::Airtime { wait } => self.airtime_wait = wait,
+            NodeEvent::MeetChanged => self.refresh_meet(),
             NodeEvent::Resync => self.reload(),
         }
         false
@@ -1977,7 +2162,7 @@ mod tests {
             text: SharedText::new(&HEAP, text).unwrap(),
             delivery: Delivery::Sent,
             reactions: Reactions::new(),
-            invite: None,
+            card: None,
             reply: None,
             time: None,
             presence: Presence::Present,

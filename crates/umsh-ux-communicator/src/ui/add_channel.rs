@@ -8,8 +8,8 @@ use buoyant::view::prelude::*;
 use embedded_graphics::pixelcolor::Rgb565;
 use heapless::String;
 
-use super::add_peer::field_look;
 use super::conversation::header;
+use super::enter_address::field_look;
 use super::label;
 use super::member::{End, action};
 use crate::board::Metrics;

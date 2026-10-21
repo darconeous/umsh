@@ -1234,6 +1234,7 @@ impl<D: Durable> ChatStore for MemoryStore<D> {
                         key: *key,
                         name: None,
                         identity: heapless::Vec::new(),
+                        linked: false,
                         last_heard: None,
                         route: None,
                         forward_secrecy: false,
@@ -1245,19 +1246,31 @@ impl<D: Durable> ChatStore for MemoryStore<D> {
             (None, _) => return Err(StoreError::NotFound),
         };
         match change {
-            PeerChange::Heard { at, name, identity } => {
+            PeerChange::Heard {
+                at,
+                name,
+                identity,
+                linked,
+            } => {
                 peer.heard = self.disk.tick();
                 peer.record.last_heard = at.or(peer.record.last_heard);
-                // What it calls itself, unless someone here named it.
-                if let Some(name) = name
-                    && !(peer.record.saved && peer.record.name.is_some())
-                {
-                    peer.record.name = Some(record::name(name));
-                }
-                if let Some(identity) = identity
-                    && identity.len() <= IDENTITY_MAX
-                {
-                    peer.record.identity = heapless::Vec::from_slice(identity).unwrap_or_default();
+                // Someone else's word never overrides the node's own.
+                if linked || !peer.record.linked {
+                    // What it calls itself, unless someone here named it.
+                    if let Some(name) = name
+                        && !(peer.record.saved && peer.record.name.is_some())
+                    {
+                        peer.record.name = Some(record::name(name));
+                    }
+                    if let Some(identity) = identity
+                        && identity.len() <= IDENTITY_MAX
+                    {
+                        peer.record.identity =
+                            heapless::Vec::from_slice(identity).unwrap_or_default();
+                    }
+                    if name.is_some() || identity.is_some() {
+                        peer.record.linked = linked;
+                    }
                 }
             }
             PeerChange::Route(route) => {
@@ -1507,6 +1520,7 @@ mod tests {
                     at: Some(1_800_000_000),
                     name: Some("Juniper"),
                     identity: Some(&[2, 4]),
+                    linked: true,
                 },
             )
             .unwrap();

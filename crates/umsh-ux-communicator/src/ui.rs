@@ -19,7 +19,6 @@ use crate::nav::{MemberFrom, Screen, keys};
 use crate::{font, theme};
 
 mod add_channel;
-mod add_peer;
 mod avatar;
 mod banner;
 mod channels;
@@ -28,11 +27,14 @@ mod clock;
 mod conversation;
 mod details;
 mod device;
+mod enter_address;
+mod exchange;
 mod find;
 mod join;
 mod links;
 mod lock;
 mod member;
+mod nearby;
 mod peer;
 mod peers;
 mod profile;
@@ -40,6 +42,7 @@ mod rail;
 mod setting;
 mod setup;
 mod share;
+mod share_contact;
 mod status;
 mod typing;
 
@@ -146,11 +149,12 @@ fn screens(state: &State) -> impl View<Rgb565, State> + use<> {
                             .and_then(|c| state.chat(c.chat))
                             .map_or("", |s| s.name.as_str()),
                     ),
-                    MemberFrom::Chat(_) => None,
+                    MemberFrom::Chat(_) | MemberFrom::Known => None,
                 },
             ),
             Screen::Join { invite, name, .. } => join::view(m, invite, name),
-            Screen::AddPeer { text, .. } => add_peer::view(state, text),
+            Screen::Nearby { .. } | Screen::Exchange { .. } | Screen::EnterAddress { .. } =>
+                add_peer(state),
             Screen::Peer {
                 peer,
                 detail,
@@ -160,12 +164,25 @@ fn screens(state: &State) -> impl View<Rgb565, State> + use<> {
             } => state
                 .peer(*peer)
                 .map(|summary| peer::view(m, summary, detail, *confirm, *requested)),
+            Screen::ShareContact { peer, .. } => state
+                .peer(*peer)
+                .map(|summary| share_contact::view(state, &summary.name)),
             Screen::Device { page, .. } => device::page(state, page),
             Screen::Setup { page, .. } => setup::view(state, page),
         })
         .padding(Edges::Top, m.strip),
     ))
     .with_alignment(Alignment::TopLeading)
+}
+
+/// Add peer's screens: Nearby, an exchange in its place, and Enter an
+/// address.
+fn add_peer(state: &State) -> impl View<Rgb565, State> + use<> {
+    match_view!(state.screen(), {
+        Screen::Exchange { .. } => exchange::view(state),
+        Screen::EnterAddress { text, .. } => enter_address::view(state, text),
+        _ => nearby::view(state),
+    })
 }
 
 /// What lies over the screen: a banner, a glance, or the character

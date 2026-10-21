@@ -24,8 +24,9 @@ pub type Name = String<NAME_MAX>;
 /// The longest body or draft, in octets: a fully reassembled message.
 pub const BODY_MAX: usize = REASSEMBLED_BODY_MAX;
 
-/// The longest advertised identity a peer record keeps.
-pub const IDENTITY_MAX: usize = 64;
+/// The longest advertised identity a peer record keeps: room for a signed
+/// one carrying a name, a location, and a timestamp.
+pub const IDENTITY_MAX: usize = 128;
 
 /// The most router hints a learned route keeps.
 pub const ROUTE_MAX: usize = 16;
@@ -252,8 +253,14 @@ pub struct PeerRecord {
     pub id: PeerId,
     pub key: PublicKey,
     pub name: Option<Name>,
-    /// Its advertised identity, as advertised.
+    /// Its advertised identity, as advertised: the whole payload when it
+    /// came signed and fits, else its role and capabilities alone. Either
+    /// way it starts with those two.
     pub identity: Vec<u8, IDENTITY_MAX>,
+    /// Its name and identity are its own: they came signed by its key, or
+    /// in a frame only its key could have sent. Otherwise they are only
+    /// what someone else said of it.
+    pub linked: bool,
     pub last_heard: Option<u32>,
     /// The learned route back, nearest router first, or `None` without
     /// one. An empty route is a direct link.
@@ -269,10 +276,13 @@ pub struct PeerRecord {
 pub enum PeerChange<'a> {
     /// It was heard, at `at`, saying what it says about itself. A peer
     /// not yet known is kept as heard.
+    /// A `linked` name and identity replace an unlinked one, but never
+    /// the other way round.
     Heard {
         at: Option<u32>,
         name: Option<&'a str>,
         identity: Option<&'a [u8]>,
+        linked: bool,
     },
     /// A route back was learned, or the old one is no good.
     Route(Option<&'a [RouterHint]>),

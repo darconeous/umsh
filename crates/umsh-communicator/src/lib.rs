@@ -29,6 +29,8 @@ mod durable;
 #[cfg(feature = "flash")]
 mod flash;
 mod ids;
+#[cfg(feature = "software-crypto")]
+mod meet;
 mod memory;
 #[cfg(feature = "node")]
 mod node;

@@ -22,7 +22,11 @@ use umsh_core::PublicKey;
 use umsh_sync::AsyncRefCell;
 use umsh_ulcp::ids::prop;
 use umsh_ulcp_simdev::SimulatedDevice;
-use umsh_ux_communicator::model::{ChatKind, Delivery, Messages, Node, NodeEvent, Peers};
+use umsh_ux_communicator::model::{
+    ChatKind, Delivery, Exchange, ExchangeEnd, MeetState, Member, Messages, NearbyDevice, Node,
+    NodeEvent, Peers,
+};
+use umsh_ux_communicator::models;
 
 mod support;
 
@@ -470,6 +474,238 @@ async fn a_deleted_chat_starts_over_with_the_next_message() {
             bob.node.load(second, &mut messages);
             assert_eq!(messages.len(), 1);
             assert_eq!(&*messages[0].text, "Meet at the ridge");
+        })
+        .await;
+}
+
+/// What Add peer on `board` shows now, with the device's answers taken in.
+fn meet(board: &Board) -> MeetState {
+    board.node.pump();
+    let mut state = MeetState::new();
+    board.node.meet(&mut state);
+    state
+}
+
+/// Names `board`'s device `name`.
+fn named(board: &Board, name: &str) {
+    board.node.set_name(name);
+    board.node.pump();
+    while board.node.next_event().is_some() {}
+}
+
+/// Two boards in range of each other and of a third radio that only
+/// listens, named Alice and Bob, both on Add peer, each listing the other.
+async fn on_nearby() -> (Board, Board, Tap, NearbyDevice, NearbyDevice) {
+    let network = SimulatedNetwork::new();
+    let near = network.add_radio_with_config(255, 20);
+    let far = network.add_radio_with_config(255, 20);
+    let tap = network.add_radio_with_config(255, 20);
+    network.connect_bidirectional(near.id(), far.id());
+    network.connect(near.id(), tap.id());
+    network.connect(far.id(), tap.id());
+    let alice = board(near, [0x11; 32]).await;
+    let bob = board(far, [0x22; 32]).await;
+    named(&alice, "Alice");
+    named(&bob, "Bob");
+    // Of two devices of one model with colors alike, one draws a new key,
+    // and a row read just before then names a key gone. Two models never
+    // do.
+    alice.node.set_model(models::LILYGO_T_LORA_PAGER);
+    bob.node.set_model(models::LILYGO_T_DECK);
+    alice.node.open_meet();
+    bob.node.open_meet();
+    let mut listed = (None, None);
+    until("the boards did not list each other", || {
+        listed = (
+            meet(&alice).devices.first().copied(),
+            meet(&bob).devices.first().copied(),
+        );
+        listed.0.is_some() && listed.1.is_some()
+    })
+    .await;
+    let (bob_listed, alice_listed) = (listed.0.unwrap(), listed.1.unwrap());
+    (alice, bob, Tap(tap, Vec::new()), bob_listed, alice_listed)
+}
+
+/// A radio that keeps every frame it hears.
+struct Tap(SimulatedRadio, Vec<Vec<u8>>);
+
+impl Tap {
+    /// Takes in what reached the tap, and returns whether any of it
+    /// carries `key`.
+    fn heard(&mut self, key: &PublicKey) -> bool {
+        use std::task::{Context, Poll, Waker};
+        use umsh::hal::Radio as _;
+
+        let mut buf = [0u8; 255];
+        let mut cx = Context::from_waker(Waker::noop());
+        while let Poll::Ready(Ok(rx)) = self.0.poll_receive(&mut cx, &mut buf) {
+            self.1.push(buf[..rx.len].to_vec());
+        }
+        self.1
+            .iter()
+            .any(|frame| frame.windows(key.0.len()).any(|window| window == key.0))
+    }
+}
+
+/// Alice asks Bob, Bob agrees, and both come to the same code.
+async fn comparing(alice: &Board, bob: &Board, bob_listed: NearbyDevice) -> u32 {
+    assert!(alice.node.ask_to_exchange(bob_listed.id));
+    until("Bob was not asked", || {
+        matches!(meet(bob).exchange, Exchange::Asked(_))
+    })
+    .await;
+    bob.node.answer_exchange(true);
+    let code = |board: &Board| match meet(board).exchange {
+        Exchange::Comparing { code, .. } => Some(code),
+        _ => None,
+    };
+    let mut codes = (None, None);
+    until("the codes did not show", || {
+        codes = (code(alice), code(bob));
+        codes.0.is_some() && codes.1.is_some()
+    })
+    .await;
+    assert_eq!(codes.0, codes.1);
+    codes.0.unwrap()
+}
+
+async fn until_exchanged(board: &Board) -> Member {
+    let mut member = None;
+    until("the contacts did not cross", || {
+        if let Exchange::Exchanged(theirs) = meet(board).exchange {
+            member = Some(theirs);
+        }
+        member.is_some()
+    })
+    .await;
+    member.unwrap()
+}
+
+/// Once both holders find the codes the same, each board holds the
+/// other's address and name, and neither has saved anything.
+#[tokio::test(flavor = "current_thread")]
+async fn contacts_are_exchanged_after_both_confirm() {
+    LocalSet::new()
+        .run_until(async {
+            let (alice, bob, _tap, bob_listed, alice_listed) = on_nearby().await;
+            assert_eq!(bob_listed.model, models::LILYGO_T_DECK);
+            assert_eq!(alice_listed.model, models::LILYGO_T_LORA_PAGER);
+            comparing(&alice, &bob, bob_listed).await;
+            alice.node.confirm_code(true);
+            bob.node.confirm_code(true);
+
+            let at_alice = until_exchanged(&alice).await;
+            let at_bob = until_exchanged(&bob).await;
+            assert_eq!(at_alice.address.as_deref(), Some(&*address(&bob.key)));
+            assert_eq!(at_alice.sender.name.as_str(), "Bob");
+            assert!(!at_alice.saved);
+            assert_eq!(at_bob.address.as_deref(), Some(&*address(&alice.key)));
+            assert_eq!(at_bob.sender.name.as_str(), "Alice");
+            assert!(!at_bob.saved);
+            for board in [&alice, &bob] {
+                let mut peers = Peers::new();
+                board.node.peers(&mut peers);
+                assert!(peers.is_empty());
+            }
+        })
+        .await;
+}
+
+/// No frame carries a board's long-term key until its holder presses Same.
+#[tokio::test(flavor = "current_thread")]
+async fn nothing_long_term_is_sent_before_its_own_same() {
+    LocalSet::new()
+        .run_until(async {
+            let (alice, bob, mut tap, bob_listed, _) = on_nearby().await;
+            comparing(&alice, &bob, bob_listed).await;
+            alice.node.confirm_code(true);
+            // Alice's contact is on its way: give it time to air.
+            tokio::time::sleep(Duration::from_millis(500)).await;
+            assert!(!tap.heard(&alice.key));
+            assert!(!tap.heard(&bob.key));
+            assert!(matches!(
+                meet(&alice).exchange,
+                Exchange::Comparing { sent: true, .. }
+            ));
+            bob.node.confirm_code(true);
+            until_exchanged(&alice).await;
+            until_exchanged(&bob).await;
+            assert!(!tap.heard(&alice.key));
+            assert!(!tap.heard(&bob.key));
+        })
+        .await;
+}
+
+/// A holder who finds the codes different ends the exchange for both, and
+/// what the other side sent is dropped.
+#[tokio::test(flavor = "current_thread")]
+async fn different_after_one_same_discards_the_identity() {
+    LocalSet::new()
+        .run_until(async {
+            let (alice, bob, _tap, bob_listed, _) = on_nearby().await;
+            comparing(&alice, &bob, bob_listed).await;
+            alice.node.confirm_code(true);
+            tokio::time::sleep(Duration::from_millis(500)).await;
+            bob.node.confirm_code(false);
+            until("the exchange did not end for both", || {
+                [&alice, &bob]
+                    .iter()
+                    .all(|board| meet(board).exchange == Exchange::Ended(ExchangeEnd::Different))
+            })
+            .await;
+            let known = bob.node.known_member(&address(&alice.key)).unwrap();
+            assert_ne!(known.sender.name.as_str(), "Alice");
+        })
+        .await;
+}
+
+/// Leaving Add peer mid-exchange ends it for the other side too.
+#[tokio::test(flavor = "current_thread")]
+async fn leaving_cancels() {
+    LocalSet::new()
+        .run_until(async {
+            let (alice, bob, _tap, bob_listed, _) = on_nearby().await;
+            comparing(&alice, &bob, bob_listed).await;
+            alice.node.close_meet();
+            assert_eq!(meet(&alice).exchange, Exchange::Closed);
+            until("Bob did not hear Alice leave", || {
+                meet(&bob).exchange == Exchange::Ended(ExchangeEnd::Left)
+            })
+            .await;
+        })
+        .await;
+}
+
+/// Each attempt draws a key of its own: opening Add peer again after an
+/// exchange ends shows a new color, and the boards list each other anew.
+#[tokio::test(flavor = "current_thread")]
+async fn try_again_uses_a_fresh_session() {
+    LocalSet::new()
+        .run_until(async {
+            let (alice, bob, _tap, bob_listed, _) = on_nearby().await;
+            let before = meet(&alice).own_hue;
+            let first = comparing(&alice, &bob, bob_listed).await;
+            alice.node.confirm_code(false);
+            until("the exchange did not end", || {
+                meet(&bob).exchange == Exchange::Ended(ExchangeEnd::Different)
+            })
+            .await;
+            alice.node.open_meet();
+            bob.node.open_meet();
+            let mut listed = None;
+            until("the boards did not list each other again", || {
+                let state = meet(&alice);
+                listed = state.devices.first().copied();
+                state.exchange == Exchange::Idle
+                    && listed.is_some()
+                    && !meet(&bob).devices.is_empty()
+            })
+            .await;
+            let again = comparing(&alice, &bob, listed.unwrap()).await;
+            // A new pair of keys and nonces: the colors and the code are
+            // drawn anew, and match only by chance.
+            assert!(meet(&alice).own_hue != before || again != first);
         })
         .await;
 }

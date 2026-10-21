@@ -212,6 +212,7 @@ pub fn communicator_node(
             &CLOCK,
             seeds,
         ));
+        (*ptr).set_model(super::MODEL_ID);
         &*ptr
     }
 }

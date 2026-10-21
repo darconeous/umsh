@@ -1,5 +1,5 @@
-//! Add peer: one field takes a 44-character address or a `umsh:n:`
-//! invitation. The address wraps at a fixed column so its groups line up;
+//! Enter an address: one field takes a 44-character address or a
+//! `umsh:n:` invitation. The address wraps at a fixed column so its groups line up;
 //! the avatar appears from the first characters, and Message unlocks when
 //! the address is whole. Backspace goes back.
 
@@ -40,7 +40,7 @@ pub fn view(state: &State, text: &PeerText) -> impl View<Rgb565, State> + use<> 
     let entry = state.peer_entry();
     let complete = matches!(entry, PeerEntry::Complete { .. });
     VStack::new((
-        header(m, "Add peer", None, None),
+        header(m, "Enter an address", None, None),
         label::<24>(
             "Address or invitation",
             &font::BOLD,

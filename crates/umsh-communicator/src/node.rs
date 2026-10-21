@@ -18,14 +18,16 @@ use umsh_ulcp_admin::LocalPort;
 use umsh_ux_communicator::avatar::AvatarStyle;
 use umsh_ux_communicator::heapless::{String, Vec};
 use umsh_ux_communicator::model::{
-    ChannelEntry, ChatId, ChatSummary, Chats, ClockSettings, ClockSource, Details, EventQueue,
-    Heard, Invite, KeyboardSettings, MAX_HEARD, Member, Message, MessageId, Messages, Node,
-    NodeEvent, PeerDetail, PeerEntry, PeerId, PeerSummary, Peers, RadioSettings, Reaction, Setting,
-    ShareUri, Shareable,
+    ChannelEntry, ChatId, ChatSummary, Chats, ClockSettings, ClockSource, ContactUri, Details,
+    EventQueue, Heard, Invite, KeyboardSettings, MAX_HEARD, MeetState, Member, Message, MessageId,
+    Messages, NearbyId, Node, NodeEvent, PeerDetail, PeerEntry, PeerId, PeerSummary, Peers,
+    RadioSettings, Reaction, Setting, ShareUri, Shareable,
 };
 use umsh_ux_communicator::text::TextHeap;
 
 use crate::chat::{ChannelCrypto, Chats as ChatHalf, Joined};
+#[cfg(feature = "software-crypto")]
+use crate::meet::Meeting;
 use crate::memory::MemoryStore;
 use crate::record::StoreError;
 use crate::settings::Settings;
@@ -58,6 +60,9 @@ pub trait Clock {
 pub struct CommunicatorNode<P, S = MemoryStore> {
     settings: RefCell<Settings<P>>,
     chats: RefCell<ChatHalf<S>>,
+    /// Add peer's contact exchange.
+    #[cfg(feature = "software-crypto")]
+    meeting: RefCell<Meeting>,
     events: RefCell<EventQueue<EVENTS>>,
     clock: &'static dyn Clock,
     /// What the chats start with, once the device identity is known.
@@ -82,6 +87,8 @@ impl<P: LocalPort, S: ChatStore> CommunicatorNode<P, S> {
         Self {
             settings: RefCell::new(Settings::new(port)),
             chats: RefCell::new(ChatHalf::new(store, crypto, heap)),
+            #[cfg(feature = "software-crypto")]
+            meeting: RefCell::new(Meeting::new()),
             events: RefCell::new(EventQueue::new()),
             clock,
             seeds,
@@ -92,6 +99,15 @@ impl<P: LocalPort, S: ChatStore> CommunicatorNode<P, S> {
 
     pub fn clock(&self) -> &'static dyn Clock {
         self.clock
+    }
+
+    /// Sets this board's model id (`boards.json`), which a contact exchange
+    /// shows the devices nearby.
+    pub fn set_model(&self, model: u16) {
+        #[cfg(feature = "software-crypto")]
+        self.meeting.borrow_mut().set_model(model);
+        #[cfg(not(feature = "software-crypto"))]
+        let _ = model;
     }
 
     /// Whether the chats have started.
@@ -131,10 +147,35 @@ impl<P: LocalPort, S: ChatStore> CommunicatorNode<P, S> {
 
     /// Takes what the device node received for the chats.
     pub fn arrive(&self, arrival: Arrival) {
+        #[cfg(feature = "software-crypto")]
+        let arrival = match arrival {
+            Arrival::Meet {
+                from,
+                broadcast,
+                rssi,
+                body,
+            } => {
+                let now_ms = self.clock.now_ms();
+                return self.with_meeting(|meeting, events| {
+                    meeting.hear(now_ms, from, broadcast, rssi, &body, events)
+                });
+            }
+            Arrival::MeetOpened(session) => {
+                let now_ms = self.clock.now_ms();
+                return self
+                    .with_meeting(|meeting, events| meeting.opened(now_ms, session, events));
+            }
+            arrival => arrival,
+        };
         self.with_chats(|chats, now_ms, time, events| match arrival {
             Arrival::Text(inbound) => chats.receive(inbound, now_ms, time, events),
-            Arrival::Identity { key, identity, rx } => {
-                chats.identify(key, &identity, &rx, now_ms, time, events);
+            Arrival::Identity {
+                key,
+                identity,
+                payload,
+                rx,
+            } => {
+                chats.identify(key, &identity, &payload, &rx, now_ms, time, events);
             }
             Arrival::Pong {
                 peer,
@@ -142,6 +183,8 @@ impl<P: LocalPort, S: ChatStore> CommunicatorNode<P, S> {
                 rx,
             } => chats.pong(peer, round_trip_ms, &rx, now_ms, events),
             Arrival::Secrecy { peer, change } => chats.secrecy(peer, change, events),
+            #[cfg(feature = "software-crypto")]
+            Arrival::Meet { .. } | Arrival::MeetOpened(_) => {}
         });
     }
 
@@ -162,6 +205,10 @@ impl<P: LocalPort, S: ChatStore> CommunicatorNode<P, S> {
 
     /// What the chats ask of the device node next, besides sending frames.
     pub fn command(&self) -> Option<Command> {
+        #[cfg(feature = "software-crypto")]
+        if let Some(command) = self.meeting.borrow_mut().command() {
+            return Some(command);
+        }
         self.chats.borrow_mut().command()
     }
 
@@ -170,9 +217,24 @@ impl<P: LocalPort, S: ChatStore> CommunicatorNode<P, S> {
         self.with_chats(|chats, now_ms, time, events| chats.tick(now_ms, time, events));
     }
 
-    /// Takes the word on the chats' frames in flight.
+    /// Takes the word on the chats' frames in flight, and keeps the
+    /// contact exchange's deadlines.
     pub fn service(&self) {
         self.with_chats(|chats, now_ms, time, events| chats.service(now_ms, time, events));
+        #[cfg(feature = "software-crypto")]
+        {
+            let now_ms = self.clock.now_ms();
+            self.with_meeting(|meeting, events| meeting.tick(now_ms, events));
+        }
+    }
+
+    /// When [`CommunicatorNode::service`] next has a contact-exchange
+    /// deadline to keep.
+    pub fn meet_deadline(&self) -> Option<u64> {
+        #[cfg(feature = "software-crypto")]
+        return self.meeting.borrow().deadline();
+        #[cfg(not(feature = "software-crypto"))]
+        None
     }
 
     /// The chats' next frame for the device node, or `None` while nothing
@@ -219,6 +281,69 @@ impl<P: LocalPort, S: ChatStore> CommunicatorNode<P, S> {
             self.clock.wall(),
             &mut |event| events.push(event),
         )
+    }
+
+    /// Runs `f` with the contact exchange and the event queue, then takes
+    /// in the contact an exchange it completed brought.
+    #[cfg(feature = "software-crypto")]
+    fn with_meeting(
+        &self,
+        f: impl FnOnce(&mut Meeting, &mut dyn FnMut(NodeEvent)) -> Option<umsh_node::meet::Exchanged>,
+    ) {
+        let theirs = {
+            let mut events = self.events.borrow_mut();
+            f(&mut self.meeting.borrow_mut(), &mut |event| {
+                events.push(event)
+            })
+        };
+        if let Some(theirs) = theirs {
+            let member = self.with_chats(|chats, now_ms, time, events| {
+                chats.exchanged(
+                    theirs.key,
+                    &theirs.identity,
+                    &theirs.payload,
+                    theirs.signed,
+                    now_ms,
+                    time,
+                    events,
+                )
+            });
+            let mut events = self.events.borrow_mut();
+            self.meeting
+                .borrow_mut()
+                .exchanged_with(member, &mut |event| events.push(event));
+        }
+        if self.meeting.borrow().has_commands() {
+            self.wake();
+        }
+    }
+
+    /// The node identity payload a contact exchange sends: the device's
+    /// own, signed, or failing that the name alone, unsigned.
+    #[cfg(feature = "software-crypto")]
+    fn own_identity(&self) -> alloc::vec::Vec<u8> {
+        use umsh_node::{NodeCapabilities, NodeIdentityPayload, NodeRole};
+
+        let settings = self.settings.borrow();
+        if let Some(signed) = settings.identity() {
+            return signed.to_vec();
+        }
+        let name = settings.device_name();
+        let payload = NodeIdentityPayload {
+            role: NodeRole::Chat,
+            capabilities: NodeCapabilities::TEXT_MESSAGES,
+            name: (!name.is_empty()).then(|| name.as_str().into()),
+            location: None,
+            altitude_m: None,
+            timestamp: None,
+            supported_regions: None,
+            nonce: None,
+            signature: None,
+        };
+        let mut buf = [0u8; crate::record::IDENTITY_MAX];
+        payload
+            .encode(&mut buf)
+            .map_or_else(|_| alloc::vec::Vec::new(), |len| buf[..len].to_vec())
     }
 
     /// Whether events wait for the interface.
@@ -387,6 +512,20 @@ impl<P: LocalPort, S: ChatStore> Node for CommunicatorNode<P, S> {
 
     fn inspect_peer(&self, text: &str) -> PeerEntry {
         self.chats.borrow().inspect_peer(text)
+    }
+
+    fn known_member(&self, text: &str) -> Option<Member> {
+        self.with_chats(|chats, now_ms, _, events| {
+            chats.known_member(text, now_ms, self.clock.wall(), events)
+        })
+    }
+
+    fn saved_peer(&self, address: &str) -> Option<PeerId> {
+        self.chats.borrow().saved_at(address)
+    }
+
+    fn contact_uri(&self, peer: PeerId) -> Option<ContactUri> {
+        self.chats.borrow().contact_uri(peer)
     }
 
     fn peer_detail(&self, peer: PeerId) -> Option<PeerDetail> {
@@ -590,5 +729,107 @@ impl<P: LocalPort, S: ChatStore> Node for CommunicatorNode<P, S> {
 
     fn set_gnss_enabled(&self, on: bool) {
         self.change(Setting::Gnss, |settings| settings.set_gnss_enabled(on));
+    }
+
+    // ─── Contact exchange ────────────────────────────────────────────
+
+    fn open_meet(&self) {
+        #[cfg(feature = "software-crypto")]
+        {
+            let (own, frame_ms) = {
+                let mut settings = self.settings.borrow_mut();
+                settings.read_for_meet();
+                (settings.key().copied(), settings.frame_ms())
+            };
+            let Some(own) = own else { return };
+            let now_ms = self.clock.now_ms();
+            self.with_meeting(|meeting, events| {
+                meeting.open(now_ms, PublicKey(own), frame_ms, events);
+                None
+            });
+        }
+    }
+
+    fn close_meet(&self) {
+        #[cfg(feature = "software-crypto")]
+        {
+            let now_ms = self.clock.now_ms();
+            self.with_meeting(|meeting, events| {
+                meeting.close(now_ms, events);
+                None
+            });
+        }
+    }
+
+    fn meet(&self, state: &mut MeetState) {
+        #[cfg(feature = "software-crypto")]
+        self.meeting.borrow().state(state);
+        #[cfg(not(feature = "software-crypto"))]
+        {
+            *state = MeetState::new();
+        }
+    }
+
+    fn ask_to_exchange(&self, device: NearbyId) -> bool {
+        #[cfg(feature = "software-crypto")]
+        {
+            let now_ms = self.clock.now_ms();
+            let mut asked = false;
+            self.with_meeting(|meeting, events| {
+                asked = meeting.ask(now_ms, device, events);
+                None
+            });
+            asked
+        }
+        #[cfg(not(feature = "software-crypto"))]
+        {
+            let _ = device;
+            false
+        }
+    }
+
+    fn answer_exchange(&self, accept: bool) {
+        #[cfg(feature = "software-crypto")]
+        {
+            let now_ms = self.clock.now_ms();
+            self.with_meeting(|meeting, events| {
+                meeting.answer(now_ms, accept, events);
+                None
+            });
+        }
+        #[cfg(not(feature = "software-crypto"))]
+        let _ = accept;
+    }
+
+    fn confirm_code(&self, same: bool) {
+        #[cfg(feature = "software-crypto")]
+        {
+            let now_ms = self.clock.now_ms();
+            if !same {
+                self.with_meeting(|meeting, events| {
+                    meeting.different(now_ms, events);
+                    None
+                });
+                return;
+            }
+            if !self.meeting.borrow().comparing() {
+                return;
+            }
+            let identity = self.own_identity();
+            self.with_meeting(|meeting, events| meeting.same(now_ms, &identity, events));
+        }
+        #[cfg(not(feature = "software-crypto"))]
+        let _ = same;
+    }
+
+    fn cancel_exchange(&self) {
+        #[cfg(feature = "software-crypto")]
+        {
+            let now_ms = self.clock.now_ms();
+            self.with_meeting(|meeting, events| {
+                meeting.cancel(now_ms, events);
+                None
+            });
+        }
     }
 }

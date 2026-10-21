@@ -12,7 +12,8 @@ use umsh_ux_communicator::clock_settings::DateParts;
 use umsh_ux_communicator::input::{self, Arrow, Input};
 use umsh_ux_communicator::keyboard::{Latch, Modifier, PICKER};
 use umsh_ux_communicator::model::{
-    ChannelAccess, ChannelEntry, ChatKind, ClockSource, Delivery, Direction, Ending, FoundKind,
+    ChannelAccess, ChannelEntry, ChatKind, ClockSource, Delivery, Direction, Ending, Exchange,
+    ExchangeEnd, FoundKind,
     Glance, Node as _, NodeEvent, Notice, Profile, Reaction, Rule, Section, Shareable, State,
     brightness_level,
 };
@@ -1342,14 +1343,12 @@ fn the_rail_switches_to_peers_which_open_on_add_peer() {
 }
 
 #[test]
-fn add_peer_unlocks_message_once_the_address_is_whole() {
+fn enter_an_address_unlocks_message_once_the_address_is_whole() {
     use umsh_ux_communicator::model::PeerEntry;
     let mut app = app!();
-    run(
-        &mut app,
-        &[Input::Backspace, Input::Turn(1), Input::Press, Input::Press],
-    );
-    assert!(matches!(app.state().screen(), Screen::AddPeer { .. }));
+    open_nearby(&mut app);
+    run(&mut app, &[Input::Press]);
+    assert!(matches!(app.state().screen(), Screen::EnterAddress { .. }));
     assert_eq!(focus(app.state()), Some(keys::PEER_FIELD));
     run(&mut app, &typed("7cQRwjEyMJRDQCrtkgvaKiXfJ2CrUi"));
     assert!(matches!(
@@ -1362,7 +1361,7 @@ fn add_peer_unlocks_message_once_the_address_is_whole() {
     ));
     // Not whole: Enter only ends the edit, and Message cannot be reached.
     run(&mut app, &[Input::Enter, Input::Turn(1)]);
-    assert!(matches!(app.state().screen(), Screen::AddPeer { .. }));
+    assert!(matches!(app.state().screen(), Screen::EnterAddress { .. }));
     assert_ne!(focus(app.state()), Some(keys::MESSAGE_PEER));
 
     run(&mut app, &[Input::Turn(-1)]);
@@ -1382,13 +1381,11 @@ fn add_peer_unlocks_message_once_the_address_is_whole() {
 }
 
 #[test]
-fn add_peer_reads_an_invitation_and_refuses_what_is_not_an_address() {
+fn enter_an_address_reads_an_invitation_and_refuses_what_is_not_an_address() {
     use umsh_ux_communicator::model::PeerEntry;
     let mut app = app!();
-    run(
-        &mut app,
-        &[Input::Backspace, Input::Turn(1), Input::Press, Input::Press],
-    );
+    open_nearby(&mut app);
+    run(&mut app, &[Input::Press]);
     run(
         &mut app,
         &typed("umsh:n:7cQRwjEyMJRDQCrtkgvaKiXfJ2CrUi8pTn4kWsYbHd9e"),
@@ -1400,6 +1397,162 @@ fn add_peer_reads_an_invitation_and_refuses_what_is_not_an_address() {
     run(&mut app, &[Input::Backspace; 51]);
     run(&mut app, &typed("0O"));
     assert_eq!(app.state().peer_entry(), PeerEntry::Invalid);
+}
+
+/// Opens Add peer from the Peers list, on Nearby.
+fn open_nearby<V, F>(app: &mut App<V, State, F>)
+where
+    V: ViewLayout<State>,
+    V::FocusTree: DefaultFocus,
+    V::Renderables: AnimatedJoin,
+    F: Fn(&State) -> V,
+{
+    run(app, &[Input::Backspace, Input::Turn(1), Input::Press, Input::Press]);
+    assert!(matches!(app.state().screen(), Screen::Nearby { .. }));
+}
+
+/// What the fixture's other holder does, and what the node then says.
+fn other_holder<V, F>(app: &mut App<V, State, F>, store: &fixture::Store, step: fixture::MeetStep)
+where
+    V: ViewLayout<State>,
+    V::FocusTree: DefaultFocus,
+    V::Renderables: AnimatedJoin,
+    F: Fn(&State) -> V,
+{
+    store.meet_peer(step);
+    input::events(app, tick(100));
+}
+
+#[test]
+fn nearby_lists_devices_by_model_and_color_alone() {
+    let mut app = app!();
+    open_nearby(&mut app);
+    let meet = &app.state().meet;
+    assert!(meet.own_hue.is_some());
+    assert_eq!(meet.exchange, Exchange::Idle);
+    assert_eq!(meet.devices.len(), 2);
+    assert_eq!(focus(app.state()), Some(keys::ENTER_ADDRESS));
+    run(&mut app, &[Input::Turn(-2)]);
+    assert_eq!(focus(app.state()), Some(keys::nearby(1)));
+    // Leaving Add peer closes its session.
+    run(&mut app, &[Input::Backspace]);
+    assert_eq!(app.state().meet.exchange, Exchange::Closed);
+}
+
+#[test]
+fn an_exchange_asked_for_opens_on_its_card_and_goes_on_to_the_code() {
+    let store = store();
+    let mut app = app!(store);
+    open_nearby(&mut app);
+    other_holder(&mut app, store, fixture::MeetStep::Asks);
+    assert!(matches!(app.state().meet.exchange, Exchange::Asked(_)));
+    assert_eq!(focus(app.state()), Some(keys::EXCHANGE_ACCEPT));
+    run(&mut app, &[Input::Press]);
+    assert!(matches!(app.state().screen(), Screen::Exchange { .. }));
+    assert!(matches!(
+        app.state().meet.exchange,
+        Exchange::Comparing { sent: false, .. }
+    ));
+    assert_eq!(focus(app.state()), Some(keys::SAME));
+}
+
+#[test]
+fn not_now_stays_on_nearby_under_a_new_color() {
+    let store = store();
+    let mut app = app!(store);
+    open_nearby(&mut app);
+    let before = app.state().meet.own_hue;
+    other_holder(&mut app, store, fixture::MeetStep::Asks);
+    run(&mut app, &[Input::Turn(1), Input::Press]);
+    assert!(matches!(app.state().screen(), Screen::Nearby { .. }));
+    assert_eq!(app.state().meet.exchange, Exchange::Idle);
+    assert_ne!(app.state().meet.own_hue, before);
+    assert_eq!(focus(app.state()), Some(keys::ENTER_ADDRESS));
+}
+
+#[test]
+fn same_on_both_sides_opens_the_unsaved_peer_on_message() {
+    let store = store();
+    let mut app = app!(store);
+    let saved = app.state().peers.len();
+    open_nearby(&mut app);
+    run(&mut app, &[Input::Turn(-2), Input::Press]);
+    assert!(matches!(app.state().screen(), Screen::Exchange { .. }));
+    assert!(matches!(app.state().meet.exchange, Exchange::Asking(_)));
+    other_holder(&mut app, store, fixture::MeetStep::Answers(true));
+    assert_eq!(focus(app.state()), Some(keys::SAME));
+    run(&mut app, &[Input::Press]);
+    assert!(matches!(
+        app.state().meet.exchange,
+        Exchange::Comparing { sent: true, .. }
+    ));
+    other_holder(&mut app, store, fixture::MeetStep::Same);
+    match app.state().screen() {
+        Screen::Member {
+            from: MemberFrom::Known,
+            member,
+            ..
+        } => {
+            assert_eq!(member.sender.name.as_str(), "Kit Moreno");
+            assert!(!member.saved);
+        }
+        other => panic!("expected the unsaved peer, got {other:?}"),
+    }
+    assert_eq!(focus(app.state()), Some(keys::MESSAGE_MEMBER));
+    assert_eq!(app.state().meet.exchange, Exchange::Closed);
+    assert_eq!(app.state().peers.len(), saved);
+    // Back goes to the Peers list, not to Add peer.
+    run(&mut app, &[Input::Backspace]);
+    assert_eq!(app.state().screens.len(), 1);
+    assert_eq!(app.state().section, Section::Peers);
+}
+
+#[test]
+fn different_ends_the_exchange_and_try_again_draws_a_new_color() {
+    let store = store();
+    let mut app = app!(store);
+    open_nearby(&mut app);
+    let before = app.state().meet.own_hue;
+    other_holder(&mut app, store, fixture::MeetStep::Asks);
+    run(&mut app, &[Input::Press, Input::Turn(1)]);
+    assert_eq!(focus(app.state()), Some(keys::DIFFERENT));
+    run(&mut app, &[Input::Press]);
+    assert_eq!(
+        app.state().meet.exchange,
+        Exchange::Ended(ExchangeEnd::Different)
+    );
+    assert_eq!(focus(app.state()), Some(keys::TRY_AGAIN));
+    run(&mut app, &[Input::Press]);
+    assert!(matches!(app.state().screen(), Screen::Nearby { .. }));
+    assert_eq!(app.state().meet.exchange, Exchange::Idle);
+    assert_ne!(app.state().meet.own_hue, before);
+}
+
+#[test]
+fn backing_out_of_an_exchange_closes_add_peer() {
+    let store = store();
+    let mut app = app!(store);
+    open_nearby(&mut app);
+    other_holder(&mut app, store, fixture::MeetStep::Asks);
+    run(&mut app, &[Input::Press]);
+    assert!(matches!(app.state().screen(), Screen::Exchange { .. }));
+    run(&mut app, &[Input::Backspace]);
+    assert_eq!(app.state().screens.len(), 1);
+    assert_eq!(app.state().meet.exchange, Exchange::Closed);
+}
+
+#[test]
+fn the_other_holder_backing_out_ends_it_here() {
+    let store = store();
+    let mut app = app!(store);
+    open_nearby(&mut app);
+    other_holder(&mut app, store, fixture::MeetStep::Asks);
+    run(&mut app, &[Input::Press]);
+    other_holder(&mut app, store, fixture::MeetStep::Leaves);
+    assert_eq!(app.state().meet.exchange, Exchange::Ended(ExchangeEnd::Left));
+    assert_eq!(focus(app.state()), Some(keys::TRY_AGAIN));
+    run(&mut app, &[Input::Turn(1), Input::Press]);
+    assert_eq!(app.state().screens.len(), 1);
 }
 
 fn peer_detail(state: &State) -> &umsh_ux_communicator::model::PeerDetail {
@@ -1443,7 +1596,7 @@ fn a_saved_peer_shows_its_detail_and_messages_in_its_own_chat() {
 fn forward_secrecy_switches_and_a_ping_is_answered() {
     let mut app = app!();
     open_pat(&mut app);
-    run(&mut app, &[Input::Turn(3)]);
+    run(&mut app, &[Input::Turn(4)]);
     assert_eq!(focus(app.state()), Some(keys::PEER_SECRECY));
     run(&mut app, &[Input::Press]);
     assert!(peer_detail(app.state()).forward_secrecy);
@@ -1457,7 +1610,7 @@ fn forward_secrecy_switches_and_a_ping_is_answered() {
 fn a_saved_peer_is_asked_for_their_identity() {
     let mut app = app!();
     open_pat(&mut app);
-    run(&mut app, &[Input::Turn(5)]);
+    run(&mut app, &[Input::Turn(6)]);
     assert_eq!(focus(app.state()), Some(keys::PEER_IDENTITY));
     assert!(matches!(
         app.state().screen(),
@@ -1482,7 +1635,7 @@ fn forget_asks_first_and_cancel_keeps_the_peer() {
     let mut app = app!();
     open_pat(&mut app);
     let peers = app.state().peers.len();
-    run(&mut app, &[Input::Turn(6)]);
+    run(&mut app, &[Input::Turn(7)]);
     assert_eq!(focus(app.state()), Some(keys::PEER_FORGET));
     run(&mut app, &[Input::Press]);
     assert_eq!(focus(app.state()), Some(keys::FORGET_CANCEL));
@@ -2659,4 +2812,86 @@ fn gnss_shows_its_fix_while_on() {
     assert_eq!(app.state().node.gnss_enabled(), Some(false));
     run(&mut app, &[Input::Turn(1)]);
     assert_eq!(focus(app.state()), Some(keys::GNSS_ENABLED));
+}
+
+/// Turns to the newest message of the conversation shown: up from the
+/// composer, or down from an older message.
+fn to_newest<V, F>(app: &mut App<V, State, F>) -> u32
+where
+    V: ViewLayout<State>,
+    V::FocusTree: DefaultFocus,
+    V::Renderables: AnimatedJoin,
+    F: Fn(&State) -> V,
+{
+    let newest = app
+        .state()
+        .conversation
+        .as_ref()
+        .and_then(|c| c.messages.last())
+        .map(|m| m.id)
+        .expect("a message");
+    for _ in 0..40 {
+        let at = focus(app.state());
+        if at == Some(keys::message(newest)) {
+            return newest;
+        }
+        let turn = if at == Some(keys::COMPOSER) { -1 } else { 1 };
+        run(app, &[Input::Turn(turn)]);
+    }
+    panic!("never reached the newest message: {:?}", focus(app.state()));
+}
+
+/// Share contact sends a saved peer's link to the chat picked, where it
+/// shows as their card. Show opens their page while they are saved, and
+/// their unsaved sheet, on Message, once they are not: nothing is saved
+/// until Save peer.
+#[test]
+fn a_contact_is_shared_as_a_card_that_saves_nothing_by_itself() {
+    let mut app = app!();
+    open_pat(&mut app);
+    run(&mut app, &[Input::Turn(1)]);
+    assert_eq!(focus(app.state()), Some(keys::PEER_SHARE));
+    run(&mut app, &[Input::Press]);
+    assert!(matches!(app.state().screen(), Screen::ShareContact { .. }));
+    let first = app.state().chats.first().map(|c| c.id).unwrap();
+    assert_eq!(focus(app.state()), Some(keys::chat(first)));
+    run(&mut app, &[Input::Press]);
+    assert_in_conversation(app.state(), first);
+    let card = to_newest(&mut app);
+    let message = app
+        .state()
+        .conversation
+        .as_ref()
+        .and_then(|c| c.messages.iter().find(|m| m.id == card))
+        .unwrap();
+    assert!(message.text.as_str().starts_with("umsh:n:YmRG"));
+    assert_eq!(message.contact().map(|c| c.name.as_str()), Some("Pat Okafor"));
+    let preview = app.state().chat(first).unwrap().preview.as_str();
+    assert_eq!(preview, "You: Contact: Pat Okafor");
+
+    // A card offers Show first; Pat is saved, so it opens their page.
+    run(&mut app, &[Input::Press]);
+    assert_eq!(focus(app.state()), Some(keys::VIEW_CONTACT));
+    run(&mut app, &[Input::Press]);
+    assert!(peer_detail(app.state()).address.starts_with("YmRG"));
+
+    // Forgotten, Pat's card opens what is known of them, unsaved.
+    let peers = app.state().peers.len();
+    run(&mut app, &[Input::Turn(7), Input::Press, Input::Turn(-1), Input::Press]);
+    assert_eq!(app.state().peers.len(), peers - 1);
+    // Forget goes back to where the page was opened from.
+    assert!(matches!(app.state().screen(), Screen::Conversation { .. }));
+    to_newest(&mut app);
+    run(&mut app, &[Input::Press, Input::Press]);
+    let Screen::Member { member, .. } = app.state().screen() else {
+        panic!("expected the member sheet, got {:?}", app.state().screen());
+    };
+    assert!(!member.saved);
+    assert_eq!(member.sender.name.as_str(), "Pat Okafor");
+    assert_eq!(focus(app.state()), Some(keys::MESSAGE_MEMBER));
+    assert_eq!(app.state().peers.len(), peers - 1);
+    run(&mut app, &[Input::Turn(1)]);
+    assert_eq!(focus(app.state()), Some(keys::SAVE_PEER));
+    run(&mut app, &[Input::Press]);
+    assert_eq!(app.state().peers.len(), peers);
 }

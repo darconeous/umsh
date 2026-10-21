@@ -3107,8 +3107,8 @@ def main(path, native_dir=None):
             ("Add peer", screen_add_peer(),
              "Opens on Nearby: devices that also have Add peer open, nearest "
              "first, by model and a color that is new each time the screen "
-             "opens. No name, address or avatar is sent or shown until both "
-             "people confirm the code. You is this device’s color. The arcs "
+             "opens. No name, address or avatar is sent or shown until its "
+             "holder presses Same. You is this device’s color. The arcs "
              "show how close; the back-to-back glyph shows only on boards "
              "with NFC."),
             ("Asked to exchange", screen_exchange_request(),
@@ -3118,15 +3118,16 @@ def main(path, native_dir=None):
              "sent."),
             ("Compare", screen_exchange_code(),
              "Both screens show the same six digits only if nobody is in the "
-             "middle. Names still have not been sent. Turning moves between "
-             "the buttons."),
+             "middle. Nothing of this device has been sent yet: Same sends "
+             "its address and name. Turning moves between the buttons."),
             ("Waiting", screen_exchange_code("waiting"),
-             "After Same, until the other side presses Same too. Then both "
-             "devices send their addresses and names. Leaving here "
-             "cancels."),
+             "After Same, which sent this device’s address and name, until "
+             "the other side presses Same too and sends its own. Leaving "
+             "here cancels."),
             ("Codes differ", screen_exchange_code("differ"),
-             "Either side pressing Different lands both here, with nothing "
-             "sent and nothing saved. Try again goes back to Nearby."),
+             "Either side pressing Different lands both here, and whatever "
+             "either received is dropped. Nothing is saved. Try again goes "
+             "back to Nearby under a new color."),
             ("Exchanged", screen_exchanged(),
              "Where both land once the codes match, or after a tap on boards "
              "with NFC: the ordinary sheet for a peer who is not saved. It "
@@ -3150,7 +3151,8 @@ def main(path, native_dir=None):
             ("Contact in a chat", screen_contact_in_chat(),
              "A message whose whole body is a umsh:n: link renders as a "
              "contact card, as invites do for channels. Pressing it opens "
-             "the peer’s page."),
+             "its actions with Show first, as Join is for an invite: a "
+             "saved peer’s page, or else the unsaved-peer sheet."),
             ("Contact opened", screen_introduced(),
              "The same unsaved-peer sheet, as it opens: Message focused, "
              "Save peer one turn down."),

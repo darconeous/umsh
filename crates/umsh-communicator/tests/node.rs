@@ -20,7 +20,8 @@ use umsh_core::{
     PublicKey, SourceAddrRef,
 };
 use umsh_crypto::CryptoEngine;
-use umsh_crypto::software::{SoftwareAes, SoftwareSha256};
+use umsh_crypto::NodeIdentity;
+use umsh_crypto::software::{SoftwareAes, SoftwareIdentity, SoftwareSha256};
 use umsh_mac::{ChannelInfoRef, ReceivedPacketRef, RxMetadata, Snr};
 use umsh_node::{NodeCapabilities, NodeIdentityPayload, NodeRole};
 use umsh_text::ConversationKey;
@@ -531,7 +532,12 @@ fn an_invitation_in_a_message_is_joined() {
     else {
         panic!("nothing arrived");
     };
-    let invite = node.message(chat, message).unwrap().invite.unwrap();
+    let invite = node
+        .message(chat, message)
+        .unwrap()
+        .invite()
+        .cloned()
+        .unwrap();
     assert_eq!(&*invite.name, "Base Camp");
     assert_eq!(invite.access, ChannelAccess::Private);
     assert_eq!(invite.key, key.0);
@@ -558,7 +564,7 @@ fn an_invitation_in_a_message_is_joined() {
     else {
         panic!("nothing arrived");
     };
-    assert_eq!(node.message(chat, message).unwrap().invite, None);
+    assert_eq!(node.message(chat, message).unwrap().card, None);
 }
 
 /// A channel the device has no room for goes again, chat and all.
@@ -1051,6 +1057,7 @@ fn a_heard_node_is_found_by_name() {
     node.arrive(Arrival::Identity {
         key: robin,
         identity: chatter("Robin Ridge"),
+        payload: Vec::new(),
         rx: rx(1),
     });
     clock.set(65_000);
@@ -1201,6 +1208,7 @@ fn a_saved_peer_is_asked_for_their_identity() {
     node.arrive(Arrival::Identity {
         key: robin,
         identity: chatter("Robin"),
+        payload: Vec::new(),
         rx: rx(1),
     });
     assert!(events(&node).contains(&NodeEvent::PeerChanged(peer)));
@@ -1362,6 +1370,7 @@ fn a_member_known_by_hint_is_asked_for() {
     node.arrive(Arrival::Identity {
         key: robin,
         identity: chatter("Robin"),
+        payload: Vec::new(),
         rx: rx(2),
     });
     assert!(events(&node).contains(&NodeEvent::IdentitiesLearned));
@@ -1406,4 +1415,171 @@ fn peers(node: &CommunicatorNode<Port>) -> Peers {
     let mut peers = Peers::new();
     node.peers(&mut peers);
     peers
+}
+
+/// `signer`'s chatting identity named `name`, signed by it, and the link
+/// that carries it.
+fn signed_link(signer: &SoftwareIdentity, name: &str) -> (Vec<u8>, String) {
+    let identity = chatter(name);
+    let mut buf = [0u8; 128];
+    let len = identity.encode_for_signing(&mut buf).unwrap();
+    let signature = ready(signer.sign(&buf[..len])).unwrap();
+    let mut payload = buf[..len].to_vec();
+    payload.extend_from_slice(&signature);
+    let link = format!(
+        "umsh:n:{}:{}",
+        address_of(signer.public_key()),
+        umsh_uri::encode_base58_bytes(&payload)
+    );
+    (payload, link)
+}
+
+/// An unsigned link for `key`, naming it `name`.
+fn unsigned_link(key: &PublicKey, name: &str) -> String {
+    let mut buf = [0u8; 64];
+    let len = chatter(name).encode(&mut buf).unwrap();
+    format!(
+        "umsh:n:{}:{}",
+        address_of(key),
+        umsh_uri::encode_base58_bytes(&buf[..len])
+    )
+}
+
+fn ready<F: std::future::Future>(future: F) -> F::Output {
+    let mut context = std::task::Context::from_waker(std::task::Waker::noop());
+    match std::pin::pin!(future).poll(&mut context) {
+        std::task::Poll::Ready(value) => value,
+        std::task::Poll::Pending => panic!("software signing never waits"),
+    }
+}
+
+/// What `text`, said on `public` by the member `from`, arrives as.
+fn said_on_public(
+    node: &CommunicatorNode<Port>,
+    from: u8,
+    text: &str,
+) -> umsh_ux_communicator::model::Message {
+    let public = WellKnownChannels::derive().public;
+    let member = PublicKey([from; 32]);
+    let payload = composed(member, public, "Robin", text);
+    node.arrive(Arrival::Text(received(&public, member, &payload)));
+    let Some(NodeEvent::Arrived { chat, message }) = events(&node)
+        .into_iter()
+        .find(|event| matches!(event, NodeEvent::Arrived { .. }))
+    else {
+        panic!("nothing arrived");
+    };
+    node.message(chat, message).unwrap()
+}
+
+/// A message that is nothing but a node's link shows as its contact, called
+/// what its signed identity says, and opening it saves nothing.
+#[test]
+fn a_contact_in_a_message_shows_as_a_card() {
+    let sim = device();
+    let (node, _) = started(&sim);
+    let kit = SoftwareIdentity::from_secret_bytes(&[0x51; 32]);
+    let (_, link) = signed_link(&kit, "Kit");
+
+    let message = said_on_public(&node, 0x37, &link);
+    let contact = message.contact().expect("a contact card");
+    assert_eq!(&*contact.name, "Kit");
+    assert_eq!(contact.key, kit.public_key().0);
+    let member = node.known_member(&link).unwrap();
+    assert_eq!(member.sender.name, "Kit");
+    assert_eq!(
+        member.address.as_deref(),
+        Some(address_of(kit.public_key()).as_str())
+    );
+    assert!(!member.saved);
+    assert!(peers(&node).is_empty());
+
+    // Text around a link is a message, not a contact.
+    assert_eq!(
+        said_on_public(&node, 0x38, &format!("this is {link}")).card,
+        None
+    );
+
+    // A signature that is not the key's leaves the link's name out.
+    let ash = SoftwareIdentity::from_secret_bytes(&[0x52; 32]);
+    let (_, forged) = signed_link(&kit, "Ash");
+    let forged = forged.replace(&address_of(kit.public_key()), &address_of(ash.public_key()));
+    let lettering = &address_of(ash.public_key())[..4];
+    let message = said_on_public(&node, 0x39, &forged);
+    assert_eq!(&*message.contact().unwrap().name, lettering);
+    assert_eq!(node.known_member(&forged).unwrap().sender.name, lettering);
+}
+
+/// What a node says of itself is never replaced by what a link says of it.
+#[test]
+fn a_nodes_own_name_outranks_a_link() {
+    let sim = device();
+    let (node, _) = started(&sim);
+    let kit = *SoftwareIdentity::from_secret_bytes(&[0x51; 32]).public_key();
+    let address = address_of(&kit);
+
+    // Someone else's word stands until the node's own arrives.
+    assert_eq!(
+        node.known_member(&unsigned_link(&kit, "Kay"))
+            .unwrap()
+            .sender
+            .name,
+        "Kay"
+    );
+    node.arrive(Arrival::Identity {
+        key: kit,
+        identity: chatter("Kit"),
+        payload: Vec::new(),
+        rx: rx(1),
+    });
+    assert_eq!(node.known_member(&address).unwrap().sender.name, "Kit");
+    assert_eq!(
+        node.known_member(&unsigned_link(&kit, "Kay"))
+            .unwrap()
+            .sender
+            .name,
+        "Kit"
+    );
+}
+
+/// A saved peer's contact carries their own signed identity, which a node
+/// it reaches takes as their own word.
+#[test]
+fn a_saved_peer_is_shared_with_their_own_signed_identity() {
+    let sim = device();
+    let (node, _) = started(&sim);
+    let kit = SoftwareIdentity::from_secret_bytes(&[0x51; 32]);
+    let key = *kit.public_key();
+    let (payload, link) = signed_link(&kit, "Kit");
+    node.arrive(Arrival::Identity {
+        key,
+        identity: NodeIdentityPayload::from_bytes(&payload).unwrap(),
+        payload: payload.clone(),
+        rx: rx(1),
+    });
+    let member = node.known_member(&address_of(&key)).unwrap();
+    let saved = node.save_peer(&member).unwrap();
+    assert_eq!(node.contact_uri(saved.id).unwrap().as_str(), link);
+
+    let other = device();
+    let (elsewhere, _) = started(&other);
+    let member = elsewhere.known_member(&link).unwrap();
+    assert_eq!(member.sender.name, "Kit");
+    assert!(!member.saved);
+
+    // Without a signed identity kept, the link is the address alone.
+    let ash = PublicKey([0x38; 32]);
+    node.arrive(Arrival::Identity {
+        key: ash,
+        identity: chatter("Ash"),
+        payload: Vec::new(),
+        rx: rx(1),
+    });
+    let saved = node
+        .save_peer(&node.known_member(&address_of(&ash)).unwrap())
+        .unwrap();
+    assert_eq!(
+        node.contact_uri(saved.id).unwrap().as_str(),
+        format!("umsh:n:{}", address_of(&ash))
+    );
 }

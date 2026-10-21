@@ -8,14 +8,16 @@ use core::cell::{Cell, RefCell, RefMut};
 use crate::avatar::{AvatarStyle, BuiltinChannel, PeerShape};
 use crate::board::Board;
 use crate::model::{
-    Bluetooth, BluetoothReading, ChannelAccess, ChannelEntry, ChatId, ChatKind, ChatSummary, Chats,
-    ClockSettings, ClockSource, Delivery, Details, Direction, EventQueue, Fix, Gnss, GnssReading,
-    Heard, Invite, KeyboardSettings, Links, MAX_CHATS, MAX_HEARD, MAX_PEERS, MESSAGE_LEN, Member,
-    Message, MessageId, Messages, Node, NodeEvent, Parts, PeerDetail, PeerEntry, PeerId,
+    Bluetooth, BluetoothReading, Card, ChannelAccess, ChannelEntry, ChatId, ChatKind, ChatSummary,
+    Chats, ClockSettings, ClockSource, Contact, ContactUri, Delivery, Details, Direction,
+    EventQueue, Exchange, ExchangeEnd, Fix, Gnss, GnssReading, Heard, Invite, KeyboardSettings,
+    Links, MAX_CHATS, MAX_HEARD, MAX_PEERS, MESSAGE_LEN, MeetState, Member, Message, MessageId,
+    Messages, NearbyDevice, NearbyId, Node, NodeEvent, Parts, PeerDetail, PeerEntry, PeerId,
     PeerSummary, Peers, Presence, Profile, Quote, RadioSettings, Reacted, Reaction, Reactions,
     Reactor, Rule, Sender, Setting, ShareUri, Shareable, State, StatusStrip, TRANSMIT_POWER,
     brightness_at, push_newest, word_match,
 };
+use crate::models;
 use crate::text::{DraftText, SharedText, TextHeap};
 use buoyant::view::{EditBuffer, EditText as _};
 use heapless::{String, Vec};
@@ -470,7 +472,7 @@ fn mockup_message(
                 mine: false,
             })
             .collect::<Reactions>(),
-        invite,
+        card: invite.map(Card::Channel),
         reply,
         time: Some(time),
         presence: condition.presence,
@@ -538,6 +540,12 @@ pub struct Store {
     /// Bluetooth and the GNSS receiver, on or off.
     bluetooth: Cell<bool>,
     gnss: Cell<bool>,
+    /// What Add peer shows, and whether the other holder of the exchange
+    /// pressed Same.
+    meet: RefCell<MeetState>,
+    meet_theirs: Cell<bool>,
+    /// How many times Add peer opened, for a new color each time.
+    meet_opened: Cell<u8>,
     events: RefCell<EventQueue<EVENTS>>,
     /// The board's clock, in milliseconds, as it last told the fixture. The
     /// fixture's own clock runs from [`STARTED`] with it.
@@ -593,6 +601,9 @@ impl Store {
             brightness: Cell::new(brightness_at(5)),
             bluetooth: Cell::new(true),
             gnss: Cell::new(true),
+            meet: RefCell::new(MeetState::new()),
+            meet_theirs: Cell::new(false),
+            meet_opened: Cell::new(0),
             events: RefCell::new(EventQueue::new()),
             now: Cell::new(0),
             set_by: Cell::new(0),
@@ -707,6 +718,22 @@ const PEERS: [SavedPeer; 4] = [
 /// How a node URI begins.
 const PEER_INVITATION: &str = "umsh:n:";
 
+/// The mockup's exchange code.
+const MEET_CODE: u32 = 482_931;
+
+/// What the other holder of an exchange does: see [`Store::meet_peer`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MeetStep {
+    /// Asks to exchange, from the first device listed.
+    Asks,
+    /// Answers our request.
+    Answers(bool),
+    Same,
+    Different,
+    /// Backs out.
+    Leaves,
+}
+
 /// Where direct chats made with members are numbered from, above the
 /// fixture's own chats.
 const FIRST_DIRECT: ChatId = 0x100;
@@ -806,6 +833,73 @@ impl Store {
 
     fn queue(&self, event: NodeEvent) {
         self.events.borrow_mut().push(event);
+    }
+
+    /// The exchange ends for `end`, or else goes on to `next`.
+    fn meet_ends_or(&self, end: Option<ExchangeEnd>, next: Exchange) {
+        let mut meet = self.meet.borrow_mut();
+        if meet.exchange == Exchange::Closed {
+            return;
+        }
+        meet.exchange = match end {
+            Some(end) => {
+                // The other device's key is spent with ours.
+                if let Some(with) = meet.with {
+                    meet.devices.retain(|d| d.id != with.id);
+                }
+                Exchange::Ended(end)
+            }
+            None => next,
+        };
+        drop(meet);
+        self.queue(NodeEvent::MeetChanged);
+    }
+
+    /// Contacts crossed: the other device is Kit Moreno's, not saved.
+    fn meet_exchanged(&self) {
+        let address = member_traits("Kit Moreno").3.unwrap_or_default();
+        let member = self.known_at(address);
+        let mut meet = self.meet.borrow_mut();
+        if let Some(with) = meet.with {
+            meet.devices.retain(|d| d.id != with.id);
+        }
+        meet.exchange = Exchange::Exchanged(member);
+        drop(meet);
+        self.queue(NodeEvent::MeetChanged);
+    }
+
+    /// What the other holder of an exchange does, as the fixture plays it.
+    pub fn meet_peer(&self, step: MeetStep) {
+        let exchange = self.meet.borrow().exchange.clone();
+        match (step, exchange) {
+            (MeetStep::Asks, Exchange::Idle) => {
+                let device = self.meet.borrow().devices.first().copied();
+                if let Some(device) = device {
+                    let mut meet = self.meet.borrow_mut();
+                    meet.with = Some(device);
+                    meet.exchange = Exchange::Asked(device);
+                    drop(meet);
+                    self.queue(NodeEvent::MeetChanged);
+                }
+            }
+            (MeetStep::Answers(accept), Exchange::Asking(with)) => self.meet_ends_or(
+                (!accept).then_some(ExchangeEnd::NotNow),
+                Exchange::Comparing {
+                    with,
+                    code: MEET_CODE,
+                    sent: false,
+                },
+            ),
+            (MeetStep::Same, Exchange::Comparing { sent: true, .. }) => self.meet_exchanged(),
+            (MeetStep::Same, Exchange::Comparing { sent: false, .. }) => {
+                self.meet_theirs.set(true);
+            }
+            (MeetStep::Different, Exchange::Comparing { .. }) => {
+                self.meet_ends_or(Some(ExchangeEnd::Different), Exchange::Idle);
+            }
+            (MeetStep::Leaves, _) => self.cancel_exchange(),
+            _ => {}
+        }
     }
 
     /// The fixture's clock: the mockup's time, moved on with the board's.
@@ -936,10 +1030,76 @@ impl Store {
     }
 
     /// The member saved at `address`, while they are saved.
-    fn saved_peer(&self, address: &str) -> Option<PeerId> {
+    fn saved_since(&self, address: &str) -> Option<PeerId> {
         let index = self.saved.borrow().iter().position(|(a, _)| a == address)?;
         let peer = FIRST_SAVED + index as PeerId;
         (!self.forgotten.borrow().contains(&peer)).then_some(peer)
+    }
+
+    /// The address `text` names: a node's link, or the bare address.
+    fn address_in(text: &str) -> Option<&str> {
+        let text = text.trim();
+        let rest = text.strip_prefix("umsh:n:").unwrap_or(text);
+        // The fixture's addresses are made up, so only their shape is
+        // checked.
+        let address = rest.split(':').next()?;
+        (address.len() == umsh_core::base58::ENCODED_LEN).then_some(address)
+    }
+
+    /// What is known of the node at `address`: a saved peer, a member the
+    /// fixture names, or someone known by nothing but their address.
+    fn known_at(&self, address: &str) -> Member {
+        if let Some((peer, saved)) = (1..)
+            .zip(PEERS.iter())
+            .find(|(_, saved)| saved.address == address)
+        {
+            return Member {
+                sender: Sender {
+                    name: s(saved.name),
+                    avatar: AvatarStyle::peer(saved.color, saved.hint, PeerShape::Circle),
+                },
+                hint: s(saved.hint),
+                address: Some(s(address)),
+                heard: s(saved.heard),
+                saved: !self.forgotten.borrow().contains(&peer),
+            };
+        }
+        let named = ["Sam", "Kit Moreno", "Lee Park", "Ranger Station"]
+            .into_iter()
+            .find(|name| member_traits(name).3 == Some(address));
+        let mut member = match named {
+            Some(name) => member_card(name, false),
+            None => {
+                let mut name = s::<24>("Member ");
+                _ = name.push_str(&address[..4]);
+                Member {
+                    sender: Sender {
+                        name: s(&name),
+                        avatar: AvatarStyle::peer([90, 90, 90], &address[..4], PeerShape::Hexagon),
+                    },
+                    hint: s(&address[..4]),
+                    address: Some(s(address)),
+                    heard: String::new(),
+                    saved: false,
+                }
+            }
+        };
+        member.saved = self.saved_since(address).is_some();
+        member
+    }
+
+    /// The node a message whose whole text is `text` introduces.
+    fn contact_in(&self, text: &str) -> Option<Contact> {
+        if !text.trim().starts_with("umsh:n:") {
+            return None;
+        }
+        let address = Self::address_in(text)?;
+        let member = self.known_at(address);
+        Some(Contact {
+            key: umsh_core::base58::decode(address.as_bytes()).unwrap_or_default(),
+            name: SharedText::new(self.heap, &member.sender.name)?,
+            avatar: member.sender.avatar,
+        })
     }
 
     /// Whether `chat` is a channel.
@@ -1092,7 +1252,7 @@ impl Store {
                 From::Peer | From::Member(_) => Delivery::Delivered,
             },
             reactions: Reactions::new(),
-            invite: None,
+            card: self.contact_in(text).map(Card::Contact),
             reply,
             time: Some(self.time()),
             presence: Presence::Present,
@@ -1444,6 +1604,35 @@ impl Node for Store {
         (!self.forgotten.borrow().contains(&peer)).then_some(peer)
     }
 
+    fn known_member(&self, text: &str) -> Option<Member> {
+        Some(self.known_at(Self::address_in(text)?))
+    }
+
+    fn saved_peer(&self, address: &str) -> Option<PeerId> {
+        let mockup = (1..)
+            .zip(PEERS.iter())
+            .find(|(_, saved)| saved.address == address)
+            .map(|(peer, _)| peer)
+            .filter(|peer| !self.forgotten.borrow().contains(peer));
+        mockup.or_else(|| self.saved_since(address))
+    }
+
+    fn contact_uri(&self, peer: PeerId) -> Option<ContactUri> {
+        let address = match peer.checked_sub(1).and_then(|i| PEERS.get(i as usize)) {
+            Some(saved) => s::<44>(saved.address),
+            None => self
+                .saved
+                .borrow()
+                .get(peer.checked_sub(FIRST_SAVED)? as usize)?
+                .0
+                .clone(),
+        };
+        let mut uri = ContactUri::new();
+        uri.push_str("umsh:n:").ok()?;
+        uri.push_str(&address).ok()?;
+        Some(uri)
+    }
+
     fn chat_member(&self, chat: ChatId) -> Option<Member> {
         let summary = self
             .chat(chat)
@@ -1465,7 +1654,7 @@ impl Node for Store {
                 avatar: summary.avatar.clone(),
             },
             hint: s(&address[..4]),
-            saved: self.chat_peer(chat).is_some() || self.saved_peer(&address).is_some(),
+            saved: self.chat_peer(chat).is_some() || self.saved_since(&address).is_some(),
             address: Some(address),
             heard: s(listed.map_or("2m", |peer| peer.heard)),
         })
@@ -1653,6 +1842,107 @@ impl Node for Store {
             self.gnss.set(on);
             true
         });
+    }
+
+    /// Two devices are nearby: the mockup's T-Deck, near, and a XIAO kit
+    /// farther off.
+    fn open_meet(&self) {
+        let opened = self.meet_opened.get().wrapping_add(1);
+        self.meet_opened.set(opened);
+        let mut meet = self.meet.borrow_mut();
+        // The mockup's violet first, then far around the circle each time.
+        meet.own_hue = Some(opened.wrapping_mul(97).wrapping_add(123));
+        if meet.devices.is_empty() {
+            for (id, model, hue, nearness) in [
+                (1, models::LILYGO_T_DECK, 130, 3),
+                (2, models::SEEED_XIAO_ESP32S3_KIT, 40, 1),
+            ] {
+                _ = meet.devices.push(NearbyDevice {
+                    id,
+                    model,
+                    hue,
+                    nearness: Some(nearness),
+                });
+            }
+        }
+        meet.with = None;
+        meet.exchange = Exchange::Idle;
+        self.meet_theirs.set(false);
+        drop(meet);
+        self.queue(NodeEvent::MeetChanged);
+    }
+
+    fn close_meet(&self) {
+        *self.meet.borrow_mut() = MeetState::new();
+        self.queue(NodeEvent::MeetChanged);
+    }
+
+    fn meet(&self, state: &mut MeetState) {
+        state.clone_from(&self.meet.borrow());
+    }
+
+    fn ask_to_exchange(&self, device: NearbyId) -> bool {
+        let mut meet = self.meet.borrow_mut();
+        let Some(&device) = meet.devices.iter().find(|d| d.id == device) else {
+            return false;
+        };
+        if meet.exchange != Exchange::Idle {
+            return false;
+        }
+        meet.with = Some(device);
+        meet.exchange = Exchange::Asking(device);
+        drop(meet);
+        self.queue(NodeEvent::MeetChanged);
+        true
+    }
+
+    fn answer_exchange(&self, accept: bool) {
+        let Exchange::Asked(device) = self.meet.borrow().exchange else {
+            return;
+        };
+        self.meet_ends_or(
+            (!accept).then_some(ExchangeEnd::NotNow),
+            Exchange::Comparing {
+                with: device,
+                code: MEET_CODE,
+                sent: false,
+            },
+        );
+    }
+
+    fn confirm_code(&self, same: bool) {
+        let Exchange::Comparing {
+            with,
+            code,
+            sent: false,
+        } = self.meet.borrow().exchange
+        else {
+            return;
+        };
+        if !same {
+            self.meet_ends_or(Some(ExchangeEnd::Different), Exchange::Idle);
+        } else if self.meet_theirs.get() {
+            self.meet_exchanged();
+        } else {
+            self.meet_ends_or(
+                None,
+                Exchange::Comparing {
+                    with,
+                    code,
+                    sent: true,
+                },
+            );
+        }
+    }
+
+    fn cancel_exchange(&self) {
+        let in_progress = !matches!(
+            self.meet.borrow().exchange,
+            Exchange::Closed | Exchange::Idle | Exchange::Ended(_) | Exchange::Exchanged(_)
+        );
+        if in_progress {
+            self.meet_ends_or(Some(ExchangeEnd::Left), Exchange::Idle);
+        }
     }
 
     fn inspect_peer(&self, text: &str) -> PeerEntry {

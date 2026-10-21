@@ -87,6 +87,10 @@ pub struct ChannelCrypto {
     /// `umsh_crypto::CryptoEngine::derive_named_channel_key` derives it, or
     /// `None` for a name that names no channel.
     pub named: fn(&str) -> Option<ChannelKey>,
+    /// Whether a signature by a key verifies, as
+    /// `umsh_crypto::verify_ed25519_signature` checks it: the check a
+    /// shared node's identity needs.
+    pub verify: fn(&PublicKey, &[u8], &[u8; 64]) -> bool,
 }
 
 impl ChannelCrypto {
@@ -114,6 +118,7 @@ impl ChannelCrypto {
             well_known: WellKnownChannels::derive(),
             tag: |key| engine().derive_channel_tag(key),
             named: |name| engine().derive_named_channel_key(name).ok(),
+            verify: umsh_crypto::verify_ed25519_signature,
         }
     }
 
@@ -1127,22 +1132,13 @@ impl<S: ChatStore> Chats<S> {
             return None;
         };
         let (name, avatar, _) = self.face(&record)?;
-        let kept = self.store.peer(&peer).ok().flatten();
-        let mut hint = String::new();
-        _ = write!(hint, "{}", peer.hint());
-        Some(Member {
-            sender: Sender {
-                name: cut(&name),
-                avatar,
-            },
-            hint,
-            address: Some(address(&peer.0)),
-            heard: self
-                .heard_ago(&peer, kept.as_ref(), now_ms, wall)
-                .map(short_age)
-                .unwrap_or_default(),
-            saved: kept.is_some_and(|kept| kept.saved),
-        })
+        let mut member = self.member_of(&peer, now_ms, wall);
+        // Called as their chat is.
+        member.sender = Sender {
+            name: cut(&name),
+            avatar,
+        };
+        Some(member)
     }
 
     /// Deletes the direct chat `chat` and its messages. The store keeps
@@ -1255,13 +1251,13 @@ impl<S: ChatStore> Chats<S> {
         record: &MessageRecord,
         conversation: &ConversationKey,
     ) -> Option<Message> {
-        let (text, invite) = {
+        let (text, card) = {
             let mut body = self.body.borrow_mut();
             let body = self.store.body(record.id, &mut body[..]).ok()??;
-            let invite = (record.message_type == MessageType::Basic && !record.flags.deleted)
-                .then(|| self.invite_in(body))
+            let card = (record.message_type == MessageType::Basic && !record.flags.deleted)
+                .then(|| self.card_in(body))
                 .flatten();
-            (SharedText::new(self.heap, body)?, invite)
+            (SharedText::new(self.heap, body)?, card)
         };
         let direction = match record.direction {
             engine::Direction::Inbound => model::Direction::Inbound,
@@ -1306,7 +1302,7 @@ impl<S: ChatStore> Chats<S> {
             text,
             delivery,
             reactions,
-            invite,
+            card,
             reply: record
                 .regarding
                 .filter(|_| record.message_type == MessageType::Basic)

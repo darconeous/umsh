@@ -6,9 +6,13 @@
 
 use embedded_graphics::prelude::Size;
 
+use crate::models;
+
 /// A board the interface runs on.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Board {
+    /// Its model id (`boards.json`).
+    pub model: u16,
     pub metrics: Metrics,
     pub controls: Controls,
 }
@@ -17,6 +21,7 @@ impl Board {
     /// The LilyGO T-LoRa Pager: 480x222 at about 227 ppi, a wheel that
     /// presses, a lock button, and a keyboard with legends.
     pub const PAGER: Self = Self {
+        model: models::LILYGO_T_LORA_PAGER,
         metrics: Metrics {
             width: 480,
             height: 222,
@@ -41,6 +46,7 @@ impl Board {
     /// trackball that presses, a touchscreen, and a keyboard that types
     /// characters. No lock button.
     pub const TDECK: Self = Self {
+        model: models::LILYGO_T_DECK,
         metrics: Metrics {
             width: 320,
             height: 240,

@@ -85,6 +85,15 @@ const SPECS: &[Spec] = &[
         sizes: &[46, 56, 72],
         only: Some("0123456789:"),
     },
+    // A contact exchange's code, for both holders to compare: the T-Deck's,
+    // then the Pager's.
+    Spec {
+        name: "CODE",
+        file: MONO,
+        weight: 700.0,
+        sizes: &[32, 42],
+        only: Some("0123456789 "),
+    },
 ];
 
 /// Drawn for characters a face lacks. The fonts lack it too, so it is drawn
@@ -117,6 +126,42 @@ fn main() {
     std::fs::write(out_dir.join("shapes.rs"), shapes()).unwrap();
     std::fs::write(out_dir.join("icons.rs"), icons()).unwrap();
     std::fs::write(out_dir.join("reactions.rs"), reactions()).unwrap();
+    std::fs::write(out_dir.join("session_colors.rs"), session_colors()).unwrap();
+}
+
+/// The 256 contact-exchange session colors as `0xRRGGBB`, from the formula
+/// in `app-meet.md` (Code and Color): OKLCH at lightness 0.75 and chroma
+/// 0.12, the hue in 256 steps, in 8-bit sRGB.
+fn session_colors() -> String {
+    let mut colors = Vec::new();
+    for step in 0..256u32 {
+        let h = f64::from(step) * core::f64::consts::TAU / 256.0;
+        let (a, b) = (0.12 * h.cos(), 0.12 * h.sin());
+        let l = (0.75 + 0.396_337_777_4 * a + 0.215_803_757_3 * b).powi(3);
+        let m = (0.75 - 0.105_561_345_8 * a - 0.063_854_172_8 * b).powi(3);
+        let s = (0.75 - 0.089_484_177_5 * a - 1.291_485_548_0 * b).powi(3);
+        let linear = [
+            4.076_741_662_1 * l - 3.307_711_591_3 * m + 0.230_969_929_2 * s,
+            -1.268_438_004_6 * l + 2.609_757_401_1 * m - 0.341_319_396_5 * s,
+            -0.004_196_086_3 * l - 0.703_418_614_7 * m + 1.707_614_701_0 * s,
+        ];
+        let mut rgb = 0u32;
+        for x in linear {
+            let x = x.clamp(0.0, 1.0);
+            let encoded = if x <= 0.003_130_8 {
+                12.92 * x
+            } else {
+                1.055 * x.powf(1.0 / 2.4) - 0.055
+            };
+            rgb = rgb << 8 | (encoded * 255.0).round() as u32;
+        }
+        colors.push(format!("0x{rgb:06X}"));
+    }
+    format!(
+        "/// The session colors by hue step, as `0xRRGGBB`.\n\
+         pub const SESSION_COLORS: [u32; 256] = [{}];\n",
+        colors.join(", ")
+    )
 }
 
 /// One painted part of a reaction glyph, in the mockup's units centered on
@@ -634,6 +679,69 @@ const ICONS: &[(&str, u32, f32, &[Layer])] = &[
             stroke("M0 -2.5 V2", 2.0),
             fill("M-1.2 4.6 A1.2 1.2 0 1 0 1.2 4.6 A1.2 1.2 0 1 0 -1.2 4.6 Z"),
         ],
+    ),
+    // The same, over an exchange whose codes differ.
+    (
+        "WARNING_LARGE",
+        36,
+        1.8,
+        &[
+            stroke("M0 -8 L9 7 H-9 Z", 1.8),
+            stroke("M0 -2.5 V2", 2.0),
+            fill("M-1.2 4.6 A1.2 1.2 0 1 0 1.2 4.6 A1.2 1.2 0 1 0 -1.2 4.6 Z"),
+        ],
+    ),
+    // A device on Add peer before anything is exchanged: the outline of
+    // its kind of hardware, drawn over its session color. At the size of
+    // a row's avatar and of a header's.
+    ("HANDHELD_34", 34, 1.0, HANDHELD),
+    ("HANDHELD_26", 26, 0.765, HANDHELD),
+    // How near a device on Add peer seems: the dot, and the arcs lit from
+    // the inside out.
+    (
+        "NEAR_DOT",
+        30,
+        1.0,
+        &[fill(
+            "M-9.6 0 A2.6 2.6 0 1 0 -4.4 0 A2.6 2.6 0 1 0 -9.6 0 Z",
+        )],
+    ),
+    (
+        "NEAR_1",
+        30,
+        1.0,
+        &[stroke("M-3.4 -4.8 A6 6 0 0 1 -3.4 4.8", 2.0)],
+    ),
+    (
+        "NEAR_2",
+        30,
+        1.0,
+        &[stroke("M-0.4 -8.8 A11 11 0 0 1 -0.4 8.8", 2.0)],
+    ),
+    (
+        "NEAR_3",
+        30,
+        1.0,
+        &[stroke("M2.6 -12.8 A16 16 0 0 1 2.6 12.8", 2.0)],
+    ),
+];
+
+/// A handheld with a screen over a row of keys, landscape.
+const HANDHELD: &[Layer] = &[
+    stroke(
+        "M-7.5 -7 H7.5 A2.5 2.5 0 0 1 10 -4.5 V4.5 A2.5 2.5 0 0 1 7.5 7 H-7.5 \
+         A2.5 2.5 0 0 1 -10 4.5 V-4.5 A2.5 2.5 0 0 1 -7.5 -7 Z",
+        1.8,
+    ),
+    fill(
+        "M-5.5 -4 H5.5 A1 1 0 0 1 6.5 -3 V-0.5 A1 1 0 0 1 5.5 0.5 H-5.5 \
+         A1 1 0 0 1 -6.5 -0.5 V-3 A1 1 0 0 1 -5.5 -4 Z",
+    ),
+    fill(
+        "M-6.3 3.5 A0.9 0.9 0 1 0 -4.5 3.5 A0.9 0.9 0 1 0 -6.3 3.5 Z \
+         M-2.7 3.5 A0.9 0.9 0 1 0 -0.9 3.5 A0.9 0.9 0 1 0 -2.7 3.5 Z \
+         M0.9 3.5 A0.9 0.9 0 1 0 2.7 3.5 A0.9 0.9 0 1 0 0.9 3.5 Z \
+         M4.5 3.5 A0.9 0.9 0 1 0 6.3 3.5 A0.9 0.9 0 1 0 4.5 3.5 Z",
     ),
 ];
 

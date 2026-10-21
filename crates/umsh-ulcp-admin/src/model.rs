@@ -227,7 +227,7 @@ impl Model {
         let keys: Vec<u32> = COVERED
             .iter()
             .filter(|descriptor| self.supported(descriptor) != Some(false))
-            .filter(|descriptor| descriptor.access != Access::WriteOnly)
+            .filter(|descriptor| !matches!(descriptor.access, Access::WriteOnly | Access::OnDemand))
             .filter(|descriptor| {
                 descriptor.access != Access::Constant
                     || !matches!(self.freshness(descriptor.key), Freshness::Fresh { .. })

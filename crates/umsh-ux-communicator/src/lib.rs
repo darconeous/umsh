@@ -37,6 +37,7 @@ pub mod input;
 pub mod keyboard;
 pub mod lock;
 pub mod model;
+pub mod models;
 pub mod nav;
 pub mod qr;
 pub mod text;

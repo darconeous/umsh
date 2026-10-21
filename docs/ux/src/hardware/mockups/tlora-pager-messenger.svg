@@ -2096,8 +2096,8 @@
 </g>
 </g></g>
 <text x="1130.0" y="10606.8" font-size="17" fill="#3A3A3C">Opens on Nearby: devices that also have Add peer open, nearest first, by model and a color that is new each time the screen</text>
-<text x="1130.0" y="10630.8" font-size="17" fill="#3A3A3C">opens. No name, address or avatar is sent or shown until both people confirm the code. You is this device’s color. The arcs show</text>
-<text x="1130.0" y="10654.8" font-size="17" fill="#3A3A3C">how close; the back-to-back glyph shows only on boards with NFC.</text>
+<text x="1130.0" y="10630.8" font-size="17" fill="#3A3A3C">opens. No name, address or avatar is sent or shown until its holder presses Same. You is this device’s color. The arcs show how</text>
+<text x="1130.0" y="10654.8" font-size="17" fill="#3A3A3C">close; the back-to-back glyph shows only on boards with NFC.</text>
 <text x="2176.0" y="10094.8" font-size="22" fill="#1C1C1E" font-weight="700">35 · Asked to exchange</text>
 <rect x="2176.0" y="10108.8" width="984.0" height="468.0" fill="#050607" rx="16" filter="url(#shadow)"/>
 <clipPath id="scr36"><rect width="480" height="222"/></clipPath>
@@ -2208,8 +2208,8 @@
 <path d="M403 8 L409 14 L406 17 V5 L409 8 L403 14" fill="none" stroke="#9AA3AE" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
 </g>
 </g></g>
-<text x="82.0" y="11304.8" font-size="17" fill="#3A3A3C">Both screens show the same six digits only if nobody is in the middle. Names still have not been sent. Turning moves between</text>
-<text x="82.0" y="11328.8" font-size="17" fill="#3A3A3C">the buttons.</text>
+<text x="82.0" y="11304.8" font-size="17" fill="#3A3A3C">Both screens show the same six digits only if nobody is in the middle. Nothing of this device has been sent yet: Same sends its</text>
+<text x="82.0" y="11328.8" font-size="17" fill="#3A3A3C">address and name. Turning moves between the buttons.</text>
 <text x="1128.0" y="10792.8" font-size="22" fill="#1C1C1E" font-weight="700">37 · Waiting</text>
 <rect x="1128.0" y="10806.8" width="984.0" height="468.0" fill="#050607" rx="16" filter="url(#shadow)"/>
 <clipPath id="scr38"><rect width="480" height="222"/></clipPath>
@@ -2254,7 +2254,8 @@
 <path d="M403 8 L409 14 L406 17 V5 L409 8 L403 14" fill="none" stroke="#9AA3AE" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
 </g>
 </g></g>
-<text x="1130.0" y="11304.8" font-size="17" fill="#3A3A3C">After Same, until the other side presses Same too. Then both devices send their addresses and names. Leaving here cancels.</text>
+<text x="1130.0" y="11304.8" font-size="17" fill="#3A3A3C">After Same, which sent this device’s address and name, until the other side presses Same too and sends its own. Leaving here</text>
+<text x="1130.0" y="11328.8" font-size="17" fill="#3A3A3C">cancels.</text>
 <text x="2176.0" y="10792.8" font-size="22" fill="#1C1C1E" font-weight="700">38 · Codes differ</text>
 <rect x="2176.0" y="10806.8" width="984.0" height="468.0" fill="#050607" rx="16" filter="url(#shadow)"/>
 <clipPath id="scr39"><rect width="480" height="222"/></clipPath>
@@ -2301,7 +2302,8 @@
 <path d="M403 8 L409 14 L406 17 V5 L409 8 L403 14" fill="none" stroke="#9AA3AE" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
 </g>
 </g></g>
-<text x="2178.0" y="11304.8" font-size="17" fill="#3A3A3C">Either side pressing Different lands both here, with nothing sent and nothing saved. Try again goes back to Nearby.</text>
+<text x="2178.0" y="11304.8" font-size="17" fill="#3A3A3C">Either side pressing Different lands both here, and whatever either received is dropped. Nothing is saved. Try again goes back to</text>
+<text x="2178.0" y="11328.8" font-size="17" fill="#3A3A3C">Nearby under a new color.</text>
 <text x="80.0" y="11490.8" font-size="22" fill="#1C1C1E" font-weight="700">39 · Exchanged</text>
 <rect x="80.0" y="11504.8" width="984.0" height="468.0" fill="#050607" rx="16" filter="url(#shadow)"/>
 <clipPath id="scr40"><rect width="480" height="222"/></clipPath>
@@ -2532,8 +2534,8 @@
 <path d="M403 8 L409 14 L406 17 V5 L409 8 L403 14" fill="none" stroke="#9AA3AE" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
 </g>
 </g></g>
-<text x="1130.0" y="12700.8" font-size="17" fill="#3A3A3C">A message whose whole body is a umsh:n: link renders as a contact card, as invites do for channels. Pressing it opens the peer’s</text>
-<text x="1130.0" y="12724.8" font-size="17" fill="#3A3A3C">page.</text>
+<text x="1130.0" y="12700.8" font-size="17" fill="#3A3A3C">A message whose whole body is a umsh:n: link renders as a contact card, as invites do for channels. Pressing it opens its</text>
+<text x="1130.0" y="12724.8" font-size="17" fill="#3A3A3C">actions with Show first, as Join is for an invite: a saved peer’s page, or else the unsaved-peer sheet.</text>
 <text x="2176.0" y="12188.8" font-size="22" fill="#1C1C1E" font-weight="700">44 · Contact opened</text>
 <rect x="2176.0" y="12202.8" width="984.0" height="468.0" fill="#050607" rx="16" filter="url(#shadow)"/>
 <clipPath id="scr45"><rect width="480" height="222"/></clipPath>

@@ -233,6 +233,27 @@ mod memory_probe;
 mod ui;
 #[cfg(feature = "wifi")]
 mod wifi;
+/// This hardware's model id (`boards.json`): what pairing advertisements
+/// and a communicator's contact exchange show of it.
+#[cfg(feature = "board-heltec-v2")]
+#[cfg_attr(not(any(feature = "ble", feature = "communicator")), allow(dead_code))]
+const MODEL_ID: u16 = umsh_ulcp_runtime::ble_privacy::model::HELTEC_LORA32_V2;
+#[cfg(feature = "board-heltec-v3")]
+#[cfg_attr(not(any(feature = "ble", feature = "communicator")), allow(dead_code))]
+const MODEL_ID: u16 = umsh_ulcp_runtime::ble_privacy::model::HELTEC_LORA32_V3;
+#[cfg(feature = "board-tbeam-supreme")]
+#[cfg_attr(not(any(feature = "ble", feature = "communicator")), allow(dead_code))]
+const MODEL_ID: u16 = umsh_ulcp_runtime::ble_privacy::model::LILYGO_T_BEAM_SUPREME;
+#[cfg(feature = "board-tlora-pager")]
+#[cfg_attr(not(any(feature = "ble", feature = "communicator")), allow(dead_code))]
+const MODEL_ID: u16 = umsh_ulcp_runtime::ble_privacy::model::LILYGO_T_LORA_PAGER;
+#[cfg(feature = "board-xiao-esp32s3")]
+#[cfg_attr(not(any(feature = "ble", feature = "communicator")), allow(dead_code))]
+const MODEL_ID: u16 = umsh_ulcp_runtime::ble_privacy::model::SEEED_XIAO_ESP32S3_KIT;
+#[cfg(feature = "board-tdeck")]
+#[cfg_attr(not(any(feature = "ble", feature = "communicator")), allow(dead_code))]
+const MODEL_ID: u16 = umsh_ulcp_runtime::ble_privacy::model::LILYGO_T_DECK;
+
 #[cfg(all(feature = "wifi", not(feature = "chip-esp32s3")))]
 compile_error!("WiFi requires an ESP32-S3 target");
 #[cfg(all(feature = "wifi", feature = "ble", not(feature = "coex")))]

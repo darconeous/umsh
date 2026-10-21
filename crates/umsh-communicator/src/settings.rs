@@ -450,6 +450,24 @@ impl<P: LocalPort> Settings<P> {
         Some(uri)
     }
 
+    /// Asks the device afresh for what a contact exchange uses: its node
+    /// identity, signed (`PROP_IDENT`), and the longest frame's airtime.
+    pub fn read_for_meet(&mut self) {
+        self.model.read(prop::IDENT);
+        self.model.read(prop::PHY_T_FRAME);
+    }
+
+    /// The device identity's signed node identity payload, as last read.
+    pub fn identity(&self) -> Option<&[u8]> {
+        self.model.raw(prop::IDENT)
+    }
+
+    /// The longest frame's airtime at the radio's settings, in
+    /// milliseconds (`PROP_PHY_T_FRAME`).
+    pub fn frame_ms(&self) -> Option<u32> {
+        self.u32(prop::PHY_T_FRAME)
+    }
+
     pub fn device_name(&self) -> String<24> {
         let mut name = String::new();
         if let Some(Value::Text(text)) = self.model.intended(prop::DEV_NAME) {

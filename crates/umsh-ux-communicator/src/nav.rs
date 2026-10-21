@@ -12,10 +12,13 @@ use heapless::String;
 pub use crate::clock_settings::{ClockPage, DateParts, Part, ZoneFind};
 use crate::keyboard::Field;
 use crate::model::{
-    ChannelEntry, ChatId, ChatKind, ChatSummary, Details, Found, FoundKind, Invite,
-    KeyboardSettings, MAX_CHATS, MAX_FOUND, Member, MessageId, PeerDetail, PeerEntry, PeerId,
-    Profile, RadioSettings, Reaction, Section, Shareable, State, TRANSMIT_POWER, word_match,
+    ChannelEntry, ChatId, ChatKind, ChatSummary, Details, Exchange, Found, FoundKind, Invite,
+    KeyboardSettings, MAX_CHATS, MAX_FOUND, Member, MessageId, NearbyId, PeerDetail, PeerEntry,
+    PeerId, Profile, RadioSettings, Reaction, Section, Shareable, State, TRANSMIT_POWER,
+    word_match,
 };
+
+use crate::text::SharedText;
 
 /// What a joined channel is to be called here, as it is edited.
 pub type JoinName = EditBuffer<String<32>>;
@@ -33,7 +36,7 @@ pub type PowerText = EditBuffer<String<4>>;
 /// The names of focusable elements. The high byte says what kind of element
 /// a key names, so keys of different kinds never collide.
 pub mod keys {
-    use super::{ChatId, FocusKey, MessageId, PeerId, Reaction, Section, Shareable};
+    use super::{ChatId, FocusKey, MessageId, NearbyId, PeerId, Reaction, Section, Shareable};
 
     const KIND: u32 = 0xFF00_0000;
     const RAIL: u32 = 0x0100_0000;
@@ -47,6 +50,7 @@ pub mod keys {
     const FOUND: u32 = 0x1500_0000;
     const TIME_PART: u32 = 0x1B00_0000;
     const ZONE_ROW: u32 = 0x1C00_0000;
+    const NEARBY: u32 = 0x2000_0000;
     /// Set in a share key that names a channel.
     const SHARE_CHANNEL: u32 = 0x0080_0000;
 
@@ -62,6 +66,8 @@ pub mod keys {
     /// The actions menu's Retry and Delete, on an unconfirmed message.
     pub const RETRY: FocusKey = FocusKey(ACTION | 0x104);
     pub const DELETE_MESSAGE: FocusKey = FocusKey(ACTION | 0x105);
+    /// The actions menu's Show, on a message carrying a contact.
+    pub const VIEW_CONTACT: FocusKey = FocusKey(ACTION | 0x106);
     /// What the details screen shows, which the wheel scrolls through.
     pub const DETAIL_LIST: FocusKey = FocusKey(0x0600_0000);
     /// The member screen's Request identity, Message, and Save peer.
@@ -81,6 +87,7 @@ pub mod keys {
     pub const PEER_IDENTITY: FocusKey = FocusKey(0x0C00_0006);
     pub const FORGET_CONFIRM: FocusKey = FocusKey(0x0C00_0007);
     pub const FORGET_CANCEL: FocusKey = FocusKey(0x0C00_0008);
+    pub const PEER_SHARE: FocusKey = FocusKey(0x0C00_0009);
     /// A chat's menu, which holding the wheel on its row opens, and
     /// Delete's confirmation.
     pub const CHAT_SHOW_PEER: FocusKey = FocusKey(0x1D00_0000);
@@ -98,9 +105,20 @@ pub mod keys {
     /// First run's name field and Continue.
     pub const NAME_FIELD: FocusKey = FocusKey(0x1200_0000);
     pub const CONTINUE: FocusKey = FocusKey(0x1200_0001);
-    /// Add peer's field, and its Message.
+    /// Enter an address's field, and its Message.
     pub const PEER_FIELD: FocusKey = FocusKey(0x0B00_0000);
     pub const MESSAGE_PEER: FocusKey = FocusKey(0x0B00_0001);
+    /// Nearby's Enter an address and Show my code, and the card asking to
+    /// exchange.
+    pub const ENTER_ADDRESS: FocusKey = FocusKey(0x2100_0000);
+    pub const SHOW_MY_CODE: FocusKey = FocusKey(0x2100_0001);
+    pub const EXCHANGE_ACCEPT: FocusKey = FocusKey(0x2100_0002);
+    pub const EXCHANGE_DECLINE: FocusKey = FocusKey(0x2100_0003);
+    /// The exchange's choices: on the code, and once it ended.
+    pub const SAME: FocusKey = FocusKey(0x2100_0004);
+    pub const DIFFERENT: FocusKey = FocusKey(0x2100_0005);
+    pub const TRY_AGAIN: FocusKey = FocusKey(0x2100_0006);
+    pub const DONE: FocusKey = FocusKey(0x2100_0007);
     /// The join screen's Name and Join channel.
     pub const JOIN_NAME: FocusKey = FocusKey(0x0800_0000);
     pub const JOIN_CHANNEL: FocusKey = FocusKey(0x0800_0001);
@@ -183,6 +201,12 @@ pub mod keys {
     #[must_use]
     pub const fn reaction(reaction: Reaction) -> FocusKey {
         FocusKey(ACTION | reaction as u32)
+    }
+
+    /// A device listed on Nearby.
+    #[must_use]
+    pub const fn nearby(device: NearbyId) -> FocusKey {
+        FocusKey(NEARBY | (device & !KIND))
     }
 
     #[must_use]
@@ -380,6 +404,8 @@ pub enum MemberFrom {
     Message(MessageId),
     /// The direct chat with them.
     Chat(ChatId),
+    /// A contact's link, or anything else that names them by address.
+    Known,
 }
 
 /// A screen under Device.
@@ -468,13 +494,20 @@ pub enum Screen {
         requested: bool,
         focus: FocusState,
     },
+    /// The chats a saved peer's contact can be sent to.
+    ShareContact { peer: PeerId, focus: FocusState },
     /// One of the screens under Device.
     Device { page: DevicePage, focus: FocusState },
     /// One of the screens a new device starts on, over the Chats screen
     /// it leads to.
     Setup { page: SetupPage, focus: FocusState },
+    /// Add peer: the devices nearby with it open too, then Enter an address
+    /// and Show my code.
+    Nearby { focus: FocusState },
+    /// A contact exchange with a device from Nearby, in its place.
+    Exchange { focus: FocusState },
     /// A peer's address or invitation, being typed.
-    AddPeer { text: PeerText, focus: FocusState },
+    EnterAddress { text: PeerText, focus: FocusState },
     /// A channel an invitation offers, before it is joined.
     Join {
         invite: Invite,
@@ -505,8 +538,11 @@ impl Screen {
             | Self::Details { focus, .. }
             | Self::Member { focus, .. }
             | Self::Join { focus, .. }
-            | Self::AddPeer { focus, .. }
+            | Self::Nearby { focus }
+            | Self::Exchange { focus }
+            | Self::EnterAddress { focus, .. }
             | Self::Peer { focus, .. }
+            | Self::ShareContact { focus, .. }
             | Self::Device { focus, .. }
             | Self::Setup { focus, .. } => focus,
         }
@@ -519,8 +555,11 @@ impl Screen {
             | Self::Details { focus, .. }
             | Self::Member { focus, .. }
             | Self::Join { focus, .. }
-            | Self::AddPeer { focus, .. }
+            | Self::Nearby { focus }
+            | Self::Exchange { focus }
+            | Self::EnterAddress { focus, .. }
             | Self::Peer { focus, .. }
+            | Self::ShareContact { focus, .. }
             | Self::Device { focus, .. }
             | Self::Setup { focus, .. } => focus,
         }
@@ -737,11 +776,13 @@ impl State {
     /// Opens the actions menu of `message` in the conversation shown, with
     /// Reply focused; Retry, on an unconfirmed one.
     pub fn open_actions(&mut self, message: MessageId) {
-        // An invitation offers joining first.
+        // A card offers what it is for first.
         let first = if self.unconfirmed(message).is_some() {
             keys::RETRY
         } else if self.invite(message).is_some() {
             keys::JOIN
+        } else if self.contact_link(message).is_some() {
+            keys::VIEW_CONTACT
         } else {
             keys::REPLY
         };
@@ -758,8 +799,96 @@ impl State {
             .messages
             .iter()
             .find(|m| m.id == message)?
-            .invite
-            .as_ref()
+            .invite()
+    }
+
+    /// The link of the contact `message` in the open chat carries.
+    fn contact_link(&self, message: MessageId) -> Option<SharedText> {
+        self.conversation
+            .as_ref()?
+            .messages
+            .iter()
+            .find(|m| m.id == message)
+            .filter(|m| m.contact().is_some())
+            .map(|m| m.text.clone())
+    }
+
+    /// Shows the node the contact of the message whose actions menu is open
+    /// introduces: their page when they are saved, else what is known of
+    /// them, on Message. Nothing is saved until Save peer is pressed.
+    pub fn view_contact_from_actions(&mut self) {
+        let Some(message) = self.close_actions() else {
+            return;
+        };
+        let Some(link) = self.contact_link(message) else {
+            return;
+        };
+        let Some(member) = self.node.known_member(link.as_str()) else {
+            return;
+        };
+        self.show_known(member);
+    }
+
+    /// Shows `member`, known by address: their page when they are saved,
+    /// else their sheet on Message.
+    pub(crate) fn show_known(&mut self, member: Member) {
+        if member.saved
+            && let Some(peer) = member
+                .address
+                .as_deref()
+                .and_then(|address| self.node.saved_peer(address))
+            && self.peer(peer).is_some()
+        {
+            self.open_peer(peer);
+            return;
+        }
+        _ = self.screens.push(Screen::Member {
+            from: MemberFrom::Known,
+            member,
+            requested: false,
+            focus: FocusState::requesting(keys::MESSAGE_MEMBER),
+        });
+    }
+
+    /// Shows the chats the saved peer shown can be sent to, the first
+    /// focused.
+    pub fn share_contact(&mut self) {
+        let Some(&Screen::Peer { peer, .. }) = self.screens.last() else {
+            return;
+        };
+        let Some(first) = self.chats.first().map(|c| c.id) else {
+            return;
+        };
+        _ = self.screens.push(Screen::ShareContact {
+            peer,
+            focus: FocusState::requesting(keys::chat(first)),
+        });
+    }
+
+    /// Sends the contact on the Share contact screen to `chat`, and opens
+    /// it.
+    pub fn send_contact(&mut self, chat: ChatId) {
+        let Some(&Screen::ShareContact { peer, .. }) = self.screens.last() else {
+            return;
+        };
+        if self.airtime_wait.is_some() {
+            return;
+        }
+        let Some(index) = self.chats.iter().position(|c| c.id == chat) else {
+            return;
+        };
+        let Some(link) = self.node.contact_uri(peer) else {
+            return;
+        };
+        let forward_secret = self.chats[index].forward_secret;
+        let Some(message) = self.node.send(chat, &link, None, forward_secret) else {
+            return;
+        };
+        let mut summary = self.chats.remove(index);
+        summary.preview(&message);
+        summary.last_activity = message.time;
+        _ = self.chats.insert(0, summary);
+        self.go_to_chat(chat);
     }
 
     /// Shows the channel the message whose actions menu is open invites to,
@@ -1487,18 +1616,161 @@ impl State {
         }
     }
 
-    /// Shows Add peer, its field focused, so typing starts the address.
+    /// Shows Add peer, on Nearby. Its session is open while it is shown.
     pub fn open_add_peer(&mut self) {
-        _ = self.screens.push(Screen::AddPeer {
+        _ = self.screens.push(Screen::Nearby {
+            focus: FocusState::requesting(keys::ENTER_ADDRESS),
+        });
+        self.settle_meet();
+    }
+
+    /// Shows Enter an address, its field focused, so typing starts the
+    /// address.
+    pub fn open_enter_address(&mut self) {
+        _ = self.screens.push(Screen::EnterAddress {
             text: PeerText::new(),
             focus: FocusState::requesting(keys::PEER_FIELD),
         });
+        self.settle_meet();
     }
 
-    /// The address or invitation being typed into Add peer.
+    /// Shows this node's code, from Add peer.
+    pub fn show_my_code(&mut self) {
+        self.open_share();
+        self.settle_meet();
+    }
+
+    /// Asks the device on Nearby's row `device` to exchange contacts.
+    pub fn ask_to_exchange(&mut self, device: NearbyId) {
+        if self.node.ask_to_exchange(device) {
+            self.refresh_meet();
+        }
+    }
+
+    /// Answers the device that asked to exchange. Not now stays on Nearby,
+    /// under a new session key.
+    pub fn answer_exchange(&mut self, accept: bool) {
+        self.node.answer_exchange(accept);
+        if !accept {
+            self.node.open_meet();
+        }
+        self.refresh_meet();
+    }
+
+    /// Our holder compared the codes.
+    pub fn confirm_code(&mut self, same: bool) {
+        self.node.confirm_code(same);
+        self.refresh_meet();
+    }
+
+    /// Back to Nearby after an exchange ended, under a new session key.
+    pub fn try_again(&mut self) {
+        if let Some(screen @ Screen::Exchange { .. }) = self.screens.last_mut() {
+            *screen = Screen::Nearby {
+                focus: FocusState::requesting(keys::ENTER_ADDRESS),
+            };
+            self.node.open_meet();
+            self.refresh_meet();
+        }
+    }
+
+    /// Reads Add peer again from the node, and follows where it went.
+    pub(crate) fn refresh_meet(&mut self) {
+        self.node.meet(&mut self.meet);
+        self.follow_meet();
+    }
+
+    /// Keeps Add peer's session open while Nearby or the exchange is shown
+    /// and the interface is unlocked, and closed otherwise. Whatever opens
+    /// it again opens a new one.
+    pub(crate) fn settle_meet(&mut self) {
+        let shown = !self.lock.locked
+            && matches!(
+                self.screen(),
+                Screen::Nearby { .. } | Screen::Exchange { .. }
+            );
+        let open = self.meet.exchange != Exchange::Closed;
+        if shown && !open {
+            self.node.open_meet();
+        } else if !shown && open {
+            self.node.close_meet();
+        } else {
+            return;
+        }
+        self.refresh_meet();
+    }
+
+    /// Moves between Nearby and the exchange as the exchange goes, and
+    /// focuses what it asks of the holder.
+    fn follow_meet(&mut self) {
+        let nearby = matches!(self.screen(), Screen::Nearby { .. });
+        let exchange = matches!(self.screen(), Screen::Exchange { .. });
+        if !nearby && !exchange {
+            return;
+        }
+        let focus = self
+            .screen()
+            .focus()
+            .current()
+            .or(self.screen().focus().pending());
+        let held = |keys: &[FocusKey]| focus.is_some_and(|focus| keys.contains(&focus));
+        match &self.meet.exchange {
+            Exchange::Exchanged(member) => {
+                let member = member.clone();
+                self.screens.truncate(1);
+                self.settle_meet();
+                self.show_known(member);
+            }
+            Exchange::Asked(_) if nearby => {
+                if !held(&[keys::EXCHANGE_ACCEPT, keys::EXCHANGE_DECLINE]) {
+                    self.focus().request(keys::EXCHANGE_ACCEPT);
+                }
+            }
+            Exchange::Asking(_)
+            | Exchange::Accepted(_)
+            | Exchange::Comparing { .. }
+            | Exchange::Ended(_)
+                if nearby =>
+            {
+                if let Some(screen) = self.screens.last_mut() {
+                    *screen = Screen::Exchange {
+                        focus: FocusState::new(),
+                    };
+                }
+                self.follow_meet();
+            }
+            Exchange::Comparing { sent: false, .. } => {
+                if !held(&[keys::SAME, keys::DIFFERENT]) {
+                    self.focus().request(keys::SAME);
+                }
+            }
+            Exchange::Ended(_) => {
+                if !held(&[keys::TRY_AGAIN, keys::DONE]) {
+                    self.focus().request(keys::TRY_AGAIN);
+                }
+            }
+            // Under a new session key, back on Nearby.
+            Exchange::Opening | Exchange::Idle if exchange => {
+                if let Some(screen) = self.screens.last_mut() {
+                    *screen = Screen::Nearby {
+                        focus: FocusState::requesting(keys::ENTER_ADDRESS),
+                    };
+                }
+            }
+            // The card went: back to the rows.
+            Exchange::Idle | Exchange::Opening
+                if held(&[keys::EXCHANGE_ACCEPT, keys::EXCHANGE_DECLINE]) =>
+            {
+                self.focus().request(keys::ENTER_ADDRESS);
+            }
+            _ => {}
+        }
+    }
+
+    /// The address or invitation being typed into Enter an address.
     pub fn peer_text_mut(&mut self) -> Option<&mut PeerText> {
         match self.screens.last_mut() {
-            Some(Screen::AddPeer { text, .. }) => Some(text),
+            Some(Screen::EnterAddress { text, .. }) => Some(text),
             _ => None,
         }
     }
@@ -1507,7 +1779,7 @@ impl State {
     #[must_use]
     pub fn peer_entry(&self) -> PeerEntry {
         match self.screens.last() {
-            Some(Screen::AddPeer { text, .. }) => self.node.inspect_peer(text.text()),
+            Some(Screen::EnterAddress { text, .. }) => self.node.inspect_peer(text.text()),
             _ => PeerEntry::Empty,
         }
     }
@@ -1705,6 +1977,10 @@ impl State {
                     conversation.and_then(|chat| node.member(chat, message))
                 }
                 MemberFrom::Chat(chat) => node.chat_member(chat),
+                MemberFrom::Known => member
+                    .address
+                    .as_deref()
+                    .and_then(|address| node.known_member(address)),
             };
             if let Some(known) = known {
                 *member = known;
@@ -1765,6 +2041,7 @@ impl State {
     fn go_to_chat(&mut self, chat: ChatId) {
         self.close_conversation();
         self.screens.truncate(1);
+        self.settle_meet();
         self.section = Section::Chats;
         self.focus().request(keys::chat(chat));
         self.open_chat(chat);
@@ -1792,6 +2069,7 @@ impl State {
         if let Some(Screen::Conversation { .. }) = self.screens.pop() {
             self.close_conversation();
         }
+        self.settle_meet();
         // Focus returns where it was, unless the screen was left asking for
         // somewhere else.
         let focus = self.focus();

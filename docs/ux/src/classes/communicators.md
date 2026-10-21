@@ -62,12 +62,13 @@ Peers section.
 
 - After **Exchange**, both screens show a six-digit code. The codes match
   only if nobody is in the middle, and both people must press **Same**.
-- Only after both press Same do the devices send their addresses and
-  names. Each then shows the other on the ordinary sheet for a peer who is
-  not saved: it opens on Message, and Save peer is one turn down. Nothing
-  is saved until Save peer is pressed.
-- **Different** on either side ends it for both: nothing has been sent and
-  nothing is saved. Leaving the code screen cancels the same way.
+- Each device sends its address and name when its holder presses Same.
+  Once both have, each shows the other on the ordinary sheet for a peer
+  who is not saved: it opens on Message, and Save peer is one turn down.
+  Nothing is saved until Save peer is pressed.
+- **Different** on either side ends it for both, and a device whose holder
+  presses Different drops whatever it received. Nothing is saved. Leaving
+  the code screen cancels the same way.
 
 | | |
 |---|---|

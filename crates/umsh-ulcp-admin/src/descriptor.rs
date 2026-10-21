@@ -17,6 +17,9 @@ pub enum Access {
     Constant,
     /// Read, never written.
     ReadOnly,
+    /// Read only when asked for, never by a refresh: the device makes a
+    /// new value for every read, such as a signature.
+    OnDemand,
     /// Read and written whole.
     ReadWrite,
     /// Written whole, never read: the clock, which moves on its own, so a
@@ -165,6 +168,13 @@ pub const COVERED: &[Descriptor] = &[
         1,
     ),
     scalar(
+        prop::PHY_T_FRAME,
+        PropertyType::U32,
+        None,
+        Access::ReadOnly,
+        0,
+    ),
+    scalar(
         prop::PHY_LORA_SW,
         PropertyType::U16,
         Some(cap::PHY_LORA),
@@ -294,6 +304,14 @@ pub const COVERED: &[Descriptor] = &[
         Some(cap::KEYBOARD),
         Access::ReadWrite,
         1,
+    ),
+    // The device identity as it advertises itself, signed.
+    scalar(
+        prop::IDENT,
+        PropertyType::Bytes,
+        Some(cap::IDENT),
+        Access::OnDemand,
+        0,
     ),
     // The device identity's tables.
     table(prop::DEV_PEERS, cap::DEV_IDENTITY, 32, 32),

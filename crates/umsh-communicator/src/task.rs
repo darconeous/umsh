@@ -53,6 +53,9 @@ pub enum Arrival {
     Identity {
         key: PublicKey,
         identity: NodeIdentityPayload,
+        /// The payload `identity` was parsed from, which a signed one is
+        /// kept as.
+        payload: Vec<u8>,
         rx: RxSummary,
     },
     /// A peer answered a ping.
@@ -63,6 +66,19 @@ pub enum Arrival {
     },
     /// A session with forward secrecy began, ended, or could not be had.
     Secrecy { peer: PublicKey, change: Secrecy },
+    /// A contact-exchange frame, after its payload-type byte, from the
+    /// session key `from`.
+    #[cfg(feature = "software-crypto")]
+    Meet {
+        from: PublicKey,
+        broadcast: bool,
+        rssi: Option<i16>,
+        body: Vec<u8>,
+    },
+    /// The device node drew a contact-exchange session key and its seed,
+    /// or could not.
+    #[cfg(feature = "software-crypto")]
+    MeetOpened(Option<(PublicKey, [u8; 32])>),
 }
 
 /// What became of a session with forward secrecy.
@@ -104,6 +120,19 @@ pub enum Command {
         hint: NodeHint,
         options: SendOptions,
     },
+    /// Draw a contact-exchange session key, giving back any earlier one.
+    #[cfg(feature = "software-crypto")]
+    OpenMeet,
+    /// Send a contact-exchange frame from the session key: to `to`, or as a
+    /// broadcast.
+    #[cfg(feature = "software-crypto")]
+    SendMeet {
+        to: Option<PublicKey>,
+        frame: Vec<u8>,
+    },
+    /// Give back the contact-exchange session key.
+    #[cfg(feature = "software-crypto")]
+    CloseMeet,
 }
 
 /// What the device node received, waiting for the chats.
@@ -156,7 +185,8 @@ impl<R: RawMutex> Default for Inbox<R> {
 
 /// Copies what `node`, the device identity `local_key`'s node, receives
 /// for the chats into `inbox`: text frames, other nodes' identities,
-/// answers to pings, and the course of sessions with forward secrecy. It
+/// answers to pings, the course of sessions with forward secrecy, and
+/// contact-exchange frames. It
 /// wakes the inbox on word of a frame sent. The
 /// channel rules for `public` and `EMERGENCY` are applied here: a frame
 /// they refuse is left for any other listener.
@@ -196,6 +226,7 @@ where
                 inbox.push(Arrival::Identity {
                     key,
                     identity,
+                    payload: packet.payload().to_vec(),
                     rx: RxSummary::from_packet(packet),
                 });
             }
@@ -229,6 +260,21 @@ where
             node.on_pfs_established(move |peer| secrecy(peer, Secrecy::Established)),
             node.on_pfs_ended(move |peer| secrecy(peer, Secrecy::Ended)),
             node.on_pfs_failed(move |peer, _| secrecy(peer, Secrecy::Failed)),
+            // Contact exchange is Add peer's alone.
+            node.on_receive(move |packet| {
+                if packet.payload_type() != PayloadType::Meet {
+                    return false;
+                }
+                if let Some(from) = packet.from_key() {
+                    inbox.push(Arrival::Meet {
+                        from,
+                        broadcast: packet.packet_family() == umsh_node::PacketFamily::Broadcast,
+                        rssi: packet.rssi(),
+                        body: packet.payload().to_vec(),
+                    });
+                }
+                true
+            }),
         ]);
         subscriptions
     };
@@ -288,7 +334,8 @@ where
         if node.has_events() {
             notify();
         }
-        select3(inbox.ready.wait(), node.work(), sleep_until(tick_at)).await;
+        let wake_at = node.meet_deadline().map_or(tick_at, |at| at.min(tick_at));
+        select3(inbox.ready.wait(), node.work(), sleep_until(wake_at)).await;
     }
 }
 
@@ -324,6 +371,14 @@ async fn execute<M: MacBackend>(mesh: &LocalNode<M>, command: Command) -> Option
             hint,
             options,
         } => ask_channel(mesh, &channel, &hint, &options).await,
+        #[cfg(feature = "software-crypto")]
+        Command::OpenMeet => return Some(Arrival::MeetOpened(mesh.open_meet().await.ok())),
+        // One that cannot go is as good as lost on the air: the exchange
+        // times out.
+        #[cfg(feature = "software-crypto")]
+        Command::SendMeet { to, frame } => _ = mesh.send_meet(to.as_ref(), &frame).await,
+        #[cfg(feature = "software-crypto")]
+        Command::CloseMeet => mesh.close_meet().await,
     }
     None
 }

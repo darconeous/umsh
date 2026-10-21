@@ -260,20 +260,6 @@ type BleResources =
 /// would refuse with an invalid-length error.
 const BLE_VALUE_MAX: usize = 252;
 
-/// The same hardware, as the model identifier in pairing advertisements.
-#[cfg(feature = "board-heltec-v2")]
-const BLE_MODEL_ID: u16 = ble_privacy::model::HELTEC_LORA32_V2;
-#[cfg(feature = "board-heltec-v3")]
-const BLE_MODEL_ID: u16 = ble_privacy::model::HELTEC_LORA32_V3;
-#[cfg(feature = "board-tbeam-supreme")]
-const BLE_MODEL_ID: u16 = ble_privacy::model::LILYGO_T_BEAM_SUPREME;
-#[cfg(feature = "board-tlora-pager")]
-const BLE_MODEL_ID: u16 = ble_privacy::model::LILYGO_T_LORA_PAGER;
-#[cfg(feature = "board-xiao-esp32s3")]
-const BLE_MODEL_ID: u16 = ble_privacy::model::SEEED_XIAO_ESP32S3_KIT;
-#[cfg(feature = "board-tdeck")]
-const BLE_MODEL_ID: u16 = ble_privacy::model::LILYGO_T_DECK;
-
 /// Stable random-static BLE identity address derived from the factory
 /// eFuse MAC (top two bits forced to `11` per the random-static rule),
 /// so a bonded peer reconnects to the same address across reboots.
@@ -1029,7 +1015,7 @@ async fn advertise<'values, C: Controller>(
     let data = ble_privacy::advertisement(
         gatt::SERVICE_UUID.to_le_bytes(),
         &name,
-        BLE_MODEL_ID,
+        crate::MODEL_ID,
         pairing_window_open(),
         Instant::now().as_millis(),
     );

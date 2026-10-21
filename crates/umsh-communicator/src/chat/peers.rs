@@ -12,16 +12,18 @@ use umsh_mac::SendOptions;
 use umsh_node::{NodeCapabilities, NodeIdentityPayload, NodeRole, PING_MIC_SIZE};
 use umsh_text::node_adapter::{RxSummary, channel_reach, with_flood_reach};
 use umsh_text::{ConversationKey, SenderScope};
+use umsh_uri::UmshUri;
 use umsh_ux_communicator::avatar::{AvatarStyle, PeerShape};
 use umsh_ux_communicator::heapless::{String, Vec};
 use umsh_ux_communicator::model::{
-    self, Age, ChatSummary, Heard, MAX_HEARD, MAX_PEERS, Member, NodeEvent, PeerDetail, PeerEntry,
-    PeerSummary, word_match,
+    self, Age, Card, ChatSummary, Contact, ContactUri, Heard, MAX_HEARD, MAX_PEERS, Member,
+    NodeEvent, PeerDetail, PeerEntry, PeerSummary, Sender, word_match,
 };
+use umsh_ux_communicator::text::SharedText;
 
 use super::{Chats, FLOOD_HOPS, address, cut, unnamed_member};
 use crate::ids::{ChatId, MessageId, PeerId};
-use crate::record::{ChatChange, PeerChange, PeerFilter, PeerRecord};
+use crate::record::{ChatChange, IDENTITY_MAX, PeerChange, PeerFilter, PeerRecord};
 use crate::store::ChatStore;
 use crate::task::{Command, Secrecy};
 
@@ -39,6 +41,22 @@ const PINGS_KEPT: usize = 16;
 
 /// What a peer invitation starts with.
 const INVITATION: &str = "umsh:n:";
+
+/// A node's link, and what its identity bundle says of it when the bundle
+/// holds up.
+pub(crate) struct NodeLink {
+    pub key: PublicKey,
+    pub bundle: Option<Bundle>,
+}
+
+/// An identity bundle that parses, and whose signature, if it has one, is
+/// its key's.
+pub(crate) struct Bundle {
+    pub identity: NodeIdentityPayload,
+    /// The bytes it came as, which a signed one is kept as.
+    pub payload: alloc::vec::Vec<u8>,
+    pub signed: bool,
+}
 
 /// Where a session with forward secrecy with a peer stands.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -140,23 +158,47 @@ impl<S: ChatStore> Chats<S> {
         }
     }
 
-    /// Takes a node's identity, as it claims it.
+    /// Takes a node's identity, as it claims it, from `payload`, a frame
+    /// only its key could have sent or that its key signed.
+    #[allow(clippy::too_many_arguments)]
     pub fn identify(
         &mut self,
         key: PublicKey,
         identity: &NodeIdentityPayload,
+        payload: &[u8],
         rx: &RxSummary,
         now_ms: u64,
         time: Option<u32>,
         events: &mut dyn FnMut(NodeEvent),
     ) {
         self.hear(&key, rx, now_ms, events);
+        self.learn(key, identity, payload, true, time, events);
+    }
+
+    /// Keeps what `identity`, parsed from `payload`, says of the node
+    /// `key`: its own word when `linked`, else someone else's, which never
+    /// replaces its own. A signed payload is kept whole, to pass on.
+    pub fn learn(
+        &mut self,
+        key: PublicKey,
+        identity: &NodeIdentityPayload,
+        payload: &[u8],
+        linked: bool,
+        time: Option<u32>,
+        events: &mut dyn FnMut(NodeEvent),
+    ) {
         let before = self.store.peer(&key).ok().flatten();
         let kind = [identity.role.as_byte(), identity.capabilities.bits()];
+        let kept = if identity.signature.is_some() && payload.len() <= IDENTITY_MAX {
+            payload
+        } else {
+            &kind[..]
+        };
         let heard = PeerChange::Heard {
             at: time,
             name: identity.name.as_deref(),
-            identity: Some(&kind[..]),
+            identity: Some(kept),
+            linked,
         };
         let Ok(id) = self.store.update_peer(&key, heard) else {
             return;
@@ -558,9 +600,8 @@ impl<S: ChatStore> Chats<S> {
             // A known node's own name; else the one its invitation gives.
             let named = kept.as_ref().and_then(|kept| kept.name.as_deref()).map(cut);
             let invited = identity
-                .and_then(|identity| umsh_uri::decode_base58_bytes(identity).ok())
-                .and_then(|bytes| NodeIdentityPayload::from_bytes(&bytes).ok())
-                .and_then(|identity| identity.name)
+                .and_then(|identity| self.bundle(&key, identity))
+                .and_then(|bundle| bundle.identity.name)
                 .map(|name| cut(&name));
             return PeerEntry::Complete {
                 avatar: avatar(&key, kept.as_ref()),
@@ -584,6 +625,157 @@ impl<S: ChatStore> Chats<S> {
             hint,
             missing: (base58::ENCODED_LEN - digits.len()) as u8,
         }
+    }
+
+    /// The node `text` links to, when the whole of it is a node's link.
+    pub(super) fn node_link(&self, text: &str) -> Option<NodeLink> {
+        let Ok(UmshUri::Node(node)) = umsh_uri::parse_umsh_str(text.trim()) else {
+            return None;
+        };
+        let key = node.public_key;
+        Some(NodeLink {
+            key,
+            bundle: node.identity_data.and_then(|data| self.bundle(&key, data)),
+        })
+    }
+
+    /// What a message whose whole text is `body` offers as a card: the
+    /// channel it invites to, or the node it introduces.
+    pub(super) fn card_in(&self, body: &str) -> Option<Card> {
+        if let Some(invite) = self.invite_in(body) {
+            return Some(Card::Channel(invite));
+        }
+        let link = self.node_link(body)?;
+        let kept = self.store.peer(&link.key).ok().flatten();
+        // Called as it is kept here; else as its link calls it.
+        let named = kept.as_ref().and_then(|kept| kept.name.clone());
+        let given = link.bundle.and_then(|bundle| bundle.identity.name);
+        let name = match named.as_deref().or(given.as_deref()) {
+            Some(name) => SharedText::new(self.heap, name)?,
+            None => SharedText::new(self.heap, &name(&link.key, None))?,
+        };
+        Some(Card::Contact(Contact {
+            key: link.key.0,
+            name,
+            avatar: avatar(&link.key, kept.as_ref()),
+        }))
+    }
+
+    /// The identity bundle `data` carries for `key`, when it parses and
+    /// any signature it has is `key`'s.
+    fn bundle(&self, key: &PublicKey, data: &str) -> Option<Bundle> {
+        let payload = umsh_uri::decode_base58_bytes(data).ok()?;
+        let identity = NodeIdentityPayload::from_bytes(&payload).ok()?;
+        let signed = match &identity.signature {
+            None => false,
+            Some(signature) => {
+                let covered = &payload[..payload.len() - signature.len()];
+                if !(self.crypto.verify)(key, covered, signature) {
+                    return None;
+                }
+                true
+            }
+        };
+        Some(Bundle {
+            identity,
+            payload,
+            signed,
+        })
+    }
+
+    /// What is known of the node `text` names, a node's link or its bare
+    /// address. A link's identity is kept as heard, as its key's own word
+    /// only when its key signed it.
+    pub fn known_member(
+        &mut self,
+        text: &str,
+        now_ms: u64,
+        wall: Option<u32>,
+        events: &mut dyn FnMut(NodeEvent),
+    ) -> Option<Member> {
+        let text = text.trim();
+        let key = match self.node_link(text) {
+            Some(link) => {
+                let me = self.facade.as_ref().map(|facade| facade.local_key());
+                if let Some(bundle) = &link.bundle
+                    && me != Some(link.key)
+                {
+                    self.learn(
+                        link.key,
+                        &bundle.identity,
+                        &bundle.payload,
+                        bundle.signed,
+                        None,
+                        events,
+                    );
+                }
+                link.key
+            }
+            None => PublicKey(base58::decode(text.as_bytes()).ok()?),
+        };
+        Some(self.member_of(&key, now_ms, wall))
+    }
+
+    /// Takes the contact a contact exchange brought, `signed` when its
+    /// node identity is signed by `key`. It is kept as heard, never saved.
+    #[cfg(feature = "software-crypto")]
+    #[allow(clippy::too_many_arguments)]
+    pub fn exchanged(
+        &mut self,
+        key: PublicKey,
+        identity: &NodeIdentityPayload,
+        payload: &[u8],
+        signed: bool,
+        now_ms: u64,
+        wall: Option<u32>,
+        events: &mut dyn FnMut(NodeEvent),
+    ) -> Member {
+        self.learn(key, identity, payload, signed, wall, events);
+        self.member_of(&key, now_ms, wall)
+    }
+
+    /// What is known of the node `key`, under the name it is kept by.
+    pub(super) fn member_of(&self, key: &PublicKey, now_ms: u64, wall: Option<u32>) -> Member {
+        let kept = self.store.peer(key).ok().flatten();
+        let mut hint = String::new();
+        _ = write!(hint, "{}", key.hint());
+        Member {
+            sender: Sender {
+                name: cut(&name(key, kept.as_ref())),
+                avatar: avatar(key, kept.as_ref()),
+            },
+            hint,
+            address: Some(address(&key.0)),
+            heard: self
+                .heard_ago(key, kept.as_ref(), now_ms, wall)
+                .map(short_age)
+                .unwrap_or_default(),
+            saved: kept.is_some_and(|kept| kept.saved),
+        }
+    }
+
+    /// The saved peer at `address`.
+    pub fn saved_at(&self, address: &str) -> Option<model::PeerId> {
+        let key = PublicKey(base58::decode(address.as_bytes()).ok()?);
+        let kept = self.store.peer(&key).ok().flatten()?;
+        kept.saved.then_some(kept.id.0)
+    }
+
+    /// The link that shares the saved peer `peer`, carrying their own
+    /// signed identity when one is kept: what a receiver can check.
+    pub fn contact_uri(&self, peer: model::PeerId) -> Option<ContactUri> {
+        let kept = self.saved_peer(peer)?;
+        let mut uri = ContactUri::new();
+        uri.push_str(INVITATION).ok()?;
+        uri.push_str(&address(&kept.key.0)).ok()?;
+        let signed = NodeIdentityPayload::from_bytes(&kept.identity)
+            .is_ok_and(|identity| identity.signature.is_some());
+        if signed {
+            uri.push(':').ok()?;
+            uri.push_str(&umsh_uri::encode_base58_bytes(&kept.identity))
+                .ok()?;
+        }
+        Some(uri)
     }
 
     /// Nodes heard but not saved whose names have a word starting with
@@ -669,9 +861,7 @@ fn name(key: &PublicKey, kept: Option<&PeerRecord>) -> String<32> {
 /// or bridge, or anything else, which a node known by nothing but its
 /// address is too.
 pub(super) fn shape(kept: Option<&PeerRecord>) -> PeerShape {
-    let Some([role, capabilities]) =
-        kept.and_then(|kept| <[u8; 2]>::try_from(&kept.identity[..]).ok())
-    else {
+    let Some(&[role, capabilities]) = kept.and_then(|kept| kept.identity.get(..2)) else {
         return PeerShape::Hexagon;
     };
     match NodeRole::from_byte(role) {

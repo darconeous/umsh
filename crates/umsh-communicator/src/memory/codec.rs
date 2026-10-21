@@ -186,6 +186,7 @@ pub(super) fn record(disk: &Disk, key: &RecordKey, out: &mut Vec<u8>) -> bool {
             out.flag(record.forward_secrecy);
             out.flag(record.saved);
             out.u64(peer.heard);
+            out.flag(record.linked);
         }
         RecordKey::Channel(tag) => {
             let Some(channel) = disk.channels.get(tag) else {
@@ -300,6 +301,8 @@ fn restore_one(disk: &mut Disk, key: &[u8], record: &[u8]) -> Option<()> {
             let forward_secrecy = input.flag()?;
             let saved = input.flag()?;
             let heard = input.u64()?;
+            // Kept from before provenance was: nothing says whose word it is.
+            let linked = input.flag().unwrap_or(false);
             disk.peers.insert(
                 key.0,
                 PeerEntry {
@@ -308,6 +311,7 @@ fn restore_one(disk: &mut Disk, key: &[u8], record: &[u8]) -> Option<()> {
                         key,
                         name,
                         identity,
+                        linked,
                         last_heard,
                         route,
                         forward_secrecy,

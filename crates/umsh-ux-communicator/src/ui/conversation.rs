@@ -18,9 +18,10 @@ use heapless::Vec;
 
 use super::label;
 use super::setting::{card, choice};
-use crate::avatar::{AvatarStyle, BuiltinChannel};
+use crate::avatar::AvatarStyle;
 use crate::board::Metrics;
 use crate::clock::{Local, MONTHS, WEEKDAYS, civil};
+use crate::model;
 use crate::model::{
     ChannelAccess, ChatId, ChatKind, Delivery, Direction, Draft, MAX_MESSAGES, Message, MessageId,
     Messages, Parts, Presence, Quote, Reacted, Reaction, Reactions, Rule, State, hops_text,
@@ -125,12 +126,21 @@ pub fn view(state: &State, chat: ChatId) -> impl View<Rgb565, State> + use<> {
             if m.delivery == Delivery::Unconfirmed && !m.deleted {
                 return Over::Unconfirmed;
             }
-            let join = m.invite.as_ref().map(|invite| {
+            let item = |verb: &str, name: &SharedText| {
                 let mut text = MenuText::new();
-                _ = core::fmt::write(&mut text, format_args!("Join {}", invite.name.as_str()));
+                _ = core::fmt::write(&mut text, format_args!("{verb} {}", name.as_str()));
                 text
-            });
-            Over::Actions(m.my_reaction(), m.sender.is_some(), join)
+            };
+            let card = match &m.card {
+                Some(model::Card::Channel(invite)) => {
+                    Some(CardItem::Join(item("Join", &invite.name)))
+                }
+                Some(model::Card::Contact(contact)) => {
+                    Some(CardItem::Show(item("Show", &contact.name)))
+                }
+                None => None,
+            };
+            Over::Actions(m.my_reaction(), m.sender.is_some(), card)
         })
         .or(unsent.map(|unsent| match unsent {
             Unsent::Resend(_) => Over::Resend,
@@ -200,7 +210,7 @@ pub fn view(state: &State, chat: ChatId) -> impl View<Rgb565, State> + use<> {
     // Pager's stack a copy of its render tree.
     .popover(over.as_ref(), |over| {
         buoyant::match_view!(over, {
-            Over::Actions(mine, member, join) => actions_menu(m, *mine, *member, join.clone()),
+            Over::Actions(mine, member, card) => actions_menu(m, *mine, *member, card.clone()),
             Over::Unconfirmed => unconfirmed_menu(m),
             Over::Resend => resend_choices(m),
             Over::ConfirmDelete => delete_choices(m),
@@ -218,9 +228,9 @@ pub fn view(state: &State, chat: ChatId) -> impl View<Rgb565, State> + use<> {
 /// What opens over the conversation.
 #[derive(Clone)]
 enum Over {
-    /// A message's actions: my reaction, whether a member sent it, and the
-    /// channel it invites to.
-    Actions(Option<Reaction>, bool, Option<MenuText>),
+    /// A message's actions: my reaction, whether a member sent it, and what
+    /// its card offers.
+    Actions(Option<Reaction>, bool, Option<CardItem>),
     /// An unconfirmed message's actions.
     Unconfirmed,
     /// How to send again a message that was to go under forward secrecy.
@@ -624,10 +634,17 @@ fn bubble(
     let look = Look {
         text: message.text.clone(),
         reply: message.reply.clone(),
-        invite: message.invite.as_ref().map(|invite| Card {
-            name: invite.name.clone(),
-            builtin: invite.builtin,
-            tint: invite.tint,
+        card: message.card.as_ref().map(|card| match card {
+            model::Card::Channel(invite) => Card {
+                name: invite.name.clone(),
+                avatar: invite.avatar(),
+                kind: "Channel invite",
+            },
+            model::Card::Contact(contact) => Card {
+                name: contact.name.clone(),
+                avatar: contact.avatar.clone(),
+                kind: "Contact",
+            },
         }),
         reactions: message.reactions.clone(),
         to_come: message.parts.map(|parts| parts.lost != 0),
@@ -671,7 +688,7 @@ fn bubble(
 struct Look {
     text: SharedText,
     reply: Option<Quote>,
-    invite: Option<Card>,
+    card: Option<Card>,
     reactions: Reactions,
     /// Parts are still to come, and whether one will not.
     to_come: Option<bool>,
@@ -714,12 +731,22 @@ impl Look {
     }
 }
 
-/// The channel an invitation's card shows.
+/// What a card shows: the channel an invitation is to, or the node a
+/// contact introduces, and which of the two it is.
 #[derive(Clone)]
 struct Card {
     name: SharedText,
-    builtin: Option<BuiltinChannel>,
-    tint: [u8; 3],
+    avatar: AvatarStyle,
+    kind: &'static str,
+}
+
+/// A card's own item, first in its message's actions menu.
+#[derive(Clone)]
+enum CardItem {
+    /// Join the channel it invites to.
+    Join(MenuText),
+    /// Show the node it introduces.
+    Show(MenuText),
 }
 
 /// A bubble, ringed while it is focused, with its reactions as chips over
@@ -809,7 +836,7 @@ fn body_view(m: &'static Metrics, look: &Look) -> impl View<Rgb565, ()> + use<> 
         (false, _) => (theme::ACCENT, theme::ACCENT, theme::TEXT_SECONDARY),
     };
     VStack::new((
-        look.invite.is_none().then(|| {
+        look.card.is_none().then(|| {
             VStack::new((
                 look.reply
                     .as_ref()
@@ -830,9 +857,9 @@ fn body_view(m: &'static Metrics, look: &Look) -> impl View<Rgb565, ()> + use<> 
             .padding(Edges::Vertical, BUBBLE_PAD_Y)
             .background_color(fill, RoundedRectangle::with_radii(corners))
         }),
-        look.invite
+        look.card
             .as_ref()
-            .map(|invite| invite_card(m, invite, fill, color, corners)),
+            .map(|card| link_card(m, card, fill, color, corners)),
     ))
 }
 
@@ -887,29 +914,28 @@ fn quoted(
     .with_height(QUOTED)
 }
 
-/// An invitation's card, and its avatar.
+/// A card, and its avatar.
 const CARD_WIDTH: u32 = 300;
 const CARD_HEIGHT: u32 = 64;
 const CARD_AVATAR: u32 = 44;
 
-/// The channel an invitation is to, in a card that a press can take: a link
-/// inside text could not be focused.
-fn invite_card(
+/// The channel an invitation is to, or the node a contact introduces, in a
+/// card that a press can take: a link inside text could not be focused.
+fn link_card(
     m: &'static Metrics,
-    invite: &Card,
+    card: &Card,
     fill: Rgb565,
     color: Rgb565,
     corners: CornerRadii<u16>,
 ) -> impl View<Rgb565, ()> + use<> {
-    let avatar = AvatarStyle::channel(invite.builtin, &invite.name, invite.tint);
     HStack::new((
-        super::avatar::view(&avatar, CARD_AVATAR),
+        super::avatar::view(&card.avatar, CARD_AVATAR),
         VStack::new((
-            Text::new(invite.name.clone(), &font::BOLD)
+            Text::new(card.name.clone(), &font::BOLD)
                 .with_font_size(m.body)
                 .with_line_limit(1)
                 .foreground_color(color),
-            Text::new("Channel invite", &font::REGULAR)
+            Text::new(card.kind, &font::REGULAR)
                 .with_font_size(m.secondary)
                 .with_line_limit(1)
                 .foreground_color(theme::TEXT_SECONDARY),
@@ -1502,9 +1528,9 @@ fn actions_menu(
     m: &'static Metrics,
     mine: Option<Reaction>,
     member: bool,
-    join: Option<MenuText>,
+    card: Option<CardItem>,
 ) -> impl View<Rgb565, State> + use<> {
-    let has_join = join.is_some();
+    let has_card = card.is_some();
     let pad = |reaction: Reaction| {
         Button::new(
             move |s: &mut State| s.react_from_actions(reaction),
@@ -1545,16 +1571,24 @@ fn actions_menu(
             .foreground_color(theme::MENU_LINE)
             .frame()
             .with_height(1),
-        // An invitation is for joining, first.
-        join.map(|text| menu_item(m, text, keys::JOIN, State::join_from_actions))
-            .padding(Edges::Top, 2),
+        // A card is for what it offers, first.
+        card.map(|item| {
+            let (text, key, action): (_, _, fn(&mut State)) = match item {
+                CardItem::Join(text) => (text, keys::JOIN, State::join_from_actions),
+                CardItem::Show(text) => {
+                    (text, keys::VIEW_CONTACT, State::view_contact_from_actions)
+                }
+            };
+            menu_item(m, text, key, action)
+        })
+        .padding(Edges::Top, 2),
         menu_item(
             m,
             menu_text("Reply"),
             keys::REPLY,
             State::reply_from_actions,
         )
-        .padding(Edges::Top, if has_join { 0 } else { 2 }),
+        .padding(Edges::Top, if has_card { 0 } else { 2 }),
         member.then(|| {
             menu_item(
                 m,

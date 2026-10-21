@@ -36,7 +36,9 @@
 //! `shift` and `alt` (tapped), `alt-down` and `alt-up`, `airtime SECONDS`
 //! (spent airtime that returns in that long; 0 for none), `arrive` (the
 //! fixture's next message arrives), `identify` (the identity asked for
-//! arrives at once), `wait SECONDS` (the board's clock moves on, and the
+//! arrives at once), `meet STEP` (the fixture's other holder of a contact
+//! exchange `asks`, `accepts`, `declines`, presses `same` or `different`,
+//! or `leaves`), `wait SECONDS` (the board's clock moves on, and the
 //! fixture's with it), `dark` and `lit`
 //! (the panel goes dark, which locks it a second later, and lights again),
 //! `lock` (the lock button), `battery PERCENT [charging]`,
@@ -177,7 +179,10 @@ fn main() -> ExitCode {
     let (backend, dir, args) = match args.as_slice() {
         [node_flag, dir, rest @ ..] if node_flag == "--node" => {
             match node::open(Path::new(dir), std::time::Instant::now()) {
-                Ok(node) => (Backend::Node(node), Some(dir), rest),
+                Ok(node) => {
+                    node.set_model(board.model);
+                    (Backend::Node(node), Some(dir), rest)
+                }
                 Err(e) => {
                     eprintln!("host-communicator: {dir}: {e}");
                     return ExitCode::FAILURE;
@@ -352,6 +357,27 @@ fn headless(
                 } else {
                     store.answer_identity();
                 }
+                vec![]
+            }
+            "meet" => {
+                use umsh_ux_communicator::fixture::MeetStep;
+                let Backend::Fixture(store) = backend else {
+                    return Err(format!("line {}: meet needs the fixture", number + 1));
+                };
+                store.meet_peer(match rest {
+                    "asks" => MeetStep::Asks,
+                    "accepts" => MeetStep::Answers(true),
+                    "declines" => MeetStep::Answers(false),
+                    "same" => MeetStep::Same,
+                    "different" => MeetStep::Different,
+                    "leaves" => MeetStep::Leaves,
+                    _ => {
+                        return Err(format!(
+                            "line {}: meet asks, accepts, declines, same, different, or leaves",
+                            number + 1
+                        ));
+                    }
+                });
                 vec![]
             }
             "wait" => {

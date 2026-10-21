@@ -60,6 +60,15 @@ pub fn view(
             ),
             row(
                 m,
+                "Share contact",
+                keys::PEER_SHARE,
+                State::share_contact,
+                End::Chevron,
+                false,
+                ROW,
+            ),
+            row(
+                m,
                 "Route",
                 keys::PEER_ROUTE,
                 |_| {},

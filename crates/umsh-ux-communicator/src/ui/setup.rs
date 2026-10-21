@@ -8,7 +8,7 @@ use buoyant::view::prelude::*;
 use embedded_graphics::pixelcolor::Rgb565;
 use heapless::String;
 
-use super::add_peer::field_look;
+use super::enter_address::field_look;
 use super::label;
 use super::member::detail_head;
 use super::setting::{End, row};

@@ -492,9 +492,15 @@ impl<P: SoftPlatform> SoftDevice<P> {
                 self.announcements.push(request);
                 self.session.respond_announce(tid, Ok(()), &mut emit);
             }
-            // No node, so no key to sign an identity with.
+            // Signed with the device identity, as a board signs it; a
+            // device without one has nothing to sign with.
             Effect::SignIdentity { tid } => {
-                self.session.respond_identity_blob(tid, Err(()), &mut emit);
+                let blob = self
+                    .platform
+                    .load_identity()
+                    .map(|secret| identity_blob(&self.session, &secret));
+                self.session
+                    .respond_identity_blob(tid, blob.as_deref().ok_or(()), &mut emit);
             }
             Effect::ReadTime { tid } => {
                 let epoch = self.platform.wall_clock();
@@ -560,4 +566,43 @@ impl<P: SoftPlatform> SoftDevice<P> {
 /// rather than an answer for whoever asked.
 fn is_publication(frame: &[u8]) -> bool {
     Frame::parse(frame).is_ok_and(|parsed| parsed.is_publication())
+}
+
+/// The device identity's node identity, as a board's node advertises it:
+/// its role, what it does, and its name, signed by `secret`'s key
+/// (node-identity.md). The soft device has no node to ask, so it says what
+/// a chatting node says.
+fn identity_blob(session: &DeviceSession, secret: &[u8; 32]) -> Vec<u8> {
+    /// `ROLE` Chat, and the `TEXT_MESSAGES` and `MOBILE` capability bits.
+    const CHAT: u8 = 2;
+    const TEXT_MESSAGES: u8 = 0x04;
+    const MOBILE: u8 = 0x02;
+    let mut capabilities = TEXT_MESSAGES;
+    if session.ident_mobile() {
+        capabilities |= MOBILE;
+    }
+    let mut blob = vec![session.ident_role().unwrap_or(CHAT), capabilities];
+    let name = session.device_name();
+    if !name.is_empty() {
+        let mut options = [0u8; 64];
+        let mut encoder = umsh_core::options::OptionEncoder::new(&mut options);
+        if encoder.put(0, name.as_bytes()).is_ok() {
+            let len = encoder.finish();
+            blob.extend_from_slice(&options[..len]);
+        }
+    }
+    blob.push(0xFF);
+    let signature = ready(SoftwareIdentity::from_secret_bytes(secret).sign(&blob))
+        .expect("software signing does not fail");
+    blob.extend_from_slice(&signature);
+    blob
+}
+
+/// The output of a future that never waits, as software crypto's do.
+fn ready<F: core::future::Future>(future: F) -> F::Output {
+    let mut context = core::task::Context::from_waker(core::task::Waker::noop());
+    match core::pin::pin!(future).poll(&mut context) {
+        core::task::Poll::Ready(value) => value,
+        core::task::Poll::Pending => panic!("software crypto never waits"),
+    }
 }
