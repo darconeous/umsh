@@ -153,7 +153,8 @@ pub fn open(dir: &Path, start: Instant) -> std::io::Result<&'static Node> {
     Ok(node)
 }
 
-/// The interface's state over `node`, on the Chats screen of `board`.
+/// The interface's state over `node`: locked, as a device boots, over the
+/// Chats screen of `board`.
 pub fn state(node: &'static Node, board: &'static Board) -> State {
     let mut state = State::new(node, board);
     state.status.device_name = node.device_name();
@@ -165,5 +166,6 @@ pub fn state(node: &'static Node, board: &'static Board) -> State {
     );
     state.reload();
     state.focus_list();
+    state.lock();
     state
 }

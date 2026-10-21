@@ -374,7 +374,7 @@ async fn prime(node: &Node) {
     while node.next_event().is_some() {}
 }
 
-/// The interface's state over `node`, on the Chats screen.
+/// The interface's state over `node`: locked, over the Chats screen.
 fn state(node: &'static Node) -> State {
     let mut state = State::new(node, BOARD);
     state.status.device_name = node.device_name();
@@ -382,6 +382,7 @@ fn state(node: &'static Node) -> State {
     state.set_wall_time(umsh_hal::wall_clock::now());
     state.reload();
     state.focus_list();
+    state.lock();
     state
 }
 
