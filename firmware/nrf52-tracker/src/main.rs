@@ -5316,7 +5316,6 @@ mod firmware {
             Either::First(()) => ShutdownReason::Requested,
             Either::Second(reason) => reason,
         };
-        let battery_recovery = reason == ShutdownReason::BatteryCritical;
 
         DISPLAY_SHUTDOWN.signal(());
         let _ = select(
@@ -5324,6 +5323,16 @@ mod firmware {
             Timer::after(Duration::from_secs(5)),
         )
         .await;
+
+        wio_enter_off(reason).await
+    }
+
+    /// The Wio Tracker L1's System OFF teardown, from the button release
+    /// on. Shared by [`wio_shutdown_task`] and the boot gate, which reaches
+    /// it before the display or radio has started.
+    #[cfg(feature = "system-off-wio")]
+    async fn wio_enter_off(reason: ShutdownReason) -> ! {
+        let battery_recovery = reason == ShutdownReason::BatteryCritical;
 
         // The usual trigger is the nav button's four-second hold, which
         // means the button is often still down right now—and it is also
@@ -5635,6 +5644,36 @@ mod firmware {
         )
         .await;
 
+        // Finish the RTC write before the teardown removes its I2C
+        // pull-ups. A stuck bus must not prevent low-battery shutdown.
+        // Timing out this wait does not cancel the worker or release its
+        // DMA buffers; no task runs again once the synchronous power-off
+        // sequence starts.
+        #[cfg(feature = "board-techo")]
+        {
+            RTC_SHUTDOWN.signal(());
+            if matches!(
+                select(RTC_SHUTDOWN_DONE.wait(), Timer::after_millis(500)).await,
+                Either::Second(())
+            ) {
+                debug_log(format_args!("rtc: shutdown writeback timed out"));
+            }
+        }
+
+        // Dropping the `Output`s would hand the pins back to embassy, which
+        // writes PIN_CNF = INPUT:Disconnect with no pull—floating, with the
+        // rail half-collapsed for as long as the button stays held. Forget
+        // them instead: the rails stay up until the teardown pins both low.
+        core::mem::forget(peripheral_power);
+        core::mem::forget(power_enable);
+        techo_enter_off().await
+    }
+
+    /// The T-Echo's System OFF teardown, from the button release on. Shared
+    /// by [`shutdown_task`] and the boot gate, which reaches it before the
+    /// display, radio, or rails have started.
+    #[cfg(feature = "system-off-techo")]
+    async fn techo_enter_off() -> ! {
         // The usual trigger is the side button's four-second hold, which
         // means the button is often still down right now—and it is also
         // the wake pin. Arming DETECT-low while it is held would wake the
@@ -5646,21 +5685,6 @@ mod firmware {
             Timer::after(Duration::from_millis(50)).await;
         }
         Timer::after(Duration::from_millis(50)).await;
-
-        // Finish the RTC write before removing its I2C pull-ups. A stuck
-        // bus must not prevent low-battery shutdown. Timing out this wait
-        // does not cancel the worker or release its DMA buffers; no task
-        // runs again once the synchronous power-off sequence below starts.
-        #[cfg(feature = "board-techo")]
-        {
-            RTC_SHUTDOWN.signal(());
-            if matches!(
-                select(RTC_SHUTDOWN_DONE.wait(), Timer::after_millis(500)).await,
-                Either::Second(())
-            ) {
-                debug_log(format_args!("rtc: shutdown writeback timed out"));
-            }
-        }
 
         // Nothing below this point awaits, so the heartbeat task cannot run
         // again and take the status LED back.
@@ -5740,13 +5764,10 @@ mod firmware {
         // browned-up with its PPS pull-up faintly lighting the internal
         // blue LED.)
         //
-        // Dropping the `Output`s only hands the pins back to embassy,
-        // which writes PIN_CNF = INPUT:Disconnect with no pull—floating,
-        // the same trap. Pin both low so the LoRa module, GNSS, sensors,
-        // and e-paper bias generator are provably unpowered rather than
-        // left to a floating gate.
-        drop(peripheral_power);
-        drop(power_enable);
+        // A pin released to INPUT:Disconnect floats, the same trap. Pin
+        // both low so the LoRa module, GNSS, sensors, and e-paper bias
+        // generator are provably unpowered rather than left to a floating
+        // gate.
         drive_pin_low(Port::P0, 12);
         drive_pin_low(Port::P0, 13);
 
@@ -5821,9 +5842,9 @@ mod firmware {
         // Crystal-less boards (XIAO-based SenseCAP Solar) run the LFCLK from
         // the internal RC oscillator; boards with a 32.768 kHz crystal use it.
         #[cfg(not(feature = "lfclk-rc"))]
-        let p = embassy_nrf::init(umsh_bsp_nrf52840::clocks::ble_config());
+        let mut p = embassy_nrf::init(umsh_bsp_nrf52840::clocks::ble_config());
         #[cfg(feature = "lfclk-rc")]
-        let p = embassy_nrf::init(umsh_bsp_nrf52840::clocks::ble_config_lfrc());
+        let mut p = embassy_nrf::init(umsh_bsp_nrf52840::clocks::ble_config_lfrc());
         // GPIO state survives the soft reset/DFU handoff. Silence the T-1000E
         // piezo before any potentially lengthy radio, flash, or BLE work so a
         // retained PWM/enable state cannot sound until the buzzer task starts.
@@ -5916,6 +5937,96 @@ mod firmware {
         pac::POWER.events_usbdetected().write_value(0);
         pac::POWER.events_usbremoved().write_value(0);
         pac::POWER.events_usbpwrrdy().write_value(0);
+
+        // Boot gate: measure the cell before anything else draws current,
+        // and go straight back to the board's low-battery System OFF if it
+        // is too low to start on. Every boot passes through here—a cold
+        // power-on after the pack's protection releases, a VBUS edge from
+        // a panel at dawn, a reset press—and none of them otherwise knows
+        // the cell's state. External power does not excuse a low reading:
+        // a weak source holds VBUS up without carrying the load. Boards
+        // that arm LPCOMP on this path boot themselves once the cell has
+        // recovered past their wake point, which is above the gate.
+        {
+            #[cfg(any(
+                feature = "board-xiao-nrf52",
+                feature = "board-sensecap-solar",
+                feature = "board-wio-tracker-l1"
+            ))]
+            use umsh_bsp_nrf52840::system_off::ShutdownReason as Reason;
+            use umsh_ux_tracker::battery::{BatteryThresholds, boot_permitted};
+
+            #[cfg(feature = "board-xiao-nrf52")]
+            let samples = umsh_bsp_xiao_nrf52::power::boot_battery_samples(
+                p.SAADC.reborrow(),
+                Irqs,
+                p.P0_31.reborrow(),
+            )
+            .await;
+            #[cfg(feature = "board-sensecap-solar")]
+            let samples = umsh_bsp_sensecap_solar::power::boot_battery_samples(
+                p.SAADC.reborrow(),
+                Irqs,
+                p.P0_31.reborrow(),
+                p.P0_14.reborrow(),
+            )
+            .await;
+            #[cfg(feature = "board-wio-tracker-l1")]
+            let samples = umsh_bsp_wio_tracker_l1::power::boot_battery_samples(
+                p.SAADC.reborrow(),
+                Irqs,
+                p.P0_31.reborrow(),
+                p.P0_04.reborrow(),
+            )
+            .await;
+            #[cfg(feature = "board-techo")]
+            let samples = umsh_bsp_techo::power::boot_battery_samples(
+                p.SAADC.reborrow(),
+                Irqs,
+                p.P0_04.reborrow(),
+            )
+            .await;
+            #[cfg(feature = "t1000e")]
+            let samples = umsh_bsp_t1000e::power::boot_battery_samples(
+                p.SAADC.reborrow(),
+                Irqs,
+                p.P0_02.reborrow(),
+                p.P1_06.reborrow(),
+            )
+            .await;
+
+            if !boot_permitted(&samples, BatteryThresholds::default()) {
+                #[cfg(feature = "board-xiao-nrf52")]
+                umsh_bsp_xiao_nrf52::shutdown::enter_off(Reason::BatteryCritical);
+                #[cfg(feature = "board-sensecap-solar")]
+                umsh_bsp_sensecap_solar::shutdown::enter_off(Reason::BatteryCritical).await;
+                #[cfg(feature = "board-wio-tracker-l1")]
+                wio_enter_off(Reason::BatteryCritical).await;
+                #[cfg(feature = "board-techo")]
+                techo_enter_off().await;
+                // No LPCOMP on the T1000-E: its divider sits on a rail that
+                // is off in System OFF. On USB, the same charging sleep a
+                // sleeping tracker uses keeps the cable's charge visible
+                // and lets a press re-run this gate; on battery, the button
+                // is the way back.
+                #[cfg(feature = "t1000e")]
+                {
+                    if umsh_bsp_t1000e::power::usb_power_present() {
+                        let mut led_config = SimpleConfig::default();
+                        led_config.prescaler = Prescaler::Div16;
+                        let led_pwm = SimplePwm::new_1ch(p.PWM1, p.P0_24, &led_config);
+                        umsh_bsp_t1000e::shutdown::run_charging_sleep(
+                            led_pwm,
+                            Input::new(p.P0_06, Pull::Down),
+                            Input::new(p.P0_05, Pull::Down),
+                            Input::new(p.P1_03, Pull::Up),
+                        )
+                        .await;
+                    }
+                    umsh_bsp_t1000e::shutdown::resume_persisted_sleep().await;
+                }
+            }
+        }
 
         // TEMPORARY freeze diagnostics: format the previous boot's
         // watchdog capture and PC-sample ring for the ASCII dump on the

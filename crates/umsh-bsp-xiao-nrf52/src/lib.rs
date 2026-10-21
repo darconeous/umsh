@@ -68,7 +68,8 @@
 //! unavailable: no hold-to-power-off, no press-to-wake, no
 //! hold-at-boot force-pairing ceremony. Configuration and control come
 //! over USB-CDC (ULCP) or BLE. System OFF is reached only by the
-//! protective low-battery cutoff, and its exits are the reset button, a
+//! protective low-battery cutoff or the boot gate's refusal to start on a
+//! flat cell, and its exits are the reset button, a
 //! USB attach, and LPCOMP battery-recovery wake—the last of which is
 //! the only one that needs nobody present. See [`shutdown`].
 //!

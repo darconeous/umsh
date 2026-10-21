@@ -110,16 +110,21 @@ mod monitor {
     use core::sync::atomic::{AtomicU8, AtomicU32, Ordering};
 
     use embassy_nrf::gpio::{Input, Output};
-    use embassy_nrf::pac;
-    use embassy_nrf::saadc::Saadc;
+    use embassy_nrf::interrupt::typelevel::{Binding, SAADC as SaadcIrq};
+    use embassy_nrf::saadc::{
+        ChannelConfig, Config as SaadcConfig, InterruptHandler as SaadcInterruptHandler, Saadc,
+    };
+    use embassy_nrf::{Peri, pac, peripherals};
     use embassy_sync::blocking_mutex::raw::ThreadModeRawMutex;
     use embassy_sync::signal::Signal;
     use embassy_sync::watch::Watch;
     use embassy_time::{Duration, Timer};
+    use umsh_bsp_nrf52840::system_off::{Port, drive_pin_low};
     use umsh_ux_tracker::battery::{
-        BatteryState, BatteryThresholds, ChargeClass, LevelEstimator, LevelSample, charge_class,
-        classify, load_recent,
+        BOOT_SAMPLES, BatteryState, BatteryThresholds, ChargeClass, LevelEstimator, LevelSample,
+        charge_class, classify, load_recent,
     };
+    use umsh_ux_tracker::power::LowBatteryDetector;
 
     /// VBAT scaling, chosen so integer math stays exact:
     /// `battery_mv = raw * DIVIDER_MICRO / 4096`.
@@ -206,6 +211,50 @@ mod monitor {
         BATTERY_SAMPLE_REPLY.wait().await
     }
 
+    /// One reading through the divider, in cell millivolts.
+    async fn read_mv(saadc: &mut Saadc<'_, 1>) -> u16 {
+        let mut buf = [0i16; 1];
+        saadc.sample(&mut buf).await;
+        let raw = u32::from(buf[0].max(0) as u16);
+        ((raw * DIVIDER_MICRO) / 4_096).min(u32::from(u16::MAX)) as u16
+    }
+
+    /// Read the cell for the firmware's boot gate
+    /// ([`boot_permitted`](umsh_ux_tracker::battery::boot_permitted)),
+    /// before anything else draws current. Same path and scaling as
+    /// [`run_battery_monitor`], which later takes over the peripherals this
+    /// borrows.
+    ///
+    /// Drives the divider's low side (`P0.14`) LOW through the raw pin
+    /// helper rather than an `Output`, so it stays driven through the rest
+    /// of boot instead of floating—the state the module docs warn
+    /// about—until the monitor takes the pin over.
+    pub async fn boot_battery_samples<I>(
+        saadc: Peri<'_, peripherals::SAADC>,
+        irq: I,
+        tap: Peri<'_, peripherals::P0_31>,
+    ) -> [u16; BOOT_SAMPLES]
+    where
+        I: Binding<SaadcIrq, SaadcInterruptHandler>,
+    {
+        drive_pin_low(Port::P0, 14);
+        // Until now the tap floated toward the cell; let it decay back
+        // through the 510 kΩ leg.
+        Timer::after(Duration::from_millis(10)).await;
+        let mut saadc = Saadc::new(
+            saadc,
+            irq,
+            SaadcConfig::default(),
+            [ChannelConfig::single_ended(tap)],
+        );
+        let mut samples = [0u16; BOOT_SAMPLES];
+        for sample in &mut samples {
+            *sample = read_mv(&mut saadc).await;
+            Timer::after(Duration::from_millis(10)).await;
+        }
+        samples
+    }
+
     /// Monitors battery voltage via the SAADC on AIN7 / `P0.31`.
     ///
     /// Takes ownership of three pins for the life of the program:
@@ -222,10 +271,10 @@ mod monitor {
     ///   keeps it alive; dropping the `Output` would return the pin to a
     ///   disconnected input, which the BQ25101 reads as 50 mA.
     ///
-    /// `CONSECUTIVE_NEEDED` samples below the critical threshold (≈3.1 V,
-    /// sustained ~5 min, only ever reached off-USB since `classify`
-    /// reports a charge state while external power is present) fire
-    /// [`super::SHUTDOWN_SIGNAL`] for a protective System OFF. On this
+    /// Five minutes at or below the critical threshold (≈3.1 V) fire
+    /// [`super::SHUTDOWN_SIGNAL`] for a protective System OFF, whether or
+    /// not VBUS is present—on a solar node the panel *is* VBUS, and a
+    /// weak one holds it up without carrying the load. On this
     /// board that matters more than most: there is no power switch and no
     /// way to cut any rail, so firmware discipline is the *only*
     /// deep-discharge protection.
@@ -242,16 +291,16 @@ mod monitor {
         charge_status_n: Input<'static>,
         _charge_current_hi: Output<'static>,
     ) {
-        const CONSECUTIVE_NEEDED: u8 = 10;
         /// Normal cadence. Nothing is learned by reading faster: the pack
         /// discharges over days and the level estimator quantizes to 5 %.
         /// Charge-state changes do not wait for it—
         /// [`CHARGE_POLL_INTERVAL`] catches those.
         const SAMPLE_INTERVAL: Duration = Duration::from_secs(300);
-        /// Cadence while the pack reads Low or Critical, so the protective
-        /// cutoff (`CONSECUTIVE_NEEDED` consecutive critical samples) keeps
-        /// its intended ~5-minute latency instead of scaling with the
-        /// normal interval.
+        /// Cadence while the cell reads at or below Low, whatever the charge
+        /// state: the protective cutoff needs critical readings no further
+        /// apart than
+        /// [`CUTOFF_MAX_GAP_MS`](umsh_ux_tracker::power::CUTOFF_MAX_GAP_MS),
+        /// including while a weak source holds VBUS up.
         const LOW_SAMPLE_INTERVAL: Duration = Duration::from_secs(30);
         /// Recheck the 4.1 V charged boundary while `~CHG` stays released.
         const IDLE_POWERED_SAMPLE_INTERVAL: Duration = Duration::from_secs(60);
@@ -270,7 +319,8 @@ mod monitor {
         // its absolute maximum and releasing it puts P0.31 past it.
         divider_low.set_low();
 
-        let mut low_count: u8 = 0;
+        let thresholds = BatteryThresholds::default();
+        let mut cutoff = LowBatteryDetector::new(thresholds);
         let mut reply_pending = false;
         let mut estimator = LevelEstimator::new();
         let announce = BATTERY_ANNOUNCE.sender();
@@ -279,11 +329,7 @@ mod monitor {
         let mut announced: Option<(ChargeClass, Option<u8>)> = None;
 
         loop {
-            let mut buf = [0i16; 1];
-            saadc.sample(&mut buf).await;
-
-            let raw = u32::from(buf[0].max(0) as u16);
-            let battery_mv = ((raw * DIVIDER_MICRO) / 4_096).min(u32::from(u16::MAX)) as u16;
+            let battery_mv = read_mv(&mut saadc).await;
 
             let usb = usb_power_present();
             // Unlike the other boards in this family, the charger reports
@@ -292,7 +338,7 @@ mod monitor {
             // cannot charge. Require at least 4.1 V before interpreting a
             // released pin with VBUS present as Charged.
             let charging = charge_status_n.is_low();
-            let state = classify(battery_mv, usb, charging, BatteryThresholds::default());
+            let state = classify(battery_mv, usb, charging, thresholds);
             publish_battery_state(state);
 
             // Feed the level estimator; a load within the sag window marks
@@ -330,26 +376,21 @@ mod monitor {
                 announce.send(sample);
             }
 
-            // Protective cell cutoff: sustained critical voltage while on
-            // battery drives a System OFF so the pack is not deep-discharged
-            // when nobody is present. `!usb` is belt-and-suspenders—a
-            // Critical classification already implies no external power.
-            if state == BatteryState::BatteryCritical && !usb {
-                low_count = low_count.saturating_add(1);
-                if low_count >= CONSECUTIVE_NEEDED {
-                    super::SHUTDOWN_SIGNAL.signal(super::ShutdownReason::BatteryCritical);
-                    return;
-                }
-            } else {
-                low_count = 0;
+            // Protective cell cutoff: sustained critical voltage drives a
+            // System OFF so the pack is not deep-discharged when nobody is
+            // present. VBUS does not suspend it: a solar panel at dawn
+            // holds VBUS up without carrying the load.
+            if cutoff
+                .observe(embassy_time::Instant::now().as_millis(), battery_mv)
+                .is_some()
+            {
+                super::SHUTDOWN_SIGNAL.signal(super::ShutdownReason::BatteryCritical);
+                return;
             }
 
-            // A pack already reading Low or Critical is watched closely;
-            // the cutoff's latency depends on it.
-            let interval = if matches!(
-                state,
-                BatteryState::BatteryLow | BatteryState::BatteryCritical
-            ) {
+            // A pack already reading Low or below is watched closely,
+            // powered or not; the cutoff depends on it.
+            let interval = if battery_mv <= thresholds.low_mv {
                 LOW_SAMPLE_INTERVAL
             } else if matches!(
                 state,

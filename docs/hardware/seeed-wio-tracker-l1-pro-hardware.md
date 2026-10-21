@@ -521,8 +521,8 @@ This means there is definitely **firmware-level** low-battery shutdown support, 
 
 ### What UMSH does
 
-The protective cutoff (ten consecutive critical samples at 30 s, so about five
-minutes) enters System OFF with the nav button armed, as a user-requested
+The protective cutoff (critical voltage held for five minutes, with or without
+VBUS) enters System OFF with the nav button armed, as a user-requested
 power-off does—and, unlike a user-requested power-off, it leaves the divider
 gate `P0.04` **driven HIGH** and arms LPCOMP on AIN7 so the board can wake
 itself when the cell recharges. The divider costs roughly 2 µA in System OFF on
@@ -536,6 +536,10 @@ schematic in mind: it sits *above* the divider's fixed 1/2 ratio, so if this
 board's rail turns out to track the cell rather than being regulated, the
 comparator simply never trips—the no-autonomous-wake status quo, rather than
 a wake-and-die loop.
+
+Every boot also reads the cell before the radio, display, or BLE starts. Below
+3.3 V it re-enters that same low-battery System OFF, so a power-on reset, a USB
+attach, or a button press on a flat cell cannot run the board down further.
 
 Which of the two this board is remains a bench question, and the measurement is
 cheap: run the pack down to the cutoff on a supply, then ramp back up and see

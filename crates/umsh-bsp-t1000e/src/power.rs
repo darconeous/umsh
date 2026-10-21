@@ -11,7 +11,7 @@
 use core::sync::atomic::{AtomicU8, AtomicU32, Ordering};
 
 use embassy_futures::select::{Either, Either4, select, select4};
-use embassy_nrf::gpio::{Input, Output};
+use embassy_nrf::gpio::{Input, Level, Output, OutputDrive};
 use embassy_nrf::interrupt::typelevel::{Binding, SAADC as SaadcIrq};
 use embassy_nrf::saadc::{
     ChannelConfig, Config as SaadcConfig, InterruptHandler as SaadcInterruptHandler, Oversample,
@@ -23,9 +23,10 @@ use embassy_sync::signal::Signal;
 use embassy_sync::watch::Watch;
 use embassy_time::{Duration, Timer};
 use umsh_ux_tracker::battery::{
-    BatteryState, BatteryThresholds, ChargeClass, LevelEstimator, LevelSample, charge_class,
-    classify, load_recent,
+    BOOT_SAMPLES, BatteryState, BatteryThresholds, ChargeClass, LevelEstimator, LevelSample,
+    charge_class, classify, load_recent,
 };
+use umsh_ux_tracker::power::LowBatteryDetector;
 
 /// Single-consumer shutdown trigger. Fired by [`PowerSignaler::request_power_off`]
 /// (via the CLI `/poweroff` command) and by any firmware-local source that wants
@@ -157,8 +158,9 @@ impl umsh_hal::PowerControl for PowerSignaler {
 ///   full-scale input = 0.6 V / (1/6) = 3.6 V → 4096 LSB
 ///   with 2:1 divider: VBAT_mV = raw × 2 × 3600 / 4096 = raw × 1.758 mV
 ///
-/// 3.1 V low threshold → raw ≈ 1764. Ten consecutive under-threshold
-/// samples trigger a protective shutdown via [`SHUTDOWN_SIGNAL`].
+/// 3.1 V critical threshold → raw ≈ 1764. Five minutes of critical
+/// readings trigger a protective shutdown via [`SHUTDOWN_SIGNAL`], with or
+/// without external power (see [`LowBatteryDetector`]).
 ///
 /// This task is the sole owner of the SAADC and of both sensor enables, so
 /// the light sensor is served here rather than by a competing task. It
@@ -196,7 +198,6 @@ pub async fn run_battery_monitor<I>(
 ) where
     I: Binding<SaadcIrq, SaadcInterruptHandler> + Copy + 'static,
 {
-    const CONSECUTIVE_NEEDED: u8 = 10;
     /// Battery-only cadence. The cell discharges over days and the level
     /// estimator quantizes to 5 %, so frequent SAADC sampling is unnecessary.
     const SAMPLE_INTERVAL: Duration = Duration::from_secs(300);
@@ -204,17 +205,18 @@ pub async fn run_battery_monitor<I>(
     /// charging completes. Charger GPIOs can miss cable removal, so their
     /// interrupts alone cannot keep the cached charging indication current.
     const POWERED_SAMPLE_INTERVAL: Duration = Duration::from_secs(1);
-    /// Cadence while the cell is Low or Critical. The protective cutoff
-    /// counts [`CONSECUTIVE_NEEDED`] consecutive critical samples, so its
-    /// latency is a multiple of the interval in force—at the normal
-    /// cadence that would be most of an hour of deep-discharge exposure.
-    /// Sampling faster once the voltage is already alarming keeps the
-    /// cutoff at its intended ~5 minutes without paying for it in the
-    /// other 99 % of the battery's life.
+    /// Cadence while the cell is Low or Critical on battery. The protective
+    /// cutoff needs critical readings no further apart than
+    /// [`CUTOFF_MAX_GAP_MS`](umsh_ux_tracker::power::CUTOFF_MAX_GAP_MS), and
+    /// sampling faster once the voltage is already alarming keeps it at its
+    /// intended ~5 minutes without paying for it in the other 99 % of the
+    /// battery's life. Externally powered, the faster powered cadence
+    /// already covers it.
     const LOW_SAMPLE_INTERVAL: Duration = Duration::from_secs(30);
     const EDGE_DEBOUNCE: Duration = Duration::from_millis(20);
 
-    let mut low_count: u8 = 0;
+    let thresholds = BatteryThresholds::default();
+    let mut cutoff = LowBatteryDetector::new(thresholds);
     let mut reply_pending = false;
     let mut estimator = LevelEstimator::new();
     let announce = BATTERY_ANNOUNCE.sender();
@@ -223,30 +225,12 @@ pub async fn run_battery_monitor<I>(
     let mut announced: Option<(ChargeClass, Option<u8>)> = None;
 
     loop {
-        // Gate the sensor rail, settle, sample, then drop the rail. The
-        // light-sensor enable stays low: the battery divider does not need
-        // it.
-        sensor_rail.set_high();
-        Timer::after(Duration::from_millis(5)).await;
-        let raw = {
-            let mut converter = Saadc::new(
-                saadc.reborrow(),
-                irq,
-                SaadcConfig::default(),
-                [ChannelConfig::single_ended(battery_pin.reborrow())],
-            );
-            let mut buf = [0i16; 1];
-            converter.sample(&mut buf).await;
-            u32::from(buf[0].max(0) as u16)
-        };
-        sensor_rail.set_low();
-
-        let battery_mv = ((raw * 7_200) / 4_096).min(u32::from(u16::MAX)) as u16;
+        let battery_mv = read_battery_mv(&mut saadc, irq, &mut battery_pin, &mut sensor_rail).await;
         let state = classify(
             battery_mv,
             usb_power_present(),
             charge_active.is_low(),
-            BatteryThresholds::default(),
+            thresholds,
         );
         publish_battery_state(state);
 
@@ -297,22 +281,21 @@ pub async fn run_battery_monitor<I>(
             crate::preferences::set_battery_critical(false);
         }
 
-        if state == BatteryState::BatteryCritical {
-            low_count = low_count.saturating_add(1);
-            if low_count >= CONSECUTIVE_NEEDED {
-                // Cell protection: force shutdown before the battery
-                // reaches the deep-discharge knee.
-                crate::preferences::set_battery_critical(true);
-                SHUTDOWN_SIGNAL.signal(());
-                return;
-            }
-        } else {
-            low_count = 0;
+        // Cell protection: force shutdown before the battery reaches the
+        // deep-discharge knee. External power does not suspend it—see
+        // `LowBatteryDetector`.
+        if cutoff
+            .observe(embassy_time::Instant::now().as_millis(), battery_mv)
+            .is_some()
+        {
+            crate::preferences::set_battery_critical(true);
+            SHUTDOWN_SIGNAL.signal(());
+            return;
         }
 
         // A stale powered state gets one more fast sample after unplugging,
         // then returns to the appropriate battery-only cadence. Preserve the
-        // Low/Critical interval because the cutoff counts those samples.
+        // Low/Critical interval because the cutoff needs those samples.
         let interval = match state {
             BatteryState::BatteryCharging
             | BatteryState::BatteryCharged
@@ -323,8 +306,7 @@ pub async fn run_battery_monitor<I>(
         // Wait for the next battery iteration. Light and NTC requests are
         // serviced inside this wait and do not end it: their acquisitions
         // must not pull a battery-policy iteration forward
-        //—the estimator, the announce filter and the critical-battery
-        // cutoff all count iterations.
+        //—the estimator and the announce filter count iterations.
         let mut deadline = Timer::after(interval);
         loop {
             match select(
@@ -378,6 +360,58 @@ pub async fn run_battery_monitor<I>(
             break;
         }
     }
+}
+
+/// One battery reading: gate the sensor rail, settle, sample AIN0, then
+/// drop the rail. The light-sensor enable stays low: the battery divider
+/// does not need it.
+async fn read_battery_mv<I>(
+    saadc: &mut Peri<'_, peripherals::SAADC>,
+    irq: I,
+    battery_pin: &mut Peri<'_, peripherals::P0_02>,
+    sensor_rail: &mut Output<'_>,
+) -> u16
+where
+    I: Binding<SaadcIrq, SaadcInterruptHandler>,
+{
+    sensor_rail.set_high();
+    Timer::after(Duration::from_millis(5)).await;
+    let raw = {
+        let mut converter = Saadc::new(
+            saadc.reborrow(),
+            irq,
+            SaadcConfig::default(),
+            [ChannelConfig::single_ended(battery_pin.reborrow())],
+        );
+        let mut buf = [0i16; 1];
+        converter.sample(&mut buf).await;
+        u32::from(buf[0].max(0) as u16)
+    };
+    sensor_rail.set_low();
+    ((raw * 7_200) / 4_096).min(u32::from(u16::MAX)) as u16
+}
+
+/// Read the cell for the firmware's boot gate
+/// ([`boot_permitted`](umsh_ux_tracker::battery::boot_permitted)), before
+/// anything else draws current. Same path and scaling as
+/// [`run_battery_monitor`], which later takes over the peripherals this
+/// borrows.
+pub async fn boot_battery_samples<I>(
+    mut saadc: Peri<'_, peripherals::SAADC>,
+    irq: I,
+    mut battery_pin: Peri<'_, peripherals::P0_02>,
+    sensor_rail: Peri<'_, peripherals::P1_06>,
+) -> [u16; BOOT_SAMPLES]
+where
+    I: Binding<SaadcIrq, SaadcInterruptHandler> + Copy,
+{
+    let mut sensor_rail = Output::new(sensor_rail, Level::Low, OutputDrive::Standard);
+    let mut samples = [0u16; BOOT_SAMPLES];
+    for sample in &mut samples {
+        *sample = read_battery_mv(&mut saadc, irq, &mut battery_pin, &mut sensor_rail).await;
+        Timer::after(Duration::from_millis(10)).await;
+    }
+    samples
 }
 
 /// Fresh NTC and supply estimate without advancing battery policy counters.

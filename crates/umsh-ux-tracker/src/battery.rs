@@ -62,6 +62,11 @@ pub const fn charge_class(state: BatteryState) -> ChargeClass {
 pub struct BatteryThresholds {
     pub low_mv: u16,
     pub critical_mv: u16,
+    /// Least cell voltage the firmware starts on. Below it a boot goes
+    /// straight back to System OFF. It sits between `critical_mv`, where a
+    /// running node shuts down, and the LPCOMP recovery wake, so a node
+    /// woken by recovery always passes it.
+    pub boot_mv: u16,
 }
 
 impl Default for BatteryThresholds {
@@ -69,8 +74,24 @@ impl Default for BatteryThresholds {
         Self {
             low_mv: 3_500,
             critical_mv: 3_100,
+            boot_mv: 3_300,
         }
     }
+}
+
+/// Number of readings a boot-time battery check takes; see
+/// [`boot_permitted`].
+pub const BOOT_SAMPLES: usize = LEVEL_WINDOW;
+
+/// Whether a boot may proceed, from a burst of [`BOOT_SAMPLES`] readings
+/// taken before anything else draws current.
+///
+/// The decision ignores external power. A weak source—a solar panel at
+/// dawn—holds VBUS up without carrying the load, and a reading taken under
+/// charge current overstates the resting voltage, so a low reading with
+/// VBUS present is, if anything, worse than it looks.
+pub fn boot_permitted(samples: &[u16; BOOT_SAMPLES], thresholds: BatteryThresholds) -> bool {
+    median(samples) >= thresholds.boot_mv
 }
 
 /// Minimum measured cell voltage for a 4.2 V-class charger to report Charged.
@@ -369,7 +390,17 @@ mod tests {
     const T: BatteryThresholds = BatteryThresholds {
         low_mv: 3_500,
         critical_mv: 3_100,
+        boot_mv: 3_300,
     };
+
+    #[test]
+    fn boot_gate_takes_the_median_reading() {
+        assert!(boot_permitted(&[3_300; BOOT_SAMPLES], T));
+        assert!(!boot_permitted(&[3_299; BOOT_SAMPLES], T));
+        // One stray high or low reading does not decide it.
+        assert!(!boot_permitted(&[3_200, 3_200, 4_200, 3_200, 3_200], T));
+        assert!(boot_permitted(&[3_400, 3_400, 0, 3_400, 3_400], T));
+    }
 
     #[test]
     fn external_power_suppresses_battery_only_modes() {

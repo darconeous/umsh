@@ -587,6 +587,21 @@ regulator is in dropout the tap sits at 0.338 × VDD—below the 0.375 × VDD it
 would have to cross—so the comparator cannot trip until the rail is back in
 regulation. One effective wake point at ≈3.66 V of cell, not a sliding one.
 
+UMSH also enforces a boot lockout at the same 3300 mV. Every boot reads the
+cell (median of five readings, `P0.14` driven LOW first) before the radio, BLE,
+or flash starts, and below 3.3 V re-enters the cutoff's System OFF with LPCOMP
+armed. The LPCOMP wake guards only the return from the cutoff. A power-on reset
+after the pack's protection releases, a VBUS edge, or a RESET press arrives
+with no knowledge of the cell, and the lockout catches all of them.
+
+Neither the cutoff (≤3.1 V for five minutes, measured in elapsed time) nor the
+lockout consults VBUS. On a solar node the panel *is* VBUS, the only input that
+reaches the BQ25101, and a weak panel holds VBUS above the detect threshold
+while the node runs off the cell. A battery-less kit on USB never reads low
+regardless. The BQ25101's battery-detect routine toggles `OUT` between
+V<sub>O(REG)</sub> ≈ 4.2 V and V<sub>REG-BD</sub> ≈ 3.8 V (3.75 V minimum),
+which is well clear of both thresholds.
+
 ## Charging
 
 The charger is a TI **BQ25101** (schematic reference U2 in Seeed's current

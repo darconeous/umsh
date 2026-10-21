@@ -16,10 +16,11 @@
 //! | NFC field `P0.09/0.10` | untested  | would forfeit those pads for I²C |
 //! | GPIO DETECT on a button| **no**    | needs K1 retrofitted—see [`crate`] |
 //!
-//! In the shipping device image the only thing that gets here is the
-//! protective low-battery cutoff—never a gesture, because there is no
-//! gesture to make, and never a remote command, because that firmware has
-//! no power-off command. That pairing is deliberate: a board that cannot
+//! In the shipping device image the only things that get here are the
+//! protective low-battery cutoff and the boot gate that refuses to start
+//! on a cell below 3.3 V—never a gesture, because there is no gesture to
+//! make, and never a remote command, because that firmware has no
+//! power-off command. That pairing is deliberate: a board that cannot
 //! be woken by touching it should not be turnable off by anything except
 //! the one condition where staying on is worse.
 //!
@@ -66,10 +67,10 @@
 //! - 3/8 of a regulated 3.3 V VDD puts the tap threshold at 1.2375 V, so
 //!   the crossing is at **≈3.66 V of cell**, with 50 mV of hysteresis at
 //!   the tap ≈ 148 mV at the cell
-//! - that is at or above the firmware's Low threshold and well clear of
-//!   Critical (≈3.1 V), so a freshly woken board is nowhere near
-//!   re-triggering the cutoff—which in any case needs ten consecutive
-//!   critical samples, about five minutes
+//! - that is at or above the firmware's Low threshold, above the 3.3 V
+//!   boot gate, and well clear of Critical (≈3.1 V), so a freshly woken
+//!   board starts and is nowhere near re-triggering the cutoff—which in
+//!   any case needs five minutes of critical readings
 //! - the neighboring references are both wrong here: 5/16 lands at
 //!   ≈3.05 V, *below* critical, which is a wake-and-die loop; 7/16 lands
 //!   at ≈4.27 V, essentially "only when full"
@@ -100,7 +101,10 @@ pub async fn run() -> ! {
     enter_off(reason)
 }
 
-fn enter_off(reason: ShutdownReason) -> ! {
+/// The teardown itself, for a caller that already knows the reason: the
+/// shutdown task, and the firmware's boot gate when the cell is too low
+/// to start on.
+pub fn enter_off(reason: ShutdownReason) -> ! {
     // Hold the SX1262 in reset (active-low). Collapses radio current to
     // its reset-state minimum without a switchable rail. Must be driven,
     // not released: R1 on the carrier pulls this line up.

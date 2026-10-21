@@ -45,9 +45,10 @@
 //! tap × 2.953, and 3/8 of a regulated 3.3 V VDD puts the tap threshold at
 //! 1.2375 V, so the crossing is at **≈3.65 V of cell** with 50 mV of
 //! hysteresis at the tap (≈148 mV at the cell). That is at or above the
-//! firmware's Low threshold and well clear of Critical (≈3.1 V), so a
-//! freshly woken node is nowhere near re-triggering the cutoff—which
-//! needs ten consecutive critical samples, about five minutes, anyway. The
+//! firmware's Low threshold, above the 3.3 V boot gate, and well clear of
+//! Critical (≈3.1 V), so a freshly woken node starts and is nowhere near
+//! re-triggering the cutoff—which needs five minutes of critical readings
+//! anyway. The
 //! reference is relative to VDD, but the cell feeds VDDH and REG0 holds
 //! VDD at 3.3 V: while the regulator is in dropout the tap sits below the
 //! fraction and the comparator cannot trip, so there is one effective wake
@@ -74,7 +75,10 @@ pub async fn run() -> ! {
     enter_off(reason).await
 }
 
-async fn enter_off(reason: ShutdownReason) -> ! {
+/// The teardown itself, for a caller that already knows the reason: the
+/// shutdown task, and the firmware's boot gate when the cell is too low
+/// to start on.
+pub async fn enter_off(reason: ShutdownReason) -> ! {
     // Both buttons (P1.01 power, P1.07 user) are active-low with a pull-up
     // and both are wake sources. If either is still held (LOW) when we arm
     // WakeSense::Low, DETECT fires immediately and the chip wakes right back
