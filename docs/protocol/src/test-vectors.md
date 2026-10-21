@@ -208,3 +208,32 @@ F0 B0 8D E0 00 00 00 07 FF D5 EC 8B 3D 69 96 88
 ```
 
 Total: 36 bytes.
+
+## Example 9: Contact Exchange Derivations
+
+[Contact exchange](app-meet.md) values, taking Node A's public key as the asking device's session key `S_A` and Node B's as the asked device's `S_B`.
+
+- `N_A`: `0001 0203 0405 0607 0809 0A0B 0C0D 0E0F`
+- `N_B`: `1011 1213 1415 1617 1819 1A1B 1C1D 1E1F`
+
+| Value | Result |
+|---|---|
+| `COMMITMENT` | `B0B0 5CA5 750B 0DC9 02D5 E7B8 66DC 81D6 3DDE 8BDD 70E0 1A0F 8B50 BF5F FA66 9E7D` |
+| Code digest, first four bytes | `D0 43 62 18` |
+| `CODE` | `076952` |
+| `HUE` of `S_A` | 61, color `D0A84B` |
+| `HUE` of `S_B` | 119, color `53C69E` |
+
+Colors at hue steps 0, 64, 128, and 192 are `EC8DAB`, `CBAA4B`, `3DC6B1`, and `90AAFA`.
+
+A Hello from a T-LoRa Pager (model identifier 9), and A's Request:
+
+```text
+0A 01 00 00 09
+```
+
+```text
+0A 01 01 B0 B0 5C A5 75 0B 0D C9 02 D5 E7 B8 66
+DC 81 D6 3D DE 8B DD 70 E0 1A 0F 8B 50 BF 5F FA
+66 9E 7D
+```

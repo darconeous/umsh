@@ -26,6 +26,7 @@
 
 - [Payload Format](payload-format.md)
 - [Node Identity](node-identity.md)
+- [Contact Exchange](app-meet.md)
 - [MAC Commands](mac-commands.md)
 - [Node Management](app-node-management.md)
 - [Text Messages](app-text-messages.md)

@@ -216,6 +216,17 @@ pub(crate) struct LocalNodeState {
     peer_repeaters_responder: bool,
     #[cfg(feature = "software-crypto")]
     pfs: PfsSessionManager,
+    /// The session identity of a contact exchange in progress.
+    #[cfg(feature = "software-crypto")]
+    meet: Option<MeetSlot>,
+}
+
+/// A contact exchange's session identity and the peers registered to reach
+/// it, all dropped together when the session closes.
+#[cfg(feature = "software-crypto")]
+struct MeetSlot {
+    id: LocalIdentityId,
+    peers: Vec<PublicKey>,
 }
 
 impl LocalNodeState {
@@ -241,6 +252,8 @@ impl LocalNodeState {
             peer_repeaters_responder: false,
             #[cfg(feature = "software-crypto")]
             pfs: PfsSessionManager::new(),
+            #[cfg(feature = "software-crypto")]
+            meet: None,
         }
     }
 
@@ -348,6 +361,9 @@ pub enum NodeError<M: MacBackend> {
     /// Crypto failure during PFS processing.
     #[cfg(feature = "software-crypto")]
     Crypto(umsh_crypto::CryptoError),
+    /// No contact-exchange session is open.
+    #[cfg(feature = "software-crypto")]
+    MeetClosed,
 }
 
 impl<M: MacBackend> NodeError<M> {
@@ -389,6 +405,8 @@ where
             Self::PfsSessionTableFull => f.write_str("PfsSessionTableFull"),
             #[cfg(feature = "software-crypto")]
             Self::Crypto(e) => f.debug_tuple("Crypto").field(e).finish(),
+            #[cfg(feature = "software-crypto")]
+            Self::MeetClosed => f.write_str("MeetClosed"),
         }
     }
 }
@@ -1547,12 +1565,97 @@ impl<M: MacBackend> LocalNode<M> {
 
     #[cfg(feature = "software-crypto")]
     pub(crate) fn owns_ephemeral_identity(&self, identity_id: LocalIdentityId) -> bool {
-        self.state
-            .borrow()
+        let state = self.state.borrow();
+        state
             .pfs
             .sessions()
             .iter()
             .any(|session| session.local_ephemeral_id == identity_id)
+            || state
+                .meet
+                .as_ref()
+                .is_some_and(|slot| slot.id == identity_id)
+    }
+
+    /// The session identity of the contact exchange in progress, if any.
+    #[cfg(feature = "software-crypto")]
+    pub fn meet_identity(&self) -> Option<LocalIdentityId> {
+        self.state.borrow().meet.as_ref().map(|slot| slot.id)
+    }
+
+    /// Open a contact-exchange session (app-meet.md) under a freshly drawn
+    /// key, closing any earlier one. Every attempt opens its own: a session
+    /// key is never reused.
+    ///
+    /// Returns the session's public key and a seed for
+    /// [`Meet::start`](crate::meet::Meet::start).
+    #[cfg(feature = "software-crypto")]
+    pub async fn open_meet(&self) -> Result<(PublicKey, [u8; 32]), NodeError<M>> {
+        use umsh_crypto::NodeIdentity;
+        use zeroize::Zeroize;
+
+        self.close_meet().await;
+        let mut secret = [0u8; 32];
+        self.mac.fill_random(&mut secret).await;
+        let identity = umsh_crypto::software::SoftwareIdentity::from_secret_bytes(&secret);
+        secret.zeroize();
+        let key = *identity.public_key();
+        let id = self
+            .mac
+            .register_ephemeral(self.identity_id, identity)
+            .await?;
+        let mut seed = [0u8; 32];
+        self.mac.fill_random(&mut seed).await;
+        self.state.borrow_mut().meet = Some(MeetSlot {
+            id,
+            peers: Vec::new(),
+        });
+        Ok((key, seed))
+    }
+
+    /// Close the contact-exchange session: its key and the peers it reached
+    /// go away, and nothing more is heard or sent under it.
+    #[cfg(feature = "software-crypto")]
+    pub async fn close_meet(&self) {
+        let Some(slot) = self.state.borrow_mut().meet.take() else {
+            return;
+        };
+        let _ = self.mac.remove_ephemeral(slot.id).await;
+        for peer in slot.peers {
+            let _ = self.mac.remove_peer(&peer).await;
+        }
+    }
+
+    /// Send one Meet frame from the session identity: ack-requested and not
+    /// flooded to `to`, or as a broadcast with the full source when `to` is
+    /// `None`.
+    #[cfg(feature = "software-crypto")]
+    pub async fn send_meet(
+        &self,
+        to: Option<&PublicKey>,
+        frame: &[u8],
+    ) -> Result<SendProgressTicket, NodeError<M>> {
+        let id = self.meet_identity().ok_or(NodeError::MeetClosed)?;
+        let options = SendOptions::default().no_flood().with_full_source();
+        let Some(peer) = to else {
+            let receipt = self.mac.send_broadcast(id, frame, &options).await?;
+            return Ok(self.register_non_ack_send(id, receipt));
+        };
+        // A session key is a stranger to the MAC until something registers
+        // it; register it here, and remember it for close.
+        if !self.mac.ensure_transient_peer(peer).await {
+            return Err(NodeError::PeerMissing);
+        }
+        if let Some(slot) = self.state.borrow_mut().meet.as_mut()
+            && !slot.peers.contains(peer)
+        {
+            slot.peers.push(*peer);
+        }
+        let receipt = self
+            .mac
+            .send_unicast(id, peer, frame, &options.with_ack_requested(true))
+            .await?;
+        Ok(self.register_ack_send(id, receipt))
     }
 
     #[cfg(feature = "software-crypto")]

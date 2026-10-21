@@ -139,3 +139,17 @@ The `EMERGENCY` channel requires unencrypted transmission, full source key (`S=1
 ### Blind Unicast Key Binding
 
 Blind unicast payload keys are [derived by XORing](security.md#blind-unicast-payload-keys) the pairwise unicast keys with the channel's multicast keys. This ensures that decrypting a blind unicast payload requires both the pairwise shared secret and the channel key. Compromise of one without the other is insufficient. 
+
+## Contact Exchange
+
+### Code Strength
+
+A device in the middle of a [contact exchange](app-meet.md) must send its commitment before it learns the other side's nonce, and cannot change its nonce after it learns it. Each attempt therefore gives it one guess at making both holders see the same code: a one-in-a-million chance, paid for with an attempt both holders see fail. The code proves only that the two devices talking are the two in the holders' hands; it says nothing about the names those devices then send.
+
+### Session Key Erasure
+
+Session keys are ephemeral keys and fall under the same [erasure requirements](#ephemeral-key-erasure) as PFS session keys. Because a new key is drawn for every attempt, Nearby rows heard in one attempt cannot be linked by key to the next.
+
+### Correlation That Remains
+
+A Hello names a hardware model, and a rare model narrows who is nearby. The long-term identity keeps sending its ordinary traffic while a session is open, so an observer can correlate the two by timing and location.

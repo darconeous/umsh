@@ -2960,7 +2960,13 @@ impl<
         }
         let mut delivered = false;
         for (index, slot) in self.identities.iter().enumerate() {
-            if slot.is_none() {
+            // An ephemeral identity takes only unicast addressed to it: a
+            // broadcast reaches the long-term identity it answers for once,
+            // not again through each of its sessions.
+            let Some(slot) = slot else {
+                continue;
+            };
+            if slot.identity().is_ephemeral() {
                 continue;
             }
             delivered = true;

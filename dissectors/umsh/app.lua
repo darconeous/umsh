@@ -18,6 +18,7 @@ local PAYLOAD_TYPES = {
   [0x07] = "CoAP",
   [0x08] = "Node Management Request",
   [0x09] = "Node Management Response",
+  [0x0A] = "Meet",
 }
 
 -- The protocol column names the application protocol the packet actually
@@ -30,6 +31,7 @@ local PROTO_COLUMN = {
   [0x05] = "UMSH-CR",
   [0x08] = "UMSH-NM",
   [0x09] = "UMSH-NM",
+  [0x0A] = "UMSH-MEET",
 }
 
 -- Which payload types each packet type may carry.
@@ -45,6 +47,7 @@ local ALLOWED_IN = {
   [0x07] = {           [UNIC]=true, [UNAR]=true, [MCST]=true, [BUNI]=true, [BUAR]=true},
   [0x08] = {           [UNIC]=true, [UNAR]=true,              [BUNI]=true, [BUAR]=true},
   [0x09] = {           [UNIC]=true, [UNAR]=true,              [BUNI]=true, [BUAR]=true},
+  [0x0A] = {[BCST]=true, [UNIC]=true, [UNAR]=true},
 }
 local PKT_TYPE_NAME = {
   [0]="broadcast", [1]="MAC ack", [2]="unicast", [3]="unicast",
@@ -88,6 +91,21 @@ f.ni_regions   = ProtoField.string ("umsh.app.ni.regions",  "Supported Region")
 f.ni_nonce     = ProtoField.bytes  ("umsh.app.ni.nonce",    "Nonce")
 f.ni_unknown   = ProtoField.bytes  ("umsh.app.ni.unk",      "Unknown Option")
 f.ni_sig       = ProtoField.bytes  ("umsh.app.ni.sig",      "EdDSA Signature")
+
+-- Meet (docs/protocol/src/app-meet.md)
+local MEET_KINDS = {
+  [0]="Hello", [1]="Request", [2]="Accept", [3]="Reveal", [4]="Identity", [5]="End",
+}
+local MEET_REASONS = {
+  [0]="Not now", [1]="Busy", [2]="Different", [3]="Left", [4]="Timed out", [5]="Failed",
+}
+f.meet_version = ProtoField.uint8  ("umsh.app.meet.version", "Version",       base.DEC)
+f.meet_kind    = ProtoField.uint8  ("umsh.app.meet.kind",    "Kind",          base.DEC, MEET_KINDS)
+f.meet_model   = ProtoField.uint16 ("umsh.app.meet.model",   "Model",         base.HEX)
+f.meet_commit  = ProtoField.bytes  ("umsh.app.meet.commit",  "Commitment")
+f.meet_nonce   = ProtoField.bytes  ("umsh.app.meet.nonce",   "Nonce")
+f.meet_key     = ProtoField.bytes  ("umsh.app.meet.key",     "Long-Term Key")
+f.meet_reason  = ProtoField.uint8  ("umsh.app.meet.reason",  "Reason",        base.DEC, MEET_REASONS)
 
 -- MAC Command
 local MAC_COMMANDS = {
@@ -1080,6 +1098,108 @@ local function dissect_node_management(payload, subtree, tvb, pinfo, ctx, is_res
 end
 
 -- ──────────────────────────────────────────────────────────────────────────
+-- Meet dissector (contact exchange between session keys)
+--
+-- Wire layout (docs/protocol/src/app-meet.md):
+--   [VERSION:1] [KIND:1] [BODY]
+-- Every body but Identity's has an exact length; Identity's is the sender's
+-- long-term key followed by a node identity payload to the end of the frame.
+-- ──────────────────────────────────────────────────────────────────────────
+local MEET_BODY_LEN = {[0]=2, [1]=32, [2]=16, [3]=16, [5]=1}
+
+local function dissect_meet(payload, subtree, tvb, pinfo, ctx)
+  local len = #payload
+  local function flag(range, text)
+    if ctx and ctx.flag then ctx.flag(subtree, range, text) end
+  end
+
+  if len < 2 then
+    flag(tvb(0, len), "Meet payload must carry a version and a kind")
+    return
+  end
+  local version = byte_at(payload, 1)
+  subtree:add(f.meet_version, tvb(0, 1), version)
+  if version ~= 1 then
+    -- A newer version is not wrong, only unreadable here.
+    if pinfo then pinfo.cols.info:append(string.format(" Meet: version %d", version)) end
+    subtree:add(f.opaque, tvb(1)):set_text(string.format("Meet version %d data (%d bytes)",
+                                                         version, len - 1))
+    return
+  end
+
+  local kind = byte_at(payload, 2)
+  local name = MEET_KINDS[kind]
+  subtree:add(f.meet_kind, tvb(1, 1), kind)
+  if not name then
+    if pinfo then pinfo.cols.info:append(string.format(" Meet: kind %d", kind)) end
+    flag(tvb(1, 1), string.format("Meet kind %d is not defined in version 1", kind))
+    return
+  end
+  -- An Identity's node identity payload names itself in the Info column.
+  if pinfo then pinfo.cols.info:append(kind == 4 and " Meet:" or " Meet: " .. name) end
+
+  if ctx and ctx.pkt_type then
+    local broadcast = ctx.pkt_type == BCST
+    if kind == 0 and not broadcast then
+      flag(tvb(1, 1), "Meet Hello must be carried in a broadcast")
+    elseif kind ~= 0 and broadcast then
+      flag(tvb(1, 1), string.format("Meet %s must be carried in a unicast", name))
+    end
+    if ctx.full_src == false then
+      flag(tvb(1, 1), "Meet payload must carry its session key in full-key form (S=1)")
+    end
+  end
+
+  local body_len = len - 2
+  local want = MEET_BODY_LEN[kind]
+  if want and body_len ~= want then
+    flag(tvb(1, 1), string.format("Meet %s body must be %d bytes (is %d)", name, want, body_len))
+    if body_len < want then return end
+  end
+
+  if kind == 0 then
+    local model = uint16_be(payload, 3)
+    subtree:add(f.meet_model, tvb(2, 2), model)
+    if pinfo then pinfo.cols.info:append(string.format(" (model %d)", model)) end
+  elseif kind == 1 then
+    subtree:add(f.meet_commit, tvb(2, 32))
+  elseif kind == 2 or kind == 3 then
+    subtree:add(f.meet_nonce, tvb(2, 16))
+  elseif kind == 5 then
+    local reason = byte_at(payload, 3)
+    subtree:add(f.meet_reason, tvb(2, 1), reason)
+    if pinfo then
+      pinfo.cols.info:append(" (" .. (MEET_REASONS[reason] or string.format("reason %d", reason)) .. ")")
+    end
+  elseif kind == 4 then
+    if body_len < 34 then
+      flag(tvb(1, 1), string.format(
+        "Meet Identity must carry a 32-byte key and a node identity payload (has %d bytes)",
+        body_len))
+      return
+    end
+    subtree:add(f.meet_key, tvb(2, 32))
+    local identity = payload:sub(35)
+    dissect_node_identity(identity, subtree, tvb(34), ctx, pinfo)
+    -- Options end at the end of the frame (unsigned) or at a 0xFF that
+    -- exactly a signature follows.
+    local opts_module
+    pcall(function() opts_module = require("options") end)
+    if opts_module then
+      local ok, total, marker = pcall(opts_module.scan_length, identity, 3)
+      if ok and marker then
+        local after = #identity - (2 + total)
+        if after ~= 64 then
+          flag(tvb(34), string.format(
+            "Meet Identity must carry exactly a 64-byte signature after its end-of-options marker (has %d bytes)",
+            after))
+        end
+      end
+    end
+  end
+end
+
+-- ──────────────────────────────────────────────────────────────────────────
 -- Public entry point: dissect(payload_bytes, parent_tree, pinfo, ks, crypto)
 -- Called from umsh.lua with the decrypted/raw payload as a Lua string.
 -- ──────────────────────────────────────────────────────────────────────────
@@ -1154,6 +1274,9 @@ function M.dissect(payload_bytes, parent_tree, pinfo, ks, crypto_mod, ctx)
     -- Node Management: the type is the direction.
     dissect_node_management(inner, subtree, inner_len > 0 and tvb(1) or tvb(0, 0),
                             pinfo, ctx, ptype == 0x09)
+
+  elseif ptype == 0x0A then
+    dissect_meet(inner, subtree, inner_len > 0 and tvb(1) or tvb(0, 0), pinfo, ctx)
 
   else
     -- Unspecified / unknown / raw

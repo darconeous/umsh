@@ -1138,6 +1138,55 @@ check("the multicast rule names the payload type",
       true)
 
 -- ─────────────────────────────────────────────────────────────────────────────
+-- Meet payloads (docs/protocol/src/app-meet.md)
+--
+-- [VERSION][KIND][BODY]: exact body lengths, a Hello on broadcast and every
+-- other kind on unicast, and an Identity's signature either absent or exactly
+-- 64 bytes after the end-of-options marker.
+-- ─────────────────────────────────────────────────────────────────────────────
+section("Meet")
+
+-- test-vectors.md Example 9: a Hello from a T-LoRa Pager.
+local hello = dissect_payload("0A 01 00 0009", 0)
+check("hello names its payload type", has(hello, "Meet"), true)
+check("hello sets the protocol column", hello.protocol, "UMSH-MEET")
+check("hello info line", hello.info, " Meet: Hello (model 9)")
+check("clean hello has no violations", #hello.violations, 0)
+
+check("a hello on unicast is flagged",
+      #dissect_payload("0A 01 00 0009", 2).violations, 1)
+check("a request on broadcast is flagged",
+      #dissect_payload("0A 01 01" .. string.rep("00", 32), 0).violations, 1)
+check("a trailing byte is flagged",
+      #dissect_payload("0A 01 00 0009 00", 0).violations, 1)
+check("a short accept is flagged",
+      #dissect_payload("0A 01 02" .. string.rep("00", 15)).violations, 1)
+check("a newer version is not flagged",
+      #dissect_payload("0A 02 00 0009", 0).violations, 0)
+check("an undefined kind is flagged",
+      #dissect_payload("0A 01 06").violations, 1)
+
+local ended = dissect_payload("0A 01 05 01")
+check("end info line", ended.info, " Meet: End (Busy)")
+check("clean end has no violations", #ended.violations, 0)
+
+-- Role Chat, caps TEXT_MESSAGES, name "Ben".
+local key      = string.rep("AB", 32)
+local identity = "02 04 03 42656E"
+local unsigned = dissect_payload("0A 01 04" .. key .. identity)
+check("unsigned identity names the sender", unsigned.info, ' Meet: Identity: "Ben" Chat [TXT]')
+check("unsigned identity has no violations", #unsigned.violations, 0)
+
+local signed = dissect_payload("0A 01 04" .. key .. identity .. "FF" .. string.rep("11", 64))
+check("signed identity is marked signed", signed.info:find("signed", 1, true) ~= nil, true)
+check("signed identity has no violations", #signed.violations, 0)
+
+check("a marker with nothing after it is flagged",
+      #dissect_payload("0A 01 04" .. key .. identity .. "FF").violations, 1)
+check("a short signature is flagged",
+      #dissect_payload("0A 01 04" .. key .. identity .. "FF" .. string.rep("11", 63)).violations, 1)
+
+-- ─────────────────────────────────────────────────────────────────────────────
 -- Node Identity regions (docs/protocol/src/node-identity.md)
 --
 -- Option 4 is repeated: one region name per option, as UTF-8. The 2-octet

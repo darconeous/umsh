@@ -19,6 +19,7 @@ Payloads are typically prefixed by a 1-byte payload type identifier. Values from
 | 7     | CoAP-over-UMSH                         |
 | 8     | [Node Management Request](app-node-management.md) |
 | 9     | [Node Management Response](app-node-management.md) |
+| 10    | [Meet](app-meet.md)                    |
 
 ## Payload and Packet Type Compatibility
 
@@ -34,12 +35,15 @@ Not all payload types are valid with all packet types. A receiver should drop a 
 | CoAP-over-UMSH      | Yes     | Yes       | No        |
 | Node Management Req | Yes     | No        | No        |
 | Node Management Resp| Yes     | No        | No        |
+| Meet                | Yes     | No        | Note 3    |
 
-Unless explicitly configured otherwise, the only payload types allowed for broadcast are empty payloads, node identities, and the broadcast-permitted MAC commands (Note 2).
+Unless explicitly configured otherwise, the only payload types allowed for broadcast are empty payloads, node identities, the broadcast-permitted MAC commands (Note 2), and Meet Hellos (Note 3).
 
 **Note 1:** Some MAC commands may be permitted on specific channels. For example, a private channel might allow echo requests to all members and receive echo responses from everyone. Whether a given MAC command is accepted over multicast is deployment-defined and not yet specified by the protocol.
 
 **Note 2:** MAC commands are admitted to broadcast individually: a command may be carried in a broadcast only when its definition says so, and any such definition must weigh the solicitation load a broadcast can create. Currently only the [Identity Request](mac-commands.md#identity-request-1) permits broadcast carriage, under the flood-management restrictions defined there. Receivers drop any other MAC command arriving by broadcast.
+
+**Note 3:** Only a [Hello](app-meet.md#hello) rides a broadcast. Every other Meet kind is unicast between [session keys](app-meet.md#session-keys).
 
 ## Response Carriage
 

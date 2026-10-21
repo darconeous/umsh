@@ -326,11 +326,17 @@ carried and the summary line gets a one-line précis of it.
 | 7 | CoAP-over-UMSH | `CoAP` (from the built-in CoAP dissector) |
 | 8 | Node Management Request | `UMSH-NM` |
 | 9 | Node Management Response | `UMSH-NM` |
+| 10 | Meet | `UMSH-MEET` |
 
 Node Management payloads carry one ULCP frame each, which is handed to the same
 frame dissector the local-link ULCP capture uses. The payload type is the
 direction, so the summary line reads the exchange as a request or a response
 and pairs it with the token.
+
+Meet payloads are a contact exchange between two session keys. Each kind is
+named on the summary line, an Identity's node identity payload is decoded as
+any other, and a Meet frame on the wrong carriage or of the wrong length is
+flagged.
 
 ## MAC Options
 

@@ -165,7 +165,7 @@ function M.scan_length(data, offset)
   local pos = start
   while pos <= #data do
     local b = data:byte(pos)
-    if b == 0xFF then return pos - start + 1 end
+    if b == 0xFF then return pos - start + 1, true end
     -- Skip the option header + extensions + value
     local delta_nib = (b >> 4) & 0x0F
     local len_nib   = b & 0x0F
@@ -183,7 +183,7 @@ function M.scan_length(data, offset)
     end
     pos = pos + actual_len
   end
-  return #data - start + 1  -- no 0xFF marker; options consumed all remaining bytes
+  return #data - start + 1, false  -- no 0xFF marker; options consumed all remaining bytes
 end
 
 -- ---------------------------------------------------------------------------

@@ -159,7 +159,13 @@ impl<M: MacBackend> Host<M> {
                 };
                 match event {
                     umsh_mac::MacEventRef::Received(packet) => {
+                        if !meet_admits(&node, identity_id, &packet) {
+                            return;
+                        }
                         let _ = node.dispatch_received_packet(&packet);
+                        if packet.payload_type() == umsh_core::PayloadType::Meet {
+                            return;
+                        }
                         if packet.packet_type() == umsh_core::PacketType::Broadcast
                             && packet.payload().is_empty()
                         {
@@ -370,6 +376,34 @@ fn route_node<M: MacBackend>(
             .map(|(_, node)| node.clone())
     });
     node
+}
+
+/// Whether a received frame may reach the node at all, as far as contact
+/// exchange (app-meet.md) is concerned.
+///
+/// A session identity takes Meet unicasts and nothing else: it must never
+/// answer as the long-term node, so no identity response, forward secrecy,
+/// or application payload goes through it. A Meet unicast reaches only a
+/// session identity, and a Hello, being a broadcast, reaches the long-term
+/// one. Meet frames that pass go to the node's receive handlers only.
+fn meet_admits<M: MacBackend>(
+    node: &LocalNode<M>,
+    identity_id: LocalIdentityId,
+    packet: &ReceivedPacketRef<'_>,
+) -> bool {
+    #[cfg(feature = "software-crypto")]
+    let to_session = node.meet_identity() == Some(identity_id);
+    #[cfg(not(feature = "software-crypto"))]
+    let to_session = {
+        let _ = (node, identity_id);
+        false
+    };
+    let meet = packet.payload_type() == umsh_core::PayloadType::Meet;
+    if !to_session && !meet {
+        return true;
+    }
+    let unicast = packet.packet_type() != umsh_core::PacketType::Broadcast;
+    meet && to_session == unicast
 }
 
 /// Whether an identity payload's claims are its sender's own: a signature

@@ -1480,6 +1480,30 @@ fn receive_one_delivers_broadcast_to_all_identities() {
     assert_eq!(seen[0].2.as_slice(), &[1, 0x44, 0x55]);
 }
 
+#[cfg(feature = "software-crypto")]
+#[test]
+fn receive_one_delivers_broadcast_once_past_ephemeral_identities() {
+    let mut mac = make_mac();
+    let parent = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
+    let ephemeral = umsh_crypto::software::SoftwareIdentity::from_secret_bytes(&[0x55; 32]);
+    mac.register_ephemeral(parent, ephemeral).unwrap();
+    let remote = DummyIdentity::new([0xAB; 32]);
+
+    mac.radio_mut()
+        .queue_received_broadcast(&remote, &[1, 0x44, 0x55]);
+
+    let mut seen = heapless::Vec::<LocalIdentityId, 4>::new();
+    let handled = block_on(mac.receive_one(|identity, event| {
+        if received_of_type(&event, PacketType::Broadcast).is_some() {
+            seen.push(identity).unwrap();
+        }
+    }))
+    .unwrap();
+
+    assert!(handled);
+    assert_eq!(seen.as_slice(), &[parent]);
+}
+
 #[test]
 fn receive_one_drops_broadcast_with_incompatible_payload_type() {
     let mut mac = make_mac();

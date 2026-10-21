@@ -83,6 +83,8 @@ pub enum PayloadType {
     NodeManagementRequest = 8,
     /// Node-management response payload, device to administrator.
     NodeManagementResponse = 9,
+    /// Contact-exchange payload between two session identities.
+    Meet = 10,
 }
 
 impl PayloadType {
@@ -97,6 +99,7 @@ impl PayloadType {
             7 => Some(Self::CoapOverUmsh),
             8 => Some(Self::NodeManagementRequest),
             9 => Some(Self::NodeManagementResponse),
+            10 => Some(Self::Meet),
             _ => None,
         }
     }
@@ -127,6 +130,12 @@ impl PayloadType {
                     | PacketType::BlindUnicast
                     | PacketType::BlindUnicastAckReq
                     | PacketType::Multicast
+            ),
+            // Only a Hello rides a broadcast; every other Meet message is
+            // unicast between the two session identities.
+            Self::Meet => matches!(
+                packet_type,
+                PacketType::Unicast | PacketType::UnicastAckReq | PacketType::Broadcast
             ),
             Self::NodeManagementRequest | Self::NodeManagementResponse | Self::ChatRoomMessage => {
                 matches!(
@@ -1394,6 +1403,26 @@ mod tests {
         }
         assert!(PayloadType::TextMessage.allowed_for(PacketType::Multicast));
         assert!(PayloadType::CoapOverUmsh.allowed_for(PacketType::Multicast));
+    }
+
+    #[test]
+    fn meet_rides_unicast_and_its_hello_rides_broadcast() {
+        assert_eq!(PayloadType::from_byte(10), Some(PayloadType::Meet));
+        for packet_type in [
+            PacketType::Unicast,
+            PacketType::UnicastAckReq,
+            PacketType::Broadcast,
+        ] {
+            assert!(PayloadType::Meet.allowed_for(packet_type));
+        }
+        for packet_type in [
+            PacketType::BlindUnicast,
+            PacketType::BlindUnicastAckReq,
+            PacketType::Multicast,
+            PacketType::MacAck,
+        ] {
+            assert!(!PayloadType::Meet.allowed_for(packet_type));
+        }
     }
 
     #[test]

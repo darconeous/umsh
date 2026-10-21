@@ -148,6 +148,8 @@ pub mod identity_responder;
 pub mod location;
 mod mac;
 pub mod mac_command;
+#[cfg(feature = "software-crypto")]
+pub mod meet;
 mod node;
 mod peer;
 pub mod peer_repeaters;
