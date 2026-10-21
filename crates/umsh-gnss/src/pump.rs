@@ -52,10 +52,10 @@ pub use embedded_hal_async;
 ///
 /// A receiver whose backup domain stayed powered emits a dated `RMC`
 /// within a second or two of its main domain coming up—it is reading
-/// its own clock, not searching for satellites. Ten seconds is generous
-/// enough to cover a slow start and short enough that a receiver which
-/// has lost its clock does not hold up a boot.
-pub const RTC_READ_TIMEOUT_MS: u32 = 10_000;
+/// its own clock, not searching for satellites. Thirty seconds covers a
+/// receiver slow to wake from its own standby; what waits on it is only
+/// the receiver's task, and positioning, which starts after.
+pub const RTC_READ_TIMEOUT_MS: u32 = 30_000;
 
 /// How long the pump lets the board sleep through the receiver's output
 /// before staying awake to hear a cycle, in milliseconds.

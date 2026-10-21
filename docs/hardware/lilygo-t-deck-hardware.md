@@ -671,6 +671,18 @@ line and keep its backup domain on a rechargeable MS412FE coin cell through a
 GPIO. With no enable line, the module draws power whenever the slide switch is
 on; only its own backup or standby commands reduce that.
 
+The coin cell keeps the module's RTC running with the switch off, and nothing
+else on the board keeps time. The firmware reads that clock back at boot,
+waking the module briefly if it is parked.
+
+| Module | UART standby | Wake |
+|---|---|---|
+| MIA-M10Q | UBX-RXM-PMREQ, backup with `force`, no duration, `wakeupSources` = UART RX | Any edge at its RX; the byte is lost |
+| L76K | None found: `$PCAS12` timed standby is reported unsupported on this part, and its standby is the STANDBY pin, which no source routes to an S3 GPIO | — |
+
+A module woken by an RX edge makes the MCU's TX line part of its power state:
+while it is parked, TX idles high rather than floating.
+
 ## 13. Audio
 
 | Function | Part | Pins |

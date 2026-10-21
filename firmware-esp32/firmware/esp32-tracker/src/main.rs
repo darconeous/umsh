@@ -1878,13 +1878,45 @@ async fn gnss_task(
         boot: Some((uart1, rx, tx)),
         open: None,
         baud: GNSS_BAUDS[0],
+        #[cfg(feature = "gnss-uart-standby")]
+        receiver: GnssReceiver::Unknown,
     });
+    #[allow(unused_mut)]
+    let mut power = GnssPower {
+        inner: control,
+        slot: &slot,
+    };
+
+    // The receiver's backup domain is the only clock that survived being
+    // switched off: read it back before the pump takes over. A clock
+    // operation, so gated on trust rather than `PROP_GNSS_ENABLED`, and
+    // after the device domain so that trust is the saved setting.
+    #[cfg(feature = "gnss-holds-the-clock")]
+    {
+        umsh_ulcp_runtime::gnss::wait_configured().await;
+        if !umsh_hal::wall_clock::is_set() && umsh_ulcp_runtime::gnss::policy().trust_time {
+            // Light sleep stops the UART, and the read is bounded.
+            let _awake = esp_hal::rtc_cntl::WakeLock::new();
+            match umsh_gnss::pump::rtc_read_once(GnssPort { slot: &slot }, &mut power, Delay)
+                .await
+                .and_then(|at| at.to_unix())
+            {
+                Some(epoch) => {
+                    umsh_hal::wall_clock::apply(
+                        epoch,
+                        umsh_hal::wall_clock::TimeSource::GnssRtc,
+                        true,
+                    );
+                    debug_log(format_args!("gnss: clock restored from receiver RTC"));
+                }
+                None => debug_log(format_args!("gnss: receiver RTC had no time")),
+            }
+        }
+    }
+
     umsh_gnss::pump::run(
         GnssPort { slot: &slot },
-        GnssPower {
-            inner: control,
-            slot: &slot,
-        },
+        power,
         enable,
         umsh_ulcp_runtime::gnss::FixSink,
         Delay,
@@ -1925,6 +1957,8 @@ struct GnssUartSlot {
     open: Option<Uart<'static, Async>>,
     /// The rate the receiver was last heard at, or the first to try.
     baud: u32,
+    #[cfg(feature = "gnss-uart-standby")]
+    receiver: GnssReceiver,
 }
 
 #[cfg(feature = "gnss")]
@@ -1968,9 +2002,30 @@ impl GnssUartSlot {
         // single-task slot is their only owner across GNSS cycles.
         unsafe {
             drop(Input::new(GnssRxPin::steal(), InputConfig::default()));
+            #[cfg(not(feature = "gnss-uart-standby"))]
             drop(Input::new(GnssTxPin::steal(), InputConfig::default()));
+            // There is no rail to feed, and a parked receiver wakes on
+            // any edge at its RX: hold the line at idle instead.
+            #[cfg(feature = "gnss-uart-standby")]
+            drop(Output::new(
+                GnssTxPin::steal(),
+                Level::High,
+                OutputConfig::default(),
+            ));
         }
     }
+}
+
+/// What is known of a receiver driven only over its UART.
+#[cfg(feature = "gnss-uart-standby")]
+#[derive(Clone, Copy)]
+enum GnssReceiver {
+    /// Nothing yet this boot: whatever ran before may have parked it.
+    Unknown,
+    /// Sent the wake byte.
+    Awake,
+    /// Sent the backup request, or listened for and not heard.
+    Parked,
 }
 
 /// The pump's `Read` half over the slot. The `RefMut` is held across
@@ -2013,6 +2068,11 @@ struct GnssPower<'a> {
 impl umsh_gnss::pump::Power for GnssPower<'_> {
     async fn power_on(&mut self) {
         self.slot.borrow_mut().open_port();
+        #[cfg(feature = "gnss-uart-standby")]
+        {
+            gnss_send(self.slot, &[umsh_gnss::ubx::WAKE]).await;
+            self.slot.borrow_mut().receiver = GnssReceiver::Awake;
+        }
         self.inner.power_on().await;
         if GNSS_BAUDS.len() > 1 {
             find_gnss_baud(self.slot).await;
@@ -2020,21 +2080,69 @@ impl umsh_gnss::pump::Power for GnssPower<'_> {
     }
 
     async fn power_off(&mut self) {
+        #[cfg(feature = "gnss-uart-standby")]
+        self.park().await;
         self.inner.power_off().await;
         self.slot.borrow_mut().close_port();
+    }
+}
+
+#[cfg(feature = "gnss-uart-standby")]
+impl GnssPower<'_> {
+    /// Sends the receiver the backup request. When nothing says whether it
+    /// is awake, it is listened for first, since the request is itself a
+    /// wake to a receiver that something before this boot parked.
+    async fn park(&mut self) {
+        let receiver = self.slot.borrow().receiver;
+        let awake = match receiver {
+            GnssReceiver::Awake => true,
+            GnssReceiver::Parked => false,
+            GnssReceiver::Unknown => {
+                self.slot.borrow_mut().open_port();
+                find_gnss_baud(self.slot).await
+            }
+        };
+        if awake {
+            gnss_send(self.slot, &umsh_gnss::ubx::BACKUP).await;
+        }
+        self.slot.borrow_mut().receiver = GnssReceiver::Parked;
+    }
+}
+
+/// Writes `bytes` to the receiver and waits until the last has left the
+/// line, so the port can close straight after. A failed write is dropped:
+/// the receiver keeps running, as one with no standby would.
+///
+/// The `RefMut` is held across the writes, sound for the reason
+/// [`GnssPort`] gives.
+#[cfg(feature = "gnss-uart-standby")]
+#[allow(clippy::await_holding_refcell_ref)]
+async fn gnss_send(slot: &core::cell::RefCell<GnssUartSlot>, bytes: &[u8]) {
+    // Light sleep stops the UART mid-frame.
+    let _awake = esp_hal::rtc_cntl::WakeLock::new();
+    let mut slot = slot.borrow_mut();
+    let Some(uart) = slot.open.as_mut() else {
+        return;
+    };
+    if embedded_io_async::Write::write_all(uart, bytes)
+        .await
+        .is_ok()
+    {
+        _ = uart.flush_async().await;
     }
 }
 
 /// Listens for the receiver at each of [`GNSS_BAUDS`], the rate it was
 /// last heard at first, and stays at the first that carries a sentence.
 /// Hearing none, it stays at that first rate and listens again at the
-/// next power-up: a receiver can be plugged in later.
+/// next power-up: a receiver can be plugged in later. Returns whether it
+/// heard one.
 ///
 /// The `RefMut` is held across the reads, sound for the reason
 /// [`GnssPort`] gives.
 #[cfg(feature = "gnss")]
 #[allow(clippy::await_holding_refcell_ref)]
-async fn find_gnss_baud(slot: &core::cell::RefCell<GnssUartSlot>) {
+async fn find_gnss_baud(slot: &core::cell::RefCell<GnssUartSlot>) -> bool {
     // Light sleep stops the UART: stay awake to hear it.
     let _awake = esp_hal::rtc_cntl::WakeLock::new();
     let mut slot = slot.borrow_mut();
@@ -2043,7 +2151,7 @@ async fn find_gnss_baud(slot: &core::cell::RefCell<GnssUartSlot>) {
         core::iter::once(last).chain(GNSS_BAUDS.iter().copied().filter(|&baud| baud != last));
     for baud in rates {
         let Some(uart) = slot.open.as_mut() else {
-            return;
+            return false;
         };
         if uart.apply_config(&gnss_uart_config(baud)).is_err() {
             continue;
@@ -2053,12 +2161,13 @@ async fn find_gnss_baud(slot: &core::cell::RefCell<GnssUartSlot>) {
                 debug_log(format_args!("gnss: receiver heard at {baud} baud"));
             }
             slot.baud = baud;
-            return;
+            return true;
         }
     }
     if let Some(uart) = slot.open.as_mut() {
         _ = uart.apply_config(&gnss_uart_config(last));
     }
+    false
 }
 
 /// Whether a whole, checksummed sentence arrives within [`GNSS_LISTEN`].

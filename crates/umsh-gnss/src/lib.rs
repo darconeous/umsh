@@ -15,6 +15,7 @@ pub mod epoch;
 pub mod nmea;
 #[cfg(feature = "pump")]
 pub mod pump;
+pub mod ubx;
 
 pub use driver::{Driver, Fix, FixQuality};
 pub use epoch::DateTime;

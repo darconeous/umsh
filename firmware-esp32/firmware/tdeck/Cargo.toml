@@ -111,6 +111,8 @@ board-tdeck = [
     "usb-presence-sof",
     "battery-adc-rail",
     "gnss",
+    "gnss-uart-standby",
+    "gnss-holds-the-clock",
 ]
 board-tbeam-supreme = [
     "ulcp-i2c",
@@ -196,6 +198,15 @@ usb-presence-sof = ["wired-usb-serial-jtag"]
 # gate; positioning flows through `umsh-ulcp-runtime`'s gnss feature. Its
 # time sets the wall clock.
 gnss = ["wall-clock"]
+# The receiver has no power control but its UART: off is the u-blox
+# backup request, and on is a byte that wakes it. A receiver whose state
+# is unknown is listened for before it is sent anything, since a byte
+# into one already asleep would wake it.
+gnss-uart-standby = ["gnss"]
+# The receiver's backup domain is the only clock that survives power-off:
+# with the wall clock unset and GNSS time trusted, it is read back at boot
+# whether or not positioning is enabled.
+gnss-holds-the-clock = ["gnss"]
 # PCF8563 wall-clock RTC: time is restored at boot (TimeSource::
 # ExternalRtc) and written back on manual set and trusted GNSS time.
 rtc-pcf8563 = ["external-rtc"]
