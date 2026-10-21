@@ -2254,8 +2254,7 @@
 <path d="M403 8 L409 14 L406 17 V5 L409 8 L403 14" fill="none" stroke="#9AA3AE" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
 </g>
 </g></g>
-<text x="1130.0" y="11304.8" font-size="17" fill="#3A3A3C">After Same, until the other side presses Same too. Then both devices send their addresses and names, save each other, and</text>
-<text x="1130.0" y="11328.8" font-size="17" fill="#3A3A3C">open the peer’s page with Message focused. Leaving here cancels.</text>
+<text x="1130.0" y="11304.8" font-size="17" fill="#3A3A3C">After Same, until the other side presses Same too. Then both devices send their addresses and names. Leaving here cancels.</text>
 <text x="2176.0" y="10792.8" font-size="22" fill="#1C1C1E" font-weight="700">38 · Codes differ</text>
 <rect x="2176.0" y="10806.8" width="984.0" height="468.0" fill="#050607" rx="16" filter="url(#shadow)"/>
 <clipPath id="scr39"><rect width="480" height="222"/></clipPath>
@@ -2303,27 +2302,27 @@
 </g>
 </g></g>
 <text x="2178.0" y="11304.8" font-size="17" fill="#3A3A3C">Either side pressing Different lands both here, with nothing sent and nothing saved. Try again goes back to Nearby.</text>
-<text x="80.0" y="11490.8" font-size="22" fill="#1C1C1E" font-weight="700">39 · After a tap</text>
+<text x="80.0" y="11490.8" font-size="22" fill="#1C1C1E" font-weight="700">39 · Exchanged</text>
 <rect x="80.0" y="11504.8" width="984.0" height="468.0" fill="#050607" rx="16" filter="url(#shadow)"/>
 <clipPath id="scr40"><rect width="480" height="222"/></clipPath>
 <g transform="translate(92,11516.8) scale(2)"><g clip-path="url(#scr40)">
 <rect x="0.0" y="0.0" width="480.0" height="222.0" fill="#0B0D10"/>
-<g transform="translate(148.0,72.0) scale(1.8) translate(-148.0,-72.0)">
-<path d="M139.5 64.0 H143.5 Q146.0 64.0 146.0 66.5 V77.5 Q146.0 80.0 143.5 80.0 H139.5 Q137.0 80.0 137.0 77.5 V66.5 Q137.0 64.0 139.5 64.0 Z" fill="none" stroke="#4DA3FF" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-<path d="M152.5 64.0 H156.5 Q159.0 64.0 159.0 66.5 V77.5 Q159.0 80.0 156.5 80.0 H152.5 Q150.0 80.0 150.0 77.5 V66.5 Q150.0 64.0 152.5 64.0 Z" fill="none" stroke="#4DA3FF" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-<path d="M144.0 60 Q148.0 57 152.0 60" fill="none" stroke="#4DA3FF" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
-<path d="M144.0 84 Q148.0 87 152.0 84" fill="none" stroke="#4DA3FF" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<clipPath id="cl34"><rect x="0" y="52" width="480" height="170"/></clipPath><g clip-path="url(#cl34)">
+<circle cx="32.0" cy="82.0" r="22" fill="#B3F69E"/>
+<text x="32.0" y="79.0" font-size="16.72" fill="#000" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">Ym</text>
+<text x="32.0" y="97.0" font-size="16.72" fill="#000" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">RG</text>
+<text x="64.0" y="89.0" font-size="20" fill="#EEF1F5" font-weight="700">Pat Okafor</text>
+<text x="10.0" y="128.0" font-size="16" fill="#9AA3AE" font-family="Menlo, 'SF Mono', Consolas, monospace">YmRGmitsDJy13p2eiuxziZph6qDZFS1pcN1uaofYjM45</text>
+<text x="12.0" y="160.0" font-size="20" fill="#EEF1F5">Message</text>
+<path d="M460 147.0 L466 153.0 L460 159.0" fill="none" stroke="#7F8995" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M12.0 169.5 L480.0 169.5" stroke="#20252C" stroke-width="1"/>
+<rect x="4.0" y="171.0" width="472.0" height="32.0" fill="#18304D" rx="8" stroke="#4DA3FF" stroke-width="1.6"/>
+<text x="12.0" y="194.0" font-size="20" fill="#EEF1F5" font-weight="700">Save peer</text>
 </g>
-<circle cx="240.0" cy="72.0" r="30" fill="#B3F69E"/>
-<text x="240.0" y="67.9" font-size="22.80" fill="#000" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">Ym</text>
-<text x="240.0" y="92.5" font-size="22.80" fill="#000" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">RG</text>
-<text x="240.0" y="130.0" font-size="20" fill="#EEF1F5" font-weight="700" text-anchor="middle">Pat Okafor</text>
-<path d="M201.2 151 L204.4 154.2 L210.8 147.0" fill="none" stroke="#3DD68C" stroke-width="1.92" stroke-linecap="round" stroke-linejoin="round"/>
-<text x="218.0" y="157.0" font-size="17" fill="#3DD68C" font-weight="600">Saved</text>
-<rect x="52.0" y="176.0" width="180.0" height="36.0" fill="#18304D" rx="10" stroke="#4DA3FF" stroke-width="1.6"/>
-<text x="142.0" y="200.0" font-size="20" fill="#4DA3FF" font-weight="700" text-anchor="middle">Message</text>
-<rect x="248.0" y="176.0" width="180.0" height="36.0" fill="#161A20" rx="10" stroke="#2E3540" stroke-width="1"/>
-<text x="338.0" y="200.0" font-size="20" fill="#9AA3AE" font-weight="500" text-anchor="middle">Done</text>
+<rect x="0.0" y="22.0" width="480.0" height="30.0" fill="#0B0D10"/>
+<path d="M0.0 51.5 L480.0 51.5" stroke="#20252C" stroke-width="1"/>
+<path d="M13 31.0 L7 37.0 L13 43.0" fill="none" stroke="#7F8995" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="22.0" y="44.0" font-size="20" fill="#EEF1F5" font-weight="700">Peer</text>
 <rect x="0.0" y="0.0" width="480.0" height="22.0" fill="#0E1115"/>
 <text x="8.0" y="16.5" font-size="16" fill="#9AA3AE" font-weight="600">Juniper</text>
 <text x="240.0" y="16.5" font-size="16" fill="#EEF1F5" font-weight="700" text-anchor="middle">14:32</text>
@@ -2343,14 +2342,14 @@
 <path d="M403 8 L409 14 L406 17 V5 L409 8 L403 14" fill="none" stroke="#9AA3AE" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
 </g>
 </g></g>
-<text x="82.0" y="12002.8" font-size="17" fill="#3A3A3C">Boards with NFC. Holding two devices back to back, both on Add peer, exchanges contacts with no code: the touch is the</text>
-<text x="82.0" y="12026.8" font-size="17" fill="#3A3A3C">agreement. Both land here, saved. Forget on the peer’s page undoes a mistaken tap.</text>
+<text x="82.0" y="12002.8" font-size="17" fill="#3A3A3C">Where both land once the codes match, or after a tap on boards with NFC: the ordinary sheet for a peer who is not saved. It</text>
+<text x="82.0" y="12026.8" font-size="17" fill="#3A3A3C">opens on Message; turning down reaches Save peer, shown here. Nothing is saved until it is pressed.</text>
 <text x="1128.0" y="11490.8" font-size="22" fill="#1C1C1E" font-weight="700">40 · Enter an address</text>
 <rect x="1128.0" y="11504.8" width="984.0" height="468.0" fill="#050607" rx="16" filter="url(#shadow)"/>
 <clipPath id="scr41"><rect width="480" height="222"/></clipPath>
 <g transform="translate(1140,11516.8) scale(2)"><g clip-path="url(#scr41)">
 <rect x="0.0" y="0.0" width="480.0" height="222.0" fill="#0B0D10"/>
-<clipPath id="cl34"><rect x="0" y="52" width="480" height="170"/></clipPath><g clip-path="url(#cl34)">
+<clipPath id="cl35"><rect x="0" y="52" width="480" height="170"/></clipPath><g clip-path="url(#cl35)">
 <text x="10.0" y="72.0" font-size="16" fill="#9AA3AE" font-weight="700">Address or invitation</text>
 <rect x="8.0" y="80.0" width="464.0" height="62.0" fill="#1A2333" rx="12" stroke="#4DA3FF" stroke-width="2.2"/>
 <text x="20.0" y="104.0" font-size="20" fill="#EEF1F5" font-family="Menlo, 'SF Mono', Consolas, monospace">7cQRwjEyMJRDQCrtkgvaKi</text>
@@ -2394,7 +2393,7 @@
 <clipPath id="scr42"><rect width="480" height="222"/></clipPath>
 <g transform="translate(2188,11516.8) scale(2)"><g clip-path="url(#scr42)">
 <rect x="0.0" y="0.0" width="480.0" height="222.0" fill="#0B0D10"/>
-<clipPath id="cl35"><rect x="0" y="22" width="480" height="200"/></clipPath><g clip-path="url(#cl35)">
+<clipPath id="cl36"><rect x="0" y="22" width="480" height="200"/></clipPath><g clip-path="url(#cl36)">
 <circle cx="32.0" cy="52.0" r="22" fill="#B3F69E"/>
 <text x="32.0" y="49.0" font-size="16.72" fill="#000" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">Ym</text>
 <text x="32.0" y="67.0" font-size="16.72" fill="#000" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">RG</text>
@@ -2486,7 +2485,7 @@
 <clipPath id="scr44"><rect width="480" height="222"/></clipPath>
 <g transform="translate(1140,12214.8) scale(2)"><g clip-path="url(#scr44)">
 <rect x="0.0" y="0.0" width="480.0" height="222.0" fill="#0B0D10"/>
-<clipPath id="cl36"><rect x="0" y="52" width="480" height="146"/></clipPath><g clip-path="url(#cl36)">
+<clipPath id="cl37"><rect x="0" y="52" width="480" height="146"/></clipPath><g clip-path="url(#cl37)">
 <path d="M257.2 50.0 H458.0 Q472.0 50.0 472.0 64.0 V77.0 Q472.0 82.0 467.0 82.0 H257.2 Q243.2 82.0 243.2 68.0 V64.0 Q243.2 50.0 257.2 50.0 Z" fill="#2A62C9"/>
 <text x="254.2" y="72.0" font-size="20" fill="#fff">Who has the hut radio?</text>
 <path d="M22.0 90.0 H109.4 Q123.4 90.0 123.4 104.0 V108.0 Q123.4 122.0 109.4 122.0 H13.0 Q8.0 122.0 8.0 117.0 V104.0 Q8.0 90.0 22.0 90.0 Z" fill="#23272E"/>
@@ -2535,24 +2534,27 @@
 </g></g>
 <text x="1130.0" y="12700.8" font-size="17" fill="#3A3A3C">A message whose whole body is a umsh:n: link renders as a contact card, as invites do for channels. Pressing it opens the peer’s</text>
 <text x="1130.0" y="12724.8" font-size="17" fill="#3A3A3C">page.</text>
-<text x="2176.0" y="12188.8" font-size="22" fill="#1C1C1E" font-weight="700">44 · Introduced peer</text>
+<text x="2176.0" y="12188.8" font-size="22" fill="#1C1C1E" font-weight="700">44 · Contact opened</text>
 <rect x="2176.0" y="12202.8" width="984.0" height="468.0" fill="#050607" rx="16" filter="url(#shadow)"/>
 <clipPath id="scr45"><rect width="480" height="222"/></clipPath>
 <g transform="translate(2188,12214.8) scale(2)"><g clip-path="url(#scr45)">
 <rect x="0.0" y="0.0" width="480.0" height="222.0" fill="#0B0D10"/>
-<clipPath id="cl37"><rect x="0" y="22" width="480" height="200"/></clipPath><g clip-path="url(#cl37)">
-<circle cx="32.0" cy="52.0" r="22" fill="#B3C167"/>
-<text x="32.0" y="49.0" font-size="16.72" fill="#000" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">hh</text>
-<text x="32.0" y="67.0" font-size="16.72" fill="#000" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">ae</text>
-<text x="64.0" y="47.0" font-size="20" fill="#EEF1F5" font-weight="700">Rick Alvarez</text>
-<text x="64.0" y="68.0" font-size="16" fill="#7F8995" font-weight="500">From Pat Okafor</text>
-<text x="10.0" y="99.0" font-size="16" fill="#9AA3AE" font-family="Menlo, 'SF Mono', Consolas, monospace">hhaehHAvHMXFSArpxAYRYNRFCds4QrhDXZjRfNPPPZy9</text>
-<rect x="4.0" y="107.0" width="472.0" height="32.0" fill="#18304D" rx="8" stroke="#4DA3FF" stroke-width="1.6"/>
-<text x="12.0" y="130.0" font-size="20" fill="#EEF1F5" font-weight="700">Save peer</text>
-<text x="12.0" y="164.0" font-size="20" fill="#EEF1F5">Message</text>
-<path d="M460 151.0 L466 157.0 L460 163.0" fill="none" stroke="#7F8995" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-<path d="M12.0 173.5 L480.0 173.5" stroke="#20252C" stroke-width="1"/>
+<clipPath id="cl38"><rect x="0" y="52" width="480" height="170"/></clipPath><g clip-path="url(#cl38)">
+<circle cx="32.0" cy="82.0" r="22" fill="#B3C167"/>
+<text x="32.0" y="79.0" font-size="16.72" fill="#000" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">hh</text>
+<text x="32.0" y="97.0" font-size="16.72" fill="#000" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">ae</text>
+<text x="64.0" y="89.0" font-size="20" fill="#EEF1F5" font-weight="700">Rick Alvarez</text>
+<text x="10.0" y="128.0" font-size="16" fill="#9AA3AE" font-family="Menlo, 'SF Mono', Consolas, monospace">hhaehHAvHMXFSArpxAYRYNRFCds4QrhDXZjRfNPPPZy9</text>
+<rect x="4.0" y="137.0" width="472.0" height="32.0" fill="#18304D" rx="8" stroke="#4DA3FF" stroke-width="1.6"/>
+<text x="12.0" y="160.0" font-size="20" fill="#EEF1F5" font-weight="700">Message</text>
+<path d="M460 147.0 L466 153.0 L460 159.0" fill="none" stroke="#7F8995" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="12.0" y="194.0" font-size="20" fill="#EEF1F5">Save peer</text>
+<path d="M12.0 203.5 L480.0 203.5" stroke="#20252C" stroke-width="1"/>
 </g>
+<rect x="0.0" y="22.0" width="480.0" height="30.0" fill="#0B0D10"/>
+<path d="M0.0 51.5 L480.0 51.5" stroke="#20252C" stroke-width="1"/>
+<path d="M13 31.0 L7 37.0 L13 43.0" fill="none" stroke="#7F8995" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="22.0" y="44.0" font-size="20" fill="#EEF1F5" font-weight="700">Peer</text>
 <rect x="0.0" y="0.0" width="480.0" height="22.0" fill="#0E1115"/>
 <text x="8.0" y="16.5" font-size="16" fill="#9AA3AE" font-weight="600">Juniper</text>
 <text x="240.0" y="16.5" font-size="16" fill="#EEF1F5" font-weight="700" text-anchor="middle">14:32</text>
@@ -2572,13 +2574,13 @@
 <path d="M403 8 L409 14 L406 17 V5 L409 8 L403 14" fill="none" stroke="#9AA3AE" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
 </g>
 </g></g>
-<text x="2178.0" y="12700.8" font-size="17" fill="#3A3A3C">Says who sent the contact. Save peer keeps it; Message works without saving.</text>
+<text x="2178.0" y="12700.8" font-size="17" fill="#3A3A3C">The same unsaved-peer sheet, as it opens: Message focused, Save peer one turn down.</text>
 <text x="80.0" y="12886.8" font-size="22" fill="#1C1C1E" font-weight="700">45 · Share contact</text>
 <rect x="80.0" y="12900.8" width="984.0" height="468.0" fill="#050607" rx="16" filter="url(#shadow)"/>
 <clipPath id="scr46"><rect width="480" height="222"/></clipPath>
 <g transform="translate(92,12912.8) scale(2)"><g clip-path="url(#scr46)">
 <rect x="0.0" y="0.0" width="480.0" height="222.0" fill="#0B0D10"/>
-<clipPath id="cl38"><rect x="0" y="52" width="480" height="170"/></clipPath><g clip-path="url(#cl38)">
+<clipPath id="cl39"><rect x="0" y="52" width="480" height="170"/></clipPath><g clip-path="url(#cl39)">
 <text x="12.0" y="71.0" font-size="16" fill="#9AA3AE" font-weight="700">Send Rick Alvarez to</text>
 <rect x="4.0" y="79.0" width="472.0" height="42.0" fill="#18304D" rx="8" stroke="#4DA3FF" stroke-width="1.6"/>
 <circle cx="30.0" cy="100.0" r="17" fill="#5E0AE0"/>
@@ -2628,7 +2630,7 @@
 <clipPath id="scr47"><rect width="480" height="222"/></clipPath>
 <g transform="translate(92,13720.8) scale(2)"><g clip-path="url(#scr47)">
 <rect x="0.0" y="0.0" width="480.0" height="222.0" fill="#0B0D10"/>
-<clipPath id="cl39"><rect x="66" y="22" width="414" height="200"/></clipPath><g clip-path="url(#cl39)">
+<clipPath id="cl40"><rect x="66" y="22" width="414" height="200"/></clipPath><g clip-path="url(#cl40)">
 <text x="78.0" y="47.0" font-size="20" fill="#EEF1F5">Identity</text>
 <path d="M460 34.0 L466 40.0 L460 46.0" fill="none" stroke="#7F8995" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
 <text x="450.0" y="46.0" font-size="17" fill="#9AA3AE" text-anchor="end">Juniper</text>
@@ -2722,7 +2724,7 @@
 <clipPath id="scr48"><rect width="480" height="222"/></clipPath>
 <g transform="translate(1140,13720.8) scale(2)"><g clip-path="url(#scr48)">
 <rect x="0.0" y="0.0" width="480.0" height="222.0" fill="#0B0D10"/>
-<clipPath id="cl40"><rect x="0" y="52" width="480" height="136"/></clipPath><g clip-path="url(#cl40)">
+<clipPath id="cl41"><rect x="0" y="52" width="480" height="136"/></clipPath><g clip-path="url(#cl41)">
 <path d="M22.0 27.0 H283.9 Q297.9 27.0 297.9 41.0 V69.0 Q297.9 83.0 283.9 83.0 H13.0 Q8.0 83.0 8.0 78.0 V41.0 Q8.0 27.0 22.0 27.0 Z" fill="#23272E"/>
 <text x="19.0" y="49.0" font-size="20" fill="#EEF1F5">At the north junction yet? Sam</text>
 <text x="19.0" y="73.0" font-size="20" fill="#EEF1F5">says the creek is high</text>
@@ -2813,7 +2815,7 @@
 <clipPath id="scr51"><rect width="480" height="222"/></clipPath>
 <g transform="translate(1140,14418.8) scale(2)"><g clip-path="url(#scr51)">
 <rect x="0.0" y="0.0" width="480.0" height="222.0" fill="#0B0D10"/>
-<clipPath id="cl41"><rect x="0" y="52" width="480" height="170"/></clipPath><g clip-path="url(#cl41)">
+<clipPath id="cl42"><rect x="0" y="52" width="480" height="170"/></clipPath><g clip-path="url(#cl42)">
 <rect x="4.0" y="53.0" width="472.0" height="34.0" fill="#18304D" rx="8" stroke="#4DA3FF" stroke-width="1.6"/>
 <text x="12.0" y="77.0" font-size="20" fill="#EEF1F5" font-weight="700">UMSH USA/Canada (recommended)</text>
 <text x="12.0" y="113.0" font-size="20" fill="#EEF1F5">MeshCore USA/Canada (recommended)</text>
@@ -2844,7 +2846,7 @@
 <clipPath id="scr52"><rect width="480" height="222"/></clipPath>
 <g transform="translate(2188,14418.8) scale(2)"><g clip-path="url(#scr52)">
 <rect x="0.0" y="0.0" width="480.0" height="222.0" fill="#0B0D10"/>
-<clipPath id="cl42"><rect x="0" y="52" width="480" height="170"/></clipPath><g clip-path="url(#cl42)">
+<clipPath id="cl43"><rect x="0" y="52" width="480" height="170"/></clipPath><g clip-path="url(#cl43)">
 <text x="12.0" y="77.0" font-size="20" fill="#EEF1F5"></text>
 <path d="M12.0 87.5 L480.0 87.5" stroke="#20252C" stroke-width="1"/>
 <text x="36.0" y="77.0" font-size="20" fill="#EEF1F5">UTC−2</text>
@@ -2887,7 +2889,7 @@
 <clipPath id="scr53"><rect width="480" height="222"/></clipPath>
 <g transform="translate(92,15226.8) scale(2)"><g clip-path="url(#scr53)">
 <rect x="0.0" y="0.0" width="480.0" height="222.0" fill="#0B0D10"/>
-<clipPath id="cl43"><rect x="0" y="52" width="480" height="136"/></clipPath><g clip-path="url(#cl43)">
+<clipPath id="cl44"><rect x="0" y="52" width="480" height="136"/></clipPath><g clip-path="url(#cl44)">
 <path d="M22.0 27.0 H283.9 Q297.9 27.0 297.9 41.0 V69.0 Q297.9 83.0 283.9 83.0 H13.0 Q8.0 83.0 8.0 78.0 V41.0 Q8.0 27.0 22.0 27.0 Z" fill="#23272E"/>
 <text x="19.0" y="49.0" font-size="20" fill="#EEF1F5">At the north junction yet? Sam</text>
 <text x="19.0" y="73.0" font-size="20" fill="#EEF1F5">says the creek is high</text>
@@ -2938,7 +2940,7 @@
 <clipPath id="scr54"><rect width="480" height="222"/></clipPath>
 <g transform="translate(1140,15226.8) scale(2)"><g clip-path="url(#scr54)">
 <rect x="0.0" y="0.0" width="480.0" height="222.0" fill="#0B0D10"/>
-<clipPath id="cl44"><rect x="0" y="52" width="480" height="136"/></clipPath><g clip-path="url(#cl44)">
+<clipPath id="cl45"><rect x="0" y="52" width="480" height="136"/></clipPath><g clip-path="url(#cl45)">
 <path d="M22.0 27.0 H283.9 Q297.9 27.0 297.9 41.0 V69.0 Q297.9 83.0 283.9 83.0 H13.0 Q8.0 83.0 8.0 78.0 V41.0 Q8.0 27.0 22.0 27.0 Z" fill="#23272E"/>
 <text x="19.0" y="49.0" font-size="20" fill="#EEF1F5">At the north junction yet? Sam</text>
 <text x="19.0" y="73.0" font-size="20" fill="#EEF1F5">says the creek is high</text>
@@ -2989,7 +2991,7 @@
 <clipPath id="scr55"><rect width="480" height="222"/></clipPath>
 <g transform="translate(2188,15226.8) scale(2)"><g clip-path="url(#scr55)">
 <rect x="0.0" y="0.0" width="480.0" height="222.0" fill="#0B0D10"/>
-<clipPath id="cl45"><rect x="0" y="52" width="480" height="136"/></clipPath><g clip-path="url(#cl45)">
+<clipPath id="cl46"><rect x="0" y="52" width="480" height="136"/></clipPath><g clip-path="url(#cl46)">
 <path d="M22.0 27.0 H283.9 Q297.9 27.0 297.9 41.0 V69.0 Q297.9 83.0 283.9 83.0 H13.0 Q8.0 83.0 8.0 78.0 V41.0 Q8.0 27.0 22.0 27.0 Z" fill="#23272E"/>
 <text x="19.0" y="49.0" font-size="20" fill="#EEF1F5">At the north junction yet? Sam</text>
 <text x="19.0" y="73.0" font-size="20" fill="#EEF1F5">says the creek is high</text>
@@ -3040,7 +3042,7 @@
 <clipPath id="scr56"><rect width="480" height="222"/></clipPath>
 <g transform="translate(92,15924.8) scale(2)"><g clip-path="url(#scr56)">
 <rect x="0.0" y="0.0" width="480.0" height="222.0" fill="#0B0D10"/>
-<clipPath id="cl46"><rect x="0" y="52" width="480" height="136"/></clipPath><g clip-path="url(#cl46)">
+<clipPath id="cl47"><rect x="0" y="52" width="480" height="136"/></clipPath><g clip-path="url(#cl47)">
 <path d="M22.0 27.0 H283.9 Q297.9 27.0 297.9 41.0 V69.0 Q297.9 83.0 283.9 83.0 H13.0 Q8.0 83.0 8.0 78.0 V41.0 Q8.0 27.0 22.0 27.0 Z" fill="#23272E"/>
 <text x="19.0" y="49.0" font-size="20" fill="#EEF1F5">At the north junction yet? Sam</text>
 <text x="19.0" y="73.0" font-size="20" fill="#EEF1F5">says the creek is high</text>
@@ -3134,7 +3136,7 @@
 <clipPath id="scr58"><rect width="480" height="222"/></clipPath>
 <g transform="translate(2188,15924.8) scale(2)"><g clip-path="url(#scr58)">
 <rect x="0.0" y="0.0" width="480.0" height="222.0" fill="#0B0D10"/>
-<clipPath id="cl47"><rect x="0" y="52" width="480" height="136"/></clipPath><g clip-path="url(#cl47)">
+<clipPath id="cl48"><rect x="0" y="52" width="480" height="136"/></clipPath><g clip-path="url(#cl48)">
 <path d="M22.0 27.0 H283.9 Q297.9 27.0 297.9 41.0 V69.0 Q297.9 83.0 283.9 83.0 H13.0 Q8.0 83.0 8.0 78.0 V41.0 Q8.0 27.0 22.0 27.0 Z" fill="#23272E"/>
 <text x="19.0" y="49.0" font-size="20" fill="#EEF1F5">At the north junction yet? Sam</text>
 <text x="19.0" y="73.0" font-size="20" fill="#EEF1F5">says the creek is high</text>
@@ -3167,7 +3169,7 @@
 <text x="228.0" y="78.0" font-size="18" font-family="'Apple Color Emoji', 'Noto Color Emoji', sans-serif" fill="#7F8995" text-anchor="middle">é</text>
 <text x="268.0" y="78.0" font-size="18" font-family="'Apple Color Emoji', 'Noto Color Emoji', sans-serif" fill="#7F8995" text-anchor="middle">€</text>
 <path d="M6.0 86.5 L474.0 86.5" stroke="#2E3540" stroke-width="1"/>
-<clipPath id="cl48"><rect x="6" y="87" width="468" height="97"/></clipPath><g clip-path="url(#cl48)">
+<clipPath id="cl49"><rect x="6" y="87" width="468" height="97"/></clipPath><g clip-path="url(#cl49)">
 <text x="38.5" y="119.5" font-size="25" font-family="'Apple Color Emoji', 'Noto Color Emoji', sans-serif" fill="#EEF1F5" text-anchor="middle">😀</text>
 <text x="79.5" y="119.5" font-size="25" font-family="'Apple Color Emoji', 'Noto Color Emoji', sans-serif" fill="#EEF1F5" text-anchor="middle">😃</text>
 <text x="120.5" y="119.5" font-size="25" font-family="'Apple Color Emoji', 'Noto Color Emoji', sans-serif" fill="#EEF1F5" text-anchor="middle">😄</text>
@@ -3229,7 +3231,7 @@
 <clipPath id="scr59"><rect width="480" height="222"/></clipPath>
 <g transform="translate(92,16622.8) scale(2)"><g clip-path="url(#scr59)">
 <rect x="0.0" y="0.0" width="480.0" height="222.0" fill="#0B0D10"/>
-<clipPath id="cl49"><rect x="0" y="52" width="480" height="136"/></clipPath><g clip-path="url(#cl49)">
+<clipPath id="cl50"><rect x="0" y="52" width="480" height="136"/></clipPath><g clip-path="url(#cl50)">
 <path d="M22.0 27.0 H283.9 Q297.9 27.0 297.9 41.0 V69.0 Q297.9 83.0 283.9 83.0 H13.0 Q8.0 83.0 8.0 78.0 V41.0 Q8.0 27.0 22.0 27.0 Z" fill="#23272E"/>
 <text x="19.0" y="49.0" font-size="20" fill="#EEF1F5">At the north junction yet? Sam</text>
 <text x="19.0" y="73.0" font-size="20" fill="#EEF1F5">says the creek is high</text>
@@ -3260,7 +3262,7 @@
 <text x="42.0" y="78.0" font-size="20" fill="#EEF1F5">hea</text>
 <rect x="76.4" y="62.0" width="2.5" height="20.0" fill="#4DA3FF"/>
 <path d="M6.0 86.5 L474.0 86.5" stroke="#2E3540" stroke-width="1"/>
-<clipPath id="cl50"><rect x="6" y="87" width="468" height="97"/></clipPath><g clip-path="url(#cl50)">
+<clipPath id="cl51"><rect x="6" y="87" width="468" height="97"/></clipPath><g clip-path="url(#cl51)">
 <rect x="19.0" y="91.0" width="39.0" height="39.0" fill="#18304D" rx="8" stroke="#4DA3FF" stroke-width="2"/>
 <text x="38.5" y="119.5" font-size="25" font-family="'Apple Color Emoji', 'Noto Color Emoji', sans-serif" fill="#EEF1F5" text-anchor="middle">❤️</text>
 <text x="79.5" y="119.5" font-size="25" font-family="'Apple Color Emoji', 'Noto Color Emoji', sans-serif" fill="#EEF1F5" text-anchor="middle">🧡</text>
@@ -3321,7 +3323,7 @@
 <clipPath id="scr60"><rect width="480" height="222"/></clipPath>
 <g transform="translate(1140,16622.8) scale(2)"><g clip-path="url(#scr60)">
 <rect x="0.0" y="0.0" width="480.0" height="222.0" fill="#0B0D10"/>
-<clipPath id="cl51"><rect x="0" y="52" width="480" height="136"/></clipPath><g clip-path="url(#cl51)">
+<clipPath id="cl52"><rect x="0" y="52" width="480" height="136"/></clipPath><g clip-path="url(#cl52)">
 <path d="M22.0 27.0 H283.9 Q297.9 27.0 297.9 41.0 V69.0 Q297.9 83.0 283.9 83.0 H13.0 Q8.0 83.0 8.0 78.0 V41.0 Q8.0 27.0 22.0 27.0 Z" fill="#23272E"/>
 <text x="19.0" y="49.0" font-size="20" fill="#EEF1F5">At the north junction yet? Sam</text>
 <text x="19.0" y="73.0" font-size="20" fill="#EEF1F5">says the creek is high</text>
@@ -3504,7 +3506,7 @@
 <clipPath id="scr62"><rect width="480" height="222"/></clipPath>
 <g transform="translate(92,17320.8) scale(2)"><g clip-path="url(#scr62)">
 <rect x="0.0" y="0.0" width="480.0" height="222.0" fill="#0B0D10"/>
-<clipPath id="cl52"><rect x="0" y="52" width="480" height="170"/></clipPath><g clip-path="url(#cl52)">
+<clipPath id="cl53"><rect x="0" y="52" width="480" height="170"/></clipPath><g clip-path="url(#cl53)">
 <rect x="4.0" y="53.0" width="472.0" height="34.0" fill="#18304D" rx="8" stroke="#4DA3FF" stroke-width="1.6"/>
 <text x="12.0" y="77.0" font-size="20" fill="#EEF1F5" font-weight="700">Capitalize sentences</text>
 <rect x="426.0" y="59.0" width="40.0" height="22.0" fill="#4DA3FF" rx="11.0"/>
@@ -3576,7 +3578,7 @@
 </g>
 <rect x="42.0" y="137.0" width="22.0" height="22.0" fill="#FF6B5E" rx="11"/>
 <text x="53.0" y="154.0" font-size="16" fill="#fff" font-weight="700" text-anchor="middle">4</text>
-<clipPath id="cl53"><rect x="0" y="30" width="480" height="160"/></clipPath><g clip-path="url(#cl53)">
+<clipPath id="cl54"><rect x="0" y="30" width="480" height="160"/></clipPath><g clip-path="url(#cl54)">
 <rect x="196.0" y="30.0" width="254.0" height="52.0" fill="#11151A" rx="10" stroke="#20252C" stroke-width="1"/>
 <circle cx="216.0" cy="56.0" r="12" fill="#5E0AE0"/>
 <text x="216.0" y="54.4" font-size="9.12" fill="#fff" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">H1</text>
@@ -3644,7 +3646,7 @@
 </g>
 <rect x="42.0" y="137.0" width="22.0" height="22.0" fill="#FF6B5E" rx="11"/>
 <text x="53.0" y="154.0" font-size="16" fill="#fff" font-weight="700" text-anchor="middle">4</text>
-<clipPath id="cl54"><rect x="0" y="30" width="480" height="160"/></clipPath><g clip-path="url(#cl54)">
+<clipPath id="cl55"><rect x="0" y="30" width="480" height="160"/></clipPath><g clip-path="url(#cl55)">
 <rect x="196.0" y="30.0" width="254.0" height="52.0" fill="#11151A" rx="10" stroke="#20252C" stroke-width="1"/>
 <circle cx="216.0" cy="56.0" r="12" fill="#5E0AE0"/>
 <text x="216.0" y="54.4" font-size="9.12" fill="#fff" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">H1</text>
@@ -3713,7 +3715,7 @@
 </g>
 <rect x="42.0" y="137.0" width="22.0" height="22.0" fill="#FF6B5E" rx="11"/>
 <text x="53.0" y="154.0" font-size="16" fill="#fff" font-weight="700" text-anchor="middle">4</text>
-<clipPath id="cl55"><rect x="0" y="30" width="480" height="160"/></clipPath><g clip-path="url(#cl55)">
+<clipPath id="cl56"><rect x="0" y="30" width="480" height="160"/></clipPath><g clip-path="url(#cl56)">
 <rect x="196.0" y="30.0" width="254.0" height="52.0" fill="#11151A" rx="10" stroke="#20252C" stroke-width="1"/>
 <circle cx="216.0" cy="56.0" r="12" fill="#5E0AE0"/>
 <text x="216.0" y="54.4" font-size="9.12" fill="#fff" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">H1</text>
@@ -3815,7 +3817,7 @@
 </g>
 <rect x="42.0" y="137.0" width="22.0" height="22.0" fill="#FF6B5E" rx="11"/>
 <text x="53.0" y="154.0" font-size="16" fill="#fff" font-weight="700" text-anchor="middle">4</text>
-<clipPath id="cl56"><rect x="0" y="30" width="480" height="160"/></clipPath><g clip-path="url(#cl56)">
+<clipPath id="cl57"><rect x="0" y="30" width="480" height="160"/></clipPath><g clip-path="url(#cl57)">
 <rect x="196.0" y="30.0" width="254.0" height="52.0" fill="#11151A" rx="10" stroke="#20252C" stroke-width="1"/>
 <circle cx="216.0" cy="56.0" r="12" fill="#5E0AE0"/>
 <text x="216.0" y="54.4" font-size="9.12" fill="#fff" font-weight="700" text-anchor="middle" font-family="Menlo, 'SF Mono', Consolas, monospace">H1</text>
@@ -3865,7 +3867,7 @@
 <clipPath id="scr68"><rect width="480" height="222"/></clipPath>
 <g transform="translate(92,19634.8) scale(2)"><g clip-path="url(#scr68)">
 <rect x="0.0" y="0.0" width="480.0" height="222.0" fill="#0B0D10"/>
-<clipPath id="cl57"><rect x="0" y="52" width="480" height="170"/></clipPath><g clip-path="url(#cl57)">
+<clipPath id="cl58"><rect x="0" y="52" width="480" height="170"/></clipPath><g clip-path="url(#cl58)">
 <rect x="4.0" y="53.0" width="472.0" height="34.0" fill="#18304D" rx="8" stroke="#4DA3FF" stroke-width="1.6"/>
 <text x="12.0" y="77.0" font-size="20" fill="#EEF1F5" font-weight="700">Set automatically</text>
 <rect x="426.0" y="59.0" width="40.0" height="22.0" fill="#4DA3FF" rx="11.0"/>
@@ -3971,7 +3973,7 @@
 <clipPath id="scr70"><rect width="480" height="222"/></clipPath>
 <g transform="translate(2188,19634.8) scale(2)"><g clip-path="url(#scr70)">
 <rect x="0.0" y="0.0" width="480.0" height="222.0" fill="#0B0D10"/>
-<clipPath id="cl58"><rect x="0" y="52" width="480" height="170"/></clipPath><g clip-path="url(#cl58)">
+<clipPath id="cl59"><rect x="0" y="52" width="480" height="170"/></clipPath><g clip-path="url(#cl59)">
 <text x="12.0" y="77.0" font-size="20" fill="#EEF1F5"></text>
 <text x="466.0" y="76.0" font-size="17" fill="#9AA3AE" text-anchor="end">UTC−8</text>
 <path d="M12.0 87.5 L480.0 87.5" stroke="#20252C" stroke-width="1"/>
@@ -4355,7 +4357,7 @@
 <clipPath id="scr73"><rect width="480" height="222"/></clipPath>
 <g transform="translate(87.0,22963.8) scale(1.2)"><g clip-path="url(#scr73)">
 <rect x="0.0" y="0.0" width="480.0" height="222.0" fill="#0B0D10"/>
-<clipPath id="cl59"><rect x="66" y="22" width="414" height="200"/></clipPath><g clip-path="url(#cl59)">
+<clipPath id="cl60"><rect x="66" y="22" width="414" height="200"/></clipPath><g clip-path="url(#cl60)">
 <text x="78.0" y="47.0" font-size="20" fill="#EEF1F5">Identity</text>
 <path d="M460 34.0 L466 40.0 L460 46.0" fill="none" stroke="#7F8995" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
 <text x="450.0" y="46.0" font-size="17" fill="#9AA3AE" text-anchor="end">Juniper</text>
@@ -4451,7 +4453,7 @@
 <clipPath id="scr74"><rect width="480" height="222"/></clipPath>
 <g transform="translate(709.5,22963.8) scale(1.2)"><g clip-path="url(#scr74)">
 <rect x="0.0" y="0.0" width="480.0" height="222.0" fill="#0B0D10"/>
-<clipPath id="cl60"><rect x="0" y="52" width="480" height="170"/></clipPath><g clip-path="url(#cl60)">
+<clipPath id="cl61"><rect x="0" y="52" width="480" height="170"/></clipPath><g clip-path="url(#cl61)">
 <text x="12.0" y="77.0" font-size="20" fill="#EEF1F5">Region</text>
 <path d="M460 64.0 L466 70.0 L460 76.0" fill="none" stroke="#7F8995" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
 <text x="450.0" y="76.0" font-size="17" fill="#9AA3AE" text-anchor="end">United States</text>
@@ -4507,7 +4509,7 @@
 <clipPath id="scr75"><rect width="480" height="222"/></clipPath>
 <g transform="translate(1332.0,22963.8) scale(1.2)"><g clip-path="url(#scr75)">
 <rect x="0.0" y="0.0" width="480.0" height="222.0" fill="#0B0D10"/>
-<clipPath id="cl61"><rect x="0" y="52" width="480" height="170"/></clipPath><g clip-path="url(#cl61)">
+<clipPath id="cl62"><rect x="0" y="52" width="480" height="170"/></clipPath><g clip-path="url(#cl62)">
 <text x="12.0" y="77.0" font-size="20" fill="#EEF1F5">Region</text>
 <path d="M460 64.0 L466 70.0 L460 76.0" fill="none" stroke="#7F8995" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
 <text x="450.0" y="76.0" font-size="17" fill="#9AA3AE" text-anchor="end">United States</text>
@@ -4571,7 +4573,7 @@
 <clipPath id="scr76"><rect width="480" height="222"/></clipPath>
 <g transform="translate(1954.5,22963.8) scale(1.2)"><g clip-path="url(#scr76)">
 <rect x="0.0" y="0.0" width="480.0" height="222.0" fill="#0B0D10"/>
-<clipPath id="cl62"><rect x="0" y="52" width="480" height="170"/></clipPath><g clip-path="url(#cl62)">
+<clipPath id="cl63"><rect x="0" y="52" width="480" height="170"/></clipPath><g clip-path="url(#cl63)">
 <text x="12.0" y="77.0" font-size="20" fill="#EEF1F5">Region</text>
 <path d="M460 64.0 L466 70.0 L460 76.0" fill="none" stroke="#7F8995" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
 <text x="450.0" y="76.0" font-size="17" fill="#9AA3AE" text-anchor="end">United States</text>
@@ -4628,7 +4630,7 @@
 <clipPath id="scr77"><rect width="480" height="222"/></clipPath>
 <g transform="translate(2577.0,22963.8) scale(1.2)"><g clip-path="url(#scr77)">
 <rect x="0.0" y="0.0" width="480.0" height="222.0" fill="#0B0D10"/>
-<clipPath id="cl63"><rect x="66" y="22" width="414" height="200"/></clipPath><g clip-path="url(#cl63)">
+<clipPath id="cl64"><rect x="66" y="22" width="414" height="200"/></clipPath><g clip-path="url(#cl64)">
 <text x="78.0" y="47.0" font-size="20" fill="#EEF1F5">Identity</text>
 <path d="M460 34.0 L466 40.0 L460 46.0" fill="none" stroke="#7F8995" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
 <text x="450.0" y="46.0" font-size="17" fill="#9AA3AE" text-anchor="end">Juniper</text>

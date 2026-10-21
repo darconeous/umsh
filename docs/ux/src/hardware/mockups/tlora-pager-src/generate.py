@@ -2149,18 +2149,28 @@ def screen_exchange_code(state="ask"):
     return o
 
 
-def screen_tapped():
+def peer_sheet(name, focus="Message"):
+    """The sheet for a peer who is not saved: what an exchange, a tap or a
+    contact card opens. It opens on Message; Save peer is one turn down.
+    Nothing is saved until Save peer is pressed."""
     o = [R(0, 0, W, H, C["bg"])]
-    cy = STRIP + 50
-    o += scaled(tap_glyph(W / 2 - 92, cy, C["accent"]), W / 2 - 92, cy, 1.8)
-    o += avatar(W / 2, cy, 30, "Pat Okafor")
-    o.append(T(W / 2, cy + 58, "Pat Okafor", F_BODY, C["text"], 700,
-               "middle"))
-    o += check_mark(W / 2 - 34, cy + 79, C["green"], 0.8)
-    o.append(T(W / 2 - 22, cy + 85, "Saved", F_SEC, C["green"], 600))
-    o += push_buttons(["Message", "Done"])
+    body = avatar(32, TOP + 30, 22, name)
+    body.append(T(64, TOP + 37, name, F_BODY, C["text"], 700))
+    body.append(T(10, TOP + 76, address(name), F_SMALL, C["text2"],
+                  mono=True))
+    yy = TOP + 84
+    for label, chev in [("Message", True), ("Save peer", False)]:
+        body += setting_row(0, yy, label, None, label == focus, chev=chev,
+                            rh=34)
+        yy += 34
+    o += clip(body, 0, TOP, W, H - TOP)
+    o += screen_header("Peer")
     o += status()
     return o
+
+
+def screen_exchanged():
+    return peer_sheet("Pat Okafor", focus="Save peer")
 
 
 def screen_contact_in_chat():
@@ -2180,19 +2190,7 @@ def screen_contact_in_chat():
 
 
 def screen_introduced():
-    o = [R(0, 0, W, H, C["bg"])]
-    y = STRIP
-    body = detail_head("Rick Alvarez", "peer", "From Pat Okafor", y)
-    body.append(T(10, y + 77, address("Rick Alvarez"), F_SMALL, C["text2"],
-                  mono=True))
-    yy = y + 84
-    for label, chev, focused in [("Save peer", False, True),
-                                 ("Message", True, False)]:
-        body += setting_row(0, yy, label, None, focused, chev=chev, rh=34)
-        yy += 34
-    o += clip(body, 0, STRIP, W, H - STRIP)
-    o += status()
-    return o
+    return peer_sheet("Rick Alvarez")
 
 
 def screen_share_contact():
@@ -3124,18 +3122,16 @@ def main(path, native_dir=None):
              "the buttons."),
             ("Waiting", screen_exchange_code("waiting"),
              "After Same, until the other side presses Same too. Then both "
-             "devices send their addresses and names, save each other, and "
-             "open the peer’s page with Message focused. Leaving here "
+             "devices send their addresses and names. Leaving here "
              "cancels."),
             ("Codes differ", screen_exchange_code("differ"),
              "Either side pressing Different lands both here, with nothing "
              "sent and nothing saved. Try again goes back to Nearby."),
-            ("After a tap", screen_tapped(),
-             "Boards with NFC. Holding two devices back to back, both on Add "
-             "peer, "
-             "exchanges contacts with no code: the touch is the agreement. "
-             "Both land here, saved. Forget on the peer’s page undoes a "
-             "mistaken tap."),
+            ("Exchanged", screen_exchanged(),
+             "Where both land once the codes match, or after a tap on boards "
+             "with NFC: the ordinary sheet for a peer who is not saved. It "
+             "opens on Message; turning down reaches Save peer, shown here. "
+             "Nothing is saved until it is pressed."),
             ("Enter an address", screen_enter_address(),
              "Add peer › Enter an address. Takes a 44-character address or a "
              "umsh:n: invitation. The address wraps at a fixed column; the "
@@ -3155,9 +3151,9 @@ def main(path, native_dir=None):
              "A message whose whole body is a umsh:n: link renders as a "
              "contact card, as invites do for channels. Pressing it opens "
              "the peer’s page."),
-            ("Introduced peer", screen_introduced(),
-             "Says who sent the contact. Save peer keeps it; Message works "
-             "without saving."),
+            ("Contact opened", screen_introduced(),
+             "The same unsaved-peer sheet, as it opens: Message focused, "
+             "Save peer one turn down."),
             ("Share contact", screen_share_contact(),
              "From a peer’s page. Picks a chat; the contact goes there as an "
              "ordinary message."),

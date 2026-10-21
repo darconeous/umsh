@@ -63,32 +63,33 @@ Peers section.
 - After **Exchange**, both screens show a six-digit code. The codes match
   only if nobody is in the middle, and both people must press **Same**.
 - Only after both press Same do the devices send their addresses and
-  names. Each saves the other and opens the peer's page with Message
-  focused.
+  names. Each then shows the other on the ordinary sheet for a peer who is
+  not saved: it opens on Message, and Save peer is one turn down. Nothing
+  is saved until Save peer is pressed.
 - **Different** on either side ends it for both: nothing has been sent and
   nothing is saved. Leaving the code screen cancels the same way.
 
-![Codes differ](../hardware/mockups/tlora-pager-native/38-codes-differ.png)
+| | |
+|---|---|
+| ![Codes differ](../hardware/mockups/tlora-pager-native/38-codes-differ.png) | ![Exchanged](../hardware/mockups/tlora-pager-native/39-exchanged.png) |
 
 **Tap.** On boards with NFC, holding two devices back to back while both
 have Add peer open exchanges contacts with no code: the touch is the
-agreement. Both land on a saved card with Message and Done. A tag carrying a
+agreement. Both land on the same unsaved-peer sheet. A tag carrying a
 channel invitation opens Join channel, naming the card in its warning. A
 phone tapping the device reads its link only while Show my code is open;
 Add peer never serves it.
 
-| | |
-|---|---|
-| ![After a tap](../hardware/mockups/tlora-pager-native/39-after-a-tap.png) | ![Channel card](../hardware/mockups/tlora-pager-native/30-channel-card.png) |
+![Channel card](../hardware/mockups/tlora-pager-native/30-channel-card.png)
 
 **Introductions.** A message whose whole body is a `umsh:n:` link is a
-contact card, as an invitation is for a channel. Pressing it opens the
-peer's page, which says who sent it and offers Save peer. A peer's page has
-**Share contact**, which sends that contact to a chosen chat.
+contact card, as an invitation is for a channel. Pressing it opens the same
+unsaved-peer sheet. A saved peer's page has **Share contact**, which sends
+that contact to a chosen chat.
 
 | | |
 |---|---|
-| ![Contact in a chat](../hardware/mockups/tlora-pager-native/43-contact-in-a-chat.png) | ![Introduced peer](../hardware/mockups/tlora-pager-native/44-introduced-peer.png) |
+| ![Contact in a chat](../hardware/mockups/tlora-pager-native/43-contact-in-a-chat.png) | ![Contact opened](../hardware/mockups/tlora-pager-native/44-contact-opened.png) |
 
 **Enter an address** still takes a 44-character address or a `umsh:n:`
 invitation, for when nobody is nearby.
