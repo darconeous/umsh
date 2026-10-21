@@ -2080,8 +2080,10 @@ async fn hears_a_sentence(uart: &mut Uart<'static, Async>) -> bool {
                     return true;
                 }
             }
-            // At the wrong rate, framing errors are what is heard.
-            Ok(Err(_)) => {}
+            // At the wrong rate, framing errors are what is heard, and
+            // the next read can fail at once: pause, so this never holds
+            // the executor.
+            Ok(Err(_)) => Timer::after_millis(u64::from(umsh_gnss::pump::ERROR_BACKOFF_MS)).await,
             Err(_) => return false,
         }
     }

@@ -74,6 +74,15 @@ pub const LISTEN_MS: u32 = 10_000;
 /// Pause after a read that returned nothing, in milliseconds.
 const IDLE_BACKOFF_MS: u32 = 100;
 
+/// Pause after a read error, in milliseconds.
+///
+/// A line that is nothing but errors—a receiver at another rate, noise
+/// on an unconnected pin—fails the next read at once, so a loop that read
+/// again straight away would never yield the executor. The UART's FIFO
+/// holds several times this long of a receiver's output, so the pause
+/// costs nothing on a line that is merely glitching.
+pub const ERROR_BACKOFF_MS: u32 = 10;
+
 /// Board-specific power sequencing for one receiver.
 ///
 /// Implementations live in each BSP, because this is the only part that
@@ -236,7 +245,10 @@ where
                     }
                     // Drop the cycle the error fell in and pick up at the
                     // next one.
-                    Either::First(Err(_)) => driver.resync(),
+                    Either::First(Err(_)) => {
+                        driver.resync();
+                        idle.delay_ms(ERROR_BACKOFF_MS).await;
+                    }
                     Either::Second(()) => {
                         if !enable.enabled() {
                             return;
@@ -457,6 +469,24 @@ mod tests {
         }
     }
 
+    /// A line that is nothing but errors, counting how often it is read.
+    struct BrokenUart(Rc<core::cell::Cell<usize>>);
+
+    impl embedded_io_async::ErrorType for BrokenUart {
+        type Error = embedded_io_async::ErrorKind;
+    }
+
+    impl Read for BrokenUart {
+        async fn read(&mut self, _buf: &mut [u8]) -> Result<usize, Self::Error> {
+            let reads = self.0.get() + 1;
+            self.0.set(reads);
+            // A pump that reads again without pausing never returns from
+            // its poll; fail rather than hang the test.
+            assert!(reads < 100, "read again without pausing");
+            Err(embedded_io_async::ErrorKind::InvalidData)
+        }
+    }
+
     struct MockSink(Log);
 
     impl Sink for MockSink {
@@ -587,7 +617,8 @@ mod tests {
                 MockPower(log.clone()),
                 MockEnable::new(&[true]),
                 MockSink(log.clone()),
-                StalledDelay,
+                // The pause after the error elapses; the watchdog's does not.
+                CountedDelay::new(1),
                 (),
             )
             .await;
@@ -598,6 +629,26 @@ mod tests {
             "the receiver was cycled"
         );
         assert_eq!(log.fixes().len(), 1);
+    }
+
+    /// A line that only errs must still let the executor run: the pump
+    /// pauses after each error instead of reading again at once.
+    #[test]
+    fn a_line_that_only_errs_does_not_hold_the_executor() {
+        let log = Log::default();
+        let reads = Rc::new(core::cell::Cell::new(0));
+        poll_until_stalled(async {
+            let _ = run(
+                BrokenUart(reads.clone()),
+                MockPower(log.clone()),
+                MockEnable::new(&[true]),
+                MockSink(log.clone()),
+                StalledDelay,
+                (),
+            )
+            .await;
+        });
+        assert_eq!(reads.get(), 1, "the pump did not pause after the error");
     }
 
     #[test]
