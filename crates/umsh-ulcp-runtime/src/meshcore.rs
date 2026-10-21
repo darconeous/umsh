@@ -250,6 +250,7 @@ where
         }
         let options = TxOptions {
             cad: CadPolicy::Gate,
+            power_dbm: None,
         };
         match radio.transmit(frame, options).await {
             Ok(()) => return Sent::Transmitted,

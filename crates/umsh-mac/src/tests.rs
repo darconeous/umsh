@@ -3091,6 +3091,58 @@ fn receive_one_delivers_unicast_and_queues_immediate_ack() {
 }
 
 #[test]
+fn an_identitys_power_carries_its_sends_and_its_acks() {
+    let mut mac = make_mac();
+    let quiet = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
+    let loud = mac.add_identity(DummyIdentity::new([0x20; 32])).unwrap();
+    mac.identity_mut(quiet).unwrap().set_tx_power_dbm(Some(-9));
+    let remote = DummyIdentity::new([0xAB; 32]);
+    let peer_key = *remote.public_key();
+    let peer_id = mac.add_peer(peer_key).unwrap();
+    let keys = PairwiseKeys {
+        k_enc: [1; 32],
+        k_mic: [2; 32],
+    };
+    for id in [quiet, loud] {
+        mac.install_pairwise_keys(id, peer_id, keys.clone())
+            .unwrap();
+    }
+
+    for id in [quiet, loud] {
+        block_on(mac.send_unicast(id, &peer_key, b"payload", &SendOptions::default())).unwrap();
+        let dst_hint = mac.identity(id).unwrap().identity().public_key().hint();
+        mac.radio_mut()
+            .queue_received_unicast(&remote, &keys, &dst_hint, b"hello", true);
+        assert!(block_on(mac.receive_one(|_, _| {})).unwrap());
+        while !mac.tx_queue().is_empty() {
+            block_on(mac.transmit_next(&mut |_, _| {})).unwrap();
+        }
+    }
+
+    let sent: Vec<_> = mac
+        .radio()
+        .transmitted
+        .iter()
+        .map(|frame| {
+            PacketHeader::parse(frame.as_slice())
+                .unwrap()
+                .fcf
+                .packet_type()
+        })
+        .zip(mac.radio().transmitted_power.iter().copied())
+        .collect();
+    assert_eq!(
+        sent,
+        [
+            (PacketType::MacAck, Some(-9)),
+            (PacketType::Unicast, Some(-9)),
+            (PacketType::MacAck, None),
+            (PacketType::Unicast, None),
+        ]
+    );
+}
+
+#[test]
 fn receive_one_auto_derives_registered_unicast_peer_state() {
     let mut mac = make_mac();
     let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
@@ -8882,6 +8934,7 @@ fn modeled_network_reports_cad_busy_during_active_transmission() {
         b"retry",
         TxOptions {
             cad: umsh_hal::CadPolicy::Gate,
+            power_dbm: None,
         },
     ));
     assert!(matches!(result, Err(TxError::CadTimeout)));
@@ -12965,6 +13018,8 @@ impl Sha256Provider for DummySha {
 #[derive(Default)]
 struct DummyRadio {
     transmitted: heapless::Vec<heapless::Vec<u8, 256>, 16>,
+    /// The power each frame in `transmitted` was sent at.
+    transmitted_power: heapless::Vec<Option<i8>, 16>,
     cad_responses: heapless::Deque<bool, 16>,
     cad_calls: u32,
     received: heapless::Deque<heapless::Vec<u8, 256>, 16>,
@@ -13588,6 +13643,7 @@ impl Radio for DummyRadio {
             stored.push(*byte).unwrap();
         }
         self.transmitted.push(stored).unwrap();
+        self.transmitted_power.push(options.power_dbm).unwrap();
         Ok(())
     }
     fn poll_receive(

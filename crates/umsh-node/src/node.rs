@@ -1585,7 +1585,8 @@ impl<M: MacBackend> LocalNode<M> {
 
     /// Open a contact-exchange session (app-meet.md) under a freshly drawn
     /// key, closing any earlier one. Every attempt opens its own: a session
-    /// key is never reused.
+    /// key is never reused. The session sends, and acks, at
+    /// [`TX_POWER_DBM`](crate::meet::TX_POWER_DBM).
     ///
     /// Returns the session's public key and a seed for
     /// [`Meet::start`](crate::meet::Meet::start).
@@ -1604,6 +1605,9 @@ impl<M: MacBackend> LocalNode<M> {
             .mac
             .register_ephemeral(self.identity_id, identity)
             .await?;
+        self.mac
+            .set_tx_power_dbm(id, Some(crate::meet::TX_POWER_DBM))
+            .await;
         let mut seed = [0u8; 32];
         self.mac.fill_random(&mut seed).await;
         self.state.borrow_mut().meet = Some(MeetSlot {

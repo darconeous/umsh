@@ -83,6 +83,7 @@ impl UdpFakeRadio {
                 data,
                 TxOptions {
                     cad: CadPolicy::Skip,
+                    power_dbm: None,
                 },
             )
             .await

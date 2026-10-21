@@ -405,6 +405,7 @@ async fn transmit<L: FrameLink>(
         data,
         TxOptions {
             cad: CadPolicy::Skip,
+            power_dbm: None,
         },
     )
     .await

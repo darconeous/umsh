@@ -114,6 +114,12 @@ pub trait MacBackend: Clone {
     #[cfg(feature = "software-crypto")]
     async fn remove_ephemeral(&self, id: LocalIdentityId) -> bool;
 
+    /// Send everything from `id`, and the acks it returns, at `power_dbm`
+    /// in dBm; `None` sends at the configured power.
+    async fn set_tx_power_dbm(&self, id: LocalIdentityId, power_dbm: Option<i8>) {
+        let _ = (id, power_dbm);
+    }
+
     /// Return the live TX frame counter for `from`, if it identifies a registered identity.
     async fn frame_counter(&self, from: LocalIdentityId) -> Option<u32> {
         let _ = from;
@@ -395,6 +401,10 @@ impl<
     #[cfg(feature = "software-crypto")]
     async fn remove_ephemeral(&self, id: LocalIdentityId) -> bool {
         self.remove_ephemeral(id).await
+    }
+
+    async fn set_tx_power_dbm(&self, id: LocalIdentityId, power_dbm: Option<i8>) {
+        self.set_tx_power_dbm(id, power_dbm).await
     }
 
     async fn frame_counter(&self, from: LocalIdentityId) -> Option<u32> {

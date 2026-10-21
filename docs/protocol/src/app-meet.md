@@ -235,6 +235,12 @@ Two devices of the same model whose hue steps are within 24 of each other
 with the lower session key of such a pair opens a new session, with a new key
 and a new color.
 
+## Transmit Power {#transmit-power}
+
+A device SHOULD send every Meet frame, and every acknowledgment of one, at
+−9 dBm, or at the least power its radio can transmit if that is higher. The two
+holders stand together; nothing farther away needs to hear them.
+
 ## Linking a Name to a Key {#linking}
 
 A Meet Identity travels between session keys, not from `KEY`, so nothing but

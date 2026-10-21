@@ -503,6 +503,14 @@ impl<
         self.mac.borrow_mut().await.remove_ephemeral(id)
     }
 
+    /// Send everything from `id`, and the acks it returns, at `power_dbm`
+    /// in dBm; `None` sends at the configured power.
+    pub async fn set_tx_power_dbm(&self, id: LocalIdentityId, power_dbm: Option<i8>) {
+        if let Some(slot) = self.mac.borrow_mut().await.identity_mut(id) {
+            slot.set_tx_power_dbm(power_dbm);
+        }
+    }
+
     /// Cancel a pending ACK-requested send, stopping retransmissions.
     ///
     /// Returns `true` if the pending ACK was found and removed.

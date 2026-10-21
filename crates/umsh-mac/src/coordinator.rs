@@ -29,7 +29,7 @@ use crate::{
     },
     route_score::{Hop, path_score},
     send::{
-        CompletionSignal, PendingAck, PendingAckError, ResendRecord, RxBaselineAdoption,
+        CompletionSignal, PendingAck, PendingAckError, QueuedTx, ResendRecord, RxBaselineAdoption,
         SendOptions, SendReceipt, TxPriority, TxQueue,
     },
     uplinks::Uplink,
@@ -321,6 +321,7 @@ pub struct IdentitySlot<
     next_receipt: u32,
     pfs_parent: Option<LocalIdentityId>,
     pending_counter_resync: LinearMap<PeerId, PendingCounterResync, PEERS>,
+    tx_power_dbm: Option<i8>,
 }
 
 impl<I: NodeIdentity, const PEERS: usize, const ACKS: usize, const FRAME: usize>
@@ -345,6 +346,7 @@ impl<I: NodeIdentity, const PEERS: usize, const ACKS: usize, const FRAME: usize>
             next_receipt: 0,
             pfs_parent,
             pending_counter_resync: LinearMap::new(),
+            tx_power_dbm: None,
         }
     }
 
@@ -521,6 +523,19 @@ impl<I: NodeIdentity, const PEERS: usize, const ACKS: usize, const FRAME: usize>
     /// Return the parent long-term identity if this slot is ephemeral.
     pub fn pfs_parent(&self) -> Option<LocalIdentityId> {
         self.pfs_parent
+    }
+
+    /// The transmit power in dBm for everything this identity sends, and
+    /// for the acks it returns; `None` sends at the radio's configured
+    /// power.
+    pub fn tx_power_dbm(&self) -> Option<i8> {
+        self.tx_power_dbm
+    }
+
+    /// Set the transmit power for everything this identity sends, and for
+    /// the acks it returns.
+    pub fn set_tx_power_dbm(&mut self, power_dbm: Option<i8>) {
+        self.tx_power_dbm = power_dbm;
     }
 
     /// Borrow the pending counter-resynchronization table.
@@ -1895,15 +1910,17 @@ impl<
         } else {
             None
         };
-        if self
-            .tx_queue
-            .enqueue(
-                TxPriority::ImmediateAck,
-                frame,
-                tracked_receipt,
-                tracked_receipt.map(|_| from),
-            )
-            .is_err()
+        // An ack goes out at the power its identity sends at.
+        let power_dbm = self.identity(from).and_then(IdentitySlot::tx_power_dbm);
+        if QueuedTx::try_new(
+            TxPriority::ImmediateAck,
+            frame,
+            tracked_receipt,
+            tracked_receipt.map(|_| from),
+            0,
+        )
+        .and_then(|entry| self.tx_queue.enqueue_entry(entry.with_power_dbm(power_dbm)))
+        .is_err()
         {
             if let Some(receipt) = tracked_receipt {
                 let _ = self
@@ -2391,16 +2408,19 @@ impl<
             return Ok(None);
         }
 
-        let tx_options = if queued.priority == TxPriority::ImmediateAck {
+        let tx_options = TxOptions {
             // Immediate ACK: the channel was clear when the packet ended, so
             // transmit without CAD (see channel-access.md § Immediate ACK).
-            TxOptions {
-                cad: umsh_hal::CadPolicy::Skip,
-            }
-        } else {
-            TxOptions {
-                cad: umsh_hal::CadPolicy::Gate,
-            }
+            cad: if queued.priority == TxPriority::ImmediateAck {
+                umsh_hal::CadPolicy::Skip
+            } else {
+                umsh_hal::CadPolicy::Gate
+            },
+            power_dbm: queued.power_dbm.or_else(|| {
+                identity_id
+                    .and_then(|id| self.identity(id))
+                    .and_then(IdentitySlot::tx_power_dbm)
+            }),
         };
         match self
             .radio
@@ -2459,16 +2479,11 @@ impl<
                             .random_range(..(backoff_hi_ms - backoff_lo_ms).saturating_add(1)),
                     ),
                 );
+                let mut queued = queued;
+                queued.not_before_ms = now_ms.saturating_add(backoff_ms);
+                queued.cad_attempts = next_attempt;
                 self.tx_queue
-                    .enqueue_with_state(
-                        queued.priority,
-                        queued.frame.as_slice(),
-                        queued.receipt,
-                        queued.identity_id,
-                        now_ms.saturating_add(backoff_ms),
-                        next_attempt,
-                        queued.forward_deferrals,
-                    )
+                    .enqueue_entry(queued)
                     .map_err(|_| MacError::QueueFull)?;
                 return Ok(None);
             }

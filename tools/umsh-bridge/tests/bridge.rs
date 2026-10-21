@@ -186,6 +186,7 @@ fn a_frame_crosses_the_bridge_exactly_as_it_was_heard() {
                 &sent,
                 TxOptions {
                     cad: CadPolicy::Skip,
+                    power_dbm: None,
                 },
             )
             .await
@@ -236,6 +237,7 @@ fn the_bridge_does_not_carry_a_frame_back_to_where_it_came_from() {
                 &sent,
                 TxOptions {
                     cad: CadPolicy::Skip,
+                    power_dbm: None,
                 },
             )
             .await
@@ -269,6 +271,7 @@ fn a_spent_flood_budget_is_the_repeaters_business_not_the_bridges() {
                 &spent,
                 TxOptions {
                     cad: CadPolicy::Skip,
+                    power_dbm: None,
                 },
             )
             .await
@@ -303,6 +306,7 @@ fn the_exit_clamp_lowers_a_budget_on_the_way_through() {
                 &sent,
                 TxOptions {
                     cad: CadPolicy::Skip,
+                    power_dbm: None,
                 },
             )
             .await
@@ -371,6 +375,7 @@ fn a_reconnecting_client_displaces_its_predecessor_without_being_torn_down() {
                 &broadcast(3, 0x77, &[]),
                 TxOptions {
                     cad: CadPolicy::Skip,
+                    power_dbm: None,
                 },
             )
             .await

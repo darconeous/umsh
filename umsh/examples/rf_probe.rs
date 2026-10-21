@@ -54,6 +54,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 &beacon(counter),
                 TxOptions {
                     cad: CadPolicy::Skip,
+                    power_dbm: None,
                 },
             )
             .await
@@ -106,6 +107,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 &beacon(counter),
                 TxOptions {
                     cad: CadPolicy::Skip,
+                    power_dbm: None,
                 },
             )
             .await

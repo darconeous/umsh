@@ -205,6 +205,9 @@ pub enum CadPolicy {
 pub struct TxOptions {
     /// Channel-activity-detection policy applied before this transmit.
     pub cad: CadPolicy,
+    /// This frame's transmit power in dBm, raised to the least the radio
+    /// can transmit; `None` sends at the configured power.
+    pub power_dbm: Option<i8>,
 }
 
 /// Error returned by [`Radio::transmit`].

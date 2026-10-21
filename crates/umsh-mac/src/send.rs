@@ -625,6 +625,8 @@ impl TxPriority {
 ///   medium contention retries.
 /// - **`forward_deferrals`**—number of times a queued flood-forward has already been
 ///   deferred after overhearing another copy of the same packet before it transmitted.
+/// - **`power_dbm`**—a transmit power for this frame alone, which an ack takes from
+///   the identity returning it; other frames go at their identity's power.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct QueuedTx<const FRAME: usize = MAX_RESEND_FRAME_LEN> {
     /// Priority class.
@@ -644,6 +646,9 @@ pub struct QueuedTx<const FRAME: usize = MAX_RESEND_FRAME_LEN> {
     pub cad_attempts: u8,
     /// Number of overheard-repeat deferrals already consumed.
     pub forward_deferrals: u8,
+    /// Transmit power in dBm for this frame alone, ahead of its
+    /// identity's; `None` leaves it to the identity.
+    pub power_dbm: Option<i8>,
 }
 
 impl<const FRAME: usize> QueuedTx<FRAME> {
@@ -683,7 +688,14 @@ impl<const FRAME: usize> QueuedTx<FRAME> {
             not_before_ms,
             cad_attempts,
             forward_deferrals,
+            power_dbm: None,
         })
+    }
+
+    /// This entry, sent at `power_dbm` in dBm.
+    pub fn with_power_dbm(mut self, power_dbm: Option<i8>) -> Self {
+        self.power_dbm = power_dbm;
+        self
     }
 
     /// Whether the entry's earliest transmission time has passed.
@@ -754,6 +766,16 @@ impl<const N: usize, const FRAME: usize> TxQueue<N, FRAME> {
     ) -> Result<u32, CapacityError> {
         let sequence = self.next_sequence;
         let entry = QueuedTx::try_new(priority, frame, receipt, identity_id, sequence)?;
+        self.entries.push(entry).map_err(|_| CapacityError)?;
+        self.next_sequence = self.next_sequence.wrapping_add(1);
+        Ok(sequence)
+    }
+
+    /// Enqueue an entry as it stands, behind everything already queued at
+    /// its priority, and return its new sequence number.
+    pub fn enqueue_entry(&mut self, mut entry: QueuedTx<FRAME>) -> Result<u32, CapacityError> {
+        let sequence = self.next_sequence;
+        entry.sequence = sequence;
         self.entries.push(entry).map_err(|_| CapacityError)?;
         self.next_sequence = self.next_sequence.wrapping_add(1);
         Ok(sequence)

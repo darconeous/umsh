@@ -158,6 +158,7 @@ async fn transmit(radio: &mut UdpMulticastRadio, frame: &[u8]) {
             frame,
             TxOptions {
                 cad: CadPolicy::Skip,
+                power_dbm: None,
             },
         )
         .await

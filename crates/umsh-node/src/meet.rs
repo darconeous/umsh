@@ -55,6 +55,9 @@ pub const ROW_LIFETIME_INTERVALS: u64 = 3;
 pub const REPLY_HELLO_DELAY_MS: core::ops::RangeInclusive<u64> = 500..=2_000;
 /// Most devices listed at once.
 pub const MAX_ROWS: usize = 16;
+/// Every Meet frame, and every ack for one, goes out at this power in dBm,
+/// or the least the radio can transmit if that is more.
+pub const TX_POWER_DBM: i8 = -9;
 
 const COMMIT_LABEL: &[u8] = b"UMSH meet commit";
 const CODE_LABEL: &[u8] = b"UMSH meet code";

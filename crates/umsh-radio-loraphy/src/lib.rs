@@ -165,7 +165,7 @@ impl<M: RawMutex + 'static, const RX: usize, const TX: usize> umsh_hal::Radio
             .tx
             .send(TxRequest {
                 data: frame_data,
-                power_dbm: None,
+                power_dbm: options.power_dbm.map(i32::from),
                 cad: options.cad,
             })
             .await;
