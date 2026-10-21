@@ -22,6 +22,7 @@ particular, treat the display as non-touch and do not inherit T-Deck Pro pins.
 | Haptic motor | Optional short focus/action confirmation and silent alerts |
 | Speaker | Message/urgent notifications; optional and silenced by profile |
 | Keyboard backlight | Alt+Space, then Space toggles it; also a Device › Keyboard switch |
+| NFC | Tap to exchange contacts on Add peer; read contact and channel cards; serve the device's link while Show my code is open. See [Adding peers](../classes/communicators.md#adding-peers) |
 
 ## Proposed layout
 
@@ -31,6 +32,6 @@ rotary/keyboard action must always be visible. Do not draw touch-style buttons.
 
 The first implementation should cover on-device setup, Inbox,
 Conversation/Compose, Nodes or
-Contacts, Device status, Settings, and Maintenance. Audio, NFC, sensors, and SD
+Contacts, Device status, Settings, and Maintenance. Audio, sensors, and SD
 features should not distort the core messaging navigation before they have a
 clear UMSH user story. None of these core paths may depend on a phone.

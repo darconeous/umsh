@@ -66,7 +66,7 @@ is a one-shot Shift and is canceled the same way.
 
 | Caps lock | Alt, once |
 |---|---|
-| ![Caps lock](../hardware/mockups/tlora-pager-native/44-caps-lock.png) | ![Alt one-shot](../hardware/mockups/tlora-pager-native/45-alt-once.png) |
+| ![Caps lock](../hardware/mockups/tlora-pager-native/54-caps-lock.png) | ![Alt one-shot](../hardware/mockups/tlora-pager-native/55-alt-once.png) |
 
 ## Typing aids
 
@@ -81,7 +81,7 @@ The start of a sentence is the start of the field, or a position after `.`,
 lands, including after the wheel moves it. Tapping Shift disarms it, and
 nothing arms while a lock is on.
 
-![Start of a sentence](../hardware/mockups/tlora-pager-native/42-start-of-a-sentence.png)
+![Start of a sentence](../hardware/mockups/tlora-pager-native/52-start-of-a-sentence.png)
 
 ### Period on double space
 
@@ -94,14 +94,14 @@ the cursor into the middle of a word with the wheel and pressing Space twice
 types two spaces, because the last key pressed was not a letter. A letter typed
 through Alt is a symbol, not a letter.
 
-![Double space](../hardware/mockups/tlora-pager-native/43-double-space.png)
+![Double space](../hardware/mockups/tlora-pager-native/53-double-space.png)
 
 ### Settings
 
 **Device › Keyboard** has a switch for each aid, plus the keyboard light. A
 switched-off aid is off in every field.
 
-![Keyboard settings](../hardware/mockups/tlora-pager-native/51-keyboard-settings.png)
+![Keyboard settings](../hardware/mockups/tlora-pager-native/61-keyboard-settings.png)
 
 ## Fields choose their keyboard
 
@@ -125,7 +125,7 @@ time it becomes active.
 A numbers-only field in symbol lock types digits from the top row and the
 minus sign from Alt+F. Space types a space.
 
-![Numbers-only field](../hardware/mockups/tlora-pager-native/46-numbers-only-field.png)
+![Numbers-only field](../hardware/mockups/tlora-pager-native/56-numbers-only-field.png)
 
 ## Character picker
 
@@ -150,7 +150,7 @@ edge.
 
 | Picker | Filtered |
 |---|---|
-| ![Character picker](../hardware/mockups/tlora-pager-native/47-character-picker.png) | ![Picker filtered](../hardware/mockups/tlora-pager-native/48-picker-filtered.png) |
+| ![Character picker](../hardware/mockups/tlora-pager-native/57-character-picker.png) | ![Picker filtered](../hardware/mockups/tlora-pager-native/58-picker-filtered.png) |
 
 Filtering matches the device language's character names. The picker can offer
 only characters the panel's fonts can draw.
@@ -170,4 +170,4 @@ adjusted brightness does not arm it.
 
 | Keyboard light | Brightness |
 |---|---|
-| ![Keyboard light](../hardware/mockups/tlora-pager-native/49-keyboard-light.png) | ![Brightness](../hardware/mockups/tlora-pager-native/50-brightness.png) |
+| ![Keyboard light](../hardware/mockups/tlora-pager-native/59-keyboard-light.png) | ![Brightness](../hardware/mockups/tlora-pager-native/60-brightness.png) |

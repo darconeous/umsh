@@ -817,17 +817,19 @@ def part_dots(x, cy, present, count, missing=()):
     return o
 
 
-def invite_card(x, y, focused, name="Trail Crew"):
-    """A channel invitation inside an incoming message."""
+def invite_card(x, y, focused, name="Trail Crew", kind="channel",
+                sub="Channel invite"):
+    """A link that is a message's whole body, drawn as a card: a channel
+    invitation, or a peer's contact."""
     w, h = 300, 64
     o = []
     if focused:
         o.append(P(rrect(x - 3.5, y - 3.5, w + 7, h + 7, 17, 17, 17, 17),
                    C["accent"], sw=2.2))
     o.append(P(rrect(x, y, w, h, 14, 14, 14, 5), fill=C["inb"]))
-    o += avatar(x + 30, y + h / 2, 20, name, "channel")
+    o += avatar(x + 30, y + h / 2, 20, name, kind)
     o.append(T(x + 60, y + 27, name, F_BODY, C["text"], 700))
-    o.append(T(x + 60, y + 49, "Channel invite", F_SEC, C["text2"]))
+    o.append(T(x + 60, y + 49, sub, F_SEC, C["text2"]))
     o.append(chevron(x + w - 16, y + h / 2))
     return o, w
 
@@ -881,7 +883,8 @@ def transcript(items, top, bottom, channel=False):
                 o.append(CIRC(in_x + 17 + i * 14, y + bh / 2, 4, shade))
             pos[idx] = (in_x, y, bw, bh)
         elif k == "invite":
-            g, w = invite_card(in_x, y, it.get("focused"))
+            g, w = invite_card(in_x, y, it.get("focused"),
+                               **it.get("card", {}))
             o += g
             pos[idx] = (in_x, y, w, h)
         else:
@@ -1844,7 +1847,7 @@ def mono_field(x, y, w, text, per_line, mode="active", lh=26):
     return o, h
 
 
-def screen_add_peer():
+def screen_enter_address():
     o = [R(0, 0, W, H, C["bg"])]
     body = [section_label(10, TOP + 20, "Address or invitation")]
     typed = address("Unsaved 7cQa")[:30]
@@ -1858,7 +1861,7 @@ def screen_add_peer():
     y += 44
     body += setting_row(0, y, "Message", None, muted=True)
     o += clip(body, 0, TOP, W, H - TOP)
-    o += screen_header("Add peer")
+    o += screen_header("Enter an address")
     o += status()
     return o
 
@@ -1878,6 +1881,7 @@ def screen_peer_detail():
     yy = y + 84
     for label, val, kind, focused in [
         ("Message", None, "action", True),
+        ("Share contact", None, "action", False),
         ("Route", "Direct · −97 dBm", "read", False),
         ("Last heard", "5 min ago", "read", False),
         ("Forward secrecy", "Off", "read", False),
@@ -1954,6 +1958,284 @@ def screen_share():
     y += rh
     o.append(T(x0 + 4, y + 25, "Location", F_BODY, C["text"]))
     o += switch(W - 10, y + rh / 2, False)
+    o += status()
+    return o
+
+
+# ---------------------------------------------------------------- exchanging contacts
+# Until both people confirm the code, Add peer shows a nearby device only by
+# its model and a color from its session key, which is new every time Add
+# peer opens. No name, address, hint or avatar is sent or shown.
+SESSION_MINE = "#C46BD8"  # Juniper's Pager, this session
+SESSION_DECK = "#2BB3A3"  # Pat's T-Deck, this session
+SESSION_PHONE = "#E39A3B"  # someone's iPhone, this session
+EXCHANGE_CODE = "482 931"
+
+
+def nearness(cx, cy, n, col=None):
+    """How close a device on Add peer is: arcs lit from the inside out."""
+    col = col or C["accent"]
+    o = [CIRC(cx - 9, cy, 2.6, col)]
+    for i in range(3):
+        r = 6 + i * 5
+        c = col if i < n else "#3A414B"
+        o.append(P(f"M{cx-9+r*0.6:.1f} {cy-r*0.8:.1f} "
+                   f"A{r} {r} 0 0 1 {cx-9+r*0.6:.1f} {cy+r*0.8:.1f}",
+                   c, sw=2))
+    return o
+
+
+def tap_glyph(cx, cy, col):
+    """Two devices back to back: a tap works here. Boards without NFC
+    never show it."""
+    return [P(rrect(cx - 11, cy - 8, 9, 16, 2.5, 2.5, 2.5, 2.5), col, sw=1.5),
+            P(rrect(cx + 2, cy - 8, 9, 16, 2.5, 2.5, 2.5, 2.5), col, sw=1.5),
+            P(f"M{cx-4} {cy-12} Q{cx} {cy-15} {cx+4} {cy-12}", col, sw=1.4),
+            P(f"M{cx-4} {cy+12} Q{cx} {cy+15} {cx+4} {cy+12}", col, sw=1.4)]
+
+
+def check_mark(cx, cy, col, k=1.0):
+    return [P(f"M{cx-6*k} {cy} L{cx-2*k} {cy+4*k} L{cx+6*k} {cy-5*k}", col,
+              sw=2.4 * k)]
+
+
+def device_glyph(cx, cy, r, col, kind="landscape"):
+    """A nearby device before anything is exchanged: its session color and
+    the outline of its kind of hardware, never an avatar."""
+    ink = C["bg"]
+    o = [CIRC(cx, cy, r, col)]
+    k = r / 17
+    if kind == "phone":
+        o.append(P(rrect(cx - 5.5 * k, cy - 9 * k, 11 * k, 18 * k, 2.5 * k,
+                         2.5 * k, 2.5 * k, 2.5 * k), ink, sw=1.8 * k))
+        o.append(LINE(cx - 2 * k, cy + 6 * k, cx + 2 * k, cy + 6 * k, ink,
+                      1.6 * k))
+    else:
+        o.append(P(rrect(cx - 10 * k, cy - 7 * k, 20 * k, 14 * k, 2.5 * k,
+                         2.5 * k, 2.5 * k, 2.5 * k), ink, sw=1.8 * k))
+        o.append(R(cx - 6.5 * k, cy - 4 * k, 13 * k, 4.5 * k, ink, rx=1))
+        for i in range(4):
+            o.append(CIRC(cx - 5.4 * k + i * 3.6 * k, cy + 3.5 * k, 0.9 * k,
+                          ink))
+    return o
+
+
+def nearby_row(y, model, col, n, kind="landscape", focused=False, dim=False):
+    o = []
+    cy = y + ROW / 2
+    if focused:
+        o.append(R(4, y + 1, W - 8, ROW - 2, C["focus"], rx=8,
+                   stroke=C["accent"], sw=1.6))
+    o += device_glyph(30, cy, 17, col, kind)
+    o.append(T(56, cy + 7, model, F_BODY, C["text2"] if dim else C["text"],
+               700 if focused else 600))
+    o += nearness(W - 30, cy, n, C["text3"] if dim else None)
+    if not focused:
+        o.append(LINE(56, y + ROW - 0.5, W, y + ROW - 0.5))
+    return o
+
+
+def you_mark(col):
+    """This device's own session color, at the right of the Add peer
+    header, so two people can tell which row is which."""
+    c = STRIP + HDR / 2
+    o = device_glyph(W - 22, c, 11, col)
+    o.append(T(W - 40, c + 6, "You", F_SEC, C["text3"], 600, "end"))
+    return o
+
+
+def push_buttons(labels, focus=0, y=H - 46):
+    """Two choices side by side at the bottom; turning moves between them."""
+    o = []
+    bw, gap = 180, 16
+    x0 = (W - 2 * bw - gap) / 2
+    for i, label in enumerate(labels):
+        bx = x0 + i * (bw + gap)
+        if i == focus:
+            o.append(R(bx, y, bw, 36, C["focus"], rx=10, stroke=C["accent"],
+                       sw=1.6))
+        else:
+            o.append(R(bx, y, bw, 36, C["field"], rx=10,
+                       stroke=C["menuline"]))
+        o.append(T(bx + bw / 2, y + 24, label, F_BODY,
+                   C["accent"] if i == focus else C["text2"],
+                   700 if i == focus else 500, "middle"))
+    return o
+
+
+def screen_add_peer():
+    o = [R(0, 0, W, H, C["bg"])]
+    body = [section_label(12, TOP + 19, "Nearby")]
+    body += scaled(tap_glyph(W - 30, TOP + 13, C["text2"]), W - 30, TOP + 13,
+                   1.25)
+    y = TOP + 26
+    body += nearby_row(y, "T-Deck", SESSION_DECK, 3, focused=True)
+    y += ROW
+    body += nearby_row(y, "iPhone", SESSION_PHONE, 1, "phone", dim=True)
+    y += ROW
+    body += setting_row(0, y, "Enter an address", None, chev=True)
+    y += 36
+    body += setting_row(0, y, "Show my code", None, chev=True)
+    o += clip(body, 0, TOP, W, H - TOP)
+    o += screen_header("Add peer")
+    o += you_mark(SESSION_MINE)
+    o += status()
+    return o
+
+
+def screen_exchange_request():
+    """Pat's T-Deck, also on Add peer, when Juniper presses its row."""
+    global DEVICE_NAME
+    saved, DEVICE_NAME = DEVICE_NAME, "Pat Okafor"
+    o = [R(0, 0, W, H, C["bg"])]
+    body = [section_label(12, TOP + 19, "Nearby")]
+    body += nearby_row(TOP + 26, "T-LoRa Pager", SESSION_MINE, 3)
+    o += clip(body, 0, TOP, W, H - TOP)
+    o += screen_header("Add peer")
+    o += you_mark(SESSION_DECK)
+    mw, ih = 330, 34
+    mh = 62 + 2 * ih + 8
+    mx = (W - mw) / 2
+    my = STRIP + (H - STRIP - mh) / 2
+    o += menu_card(mx, my, mw, mh)
+    o += device_glyph(mx + 32, my + 31, 19, SESSION_MINE)
+    o.append(T(mx + 60, my + 27, "T-LoRa Pager", F_BODY, C["text"], 700))
+    o.append(T(mx + 60, my + 48, "Exchange contacts?", F_SEC, C["text2"]))
+    o += menu_items(mx, my + 62, mw, ["Exchange", "Not now"], 0, ih)
+    o += status()
+    DEVICE_NAME = saved
+    return o
+
+
+def device_header(model, col, sub):
+    c = STRIP + HDR / 2
+    o = [R(0, STRIP, W, HDR, C["bg"]),
+         LINE(0, STRIP + HDR - 0.5, W, STRIP + HDR - 0.5)]
+    o.append(P(f"M13 {c-6} L7 {c} L13 {c+6}", C["text3"], sw=2))
+    o += device_glyph(35, c, 13, col)
+    o.append(T(54, c + 7, model, F_BODY, C["text"], 700))
+    o.append(T(54 + tw(model, F_BODY, True) + 10, c + 6, sub, F_SMALL,
+               C["text3"], 500))
+    return o
+
+
+def screen_exchange_code(state="ask"):
+    """state: ask, waiting, differ."""
+    o = [R(0, 0, W, H, C["bg"])]
+    o += device_header("T-Deck", SESSION_DECK, "Exchanging")
+    cy = TOP + 50
+    by = H - 46
+    if state == "differ":
+        o += scaled(glyph_warn(W / 2, cy - 6, C["red"]), W / 2, cy - 6, 2.0)
+        o.append(T(W / 2, cy + 40, "Codes differ. Nothing saved.", F_BODY,
+                   C["text"], 600, "middle"))
+        o += push_buttons(["Try again", "Done"])
+    else:
+        o.append(T(W / 2, cy + 14, EXCHANGE_CODE, 42, C["text"], 700,
+                   "middle", mono=True, extra=' letter-spacing="3"'))
+        o.append(T(W / 2, cy + 44, "Same code on the other screen?", F_SEC,
+                   C["text2"], 500, "middle"))
+        if state == "waiting":
+            o += check_mark(W / 2 - 150, by + 17, C["green"])
+            o.append(T(W / 2 - 134, by + 23, "Same", F_BODY, C["green"],
+                       700))
+            o.append(T(W / 2 - 40, by + 23, "Waiting for T-Deck", F_BODY,
+                       C["text2"], 500))
+            for i, shade in enumerate((C["text2"], C["text2"], "#3A414B")):
+                o.append(CIRC(W / 2 + 166 + i * 9, by + 17, 2.4, shade))
+        else:
+            o += push_buttons(["Same", "Different"])
+    o += status()
+    return o
+
+
+def screen_tapped():
+    o = [R(0, 0, W, H, C["bg"])]
+    cy = STRIP + 50
+    o += scaled(tap_glyph(W / 2 - 92, cy, C["accent"]), W / 2 - 92, cy, 1.8)
+    o += avatar(W / 2, cy, 30, "Pat Okafor")
+    o.append(T(W / 2, cy + 58, "Pat Okafor", F_BODY, C["text"], 700,
+               "middle"))
+    o += check_mark(W / 2 - 34, cy + 79, C["green"], 0.8)
+    o.append(T(W / 2 - 22, cy + 85, "Saved", F_SEC, C["green"], 600))
+    o += push_buttons(["Message", "Done"])
+    o += status()
+    return o
+
+
+def screen_contact_in_chat():
+    o = [R(0, 0, W, H, C["bg"])]
+    items = [
+        {"k": "out", "who": "me", "text": "Who has the hut radio?"},
+        {"k": "in", "who": "po", "text": "Rick does:"},
+        {"k": "invite", "who": "po", "focused": True,
+         "card": {"name": "Rick Alvarez", "kind": "peer", "sub": "Contact"}},
+    ]
+    tr, _ = transcript(items, TOP, BAR_Y)
+    o += tr
+    o += screen_header("Pat Okafor", "peer", "Direct")
+    o += composer_bar()
+    o += status()
+    return o
+
+
+def screen_introduced():
+    o = [R(0, 0, W, H, C["bg"])]
+    y = STRIP
+    body = detail_head("Rick Alvarez", "peer", "From Pat Okafor", y)
+    body.append(T(10, y + 77, address("Rick Alvarez"), F_SMALL, C["text2"],
+                  mono=True))
+    yy = y + 84
+    for label, chev, focused in [("Save peer", False, True),
+                                 ("Message", True, False)]:
+        body += setting_row(0, yy, label, None, focused, chev=chev, rh=34)
+        yy += 34
+    o += clip(body, 0, STRIP, W, H - STRIP)
+    o += status()
+    return o
+
+
+def screen_share_contact():
+    o = [R(0, 0, W, H, C["bg"])]
+    body = [section_label(12, TOP + 19, "Send Rick Alvarez to")]
+    y = TOP + 26
+    for i, (name, kind, meta) in enumerate([
+            ("Jo Reyes", "peer", "Direct chat"),
+            ("Trail Crew", "channel", "Channel"),
+            ("Sam Ito", "peer", "Direct chat")]):
+        cy = y + ROW / 2
+        if i == 0:
+            body.append(R(4, y + 1, W - 8, ROW - 2, C["focus"], rx=8,
+                          stroke=C["accent"], sw=1.6))
+        body += avatar(30, cy, 17, name, kind)
+        body.append(T(56, y + 20, name, F_BODY, C["text"],
+                      700 if i == 0 else 600))
+        body.append(T(56, y + 39, meta, F_SEC, C["text3"]))
+        if i:
+            body.append(LINE(56, y + ROW - 0.5, W, y + ROW - 0.5))
+        y += ROW
+    o += clip(body, 0, TOP, W, H - TOP)
+    o += screen_header("Share contact")
+    o += status()
+    return o
+
+
+def screen_channel_card():
+    o = [R(0, 0, W, H, C["bg"])]
+    body = detail_head("Trail Crew", "channel", "Private channel · From a card")
+    y = TOP + 58
+    body += scaled(glyph_warn(18, y + 12, C["amber"]), 18, y + 12, 0.9)
+    body.append(T(34, y + 18, "Anyone with this card can read and post.",
+                  F_SEC, C["amber"], 500))
+    y += 28
+    body += setting_row(0, y, "Name", "Trail Crew", chev=True)
+    y += 36
+    body.append(R(4, y + 1, W - 8, 34, C["focus"], rx=8, stroke=C["accent"],
+                  sw=1.6))
+    body.append(T(W / 2, y + 25, "Join channel", F_BODY, C["accent"], 700,
+                  "middle"))
+    o += clip(body, 0, TOP, W, H - TOP)
+    o += screen_header("Join channel")
     o += status()
     return o
 
@@ -2807,6 +3089,10 @@ def main(path, native_dir=None):
              "The invitation’s preview. Nothing is joined or sent until Join "
              "channel. Region and hops from the link apply silently, as on "
              "iOS."),
+            ("Channel card", screen_channel_card(),
+             "Boards with NFC. A tag carrying a channel invitation opens the "
+             "same screen; the warning names the card, since a card can be "
+             "lent or copied."),
             ("Add channel", screen_add_channel(),
              "Device › Channels › Add channel. One field takes a channel name "
              "or a umsh:ck: invitation, and the preview says which as you "
@@ -2821,17 +3107,60 @@ def main(path, native_dir=None):
              "Backspace from a top-level list lands on the rail; turning "
              "switches lists live, press enters. Add peer heads the list."),
             ("Add peer", screen_add_peer(),
-             "Takes a 44-character address or a umsh:n: invitation. The "
-             "address wraps at a fixed column; the avatar appears from the "
-             "first characters, and Message unlocks when it is complete."),
+             "Opens on Nearby: devices that also have Add peer open, nearest "
+             "first, by model and a color that is new each time the screen "
+             "opens. No name, address or avatar is sent or shown until both "
+             "people confirm the code. You is this device’s color. The arcs "
+             "show how close; the back-to-back glyph shows only on boards "
+             "with NFC."),
+            ("Asked to exchange", screen_exchange_request(),
+             "Pat’s T-Deck, drawn at the Pager’s size, when Juniper presses "
+             "its row. Pat knows who asked "
+             "by who is standing there. Not now declines; nothing else is "
+             "sent."),
+            ("Compare", screen_exchange_code(),
+             "Both screens show the same six digits only if nobody is in the "
+             "middle. Names still have not been sent. Turning moves between "
+             "the buttons."),
+            ("Waiting", screen_exchange_code("waiting"),
+             "After Same, until the other side presses Same too. Then both "
+             "devices send their addresses and names, save each other, and "
+             "open the peer’s page with Message focused. Leaving here "
+             "cancels."),
+            ("Codes differ", screen_exchange_code("differ"),
+             "Either side pressing Different lands both here, with nothing "
+             "sent and nothing saved. Try again goes back to Nearby."),
+            ("After a tap", screen_tapped(),
+             "Boards with NFC. Holding two devices back to back, both on Add "
+             "peer, "
+             "exchanges contacts with no code: the touch is the agreement. "
+             "Both land here, saved. Forget on the peer’s page undoes a "
+             "mistaken tap."),
+            ("Enter an address", screen_enter_address(),
+             "Add peer › Enter an address. Takes a 44-character address or a "
+             "umsh:n: invitation. The address wraps at a fixed column; the "
+             "avatar appears from the first characters, and Message unlocks "
+             "when it is complete."),
             ("Peer detail", screen_peer_detail(),
              "The full address fits on one line. One focusable list of "
              "readouts and actions follows; Forget is last and asks to "
-             "confirm."),
+             "confirm. Share contact sends the peer to a chat."),
             ("Share", screen_share(),
              "A version-4 QR at about 5 px per module, sized for scanning "
              "rather than type. Turning on Shows switches between the "
-             "identity and joined channels. The pattern is illustrative."),
+             "identity and joined channels. The pattern is illustrative. "
+             "On boards with NFC, a phone tapping the device while this is "
+             "open reads the same link; Add peer never serves it."),
+            ("Contact in a chat", screen_contact_in_chat(),
+             "A message whose whole body is a umsh:n: link renders as a "
+             "contact card, as invites do for channels. Pressing it opens "
+             "the peer’s page."),
+            ("Introduced peer", screen_introduced(),
+             "Says who sent the contact. Save peer keeps it; Message works "
+             "without saving."),
+            ("Share contact", screen_share_contact(),
+             "From a peer’s page. Picks a chat; the contact goes there as an "
+             "ordinary message."),
         ]),
         ("Device, power and first run", [
             ("Device", screen_device(),

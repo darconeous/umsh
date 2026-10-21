@@ -29,6 +29,70 @@ Maintenance actions should not compete visually with messaging.
   can prove it), and failed. Never invent a stronger delivery claim.
 - Provide an explicit cancel path for queued work when technically possible.
 
+## Adding peers
+
+Every communicator adds peers without anyone typing an address. A board
+without a feature, such as NFC, leaves out the parts that use it and nothing
+else changes. The screens are in the
+[T-LoRa Pager mockups](../hardware/mockups/tlora-pager-messenger.svg),
+Peers section.
+
+**Add peer** heads the Peers list. It opens on **Nearby**, followed by
+**Enter an address** and **Show my code**.
+
+| | |
+|---|---|
+| ![Add peer](../hardware/mockups/tlora-pager-native/34-add-peer.png) | ![Asked to exchange](../hardware/mockups/tlora-pager-native/35-asked-to-exchange.png) |
+
+- **Nearby** lists the devices that also have Add peer open, nearest first.
+  A device is discoverable only while this screen is open.
+- **Nothing identifying is sent before both people agree.** Each row shows
+  only the device's model and a color, never a name, address, hint or
+  avatar. The color comes from a session key made fresh each time Add peer
+  opens, so it identifies nothing afterward. The header shows this device's
+  own color beside **You**, so two people holding the same model can tell
+  which row is whose.
+- The person is the identification. Pressing a row asks that device to
+  exchange; its holder sees **Exchange contacts?** and knows who asked by
+  who is standing there.
+
+| | |
+|---|---|
+| ![Compare](../hardware/mockups/tlora-pager-native/36-compare.png) | ![Waiting](../hardware/mockups/tlora-pager-native/37-waiting.png) |
+
+- After **Exchange**, both screens show a six-digit code. The codes match
+  only if nobody is in the middle, and both people must press **Same**.
+- Only after both press Same do the devices send their addresses and
+  names. Each saves the other and opens the peer's page with Message
+  focused.
+- **Different** on either side ends it for both: nothing has been sent and
+  nothing is saved. Leaving the code screen cancels the same way.
+
+![Codes differ](../hardware/mockups/tlora-pager-native/38-codes-differ.png)
+
+**Tap.** On boards with NFC, holding two devices back to back while both
+have Add peer open exchanges contacts with no code: the touch is the
+agreement. Both land on a saved card with Message and Done. A tag carrying a
+channel invitation opens Join channel, naming the card in its warning. A
+phone tapping the device reads its link only while Show my code is open;
+Add peer never serves it.
+
+| | |
+|---|---|
+| ![After a tap](../hardware/mockups/tlora-pager-native/39-after-a-tap.png) | ![Channel card](../hardware/mockups/tlora-pager-native/30-channel-card.png) |
+
+**Introductions.** A message whose whole body is a `umsh:n:` link is a
+contact card, as an invitation is for a channel. Pressing it opens the
+peer's page, which says who sent it and offers Save peer. A peer's page has
+**Share contact**, which sends that contact to a chosen chat.
+
+| | |
+|---|---|
+| ![Contact in a chat](../hardware/mockups/tlora-pager-native/43-contact-in-a-chat.png) | ![Introduced peer](../hardware/mockups/tlora-pager-native/44-introduced-peer.png) |
+
+**Enter an address** still takes a 44-character address or a `umsh:n:`
+invitation, for when nobody is nearby.
+
 ## Keyboard and auxiliary controls
 
 Use hardware navigation controls for focus and scrolling; use the keyboard for
