@@ -14,6 +14,15 @@
 //! Each item is the record's key, after its length, then the record. A free
 //! slot's item is empty.
 //!
+//! The partition's first sector is the store's header: [`HEADER`], the
+//! store's mark and its format, and nothing else. The map keeps the rest.
+//! `sequential-storage` keeps no mark of its own—it takes a page whose
+//! first word is half zeros to be one of its own—so a partition holding
+//! anything else would be read item by item before it failed to mount.
+//! The header decides it in one read instead: a partition without one is
+//! not this store's, and nothing past it is read. An erased header is a
+//! partition never used, and is written once the map in it mounts.
+//!
 //! The map's calls are asynchronous, but over a blocking flash driver each
 //! finishes on its first poll. The store polls each once, and treats one
 //! that has not finished as a failed write.
@@ -38,6 +47,21 @@ use crate::record::StoreError;
 /// The chat store kept in flash.
 pub type FlashMapStore<F> = MemoryStore<FlashMap<F>>;
 
+/// The start of a partition holding this store: its mark, then the
+/// version of its format.
+const HEADER: [u8; 8] = [b'U', b'C', b'H', b'T', 0, 0, 0, 1];
+
+/// What a partition's header says of it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Header {
+    /// This store, in this format.
+    Ours,
+    /// Erased: a partition never used.
+    Erased,
+    /// Anything else: not this store, or not in this format.
+    Foreign,
+}
+
 /// Slots whose place in flash the map remembers, so that recycling a page
 /// does not search for each of its items.
 const CACHED_SLOTS: usize = 4096;
@@ -45,6 +69,9 @@ const CACHED_SLOTS: usize = 4096;
 /// A store's records, kept in a `sequential-storage` map on `F`.
 pub struct FlashMap<F: NorFlash> {
     map: Option<MapStorage<u32, F, HeapKeyPointerCache<u32>>>,
+    /// Where the header sector starts.
+    header: u32,
+    /// The map's part of the partition: all of it after the header.
     range: Range<u32>,
     /// Where items are laid out on their way to and from flash.
     buffer: &'static mut [u8],
@@ -59,15 +86,18 @@ pub struct FlashMap<F: NorFlash> {
 }
 
 impl<F: NorFlash> FlashMap<F> {
-    /// The map in `range` of `flash`, read and written through `buffer`.
+    /// The store in `range` of `flash`, read and written through
+    /// `buffer`: its header in the first sector, and the map in the rest.
     ///
     /// `buffer` holds the largest item: a message's record with its key,
     /// about 1.8 KB. Some drivers want it word-aligned, and in memory they
     /// can write from.
     pub fn new(flash: F, range: Range<u32>, buffer: &'static mut [u8]) -> Self {
+        let header = range.start;
         let mut map = Self {
             map: None,
-            range,
+            header,
+            range: header + F::ERASE_SIZE as u32..range.end,
             buffer,
             slots: BTreeMap::new(),
             free: Vec::new(),
@@ -94,6 +124,28 @@ impl<F: NorFlash> FlashMap<F> {
 
     fn map(&mut self) -> &mut MapStorage<u32, F, HeapKeyPointerCache<u32>> {
         self.map.as_mut().expect("the map is open")
+    }
+
+    /// What the header sector says of the partition.
+    fn header(&mut self) -> Result<Header, StoreError> {
+        let mut bytes = alloc::vec![0u8; HEADER.len().next_multiple_of(F::READ_SIZE)];
+        let at = self.header;
+        now(self.map().flash().read(at, &mut bytes))?.map_err(|_| StoreError::Io)?;
+        Ok(if bytes.iter().all(|&byte| byte == 0xFF) {
+            Header::Erased
+        } else if bytes.starts_with(&HEADER) {
+            Header::Ours
+        } else {
+            Header::Foreign
+        })
+    }
+
+    /// Write the header into its erased sector.
+    fn write_header(&mut self) -> Result<(), StoreError> {
+        let mut bytes = alloc::vec![0xFF; HEADER.len().next_multiple_of(F::WRITE_SIZE)];
+        bytes[..HEADER.len()].copy_from_slice(&HEADER);
+        let at = self.header;
+        now(self.map().flash().write(at, &bytes))?.map_err(|_| StoreError::Io)
     }
 
     fn store(&mut self, slot: u32, item: &[u8]) -> Result<(), StoreError> {
@@ -136,6 +188,11 @@ impl<F: NorFlash> Durable for FlashMap<F> {
     }
 
     fn read(&mut self, each: &mut dyn FnMut(&[u8], &[u8])) -> Result<(), StoreError> {
+        let header = self.header()?;
+        if header == Header::Foreign {
+            return Err(StoreError::Corrupt);
+        }
+
         // A fresh cache: what the old one remembers may predate a power
         // cut.
         let map = self.map.take().expect("the map is open");
@@ -168,11 +225,20 @@ impl<F: NorFlash> Durable for FlashMap<F> {
                 _ => self.free.push(slot),
             }
         }
+        if header == Header::Erased {
+            self.write_header()?;
+        }
         Ok(())
     }
 
     fn clear(&mut self) -> Result<(), StoreError> {
+        // The header goes last: until the map is erased, the partition
+        // must still read as not this store's.
         now(self.map().erase_all())?.map_err(error)?;
+        let at = self.header;
+        now(self.map().flash().erase(at, at + F::ERASE_SIZE as u32))?
+            .map_err(|_| StoreError::Io)?;
+        self.write_header()?;
         self.slots.clear();
         self.free.clear();
         self.next_slot = 0;
@@ -389,6 +455,91 @@ mod tests {
     #[test]
     fn conformance() {
         conformance::run(&mut Flash);
+    }
+
+    /// A flash that counts its reads.
+    struct Counted {
+        flash: RamFlash,
+        reads: usize,
+    }
+
+    impl ErrorType for Counted {
+        type Error = RamFlashError;
+    }
+
+    impl ReadNorFlash for Counted {
+        const READ_SIZE: usize = RamFlash::READ_SIZE;
+
+        async fn read(&mut self, offset: u32, bytes: &mut [u8]) -> Result<(), Self::Error> {
+            self.reads += 1;
+            self.flash.read(offset, bytes).await
+        }
+
+        fn capacity(&self) -> usize {
+            self.flash.capacity()
+        }
+    }
+
+    impl NorFlash for Counted {
+        const WRITE_SIZE: usize = RamFlash::WRITE_SIZE;
+        const ERASE_SIZE: usize = RamFlash::ERASE_SIZE;
+
+        async fn erase(&mut self, from: u32, to: u32) -> Result<(), Self::Error> {
+            self.flash.erase(from, to).await
+        }
+
+        async fn write(&mut self, offset: u32, bytes: &[u8]) -> Result<(), Self::Error> {
+            self.flash.write(offset, bytes).await
+        }
+    }
+
+    impl MultiwriteNorFlash for Counted {}
+
+    /// What another firmware left: no erased word, and every word's
+    /// first byte more than half zeros, as `sequential-storage` takes for
+    /// one of its own pages.
+    fn foreign() -> RamFlash {
+        RamFlash::from_bytes((0..SIZE).map(|at| (at % 251) as u8 & 0x3C).collect())
+    }
+
+    /// A partition holding something else is refused on its header's one
+    /// read, not read item by item first.
+    #[test]
+    fn a_partition_holding_something_else_is_refused_at_once() {
+        let mut map = FlashMap::new(
+            Counted {
+                flash: foreign(),
+                reads: 0,
+            },
+            0..SIZE as u32,
+            buffer(),
+        );
+        assert_eq!(map.read(&mut |_, _| {}), Err(StoreError::Corrupt));
+        assert_eq!(map.flash_mut().reads, 1);
+    }
+
+    /// Cleared, a partition that held something else mounts as this
+    /// store's from then on.
+    #[test]
+    fn a_cleared_partition_mounts_as_this_stores() {
+        let mut store = FlashMapStore::mount_or_clear(
+            FlashMap::new(foreign(), 0..SIZE as u32, buffer()),
+            Quota::DEFAULT,
+        )
+        .unwrap();
+        let bytes = store.durable_mut().flash_mut().bytes().to_vec();
+        assert!(bytes.starts_with(&HEADER));
+        assert_eq!(mount(RamFlash::from_bytes(bytes)).usage(), store.usage());
+    }
+
+    /// A partition never used mounts without an erase: its header is
+    /// written, and nothing else.
+    #[test]
+    fn an_erased_partition_mounts_without_an_erase() {
+        let mut store = mount(RamFlash::new(SIZE));
+        let flash = store.durable_mut().flash_mut();
+        assert_eq!(flash.spent(), HEADER.len() / RamFlash::WRITE_SIZE);
+        assert!(flash.bytes().starts_with(&HEADER));
     }
 
     /// The store mounted again from the flash alone has what it had.
