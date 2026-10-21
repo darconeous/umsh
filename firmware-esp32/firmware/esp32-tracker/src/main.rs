@@ -3245,7 +3245,7 @@ async fn main(spawner: Spawner) {
         );
         spawner.spawn(tdeck::input::press_task(press).unwrap());
         spawner.spawn(tdeck::input::keyboard_task(i2c_bus).unwrap());
-        spawner.spawn(tdeck::input::touch_task(i2c_bus).unwrap());
+        spawner.spawn(tdeck::input::touch_task(i2c_bus, peripherals.GPIO16).unwrap());
         spawner.spawn(tdeck::heartbeat_task(rtc, sleep.deep_sleep).unwrap());
     }
     #[cfg(feature = "board-tlora-pager")]

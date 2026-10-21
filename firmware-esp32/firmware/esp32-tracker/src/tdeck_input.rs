@@ -363,8 +363,21 @@ const TOUCH_PROBE_GAP: Duration = Duration::from_millis(250);
 
 type TouchPanel = Gt911<board::I2cHandle>;
 
+/// How long INT is driven high to wake a sleeping controller (§7.5).
+const TOUCH_WAKE: Duration = Duration::from_millis(8);
+
 #[embassy_executor::task]
-pub async fn touch_task(bus: &'static board::I2cBus) {
+pub async fn touch_task(bus: &'static board::I2cBus, mut int: peripherals::GPIO16<'static>) {
+    // The controller is reset only by its own power-on, so one put to
+    // sleep at shutdown still sleeps after the S3 boots again, and answers
+    // no probe until INT wakes it.
+    drop(Output::new(
+        int.reborrow(),
+        Level::High,
+        OutputConfig::default(),
+    ));
+    Timer::after(TOUCH_WAKE).await;
+    drop(Input::new(int, InputConfig::default()));
     let mut panel = None;
     select(run_touch(bus, &mut panel), STOP_TOUCH.wait()).await;
     // The controller keeps power through deep sleep.

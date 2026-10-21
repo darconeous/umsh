@@ -392,6 +392,11 @@ Writing `0x05` to the command register `0x8040` puts the GT911 to sleep;
 driving INT high for a few milliseconds wakes it. LilyGoLib drives INT high for
 8 ms before probing, then returns it to an input.
 
+Only the RC power-on resets the controller, and it stays powered while the
+switch is on. A controller put to sleep before a deep-sleep wake, a reset, or a
+flash is still asleep when the S3 boots again, and answers no probe until INT
+wakes it.
+
 ### 7.6 Presence
 
 LilyGO's wiki says the original T-Deck has no touchscreen; its schematic,
