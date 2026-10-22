@@ -220,7 +220,7 @@ During pairing mode, the device declares general discoverability,
 **MUST** include the ULCP GATT Service UUID in its advertising data, and
 **SHOULD** advertise its [model identifier](#ble-model-identifier) and the
 current `PROP_DEV_NAME`, shortening the name without
-splitting a UTF-8 code point where needed. A rename
+splitting a grapheme cluster where needed. A rename
 during the window updates these payloads. Names, including existing
 hardware-derived default suffixes, are a deliberate disclosure during
 pairing. Ordinary renaming does not disconnect a connected host.

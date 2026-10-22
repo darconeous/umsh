@@ -40,6 +40,8 @@ All human-readable text in UMSH—message bodies, node names, sender handles, ro
 - Inside a CoAP-style option, the option's length field defines the string boundary.
 - As trailing data after a `0xFF` marker, the string extends to the end of the payload (or to the start of a trailing signature).
 
+A sender that shortens a string to fit a byte limit (a node name, a sender handle, a region name) cuts it at an extended grapheme cluster boundary ([UAX #29](https://www.unicode.org/reports/tr29/)), so that an emoji sequence or a letter with combining marks is kept whole or dropped whole. A receiver given a string that ends mid-cluster renders what it can; it does not reject the string. Message fragmentation splits bodies at byte boundaries and is unaffected (see [Text Messages](app-text-messages.md)).
+
 ## Base58 Encoding
 
 Public keys and channel keys in human-facing contexts (URIs, QR codes) are encoded using Base58. This avoids visually ambiguous characters (0/O, l/1) and produces compact, copy-paste-friendly strings.
