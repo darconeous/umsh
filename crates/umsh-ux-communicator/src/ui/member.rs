@@ -179,7 +179,8 @@ pub(super) fn detail_head(
         back,
         super::avatar::view(avatar, AVATAR),
         VStack::new((
-            label::<32>(name, &font::BOLD, m.body, theme::TEXT),
+            // An emoji's name, a channel's title, runs past a name's 32.
+            label::<48>(name, &font::BOLD, m.body, theme::TEXT),
             label::<48>(about, &font::MEDIUM, m.small, theme::TEXT_TERTIARY),
         ))
         .with_spacing(0)

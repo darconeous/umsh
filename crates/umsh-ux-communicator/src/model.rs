@@ -269,7 +269,7 @@ impl ChatSummary {
         summary
     }
 
-    /// What a row that identifies the chat calls it: a channel as
+    /// What is shown to the right of the chat's avatar: a channel as
     /// [`channel_title`] says, and a peer by its name.
     #[must_use]
     pub fn title(&self) -> Title {
@@ -912,6 +912,12 @@ impl Invite {
     #[must_use]
     pub fn avatar(&self) -> AvatarStyle {
         AvatarStyle::channel(self.builtin, &self.name, self.tint)
+    }
+
+    /// What is shown beside [`Invite::avatar`]: see [`channel_title`].
+    #[must_use]
+    pub fn title(&self) -> Title {
+        channel_title(&self.name)
     }
 }
 

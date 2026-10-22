@@ -10,6 +10,8 @@ use embedded_graphics::pixelcolor::{Gray4, Rgb565, Rgb888};
 use heapless::String;
 use umsh_emoji::Shown;
 
+use crate::text::SharedText;
+
 include!(concat!(env!("OUT_DIR"), "/shapes.rs"));
 
 /// The outline of a peer's avatar, which says what kind of node it is.
@@ -160,11 +162,13 @@ impl AvatarStyle {
     }
 }
 
-/// A name as a row shows it: a copy of it, or text the firmware holds.
+/// A name as shown beside its avatar: a copy of it, text the firmware
+/// holds, or text shared with a message.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Title {
     Owned(String<32>),
     Static(&'static str),
+    Shared(SharedText),
 }
 
 impl Title {
@@ -184,6 +188,10 @@ impl Title {
                 let (before, after) = text.split_at(at);
                 (Self::copy(before), Self::copy(after))
             }
+            Self::Shared(text) => {
+                let (before, after) = text.split_at(at);
+                (Self::copy(before), Self::copy(after))
+            }
             Self::Static(text) => {
                 let (before, after) = text.split_at(at);
                 (Self::Static(before), Self::Static(after))
@@ -197,6 +205,7 @@ impl AsRef<str> for Title {
         match self {
             Self::Owned(text) => text,
             Self::Static(text) => text,
+            Self::Shared(text) => text,
         }
     }
 }
@@ -208,10 +217,11 @@ fn leading_emoji(name: &str) -> Option<(&str, Shown)> {
     (!matches!(shown, Shown::Text | Shown::Nothing)).then_some((first, shown))
 }
 
-/// What a row that identifies a channel calls it: its name without the
-/// emoji leading it, which the badge shows, and the spaces after. A name
-/// that is that emoji alone is called by the emoji's name, or a flag by
-/// its region's code. An emoji with neither keeps the name as it is.
+/// What is shown to the right of a channel's badge, wherever the two sit
+/// side by side: its name without the emoji leading it, which the badge
+/// shows, and the spaces after. A name that is that emoji alone is called
+/// by the emoji's name, or a flag by its region's code. An emoji with
+/// neither keeps the name as it is.
 #[must_use]
 pub fn channel_title(name: &str) -> Title {
     let Some((first, shown)) = leading_emoji(name) else {

@@ -621,8 +621,8 @@ this phone holds, and nothing heard on the air can add to it.
 
 ### Channel badge
 
-A channel's badge, and the title its rows show beside it, follow [Channel
-Badges and Titles](../channel-badges.md).
+A channel's badge, and the title shown beside it, follow [Channel Badges and
+Titles](../channel-badges.md).
 
 ### Channel list
 

@@ -18,7 +18,7 @@ use heapless::Vec;
 
 use super::label;
 use super::setting::{card, choice};
-use crate::avatar::AvatarStyle;
+use crate::avatar::{AvatarStyle, Title};
 use crate::board::Metrics;
 use crate::clock::{Local, MONTHS, WEEKDAYS, civil};
 use crate::model;
@@ -165,10 +165,11 @@ pub fn view(state: &State, chat: ChatId) -> impl View<Rgb565, State> + use<> {
         &mut placeholder,
         format_args!("Message {}", summary.map_or("", |s| &s.name)),
     );
+    let title = summary.map(model::ChatSummary::title);
     VStack::new((
         header(
             m,
-            summary.map_or("", |s| &s.name),
+            title.as_ref().map_or("", AsRef::as_ref),
             summary.map(|s| &s.avatar),
             summary.map(|s| s.kind),
         ),
@@ -339,7 +340,8 @@ pub(super) fn header(
         back(m, |s| _ = s.back()),
         HStack::new((
             avatar.map(|style| super::avatar::view(style, AVATAR)),
-            label::<32>(
+            // An emoji's name, a channel's title, runs past a name's 32.
+            label::<48>(
                 name,
                 &font::BOLD,
                 m.body,
@@ -637,12 +639,12 @@ fn bubble(
         reply: message.reply.clone(),
         card: message.card.as_ref().map(|card| match card {
             model::Card::Channel(invite) => Card {
-                name: invite.name.clone(),
+                name: invite.title(),
                 avatar: invite.avatar(),
                 kind: "Channel invite",
             },
             model::Card::Contact(contact) => Card {
-                name: contact.name.clone(),
+                name: Title::Shared(contact.name.clone()),
                 avatar: contact.avatar.clone(),
                 kind: "Contact",
             },
@@ -736,7 +738,7 @@ impl Look {
 /// contact introduces, and which of the two it is.
 #[derive(Clone)]
 struct Card {
-    name: SharedText,
+    name: Title,
     avatar: AvatarStyle,
     kind: &'static str,
 }

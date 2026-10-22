@@ -40,7 +40,7 @@ pub fn view(
     };
     VStack::new((
         header(m, "Join channel", None, None),
-        detail_head(m, &invite.avatar(), &invite.name, kind, false),
+        detail_head(m, &invite.avatar(), invite.title().as_ref(), kind, false),
         HStack::new((
             Image::new(&icon::WARNING)
                 .as_template()

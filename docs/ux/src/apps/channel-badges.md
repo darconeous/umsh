@@ -39,11 +39,13 @@ Lettering is made of whole grapheme clusters, never parts of one.
 3. A private channel that was never named has nothing to letter and shows its
    identifier instead.
 
-## Row title
+## Title
 
-A row that identifies a channel, such as a list row, a search result, a
-lock-screen card, or a notification, shows the channel's title beside its badge.
-The title is the name without what the badge already shows:
+Wherever a channel's badge sits to the left of its name on one row or
+widget, such as a list row, a search result, a lock-screen card, a
+notification, an invitation, or the conversation's header, the name is shown
+as the channel's title. The title is the name without what the badge already
+shows:
 
 1. A name that starts with an emoji drops that emoji, and any whitespace after
    it. Only the first emoji is dropped; any after it stay in the title.
@@ -54,8 +56,8 @@ The title is the name without what the badge already shows:
    written.
 3. Any other name is its own title.
 
-Editable fields, the conversation's own header, and text that quotes the name
-show the name as written. Search matches both the name and the title, so
+Anywhere else, such as an editable field or text that quotes the name, the
+name is shown as written. Search matches both the name and the title, so
 `fire` finds a channel named `🔥`.
 
 Two channels may share a title, as they may share a name. The badge and the
@@ -63,7 +65,7 @@ channel's details tell them apart.
 
 ## Examples
 
-| Name | Badge | Row title |
+| Name | Badge | Title |
 |---|---|---|
 | `Hot Topic` | `HT` | Hot Topic |
 | `hike-club` | `HC` | hike-club |
