@@ -12,6 +12,7 @@ use super::conversation::header;
 use super::label;
 use crate::board::Metrics;
 use crate::model::{BRIGHTNESS_LEVELS, State};
+use crate::nav::keys;
 use crate::{font, icon, theme};
 
 const INSET: u32 = 12;
@@ -183,6 +184,41 @@ pub(super) fn marked_row<A: Fn(&mut State) + Clone>(
     })
 }
 
+/// A row that only reads out `value`, `height` tall. It takes no focus:
+/// turning passes it by, and the list scrolls to show it.
+pub(super) fn readout(
+    m: &'static Metrics,
+    name: &'static str,
+    value: &str,
+    height: u32,
+) -> impl View<Rgb565, State> + use<> {
+    let look = RowLook {
+        name,
+        value: (!value.is_empty()).then(|| self::value(value)),
+        chevron: false,
+        level: None,
+        checked: None,
+        danger: false,
+        focused: false,
+        m,
+    };
+    Lazy::new(look, row_look)
+        .padding(Edges::Leading, INSET - 4)
+        .padding(Edges::Trailing, 10)
+        .frame()
+        .with_height(height - 2)
+        .padding(Edges::Horizontal, 4)
+        .padding(Edges::Vertical, 1)
+        .overlay(
+            Alignment::Bottom,
+            Rectangle
+                .foreground_color(theme::LINE)
+                .frame()
+                .with_height(1)
+                .padding(Edges::Leading, INSET),
+        )
+}
+
 /// What a row draws beside its switch: its check mark, name, value,
 /// chevron, and level.
 #[derive(Clone)]
@@ -277,7 +313,8 @@ fn level_look(level: u8, active: bool) -> impl View<Rgb565, ()> + use<> {
 }
 
 /// A screen under Device: its header, and `rows` in a list. Backspace goes
-/// back.
+/// back. Where nothing in it takes focus, the list takes it, as
+/// [`keys::READING`], and turning scrolls it.
 pub(super) fn page<V: View<Rgb565, State>>(
     m: &'static Metrics,
     title: &'static str,
@@ -285,7 +322,10 @@ pub(super) fn page<V: View<Rgb565, State>>(
 ) -> impl View<Rgb565, State> + use<V> {
     VStack::new((
         header(m, title, None, None),
-        super::list(rows).with_scroll_step(ROW),
+        super::list(rows)
+            .with_scroll_step(ROW)
+            .with_self_focus(true)
+            .focus_key(keys::READING),
     ))
     .with_spacing(0)
     .bound_focus(BoundaryBehavior::Stop)

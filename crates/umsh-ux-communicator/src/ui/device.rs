@@ -11,7 +11,7 @@ use embedded_graphics::pixelcolor::Rgb565;
 use heapless::String;
 
 use super::conversation::header;
-use super::setting::{End, card, choice, row};
+use super::setting::{End, card, choice, readout, row};
 use crate::board::Metrics;
 use crate::model::{BatteryReading, Bluetooth, ChatKind, RadioSettings, State};
 use crate::nav::{DevicePage, Screen, keys};
@@ -264,15 +264,7 @@ fn radio(
                     false,
                     ROW,
                 ),
-                row(
-                    m,
-                    "Airtime",
-                    keys::AIRTIME,
-                    |_| {},
-                    End::value(&airtime),
-                    false,
-                    ROW,
-                ),
+                readout(m, "Airtime", &airtime, ROW),
             ))
             .with_spacing(0),
         )

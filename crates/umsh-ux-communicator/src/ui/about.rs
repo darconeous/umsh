@@ -1,13 +1,12 @@
 //! About: what the device is and runs, and the credits for what its
 //! firmware is built from.
 
-use buoyant::focus::FocusKey;
 use buoyant::view::Lazy;
 use buoyant::view::prelude::*;
 use embedded_graphics::pixelcolor::Rgb565;
 use heapless::{String, Vec};
 
-use super::setting::{End, page, row};
+use super::setting::{End, page, readout, row};
 use crate::board::Metrics;
 use crate::model::State;
 use crate::nav::keys;
@@ -15,7 +14,6 @@ use crate::{font, models, theme};
 
 const ROW: u32 = 36;
 const INSET: u32 = 12;
-const RADIUS: u16 = 8;
 
 /// The firmware's parts, each with its license, ahead of the crates.
 const PARTS: [(&str, &str); 4] = [
@@ -64,19 +62,19 @@ pub fn view(state: &State) -> impl View<Rgb565, State> + use<> {
         &mut storage,
         format_args!("{} of {}", size(about.stored), size(about.quota)),
     );
-    let readout = |name, key, value: &str| row(m, name, key, |_| {}, End::value(value), false, ROW);
     page(
         m,
         "About",
         VStack::new((
-            readout("Name", keys::ABOUT_NAME, &state.status.device_name),
+            readout(m, "Name", &state.status.device_name, ROW),
             readout(
+                m,
                 "Model",
-                keys::ABOUT_MODEL,
                 models::name(state.board.model).unwrap_or_default(),
+                ROW,
             ),
-            readout("Firmware", keys::ABOUT_FIRMWARE, state.firmware),
-            readout("Storage", keys::ABOUT_STORAGE, &storage),
+            readout(m, "Firmware", state.firmware, ROW),
+            readout(m, "Storage", &storage, ROW),
             row(
                 m,
                 "Credits",
@@ -100,7 +98,7 @@ pub fn credits(state: &State) -> impl View<Rgb565, State> + use<> {
         .collect();
     let part = |i: usize| {
         let (name, body) = PARTS[i];
-        entry(m, name, body, keys::credit(i))
+        entry(m, name, body)
     };
     page(
         m,
@@ -121,39 +119,31 @@ pub fn credits(state: &State) -> impl View<Rgb565, State> + use<> {
             .padding(Edges::Vertical, 6),
             ForEach::<LICENSES>::new_vertical(&INDICES[..licenses.len()], move |&i| {
                 let (license, crates) = licenses[i];
-                entry(m, license, crates, keys::credit(PARTS.len() + i))
-            })
-            .keyed(|&i| keys::credit(PARTS.len() + i)),
+                entry(m, license, crates)
+            }),
         ))
         .with_spacing(0),
     )
 }
 
 /// An entry of the credits: `name`, and below it `body`'s lines, which
-/// wrap. It takes focus so the wheel passes through it.
+/// wrap. It takes no focus: the list scrolls through it.
+///
+/// Built from its text each time it is drawn ([`Lazy`]): kept in the
+/// render trees, every entry's would outweigh the rest of the screen.
 fn entry(
     m: &'static Metrics,
     name: &'static str,
     body: &'static str,
-    key: FocusKey,
 ) -> impl View<Rgb565, State> + use<> {
-    Button::new(
-        |_: &mut State| {},
-        move |button: ButtonState| Lazy::new((name, body, button.is_focused(), m), entry_look),
-    )
-    .focus_key(key)
+    Lazy::new((name, body, m), entry_look)
 }
 
-/// What an entry of the credits draws.
-///
-/// Built from its text each time it is drawn ([`Lazy`]): kept in the
-/// render trees, every entry's would outweigh the rest of the screen.
 fn entry_look(
-    &(name, body, focused, m): &(&'static str, &'static str, bool, &'static Metrics),
+    &(name, body, m): &(&'static str, &'static str, &'static Metrics),
 ) -> impl View<Rgb565, ()> + use<> {
-    let face = if focused { &font::BOLD } else { &font::REGULAR };
     VStack::new((
-        Text::new(name, face)
+        Text::new(name, &font::REGULAR)
             .with_font_size(m.body)
             .foreground_color(theme::TEXT),
         Text::new(body, &font::REGULAR)
@@ -163,35 +153,18 @@ fn entry_look(
     .with_alignment(HorizontalAlignment::Leading)
     .with_spacing(2)
     .flex_infinite_width(HorizontalAlignment::Leading)
-    .hint_background_color(if focused {
-        theme::FOCUS
-    } else {
-        theme::BACKGROUND
-    })
+    .hint_background_color(theme::BACKGROUND)
     .padding(Edges::Horizontal, INSET - 4)
     .padding(Edges::Vertical, 6)
-    .background(
-        Alignment::Center,
-        focused.then(|| {
-            ZStack::new((
-                RoundedRectangle::new(RADIUS).foreground_color(theme::FOCUS),
-                RoundedRectangle::new(RADIUS)
-                    .stroked(2)
-                    .foreground_color(theme::ACCENT),
-            ))
-        }),
-    )
     .padding(Edges::Horizontal, 4)
     .padding(Edges::Vertical, 1)
     .overlay(
         Alignment::Bottom,
-        (!focused).then(|| {
-            Rectangle
-                .foreground_color(theme::LINE)
-                .frame()
-                .with_height(1)
-                .padding(Edges::Leading, INSET)
-        }),
+        Rectangle
+            .foreground_color(theme::LINE)
+            .frame()
+            .with_height(1)
+            .padding(Edges::Leading, INSET),
     )
 }
 

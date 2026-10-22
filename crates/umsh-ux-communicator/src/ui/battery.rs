@@ -5,9 +5,8 @@ use buoyant::view::prelude::*;
 use embedded_graphics::pixelcolor::Rgb565;
 use heapless::String;
 
-use super::setting::{End, page, row};
+use super::setting::{page, readout};
 use crate::model::{Charge, State};
-use crate::nav::keys;
 
 const ROW: u32 = 36;
 
@@ -20,44 +19,21 @@ pub fn view(state: &State) -> impl View<Rgb565, State> + use<> {
         m,
         "Battery",
         VStack::new((
-            percent.map(|percent| {
-                row(
-                    m,
-                    "Level",
-                    keys::BATTERY_LEVEL,
-                    |_| {},
-                    End::value(&percent),
-                    false,
-                    ROW,
-                )
-            }),
+            percent.map(|percent| readout(m, "Level", &percent, ROW)),
             reading.charge.map(|charge| {
-                row(
+                readout(
                     m,
                     "Status",
-                    keys::BATTERY_CHARGE,
-                    |_| {},
-                    End::value(match charge {
+                    match charge {
                         Charge::Discharging => "On battery",
                         Charge::Charging => "Charging",
                         Charge::Charged => "Charged",
                         Charge::NotCharging => "Not charging",
-                    }),
-                    false,
+                    },
                     ROW,
                 )
             }),
-            voltage.map(|voltage| {
-                row(
-                    m,
-                    "Voltage",
-                    keys::BATTERY_VOLTAGE,
-                    |_| {},
-                    End::value(&voltage),
-                    false,
-                    ROW,
-                )
-            }),
+            voltage.map(|voltage| readout(m, "Voltage", &voltage, ROW)),
         ))
         .with_spacing(0),
     )

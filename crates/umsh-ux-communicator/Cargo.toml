@@ -23,10 +23,11 @@ fixture = ["dep:umsh-core", "dep:umsh-ulcp"]
 [dependencies]
 # The fork carries a prerendered anti-aliased font backend, line-limited
 # text, focus by key bound into app state, a text field whose text is kept
-# in storage the app chooses, images held by value, and building an app in
-# place. Branch `umsh` of
+# in storage the app chooses, images held by value, building an app in
+# place, and scroll views that take focus when nothing in them can. Branch
+# `umsh` of
 # darconeous/buoyant.
-buoyant = { git = "https://github.com/darconeous/buoyant", rev = "3ce6bdfcc58415e8232070c14cbe599c12d98cd3", default-features = false, features = ["embedded-graphics", "unicode-segmentation"] }
+buoyant = { git = "https://github.com/darconeous/buoyant", rev = "1ae30130978bc02a22bd134afab95bea7e07d16e", default-features = false, features = ["embedded-graphics", "unicode-segmentation"] }
 embedded-graphics = { version = "0.8", default-features = false }
 # The touches Buoyant takes.
 embedded-touch = "0.3"

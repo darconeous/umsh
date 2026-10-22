@@ -2892,7 +2892,9 @@ where
 fn bluetooth_turns_off_and_its_rows_go_with_it() {
     let mut app = app!();
     open_bluetooth(&mut app);
-    turn_to(&mut app, keys::BLUETOOTH_STATUS);
+    // The readouts take no focus: the next turn passes them by.
+    run(&mut app, &[Input::Turn(1)]);
+    assert_eq!(focus(app.state()), Some(keys::PAIRING));
     turn_to(&mut app, keys::BLUETOOTH_ENABLED);
     run(&mut app, &[Input::Press]);
     assert_eq!(app.state().node.bluetooth_enabled(), Some(false));
@@ -2913,7 +2915,6 @@ fn pairing_opens_shows_its_pin_and_pairings_clear_once_confirmed() {
     // The board reads the window open, and the PIN to give.
     app.state_mut().links.bluetooth.pin = Some(4_321);
     app.finalize_view();
-    turn_to(&mut app, keys::PAIRING_PIN);
     turn_to(&mut app, keys::CLEAR_PAIRINGS);
     run(&mut app, &[Input::Press]);
     assert_eq!(focus(app.state()), Some(keys::CLEAR_PAIRINGS_CANCEL));
@@ -2932,9 +2933,9 @@ fn pairing_opens_shows_its_pin_and_pairings_clear_once_confirmed() {
 fn gnss_shows_its_fix_while_on() {
     let mut app = app!();
     open_category(&mut app, keys::GNSS);
+    // Its readouts take no focus, so turning stays on the switch.
+    run(&mut app, &[Input::Turn(1)]);
     assert_eq!(focus(app.state()), Some(keys::GNSS_ENABLED));
-    turn_to(&mut app, keys::GNSS_SATELLITES);
-    turn_to(&mut app, keys::GNSS_ENABLED);
     run(&mut app, &[Input::Press]);
     assert_eq!(app.state().node.gnss_enabled(), Some(false));
     run(&mut app, &[Input::Turn(1)]);
@@ -2994,9 +2995,8 @@ fn battery_is_listed_once_the_board_reads_it() {
     assert!(listed(&mut app));
     turn_to(&mut app, keys::BATTERY);
     run(&mut app, &[Input::Press]);
-    // No level to focus, so its first reading.
-    assert_eq!(focus(app.state()), Some(keys::BATTERY_CHARGE));
-    turn_to(&mut app, keys::BATTERY_VOLTAGE);
+    // Nothing on it to focus: the screen takes focus as a whole.
+    assert_eq!(focus(app.state()), Some(keys::READING));
     // The voltage is news only while it is shown.
     let wavered = BatteryReading {
         millivolts: Some(4_170),
@@ -3011,15 +3011,15 @@ fn battery_is_listed_once_the_board_reads_it() {
 fn statistics_are_read_while_shown() {
     let mut app = app!();
     open_category(&mut app, keys::STATISTICS);
-    assert_eq!(focus(app.state()), Some(keys::statistic(0)));
+    assert_eq!(focus(app.state()), Some(keys::READING));
     // The fixture counts more traffic with each read.
     let sent = |app: &App<_, State, _>| app.state().node.statistics().sent;
     let opened = sent(&app);
-    turn_to(&mut app, keys::statistic(2));
-    turn_to(&mut app, keys::statistic(10));
-    // MeshCore is not kept here, so it is not shown.
-    run(&mut app, &[Input::Turn(1)]);
-    assert_eq!(focus(app.state()), Some(keys::statistic(10)));
+    // Turning scrolls, and focus stays with the screen.
+    for _ in 0..20 {
+        run(&mut app, &[Input::Turn(1)]);
+    }
+    assert_eq!(focus(app.state()), Some(keys::READING));
     run(&mut app, &[Input::Backspace]);
     assert_eq!(focus(app.state()), Some(keys::STATISTICS));
     assert_eq!(sent(&app), opened);
@@ -3031,18 +3031,16 @@ fn statistics_are_read_while_shown() {
 fn about_opens_credits_and_backs_out() {
     let mut app = app!();
     open_category(&mut app, keys::ABOUT);
-    assert_eq!(focus(app.state()), Some(keys::ABOUT_NAME));
-    turn_to(&mut app, keys::CREDITS);
+    // Credits is all there is to focus.
+    assert_eq!(focus(app.state()), Some(keys::CREDITS));
+    run(&mut app, &[Input::Turn(-1)]);
+    assert_eq!(focus(app.state()), Some(keys::CREDITS));
     run(&mut app, &[Input::Press]);
-    assert_eq!(focus(app.state()), Some(keys::credit(0)));
-    // The parts, then the licenses: the longest takes turns to pass.
-    turn_to(&mut app, keys::credit(4));
-    run(&mut app, &[Input::Turn(1)]);
-    assert_eq!(focus(app.state()), Some(keys::credit(4)));
-    for _ in 0..20 {
+    assert_eq!(focus(app.state()), Some(keys::READING));
+    for _ in 0..40 {
         run(&mut app, &[Input::Turn(1)]);
     }
-    assert!(focus(app.state()) > Some(keys::credit(4)));
+    assert_eq!(focus(app.state()), Some(keys::READING));
     run(&mut app, &[Input::Backspace]);
     assert_eq!(focus(app.state()), Some(keys::CREDITS));
     run(&mut app, &[Input::Backspace]);

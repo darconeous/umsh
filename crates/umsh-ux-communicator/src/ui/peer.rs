@@ -10,7 +10,7 @@ use embedded_graphics::pixelcolor::Rgb565;
 use heapless::String;
 
 use super::member::detail_head;
-use super::setting::{End, card, choice, row};
+use super::setting::{End, card, choice, readout, row};
 use crate::board::Metrics;
 use crate::model::{PeerDetail, PeerSummary, State, hops_text};
 use crate::nav::keys;
@@ -67,24 +67,8 @@ pub fn view(
                 false,
                 ROW,
             ),
-            row(
-                m,
-                "Route",
-                keys::PEER_ROUTE,
-                |_| {},
-                detail.route.as_deref().map_or(End::Nothing, End::value),
-                false,
-                ROW,
-            ),
-            row(
-                m,
-                "Last heard",
-                keys::PEER_HEARD,
-                |_| {},
-                End::value(&detail.heard),
-                false,
-                ROW,
-            ),
+            readout(m, "Route", detail.route.as_deref().unwrap_or_default(), ROW),
+            readout(m, "Last heard", &detail.heard, ROW),
             row(
                 m,
                 "Forward secrecy",

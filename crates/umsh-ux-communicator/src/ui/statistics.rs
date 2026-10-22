@@ -6,9 +6,8 @@ use buoyant::view::prelude::*;
 use embedded_graphics::pixelcolor::Rgb565;
 use heapless::{String, Vec};
 
-use super::setting::{End, page, row};
+use super::setting::{page, readout};
 use crate::model::{State, Statistics};
-use crate::nav::keys;
 
 const ROW: u32 = 36;
 
@@ -49,23 +48,13 @@ static INDICES: [usize; NAMES.len()] = {
 pub fn view(state: &State) -> impl View<Rgb565, State> + use<> {
     let m = state.metrics();
     let shown = readouts(&state.node.statistics(), state.node.radio().airtime);
-    let places: Vec<usize, { NAMES.len() }> = shown.iter().map(|(place, _)| *place).collect();
     page(
         m,
         "Statistics",
         ForEach::<{ NAMES.len() }>::new_vertical(&INDICES[..shown.len()], move |&i| {
             let (place, value) = &shown[i];
-            row(
-                m,
-                NAMES[*place],
-                keys::statistic(*place),
-                |_| {},
-                End::value(value),
-                false,
-                ROW,
-            )
-        })
-        .keyed(move |&i| keys::statistic(places[i])),
+            readout(m, NAMES[*place], value, ROW)
+        }),
     )
 }
 

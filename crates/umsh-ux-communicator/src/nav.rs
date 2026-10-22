@@ -52,8 +52,6 @@ pub mod keys {
     const ZONE_ROW: u32 = 0x1C00_0000;
     const NEARBY: u32 = 0x2000_0000;
     const AUTO_LOCK_ROW: u32 = 0x2400_0000;
-    const STATISTIC: u32 = 0x2500_0000;
-    const CREDIT: u32 = 0x2700_0000;
     /// Set in a share key that names a channel.
     const SHARE_CHANNEL: u32 = 0x0080_0000;
 
@@ -79,11 +77,9 @@ pub mod keys {
     pub const SAVE_PEER: FocusKey = FocusKey(0x0700_0002);
     /// The Peers list's Add peer, which heads it.
     pub const ADD_PEER: FocusKey = FocusKey(0x0A00_0000);
-    /// A saved peer's screen: its actions and readouts, in order, and
-    /// Forget's confirmation.
+    /// A saved peer's screen: its actions, in order, and Forget's
+    /// confirmation.
     pub const PEER_MESSAGE: FocusKey = FocusKey(0x0C00_0000);
-    pub const PEER_ROUTE: FocusKey = FocusKey(0x0C00_0001);
-    pub const PEER_HEARD: FocusKey = FocusKey(0x0C00_0002);
     pub const PEER_SECRECY: FocusKey = FocusKey(0x0C00_0003);
     pub const PEER_PING: FocusKey = FocusKey(0x0C00_0004);
     pub const PEER_FORGET: FocusKey = FocusKey(0x0C00_0005);
@@ -138,41 +134,28 @@ pub mod keys {
     pub const BATTERY: FocusKey = FocusKey(DEVICE | 11);
     pub const STATISTICS: FocusKey = FocusKey(DEVICE | 12);
     pub const ABOUT: FocusKey = FocusKey(DEVICE | 13);
-    /// The About screen's rows, in order.
-    pub const ABOUT_NAME: FocusKey = FocusKey(0x2600_0000);
-    pub const ABOUT_MODEL: FocusKey = FocusKey(0x2600_0001);
-    pub const ABOUT_FIRMWARE: FocusKey = FocusKey(0x2600_0002);
-    pub const ABOUT_STORAGE: FocusKey = FocusKey(0x2600_0003);
-    pub const CREDITS: FocusKey = FocusKey(0x2600_0004);
-    /// The Battery screen's readouts, in order.
-    pub const BATTERY_LEVEL: FocusKey = FocusKey(0x2200_0000);
-    pub const BATTERY_CHARGE: FocusKey = FocusKey(0x2200_0001);
-    pub const BATTERY_VOLTAGE: FocusKey = FocusKey(0x2200_0002);
+    /// A Device screen with nothing in it to focus, as a whole: turning
+    /// scrolls it.
+    pub const READING: FocusKey = FocusKey(0x2800_0000);
+    /// About's Credits.
+    pub const CREDITS: FocusKey = FocusKey(0x2600_0000);
     /// The Display screen's rows, in order.
     pub const BRIGHTNESS: FocusKey = FocusKey(0x2300_0000);
     pub const AUTO_LOCK: FocusKey = FocusKey(0x2300_0001);
-    /// The Bluetooth screen's rows, in order, and Clear pairings'
+    /// The Bluetooth screen's actions, in order, and Clear pairings'
     /// confirmation.
     pub const BLUETOOTH_ENABLED: FocusKey = FocusKey(0x1E00_0000);
-    pub const BLUETOOTH_STATUS: FocusKey = FocusKey(0x1E00_0001);
-    pub const PAIRED: FocusKey = FocusKey(0x1E00_0002);
     pub const PAIRING: FocusKey = FocusKey(0x1E00_0003);
-    pub const PAIRING_PIN: FocusKey = FocusKey(0x1E00_0004);
     pub const CLEAR_PAIRINGS: FocusKey = FocusKey(0x1E00_0005);
     pub const CLEAR_PAIRINGS_CONFIRM: FocusKey = FocusKey(0x1E00_0006);
     pub const CLEAR_PAIRINGS_CANCEL: FocusKey = FocusKey(0x1E00_0007);
-    /// The GNSS screen's switch and readouts, in order.
+    /// The GNSS screen's switch.
     pub const GNSS_ENABLED: FocusKey = FocusKey(0x1F00_0000);
-    pub const GNSS_FIX: FocusKey = FocusKey(0x1F00_0001);
-    pub const GNSS_POSITION: FocusKey = FocusKey(0x1F00_0002);
-    pub const GNSS_ALTITUDE: FocusKey = FocusKey(0x1F00_0003);
-    pub const GNSS_SATELLITES: FocusKey = FocusKey(0x1F00_0004);
     /// The Clock screen's rows, in order.
     pub const CLOCK_AUTOMATIC: FocusKey = FocusKey(0x1A00_0000);
     pub const CLOCK_TIME: FocusKey = FocusKey(0x1A00_0001);
     pub const CLOCK_ZONE: FocusKey = FocusKey(0x1A00_0002);
     pub const CLOCK_24H: FocusKey = FocusKey(0x1A00_0003);
-    pub const CLOCK_SOURCE: FocusKey = FocusKey(0x1A00_0004);
     /// Date and time's Set.
     pub const SET_TIME: FocusKey = FocusKey(0x1A00_0005);
     /// The Keyboard screen's switches, in order.
@@ -206,13 +189,11 @@ pub mod keys {
     /// Shut down's confirmation.
     pub const SHUT_DOWN_CONFIRM: FocusKey = FocusKey(0x1600_0000);
     pub const SHUT_DOWN_CANCEL: FocusKey = FocusKey(0x1600_0001);
-    /// The Radio screen's switch, its Profile, its other switches, and its
-    /// readout.
+    /// The Radio screen's switch, its Profile, and its other switches.
     pub const RADIO_ENABLED: FocusKey = FocusKey(0x0E00_0005);
     pub const PROFILE: FocusKey = FocusKey(0x0E00_0000);
     pub const FORWARDING: FocusKey = FocusKey(0x0E00_0002);
     pub const SHARE_LOCATION: FocusKey = FocusKey(0x0E00_0003);
-    pub const AIRTIME: FocusKey = FocusKey(0x0E00_0004);
 
     /// A reaction in the actions menu's palette: any but the emotes is
     /// on More.
@@ -279,19 +260,6 @@ pub mod keys {
     #[must_use]
     pub const fn auto_lock_choice(index: usize) -> FocusKey {
         FocusKey(AUTO_LOCK_ROW | (index as u32 & !KIND))
-    }
-
-    /// One of the Statistics screen's readouts, by its place among all
-    /// it can show.
-    #[must_use]
-    pub const fn statistic(index: usize) -> FocusKey {
-        FocusKey(STATISTIC | (index as u32 & !KIND))
-    }
-
-    /// One of the Credits screen's entries, by its place among them.
-    #[must_use]
-    pub const fn credit(index: usize) -> FocusKey {
-        FocusKey(CREDIT | (index as u32 & !KIND))
     }
 
     /// A radio profile in the list of them, by its place there.
@@ -1243,19 +1211,11 @@ impl State {
         }
     }
 
-    /// Shows the battery's readings, the first focused.
+    /// Shows the battery's readings.
     pub fn open_battery(&mut self) {
-        let reading = self.battery;
-        let first = if reading.percent.is_some() {
-            keys::BATTERY_LEVEL
-        } else if reading.charge.is_some() {
-            keys::BATTERY_CHARGE
-        } else {
-            keys::BATTERY_VOLTAGE
-        };
         _ = self.screens.push(Screen::Device {
             page: DevicePage::Battery,
-            focus: FocusState::requesting(first),
+            focus: FocusState::requesting(keys::READING),
         });
     }
 
@@ -1334,7 +1294,7 @@ impl State {
     pub fn open_statistics(&mut self) {
         _ = self.screens.push(Screen::Device {
             page: DevicePage::Statistics,
-            focus: FocusState::requesting(keys::statistic(0)),
+            focus: FocusState::requesting(keys::READING),
         });
         self.settle();
     }
@@ -1343,7 +1303,7 @@ impl State {
     pub fn open_about(&mut self) {
         _ = self.screens.push(Screen::Device {
             page: DevicePage::About,
-            focus: FocusState::requesting(keys::ABOUT_NAME),
+            focus: FocusState::requesting(keys::CREDITS),
         });
     }
 
@@ -1351,7 +1311,7 @@ impl State {
     pub fn open_credits(&mut self) {
         _ = self.screens.push(Screen::Device {
             page: DevicePage::Credits,
-            focus: FocusState::requesting(keys::credit(0)),
+            focus: FocusState::requesting(keys::READING),
         });
     }
 

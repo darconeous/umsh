@@ -10,7 +10,7 @@ use embedded_graphics::pixelcolor::Rgb565;
 use heapless::{String, Vec};
 
 use super::conversation::header;
-use super::setting::{End, marked_row, row};
+use super::setting::{End, marked_row, readout, row};
 use super::{label, line};
 use crate::board::Metrics;
 use crate::clock_settings::{ClockPage, DateParts, Part, ZoneFind, matching};
@@ -141,17 +141,7 @@ fn main(state: &State) -> impl View<Rgb565, State> + use<> {
                     false,
                     ROW,
                 ),
-                source.map(|source| {
-                    row(
-                        m,
-                        "Last set from",
-                        keys::CLOCK_SOURCE,
-                        |_| {},
-                        End::value(&source),
-                        false,
-                        ROW,
-                    )
-                }),
+                source.map(|source| readout(m, "Last set from", &source, ROW)),
             ))
             .with_spacing(0),
         )

@@ -2,11 +2,11 @@
 backspace
 turn 2
 press
-turn 7
+turn 6
 shot device-links
 press
 shot bluetooth
-turn 5
+turn 2
 press
 shot bluetooth-clear
 backspace

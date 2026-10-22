@@ -5,7 +5,7 @@ use buoyant::view::prelude::*;
 use embedded_graphics::pixelcolor::Rgb565;
 use heapless::String;
 
-use super::setting::{End, card, choice, page, row};
+use super::setting::{End, card, choice, page, readout, row};
 use crate::board::Metrics;
 use crate::model::{Fix, GnssReading, State};
 use crate::nav::keys;
@@ -45,30 +45,17 @@ pub fn bluetooth(state: &State, confirm: bool) -> impl View<Rgb565, State> + use
             ),
             on.then(|| {
                 VStack::new((
-                    row(
+                    readout(
                         m,
                         "Phone",
-                        keys::BLUETOOTH_STATUS,
-                        |_| {},
-                        End::value(if reading.connected {
+                        if reading.connected {
                             "Connected"
                         } else {
                             "Not connected"
-                        }),
-                        false,
+                        },
                         ROW,
                     ),
-                    shows_pairing.then(|| {
-                        row(
-                            m,
-                            "Paired phones",
-                            keys::PAIRED,
-                            |_| {},
-                            End::value(&paired),
-                            false,
-                            ROW,
-                        )
-                    }),
+                    shows_pairing.then(|| readout(m, "Paired phones", &paired, ROW)),
                     shows_pairing.then(|| {
                         row(
                             m,
@@ -80,17 +67,7 @@ pub fn bluetooth(state: &State, confirm: bool) -> impl View<Rgb565, State> + use
                             ROW,
                         )
                     }),
-                    (!pin.is_empty()).then(|| {
-                        row(
-                            m,
-                            "PIN",
-                            keys::PAIRING_PIN,
-                            |_| {},
-                            End::value(&pin),
-                            false,
-                            ROW,
-                        )
-                    }),
+                    (!pin.is_empty()).then(|| readout(m, "PIN", &pin, ROW)),
                     shows_pairing.then(|| {
                         row(
                             m,
@@ -170,50 +147,23 @@ pub fn gnss(state: &State) -> impl View<Rgb565, State> + use<> {
             ),
             on.then(|| {
                 VStack::new((
-                    row(
+                    readout(
                         m,
                         "Fix",
-                        keys::GNSS_FIX,
-                        |_| {},
-                        End::value(match reading.fix {
+                        match reading.fix {
                             Fix::None => "Searching",
                             Fix::TwoD => "2D",
                             Fix::ThreeD => "3D",
-                        }),
-                        false,
+                        },
                         ROW,
                     ),
-                    texts.position.map(|position| {
-                        row(
-                            m,
-                            "Position",
-                            keys::GNSS_POSITION,
-                            |_| {},
-                            End::value(&position),
-                            false,
-                            ROW,
-                        )
-                    }),
-                    texts.altitude.map(|altitude| {
-                        row(
-                            m,
-                            "Altitude",
-                            keys::GNSS_ALTITUDE,
-                            |_| {},
-                            End::value(&altitude),
-                            false,
-                            ROW,
-                        )
-                    }),
-                    row(
-                        m,
-                        "Satellites",
-                        keys::GNSS_SATELLITES,
-                        |_| {},
-                        End::value(&texts.satellites),
-                        false,
-                        ROW,
-                    ),
+                    texts
+                        .position
+                        .map(|position| readout(m, "Position", &position, ROW)),
+                    texts
+                        .altitude
+                        .map(|altitude| readout(m, "Altitude", &altitude, ROW)),
+                    readout(m, "Satellites", &texts.satellites, ROW),
                 ))
                 .with_spacing(0)
             }),

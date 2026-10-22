@@ -10,5 +10,5 @@ backspace
 turn 1
 press
 shot peer
-turn 4
+turn 2
 shot peer-lower
