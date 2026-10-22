@@ -32,6 +32,7 @@ use umsh_ux_communicator::heapless::String;
 use umsh_ux_communicator::model::{
     self, ChatKind, ChatSummary, Details, Member, Message, NodeEvent, Presence, Sender,
 };
+use umsh_ux_communicator::picker::RecentText;
 use umsh_ux_communicator::text::{DraftText, SharedText, TextHeap};
 
 use crate::batch::{Batch, Committed, Subject};
@@ -988,6 +989,21 @@ impl<S: ChatStore> Chats<S> {
                 .store
                 .update_chat(ChatId(chat), ChatChange::Draft(draft));
         }
+    }
+
+    /// The character picker's recent picks, as last kept.
+    pub fn recent_picks(&self) -> RecentText {
+        let mut body = self.body.borrow_mut();
+        let kept = self.store.recent_picks(&mut body[..]).ok().flatten();
+        kept.and_then(|kept| core::str::from_utf8(kept).ok())
+            .and_then(|kept| RecentText::try_from(kept).ok())
+            .unwrap_or_default()
+    }
+
+    /// Keeps `picks` as the character picker's recent picks.
+    pub fn keep_recent_picks(&mut self, picks: &str) {
+        let record = Some(picks.as_bytes()).filter(|p| !p.is_empty());
+        _ = self.store.keep_recent_picks(record);
     }
 
     /// How `message` reached this device, and who reacted to it: this

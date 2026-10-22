@@ -18,6 +18,7 @@ use crate::model::{
     brightness_at, push_newest, word_match,
 };
 use crate::models;
+use crate::picker::RecentText;
 use crate::text::{DraftText, SharedText, TextHeap};
 use buoyant::view::{EditBuffer, EditText as _};
 use heapless::{String, Vec};
@@ -535,6 +536,8 @@ pub struct Store {
     share_location: Cell<bool>,
     transmit_power: Cell<i8>,
     keyboard: Cell<KeyboardSettings>,
+    /// The character picker's recent picks, as kept.
+    picks: RefCell<RecentText>,
     clock: Cell<ClockSettings>,
     brightness: Cell<u8>,
     /// Bluetooth and the GNSS receiver, on or off.
@@ -598,6 +601,7 @@ impl Store {
                 period: true,
                 light: true,
             }),
+            picks: RefCell::new(RecentText::new()),
             brightness: Cell::new(brightness_at(5)),
             bluetooth: Cell::new(true),
             gnss: Cell::new(true),
@@ -1372,6 +1376,14 @@ impl Node for Store {
         if let Some(row) = self.rows().iter_mut().find(|row| row.id == chat) {
             row.unread = false;
         }
+    }
+
+    fn recent_picks(&self) -> RecentText {
+        self.picks.borrow().clone()
+    }
+
+    fn keep_recent_picks(&self, picks: &str) {
+        *self.picks.borrow_mut() = RecentText::try_from(picks).unwrap_or_default();
     }
 
     fn save_draft(&self, chat: ChatId, text: &str) {

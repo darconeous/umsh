@@ -12,12 +12,6 @@
 
 use crate::board::KeyboardKind;
 
-/// What the character picker offers, while it offers only what the keys
-/// cannot type.
-pub const PICKER: [char; 16] = [
-    '#', '&', '%', '~', '(', ')', '[', ']', '{', '}', '<', '>', '|', '\\', '^', '`',
-];
-
 /// How soon a second tap locks a modifier, and a second space after a
 /// word types a period, in milliseconds.
 pub const DOUBLE_TAP_MS: u64 = 400;

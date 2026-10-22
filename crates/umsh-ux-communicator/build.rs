@@ -611,6 +611,16 @@ const ICONS: &[(&str, u32, f32, &[Layer])] = &[
             stroke("M2 2 L5 5", 1.4),
         ],
     ),
+    // The character picker's recently used characters.
+    (
+        "CLOCK",
+        18,
+        1.0,
+        &[
+            stroke("M-7 0 A7 7 0 1 0 7 0 A7 7 0 1 0 -7 0 Z", 1.5),
+            stroke("M0 -4 L0 0 L3 2", 1.5),
+        ],
+    ),
     // Shift and Alt in the strip: outlined while armed for one key,
     // filled with a bar beneath while locked. Alt is drawn as its key.
     ("SHIFT_ONCE", 20, 1.15, &[stroke(SHIFT, 1.5)]),

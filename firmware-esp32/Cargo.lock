@@ -182,7 +182,7 @@ dependencies = [
  "embedded-io 0.7.1",
  "embedded-io-async 0.7.0",
  "futures-intrusive",
- "heapless 0.9.3",
+ "heapless 0.8.0",
 ]
 
 [[package]]
@@ -213,7 +213,7 @@ checksum = "72f5acc6cb2ba439de613abc23857ec3d78374d8ed5ac84e9d11336e87da8649"
 [[package]]
 name = "buoyant"
 version = "0.8.0-alpha.1"
-source = "git+https://github.com/darconeous/buoyant?rev=02aa2d52c73a73985f10adb54b50bcee6834409b#02aa2d52c73a73985f10adb54b50bcee6834409b"
+source = "git+https://github.com/darconeous/buoyant?rev=3ce6bdfcc58415e8232070c14cbe599c12d98cd3#3ce6bdfcc58415e8232070c14cbe599c12d98cd3"
 dependencies = [
  "embedded-graphics",
  "embedded-graphics-core",

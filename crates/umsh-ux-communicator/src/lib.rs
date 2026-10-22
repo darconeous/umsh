@@ -39,6 +39,7 @@ pub mod lock;
 pub mod model;
 pub mod models;
 pub mod nav;
+pub mod picker;
 pub mod qr;
 pub mod text;
 pub mod theme;

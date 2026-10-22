@@ -62,6 +62,7 @@ pub fn run<H: Harness>(harness: &mut H) {
     remount(harness);
     power_cuts(harness);
     device_lists(harness);
+    recent_picks(harness);
     erase(harness);
 }
 
@@ -1116,6 +1117,28 @@ fn lost_edit<H: Harness>(harness: &mut H, step: CommitStep) {
             );
         }
     }
+}
+
+/// The recent picks are kept beside the chats until replaced or forgotten,
+/// and erasing forgets them.
+pub fn recent_picks<H: Harness>(harness: &mut H) {
+    let mut store = harness.fresh();
+    let mut out = [0u8; 64];
+    assert_eq!(store.recent_picks(&mut out).unwrap(), None);
+    store.keep_recent_picks(Some(b"a\nb")).unwrap();
+    harness.power_on(&mut store);
+    assert_eq!(store.recent_picks(&mut out).unwrap(), Some(&b"a\nb"[..]));
+    assert_eq!(
+        store.recent_picks(&mut [0u8; 2]),
+        Err(StoreError::BufferTooSmall)
+    );
+    store.keep_recent_picks(None).unwrap();
+    harness.power_on(&mut store);
+    assert_eq!(store.recent_picks(&mut out).unwrap(), None);
+    store.keep_recent_picks(Some(b"c")).unwrap();
+    store.erase().unwrap();
+    harness.power_on(&mut store);
+    assert_eq!(store.recent_picks(&mut out).unwrap(), None);
 }
 
 /// The device's lists are kept beside the chats until replaced or

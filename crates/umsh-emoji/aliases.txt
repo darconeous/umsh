@@ -1,0 +1,13 @@
+# Words an emoji is also found by in the picker, beside its CLDR name: the
+# emoji, then its words. The emoji must be in manifest.txt.
+😂 lol
+🤣 rofl
+👍 +1 yes
+👎 -1 no
+❤️ <3 love
+🙏 thanks please
+🎉 party tada
+👌 ok
+😮 wow
+🤷 shrug
+🤦 facepalm

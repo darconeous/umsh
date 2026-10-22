@@ -23,6 +23,7 @@ use umsh_ux_communicator::model::{
     Messages, NearbyId, Node, NodeEvent, PeerDetail, PeerEntry, PeerId, PeerSummary, Peers,
     RadioSettings, Reaction, Setting, ShareUri, Shareable,
 };
+use umsh_ux_communicator::picker::RecentText;
 use umsh_ux_communicator::text::TextHeap;
 
 use crate::chat::{ChannelCrypto, Chats as ChatHalf, Joined};
@@ -439,6 +440,14 @@ impl<P: LocalPort, S: ChatStore> Node for CommunicatorNode<P, S> {
 
     fn save_draft(&self, chat: ChatId, text: &str) {
         self.chats.borrow_mut().save_draft(chat, text);
+    }
+
+    fn recent_picks(&self) -> RecentText {
+        self.chats.borrow().recent_picks()
+    }
+
+    fn keep_recent_picks(&self, picks: &str) {
+        self.chats.borrow_mut().keep_recent_picks(picks);
     }
 
     fn details(&self, chat: ChatId, message: MessageId) -> Option<Details> {

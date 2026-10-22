@@ -133,6 +133,8 @@ struct Disk {
     channels: BTreeMap<[u8; 16], ChannelRecord>,
     /// The record the device keeps here of its own lists.
     device_lists: Option<Vec<u8>>,
+    /// The characters last picked, as the interface keeps them.
+    recent_picks: Option<Vec<u8>>,
 }
 
 impl Disk {
@@ -167,6 +169,7 @@ enum RecordKey {
     Peer([u8; 32]),
     Channel([u8; 16]),
     DeviceLists,
+    RecentPicks,
 }
 
 /// Records changed since they were last handed to the durable layer, in
@@ -1364,6 +1367,24 @@ impl<D: Durable> ChatStore for MemoryStore<D> {
         self.settle()
     }
 
+    fn recent_picks<'b>(&self, out: &'b mut [u8]) -> Result<Option<&'b [u8]>, StoreError> {
+        let Some(picks) = &self.disk.recent_picks else {
+            return Ok(None);
+        };
+        let out = out
+            .get_mut(..picks.len())
+            .ok_or(StoreError::BufferTooSmall)?;
+        out.copy_from_slice(picks);
+        Ok(Some(out))
+    }
+
+    fn keep_recent_picks(&mut self, record: Option<&[u8]>) -> Result<(), StoreError> {
+        self.writable()?;
+        self.disk.recent_picks = record.map(<[u8]>::to_vec);
+        self.dirty.mark(RecordKey::RecentPicks);
+        self.settle()
+    }
+
     fn interrupt(&mut self) -> Result<(), StoreError> {
         self.writable()?;
         let Disk {
@@ -1629,6 +1650,11 @@ mod tests {
     }
 
     #[test]
+    fn encoded_recent_picks() {
+        conformance::recent_picks(&mut Encoded);
+    }
+
+    #[test]
     fn encoded_wire_aliases() {
         conformance::wire_aliases(&mut Encoded);
     }
@@ -1776,6 +1802,11 @@ mod tests {
     #[test]
     fn device_lists() {
         conformance::device_lists(&mut Memory);
+    }
+
+    #[test]
+    fn recent_picks() {
+        conformance::recent_picks(&mut Memory);
     }
 
     #[test]

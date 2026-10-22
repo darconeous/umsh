@@ -12,6 +12,7 @@ use crate::clock::Local;
 use crate::keyboard::{Aids, Keyboard};
 use crate::lock::Lock;
 use crate::nav::{Screen, Unsent, keys};
+use crate::picker::{Picker, RecentText, Recents};
 use crate::text::{DraftText, SharedText, TextHeap};
 
 /// The most chats the list holds at once.
@@ -1116,6 +1117,12 @@ pub trait Node {
     /// of nothing but whitespace is no draft, and clears the one kept.
     fn save_draft(&self, chat: ChatId, text: &str);
 
+    /// The characters last picked in the character picker, as
+    /// [`Node::keep_recent_picks`] last kept them.
+    fn recent_picks(&self) -> RecentText;
+    /// Keeps `picks`: each pick's text, newest first, a line each.
+    fn keep_recent_picks(&self, picks: &str);
+
     /// Keeps `text`, sent now in reply to `reply_to` if it is a reply, as the
     /// newest message of `chat`, and returns the message as kept, or `None`
     /// when there is no room for it. With `forward_secret` it goes under a
@@ -1434,8 +1441,10 @@ pub struct State {
     pub ending: Option<Ending>,
     /// What keys type: the focused field's modifiers and aids.
     pub keyboard: Keyboard,
-    /// The character picker is open, with this character focused.
-    pub picker: Option<u8>,
+    /// The character picker, while it is open.
+    pub picker: Option<Picker>,
+    /// The characters last picked.
+    pub recents: Recents,
     /// A brief card for a setting a key changed.
     pub glance: Option<Glance>,
     /// The wheel is down, since this press began.
@@ -1499,7 +1508,7 @@ const GLANCE_MS: u64 = 1500;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Overlay {
     Ending(Ending),
-    Picker(u8),
+    Picker,
     Glance(Glance),
     Banner(Notice),
 }
@@ -1569,6 +1578,7 @@ impl State {
             ending: None,
             keyboard: Keyboard::new(board.controls.keyboard),
             picker: None,
+            recents: Recents::default(),
             glance: None,
             press: None,
             touch: None,
@@ -2064,12 +2074,35 @@ impl State {
 
     /// The battery is empty: the screen shows only its icon, `lit` or not.
     pub fn battery_empty(&mut self, lit: bool) {
+        self.save_recents();
         self.ending = Some(Ending::BatteryEmpty { lit });
     }
 
     /// The board is turning off as asked, and says so.
     pub fn shutting_down(&mut self) {
+        self.save_recents();
         self.ending = Some(Ending::ShuttingDown);
+    }
+
+    /// Hands the node the recent picks, if they changed since it last had
+    /// them.
+    fn save_recents(&mut self) {
+        if self.recents.save_at.take().is_some() {
+            self.node.keep_recent_picks(&self.recents.text());
+        }
+    }
+
+    /// Opens the character picker, on the recent picks.
+    pub fn open_picker(&mut self) {
+        let node = self.node;
+        self.recents.load(|| node.recent_picks());
+        self.picker = Some(Picker::default());
+    }
+
+    /// The picker's cells to a row, on this board.
+    #[must_use]
+    pub fn picker_columns(&self) -> u16 {
+        crate::ui::picker_columns(self.metrics()) as u16
     }
 
     /// When the screen next changes by itself, on the board's clock.
@@ -2081,6 +2114,7 @@ impl State {
             self.lock.deadline(),
             self.press.and_then(|p| p.hold_until),
             self.touch.and_then(|t| t.hold_until),
+            self.recents.save_at,
         ]
         .into_iter()
         .flatten()
@@ -2104,6 +2138,9 @@ impl State {
             press.held = self.hold();
             self.press = Some(press);
         }
+        if self.recents.save_at.is_some_and(|at| at <= now) {
+            self.save_recents();
+        }
     }
 
     /// What lies over the screen.
@@ -2111,7 +2148,7 @@ impl State {
     pub fn overlay(&self) -> Option<Overlay> {
         self.ending
             .map(Overlay::Ending)
-            .or(self.picker.map(Overlay::Picker))
+            .or(self.picker.as_ref().map(|_| Overlay::Picker))
             .or(self.glance.map(Overlay::Glance))
             .or(self.banner.map(|b| Overlay::Banner(b.notice)))
     }

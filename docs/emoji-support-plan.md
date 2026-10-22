@@ -10,8 +10,9 @@ listed in a committed manifest, so supporting more emoji means adding lines
 to that manifest, not changing code.
 
 Steps 1–3 of the [work order](#work-order) are implemented, apart from
-Device › About and retiring the reaction art. Input (step 4) and the spec
-edits and mockups (step 5) are not. The protocol-facing changes are
+Device › About and retiring the reaction art. Of step 4, the picker, its
+name filter, and recents are implemented; reaction **More** is not. The
+spec edits and mockups (step 5) are not. The protocol-facing changes are
 collected in [Protocol changes](#protocol-changes).
 
 ## Where things stand
@@ -176,7 +177,9 @@ nearest 1.2× the em of the text around it:
 | Small and secondary | 16–17 px | 12–14 px | 20 px / 16 px |
 | Body | 20 px | 16 px | 24 px / 20 px |
 
-Emoji may stand a little above and below their line. Anything drawn around
+An emoji is centered on its line, line gap included, so a line of emoji
+alone sits evenly in its bubble or row. Emoji may stand a little
+above and below their line. Anything drawn around
 text that they might reach, such as a field's outline, is drawn over the
 text rather than under it.
 
@@ -293,7 +296,7 @@ purpose-built subset was written. It lives in a small `no_std` crate,
 
 ### Buoyant (the fork)
 
-Buoyant's text was per `char`. The fork (`02aa2d5` on its `umsh` branch)
+Buoyant's text was per `char`. The fork (`3ce6bdf` on its `umsh` branch)
 lays out by cluster, behind a `unicode-segmentation` feature:
 
 - `FontMetrics::cluster_advance` and `cluster_rendered_size`, and
@@ -306,6 +309,8 @@ lays out by cluster, behind a `unicode-segmentation` feature:
 - `TextField` inserts, deletes, and moves the cursor by cluster. Backspace
   removes 👍🏽 whole. A splice that doesn't fit is refused whole, as it is
   now, so an emoji the 24-byte name field cannot hold simply doesn't go in.
+- `Key::Text` types a string at once, inserted whole or not at all: how
+  the picker inserts an emoji of several code points.
 
 The communicator's fonts are a `Typeface` (`umsh-ux-communicator`): a
 `PrerenderedFont` for text, with emoji beside it. For each cluster it tries
@@ -351,14 +356,24 @@ held the font's own "?" would not fit a 6- or 10-pixel cell.
 
 ## Sending
 
-- **The character picker** is built as the keyboard spec describes it.
-  Categories come from the manifest's CLDR groups, recents come first, and
-  the grid shows only what the board's set draws. The name filter matches
-  CLDR short names plus a few aliases (`+1`, `lol`). Names are English for
-  now; CLDR annotations make other languages a data change.
+- **The character picker** is built as the keyboard spec describes it. Its
+  tabs are recents, the manifest's nine CLDR groups, then the symbols,
+  currency signs, and accented letters the text fonts draw (a table in
+  `picker.rs`, named from Unicode). Each tab's run starts a row. A pick is
+  inserted whole, or not at all when the field is full (Buoyant's
+  `Key::Text`). The picker does not open in number fields.
+- **The name filter** matches CLDR short names plus the aliases in
+  `umsh-emoji/aliases.txt` (`+1`, `lol`, `<3`). Each typed word must begin
+  a word of the name. A match on the name's last word, the thing it names,
+  or on an alias, comes before a match on another word; otherwise manifest
+  order. Names are English for now; CLDR annotations make other languages a
+  data change.
 - **No skin-tone choice.** The set has no tones, so the picker offers none.
 - **Recents** are stored in the chat store, not as a setting: they are
-  frequent, local, and not configuration. Writes are debounced.
+  frequent, local, and not configuration. The last 20 are kept in a
+  recent-picks record as each pick's text, a line each, so they survive
+  manifest edits. Writes wait 5 s after a pick, and happen before the board
+  turns off.
 - **Reactions.** The six canonical reactions still send their tokens (`<3`,
   `+1`, …). A **More** cell at the end of the reaction palette opens the
   picker, and the reaction body is that emoji. A reaction received with any

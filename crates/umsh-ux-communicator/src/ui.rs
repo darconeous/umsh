@@ -192,7 +192,7 @@ fn overlay_view(state: &State, overlay: Overlay) -> impl View<Rgb565, State> + u
     let m = state.metrics();
     match_view!(overlay, {
         Overlay::Ending(end) => ending(state.metrics(), end),
-        Overlay::Picker(at) => typing::picker(state, at),
+        Overlay::Picker => typing::picker(state),
         Overlay::Glance(glance) => typing::glance(m, glance),
         Overlay::Banner(notice) => banner::view(state, notice),
     })

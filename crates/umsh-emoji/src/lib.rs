@@ -9,6 +9,9 @@
 //! glyph, the glyphs of its parts, a flag's region code, the placeholder,
 //! or text. A [`Cache`] inflates glyphs and keeps the ones last drawn.
 //!
+//! For a picker, [`GROUPS`] lists the glyphs by CLDR group, [`sequence`]
+//! gives what to send for one, and [`matching`] finds them by name.
+//!
 //! The art is Twemoji (<https://github.com/jdecked/twemoji>), licensed
 //! under CC BY 4.0, rasterized, color-reduced, and compressed here.
 
@@ -17,10 +20,12 @@
 mod cache;
 mod inflate;
 mod lookup;
+mod names;
 mod store;
 
 pub use cache::Cache;
 pub use lookup::{MAX_PARTS, Region, Shown, find, shown};
+pub use names::{Group, Match, matching, sequence, words};
 use store::Blocks;
 pub use store::{BLOCK, Glyph, Id, Store};
 

@@ -31,6 +31,10 @@ const VS16: u32 = 0xFE0F;
 
 struct Entry {
     sequence: Vec<u32>,
+    /// Its CLDR short name, lowercased.
+    name: String,
+    /// Its CLDR group.
+    group: String,
 }
 
 fn main() {
@@ -38,6 +42,7 @@ fn main() {
     let out = PathBuf::from(std::env::var("OUT_DIR").unwrap());
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=manifest.txt");
+    println!("cargo:rerun-if-changed=aliases.txt");
     println!("cargo:rerun-if-changed=twemoji/svg");
 
     let entries = manifest(&std::fs::read_to_string(dir.join("manifest.txt")).unwrap());
@@ -138,26 +143,81 @@ fn main() {
     )
     .unwrap();
     lookup(&mut tables, &entries);
+    let aliases = aliases(
+        &std::fs::read_to_string(dir.join("aliases.txt")).unwrap(),
+        &entries,
+    );
+    names(&mut tables, &entries, &aliases);
     std::fs::write(out.join("emoji.rs"), tables).unwrap();
 }
 
 /// The manifest's sequences, in order.
 fn manifest(text: &str) -> Vec<Entry> {
-    text.lines()
-        .filter(|line| !line.trim().is_empty() && !line.starts_with('#'))
-        .map(|line| {
-            let codes = line.split(';').next().unwrap();
-            let sequence: Vec<u32> = codes
-                .split_whitespace()
-                .map(|c| u32::from_str_radix(c, 16).expect("hex code point"))
-                .collect();
-            assert!(
-                !sequence.iter().any(|c| TONES.contains(c)),
-                "skin tones are drawn as their base: {line}"
-            );
-            Entry { sequence }
-        })
-        .collect()
+    let mut group = String::new();
+    let mut entries = Vec::new();
+    for line in text.lines() {
+        if let Some(name) = line.strip_prefix("# group:") {
+            group = name.trim().to_owned();
+        }
+        if line.trim().is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let (fields, comment) = line.split_once('#').expect("a comment with the name");
+        let codes = fields.split(';').next().unwrap();
+        let sequence: Vec<u32> = codes
+            .split_whitespace()
+            .map(|c| u32::from_str_radix(c, 16).expect("hex code point"))
+            .collect();
+        assert!(
+            !sequence.iter().any(|c| TONES.contains(c)),
+            "skin tones are drawn as their base: {line}"
+        );
+        assert!(!group.is_empty(), "under a group: {line}");
+        // The emoji, its version, then its name.
+        let name = comment
+            .split_whitespace()
+            .skip(2)
+            .collect::<Vec<_>>()
+            .join(" ");
+        entries.push(Entry {
+            sequence,
+            name: words(&name),
+            group: group.clone(),
+        });
+    }
+    entries
+}
+
+/// `name` as words to match, lowercased and split at spaces only.
+fn words(name: &str) -> String {
+    name.to_lowercase()
+        .replace([':', ',', '\u{201C}', '\u{201D}', '|'], " ")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// The words each entry is also found by, from `text`: an emoji and its
+/// words, a line each.
+fn aliases(text: &str, entries: &[Entry]) -> HashMap<usize, String> {
+    let bare = |s: &[u32]| -> Vec<u32> { s.iter().copied().filter(|&c| c != VS16).collect() };
+    let mut out = HashMap::new();
+    for line in text.lines() {
+        if line.trim().is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let (emoji, rest) = line.split_once(char::is_whitespace).unwrap();
+        let sequence: Vec<u32> = emoji.chars().map(u32::from).collect();
+        let id = entries
+            .iter()
+            .position(|e| bare(&e.sequence) == bare(&sequence))
+            .unwrap_or_else(|| panic!("aliases.txt: {emoji} is not in the manifest"));
+        assert!(
+            out.insert(id, words(rest)).is_none(),
+            "aliases.txt: {emoji} twice"
+        );
+    }
+    out
 }
 
 /// Where Twemoji keeps a sequence's art. It names most files without
@@ -345,6 +405,79 @@ fn nearest(centers: &[[f32; 4]], p: &[f32; 4]) -> (usize, f32) {
         .enumerate()
         .min_by(|a, b| a.1.total_cmp(&b.1))
         .unwrap()
+}
+
+/// What a picker shows and finds: each glyph's sequence as it is sent,
+/// its words, and the groups glyphs fall in.
+fn names(tables: &mut String, entries: &[Entry], aliases: &HashMap<usize, String>) {
+    let pool = |items: &mut dyn Iterator<Item = String>| -> (String, Vec<usize>) {
+        let mut pool = String::new();
+        let mut ends = Vec::new();
+        for item in items {
+            pool.push_str(&item);
+            ends.push(pool.len());
+        }
+        assert!(pool.len() <= usize::from(u16::MAX));
+        (pool, ends)
+    };
+    let (sequences, sequence_ends) = pool(&mut entries.iter().map(|e| {
+        e.sequence
+            .iter()
+            .map(|&c| char::from_u32(c).unwrap())
+            .collect()
+    }));
+    let (words, word_ends) =
+        pool(
+            &mut entries
+                .iter()
+                .enumerate()
+                .map(|(id, e)| match aliases.get(&id) {
+                    Some(aliases) => format!("{}|{aliases}", e.name),
+                    None => e.name.clone(),
+                }),
+        );
+    let mut groups: Vec<(&str, usize, usize)> = Vec::new();
+    for (id, entry) in entries.iter().enumerate() {
+        match groups.last_mut() {
+            Some((name, _, end)) if *name == entry.group => *end = id + 1,
+            _ => {
+                assert!(
+                    groups.iter().all(|g| g.0 != entry.group),
+                    "{} is split in the manifest",
+                    entry.group
+                );
+                groups.push((&entry.group, id, id + 1));
+            }
+        }
+    }
+    writeln!(
+        tables,
+        "/// Each glyph's sequence as it is sent, one after another.\n\
+         static SEQUENCES: &str = {sequences:?};\n\
+         /// Where each glyph's sequence ends in [`SEQUENCES`].\n\
+         static SEQUENCE_ENDS: [u16; {}] = {sequence_ends:?};\n\
+         /// Each glyph's words: its name, then after a `|` any aliases.\n\
+         static WORDS: &str = {words:?};\n\
+         /// Where each glyph's words end in [`WORDS`].\n\
+         static WORD_ENDS: [u16; {}] = {word_ends:?};",
+        entries.len(),
+        entries.len(),
+    )
+    .unwrap();
+    let groups: Vec<String> = groups
+        .iter()
+        .map(|(name, start, end)| format!("Group {{ name: {name:?}, start: {start}, end: {end} }}"))
+        .collect();
+    writeln!(
+        tables,
+        "/// How many groups the manifest has.\n\
+         pub const GROUP_COUNT: usize = {};\n\
+         /// The groups of the manifest, in its order.\n\
+         pub static GROUPS: [Group; GROUP_COUNT] = [{}];",
+        groups.len(),
+        groups.join(", ")
+    )
+    .unwrap();
 }
 
 /// The lookup table: each sequence without U+FE0F, as UTF-8, sorted, in

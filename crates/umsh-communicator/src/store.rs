@@ -78,6 +78,12 @@ pub trait ChatStore {
     /// Keeps `record` as the device's lists, or forgets them with `None`.
     fn keep_device_lists(&mut self, record: Option<&[u8]>) -> Result<(), StoreError>;
 
+    /// The record the interface keeps here of the characters it last
+    /// picked to type. Gone with everything else on [`ChatStore::erase`].
+    fn recent_picks<'b>(&self, out: &'b mut [u8]) -> Result<Option<&'b [u8]>, StoreError>;
+    /// Keeps `record` as the recent picks, or forgets them with `None`.
+    fn keep_recent_picks(&mut self, record: Option<&[u8]>) -> Result<(), StoreError>;
+
     /// Fails what each outbound message still awaited (see
     /// [`Delivery::interrupt`]), as a new session starts: no word on the
     /// last one's frames will be taken.

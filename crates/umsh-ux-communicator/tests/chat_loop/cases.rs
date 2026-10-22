@@ -10,7 +10,8 @@ use umsh_ux_communicator::board::{KeyboardKind, Unlock};
 use umsh_ux_communicator::buoyant;
 use umsh_ux_communicator::clock_settings::DateParts;
 use umsh_ux_communicator::input::{self, Arrow, Input};
-use umsh_ux_communicator::keyboard::{Latch, Modifier, PICKER};
+use umsh_ux_communicator::keyboard::{Latch, Modifier};
+use umsh_ux_communicator::picker::Pick;
 use umsh_ux_communicator::model::{
     ChannelAccess, ChannelEntry, ChatKind, ClockSource, Delivery, Direction, Ending, Exchange,
     ExchangeEnd, FoundKind,
@@ -2156,6 +2157,11 @@ fn caps_lock_and_alt_type_capitals_and_symbols() {
     assert_eq!(draft(app.state(), TRAIL_CREW), "HUT1q");
 }
 
+/// The pick the open picker has focused.
+fn picked(state: &State) -> Option<Pick> {
+    state.picker.as_ref()?.focused(state.recents.picks())
+}
+
 #[test]
 fn alt_then_space_opens_the_picker_and_a_press_types_from_it() {
     let mut app = app!();
@@ -2163,18 +2169,31 @@ fn alt_then_space_opens_the_picker_and_a_press_types_from_it() {
     run(&mut app, &keys_for("a"));
     run(&mut app, &tap(Modifier::Alt));
     run(&mut app, &[Input::Space]);
-    assert_eq!(app.state().picker, Some(0));
+    // With nothing picked yet, it opens on the first emoji.
+    assert_eq!(picked(app.state()), Some(Pick::Emoji(0)));
     run(&mut app, &[Input::Turn(1), Input::Press]);
-    assert_eq!(app.state().picker, None);
-    assert_eq!(draft(app.state(), TRAIL_CREW), format!("A{}", PICKER[1]));
+    assert!(app.state().picker.is_none());
+    let pick = Pick::Emoji(1).text();
+    assert_eq!(draft(app.state(), TRAIL_CREW), format!("A{pick}"));
     // The field is still being edited.
     run(&mut app, &keys_for("b"));
-    assert_eq!(draft(app.state(), TRAIL_CREW), format!("A{}b", PICKER[1]));
+    assert_eq!(draft(app.state(), TRAIL_CREW), format!("A{pick}b"));
+
+    // It opens next on what was picked, which the node keeps a little
+    // later.
+    run(&mut app, &tap(Modifier::Alt));
+    run(&mut app, &[Input::Space]);
+    assert_eq!(picked(app.state()), Some(Pick::Emoji(1)));
+    let now = tick(5000);
+    app.state_mut().expire(now);
+    assert_eq!(app.state().node.recent_picks().as_str(), format!("{pick}\n"));
+    run(&mut app, &[Input::Backspace]);
+    assert!(app.state().picker.is_none());
 
     // Space in the picker switches the keyboard light instead.
     run(&mut app, &tap(Modifier::Alt));
     run(&mut app, &[Input::Space, Input::Space]);
-    assert_eq!(app.state().picker, None);
+    assert!(app.state().picker.is_none());
     assert!(!app.state().node.keyboard().light);
     assert!(matches!(
         app.state().glance,
@@ -2183,12 +2202,39 @@ fn alt_then_space_opens_the_picker_and_a_press_types_from_it() {
 }
 
 #[test]
+fn letters_in_the_picker_find_by_name_and_backspace_takes_them_off() {
+    let mut app = app!();
+    open_trail_crew(&mut app);
+    run(&mut app, &keys_for("a"));
+    run(&mut app, &tap(Modifier::Alt));
+    run(&mut app, &[Input::Space]);
+    run(&mut app, &typed("<3"));
+    assert_eq!(app.state().picker.as_ref().unwrap().filter(), "<3");
+    let heart = Pick::of("\u{2764}").unwrap();
+    assert_eq!(picked(app.state()), Some(heart));
+    run(&mut app, &[Input::Enter]);
+    // Two code points, typed whole.
+    assert_eq!(draft(app.state(), TRAIL_CREW), "A\u{2764}\u{FE0F}");
+
+    run(&mut app, &tap(Modifier::Alt));
+    run(&mut app, &[Input::Space]);
+    run(&mut app, &typed("zq"));
+    assert_eq!(picked(app.state()), None);
+    run(&mut app, &[Input::Backspace, Input::Backspace]);
+    assert_eq!(app.state().picker.as_ref().unwrap().filter(), "");
+    // Back on the recent picks.
+    assert_eq!(picked(app.state()), Some(heart));
+    run(&mut app, &[Input::Backspace]);
+    assert!(app.state().picker.is_none());
+}
+
+#[test]
 fn alt_and_two_quick_spaces_switch_the_keyboard_light_anywhere() {
     let mut app = app!();
     // On the Chats list, with no field: Alt+Space alone does nothing.
     run(&mut app, &tap(Modifier::Alt));
     run(&mut app, &[Input::Space]);
-    assert_eq!(app.state().picker, None);
+    assert!(app.state().picker.is_none());
     assert!(app.state().node.keyboard().light);
     // Held Alt, then one-shot Alt, each with two quick spaces.
     quick(
@@ -2738,22 +2784,22 @@ fn rolling_up_a_part_of_the_date_adds_and_across_is_done_with_it() {
 
 #[test]
 fn the_picker_rolls_a_row_up_and_down_and_a_character_across() {
-    let columns = ui::picker_columns(&BOARD.metrics) as u8;
+    let columns = ui::picker_columns(&BOARD.metrics) as u16;
     let mut app = app!();
     open_trail_crew(&mut app);
     run(&mut app, &typed("a"));
     run(&mut app, &tap(Modifier::Alt));
     run(&mut app, &[Input::Space]);
-    assert_eq!(app.state().picker, Some(0));
+    assert_eq!(picked(app.state()), Some(Pick::Emoji(0)));
     run(&mut app, &[Input::Move(Arrow::Right)]);
-    assert_eq!(app.state().picker, Some(1));
+    assert_eq!(picked(app.state()), Some(Pick::Emoji(1)));
     run(&mut app, &[Input::Move(Arrow::Down)]);
-    assert_eq!(app.state().picker, Some(1 + columns));
+    assert_eq!(picked(app.state()), Some(Pick::Emoji(1 + columns)));
     run(&mut app, &[Input::Move(Arrow::Left), Input::Move(Arrow::Up)]);
-    assert_eq!(app.state().picker, Some(0));
+    assert_eq!(picked(app.state()), Some(Pick::Emoji(0)));
     // At an edge, it stays.
     run(&mut app, &[Input::Move(Arrow::Up), Input::Move(Arrow::Left)]);
-    assert_eq!(app.state().picker, Some(0));
+    assert_eq!(picked(app.state()), Some(Pick::Emoji(0)));
 }
 
 #[test]

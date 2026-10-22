@@ -33,6 +33,7 @@ pub(super) const MESSAGE_RECORD: u8 = 4;
 const PEER_RECORD: u8 = 5;
 const CHANNEL: u8 = 6;
 const DEVICE_LISTS: u8 = 7;
+const RECENT_PICKS: u8 = 8;
 
 /// The key of the record `key` names.
 pub(super) fn key(key: &RecordKey, out: &mut heapless::Vec<u8, KEY_MAX>) {
@@ -68,6 +69,7 @@ pub(super) fn key(key: &RecordKey, out: &mut heapless::Vec<u8, KEY_MAX>) {
             put(tag);
         }
         RecordKey::DeviceLists => put(&[DEVICE_LISTS]),
+        RecordKey::RecentPicks => put(&[RECENT_PICKS]),
     }
 }
 
@@ -211,6 +213,12 @@ pub(super) fn record(disk: &Disk, key: &RecordKey, out: &mut Vec<u8>) -> bool {
             };
             out.bytes(lists);
         }
+        RecordKey::RecentPicks => {
+            let Some(picks) = &disk.recent_picks else {
+                return false;
+            };
+            out.bytes(picks);
+        }
     }
     true
 }
@@ -231,6 +239,7 @@ fn restore_one(disk: &mut Disk, key: &[u8], record: &[u8]) -> Option<()> {
             }
         }
         DEVICE_LISTS => disk.device_lists = Some(record.to_vec()),
+        RECENT_PICKS => disk.recent_picks = Some(record.to_vec()),
         CHECKPOINT => {
             let conversation = input.conversation()?;
             let checkpoint = StreamCheckpoint {

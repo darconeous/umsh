@@ -25,7 +25,7 @@ use buoyant::render::AnimatedJoin;
 use buoyant::view::{EditBuffer, EditText, ViewLayout};
 use embedded_touch::{Phase, Tool, Touch, TouchPoint};
 
-use crate::keyboard::{Field, Modifier, PICKER, Spaced, starts_sentence};
+use crate::keyboard::{Field, Modifier, Spaced, starts_sentence};
 use crate::model::{HOLD_MS, Press, State, TouchHold};
 use crate::nav::keys;
 
@@ -381,9 +381,10 @@ where
                     press(app, Key::Character(' '));
                 }
                 Spaced::Picker => {
-                    // Only into a field being edited.
-                    if state.keyboard.active() {
-                        state.picker = Some(0);
+                    // Only into a field being edited, that takes more
+                    // than numbers.
+                    if state.keyboard.active() && state.keyboard.field() != Some(Field::Number) {
+                        state.open_picker();
                     }
                 }
                 Spaced::Light => state.switch_keyboard_light(now),
@@ -448,8 +449,9 @@ fn accepts(state: &State, c: char) -> bool {
 }
 
 /// An input while the character picker is open: the wheel walks it, a
-/// press or Enter types the focused character, Backspace closes it, and
-/// Space switches the keyboard light.
+/// press or Enter types the focused pick, letters type a name to find
+/// one by, Backspace takes a letter off the name or closes it, and Space
+/// switches the keyboard light.
 fn pick<V, F>(app: &mut App<V, State, F>, input: Input, now: u64)
 where
     V: ViewLayout<State>,
@@ -458,23 +460,36 @@ where
     F: Fn(&State) -> V,
 {
     let mut state = app.state_mut();
-    let Some(at) = state.picker else {
+    let columns = state.picker_columns();
+    let typed = match input {
+        Input::Character(c) => Some(state.keyboard.character(c)),
+        Input::Key { plain, alt } => Some(state.keyboard.letter(plain, alt)),
+        _ => None,
+    };
+    let State {
+        picker, recents, ..
+    } = &mut *state;
+    let Some(picker) = picker.as_mut() else {
         return;
     };
+    let picks = recents.picks();
     match input {
-        Input::Turn(detents) => {
-            let last = PICKER.len() as i16 - 1;
-            state.picker = Some((i16::from(at) + i16::from(detents)).clamp(0, last) as u8);
-        }
+        Input::Turn(detents) => picker.turn(picks, columns, detents.into()),
         Input::Press | Input::Enter => {
+            let picked = picker.focused(picks);
             state.press = None;
             state.picker = None;
             state.keyboard.other();
-            press(app, Key::Character(PICKER[usize::from(at)]));
+            if let Some(pick) = picked {
+                state.recents.picked(pick, now);
+                press(app, Key::Text(pick.text()));
+            }
         }
         Input::Backspace => {
-            state.picker = None;
-            state.keyboard.other();
+            if !picker.erase_letter() {
+                state.picker = None;
+                state.keyboard.other();
+            }
         }
         Input::Space => {
             state.picker = None;
@@ -482,22 +497,16 @@ where
             state.switch_keyboard_light(now);
         }
         Input::Modifier { modifier, down } => state.keyboard.modifier(modifier, down, now),
-        // A row up or down, or a character across.
-        Input::Move(direction) => {
-            let columns = crate::ui::picker_columns(state.metrics()) as i16;
-            let step = match direction {
-                Arrow::Up => -columns,
-                Arrow::Down => columns,
-                Arrow::Left => -1,
-                Arrow::Right => 1,
-            };
-            let to = i16::from(at) + step;
-            if (0..PICKER.len() as i16).contains(&to) {
-                state.picker = Some(to as u8);
+        Input::Move(Arrow::Up) => picker.rows_down(picks, columns, -1),
+        Input::Move(Arrow::Down) => picker.rows_down(picks, columns, 1),
+        Input::Move(Arrow::Left) => picker.turn(picks, columns, -1),
+        Input::Move(Arrow::Right) => picker.turn(picks, columns, 1),
+        Input::Character(_) | Input::Key { .. } => {
+            if let Some(c) = typed {
+                picker.type_letter(c);
             }
         }
-        // Filtering by name comes with the full picker.
-        Input::Release | Input::Key { .. } | Input::Character(_) | Input::Touch { .. } => {}
+        Input::Release | Input::Touch { .. } => {}
     }
 }
 
