@@ -170,15 +170,17 @@ fn back(key: Key, s: &mut State) -> KeyResponse {
 /// bottom of the screen.
 pub fn picker(state: &State) -> impl View<Rgb565, State> + use<> {
     let m = state.metrics();
-    let over_conversation = state.keyboard.field() == Some(Field::Prose);
-    let recents = state.recents.picks();
+    let reacting = state
+        .picker
+        .as_ref()
+        .is_some_and(|p| p.reacting().is_some());
+    let over_conversation = reacting || state.keyboard.field() == Some(Field::Prose);
     let look = PickerLook {
         shown: state
             .picker
             .as_ref()
-            .map(|p| p.shown(recents, state.picker_columns()))
+            .map(|p| p.shown(state.recents.picks(), state.picker_columns()))
             .unwrap_or_default(),
-        recents: !recents.is_empty(),
         m,
     };
     Lazy::new(look, picker_card)
@@ -196,8 +198,6 @@ pub fn picker(state: &State) -> impl View<Rgb565, State> + use<> {
 #[derive(Clone, Debug)]
 struct PickerLook {
     shown: Shown,
-    /// There are recent picks, so their tab is shown.
-    recents: bool,
     m: &'static Metrics,
 }
 
@@ -206,7 +206,7 @@ struct PickerLook {
 fn picker_card(look: &PickerLook) -> impl View<Rgb565, ()> + use<> {
     let m = look.m;
     let head = match_view!(look.shown.filter.is_empty(), {
-        true => tabs(m, look.shown.tab, look.recents),
+        true => tabs(m, look.shown.tabs, look.shown.tab),
         false => filter(m, &look.shown.filter),
     });
     VStack::new((
@@ -220,13 +220,17 @@ fn picker_card(look: &PickerLook) -> impl View<Rgb565, ()> + use<> {
     .frame()
     .with_width(m.width - 2 * PICKER_INSET)
     .with_height(picker_height(m))
+    .with_alignment(Alignment::TopLeading)
     .background(Alignment::Center, card(12, theme::MENU, theme::MENU_LINE))
 }
 
 /// The tabs, with `current`'s underlined.
-fn tabs(m: &'static Metrics, current: Option<Tab>, recents: bool) -> impl View<Rgb565, ()> + use<> {
-    let tabs = &TABS[usize::from(!recents)..];
-    let width = grid_width(m) / tabs.len() as u32;
+fn tabs(
+    m: &'static Metrics,
+    tabs: &'static [Tab],
+    current: Option<Tab>,
+) -> impl View<Rgb565, ()> + use<> {
+    let width = grid_width(m) / tabs.len().max(1) as u32;
     ForEach::<{ TABS.len() }>::new_horizontal(tabs, move |&tab| {
         let face = (tab != Tab::Recent).then(|| {
             Text::new(tab.face(), &font::BOLD)

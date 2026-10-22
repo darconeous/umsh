@@ -10,9 +10,10 @@ listed in a committed manifest, so supporting more emoji means adding lines
 to that manifest, not changing code.
 
 Steps 1–3 of the [work order](#work-order) are implemented, apart from
-Device › About and retiring the reaction art. Of step 4, the picker, its
-name filter, and recents are implemented; reaction **More** is not. The
-spec edits and mockups (step 5) are not. The protocol-facing changes are
+Device › About. Step 4 is implemented: the picker, its name filter,
+recents, and reaction **More**, with the hand-drawn reaction art retired.
+Of step 5, the reactions clarification (2) is in the spec; the other spec
+edits and the mockups are not. The protocol-facing changes are
 collected in [Protocol changes](#protocol-changes).
 
 ## Where things stand
@@ -364,9 +365,9 @@ held the font's own "?" would not fit a 6- or 10-pixel cell.
   `Key::Text`). The picker does not open in number fields.
 - **The name filter** matches CLDR short names plus the aliases in
   `umsh-emoji/aliases.txt` (`+1`, `lol`, `<3`). Each typed word must begin
-  a word of the name. A match on the name's last word, the thing it names,
-  or on an alias, comes before a match on another word; otherwise manifest
-  order. Names are English for now; CLDR annotations make other languages a
+  a word of the name. A whole name or alias typed comes first, then a
+  match on the name's last word (the thing it names), then any other;
+  otherwise manifest order. Names are English for now; CLDR annotations make other languages a
   data change.
 - **No skin-tone choice.** The set has no tones, so the picker offers none.
 - **Recents** are stored in the chat store, not as a setting: they are
@@ -375,10 +376,16 @@ held the font's own "?" would not fit a 6- or 10-pixel cell.
   manifest edits. Writes wait 5 s after a pick, and happen before the board
   turns off.
 - **Reactions.** The six canonical reactions still send their tokens (`<3`,
-  `+1`, …). A **More** cell at the end of the reaction palette opens the
-  picker, and the reaction body is that emoji. A reaction received with any
-  emoji the set has is drawn as that emoji. Parsing takes the first
-  *cluster* rather than the first `char`.
+  `+1`, …), and every reaction is drawn as an emoji, the six as iOS draws
+  them (🩷 👍 👎 🤣 ‼️ ❓). A **More** cell at the end of the reaction palette
+  opens the picker, offering only emoji, and the reaction body is that
+  emoji; one that stands for an emote (❤️) is sent as its token. More shows
+  my reaction when it is not one of the six. Parsing takes the first
+  *cluster* rather than the first `char`; a cluster that is a letter or a
+  digit is no reaction. The chat store keeps any other reaction as its
+  cluster (up to 31 bytes), and a message counts up to eight kinds. One
+  the set does not draw is the placeholder, which `umsh-emoji` draws for
+  U+FFFC.
 - **Names.** Device, peer, and private-channel display names take emoji
   through the same picker. Byte limits do not change; a name is cut only at
   cluster boundaries. 24 bytes holds six single-code-point emoji. Public

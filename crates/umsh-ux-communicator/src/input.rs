@@ -26,7 +26,7 @@ use buoyant::view::{EditBuffer, EditText, ViewLayout};
 use embedded_touch::{Phase, Tool, Touch, TouchPoint};
 
 use crate::keyboard::{Field, Modifier, Spaced, starts_sentence};
-use crate::model::{HOLD_MS, Press, State, TouchHold};
+use crate::model::{HOLD_MS, Press, Reaction, State, TouchHold};
 use crate::nav::keys;
 
 /// One user input.
@@ -449,7 +449,8 @@ fn accepts(state: &State, c: char) -> bool {
 }
 
 /// An input while the character picker is open: the wheel walks it, a
-/// press or Enter types the focused pick, letters type a name to find
+/// press or Enter types the focused pick, or reacts with it to the message
+/// the picker was opened for, letters type a name to find
 /// one by, Backspace takes a letter off the name or closes it, and Space
 /// switches the keyboard light.
 fn pick<V, F>(app: &mut App<V, State, F>, input: Input, now: u64)
@@ -477,12 +478,16 @@ where
         Input::Turn(detents) => picker.turn(picks, columns, detents.into()),
         Input::Press | Input::Enter => {
             let picked = picker.focused(picks);
+            let reacting = picker.reacting();
             state.press = None;
             state.picker = None;
             state.keyboard.other();
             if let Some(pick) = picked {
                 state.recents.picked(pick, now);
-                press(app, Key::Text(pick.text()));
+                match reacting {
+                    Some(message) => state.react(message, Reaction::of(pick.text())),
+                    None => press(app, Key::Text(pick.text())),
+                }
             }
         }
         Input::Backspace => {

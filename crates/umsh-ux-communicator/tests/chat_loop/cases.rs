@@ -529,10 +529,42 @@ fn pressing_a_message_opens_its_actions_and_backspace_closes_them() {
     assert_eq!(focus(app.state()), Some(keys::REPLY));
     // The palette is above Reply.
     run(&mut app, &[Input::Turn(-1)]);
+    assert_eq!(focus(app.state()), Some(keys::MORE_REACTIONS));
+    run(&mut app, &[Input::Turn(-1)]);
     assert_eq!(focus(app.state()), Some(keys::reaction(Reaction::Question)));
     run(&mut app, &[Input::Backspace]);
     assert_eq!(actions(app.state()), None);
     assert_eq!(focus(app.state()), Some(keys::message(SEE_YOU)));
+}
+
+#[test]
+fn more_reacts_with_any_emoji_from_the_picker() {
+    let mut app = app!();
+    let open_on_answer = [Input::Press, Input::Turn(-2), Input::Press];
+    run(&mut app, &open_on_answer);
+    turn_to(&mut app, keys::MORE_REACTIONS);
+    run(&mut app, &[Input::Press]);
+    assert_eq!(actions(app.state()), None);
+    let picker = app.state().picker.as_ref().expect("the picker is open");
+    assert!(picker.reacting().is_some());
+    run(&mut app, &typed("fire"));
+    run(&mut app, &[Input::Enter]);
+    assert!(app.state().picker.is_none());
+    let fire = Reaction::of("\u{1F525}");
+    assert!(matches!(fire, Reaction::Emoji(_)));
+    assert_eq!(
+        reactions(app.state(), ANSWER),
+        [(Reaction::Heart, 1, false), (fire, 1, true)]
+    );
+
+    // An emote picked there is the emote.
+    run(&mut app, &[Input::Backspace, Input::Press]);
+    run(&mut app, &open_on_answer[1..]);
+    turn_to(&mut app, keys::MORE_REACTIONS);
+    run(&mut app, &[Input::Press]);
+    run(&mut app, &typed("<3"));
+    run(&mut app, &[Input::Enter]);
+    assert_eq!(reactions(app.state(), ANSWER), [(Reaction::Heart, 2, true)]);
 }
 
 #[test]

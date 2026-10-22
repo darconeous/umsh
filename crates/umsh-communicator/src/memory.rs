@@ -26,7 +26,7 @@ use umsh_text::{ConversationKey, MessageType, SenderScope, WireRef};
 use crate::batch::{Batch, Change, CommitStep, Committed, Subject};
 use crate::durable::{Durable, Volatile};
 use crate::ids::{ChatId, MessageId, PeerId};
-use crate::reaction::{Reacted, Reaction, Reactions};
+use crate::reaction::{REACTIONS, Reacted, Reaction, Reactions};
 use crate::record::{
     self, BODY_MAX, ChannelChange, ChannelRecord, ChatChange, ChatRecord, Delivery, IDENTITY_MAX,
     LinkInfo, MessageFlags, MessageRecord, PeerChange, PeerFilter, PeerRecord, ROUTE_MAX,
@@ -302,21 +302,18 @@ fn hint_of(key: &[u8; 32]) -> [u8; 3] {
 fn reactions(reactors: &[Reactor]) -> Reactions {
     let mut counted = Reactions::new();
     for reactor in reactors {
-        match counted
+        if let Some(reacted) = counted
             .iter_mut()
             .find(|reacted| reacted.reaction == reactor.reaction)
         {
-            Some(reacted) => {
-                reacted.count += 1;
-                reacted.mine |= reactor.mine;
-            }
-            None => {
-                let _ = counted.push(Reacted {
-                    reaction: reactor.reaction,
-                    count: 1,
-                    mine: reactor.mine,
-                });
-            }
+            reacted.count += 1;
+            reacted.mine |= reactor.mine;
+        } else if counted.len() < REACTIONS {
+            counted.push(Reacted {
+                reaction: reactor.reaction,
+                count: 1,
+                mine: reactor.mine,
+            });
         }
     }
     counted

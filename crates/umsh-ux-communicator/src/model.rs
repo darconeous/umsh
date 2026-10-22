@@ -677,7 +677,7 @@ pub enum Presence {
     Unavailable,
 }
 
-/// A reaction to a message: one of UMSH's emote tokens.
+/// A reaction to a message: one of UMSH's emote tokens, or another emoji.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Reaction {
     Heart,
@@ -686,6 +686,10 @@ pub enum Reaction {
     Laugh,
     Exclaim,
     Question,
+    /// An emoji the board draws.
+    Emoji(umsh_emoji::Id),
+    /// Anything else, drawn as the placeholder.
+    Other,
 }
 
 impl Reaction {
@@ -699,16 +703,41 @@ impl Reaction {
         Self::Question,
     ];
 
-    /// The emote's body on the air.
+    /// What it is drawn as: an emoji's sequence, as iOS draws the emotes.
     #[must_use]
-    pub const fn token(self) -> &'static str {
+    pub fn face(self) -> &'static str {
         match self {
-            Self::Heart => "<3",
-            Self::ThumbsUp => "+1",
-            Self::ThumbsDown => "-1",
-            Self::Laugh => "ha",
-            Self::Exclaim => "!",
-            Self::Question => "?",
+            Self::Heart => "\u{1FA77}",
+            Self::ThumbsUp => "\u{1F44D}",
+            Self::ThumbsDown => "\u{1F44E}",
+            Self::Laugh => "\u{1F923}",
+            Self::Exclaim => "\u{203C}\u{FE0F}",
+            Self::Question => "\u{2753}",
+            Self::Emoji(id) => umsh_emoji::sequence(id),
+            Self::Other => umsh_emoji::PLACEHOLDER,
+        }
+    }
+
+    /// The reaction `cluster` is: an emote for the emoji that stand for
+    /// one, as the chat store reads them, the emoji it draws as, or
+    /// [`Reaction::Other`].
+    #[must_use]
+    pub fn of(cluster: &str) -> Self {
+        let umsh_emoji::Shown::Glyph(id) = umsh_emoji::shown(cluster) else {
+            return Self::Other;
+        };
+        let bare: heapless::String<16> = umsh_emoji::sequence(id)
+            .chars()
+            .filter(|&c| c != '\u{FE0F}')
+            .collect();
+        match bare.as_str() {
+            "\u{2665}" | "\u{2764}" | "\u{1FA77}" => Self::Heart,
+            "\u{1F44D}" => Self::ThumbsUp,
+            "\u{1F44E}" => Self::ThumbsDown,
+            "\u{1F923}" => Self::Laugh,
+            "\u{2757}" | "\u{2755}" | "\u{203C}" => Self::Exclaim,
+            "\u{2753}" | "\u{2754}" => Self::Question,
+            _ => Self::Emoji(id),
         }
     }
 }
@@ -722,9 +751,12 @@ pub struct Reacted {
     pub mine: bool,
 }
 
+/// The most kinds of reaction a message shows.
+pub const REACTIONS: usize = 8;
+
 /// A message's reactions, in the order they first arrived. Each sender has
 /// at most one.
-pub type Reactions = Vec<Reacted, { Reaction::ALL.len() }>;
+pub type Reactions = Vec<Reacted, REACTIONS>;
 
 /// One message in a conversation.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -2097,6 +2129,12 @@ impl State {
         let node = self.node;
         self.recents.load(|| node.recent_picks());
         self.picker = Some(Picker::default());
+    }
+
+    /// Opens the character picker to react to `message` with an emoji.
+    pub fn open_picker_to_react(&mut self, message: MessageId) {
+        self.open_picker();
+        self.picker = Some(Picker::to_react(message));
     }
 
     /// The picker's cells to a row, on this board.

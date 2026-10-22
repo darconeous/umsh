@@ -15,7 +15,7 @@ use umsh_text::{ConversationKey, MessageType, SenderScope};
 
 use super::{CHAT, ChatEntry, Disk, MESSAGE, MessageEntry, PEER, PeerEntry, Reactor, RecordKey};
 use crate::ids::{ChatId, MessageId, PeerId};
-use crate::reaction::{Reaction, Reactions};
+use crate::reaction::{Cluster, Reaction, Reactions};
 use crate::record::{
     self, BODY_MAX, BuiltinChannel, ChannelAccess, ChannelRecord, ChatRecord, Delivery,
     IDENTITY_MAX, LinkInfo, MessageFlags, MessageRecord, NAME_MAX, Name, PeerRecord, ROUTE_MAX,
@@ -34,6 +34,10 @@ const PEER_RECORD: u8 = 5;
 const CHANNEL: u8 = 6;
 const DEVICE_LISTS: u8 = 7;
 const RECENT_PICKS: u8 = 8;
+
+/// A reactor's reaction that is not one of the emotes, its cluster after.
+/// The emotes are their place in [`Reaction::ALL`].
+const OTHER_REACTION: u8 = 0xFF;
 
 /// The key of the record `key` names.
 pub(super) fn key(key: &RecordKey, out: &mut heapless::Vec<u8, KEY_MAX>) {
@@ -166,7 +170,16 @@ pub(super) fn record(disk: &Disk, key: &RecordKey, out: &mut Vec<u8>) -> bool {
             for reactor in &message.reactors {
                 out.sender(&reactor.who.scope());
                 out.flag(reactor.mine);
-                out.u8(reactor.reaction as u8);
+                match reactor.reaction {
+                    Reaction::Other(cluster) => {
+                        out.u8(OTHER_REACTION);
+                        out.short(cluster.as_str().as_bytes());
+                    }
+                    reaction => out.u8(Reaction::ALL
+                        .iter()
+                        .position(|&r| r == reaction)
+                        .unwrap_or_default() as u8),
+                }
             }
             out.long(&message.body);
         }
@@ -423,7 +436,12 @@ fn message(id: u32, input: &mut In<'_>) -> Option<MessageEntry> {
     for _ in 0..count {
         let who = SenderCode::from(&input.sender()?);
         let mine = input.flag()?;
-        let reaction = *Reaction::ALL.get(usize::from(input.u8()?))?;
+        let reaction = match input.u8()? {
+            OTHER_REACTION => {
+                Reaction::Other(Cluster::new(core::str::from_utf8(input.short()?).ok()?)?)
+            }
+            emote => *Reaction::ALL.get(usize::from(emote))?,
+        };
         reactors.push(Reactor {
             who,
             mine,

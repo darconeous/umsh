@@ -75,9 +75,16 @@ pub fn find(sequence: &str) -> Option<Id> {
     None
 }
 
+/// What is always drawn as the placeholder: U+FFFC OBJECT REPLACEMENT
+/// CHARACTER, which stands for something that cannot be shown.
+pub const PLACEHOLDER: &str = "\u{FFFC}";
+
 /// How `cluster`, one extended grapheme cluster, is drawn.
 #[must_use]
 pub fn shown(cluster: &str) -> Shown {
+    if cluster == PLACEHOLDER {
+        return Shown::Placeholder;
+    }
     let mut buffer = [0; LONGEST];
     // 1. The sequence itself, without U+FE0F.
     let Some(key) = without(cluster, &mut buffer, |c| c == VS16) else {
@@ -224,6 +231,11 @@ mod tests {
         assert_eq!(shown("\u{1F600}"), Shown::Glyph(id("\u{1F600}")));
         assert_eq!(shown("\u{2764}\u{FE0F}"), Shown::Glyph(id("\u{2764}")));
         assert_eq!(shown("\u{2764}"), Shown::Glyph(id("\u{2764}")));
+    }
+
+    #[test]
+    fn the_placeholder_has_a_character_of_its_own() {
+        assert_eq!(shown(PLACEHOLDER), Shown::Placeholder);
     }
 
     #[test]

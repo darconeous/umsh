@@ -24,7 +24,7 @@ use umsh_text::{ConversationKey, SenderScope};
 
 use crate::batch::{Batch, CommitStep, Committed, Subject};
 use crate::ids::{ChatId, MessageId};
-use crate::reaction::{Reacted, Reaction};
+use crate::reaction::{Cluster, Reacted, Reaction};
 use crate::record::{
     ChannelAccess, ChannelChange, ChannelRecord, ChatChange, ChatRecord, LinkInfo, MessageRecord,
     PeerChange, PeerFilter, PeerRecord, ReactorRecord, StoreError, Usage, WireAlias,
@@ -640,6 +640,13 @@ pub fn reactions<H: Harness>(harness: &mut H) {
     rig.hear(&mut store, direct(), about_mine("lol"));
     assert_eq!(record(&store, mine).reactions[0].reaction, Reaction::Laugh);
     assert_eq!(store.reactors(mine).count(), 1);
+    // Any other emoji is kept as itself.
+    rig.hear(&mut store, direct(), about_mine("\u{1f525}"));
+    harness.power_on(&mut store);
+    assert_eq!(
+        record(&store, mine).reactions[0].reaction,
+        Reaction::Other(Cluster::new("\u{1f525}").unwrap())
+    );
     rig.hear(&mut store, direct(), about_mine(""));
     assert!(record(&store, mine).reactions.is_empty());
     assert_eq!(store.reactors(mine).count(), 0);

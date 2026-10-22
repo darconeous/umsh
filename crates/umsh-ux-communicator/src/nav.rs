@@ -194,11 +194,25 @@ pub mod keys {
     pub const SHARE_LOCATION: FocusKey = FocusKey(0x0E00_0003);
     pub const AIRTIME: FocusKey = FocusKey(0x0E00_0004);
 
-    /// A reaction in the actions menu's palette.
+    /// A reaction in the actions menu's palette: any but the emotes is
+    /// on More.
     #[must_use]
     pub const fn reaction(reaction: Reaction) -> FocusKey {
-        FocusKey(ACTION | reaction as u32)
+        FocusKey(
+            ACTION
+                | match reaction {
+                    Reaction::Heart => 0,
+                    Reaction::ThumbsUp => 1,
+                    Reaction::ThumbsDown => 2,
+                    Reaction::Laugh => 3,
+                    Reaction::Exclaim => 4,
+                    Reaction::Question => 5,
+                    Reaction::Emoji(_) | Reaction::Other => 6,
+                },
+        )
     }
+    /// The palette's More, which opens the character picker.
+    pub const MORE_REACTIONS: FocusKey = reaction(Reaction::Other);
 
     /// A device listed on Nearby.
     #[must_use]
@@ -1863,6 +1877,14 @@ impl State {
     pub fn react_from_actions(&mut self, reaction: Reaction) {
         if let Some(message) = self.close_actions() {
             self.react(message, reaction);
+        }
+    }
+
+    /// Closes the actions menu, and opens the character picker to react to
+    /// its message with any emoji.
+    pub fn more_reactions_from_actions(&mut self) {
+        if let Some(message) = self.close_actions() {
+            self.open_picker_to_react(message);
         }
     }
 

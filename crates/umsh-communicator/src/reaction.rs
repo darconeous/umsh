@@ -1,13 +1,55 @@
 //! Reactions: emotes about a message, folded into it.
 //!
 //! On the wire a reaction is a status message regarding its target, its
-//! body one of UMSH's emote tokens; an empty body withdraws the sender's
-//! earlier one. The store keeps the latest from each sender inside the
-//! target, and counts them by token when the message is read.
+//! body one of UMSH's emote tokens or an emoji; an empty body withdraws
+//! the sender's earlier one. The store keeps the latest from each sender
+//! inside the target, and counts them by reaction when the message is
+//! read.
 
-use heapless::Vec;
+use alloc::vec::Vec;
+use core::fmt;
 
-/// One of UMSH's emote tokens.
+/// The longest grapheme cluster a reaction keeps, in bytes: room for a
+/// joined family or a subdivision's flag.
+pub const CLUSTER_MAX: usize = 31;
+
+/// The most kinds of reaction a message counts.
+pub const REACTIONS: usize = 8;
+
+/// One grapheme cluster, held in place so a reaction stays `Copy`.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Cluster {
+    len: u8,
+    bytes: [u8; CLUSTER_MAX],
+}
+
+impl Cluster {
+    /// `cluster`, unless it is longer than [`CLUSTER_MAX`].
+    #[must_use]
+    pub fn new(cluster: &str) -> Option<Self> {
+        let mut bytes = [0; CLUSTER_MAX];
+        bytes
+            .get_mut(..cluster.len())?
+            .copy_from_slice(cluster.as_bytes());
+        Some(Self {
+            len: cluster.len() as u8,
+            bytes,
+        })
+    }
+
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        core::str::from_utf8(&self.bytes[..usize::from(self.len)]).unwrap_or_default()
+    }
+}
+
+impl fmt::Debug for Cluster {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Debug::fmt(self.as_str(), f)
+    }
+}
+
+/// A reaction: one of UMSH's emote tokens, or another emoji.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Reaction {
     Heart,
@@ -16,6 +58,8 @@ pub enum Reaction {
     Laugh,
     Exclaim,
     Question,
+    /// Any other: the first grapheme cluster of its body.
+    Other(Cluster),
 }
 
 impl Reaction {
@@ -29,8 +73,9 @@ impl Reaction {
         Self::Question,
     ];
 
-    /// The emote's body on the air.
-    pub const fn token(self) -> &'static str {
+    /// The reaction's body on the air: an emote's token, or the cluster.
+    #[must_use]
+    pub fn body(&self) -> &str {
         match self {
             Self::Heart => "<3",
             Self::ThumbsUp => "+1",
@@ -38,19 +83,31 @@ impl Reaction {
             Self::Laugh => "ha",
             Self::Exclaim => "!",
             Self::Question => "?",
+            Self::Other(cluster) => cluster.as_str(),
         }
     }
 
-    /// The emote a reaction's body stands for.
+    /// The reaction a body stands for.
     ///
     /// Reading is looser than writing, as it is on iOS: the tokens, their
-    /// longer spellings, and the emoji other clients send all count, and
-    /// a body that is none of them counts as its first grapheme cluster,
-    /// so 👍🏽 stays whole. Anything else stands for no emote this palette
-    /// has.
+    /// longer spellings, and the emoji other clients send all count as
+    /// their emote, and a body that is none of them counts as its first
+    /// grapheme cluster, so 👍🏽 stays whole. A cluster that is a letter or
+    /// a digit, as in a word, is no reaction.
     pub fn from_body(body: &str) -> Option<Self> {
         let trimmed = body.trim();
-        Self::spelled(trimmed).or_else(|| Self::spelled(umsh_grapheme::first_cluster(trimmed)?))
+        let first = umsh_grapheme::first_cluster(trimmed)?;
+        Self::spelled(trimmed)
+            .or_else(|| Self::spelled(first))
+            .or_else(|| {
+                // A keycap starts with its digit.
+                let pictured = first.contains(['\u{FE0F}', '\u{20E3}'])
+                    || !first.starts_with(char::is_alphanumeric);
+                pictured
+                    .then(|| Cluster::new(first))
+                    .flatten()
+                    .map(Self::Other)
+            })
     }
 
     fn spelled(body: &str) -> Option<Self> {
@@ -100,9 +157,10 @@ pub struct Reacted {
     pub mine: bool,
 }
 
-/// A message's reactions, one entry per emote, in the order each emote
-/// first appeared.
-pub type Reactions = Vec<Reacted, { Reaction::ALL.len() }>;
+/// A message's reactions, one entry per reaction, in the order each first
+/// appeared: at most [`REACTIONS`]. Kept on the heap, as a record holds
+/// none until it is read.
+pub type Reactions = Vec<Reacted>;
 
 #[cfg(test)]
 mod tests {
@@ -111,7 +169,7 @@ mod tests {
     #[test]
     fn every_token_reads_as_itself() {
         for reaction in Reaction::ALL {
-            assert_eq!(Reaction::from_body(reaction.token()), Some(reaction));
+            assert_eq!(Reaction::from_body(reaction.body()), Some(reaction));
         }
     }
 
@@ -135,5 +193,25 @@ mod tests {
         );
         assert_eq!(Reaction::from_body("nice"), None);
         assert_eq!(Reaction::from_body(""), None);
+    }
+
+    #[test]
+    fn any_other_emoji_is_its_own_reaction() {
+        let fire = Reaction::from_body("\u{1f525} nice").unwrap();
+        assert_eq!(fire, Reaction::Other(Cluster::new("\u{1f525}").unwrap()));
+        assert_eq!(fire.body(), "\u{1f525}");
+        // Joined, toned, and keycap sequences stay whole.
+        for body in [
+            "\u{1f469}\u{200d}\u{1f4bb}",
+            "\u{1f44b}\u{1f3fd}",
+            "1\u{fe0f}\u{20e3}",
+            "\u{2605}",
+        ] {
+            assert_eq!(Reaction::from_body(body).unwrap().body(), body);
+        }
+        assert_eq!(Reaction::from_body("\u{e9}t\u{e9}"), None);
+        // Too long to keep: a family of four, toned.
+        let family = "\u{1f468}\u{1f3fb}\u{200d}\u{1f469}\u{1f3fb}\u{200d}\u{1f467}\u{1f3fb}\u{200d}\u{1f466}\u{1f3fb}";
+        assert_eq!(Reaction::from_body(family), None);
     }
 }

@@ -24,7 +24,8 @@ use crate::clock::{Local, MONTHS, WEEKDAYS, civil};
 use crate::model;
 use crate::model::{
     ChannelAccess, ChatId, ChatKind, Delivery, Direction, Draft, MAX_MESSAGES, Message, MessageId,
-    Messages, Parts, Presence, Quote, Reacted, Reaction, Reactions, Rule, State, hops_text,
+    Messages, Parts, Presence, Quote, REACTIONS, Reacted, Reaction, Reactions, Rule, State,
+    hops_text,
 };
 use crate::nav::{Screen, Unsent, keys};
 use crate::text::{DraftText, SharedText};
@@ -957,6 +958,19 @@ fn link_card(
     .background_color(fill, RoundedRectangle::with_radii(corners))
 }
 
+/// A reaction as its emoji, set beside text `size` pixels to the em, on
+/// `fill`.
+pub(super) fn face<C>(
+    reaction: Reaction,
+    size: u32,
+    fill: Rgb565,
+) -> impl View<Rgb565, C> + use<C> {
+    Text::new(reaction.face(), &font::REGULAR)
+        .with_font_size(size)
+        .with_line_limit(1)
+        .hint_background_color(fill)
+}
+
 /// A reaction chip's diameter, the background ring that sets it off, and how
 /// far apart chips overlap.
 const CHIP: u32 = 28;
@@ -987,10 +1001,10 @@ fn chips(
     open: bool,
 ) -> impl View<Rgb565, ()> + use<> {
     // Mine takes the color of my bubbles.
-    let (mine_fill, mine_pad) = if open {
-        (theme::OUTBOUND_OPEN, icon::Pad::MineOpen)
+    let mine_fill = if open {
+        theme::OUTBOUND_OPEN
     } else {
-        (theme::OUTBOUND, icon::Pad::Mine)
+        theme::OUTBOUND
     };
     // Toward the outside of the bubble: left on a sent message.
     let out: i32 = if outbound { -1 } else { 1 };
@@ -1001,7 +1015,7 @@ fn chips(
     let top = move |above_bubble: i32| ring + above_bubble;
     let halo = (CHIP + 2 * CHIP_HALO) as i32;
     // Mine at the corner, then others inward, drawn back to front.
-    let mut order: Vec<Reacted, { Reaction::ALL.len() }> = Vec::new();
+    let mut order: Vec<Reacted, REACTIONS> = Vec::new();
     for r in reactions.iter().filter(|r| r.mine) {
         _ = order.push(*r);
     }
@@ -1021,10 +1035,10 @@ fn chips(
         let place = count.checked_sub(1 + k)?;
         order.get(place).map(|r| {
             let inward = CHIP_STEP * place as i32;
-            let (fill, pad) = if r.mine {
-                (mine_fill, mine_pad)
+            let fill = if r.mine {
+                mine_fill
             } else {
-                (theme::CHIP_THEIRS, icon::Pad::Theirs)
+                theme::CHIP_THEIRS
             };
             let number = (r.count > 1).then(|| {
                 let mut n: heapless::String<4> = heapless::String::new();
@@ -1046,7 +1060,7 @@ fn chips(
                 ZStack::new((
                     Circle.foreground_color(theme::BACKGROUND),
                     Circle.foreground_color(fill).frame_sized(CHIP, CHIP),
-                    Image::new(icon::reaction(r.reaction, pad)),
+                    face(r.reaction, m.small, fill),
                 ))
                 .frame_sized(halo as u32, halo as u32)
                 .offset(edge(halo / 2 - inward), top(-(CHIP_RISE as i32) - halo / 2)),
@@ -1517,10 +1531,13 @@ fn quote(
     .with_height(QUOTE)
 }
 
-/// The actions menu's width, and its palette's row.
-const MENU_WIDTH: u32 = 236;
+/// The actions menu's palette: its row, a pad, the room between pads, and
+/// its inset; and the menu's width, which the palette's seven pads set.
 const PALETTE: u32 = 44;
 const PAD: u32 = 34;
+const PAD_GAP: u32 = 3;
+const PALETTE_INSET: u32 = 8;
+const MENU_WIDTH: u32 = 2 * PALETTE_INSET + 7 * PAD + 6 * PAD_GAP;
 /// A menu item, and its focused look inside it.
 const ITEM: u32 = 32;
 const ITEM_INSET: u32 = 5;
@@ -1533,27 +1550,50 @@ fn actions_menu(
     card: Option<CardItem>,
 ) -> impl View<Rgb565, State> + use<> {
     let has_card = card.is_some();
-    let pad = |reaction: Reaction| {
+    // Ringed while focused, and faintly while it is mine.
+    let ring = move |focused: bool, chosen: bool| {
+        let color = if focused {
+            Some(theme::ACCENT)
+        } else if chosen {
+            Some(theme::TEXT_TERTIARY)
+        } else {
+            None
+        };
+        color.map(|color| Circle.stroked(2).foreground_color(color))
+    };
+    let pad = move |reaction: Reaction| {
         Button::new(
             move |s: &mut State| s.react_from_actions(reaction),
             move |button: ButtonState| {
-                let ring = if button.is_focused() {
-                    Some(theme::ACCENT)
-                } else if mine == Some(reaction) {
-                    Some(theme::TEXT_TERTIARY)
-                } else {
-                    None
-                };
                 ZStack::new((
                     Circle.foreground_color(theme::REACTION_PAD),
-                    Image::new(icon::reaction(reaction, icon::Pad::Palette)),
-                    ring.map(|color| Circle.stroked(2).foreground_color(color)),
+                    face(reaction, m.body, theme::REACTION_PAD),
+                    ring(button.is_focused(), mine == Some(reaction)),
                 ))
                 .frame_sized(PAD, PAD)
             },
         )
         .focus_key(keys::reaction(reaction))
     };
+    // Any other reaction of mine shows on More.
+    let other = mine.filter(|r| !Reaction::ALL.contains(r));
+    let more = Button::new(
+        State::more_reactions_from_actions,
+        move |button: ButtonState| {
+            ZStack::new((
+                Circle.foreground_color(theme::REACTION_PAD),
+                other.map(|r| face(r, m.body, theme::REACTION_PAD)),
+                other.is_none().then(|| {
+                    Image::new(&icon::ADD)
+                        .as_template()
+                        .foreground_color(theme::TEXT_SECONDARY)
+                }),
+                ring(button.is_focused(), other.is_some()),
+            ))
+            .frame_sized(PAD, PAD)
+        },
+    )
+    .focus_key(keys::MORE_REACTIONS);
     let [heart, up, down, laugh, exclaim, question] = Reaction::ALL;
     let content = VStack::new((
         HStack::new((
@@ -1563,9 +1603,10 @@ fn actions_menu(
             pad(laugh),
             pad(exclaim),
             pad(question),
+            more,
         ))
-        .with_spacing(3)
-        .padding(Edges::Leading, 8)
+        .with_spacing(PAD_GAP)
+        .padding(Edges::Leading, PALETTE_INSET)
         .flex_infinite_width(HorizontalAlignment::Leading)
         .frame()
         .with_height(PALETTE),

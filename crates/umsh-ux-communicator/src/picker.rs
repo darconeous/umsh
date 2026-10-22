@@ -6,6 +6,8 @@
 //! signs, and accented letters. Recently picked characters come first.
 
 use heapless::{String, Vec};
+
+use crate::model::MessageId;
 use umsh_emoji::{COUNT, GROUP_COUNT, GROUPS, Id, Match, find, matching, sequence, words};
 
 /// Recently picked characters kept, newest first.
@@ -108,10 +110,10 @@ impl Tab {
         }
     }
 
-    /// How many it offers.
-    fn len(self, recents: &[Pick]) -> u16 {
+    /// How many it offers, but for [`Tab::Recent`].
+    fn len(self) -> u16 {
         match self {
-            Self::Recent => recents.len() as u16,
+            Self::Recent => 0,
             Self::Group(g) => GROUPS.get(usize::from(g)).map_or(0, |g| g.end - g.start),
             Self::Symbols => SYMBOLS as u16,
             Self::Currency => CURRENCY as u16,
@@ -471,6 +473,9 @@ const SAVE_MS: u64 = 5000;
 /// The picker, open.
 #[derive(Debug, Default)]
 pub struct Picker {
+    /// The message a pick reacts to, rather than being typed. It offers
+    /// only emoji.
+    reacting: Option<MessageId>,
     /// The focused pick, counted through everything offered, in order.
     at: u16,
     /// The first row shown.
@@ -484,6 +489,8 @@ pub struct Picker {
 /// What the picker shows: its tab or name, and the rows in view.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Shown {
+    /// The tabs offered.
+    pub tabs: &'static [Tab],
     /// The tab the focused pick is under, while no name is typed.
     pub tab: Option<Tab>,
     pub filter: String<FILTER>,
@@ -493,9 +500,45 @@ pub struct Shown {
 }
 
 impl Picker {
+    /// The picker, to react to `message`.
+    #[must_use]
+    pub fn to_react(message: MessageId) -> Self {
+        Self {
+            reacting: Some(message),
+            ..Self::default()
+        }
+    }
+
+    /// The message a pick reacts to, if it is not to be typed.
+    #[must_use]
+    pub fn reacting(&self) -> Option<MessageId> {
+        self.reacting
+    }
+
     #[must_use]
     pub fn filter(&self) -> &str {
         &self.filter
+    }
+
+    /// Whether `pick` is offered at all.
+    fn offers(&self, pick: Pick) -> bool {
+        self.reacting.is_none() || matches!(pick, Pick::Emoji(_))
+    }
+
+    /// The recent picks offered.
+    fn recents<'a>(&'a self, recents: &'a [Pick]) -> impl Iterator<Item = Pick> + 'a {
+        recents.iter().copied().filter(|&p| self.offers(p))
+    }
+
+    /// The tabs offered, but for [`Tab::Recent`]: only emoji's while
+    /// reacting.
+    fn tabs(&self) -> &'static [Tab] {
+        let end = if self.reacting.is_some() {
+            1 + GROUP_COUNT
+        } else {
+            TABS.len()
+        };
+        &TABS[1..end]
     }
 
     /// The runs offered, in order, each with how many it has: one without a
@@ -504,9 +547,9 @@ impl Picker {
         let filtered = !self.filter.is_empty();
         let found = filtered.then_some((None, self.found.len() as u16));
         let tabs = (!filtered).then(|| {
-            core::iter::once(Tab::Recent)
-                .chain(Tab::all())
-                .map(|tab| (Some(tab), tab.len(recents)))
+            let recent = self.recents(recents).count() as u16;
+            core::iter::once((Some(Tab::Recent), recent))
+                .chain(self.tabs().iter().map(|&tab| (Some(tab), tab.len())))
                 .filter(|&(_, len)| len > 0)
         });
         found.into_iter().chain(tabs.into_iter().flatten())
@@ -522,10 +565,11 @@ impl Picker {
             return self.found.get(usize::from(index)).copied();
         }
         let mut i = usize::from(index);
-        if let Some(&pick) = recents.get(i) {
-            return Some(pick);
+        let recent = self.recents(recents).count();
+        if i < recent {
+            return self.recents(recents).nth(i);
         }
-        i -= recents.len();
+        i -= recent;
         if i < usize::from(COUNT) {
             return Some(Pick::Emoji(i as Id));
         }
@@ -627,9 +671,10 @@ impl Picker {
         }
         let emoji = (0..COUNT).map(Pick::Emoji);
         let characters = (0..CHARACTERS.len() as u8).map(Pick::Character);
-        for rank in [Match::Head, Match::Word] {
+        for rank in [Match::Name, Match::Head, Match::Word] {
             for pick in emoji.clone().chain(characters.clone()) {
-                if matching(pick.words(), &self.filter) == Some(rank)
+                if self.offers(pick)
+                    && matching(pick.words(), &self.filter) == Some(rank)
                     && self.found.push(pick).is_err()
                 {
                     return;
@@ -641,7 +686,9 @@ impl Picker {
     /// What is in view, `columns` cells to a row.
     #[must_use]
     pub fn shown(&self, recents: &[Pick], columns: u16) -> Shown {
+        let has_recents = self.recents(recents).next().is_some();
         let mut shown = Shown {
+            tabs: &TABS[usize::from(!has_recents)..1 + self.tabs().len()],
             tab: None,
             filter: self.filter.clone(),
             rows: Vec::new(),
@@ -762,6 +809,27 @@ mod tests {
         assert!(picker.erase_letter());
         assert!(!picker.erase_letter());
         assert_eq!(picker.shown(&[], 10).tab, Some(Tab::Group(0)));
+    }
+
+    #[test]
+    fn reacting_it_offers_only_emoji() {
+        let recents = recents();
+        let mut picker = Picker::to_react(7);
+        assert_eq!(picker.reacting(), Some(7));
+        let shown = picker.shown(&recents, 10);
+        // The thumb, but not the euro.
+        assert_eq!(shown.rows[0].as_slice(), &recents[..1]);
+        assert_eq!(shown.tabs.first(), Some(&Tab::Recent));
+        assert_eq!(shown.tabs.last(), Some(&Tab::Group(GROUP_COUNT as u8 - 1)));
+        picker.turn(&recents, 10, i16::MAX);
+        assert!(matches!(picker.focused(&recents), Some(Pick::Emoji(_))));
+        // Only letters are named so.
+        for c in "cedilla".chars() {
+            picker.type_letter(c);
+        }
+        assert_eq!(picker.focused(&recents), None);
+        // Without recents, no tab for them.
+        assert_eq!(Picker::default().shown(&[], 10).tabs[0], Tab::Group(0));
     }
 
     #[test]

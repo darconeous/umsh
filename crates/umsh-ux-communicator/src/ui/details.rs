@@ -13,7 +13,7 @@ use super::{label, line};
 use crate::board::Metrics;
 use crate::model::{Details, MAX_REACTORS, Reactor, State};
 use crate::nav::keys;
-use crate::{font, icon, theme};
+use crate::{font, theme};
 
 const ROW: u32 = 36;
 const INSET: u32 = 12;
@@ -144,7 +144,7 @@ fn reactor(m: &'static Metrics, reactor: &Reactor) -> impl View<Rgb565, State> +
             .is_none()
             .then(|| line("You", &font::REGULAR, m.body, theme::TEXT)),
         Spacer::default(),
-        Image::new(icon::reaction(reactor.reaction, icon::Pad::Screen)),
+        super::conversation::face(reactor.reaction, m.body, theme::BACKGROUND),
     ))
     .with_spacing(8)
     .padding(Edges::Leading, NAME_X)

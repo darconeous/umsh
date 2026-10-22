@@ -574,7 +574,8 @@ impl<S: ChatStore> Chats<S> {
         let Some(regarding) = self.regarding(message, &conversation) else {
             return;
         };
-        let body = reaction.map_or("", |reaction| emote(reaction).token());
+        let emote = reaction.and_then(emote);
+        let body = emote.as_ref().map_or("", crate::Reaction::body);
         let intent = ComposeIntent::Reply {
             body,
             regarding,
@@ -1300,6 +1301,7 @@ impl<S: ChatStore> Chats<S> {
         let reactions = record
             .reactions
             .iter()
+            .take(model::REACTIONS)
             .map(|reacted| model::Reacted {
                 reaction: reaction(reacted.reaction),
                 count: u8::try_from(reacted.count).unwrap_or(u8::MAX),
@@ -1429,16 +1431,19 @@ impl<S: ChatStore> Chats<S> {
     }
 }
 
-/// The emote `reaction` goes on the air as.
-fn emote(reaction: model::Reaction) -> crate::Reaction {
-    match reaction {
+/// What `reaction` goes on the air as: `None` for one the interface only
+/// shows, which is never sent.
+fn emote(reaction: model::Reaction) -> Option<crate::Reaction> {
+    Some(match reaction {
         model::Reaction::Heart => crate::Reaction::Heart,
         model::Reaction::ThumbsUp => crate::Reaction::ThumbsUp,
         model::Reaction::ThumbsDown => crate::Reaction::ThumbsDown,
         model::Reaction::Laugh => crate::Reaction::Laugh,
         model::Reaction::Exclaim => crate::Reaction::Exclaim,
         model::Reaction::Question => crate::Reaction::Question,
-    }
+        model::Reaction::Emoji(_) => return crate::Reaction::from_body(reaction.face()),
+        model::Reaction::Other => return None,
+    })
 }
 
 fn reaction(reaction: crate::Reaction) -> model::Reaction {
@@ -1449,6 +1454,7 @@ fn reaction(reaction: crate::Reaction) -> model::Reaction {
         crate::Reaction::Laugh => model::Reaction::Laugh,
         crate::Reaction::Exclaim => model::Reaction::Exclaim,
         crate::Reaction::Question => model::Reaction::Question,
+        crate::Reaction::Other(cluster) => model::Reaction::of(cluster.as_str()),
     }
 }
 

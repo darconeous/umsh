@@ -16,6 +16,8 @@ pub struct Group {
 /// How well words match what was typed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Match {
+    /// Whole: what was typed is its name, or an alias.
+    Name,
     /// By the word that says what it is: the last of its name, as
     /// "heart" in "red heart", or an alias.
     Head,
@@ -64,6 +66,11 @@ pub fn matching(words: &str, query: &str) -> Option<Match> {
         last = Some(word);
     }
     let last = last?;
+    let typed = query.trim();
+    if name.eq_ignore_ascii_case(typed) || aliases.split(' ').any(|a| a.eq_ignore_ascii_case(typed))
+    {
+        return Some(Match::Name);
+    }
     let head = name.rsplit([' ', '-']).next().unwrap_or_default();
     if begins(head, last) || aliases.split(' ').any(|t| begins(t, last)) {
         Some(Match::Head)
@@ -104,9 +111,11 @@ mod tests {
 
     #[test]
     fn a_query_matches_the_starts_of_words() {
+        assert_eq!(matching("fire", "Fire"), Some(Match::Name));
+        assert_eq!(matching("heart on fire", "fire"), Some(Match::Head));
+        assert_eq!(matching("red heart|<3 love", "<3"), Some(Match::Name));
         assert_eq!(matching("red heart|<3 love", "hea"), Some(Match::Head));
         assert_eq!(matching("red heart|<3 love", "RED"), Some(Match::Word));
-        assert_eq!(matching("red heart|<3 love", "<3"), Some(Match::Head));
         assert_eq!(
             matching("smiling face with heart-eyes", "hea"),
             Some(Match::Word)

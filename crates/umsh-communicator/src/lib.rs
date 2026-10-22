@@ -52,7 +52,7 @@ pub use durable::{Durable, Volatile};
 pub use flash::{FlashMap, FlashMapStore, RamFlash, RamFlashError, claim_partition};
 pub use ids::{ChatId, MessageId, PeerId};
 pub use memory::{MemoryStore, Quota};
-pub use reaction::{Reacted, Reaction, Reactions};
+pub use reaction::{CLUSTER_MAX, Cluster, REACTIONS, Reacted, Reaction, Reactions};
 pub use record::{
     BODY_MAX, BuiltinChannel, ChannelAccess, ChannelChange, ChannelRecord, ChatChange, ChatRecord,
     Delivery, IDENTITY_MAX, LinkInfo, MessageFlags, MessageRecord, NAME_MAX, Name, PeerChange,
