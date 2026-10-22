@@ -104,17 +104,12 @@ struct Cell {
 impl Cell {
     fn of(face: &Face) -> Self {
         let store = Store::beside_text(u32::from(face.size));
-        let size = i32::from(store.size);
-        // Centered on the capitals, as the letters beside it are.
-        let middle = face
-            .glyph('H')
-            .filter(|g| g.character == 'H')
-            .map_or(i32::from(face.ascent) * 3 / 5, |cap| {
-                i32::from(cap.top) + i32::from(cap.height) / 2
-            });
+        // Centered on the line, so a line of emoji alone sits as evenly in
+        // its bubble or row as a line of text does.
+        let line = i32::from(face.ascent) - i32::from(face.descent) + i32::from(face.line_gap);
         Self {
             store,
-            top: middle - size / 2,
+            top: (line - i32::from(store.size)) / 2,
             advance: u32::from(store.size) + (u32::from(store.size) / 10).max(1),
         }
     }
@@ -305,7 +300,7 @@ impl Typeface {
         let attributes = PrerenderedAttributes {
             size: u32::from(face.size),
         };
-        let line = i32::from(face.ascent) - i32::from(face.descent);
+        let line = i32::from(face.ascent) - i32::from(face.descent) + i32::from(face.line_gap);
         let mut x = at.x + (height / 4) as i32;
         let y = top + (h - line) / 2;
         for c in code.chars() {
