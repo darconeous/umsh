@@ -23,6 +23,7 @@ use buoyant::focus::{DefaultFocus, Direction};
 use buoyant::primitives::Point;
 use buoyant::render::AnimatedJoin;
 use buoyant::view::{EditBuffer, EditText, ViewLayout};
+use core::time::Duration;
 use embedded_touch::{Phase, Tool, Touch, TouchPoint};
 
 use crate::keyboard::{Field, Modifier, Spaced, starts_sentence};
@@ -57,20 +58,20 @@ pub enum Input {
     Character(char),
     /// A trackball rolled a step toward this arrow.
     Move(Arrow),
-    /// A finger touched the screen, moved on it, or left it, at this point.
+    /// A finger touched the screen, moved on it, or left it, at this point,
+    /// `at` milliseconds on the board's clock.
     Touch {
         phase: TouchPhase,
         x: i16,
         y: i16,
+        at: u64,
     },
 }
 
 impl Input {
-    /// Whether `next`, queued right behind this, makes it moot: a touch
-    /// that moved again before this move was taken in is only where it is
-    /// now, and each move taken in costs a layout.
-    #[must_use]
-    pub const fn superseded_by(&self, next: &Self) -> bool {
+    /// Whether this can leave its layout to `next`, queued right behind
+    /// it: a touch move followed by another.
+    const fn lays_out_with(&self, next: &Self) -> bool {
         matches!(
             (self, next),
             (
@@ -152,9 +153,23 @@ impl Arrow {
     }
 }
 
-/// Applies `input`, which happened at `now` on the board's clock in
+/// Applies `input`, taken in at `now` on the board's clock in
 /// milliseconds, to the running interface.
 pub fn apply<V, F>(app: &mut App<V, State, F>, input: Input, now: u64)
+where
+    V: ViewLayout<State>,
+    V::FocusTree: DefaultFocus,
+    V::Renderables: AnimatedJoin,
+    F: Fn(&State) -> V,
+{
+    apply_before(app, input, None, now);
+}
+
+/// Applies `input`, with `next` queued right behind it. A touch move
+/// followed by another leaves its layout to that one: a layout costs about
+/// a frame, and a finger reports faster than that, while a fling still
+/// needs every point.
+pub fn apply_before<V, F>(app: &mut App<V, State, F>, input: Input, next: Option<&Input>, now: u64)
 where
     V: ViewLayout<State>,
     V::FocusTree: DefaultFocus,
@@ -166,8 +181,17 @@ where
         return;
     }
     app.state_mut().uptime = now;
-    if let Input::Touch { phase, x, y } = input {
-        touch(app, phase, Point::new(x.into(), y.into()), now);
+    if let Input::Touch { phase, x, y, at } = input {
+        // Timed when the panel reported it, not when it is taken in, so a
+        // flick keeps its speed through a slow frame.
+        let elapsed = app.elapsed();
+        let age = Duration::from_millis(now.saturating_sub(at));
+        app.set_time(elapsed.saturating_sub(age));
+        touch(app, phase, Point::new(x.into(), y.into()), at);
+        app.set_time(elapsed);
+        if next.is_some_and(|next| input.lays_out_with(next)) {
+            return;
+        }
         app.finalize_view();
         app.state_mut().sync_keyboard();
         return;

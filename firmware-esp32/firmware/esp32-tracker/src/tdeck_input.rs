@@ -527,7 +527,7 @@ async fn run_touch(
     loop {
         if control(|c| c.policy.mode != Mode::Interactive) {
             if let Some(Some((x, y))) = contact.take() {
-                send(touch(TouchPhase::Cancelled, x, y));
+                send(touch(TouchPhase::Cancelled, x, y, Instant::now()));
                 lag.end(true);
             }
             // Lighting the panel raises the signal.
@@ -550,11 +550,14 @@ async fn run_touch(
                             None => {
                                 let gesture = start_gesture();
                                 let delivered = gesture == Gesture::Navigate;
-                                finish_gesture(touch(TouchPhase::Started, at.0, at.1), gesture);
+                                finish_gesture(
+                                    touch(TouchPhase::Started, at.0, at.1, began),
+                                    gesture,
+                                );
                                 contact = Some(delivered.then_some(at));
                             }
                             Some(Some(last)) if last != at => {
-                                send(touch(TouchPhase::Moved, at.0, at.1));
+                                send(touch(TouchPhase::Moved, at.0, at.1, began));
                                 contact = Some(Some(at));
                             }
                             Some(_) => {}
@@ -564,7 +567,7 @@ async fn run_touch(
                         note_activity();
                         let last = contact.take().flatten();
                         if let Some((x, y)) = last {
-                            send(touch(TouchPhase::Ended, x, y));
+                            send(touch(TouchPhase::Ended, x, y, began));
                         }
                         lag.end(last.is_some());
                     }
@@ -657,6 +660,11 @@ impl TouchLag {
     }
 }
 
-fn touch(phase: TouchPhase, x: i16, y: i16) -> UiItem {
-    UiItem::Touch { phase, x, y }
+fn touch(phase: TouchPhase, x: i16, y: i16, at: Instant) -> UiItem {
+    UiItem::Touch {
+        phase,
+        x,
+        y,
+        at: at.as_millis(),
+    }
 }

@@ -233,17 +233,13 @@ async fn interface(
                 // An input leaves the interface laid out and settled, so its
                 // layout is counted here rather than in the frame. Everything
                 // queued is taken before drawing, so typing outpacing the
-                // frames only skips frames. A touch reports faster than a
-                // frame is drawn, so of the moves queued in a row only the
-                // last is taken in.
+                // frames only skips frames, and a run of touch moves takes
+                // one layout.
                 let began = Instant::now();
                 let mut next = Some(first);
                 while let Some(input) = next {
                     next = INPUT.try_receive().ok();
-                    if next.is_some_and(|next| input.superseded_by(&next)) {
-                        continue;
-                    }
-                    input::apply(app, input, now());
+                    input::apply_before(app, input, next.as_ref(), now());
                 }
                 costs.layout = costs.layout.max(Instant::now() - began);
                 mark(app.state(), Phase::Input);

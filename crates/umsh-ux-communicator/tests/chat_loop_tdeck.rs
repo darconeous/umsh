@@ -26,18 +26,112 @@ where
     (x as i16, y as i16)
 }
 
-fn touch(phase: input::TouchPhase, (x, y): (i16, i16)) -> Input {
-    Input::Touch { phase, x, y }
+/// A touch the panel reported at `at`.
+fn touch(phase: input::TouchPhase, (x, y): (i16, i16), at: u64) -> Input {
+    Input::Touch { phase, x, y, at }
+}
+
+/// A touch reported at `now`, and taken in at once.
+fn apply_touch<V, F>(app: &mut App<V, State, F>, phase: input::TouchPhase, at: (i16, i16), now: u64)
+where
+    V: ViewLayout<State>,
+    V::FocusTree: DefaultFocus,
+    V::Renderables: AnimatedJoin,
+    F: Fn(&State) -> V,
+{
+    input::apply(app, touch(phase, at, now), now);
+}
+
+/// A downward stroke through a long history, as the panel reports it: 8 px
+/// every 20 ms from `start`, then lifted `lift` ms after the last move.
+fn stroke(start: u64, lift: u64) -> Vec<Input> {
+    use input::TouchPhase::{Ended, Moved, Started};
+    let (x, y) = (160, 60);
+    let mut stroke = vec![touch(Started, (x, y), start)];
+    for step in 1..=5 {
+        stroke.push(touch(Moved, (x, y + 8 * step), start + 20 * step as u64));
+    }
+    stroke.push(touch(Ended, (x, y + 40), start + 100 + lift));
+    stroke
+}
+
+/// Takes in each of `inputs` as the panel reports it, returning the time.
+fn at_once<V, F>(app: &mut App<V, State, F>, inputs: Vec<Input>) -> u64
+where
+    V: ViewLayout<State>,
+    V::FocusTree: DefaultFocus,
+    V::Renderables: AnimatedJoin,
+    F: Fn(&State) -> V,
+{
+    let mut now = 0;
+    for input in inputs {
+        let Input::Touch { at, .. } = input else {
+            unreachable!("a stroke is touches")
+        };
+        now = at;
+        app.set_time(std::time::Duration::from_millis(now));
+        input::apply(app, input, now);
+    }
+    now
+}
+
+/// Takes in all of `inputs` together at `now`, as after a slow frame.
+fn all_at<V, F>(app: &mut App<V, State, F>, inputs: Vec<Input>, now: u64) -> u64
+where
+    V: ViewLayout<State>,
+    V::FocusTree: DefaultFocus,
+    V::Renderables: AnimatedJoin,
+    F: Fn(&State) -> V,
+{
+    app.set_time(std::time::Duration::from_millis(now));
+    let mut queue = inputs.into_iter().peekable();
+    while let Some(input) = queue.next() {
+        input::apply_before(app, input, queue.peek(), now);
+    }
+    now
+}
+
+/// The message a tap lands on in a long history at `start`, once what
+/// `take` takes in has come to rest.
+fn landing<V, F>(
+    mut app: App<V, State, F>,
+    start: u64,
+    take: impl FnOnce(&mut App<V, State, F>) -> u64,
+) -> Option<FocusKey>
+where
+    V: ViewLayout<State>,
+    V::FocusTree: DefaultFocus,
+    V::Renderables: AnimatedJoin,
+    F: Fn(&State) -> V,
+{
+    use input::TouchPhase::{Ended, Started};
+    app.state_mut().open_chat(7);
+    app.set_time(std::time::Duration::from_millis(start));
+    app.finalize_view();
+    let mut now = take(&mut app);
+    for _ in 0..100 {
+        now += 20;
+        app.set_time(std::time::Duration::from_millis(now));
+        input::expire(&mut app, now);
+        app.finalize_view();
+    }
+    apply_touch(&mut app, Started, (160, 100), now + 20);
+    apply_touch(&mut app, Ended, (160, 100), now + 40);
+    focus(app.state())
 }
 
 #[test]
-fn only_a_move_queued_behind_another_move_is_moot() {
-    use input::TouchPhase::{Ended, Moved, Started};
-    let moved = touch(Moved, (10, 10));
-    assert!(moved.superseded_by(&touch(Moved, (10, 20))));
-    assert!(!moved.superseded_by(&touch(Ended, (10, 20))));
-    assert!(!touch(Started, (10, 10)).superseded_by(&moved));
-    assert!(!moved.superseded_by(&Input::Press));
+fn a_flick_taken_in_late_coasts_as_far_as_one_taken_in_at_once() {
+    let start = 10_000;
+    // Held still before lifting, it stops where the finger left it.
+    let held = landing(app!(), start, |app| at_once(app, stroke(start, 200)));
+    let flung = landing(app!(), start, |app| at_once(app, stroke(start, 0)));
+    assert_ne!(flung, held, "a flick coasts on");
+    // The whole flick queued behind a slow frame, and taken in together.
+    let late = landing(app!(), start, |app| {
+        all_at(app, stroke(start, 0), start + 250)
+    });
+    assert_eq!(late, flung);
 }
 
 #[test]
@@ -45,8 +139,8 @@ fn tapping_a_chat_opens_it() {
     use input::TouchPhase::{Ended, Started};
     let mut app = app!();
     let at = middle_of(&mut app, keys::chat(PAT));
-    input::apply(&mut app, touch(Started, at), tick(1000));
-    input::apply(&mut app, touch(Ended, at), tick(100));
+    apply_touch(&mut app, Started, at, tick(1000));
+    apply_touch(&mut app, Ended, at, tick(100));
     assert_in_conversation(app.state(), PAT);
 }
 
@@ -55,14 +149,14 @@ fn holding_a_finger_on_a_chat_opens_its_menu_and_lifting_it_does_not_open_it() {
     use input::TouchPhase::{Ended, Started};
     let mut app = app!();
     let at = middle_of(&mut app, keys::chat(PAT));
-    input::apply(&mut app, touch(Started, at), tick(1000));
+    apply_touch(&mut app, Started, at, tick(1000));
     let due = app
         .state()
         .next_deadline()
         .expect("a touch held has a deadline");
     input::expire(&mut app, tick(due - tick(0)));
     assert_eq!(chat_menu(app.state()), Some(ChatMenu::Open(PAT)));
-    input::apply(&mut app, touch(Ended, at), tick(100));
+    apply_touch(&mut app, Ended, at, tick(100));
     assert!(matches!(app.state().screen(), Screen::Chats { .. }));
     assert_eq!(chat_menu(app.state()), Some(ChatMenu::Open(PAT)));
 }
@@ -72,8 +166,8 @@ fn a_finger_that_moves_away_is_not_held() {
     use input::TouchPhase::{Moved, Started};
     let mut app = app!();
     let (x, y) = middle_of(&mut app, keys::chat(PAT));
-    input::apply(&mut app, touch(Started, (x, y)), tick(1000));
-    input::apply(&mut app, touch(Moved, (x, y - 20)), tick(50));
+    apply_touch(&mut app, Started, (x, y), tick(1000));
+    apply_touch(&mut app, Moved, (x, y - 20), tick(50));
     assert_eq!(app.state().next_deadline(), None);
 }
 
@@ -83,8 +177,8 @@ fn the_lock_screen_takes_no_touch() {
     let mut app = app!();
     let at = middle_of(&mut app, keys::chat(PAT));
     lock(&mut app);
-    input::apply(&mut app, touch(Started, at), tick(1000));
-    input::apply(&mut app, touch(Ended, at), tick(100));
+    apply_touch(&mut app, Started, at, tick(1000));
+    apply_touch(&mut app, Ended, at, tick(100));
     assert!(app.state().lock.locked);
     assert_eq!(app.state().touch, None);
 }
@@ -105,8 +199,8 @@ fn tapping_the_back_arrow_goes_back_and_the_trackball_never_lands_on_it() {
     let m = &BOARD.metrics;
     let reach = m.touch_target.expect("the T-Deck has touch") as i16 / 2;
     let at = (reach + 6, (m.strip + m.header) as i16 - 3);
-    input::apply(&mut app, touch(Started, at), tick(1000));
-    input::apply(&mut app, touch(Ended, at), tick(100));
+    apply_touch(&mut app, Started, at, tick(1000));
+    apply_touch(&mut app, Ended, at, tick(100));
     assert!(matches!(app.state().screen(), Screen::Chats { .. }));
     assert_eq!(focus(app.state()), Some(keys::chat(PAT)));
 }
@@ -127,13 +221,13 @@ fn a_tap_on_a_message_selects_it_and_holding_it_opens_its_actions() {
         .expect("the composer is on screen");
     let at = (at.0, at.1.min(area.origin.y as i16 - 30));
     assert_ne!(at, composer);
-    input::apply(&mut app, touch(Started, at), tick(1000));
-    input::apply(&mut app, touch(Ended, at), tick(100));
+    apply_touch(&mut app, Started, at, tick(1000));
+    apply_touch(&mut app, Ended, at, tick(100));
     assert_eq!(actions(app.state()), None);
     assert_eq!(focus(app.state()), Some(keys::message(SEE_YOU)));
     // Focused, it has moved again.
     let at = middle_of(&mut app, keys::message(SEE_YOU));
-    input::apply(&mut app, touch(Started, at), tick(1000));
+    apply_touch(&mut app, Started, at, tick(1000));
     let due = app
         .state()
         .next_deadline()
@@ -141,7 +235,7 @@ fn a_tap_on_a_message_selects_it_and_holding_it_opens_its_actions() {
     input::expire(&mut app, tick(due - tick(0)));
     assert_eq!(actions(app.state()), Some(SEE_YOU));
     // Lifting the finger chooses nothing in the menu.
-    input::apply(&mut app, touch(Ended, at), tick(100));
+    apply_touch(&mut app, Ended, at, tick(100));
     assert_eq!(actions(app.state()), Some(SEE_YOU));
 }
 
@@ -154,8 +248,8 @@ fn a_tap_outside_a_menu_closes_it_and_chooses_nothing() {
     assert_eq!(chat_menu(app.state()), Some(ChatMenu::Open(PAT)));
     // The bottom-left corner, clear of the menu.
     let at = (4, BOARD.metrics.height as i16 - 4);
-    input::apply(&mut app, touch(Started, at), tick(1000));
-    input::apply(&mut app, touch(Ended, at), tick(100));
+    apply_touch(&mut app, Started, at, tick(1000));
+    apply_touch(&mut app, Ended, at, tick(100));
     assert_eq!(chat_menu(app.state()), None);
     assert!(matches!(app.state().screen(), Screen::Chats { .. }));
     assert_eq!(focus(app.state()), Some(keys::chat(PAT)));
@@ -178,13 +272,13 @@ fn a_flick_through_the_history_selects_nothing() {
     };
     let (x, y) = (100, 60);
     let now = at(&mut app, 0);
-    input::apply(&mut app, touch(Started, (x, y)), now);
+    apply_touch(&mut app, Started, (x, y), now);
     for step in 1..=5 {
         let now = at(&mut app, 20);
-        input::apply(&mut app, touch(Moved, (x, y + 25 * step)), now);
+        apply_touch(&mut app, Moved, (x, y + 25 * step), now);
     }
     let now = at(&mut app, 20);
-    input::apply(&mut app, touch(Ended, (x, y + 125)), now);
+    apply_touch(&mut app, Ended, (x, y + 125), now);
     let mut seen = vec![focus(app.state())];
     for _ in 0..100 {
         let now = at(&mut app, 20);
