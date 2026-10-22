@@ -43,6 +43,13 @@ const INSET: u32 = 12;
 const CARD_WIDTH: u32 = 330;
 const CARD_HEAD: u32 = 56;
 
+/// Never inlined, to sidestep a compiler bug: with this inlined into
+/// `ui::screens`, the Xtensa LLVM backend fails that function at
+/// `opt-level = "s"` with "Cannot select: XtensaISD::PCREL_WRAPPER" on
+/// [`INDICES`]'s address (esp rustc 1.95.0-nightly, LLVM 21.1.3). The
+/// code is valid; `opt-level = 3` compiles it. To check whether this is
+/// still needed, drop the attribute and build the Pager at `"s"`.
+#[inline(never)]
 pub fn view(state: &State) -> impl View<Rgb565, State> + use<> {
     let m = state.metrics();
     let devices: Vec<NearbyDevice, MAX_NEARBY> = state.meet.devices.clone();

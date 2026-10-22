@@ -72,54 +72,69 @@ impl Default for ReseedSlot {
 }
 
 /// ChaCha20, rekeyed whenever its [`ReseedSlot`] holds a fresh seed.
+///
+/// Keyed on the first draw, not when built. A generator lives inside a
+/// MAC that is built in place in a static arena, and that only happens
+/// when every field is written by plain stores: a value that comes back
+/// from a call the compiler did not inline is copied into the MAC
+/// instead, and that copy cannot be split out of the whole-MAC moves,
+/// so the MAC itself is copied through the stack—twice its size, more
+/// than the main stack holds. `ChaCha20Rng::from_seed` is such a call
+/// at `opt-level = "s"`, so it runs on the first use, through `&mut
+/// self`, where its result lands in the arena directly.
 pub struct ReseedingRng {
-    rng: ChaCha20Rng,
+    /// `None` until the first draw keys it from `seed`.
+    rng: Option<ChaCha20Rng>,
+    /// The boot seed, zeroed once the generator is keyed.
+    seed: [u8; 32],
     slot: &'static ReseedSlot,
 }
 
 impl ReseedingRng {
-    pub fn new(seed: [u8; 32], slot: &'static ReseedSlot) -> Self {
+    /// Plain stores only; see the type's note.
+    pub const fn new(seed: [u8; 32], slot: &'static ReseedSlot) -> Self {
         Self {
-            rng: ChaCha20Rng::from_seed(seed),
+            rng: None,
+            seed,
             slot,
         }
     }
 
-    /// Fold a waiting seed into the key.
+    /// The keyed generator, with a waiting seed folded into its key.
     ///
     /// The new key is derived from the fresh seed and from output of the
     /// running generator, so it is at least as strong as either: a weak
     /// harvest cannot displace what the generator already had, and a
     /// compromised generator is healed by a good harvest.
-    fn refresh(&mut self) {
-        let Some(mut fresh) = self.slot.take() else {
-            return;
-        };
-        let mut current = [0u8; 32];
-        self.rng.fill_bytes(&mut current);
-        let mut next = [0u8; 32];
-        hkdf_sha256(&SoftwareSha256, &fresh, &current, INFO_RESEED, &mut next);
-        self.rng = ChaCha20Rng::from_seed(next);
-        fresh.zeroize();
-        current.zeroize();
-        next.zeroize();
+    fn refresh(&mut self) -> &mut ChaCha20Rng {
+        let rng = self
+            .rng
+            .get_or_insert_with(|| ChaCha20Rng::from_seed(core::mem::take(&mut self.seed)));
+        if let Some(mut fresh) = self.slot.take() {
+            let mut current = [0u8; 32];
+            rng.fill_bytes(&mut current);
+            let mut next = [0u8; 32];
+            hkdf_sha256(&SoftwareSha256, &fresh, &current, INFO_RESEED, &mut next);
+            *rng = ChaCha20Rng::from_seed(next);
+            fresh.zeroize();
+            current.zeroize();
+            next.zeroize();
+        }
+        rng
     }
 }
 
 impl RngCore for ReseedingRng {
     fn next_u32(&mut self) -> u32 {
-        self.refresh();
-        self.rng.next_u32()
+        self.refresh().next_u32()
     }
 
     fn next_u64(&mut self) -> u64 {
-        self.refresh();
-        self.rng.next_u64()
+        self.refresh().next_u64()
     }
 
     fn fill_bytes(&mut self, dest: &mut [u8]) {
-        self.refresh();
-        self.rng.fill_bytes(dest);
+        self.refresh().fill_bytes(dest);
     }
 
     fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), rand_core::Error> {

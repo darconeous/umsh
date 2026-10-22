@@ -78,5 +78,9 @@ debug = "line-tables-only"
 debug-assertions = false
 incremental = false
 lto = "fat"
-opt-level = 3
+# Size, not speed: the communicator images carry a generic view tree that
+# `opt-level = 3` inlines into megabytes of code (a third of the T-Deck's
+# and the Pager's text). The MAC is still built in place at this level;
+# `scripts/check_xtensa_stack.py` is what notices if that stops.
+opt-level = "s"
 overflow-checks = false

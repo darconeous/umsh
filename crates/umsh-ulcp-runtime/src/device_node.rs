@@ -1391,6 +1391,11 @@ pub struct DeviceNodeParts<CS: CounterStore + 'static> {
 // the Xtensa compiler reserve MAC constructor temporaries alongside the
 // rest of bring-up (58,144 bytes in the WiFi image). Return only a reference
 // so no large value crosses this boundary; the arena remains internal RAM.
+//
+// Everything handed to `Mac::new` here must reduce to plain stores. One
+// value that comes back from an out-of-line call is enough to make the
+// compiler build the whole MAC on the stack and copy it in (see
+// `ReseedingRng`); `scripts/check_xtensa_stack.py` catches that.
 #[inline(never)]
 fn initialize_mac<CS: CounterStore + 'static>(
     arena: &'static mut DeviceNodeMacArena<CS>,
