@@ -99,9 +99,9 @@ pub struct Settings<P> {
     /// Peers saved, or with `false` forgotten, that the device has yet to
     /// answer for, oldest first.
     peer_writes: Deque<(WriteId, [u8; 32], bool), PEER_WRITES_KEPT>,
-    /// Channels joined that the device has yet to answer for, oldest
-    /// first.
-    channel_writes: Deque<(WriteId, ChannelTag), CHANNEL_WRITES_KEPT>,
+    /// Channels joined (`true`) or left that the device has yet to answer
+    /// for, oldest first.
+    channel_writes: Deque<(WriteId, ChannelTag, bool), CHANNEL_WRITES_KEPT>,
     /// Channels the device would not join, for the chats to let go of.
     refused_joins: Vec<ChannelTag, CHANNEL_WRITES_KEPT>,
     /// When to ask the device to save.
@@ -224,16 +224,17 @@ impl<P: LocalPort> Settings<P> {
                     events(NodeEvent::SettingsChanged);
                     return;
                 }
-                if let Some(&(_, tag)) = self.channel_writes.iter().find(|(write, _)| *write == id)
+                if let Some(&(_, tag, joined)) =
+                    self.channel_writes.iter().find(|(write, ..)| *write == id)
                 {
-                    self.channel_writes.retain(|(write, _)| *write != id);
+                    self.channel_writes.retain(|(write, ..)| *write != id);
                     // An answer that went astray says nothing: the device
                     // is read again, and the channel stays until it says.
                     let refused = matches!(
                         outcome,
                         WriteOutcome::Refused(_) | WriteOutcome::Skipped | WriteOutcome::Unsent
                     );
-                    if refused && !self.model.channels().any(|held| *held == tag.0) {
+                    if joined && refused && !self.model.channels().any(|held| *held == tag.0) {
                         _ = self.refused_joins.push(tag);
                     }
                     return;
@@ -409,11 +410,29 @@ impl<P: LocalPort> Settings<P> {
         let Ok(id) = self.model.join_channel(key) else {
             return false;
         };
+        self.channel_written(id, tag, true);
+        true
+    }
+
+    /// Asks the device to let go of the channel `key`, whose tag is `tag`.
+    /// It is no longer among [`Settings::channels`] from now on, unless
+    /// the device refuses.
+    pub fn leave_channel(&mut self, key: &[u8; 32], tag: ChannelTag) -> bool {
+        let Ok(id) = self.model.leave_channel(key) else {
+            return false;
+        };
+        self.channel_written(id, tag, false);
+        true
+    }
+
+    /// Keeps the write `id`, which joins (`joined`) or leaves `tag`, for the
+    /// device's answer, in place of any earlier one for the same channel.
+    fn channel_written(&mut self, id: WriteId, tag: ChannelTag, joined: bool) {
+        self.channel_writes.retain(|&(_, kept, _)| kept != tag);
         if self.channel_writes.is_full() {
             self.channel_writes.pop_front();
         }
-        let _ = self.channel_writes.push_back((id, tag));
-        true
+        let _ = self.channel_writes.push_back((id, tag, joined));
     }
 
     /// The channels the device would not join since last asked.
@@ -474,16 +493,24 @@ impl<P: LocalPort> Settings<P> {
     }
 
     /// The channels the device identity holds, by tag, and those it has
-    /// been asked to join and has yet to answer for.
+    /// been asked to join and has yet to answer for, less those it has been
+    /// asked to leave.
     pub fn channels(&self) -> impl Iterator<Item = ChannelTag> + '_ {
         let joining = self
             .channel_writes
             .iter()
-            .map(|&(_, tag)| tag)
+            .filter(|&&(_, _, joined)| joined)
+            .map(|&(_, tag, _)| tag)
             .filter(|tag| !self.model.channels().any(|held| *held == tag.0));
+        let leaving = |tag: &ChannelTag| {
+            self.channel_writes
+                .iter()
+                .any(|&(_, kept, joined)| !joined && kept == *tag)
+        };
         self.model
             .channels()
             .map(|tag| ChannelTag(*tag))
+            .filter(move |tag| !leaving(tag))
             .chain(joining)
     }
 
@@ -499,25 +526,43 @@ impl<P: LocalPort> Settings<P> {
         )
     }
 
-    /// The link that shares the device identity.
+    /// The link that shares the device identity: its address, and its
+    /// contact once the device has given one.
     pub fn share_uri(&self) -> Option<ShareUri> {
         self.key()?;
         let mut uri = ShareUri::new();
         uri.push_str("umsh:n:").ok()?;
         uri.push_str(&self.address()).ok()?;
+        if let Some(contact) = self.contact() {
+            let mut whole = uri.clone();
+            let carried = whole.push(':').is_ok()
+                && whole
+                    .push_str(&umsh_uri::encode_base58_bytes(contact))
+                    .is_ok();
+            if carried {
+                uri = whole;
+            }
+        }
         Some(uri)
     }
 
-    /// Asks the device afresh for what a contact exchange uses: its node
-    /// identity, signed (`PROP_IDENT`), and the longest frame's airtime.
+    /// Asks the device afresh for its contact: its node identity as it is
+    /// kept, signed (`PROP_IDENT_CONTACT`). Each one is dated as it is
+    /// signed.
+    pub fn read_contact(&mut self) {
+        self.model.read(prop::IDENT_CONTACT);
+    }
+
+    /// Asks the device afresh for what a contact exchange uses: its
+    /// contact, and the longest frame's airtime.
     pub fn read_for_meet(&mut self) {
-        self.model.read(prop::IDENT);
+        self.read_contact();
         self.model.read(prop::PHY_T_FRAME);
     }
 
-    /// The device identity's signed node identity payload, as last read.
-    pub fn identity(&self) -> Option<&[u8]> {
-        self.model.raw(prop::IDENT)
+    /// The device identity's contact, signed, as last read.
+    pub fn contact(&self) -> Option<&[u8]> {
+        self.model.raw(prop::IDENT_CONTACT)
     }
 
     /// The longest frame's airtime at the radio's settings, in

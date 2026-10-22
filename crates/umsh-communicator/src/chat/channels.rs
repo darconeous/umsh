@@ -213,6 +213,29 @@ impl<S: ChatStore> Chats<S> {
         }
     }
 
+    /// Leaves the channel `chat` is in: lets go of it, and of its chat and
+    /// the chat's messages. Returns the key and tag the device is to let go
+    /// of.
+    pub fn leave(
+        &mut self,
+        chat: model::ChatId,
+        events: &mut dyn FnMut(NodeEvent),
+    ) -> Option<(ChannelKey, ChannelTag)> {
+        let ConversationKey::ChannelGroup { channel: tag } = self.conversation(chat)? else {
+            return None;
+        };
+        let facade = self.facade.as_mut()?;
+        let key = facade.channels().key(&tag)?;
+        facade.channels_mut().remove(&tag);
+        self.held.retain(|held| *held != tag);
+        self.store
+            .update_chat(ChatId(chat), ChatChange::Delete)
+            .ok()?;
+        _ = self.store.update_channel(&tag, ChannelChange::Remove);
+        events(NodeEvent::ChatRemoved(chat));
+        Some((key, tag))
+    }
+
     /// The link that shares the channel `chat` is in: its name, for a
     /// named channel; else its key, and the name it is shown by when that
     /// fits.

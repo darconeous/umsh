@@ -55,6 +55,7 @@ pub fn config() -> SessionConfig {
         ble_pin: false,
         reboot: true,
         dev_identity: true,
+        messaging: true,
         stats: None,
         mac_node: false,
         meshcore_forwarder: false,

@@ -70,7 +70,8 @@ use umsh_sync::AsyncRefCell;
 use umsh_ulcp::announce::AnnouncementKind;
 use umsh_ulcp::stats::{Counter, Mirror, StatsLedger};
 use umsh_ulcp_device::{
-    AnnounceRequest, MAX_CHANNEL_KEYS, MAX_DEV_ADMINS, MAX_DEV_PEERS, MAX_DEVICE_NAME_LEN,
+    AnnounceRequest, IdentityForm, MAX_CHANNEL_KEYS, MAX_DEV_ADMINS, MAX_DEV_PEERS,
+    MAX_DEVICE_NAME_LEN,
 };
 
 use crate::driver::DevDomainSnapshot;
@@ -1317,26 +1318,27 @@ pub async fn reboot_quiesce_loop<CS: CounterStore + 'static>(mac: DeviceNodeHand
     }
 }
 
-static IDENT_REQUEST: Signal<NodeMutex, ()> = Signal::new();
+static IDENT_REQUEST: Signal<NodeMutex, IdentityForm> = Signal::new();
 static IDENT_RESPONSE: Signal<NodeMutex, Option<IdentityBlob>> = Signal::new();
 
 /// A complete signed node-identity blob: the canonical unsigned encoding
 /// followed by its 64-octet detached signature.
 type IdentityBlob = heapless::Vec<u8, 320>;
 
-/// Build and sign this node's identity blob into `out`, returning its
-/// length.
+/// Build and sign this node's identity blob in `form` into `out`,
+/// returning its length.
 ///
-/// This is the standalone framing of the same statement the Identity
-/// Request responder makes—same profile, same builder—differing only
-/// in that it carries no request nonce and is authenticated by the
-/// signature rather than by an enclosing unicast.
-pub async fn sign_identity_blob(out: &mut [u8]) -> Option<usize> {
+/// The advertised form is the standalone framing of the same statement
+/// the Identity Request responder makes—same profile, same builder—
+/// differing only in that it carries no request nonce and is
+/// authenticated by the signature rather than by an enclosing unicast.
+/// The contact form is that statement as it is kept.
+pub async fn sign_identity_blob(out: &mut [u8], form: IdentityForm) -> Option<usize> {
     if !NODE_UP.load(Ordering::Relaxed) {
         return None;
     }
     IDENT_RESPONSE.reset();
-    IDENT_REQUEST.signal(());
+    IDENT_REQUEST.signal(form);
     let blob = IDENT_RESPONSE.wait().await?;
     if blob.len() > out.len() {
         return None;
@@ -1352,14 +1354,17 @@ pub async fn identity_blob_loop<CS: CounterStore + 'static>(
 ) {
     use umsh_crypto::NodeIdentity as _;
     loop {
-        IDENT_REQUEST.wait().await;
+        let form = IDENT_REQUEST.wait().await;
         let mut blob = IdentityBlob::new();
         let _ = blob.resize_default(blob.capacity());
         // The node's own profile is the canonical statement of what this
         // node is; building from it is what keeps the local-control
         // framing and the over-the-air framing from drifting apart.
         let signed = async {
-            let payload = node.with_identity_profile(|profile| profile.to_payload(None))?;
+            let payload = node.with_identity_profile(|profile| match form {
+                IdentityForm::Advertised => profile.to_payload(None),
+                IdentityForm::Contact => profile.to_contact_payload(),
+            })?;
             let body = payload.encode_for_signing(&mut blob).ok()?;
             let signature = identity.sign(blob.get(..body)?).await.ok()?;
             blob.get_mut(body..body + 64)?.copy_from_slice(&signature);

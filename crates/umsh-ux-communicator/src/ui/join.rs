@@ -4,11 +4,11 @@
 
 use crate::typeface::Typeface;
 use buoyant::event::{Key, KeyResponse};
-use buoyant::focus::BoundaryBehavior;
+use buoyant::focus::{BoundaryBehavior, FocusKey};
 use buoyant::render::AreaColors;
-use buoyant::view::TextArea;
 use buoyant::view::prelude::*;
 use buoyant::view::text_field::TextFieldStatus;
+use buoyant::view::{EditBuffer, TextArea};
 use embedded_graphics::pixelcolor::Rgb565;
 use heapless::String;
 
@@ -68,23 +68,41 @@ pub fn view(
 
 /// What the channel is to be called here, edited in place.
 fn name_row(m: &'static Metrics, name: &JoinName) -> impl View<Rgb565, State> + use<> {
-    let shown: String<32> = String::try_from(name.text()).unwrap_or_default();
-    TextField::new(name, &font::REGULAR, State::join_name_mut)
+    edited_name(
+        m,
+        name,
+        State::join_name_mut,
+        State::field_active,
+        keys::JOIN_NAME,
+    )
+}
+
+/// A row named Name whose value is edited where it stands: `edit` reaches
+/// the text, and `active` hears the edit begin and end. Enter ends it.
+pub(super) fn edited_name<const N: usize>(
+    m: &'static Metrics,
+    name: &EditBuffer<String<N>>,
+    edit: fn(&mut State) -> Option<&mut EditBuffer<String<N>>>,
+    active: fn(&mut State, bool),
+    key: FocusKey,
+) -> impl View<Rgb565, State> + use<N> {
+    let shown: String<N> = String::try_from(name.text()).unwrap_or_default();
+    TextField::new(name, &font::REGULAR, edit)
         .with_font_size(m.secondary)
         .with_max_lines(1)
         // Enter ends the edit.
         .on_submit(|_: &mut State| {})
-        .on_active(State::field_active)
+        .on_active(active)
         .with_label(move |status, area| name_look(m, status, area, &shown))
-        .focus_key(keys::JOIN_NAME)
+        .focus_key(key)
 }
 
-fn name_look(
+fn name_look<const N: usize>(
     m: &'static Metrics,
     status: TextFieldStatus,
-    area: TextArea<'static, String<32>, Typeface>,
+    area: TextArea<'static, String<N>, Typeface>,
     shown: &str,
-) -> impl View<Rgb565, State> + use<> {
+) -> impl View<Rgb565, State> + use<N> {
     let editing = status.is_active();
     let focused = status.is_focused() || editing;
     let face = if focused { &font::BOLD } else { &font::REGULAR };

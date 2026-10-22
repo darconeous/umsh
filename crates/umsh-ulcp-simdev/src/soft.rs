@@ -494,13 +494,15 @@ impl<P: SoftPlatform> SoftDevice<P> {
             }
             // Signed with the device identity, as a board signs it; a
             // device without one has nothing to sign with.
-            Effect::SignIdentity { tid } => {
+            // It advertises no position or regions, so both forms are the
+            // same statement.
+            Effect::SignIdentity { tid, form } => {
                 let blob = self
                     .platform
                     .load_identity()
                     .map(|secret| identity_blob(&self.session, &secret));
                 self.session
-                    .respond_identity_blob(tid, blob.as_deref().ok_or(()), &mut emit);
+                    .respond_identity_blob(tid, form, blob.as_deref().ok_or(()), &mut emit);
             }
             Effect::ReadTime { tid } => {
                 let epoch = self.platform.wall_clock();

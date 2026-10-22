@@ -86,6 +86,7 @@ pub fn web_sim_config() -> umsh_ulcp_simdev::SessionConfig {
         // near enough a power cycle for the debugger to exercise.
         reboot: true,
         dev_identity: true,
+        messaging: false,
         // No node behind the session: a backhaul would connect the host
         // to nothing, so the device must not claim `CAP_MAC_BACKHAUL`—
         // that claim is exactly what a bridge checks before trusting a

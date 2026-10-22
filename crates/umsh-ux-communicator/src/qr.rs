@@ -8,9 +8,10 @@ use embedded_graphics::prelude::*;
 use embedded_graphics::primitives::Rectangle;
 use qrcodegen_no_heap::{QrCode, QrCodeEcc, Version};
 
-/// The largest code made: version 6, 41 modules a side.
-const MAX_VERSION: Version = Version::new(6);
-const MAX_SIDE: usize = 41;
+/// The largest code made: version 9, 53 modules a side, which holds a
+/// node's link with its signed contact.
+const MAX_VERSION: Version = Version::new(9);
+const MAX_SIDE: usize = 53;
 const BYTES: usize = (MAX_SIDE * MAX_SIDE).div_ceil(8);
 
 /// A code's modules, each drawn `scale` pixels square, dark on light. The
@@ -26,7 +27,7 @@ pub struct QrImage {
 impl QrImage {
     /// Encodes `text` at the largest scale that fits `room` pixels square
     /// with a quiet zone of `quiet` modules each side. `None` when it does
-    /// not fit a version 6 code.
+    /// not fit a version 9 code.
     #[must_use]
     pub fn encode(text: &str, room: u32, quiet: u32) -> Option<Self> {
         let mut out = [0u8; MAX_VERSION.buffer_len()];

@@ -112,6 +112,7 @@ fn config() -> SessionConfig {
         // `CMD_REBOOT` to restart.
         reboot: false,
         dev_identity: true,
+        messaging: true,
         stats: None,
         // Its node does not forward, so there is no repeater to switch on.
         mac_node: false,

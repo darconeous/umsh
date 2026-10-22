@@ -1,5 +1,5 @@
 //! Device › Channels: Add channel, then the joined channels in list order.
-//! Pressing one opens it; Backspace goes back.
+//! Pressing one shows it; Backspace goes back.
 
 use buoyant::event::{Key, KeyResponse};
 use buoyant::focus::BoundaryBehavior;

@@ -401,8 +401,9 @@ pub enum Shareable {
     Channel(ChatId),
 }
 
-/// A link that shares a node or a channel, such as `umsh:n:…`.
-pub type ShareUri = String<96>;
+/// A link that shares a node, with its signed contact, or a channel, such
+/// as `umsh:n:…`.
+pub type ShareUri = String<320>;
 /// A link that shares a node: its address and its own signed identity.
 pub type ContactUri = String<320>;
 
@@ -1334,6 +1335,13 @@ pub trait Node {
     /// [`NodeEvent::ChatRemoved`].
     fn delete_chat(&self, chat: ChatId);
 
+    /// Calls `chat` `name` here, or by its peer's or channel's own name
+    /// when `None`. The change comes as [`NodeEvent::ChatChanged`].
+    fn rename_chat(&self, chat: ChatId, name: Option<&str>);
+
+    /// Keeps `chat`'s messages from interrupting while `muted`.
+    fn set_muted(&self, chat: ChatId, muted: bool);
+
     /// Keeps `member`, whose identity is known, among my peers, and returns
     /// them as the Peers list shows them. `None` when there is no room.
     fn save_peer(&self, member: &Member) -> Option<PeerSummary>;
@@ -1391,6 +1399,10 @@ pub trait Node {
     /// or there is no room for it.
     fn add_channel(&self, text: &str) -> Option<ChatSummary>;
 
+    /// Leaves the channel `chat` is in: the device lets go of its key, and
+    /// the chat goes with its messages, as [`NodeEvent::ChatRemoved`].
+    fn leave_channel(&self, chat: ChatId);
+
     /// Nodes heard but not saved whose names have a word starting with
     /// `query`, most recently heard first.
     fn find_heard(&self, query: &str) -> Vec<Heard, MAX_HEARD>;
@@ -1406,6 +1418,11 @@ pub trait Node {
 
     /// Calls this node `name`, which may be empty.
     fn set_name(&self, name: &str);
+
+    /// Asks the device afresh for this node's contact, which
+    /// [`Node::share_uri`] carries for [`Shareable::Identity`] once it
+    /// comes, as [`NodeEvent::SettingsChanged`].
+    fn read_contact(&self);
 
     /// The link that shares `what`. `None` when it cannot be shared.
     fn share_uri(&self, what: Shareable) -> Option<ShareUri>;
@@ -1937,7 +1954,7 @@ impl State {
     }
 
     /// Reads how `chat` is listed from the node again.
-    fn refresh_chat(&mut self, chat: ChatId) {
+    pub(crate) fn refresh_chat(&mut self, chat: ChatId) {
         match self.node.chat(chat) {
             Some(fresh) => _ = self.place(fresh),
             None => self.remove_chat(chat),
@@ -1968,8 +1985,37 @@ impl State {
         let Some(index) = self.chats.iter().position(|c| c.id == chat) else {
             return;
         };
+        // Where it stood among the channels, for the Channels screen.
+        let channel = self
+            .chats
+            .iter()
+            .filter(|c| matches!(c.kind, ChatKind::Channel { .. }))
+            .position(|c| c.id == chat);
         self.chats.remove(index);
         self.arrived.retain(|a| a.chat != chat);
+        // Its own screens go, back to the one they were opened from.
+        if let Some(at) = self.screens.iter().position(|s| s.about(chat)) {
+            self.screens.truncate(at.max(1));
+            if let (
+                Some(channel),
+                Some(Screen::Device {
+                    page: DevicePage::Channels,
+                    focus,
+                }),
+            ) = (channel, self.screens.last_mut())
+            {
+                let mut channels = self
+                    .chats
+                    .iter()
+                    .filter(|c| matches!(c.kind, ChatKind::Channel { .. }));
+                let next = channels
+                    .clone()
+                    .nth(channel)
+                    .or_else(|| channels.next_back())
+                    .map_or(keys::ADD_CHANNEL, |c| keys::chat(c.id));
+                focus.request(next);
+            }
+        }
         if self
             .banner
             .is_some_and(|b| b.notice == Notice::Message(chat))

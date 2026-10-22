@@ -117,6 +117,8 @@ struct ChatRow {
     id: ChatId,
     avatar: AvatarStyle,
     name: String<32>,
+    /// What it is called here instead, when it is.
+    alias: Option<String<32>>,
     kind: ChatKind,
     unread: bool,
     muted: bool,
@@ -146,6 +148,7 @@ fn mockup_chats(heap: TextHeap) -> [ChatRow; 7] {
         id,
         avatar,
         name: s(name),
+        alias: None,
         kind,
         unread,
         muted,
@@ -1137,6 +1140,7 @@ impl Store {
             id,
             avatar,
             name: cut(name),
+            alias: None,
             kind,
             unread: false,
             muted: false,
@@ -1168,7 +1172,8 @@ impl Store {
 
     /// `row` as the list shows it.
     fn summary(&self, row: &ChatRow) -> ChatSummary {
-        let mut summary = ChatSummary::new(row.id, row.avatar.clone(), &row.name, self.heap);
+        let name = row.alias.as_ref().unwrap_or(&row.name);
+        let mut summary = ChatSummary::new(row.id, row.avatar.clone(), name, self.heap);
         summary.kind = row.kind;
         summary.unread = row.unread;
         summary.muted = row.muted;
@@ -1689,6 +1694,29 @@ impl Node for Store {
         self.queue(NodeEvent::ChatRemoved(chat));
     }
 
+    fn rename_chat(&self, chat: ChatId, name: Option<&str>) {
+        if let Some(row) = self.rows().iter_mut().find(|row| row.id == chat) {
+            row.alias = name.map(cut);
+        }
+        self.queue(NodeEvent::ChatChanged(chat));
+    }
+
+    fn set_muted(&self, chat: ChatId, muted: bool) {
+        if let Some(row) = self.rows().iter_mut().find(|row| row.id == chat) {
+            row.muted = muted;
+        }
+        self.queue(NodeEvent::ChatChanged(chat));
+    }
+
+    fn leave_channel(&self, chat: ChatId) {
+        if self
+            .chat(chat)
+            .is_some_and(|c| matches!(c.kind, ChatKind::Channel { .. }))
+        {
+            self.delete_chat(chat);
+        }
+    }
+
     fn find_heard(&self, query: &str) -> Vec<Heard, MAX_HEARD> {
         HEARD
             .iter()
@@ -1707,6 +1735,8 @@ impl Node for Store {
     fn address(&self) -> String<44> {
         s(ADDRESS)
     }
+
+    fn read_contact(&self) {}
 
     fn share_uri(&self, what: Shareable) -> Option<ShareUri> {
         match what {

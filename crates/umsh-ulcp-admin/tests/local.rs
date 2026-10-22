@@ -54,6 +54,7 @@ fn config() -> SessionConfig {
         ble_pin: true,
         reboot: true,
         dev_identity: true,
+        messaging: false,
         stats: None,
         // A simulated device has no node, so it cannot forward.
         mac_node: false,

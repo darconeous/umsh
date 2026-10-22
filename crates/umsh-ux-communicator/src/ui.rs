@@ -23,6 +23,7 @@ mod add_channel;
 mod avatar;
 mod banner;
 mod battery;
+mod channel;
 mod channels;
 mod chats;
 mod clock;
@@ -33,6 +34,7 @@ mod display;
 mod enter_address;
 mod exchange;
 mod find;
+mod identity;
 mod join;
 mod links;
 mod lock;
@@ -159,24 +161,51 @@ fn screens(state: &State) -> impl View<Rgb565, State> + use<> {
             Screen::Join { invite, name, .. } => join::view(m, invite, name),
             Screen::Nearby { .. } | Screen::Exchange { .. } | Screen::EnterAddress { .. } =>
                 add_peer(state),
-            Screen::Peer {
-                peer,
-                detail,
-                confirm,
-                requested,
-                ..
-            } => state
-                .peer(*peer)
-                .map(|summary| peer::view(m, summary, detail, *confirm, *requested)),
-            Screen::ShareContact { peer, .. } => state
-                .peer(*peer)
-                .map(|summary| share_contact::view(state, &summary.name)),
+            Screen::Peer { .. } | Screen::ShareContact { .. } | Screen::Channel { .. } =>
+                peer_or_channel(state),
             Screen::Device { page, .. } => device::page(state, page),
             Screen::Setup { page, .. } => setup::view(state, page),
         })
         .padding(Edges::Top, m.strip),
     ))
     .with_alignment(Alignment::TopLeading)
+}
+
+/// A saved peer's screens, and a channel's.
+fn peer_or_channel(state: &State) -> impl View<Rgb565, State> + use<> {
+    let m = state.metrics();
+    match_view!(state.screen(), {
+        Screen::Peer {
+            peer,
+            detail,
+            confirm,
+            requested,
+            ..
+        } => state
+            .peer(*peer)
+            .map(|summary| peer::view(m, summary, detail, *confirm, *requested)),
+        Screen::ShareContact { peer, .. } => state
+            .peer(*peer)
+            .map(|summary| share_contact::view(state, &summary.name)),
+        // A channel's, the only other screen sent here.
+        _ => channel_screen(state),
+    })
+}
+
+/// A channel's screen, while it is shown.
+fn channel_screen(state: &State) -> Option<impl View<Rgb565, State> + use<>> {
+    let Screen::Channel {
+        chat,
+        name,
+        confirm,
+        ..
+    } = state.screen()
+    else {
+        return None;
+    };
+    state
+        .chat(*chat)
+        .map(|summary| channel::view(state.metrics(), summary, name, *confirm))
 }
 
 /// Add peer's screens: Nearby, an exchange in its place, and Enter an

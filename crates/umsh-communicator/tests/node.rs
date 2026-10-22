@@ -634,6 +634,86 @@ fn a_channel_the_device_will_not_hold_goes_again() {
     assert_eq!(node.chat(more.id), None);
 }
 
+/// This node's code carries its contact, read afresh: who it is, signed,
+/// and mobile, as a communicator's device identity starts out, so it
+/// carries no position.
+#[test]
+fn the_identity_link_carries_a_signed_mobile_contact() {
+    let sim = device();
+    let (node, clock) = started(&sim);
+    node.set_name("Juniper");
+    clock.set(1_000);
+    node.pump();
+    node.read_contact();
+    clock.set(2_000);
+    node.pump();
+    let uri = node.share_uri(Shareable::Identity).unwrap();
+    let rest = uri.strip_prefix("umsh:n:").unwrap();
+    let (address, contact) = rest.split_once(':').expect("a contact follows the address");
+    assert_eq!(address, node.address().as_str());
+    let blob = umsh_uri::decode_base58_bytes(contact).unwrap();
+    let contact = NodeIdentityPayload::from_bytes(&blob).unwrap();
+    assert_eq!(contact.name.as_deref(), Some("Juniper"));
+    assert!(contact.signature.is_some());
+    assert!(contact.capabilities.contains(NodeCapabilities::MOBILE));
+    assert_eq!(contact.location, None);
+}
+
+/// A channel left goes, chat and all, and stays gone: the device lets go
+/// of it, the well-known Public as much as one joined here.
+#[test]
+fn a_channel_left_goes_and_stays_gone() {
+    let sim = device();
+    let (node, clock) = started(&sim);
+    let crew = node.add_channel("Trail Crew").unwrap();
+    let public = node.add_channel("public").unwrap();
+    clock.set(1_000);
+    node.pump();
+    events(&node);
+
+    node.leave_channel(public.id);
+    node.leave_channel(crew.id);
+    let left = events(&node);
+    assert!(
+        left.contains(&NodeEvent::ChatRemoved(public.id)),
+        "{left:?}"
+    );
+    assert!(left.contains(&NodeEvent::ChatRemoved(crew.id)), "{left:?}");
+    for step in 2..5 {
+        clock.set(1_000 * step);
+        node.pump();
+    }
+    assert_eq!(node.chat(public.id), None);
+    assert_eq!(node.chat(crew.id), None);
+    let kept = |node: &CommunicatorNode<Port>| -> Vec<String> {
+        chats(node)
+            .iter()
+            .map(|chat| chat.name.as_str().into())
+            .collect()
+    };
+    assert_eq!(kept(&node), ["EMERGENCY"]);
+
+    drop(node);
+    assert_eq!(kept(&node_over(&sim)), ["EMERGENCY"]);
+}
+
+/// A chat renamed goes by the new name, and by its channel's own again
+/// once the name is taken away; one muted says so.
+#[test]
+fn a_chat_is_renamed_and_muted() {
+    let sim = device();
+    let (node, _) = started(&sim);
+    let crew = node.add_channel("Trail Crew").unwrap();
+    events(&node);
+    node.rename_chat(crew.id, Some("Crew"));
+    assert_eq!(events(&node), [NodeEvent::ChatChanged(crew.id)]);
+    assert_eq!(node.chat(crew.id).unwrap().name, "Crew");
+    node.rename_chat(crew.id, None);
+    assert_eq!(node.chat(crew.id).unwrap().name, "Trail Crew");
+    node.set_muted(crew.id, true);
+    assert!(node.chat(crew.id).unwrap().muted);
+}
+
 /// A message on `public` arrives in its chat, under the name its sender
 /// gave, with what the radio said about it.
 #[test]

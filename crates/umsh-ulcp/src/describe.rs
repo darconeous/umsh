@@ -75,6 +75,7 @@ pub const fn property_name(key: u32) -> Option<&'static str> {
         prop::STARTUP_BEACON => "PROP_STARTUP_BEACON",
         prop::IDENT_LOCATION => "PROP_IDENT_LOCATION",
         prop::IDENT_ALTITUDE => "PROP_IDENT_ALTITUDE",
+        prop::IDENT_CONTACT => "PROP_IDENT_CONTACT",
         prop::GNSS_ENABLED => "PROP_GNSS_ENABLED",
         prop::GNSS_LOCATION => "PROP_GNSS_LOCATION",
         prop::GNSS_ALTITUDE => "PROP_GNSS_ALTITUDE",
@@ -230,6 +231,7 @@ pub const PROPERTIES: &[u32] = &[
     prop::STARTUP_BEACON,
     prop::IDENT_LOCATION,
     prop::IDENT_ALTITUDE,
+    prop::IDENT_CONTACT,
     prop::GNSS_ENABLED,
     prop::GNSS_LOCATION,
     prop::GNSS_ALTITUDE,
@@ -400,8 +402,8 @@ pub const fn property_type(key: u32) -> Option<PropertyType> {
         // A flags octet followed by whichever components it claims.
         prop::BATTERY => Bytes,
         prop::MAC_REPEATER_ENABLED => Bool,
-        // The signed node-identity blob.
-        prop::IDENT => Bytes,
+        // The signed node-identity blob, as advertised and as kept.
+        prop::IDENT | prop::IDENT_CONTACT => Bytes,
         prop::IDENT_ROLE => U8,
         prop::IDENT_MOBILE => Bool,
         // UTF-8 region names, one per item.

@@ -334,6 +334,10 @@ pub struct SessionConfig {
     /// that only carries its host's traffic, such as a LAN virtual radio,
     /// need not. Required by [`mac_node`](Self::mac_node).
     pub dev_identity: bool,
+    /// Whether the device identity is the messaging identity of whoever
+    /// carries the device: the device has a messaging interface of its
+    /// own. Such an identity starts out mobile (`PROP_IDENT_MOBILE`).
+    pub messaging: bool,
     /// The shared traffic ledger. `None`: the device keeps no counters;
     /// `CAP_STATS` is absent and the `PROP_STAT_*` properties are
     /// unknown. `Some`: the capability is advertised and the counters
@@ -397,6 +401,38 @@ pub enum TxOutcome {
     Failed,
 }
 
+/// Which signed node identity a read asks the platform for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IdentityForm {
+    /// What the device advertises (`PROP_IDENT`).
+    Advertised,
+    /// What the device hands out to be kept (`PROP_IDENT_CONTACT`): the
+    /// advertised identity without a mobile node's position, the regions
+    /// it forwards for, or a nonce.
+    Contact,
+}
+
+impl IdentityForm {
+    /// The form the property `key` reads, when it reads one.
+    #[must_use]
+    pub const fn of(key: u32) -> Option<Self> {
+        match key {
+            prop::IDENT => Some(Self::Advertised),
+            prop::IDENT_CONTACT => Some(Self::Contact),
+            _ => None,
+        }
+    }
+
+    /// The property that reads this form.
+    #[must_use]
+    pub const fn property(self) -> u32 {
+        match self {
+            Self::Advertised => prop::IDENT,
+            Self::Contact => prop::IDENT_CONTACT,
+        }
+    }
+}
+
 /// A radio side effect for the caller to execute.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Effect {
@@ -406,11 +442,11 @@ pub enum Effect {
     /// [`Session::tx_power`]; report completion with
     /// [`Session::on_tx_result`].
     StartTransmit,
-    /// Build and sign the device identity's node-identity blob and feed
-    /// it back with [`Session::respond_identity_blob`], quoting this
-    /// `tid`. The platform owns the signing key and the advertised
+    /// Build and sign the device identity's node-identity blob in `form`
+    /// and feed it back with [`Session::respond_identity_blob`], quoting
+    /// this `tid`. The platform owns the signing key and the advertised
     /// profile; the session owns only the properties that shape it.
-    SignIdentity { tid: u8 },
+    SignIdentity { tid: u8, form: IdentityForm },
     /// Sample the current instantaneous RSSI from the radio and feed the
     /// result back with [`Session::respond_rssi`], quoting this `tid`. Emitted
     /// for a `PROP_PHY_RSSI` get while the PHY is enabled, because the session
@@ -1168,7 +1204,7 @@ impl DeviceDomain {
             meshcore_regions: MeshCoreRegions::default(),
             lan_bearer: crate::lan_bearer::LanBearerConfig::default(),
             ident_role: None,
-            ident_mobile: false,
+            ident_mobile: config.messaging,
             ident_location: HeaplessVec::new(),
             ident_altitude_m: None,
             dev_discoverable: true,
@@ -2705,7 +2741,7 @@ impl SavedState {
             meshcore_regions: MeshCoreRegions::default(),
             lan_bearer: crate::lan_bearer::LanBearerConfig::default(),
             ident_role: None,
-            ident_mobile: false,
+            ident_mobile: config.messaging,
             ident_location: HeaplessVec::new(),
             ident_altitude_m: None,
             dev_discoverable: true,
@@ -5220,8 +5256,8 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         // coherence work across the device key, role, mobility,
         // forwarding state, name, and every identity field added later,
         // to save a signature nobody reads in a loop.
-        if key == prop::IDENT {
-            return Some(Effect::SignIdentity { tid });
+        if let Some(form) = IdentityForm::of(key) {
+            return Some(Effect::SignIdentity { tid, form });
         }
         // PROP_BATTERY is a measurement, not stored state: when any field
         // is reported, defer to the platform's battery source so the
@@ -5290,19 +5326,21 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         }
     }
 
-    /// Complete a deferred `PROP_IDENT` read requested via
-    /// [`Effect::SignIdentity`]. `blob` is the complete signed
-    /// node-identity payload—the canonical unsigned encoding followed
-    /// by its 64-octet detached signature—or `Err` if it could not be
-    /// produced. Quote the same `tid` the effect carried.
+    /// Complete a deferred `PROP_IDENT` or `PROP_IDENT_CONTACT` read
+    /// requested via [`Effect::SignIdentity`]. `blob` is the complete
+    /// signed node-identity payload in `form`—the canonical unsigned
+    /// encoding followed by its 64-octet detached signature—or `Err` if
+    /// it could not be produced. Quote the `tid` and `form` the effect
+    /// carried.
     pub fn respond_identity_blob(
         &mut self,
         tid: u8,
+        form: IdentityForm,
         blob: Result<&[u8], ()>,
         emit: &mut impl FnMut(&[u8]),
     ) {
         match blob {
-            Ok(bytes) => self.send_prop_is(tid, prop::IDENT, bytes, emit),
+            Ok(bytes) => self.send_prop_is(tid, form.property(), bytes, emit),
             Err(()) => self.complete(tid, Status::FAILURE, emit),
         }
     }
@@ -8709,7 +8747,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             }
             // Deferred-read like PHY_RSSI: prop_get intercepts and asks
             // the platform to sign; this arm is only a fallback.
-            prop::IDENT => return PropValue::Unimplemented,
+            prop::IDENT | prop::IDENT_CONTACT => return PropValue::Unimplemented,
             prop::IDENT_ROLE => match self.device.ident_role {
                 Some(role) => {
                     out[0] = role;
@@ -9222,6 +9260,7 @@ const fn is_identity_property(key: u32) -> bool {
             | prop::IDENT_MOBILE
             | prop::IDENT_LOCATION
             | prop::IDENT_ALTITUDE
+            | prop::IDENT_CONTACT
             | prop::ADVERT_INTERVAL
             | prop::BEACON_INTERVAL
             | prop::STARTUP_BEACON
@@ -9555,6 +9594,7 @@ mod tests {
             ble_pin: true,
             reboot: true,
             dev_identity: true,
+            messaging: false,
             mac_node: true,
             meshcore_forwarder: true,
             lan_bearer: crate::LanBearerRole::Forwarding,
@@ -10598,6 +10638,7 @@ mod tests {
     fn a_device_without_an_identity_offers_nothing_that_needs_one() {
         let config = SessionConfig {
             dev_identity: false,
+            messaging: false,
             mac_node: false,
             meshcore_forwarder: false,
             lan_bearer: crate::LanBearerRole::None,
@@ -10617,6 +10658,7 @@ mod tests {
             prop::DEV_ADMINS,
             prop::IDENT,
             prop::IDENT_ROLE,
+            prop::IDENT_CONTACT,
             prop::ADVERT_INTERVAL,
         ] {
             let mut buf = [0u8; 16];
@@ -11680,32 +11722,39 @@ mod tests {
         expect_status(&emitted[0], 2, Status::INVALID_ARGUMENT);
     }
 
-    /// `PROP_IDENT` is a signature the session cannot produce, so the
-    /// read defers to the platform and the platform's answer—success
-    /// or failure—is what the host sees.
+    /// `PROP_IDENT` and `PROP_IDENT_CONTACT` are signatures the session
+    /// cannot produce, so each read defers to the platform, asking for its
+    /// own form, and the platform's answer—success or failure—is what the
+    /// host sees, under the property it asked for.
     #[test]
     fn prop_ident_defers_to_the_platform_for_signing() {
-        let mut session = test_session();
-        let mut buf = [0u8; 16];
-        let len = frame::prop_get(&mut buf, 7, prop::IDENT).unwrap();
-        let (emitted, effect) = dispatch(&mut session, &buf[..len], 0);
-        assert!(emitted.is_empty(), "nothing before the signature exists");
-        assert_eq!(effect, Some(Effect::SignIdentity { tid: 7 }));
+        for form in [IdentityForm::Advertised, IdentityForm::Contact] {
+            let mut session = test_session();
+            let mut buf = [0u8; 16];
+            let len = frame::prop_get(&mut buf, 7, form.property()).unwrap();
+            let (emitted, effect) = dispatch(&mut session, &buf[..len], 0);
+            assert!(emitted.is_empty(), "nothing before the signature exists");
+            assert_eq!(effect, Some(Effect::SignIdentity { tid: 7, form }));
 
-        let blob = [0xAB; 96];
-        let mut out = Vec::new();
-        session.respond_identity_blob(7, Ok(&blob), &mut |bytes: &[u8]| out.push(bytes.to_vec()));
-        let (tid, key, value) = parse_prop_is(&out[0]);
-        assert_eq!((tid, key), (7, prop::IDENT));
-        assert_eq!(value, blob);
+            let blob = [0xAB; 96];
+            let mut out = Vec::new();
+            session.respond_identity_blob(7, form, Ok(&blob), &mut |bytes: &[u8]| {
+                out.push(bytes.to_vec())
+            });
+            let (tid, key, value) = parse_prop_is(&out[0]);
+            assert_eq!((tid, key), (7, form.property()));
+            assert_eq!(value, blob);
 
-        // A board with no device node reports failure rather than an
-        // empty or fabricated identity.
-        let (_, effect) = dispatch(&mut session, &buf[..len], 0);
-        assert_eq!(effect, Some(Effect::SignIdentity { tid: 7 }));
-        let mut out = Vec::new();
-        session.respond_identity_blob(7, Err(()), &mut |bytes: &[u8]| out.push(bytes.to_vec()));
-        expect_status(&out[0], 7, Status::FAILURE);
+            // A board with no device node reports failure rather than an
+            // empty or fabricated identity.
+            let (_, effect) = dispatch(&mut session, &buf[..len], 0);
+            assert_eq!(effect, Some(Effect::SignIdentity { tid: 7, form }));
+            let mut out = Vec::new();
+            session.respond_identity_blob(7, form, Err(()), &mut |bytes: &[u8]| {
+                out.push(bytes.to_vec())
+            });
+            expect_status(&out[0], 7, Status::FAILURE);
+        }
     }
 
     #[test]
@@ -14192,6 +14241,7 @@ mod tests {
             prop::IDENT_MOBILE,
             prop::IDENT_LOCATION,
             prop::IDENT_ALTITUDE,
+            prop::IDENT_CONTACT,
             prop::DEV_DISCOVERABLE,
             // The rest of the repeater policy is whole-value; only the
             // region table is edited entry by entry.
@@ -14208,9 +14258,9 @@ mod tests {
             assert!(effect.is_none());
             expect_status(&emitted[0], 1, Status::INVALID_ARGUMENT);
         }
-        // An unknown property is not found; 85 is still-spare space in
+        // An unknown property is not found; 86 is still-spare space in
         // the advertisement sub-range.
-        for unknown in [85, 1_234] {
+        for unknown in [86, 1_234] {
             let len = frame::prop_remove(&mut buf, 2, unknown, &[0; 4]).unwrap();
             let (emitted, effect) = dispatch(&mut session, &buf[..len], 0);
             assert!(effect.is_none());

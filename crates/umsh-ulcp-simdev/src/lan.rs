@@ -90,6 +90,7 @@ pub fn session_config(dev_version: &'static str) -> SessionConfig {
         // for `CMD_REBOOT` to restart.
         reboot: false,
         dev_identity: false,
+        messaging: false,
         stats: None,
         mac_node: false,
         meshcore_forwarder: false,

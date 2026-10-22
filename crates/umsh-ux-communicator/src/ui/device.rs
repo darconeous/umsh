@@ -52,7 +52,7 @@ pub fn view(state: &State) -> impl View<Rgb565, State> + use<> {
             category(
                 "Identity",
                 keys::IDENTITY,
-                State::open_share,
+                State::open_identity,
                 &state.status.device_name,
             ),
             category("Channels", keys::CHANNELS, State::open_channels, &joined),
@@ -168,7 +168,8 @@ pub fn page(state: &State, page: &DevicePage) -> impl View<Rgb565, State> + use<
     let m = state.metrics();
     match_view!(page, {
         DevicePage::Radio { settings } => radio(m, settings, state.profile_name(settings)),
-        DevicePage::Share => super::share::view(state),
+        DevicePage::Identity { name } => super::identity::view(state, name),
+        DevicePage::Share { what } => super::share::view(state, *what),
         DevicePage::Channels => super::channels::view(state),
         DevicePage::AddChannel { text } => super::add_channel::view(state, text),
         DevicePage::Profiles => super::profile::view(state, "Profile"),

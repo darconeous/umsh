@@ -166,7 +166,9 @@ use umsh_ulcp::{Status, hdlc};
 use umsh_ulcp_device::GnssConfig;
 #[cfg(feature = "wall-clock")]
 use umsh_ulcp_device::TimeConfig;
-use umsh_ulcp_device::{BatteryFields, MAX_DEVICE_NAME_LEN, RadioSettings, SessionConfig};
+use umsh_ulcp_device::{
+    BatteryFields, IdentityForm, MAX_DEVICE_NAME_LEN, RadioSettings, SessionConfig,
+};
 use umsh_ulcp_runtime::driver::{
     self, DeviceEnv, DeviceRuntime, InEvent, InputChannel, TransportChannels,
 };
@@ -528,6 +530,7 @@ fn session_config() -> SessionConfig {
         // The SoC restarts on command; see the `reboot` hook below.
         reboot: true,
         dev_identity: true,
+        messaging: cfg!(feature = "communicator"),
         // A real MAC runs behind this session.
         mac_node: true,
         meshcore_forwarder: cfg!(feature = "meshcore-forwarder"),
@@ -1503,12 +1506,12 @@ impl DeviceEnv for BoardDeviceEnv {
         self.proto_store.older_snapshot(out).await
     }
 
-    async fn sign_identity(&mut self, out: &mut [u8]) -> Option<usize> {
+    async fn sign_identity(&mut self, out: &mut [u8], form: IdentityForm) -> Option<usize> {
         debug_log(format_args!(
             "identity request: node key present={}",
             device_node::node_key().is_some()
         ));
-        device_node::sign_identity_blob(out).await
+        device_node::sign_identity_blob(out, form).await
     }
 
     /// This board has no attention indicator, so the trace is the local

@@ -96,6 +96,7 @@ fn session_config() -> SessionConfig {
         // bridge is the operator's business.
         reboot: false,
         dev_identity: true,
+        messaging: false,
         // A soft device on the bridge has no antenna of its own.
         stats: None,
         mac_node: false,

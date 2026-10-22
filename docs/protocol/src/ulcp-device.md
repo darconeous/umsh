@@ -27,8 +27,9 @@ Interface](ulcp-core.md#device-interface)), the device identity is also
 the messaging identity of whoever carries the device: its conversations
 are held under it, and its peers address it. Such a device advertises
 the `TXT` capability bit (see [Capability
-Bitmap](node-identity.md#capability-bitmap)) and derives its role as
-`Chat` (see [`PROP_IDENT_ROLE`](#prop-ident-role)).
+Bitmap](node-identity.md#capability-bitmap)), derives its role as
+`Chat` (see [`PROP_IDENT_ROLE`](#prop-ident-role)), and advertises itself
+as mobile by default (see [`PROP_IDENT_MOBILE`](#prop-ident-mobile)).
 
 **A device identity always exists.** A device advertising
 `CAP_DEV_IDENTITY` that finds no stored keypair at power-on **MUST**
@@ -85,7 +86,7 @@ Code | Name               | Requires           | Grants
 38   | `CAP_DEV_NAME`     | —                  | `PROP_DEV_NAME`
 39   | `CAP_BATTERY`      | —                  | Battery-powered operation and `PROP_BATTERY`
 40   | `CAP_REPEATER`     | `CAP_DEV_IDENTITY` | Autonomous repeater forwarding by the device identity: `PROP_MAC_REPEATER_ENABLED`, `PROP_MAC_REPEATER_REGIONS`, `PROP_MAC_REPEATER_DEFAULT_REGION`, `PROP_MAC_REPEATER_MIN_RSSI`, `PROP_MAC_REPEATER_MIN_SNR`
-41   | `CAP_IDENT`        | `CAP_DEV_IDENTITY` | `PROP_IDENT`, `PROP_IDENT_ROLE`, `PROP_IDENT_MOBILE`, `PROP_IDENT_LOCATION`, `PROP_IDENT_ALTITUDE`—serving and configuring the device identity's advertised node identity
+41   | `CAP_IDENT`        | `CAP_DEV_IDENTITY` | `PROP_IDENT`, `PROP_IDENT_ROLE`, `PROP_IDENT_MOBILE`, `PROP_IDENT_LOCATION`, `PROP_IDENT_ALTITUDE`, `PROP_IDENT_CONTACT`—serving and configuring the device identity's advertised node identity
 42   | `CAP_ALERT`        | —                  | Some means of making the device physically conspicuous on demand, and `PROP_ALERT`
 44   | `CAP_TIME`         | —                  | A wall clock: `PROP_TIME`, `PROP_TZ_RULE`, `PROP_TIME_24H`
 45   | `CAP_GNSS`         | `CAP_TIME`         | A GNSS receiver: `PROP_GNSS_ENABLED`, `PROP_GNSS_LOCATION`, `PROP_GNSS_ALTITUDE`, `PROP_GNSS_FIX`, `PROP_GNSS_PRECISION`, `PROP_GNSS_SATELLITES`, `PROP_GNSS_IDENT_UPDATE`, `PROP_GNSS_IDENT_PRECISION`, `PROP_GNSS_TIME_TRUST`
@@ -254,6 +255,7 @@ Id | Mnemonic                    | Commands                 | Description
 82 | `PROP_STARTUP_BEACON`       | Get, Set                 | Whether a beacon goes out at bring-up
 83 | `PROP_IDENT_LOCATION`       | Get, Set                 | Position the advertised node identity carries
 84 | `PROP_IDENT_ALTITUDE`       | Get, Set                 | Altitude the advertised node identity carries
+85 | `PROP_IDENT_CONTACT`        | Get                      | Signed node identity for keeping as a contact
 88 | `PROP_GNSS_ENABLED`         | Get, Set                 | Whether the GNSS receiver is powered
 89 | `PROP_GNSS_LOCATION`        | Get, Is                  | Position of the last fix
 90 | `PROP_GNSS_ALTITUDE`        | Get                      | Altitude of the last fix
@@ -1041,10 +1043,15 @@ device is. It differs from that response in exactly two ways, both
 structural: it carries no request nonce, and it is authenticated by the
 signature rather than by an enclosing authenticated unicast.
 
-The contents are nonce-free and timestamp-free, so the value is a
-function of the device's configuration alone. A device **MAY** cache it,
-but is not required to: reading this property is an operator-scale
-event.
+The contents are nonce-free. They carry the [Unix
+Timestamp](node-identity.md#unix-timestamp-option-3) when the device
+knows the time, so each read is signed afresh; reading this property is
+an operator-scale event.
+
+What the device advertises can include where it is, which is right for a
+statement heard now and wrong for one kept. An identity meant to be kept—
+in a QR code, a contact link, a contact exchange—is
+[`PROP_IDENT_CONTACT`](#prop-ident-contact).
 
 ### PROP 72: `PROP_IDENT_ROLE` {#prop-ident-role}
 
@@ -1082,10 +1089,14 @@ and the mesh has no business knowing it.
 * Asynchronous Updates: No
 * Required: `CAP_IDENT`
 * Value Type: BOOL
-* Post-Reset Value: 0 (false), or restored from saved state
+* Post-Reset Value: 1 (true) on a device whose device identity is a
+  messaging identity, 0 (false) on any other; or restored from saved
+  state
 
 Whether the device identity advertises the mobile capability bit: true
-for a device that moves, false for one installed in a fixed location.
+for a device that moves, false for one installed in a fixed location. A
+device with a messaging identity is carried by its person, so it starts
+out mobile.
 
 Orthogonal to `PROP_IDENT_ROLE` and to `PROP_MAC_REPEATER_ENABLED`, and
 orthogonal to whether a host is tethered. A hand-carried repeater and a
@@ -1546,6 +1557,30 @@ it, so a host that pads to a fixed width is understood. A device
 An **empty** value means no altitude is advertised. A device that
 advertises no [location](ulcp-device.md#prop-ident-location) advertises
 no altitude either: an altitude alone places nothing.
+
+### PROP 85: `PROP_IDENT_CONTACT` {#prop-ident-contact}
+
+* Type: Single-Value, Read-Only
+* Asynchronous Updates: No
+* Required: `CAP_IDENT`
+* Value Type: Signed node-identity payload
+
+The device identity's signed [node identity](node-identity.md) as a
+statement to be kept: in a QR code, a contact link, or a contact
+exchange. It is built from the same role, capabilities, and options as
+[`PROP_IDENT`](#prop-ident), with these left out:
+
+- **Node Location** (option 1) and **Altitude in Meters** (option 2),
+  when the identity carries the mobile capability bit. A kept position
+  goes stale and travels wherever the contact does; a node that does
+  not move keeps its position, which is worth handing out.
+- **Supported Flood Regions** (option 4). They are forwarding policy,
+  which changes, not part of who the node is.
+- **Nonce** (option 5), which no standalone identity carries.
+
+It carries the [Unix Timestamp](node-identity.md#unix-timestamp-option-3)
+when the device knows the time, which is what lets whoever holds it judge
+how old it is. Like `PROP_IDENT`, it is signed afresh on each read.
 
 ### PROP 88: `PROP_GNSS_ENABLED` {#prop-gnss-enabled}
 

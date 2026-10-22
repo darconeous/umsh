@@ -137,6 +137,8 @@ impl<P: LocalPort, S: ChatStore> CommunicatorNode<P, S> {
             && let Some(key) = settings.key()
         {
             chats.start(PublicKey(*key), self.seeds, now_ms, &mut push);
+            // Ready for its code, which reads it afresh as it opens.
+            settings.read_contact();
         }
         chats.hold(settings.channels(), &mut push);
         for tag in settings.take_refused_joins() {
@@ -326,7 +328,7 @@ impl<P: LocalPort, S: ChatStore> CommunicatorNode<P, S> {
         use umsh_node::{NodeCapabilities, NodeIdentityPayload, NodeRole};
 
         let settings = self.settings.borrow();
-        if let Some(signed) = settings.identity() {
+        if let Some(signed) = settings.contact() {
             return signed.to_vec();
         }
         let name = settings.device_name();
@@ -603,6 +605,14 @@ impl<P: LocalPort, S: ChatStore> Node for CommunicatorNode<P, S> {
         self.with_chats(|chats, _, _, events| chats.delete_chat(chat, events));
     }
 
+    fn rename_chat(&self, chat: ChatId, name: Option<&str>) {
+        self.with_chats(|chats, _, _, events| chats.rename_chat(chat, name, events));
+    }
+
+    fn set_muted(&self, chat: ChatId, muted: bool) {
+        self.with_chats(|chats, _, _, events| chats.set_muted(chat, muted, events));
+    }
+
     fn save_peer(&self, member: &Member) -> Option<PeerSummary> {
         let (key, summary) = self.with_chats(|chats, now_ms, _, events| {
             chats.save_peer(member, now_ms, self.clock.wall(), events)
@@ -627,6 +637,13 @@ impl<P: LocalPort, S: ChatStore> Node for CommunicatorNode<P, S> {
         self.joined(joined)
     }
 
+    fn leave_channel(&self, chat: ChatId) {
+        let left = self.with_chats(|chats, _, _, events| chats.leave(chat, events));
+        if let Some((key, tag)) = left {
+            self.settings.borrow_mut().leave_channel(&key.0, tag);
+        }
+    }
+
     fn find_heard(&self, query: &str) -> Vec<Heard, MAX_HEARD> {
         self.chats
             .borrow()
@@ -649,6 +666,10 @@ impl<P: LocalPort, S: ChatStore> Node for CommunicatorNode<P, S> {
 
     fn set_name(&self, name: &str) {
         self.change(Setting::Name, |settings| settings.set_name(name));
+    }
+
+    fn read_contact(&self) {
+        self.settings.borrow_mut().read_contact();
     }
 
     fn share_uri(&self, what: Shareable) -> Option<ShareUri> {

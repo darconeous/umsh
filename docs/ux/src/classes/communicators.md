@@ -144,6 +144,26 @@ since power-on are not read off the clock and may still show.
 - **Every time shown** is in the offset its zone kept at that instant, so a
   message from before a daylight-saving change keeps its own hour.
 
+## Identity and channels
+
+**Device › Identity** is this device's own sheet, laid out as a saved peer's:
+its avatar, name, and whole address, then **Name**, edited where it stands,
+and **View QR code**, which opens its code alone. The code carries its
+address and its signed contact (`PROP_IDENT_CONTACT`), which leaves out where
+a mobile node is.
+
+A joined channel has a sheet of its own, from its row in **Device ›
+Channels** or from its chat's menu (holding the wheel on its row, as a direct
+chat's opens **Show peer**):
+
+- **Message** opens its conversation.
+- **View QR code** shows its invitation, or its name for a public channel.
+- **Name** is what it is called here, edited where it stands. Emptied, it goes
+  by its own name again.
+- **Notifications** decides whether its messages interrupt with a banner.
+- **Leave**, last and confirmed, lets go of its key and its chat. Rejoining a
+  private channel takes a new invitation.
+
 ## About
 
 **Device › About** says what the device is and runs, a readout per row.

@@ -1177,6 +1177,39 @@ impl<S: ChatStore> Chats<S> {
         }
     }
 
+    /// Calls `chat` `name` here, or by its peer's or channel's own name
+    /// when `None`.
+    pub fn rename_chat(
+        &mut self,
+        chat: model::ChatId,
+        name: Option<&str>,
+        events: &mut dyn FnMut(NodeEvent),
+    ) {
+        if self
+            .store
+            .update_chat(ChatId(chat), ChatChange::Rename(name))
+            .is_ok()
+        {
+            events(NodeEvent::ChatChanged(chat));
+        }
+    }
+
+    /// Keeps `chat`'s messages from interrupting while `muted`.
+    pub fn set_muted(
+        &mut self,
+        chat: model::ChatId,
+        muted: bool,
+        events: &mut dyn FnMut(NodeEvent),
+    ) {
+        if self
+            .store
+            .update_chat(ChatId(chat), ChatChange::Mute(muted))
+            .is_ok()
+        {
+            events(NodeEvent::ChatChanged(chat));
+        }
+    }
+
     pub(super) fn conversation(&self, chat: model::ChatId) -> Option<ConversationKey> {
         self.store
             .chats()

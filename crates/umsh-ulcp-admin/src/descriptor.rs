@@ -320,6 +320,14 @@ pub const COVERED: &[Descriptor] = &[
         Access::OnDemand,
         0,
     ),
+    // ...and as a contact keeps it.
+    scalar(
+        prop::IDENT_CONTACT,
+        PropertyType::Bytes,
+        Some(cap::IDENT),
+        Access::OnDemand,
+        0,
+    ),
     // The device identity's tables.
     table(prop::DEV_PEERS, cap::DEV_IDENTITY, 32, 32),
     table(prop::DEV_CHANNEL_KEYS, cap::DEV_IDENTITY, 32, 16),

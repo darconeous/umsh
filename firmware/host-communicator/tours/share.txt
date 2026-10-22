@@ -1,8 +1,23 @@
-# Sharing this node and a channel.
+# This node's sheet and its code, then a channel's sheet and its code.
 backspace
 turn 2
 press
 press
-shot share-identity
+shot identity
 turn 1
+press
+shot share-identity
+backspace
+backspace
+turn 1
+press
+turn 1
+press
+shot channel
+turn 1
+press
 shot share-channel
+backspace
+turn 3
+press
+shot channel-leave

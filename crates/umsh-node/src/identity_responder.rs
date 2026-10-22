@@ -169,6 +169,21 @@ impl NodeIdentityProfile {
             signature: None,
         }
     }
+
+    /// Build the (unsigned) identity payload this node hands out to be
+    /// kept, as a contact or in a QR code: [`to_payload`](Self::to_payload)
+    /// without a nonce, without the regions it forwards for, which are
+    /// policy that changes, and, on a mobile node, without its position,
+    /// which goes stale wherever the contact is kept.
+    pub fn to_contact_payload(&self) -> NodeIdentityPayload {
+        let mut payload = self.to_payload(None);
+        payload.supported_regions = None;
+        if self.capabilities.contains(NodeCapabilities::MOBILE) {
+            payload.location = None;
+            payload.altitude_m = None;
+        }
+        payload
+    }
 }
 
 /// Reception context for an incoming Identity Request, handed to the respond
@@ -486,5 +501,38 @@ mod tests {
             NodeCapabilities::empty(),
         );
         assert_eq!(profile.to_payload(None).timestamp, None);
+    }
+
+    /// A contact keeps who the node is and when it said so, but not the
+    /// regions it forwards for, and not where a mobile node was. A fixed
+    /// node keeps its position.
+    #[test]
+    fn a_contact_drops_regions_and_a_mobile_position() {
+        let here = NodeLocation::from_e7(377_749_000, -1_224_194_000, 5);
+        let profile = |capabilities| {
+            let mut profile =
+                NodeIdentityProfile::new(PublicKey([9; 32]), NodeRole::Repeater, capabilities)
+                    .with_name("Hilltop")
+                    .with_location(here);
+            profile.altitude_m = Some(410);
+            profile.supported_regions = Some(alloc::vec!["SJC".into()]);
+            profile.clock = || Some(1_785_000_000);
+            profile
+        };
+
+        let fixed = profile(NodeCapabilities::REPEATER).to_contact_payload();
+        assert_eq!(fixed.name.as_deref(), Some("Hilltop"));
+        assert_eq!(fixed.location, Some(here));
+        assert_eq!(fixed.altitude_m, Some(410));
+        assert_eq!(fixed.timestamp, Some(1_785_000_000));
+        assert_eq!(fixed.supported_regions, None);
+        assert_eq!(fixed.nonce, None);
+
+        let mobile =
+            profile(NodeCapabilities::REPEATER | NodeCapabilities::MOBILE).to_contact_payload();
+        assert_eq!(mobile.name.as_deref(), Some("Hilltop"));
+        assert_eq!(mobile.location, None);
+        assert_eq!(mobile.altitude_m, None);
+        assert_eq!(mobile.timestamp, Some(1_785_000_000));
     }
 }

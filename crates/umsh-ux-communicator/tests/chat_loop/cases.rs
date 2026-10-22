@@ -398,7 +398,7 @@ fn holding_the_wheel_on_a_chat_opens_its_menu_and_letting_go_does_not_open_it() 
     hold(&mut app);
     assert!(matches!(app.state().screen(), Screen::Chats { .. }));
     assert_eq!(chat_menu(app.state()), Some(ChatMenu::Open(PAT)));
-    assert_eq!(focus(app.state()), Some(keys::CHAT_SHOW_PEER));
+    assert_eq!(focus(app.state()), Some(keys::CHAT_SHOW));
     // Backspace closes it, back to the row.
     run(&mut app, &[Input::Backspace]);
     assert_eq!(chat_menu(app.state()), None);
@@ -439,7 +439,7 @@ fn show_peer_offers_to_save_a_chats_unsaved_peer() {
     let mut app = app!();
     assert_eq!(focus(app.state()), Some(keys::chat(RIDGE)));
     hold(&mut app);
-    assert_eq!(focus(app.state()), Some(keys::CHAT_SHOW_PEER));
+    assert_eq!(focus(app.state()), Some(keys::CHAT_SHOW));
     run(&mut app, &[Input::Press]);
     let (member, _) = shown_member(app.state());
     assert_eq!(member.sender.name.as_str(), "Ridge Medic");
@@ -481,7 +481,7 @@ fn deleting_a_chat_asks_first_and_then_removes_it() {
 }
 
 #[test]
-fn holding_the_wheel_on_a_channel_opens_it_on_letting_go() {
+fn holding_the_wheel_on_a_channel_opens_its_menu_to_show_it() {
     let mut app = app!();
     turn_to(&mut app, keys::chat(TRAIL_CREW));
     assert!(matches!(
@@ -489,8 +489,23 @@ fn holding_the_wheel_on_a_channel_opens_it_on_letting_go() {
         ChatKind::Channel { .. }
     ));
     hold(&mut app);
-    assert_eq!(chat_menu(app.state()), None);
-    assert!(matches!(app.state().screen(), Screen::Conversation { chat, .. } if *chat == TRAIL_CREW));
+    assert_eq!(chat_menu(app.state()), Some(ChatMenu::Open(TRAIL_CREW)));
+    assert_eq!(focus(app.state()), Some(keys::CHAT_SHOW));
+    run(&mut app, &[Input::Press]);
+    assert!(matches!(app.state().screen(), Screen::Channel { chat, .. } if *chat == TRAIL_CREW));
+}
+
+#[test]
+fn leaving_a_channel_from_its_menu_asks_first() {
+    let mut app = app!();
+    turn_to(&mut app, keys::chat(TRAIL_CREW));
+    hold(&mut app);
+    turn_to(&mut app, keys::CHAT_DELETE);
+    run(&mut app, &[Input::Press]);
+    assert_eq!(chat_menu(app.state()), Some(ChatMenu::ConfirmDelete(TRAIL_CREW)));
+    turn_to(&mut app, keys::DELETE_CONFIRM);
+    run(&mut app, &[Input::Press]);
+    assert_eq!(app.state().chat(TRAIL_CREW), None);
 }
 
 fn actions(state: &State) -> Option<u32> {
@@ -1845,26 +1860,123 @@ fn a_switch_flips_on_press() {
 }
 
 #[test]
-fn turning_on_share_moves_between_this_node_and_its_channels() {
+fn identity_is_renamed_in_place_and_shows_its_code() {
     let mut app = app!();
     open_category(&mut app, keys::IDENTITY);
     assert!(matches!(
         app.state().screen(),
         Screen::Device {
-            page: DevicePage::Share,
+            page: DevicePage::Identity { .. },
             ..
         }
     ));
-    assert_eq!(app.state().shared(), Shareable::Identity);
-    run(&mut app, &[Input::Turn(1)]);
-    assert_eq!(app.state().shared(), Shareable::Channel(2));
-    run(&mut app, &[Input::Turn(2)]);
-    assert_eq!(app.state().shared(), Shareable::Channel(6));
-    // The last stays put.
-    run(&mut app, &[Input::Turn(1)]);
-    assert_eq!(app.state().shared(), Shareable::Channel(6));
+    assert_eq!(focus(app.state()), Some(keys::IDENTITY_NAME));
+    let before = app.state().status.device_name.chars().count();
+    run(&mut app, &[Input::Press]);
+    run(&mut app, &vec![Input::Backspace; before]);
+    run(&mut app, &typed("Robin"));
+    run(&mut app, &[Input::Enter]);
+    assert_eq!(app.state().status.device_name.as_str(), "Robin");
+    // A press ends an edit as Enter does.
+    run(&mut app, &[Input::Press]);
+    run(&mut app, &typed("!"));
+    run(&mut app, &[Input::Press]);
+    assert_eq!(app.state().status.device_name.as_str(), "Robin!");
+
+    turn_to(&mut app, keys::IDENTITY_CODE);
+    run(&mut app, &[Input::Press]);
+    assert!(matches!(
+        app.state().screen(),
+        Screen::Device {
+            page: DevicePage::Share {
+                what: Shareable::Identity
+            },
+            ..
+        }
+    ));
+    run(&mut app, &[Input::Backspace]);
+    assert_eq!(focus(app.state()), Some(keys::IDENTITY_CODE));
     run(&mut app, &[Input::Backspace]);
     assert_eq!(focus(app.state()), Some(keys::IDENTITY));
+}
+
+/// Opens Device › Channels › Trail Crew's screen from the Chats list.
+fn show_trail_crew<V, F>(app: &mut App<V, State, F>)
+where
+    V: ViewLayout<State>,
+    V::FocusTree: DefaultFocus,
+    V::Renderables: AnimatedJoin,
+    F: Fn(&State) -> V,
+{
+    open_category(app, keys::CHANNELS);
+    turn_to(app, keys::chat(TRAIL_CREW));
+    run(app, &[Input::Press]);
+    assert!(matches!(app.state().screen(), Screen::Channel { chat, .. } if *chat == TRAIL_CREW));
+    assert_eq!(focus(app.state()), Some(keys::CHANNEL_MESSAGE));
+}
+
+#[test]
+fn a_channel_is_renamed_muted_and_shared_from_its_screen() {
+    let mut app = app!();
+    show_trail_crew(&mut app);
+    turn_to(&mut app, keys::CHANNEL_CODE);
+    run(&mut app, &[Input::Press]);
+    assert!(matches!(
+        app.state().screen(),
+        Screen::Device {
+            page: DevicePage::Share {
+                what: Shareable::Channel(TRAIL_CREW)
+            },
+            ..
+        }
+    ));
+    run(&mut app, &[Input::Backspace]);
+
+    turn_to(&mut app, keys::CHANNEL_NAME);
+    run(&mut app, &[Input::Press]);
+    run(&mut app, &[Input::Backspace; 10]);
+    run(&mut app, &typed("Crew"));
+    run(&mut app, &[Input::Enter]);
+    let name = |app: &App<_, State, _>| app.state().chat(TRAIL_CREW).unwrap().name.clone();
+    assert_eq!(name(&app).as_str(), "Crew");
+    // Emptied, it goes by its own name again.
+    run(&mut app, &[Input::Press]);
+    run(&mut app, &[Input::Backspace; 4]);
+    run(&mut app, &[Input::Enter]);
+    assert_eq!(name(&app).as_str(), "Trail Crew");
+
+    assert!(!app.state().chat(TRAIL_CREW).unwrap().muted);
+    turn_to(&mut app, keys::CHANNEL_NOTIFICATIONS);
+    run(&mut app, &[Input::Press]);
+    assert!(app.state().chat(TRAIL_CREW).unwrap().muted);
+
+    turn_to(&mut app, keys::CHANNEL_MESSAGE);
+    run(&mut app, &[Input::Press]);
+    assert!(matches!(app.state().screen(), Screen::Conversation { chat, .. } if *chat == TRAIL_CREW));
+}
+
+#[test]
+fn leaving_a_channel_asks_first_and_returns_to_channels() {
+    let mut app = app!();
+    show_trail_crew(&mut app);
+    turn_to(&mut app, keys::CHANNEL_LEAVE);
+    run(&mut app, &[Input::Press]);
+    assert_eq!(focus(app.state()), Some(keys::LEAVE_CANCEL));
+    run(&mut app, &[Input::Press]);
+    assert_eq!(focus(app.state()), Some(keys::CHANNEL_LEAVE));
+    run(&mut app, &[Input::Press]);
+    turn_to(&mut app, keys::LEAVE_CONFIRM);
+    run(&mut app, &[Input::Press]);
+    assert_eq!(app.state().chat(TRAIL_CREW), None);
+    assert!(matches!(
+        app.state().screen(),
+        Screen::Device {
+            page: DevicePage::Channels,
+            ..
+        }
+    ));
+    let focused = focus(app.state()).and_then(keys::chat_of);
+    assert!(focused.is_some_and(|chat| app.state().is_channel(chat)), "{focused:?}");
 }
 
 /// Opens Device › Channels › Add channel from the Chats list.
@@ -1953,9 +2065,7 @@ fn an_invitation_counts_down_and_joins_a_private_channel() {
 #[test]
 fn a_joined_channel_opens_from_the_channels_list() {
     let mut app = app!();
-    open_add_channel(&mut app);
-    run(&mut app, &[Input::Backspace]);
-    turn_to(&mut app, keys::chat(TRAIL_CREW));
+    show_trail_crew(&mut app);
     run(&mut app, &[Input::Press]);
     assert_in_conversation(app.state(), TRAIL_CREW);
 }

@@ -40,9 +40,9 @@ use umsh_ulcp::Status;
 use umsh_ulcp::i2c::{ScanRequest, TransferRequest};
 use umsh_ulcp_device::listeners::{Mirrors, Writes};
 use umsh_ulcp_device::{
-    Effect, I2C_DATA_MAX, IdentitySource, MAX_CHANNEL_KEYS, MAX_DEV_ADMINS, MAX_DEV_PEERS,
-    MAX_REPEATER_REGIONS, NETWORK_TABLE_MAX, QueuedNotice, REGION_STRING_MAX_LEN, RadioRxInfo,
-    Resolvers, SNAPSHOT_MAX, Session, TxOutcome, TxPower,
+    Effect, I2C_DATA_MAX, IdentityForm, IdentitySource, MAX_CHANNEL_KEYS, MAX_DEV_ADMINS,
+    MAX_DEV_PEERS, MAX_REPEATER_REGIONS, NETWORK_TABLE_MAX, QueuedNotice, REGION_STRING_MAX_LEN,
+    RadioRxInfo, Resolvers, SNAPSHOT_MAX, Session, TxOutcome, TxPower,
 };
 
 use crate::transport_policy::{SessionArbitration, Transport};
@@ -719,14 +719,14 @@ pub trait DeviceEnv {
     async fn sample_gnss(&mut self) -> Result<umsh_ulcp::gnss::GnssSnapshot, ()> {
         Err(())
     }
-    /// Build and sign the device identity's node-identity blob into
-    /// `out` (`Effect::SignIdentity`), returning its length.
+    /// Build and sign the device identity's node-identity blob in `form`
+    /// into `out` (`Effect::SignIdentity`), returning its length.
     ///
     /// The board owns both halves the session does not: the signing key,
     /// and the advertised profile the Identity Request responder uses.
     /// Boards without a device node keep the default, which refuses.
-    async fn sign_identity(&mut self, out: &mut [u8]) -> Option<usize> {
-        let _ = out;
+    async fn sign_identity(&mut self, out: &mut [u8], form: IdentityForm) -> Option<usize> {
+        let _ = (out, form);
         None
     }
     /// Apply a `PROP_BLE_PAIRING_PIN` write against the bond journal and
@@ -1649,16 +1649,17 @@ where
                 session.respond_rssi(tid, sample, &mut |frame: &[u8]| emitter.push(frame));
                 emitter.flush(sink).await;
             }
-            Some(Effect::SignIdentity { tid }) => {
+            Some(Effect::SignIdentity { tid, form }) => {
                 // The session holds no signing key, so the
                 // platform builds the canonical node-identity
                 // payload from the same profile the Identity
                 // Request responder advertises and signs it
                 // with the device identity.
                 let mut blob = [0u8; IDENTITY_BLOB_MAX];
-                let signed = env.sign_identity(&mut blob).await;
+                let signed = env.sign_identity(&mut blob, form).await;
                 session.respond_identity_blob(
                     tid,
+                    form,
                     signed.map(|len| &blob[..len]).ok_or(()),
                     &mut |frame: &[u8]| emitter.push(frame),
                 );

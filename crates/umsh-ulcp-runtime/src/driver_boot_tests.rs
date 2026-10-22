@@ -50,6 +50,7 @@ fn session(name: &'static str) -> TestSession {
             ble_pin: true,
             reboot: true,
             dev_identity: true,
+            messaging: false,
             mac_node: false,
             meshcore_forwarder: false,
             lan_bearer: umsh_ulcp_device::LanBearerRole::None,

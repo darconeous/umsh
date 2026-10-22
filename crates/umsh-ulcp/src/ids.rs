@@ -197,6 +197,11 @@ pub mod prop {
     /// location. Same writability rule as [`IDENT_LOCATION`]; requires
     /// `CAP_IDENT`.
     pub const IDENT_ALTITUDE: u32 = 84;
+    /// The device identity's signed node-identity blob as a statement to
+    /// be kept (`PROP_IDENT_CONTACT`): `IDENT` without the position of a
+    /// mobile node, the regions it forwards for, or a nonce. Served
+    /// through the same deferred signing effect; requires `CAP_IDENT`.
+    pub const IDENT_CONTACT: u32 = 85;
     /// Whether the GNSS receiver is powered (`PROP_GNSS_ENABLED`)—BOOL,
     /// default 0. Off means the lowest power state the receiver reaches;
     /// a board whose receiver RTC is the board's only clock keeps that

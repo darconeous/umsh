@@ -13,7 +13,7 @@ use super::line;
 use super::setting::{card, choice};
 use crate::avatar::{AvatarStyle, Title};
 use crate::board::Metrics;
-use crate::model::{Age, ChatSummary, Chats, MAX_CHATS, State, age};
+use crate::model::{Age, ChatKind, ChatSummary, Chats, MAX_CHATS, State, age};
 use crate::nav::{ChatMenu, keys};
 use crate::text::DraftText;
 use crate::{font, icon, theme};
@@ -40,7 +40,7 @@ static INDICES: [usize; MAX_CHATS] = {
 };
 
 /// The list, with each chat's age counted to `now`, and over it `menu`:
-/// a chat's menu or Delete's confirmation. Backspace moves to the rail, Enter opens the
+/// a chat's menu or its confirmation. Backspace moves to the rail, Enter opens the
 /// focused chat, as a press does, and a letter starts Find with it.
 pub fn view(
     m: &'static Metrics,
@@ -53,6 +53,9 @@ pub fn view(
     let count = rows.len();
     // The chat a menu is open for stays lit behind it.
     let held = menu.map(ChatMenu::chat);
+    let channel = held
+        .and_then(|held| chats.iter().find(|c| c.id == held))
+        .is_some_and(|c| matches!(c.kind, ChatKind::Channel { .. }));
     super::list(
         ForEach::<MAX_CHATS>::new_vertical(&INDICES[..count], move |&i| {
             let chat = &rows[i];
@@ -81,7 +84,7 @@ pub fn view(
         }
         _ => KeyResponse::Ignored,
     })
-    .popover(menu.as_ref(), move |menu| over(m, *menu))
+    .popover(menu.as_ref(), move |menu| over(m, *menu, channel))
     // A tap outside closes it, as Backspace does.
     .on_blur(|s: &mut State| {
         s.close_chat_menu();
@@ -89,25 +92,25 @@ pub fn view(
     })
 }
 
-/// A chat's menu, or Delete's confirmation, Cancel focused. Backspace
-/// closes either.
+/// A chat's menu, or Delete's confirmation, Cancel focused: a
+/// `channel`'s has Leave in Delete's place. Backspace closes either.
 // Out of line, as `setting::row` is, against the Xtensa back end's failure.
 #[inline(never)]
-fn over(m: &'static Metrics, menu: ChatMenu) -> impl View<Rgb565, State> + use<> {
+fn over(m: &'static Metrics, menu: ChatMenu, channel: bool) -> impl View<Rgb565, State> + use<> {
     let text = |text: &str| String::try_from(text).unwrap_or_default();
     let (first, second) = match menu {
         ChatMenu::Open(_) => (
             Some(choice(
                 m,
-                text("Show peer"),
-                keys::CHAT_SHOW_PEER,
-                State::show_chat_peer,
+                text(if channel { "Show channel" } else { "Show peer" }),
+                keys::CHAT_SHOW,
+                State::show_chat,
                 theme::TEXT,
                 None,
             )),
             choice(
                 m,
-                text("Delete"),
+                text(if channel { "Leave" } else { "Delete" }),
                 keys::CHAT_DELETE,
                 State::ask_delete_chat,
                 theme::RED,
@@ -117,7 +120,11 @@ fn over(m: &'static Metrics, menu: ChatMenu) -> impl View<Rgb565, State> + use<>
         ChatMenu::ConfirmDelete(_) => (
             Some(choice(
                 m,
-                text("Delete chat"),
+                text(if channel {
+                    "Leave channel"
+                } else {
+                    "Delete chat"
+                }),
                 keys::DELETE_CONFIRM,
                 State::delete_chat,
                 theme::RED,

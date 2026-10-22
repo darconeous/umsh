@@ -563,6 +563,7 @@ mod firmware {
             // register; see the `reboot` hook below.
             reboot: true,
             dev_identity: true,
+            messaging: false,
             // A real MAC runs behind every session here.
             mac_node: true,
             meshcore_forwarder: cfg!(feature = "meshcore-forwarder"),
@@ -1917,8 +1918,12 @@ mod firmware {
             self.proto_store.older_snapshot(out).await
         }
 
-        async fn sign_identity(&mut self, out: &mut [u8]) -> Option<usize> {
-            super::device_node::sign_identity_blob(out).await
+        async fn sign_identity(
+            &mut self,
+            out: &mut [u8],
+            form: umsh_ulcp_device::IdentityForm,
+        ) -> Option<usize> {
+            super::device_node::sign_identity_blob(out, form).await
         }
 
         /// A rejected snapshot on an unattended repeater reaches nobody

@@ -104,6 +104,7 @@ impl<const PAYLOAD: usize> Device<PAYLOAD> {
             ble_pin: true,
             reboot: true,
             dev_identity: true,
+            messaging: false,
             stats: None,
             mac_node: true,
             meshcore_forwarder: false,

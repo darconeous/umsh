@@ -14,9 +14,9 @@ pub use crate::clock_settings::{ClockPage, DateParts, Part, ZoneFind};
 use crate::keyboard::Field;
 use crate::model::{
     AUTO_LOCK_CHOICES, ChannelEntry, ChatId, ChatKind, ChatSummary, Details, Exchange, Found,
-    FoundKind, Invite, KeyboardSettings, MAX_CHATS, MAX_FOUND, Member, MessageId, NearbyId,
-    PeerDetail, PeerEntry, PeerId, Profile, RadioSettings, Reaction, Section, Shareable, State,
-    TRANSMIT_POWER, word_match,
+    FoundKind, Invite, KeyboardSettings, MAX_FOUND, Member, MessageId, NearbyId, PeerDetail,
+    PeerEntry, PeerId, Profile, RadioSettings, Reaction, Section, Shareable, State, TRANSMIT_POWER,
+    word_match,
 };
 
 use crate::text::SharedText;
@@ -37,7 +37,7 @@ pub type PowerText = EditBuffer<String<4>>;
 /// The names of focusable elements. The high byte says what kind of element
 /// a key names, so keys of different kinds never collide.
 pub mod keys {
-    use super::{ChatId, FocusKey, MessageId, NearbyId, PeerId, Reaction, Section, Shareable};
+    use super::{ChatId, FocusKey, MessageId, NearbyId, PeerId, Reaction, Section};
 
     const KIND: u32 = 0xFF00_0000;
     const RAIL: u32 = 0x0100_0000;
@@ -53,8 +53,6 @@ pub mod keys {
     const ZONE_ROW: u32 = 0x1C00_0000;
     const NEARBY: u32 = 0x2000_0000;
     const AUTO_LOCK_ROW: u32 = 0x2400_0000;
-    /// Set in a share key that names a channel.
-    const SHARE_CHANNEL: u32 = 0x0080_0000;
 
     /// A conversation's composer. Only one conversation is shown at a time.
     pub const COMPOSER: FocusKey = FocusKey(0x0400_0000);
@@ -88,9 +86,9 @@ pub mod keys {
     pub const FORGET_CONFIRM: FocusKey = FocusKey(0x0C00_0007);
     pub const FORGET_CANCEL: FocusKey = FocusKey(0x0C00_0008);
     pub const PEER_SHARE: FocusKey = FocusKey(0x0C00_0009);
-    /// A chat's menu, which holding the wheel on its row opens, and
-    /// Delete's confirmation.
-    pub const CHAT_SHOW_PEER: FocusKey = FocusKey(0x1D00_0000);
+    /// A chat's menu, which holding the wheel on its row opens: its peer
+    /// or channel, and Delete or Leave; and their confirmation.
+    pub const CHAT_SHOW: FocusKey = FocusKey(0x1D00_0000);
     pub const CHAT_DELETE: FocusKey = FocusKey(0x1D00_0001);
     pub const DELETE_CONFIRM: FocusKey = FocusKey(0x1D00_0002);
     pub const DELETE_CANCEL: FocusKey = FocusKey(0x1D00_0003);
@@ -122,6 +120,20 @@ pub mod keys {
     /// The join screen's Name and Join channel.
     pub const JOIN_NAME: FocusKey = FocusKey(0x0800_0000);
     pub const JOIN_CHANNEL: FocusKey = FocusKey(0x0800_0001);
+    /// A code that shares this node or a channel, which the wheel rests on.
+    pub const SHARE_CODE: FocusKey = FocusKey(SHARE);
+    /// The Identity screen's Name and View QR code.
+    pub const IDENTITY_NAME: FocusKey = FocusKey(0x2800_0000);
+    pub const IDENTITY_CODE: FocusKey = FocusKey(0x2800_0001);
+    /// A channel's screen: its actions and settings, in order, and Leave's
+    /// confirmation.
+    pub const CHANNEL_MESSAGE: FocusKey = FocusKey(0x2900_0000);
+    pub const CHANNEL_CODE: FocusKey = FocusKey(0x2900_0001);
+    pub const CHANNEL_NAME: FocusKey = FocusKey(0x2900_0002);
+    pub const CHANNEL_NOTIFICATIONS: FocusKey = FocusKey(0x2900_0003);
+    pub const CHANNEL_LEAVE: FocusKey = FocusKey(0x2900_0004);
+    pub const LEAVE_CONFIRM: FocusKey = FocusKey(0x2900_0005);
+    pub const LEAVE_CANCEL: FocusKey = FocusKey(0x2900_0006);
     /// The Device list's categories.
     pub const IDENTITY: FocusKey = FocusKey(DEVICE);
     pub const CHANNELS: FocusKey = FocusKey(DEVICE | 1);
@@ -173,7 +185,7 @@ pub mod keys {
         use super::Field;
         match key {
             COMPOSER => Some(Field::Prose),
-            NAME_FIELD | JOIN_NAME => Some(Field::Name),
+            NAME_FIELD | JOIN_NAME | IDENTITY_NAME | CHANNEL_NAME => Some(Field::Name),
             FIND_FIELD | PEER_FIELD | CHANNEL_FIELD => Some(Field::Literal),
             POWER_FIELD => Some(Field::Number),
             _ => None,
@@ -225,30 +237,6 @@ pub mod keys {
     #[must_use]
     pub const fn rail(section: Section) -> FocusKey {
         FocusKey(RAIL | section as u32)
-    }
-
-    /// Share's Shows, at `shareable`: turning moves focus between these,
-    /// and what is focused is what is shown.
-    #[must_use]
-    pub const fn share(shareable: Shareable) -> FocusKey {
-        match shareable {
-            Shareable::Identity => FocusKey(SHARE),
-            Shareable::Channel(chat) => {
-                FocusKey(SHARE | SHARE_CHANNEL | (chat & (SHARE_CHANNEL - 1)))
-            }
-        }
-    }
-
-    /// What the share key `key` shows.
-    #[must_use]
-    pub const fn shareable(key: FocusKey) -> Option<Shareable> {
-        if key.0 & KIND != SHARE {
-            None
-        } else if key.0 & SHARE_CHANNEL == 0 {
-            Some(Shareable::Identity)
-        } else {
-            Some(Shareable::Channel(key.0 & (SHARE_CHANNEL - 1)))
-        }
     }
 
     /// One of Find's results, by its place among them.
@@ -385,7 +373,7 @@ fn distance(hops: Option<u8>) -> String<12> {
 pub enum ChatMenu {
     /// Its menu, which holding the wheel on its row opened.
     Open(ChatId),
-    /// Its Delete, asking to be confirmed.
+    /// Its Delete, or its channel's Leave, asking to be confirmed.
     ConfirmDelete(ChatId),
 }
 
@@ -403,7 +391,7 @@ impl ChatMenu {
 pub enum Unsent {
     /// How to send again one that was to go under forward secrecy.
     Resend(MessageId),
-    /// Its Delete, asking to be confirmed.
+    /// Its Delete, or its channel's Leave, asking to be confirmed.
     ConfirmDelete(MessageId),
 }
 
@@ -432,8 +420,10 @@ pub enum MemberFrom {
 pub enum DevicePage {
     /// The radio's settings.
     Radio { settings: RadioSettings },
-    /// A code that shares this node or a joined channel.
-    Share,
+    /// This node: its name, which is edited in place, and its address.
+    Identity { name: NameText },
+    /// A code that shares `what`.
+    Share { what: Shareable },
     /// The joined channels.
     Channels,
     /// A channel's name or invitation, being typed.
@@ -528,6 +518,15 @@ pub enum Screen {
     },
     /// The chats a saved peer's contact can be sent to.
     ShareContact { peer: PeerId, focus: FocusState },
+    /// A joined channel.
+    Channel {
+        chat: ChatId,
+        /// What it is called here, edited in place.
+        name: JoinName,
+        /// Leave is asking to be confirmed.
+        confirm: bool,
+        focus: FocusState,
+    },
     /// One of the screens under Device.
     Device { page: DevicePage, focus: FocusState },
     /// One of the screens a new device starts on, over the Chats screen
@@ -575,8 +574,25 @@ impl Screen {
             | Self::EnterAddress { focus, .. }
             | Self::Peer { focus, .. }
             | Self::ShareContact { focus, .. }
+            | Self::Channel { focus, .. }
             | Self::Device { focus, .. }
             | Self::Setup { focus, .. } => focus,
+        }
+    }
+
+    /// Whether this is one of the joined channel `chat`'s own screens.
+    #[must_use]
+    pub fn about(&self, chat: ChatId) -> bool {
+        match self {
+            Self::Channel { chat: shown, .. }
+            | Self::Device {
+                page:
+                    DevicePage::Share {
+                        what: Shareable::Channel(shown),
+                    },
+                ..
+            } => *shown == chat,
+            _ => false,
         }
     }
 
@@ -592,6 +608,7 @@ impl Screen {
             | Self::EnterAddress { focus, .. }
             | Self::Peer { focus, .. }
             | Self::ShareContact { focus, .. }
+            | Self::Channel { focus, .. }
             | Self::Device { focus, .. }
             | Self::Setup { focus, .. } => focus,
         }
@@ -1104,36 +1121,70 @@ impl State {
         }
     }
 
-    /// Shows this node's code.
-    pub fn open_share(&mut self) {
+    /// Shows this node, its name focused.
+    pub fn open_identity(&mut self) {
+        let name = NameText::with_text(self.status.device_name.clone());
         _ = self.screens.push(Screen::Device {
-            page: DevicePage::Share,
-            focus: FocusState::requesting(keys::share(Shareable::Identity)),
+            page: DevicePage::Identity { name },
+            focus: FocusState::requesting(keys::IDENTITY_NAME),
         });
     }
 
-    /// What Share can show: this node, then the joined channels in list
-    /// order.
-    #[must_use]
-    pub fn shareables(&self) -> heapless::Vec<Shareable, { MAX_CHATS + 1 }> {
-        let channels = self
-            .chats
-            .iter()
-            .filter(|c| matches!(c.kind, ChatKind::Channel { .. }))
-            .map(|c| Shareable::Channel(c.id));
-        core::iter::once(Shareable::Identity)
-            .chain(channels)
-            .collect()
+    /// The name being edited on the Identity screen.
+    pub fn identity_name_mut(&mut self) -> Option<&mut NameText> {
+        match self.screens.last_mut() {
+            Some(Screen::Device {
+                page: DevicePage::Identity { name },
+                ..
+            }) => Some(name),
+            _ => None,
+        }
     }
 
-    /// What Share shows: the one focused.
-    #[must_use]
-    pub fn shared(&self) -> Shareable {
-        self.screen()
-            .focus()
-            .current()
-            .and_then(keys::shareable)
-            .unwrap_or(Shareable::Identity)
+    /// The Identity screen's name begins or ends an edit. An edit ended
+    /// keeps the name as typed.
+    pub fn identity_name_active(&mut self, active: bool) {
+        self.field_active(active);
+        if !active {
+            self.rename_identity();
+        }
+    }
+
+    /// Calls this node what the Identity screen's name says, empty or not,
+    /// and shows the name as it then stands.
+    pub fn rename_identity(&mut self) {
+        let Some(Screen::Device {
+            page: DevicePage::Identity { name },
+            ..
+        }) = self.screens.last()
+        else {
+            return;
+        };
+        let typed = name.text().trim();
+        if typed != self.status.device_name.as_str() {
+            self.node.set_name(typed);
+            self.refresh_settings();
+        }
+        let shown = self.status.device_name.clone();
+        if let Some(name) = self.identity_name_mut() {
+            *name = NameText::with_text(shown);
+        }
+    }
+
+    /// Shows this node's code.
+    pub fn open_identity_code(&mut self) {
+        self.open_share(Shareable::Identity);
+    }
+
+    /// Shows the code that shares `what`: this node's dated afresh.
+    fn open_share(&mut self, what: Shareable) {
+        if what == Shareable::Identity {
+            self.node.read_contact();
+        }
+        _ = self.screens.push(Screen::Device {
+            page: DevicePage::Share { what },
+            focus: FocusState::requesting(keys::SHARE_CODE),
+        });
     }
 
     /// Shows the radio's settings, its switch focused.
@@ -1586,7 +1637,7 @@ impl State {
         }
     }
 
-    /// Opens the menu of the direct chat focused in the Chats list, with its
+    /// Opens the menu of the chat focused in the Chats list, with its
     /// first choice focused.
     fn hold_chat(&mut self) -> bool {
         let Some(Screen::Chats { focus, menu, .. }) = self.screens.last() else {
@@ -1598,15 +1649,12 @@ impl State {
         let Some(chat) = focus.current().and_then(keys::chat_of) else {
             return false;
         };
-        if !self
-            .chat(chat)
-            .is_some_and(|c| matches!(c.kind, ChatKind::Peer { .. }))
-        {
+        if self.chat(chat).is_none() {
             return false;
         }
         if let Some(Screen::Chats { focus, menu, .. }) = self.screens.last_mut() {
             *menu = Some(ChatMenu::Open(chat));
-            focus.request(keys::CHAT_SHOW_PEER);
+            focus.request(keys::CHAT_SHOW);
         }
         true
     }
@@ -1654,14 +1702,17 @@ impl State {
         }
     }
 
-    /// Shows the peer of the chat whose menu is open: their page when they
-    /// are saved, else what is known of them, with Save peer.
-    pub fn show_chat_peer(&mut self) {
+    /// Shows whom or what the chat whose menu is open is with: its
+    /// channel; or its peer's page when they are saved, else what is known
+    /// of them, with Save peer.
+    pub fn show_chat(&mut self) {
         let Some(chat) = self.menu_chat() else {
             return;
         };
         self.close_chat_menu();
-        if let Some(peer) = self.node.chat_peer(chat) {
+        if self.is_channel(chat) {
+            self.open_channel(chat);
+        } else if let Some(peer) = self.node.chat_peer(chat) {
             self.open_peer(peer);
         } else if let Some(member) = self.node.chat_member(chat) {
             let focus = if member.saved {
@@ -1689,13 +1740,25 @@ impl State {
         }
     }
 
-    /// Deletes the chat, confirmed. Its row goes when the node says it has.
+    /// Deletes the direct chat, or leaves the channel, confirmed. Its row
+    /// goes when the node says it has.
     pub fn delete_chat(&mut self) {
         let Some(chat) = self.menu_chat() else {
             return;
         };
         self.close_chat_menu();
-        self.node.delete_chat(chat);
+        if self.is_channel(chat) {
+            self.node.leave_channel(chat);
+        } else {
+            self.node.delete_chat(chat);
+        }
+    }
+
+    /// Whether `chat` is a channel's.
+    #[must_use]
+    pub fn is_channel(&self, chat: ChatId) -> bool {
+        self.chat(chat)
+            .is_some_and(|c| matches!(c.kind, ChatKind::Channel { .. }))
     }
 
     pub fn open_channels(&mut self) {
@@ -1705,9 +1768,114 @@ impl State {
         });
     }
 
-    /// Opens the conversation of the joined channel `chat`.
+    /// Shows the joined channel `chat`, Message focused.
     pub fn open_channel(&mut self, chat: ChatId) {
-        self.go_to_chat(chat);
+        let Some(summary) = self
+            .chat(chat)
+            .filter(|c| matches!(c.kind, ChatKind::Channel { .. }))
+        else {
+            return;
+        };
+        let name = JoinName::with_text(summary.name.clone());
+        _ = self.screens.push(Screen::Channel {
+            chat,
+            name,
+            confirm: false,
+            focus: FocusState::requesting(keys::CHANNEL_MESSAGE),
+        });
+    }
+
+    /// The channel shown.
+    fn shown_channel(&self) -> Option<ChatId> {
+        match self.screens.last() {
+            Some(Screen::Channel { chat, .. }) => Some(*chat),
+            _ => None,
+        }
+    }
+
+    /// Opens the conversation of the channel shown.
+    pub fn message_channel(&mut self) {
+        if let Some(chat) = self.shown_channel() {
+            self.go_to_chat(chat);
+        }
+    }
+
+    /// Shows the code that shares the channel shown.
+    pub fn open_channel_code(&mut self) {
+        if let Some(chat) = self.shown_channel() {
+            self.open_share(Shareable::Channel(chat));
+        }
+    }
+
+    /// The name being edited on the channel's screen.
+    pub fn channel_name_mut(&mut self) -> Option<&mut JoinName> {
+        match self.screens.last_mut() {
+            Some(Screen::Channel { name, .. }) => Some(name),
+            _ => None,
+        }
+    }
+
+    /// The channel's name begins or ends an edit. An edit ended keeps the
+    /// name as typed.
+    pub fn channel_name_active(&mut self, active: bool) {
+        self.field_active(active);
+        if !active {
+            self.rename_channel();
+        }
+    }
+
+    /// Calls the channel shown what its screen's name says, or by its own
+    /// name when that is empty, and shows the name as it then stands.
+    pub fn rename_channel(&mut self) {
+        let Some(Screen::Channel { chat, name, .. }) = self.screens.last() else {
+            return;
+        };
+        let chat = *chat;
+        let typed: String<32> = String::try_from(name.text().trim()).unwrap_or_default();
+        if self.chat(chat).is_some_and(|c| c.name != typed) {
+            self.node
+                .rename_chat(chat, (!typed.is_empty()).then_some(typed.as_str()));
+            self.refresh_chat(chat);
+        }
+        let shown = self.chat(chat).map(|c| c.name.clone()).unwrap_or_default();
+        if let Some(name) = self.channel_name_mut() {
+            *name = JoinName::with_text(shown);
+        }
+    }
+
+    /// Turns the shown channel's notifications on or off.
+    pub fn toggle_channel_notifications(&mut self) {
+        let Some(chat) = self.shown_channel() else {
+            return;
+        };
+        if let Some(muted) = self.chat(chat).map(|c| c.muted) {
+            self.node.set_muted(chat, !muted);
+            self.refresh_chat(chat);
+        }
+    }
+
+    /// Asks to confirm leaving the channel shown, Cancel focused.
+    pub fn ask_leave(&mut self) {
+        if let Some(Screen::Channel { confirm, focus, .. }) = self.screens.last_mut() {
+            *confirm = true;
+            focus.request(keys::LEAVE_CANCEL);
+        }
+    }
+
+    /// Stays in the channel shown after all.
+    pub fn cancel_leave(&mut self) {
+        if let Some(Screen::Channel { confirm, focus, .. }) = self.screens.last_mut() {
+            *confirm = false;
+            focus.request(keys::CHANNEL_LEAVE);
+        }
+    }
+
+    /// Leaves the channel shown, confirmed. Its screens go with its chat.
+    pub fn leave_channel(&mut self) {
+        if let Some(chat) = self.shown_channel() {
+            self.node.leave_channel(chat);
+            self.refresh_chat(chat);
+        }
     }
 
     /// Shows Add channel, its field focused, so typing starts the name.
@@ -1778,7 +1946,7 @@ impl State {
 
     /// Shows this node's code, from Add peer.
     pub fn show_my_code(&mut self) {
-        self.open_share();
+        self.open_identity_code();
         self.settle_meet();
     }
 
