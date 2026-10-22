@@ -6,6 +6,7 @@
 
 use buoyant::event::{Key, KeyResponse};
 use buoyant::focus::BoundaryBehavior;
+use buoyant::view::Lazy;
 use buoyant::view::popover::Dismissal;
 use buoyant::view::prelude::*;
 use embedded_graphics::pixelcolor::Rgb565;
@@ -116,36 +117,43 @@ fn row(m: &'static Metrics, device: NearbyDevice) -> impl View<Rgb565, State> + 
     let id = device.id;
     Button::new(
         move |s: &mut State| s.ask_to_exchange(id),
-        move |button: ButtonState| {
-            let focused = button.is_focused();
-            focused_row(
-                HStack::new((
-                    label::<16>(
-                        model_name(device.model),
-                        if focused {
-                            &font::BOLD
-                        } else {
-                            &font::SEMIBOLD
-                        },
-                        m.body,
-                        theme::TEXT,
-                    ),
-                    Spacer::default(),
-                    device.nearness.map(nearness),
-                ))
-                .with_spacing(8)
-                .padding(Edges::Leading, TEXT_X)
-                .padding(Edges::Trailing, 10)
-                .frame()
-                .with_height(ROW)
-                .overlay(
-                    Alignment::Leading,
-                    glyph(device.color, AVATAR).frame().with_width(TEXT_X),
-                ),
-                focused,
-                m.width,
-            )
-        },
+        move |button: ButtonState| Lazy::new((device, button.is_focused(), m), row_look),
+    )
+}
+
+/// A device's row: its glyph, its model, and how near it seems.
+///
+/// Built from the device each time it is drawn ([`Lazy`]): kept in the
+/// render trees, every row's would outweigh the rest of the screen.
+fn row_look(
+    &(device, focused, m): &(NearbyDevice, bool, &'static Metrics),
+) -> impl View<Rgb565, ()> + use<> {
+    focused_row(
+        HStack::new((
+            super::line(
+                model_name(device.model),
+                if focused {
+                    &font::BOLD
+                } else {
+                    &font::SEMIBOLD
+                },
+                m.body,
+                theme::TEXT,
+            ),
+            Spacer::default(),
+            device.nearness.map(nearness),
+        ))
+        .with_spacing(8)
+        .padding(Edges::Leading, TEXT_X)
+        .padding(Edges::Trailing, 10)
+        .frame()
+        .with_height(ROW)
+        .overlay(
+            Alignment::Leading,
+            glyph(device.color, AVATAR).frame().with_width(TEXT_X),
+        ),
+        focused,
+        m.width,
     )
 }
 
@@ -207,7 +215,7 @@ pub(super) fn model_name(model: u16) -> &'static str {
 /// A device before anything is exchanged: its color for this visit, and
 /// the outline of a handheld, never an avatar. `size` is a row's avatar or
 /// a header's.
-pub(super) fn glyph(color: u32, size: u32) -> impl View<Rgb565, State> + use<> {
+pub(super) fn glyph<C>(color: u32, size: u32) -> impl View<Rgb565, C> + use<C> {
     let outline = if size == AVATAR {
         &icon::HANDHELD_34
     } else {
@@ -230,7 +238,7 @@ pub(super) fn glyph(color: u32, size: u32) -> impl View<Rgb565, State> + use<> {
 
 /// How near a device seems: the arcs lit from the inside out, `near` of
 /// three.
-fn nearness(near: u8) -> impl View<Rgb565, State> + use<> {
+fn nearness(near: u8) -> impl View<Rgb565, ()> + use<> {
     let arc = |shown: u8| {
         if near >= shown {
             theme::ACCENT
