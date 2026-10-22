@@ -16,6 +16,7 @@
 
 - [Mobile Application Guidelines](apps/mobile-guidelines.md)
 - [Peer Identity, Avatars, and Secure Sessions](apps/peer-identity-and-sessions.md)
+- [Channel Badges and Titles](apps/channel-badges.md)
 - [Importing, Discovery, and Sharing](apps/import-discovery-sharing.md)
 - [Messaging and Delivery States](apps/messaging-and-delivery.md)
 

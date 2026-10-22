@@ -621,25 +621,8 @@ this phone holds, and nothing heard on the air can add to it.
 
 ### Channel badge
 
-A channel is drawn as a rounded square, distinguishing it at a glance from a
-peer's circular avatar. It carries the first letter of each word of the
-channel's name, up to four, two to a line—so three and four initials stay as
-large as two rather than shrinking. A private channel that was never named has
-nothing to initial and shows its identifier instead.
-
-The color is derived from the key: the channel-identifier derivation run one
-byte longer, `HKDF-SHA256(channel_key, salt="UMSH-CHAN-ID", info="", L=3)`, so
-its first two bytes are the identifier itself. Everyone holding the key sees
-the same badge with nothing agreed or transmitted.
-
-Two exceptions are recognized on sight rather than read: `public` is a white
-**P** on blue, `EMERGENCY` a white **E** on red.
-
-A derived color can land anywhere, including the middle of the brightness
-range where neither black nor white text reads well. The badge keeps the
-derived hue and moves only brightness and saturation, into whichever of a light
-or dark band it is already nearer; each band clears 4.5:1 against a fixed text
-color.
+A channel's badge, and the title its rows show beside it, follow [Channel
+Badges and Titles](../channel-badges.md).
 
 ### Channel list
 
@@ -647,7 +630,7 @@ Sections appear only when they contain something:
 
 - The channels this identity is in, with no section header—everything listed
   is joined, which the screen title already says. Each row shows the channel's
-  badge, its name as written, a type label (**Built-in**, **Public**,
+  badge, its title, a type label (**Built-in**, **Public**,
   **Private**), the two-octet derived identifier in monospace, and which
   identities have joined it (**Phone**, **Radio**, or **Phone and radio**). A
   muted channel carries a bell-slash glyph with a text equivalent for
