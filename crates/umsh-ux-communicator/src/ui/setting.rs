@@ -3,6 +3,7 @@
 
 use buoyant::event::{Key, KeyResponse};
 use buoyant::focus::{BoundaryBehavior, FocusKey};
+use buoyant::view::Lazy;
 use buoyant::view::prelude::*;
 use embedded_graphics::pixelcolor::Rgb565;
 use heapless::String;
@@ -120,67 +121,47 @@ pub(super) fn marked_row<A: Fn(&mut State) + Clone>(
     let flip = act.clone();
     Button::new(act, move |button: ButtonState| {
         let focused = button.is_focused();
-        let face = if focused { &font::BOLD } else { &font::REGULAR };
-        let color = if danger { theme::RED } else { theme::TEXT };
-        HStack::new((
-            (checked == Some(true)).then(|| {
-                Image::new(&icon::CHECK)
-                    .as_template()
-                    .foreground_color(theme::ACCENT)
-                    .frame()
-                    .with_width(CHECK - 8)
-            }),
-            // Static, so drawn as it is rather than copied. Unchecked, the
-            // name keeps the check mark's room and its spacing.
-            super::line(name, face, m.body, color).padding(
-                Edges::Leading,
-                if checked == Some(false) { CHECK } else { 0 },
-            ),
-            Spacer::default(),
-            value.as_ref().map(|value| {
-                label::<32>(value, &font::REGULAR, m.secondary, theme::TEXT_SECONDARY)
-            }),
-            chevron.then(|| {
-                Image::new(&icon::CHEVRON)
-                    .as_template()
-                    .foreground_color(theme::TEXT_TERTIARY)
-            }),
-            switch.map(switch_look),
-            level.map(|(level, active)| level_look(level, active)),
-        ))
-        .with_spacing(8)
-        .hint_background_color(if focused {
-            theme::FOCUS
-        } else {
-            theme::BACKGROUND
-        })
-        .padding(Edges::Leading, INSET - 4)
-        .padding(Edges::Trailing, 10)
-        .frame()
-        .with_height(height - 2)
-        .background(
-            Alignment::Center,
-            focused.then(|| {
-                ZStack::new((
-                    RoundedRectangle::new(RADIUS).foreground_color(theme::FOCUS),
-                    RoundedRectangle::new(RADIUS)
-                        .stroked(2)
-                        .foreground_color(theme::ACCENT),
-                ))
-            }),
-        )
-        .padding(Edges::Horizontal, 4)
-        .padding(Edges::Vertical, 1)
-        .overlay(
-            Alignment::Bottom,
-            (!focused).then(|| {
-                Rectangle
-                    .foreground_color(theme::LINE)
-                    .frame()
-                    .with_height(1)
-                    .padding(Edges::Leading, INSET)
-            }),
-        )
+        let look = RowLook {
+            name,
+            value: value.clone(),
+            chevron,
+            level,
+            checked,
+            danger,
+            focused,
+            m,
+        };
+        // The switch is apart from the rest, which is drawn without
+        // animation: its knob slides.
+        HStack::new((Lazy::new(look, row_look), switch.map(switch_look)))
+            .with_spacing(8)
+            .padding(Edges::Leading, INSET - 4)
+            .padding(Edges::Trailing, 10)
+            .frame()
+            .with_height(height - 2)
+            .background(
+                Alignment::Center,
+                focused.then(|| {
+                    ZStack::new((
+                        RoundedRectangle::new(RADIUS).foreground_color(theme::FOCUS),
+                        RoundedRectangle::new(RADIUS)
+                            .stroked(2)
+                            .foreground_color(theme::ACCENT),
+                    ))
+                }),
+            )
+            .padding(Edges::Horizontal, 4)
+            .padding(Edges::Vertical, 1)
+            .overlay(
+                Alignment::Bottom,
+                (!focused).then(|| {
+                    Rectangle
+                        .foreground_color(theme::LINE)
+                        .frame()
+                        .with_height(1)
+                        .padding(Edges::Leading, INSET)
+                }),
+            )
     })
     .focus_key(key)
     // A switch takes the arrows: toward off, and toward on. A level
@@ -202,8 +183,77 @@ pub(super) fn marked_row<A: Fn(&mut State) + Clone>(
     })
 }
 
+/// What a row draws beside its switch: its check mark, name, value,
+/// chevron, and level.
+#[derive(Clone)]
+struct RowLook {
+    name: &'static str,
+    value: Option<Value>,
+    chevron: bool,
+    level: Option<(u8, bool)>,
+    checked: Option<bool>,
+    danger: bool,
+    focused: bool,
+    m: &'static Metrics,
+}
+
+/// A row, but for its switch.
+///
+/// Built from its data each time it is drawn ([`Lazy`]): kept in the
+/// render trees, every row's would outweigh the rest of the screen, and a
+/// screen's rows are built on the stack together.
+fn row_look(look: &RowLook) -> impl View<Rgb565, ()> + use<> {
+    let face = if look.focused {
+        &font::BOLD
+    } else {
+        &font::REGULAR
+    };
+    let color = if look.danger { theme::RED } else { theme::TEXT };
+    HStack::new((
+        (look.checked == Some(true)).then(|| {
+            Image::new(&icon::CHECK)
+                .as_template()
+                .foreground_color(theme::ACCENT)
+                .frame()
+                .with_width(CHECK - 8)
+        }),
+        // Static, so drawn as it is rather than copied. Unchecked, the
+        // name keeps the check mark's room and its spacing.
+        super::line(look.name, face, look.m.body, color).padding(
+            Edges::Leading,
+            if look.checked == Some(false) {
+                CHECK
+            } else {
+                0
+            },
+        ),
+        Spacer::default(),
+        // Already cut short to fit, by [`value`].
+        look.value.clone().map(|value| {
+            super::line(
+                value,
+                &font::REGULAR,
+                look.m.secondary,
+                theme::TEXT_SECONDARY,
+            )
+        }),
+        look.chevron.then(|| {
+            Image::new(&icon::CHEVRON)
+                .as_template()
+                .foreground_color(theme::TEXT_TERTIARY)
+        }),
+        look.level.map(|(level, active)| level_look(level, active)),
+    ))
+    .with_spacing(8)
+    .hint_background_color(if look.focused {
+        theme::FOCUS
+    } else {
+        theme::BACKGROUND
+    })
+}
+
 /// A level's steps, lit up to `level`: in the accent while `active`.
-fn level_look(level: u8, active: bool) -> impl View<Rgb565, State> + use<> {
+fn level_look(level: u8, active: bool) -> impl View<Rgb565, ()> + use<> {
     let lit = if active { theme::ACCENT } else { theme::TEXT };
     let step = move |i: u8| {
         RoundedRectangle::new(2)
