@@ -122,14 +122,11 @@ pub mod keys {
     /// The join screen's Name and Join channel.
     pub const JOIN_NAME: FocusKey = FocusKey(0x0800_0000);
     pub const JOIN_CHANNEL: FocusKey = FocusKey(0x0800_0001);
-    /// The Device list's categories, in order.
+    /// The Device list's categories.
     pub const IDENTITY: FocusKey = FocusKey(DEVICE);
     pub const CHANNELS: FocusKey = FocusKey(DEVICE | 1);
     pub const RADIO: FocusKey = FocusKey(DEVICE | 2);
-    pub const ALERTS: FocusKey = FocusKey(DEVICE | 3);
-    pub const DISPLAY: FocusKey = FocusKey(DEVICE | 4);
     pub const BLUETOOTH: FocusKey = FocusKey(DEVICE | 5);
-    pub const MAINTENANCE: FocusKey = FocusKey(DEVICE | 6);
     pub const SHUT_DOWN: FocusKey = FocusKey(DEVICE | 7);
     pub const KEYBOARD: FocusKey = FocusKey(DEVICE | 8);
     pub const CLOCK: FocusKey = FocusKey(DEVICE | 9);

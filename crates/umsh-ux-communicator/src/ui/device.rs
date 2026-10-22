@@ -61,13 +61,6 @@ pub fn view(state: &State) -> impl View<Rgb565, State> + use<> {
                 State::open_radio,
                 state.profile_name(&state.node.radio()),
             ),
-            category(
-                "Alerts",
-                keys::ALERTS,
-                |_| {},
-                if state.status.silent { "Silent" } else { "" },
-            ),
-            category("Display", keys::DISPLAY, |_| {}, ""),
             category("Keyboard", keys::KEYBOARD, State::open_keyboard, ""),
             category(
                 "Clock",
@@ -94,7 +87,6 @@ pub fn view(state: &State) -> impl View<Rgb565, State> + use<> {
                     .map(|_| category("GNSS", keys::GNSS, State::open_gnss, "")),
             ))
             .with_spacing(0),
-            category("Maintenance", keys::MAINTENANCE, |_| {}, ""),
             row(
                 m,
                 "Shut down",
