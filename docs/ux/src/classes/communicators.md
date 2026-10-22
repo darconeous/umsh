@@ -144,6 +144,27 @@ since power-on are not read off the clock and may still show.
 - **Every time shown** is in the offset its zone kept at that instant, so a
   message from before a daylight-saving change keeps its own hour.
 
+## About
+
+**Device › About** says what the device is and runs, a readout per row.
+
+| | |
+|---|---|
+| ![About](../hardware/mockups/tlora-pager-native/72-about.png) | ![Credits](../hardware/mockups/tlora-pager-native/73-credits.png) |
+
+- **Name** and **Model**, as the device and its board give them.
+- **Firmware** is the release tag (`fw-YYYY.MM.NN`), or the commit for a
+  development build. No build date: builds are reproducible.
+- **Address** shows the hint, with the whole 44-character address under it.
+- **Storage** is the chats' room used of all they may keep.
+- **Credits** lists the firmware's parts with their licenses: UMSH, Twemoji
+  (with its copyright, its license, and that the art is rasterized,
+  color-reduced, and compressed), the M PLUS fonts, and Unicode's emoji data
+  and character names. Then come the Rust crates the image links, grouped by
+  license. `make crate-notices` writes that list from `cargo tree`, and CI
+  checks it is current.
+- Entries longer than the screen take turns to pass, as a long message does.
+
 ## Optional phone integration
 
 A communicator may optionally pair with a phone for synchronization, backup,

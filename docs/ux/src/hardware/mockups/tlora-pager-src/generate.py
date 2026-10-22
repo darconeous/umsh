@@ -14,6 +14,7 @@ rasterizes those at one pixel per panel pixel with headless Chrome and
 quantizes to RGB565 (needs Google Chrome and ImageMagick). deantenna.py, which
 needs Pillow, made pager-photo.png from the site's board photo.
 """
+import base64
 import hashlib
 import os
 import random
@@ -525,76 +526,14 @@ def chevron(x, cy, col=None):
              sw=2)
 
 
-# Reaction glyphs follow the iOS palette (🩷 👍 👎 🤣 ‼️ ❓) in emoji colors.
-# They are drawn, not set: the panel has no color emoji font, and a font
-# glyph is a few pixels at this size. Each fills about a 20 px box at k=1.
+# Reactions wear the iOS faces, as the device draws them.
 REACTIONS = ["<3", "+1", "-1", "ha", "!", "?"]
-E_PINK = "#FF8FC4"
-E_YELLOW = "#FFC83D"
-E_SHADE = "#B87A0E"
-E_INK = "#4A2E08"
-E_TEAR = "#5AB8FF"
-E_RED = "#F0453A"
-
-
-def heart(cx, cy, k=1.0):
-    return P(f"M{cx} {cy+5.5*k} C{cx-8*k} {cy+0.5*k} {cx-6.5*k} {cy-6*k} "
-             f"{cx-3.2*k} {cy-6*k} C{cx-1.4*k} {cy-6*k} {cx} {cy-4.6*k} "
-             f"{cx} {cy-3.4*k} C{cx} {cy-4.6*k} {cx+1.4*k} {cy-6*k} "
-             f"{cx+3.2*k} {cy-6*k} C{cx+6.5*k} {cy-6*k} {cx+8*k} {cy+0.5*k} "
-             f"{cx} {cy+5.5*k} Z", fill=E_PINK)
-
-
-def thumb(cx, cy, down=False):
-    """A fist with the thumb up, or turned over for down."""
-    hand = ("M-8 -0.3 L-4 -0.3 L-2 -6.3 Q-1 -9.3 1.5 -8.3 Q3 -7.3 2.5 -4.3 "
-            "L1.5 -0.8 L6 -0.8 Q8 -0.8 8 1.2 Q8 2.7 7 3.2 Q8.2 4 7.6 5.4 "
-            "Q8 6.6 7 7.4 Q7.6 8.6 6 9.2 L-5 9.2 Q-8 9.2 -8 6.7 Z")
-    turn = " rotate(180)" if down else ""
-    return [f'<g transform="translate({cx:.1f},{cy:.1f}){turn}">',
-            P(hand, E_SHADE, E_YELLOW, sw=0.9),
-            P("M3 3.2 H7 M3 5.4 H7.4 M3 7.4 H6.8", E_SHADE, sw=0.9),
-            "</g>"]
-
-
-def laugh(cx, cy):
-    """Rolling on the floor laughing: a tilted face, eyes shut, tears."""
-    return [f'<g transform="translate({cx:.1f},{cy:.1f}) rotate(-20)">',
-            CIRC(0, 0, 8.6, E_YELLOW),
-            P("M-6 -4.8 L-2.6 -3.2 L-6 -1.6 M6 -4.8 L2.6 -3.2 L6 -1.6",
-              E_INK, sw=1.5),
-            P("M-5.6 0.6 H5.6 Q5.6 7 0 7 Q-5.6 7 -5.6 0.6 Z", fill=E_INK),
-            P("M-4.9 0.6 H4.9 L4.7 2.2 H-4.7 Z", fill="#fff"),
-            P("M-8.4 -2.4 Q-12.2 1.4 -10 3.2 Q-7.8 4 -8.4 -2.4 Z",
-              fill=E_TEAR),
-            P("M8.4 -2.4 Q12.2 1.4 10 3.2 Q7.8 4 8.4 -2.4 Z", fill=E_TEAR),
-            "</g>"]
-
-
-def bangs(cx, cy):
-    o = []
-    for x in (cx - 3.6, cx + 3.6):
-        o.append(P(f"M{x-2:.1f} {cy-8.6:.1f} H{x+2:.1f} L{x+1.1:.1f} "
-                   f"{cy+3:.1f} H{x-1.1:.1f} Z", E_RED, E_RED, sw=1))
-        o.append(CIRC(x, cy + 7, 1.9, E_RED))
-    return o
-
-
-def question(cx, cy):
-    return [P(f"M{cx-4.6} {cy-4.2} C{cx-4.6} {cy-10.2} {cx+5} {cy-10.2} "
-              f"{cx+5} {cy-4.6} C{cx+5} {cy-1.2} {cx} {cy-1.2} {cx} {cy+2.8}",
-              E_RED, sw=3.2),
-            CIRC(cx, cy + 7.2, 2, E_RED)]
+REACTION_FACES = {"<3": "\U0001FA77", "+1": "\U0001F44D", "-1": "\U0001F44E",
+                  "ha": "\U0001F923", "!": "‼️", "?": "❓"}
 
 
 def reaction_glyph(tok, cx, cy, k=1.0):
-    g = {"<3": lambda: [heart(cx, cy + 0.5, 1.35)],
-         "+1": lambda: thumb(cx, cy),
-         "-1": lambda: thumb(cx, cy, down=True),
-         "ha": lambda: laugh(cx, cy),
-         "!": lambda: bangs(cx, cy),
-         "?": lambda: question(cx, cy)}[tok]()
-    return g if k == 1 else scaled(g, cx, cy, k)
+    return [emoji(cx, cy, REACTION_FACES[tok], 20 * k)]
 
 
 def menu_card(mx, my, mw, mh):
@@ -2410,12 +2349,44 @@ def screen_setup_time_zone():
 
 
 # ---------------------------------------------------------------- keyboard
-EMOJI = "'Apple Color Emoji', 'Noto Color Emoji', sans-serif"
+# Emoji are Twemoji's art, as the device draws them: the firmware's own
+# vendored copy, never a system emoji font.
+TWEMOJI = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                       "../../../../../../crates/umsh-emoji/twemoji/svg")
+
+
+def twemoji_art(s):
+    """Twemoji's SVG for `s`, or None where it draws none. It names most
+    files without U+FE0F, but keeps it in some."""
+    cps = [ord(c) for c in s]
+    bare = [c for c in cps if c != 0xFE0F]
+    names = [cps, bare]
+    if len(bare) > 1:
+        names.append([bare[0], 0xFE0F] + bare[1:])
+    for n in names:
+        path = os.path.join(TWEMOJI, "-".join(f"{c:x}" for c in n) + ".svg")
+        if os.path.exists(path):
+            with open(path, "rb") as f:
+                return f.read()
+    return None
+
+
+def emoji(cx, cy, s, size):
+    """`s`, `size` px square, centered on (cx, cy). An image rather than
+    inline SVG, so the art's ids never meet another's."""
+    art = base64.b64encode(twemoji_art(s)).decode()
+    return (f'<image x="{cx - size / 2:.1f}" y="{cy - size / 2:.1f}" '
+            f'width="{size:.1f}" height="{size:.1f}" '
+            f'href="data:image/svg+xml;base64,{art}"/>')
 
 
 def glyph_text(x, y, s, size, fill=None, anchor="middle"):
+    """`s` set on baseline `y`: Twemoji's art where it has some, and text
+    otherwise."""
+    if twemoji_art(s):
+        return emoji(x, y - size * 0.36, s, size)
     return (f'<text x="{x:.1f}" y="{y:.1f}" font-size="{size}" '
-            f'font-family="{EMOJI}" fill="{fill or C["text"]}" '
+            f'font-family="{SANS}" fill="{fill or C["text"]}" '
             f'text-anchor="{anchor}">{escape(s)}</text>')
 
 
@@ -2636,6 +2607,65 @@ def screen_clock():
     o += clip(body, 0, TOP, W, H - TOP)
     o += screen_header("Clock")
     o += status(time=TIME_12, silent=True)
+    return o
+
+
+def screen_about():
+    """Device › About: what the device is and runs."""
+    o = [R(0, 0, W, H, C["bg"])]
+    rows = [("Name", DEVICE_NAME), ("Model", "T-LoRa Pager"),
+            ("Firmware", "fw-2026.10.01")]
+    body = []
+    y = TOP
+    for i, (label, val) in enumerate(rows):
+        body += setting_row(0, y, label, val, focused=i == 0)
+        y += 36
+    address = b58(44, 3)
+    body += setting_row(0, y, "Address", address[:4])
+    y += 36
+    body.append(T(12, y + 14, address, F_SMALL, C["text2"]))
+    y += 26
+    body += setting_row(0, y, "Storage", "31 KB of 300 KB")
+    y += 36
+    body += setting_row(0, y, "Credits", None, chev=True)
+    o += clip(body, 0, TOP, W, H - TOP)
+    o += screen_header("About")
+    o += status(silent=True)
+    return o
+
+
+CREDITS = [
+    ("UMSH", ["MIT OR Apache-2.0", "umsh.dev"]),
+    ("Twemoji", ["© 2014–2021 Twitter",
+                 "© 2022–present Jason Sofonia & Justine De Caires",
+                 "CC BY 4.0",
+                 "Rasterized, color-reduced, and compressed",
+                 "creativecommons.org/licenses/by/4.0"]),
+    ("M PLUS 1, M PLUS Code", ["© 2021 The M+ FONTS Project Authors",
+                               "SIL Open Font License 1.1"]),
+]
+
+
+def screen_credits():
+    """Device › About › Credits: what the firmware is built from."""
+    o = [R(0, 0, W, H, C["bg"])]
+    body = []
+    y = TOP
+    for i, (name, lines) in enumerate(CREDITS):
+        h = 34 + 19 * len(lines)
+        if i == 1:
+            body.append(R(4, y + 1, W - 8, h - 2, C["focus"], rx=8,
+                          stroke=C["accent"], sw=1.6))
+        body.append(T(12, y + 25, name, F_BODY, C["text"],
+                      700 if i == 1 else 400))
+        for j, line in enumerate(lines):
+            body.append(T(12, y + 46 + 19 * j, line, F_SMALL, C["text2"]))
+        if i != 1:
+            body.append(LINE(12, y + h - 0.5, W, y + h - 0.5))
+        y += h
+    o += clip(body, 0, TOP, W, H - TOP)
+    o += screen_header("Credits")
+    o += status(silent=True)
     return o
 
 
@@ -3268,6 +3298,15 @@ def main(path, native_dir=None):
              "Asks to confirm, Cancel focused, as Forget does. The chat and "
              "its messages go; the peer stays saved, and their next message "
              "starts a new chat."),
+        ]),
+        ("About", [
+            ("About", screen_about(),
+             "Device › About. The address is whole under its hint; Storage "
+             "is the chats’ room used of all they may keep."),
+            ("Credits", screen_credits(),
+             "The firmware’s parts with their licenses, then the Rust "
+             "crates it links, grouped by license. An entry longer than the "
+             "screen takes turns to pass, as a long message does."),
         ]),
     ]
     by = hy + HW_H + 140
