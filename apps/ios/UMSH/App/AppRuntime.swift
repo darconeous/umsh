@@ -3217,16 +3217,6 @@ final class AppRuntime {
         "Back at basecamp before dark.",
     ]
 
-    /// Staging only: have a staged peer message this phone after a short
-    /// delay—long enough to background the app or lock the screen, which
-    /// is the point of testing a notification. A no-op on a real radio.
-    ///
-    /// `onChannel` sends to the staged group chat instead of this phone. The
-    /// two are worth testing separately: a group message names a channel and
-    /// a speaker where a direct one names only a peer, and that difference is
-    /// exactly what a notification has to carry.
-    /// Staging only: have a staged peer react to the phone's last message,
-    /// after the same delay and for the same reason as a staged message.
     /// Staging only: a staged peer opens Add Peer, so it shows on Nearby,
     /// or asks the phone to exchange.
     func stagedPeerMeets(asking: Bool) {
@@ -3234,6 +3224,8 @@ final class AppRuntime {
         Task { await staging.stagedPeerMeets(asking: asking) }
     }
 
+    /// Staging only: have a staged peer react to the phone's last message,
+    /// after the same delay and for the same reason as a staged message.
     func stagedPeerReacts() {
         guard let staging = radioConnection as? FakeRadioConnection else { return }
         let glyph = ReactionEmoji.palette.randomElement()?.token ?? "+1"
@@ -3279,6 +3271,14 @@ final class AppRuntime {
         Task { await staging.setRemoteDeviceReachable(reachable) }
     }
 
+    /// Staging only: have a staged peer message this phone after a short
+    /// delay—long enough to background the app or lock the screen, which
+    /// is the point of testing a notification. A no-op on a real radio.
+    ///
+    /// `onChannel` sends to the staged group chat instead of this phone. The
+    /// two are worth testing separately: a group message names a channel and
+    /// a speaker where a direct one names only a peer, and that difference is
+    /// exactly what a notification has to carry.
     func stagedPeerSendsMessage(onChannel: Bool) {
         guard let staging = radioConnection as? FakeRadioConnection else { return }
         let line = Self.stagedPeerLines[
@@ -3303,6 +3303,7 @@ final class AppRuntime {
     var stagedPeerSendsMessage: ((Bool) -> Void)? { nil }
     var stagedPeerReacts: (() -> Void)? { nil }
     var stagedPeerReplies: (() -> Void)? { nil }
+    var stagedPeerMeets: ((Bool) -> Void)? { nil }
     var stagedDropTransmissions: ((Bool) -> Void)? { nil }
     var stagedRemoteDevicesReachable: ((Bool) -> Void)? { nil }
     #endif
