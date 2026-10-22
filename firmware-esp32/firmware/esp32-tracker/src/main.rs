@@ -3036,12 +3036,10 @@ async fn main(spawner: Spawner) {
     // of it before the application sees any, so its heap is smaller.
     // Most of it goes in the bootloader's former arena, which is free once
     // `main` runs and would otherwise sit unused; every byte left in the
-    // ordinary arena comes out of the main stack.
+    // ordinary arena comes out of the main stack. On the S3 that arena is
+    // 73,744 bytes (`dram2_seg`), so it takes 72 KiB of the heap.
     #[cfg(all(feature = "chip-esp32s3", not(feature = "wifi")))]
-    {
-        esp_alloc::heap_allocator!(size: 8 * 1024);
-        esp_alloc::heap_allocator!(#[esp_hal::ram(reclaimed)] size: 64 * 1024);
-    }
+    esp_alloc::heap_allocator!(#[esp_hal::ram(reclaimed)] size: 72 * 1024);
     #[cfg(feature = "wifi")]
     {
         // Both regions are internal RAM. The bootloader's former arena
@@ -3050,12 +3048,12 @@ async fn main(spawner: Spawner) {
         // The Heltec keeps its session internally; the Pager adds DMA state.
         // Their smaller heaps leave room for nested calls and interrupts.
         #[cfg(feature = "board-heltec-v3")]
-        esp_alloc::heap_allocator!(size: 40 * 1024);
+        esp_alloc::heap_allocator!(size: 32 * 1024);
         // Leave room for sleep and audio DMA/task state while preserving the
         // checked 32 KiB nested-call reserve (82 KiB total internal heap).
         // The T-Deck runs the same communicator in the same budget.
         #[cfg(any(feature = "board-tlora-pager", feature = "board-tdeck"))]
-        esp_alloc::heap_allocator!(size: 18 * 1024);
+        esp_alloc::heap_allocator!(size: 10 * 1024);
         // Keep the 20 KiB stack reserve and nested task construction headroom
         // with the upgraded radio/scheduler's internal static storage. The
         // MeshCore forwarder adds a few KiB of internal statics (its radio
@@ -3069,7 +3067,7 @@ async fn main(spawner: Spawner) {
             )),
             not(feature = "meshcore-forwarder")
         ))]
-        esp_alloc::heap_allocator!(size: 44 * 1024);
+        esp_alloc::heap_allocator!(size: 36 * 1024);
         #[cfg(all(
             not(any(
                 feature = "board-heltec-v3",
@@ -3080,7 +3078,7 @@ async fn main(spawner: Spawner) {
             not(feature = "debug-log"),
             not(feature = "lan-bearer")
         ))]
-        esp_alloc::heap_allocator!(size: 40 * 1024);
+        esp_alloc::heap_allocator!(size: 32 * 1024);
         // A diagnostic build pays for its log queue the same way, and the
         // LAN bearer for its port, export queue, and task; the log itself
         // reports the heap minimum, which is how the cut is judged.
@@ -3094,7 +3092,7 @@ async fn main(spawner: Spawner) {
             any(feature = "debug-log", feature = "lan-bearer"),
             not(all(feature = "debug-log", feature = "lan-bearer"))
         ))]
-        esp_alloc::heap_allocator!(size: 36 * 1024);
+        esp_alloc::heap_allocator!(size: 28 * 1024);
         #[cfg(all(
             not(any(
                 feature = "board-heltec-v3",
@@ -3105,8 +3103,8 @@ async fn main(spawner: Spawner) {
             feature = "debug-log",
             feature = "lan-bearer"
         ))]
-        esp_alloc::heap_allocator!(size: 32 * 1024);
-        esp_alloc::heap_allocator!(#[esp_hal::ram(reclaimed)] size: 64 * 1024);
+        esp_alloc::heap_allocator!(size: 24 * 1024);
+        esp_alloc::heap_allocator!(#[esp_hal::ram(reclaimed)] size: 72 * 1024);
     }
     #[cfg(feature = "psram")]
     external::init(peripherals.PSRAM);
@@ -3479,8 +3477,15 @@ async fn main(spawner: Spawner) {
     let _ = force_pairing;
     let (proto_store, boot_snapshot) =
         SnapshotStore::mount(shared, journals::proto_page0(&partition)).await;
-    let (mut identity_store, identity_payload) =
-        ProtoStore::mount(shared, journals::identity_page0(&partition)).await;
+    // The record itself is read only here. Held in `main`'s scope, it would
+    // stay in the main task's future for good: a local that was ever
+    // borrowed is kept across every later await, `ble::run` included.
+    let (mut identity_store, stored_identity, identity_len) = {
+        let (store, payload) =
+            ProtoStore::mount(shared, journals::identity_page0(&partition)).await;
+        let stored = driver::stored_device_identity(payload.as_deref());
+        (store, stored, payload.map_or(0, |payload| payload.len()))
+    };
     let node_counters = init_node_counters();
     mount_node_counters(node_counters, shared, journals::counter_page0(&partition)).await;
 
@@ -3504,7 +3509,6 @@ async fn main(spawner: Spawner) {
     // belongs to; writing over it would lose that key for good. That
     // boot runs on a volatile key instead, and the record waits for a
     // host to install or clear one.
-    let stored_identity = driver::stored_device_identity(identity_payload.as_deref());
     let boot_identity_keys = match stored_identity {
         StoredIdentity::Keys { secret, public } => Some((secret, public)),
         StoredIdentity::Absent | StoredIdentity::Unparseable => {
@@ -3512,13 +3516,12 @@ async fn main(spawner: Spawner) {
             pool_draw(b"device-identity", &mut secret);
             let (public, record) = driver::device_identity_record(&secret);
             if stored_identity == StoredIdentity::Unparseable {
-                let len = identity_payload.as_ref().map_or(0, |payload| payload.len());
                 let key = umsh_core::PublicKey(public);
                 println!(
-                    "device identity record UNREADABLE len={len}—kept; volatile key={key} this boot"
+                    "device identity record UNREADABLE len={identity_len}—kept; volatile key={key} this boot"
                 );
                 debug_log(format_args!(
-                    "device identity record UNREADABLE len={len}—kept; volatile key={key} this boot"
+                    "device identity record UNREADABLE len={identity_len}—kept; volatile key={key} this boot"
                 ));
             } else {
                 // A persist failure is not fatal: the device runs on this
@@ -3541,9 +3544,11 @@ async fn main(spawner: Spawner) {
     {
         prune_stale_tx_counters(node_counters, public).await;
     }
+    // Matched, not borrowed: a borrow would keep the 4 KiB snapshot in the
+    // main task's future after `device_task` takes it.
     println!(
         "journals: snapshot={} identity={} bonds={}",
-        boot_snapshot.is_some(),
+        matches!(boot_snapshot, Some(_)),
         boot_identity_keys.is_some(),
         ble::bond_count(),
     );
