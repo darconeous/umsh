@@ -1,11 +1,11 @@
 //! An avatar drawn from its [`AvatarStyle`]: the tinted outline with the
 //! lettering centered over it.
 
-use buoyant::font::PrerenderedFont;
+use crate::typeface::Typeface;
 use buoyant::view::prelude::*;
 use embedded_graphics::pixelcolor::Rgb565;
 
-use crate::avatar::{AvatarStyle, Outline, PeerShape};
+use crate::avatar::{AvatarStyle, Lettering, Outline, PeerShape};
 use crate::font;
 
 /// `style` at `size` pixels across.
@@ -21,7 +21,10 @@ pub fn view<C>(style: &AvatarStyle, size: u32) -> impl View<Rgb565, C> + use<C> 
             (&font::MONO_BOLD, size * 27 / 80, (size * 17 + 75) / 150)
         }
         Outline::Peer(_) => (&font::MONO_BOLD, size * 3 / 8, 0),
-        Outline::Channel if style.lines[1].is_empty() && style.lines[0].chars().count() == 1 => {
+        Outline::Channel
+            if style.lines[1].is_empty()
+                && umsh_grapheme::clusters(&style.lines[0]).count() == 1 =>
+        {
             (&font::BOLD, size * 3 / 4, 0)
         }
         Outline::Channel => (&font::BOLD, size * 2 / 5, 0),
@@ -33,7 +36,7 @@ pub fn view<C>(style: &AvatarStyle, size: u32) -> impl View<Rgb565, C> + use<C> 
         i32::from(shown.ascent) - i32::from(shown.descent) + i32::from(shown.line_gap)
     };
     let two = !style.lines[1].is_empty();
-    let line = |s: &heapless::String<2>, offset: i32| {
+    let line = |s: &Lettering, offset: i32| {
         Text::new(s.clone(), face)
             .with_font_size(text_size)
             .foreground_color(style.text)
@@ -60,7 +63,7 @@ pub fn view<C>(style: &AvatarStyle, size: u32) -> impl View<Rgb565, C> + use<C> 
 /// its line. A line holds the face's tallest ascent above the baseline, and
 /// its descent and the gap to the next line below it, so capitals centered
 /// as a line is sit high by half of what is under them less what is over.
-fn cap_drop(face: &PrerenderedFont, size: u32) -> i32 {
+fn cap_drop(face: &Typeface, size: u32) -> i32 {
     let face = face.face(size);
     let over = face.glyph('H').map_or(0, |cap| i32::from(cap.top));
     let under = -i32::from(face.descent) + i32::from(face.line_gap);

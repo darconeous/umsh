@@ -28,8 +28,8 @@ use crate::model::{
 };
 use crate::nav::{Screen, Unsent, keys};
 use crate::text::{DraftText, SharedText};
+use crate::typeface::Typeface;
 use crate::{font, icon, theme};
-use buoyant::font::PrerenderedFont;
 use buoyant::primitives::geometry::CornerRadii;
 use buoyant::render::AreaColors;
 
@@ -1396,7 +1396,7 @@ fn field(
 fn field_look(
     m: &'static Metrics,
     status: TextFieldStatus,
-    area: TextArea<'static, DraftText, PrerenderedFont>,
+    area: TextArea<'static, DraftText, Typeface>,
     (active_fill, active_ring): (Rgb565, Rgb565),
     placeholder: Option<&Placeholder>,
 ) -> impl View<Rgb565, State> + use<> {
@@ -1431,12 +1431,14 @@ fn field_look(
     .padding(Edges::Vertical, 2)
     .background(
         Alignment::Center,
-        ZStack::new((
-            RoundedRectangle::new(FIELD_RADIUS).foreground_color(fill),
-            RoundedRectangle::new(FIELD_RADIUS)
-                .stroked(line_width)
-                .foreground_color(ring),
-        )),
+        RoundedRectangle::new(FIELD_RADIUS).foreground_color(fill),
+    )
+    // The ring over the text, which an emoji may reach.
+    .overlay(
+        Alignment::Center,
+        RoundedRectangle::new(FIELD_RADIUS)
+            .stroked(line_width)
+            .foreground_color(ring),
     )
 }
 

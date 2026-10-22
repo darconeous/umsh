@@ -2,9 +2,9 @@
 //! or sent until Join channel. Name is what the channel is called here;
 //! pressing it edits it. Backspace goes back.
 
+use crate::typeface::Typeface;
 use buoyant::event::{Key, KeyResponse};
 use buoyant::focus::BoundaryBehavior;
-use buoyant::font::PrerenderedFont;
 use buoyant::render::AreaColors;
 use buoyant::view::TextArea;
 use buoyant::view::prelude::*;
@@ -82,7 +82,7 @@ fn name_row(m: &'static Metrics, name: &JoinName) -> impl View<Rgb565, State> + 
 fn name_look(
     m: &'static Metrics,
     status: TextFieldStatus,
-    area: TextArea<'static, String<32>, PrerenderedFont>,
+    area: TextArea<'static, String<32>, Typeface>,
     shown: &str,
 ) -> impl View<Rgb565, State> + use<> {
     let editing = status.is_active();

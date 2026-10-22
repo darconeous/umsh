@@ -5,9 +5,9 @@
 //! on an empty field ends the edit, and again closes Find; where the board
 //! has touch, an arrow before the field closes it too.
 
+use crate::typeface::Typeface;
 use buoyant::event::{Key, KeyResponse};
 use buoyant::focus::BoundaryBehavior;
-use buoyant::font::PrerenderedFont;
 use buoyant::render::AreaColors;
 use buoyant::view::TextArea;
 use buoyant::view::prelude::*;
@@ -108,7 +108,7 @@ pub fn view(state: &State, text: &FindText) -> impl View<Rgb565, State> + use<> 
 fn field_look(
     m: &'static Metrics,
     status: TextFieldStatus,
-    area: TextArea<'static, String<24>, PrerenderedFont>,
+    area: TextArea<'static, String<24>, Typeface>,
     count: usize,
 ) -> impl View<Rgb565, State> + use<> {
     let (fill, ring, stroke) = if status.is_active() {
@@ -140,12 +140,14 @@ fn field_look(
     .with_height(FIELD)
     .background(
         Alignment::Center,
-        ZStack::new((
-            RoundedRectangle::new(RADIUS).foreground_color(fill),
-            RoundedRectangle::new(RADIUS)
-                .stroked(stroke)
-                .foreground_color(ring),
-        )),
+        RoundedRectangle::new(RADIUS).foreground_color(fill),
+    )
+    // The ring over the text, which an emoji may reach.
+    .overlay(
+        Alignment::Center,
+        RoundedRectangle::new(RADIUS)
+            .stroked(stroke)
+            .foreground_color(ring),
     )
 }
 

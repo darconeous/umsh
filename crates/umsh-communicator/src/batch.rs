@@ -376,7 +376,7 @@ impl Committed {
     }
 }
 
-/// Cuts `text` to at most `max` bytes, at a character boundary.
+/// Cuts `text` to at most `max` bytes, between grapheme clusters.
 fn cut(text: &mut String, max: usize) {
     let len = clip(text, max).len();
     text.truncate(len);

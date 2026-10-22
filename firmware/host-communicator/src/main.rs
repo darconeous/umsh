@@ -76,7 +76,7 @@ use umsh_ux_communicator::board::Board;
 use umsh_ux_communicator::input::{self, Arrow, Input};
 use umsh_ux_communicator::keyboard::Modifier;
 use umsh_ux_communicator::model::{HOLD_MS, NodeEvent, State};
-use umsh_ux_communicator::{fixture, theme, ui};
+use umsh_ux_communicator::{fixture, theme, typeface, ui};
 
 /// Where the fixture's chats keep their messages, for the life of the run.
 fn store() -> &'static fixture::Store {
@@ -156,6 +156,7 @@ impl Backend {
 }
 
 fn main() -> ExitCode {
+    typeface::install(Box::leak(Box::new(typeface::EmojiCache::new())));
     let mut args: Vec<String> = std::env::args().skip(1).collect();
     let board = match args.iter().position(|a| a == "--board") {
         Some(at) if at + 1 < args.len() => {

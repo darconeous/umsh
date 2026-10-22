@@ -114,7 +114,7 @@ fn main() {
         }
         writeln!(
             out,
-            "pub static {}: PrerenderedFont = PrerenderedFont {{ faces: &[{}] }};",
+            "pub static {}: Typeface = Typeface::new(PrerenderedFont {{ faces: &[{}] }});",
             spec.name,
             faces.join(", ")
         )
@@ -126,6 +126,108 @@ fn main() {
     std::fs::write(out_dir.join("shapes.rs"), shapes()).unwrap();
     std::fs::write(out_dir.join("icons.rs"), icons()).unwrap();
     std::fs::write(out_dir.join("reactions.rs"), reactions()).unwrap();
+    let sans = std::fs::read(dir.join(SANS)).expect("font file");
+    let sans = FontRef::from_index(&sans, 0).expect("parsable font");
+    std::fs::write(
+        out_dir.join("placeholder.rs"),
+        placeholders(&mut context, sans),
+    )
+    .unwrap();
+}
+
+/// The sizes emoji are drawn at, as `umsh-emoji` renders them.
+const EMOJI_SIZES: &[u32] = &[16, 20, 24];
+
+/// The placeholder for an emoji the set lacks, at each emoji size: a gray
+/// disc filling the cell, with a heavy question mark in the text color,
+/// about two-thirds of the cell tall and centered on its ink. Each pixel
+/// is RGB565 and an alpha, as an emoji's palette entries are.
+fn placeholders(context: &mut ScaleContext, font: FontRef) -> String {
+    const DISC: [f32; 3] = [0x6B as f32, 0x74 as f32, 0x80 as f32];
+    const MARK: [f32; 3] = [0xEE as f32, 0xF1 as f32, 0xF5 as f32];
+    const SS: u32 = 4;
+    let mut out = String::new();
+    let mut names = Vec::new();
+    for &size in EMOJI_SIZES {
+        let big = size * SS;
+        let settings = [Setting {
+            tag: swash::tag_from_bytes(b"wght"),
+            value: 800.0,
+        }];
+        let mut scaler = context
+            .builder(font)
+            .size(big as f32 * 0.66)
+            .hint(false)
+            .variations(settings.iter().copied())
+            .build();
+        let mut renderer = Render::new(&[Source::Outline]);
+        renderer.format(Format::Alpha);
+        let mark = renderer
+            .render(&mut scaler, font.charmap().map('?'))
+            .expect("a question mark");
+        let (mark_width, mark_height) = (mark.placement.width, mark.placement.height);
+        let mark_x = (big as i32 - mark_width as i32) / 2;
+        let mark_y = (big as i32 - mark_height as i32) / 2;
+        // A half-pixel inset, so the disc fills the cell as Twemoji's art
+        // does.
+        let center = big as f32 / 2.0;
+        let radius = center - SS as f32 / 2.0;
+        let mut pixels = Vec::new();
+        for y in 0..size {
+            for x in 0..size {
+                let (mut rgb, mut alpha) = ([0.0f32; 3], 0.0f32);
+                for j in 0..SS {
+                    for i in 0..SS {
+                        let (sx, sy) = (x * SS + i, y * SS + j);
+                        let (dx, dy) = (sx as f32 + 0.5 - center, sy as f32 + 0.5 - center);
+                        if dx * dx + dy * dy > radius * radius {
+                            continue;
+                        }
+                        let (mx, my) = (sx as i32 - mark_x, sy as i32 - mark_y);
+                        let q = if (0..mark_width as i32).contains(&mx)
+                            && (0..mark_height as i32).contains(&my)
+                        {
+                            f32::from(mark.data[(my as u32 * mark_width + mx as u32) as usize])
+                                / 255.0
+                        } else {
+                            0.0
+                        };
+                        for c in 0..3 {
+                            rgb[c] += DISC[c] * (1.0 - q) + MARK[c] * q;
+                        }
+                        alpha += 1.0;
+                    }
+                }
+                let rgb565 = if alpha > 0.0 {
+                    let c = rgb.map(|v| v / alpha / 255.0);
+                    ((c[0] * 31.0).round() as u16) << 11
+                        | ((c[1] * 63.0).round() as u16) << 5
+                        | (c[2] * 31.0).round() as u16
+                } else {
+                    0
+                };
+                let alpha = (alpha / (SS * SS) as f32 * 255.0).round() as u8;
+                pixels.push(format!("({rgb565:#06x}, {alpha})"));
+            }
+        }
+        writeln!(
+            out,
+            "static PLACEHOLDER_{size}: [(u16, u8); {}] = [{}];",
+            pixels.len(),
+            pixels.join(", ")
+        )
+        .unwrap();
+        names.push(format!("({size}, &PLACEHOLDER_{size})"));
+    }
+    writeln!(
+        out,
+        "/// The placeholder at each emoji size: each pixel's RGB565 and alpha.\n\
+         static PLACEHOLDERS: [(u16, &[(u16, u8)]); {}] = [{}];",
+        names.len(),
+        names.join(", ")
+    )
+    .unwrap();
+    out
 }
 
 /// One painted part of a reaction glyph, in the mockup's units centered on

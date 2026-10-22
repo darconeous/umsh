@@ -3,9 +3,9 @@
 //! the avatar appears from the first characters, and Message unlocks when
 //! the address is whole. Backspace goes back.
 
+use crate::typeface::Typeface;
 use buoyant::event::{Key, KeyResponse};
 use buoyant::focus::BoundaryBehavior;
-use buoyant::font::PrerenderedFont;
 use buoyant::render::AreaColors;
 use buoyant::view::prelude::*;
 use buoyant::view::text_field::TextFieldStatus;
@@ -98,7 +98,7 @@ fn field(m: &'static Metrics, text: &PeerText) -> impl View<Rgb565, State> + use
 /// A field typed in monospace, its text `width` wide at most.
 pub(super) fn field_look<B: EditText>(
     status: TextFieldStatus,
-    area: TextArea<'static, B, PrerenderedFont>,
+    area: TextArea<'static, B, Typeface>,
     width: u32,
 ) -> impl View<Rgb565, State> + use<B> {
     let (fill, ring, stroke) = if status.is_active() {
@@ -121,12 +121,14 @@ pub(super) fn field_look<B: EditText>(
     .padding(Edges::Vertical, 5)
     .background(
         Alignment::Center,
-        ZStack::new((
-            RoundedRectangle::new(RADIUS).foreground_color(fill),
-            RoundedRectangle::new(RADIUS)
-                .stroked(stroke)
-                .foreground_color(ring),
-        )),
+        RoundedRectangle::new(RADIUS).foreground_color(fill),
+    )
+    // The ring over the text, which an emoji may reach.
+    .overlay(
+        Alignment::Center,
+        RoundedRectangle::new(RADIUS)
+            .stroked(stroke)
+            .foreground_color(ring),
     )
 }
 

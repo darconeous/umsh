@@ -20,6 +20,8 @@ pub const LINE: Rgb565 = rgb(0x20252C);
 pub const TEXT: Rgb565 = rgb(0xEEF1F5);
 pub const TEXT_SECONDARY: Rgb565 = rgb(0x9AA3AE);
 pub const TEXT_TERTIARY: Rgb565 = rgb(0x7F8995);
+/// The disc of an emoji the set lacks, and the badge of a flag's code.
+pub const PLACEHOLDER: Rgb565 = rgb(0x6B7480);
 pub const ACCENT: Rgb565 = rgb(0x4DA3FF);
 /// The accent where anyone can read what is written: an open channel.
 pub const ACCENT_OPEN: Rgb565 = GREEN;

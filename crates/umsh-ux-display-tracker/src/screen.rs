@@ -39,7 +39,7 @@ use core::fmt::Write as _;
 
 use embedded_graphics::image::{Image, ImageRaw};
 use embedded_graphics::mono_font::ascii::{FONT_6X10, FONT_10X20};
-use embedded_graphics::mono_font::{MonoFont, MonoTextStyle, MonoTextStyleBuilder};
+use embedded_graphics::mono_font::{MonoFont, MonoTextStyle};
 use embedded_graphics::pixelcolor::BinaryColor;
 use embedded_graphics::prelude::*;
 use embedded_graphics::primitives::{
@@ -1298,12 +1298,19 @@ fn entry_affix(item: MenuItem, settings: &SettingsModel) -> &'static str {
     }
 }
 
-/// The first `max` characters of `text`, cut on a character boundary.
+/// The first `max` cells of `text`. Each grapheme cluster takes one cell,
+/// so an emoji is kept whole or left out whole.
 fn truncate_chars(text: &str, max: usize) -> &str {
-    match text.char_indices().nth(max) {
-        Some((end, _)) => &text[..end],
-        None => text,
-    }
+    let end = umsh_grapheme::clusters(text)
+        .take(max)
+        .map(str::len)
+        .sum::<usize>();
+    &text[..end]
+}
+
+/// How many cells `text` takes: one for each grapheme cluster.
+fn cells(text: &str) -> usize {
+    umsh_grapheme::clusters(text).count()
 }
 
 /// Width of the scroll-bar track on a board that draws one.
@@ -1640,8 +1647,13 @@ where
             });
             match core::str::from_utf8(name.as_bytes()) {
                 Ok(text) => {
-                    for c in text.chars() {
-                        if line.push(if c.is_control() { '?' } else { c }).is_err() {
+                    for cluster in umsh_grapheme::clusters(text) {
+                        let cluster = if cluster.chars().any(char::is_control) {
+                            "?"
+                        } else {
+                            cluster
+                        };
+                        if line.push_str(cluster).is_err() {
                             break;
                         }
                     }
@@ -1702,7 +1714,7 @@ where
     }
     let advance = layout.font.character_size.width + layout.font.character_spacing;
     let text = clip(layout, text, layout.size.width);
-    let width = advance.saturating_mul(text.chars().count() as u32);
+    let width = advance.saturating_mul(cells(text) as u32);
     let x = (layout.size.width.saturating_sub(width) / 2) as i32;
     draw_text(target, layout, Point::new(x, layout.row_top(row)), text);
 }
@@ -1711,8 +1723,92 @@ fn draw_text<D>(target: &mut D, layout: &Layout, at: Point, text: &str)
 where
     D: DrawTarget<Color = BinaryColor>,
 {
-    let style = MonoTextStyle::new(layout.font, BinaryColor::On);
-    let _ = Text::with_baseline(text, at, style, Baseline::Top).draw(target);
+    draw_cells(target, layout, at, text, BinaryColor::On);
+}
+
+/// Draws `text` a cell per grapheme cluster, in `ink` with nothing behind
+/// it. A cluster the panel's font cannot draw, such as an emoji, is the
+/// placeholder: a disc with a question mark knocked out of it.
+fn draw_cells<D>(target: &mut D, layout: &Layout, at: Point, text: &str, ink: BinaryColor)
+where
+    D: DrawTarget<Color = BinaryColor>,
+{
+    let style = MonoTextStyle::new(layout.font, ink);
+    let advance = (layout.font.character_size.width + layout.font.character_spacing) as i32;
+    let mut x = at.x;
+    let mut run = 0;
+    for (start, cluster) in cluster_indices(text) {
+        if is_drawable(cluster) {
+            continue;
+        }
+        // The run of drawable text before this cluster.
+        let before = &text[run..start];
+        let _ = Text::with_baseline(before, Point::new(x, at.y), style, Baseline::Top).draw(target);
+        x += advance * cells(before) as i32;
+        draw_placeholder(target, layout, Point::new(x, at.y), ink);
+        x += advance;
+        run = start + cluster.len();
+    }
+    let _ =
+        Text::with_baseline(&text[run..], Point::new(x, at.y), style, Baseline::Top).draw(target);
+}
+
+/// The clusters of `text` with their byte offsets.
+fn cluster_indices(text: &str) -> impl Iterator<Item = (usize, &str)> {
+    let base = text.as_ptr() as usize;
+    umsh_grapheme::clusters(text).map(move |cluster| (cluster.as_ptr() as usize - base, cluster))
+}
+
+/// Whether the panel's ASCII font draws `cluster` as itself.
+fn is_drawable(cluster: &str) -> bool {
+    cluster.len() == 1
+        && cluster.as_bytes()[0].is_ascii()
+        && !cluster.as_bytes()[0].is_ascii_control()
+}
+
+/// The placeholder for a cluster the font cannot draw: a disc with a
+/// question mark knocked out of it, drawn by hand at each font's size, as
+/// a disc that held the font's own question mark would not fit a cell.
+fn draw_placeholder<D>(target: &mut D, layout: &Layout, at: Point, ink: BinaryColor)
+where
+    D: DrawTarget<Color = BinaryColor>,
+{
+    const SMALL: [&str; 7] = [
+        ".###.", //
+        "#..##", //
+        "###.#", //
+        "##.##", //
+        "##.##", //
+        "#####", //
+        ".#.#.",
+    ];
+    const LARGE: [&str; 11] = [
+        "..#####..",
+        ".#######.",
+        "###...###",
+        "##.###.##",
+        "######.##",
+        "#####.###",
+        "####.####",
+        "####.####",
+        "#########",
+        ".###.###.",
+        "..#####..",
+    ];
+    // Each with the height of its font's capitals, which it is centered on.
+    let (rows, caps): (&[&str], i32) = if layout.font.character_size.height >= 20 {
+        (&LARGE, 13)
+    } else {
+        (&SMALL, 7)
+    };
+    let top = at.y + layout.font.baseline as i32 + 1 - caps + (caps - rows.len() as i32) / 2;
+    let pixels = rows.iter().enumerate().flat_map(|(y, row)| {
+        row.bytes()
+            .enumerate()
+            .filter(|&(_, b)| b == b'#')
+            .map(move |(x, _)| Pixel(Point::new(at.x + x as i32, top + y as i32), ink))
+    });
+    let _ = target.draw_iter(pixels);
 }
 
 /// Name a page: its title, centered, in the heaviest weight the panel's
@@ -1744,7 +1840,7 @@ where
     // the measured width and letting that pixel fall in the right-hand
     // margin keeps the title on the same grid as everything else.
     let text = clip(layout, text, layout.size.width.saturating_sub(BOLD_SMEAR));
-    let width = advance.saturating_mul(text.chars().count() as u32);
+    let width = advance.saturating_mul(cells(text) as u32);
     let x = (layout.size.width.saturating_sub(width) / 2) as i32;
     let top = layout.row_top(row);
     draw_text(target, layout, Point::new(x, top), text);
@@ -1789,18 +1885,13 @@ where
     if text.is_empty() {
         return;
     }
-    let style = MonoTextStyleBuilder::new()
-        .font(layout.font)
-        .text_color(BinaryColor::Off)
-        .background_color(BinaryColor::On)
-        .build();
-    let _ = Text::with_baseline(
-        text,
+    draw_cells(
+        target,
+        layout,
         Point::new(layout.left, layout.row_top(row)),
-        style,
-        Baseline::Top,
-    )
-    .draw(target);
+        text,
+        BinaryColor::Off,
+    );
 }
 
 /// Draw a row highlighted or plain, so callers stop repeating the choice.
@@ -2663,6 +2754,30 @@ mod tests {
         assert_eq!(line.as_str(), "Battery readings unavailable");
         battery_detail_line(&mut line, MenuItem::BatteryCharge, &status, 2);
         assert!(line.is_empty());
+    }
+
+    #[test]
+    fn an_emoji_takes_one_cell() {
+        for layout in layouts() {
+            let advance = layout.font.character_size.width + layout.font.character_spacing;
+            let cell = layout.font.character_size;
+            let row = |x: u32| {
+                Rectangle::new(
+                    Point::new((x * advance) as i32, 0),
+                    Size::new(advance, cell.height),
+                )
+            };
+            let mut panel = TestPanel::new(layout.size);
+            // A thumbs up with a skin tone is two code points, one cluster.
+            draw_text(&mut panel, &layout, Point::zero(), "a\u{1f44d}\u{1f3fd}b");
+            assert!(panel.lit_in(row(1)) > 0, "no placeholder");
+            assert!(panel.lit_in(row(2)) > 0, "the b moved");
+            assert_eq!(panel.lit_in(row(3)), 0, "a cell per code point");
+            assert_eq!(
+                truncate_chars("a\u{1f44d}\u{1f3fd}b", 2),
+                "a\u{1f44d}\u{1f3fd}"
+            );
+        }
     }
 
     fn layouts() -> [Layout; 3] {

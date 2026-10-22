@@ -42,5 +42,6 @@ pub mod nav;
 pub mod qr;
 pub mod text;
 pub mod theme;
+pub mod typeface;
 pub mod ui;
 pub mod zones;

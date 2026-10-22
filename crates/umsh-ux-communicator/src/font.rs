@@ -7,4 +7,6 @@
 use buoyant::font::PrerenderedFont;
 use buoyant::font::prerendered::{Face, GlyphEntry};
 
+use crate::typeface::Typeface;
+
 include!(concat!(env!("OUT_DIR"), "/fonts.rs"));

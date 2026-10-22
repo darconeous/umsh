@@ -723,13 +723,7 @@ pub async fn sign_node_identity_bundle(
 
     let name = profile
         .name
-        .map(|name| {
-            let mut end = name.len().min(24);
-            while !name.is_char_boundary(end) {
-                end -= 1;
-            }
-            name[..end].to_owned()
-        })
+        .map(|name| umsh_grapheme::cut(&name, 24).to_owned())
         .filter(|name| !name.is_empty());
 
     let location = match (

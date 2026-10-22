@@ -429,7 +429,8 @@ pub fn set_device_name(name: &[u8]) {
     DEVICE_NAME.lock(|cell| {
         let mut current = cell.borrow_mut();
         current.clear();
-        let _ = current.extend_from_slice(&name[..name.len().min(MAX_DEVICE_NAME_LEN)]);
+        let _ =
+            current.extend_from_slice(&name[..umsh_grapheme::cut_len(name, MAX_DEVICE_NAME_LEN)]);
     });
     NAME_CHANGED.signal(());
 }
@@ -441,22 +442,10 @@ fn profile_name() -> Option<alloc::string::String> {
         let current = cell.borrow();
         core::str::from_utf8(&current)
             .ok()
-            .map(|name| truncate_utf8(name, 24))
+            .map(|name| umsh_grapheme::cut(name, 24))
             .filter(|name| !name.is_empty())
             .map(alloc::string::String::from)
     })
-}
-
-/// Trim to at most `max` bytes without splitting a UTF-8 sequence.
-fn truncate_utf8(text: &str, max: usize) -> &str {
-    if text.len() <= max {
-        return text;
-    }
-    let mut end = max;
-    while !text.is_char_boundary(end) {
-        end -= 1;
-    }
-    &text[..end]
 }
 
 /// The advertised (role, capabilities) pair for the device identity.

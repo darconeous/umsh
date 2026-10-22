@@ -68,8 +68,12 @@ pub struct AvatarStyle {
     pub fill: Rgb565,
     pub text: Rgb565,
     /// One or two lines of lettering, stacked.
-    pub lines: [String<2>; 2],
+    pub lines: [Lettering; 2],
 }
+
+/// A line of an avatar's lettering: up to two grapheme clusters, such as two
+/// letters, or a letter and an emoji.
+pub type Lettering = String<32>;
 
 /// A channel the two standard names are recognized by, which keep fixed
 /// colors instead of derived ones.
@@ -99,31 +103,30 @@ impl AvatarStyle {
     }
 
     /// A channel's badge: initials from its name, fill from its key's tint.
+    /// An initial is the first grapheme cluster of a word, so a channel
+    /// named "🔥 Crew" is lettered 🔥C, as on iOS.
     #[must_use]
     pub fn channel(builtin: Option<BuiltinChannel>, title: &str, tint: [u8; 3]) -> Self {
-        let mut initials: String<4> = String::new();
-        for word in title.split(|c: char| c.is_whitespace() || c == '-' || c == '_') {
-            if let Some(c) = word.chars().next()
-                && initials.len() < 4
-            {
-                for upper in c.to_uppercase() {
-                    let _ = initials.push(upper);
-                }
-            }
-        }
+        let initials: heapless::Vec<&str, 4> = title
+            .split(|c: char| c.is_whitespace() || c == '-' || c == '_')
+            .filter_map(umsh_grapheme::first_cluster)
+            .take(4)
+            .collect();
         let (fill, text) = match builtin {
             Some(BuiltinChannel::Public) => (rgb565([0x0A, 0x84, 0xFF]), WHITE),
             Some(BuiltinChannel::Emergency) => (rgb565([0xFF, 0x45, 0x3A]), WHITE),
             None => derived_channel_fill(tint),
         };
-        let lines = if initials.chars().count() > 2 {
-            two_lines(&initials)
+        // Up to two initials share a line; more go two over two.
+        let first_line = if initials.len() > 2 {
+            2
         } else {
-            [
-                String::try_from(initials.as_str()).unwrap_or_default(),
-                String::new(),
-            ]
+            initials.len()
         };
+        let mut lines = [String::new(), String::new()];
+        for (i, initial) in initials.iter().enumerate() {
+            push_uppercase(&mut lines[usize::from(i >= first_line)], initial);
+        }
         Self {
             outline: Outline::Channel,
             fill,
@@ -140,13 +143,24 @@ fn rgb565(rgb: [u8; 3]) -> Rgb565 {
     Rgb888::new(rgb[0], rgb[1], rgb[2]).into()
 }
 
-/// The first two characters, then the rest, each at most two.
-fn two_lines(s: &str) -> [String<2>; 2] {
+/// The first two clusters, then the next two.
+fn two_lines(s: &str) -> [Lettering; 2] {
     let mut lines = [String::new(), String::new()];
-    for (i, c) in s.chars().take(4).enumerate() {
-        let _ = lines[i / 2].push(c);
+    for (i, cluster) in umsh_grapheme::clusters(s).take(4).enumerate() {
+        let _ = lines[i / 2].push_str(cluster);
     }
     lines
+}
+
+/// Appends `cluster` uppercased, whole or not at all.
+fn push_uppercase(line: &mut Lettering, cluster: &str) {
+    let mut upper = Lettering::new();
+    for c in cluster.chars().flat_map(char::to_uppercase) {
+        if upper.push(c).is_err() {
+            return;
+        }
+    }
+    let _ = line.push_str(&upper);
 }
 
 /// Whether white text has the greater APCA lightness contrast (SAPC 0.0.98G)
@@ -219,4 +233,21 @@ fn hsv_to_rgb(h: f32, s: f32, v: f32) -> [u8; 3] {
         _ => (v, p, q),
     };
     [r, g, b].map(|c| libm::roundf(c * 255.0) as u8)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn lettering(title: &str) -> [Lettering; 2] {
+        AvatarStyle::channel(None, title, [0, 0, 0]).lines
+    }
+
+    #[test]
+    fn channel_initials_are_whole_clusters() {
+        assert_eq!(lettering("🔥 Crew"), ["🔥C", ""]);
+        assert_eq!(lettering("hike-club"), ["HC", ""]);
+        assert_eq!(lettering("one two 👍🏽 four five"), ["OT", "👍🏽F"]);
+        assert_eq!(lettering("🇫🇷"), ["🇫🇷", ""]);
+    }
 }

@@ -2138,13 +2138,10 @@ impl State {
     }
 }
 
-/// Appends as much of `s` as fits.
+/// Appends as much of `s` as fits, ending between grapheme clusters.
 fn push_cut<const N: usize>(into: &mut String<N>, s: &str) {
-    for c in s.chars() {
-        if into.push(c).is_err() {
-            break;
-        }
-    }
+    let room = N - into.len();
+    let _ = into.push_str(umsh_grapheme::cut(s, room));
 }
 
 #[cfg(test)]

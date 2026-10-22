@@ -23,7 +23,7 @@ use umsh_ux_communicator::model::{
     Bluetooth, BluetoothReading, ClockSource, Fix, Gnss, GnssReading, Links, Node as _, State,
     Wifi, brightness_level,
 };
-use umsh_ux_communicator::{theme, ui};
+use umsh_ux_communicator::{theme, typeface, ui};
 use umsh_ux_display_tracker::attention::{Attention, AttentionConfig, DisplayKind, Transition};
 
 /// The board the interface runs on.
@@ -139,6 +139,8 @@ async fn interface(
 
     let start = Instant::now();
     prime(node).await;
+    // Inflated emoji, kept beside the app: plain data, touched only here.
+    typeface::install(external::communicator(typeface::EmojiCache::new_in));
     // The interface's state and both of its render trees are plain data
     // that only this task touches, and they are the largest thing it
     // holds: kept in the task, they would come out of the main stack.

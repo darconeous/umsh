@@ -2822,13 +2822,7 @@ fn phone_identity_profile(
         NodeCapabilities::MOBILE | NodeCapabilities::TEXT_MESSAGES,
     );
     profile.name = name
-        .map(|name| {
-            let mut end = name.len().min(24);
-            while !name.is_char_boundary(end) {
-                end -= 1;
-            }
-            name[..end].to_owned()
-        })
+        .map(|name| umsh_grapheme::cut(name, 24).to_owned())
         .filter(|name| !name.is_empty());
     profile.location = location;
     profile
@@ -2836,7 +2830,7 @@ fn phone_identity_profile(
 
 /// Build the signed standalone node-identity bundle for this phone: role
 /// Chat, capabilities Mobile + Text messages, optional display name
-/// (truncated to the 24-byte wire limit on a character boundary), and the
+/// (truncated to the 24-byte wire limit between grapheme clusters), and the
 /// disclosed location when one is being shared. The result is ROLE
 /// through the trailing 64-byte signature, without the payload-type byte.
 async fn build_signed_identity_bundle(
@@ -2846,13 +2840,7 @@ async fn build_signed_identity_bundle(
     location: Option<NodeLocation>,
 ) -> Result<Vec<u8>, MobileMeshError> {
     let name = name
-        .map(|name| {
-            let mut end = name.len().min(24);
-            while !name.is_char_boundary(end) {
-                end -= 1;
-            }
-            name[..end].to_owned()
-        })
+        .map(|name| umsh_grapheme::cut(name, 24).to_owned())
         .filter(|name| !name.is_empty());
     let payload = NodeIdentityPayload {
         role: NodeRole::Chat,

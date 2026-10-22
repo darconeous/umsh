@@ -38,6 +38,7 @@ software-crypto = [
 [dependencies]
 umsh-text = { path = "../umsh-text", default-features = false, features = ["alloc"] }
 umsh-core = { path = "../umsh-core", default-features = false }
+umsh-grapheme = { path = "../umsh-grapheme" }
 heapless = { workspace = true }
 umsh-ux-communicator = { path = "../umsh-ux-communicator", optional = true }
 umsh-ulcp = { path = "../umsh-ulcp", optional = true }

@@ -12,6 +12,7 @@ crate-type = ["lib", "staticlib", "cdylib"]
 [dependencies]
 umsh-core = { path = "../umsh-core" }
 umsh-crypto = { path = "../umsh-crypto" }
+umsh-grapheme = { path = "../umsh-grapheme" }
 umsh-hal = { path = "../umsh-hal" }
 umsh-ulcp = { path = "../umsh-ulcp" }
 umsh-uri = { path = "../umsh-uri" }

@@ -3,9 +3,9 @@
 //! Views own what they draw: Buoyant keeps the previous frame's render tree
 //! to animate from, so nothing in it may borrow the state that changed.
 
+use crate::typeface::Typeface;
 use buoyant::app::App;
 use buoyant::focus::{DefaultFocus, Role};
-use buoyant::font::PrerenderedFont;
 use buoyant::match_view;
 use buoyant::render::AnimatedJoin;
 use buoyant::view::ViewMarker;
@@ -293,16 +293,12 @@ enum List {
 /// owned so the view borrows nothing.
 fn label<const N: usize>(
     s: &str,
-    face: &'static PrerenderedFont,
+    face: &'static Typeface,
     size: u32,
     color: Rgb565,
 ) -> impl View<Rgb565, State> + use<N> {
     let mut owned: heapless::String<N> = heapless::String::new();
-    for c in s.chars() {
-        if owned.push(c).is_err() {
-            break;
-        }
-    }
+    _ = owned.push_str(umsh_grapheme::cut(s, N));
     line(owned, face, size, color)
 }
 
@@ -310,7 +306,7 @@ fn label<const N: usize>(
 /// is shown without being copied.
 fn line<T: AsRef<str> + Clone, C>(
     text: T,
-    face: &'static PrerenderedFont,
+    face: &'static Typeface,
     size: u32,
     color: Rgb565,
 ) -> impl View<Rgb565, C> + use<T, C> {
@@ -325,7 +321,7 @@ fn line<T: AsRef<str> + Clone, C>(
 /// evenly where it does not fit.
 fn address(
     text: &str,
-    face: &'static PrerenderedFont,
+    face: &'static Typeface,
     size: u32,
     color: Rgb565,
     width: u32,

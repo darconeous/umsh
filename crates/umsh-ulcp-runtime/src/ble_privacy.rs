@@ -64,15 +64,10 @@ pub struct AdvertisementData {
     pub scan_response_len: usize,
 }
 
+/// The length of the longest prefix of `bytes` that fits `limit` without
+/// splitting a grapheme cluster; zero when `bytes` is not UTF-8.
 pub fn utf8_prefix_len(bytes: &[u8], limit: usize) -> usize {
-    let Ok(text) = core::str::from_utf8(bytes) else {
-        return 0;
-    };
-    let mut len = bytes.len().min(limit);
-    while !text.is_char_boundary(len) {
-        len -= 1;
-    }
-    len
+    umsh_grapheme::cut_len(bytes, limit)
 }
 
 /// Service discovery remains public; the model and name are disclosed only

@@ -1459,9 +1459,6 @@ fn cut<const N: usize>(text: &str) -> String<N> {
 }
 
 fn push_cut<const N: usize>(out: &mut String<N>, text: &str) {
-    for c in text.chars() {
-        if out.push(c).is_err() {
-            break;
-        }
-    }
+    let room = N - out.len();
+    _ = out.push_str(umsh_grapheme::cut(text, room));
 }

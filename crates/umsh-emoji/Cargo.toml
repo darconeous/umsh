@@ -1,0 +1,22 @@
+[package]
+name = "umsh-emoji"
+description = "Twemoji art for UMSH communicators, pre-rendered and compressed"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+documentation = "https://darconeous.github.io/umsh/docs/rust/umsh_emoji/"
+
+# The emoji in manifest.txt, drawn from the vendored Twemoji SVGs (CC BY 4.0,
+# see twemoji/LICENSE-GRAPHICS) at each size communicators set emoji in.
+# build.rs renders each one, reduces it to a palette of at most 32 colors,
+# and compresses the glyphs in blocks; the device inflates a block when it
+# first draws one of its glyphs. See docs/emoji-support-plan.md.
+
+[dev-dependencies]
+# The decoder is checked against the encoder the build uses.
+miniz_oxide = { version = "0.9", features = ["with-alloc"] }
+
+[build-dependencies]
+miniz_oxide = { version = "0.9", features = ["with-alloc"] }
+resvg = { version = "0.48", default-features = false }

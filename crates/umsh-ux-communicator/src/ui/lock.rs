@@ -5,7 +5,7 @@
 //! The time and date show only while the clock is known, and the clock
 //! stands in for them otherwise.
 
-use buoyant::font::PrerenderedFont;
+use crate::typeface::Typeface;
 use buoyant::match_view;
 use buoyant::view::Lazy;
 use buoyant::view::prelude::*;
@@ -282,7 +282,7 @@ fn when(
 }
 
 /// How far a line of `font` at `size` reaches below its baseline.
-fn below_baseline(font: &PrerenderedFont, size: u32) -> u32 {
+fn below_baseline(font: &Typeface, size: u32) -> u32 {
     let face = font.face(size);
     (i32::from(face.line_gap) - i32::from(face.descent)).max(0) as u32
 }
@@ -429,7 +429,7 @@ mod tests {
     use super::*;
 
     /// How wide `text` is in `font` at `size`.
-    fn width(text: &str, font: &PrerenderedFont, size: u32) -> u32 {
+    fn width(text: &str, font: &Typeface, size: u32) -> u32 {
         let face = font.face(size);
         text.chars()
             .filter_map(|c| face.glyph(c).or(face.fallback.as_ref()))

@@ -31,24 +31,16 @@ pub const IDENTITY_MAX: usize = 128;
 /// The most router hints a learned route keeps.
 pub const ROUTE_MAX: usize = 16;
 
-/// `text` as a [`Name`], cut at a character boundary.
+/// `text` as a [`Name`], cut between grapheme clusters.
 pub(crate) fn name(text: &str) -> Name {
-    let mut end = text.len().min(NAME_MAX);
-    while !text.is_char_boundary(end) {
-        end -= 1;
-    }
     let mut name = Name::new();
-    let _ = name.push_str(&text[..end]);
+    let _ = name.push_str(clip(text, NAME_MAX));
     name
 }
 
-/// `text` cut to at most `max` octets, at a character boundary.
+/// `text` cut to at most `max` octets, between grapheme clusters.
 pub(crate) fn clip(text: &str, max: usize) -> &str {
-    let mut end = text.len().min(max);
-    while !text.is_char_boundary(end) {
-        end -= 1;
-    }
-    &text[..end]
+    umsh_grapheme::cut(text, max)
 }
 
 /// One conversation's transcript.

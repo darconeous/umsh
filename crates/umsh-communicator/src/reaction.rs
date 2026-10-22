@@ -45,15 +45,12 @@ impl Reaction {
     ///
     /// Reading is looser than writing, as it is on iOS: the tokens, their
     /// longer spellings, and the emoji other clients send all count, and
-    /// a body that is none of them counts as its first character. Anything
-    /// else stands for no emote this palette has.
+    /// a body that is none of them counts as its first grapheme cluster,
+    /// so 👍🏽 stays whole. Anything else stands for no emote this palette
+    /// has.
     pub fn from_body(body: &str) -> Option<Self> {
         let trimmed = body.trim();
-        Self::spelled(trimmed).or_else(|| {
-            let first = trimmed.chars().next()?;
-            let mut buf = [0u8; 4];
-            Self::spelled(first.encode_utf8(&mut buf))
-        })
+        Self::spelled(trimmed).or_else(|| Self::spelled(umsh_grapheme::first_cluster(trimmed)?))
     }
 
     fn spelled(body: &str) -> Option<Self> {
@@ -130,8 +127,12 @@ mod tests {
             Some(Reaction::ThumbsUp)
         );
         assert_eq!(Reaction::from_body("??"), Some(Reaction::Question));
-        // A sentence counts as its first character.
+        // A sentence counts as its first cluster.
         assert_eq!(Reaction::from_body("!nice"), Some(Reaction::Exclaim));
+        assert_eq!(
+            Reaction::from_body("\u{1f44d}\u{1f3fd} nice"),
+            Some(Reaction::ThumbsUp)
+        );
         assert_eq!(Reaction::from_body("nice"), None);
         assert_eq!(Reaction::from_body(""), None);
     }
