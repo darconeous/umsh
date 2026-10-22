@@ -26,11 +26,12 @@ use umsh_ux_communicator::model::{
 use umsh_ux_communicator::{theme, typeface, ui};
 use umsh_ux_display_tracker::attention::{Attention, AttentionConfig, DisplayKind, Transition};
 
-/// The board the interface runs on.
+/// The board the interface runs on. The boot splash sets its version in
+/// this board's body face too.
 #[cfg(feature = "board-tlora-pager")]
-const BOARD: &Board = &Board::PAGER;
+pub(crate) const BOARD: &Board = &Board::PAGER;
 #[cfg(feature = "board-tdeck")]
-const BOARD: &Board = &Board::TDECK;
+pub(crate) const BOARD: &Board = &Board::TDECK;
 
 /// How often an animation advances.
 const FRAME: Duration = Duration::from_millis(16);

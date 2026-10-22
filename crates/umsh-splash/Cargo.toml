@@ -1,0 +1,23 @@
+[package]
+name = "umsh-splash"
+description = "The boot splash of UMSH devices with a color panel: the logo and the firmware version"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+documentation = "https://darconeous.github.io/umsh/docs/rust/umsh_splash/"
+
+# Drawn before anything else is up, and kept apart from the interface that
+# replaces it, so that it always comes up. The logo is finished bytes under
+# assets/ (see its README). The version is set in a face the interface
+# already keeps in flash, which the firmware passes in: Buoyant is here for
+# that face's table types only, with none of its features.
+
+[dependencies]
+# The same pin as umsh-ux-communicator's.
+buoyant = { git = "https://github.com/darconeous/buoyant", rev = "3ce6bdfcc58415e8232070c14cbe599c12d98cd3", default-features = false }
+embedded-graphics = { version = "0.8", default-features = false }
+
+[dev-dependencies]
+# The faces the firmware passes, for the tests and the preview.
+umsh-ux-communicator = { path = "../umsh-ux-communicator" }

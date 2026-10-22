@@ -301,6 +301,14 @@ const DISPLAY_LAYOUT: screen::Layout = screen::Layout::TFT_320X240;
 #[cfg(any(feature = "display-ssd1306", feature = "display-sh1106"))]
 const DISPLAY_LAYOUT: screen::Layout = screen::Layout::OLED_128X64;
 
+/// The communicator's splash, drawn in the frame's full color: the logo in
+/// its orange, and the version in the face the interface sets body text in,
+/// which is already in flash.
+#[cfg(all(feature = "communicator", feature = "display-st7796"))]
+const SPLASH: &umsh_splash::Splash = &umsh_splash::Splash::TFT_480X222;
+#[cfg(all(feature = "communicator", feature = "display-st7789"))]
+const SPLASH: &umsh_splash::Splash = &umsh_splash::Splash::TFT_320X240;
+
 /// Render the current page. Best-effort—a display error just leaves the
 /// panel stale; it never blocks the protocol paths.
 async fn render_frame(display: &mut Display, model: &UiModel, status: &screen::StatusModel<'_>) {
@@ -354,6 +362,13 @@ pub(crate) async fn show_boot_splash(
     let _ = display.set_display_on(false).await;
     let _ = display.set_brightness(Brightness::NORMAL).await;
     let mut splash = umsh_ux_display_tracker::boot::BootSplash::new();
+    #[cfg(feature = "communicator")]
+    SPLASH.render(
+        display.color(),
+        umsh_ux_communicator::font::MEDIUM.face(communicator::BOARD.metrics.body),
+        env!("GIT_DESCRIBE"),
+    );
+    #[cfg(not(feature = "communicator"))]
     screen::render_splash(display, &DISPLAY_LAYOUT, env!("GIT_DESCRIBE"));
     for attempt in 1..=3 {
         match display.flush().await {

@@ -5133,6 +5133,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "umsh-splash"
+version = "0.1.0"
+dependencies = [
+ "buoyant",
+ "embedded-graphics",
+ "umsh-ux-communicator",
+]
+
+[[package]]
 name = "umsh-sync"
 version = "0.1.0"
 dependencies = [

@@ -1671,6 +1671,7 @@ dependencies = [
  "umsh-mac",
  "umsh-node",
  "umsh-radio-loraphy",
+ "umsh-splash",
  "umsh-sync",
  "umsh-ulcp",
  "umsh-ulcp-admin",
@@ -1726,6 +1727,7 @@ dependencies = [
  "umsh-mac",
  "umsh-node",
  "umsh-radio-loraphy",
+ "umsh-splash",
  "umsh-sync",
  "umsh-ulcp",
  "umsh-ulcp-admin",
@@ -1781,6 +1783,7 @@ dependencies = [
  "umsh-mac",
  "umsh-node",
  "umsh-radio-loraphy",
+ "umsh-splash",
  "umsh-sync",
  "umsh-ulcp",
  "umsh-ulcp-admin",
@@ -1872,6 +1875,7 @@ dependencies = [
  "umsh-radio-loraphy",
  "umsh-rtc-pcf8563",
  "umsh-sensor-bme280",
+ "umsh-splash",
  "umsh-sync",
  "umsh-ulcp",
  "umsh-ulcp-admin",
@@ -1930,6 +1934,7 @@ dependencies = [
  "umsh-mac",
  "umsh-node",
  "umsh-radio-loraphy",
+ "umsh-splash",
  "umsh-sync",
  "umsh-tdeck-peripherals",
  "umsh-ulcp",
@@ -1992,6 +1997,7 @@ dependencies = [
  "umsh-node",
  "umsh-pager-peripherals",
  "umsh-radio-loraphy",
+ "umsh-splash",
  "umsh-sync",
  "umsh-ulcp",
  "umsh-ulcp-admin",
@@ -2047,6 +2053,7 @@ dependencies = [
  "umsh-mac",
  "umsh-node",
  "umsh-radio-loraphy",
+ "umsh-splash",
  "umsh-sync",
  "umsh-ulcp",
  "umsh-ulcp-admin",
@@ -4176,6 +4183,14 @@ version = "0.1.0"
 dependencies = [
  "embassy-sync 0.8.0",
  "embedded-hal-async",
+]
+
+[[package]]
+name = "umsh-splash"
+version = "0.1.0"
+dependencies = [
+ "buoyant",
+ "embedded-graphics",
 ]
 
 [[package]]
