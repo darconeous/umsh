@@ -31,6 +31,16 @@ fn touch(phase: input::TouchPhase, (x, y): (i16, i16)) -> Input {
 }
 
 #[test]
+fn only_a_move_queued_behind_another_move_is_moot() {
+    use input::TouchPhase::{Ended, Moved, Started};
+    let moved = touch(Moved, (10, 10));
+    assert!(moved.superseded_by(&touch(Moved, (10, 20))));
+    assert!(!moved.superseded_by(&touch(Ended, (10, 20))));
+    assert!(!touch(Started, (10, 10)).superseded_by(&moved));
+    assert!(!moved.superseded_by(&Input::Press));
+}
+
+#[test]
 fn tapping_a_chat_opens_it() {
     use input::TouchPhase::{Ended, Started};
     let mut app = app!();

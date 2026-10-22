@@ -65,6 +65,28 @@ pub enum Input {
     },
 }
 
+impl Input {
+    /// Whether `next`, queued right behind this, makes it moot: a touch
+    /// that moved again before this move was taken in is only where it is
+    /// now, and each move taken in costs a layout.
+    #[must_use]
+    pub const fn superseded_by(&self, next: &Self) -> bool {
+        matches!(
+            (self, next),
+            (
+                Self::Touch {
+                    phase: TouchPhase::Moved,
+                    ..
+                },
+                Self::Touch {
+                    phase: TouchPhase::Moved,
+                    ..
+                },
+            )
+        )
+    }
+}
+
 /// Where a touch is in its course.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TouchPhase {

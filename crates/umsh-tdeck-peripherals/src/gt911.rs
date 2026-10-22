@@ -8,8 +8,8 @@ use embedded_hal_async::i2c::I2c;
 pub const ADDRESSES: [u8; 2] = [0x5d, 0x14];
 const COMMAND: u16 = 0x8040;
 const PRODUCT_ID: u16 = 0x8140;
+/// Status, then the first point: its track ID, then X and Y little-endian.
 const STATUS: u16 = 0x814e;
-const POINTS: u16 = 0x814f;
 /// Status: a report is ready, and how many points it holds.
 const READY: u8 = 0x80;
 const COUNT: u8 = 0x0f;
@@ -98,32 +98,43 @@ impl<I: I2c> Gt911<I> {
     }
 
     /// The latest report, acknowledged so the controller makes the next.
+    /// The status and the first point come in one transfer.
     pub async fn read(&mut self) -> Result<Report, I::Error> {
-        let mut status = [0];
-        read(&mut self.i2c, self.address, STATUS, &mut status).await?;
-        if status[0] & READY == 0 {
+        let mut report = [0; 6];
+        read(&mut self.i2c, self.address, STATUS, &mut report).await?;
+        let [status, _track, x_low, x_high, y_low, y_high] = report;
+        if status & READY == 0 {
             return Ok(Report::Pending);
         }
-        let report = if status[0] & COUNT == 0 {
+        let report = if status & COUNT == 0 {
             Report::Released
         } else {
-            // Track ID, then X and Y little-endian.
-            let mut point = [0; 5];
-            read(&mut self.i2c, self.address, POINTS, &mut point).await?;
             Report::Touched(landscape(
-                u16::from_le_bytes([point[1], point[2]]),
-                u16::from_le_bytes([point[3], point[4]]),
+                u16::from_le_bytes([x_low, x_high]),
+                u16::from_le_bytes([y_low, y_high]),
             ))
         };
         write(&mut self.i2c, self.address, STATUS, 0).await?;
         Ok(report)
     }
 
-    /// Whether any point is down now, ready or not.
-    pub async fn touched(&mut self) -> Result<bool, I::Error> {
-        let mut status = [0];
-        read(&mut self.i2c, self.address, STATUS, &mut status).await?;
-        Ok(status[0] & READY != 0 && status[0] & COUNT != 0)
+    /// The sense of INT, from `line_high` sampled between two reads that
+    /// both found nothing reported (§7.3). A report on either side means
+    /// the line may not have been idle: `None`, and the caller tries
+    /// again. The first read only proves no finger is down if it comes at
+    /// least a report period after the last one acknowledged.
+    pub async fn idle_polarity(
+        &mut self,
+        line_high: impl FnOnce() -> bool,
+    ) -> Result<Option<Polarity>, I::Error> {
+        if self.read().await? != Report::Pending {
+            return Ok(None);
+        }
+        let high = line_high();
+        if self.read().await? != Report::Pending {
+            return Ok(None);
+        }
+        Ok(Some(Polarity::from_idle(high)))
     }
 
     /// Sleeps until INT is driven high for a few milliseconds.

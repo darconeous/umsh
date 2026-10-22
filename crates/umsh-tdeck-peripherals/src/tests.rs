@@ -135,13 +135,12 @@ fn the_gt911_is_found_at_either_address_and_reports_points() {
             Op::FailedRead(0x5d, vec![0x81, 0x40]),
             Op::Read(0x14, vec![0x81, 0x40], b"911\0".to_vec()),
             // Nothing new.
-            Op::Read(0x14, vec![0x81, 0x4e], vec![0x00]),
+            Op::Read(0x14, vec![0x81, 0x4e], vec![0x00; 6]),
             // One point: raw (10, 300).
-            Op::Read(0x14, vec![0x81, 0x4e], vec![0x81]),
-            Op::Read(0x14, vec![0x81, 0x4f], vec![0, 10, 0, 0x2c, 1]),
+            Op::Read(0x14, vec![0x81, 0x4e], vec![0x81, 0, 10, 0, 0x2c, 1]),
             Op::Write(0x14, vec![0x81, 0x4e, 0]),
             // Lifted.
-            Op::Read(0x14, vec![0x81, 0x4e], vec![0x80]),
+            Op::Read(0x14, vec![0x81, 0x4e], vec![0x80, 0, 0, 0, 0, 0]),
             Op::Write(0x14, vec![0x81, 0x4e, 0]),
             Op::Write(0x14, vec![0x80, 0x40, 5]),
         ]));
@@ -156,6 +155,61 @@ fn the_gt911_is_found_at_either_address_and_reports_points() {
         );
         assert_eq!(touch.read().await, Ok(Report::Released));
         touch.sleep().await.unwrap();
+    });
+}
+
+/// A controller at 0x5d whose status reads come from `statuses` in turn.
+fn polarity_bus(statuses: &[u8]) -> Bus {
+    let mut ops = vec![Op::Read(0x5d, vec![0x81, 0x40], b"911\0".to_vec())];
+    for &status in statuses {
+        let mut report = vec![0; 6];
+        report[0] = status;
+        ops.push(Op::Read(0x5d, vec![0x81, 0x4e], report));
+        if status & 0x80 != 0 {
+            ops.push(Op::Write(0x5d, vec![0x81, 0x4e, 0]));
+        }
+    }
+    Bus(VecDeque::from(ops))
+}
+
+#[test]
+fn touch_polarity_comes_from_the_line_between_two_empty_reads() {
+    embassy_futures::block_on(async {
+        let Ok(mut touch) = Gt911::probe(polarity_bus(&[0, 0])).await else {
+            panic!("not found");
+        };
+        assert_eq!(
+            touch.idle_polarity(|| true).await,
+            Ok(Some(Polarity::ActiveLow))
+        );
+        let Ok(mut touch) = Gt911::probe(polarity_bus(&[0, 0])).await else {
+            panic!("not found");
+        };
+        assert_eq!(
+            touch.idle_polarity(|| false).await,
+            Ok(Some(Polarity::ActiveHigh))
+        );
+    });
+}
+
+#[test]
+fn a_report_around_the_sample_leaves_the_polarity_unknown() {
+    embassy_futures::block_on(async {
+        // A finger down before the sample: the line is never looked at.
+        let Ok(mut touch) = Gt911::probe(polarity_bus(&[0x81])).await else {
+            panic!("not found");
+        };
+        assert_eq!(
+            touch
+                .idle_polarity(|| panic!("sampled under a report"))
+                .await,
+            Ok(None)
+        );
+        // A release reported just after it.
+        let Ok(mut touch) = Gt911::probe(polarity_bus(&[0, 0x80])).await else {
+            panic!("not found");
+        };
+        assert_eq!(touch.idle_polarity(|| true).await, Ok(None));
     });
 }
 

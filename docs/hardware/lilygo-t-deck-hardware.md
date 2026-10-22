@@ -370,10 +370,11 @@ change it persistently, because the GT911 keeps its configuration:
   184-byte config block at `0x8047`, bumps the version byte, writes the
   checksum to `0x80FF`, and sets `0x8100 = 1`.
 
-Whether each panel uses an edge mode (a pulse per report) or a level mode, and
-whether INT is driven while idle rather than floating, is still to be checked on
-hardware (§17). In a level mode the line stays asserted through a drag with no
-further edges, so reports are read at the frame rate while a finger is down.
+An original T-Deck panel (at `0x5D`) idles INT high and pulses it low once per
+report, about every 10 ms while a finger is down, the release report included.
+Whether a Plus panel pulses the same way or holds the line through a drag
+(a level mode) is still to be checked (§17). In a level mode the line stays
+asserted with no further edges, so reports are read on a timer while it does.
 
 ### 7.4 Registers and coordinates
 
@@ -756,8 +757,8 @@ ESP32S3 (§6.3 of its reference); use the manual sequence then.
 1. Display colors, inversion, and gamma with LilyGoLib's init list, on an
    original and a Plus panel.
 2. Whether the panel runs reliably above 40 MHz.
-3. Touch address on each unit; per panel, the INT idle level, whether INT is
-   driven while idle, edge versus level mode; and the corner mapping.
+3. Touch address on each unit; on a Plus panel, the INT idle level, whether
+   INT is driven while idle, edge versus level mode; and the corner mapping.
 4. Keyboard firmware date on each unit: whether `0x01` backlight and `0x03`
    raw mode are answered, and what an old image returns for a 5-byte read.
 5. Physical position of Alt, Sym, the Shifts, and Mic.
