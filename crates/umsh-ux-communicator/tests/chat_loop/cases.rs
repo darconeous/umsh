@@ -126,6 +126,69 @@ fn focus(state: &State) -> Option<FocusKey> {
     state.screen().focus().current()
 }
 
+/// Turns the wheel a notch at a time until `key` has focus: down first,
+/// then back up. A test names the row it wants, not how far down it sits.
+fn turn_to<V, F>(app: &mut App<V, State, F>, key: FocusKey)
+where
+    V: ViewLayout<State>,
+    V::FocusTree: DefaultFocus,
+    V::Renderables: AnimatedJoin,
+    F: Fn(&State) -> V,
+{
+    for step in [1, -1] {
+        let mut passed = Vec::new();
+        while !passed.contains(&focus(app.state())) {
+            if focus(app.state()) == Some(key) {
+                return;
+            }
+            passed.push(focus(app.state()));
+            run(app, &[Input::Turn(step)]);
+        }
+    }
+    panic!("never reached {key:?}: {:?}", focus(app.state()));
+}
+
+/// Opens `chat` from the Chats list.
+fn open_chat<V, F>(app: &mut App<V, State, F>, chat: u32)
+where
+    V: ViewLayout<State>,
+    V::FocusTree: DefaultFocus,
+    V::Renderables: AnimatedJoin,
+    F: Fn(&State) -> V,
+{
+    turn_to(app, keys::chat(chat));
+    run(app, &[Input::Press]);
+    assert_in_conversation(app.state(), chat);
+}
+
+/// Device, from the Chats list, on its first category.
+fn open_device<V, F>(app: &mut App<V, State, F>)
+where
+    V: ViewLayout<State>,
+    V::FocusTree: DefaultFocus,
+    V::Renderables: AnimatedJoin,
+    F: Fn(&State) -> V,
+{
+    run(app, &[Input::Backspace]);
+    turn_to(app, keys::rail(Section::Device));
+    run(app, &[Input::Press]);
+    assert_eq!(app.state().section, Section::Device);
+    assert_eq!(focus(app.state()), Some(keys::IDENTITY));
+}
+
+/// Opens the Device category at `key`, from the Chats list.
+fn open_category<V, F>(app: &mut App<V, State, F>, key: FocusKey)
+where
+    V: ViewLayout<State>,
+    V::FocusTree: DefaultFocus,
+    V::Renderables: AnimatedJoin,
+    F: Fn(&State) -> V,
+{
+    open_device(app);
+    turn_to(app, key);
+    run(app, &[Input::Press]);
+}
+
 fn draft(state: &State, chat: u32) -> &str {
     state.chat(chat).expect("chat exists").draft.text()
 }
@@ -200,8 +263,8 @@ fn backspace_erases_while_typing() {
 #[test]
 fn backspace_with_nothing_to_erase_ends_the_edit_then_goes_back() {
     let mut app = app!();
-    run(&mut app, &[Input::Turn(2), Input::Press, Input::Enter]);
-    assert_in_conversation(app.state(), PAT);
+    open_chat(&mut app, PAT);
+    run(&mut app, &[Input::Enter]);
     run(&mut app, &[Input::Backspace]);
     assert_in_conversation(app.state(), PAT);
     run(&mut app, &[Input::Backspace]);
@@ -230,8 +293,8 @@ fn enter_sends_the_draft() {
 #[test]
 fn a_draft_longer_than_a_fragment_is_sent_whole() {
     let mut app = app!();
-    run(&mut app, &[Input::Turn(2), Input::Press]);
-    let long = "Trail is washed out past the second creek crossing. ".repeat(6);
+    open_chat(&mut app, PAT);
+    let long ="Trail is washed out past the second creek crossing. ".repeat(6);
     assert!(long.len() > 160);
     run(&mut app, &typed(&long));
     assert_eq!(draft(app.state(), PAT), long);
@@ -268,8 +331,7 @@ fn a_sent_message_is_there_when_the_chat_opens_again() {
 #[test]
 fn a_chat_that_moves_to_the_top_keeps_focus() {
     let mut app = app!();
-    run(&mut app, &[Input::Turn(2), Input::Press]);
-    assert_in_conversation(app.state(), PAT);
+    open_chat(&mut app, PAT);
     run(&mut app, &typed("ok"));
     run(&mut app, &[Input::Enter, Input::Backspace]);
     assert_eq!(app.state().chats[0].id, PAT);
@@ -279,10 +341,11 @@ fn a_chat_that_moves_to_the_top_keeps_focus() {
 #[test]
 fn backspace_on_the_list_goes_to_the_rail_and_press_returns() {
     let mut app = app!();
-    run(&mut app, &[Input::Turn(1), Input::Backspace]);
+    turn_to(&mut app, keys::chat(TRAIL_CREW));
+    run(&mut app, &[Input::Backspace]);
     assert_eq!(focus(app.state()), Some(keys::rail(Section::Chats)));
     run(&mut app, &[Input::Press]);
-    assert_eq!(focus(app.state()), Some(keys::chat(2)));
+    assert_eq!(focus(app.state()), Some(keys::chat(TRAIL_CREW)));
 }
 
 #[test]
@@ -330,8 +393,7 @@ fn chat_menu(state: &State) -> Option<ChatMenu> {
 #[test]
 fn holding_the_wheel_on_a_chat_opens_its_menu_and_letting_go_does_not_open_it() {
     let mut app = app!();
-    run(&mut app, &[Input::Turn(2)]);
-    assert_eq!(focus(app.state()), Some(keys::chat(PAT)));
+    turn_to(&mut app, keys::chat(PAT));
     hold(&mut app);
     assert!(matches!(app.state().screen(), Screen::Chats { .. }));
     assert_eq!(chat_menu(app.state()), Some(ChatMenu::Open(PAT)));
@@ -364,7 +426,7 @@ fn turning_while_the_wheel_is_down_lets_go_of_the_press() {
 #[test]
 fn show_peer_opens_the_chats_saved_peer() {
     let mut app = app!();
-    run(&mut app, &[Input::Turn(2)]);
+    turn_to(&mut app, keys::chat(PAT));
     hold(&mut app);
     run(&mut app, &[Input::Press]);
     assert!(matches!(app.state().screen(), Screen::Peer { .. }));
@@ -394,9 +456,10 @@ fn show_peer_offers_to_save_a_chats_unsaved_peer() {
 #[test]
 fn deleting_a_chat_asks_first_and_then_removes_it() {
     let mut app = app!();
-    run(&mut app, &[Input::Turn(2)]);
+    turn_to(&mut app, keys::chat(PAT));
     hold(&mut app);
-    run(&mut app, &[Input::Turn(1), Input::Press]);
+    turn_to(&mut app, keys::CHAT_DELETE);
+    run(&mut app, &[Input::Press]);
     assert_eq!(chat_menu(app.state()), Some(ChatMenu::ConfirmDelete(PAT)));
     assert_eq!(focus(app.state()), Some(keys::DELETE_CANCEL));
     // Cancel keeps it.
@@ -405,10 +468,10 @@ fn deleting_a_chat_asks_first_and_then_removes_it() {
     assert!(app.state().chat(PAT).is_some());
 
     hold(&mut app);
-    run(
-        &mut app,
-        &[Input::Turn(1), Input::Press, Input::Turn(-1), Input::Press],
-    );
+    turn_to(&mut app, keys::CHAT_DELETE);
+    run(&mut app, &[Input::Press]);
+    turn_to(&mut app, keys::DELETE_CONFIRM);
+    run(&mut app, &[Input::Press]);
     assert_eq!(chat_menu(app.state()), None);
     assert!(app.state().chat(PAT).is_none());
     // The row that took its place is focused.
@@ -419,15 +482,14 @@ fn deleting_a_chat_asks_first_and_then_removes_it() {
 #[test]
 fn holding_the_wheel_on_a_channel_opens_it_on_letting_go() {
     let mut app = app!();
-    run(&mut app, &[Input::Turn(1)]);
+    turn_to(&mut app, keys::chat(TRAIL_CREW));
     assert!(matches!(
-        app.state().chats[1].kind,
+        app.state().chat(TRAIL_CREW).expect("chat exists").kind,
         ChatKind::Channel { .. }
     ));
-    let channel = app.state().chats[1].id;
     hold(&mut app);
     assert_eq!(chat_menu(app.state()), None);
-    assert!(matches!(app.state().screen(), Screen::Conversation { chat, .. } if *chat == channel));
+    assert!(matches!(app.state().screen(), Screen::Conversation { chat, .. } if *chat == TRAIL_CREW));
 }
 
 fn actions(state: &State) -> Option<u32> {
@@ -475,10 +537,10 @@ fn pressing_a_message_opens_its_actions_and_backspace_closes_them() {
 #[test]
 fn a_reaction_is_mine_until_chosen_again_and_kept_across_opening_the_chat() {
     let mut app = app!();
-    let open_on_answer = [Input::Press, Input::Turn(-2), Input::Press, Input::Turn(-6)];
+    let open_on_answer = [Input::Press, Input::Turn(-2), Input::Press];
     run(&mut app, &open_on_answer);
     // Ridge Medic's heart is there already; mine joins it.
-    assert_eq!(focus(app.state()), Some(keys::reaction(Reaction::Heart)));
+    turn_to(&mut app, keys::reaction(Reaction::Heart));
     run(&mut app, &[Input::Press]);
     assert_eq!(actions(app.state()), None);
     assert_eq!(reactions(app.state(), ANSWER), [(Reaction::Heart, 2, true)]);
@@ -488,6 +550,7 @@ fn a_reaction_is_mine_until_chosen_again_and_kept_across_opening_the_chat() {
 
     // Choosing it again withdraws it.
     run(&mut app, &open_on_answer[1..]);
+    turn_to(&mut app, keys::reaction(Reaction::Heart));
     run(&mut app, &[Input::Press]);
     assert_eq!(
         reactions(app.state(), ANSWER),
@@ -539,16 +602,9 @@ fn sending_a_reply_ends_it() {
 #[test]
 fn details_open_from_the_actions_and_back_returns_to_the_message() {
     let mut app = app!();
-    run(
-        &mut app,
-        &[
-            Input::Press,
-            Input::Turn(-3),
-            Input::Press,
-            Input::Turn(1),
-            Input::Press,
-        ],
-    );
+    run(&mut app, &[Input::Press, Input::Turn(-3), Input::Press]);
+    turn_to(&mut app, keys::DETAILS);
+    run(&mut app, &[Input::Press]);
     let Screen::Details {
         message, details, ..
     } = app.state().screen()
@@ -600,8 +656,7 @@ where
 #[test]
 fn an_unconfirmed_message_offers_retry_first() {
     let mut app = app!();
-    run(&mut app, &[Input::Turn(2), Input::Press]);
-    assert_in_conversation(app.state(), PAT);
+    open_chat(&mut app, PAT);
     run(&mut app, &[Input::Turn(-1)]);
     assert_eq!(focus(app.state()), Some(keys::message(ANTENNA)));
     assert_eq!(delivery(app.state(), ANTENNA), Delivery::Unconfirmed);
@@ -631,10 +686,11 @@ fn an_unconfirmed_message_offers_retry_first() {
 #[test]
 fn deleting_an_unconfirmed_message_asks_first() {
     let mut app = app!();
-    run(&mut app, &[Input::Turn(2), Input::Press, Input::Turn(-1)]);
+    open_chat(&mut app, PAT);
+    run(&mut app, &[Input::Turn(-1)]);
     assert_eq!(focus(app.state()), Some(keys::message(ANTENNA)));
-    run(&mut app, &[Input::Press, Input::Turn(2)]);
-    assert_eq!(focus(app.state()), Some(keys::DELETE_MESSAGE));
+    run(&mut app, &[Input::Press]);
+    turn_to(&mut app, keys::DELETE_MESSAGE);
     run(&mut app, &[Input::Press]);
     assert_eq!(actions(app.state()), None);
     assert_eq!(unsent(app.state()), Some(ANTENNA));
@@ -645,16 +701,11 @@ fn deleting_an_unconfirmed_message_asks_first() {
     assert_eq!(focus(app.state()), Some(keys::message(ANTENNA)));
     assert!(!message(app.state(), ANTENNA).deleted);
 
-    run(
-        &mut app,
-        &[
-            Input::Press,
-            Input::Turn(2),
-            Input::Press,
-            Input::Turn(-1),
-            Input::Press,
-        ],
-    );
+    run(&mut app, &[Input::Press]);
+    turn_to(&mut app, keys::DELETE_MESSAGE);
+    run(&mut app, &[Input::Press]);
+    turn_to(&mut app, keys::DELETE_MESSAGE_CONFIRM);
+    run(&mut app, &[Input::Press]);
     assert_eq!(unsent(app.state()), None);
     assert!(message(app.state(), ANTENNA).deleted);
     // What stands in for it takes no focus.
@@ -701,7 +752,8 @@ fn an_unconfirmed_message_under_forward_secrecy_asks_before_going_without() {
     // Going without, it is mine like any other.
     run(&mut app, &[Input::Press, Input::Press]);
     assert_eq!(unsent(app.state()), Some(SECRET));
-    run(&mut app, &[Input::Turn(1), Input::Press]);
+    turn_to(&mut app, keys::RESEND_WITHOUT_SECRECY);
+    run(&mut app, &[Input::Press]);
     assert_eq!(unsent(app.state()), None);
     assert_eq!(delivery(app.state(), SECRET), Delivery::Sending);
     assert!(!forward_secret(app.state(), SECRET));
@@ -723,7 +775,7 @@ fn trying_again_keeps_forward_secrecy() {
 #[test]
 fn spent_airtime_keeps_the_draft_and_holds_a_retry() {
     let mut app = app!();
-    run(&mut app, &[Input::Turn(2), Input::Press]);
+    open_chat(&mut app, PAT);
     spend_airtime(&mut app, Some(100));
     run(&mut app, &typed("Also the 18650s"));
     run(&mut app, &[Input::Enter]);
@@ -806,9 +858,8 @@ fn a_message_from_elsewhere_shows_a_banner_that_takes_no_key() {
 fn a_message_in_the_open_chat_joins_it_without_a_banner() {
     let store = store();
     let mut app = app!(store);
-    run(&mut app, &[Input::Turn(1), Input::Press]);
-    assert_in_conversation(app.state(), TRAIL_CREW);
-    let before = app.state().conversation.as_ref().unwrap().messages.len();
+    open_chat(&mut app, TRAIL_CREW);
+    let before =app.state().conversation.as_ref().unwrap().messages.len();
     assert!(!arrive(&mut app, store, 0));
     assert_eq!(app.state().banner, None);
     assert!(!app.state().chats[0].unread);
@@ -1046,8 +1097,7 @@ fn turning_with_alt_held_while_locked_sets_brightness_not_the_bar() {
 #[test]
 fn a_channel_send_ends_at_sent() {
     let mut app = app!();
-    run(&mut app, &[Input::Turn(1), Input::Press]);
-    assert_in_conversation(app.state(), TRAIL_CREW);
+    open_chat(&mut app, TRAIL_CREW);
     run(&mut app, &[Input::Enter]);
     run(&mut app, &typed("Switchbacks, 15 min out"));
     run(&mut app, &[Input::Enter]);
@@ -1067,10 +1117,9 @@ where
     V::Renderables: AnimatedJoin,
     F: Fn(&State) -> V,
 {
-    run(app, &[Input::Turn(1), Input::Press]);
-    assert_in_conversation(app.state(), TRAIL_CREW);
-    run(app, &[Input::Turn(-back), Input::Press, Input::Turn(1)]);
-    assert_eq!(focus(app.state()), Some(keys::VIEW_MEMBER));
+    open_chat(app, TRAIL_CREW);
+    run(app, &[Input::Turn(-back), Input::Press]);
+    turn_to(app, keys::VIEW_MEMBER);
     run(app, &[Input::Press]);
 }
 
@@ -1121,25 +1170,19 @@ const BEHIND_YOU: u32 = (TRAIL_CREW << 8) | 1;
 #[test]
 fn changing_my_reaction_moves_it_between_shared_chips() {
     let mut app = app!();
-    run(&mut app, &[Input::Turn(1), Input::Press, Input::Turn(-2)]);
+    open_chat(&mut app, TRAIL_CREW);
+    run(&mut app, &[Input::Turn(-2)]);
     assert_eq!(focus(app.state()), Some(keys::message(BEHIND_YOU)));
-    let on = |reaction: Reaction| {
-        let step = Reaction::ALL
-            .iter()
-            .position(|&r| r == reaction)
-            .expect("in the palette");
-        [
-            Input::Press,
-            Input::Turn(-(Reaction::ALL.len() as i8 - step as i8)),
-            Input::Press,
-        ]
-    };
-    run(&mut app, &on(Reaction::ThumbsUp));
+    run(&mut app, &[Input::Press]);
+    turn_to(&mut app, keys::reaction(Reaction::ThumbsUp));
+    run(&mut app, &[Input::Press]);
     assert_eq!(
         reactions(app.state(), BEHIND_YOU),
         [(Reaction::ThumbsUp, 2, true), (Reaction::Exclaim, 1, false)]
     );
-    run(&mut app, &on(Reaction::Exclaim));
+    run(&mut app, &[Input::Press]);
+    turn_to(&mut app, keys::reaction(Reaction::Exclaim));
+    run(&mut app, &[Input::Press]);
     assert_eq!(
         reactions(app.state(), BEHIND_YOU),
         [(Reaction::ThumbsUp, 1, false), (Reaction::Exclaim, 2, true)]
@@ -1185,8 +1228,7 @@ fn an_identity_that_arrives_names_the_member_everywhere() {
 fn save_peer_goes_once_saved_and_message_opens_a_direct_chat() {
     let mut app = app!();
     view_member(&mut app, 1);
-    run(&mut app, &[Input::Turn(1)]);
-    assert_eq!(focus(app.state()), Some(keys::SAVE_PEER));
+    turn_to(&mut app, keys::SAVE_PEER);
     run(&mut app, &[Input::Press]);
     assert!(shown_member(app.state()).0.saved);
     assert_eq!(
@@ -1212,17 +1254,16 @@ fn save_peer_goes_once_saved_and_message_opens_a_direct_chat() {
 /// Jo's invitation to Base Camp.
 const INVITE: u32 = (JO << 8) | 2;
 
-/// Opens Jo's chat, `row` down the list, and turns up to the invitation, through the tall
+/// Opens Jo's chat and turns up to the invitation, through the tall
 /// message, which the wheel scrolls through first.
-fn to_invite<V, F>(app: &mut App<V, State, F>, row: i8)
+fn to_invite<V, F>(app: &mut App<V, State, F>)
 where
     V: ViewLayout<State>,
     V::FocusTree: DefaultFocus,
     V::Renderables: AnimatedJoin,
     F: Fn(&State) -> V,
 {
-    run(app, &[Input::Turn(row), Input::Press]);
-    assert_in_conversation(app.state(), JO);
+    open_chat(app, JO);
     for _ in 0..20 {
         if focus(app.state()) == Some(keys::message(INVITE)) {
             return;
@@ -1242,7 +1283,7 @@ fn joined_chat(state: &State) -> u32 {
 #[test]
 fn an_invitation_offers_joining_first_and_join_opens_the_channel() {
     let mut app = app!();
-    to_invite(&mut app, 4);
+    to_invite(&mut app);
     run(&mut app, &[Input::Press]);
     assert_eq!(focus(app.state()), Some(keys::JOIN));
     run(&mut app, &[Input::Press]);
@@ -1269,9 +1310,7 @@ fn an_invitation_offers_joining_first_and_join_opens_the_channel() {
 
     // Joining again opens the same channel.
     run(&mut app, &[Input::Backspace]);
-    // The channel heads the list now, above Jo.
-    run(&mut app, &[Input::Turn(-20)]);
-    to_invite(&mut app, 5);
+    to_invite(&mut app);
     run(&mut app, &[Input::Press, Input::Press, Input::Press]);
     assert_eq!(joined_chat(app.state()), chat);
     assert_eq!(app.state().chats.len(), before + 1);
@@ -1280,13 +1319,15 @@ fn an_invitation_offers_joining_first_and_join_opens_the_channel() {
 #[test]
 fn a_channel_joined_can_be_called_something_else_here() {
     let mut app = app!();
-    to_invite(&mut app, 4);
-    run(&mut app, &[Input::Press, Input::Press, Input::Turn(-1)]);
-    assert_eq!(focus(app.state()), Some(keys::JOIN_NAME));
+    to_invite(&mut app);
+    run(&mut app, &[Input::Press, Input::Press]);
+    turn_to(&mut app, keys::JOIN_NAME);
     run(&mut app, &[Input::Press]);
     run(&mut app, &[Input::Backspace; 4]);
     run(&mut app, &typed("Hut"));
-    run(&mut app, &[Input::Enter, Input::Turn(1), Input::Press]);
+    run(&mut app, &[Input::Enter]);
+    turn_to(&mut app, keys::JOIN_CHANNEL);
+    run(&mut app, &[Input::Press]);
     let chat = joined_chat(app.state());
     assert_eq!(
         app.state().chat(chat).map(|c| c.name.as_str()),
@@ -1299,8 +1340,7 @@ const EMERGENCY: u32 = 6;
 #[test]
 fn emergency_is_open_and_its_sends_end_at_sent() {
     let mut app = app!();
-    run(&mut app, &[Input::Turn(5), Input::Press]);
-    assert_in_conversation(app.state(), EMERGENCY);
+    open_chat(&mut app, EMERGENCY);
     let kind = app
         .state()
         .chat(EMERGENCY)
@@ -1407,7 +1447,11 @@ where
     V::Renderables: AnimatedJoin,
     F: Fn(&State) -> V,
 {
-    run(app, &[Input::Backspace, Input::Turn(1), Input::Press, Input::Press]);
+    run(app, &[Input::Backspace]);
+    turn_to(app, keys::rail(Section::Peers));
+    run(app, &[Input::Press]);
+    turn_to(app, keys::ADD_PEER);
+    run(app, &[Input::Press]);
     assert!(matches!(app.state().screen(), Screen::Nearby { .. }));
 }
 
@@ -1432,8 +1476,7 @@ fn nearby_lists_devices_by_model_and_color_alone() {
     assert_eq!(meet.exchange, Exchange::Idle);
     assert_eq!(meet.devices.len(), 2);
     assert_eq!(focus(app.state()), Some(keys::ENTER_ADDRESS));
-    run(&mut app, &[Input::Turn(-2)]);
-    assert_eq!(focus(app.state()), Some(keys::nearby(1)));
+    turn_to(&mut app, keys::nearby(1));
     // Leaving Add peer closes its session.
     run(&mut app, &[Input::Backspace]);
     assert_eq!(app.state().meet.exchange, Exchange::Closed);
@@ -1463,7 +1506,8 @@ fn not_now_stays_on_nearby_under_a_new_color() {
     open_nearby(&mut app);
     let before = app.state().meet.own_color;
     other_holder(&mut app, store, fixture::MeetStep::Asks);
-    run(&mut app, &[Input::Turn(1), Input::Press]);
+    turn_to(&mut app, keys::EXCHANGE_DECLINE);
+    run(&mut app, &[Input::Press]);
     assert!(matches!(app.state().screen(), Screen::Nearby { .. }));
     assert_eq!(app.state().meet.exchange, Exchange::Idle);
     assert_ne!(app.state().meet.own_color, before);
@@ -1476,7 +1520,8 @@ fn same_on_both_sides_opens_the_unsaved_peer_on_message() {
     let mut app = app!(store);
     let saved = app.state().peers.len();
     open_nearby(&mut app);
-    run(&mut app, &[Input::Turn(-2), Input::Press]);
+    turn_to(&mut app, keys::nearby(1));
+    run(&mut app, &[Input::Press]);
     assert!(matches!(app.state().screen(), Screen::Exchange { .. }));
     assert!(matches!(app.state().meet.exchange, Exchange::Asking(_)));
     other_holder(&mut app, store, fixture::MeetStep::Answers(true));
@@ -1514,8 +1559,8 @@ fn different_ends_the_exchange_and_try_again_draws_a_new_color() {
     open_nearby(&mut app);
     let before = app.state().meet.own_color;
     other_holder(&mut app, store, fixture::MeetStep::Asks);
-    run(&mut app, &[Input::Press, Input::Turn(1)]);
-    assert_eq!(focus(app.state()), Some(keys::DIFFERENT));
+    run(&mut app, &[Input::Press]);
+    turn_to(&mut app, keys::DIFFERENT);
     run(&mut app, &[Input::Press]);
     assert_eq!(
         app.state().meet.exchange,
@@ -1551,7 +1596,8 @@ fn the_other_holder_backing_out_ends_it_here() {
     other_holder(&mut app, store, fixture::MeetStep::Leaves);
     assert_eq!(app.state().meet.exchange, Exchange::Ended(ExchangeEnd::Left));
     assert_eq!(focus(app.state()), Some(keys::TRY_AGAIN));
-    run(&mut app, &[Input::Turn(1), Input::Press]);
+    turn_to(&mut app, keys::DONE);
+    run(&mut app, &[Input::Press]);
     assert_eq!(app.state().screens.len(), 1);
 }
 
@@ -1570,16 +1616,18 @@ where
     V::Renderables: AnimatedJoin,
     F: Fn(&State) -> V,
 {
-    run(
-        app,
-        &[
-            Input::Backspace,
-            Input::Turn(1),
-            Input::Press,
-            Input::Turn(1),
-            Input::Press,
-        ],
-    );
+    run(app, &[Input::Backspace]);
+    turn_to(app, keys::rail(Section::Peers));
+    run(app, &[Input::Press]);
+    let pat = app
+        .state()
+        .peers
+        .iter()
+        .find(|p| p.name.as_str() == "Pat Okafor")
+        .map(|p| p.id)
+        .expect("Pat is saved");
+    turn_to(app, keys::peer(pat));
+    run(app, &[Input::Press]);
     assert_eq!(focus(app.state()), Some(keys::PEER_MESSAGE));
 }
 
@@ -1596,13 +1644,13 @@ fn a_saved_peer_shows_its_detail_and_messages_in_its_own_chat() {
 fn forward_secrecy_switches_and_a_ping_is_answered() {
     let mut app = app!();
     open_pat(&mut app);
-    run(&mut app, &[Input::Turn(4)]);
-    assert_eq!(focus(app.state()), Some(keys::PEER_SECRECY));
+    turn_to(&mut app, keys::PEER_SECRECY);
     run(&mut app, &[Input::Press]);
     assert!(peer_detail(app.state()).forward_secrecy);
     run(&mut app, &[Input::Press]);
     assert!(!peer_detail(app.state()).forward_secrecy);
-    run(&mut app, &[Input::Turn(1), Input::Press]);
+    turn_to(&mut app, keys::PEER_PING);
+    run(&mut app, &[Input::Press]);
     assert_eq!(peer_detail(app.state()).ping.as_deref(), Some("1.4 s"));
 }
 
@@ -1610,8 +1658,7 @@ fn forward_secrecy_switches_and_a_ping_is_answered() {
 fn a_saved_peer_is_asked_for_their_identity() {
     let mut app = app!();
     open_pat(&mut app);
-    run(&mut app, &[Input::Turn(6)]);
-    assert_eq!(focus(app.state()), Some(keys::PEER_IDENTITY));
+    turn_to(&mut app, keys::PEER_IDENTITY);
     assert!(matches!(
         app.state().screen(),
         Screen::Peer {
@@ -1635,15 +1682,16 @@ fn forget_asks_first_and_cancel_keeps_the_peer() {
     let mut app = app!();
     open_pat(&mut app);
     let peers = app.state().peers.len();
-    run(&mut app, &[Input::Turn(7)]);
-    assert_eq!(focus(app.state()), Some(keys::PEER_FORGET));
+    turn_to(&mut app, keys::PEER_FORGET);
     run(&mut app, &[Input::Press]);
     assert_eq!(focus(app.state()), Some(keys::FORGET_CANCEL));
     run(&mut app, &[Input::Press]);
     assert_eq!(focus(app.state()), Some(keys::PEER_FORGET));
     assert_eq!(app.state().peers.len(), peers);
 
-    run(&mut app, &[Input::Press, Input::Turn(-1), Input::Press]);
+    run(&mut app, &[Input::Press]);
+    turn_to(&mut app, keys::FORGET_CONFIRM);
+    run(&mut app, &[Input::Press]);
     assert!(matches!(app.state().screen(), Screen::Chats { .. }));
     assert_eq!(app.state().peers.len(), peers - 1);
     // The row that took its place is focused.
@@ -1669,13 +1717,9 @@ where
     V::Renderables: AnimatedJoin,
     F: Fn(&State) -> V,
 {
-    run(app, &[Input::Backspace, Input::Turn(2), Input::Press]);
-    assert_eq!(app.state().section, Section::Device);
-    assert_eq!(focus(app.state()), Some(keys::IDENTITY));
-    run(app, &[Input::Turn(2), Input::Press]);
+    open_category(app, keys::RADIO);
     assert_eq!(focus(app.state()), Some(keys::RADIO_ENABLED));
-    run(app, &[Input::Turn(1)]);
-    assert_eq!(focus(app.state()), Some(keys::PROFILE));
+    turn_to(app, keys::PROFILE);
 }
 
 fn on_profiles(state: &State) -> bool {
@@ -1758,22 +1802,19 @@ fn settings_no_profile_has_read_as_custom() {
 fn a_switch_flips_on_press() {
     let mut app = app!();
     open_radio(&mut app);
-    run(&mut app, &[Input::Turn(3)]);
-    assert_eq!(focus(app.state()), Some(keys::SHARE_LOCATION));
+    turn_to(&mut app, keys::SHARE_LOCATION);
     assert!(!radio(app.state()).share_location);
     run(&mut app, &[Input::Press]);
     assert!(radio(app.state()).share_location);
-    run(&mut app, &[Input::Turn(-1), Input::Press]);
+    turn_to(&mut app, keys::FORWARDING);
+    run(&mut app, &[Input::Press]);
     assert!(!radio(app.state()).forwarding);
 }
 
 #[test]
 fn turning_on_share_moves_between_this_node_and_its_channels() {
     let mut app = app!();
-    run(
-        &mut app,
-        &[Input::Backspace, Input::Turn(2), Input::Press, Input::Press],
-    );
+    open_category(&mut app, keys::IDENTITY);
     assert!(matches!(
         app.state().screen(),
         Screen::Device {
@@ -1801,16 +1842,7 @@ where
     V::Renderables: AnimatedJoin,
     F: Fn(&State) -> V,
 {
-    run(
-        app,
-        &[
-            Input::Backspace,
-            Input::Turn(2),
-            Input::Press,
-            Input::Turn(1),
-            Input::Press,
-        ],
-    );
+    open_category(app, keys::CHANNELS);
     assert_eq!(focus(app.state()), Some(keys::ADD_CHANNEL));
     run(app, &[Input::Press]);
     assert_eq!(focus(app.state()), Some(keys::CHANNEL_FIELD));
@@ -1862,9 +1894,10 @@ fn an_invitation_counts_down_and_joins_a_private_channel() {
 fn a_joined_channel_opens_from_the_channels_list() {
     let mut app = app!();
     open_add_channel(&mut app);
-    run(&mut app, &[Input::Backspace, Input::Turn(1), Input::Press]);
-    // Trail Crew, the first channel in the list.
-    assert_in_conversation(app.state(), 2);
+    run(&mut app, &[Input::Backspace]);
+    turn_to(&mut app, keys::chat(TRAIL_CREW));
+    run(&mut app, &[Input::Press]);
+    assert_in_conversation(app.state(), TRAIL_CREW);
 }
 
 #[test]
@@ -1999,9 +2032,8 @@ fn the_strip_counts_thirds_centered_on_their_levels() {
 #[test]
 fn shut_down_asks_first_and_then_ends_input() {
     let mut app = app!();
-    run(&mut app, &[Input::Backspace, Input::Turn(2), Input::Press]);
-    run(&mut app, &[Input::Turn(10)]);
-    assert_eq!(focus(app.state()), Some(keys::SHUT_DOWN));
+    open_device(&mut app);
+    turn_to(&mut app, keys::SHUT_DOWN);
     // Cancel is focused, and Backspace cancels too.
     run(&mut app, &[Input::Press]);
     assert_eq!(focus(app.state()), Some(keys::SHUT_DOWN_CANCEL));
@@ -2009,7 +2041,9 @@ fn shut_down_asks_first_and_then_ends_input() {
     assert_eq!(focus(app.state()), Some(keys::SHUT_DOWN));
     assert_eq!(app.state().ending, None);
 
-    run(&mut app, &[Input::Press, Input::Turn(-1), Input::Press]);
+    run(&mut app, &[Input::Press]);
+    turn_to(&mut app, keys::SHUT_DOWN_CONFIRM);
+    run(&mut app, &[Input::Press]);
     assert_eq!(app.state().ending, Some(Ending::ShuttingDown));
     // Nothing moves under the card.
     run(&mut app, &[Input::Turn(-3), Input::Backspace]);
@@ -2052,8 +2086,7 @@ where
     V::Renderables: AnimatedJoin,
     F: Fn(&State) -> V,
 {
-    run(app, &[Input::Turn(1), Input::Press]);
-    assert_in_conversation(app.state(), TRAIL_CREW);
+    open_chat(app, TRAIL_CREW);
     assert_eq!(draft(app.state(), TRAIL_CREW), "");
 }
 
@@ -2090,14 +2123,16 @@ fn typed_characters_take_the_capital_and_the_period_too() {
 fn the_aids_stay_off_when_switched_off() {
     let mut app = app!();
     // Device › Keyboard, Capitalize sentences and Period on double space.
-    run(&mut app, &[Input::Backspace, Input::Turn(2), Input::Press]);
-    run(&mut app, &[Input::Turn(5), Input::Press]);
+    open_category(&mut app, keys::KEYBOARD);
     assert_eq!(focus(app.state()), Some(keys::CAPITALIZE));
-    run(&mut app, &[Input::Press, Input::Turn(1), Input::Press]);
+    run(&mut app, &[Input::Press]);
+    turn_to(&mut app, keys::PERIOD);
+    run(&mut app, &[Input::Press]);
     let settings = app.state().node.keyboard();
     assert!(!settings.capitalize && !settings.period && settings.light);
     run(&mut app, &[Input::Backspace, Input::Backspace]);
-    run(&mut app, &[Input::Turn(-2), Input::Press]);
+    turn_to(&mut app, keys::rail(Section::Chats));
+    run(&mut app, &[Input::Press]);
 
     open_trail_crew(&mut app);
     run(&mut app, &keys_for("on"));
@@ -2217,7 +2252,8 @@ fn transmit_power_is_typed_in_symbol_lock() {
     }
     let mut app = app!();
     open_radio(&mut app);
-    run(&mut app, &[Input::Turn(1), Input::Press]);
+    turn_to(&mut app, keys::TRANSMIT_POWER);
+    run(&mut app, &[Input::Press]);
     assert_eq!(focus(app.state()), Some(keys::POWER_FIELD));
     assert_eq!(app.state().keyboard.latches(), (Latch::Off, Latch::Locked));
     // The field holds 22; a key types its digit.
@@ -2252,7 +2288,8 @@ fn a_keyboard_with_its_own_symbols_types_transmit_power_as_it_is() {
     }
     let mut app = app!();
     open_radio(&mut app);
-    run(&mut app, &[Input::Turn(1), Input::Press]);
+    turn_to(&mut app, keys::TRANSMIT_POWER);
+    run(&mut app, &[Input::Press]);
     assert_eq!(focus(app.state()), Some(keys::POWER_FIELD));
     // No symbol lock to show: the keyboard's own Sym layer types digits.
     assert_eq!(app.state().keyboard.latches(), (Latch::Off, Latch::Off));
@@ -2272,7 +2309,8 @@ fn transmit_power_takes_only_a_number() {
     }
     let mut app = app!();
     open_radio(&mut app);
-    run(&mut app, &[Input::Turn(1), Input::Press]);
+    turn_to(&mut app, keys::TRANSMIT_POWER);
+    run(&mut app, &[Input::Press]);
     let tap = |modifier| {
         [
             Input::Modifier {
@@ -2373,7 +2411,7 @@ fn events_keep_one_of_each_and_overflow_to_a_resync() {
 #[test]
 fn a_resync_reads_everything_again_and_keeps_the_draft_being_written() {
     let mut app = app!();
-    run(&mut app, &[Input::Turn(2), Input::Press]);
+    open_chat(&mut app, PAT);
     // Typing, the cursor two back from the end.
     run(&mut app, &typed("Bring"));
     run(&mut app, &[Input::Turn(-2)]);
@@ -2397,7 +2435,7 @@ fn a_resync_reads_everything_again_and_keeps_the_draft_being_written() {
 #[test]
 fn a_draft_left_unsent_is_kept_by_the_node() {
     let mut app = app!();
-    run(&mut app, &[Input::Turn(2), Input::Press]);
+    open_chat(&mut app, PAT);
     run(&mut app, &typed("Back by six"));
     run(&mut app, &[Input::Press, Input::Backspace]);
     let kept = app.state().node.chat(PAT).expect("the chat");
@@ -2416,7 +2454,7 @@ fn a_draft_left_unsent_is_kept_by_the_node() {
 fn opening_a_chat_marks_it_read_in_the_node() {
     let mut app = app!();
     assert!(app.state().node.chat(TRAIL_CREW).expect("the chat").unread);
-    run(&mut app, &[Input::Turn(1), Input::Press]);
+    open_chat(&mut app, TRAIL_CREW);
     assert!(!app.state().node.chat(TRAIL_CREW).expect("the chat").unread);
 }
 
@@ -2424,7 +2462,7 @@ fn opening_a_chat_marks_it_read_in_the_node() {
 fn a_message_arriving_in_the_chat_being_read_is_read() {
     let store = store();
     let mut app = app!(store);
-    run(&mut app, &[Input::Turn(1), Input::Press]);
+    open_chat(&mut app, TRAIL_CREW);
     assert!(!arrive(&mut app, store, 0));
     assert!(!store.chat(TRAIL_CREW).expect("the chat").unread);
     // Taken in twice, it is shown once.
@@ -2538,10 +2576,7 @@ where
     V::Renderables: AnimatedJoin,
     F: Fn(&State) -> V,
 {
-    run(app, &[Input::Backspace, Input::Turn(2), Input::Press]);
-    run(app, &[Input::Turn(6)]);
-    assert_eq!(focus(app.state()), Some(keys::CLOCK));
-    run(app, &[Input::Press]);
+    open_category(app, keys::CLOCK);
     assert_eq!(focus(app.state()), Some(keys::CLOCK_AUTOMATIC));
 }
 
@@ -2550,23 +2585,28 @@ fn the_clock_is_set_by_hand_a_part_at_a_time() {
     let mut app = app!();
     open_clock(&mut app);
     // Automatic, Date and time is a readout and opens nothing.
-    run(&mut app, &[Input::Turn(1), Input::Press]);
+    turn_to(&mut app, keys::CLOCK_TIME);
+    run(&mut app, &[Input::Press]);
     assert_eq!(focus(app.state()), Some(keys::CLOCK_TIME));
-    run(&mut app, &[Input::Turn(-1), Input::Press]);
+    turn_to(&mut app, keys::CLOCK_AUTOMATIC);
+    run(&mut app, &[Input::Press]);
     assert_eq!(app.state().clock.automatic, Some(false));
-    run(&mut app, &[Input::Turn(1), Input::Press]);
+    turn_to(&mut app, keys::CLOCK_TIME);
+    run(&mut app, &[Input::Press]);
     assert_eq!(
         focus(app.state()),
         Some(keys::time_part(umsh_ux_communicator::nav::Part::Month))
     );
     let before = DateParts::at(app.state().local(app.state().wall_time.unwrap()));
     // Pressed, turning changes the month; pressed again, it moves on.
-    run(
+    run(&mut app, &[Input::Press, Input::Turn(1), Input::Press]);
+    turn_to(
         &mut app,
-        &[Input::Press, Input::Turn(1), Input::Press, Input::Turn(4)],
+        keys::time_part(umsh_ux_communicator::nav::Part::Minute),
     );
     run(&mut app, &typed("05"));
-    run(&mut app, &[Input::Turn(1), Input::Press]);
+    turn_to(&mut app, keys::SET_TIME);
+    run(&mut app, &[Input::Press]);
     assert_eq!(focus(app.state()), Some(keys::CLOCK_TIME));
     let after = DateParts::at(app.state().local(app.state().wall_time.unwrap()));
     assert_eq!(after.month, before.month % 12 + 1);
@@ -2584,8 +2624,8 @@ fn the_clock_is_set_by_hand_a_part_at_a_time() {
 fn hours_are_written_as_the_clock_is_set_to() {
     let mut app = app!();
     open_clock(&mut app);
-    run(&mut app, &[Input::Turn(3), Input::Press]);
-    assert_eq!(focus(app.state()), Some(keys::CLOCK_24H));
+    turn_to(&mut app, keys::CLOCK_24H);
+    run(&mut app, &[Input::Press]);
     assert!(!app.state().hour24());
     let local = app.state().local(app.state().wall_time.unwrap());
     assert!(local.time(app.state().hour24()).ends_with('M'));
@@ -2595,7 +2635,8 @@ fn hours_are_written_as_the_clock_is_set_to() {
 fn letters_narrow_the_time_zones_and_a_press_sets_one() {
     let mut app = app!();
     open_clock(&mut app);
-    run(&mut app, &[Input::Turn(2), Input::Press]);
+    turn_to(&mut app, keys::CLOCK_ZONE);
+    run(&mut app, &[Input::Press]);
     // No zone is called that, so the x is refused.
     run(&mut app, &typed("jx"));
     let japan = zones::ZONES
@@ -2649,8 +2690,7 @@ fn rolling_left_from_a_list_reaches_the_rail_and_right_enters_a_section() {
 fn rolling_across_a_switch_sets_it() {
     let mut app = app!();
     open_radio(&mut app);
-    run(&mut app, &[Input::Turn(3)]);
-    assert_eq!(focus(app.state()), Some(keys::SHARE_LOCATION));
+    turn_to(&mut app, keys::SHARE_LOCATION);
     run(&mut app, &[Input::Move(Arrow::Left)]);
     assert!(!radio(app.state()).share_location);
     run(&mut app, &[Input::Move(Arrow::Right)]);
@@ -2665,8 +2705,10 @@ fn rolling_across_a_switch_sets_it() {
 fn rolling_up_a_part_of_the_date_adds_and_across_is_done_with_it() {
     let mut app = app!();
     open_clock(&mut app);
-    run(&mut app, &[Input::Press, Input::Turn(1), Input::Press]);
-    let month = keys::time_part(umsh_ux_communicator::nav::Part::Month);
+    run(&mut app, &[Input::Press]);
+    turn_to(&mut app, keys::CLOCK_TIME);
+    run(&mut app, &[Input::Press]);
+    let month =keys::time_part(umsh_ux_communicator::nav::Part::Month);
     assert_eq!(focus(app.state()), Some(month));
     let shown = |state: &State| match state.screen() {
         Screen::Device {
@@ -2733,8 +2775,7 @@ fn rolling_does_nothing_while_locked() {
 #[test]
 fn the_radio_turns_off_and_on_from_its_page() {
     let mut app = app!();
-    run(&mut app, &[Input::Backspace, Input::Turn(2), Input::Press]);
-    run(&mut app, &[Input::Turn(2), Input::Press]);
+    open_category(&mut app, keys::RADIO);
     assert_eq!(focus(app.state()), Some(keys::RADIO_ENABLED));
     assert!(radio(app.state()).enabled);
     run(&mut app, &[Input::Press]);
@@ -2752,10 +2793,7 @@ where
     V::Renderables: AnimatedJoin,
     F: Fn(&State) -> V,
 {
-    run(app, &[Input::Backspace, Input::Turn(2), Input::Press]);
-    run(app, &[Input::Turn(7)]);
-    assert_eq!(focus(app.state()), Some(keys::BLUETOOTH));
-    run(app, &[Input::Press]);
+    open_category(app, keys::BLUETOOTH);
     assert_eq!(focus(app.state()), Some(keys::BLUETOOTH_ENABLED));
 }
 
@@ -2763,9 +2801,9 @@ where
 fn bluetooth_turns_off_and_its_rows_go_with_it() {
     let mut app = app!();
     open_bluetooth(&mut app);
-    run(&mut app, &[Input::Turn(1)]);
-    assert_eq!(focus(app.state()), Some(keys::BLUETOOTH_STATUS));
-    run(&mut app, &[Input::Turn(-1), Input::Press]);
+    turn_to(&mut app, keys::BLUETOOTH_STATUS);
+    turn_to(&mut app, keys::BLUETOOTH_ENABLED);
+    run(&mut app, &[Input::Press]);
     assert_eq!(app.state().node.bluetooth_enabled(), Some(false));
     // Nothing below the switch is left to land on.
     run(&mut app, &[Input::Turn(1)]);
@@ -2778,22 +2816,23 @@ fn bluetooth_turns_off_and_its_rows_go_with_it() {
 fn pairing_opens_shows_its_pin_and_pairings_clear_once_confirmed() {
     let mut app = app!();
     open_bluetooth(&mut app);
-    run(&mut app, &[Input::Turn(3)]);
-    assert_eq!(focus(app.state()), Some(keys::PAIRING));
+    turn_to(&mut app, keys::PAIRING);
     run(&mut app, &[Input::Press]);
     assert!(app.state().links.bluetooth.pairing);
     // The board reads the window open, and the PIN to give.
     app.state_mut().links.bluetooth.pin = Some(4_321);
     app.finalize_view();
-    run(&mut app, &[Input::Turn(1)]);
-    assert_eq!(focus(app.state()), Some(keys::PAIRING_PIN));
-    run(&mut app, &[Input::Turn(1), Input::Press]);
+    turn_to(&mut app, keys::PAIRING_PIN);
+    turn_to(&mut app, keys::CLEAR_PAIRINGS);
+    run(&mut app, &[Input::Press]);
     assert_eq!(focus(app.state()), Some(keys::CLEAR_PAIRINGS_CANCEL));
     // Backspace cancels, and nothing is forgotten.
     run(&mut app, &[Input::Backspace]);
     assert_eq!(focus(app.state()), Some(keys::CLEAR_PAIRINGS));
     assert_eq!(app.state().links.bluetooth.paired, Some(1));
-    run(&mut app, &[Input::Press, Input::Turn(-1), Input::Press]);
+    run(&mut app, &[Input::Press]);
+    turn_to(&mut app, keys::CLEAR_PAIRINGS_CONFIRM);
+    run(&mut app, &[Input::Press]);
     assert_eq!(focus(app.state()), Some(keys::CLEAR_PAIRINGS));
     assert_eq!(app.state().links.bluetooth.paired, Some(0));
 }
@@ -2801,14 +2840,11 @@ fn pairing_opens_shows_its_pin_and_pairings_clear_once_confirmed() {
 #[test]
 fn gnss_shows_its_fix_while_on() {
     let mut app = app!();
-    run(&mut app, &[Input::Backspace, Input::Turn(2), Input::Press]);
-    run(&mut app, &[Input::Turn(8)]);
-    assert_eq!(focus(app.state()), Some(keys::GNSS));
-    run(&mut app, &[Input::Press]);
+    open_category(&mut app, keys::GNSS);
     assert_eq!(focus(app.state()), Some(keys::GNSS_ENABLED));
-    run(&mut app, &[Input::Turn(4)]);
-    assert_eq!(focus(app.state()), Some(keys::GNSS_SATELLITES));
-    run(&mut app, &[Input::Turn(-4), Input::Press]);
+    turn_to(&mut app, keys::GNSS_SATELLITES);
+    turn_to(&mut app, keys::GNSS_ENABLED);
+    run(&mut app, &[Input::Press]);
     assert_eq!(app.state().node.gnss_enabled(), Some(false));
     run(&mut app, &[Input::Turn(1)]);
     assert_eq!(focus(app.state()), Some(keys::GNSS_ENABLED));
@@ -2849,8 +2885,7 @@ where
 fn a_contact_is_shared_as_a_card_that_saves_nothing_by_itself() {
     let mut app = app!();
     open_pat(&mut app);
-    run(&mut app, &[Input::Turn(1)]);
-    assert_eq!(focus(app.state()), Some(keys::PEER_SHARE));
+    turn_to(&mut app, keys::PEER_SHARE);
     run(&mut app, &[Input::Press]);
     assert!(matches!(app.state().screen(), Screen::ShareContact { .. }));
     let first = app.state().chats.first().map(|c| c.id).unwrap();
@@ -2877,7 +2912,10 @@ fn a_contact_is_shared_as_a_card_that_saves_nothing_by_itself() {
 
     // Forgotten, Pat's card opens what is known of them, unsaved.
     let peers = app.state().peers.len();
-    run(&mut app, &[Input::Turn(7), Input::Press, Input::Turn(-1), Input::Press]);
+    turn_to(&mut app, keys::PEER_FORGET);
+    run(&mut app, &[Input::Press]);
+    turn_to(&mut app, keys::FORGET_CONFIRM);
+    run(&mut app, &[Input::Press]);
     assert_eq!(app.state().peers.len(), peers - 1);
     // Forget goes back to where the page was opened from.
     assert!(matches!(app.state().screen(), Screen::Conversation { .. }));
@@ -2890,8 +2928,7 @@ fn a_contact_is_shared_as_a_card_that_saves_nothing_by_itself() {
     assert_eq!(member.sender.name.as_str(), "Pat Okafor");
     assert_eq!(focus(app.state()), Some(keys::MESSAGE_MEMBER));
     assert_eq!(app.state().peers.len(), peers - 1);
-    run(&mut app, &[Input::Turn(1)]);
-    assert_eq!(focus(app.state()), Some(keys::SAVE_PEER));
+    turn_to(&mut app, keys::SAVE_PEER);
     run(&mut app, &[Input::Press]);
     assert_eq!(app.state().peers.len(), peers);
 }
