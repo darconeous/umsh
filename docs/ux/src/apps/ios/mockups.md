@@ -184,6 +184,15 @@ bubble style; initials, names, grouping, and spacing distinguish them without a
 rainbow of sender colors. The user's outgoing bubble uses the platform accent
 and trailing alignment.
 
+## B3. Replying to a message
+
+[![Reply mockups: Reply in the message menu, the composer carrying a quote, replies in a direct chat and a channel, tapping a quote, missing originals, swipe to reply, and the quotes enlarged](mockups/replies.svg)](mockups/replies.svg)
+
+A reply is a text message with a Regarding option
+(`docs/protocol/src/app-text-messages.md`), as the communicator devices send. Boards 1, 2 and 7 start one; boards 3–6 show
+replies in the transcript. Board 8 shows the quote at a larger scale in each
+kind of bubble.
+
 ## C. Peers list
 
 ```text

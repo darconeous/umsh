@@ -466,6 +466,17 @@ struct StagingSeeder {
         let body: String
         let minutesAgo: Int
         var reactions: [(token: String, from: String?, minutesAgo: Int)] = []
+        /// What it replies to.
+        var replyTo: Reply? = nil
+        /// Taken back since.
+        var isDeleted = false
+
+        enum Reply {
+            /// An earlier line of the same script, by index.
+            case line(Int)
+            /// A message this phone never received.
+            case missing
+        }
 
         /// Said by the phone's owner.
         var isOutbound: Bool { speaker == nil }
@@ -486,12 +497,12 @@ struct StagingSeeder {
                 Line(speaker: "Maya Ortiz", body: "Heading up the north spur now. Should have eyes on the washout in about forty minutes.", minutesAgo: 96),
                 Line(speaker: nil, body: "Copy. Dev's already at the lower crossing with the saw.", minutesAgo: 94),
                 Line(speaker: "Maya Ortiz", body: "Perfect. Tell him the culvert at mile 3 is completely packed with gravel—we'll need the mattock.", minutesAgo: 91, reactions: [(token: "+1", from: nil, minutesAgo: 90)]),
-                Line(speaker: nil, body: "Passing it along. Radio check in an hour?", minutesAgo: 88),
+                Line(speaker: nil, body: "Passing it along. Radio check in an hour?", minutesAgo: 88, replyTo: .line(2)),
                 Line(speaker: "Maya Ortiz", body: "Works. Signal's holding fine off the ridge repeater up here.", minutesAgo: 86),
                 Line(speaker: "Maya Ortiz", body: "At the washout. It's worse than the photos—about twelve feet of tread gone and the uphill bank is still moving.", minutesAgo: 12),
                 Line(speaker: "Maya Ortiz", body: "Going to flag it and back off. Not something we fix today.", minutesAgo: 11),
                 Line(speaker: nil, body: "Agreed, don't push it. Flag both approaches and we'll scope it properly Thursday.", minutesAgo: 9, reactions: [(token: "+1", from: "Maya Ortiz", minutesAgo: 8)]),
-                Line(speaker: "Maya Ortiz", body: "On it. Heading back down to meet Dev.", minutesAgo: 4, reactions: [(token: "<3", from: nil, minutesAgo: 3)]),
+                Line(speaker: "Maya Ortiz", body: "On it. Heading back down to meet Dev.", minutesAgo: 4, reactions: [(token: "<3", from: nil, minutesAgo: 3)], replyTo: .line(7)),
             ]
         ),
         DirectScript(
@@ -502,8 +513,11 @@ struct StagingSeeder {
                 Line(speaker: "Dev Raman", body: "Two deadfalls across, both about 18 inches. Working the second one now.", minutesAgo: 137),
                 Line(speaker: nil, body: "Nice. Maya says bring the mattock when you head up—culvert at mile 3 is packed solid.", minutesAgo: 133),
                 Line(speaker: "Dev Raman", body: "Got it in the pack already. Give me an hour here.", minutesAgo: 131, reactions: [(token: "+1", from: nil, minutesAgo: 130)]),
+                Line(speaker: nil, body: "Can you check the sign at the upper junction on your way?", minutesAgo: 60, isDeleted: true),
+                Line(speaker: "Dev Raman", body: "Ha, saw you take that back. Checked it anyway, it's fine.", minutesAgo: 52, replyTo: .line(4)),
+                Line(speaker: "Dev Raman", body: "Still want me on that after lunch?", minutesAgo: 24, replyTo: .missing),
                 Line(speaker: "Dev Raman", body: "Second one's clear. Tread's in better shape than last season through here.", minutesAgo: 18),
-                Line(speaker: nil, body: "Good news for once.", minutesAgo: 16, reactions: [(token: "ha", from: "Dev Raman", minutesAgo: 15)]),
+                Line(speaker: nil, body: "Good news for once.", minutesAgo: 16, reactions: [(token: "ha", from: "Dev Raman", minutesAgo: 15)], replyTo: .line(7)),
             ]
         ),
         DirectScript(
@@ -526,10 +540,10 @@ struct StagingSeeder {
         Line(speaker: "Maya Ortiz", body: "Taking the north spur. Dev's on the lower crossing.", minutesAgo: 205),
         Line(speaker: "Dev Raman", body: "Two deadfalls down here, nothing we can't handle.", minutesAgo: 201),
         Line(speaker: nil, body: "I'll stage the tools at the Echo lot for Thursday. Anyone need anything specific?", minutesAgo: 198),
-        Line(speaker: "Jules Whitaker", body: "Another rock bar if we have one. The one we've got is bent.", minutesAgo: 194, reactions: [(token: "ha", from: "Dev Raman", minutesAgo: 192)]),
+        Line(speaker: "Jules Whitaker", body: "Another rock bar if we have one. The one we've got is bent.", minutesAgo: 194, reactions: [(token: "ha", from: "Dev Raman", minutesAgo: 192)], replyTo: .line(3)),
         Line(speaker: "Echo Basecamp", body: "Reminder that the upper loop is still closed to stock until the bridge inspection clears.", minutesAgo: 150),
         Line(speaker: "Maya Ortiz", body: "Washout at the north spur is bigger than reported. Twelve feet of tread gone, bank still active. Flagging both approaches.", minutesAgo: 12, reactions: [(token: "!", from: "Echo Basecamp", minutesAgo: 11), (token: "!", from: "Jules Whitaker", minutesAgo: 10), (token: "!", from: nil, minutesAgo: 9)]),
-        Line(speaker: "Echo Basecamp", body: "Noted. I'll get it on the closure list tonight and pull the district engineer in.", minutesAgo: 8),
+        Line(speaker: "Echo Basecamp", body: "Noted. I'll get it on the closure list tonight and pull the district engineer in.", minutesAgo: 8, replyTo: .line(6)),
         Line(speaker: nil, body: "Thanks. Nobody goes past the flags until we've scoped it properly.", minutesAgo: 6, reactions: [(token: "+1", from: "Maya Ortiz", minutesAgo: 5), (token: "+1", from: "Jules Whitaker", minutesAgo: 4)]),
     ]
 
@@ -581,7 +595,14 @@ struct StagingSeeder {
                         senderAddress: from?.address,
                         senderHint: from?.hint
                     )
-                }
+                },
+                regarding: line.replyTo.map { reply in
+                    switch reply {
+                    case let .line(index): .message(UInt32(index + 1))
+                    case .missing: .missing
+                    }
+                },
+                isDeleted: line.isDeleted
             )
         }
     }

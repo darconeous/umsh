@@ -86,6 +86,14 @@ actor FakeRadioConnection: RadioConnection {
         #endif
     }
 
+    /// Ask the staging air to have a staged peer reply to the phone's last
+    /// message to it.
+    func stagedPeerReplies(body: String) async {
+        #if DEBUG
+        await (air as? StagingMeshAir)?.replyFromPeer(body: body)
+        #endif
+    }
+
     /// Ask the staging air to have a staged peer open Add Peer, and with
     /// `asking`, ask the phone to exchange contacts once it lists it.
     func stagedPeerMeets(asking: Bool) async {
@@ -1117,6 +1125,21 @@ actor FakeRadioConnection: RadioConnection {
     ) async throws -> MobileChatComposeBatchRecord {
         guard let meshSession else { throw RadioConnectionError.incompatibleProtocol }
         return try await meshSession.composeReaction(
+            conversationAddress: conversationAddress,
+            clientToken: clientToken,
+            target: target,
+            body: body
+        )
+    }
+
+    func composeReply(
+        conversationAddress: String,
+        clientToken: UInt32,
+        target: MobileChatRegardingRef,
+        body: String
+    ) async throws -> MobileChatComposeBatchRecord {
+        guard let meshSession else { throw RadioConnectionError.incompatibleProtocol }
+        return try await meshSession.composeReply(
             conversationAddress: conversationAddress,
             clientToken: clientToken,
             target: target,

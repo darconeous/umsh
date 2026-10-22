@@ -60,6 +60,7 @@ struct SettingsView: View {
     /// Debug builds only, and meaningful only in staging mode.
     var stagedPeerSendsMessage: ((Bool) -> Void)? = nil
     var stagedPeerReacts: (() -> Void)? = nil
+    var stagedPeerReplies: (() -> Void)? = nil
     var stagedPeerMeets: ((Bool) -> Void)? = nil
     var stagedDropTransmissions: ((Bool) -> Void)? = nil
     /// Staging only: whether the canned remote devices answer at all.
@@ -237,6 +238,11 @@ struct SettingsView: View {
                 if stagingEnabled, let stagedPeerReacts {
                     Button("Staged Reaction in 5 Seconds") {
                         stagedPeerReacts()
+                    }
+                }
+                if stagingEnabled, let stagedPeerReplies {
+                    Button("Staged Reply in 5 Seconds") {
+                        stagedPeerReplies()
                     }
                 }
                 if stagingEnabled, let stagedPeerMeets {

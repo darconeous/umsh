@@ -1579,6 +1579,14 @@ public protocol MobileMeshSessionProtocol: AnyObject, Sendable {
     func composeReaction(conversationAddress: String, clientToken: UInt32, target: MobileChatRegardingRef, body: String) async throws  -> MobileChatComposeBatchRecord
 
     /**
+     * Send a text message in reply to `target`, which, as for a reaction,
+     * may be either party's message and one persisted before this launch.
+     * Where the original can no longer be named, the text goes as a plain
+     * message.
+     */
+    func composeReply(conversationAddress: String, clientToken: UInt32, target: MobileChatRegardingRef, body: String) async throws  -> MobileChatComposeBatchRecord
+
+    /**
      * Compose a message into a conversation, addressed either by a peer's
      * address or by a channel's conversation address.
      */
@@ -2496,6 +2504,28 @@ open func composeReaction(conversationAddress: String, clientToken: UInt32, targ
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
                 uniffi_umsh_mobile_core_fn_method_mobilemeshsession_compose_reaction(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(conversationAddress),FfiConverterUInt32.lower(clientToken),FfiConverterTypeMobileChatRegardingRef_lower(target),FfiConverterString.lower(body)
+                )
+            },
+            pollFunc: ffi_umsh_mobile_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_umsh_mobile_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_umsh_mobile_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeMobileChatComposeBatchRecord_lift,
+            errorHandler: FfiConverterTypeMobileMeshError_lift
+        )
+}
+
+    /**
+     * Send a text message in reply to `target`, which, as for a reaction,
+     * may be either party's message and one persisted before this launch.
+     * Where the original can no longer be named, the text goes as a plain
+     * message.
+     */
+open func composeReply(conversationAddress: String, clientToken: UInt32, target: MobileChatRegardingRef, body: String)async throws  -> MobileChatComposeBatchRecord  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_umsh_mobile_core_fn_method_mobilemeshsession_compose_reply(
                         self.uniffiCloneHandle(),FfiConverterString.lower(conversationAddress),FfiConverterUInt32.lower(clientToken),FfiConverterTypeMobileChatRegardingRef_lower(target),FfiConverterString.lower(body)
                 )
             },
@@ -21664,6 +21694,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_compose_reaction() != 47417) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_compose_reply() != 30432) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_compose_text() != 46919) {

@@ -1,5 +1,6 @@
 import Foundation
 import SQLite3
+import UMSHMobileCore
 
 @main
 struct PersistenceSmokeTest {
@@ -207,13 +208,97 @@ struct PersistenceSmokeTest {
         // Opening an already migrated store must also succeed.
         _ = try SQLiteApplicationStore(path: historicalURL.path)
 
-        print("SQLite tier, delete/demote, retention, migration, and upgrade checks passed")
+        try await checkReplies(store)
+
+        print("SQLite tier, delete/demote, retention, migration, upgrade, and reply checks passed")
 
         // Seeding tens of thousands of rows takes long enough that the ordinary
         // smoke run should not pay for it.
         if ProcessInfo.processInfo.environment["UMSH_CHAT_BENCH"] == "1" {
             try await runChatScaleBenchmark()
         }
+    }
+
+    /// A reply quotes its original as that reads now: found by live handle or
+    /// by wire coordinates, adopted when it arrives after the reply, shown as
+    /// deleted once taken back, and unavailable when it never comes.
+    private static func checkReplies(_ store: SQLiteApplicationStore) async throws {
+        let peer = "reply-peer"
+        func message(
+            session: UInt64,
+            handle: UInt32,
+            revision: UInt32 = 0,
+            kind: MobileChatMutationKind = .insert,
+            direction: MobileChatDirection = .inbound,
+            wireId: UInt8? = nil,
+            body: String? = nil,
+            regardingHandle: UInt32? = nil,
+            regardingWireId: UInt8? = nil,
+            originalHandle: UInt32? = nil,
+            presence: MobileChatPresence = .present
+        ) -> MobileChatMutationRecord {
+            MobileChatMutationRecord(
+                sessionId: session, handle: handle, revision: revision, kind: kind,
+                conversationAddress: peer, senderAddress: nil, senderHint: nil,
+                direction: direction, messageType: 0, wireId: wireId, epoch: 0,
+                clientToken: nil, senderHandle: nil, regardingHandle: regardingHandle,
+                regardingWireId: regardingWireId,
+                regardingDirection: regardingWireId == nil ? nil : .inbound,
+                regardingSenderHint: nil, backgroundColor: nil, textColor: nil,
+                originalHandle: originalHandle, originalWireId: nil, originalDirection: nil,
+                originalSenderHint: nil, body: body, complete: true, presentFragments: 1,
+                fragmentCount: 1, finalized: true, presence: presence, receivedLate: false,
+                notify: false, rx: nil
+            )
+        }
+        func page() async throws -> [String: StoredChatMessage] {
+            let page = try await store.chatMessagePage(
+                ownerIdentityID: "alice",
+                conversationAddress: peer,
+                newest: 100
+            )
+            return Dictionary(uniqueKeysWithValues: page.messages.map { ($0.body, $0) })
+        }
+
+        _ = try await store.applyChatMutations(ownerIdentityID: "alice", mutations: [
+            message(session: 100, handle: 1, wireId: 5, body: "Is the repeater up?"),
+            // Same session: named by its live handle.
+            message(session: 100, handle: 2, direction: .outbound, wireId: 1,
+                    body: "Since this morning.", regardingHandle: 1),
+        ])
+        _ = try await store.applyChatMutations(ownerIdentityID: "alice", mutations: [
+            // A later session: named by wire coordinates.
+            message(session: 200, handle: 1, wireId: 6, body: "Three hops?", regardingWireId: 5),
+            // Ahead of its original.
+            message(session: 200, handle: 2, wireId: 8, body: "Bring the antenna.",
+                    regardingWireId: 7),
+            // Never answered by anything stored.
+            message(session: 200, handle: 3, wireId: 9, body: "Ten minutes late.",
+                    regardingWireId: 77),
+            // A gap that turns out to be a reply once repaired.
+            message(session: 200, handle: 4, wireId: 10, body: "", presence: .gapPending),
+        ])
+        var rows = try await page()
+        precondition(rows["Since this morning."]?.quote?.original?.body == "Is the repeater up?")
+        precondition(rows["Three hops?"]?.quote?.original?.ref.id == "100:1")
+        precondition(rows["Bring the antenna."]?.isReply == true)
+        precondition(rows["Bring the antenna."]?.quote?.original == nil)
+        precondition(rows["Ten minutes late."]?.quote == .unavailable)
+        precondition(rows["Is the repeater up?"]?.quote == nil, "an original is not a reply")
+
+        _ = try await store.applyChatMutations(ownerIdentityID: "alice", mutations: [
+            message(session: 200, handle: 5, wireId: 7, body: "The antenna is in the truck."),
+            message(session: 200, handle: 4, revision: 1, wireId: 10, body: "Filled in.",
+                    regardingWireId: 7),
+            message(session: 100, handle: 6, kind: .delete, originalHandle: 1),
+        ])
+        rows = try await page()
+        precondition(
+            rows["Bring the antenna."]?.quote?.original?.body == "The antenna is in the truck.",
+            "a reply that outran its original adopts it"
+        )
+        precondition(rows["Filled in."]?.quote?.original?.ref.id == "200:5")
+        precondition(rows["Three hops?"]?.quote?.original?.isDeleted == true)
     }
 
     private static func node(_ nodes: [StoredNode], _ address: String) -> StoredNode {

@@ -76,6 +76,15 @@ struct ConversationThreadView: View {
     @State private var resendingMessage: ChatMessageSummary?
     @State private var inspectedMember: InspectedMember?
     @State private var inspectedMessage: ChatMessageSummary?
+    /// The message the draft replies to. Held here, like the communicator's
+    /// conversation screen: leaving drops the reply and keeps the text.
+    @State private var replyTarget: ChatMessageSummary?
+    /// Bumped to put the cursor in the composer.
+    @State private var composerFocusRequest = 0
+    /// The row just shown from a quote, flashed so the eye finds it.
+    @State private var highlightedMessageID: String?
+    /// A row already in the window to bring into view, animated.
+    @State private var revealRequest = TranscriptRestoreAnchor()
     @Environment(\.visibleConversationReporter) private var visibleConversationReporter
     @Environment(\.transcriptLoader) private var transcriptLoader
     @State private var transcript = TranscriptWindow()
@@ -252,7 +261,14 @@ struct ConversationThreadView: View {
                                             || (message.isOutbound
                                                 && message.deliveryState?.lowercased() == "failed")
                                             ? nil
-                                            : { glyph in react(to: message, with: glyph) }
+                                            : { glyph in react(to: message, with: glyph) },
+                                        onReply: canReply(to: message)
+                                            ? { startReply(to: message) }
+                                            : nil,
+                                        quoteName: message.reply.flatMap(quoteName(for:)),
+                                        onOpenQuote: message.reply?.targetID.map { target in
+                                            { Task { await openQuote(target) } }
+                                        }
                                     )
                                     // Every bubble measures a UITextView, so
                                     // an unrelated invalidation (a radio
@@ -260,6 +276,23 @@ struct ConversationThreadView: View {
                                     // would otherwise re-measure the whole
                                     // non-lazy transcript.
                                     .equatable()
+                                    .modifier(
+                                        ReplySwipe(
+                                            isOutbound: message.isOutbound,
+                                            onReply: canReply(to: message)
+                                                ? { startReply(to: message) }
+                                                : nil
+                                        )
+                                    )
+                                    .background {
+                                        // Full width, past the transcript's
+                                        // margins, but never above or below the
+                                        // row, where neighbors would cover it.
+                                        conversation.security.tint
+                                            .opacity(highlightedMessageID == message.id ? 0.14 : 0)
+                                            .padding(.horizontal, -16)
+                                            .allowsHitTesting(false)
+                                    }
                                     .padding(.top, presentation.topSpacing)
                                     .id(item.id)
                                 case let .dateSeparator(_, date):
@@ -357,6 +390,12 @@ struct ConversationThreadView: View {
                     .onChange(of: scrollToBottomRequest) { _, _ in
                         scheduleScrollToBottom(proxy, animated: transcript.hasLoadedOnce)
                     }
+                    .onChange(of: revealRequest) { _, request in
+                        guard let id = request.messageID else { return }
+                        withAnimation {
+                            proxy.scrollTo(id, anchor: request.anchor)
+                        }
+                    }
                     .onChange(of: restoreAnchor) { _, anchor in
                         guard let id = anchor.messageID else { return }
                         // After a page lands above the reader, put the row they
@@ -365,7 +404,7 @@ struct ConversationThreadView: View {
                         // SwiftUI measure the new rows before the target is
                         // resolved, the same deferral the bottom scroll uses.
                         DispatchQueue.main.async {
-                            proxy.scrollTo(id, anchor: .top)
+                            proxy.scrollTo(id, anchor: anchor.anchor)
                             guard anchor.thenScrollToBottom else { return }
                             // Chained rather than requested alongside: issued
                             // together the two resolve in one tick and the
@@ -411,6 +450,11 @@ struct ConversationThreadView: View {
                 security: conversation.security,
                 blocked: composerBlock,
                 canSend: canSendNow,
+                reply: replyTarget.map { target in
+                    ComposerReply(name: replyName(for: target), line: MessageQuote.oneLine(target.body))
+                },
+                cancelReply: { replyTarget = nil },
+                focusRequest: composerFocusRequest,
                 send: { await send() }
             )
             .safeAreaInset(edge: .top) {
@@ -1009,7 +1053,7 @@ struct ConversationThreadView: View {
 
     /// Open the window on a particular message, for a search result that has to
     /// be shown in its context rather than at the end of the conversation.
-    func focus(messageID: String) async {
+    func focus(messageID: String, anchor: UnitPoint = .top) async {
         guard let page = await transcriptLoader.around(
             conversation.conversationAddress,
             messageID,
@@ -1024,7 +1068,59 @@ struct ConversationThreadView: View {
         withTransaction(transaction) {
             transcript.replace(with: page, revision: conversation.messageRevision)
         }
-        restoreAnchor = restoreAnchor.moved(to: messageID)
+        restoreAnchor = restoreAnchor.moved(to: messageID, anchor: anchor)
+    }
+
+    // MARK: Replies
+
+    /// Whether a reply could name this message. One of mine that never went
+    /// out cannot be named to anyone.
+    private func canReply(to message: ChatMessageSummary) -> Bool {
+        !message.isDeleted && !message.isGapPlaceholder && !message.isUnavailable
+            && !(message.isOutbound && message.deliveryState?.lowercased() == "failed")
+    }
+
+    private func startReply(to message: ChatMessageSummary) {
+        withAnimation(UMSHAnimation.accessory) { replyTarget = message }
+        composerFocusRequest += 1
+    }
+
+    /// Who the composer says the draft replies to.
+    private func replyName(for message: ChatMessageSummary) -> String {
+        if message.isOutbound { return "yourself" }
+        return isChannel ? memberName(for: message) : conversation.title
+    }
+
+    /// Who a quote names: me, the peer of a direct chat, or the member of a
+    /// channel by the same rules as their own messages' labels. A quote of a
+    /// message that is not here cannot say whose it was.
+    private func quoteName(for quote: MessageQuote) -> String? {
+        guard quote.state != .unavailable else { return nil }
+        if quote.isOutbound { return "You" }
+        guard isChannel else { return conversation.title }
+        return memberName(
+            address: quote.senderAddress,
+            handle: quote.senderHandle,
+            hintLabel: quote.senderNodeHint?.text
+        )
+    }
+
+    /// Show the message a quote is of: scrolled to where it is in the window,
+    /// or the window opened around it, and its row flashed.
+    private func openQuote(_ targetID: String) async {
+        let loaded = transcript.rows.contains { $0.id == targetID }
+        if loaded {
+            // Leaving the live edge: nothing should pull the reader back to it.
+            scroll.followsLatestMessage = false
+            revealRequest = revealRequest.moved(to: targetID, anchor: .center)
+        } else {
+            await focus(messageID: targetID, anchor: .center)
+        }
+        highlightedMessageID = targetID
+        try? await Task.sleep(for: .milliseconds(loaded ? 450 : 250))
+        withAnimation(.easeOut(duration: 0.8)) {
+            if highlightedMessageID == targetID { highlightedMessageID = nil }
+        }
     }
 
     /// React to where the reader has got to: pull past an edge and the page
@@ -1101,9 +1197,18 @@ struct ConversationThreadView: View {
             showsBlockedReason = true
             return
         }
-        switch await sendMessage(conversation, body) {
+        let replying = replyTarget
+        let result = if let replying {
+            await messageActions.reply(conversation, replying, body)
+        } else {
+            await sendMessage(conversation, body)
+        }
+        switch result {
         case let .sent(updatedConversation, warning):
             conversation = updatedConversation
+            if replyTarget == replying {
+                withAnimation(UMSHAnimation.accessory) { replyTarget = nil }
+            }
             if let warning {
                 sendFailureMessage = warning
                 messageWasSubmitted = true
@@ -1167,13 +1272,21 @@ struct ConversationThreadView: View {
     /// can write any name there. It is useful precisely when we know nothing
     /// else, and must never displace a name this phone established itself.
     private func memberName(for message: ChatMessageSummary) -> String {
-        if let address = message.senderAddress, let peer = knownPeer(address: address) {
+        memberName(
+            address: message.senderAddress,
+            handle: message.senderHandle,
+            hintLabel: message.senderHintLabel
+        )
+    }
+
+    private func memberName(address: String?, handle: String?, hintLabel: String?) -> String {
+        if let address, let peer = knownPeer(address: address) {
             return peer.displayName
         }
-        if let handle = message.senderHandle, !handle.isEmpty { return handle }
-        if let address = message.senderAddress { return String(address.prefix(10)) }
-        guard let hint = message.senderHintLabel else { return "Unknown member" }
-        return "Member \(hint)"
+        if let handle, !handle.isEmpty { return handle }
+        if let address { return String(address.prefix(10)) }
+        guard let hintLabel else { return "Unknown member" }
+        return "Member \(hintLabel)"
     }
 
     /// A peer this phone has saved, whether or not a direct chat with them

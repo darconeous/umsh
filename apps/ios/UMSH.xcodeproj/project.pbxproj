@@ -104,6 +104,7 @@
 		10000000000000000000003B /* UMSH/Features/Conversations/TranscriptScrollSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20000000000000000000003B /* UMSH/Features/Conversations/TranscriptScrollSupport.swift */; };
 		10000000000000000000003C /* UMSH/Features/Conversations/ChatMessageBubble.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20000000000000000000003C /* UMSH/Features/Conversations/ChatMessageBubble.swift */; };
 		10000000000000000000003D /* UMSH/Features/Conversations/MessageComposer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20000000000000000000003D /* UMSH/Features/Conversations/MessageComposer.swift */; };
+		10000000000000000000AF01 /* UMSH/Features/Conversations/MessageReplies.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20000000000000000000AF01 /* UMSH/Features/Conversations/MessageReplies.swift */; };
 		100000000000000000000051 /* UMSH/Features/Conversations/MessageReactions.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000051 /* UMSH/Features/Conversations/MessageReactions.swift */; };
 		100000000000000000000052 /* UMSH/Features/Conversations/ConversationSecurity.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000052 /* UMSH/Features/Conversations/ConversationSecurity.swift */; };
 		10000000000000000000003E /* UMSH/Features/Map/NodeMapView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20000000000000000000003E /* UMSH/Features/Map/NodeMapView.swift */; };
@@ -241,6 +242,7 @@
 		20000000000000000000003B /* UMSH/Features/Conversations/TranscriptScrollSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Features/Conversations/TranscriptScrollSupport.swift; sourceTree = "<group>"; };
 		20000000000000000000003C /* UMSH/Features/Conversations/ChatMessageBubble.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Features/Conversations/ChatMessageBubble.swift; sourceTree = "<group>"; };
 		20000000000000000000003D /* UMSH/Features/Conversations/MessageComposer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Features/Conversations/MessageComposer.swift; sourceTree = "<group>"; };
+		20000000000000000000AF01 /* UMSH/Features/Conversations/MessageReplies.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Features/Conversations/MessageReplies.swift; sourceTree = "<group>"; };
 		200000000000000000000051 /* UMSH/Features/Conversations/MessageReactions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Features/Conversations/MessageReactions.swift; sourceTree = "<group>"; };
 		200000000000000000000052 /* UMSH/Features/Conversations/ConversationSecurity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Features/Conversations/ConversationSecurity.swift; sourceTree = "<group>"; };
 		20000000000000000000003E /* UMSH/Features/Map/NodeMapView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Features/Map/NodeMapView.swift; sourceTree = "<group>"; };
@@ -390,6 +392,7 @@
 				20000000000000000000003B /* UMSH/Features/Conversations/TranscriptScrollSupport.swift */,
 				20000000000000000000003C /* UMSH/Features/Conversations/ChatMessageBubble.swift */,
 				20000000000000000000003D /* UMSH/Features/Conversations/MessageComposer.swift */,
+				20000000000000000000AF01 /* UMSH/Features/Conversations/MessageReplies.swift */,
 				200000000000000000000051 /* UMSH/Features/Conversations/MessageReactions.swift */,
 				200000000000000000000052 /* UMSH/Features/Conversations/ConversationSecurity.swift */,
 				20000000000000000000000F /* UMSH/DesignSystem/CanonicalAddressView.swift */,
@@ -714,6 +717,7 @@
 				10000000000000000000003B /* UMSH/Features/Conversations/TranscriptScrollSupport.swift in Sources */,
 				10000000000000000000003C /* UMSH/Features/Conversations/ChatMessageBubble.swift in Sources */,
 				10000000000000000000003D /* UMSH/Features/Conversations/MessageComposer.swift in Sources */,
+				10000000000000000000AF01 /* UMSH/Features/Conversations/MessageReplies.swift in Sources */,
 				100000000000000000000051 /* UMSH/Features/Conversations/MessageReactions.swift in Sources */,
 				100000000000000000000052 /* UMSH/Features/Conversations/ConversationSecurity.swift in Sources */,
 				10000000000000000000000F /* UMSH/DesignSystem/CanonicalAddressView.swift in Sources */,

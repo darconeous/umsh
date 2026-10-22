@@ -1603,6 +1603,21 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
         )
     }
 
+    func composeReply(
+        conversationAddress: String,
+        clientToken: UInt32,
+        target: MobileChatRegardingRef,
+        body: String
+    ) async throws -> MobileChatComposeBatchRecord {
+        let session = try await currentMeshSession()
+        return try await session.composeReply(
+            conversationAddress: conversationAddress,
+            clientToken: clientToken,
+            target: target,
+            body: body
+        )
+    }
+
     func commitChatBatch(_ batchID: UInt64) async throws {
         let session = try await currentMeshSession()
         try await session.commitChatBatch(batchId: batchID)

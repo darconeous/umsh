@@ -9,6 +9,12 @@ struct ComposerBlock: Equatable {
     let actionLabel: String
 }
 
+/// Whom and what the draft replies to, as the composer quotes it.
+struct ComposerReply: Equatable {
+    let name: String
+    let line: String
+}
+
 /// Where a message is written: a capsule field floating over the transcript,
 /// or—with nothing able to carry a message—the reason and the way to fix
 /// it.
@@ -30,6 +36,11 @@ struct MessageComposer: View {
     /// link states—a reconnect, an attach in progress—where the field
     /// stays put so typing is not interrupted, and only the send button waits.
     let canSend: Bool
+    /// What the draft replies to, quoted at the top of the field.
+    var reply: ComposerReply? = nil
+    var cancelReply: () -> Void = {}
+    /// Bumped to put the cursor in the field.
+    var focusRequest = 0
     let send: () async -> Void
 
     @Environment(\.openRadioDetail) private var openRadioDetail
@@ -65,24 +76,45 @@ struct MessageComposer: View {
     }
 
     private var field: some View {
-        ZStack(alignment: .topLeading) {
-            HardwareAwareMessageEditor(
-                text: $draft,
-                trailingTextInset: 34,
-                onHardwareReturn: { Task { await send() } }
-            )
-            if draft.isEmpty {
-                Text(placeholder)
-                    .foregroundStyle(.tertiary)
-                    .padding(.horizontal, HardwareAwareMessageEditor.leadingTextInset)
-                    .padding(.vertical, HardwareAwareMessageEditor.verticalTextInset)
-                    .allowsHitTesting(false)
+        VStack(spacing: 0) {
+            if let reply {
+                ComposerReplyStrip(
+                    name: reply.name,
+                    line: reply.line,
+                    security: security,
+                    cancel: cancelReply
+                )
+                .padding([.horizontal, .top], 6)
+                .transition(.opacity)
+            }
+            ZStack(alignment: .topLeading) {
+                HardwareAwareMessageEditor(
+                    text: $draft,
+                    trailingTextInset: 34,
+                    focusRequest: focusRequest,
+                    onHardwareReturn: { Task { await send() } }
+                )
+                if draft.isEmpty {
+                    Text(placeholder)
+                        .foregroundStyle(.tertiary)
+                        .padding(.horizontal, HardwareAwareMessageEditor.leadingTextInset)
+                        .padding(.vertical, HardwareAwareMessageEditor.verticalTextInset)
+                        .allowsHitTesting(false)
+                }
             }
         }
         .background {
-            Capsule()
-                .stroke(Color(uiColor: .separator), lineWidth: 0.5)
+            // A capsule holds one line; carrying a quote, the field is a
+            // rounded rectangle that keeps the quote's corners.
+            if reply == nil {
+                Capsule()
+                    .stroke(Color(uiColor: .separator), lineWidth: 0.5)
+            } else {
+                RoundedRectangle(cornerRadius: 20, style: .continuous)
+                    .stroke(Color(uiColor: .separator), lineWidth: 0.5)
+            }
         }
+        .animation(UMSHAnimation.accessory, value: reply)
         .overlay(alignment: .bottomTrailing) {
             // Absent rather than disabled while the field is empty, as in
             // Messages: the button arriving is what says the message is ready
@@ -142,6 +174,8 @@ struct HardwareAwareMessageEditor: UIViewRepresentable {
     /// Room kept clear at the trailing edge for the send button, which sits
     /// inside the field rather than beside it.
     var trailingTextInset: CGFloat = 4
+    /// Bumped to make the field first responder.
+    var focusRequest = 0
     let onHardwareReturn: () -> Void
 
     func makeCoordinator() -> Coordinator {
@@ -177,6 +211,10 @@ struct HardwareAwareMessageEditor: UIViewRepresentable {
             textView.textContainerInset = textInsets
         }
         textView.onHardwareReturn = onHardwareReturn
+        if context.coordinator.focusRequest != focusRequest {
+            context.coordinator.focusRequest = focusRequest
+            DispatchQueue.main.async { textView.becomeFirstResponder() }
+        }
     }
 
     private var textInsets: UIEdgeInsets {
@@ -208,6 +246,8 @@ struct HardwareAwareMessageEditor: UIViewRepresentable {
 
     final class Coordinator: NSObject, UITextViewDelegate {
         @Binding private var text: String
+        /// The focus request already acted on.
+        var focusRequest = 0
 
         init(text: Binding<String>) {
             _text = text

@@ -406,6 +406,40 @@ impl MobileChatState {
         )
     }
 
+    /// A text message in reply to another. A reply whose original can no
+    /// longer be named goes as a plain message: what was written still
+    /// goes, without the quote.
+    pub fn compose_reply(
+        &mut self,
+        conversation: ConversationKey,
+        client_token: u32,
+        target: &MobileChatRegardingRef,
+        body: &str,
+        now_ms: u64,
+    ) -> Result<ComposedChatBatch, ComposeFailure> {
+        let Some(regarding) = self.regarding_ref(target) else {
+            return self.compose_text(conversation, client_token, body, now_ms);
+        };
+        let reply = self.compose_batch(
+            conversation,
+            client_token,
+            ComposeIntent::Reply {
+                body,
+                regarding,
+                status: false,
+            },
+            now_ms,
+        );
+        // Anything else the engine refuses a reply for, it refuses the
+        // plain message for too.
+        match reply {
+            Err(ComposeFailure::Refused) => {
+                self.compose_text(conversation, client_token, body, now_ms)
+            }
+            composed => composed,
+        }
+    }
+
     /// Release the frames of the batch Swift has stored.
     pub fn commit(&mut self, batch_id: u64) -> Option<Outbound> {
         let batch = self.pending.take_if(|batch| batch.id() == batch_id)?;
@@ -1198,6 +1232,99 @@ mod tests {
         assert!(
             cold.compose_reaction(direct(), 9, &target, "<3", 0)
                 .is_err()
+        );
+    }
+
+    /// A reply is ordinary text carrying the reference, so the platform can
+    /// quote what it answers.
+    #[test]
+    fn compose_reply_exports_basic_regarding() {
+        let (mut state, tag) = state_with_channel();
+        let conversation = ConversationKey::ChannelGroup { channel: tag };
+        let hint = vec![0x33, 0x44, 0x55];
+        let target = MobileChatRegardingRef {
+            session_id: state.session_id().wrapping_add(1),
+            handle: 0,
+            wire_id: Some(9),
+            direction: Some(MobileChatDirection::Inbound),
+            sender_hint: Some(hint.clone()),
+            epoch: Some(0),
+        };
+        let composed = state
+            .compose_reply(conversation, 1, &target, "Spikes were plenty.", 0)
+            .expect("reply composes against a persisted target");
+        let insert = composed
+            .record
+            .mutations
+            .iter()
+            .find(|mutation| mutation.kind == MobileChatMutationKind::Insert)
+            .expect("insert mutation");
+        assert_eq!(insert.message_type, Some(0), "a reply is basic text");
+        assert_eq!(insert.body.as_deref(), Some("Spikes were plenty."));
+        assert_eq!(insert.regarding_wire_id, Some(9));
+        assert_eq!(
+            insert.regarding_direction,
+            Some(MobileChatDirection::Inbound)
+        );
+        assert_eq!(insert.regarding_sender_hint, Some(hint));
+    }
+
+    /// Where the original can no longer be named, what was written still
+    /// goes, as a plain message.
+    #[test]
+    fn reply_to_unnamed_original_goes_as_plain_text() {
+        let mut first = empty_state();
+        let composed = first
+            .compose_text(direct(), 7, "mine", 0)
+            .expect("compose succeeds");
+        let insert = composed
+            .record
+            .mutations
+            .iter()
+            .find(|mutation| mutation.kind == MobileChatMutationKind::Insert)
+            .expect("insert mutation");
+        let target = MobileChatRegardingRef {
+            session_id: insert.session_id,
+            handle: insert.handle,
+            wire_id: insert.wire_id,
+            direction: Some(MobileChatDirection::Outbound),
+            sender_hint: None,
+            epoch: insert.epoch,
+        };
+
+        // No continuity: the engine refuses the reference.
+        let mut cold = empty_state();
+        let plain = cold
+            .compose_reply(direct(), 8, &target, "still going", 0)
+            .expect("the text still composes");
+        let insert = plain
+            .record
+            .mutations
+            .iter()
+            .find(|mutation| mutation.kind == MobileChatMutationKind::Insert)
+            .expect("insert mutation");
+        assert_eq!(insert.message_type, Some(0));
+        assert_eq!(insert.body.as_deref(), Some("still going"));
+        assert_eq!(insert.regarding_handle, None);
+        assert_eq!(insert.regarding_wire_id, None);
+
+        // No wire identity and a foreign session: nothing to name it by.
+        assert!(cold.commit(plain.record.batch_id).is_some());
+        let unnamed = MobileChatRegardingRef {
+            session_id: cold.session_id().wrapping_add(1),
+            wire_id: None,
+            ..target
+        };
+        let plain = cold
+            .compose_reply(direct(), 9, &unnamed, "again", 1)
+            .expect("the text still composes");
+        assert!(
+            plain
+                .record
+                .mutations
+                .iter()
+                .all(|mutation| mutation.regarding_wire_id.is_none()
+                    && mutation.regarding_handle.is_none())
         );
     }
 

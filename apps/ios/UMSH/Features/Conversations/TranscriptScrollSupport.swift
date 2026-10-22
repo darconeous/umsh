@@ -78,12 +78,19 @@ struct TranscriptRestoreAnchor: Equatable {
     /// gives the animation a short distance to travel instead of a jump
     /// through thousands of messages that were never loaded.
     var thenScrollToBottom = false
+    /// Where in the viewport the row lands.
+    var anchor: UnitPoint = .top
 
-    func moved(to id: String?, thenScrollToBottom: Bool = false) -> TranscriptRestoreAnchor {
+    func moved(
+        to id: String?,
+        anchor: UnitPoint = .top,
+        thenScrollToBottom: Bool = false
+    ) -> TranscriptRestoreAnchor {
         TranscriptRestoreAnchor(
             messageID: id,
             generation: generation + 1,
-            thenScrollToBottom: thenScrollToBottom
+            thenScrollToBottom: thenScrollToBottom,
+            anchor: anchor
         )
     }
 }

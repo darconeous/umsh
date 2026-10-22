@@ -192,6 +192,35 @@ actor StagingMeshAir: FakeRadioAir {
         pumpPeer(index)
     }
 
+    /// Have a staged peer reply to the last thing the phone said to it, over
+    /// the same real path as a reaction, so the phone's core resolves what
+    /// the reply quotes.
+    func replyFromPeer(body: String) async {
+        let logger = Logger(subsystem: "com.voria.umsh.ios", category: "Staging")
+        let peers = await ensurePeers()
+        guard let index = peers.indices.first else { return }
+        guard let target = lastHeard[index] else {
+            logger.warning("Staged reply dropped: the phone has not said anything yet")
+            return
+        }
+        guard let phoneAddress else { return }
+        do {
+            let batch = try await peers[index].session.composeReply(
+                conversationAddress: phoneAddress,
+                clientToken: UInt32.random(in: 1...UInt32.max),
+                target: target,
+                body: body
+            )
+            try await peers[index].session.commitChatBatch(batchId: batch.batchId)
+            logger.notice("Staged peer \(peers[index].name, privacy: .public) replied")
+        } catch {
+            logger.warning(
+                "Staged reply failed: \(error.localizedDescription, privacy: .public)"
+            )
+        }
+        pumpPeer(index)
+    }
+
     /// Have the first staged peer open Add Peer as a T-LoRa Pager would, so
     /// it shows on the phone's Nearby. `asking`, it asks the phone to
     /// exchange as soon as it lists it. It agrees when asked, presses Same a

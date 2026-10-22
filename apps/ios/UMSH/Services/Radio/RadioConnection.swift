@@ -431,6 +431,14 @@ protocol RadioConnection: AnyObject, Sendable {
         target: MobileChatRegardingRef,
         body: String
     ) async throws -> MobileChatComposeBatchRecord
+    /// Send text in reply to a message, named the same way a reaction's
+    /// target is. Where it can no longer be named, the text goes plain.
+    func composeReply(
+        conversationAddress: String,
+        clientToken: UInt32,
+        target: MobileChatRegardingRef,
+        body: String
+    ) async throws -> MobileChatComposeBatchRecord
     func commitChatBatch(_ batchID: UInt64) async throws
     func rejectChatBatch(
         _ batchID: UInt64,

@@ -2763,6 +2763,24 @@ final class AppRuntime {
         }
     }
 
+    /// Send `body` in reply to `message`. Where the original can no longer
+    /// be named the text goes as a plain message, as it does from a
+    /// communicator.
+    func replyToMessage(
+        _ conversation: ConversationListItem,
+        _ message: ChatMessageSummary,
+        _ body: String
+    ) async -> MessageSendResult {
+        await performChatCompose(conversation, clearsDraft: true) { clientToken in
+            try await radioConnection.composeReply(
+                conversationAddress: conversation.conversationAddress,
+                clientToken: clientToken,
+                target: regardingRef(message),
+                body: body
+            )
+        }
+    }
+
     /// The engine accepts either the live handle (same facade session) or
     /// the persisted wire identity (after an app restart); send both and let
     /// Rust pick, so the transcript never has to care which run composed a
@@ -3231,6 +3249,22 @@ final class AppRuntime {
         }
     }
 
+    /// Staging only: have a staged peer reply to the phone's last message,
+    /// after the same delay as a staged reaction.
+    func stagedPeerReplies() {
+        guard let staging = radioConnection as? FakeRadioConnection else { return }
+        Task {
+            let assertion = UIApplication.shared.beginBackgroundTask(
+                withName: "umsh.staging.delayed-reply"
+            )
+            try? await Task.sleep(for: .seconds(5))
+            await staging.stagedPeerReplies(body: "Sounds good, see you there.")
+            if assertion != .invalid {
+                UIApplication.shared.endBackgroundTask(assertion)
+            }
+        }
+    }
+
     /// Staging only: make the radio drop everything handed to it, so sends
     /// fail the way they would over a link that has gone.
     func stagedDropTransmissions(_ dropping: Bool) {
@@ -3268,6 +3302,7 @@ final class AppRuntime {
     #else
     var stagedPeerSendsMessage: ((Bool) -> Void)? { nil }
     var stagedPeerReacts: (() -> Void)? { nil }
+    var stagedPeerReplies: (() -> Void)? { nil }
     var stagedDropTransmissions: ((Bool) -> Void)? { nil }
     var stagedRemoteDevicesReachable: ((Bool) -> Void)? { nil }
     #endif
@@ -4406,7 +4441,24 @@ final class AppRuntime {
             senderHandle: stored.senderHandle,
             senderNodeHint: stored.senderHint.flatMap { nodeHints[$0] },
             reception: stored.reception,
-            reactions: stored.reactions.map(messageReaction(from:))
+            reactions: stored.reactions.map(messageReaction(from:)),
+            reply: stored.quote.map { messageQuote(from: $0, nodeHints: nodeHints) }
+        )
+    }
+
+    private static func messageQuote(
+        from stored: StoredMessageQuote,
+        nodeHints: [Data: MeshNodeHint]
+    ) -> MessageQuote {
+        guard let original = stored.original else { return .unavailable }
+        return MessageQuote(
+            state: original.isDeleted ? .deleted : .present,
+            targetID: original.ref.id,
+            body: original.isDeleted ? "" : original.body,
+            isOutbound: original.outbound,
+            senderAddress: original.senderAddress,
+            senderHandle: original.senderHandle,
+            senderNodeHint: original.senderHint.flatMap { nodeHints[$0] }
         )
     }
 
@@ -4434,8 +4486,9 @@ final class AppRuntime {
     /// row. Rendering is an FFI round trip and the answer never changes, so the
     /// coordinator keeps what it has already resolved for the whole session.
     private func renderedNodeHints(in messages: [StoredChatMessage]) async -> [Data: MeshNodeHint] {
-        for hint in Set(messages.compactMap(\.senderHint))
-        where coordinator.renderedNodeHints[hint] == nil {
+        let hints = messages.compactMap(\.senderHint)
+            + messages.compactMap { $0.quote?.original?.senderHint }
+        for hint in Set(hints) where coordinator.renderedNodeHints[hint] == nil {
             if let value = try? await meshEngine.renderNodeHint(hint) {
                 coordinator.renderedNodeHints[hint] = value
             }

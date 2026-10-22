@@ -406,6 +406,8 @@ struct ChatMessageSummary: Identifiable, Hashable, Sendable {
     var reception: StoredMessageReception? = nil
     /// Reactions to this message, at most one per person, oldest first.
     var reactions: [MessageReaction] = []
+    /// What this message replies to, when it is a reply.
+    var reply: MessageQuote? = nil
 
     /// The reaction this user has on this message, if any. What the picker
     /// shows as chosen, and what tapping the same emoji again withdraws.
@@ -434,6 +436,28 @@ struct ChatMessageSummary: Identifiable, Hashable, Sendable {
         guard let sentDate else { return false }
         return Date.now.timeIntervalSince(sentDate) <= Self.reviseWindow
     }
+}
+
+/// A reply's quote of the message it answers, as that message reads now.
+struct MessageQuote: Hashable, Sendable {
+    enum State: Hashable, Sendable {
+        case present
+        /// Its sender took it back.
+        case deleted
+        /// It never arrived here, or is no longer kept.
+        case unavailable
+    }
+
+    let state: State
+    /// The original's transcript id, while it can be scrolled to.
+    var targetID: String? = nil
+    var body: String = ""
+    var isOutbound: Bool = false
+    var senderAddress: String? = nil
+    var senderHandle: String? = nil
+    var senderNodeHint: MeshNodeHint? = nil
+
+    static let unavailable = MessageQuote(state: .unavailable)
 }
 
 /// One person's reaction to one message.
@@ -537,6 +561,9 @@ struct ChatMessageActions: Sendable {
     /// React with one of the palette glyphs, or withdraw the existing
     /// reaction by passing the one already chosen.
     var react: @Sendable (ConversationListItem, ChatMessageSummary, String) async
+        -> MessageSendResult = { _, _, _ in .failed("Messaging is unavailable.") }
+    /// Send text in reply to a message, quoting it.
+    var reply: @Sendable (ConversationListItem, ChatMessageSummary, String) async
         -> MessageSendResult = { _, _, _ in .failed("Messaging is unavailable.") }
     /// Put a failed message back on the air—an edit of itself carrying the
     /// same text, so a peer who already has it never sees it twice. Recent

@@ -966,6 +966,10 @@ enum ChatComposeRequest {
         target: MobileChatRegardingRef,
         body: String,
     },
+    Reply {
+        target: MobileChatRegardingRef,
+        body: String,
+    },
 }
 
 struct InboundFrame {
@@ -2391,6 +2395,25 @@ impl MobileMeshSession {
             conversation_address,
             client_token,
             ChatComposeRequest::Reaction { target, body },
+        )
+        .await
+    }
+
+    /// Send a text message in reply to `target`, which, as for a reaction,
+    /// may be either party's message and one persisted before this launch.
+    /// Where the original can no longer be named, the text goes as a plain
+    /// message.
+    pub async fn compose_reply(
+        &self,
+        conversation_address: String,
+        client_token: u32,
+        target: MobileChatRegardingRef,
+        body: String,
+    ) -> Result<MobileChatComposeBatchRecord, MobileMeshError> {
+        self.compose_chat(
+            conversation_address,
+            client_token,
+            ChatComposeRequest::Reply { target, body },
         )
         .await
     }
@@ -4127,6 +4150,14 @@ async fn run_worker(
                                     ),
                                     ChatComposeRequest::Reaction { target, body } => chat
                                         .compose_reaction(
+                                            conversation,
+                                            client_token,
+                                            target,
+                                            body,
+                                            now_ms,
+                                        ),
+                                    ChatComposeRequest::Reply { target, body } => chat
+                                        .compose_reply(
                                             conversation,
                                             client_token,
                                             target,

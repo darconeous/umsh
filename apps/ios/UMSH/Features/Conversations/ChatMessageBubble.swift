@@ -220,6 +220,13 @@ struct ChatMessageBubble: View, @MainActor Equatable {
     /// chosen. The picker marks the current choice, so the same tap that
     /// selects also unselects.
     var onReact: ((String) -> Void)?
+    /// Start a reply to this message. Absent where there is nothing a reply
+    /// could name.
+    var onReply: (() -> Void)?
+    /// Who sent the message this one replies to, as its quote names them.
+    var quoteName: String?
+    /// Show the message this one replies to.
+    var onOpenQuote: (() -> Void)?
 
     @State private var showsOriginalBody = false
 
@@ -245,6 +252,9 @@ struct ChatMessageBubble: View, @MainActor Equatable {
             && (lhs.onDelete == nil) == (rhs.onDelete == nil)
             && (lhs.onResend == nil) == (rhs.onResend == nil)
             && (lhs.onReact == nil) == (rhs.onReact == nil)
+            && (lhs.onReply == nil) == (rhs.onReply == nil)
+            && lhs.quoteName == rhs.quoteName
+            && (lhs.onOpenQuote == nil) == (rhs.onOpenQuote == nil)
     }
 
     private var isFailed: Bool {
@@ -470,6 +480,9 @@ struct ChatMessageBubble: View, @MainActor Equatable {
         if let onReact {
             reactionPicker(onReact)
         }
+        if let onReply {
+            Button("Reply", systemImage: "arrowshape.turn.up.left", action: onReply)
+        }
         Button("Copy", systemImage: "doc.on.doc") {
             UIPasteboard.general.string = message.body
         }
@@ -550,17 +563,40 @@ struct ChatMessageBubble: View, @MainActor Equatable {
         }
     }
 
+    /// The tail eats into the bubble's own side, so its width is kept clear
+    /// on whichever side it hangs off.
+    private var tailEdge: Edge.Set {
+        message.isOutbound ? .trailing : .leading
+    }
+
+    private var messageText: some View {
+        SelectableMessageText(
+            text: message.body,
+            textColor: message.isOutbound ? .white : .label
+        )
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .padding(tailEdge, BubbleShape.tailWidth)
+    }
+
     private var bubble: some View {
         ZStack(alignment: .leading) {
-            SelectableMessageText(
-                text: message.body,
-                textColor: message.isOutbound ? .white : .label
-            )
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-                // The tail eats into the bubble's own side, so keep its width
-                // clear of the text on whichever side it hangs off.
-                .padding(message.isOutbound ? .trailing : .leading, BubbleShape.tailWidth)
+            if let reply = message.reply {
+                ReplyStack {
+                    ReplyQuoteView(
+                        quote: reply,
+                        name: quoteName,
+                        isOutbound: message.isOutbound,
+                        security: security,
+                        onOpen: onOpenQuote
+                    )
+                    .padding([.horizontal, .top], 4)
+                    .padding(tailEdge, BubbleShape.tailWidth)
+                    messageText
+                }
+            } else {
+                messageText
+            }
             if let senderLabel, let labelClearance {
                 // A short bubble under a long name is widened until its
                 // reaction chips clear the name, so the two can share a row.

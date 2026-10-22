@@ -345,6 +345,13 @@ struct StoredChatMessage: Equatable, Sendable, Identifiable {
     /// Folded at read time from the emote rows that name it—they are
     /// messages in their own right, but never transcript rows.
     var reactions: [StoredMessageReaction] = []
+    /// Whether this message replies to another.
+    var isReply = false
+    /// The stored row it replies to, once that has been found.
+    var replyTarget: StoredMessageRef?
+    /// What it replies to, as it reads now: read with the page, so an edit
+    /// or a deletion of the original shows in every quote of it.
+    var quote: StoredMessageQuote?
 
     var isGapPlaceholder: Bool { presence == 1 }
     var isUnavailable: Bool { presence == 2 }
@@ -387,6 +394,33 @@ struct StoredChatMessagePage: Equatable, Sendable {
     let hasNewer: Bool
 
     static let empty = StoredChatMessagePage(messages: [], hasOlder: false, hasNewer: false)
+}
+
+/// A stored message's durable identity.
+struct StoredMessageRef: Hashable, Sendable {
+    let sessionID: String
+    let handle: UInt32
+
+    var id: String { "\(sessionID):\(handle)" }
+}
+
+/// What a reply quotes of the message it answers.
+struct StoredMessageQuote: Hashable, Sendable {
+    /// The original, while it is stored and present; `nil` when it never
+    /// arrived, is no longer kept, or was lost to a gap.
+    let original: Original?
+
+    struct Original: Hashable, Sendable {
+        let ref: StoredMessageRef
+        let body: String
+        let outbound: Bool
+        let isDeleted: Bool
+        let senderAddress: String?
+        let senderHint: Data?
+        let senderHandle: String?
+    }
+
+    static let unavailable = StoredMessageQuote(original: nil)
 }
 
 /// One person's reaction to one message.
@@ -445,6 +479,18 @@ struct StagedMessage {
     var deliveryState: String? = nil
     var reception: StoredMessageReception? = nil
     var reactions: [StagedReaction] = []
+    /// What it replies to, when it is a reply.
+    var regarding: StagedRegarding? = nil
+    /// Taken back by its sender: a tombstone, with nothing left to say.
+    var isDeleted = false
+}
+
+/// What a staged reply answers.
+enum StagedRegarding {
+    /// Another message of the same staged transcript, by handle.
+    case message(UInt32)
+    /// One this phone never stored.
+    case missing
 }
 
 /// One reaction about a ``StagedMessage``. Its handle is allocated by the
@@ -499,7 +545,7 @@ actor SQLiteApplicationStore {
     /// store refuses to open any database above this constant, so a stale value
     /// lets the new schema apply once and then locks the user out of their own
     /// data on the next launch. ``migrate(_:)`` checks the two agree.
-    static let currentSchemaVersion: Int32 = 25
+    static let currentSchemaVersion: Int32 = 26
 
     nonisolated(unsafe) private let database: OpaquePointer
 
@@ -1406,8 +1452,8 @@ actor SQLiteApplicationStore {
             FROM chat_message r
             JOIN chat_message target
                 ON target.owner_identity_id = r.owner_identity_id
-                AND target.session_id = r.reaction_target_session_id
-                AND target.handle = r.reaction_target_handle
+                AND target.session_id = r.regarding_target_session_id
+                AND target.handle = r.regarding_target_handle
             WHERE r.owner_identity_id = ? AND r.session_id = ? AND r.handle = ?
                 AND r.direction = 0 AND r.deleted = 0 AND r.is_reaction = 1
                 AND r.body <> ''
@@ -2792,8 +2838,8 @@ actor SQLiteApplicationStore {
             let reactions = try prepare(
                 """
                 DELETE FROM chat_message
-                WHERE owner_identity_id = ? AND reaction_target_session_id = ?
-                    AND reaction_target_handle = ?
+                WHERE owner_identity_id = ? AND regarding_target_session_id = ?
+                    AND regarding_target_handle = ? AND is_reaction = 1
                     AND EXISTS (
                         SELECT 1 FROM chat_message target
                         WHERE target.owner_identity_id = ?
@@ -2874,7 +2920,9 @@ actor SQLiteApplicationStore {
         wire_id, epoch, edited, presence, received_late, delivered_late, original_body,
         sender_address, sender_hint, sender_handle,
         rx_rssi_dbm, rx_snr_cb, rx_lqi, rx_hop_count,
-        rx_route_hints, rx_source_authenticated, rowid, delivered_flooded
+        rx_route_hints, rx_source_authenticated, rowid, delivered_flooded,
+        regarding_handle IS NOT NULL OR regarding_wire_id IS NOT NULL,
+        regarding_target_session_id, regarding_target_handle
         """
 
     /// How many messages a transcript read will accept in one page, whatever
@@ -2962,7 +3010,7 @@ actor SQLiteApplicationStore {
                 before: $0.cursor
             )
         } ?? false
-        return try withReactions(
+        return try withAnnotations(
             ownerIdentityID: ownerIdentityID,
             StoredChatMessagePage(
                 messages: messages,
@@ -2999,8 +3047,9 @@ actor SQLiteApplicationStore {
                     sender_address, sender_hint, sender_handle,
                     direction, body, deleted, created_at_ms, presence, delivery_state,
                     rx_rssi_dbm, rx_snr_cb, rx_hop_count, rx_source_authenticated,
-                    is_reaction, reaction_target_session_id, reaction_target_handle
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?)
+                    is_reaction, regarding_target_session_id, regarding_target_handle,
+                    regarding_handle, regarding_wire_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """
             )
             defer { sqlite3_finalize(statement) }
@@ -3013,7 +3062,8 @@ actor SQLiteApplicationStore {
                     conversationAddress: conversationAddress,
                     sessionID: sessionID,
                     handle: message.handle,
-                    body: message.body,
+                    body: message.isDeleted ? "" : message.body,
+                    isDeleted: message.isDeleted,
                     outbound: message.outbound,
                     createdAt: message.createdAt,
                     senderAddress: message.senderAddress,
@@ -3021,7 +3071,8 @@ actor SQLiteApplicationStore {
                     senderHandle: message.senderHandle,
                     deliveryState: message.deliveryState,
                     reception: message.reception,
-                    reactionTarget: nil
+                    isReaction: false,
+                    regarding: message.regarding
                 )
                 for reaction in message.reactions {
                     try writeStagedRow(
@@ -3031,6 +3082,7 @@ actor SQLiteApplicationStore {
                         sessionID: sessionID,
                         handle: reactionHandle,
                         body: reaction.body,
+                        isDeleted: false,
                         outbound: reaction.outbound,
                         createdAt: reaction.createdAt,
                         senderAddress: reaction.senderAddress,
@@ -3038,7 +3090,8 @@ actor SQLiteApplicationStore {
                         senderHandle: nil,
                         deliveryState: reaction.outbound ? "acknowledged" : nil,
                         reception: nil,
-                        reactionTarget: message.handle
+                        isReaction: true,
+                        regarding: .message(message.handle)
                     )
                     reactionHandle += 1
                 }
@@ -3058,6 +3111,7 @@ actor SQLiteApplicationStore {
         sessionID: String,
         handle: UInt32,
         body: String,
+        isDeleted: Bool,
         outbound: Bool,
         createdAt: Date,
         senderAddress: String?,
@@ -3065,7 +3119,8 @@ actor SQLiteApplicationStore {
         senderHandle: String?,
         deliveryState: String?,
         reception: StoredMessageReception?,
-        reactionTarget: UInt32?
+        isReaction: Bool,
+        regarding: StagedRegarding?
     ) throws {
         sqlite3_reset(statement)
         try bind(ownerIdentityID, to: statement, at: 1)
@@ -3077,21 +3132,29 @@ actor SQLiteApplicationStore {
         try bindOptional(senderHandle, to: statement, at: 7)
         try check(sqlite3_bind_int(statement, 8, outbound ? 1 : 0))
         try bind(body, to: statement, at: 9)
+        try check(sqlite3_bind_int(statement, 10, isDeleted ? 1 : 0))
         try check(
-            sqlite3_bind_int64(statement, 10, Int64(createdAt.timeIntervalSince1970 * 1_000))
+            sqlite3_bind_int64(statement, 11, Int64(createdAt.timeIntervalSince1970 * 1_000))
         )
-        try bindOptional(deliveryState, to: statement, at: 11)
-        try bindOptionalInt(reception?.rssiDbm.map(Int64.init), to: statement, at: 12)
-        try bindOptionalInt(reception?.snrCentibels.map(Int64.init), to: statement, at: 13)
-        try bindOptionalInt(reception?.hopCount.map(Int64.init), to: statement, at: 14)
+        try bindOptional(deliveryState, to: statement, at: 12)
+        try bindOptionalInt(reception?.rssiDbm.map(Int64.init), to: statement, at: 13)
+        try bindOptionalInt(reception?.snrCentibels.map(Int64.init), to: statement, at: 14)
+        try bindOptionalInt(reception?.hopCount.map(Int64.init), to: statement, at: 15)
         try bindOptionalInt(
             reception.map { Int64($0.sourceAuthenticated ? 1 : 0) },
             to: statement,
-            at: 15
+            at: 16
         )
-        try check(sqlite3_bind_int(statement, 16, reactionTarget == nil ? 0 : 1))
-        try bindOptional(reactionTarget == nil ? nil : sessionID, to: statement, at: 17)
-        try bindOptionalInt(reactionTarget.map(Int64.init), to: statement, at: 18)
+        try check(sqlite3_bind_int(statement, 17, isReaction ? 1 : 0))
+        // A resolved reference names its target the way a live handle
+        // would; a missing one keeps only the wire coordinates it arrived
+        // with, which is what leaves its target unfound.
+        let target: UInt32? = if case let .message(handle) = regarding { handle } else { nil }
+        try bindOptional(target == nil ? nil : sessionID, to: statement, at: 18)
+        try bindOptionalInt(target.map(Int64.init), to: statement, at: 19)
+        try bindOptionalInt(target.map(Int64.init), to: statement, at: 20)
+        let missing = if case .missing = regarding { true } else { false }
+        try bindOptionalInt(missing ? 0 : nil, to: statement, at: 21)
         try stepDone(statement)
     }
 
@@ -3324,7 +3387,7 @@ actor SQLiteApplicationStore {
         var messages = try readChatMessages(statement)
         let hasOlder = messages.count > bounded
         if hasOlder { messages.removeLast(messages.count - bounded) }
-        return try withReactions(
+        return try withAnnotations(
             ownerIdentityID: ownerIdentityID,
             StoredChatMessagePage(
                 messages: messages.reversed(),
@@ -3343,6 +3406,88 @@ actor SQLiteApplicationStore {
             case let code: throw Self.sqliteFailure(database, code)
             }
         }
+    }
+
+    /// Attach what a page's messages carry from other rows: the reactions
+    /// about them, and the quotes of what they reply to.
+    private func withAnnotations(
+        ownerIdentityID: String,
+        _ page: StoredChatMessagePage
+    ) throws -> StoredChatMessagePage {
+        try withQuotes(
+            ownerIdentityID: ownerIdentityID,
+            withReactions(ownerIdentityID: ownerIdentityID, page)
+        )
+    }
+
+    /// Attach the quote each reply carries of its original.
+    ///
+    /// The original may sit anywhere in history, so, like reactions, this is
+    /// a second read keyed by identity. A reply whose original has not been
+    /// found, or is no longer stored, quotes it as unavailable.
+    private func withQuotes(
+        ownerIdentityID: String,
+        _ page: StoredChatMessagePage
+    ) throws -> StoredChatMessagePage {
+        guard page.messages.contains(where: \.isReply) else { return page }
+        let targets = Array(Set(page.messages.compactMap(\.replyTarget)))
+        var originals: [StoredMessageRef: StoredMessageQuote.Original] = [:]
+        for chunk in stride(from: 0, to: targets.count, by: 200).map({ start in
+            targets[start..<min(start + 200, targets.count)]
+        }) {
+            let tuples = Array(repeating: "(?, ?)", count: chunk.count).joined(separator: ", ")
+            let statement = try prepare(
+                """
+                SELECT session_id, handle, body, direction, deleted,
+                    sender_address, sender_hint, sender_handle
+                FROM chat_message
+                WHERE owner_identity_id = ? AND presence = 0
+                    AND (session_id, handle) IN (\(tuples))
+                """
+            )
+            defer { sqlite3_finalize(statement) }
+            try bind(ownerIdentityID, to: statement, at: 1)
+            var index: Int32 = 2
+            for target in chunk {
+                try bind(target.sessionID, to: statement, at: index)
+                try check(sqlite3_bind_int64(statement, index + 1, Int64(target.handle)))
+                index += 2
+            }
+            rows: while true {
+                switch sqlite3_step(statement) {
+                case SQLITE_ROW:
+                    let ref = StoredMessageRef(
+                        sessionID: Self.stringColumn(statement, at: 0),
+                        handle: UInt32(sqlite3_column_int64(statement, 1))
+                    )
+                    originals[ref] = StoredMessageQuote.Original(
+                        ref: ref,
+                        body: Self.stringColumn(statement, at: 2),
+                        outbound: sqlite3_column_int(statement, 3) == 1,
+                        isDeleted: sqlite3_column_int(statement, 4) != 0,
+                        senderAddress: Self.optionalStringColumn(statement, at: 5),
+                        senderHint: Self.optionalDataColumn(statement, at: 6),
+                        senderHandle: Self.optionalStringColumn(statement, at: 7)
+                    )
+                case SQLITE_DONE:
+                    break rows
+                case let code:
+                    throw Self.sqliteFailure(database, code)
+                }
+            }
+        }
+        return StoredChatMessagePage(
+            messages: page.messages.map { message in
+                guard message.isReply else { return message }
+                var message = message
+                message.quote = StoredMessageQuote(
+                    original: message.replyTarget.flatMap { originals[$0] }
+                )
+                return message
+            },
+            hasOlder: page.hasOlder,
+            hasNewer: page.hasNewer
+        )
     }
 
     /// Attach each message's reactions.
@@ -3393,12 +3538,12 @@ actor SQLiteApplicationStore {
             let tuples = Array(repeating: "(?, ?)", count: chunk.count).joined(separator: ", ")
             let statement = try prepare(
                 """
-                SELECT reaction_target_session_id, reaction_target_handle,
+                SELECT regarding_target_session_id, regarding_target_handle,
                     body, direction, sender_address, sender_hint,
                     session_id, handle, wire_id, epoch, created_at_ms, delivery_state
                 FROM chat_message
                 WHERE owner_identity_id = ? AND is_reaction = 1 AND deleted = 0
-                    AND (reaction_target_session_id, reaction_target_handle) IN (\(tuples))
+                    AND (regarding_target_session_id, regarding_target_handle) IN (\(tuples))
                 ORDER BY created_at_ms ASC, rowid ASC
                 """
             )
@@ -3480,7 +3625,14 @@ actor SQLiteApplicationStore {
             senderHandle: optionalStringColumn(statement, at: 16),
             reception: reception(statement, at: 17),
             rowID: sqlite3_column_int64(statement, 23),
-            deliveredFlooded: sqlite3_column_int(statement, 24) != 0
+            deliveredFlooded: sqlite3_column_int(statement, 24) != 0,
+            isReply: sqlite3_column_int(statement, 25) != 0,
+            replyTarget: optionalStringColumn(statement, at: 26).map { session in
+                StoredMessageRef(
+                    sessionID: session,
+                    handle: UInt32(truncatingIfNeeded: sqlite3_column_int64(statement, 27))
+                )
+            }
         )
     }
 
@@ -3660,14 +3812,15 @@ actor SQLiteApplicationStore {
                   let body = mutation.body
             else { return false }
             // An emote—status text about another message—is a reaction
-            // rather than a transcript row of its own. Resolve what it is
-            // about now, while the reference is in hand: the target may be
-            // named by a live handle or, far more often, by the wire
-            // coordinates of a row stored in some earlier session.
-            let isReaction = mutation.messageType == 1
-                && (mutation.regardingHandle != nil || mutation.regardingWireId != nil)
-            let reactionTarget = isReaction
-                ? try resolveReactionTarget(
+            // rather than a transcript row of its own; anything else about
+            // another message is a reply to it. Resolve what either is about
+            // now, while the reference is in hand: the target may be named by
+            // a live handle or, far more often, by the wire coordinates of a
+            // row stored in some earlier session.
+            let isRegarding = mutation.regardingHandle != nil || mutation.regardingWireId != nil
+            let isReaction = mutation.messageType == 1 && isRegarding
+            let regardingTarget = isRegarding
+                ? try resolveRegardingTarget(
                     ownerIdentityID: ownerIdentityID,
                     sessionID: sessionID,
                     conversationAddress: peerAddress,
@@ -3685,7 +3838,7 @@ actor SQLiteApplicationStore {
                     sender_hint, rx_rssi_dbm, rx_snr_cb, rx_lqi, rx_hop_count,
                     rx_route_hints, rx_source_authenticated,
                     is_reaction, regarding_wire_id, regarding_direction, regarding_sender_hint,
-                    reaction_target_session_id, reaction_target_handle,
+                    regarding_target_session_id, regarding_target_handle,
                     delivery_session_id, delivery_handle
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?,
                           ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -3712,6 +3865,25 @@ actor SQLiteApplicationStore {
                         COALESCE(excluded.rx_route_hints, chat_message.rx_route_hints),
                     rx_source_authenticated = COALESCE(
                         excluded.rx_source_authenticated, chat_message.rx_source_authenticated
+                    ),
+                    -- So does what it is about: a repaired gap may turn out
+                    -- to be a reply or a reaction.
+                    is_reaction = MAX(chat_message.is_reaction, excluded.is_reaction),
+                    regarding_handle =
+                        COALESCE(excluded.regarding_handle, chat_message.regarding_handle),
+                    regarding_wire_id =
+                        COALESCE(excluded.regarding_wire_id, chat_message.regarding_wire_id),
+                    regarding_direction =
+                        COALESCE(excluded.regarding_direction, chat_message.regarding_direction),
+                    regarding_sender_hint = COALESCE(
+                        excluded.regarding_sender_hint, chat_message.regarding_sender_hint
+                    ),
+                    regarding_target_session_id = COALESCE(
+                        excluded.regarding_target_session_id,
+                        chat_message.regarding_target_session_id
+                    ),
+                    regarding_target_handle = COALESCE(
+                        excluded.regarding_target_handle, chat_message.regarding_target_handle
                     )
                 """
             )
@@ -3763,17 +3935,17 @@ actor SQLiteApplicationStore {
                 at: 33
             )
             try bindOptional(mutation.regardingSenderHint.map { Data($0) }, to: statement, at: 34)
-            try bindOptional(reactionTarget?.sessionID, to: statement, at: 35)
-            try bindOptionalInt(reactionTarget.map { Int64($0.handle) }, to: statement, at: 36)
+            try bindOptional(regardingTarget?.sessionID, to: statement, at: 35)
+            try bindOptionalInt(regardingTarget.map { Int64($0.handle) }, to: statement, at: 36)
             // A fresh row reports its own transmission until an edit re-aims it.
             try bind(sessionID, to: statement, at: 37)
             try check(sqlite3_bind_int64(statement, 38, Int64(mutation.handle)))
             try stepDone(statement)
-            // A reaction can outrun the message it is about—repaired gaps
-            // and channel-group reordering both do it. Whenever a real message
-            // lands, adopt whatever was already waiting on it.
+            // A reaction or a reply can outrun the message it is about—
+            // repaired gaps and channel-group reordering both do it. Whenever
+            // a real message lands, adopt whatever was already waiting on it.
             if !isReaction, let wireID = mutation.wireId {
-                try bindPendingReactions(
+                try bindPendingRegarding(
                     ownerIdentityID: ownerIdentityID,
                     sessionID: sessionID,
                     handle: mutation.handle,
@@ -3938,7 +4110,7 @@ actor SQLiteApplicationStore {
         try check(sqlite3_bind_int64(statement, 10, Int64(mutation.handle)))
         try stepDone(statement)
         guard sqlite3_changes(database) > 0 else { return false }
-        try bindPendingReactions(
+        try bindPendingRegarding(
             ownerIdentityID: ownerIdentityID,
             sessionID: sessionID,
             handle: mutation.handle,
@@ -4056,15 +4228,15 @@ actor SQLiteApplicationStore {
         try stepDone(message)
     }
 
-    /// Which stored row a reaction is about.
+    /// Which stored row a reaction or a reply is about.
     ///
     /// A live handle names a row this session wrote. Otherwise the reference
     /// arrives as wire coordinates, and the row it names is the newest
     /// non-reaction message holding that ID on that stream—wire IDs recycle
     /// serially, so the newest is the only one still referenceable. `nil`
-    /// when the target has not been stored yet; ``bindPendingReactions``
+    /// when the target has not been stored yet; ``bindPendingRegarding``
     /// adopts those once it is.
-    private func resolveReactionTarget(
+    private func resolveRegardingTarget(
         ownerIdentityID: String,
         sessionID: String,
         conversationAddress: String,
@@ -4099,8 +4271,9 @@ actor SQLiteApplicationStore {
         return (String(cString: session), UInt32(sqlite3_column_int64(statement, 1)))
     }
 
-    /// Adopt reactions that arrived before the message they are about.
-    private func bindPendingReactions(
+    /// Adopt reactions and replies that arrived before the message they are
+    /// about.
+    private func bindPendingRegarding(
         ownerIdentityID: String,
         sessionID: String,
         handle: UInt32,
@@ -4112,11 +4285,12 @@ actor SQLiteApplicationStore {
         let statement = try prepare(
             """
             UPDATE chat_message
-            SET reaction_target_session_id = ?, reaction_target_handle = ?
+            SET regarding_target_session_id = ?, regarding_target_handle = ?
             WHERE owner_identity_id = ? AND conversation_address = ?
-                AND is_reaction = 1 AND reaction_target_session_id IS NULL
+                AND regarding_target_session_id IS NULL
                 AND regarding_wire_id = ? AND regarding_direction = ?
                 AND regarding_sender_hint IS ?
+                AND NOT (session_id = ? AND handle = ?)
             """
         )
         defer { sqlite3_finalize(statement) }
@@ -4127,6 +4301,8 @@ actor SQLiteApplicationStore {
         try check(sqlite3_bind_int(statement, 5, Int32(wireID)))
         try check(sqlite3_bind_int(statement, 6, outbound ? 1 : 0))
         try bindOptional(senderHint, to: statement, at: 7)
+        try bind(sessionID, to: statement, at: 8)
+        try check(sqlite3_bind_int64(statement, 9, Int64(handle)))
         try stepDone(statement)
     }
 
@@ -5055,6 +5231,60 @@ actor SQLiteApplicationStore {
                     ALTER TABLE node ADD COLUMN advertisement_received_at REAL;
 
                     PRAGMA user_version = 25;
+                    """
+                )
+                try execute(database, sql: "COMMIT")
+            } catch {
+                try? execute(database, sql: "ROLLBACK")
+                throw error
+            }
+        }
+
+        if version < 26 {
+            try execute(database, sql: "BEGIN IMMEDIATE")
+            do {
+                // A reply names the message it answers just as a reaction
+                // does, so the resolved target is the Regarding reference's,
+                // not the reaction's. Replies stored before this kept their
+                // reference unresolved; resolve them the way an arriving
+                // one is. The wire lookup now runs for every reply, so it
+                // gets an index.
+                try execute(
+                    database,
+                    sql: """
+                    ALTER TABLE chat_message
+                        RENAME COLUMN reaction_target_session_id TO regarding_target_session_id;
+                    ALTER TABLE chat_message
+                        RENAME COLUMN reaction_target_handle TO regarding_target_handle;
+
+                    UPDATE chat_message
+                    SET regarding_target_session_id = session_id,
+                        regarding_target_handle = regarding_handle
+                    WHERE is_reaction = 0
+                        AND regarding_target_session_id IS NULL
+                        AND regarding_handle IS NOT NULL;
+
+                    UPDATE chat_message AS reply
+                    SET (regarding_target_session_id, regarding_target_handle) = (
+                        SELECT target.session_id, target.handle FROM chat_message AS target
+                        WHERE target.owner_identity_id = reply.owner_identity_id
+                            AND target.conversation_address = reply.conversation_address
+                            AND target.direction = reply.regarding_direction
+                            AND target.wire_id = reply.regarding_wire_id
+                            AND target.is_reaction = 0
+                            AND target.sender_hint IS reply.regarding_sender_hint
+                            AND target.rowid <> reply.rowid
+                        ORDER BY target.epoch DESC, target.created_at_ms DESC, target.rowid DESC
+                        LIMIT 1
+                    )
+                    WHERE is_reaction = 0
+                        AND regarding_target_session_id IS NULL
+                        AND regarding_wire_id IS NOT NULL;
+
+                    CREATE INDEX chat_message_wire_idx
+                        ON chat_message (owner_identity_id, conversation_address, direction, wire_id);
+
+                    PRAGMA user_version = 26;
                     """
                 )
                 try execute(database, sql: "COMMIT")
