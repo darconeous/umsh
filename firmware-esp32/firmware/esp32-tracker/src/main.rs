@@ -826,14 +826,20 @@ pub(crate) fn debug_log(args: core::fmt::Arguments<'_>) {
     {
         let mut line = DebugLine::new();
         let dropped = DEBUG_DROPPED.swap(0, Ordering::AcqRel);
-        if write!(line, "[{:>8} ms] ", Instant::now().as_millis()).is_err()
-            || (dropped != 0 && write!(line, "[debug-dropped={dropped}] ").is_err())
-            || line.write_fmt(args).is_err()
-            || line.push_str("\r\n").is_err()
-        {
-            DEBUG_DROPPED.fetch_add(dropped.saturating_add(1), Ordering::AcqRel);
-            return;
+        // A line too long is cut short, not dropped: dropping it would
+        // put a count on the next line, which could then not fit either,
+        // and so on for every line after.
+        let _ = write!(line, "[{:>8} ms] ", Instant::now().as_millis());
+        if dropped != 0 {
+            let _ = write!(line, "[debug-dropped={dropped}] ");
         }
+        let _ = line.write_fmt(args);
+        let mut end = line.len().min(DEBUG_LINE_CAPACITY - 2);
+        while !line.is_char_boundary(end) {
+            end -= 1;
+        }
+        line.truncate(end);
+        let _ = line.push_str("\r\n");
         if DEBUG_CH.try_send(line).is_err() {
             DEBUG_DROPPED.fetch_add(dropped.saturating_add(1), Ordering::AcqRel);
         }
