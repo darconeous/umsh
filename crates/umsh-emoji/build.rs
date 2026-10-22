@@ -31,7 +31,7 @@ const VS16: u32 = 0xFE0F;
 
 struct Entry {
     sequence: Vec<u32>,
-    /// Its CLDR short name, lowercased.
+    /// Its CLDR short name, as a title shows it.
     name: String,
     /// Its CLDR group.
     group: String,
@@ -181,14 +181,25 @@ fn manifest(text: &str) -> Vec<Entry> {
             .join(" ");
         entries.push(Entry {
             sequence,
-            name: words(&name),
+            name: title(&name),
             group: group.clone(),
         });
     }
     entries
 }
 
-/// `name` as words to match, lowercased and split at spaces only.
+/// A CLDR name as a title shows it: its first letter capitalized, as
+/// "Fire" or "Red heart", and the rest as CLDR has it, as "OK hand".
+fn title(name: &str) -> String {
+    assert!(!name.contains('|'), "a name with a `|`: {name}");
+    let mut chars = name.chars();
+    chars
+        .next()
+        .map(|first| first.to_uppercase().chain(chars).collect())
+        .unwrap_or_default()
+}
+
+/// Aliases as words to match, lowercased and split at spaces only.
 fn words(name: &str) -> String {
     name.to_lowercase()
         .replace([':', ',', '\u{201C}', '\u{201D}', '|'], " ")

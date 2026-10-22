@@ -11,7 +11,7 @@ use heapless::{String, Vec};
 use super::conversation::header;
 use super::label;
 use super::peers::{AVATAR, ROW, TEXT_X, focused_row};
-use crate::avatar::AvatarStyle;
+use crate::avatar::{AvatarStyle, Title};
 use crate::board::Metrics;
 use crate::model::{ChatId, ChatKind, MAX_CHATS, State};
 use crate::nav::keys;
@@ -33,7 +33,7 @@ static INDICES: [usize; MAX_CHATS] = {
 struct Chat {
     id: ChatId,
     avatar: AvatarStyle,
-    name: String<32>,
+    title: Title,
     about: &'static str,
 }
 
@@ -48,7 +48,7 @@ pub fn view(state: &State, name: &str) -> impl View<Rgb565, State> + use<> {
         .map(|c| Chat {
             id: c.id,
             avatar: c.avatar.clone(),
-            name: c.name.clone(),
+            title: c.title(),
             about: match c.kind {
                 ChatKind::Channel { .. } => "Channel",
                 ChatKind::Peer { .. } => "Direct chat",
@@ -95,7 +95,7 @@ fn row(m: &'static Metrics, chat: &Chat) -> impl View<Rgb565, State> + use<> {
         move |button: ButtonState| {
             focused_row(
                 HStack::new((
-                    label::<32>(&chat.name, &font::SEMIBOLD, m.body, theme::TEXT),
+                    super::line(chat.title.clone(), &font::SEMIBOLD, m.body, theme::TEXT),
                     Spacer::default(),
                     super::line(
                         chat.about,

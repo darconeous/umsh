@@ -32,12 +32,23 @@ pub fn sequence(id: Id) -> &'static str {
     part(SEQUENCES, &SEQUENCE_ENDS, id)
 }
 
-/// The words glyph `id` is found by: its CLDR name, lowercased, and then,
-/// after a `|`, any aliases.
+/// The words glyph `id` is found by: its CLDR name, as [`name`] gives it,
+/// and then, after a `|`, any aliases.
 #[must_use]
 pub fn words(id: Id) -> &'static str {
     part(WORDS, &WORD_ENDS, id)
 }
+
+/// Glyph `id`'s CLDR short name, as a title shows it: its first letter
+/// capitalized, as "Fire" or "OK hand".
+#[must_use]
+pub fn name(id: Id) -> &'static str {
+    let words = words(id);
+    words.split_once('|').map_or(words, |(name, _)| name)
+}
+
+/// Where a name's words break.
+const BREAKS: [char; 6] = [' ', '-', ':', ',', '\u{201C}', '\u{201D}'];
 
 fn part(pool: &'static str, ends: &[u16], id: Id) -> &'static str {
     let id = usize::from(id);
@@ -49,15 +60,12 @@ fn part(pool: &'static str, ends: &[u16], id: Id) -> &'static str {
 
 /// How `words`, as [`words`] gives them, match `query`: each word of the
 /// query must begin one of theirs, in any order, without regard to ASCII
-/// case. A name's words are split at spaces and hyphens.
+/// case. A name's words are split at spaces, hyphens, and punctuation.
 #[must_use]
 pub fn matching(words: &str, query: &str) -> Option<Match> {
     let (name, aliases) = words.split_once('|').unwrap_or((words, ""));
-    let tokens = || {
-        name.split([' ', '-'])
-            .chain(aliases.split(' '))
-            .filter(|t| !t.is_empty())
-    };
+    let name_words = || name.split(BREAKS).filter(|t| !t.is_empty());
+    let tokens = || name_words().chain(aliases.split(' ').filter(|t| !t.is_empty()));
     let mut last = None;
     for word in query.split_whitespace() {
         if !tokens().any(|t| begins(t, word)) {
@@ -67,11 +75,15 @@ pub fn matching(words: &str, query: &str) -> Option<Match> {
     }
     let last = last?;
     let typed = query.trim();
-    if name.eq_ignore_ascii_case(typed) || aliases.split(' ').any(|a| a.eq_ignore_ascii_case(typed))
-    {
+    // The name's words, all of them, whatever punctuation is left out.
+    let whole = name_words().count() == query.split_whitespace().count()
+        && name_words()
+            .zip(query.split_whitespace())
+            .all(|(theirs, typed)| theirs.eq_ignore_ascii_case(typed));
+    if whole || aliases.split(' ').any(|a| a.eq_ignore_ascii_case(typed)) {
         return Some(Match::Name);
     }
-    let head = name.rsplit([' ', '-']).next().unwrap_or_default();
+    let head = name_words().last().unwrap_or_default();
     if begins(head, last) || aliases.split(' ').any(|t| begins(t, last)) {
         Some(Match::Head)
     } else {
@@ -95,8 +107,17 @@ mod tests {
     fn a_sequence_is_sent_as_the_manifest_has_it() {
         let heart = find("\u{2764}").unwrap();
         assert_eq!(sequence(heart), "\u{2764}\u{FE0F}");
-        assert_eq!(words(heart), "red heart|<3 love");
+        assert_eq!(words(heart), "Red heart|<3 love");
         assert_eq!(sequence(COUNT), "");
+    }
+
+    #[test]
+    fn a_name_is_cased_for_a_title() {
+        assert_eq!(name(find("\u{1F525}").unwrap()), "Fire");
+        assert_eq!(name(find("\u{2764}").unwrap()), "Red heart");
+        assert_eq!(name(find("\u{1F44C}").unwrap()), "OK hand");
+        assert_eq!(name(find("\u{1F996}").unwrap()), "T-Rex");
+        assert_eq!(name(find("1\u{20E3}").unwrap()), "Keycap: 1");
     }
 
     #[test]
@@ -124,5 +145,11 @@ mod tests {
         assert_eq!(matching("red heart", "eart"), None);
         assert_eq!(matching("red heart", "heart blue"), None);
         assert_eq!(matching("red heart", "  "), None);
+        assert_eq!(matching("Keycap: 1", "keycap 1"), Some(Match::Name));
+        assert_eq!(matching("OK hand", "ok"), Some(Match::Word));
+        assert_eq!(
+            matching("Japanese \u{201C}here\u{201D} button", "here"),
+            Some(Match::Word)
+        );
     }
 }

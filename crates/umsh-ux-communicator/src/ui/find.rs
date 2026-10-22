@@ -161,16 +161,14 @@ fn result(
     tint: bool,
 ) -> impl View<Rgb565, State> + use<> {
     let found = found.clone();
-    // The name around where the query matches it.
-    let at = word_match(&found.name, query).unwrap_or(0);
-    let end = (at + query.len()).min(found.name.len());
-    let (before, rest) = found.name.split_at(at);
+    // The title around where the query matches it. A chat found by a name
+    // its row leaves out is not lit.
+    let title = &found.title;
+    let (at, end) = word_match(title.as_ref(), query).map_or((0, 0), |at| {
+        (at, (at + query.len()).min(title.as_ref().len()))
+    });
+    let (before, rest) = title.split_at(at);
     let (matched, after) = rest.split_at(end - at);
-    let (before, matched, after): (String<32>, String<32>, String<32>) = (
-        String::try_from(before).unwrap_or_default(),
-        String::try_from(matched).unwrap_or_default(),
-        String::try_from(after).unwrap_or_default(),
-    );
     VStack::new((
         group.map(|group| {
             super::line(group, &font::BOLD, m.small, theme::TEXT_SECONDARY)
@@ -189,9 +187,9 @@ fn result(
                     theme::BACKGROUND
                 };
                 HStack::new((
-                    label::<32>(&before, &font::SEMIBOLD, m.body, theme::TEXT),
-                    label::<32>(&matched, &font::EXTRABOLD, m.body, theme::ACCENT),
-                    label::<32>(&after, &font::SEMIBOLD, m.body, theme::TEXT),
+                    super::line(before.clone(), &font::SEMIBOLD, m.body, theme::TEXT),
+                    super::line(matched.clone(), &font::EXTRABOLD, m.body, theme::ACCENT),
+                    super::line(after.clone(), &font::SEMIBOLD, m.body, theme::TEXT),
                     (!found.distance.is_empty()).then(|| {
                         label::<12>(
                             &found.distance,

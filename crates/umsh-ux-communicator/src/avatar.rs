@@ -8,6 +8,7 @@
 use embedded_graphics::image::ImageRaw;
 use embedded_graphics::pixelcolor::{Gray4, Rgb565, Rgb888};
 use heapless::String;
+use umsh_emoji::Shown;
 
 include!(concat!(env!("OUT_DIR"), "/shapes.rs"));
 
@@ -117,15 +118,19 @@ impl AvatarStyle {
     }
 
     /// A channel's badge: initials from its name, fill from its key's tint.
-    /// An initial is the first grapheme cluster of a word, so a channel
-    /// named "🔥 Crew" is lettered 🔥C, as on iOS.
+    /// An initial is the first grapheme cluster of a word, so "Hot Topic"
+    /// is lettered HT. A name led by an emoji is lettered with that emoji
+    /// alone: "🔥 Hot Topic" is lettered 🔥.
     #[must_use]
     pub fn channel(builtin: Option<BuiltinChannel>, title: &str, tint: [u8; 3]) -> Self {
-        let initials: heapless::Vec<&str, 4> = title
-            .split(|c: char| c.is_whitespace() || c == '-' || c == '_')
-            .filter_map(umsh_grapheme::first_cluster)
-            .take(4)
-            .collect();
+        let initials: heapless::Vec<&str, 4> = match leading_emoji(title) {
+            Some((emoji, _)) => [emoji].into_iter().collect(),
+            None => title
+                .split(|c: char| c.is_whitespace() || c == '-' || c == '_')
+                .filter_map(umsh_grapheme::first_cluster)
+                .take(4)
+                .collect(),
+        };
         let (fill, text) = match builtin {
             Some(BuiltinChannel::Public) => (rgb565([0x0A, 0x84, 0xFF]), WHITE),
             Some(BuiltinChannel::Emergency) => (rgb565([0xFF, 0x45, 0x3A]), WHITE),
@@ -152,6 +157,74 @@ impl AvatarStyle {
             split: split.unwrap_or(lettering.len()) as u8,
             lettering,
         }
+    }
+}
+
+/// A name as a row shows it: a copy of it, or text the firmware holds.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Title {
+    Owned(String<32>),
+    Static(&'static str),
+}
+
+impl Title {
+    /// `text`, cut at a cluster boundary to fit.
+    #[must_use]
+    pub fn copy(text: &str) -> Self {
+        let mut owned = String::new();
+        _ = owned.push_str(umsh_grapheme::cut(text, 32));
+        Self::Owned(owned)
+    }
+
+    /// The title before byte `at`, and the title from it.
+    #[must_use]
+    pub fn split_at(&self, at: usize) -> (Self, Self) {
+        match self {
+            Self::Owned(text) => {
+                let (before, after) = text.split_at(at);
+                (Self::copy(before), Self::copy(after))
+            }
+            Self::Static(text) => {
+                let (before, after) = text.split_at(at);
+                (Self::Static(before), Self::Static(after))
+            }
+        }
+    }
+}
+
+impl AsRef<str> for Title {
+    fn as_ref(&self) -> &str {
+        match self {
+            Self::Owned(text) => text,
+            Self::Static(text) => text,
+        }
+    }
+}
+
+/// The emoji a channel's name starts with, and how it is drawn.
+fn leading_emoji(name: &str) -> Option<(&str, Shown)> {
+    let first = umsh_grapheme::first_cluster(name)?;
+    let shown = umsh_emoji::shown(first);
+    (!matches!(shown, Shown::Text | Shown::Nothing)).then_some((first, shown))
+}
+
+/// What a row that identifies a channel calls it: its name without the
+/// emoji leading it, which the badge shows, and the spaces after. A name
+/// that is that emoji alone is called by the emoji's name, or a flag by
+/// its region's code. An emoji with neither keeps the name as it is.
+#[must_use]
+pub fn channel_title(name: &str) -> Title {
+    let Some((first, shown)) = leading_emoji(name) else {
+        return Title::copy(name);
+    };
+    let rest = name[first.len()..].trim_start();
+    if !rest.is_empty() {
+        return Title::copy(rest);
+    }
+    match shown {
+        Shown::Glyph(id) => Title::Static(umsh_emoji::name(id)),
+        Shown::Flag(region) => Title::copy(region.as_str()),
+        _ => Title::copy(name),
     }
 }
 
@@ -272,9 +345,45 @@ mod tests {
 
     #[test]
     fn channel_initials_are_whole_clusters() {
-        assert_eq!(lettering("🔥 Crew"), ["🔥C", ""]);
+        assert_eq!(lettering("Hot Topic"), ["HT", ""]);
         assert_eq!(lettering("hike-club"), ["HC", ""]);
         assert_eq!(lettering("one two 👍🏽 four five"), ["OT", "👍🏽F"]);
         assert_eq!(lettering("🇫🇷"), ["🇫🇷", ""]);
+    }
+
+    #[test]
+    fn a_leading_emoji_letters_the_badge_alone() {
+        assert_eq!(lettering("🔥 Hot Topic"), ["🔥", ""]);
+        assert_eq!(lettering("🔥Hot"), ["🔥", ""]);
+        assert_eq!(lettering("🔥🎉 Party"), ["🔥", ""]);
+        assert_eq!(lettering("👍🏽 Crew"), ["👍🏽", ""]);
+    }
+
+    #[test]
+    fn a_channel_row_leaves_out_the_emoji_its_badge_shows() {
+        let titles = [
+            ("🔥", "Fire"),
+            ("❤️", "Red heart"),
+            ("👌", "OK hand"),
+            ("👍🏽", "Thumbs up"),
+            ("🇫🇷", "FR"),
+            ("🔥 Hot Topic", "Hot Topic"),
+            ("🔥Hot", "Hot"),
+            ("🔥🎉 Party", "🎉 Party"),
+            ("🔥  ", "Fire"),
+            ("Hot 🔥", "Hot 🔥"),
+            ("public", "public"),
+            ("", ""),
+            // A pregnant man is not in the set: no name to give it.
+            ("\u{1FAC3}", "\u{1FAC3}"),
+        ];
+        for (name, title) in titles {
+            assert_eq!(channel_title(name).as_ref(), title, "{name}");
+        }
+        // Longer than a name is kept, and not cut.
+        assert_eq!(
+            channel_title("🫰"),
+            Title::Static("Hand with index finger and thumb crossed")
+        );
     }
 }

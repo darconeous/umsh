@@ -25,7 +25,7 @@ mod store;
 
 pub use cache::Cache;
 pub use lookup::{MAX_PARTS, PLACEHOLDER, Region, Shown, find, shown};
-pub use names::{Group, Match, matching, sequence, words};
+pub use names::{Group, Match, matching, name, sequence, words};
 use store::Blocks;
 pub use store::{BLOCK, Glyph, Id, Store};
 

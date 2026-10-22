@@ -1901,6 +1901,33 @@ fn a_channel_name_joins_a_named_channel() {
 }
 
 #[test]
+fn a_channel_row_leaves_out_the_emoji_its_badge_shows() {
+    let invitation = "umsh:ck:5BFn8YGKJ6pZR4qV3tW7mNhDrXsCxEaL9kUv2wAjT8bP?n=";
+    for (encoded, name, title) in [
+        ("%F0%9F%94%A5%20Hot%20Topic", "🔥 Hot Topic", "Hot Topic"),
+        ("%F0%9F%94%A5", "🔥", "Fire"),
+    ] {
+        let mut app = app!();
+        open_add_channel(&mut app);
+        run(&mut app, &typed(invitation));
+        run(&mut app, &typed(encoded));
+        run(&mut app, &[Input::Enter]);
+        let chat = app.state().chats[0].clone();
+        assert_eq!(chat.name.as_str(), name);
+        assert_eq!(chat.title().as_ref(), title);
+        // Find knows it by what its row calls it, and lights that.
+        run(&mut app, &[Input::Backspace]);
+        run(&mut app, &typed(&title[..3]));
+        let (found, _) = app.state().found();
+        let found = found
+            .iter()
+            .find(|f| f.kind == FoundKind::Chat(chat.id))
+            .expect("found");
+        assert_eq!(found.title.as_ref(), title);
+    }
+}
+
+#[test]
 fn an_invitation_counts_down_and_joins_a_private_channel() {
     let mut app = app!();
     open_add_channel(&mut app);
@@ -2032,7 +2059,7 @@ fn typing_on_the_list_finds_and_enter_opens_the_top_result() {
     assert_eq!(count, 4);
     assert_eq!(found[0].kind, FoundKind::Chat(RIDGE));
     assert_eq!(found[1].kind, FoundKind::Peer(app.state().peers[2].id));
-    assert_eq!(found[2].name.as_str(), "Riverbend Camp");
+    assert_eq!(found[2].title.as_ref(), "Riverbend Camp");
     run(&mut app, &[Input::Enter]);
     assert_in_conversation(app.state(), RIDGE);
     // Find closed behind it.

@@ -9,6 +9,7 @@ use buoyant::focus::{FocusKey, FocusState};
 use buoyant::view::EditBuffer;
 use heapless::String;
 
+use crate::avatar::Title;
 pub use crate::clock_settings::{ClockPage, DateParts, Part, ZoneFind};
 use crate::keyboard::Field;
 use crate::model::{
@@ -723,11 +724,15 @@ impl State {
             _ = found.push(item);
         };
         for chat in self.chats.iter() {
-            if word_match(&chat.name, query).is_some() {
+            // By its name, or by what its row calls it: "fire" finds 🔥.
+            let title = chat.title();
+            if word_match(&chat.name, query).is_some()
+                || word_match(title.as_ref(), query).is_some()
+            {
                 add(Found {
                     kind: FoundKind::Chat(chat.id),
                     avatar: chat.avatar.clone(),
-                    name: chat.name.clone(),
+                    title,
                     distance: String::new(),
                     age: self.age(chat),
                 });
@@ -738,7 +743,7 @@ impl State {
                 add(Found {
                     kind: FoundKind::Peer(peer.id),
                     avatar: peer.avatar.clone(),
-                    name: peer.name.clone(),
+                    title: Title::copy(&peer.name),
                     distance: distance(peer.hops),
                     age: peer.heard.clone(),
                 });
@@ -748,7 +753,7 @@ impl State {
             add(Found {
                 kind: FoundKind::Heard(heard.address),
                 avatar: heard.avatar,
-                name: heard.name,
+                title: Title::copy(&heard.name),
                 distance: heard.distance,
                 age: heard.age,
             });
@@ -766,7 +771,9 @@ impl State {
             FoundKind::Chat(chat) => self.open_chat(chat),
             FoundKind::Peer(peer) => self.open_peer(peer),
             FoundKind::Heard(address) => {
-                if let Some(chat) = self.node.direct_chat(&address, &found.name, &found.avatar) {
+                // A heard node's title is its name.
+                let name = found.title.as_ref();
+                if let Some(chat) = self.node.direct_chat(&address, name, &found.avatar) {
                     let chat = self.add_chat(chat);
                     self.go_to_chat(chat);
                 }

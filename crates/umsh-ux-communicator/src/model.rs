@@ -6,7 +6,7 @@ use buoyant::view::EditBuffer;
 use heapless::{String, Vec};
 pub use umsh_hal::tz::Rule;
 
-use crate::avatar::{AvatarStyle, BuiltinChannel};
+use crate::avatar::{AvatarStyle, BuiltinChannel, Title, channel_title};
 use crate::board::{Board, Metrics};
 use crate::clock::Local;
 use crate::keyboard::{Aids, Keyboard};
@@ -269,6 +269,16 @@ impl ChatSummary {
         summary
     }
 
+    /// What a row that identifies the chat calls it: a channel as
+    /// [`channel_title`] says, and a peer by its name.
+    #[must_use]
+    pub fn title(&self) -> Title {
+        match self.kind {
+            ChatKind::Channel { .. } => channel_title(&self.name),
+            ChatKind::Peer { .. } => Title::copy(&self.name),
+        }
+    }
+
     /// Shows `message` as the last one.
     pub fn preview(&mut self, message: &Message) {
         self.preview.clear();
@@ -324,7 +334,9 @@ pub struct Heard {
 pub struct Found {
     pub kind: FoundKind,
     pub avatar: AvatarStyle,
-    pub name: String<32>,
+    /// What the row calls it: [`ChatSummary::title`] for a chat, and a
+    /// peer's or a heard node's name.
+    pub title: Title,
     /// How far away a peer or a heard node is.
     pub distance: String<12>,
     pub age: String<6>,

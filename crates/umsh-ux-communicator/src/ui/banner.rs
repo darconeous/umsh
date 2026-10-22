@@ -38,7 +38,7 @@ fn message(m: &'static Metrics, summary: &ChatSummary) -> impl View<Rgb565, Stat
         HStack::new((
             super::avatar::view(&summary.avatar, AVATAR),
             HStack::new((
-                label::<32>(&summary.name, &font::BOLD, m.secondary, theme::TEXT)
+                super::line(summary.title(), &font::BOLD, m.secondary, theme::TEXT)
                     .fixed_size(true, false),
                 label::<64>(
                     &summary.preview,

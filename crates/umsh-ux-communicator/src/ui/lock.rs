@@ -13,7 +13,7 @@ use embedded_graphics::pixelcolor::Rgb565;
 use heapless::{String, Vec};
 
 use super::{line, status};
-use crate::avatar::AvatarStyle;
+use crate::avatar::{AvatarStyle, Title};
 use crate::board::{Metrics, Unlock};
 use crate::clock::Local;
 use crate::lock::UNLOCK_STEPS;
@@ -84,7 +84,7 @@ const fn hint_y(m: &Metrics) -> u32 {
 #[derive(Clone, Debug, PartialEq)]
 struct Card {
     avatar: AvatarStyle,
-    name: String<32>,
+    title: Title,
     age: Age,
     text: SharedText,
 }
@@ -101,7 +101,7 @@ pub fn view(state: &State) -> impl View<Rgb565, State> + use<> {
             let chat = state.chat(arrived.chat)?;
             Some(Card {
                 avatar: chat.avatar.clone(),
-                name: chat.name.clone(),
+                title: chat.title(),
                 age: age(Some((arrived.at / 1000) as u32), Some(uptime)),
                 text: arrived.text.clone(),
             })
@@ -318,7 +318,7 @@ fn card_look((card, m, width): &(Card, &'static Metrics, u32)) -> impl View<Rgb5
         super::avatar::view(&card.avatar, CARD_AVATAR),
         VStack::new((
             HStack::new((
-                line(card.name.clone(), &font::BOLD, m.secondary, theme::TEXT),
+                line(card.title.clone(), &font::BOLD, m.secondary, theme::TEXT),
                 Spacer::default(),
                 line(
                     card.age.clone(),

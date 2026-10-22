@@ -5,12 +5,11 @@ use buoyant::event::{Key, KeyResponse};
 use buoyant::focus::BoundaryBehavior;
 use buoyant::view::prelude::*;
 use embedded_graphics::pixelcolor::Rgb565;
-use heapless::{String, Vec};
+use heapless::Vec;
 
 use super::conversation::header;
-use super::label;
 use super::peers::{AVATAR, ROW, TEXT_X, add_row, focused_row};
-use crate::avatar::AvatarStyle;
+use crate::avatar::{AvatarStyle, Title};
 use crate::board::Metrics;
 use crate::model::{ChannelAccess, ChatId, ChatKind, MAX_CHATS, State};
 use crate::nav::keys;
@@ -32,7 +31,7 @@ static INDICES: [usize; MAX_CHATS] = {
 struct Channel {
     id: ChatId,
     avatar: AvatarStyle,
-    name: String<32>,
+    title: Title,
     about: &'static str,
 }
 
@@ -45,7 +44,7 @@ pub fn view(state: &State) -> impl View<Rgb565, State> + use<> {
             ChatKind::Channel { access } => Some(Channel {
                 id: c.id,
                 avatar: c.avatar.clone(),
-                name: c.name.clone(),
+                title: c.title(),
                 about: match access {
                     ChannelAccess::Private => "Private",
                     ChannelAccess::Named => "Named",
@@ -93,7 +92,7 @@ fn row(m: &'static Metrics, channel: &Channel) -> impl View<Rgb565, State> + use
         move |button: ButtonState| {
             focused_row(
                 HStack::new((
-                    label::<32>(&channel.name, &font::SEMIBOLD, m.body, theme::TEXT),
+                    super::line(channel.title.clone(), &font::SEMIBOLD, m.body, theme::TEXT),
                     Spacer::default(),
                     super::line(
                         channel.about,

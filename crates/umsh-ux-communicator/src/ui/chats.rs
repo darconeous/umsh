@@ -11,7 +11,7 @@ use heapless::{String, Vec};
 
 use super::line;
 use super::setting::{card, choice};
-use crate::avatar::AvatarStyle;
+use crate::avatar::{AvatarStyle, Title};
 use crate::board::Metrics;
 use crate::model::{Age, ChatSummary, Chats, MAX_CHATS, State, age};
 use crate::nav::{ChatMenu, keys};
@@ -154,7 +154,7 @@ fn row(
     let id = chat.id;
     let look = Row {
         avatar: chat.avatar.clone(),
-        name: chat.name.clone(),
+        title: chat.title(),
         preview: chat.preview.clone(),
         draft: (!chat.draft.is_empty()).then(|| chat.draft.storage().clone()),
         age,
@@ -177,7 +177,7 @@ fn row(
 #[derive(Clone)]
 struct Row {
     avatar: AvatarStyle,
-    name: String<32>,
+    title: Title,
     preview: String<64>,
     draft: Option<DraftText>,
     age: Age,
@@ -258,13 +258,13 @@ fn name_line(row: &Row) -> impl View<Rgb565, ()> + use<> {
     } else {
         &font::SEMIBOLD
     };
-    let name_color = if row.name.as_str() == "EMERGENCY" {
+    let name_color = if row.title.as_ref() == "EMERGENCY" {
         theme::RED
     } else {
         theme::TEXT
     };
     HStack::new((
-        line(row.name.clone(), name_face, row.m.body, name_color),
+        line(row.title.clone(), name_face, row.m.body, name_color),
         Spacer::default(),
         row.muted.then(|| {
             Image::new(&icon::BELL_SLASH)
