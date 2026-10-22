@@ -362,6 +362,34 @@ the hint `5EBD`, and `H12n` straddles `EDBC` and `EDBD`, which both render as
 Board 7 is a half-height sheet over the conversation, whose sends read
 **Delivered · flooded** while the manual path is failing.
 
+## D8–D10. Exchanging contacts in person
+
+The flow is specified in
+[Exchanging contacts in person](../import-discovery-sharing.md#exchanging-contacts-in-person).
+
+### D8. Nearby on Add Peer
+
+[![Nearby mockups: Add Peer with nearby devices, the radio-not-ready row, and the glyph legend](mockups/nearby.svg)](mockups/nearby.svg)
+
+Board 1 is Add Peer with four devices nearby, two of them iPhones told apart
+by color. Board 2 is the same sheet while the radio is not ready. Board 3 is a
+legend of device outlines, nearness levels, and sample session colors (OKLCH
+L 0.75, C 0.12).
+
+### D9. Asked to exchange
+
+[![Asked to exchange: a small sheet over Add Peer naming a T-LoRa Pager](mockups/exchange-ask.svg)](mockups/exchange-ask.svg)
+
+A fixed-height sheet over Add Peer. Its glyph and model match the asker's row.
+
+### D10. The exchange
+
+[![Exchange mockups: waiting, comparing codes, after Same, the two ended states, and the unsaved peer page](mockups/exchange.svg)](mockups/exchange.svg)
+
+Boards 1–5 are the exchange screen pushed onto the Add Peer sheet. Board 6 is
+the unsaved peer page that replaces the sheet's stack once both identities
+have arrived.
+
 ## E. Scanned private channel preview
 
 ```text

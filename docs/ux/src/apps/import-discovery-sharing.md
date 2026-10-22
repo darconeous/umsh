@@ -15,6 +15,7 @@ pretending that discovery establishes human identity.
 | Paste or manual entry | URI or advanced public-key entry | Validate while preserving the original until confirmed |
 | System link/open action | UMSH URI supplied by another app | Open the same preview flow; never commit on link activation alone |
 | Share/import file | One or more future UMSH records | Preview each record and conflicts before commit |
+| Nearby exchange | Signed identity of a person standing nearby, after both compare a code | Open the unsaved peer page; save only on Save Peer |
 
 ## Known nodes and contacts
 
@@ -71,6 +72,85 @@ Discovery sessions must be time-bounded and should use conservative flood
 defaults. They may continue to populate Recent/Observed after the visible sheet
 closes only as part of ordinary receive behavior; the UI must not imply that a
 background scan is still running.
+
+## Exchanging contacts in person
+
+Two people standing together can exchange contacts over LoRa with nothing
+typed or scanned. A phone exchanges with another phone or with a
+communicator, which does the same from its own Add peer screen (see
+[Communicators: Adding peers](../classes/communicators.md#adding-peers)). The
+screens are in the [iOS mockups](ios/mockups.md#d8d10-exchanging-contacts-in-person).
+
+### Nearby
+
+**Nearby** heads the Add Peer sheet, above the identity field. It lists the
+devices that also have Add Peer open, nearest first.
+
+- **Nothing identifying is sent before both people agree.** A row shows only a
+  glyph, the model name, and nearness—never a name, address, hint, or avatar.
+- The glyph is a circle in the device's session color with an outline of the
+  kind of device: a phone, a tablet, a computer, or a handheld radio for any
+  board. The color comes from a session key made fresh each time, so it
+  identifies nothing afterward.
+- The model name comes from the device's model identifier: a board's name,
+  such as **T-LoRa Pager**, or a platform's, such as **iPhone**. An unknown
+  identifier reads **Device**.
+- Nearness is a Wi-Fi-style symbol with zero to three arcs lit. It is smoothed
+  signal strength, not distance, and it is never put into words.
+- The section header carries **You** beside this phone's own glyph, so two
+  people holding the same model can tell which row is whose.
+
+The session runs only while the sheet is visible, the app is in the
+foreground, and the attached radio is set up for this phone. Closing the
+sheet, leaving the app, or losing the radio ends it, and this phone drops out
+of other devices' lists. Otherwise Nearby is one disabled row: **Connect a
+companion radio set up for this phone to exchange contacts.**
+
+### Asking
+
+Tapping a row asks that device to exchange and opens the exchange screen,
+waiting for an answer.
+
+A phone that is asked shows a small sheet over Add Peer: the asker's glyph and
+model, **Exchange contacts?**, and the buttons **Exchange** and **Not now**.
+The person standing there is the identification. Not now, or swiping the
+sheet away, declines, and this phone carries on under a new session key, so
+its glyph color changes.
+
+### The exchange screen
+
+The exchange screen is pushed onto the Add Peer sheet. Its title is the other
+device's glyph and model.
+
+| State | Shows | Actions |
+|---|---|---|
+| Waiting | **Waiting for {model}** with a spinner | Back |
+| Comparing | The six-digit code as `123 456` in large monospaced digits, and **Same code on the other screen?** | **Same**, **Different** |
+| After Same | A checkmark, then **Waiting for {model}** with a spinner | Back |
+| Ended | **Codes differ. Nothing saved.** or **Not exchanged. Nothing saved.** | **Try again**, **Done** |
+
+- The codes match only if nobody is in the middle, and both people must press
+  **Same**. This phone sends its identity only when its holder presses Same:
+  the same signed public bundle the identity QR code shares, without
+  location.
+- **Different** on either side ends the exchange for both, and whatever
+  arrived is dropped. **Back** cancels the same way at any point before the
+  end. A decline, a cancel, or losing the other device reads **Not
+  exchanged.**
+- **Try again** starts over under a fresh session key, so the glyph and the
+  code both change. **Done** returns to Nearby.
+
+### The end: an unsaved peer
+
+Once both people have pressed Same and both identities have arrived, the
+sheet's navigation stack is replaced by the peer page for the new peer, so
+Back does not lead to the code. The page is the ordinary one for a known node
+that is not a contact: **Message** is at the top and **Save Peer** adds it to
+Peers. Nothing is saved until Save Peer.
+
+The identity is checked as any imported bundle is, and the name is linked to
+the address only when its signature verifies. There is no mark for having met
+in person.
 
 ## URI import pipeline
 
