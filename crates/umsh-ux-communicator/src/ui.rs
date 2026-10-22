@@ -349,6 +349,14 @@ fn line<T: AsRef<str> + Clone, C>(
         .foreground_color(color)
 }
 
+/// How wide `text` is set in `face` at `size`, in pixels.
+fn advance(text: &str, face: &'static Typeface, size: u32) -> u32 {
+    let glyphs = face.face(size);
+    text.chars()
+        .map(|c| glyphs.glyph(c).map_or(0, |g| u32::from(g.advance)))
+        .sum()
+}
+
 /// An address, in the fewest lines of equal length that each fit in
 /// `width`, each line `height` tall: whole on a wide screen, and broken
 /// evenly where it does not fit.
@@ -361,12 +369,7 @@ fn address(
     height: u32,
 ) -> impl View<Rgb565, State> + use<> {
     const MOST: usize = 3;
-    let glyphs = face.face(size);
-    let advance = |s: &str| -> u32 {
-        s.chars()
-            .map(|c| glyphs.glyph(c).map_or(0, |g| u32::from(g.advance)))
-            .sum()
-    };
+    let advance = |s: &str| advance(s, face, size);
     let count = text.chars().count();
     let split = |lines: usize| {
         let each = count.div_ceil(lines).max(1);

@@ -24,6 +24,7 @@ const WARNING: u32 = 28;
 const ROW: u32 = 36;
 const INSET: u32 = 12;
 const RADIUS: u16 = 8;
+const CARET: u32 = 3;
 
 pub fn view(
     m: &'static Metrics,
@@ -90,6 +91,7 @@ pub(super) fn edited_name<const N: usize>(
     TextField::new(name, &font::REGULAR, edit)
         .with_font_size(m.secondary)
         .with_max_lines(1)
+        .with_caret_width(CARET)
         // Enter ends the edit.
         .on_submit(|_: &mut State| {})
         .on_active(active)
@@ -111,26 +113,23 @@ fn name_look<const N: usize>(
     } else {
         theme::BACKGROUND
     };
+    // Set at the end, as a value is, and edited where it stands: the area
+    // is as wide as the text and its caret, up to the room the row leaves.
+    let room = m.width - 8 - (INSET - 4) - 10 - 2 * 8 - super::advance("Name", face, m.body);
+    let wide = super::advance(shown, &font::REGULAR, m.secondary) + CARET;
     HStack::new((
         label::<8>("Name", face, m.body, theme::TEXT),
-        // Edited where it stands; otherwise set at the end, as a value is.
+        Spacer::default(),
         editing.then(|| {
             area.colors(AreaColors {
                 caret: Some(theme::ACCENT),
                 scroll_bar: None,
             })
             .foreground_color(theme::TEXT)
+            .frame()
+            .with_width(wide.min(room))
         }),
-        (!editing).then(|| {
-            HStack::new((
-                Spacer::default(),
-                label::<32>(shown, &font::REGULAR, m.secondary, theme::TEXT_SECONDARY),
-                Image::new(&icon::CHEVRON)
-                    .as_template()
-                    .foreground_color(theme::TEXT_TERTIARY),
-            ))
-            .with_spacing(8)
-        }),
+        (!editing).then(|| label::<32>(shown, &font::REGULAR, m.secondary, theme::TEXT_SECONDARY)),
     ))
     .with_spacing(8)
     .hint_background_color(fill)
