@@ -14,6 +14,21 @@ protocol RadioConnection: AnyObject, Sendable {
     /// one per session with forward secrecy: the current set first, then
     /// each change.
     func localDestinationHints() async -> AsyncStream<[Data]>
+    /// Add Peer's contact exchange: the current state first, then each
+    /// change. Nil while no mesh session is installed.
+    func meetStates() async -> AsyncStream<MobileMeetStateRecord?>
+    /// Open Add Peer's contact exchange under a fresh session key, ending
+    /// any attempt in progress; Try again and Not now open it again.
+    /// `model` is this phone's platform id (`platforms.json`).
+    func openMeet(model: UInt16) async throws
+    func closeMeet() async throws
+    /// Ask the device listed as `device` to exchange. Returns whether the
+    /// ask went out.
+    func askToExchange(device: UInt32) async throws -> Bool
+    func answerExchange(accept: Bool) async throws
+    /// The holder pressed Same (`true`) or Different.
+    func confirmCode(same: Bool) async throws
+    func cancelExchange() async throws
     func advertiseIdentity(name: String?) async throws
     /// The same advertisement, sent because the phone's own interval came
     /// round rather than because someone asked for it. Reaches only direct

@@ -24,6 +24,9 @@ use zeroize::Zeroize;
 
 use crate::{IdentitySignature, NodeIdentityPayload};
 
+mod meeting;
+pub use meeting::{Exchange, MeetCommand, Meeting, Nearby, NearbyId};
+
 /// The only version this implementation speaks.
 pub const VERSION: u8 = 1;
 
@@ -323,6 +326,13 @@ pub fn code(
 /// The session color's hue step, one of 256 around the OKLCH circle.
 pub fn session_hue(session: &PublicKey) -> u8 {
     SoftwareSha256.hash(&[COLOR_LABEL, &session.0])[0]
+}
+
+include!(concat!(env!("OUT_DIR"), "/session_colors.rs"));
+
+/// The session color, as `0xRRGGBB`, that a device shows for `session`.
+pub fn session_color(session: &PublicKey) -> u32 {
+    SESSION_COLORS[usize::from(session_hue(session))]
 }
 
 /// Whether two hue steps are near enough to be mistaken for each other.
@@ -996,6 +1006,17 @@ impl Meet {
 mod tests {
     use super::*;
     use crate::{NodeCapabilities, NodeRole};
+
+    /// The colors `test-vectors.md` gives for the exchange's session keys.
+    #[test]
+    fn session_colors_match_the_spec() {
+        assert_eq!(SESSION_COLORS[0], 0xEC8DAB);
+        assert_eq!(SESSION_COLORS[61], 0xD0A84B);
+        assert_eq!(SESSION_COLORS[64], 0xCBAA4B);
+        assert_eq!(SESSION_COLORS[119], 0x53C69E);
+        assert_eq!(SESSION_COLORS[128], 0x3DC6B1);
+        assert_eq!(SESSION_COLORS[192], 0x90AAFA);
+    }
     use alloc::string::String;
     use core::pin::pin;
     use core::task::{Context, Poll, Waker};

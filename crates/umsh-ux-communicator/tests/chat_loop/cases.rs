@@ -1428,7 +1428,7 @@ fn nearby_lists_devices_by_model_and_color_alone() {
     let mut app = app!();
     open_nearby(&mut app);
     let meet = &app.state().meet;
-    assert!(meet.own_hue.is_some());
+    assert!(meet.own_color.is_some());
     assert_eq!(meet.exchange, Exchange::Idle);
     assert_eq!(meet.devices.len(), 2);
     assert_eq!(focus(app.state()), Some(keys::ENTER_ADDRESS));
@@ -1461,12 +1461,12 @@ fn not_now_stays_on_nearby_under_a_new_color() {
     let store = store();
     let mut app = app!(store);
     open_nearby(&mut app);
-    let before = app.state().meet.own_hue;
+    let before = app.state().meet.own_color;
     other_holder(&mut app, store, fixture::MeetStep::Asks);
     run(&mut app, &[Input::Turn(1), Input::Press]);
     assert!(matches!(app.state().screen(), Screen::Nearby { .. }));
     assert_eq!(app.state().meet.exchange, Exchange::Idle);
-    assert_ne!(app.state().meet.own_hue, before);
+    assert_ne!(app.state().meet.own_color, before);
     assert_eq!(focus(app.state()), Some(keys::ENTER_ADDRESS));
 }
 
@@ -1512,7 +1512,7 @@ fn different_ends_the_exchange_and_try_again_draws_a_new_color() {
     let store = store();
     let mut app = app!(store);
     open_nearby(&mut app);
-    let before = app.state().meet.own_hue;
+    let before = app.state().meet.own_color;
     other_holder(&mut app, store, fixture::MeetStep::Asks);
     run(&mut app, &[Input::Press, Input::Turn(1)]);
     assert_eq!(focus(app.state()), Some(keys::DIFFERENT));
@@ -1525,7 +1525,7 @@ fn different_ends_the_exchange_and_try_again_draws_a_new_color() {
     run(&mut app, &[Input::Press]);
     assert!(matches!(app.state().screen(), Screen::Nearby { .. }));
     assert_eq!(app.state().meet.exchange, Exchange::Idle);
-    assert_ne!(app.state().meet.own_hue, before);
+    assert_ne!(app.state().meet.own_color, before);
 }
 
 #[test]

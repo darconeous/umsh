@@ -81,6 +81,18 @@ final class AppRuntime {
     // these (via @Bindable) for the child views that mutate summaries in
     // place.
     var radioSnapshot = RadioSnapshot.idle
+    /// Add Peer's contact exchange, as the mesh session reports it; nil
+    /// while none is open.
+    var meet: MobileMeetStateRecord?
+    /// The peer the last exchange produced, recorded unsaved, for Add Peer
+    /// to open. Add Peer clears it once it has.
+    var exchangedPeer: PeerSummary?
+    /// Add Peer is on screen with the app in the foreground, so the
+    /// exchange runs whenever the radio can carry it.
+    private var meetWanted = false
+    /// The contact already recorded for the exchange now showing, so a
+    /// repeated state does not record it twice.
+    private var recordedExchange: String?
     var localIdentity: LocalIdentitySnapshot?
     var identityError: IdentityVaultError?
     var isLoadingIdentity = true
@@ -186,6 +198,7 @@ final class AppRuntime {
         tasks.append(Task { await self.consumeAdvertisementEvents() })
         tasks.append(Task { await self.consumePeerHeardEvents() })
         tasks.append(Task { await self.consumeLocalDestinationHints() })
+        tasks.append(Task { await self.consumeMeetStates() })
         tasks.append(Task { await self.regionService.load() })
         installObservers()
         rearmSchedules()
@@ -326,7 +339,11 @@ final class AppRuntime {
             // tab tree included—on each one, which is felt as stutter
             // while typing.
             if radioSnapshot != snapshot {
+                let carried = radioSnapshot.carriesThisPhone
                 radioSnapshot = snapshot
+                if snapshot.carriesThisPhone != carried {
+                    await settleMeet()
+                }
             }
             if snapshot.linkState == .attached {
                 // The first successful attach is the first moment a
@@ -370,6 +387,139 @@ final class AppRuntime {
             guard !Task.isCancelled else { break }
             coordinator.localDestinationHints = hints
             await reconcileHostDestinations()
+        }
+    }
+
+    func consumeMeetStates() async {
+        for await state in await radioConnection.meetStates() {
+            guard !Task.isCancelled else { break }
+            meet = state
+            if case let .exchanged(contact)? = state?.exchange {
+                await recordExchanged(contact)
+            } else {
+                recordedExchange = nil
+            }
+        }
+    }
+
+    // MARK: - Contact exchange
+
+    /// Add Peer's contact exchange, for the views.
+    var contactExchange: ContactExchange {
+        ContactExchange(
+            state: meet,
+            ownModel: Self.platformModel,
+            radioReady: radioSnapshot.carriesThisPhone,
+            exchangedPeer: exchangedPeer,
+            setWanted: setMeetWanted,
+            ask: askToExchange(device:),
+            answer: answerExchange(accept:),
+            confirm: confirmCode(same:),
+            backOut: backOutOfExchange,
+            openAgain: openMeet
+        )
+    }
+
+    /// Add Peer appeared or went, or the app came to or left the
+    /// foreground with it showing.
+    func setMeetWanted(_ wanted: Bool) async {
+        guard wanted != meetWanted else { return }
+        meetWanted = wanted
+        if !wanted {
+            exchangedPeer = nil
+        }
+        await settleMeet()
+    }
+
+    /// Opens the exchange while it is wanted and the radio can carry it,
+    /// and closes it otherwise. Every attempt opens under a fresh key.
+    private func settleMeet() async {
+        let open = meet != nil && meet?.exchange != .closed
+        if meetWanted && radioSnapshot.carriesThisPhone {
+            if !open {
+                await openMeet()
+            }
+        } else if open {
+            try? await radioConnection.closeMeet()
+        }
+    }
+
+    /// Opens the exchange under a fresh session key: on arrival, and for
+    /// Try again and Not now.
+    func openMeet() async {
+        guard meetWanted, radioSnapshot.carriesThisPhone else { return }
+        exchangedPeer = nil
+        try? await radioConnection.openMeet(model: Self.platformModel)
+    }
+
+    func askToExchange(device: UInt32) async {
+        _ = try? await radioConnection.askToExchange(device: device)
+    }
+
+    /// Answers the device that asked; Not now opens again under a new key.
+    /// Views can call this after the question has gone (a card dismissing
+    /// once the answer has moved the exchange on), so it checks that a
+    /// device is still asking.
+    func answerExchange(accept: Bool) async {
+        guard meet?.exchange.askedBy != nil else { return }
+        try? await radioConnection.answerExchange(accept: accept)
+        if !accept {
+            await openMeet()
+        }
+    }
+
+    func confirmCode(same: Bool) async {
+        try? await radioConnection.confirmCode(same: same)
+    }
+
+    /// Ends the attempt under way and opens a fresh one. Like answering, it
+    /// checks the live state: the screen it backs out of can be leaving
+    /// because the attempt is already over.
+    func backOutOfExchange() async {
+        guard meet?.exchange.isUnderWay == true else { return }
+        try? await radioConnection.cancelExchange()
+        await openMeet()
+    }
+
+    /// This device's platform id (`platforms.json`), which its Hellos carry.
+    static var platformModel: UInt16 {
+        UIDevice.current.userInterfaceIdiom == .pad ? 0xFE01 : 0xFE00
+    }
+
+    /// Records who the other device says its holder is, unsaved, the tier
+    /// a node heard over the air lands in, and hands it to Add Peer.
+    /// Saving it stays the holder's call.
+    ///
+    /// The bundle came from the exchange's session key rather than from the
+    /// peer's own, so it is not authenticated by the MAC; its signature,
+    /// when it has one, is what links the name to the key.
+    func recordExchanged(_ contact: MobileMeetContactRecord) async {
+        guard recordedExchange != contact.peerAddress else { return }
+        recordedExchange = contact.peerAddress
+        guard let applicationStore, let localIdentity,
+              contact.peerAddress != localIdentity.publicIdentity.canonicalAddress
+        else { return }
+        let identity = try? await meshEngine.decodeNodeIdentity(
+            address: contact.peerAddress,
+            payload: contact.identityBundle
+        )
+        do {
+            try await applicationStore.upsertPeer(
+                ownerIdentityID: localIdentity.id,
+                publicAddress: contact.peerAddress,
+                alias: nil,
+                advertisedName: identity?.name,
+                nodeKind: identity.map { PeerRole(roleCode: $0.roleCode).rawValue },
+                advertisement: contact.identityBundle,
+                advertisementAuthenticated: false,
+                advertisementReceivedAt: Date()
+            )
+            await reloadApplicationState()
+            exchangedPeer = peers.first {
+                $0.identity.canonicalAddress == contact.peerAddress
+            }
+        } catch {
+            Self.logger.error("Failed to record an exchanged contact")
         }
     }
 
@@ -3059,6 +3209,13 @@ final class AppRuntime {
     /// exactly what a notification has to carry.
     /// Staging only: have a staged peer react to the phone's last message,
     /// after the same delay and for the same reason as a staged message.
+    /// Staging only: a staged peer opens Add Peer, so it shows on Nearby,
+    /// or asks the phone to exchange.
+    func stagedPeerMeets(asking: Bool) {
+        guard let staging = radioConnection as? FakeRadioConnection else { return }
+        Task { await staging.stagedPeerMeets(asking: asking) }
+    }
+
     func stagedPeerReacts() {
         guard let staging = radioConnection as? FakeRadioConnection else { return }
         let glyph = ReactionEmoji.palette.randomElement()?.token ?? "+1"

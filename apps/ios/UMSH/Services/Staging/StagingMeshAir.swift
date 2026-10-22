@@ -35,6 +35,10 @@ actor StagingMeshAir: FakeRadioAir {
     private var onAir: (@Sendable ([MobileMeshRxRecord]) -> Void)?
     /// The sessions hold their wake listeners weakly; these keep them alive.
     private var wakeListeners: [StagedPeerWakeListener] = []
+    /// The staged peer with Add Peer open asks the first device it lists.
+    private var asksWhenListed = false
+    /// That peer has pressed Same on the code now showing.
+    private var pressedSame = false
 
     func attach(onAir: @escaping @Sendable ([MobileMeshRxRecord]) -> Void) {
         self.onAir = onAir
@@ -93,6 +97,9 @@ actor StagingMeshAir: FakeRadioAir {
         }
         if let batchID = update.chatBatchId {
             try? peer.session.acknowledgeChatBatch(batchId: batchID)
+        }
+        if index == 0, let meet = update.meet {
+            followMeet(meet, session: peer.session)
         }
         guard !update.outboundFrames.isEmpty, let onAir else { return }
         onAir(
@@ -183,6 +190,56 @@ actor StagingMeshAir: FakeRadioAir {
             )
         }
         pumpPeer(index)
+    }
+
+    /// Have the first staged peer open Add Peer as a T-LoRa Pager would, so
+    /// it shows on the phone's Nearby. `asking`, it asks the phone to
+    /// exchange as soon as it lists it. It agrees when asked, presses Same a
+    /// moment after the code shows, and closes Add Peer once the attempt is
+    /// over.
+    func peerOpensAddPeer(asking: Bool) async {
+        let peers = await ensurePeers()
+        guard let peer = peers.first else { return }
+        let logger = Logger(subsystem: "com.voria.umsh.ios", category: "Staging")
+        pressedSame = false
+        asksWhenListed = asking
+        do {
+            try await peer.session.openMeet(model: 9)
+            logger.notice("Staged peer \(peer.name, privacy: .public) opened Add Peer")
+        } catch {
+            logger.warning(
+                "Staged Add Peer failed: \(error.localizedDescription, privacy: .public)"
+            )
+        }
+        pumpPeer(0)
+    }
+
+    private func followMeet(_ meet: MobileMeetStateRecord, session: MobileMeshSession) {
+        switch meet.exchange {
+        case .idle:
+            if asksWhenListed, let phone = meet.devices.first {
+                asksWhenListed = false
+                // As long as a holder takes to pick a row, which is time
+                // enough for the phone to hear this peer's answering Hello
+                // and list it by model.
+                Task {
+                    try? await Task.sleep(for: .seconds(3))
+                    _ = try? await session.askToExchange(device: phone.id)
+                }
+            }
+        case .asked:
+            Task { try? await session.answerExchange(accept: true) }
+        case .comparing(_, _, sent: false) where !pressedSame:
+            pressedSame = true
+            Task {
+                try? await Task.sleep(for: .seconds(2))
+                try? await session.confirmCode(same: true)
+            }
+        case .exchanged, .ended:
+            Task { try? await session.closeMeet() }
+        default:
+            break
+        }
     }
 
     private func ensurePeers() async -> [Peer] {

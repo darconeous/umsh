@@ -684,7 +684,7 @@ async fn try_again_uses_a_fresh_session() {
     LocalSet::new()
         .run_until(async {
             let (alice, bob, _tap, bob_listed, _) = on_nearby().await;
-            let before = meet(&alice).own_hue;
+            let before = meet(&alice).own_color;
             let first = comparing(&alice, &bob, bob_listed).await;
             alice.node.confirm_code(false);
             until("the exchange did not end", || {
@@ -705,7 +705,7 @@ async fn try_again_uses_a_fresh_session() {
             let again = comparing(&alice, &bob, listed.unwrap()).await;
             // A new pair of keys and nonces: the colors and the code are
             // drawn anew, and match only by chance.
-            assert!(meet(&alice).own_hue != before || again != first);
+            assert!(meet(&alice).own_color != before || again != first);
         })
         .await;
 }

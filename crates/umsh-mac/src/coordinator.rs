@@ -1494,6 +1494,17 @@ impl<
         self.identities.get(id.0 as usize)?.as_ref()
     }
 
+    /// The keys of every ephemeral identity registered: the addresses this
+    /// MAC answers to besides its long-term identities'.
+    pub fn ephemeral_keys(&self) -> impl Iterator<Item = PublicKey> + '_ {
+        self.identities
+            .iter()
+            .flatten()
+            .map(IdentitySlot::identity)
+            .filter(|identity| identity.is_ephemeral())
+            .map(|identity| *identity.public_key())
+    }
+
     /// Mutably borrow an identity slot by identifier.
     pub fn identity_mut(
         &mut self,

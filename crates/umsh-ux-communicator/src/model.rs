@@ -559,10 +559,10 @@ pub type NearbyId = u32;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct NearbyDevice {
     pub id: NearbyId,
-    /// Its model id (`boards.json`).
+    /// Its model id (`boards.json`, `platforms.json`).
     pub model: u16,
-    /// Its color's hue step, one of 256 around the OKLCH circle.
-    pub hue: u8,
+    /// Its session color, as `0xRRGGBB`.
+    pub color: u32,
     /// How near it seems, 0 (far) to 3 (close), when the bearer reports
     /// signal strength.
     pub nearness: Option<u8>,
@@ -615,8 +615,9 @@ pub enum Exchange {
 /// exchange in progress.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MeetState {
-    /// Our color's hue step for this visit, once the session is up.
-    pub own_hue: Option<u8>,
+    /// Our session color for this visit, as `0xRRGGBB`, once the session
+    /// is up.
+    pub own_color: Option<u32>,
     /// The devices heard, oldest first.
     pub devices: Vec<NearbyDevice, MAX_NEARBY>,
     /// The device the exchange is with, or was until it ended.
@@ -629,7 +630,7 @@ impl MeetState {
     #[must_use]
     pub const fn new() -> Self {
         Self {
-            own_hue: None,
+            own_color: None,
             devices: Vec::new(),
             with: None,
             exchange: Exchange::Closed,

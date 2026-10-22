@@ -54,7 +54,7 @@ pub fn view(state: &State) -> impl View<Rgb565, State> + use<> {
     VStack::new((
         header(m, "Add peer", None, None).overlay(
             Alignment::Trailing,
-            state.meet.own_hue.map(|hue| you(m, hue)),
+            state.meet.own_color.map(|color| you(m, color)),
         ),
         label::<8>("Nearby", &font::BOLD, m.small, theme::TEXT_SECONDARY)
             .padding(Edges::Leading, INSET)
@@ -103,10 +103,10 @@ pub fn view(state: &State) -> impl View<Rgb565, State> + use<> {
 }
 
 /// This device's color for this visit, beside You.
-fn you(m: &'static Metrics, hue: u8) -> impl View<Rgb565, State> + use<> {
+fn you(m: &'static Metrics, color: u32) -> impl View<Rgb565, State> + use<> {
     HStack::new((
         label::<4>("You", &font::SEMIBOLD, m.secondary, theme::TEXT_TERTIARY),
-        glyph(hue, SMALL),
+        glyph(color, SMALL),
     ))
     .with_spacing(6)
     .padding(Edges::Trailing, INSET)
@@ -140,7 +140,7 @@ fn row(m: &'static Metrics, device: NearbyDevice) -> impl View<Rgb565, State> + 
                 .with_height(ROW)
                 .overlay(
                     Alignment::Leading,
-                    glyph(device.hue, AVATAR).frame().with_width(TEXT_X),
+                    glyph(device.color, AVATAR).frame().with_width(TEXT_X),
                 ),
                 focused,
                 m.width,
@@ -157,7 +157,7 @@ fn asked_card(m: &'static Metrics, device: NearbyDevice) -> impl View<Rgb565, St
         m,
         VStack::new((
             HStack::new((
-                glyph(device.hue, AVATAR),
+                glyph(device.color, AVATAR),
                 VStack::new((
                     label::<16>(model_name(device.model), &font::BOLD, m.body, theme::TEXT),
                     label::<24>(
@@ -207,7 +207,7 @@ pub(super) fn model_name(model: u16) -> &'static str {
 /// A device before anything is exchanged: its color for this visit, and
 /// the outline of a handheld, never an avatar. `size` is a row's avatar or
 /// a header's.
-pub(super) fn glyph(hue: u8, size: u32) -> impl View<Rgb565, State> + use<> {
+pub(super) fn glyph(color: u32, size: u32) -> impl View<Rgb565, State> + use<> {
     let outline = if size == AVATAR {
         &icon::HANDHELD_34
     } else {
@@ -217,7 +217,7 @@ pub(super) fn glyph(hue: u8, size: u32) -> impl View<Rgb565, State> + use<> {
         Outline::Peer(PeerShape::Circle).mask(size).map(|mask| {
             Image::new(mask)
                 .as_template()
-                .foreground_color(theme::session(hue))
+                .foreground_color(theme::session(color))
         }),
         Image::new(outline)
             .as_template()

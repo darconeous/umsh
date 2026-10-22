@@ -39,8 +39,7 @@ use umsh_ulcp::i2c;
 use umsh_ulcp::ids::{self, cap, prop, stream};
 use umsh_ulcp::items;
 use umsh_ulcp::meta::{
-    BufferedRxMeta, RX_FLAG_ACKED, RX_FLAG_BUFFERED, RX_FLAG_SELF_TX, RxMeta, TX_FLAG_NOCCA,
-    TX_POWER_DEFAULT, TX_POWER_MAX, TxMeta,
+    BufferedRxMeta, RX_FLAG_ACKED, RX_FLAG_BUFFERED, RX_FLAG_SELF_TX, RxMeta, TX_FLAG_NOCCA, TxMeta,
 };
 use umsh_ulcp::pui;
 
@@ -4111,7 +4110,7 @@ where
         // The device performs CCA itself; the CAD policy becomes a host-side
         // retry budget around `STATUS_CCA_FAILURE`.
         let mut meta = TxMeta {
-            power: tx_power(options.power_dbm),
+            power: TxMeta::power_for(options.power_dbm),
             ..TxMeta::default()
         };
         let cca_deadline = match options.cad {
@@ -4201,13 +4200,6 @@ fn required_answers<const N: usize>(
 /// The answers to a batch, one per position in the order asked, for a
 /// reader that takes each member on its own merits: a refusal stays in
 /// its position rather than failing the read.
-/// The `TX_POWER` that asks the device for `power_dbm`.
-fn tx_power(power_dbm: Option<i8>) -> i8 {
-    // The top two values are sentinels; the device clamps the rest to its
-    // radio's range.
-    power_dbm.map_or(TX_POWER_DEFAULT, |dbm| dbm.min(TX_POWER_MAX - 1))
-}
-
 fn positions<const N: usize>(
     answers: Vec<Result<Vec<u8>, Status>>,
 ) -> Result<[Result<Vec<u8>, Status>; N], UlcpError> {
@@ -5379,14 +5371,6 @@ mod tests {
         assert_eq!(&buf[..info.len], &packet);
         assert_eq!(info.rssi, -91);
         assert_eq!(info.snr.as_centibels(), 55);
-    }
-
-    #[test]
-    fn a_frames_power_never_reads_as_a_sentinel() {
-        assert_eq!(super::tx_power(None), TX_POWER_DEFAULT);
-        assert_eq!(super::tx_power(Some(-9)), -9);
-        assert_eq!(super::tx_power(Some(TX_POWER_MAX)), TX_POWER_MAX - 1);
-        assert_eq!(super::tx_power(Some(TX_POWER_DEFAULT)), TX_POWER_MAX - 1);
     }
 
     #[tokio::test]

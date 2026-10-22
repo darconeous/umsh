@@ -3,7 +3,7 @@ import Foundation
 @main
 struct MobileCoreSmokeTest {
     static func main() throws {
-        precondition(mobileApiVersion() == 56)
+        precondition(mobileApiVersion() == 57)
         precondition(ulcpMaxDevPeers() == 8)
 
         // The phone's zone as a device takes it.
@@ -91,7 +91,7 @@ struct MobileCoreSmokeTest {
         let inspectionProperties = try ulcpInspectionProperties(
             capabilities: Data([8])
         )
-        precondition(inspectionProperties == [3, 32, 35, 37])
+        precondition(inspectionProperties == [3, 32, 35, 37, 44])
         let frequency = withUnsafeBytes(of: UInt32(915_000).littleEndian) { Data($0) }
         let sync = try inspectUlcpSync(responses: [
             UlcpPropertyFrameRecord(

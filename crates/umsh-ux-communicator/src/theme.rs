@@ -79,26 +79,8 @@ pub const BANNER_LINE: Rgb565 = rgb(0x34414F);
 /// A nearness arc not lit.
 pub const NEAR_UNLIT: Rgb565 = rgb(0x3A414B);
 
-include!(concat!(env!("OUT_DIR"), "/session_colors.rs"));
-
-/// The color of a contact-exchange session whose hue step is `hue`.
+/// A contact-exchange session color, given as `0xRRGGBB`.
 #[must_use]
-pub const fn session(hue: u8) -> Rgb565 {
-    rgb(SESSION_COLORS[hue as usize])
-}
-
-#[cfg(test)]
-mod session_tests {
-    use super::SESSION_COLORS;
-
-    /// The colors `test-vectors.md` gives for the exchange's session keys.
-    #[test]
-    fn session_colors_match_the_spec() {
-        assert_eq!(SESSION_COLORS[0], 0xEC8DAB);
-        assert_eq!(SESSION_COLORS[61], 0xD0A84B);
-        assert_eq!(SESSION_COLORS[64], 0xCBAA4B);
-        assert_eq!(SESSION_COLORS[119], 0x53C69E);
-        assert_eq!(SESSION_COLORS[128], 0x3DC6B1);
-        assert_eq!(SESSION_COLORS[192], 0x90AAFA);
-    }
+pub const fn session(color: u32) -> Rgb565 {
+    rgb(color)
 }

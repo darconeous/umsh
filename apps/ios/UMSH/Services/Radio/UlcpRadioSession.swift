@@ -187,6 +187,9 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
         /// TX_FLAG_NOCCA: transmit without the device's channel-activity
         /// check. Set by the Rust MAC for immediate acks.
         var nocca: Bool
+        /// This frame's own transmit power in dBm, which the device clamps
+        /// to its radio's range; nil sends at the configured power.
+        var powerDbm: Int8?
         var busyRetries = 0
         /// Identifies this submission to its timeout, so a watchdog armed for
         /// an earlier use of the same transaction ID cannot expire a later
@@ -214,6 +217,11 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
     /// The mesh session's latest report of the addresses it answers to
     /// besides its own. A session starts with none.
     var latestLocalDestinationHints: [Data] = []
+    var meetContinuations: [UUID: AsyncStream<MobileMeetStateRecord?>.Continuation] = [:]
+    var latestMeetState: MobileMeetStateRecord?
+    /// The radio's `PROP_PHY_T_FRAME`, kept for a mesh session installed
+    /// after the radio reported it.
+    var latestFrameTimeMs: UInt32?
     let ulcpSession = MobileUlcpSession()
     var syncAttempt = UUID()
     private var controlDeadlines = RadioControlDeadlines()
@@ -362,6 +370,59 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
 
     /// Record and announce the mesh session's addresses. Runs on
     /// `sessionQueue`.
+    func meetStates() async -> AsyncStream<MobileMeetStateRecord?> {
+        await withCheckedContinuation { result in
+            sessionQueue.async { [self] in
+                // Each value is the whole state, so only the newest matters.
+                let stream = AsyncStream(bufferingPolicy: .bufferingNewest(1)) { continuation in
+                    let id = UUID()
+                    meetContinuations[id] = continuation
+                    continuation.yield(latestMeetState)
+                    continuation.onTermination = { [weak self] _ in
+                        self?.sessionQueue.async { [weak self] in
+                            self?.meetContinuations[id] = nil
+                        }
+                    }
+                }
+                result.resume(returning: stream)
+            }
+        }
+    }
+
+    func publishMeetState(_ state: MobileMeetStateRecord?) {
+        guard state != latestMeetState else { return }
+        latestMeetState = state
+        for continuation in meetContinuations.values {
+            continuation.yield(state)
+        }
+    }
+
+    func openMeet(model: UInt16) async throws {
+        try await readyMeshSession().openMeet(model: model)
+    }
+
+    func closeMeet() async throws {
+        // Closing needs no radio: a session key goes back even while the
+        // link is down.
+        try await currentMeshSession().closeMeet()
+    }
+
+    func askToExchange(device: UInt32) async throws -> Bool {
+        try await readyMeshSession().askToExchange(device: device)
+    }
+
+    func answerExchange(accept: Bool) async throws {
+        try await readyMeshSession().answerExchange(accept: accept)
+    }
+
+    func confirmCode(same: Bool) async throws {
+        try await readyMeshSession().confirmCode(same: same)
+    }
+
+    func cancelExchange() async throws {
+        try await currentMeshSession().cancelExchange()
+    }
+
     func publishLocalDestinationHints(_ hints: [Data]) {
         guard hints != latestLocalDestinationHints else { return }
         latestLocalDestinationHints = hints
@@ -562,8 +623,13 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
                 // suppress a fresh session's first batches.
                 lastYieldedChatBatchID = nil
                 lastChatBatchYield = .distantFuture
-                // Addresses belong to the session that answers to them.
+                // Addresses belong to the session that answers to them, and
+                // so does an exchange.
                 publishLocalDestinationHints([])
+                publishMeetState(nil)
+                if let session, let latestFrameTimeMs {
+                    session.setFrameTimeMs(frameMs: latestFrameTimeMs)
+                }
                 // Push, not poll: the Rust worker announces pending updates
                 // (outbound frames, ping/advertisement events, chat batches)
                 // through this listener, so no polling cadence exists. If
@@ -1852,6 +1918,12 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
         // Mirrored like the alert: a position is state, and a pin does not
         // disappear because an unrelated property arrived.
         snapshot.position = update.snapshot.gnss.map(RadioPosition.init)
+        if let frameTimeMs = update.snapshot.provisioning?.frameTimeMs,
+           frameTimeMs != latestFrameTimeMs
+        {
+            latestFrameTimeMs = frameTimeMs
+            meshSession?.setFrameTimeMs(frameMs: frameTimeMs)
+        }
         snapshot.provisioning = update.snapshot.provisioning.map {
             RadioProvisioningSummary(
                 capabilityCount: Int($0.capabilityCount),
@@ -2328,7 +2400,12 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
         do {
             let update = meshSession.pollUpdate()
             pendingRawFrames.append(contentsOf: update.outboundFrames.map {
-                PendingRawFrame(data: $0.data, meshFrameID: $0.id, nocca: $0.nocca)
+                PendingRawFrame(
+                    data: $0.data,
+                    meshFrameID: $0.id,
+                    nocca: $0.nocca,
+                    powerDbm: $0.powerDbm
+                )
             })
             try startRawTransmits()
             for event in update.pingEvents {
@@ -2378,6 +2455,9 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
             }
             if let hints = update.localDestinationHints {
                 publishLocalDestinationHints(hints)
+            }
+            if let meet = update.meet {
+                publishMeetState(meet)
             }
             for event in update.peerHeardEvents {
                 let heard = RadioPeerHeardEvent(
@@ -2444,7 +2524,11 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
         while rawTransmitsInFlight.count < Self.maximumRawTransmitsInFlight,
               let submission = pendingRawFrames.first
         {
-            let update = try ulcpSession.transmitRaw(data: submission.data, nocca: submission.nocca)
+            let update = try ulcpSession.transmitRaw(
+                data: submission.data,
+                nocca: submission.nocca,
+                powerDbm: submission.powerDbm
+            )
             guard let transactionID = update.rawTransmitStartedTransactionId,
                   rawTransmitsInFlight[transactionID] == nil
             else {

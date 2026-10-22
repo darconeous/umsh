@@ -57,6 +57,13 @@ impl Default for TxMeta {
 impl TxMeta {
     pub const WIRE_LEN: usize = 2;
 
+    /// The `TX_POWER` that asks the device for `power_dbm` in dBm, or for
+    /// its default power when `None`. The top two values are sentinels; the
+    /// device clamps the rest to its radio's range.
+    pub fn power_for(power_dbm: Option<i8>) -> i8 {
+        power_dbm.map_or(TX_POWER_DEFAULT, |dbm| dbm.min(TX_POWER_MAX - 1))
+    }
+
     pub fn encode(self, out: &mut [u8]) -> Result<usize, MetaError> {
         let [power, flags, ..] = out else {
             return Err(MetaError::BufferTooSmall);
@@ -179,6 +186,14 @@ impl BufferedRxMeta {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_frames_power_never_reads_as_a_sentinel() {
+        assert_eq!(TxMeta::power_for(None), TX_POWER_DEFAULT);
+        assert_eq!(TxMeta::power_for(Some(-9)), -9);
+        assert_eq!(TxMeta::power_for(Some(TX_POWER_MAX)), TX_POWER_MAX - 1);
+        assert_eq!(TxMeta::power_for(Some(TX_POWER_DEFAULT)), TX_POWER_MAX - 1);
+    }
 
     #[test]
     fn tx_round_trip() {

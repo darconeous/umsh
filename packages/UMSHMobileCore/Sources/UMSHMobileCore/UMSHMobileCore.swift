@@ -1361,7 +1361,18 @@ public protocol MobileMeshSessionProtocol: AnyObject, Sendable {
      */
     func advertiseIdentityScheduled(name: String?, timestamp: UInt32?) async throws
 
+    /**
+     * Answer the device that asked to exchange.
+     */
+    func answerExchange(accept: Bool) async throws
+
     func applyChatArchiveResult(requestId: UInt32, kind: MobileChatArchiveResultKind, payload: Data) throws
+
+    /**
+     * Ask the device listed as `device` to exchange contacts. Returns
+     * whether the ask went out.
+     */
+    func askToExchange(device: UInt32) async throws  -> Bool
 
     /**
      * Ask a device across the mesh to announce itself now
@@ -1513,6 +1524,11 @@ public protocol MobileMeshSessionProtocol: AnyObject, Sendable {
     func beginManagementSetMany(peerAddress: String, writes: [MobileMeshPropertyWriteRecord]) throws  -> UInt64
 
     /**
+     * Back out of the attempt in progress.
+     */
+    func cancelExchange() async throws
+
+    /**
      * Forget the route cached for `peer`, returning whether one was held.
      *
      * The peer, its keys, and its counters are untouched; only the learned
@@ -1521,6 +1537,11 @@ public protocol MobileMeshSessionProtocol: AnyObject, Sendable {
     func clearPeerRoute(peerAddress: String) async throws  -> Bool
 
     func clearWakeListener()
+
+    /**
+     * Close Add Peer's contact exchange, backing out of any attempt.
+     */
+    func closeMeet() async throws
 
     func commitChatBatch(batchId: UInt64) async throws
 
@@ -1562,6 +1583,12 @@ public protocol MobileMeshSessionProtocol: AnyObject, Sendable {
      * address or by a channel's conversation address.
      */
     func composeText(conversationAddress: String, clientToken: UInt32, body: String) async throws  -> MobileChatComposeBatchRecord
+
+    /**
+     * The holder found the codes the same, sending this phone's identity,
+     * or different, ending the attempt with nothing kept.
+     */
+    func confirmCode(same: Bool) async throws
 
     /**
      * Solicit identities with one broadcast MAC Identity Request, either
@@ -1635,6 +1662,15 @@ public protocol MobileMeshSessionProtocol: AnyObject, Sendable {
      * identities.
      */
     func nodePublicKey()  -> Data
+
+    /**
+     * Open Add Peer's contact exchange (`app-meet.md`) under a fresh
+     * session key, ending any attempt in progress; Try again and Not now
+     * call this too. `model` is this phone's platform id
+     * (`platforms.json`), which its Hellos carry. What Add Peer shows
+     * arrives as `MobileMeshSessionUpdateRecord::meet`.
+     */
+    func openMeet(model: UInt16) async throws
 
     /**
      * Report the route the MAC will use for the next frame sent to `peer`.
@@ -1785,6 +1821,13 @@ public protocol MobileMeshSessionProtocol: AnyObject, Sendable {
      * the discoverability settings.
      */
     func setFloodHops(defaultHops: UInt8, beaconHops: UInt8) async throws
+
+    /**
+     * The longest frame's airtime at the radio's settings
+     * (`PROP_PHY_T_FRAME`), in ms, whenever the radio reports it. The MAC
+     * paces its retries by it, and the exchange its Hellos.
+     */
+    func setFrameTimeMs(frameMs: UInt32)
 
     /**
      * Register (or replace) the listener that is told when this session
@@ -1951,6 +1994,25 @@ open func advertiseIdentityScheduled(name: String?, timestamp: UInt32?)async thr
         )
 }
 
+    /**
+     * Answer the device that asked to exchange.
+     */
+open func answerExchange(accept: Bool)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_umsh_mobile_core_fn_method_mobilemeshsession_answer_exchange(
+                        self.uniffiCloneHandle(),FfiConverterBool.lower(accept)
+                )
+            },
+            pollFunc: ffi_umsh_mobile_core_rust_future_poll_void,
+            completeFunc: ffi_umsh_mobile_core_rust_future_complete_void,
+            freeFunc: ffi_umsh_mobile_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeMobileMeshError_lift
+        )
+}
+
 open func applyChatArchiveResult(requestId: UInt32, kind: MobileChatArchiveResultKind, payload: Data)throws   {try rustCallWithError(FfiConverterTypeMobileMeshError_lift) {
         uniffiCallStatus in
     uniffi_umsh_mobile_core_fn_method_mobilemeshsession_apply_chat_archive_result(
@@ -1960,6 +2022,26 @@ open func applyChatArchiveResult(requestId: UInt32, kind: MobileChatArchiveResul
         FfiConverterData.lower(payload),uniffiCallStatus
     )
 }
+}
+
+    /**
+     * Ask the device listed as `device` to exchange contacts. Returns
+     * whether the ask went out.
+     */
+open func askToExchange(device: UInt32)async throws  -> Bool  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_umsh_mobile_core_fn_method_mobilemeshsession_ask_to_exchange(
+                        self.uniffiCloneHandle(),FfiConverterUInt32.lower(device)
+                )
+            },
+            pollFunc: ffi_umsh_mobile_core_rust_future_poll_i8,
+            completeFunc: ffi_umsh_mobile_core_rust_future_complete_i8,
+            freeFunc: ffi_umsh_mobile_core_rust_future_free_i8,
+            liftFunc: FfiConverterBool.lift,
+            errorHandler: FfiConverterTypeMobileMeshError_lift
+        )
 }
 
     /**
@@ -2259,6 +2341,25 @@ open func beginManagementSetMany(peerAddress: String, writes: [MobileMeshPropert
 }
 
     /**
+     * Back out of the attempt in progress.
+     */
+open func cancelExchange()async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_umsh_mobile_core_fn_method_mobilemeshsession_cancel_exchange(
+                        self.uniffiCloneHandle()
+                )
+            },
+            pollFunc: ffi_umsh_mobile_core_rust_future_poll_void,
+            completeFunc: ffi_umsh_mobile_core_rust_future_complete_void,
+            freeFunc: ffi_umsh_mobile_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeMobileMeshError_lift
+        )
+}
+
+    /**
      * Forget the route cached for `peer`, returning whether one was held.
      *
      * The peer, its keys, and its counters are untouched; only the learned
@@ -2286,6 +2387,25 @@ open func clearWakeListener()  {try! rustCall() {
             self.uniffiCloneHandle(),uniffiCallStatus
     )
 }
+}
+
+    /**
+     * Close Add Peer's contact exchange, backing out of any attempt.
+     */
+open func closeMeet()async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_umsh_mobile_core_fn_method_mobilemeshsession_close_meet(
+                        self.uniffiCloneHandle()
+                )
+            },
+            pollFunc: ffi_umsh_mobile_core_rust_future_poll_void,
+            completeFunc: ffi_umsh_mobile_core_rust_future_complete_void,
+            freeFunc: ffi_umsh_mobile_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeMobileMeshError_lift
+        )
 }
 
 open func commitChatBatch(batchId: UInt64)async throws   {
@@ -2403,6 +2523,26 @@ open func composeText(conversationAddress: String, clientToken: UInt32, body: St
             completeFunc: ffi_umsh_mobile_core_rust_future_complete_rust_buffer,
             freeFunc: ffi_umsh_mobile_core_rust_future_free_rust_buffer,
             liftFunc: FfiConverterTypeMobileChatComposeBatchRecord_lift,
+            errorHandler: FfiConverterTypeMobileMeshError_lift
+        )
+}
+
+    /**
+     * The holder found the codes the same, sending this phone's identity,
+     * or different, ending the attempt with nothing kept.
+     */
+open func confirmCode(same: Bool)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_umsh_mobile_core_fn_method_mobilemeshsession_confirm_code(
+                        self.uniffiCloneHandle(),FfiConverterBool.lower(same)
+                )
+            },
+            pollFunc: ffi_umsh_mobile_core_rust_future_poll_void,
+            completeFunc: ffi_umsh_mobile_core_rust_future_complete_void,
+            freeFunc: ffi_umsh_mobile_core_rust_future_free_void,
+            liftFunc: { $0 },
             errorHandler: FfiConverterTypeMobileMeshError_lift
         )
 }
@@ -2533,6 +2673,29 @@ open func nodePublicKey() -> Data  {
             self.uniffiCloneHandle(),uniffiCallStatus
     )
 })
+}
+
+    /**
+     * Open Add Peer's contact exchange (`app-meet.md`) under a fresh
+     * session key, ending any attempt in progress; Try again and Not now
+     * call this too. `model` is this phone's platform id
+     * (`platforms.json`), which its Hellos carry. What Add Peer shows
+     * arrives as `MobileMeshSessionUpdateRecord::meet`.
+     */
+open func openMeet(model: UInt16)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_umsh_mobile_core_fn_method_mobilemeshsession_open_meet(
+                        self.uniffiCloneHandle(),FfiConverterUInt16.lower(model)
+                )
+            },
+            pollFunc: ffi_umsh_mobile_core_rust_future_poll_void,
+            completeFunc: ffi_umsh_mobile_core_rust_future_complete_void,
+            freeFunc: ffi_umsh_mobile_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeMobileMeshError_lift
+        )
 }
 
     /**
@@ -2931,6 +3094,20 @@ open func setFloodHops(defaultHops: UInt8, beaconHops: UInt8)async throws   {
             liftFunc: { $0 },
             errorHandler: FfiConverterTypeMobileMeshError_lift
         )
+}
+
+    /**
+     * The longest frame's airtime at the radio's settings
+     * (`PROP_PHY_T_FRAME`), in ms, whenever the radio reports it. The MAC
+     * paces its retries by it, and the exchange its Hellos.
+     */
+open func setFrameTimeMs(frameMs: UInt32)  {try! rustCall() {
+        uniffiCallStatus in
+    uniffi_umsh_mobile_core_fn_method_mobilemeshsession_set_frame_time_ms(
+            self.uniffiCloneHandle(),
+        FfiConverterUInt32.lower(frameMs),uniffiCallStatus
+    )
+}
 }
 
     /**
@@ -3914,8 +4091,11 @@ public protocol MobileUlcpSessionProtocol: AnyObject, Sendable {
      * confirmation matching. `nocca` sets `TX_FLAG_NOCCA` so the device
      * transmits without its pre-transmit channel-activity check—used for
      * immediate MAC acks (see [`MobileMeshOutboundFrameRecord::nocca`]).
+     * `power_dbm` is the frame's own transmit power, which the device
+     * clamps to its radio's range (see
+     * [`MobileMeshOutboundFrameRecord::power_dbm`]).
      */
-    func transmitRaw(data: Data, nocca: Bool) throws  -> UlcpSessionUpdateRecord
+    func transmitRaw(data: Data, nocca: Bool, powerDbm: Int8?) throws  -> UlcpSessionUpdateRecord
 
 }
 /**
@@ -4730,14 +4910,18 @@ open func setTime(epochSeconds: UInt32?)throws  -> UlcpSessionUpdateRecord  {
      * confirmation matching. `nocca` sets `TX_FLAG_NOCCA` so the device
      * transmits without its pre-transmit channel-activity check—used for
      * immediate MAC acks (see [`MobileMeshOutboundFrameRecord::nocca`]).
+     * `power_dbm` is the frame's own transmit power, which the device
+     * clamps to its radio's range (see
+     * [`MobileMeshOutboundFrameRecord::power_dbm`]).
      */
-open func transmitRaw(data: Data, nocca: Bool)throws  -> UlcpSessionUpdateRecord  {
+open func transmitRaw(data: Data, nocca: Bool, powerDbm: Int8?)throws  -> UlcpSessionUpdateRecord  {
     return try  FfiConverterTypeUlcpSessionUpdateRecord_lift(try rustCallWithError(FfiConverterTypeMobileError_lift) {
         uniffiCallStatus in
     uniffi_umsh_mobile_core_fn_method_mobileulcpsession_transmit_raw(
             self.uniffiCloneHandle(),
         FfiConverterData.lower(data),
-        FfiConverterBool.lower(nocca),uniffiCallStatus
+        FfiConverterBool.lower(nocca),
+        FfiConverterOptionInt8.lower(powerDbm),uniffiCallStatus
     )
 })
 }
@@ -6870,6 +7054,259 @@ public func FfiConverterTypeMobileChatSenderResolutionRecord_lower(_ value: Mobi
 
 
 /**
+ * Who the other device says its holder is, once contacts have crossed.
+ * Nothing is saved.
+ */
+public struct MobileMeetContactRecord: Equatable, Hashable {
+    public var peerAddress: String
+    /**
+     * Their node identity bundle, ROLE through any signature, as received.
+     */
+    public var identityBundle: Data
+    /**
+     * A valid signature by the peer's key covers the bundle. Without one,
+     * the name and the rest are not linked to the key.
+     */
+    public var signed: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(peerAddress: String,
+        /**
+         * Their node identity bundle, ROLE through any signature, as received.
+         */identityBundle: Data,
+        /**
+         * A valid signature by the peer's key covers the bundle. Without one,
+         * the name and the rest are not linked to the key.
+         */signed: Bool) {
+        self.peerAddress = peerAddress
+        self.identityBundle = identityBundle
+        self.signed = signed
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileMeetContactRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileMeetContactRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileMeetContactRecord {
+        return
+            try MobileMeetContactRecord(
+                peerAddress: FfiConverterString.read(from: &buf),
+                identityBundle: FfiConverterData.read(from: &buf),
+                signed: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileMeetContactRecord, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.peerAddress, into: &buf)
+        FfiConverterData.write(value.identityBundle, into: &buf)
+        FfiConverterBool.write(value.signed, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileMeetContactRecord_lift(_ buf: RustBuffer) throws -> MobileMeetContactRecord {
+    return try FfiConverterTypeMobileMeetContactRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileMeetContactRecord_lower(_ value: MobileMeetContactRecord) -> RustBuffer {
+    return FfiConverterTypeMobileMeetContactRecord.lower(value)
+}
+
+
+/**
+ * A device listed on Nearby: what kind of device it is and its color for
+ * this visit, and nothing of whose it is.
+ */
+public struct MobileMeetDeviceRecord: Equatable, Hashable {
+    /**
+     * Its place on Nearby, stable while it stays listed; what
+     * `ask_to_exchange` names.
+     */
+    public var id: UInt32
+    /**
+     * Its model id (`boards.json`, `platforms.json`); 0 when unspecified.
+     */
+    public var model: UInt16
+    /**
+     * Its session color, as `0xRRGGBB`.
+     */
+    public var colorRgb: UInt32
+    /**
+     * How near it seems, 0 (far) to 3 (close), once a Hello's signal is
+     * known.
+     */
+    public var nearness: UInt8?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Its place on Nearby, stable while it stays listed; what
+         * `ask_to_exchange` names.
+         */id: UInt32,
+        /**
+         * Its model id (`boards.json`, `platforms.json`); 0 when unspecified.
+         */model: UInt16,
+        /**
+         * Its session color, as `0xRRGGBB`.
+         */colorRgb: UInt32,
+        /**
+         * How near it seems, 0 (far) to 3 (close), once a Hello's signal is
+         * known.
+         */nearness: UInt8?) {
+        self.id = id
+        self.model = model
+        self.colorRgb = colorRgb
+        self.nearness = nearness
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileMeetDeviceRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileMeetDeviceRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileMeetDeviceRecord {
+        return
+            try MobileMeetDeviceRecord(
+                id: FfiConverterUInt32.read(from: &buf),
+                model: FfiConverterUInt16.read(from: &buf),
+                colorRgb: FfiConverterUInt32.read(from: &buf),
+                nearness: FfiConverterOptionUInt8.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileMeetDeviceRecord, into buf: inout [UInt8]) {
+        FfiConverterUInt32.write(value.id, into: &buf)
+        FfiConverterUInt16.write(value.model, into: &buf)
+        FfiConverterUInt32.write(value.colorRgb, into: &buf)
+        FfiConverterOptionUInt8.write(value.nearness, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileMeetDeviceRecord_lift(_ buf: RustBuffer) throws -> MobileMeetDeviceRecord {
+    return try FfiConverterTypeMobileMeetDeviceRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileMeetDeviceRecord_lower(_ value: MobileMeetDeviceRecord) -> RustBuffer {
+    return FfiConverterTypeMobileMeetDeviceRecord.lower(value)
+}
+
+
+/**
+ * What Add Peer shows of the exchange.
+ */
+public struct MobileMeetStateRecord: Equatable, Hashable {
+    /**
+     * This phone's color for this visit, once its session is up.
+     */
+    public var ownColorRgb: UInt32?
+    /**
+     * The devices heard, oldest first.
+     */
+    public var devices: [MobileMeetDeviceRecord]
+    /**
+     * The device the exchange is with, or was until it ended.
+     */
+    public var device: MobileMeetDeviceRecord?
+    public var exchange: MobileMeetExchange
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * This phone's color for this visit, once its session is up.
+         */ownColorRgb: UInt32?,
+        /**
+         * The devices heard, oldest first.
+         */devices: [MobileMeetDeviceRecord],
+        /**
+         * The device the exchange is with, or was until it ended.
+         */device: MobileMeetDeviceRecord?, exchange: MobileMeetExchange) {
+        self.ownColorRgb = ownColorRgb
+        self.devices = devices
+        self.device = device
+        self.exchange = exchange
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileMeetStateRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileMeetStateRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileMeetStateRecord {
+        return
+            try MobileMeetStateRecord(
+                ownColorRgb: FfiConverterOptionUInt32.read(from: &buf),
+                devices: FfiConverterSequenceTypeMobileMeetDeviceRecord.read(from: &buf),
+                device: FfiConverterOptionTypeMobileMeetDeviceRecord.read(from: &buf),
+                exchange: FfiConverterTypeMobileMeetExchange.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileMeetStateRecord, into buf: inout [UInt8]) {
+        FfiConverterOptionUInt32.write(value.ownColorRgb, into: &buf)
+        FfiConverterSequenceTypeMobileMeetDeviceRecord.write(value.devices, into: &buf)
+        FfiConverterOptionTypeMobileMeetDeviceRecord.write(value.device, into: &buf)
+        FfiConverterTypeMobileMeetExchange.write(value.exchange, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileMeetStateRecord_lift(_ buf: RustBuffer) throws -> MobileMeetStateRecord {
+    return try FfiConverterTypeMobileMeetStateRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileMeetStateRecord_lower(_ value: MobileMeetStateRecord) -> RustBuffer {
+    return FfiConverterTypeMobileMeetStateRecord.lower(value)
+}
+
+
+/**
  * A node-identity bundle received over the mesh, either as a broadcast
  * advertisement or as the reply to an Identity Request.
  *
@@ -7232,6 +7669,12 @@ public struct MobileMeshOutboundFrameRecord: Equatable, Hashable {
      * for originated and forwarded traffic, which must listen before talking.
      */
     public var nocca: Bool
+    /**
+     * This frame's transmit power in dBm, raised by the device to the
+     * least its radio can transmit; `None` sends at the configured power.
+     * Pass it to `MobileUlcpSession::transmit_raw`.
+     */
+    public var powerDbm: Int8?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -7241,10 +7684,16 @@ public struct MobileMeshOutboundFrameRecord: Equatable, Hashable {
          * pre-transmit channel-activity check. Set for immediate MAC acks, which
          * own the channel-access window the moment the received frame ends; clear
          * for originated and forwarded traffic, which must listen before talking.
-         */nocca: Bool) {
+         */nocca: Bool,
+        /**
+         * This frame's transmit power in dBm, raised by the device to the
+         * least its radio can transmit; `None` sends at the configured power.
+         * Pass it to `MobileUlcpSession::transmit_raw`.
+         */powerDbm: Int8?) {
         self.id = id
         self.data = data
         self.nocca = nocca
+        self.powerDbm = powerDbm
     }
 
 
@@ -7265,7 +7714,8 @@ public struct FfiConverterTypeMobileMeshOutboundFrameRecord: FfiConverterRustBuf
             try MobileMeshOutboundFrameRecord(
                 id: FfiConverterUInt64.read(from: &buf),
                 data: FfiConverterData.read(from: &buf),
-                nocca: FfiConverterBool.read(from: &buf)
+                nocca: FfiConverterBool.read(from: &buf),
+                powerDbm: FfiConverterOptionInt8.read(from: &buf)
         )
     }
 
@@ -7273,6 +7723,7 @@ public struct FfiConverterTypeMobileMeshOutboundFrameRecord: FfiConverterRustBuf
         FfiConverterUInt64.write(value.id, into: &buf)
         FfiConverterData.write(value.data, into: &buf)
         FfiConverterBool.write(value.nocca, into: &buf)
+        FfiConverterOptionInt8.write(value.powerDbm, into: &buf)
     }
 }
 
@@ -8076,6 +8527,10 @@ public struct MobileMeshSessionUpdateRecord: Equatable, Hashable {
      * passes nothing those sessions carry.
      */
     public var localDestinationHints: [Data]?
+    /**
+     * Add Peer's contact exchange, when it changed since the last poll.
+     */
+    public var meet: MobileMeetStateRecord?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -8103,7 +8558,10 @@ public struct MobileMeshSessionUpdateRecord: Equatable, Hashable {
          * forward secrecy. The radio's receive filter must admit each of them
          * (see `MobileUlcpSession::reconcile_host_destination_hints`), or it
          * passes nothing those sessions carry.
-         */localDestinationHints: [Data]?) {
+         */localDestinationHints: [Data]?,
+        /**
+         * Add Peer's contact exchange, when it changed since the last poll.
+         */meet: MobileMeetStateRecord?) {
         self.outboundFrames = outboundFrames
         self.pingEvents = pingEvents
         self.managementEvents = managementEvents
@@ -8116,6 +8574,7 @@ public struct MobileMeshSessionUpdateRecord: Equatable, Hashable {
         self.chatSenderResolutions = chatSenderResolutions
         self.chatDiagnostics = chatDiagnostics
         self.localDestinationHints = localDestinationHints
+        self.meet = meet
     }
 
 
@@ -8145,7 +8604,8 @@ public struct FfiConverterTypeMobileMeshSessionUpdateRecord: FfiConverterRustBuf
                 chatArchiveLookups: FfiConverterSequenceTypeMobileChatArchiveLookupRecord.read(from: &buf),
                 chatSenderResolutions: FfiConverterSequenceTypeMobileChatSenderResolutionRecord.read(from: &buf),
                 chatDiagnostics: FfiConverterSequenceString.read(from: &buf),
-                localDestinationHints: FfiConverterOptionSequenceData.read(from: &buf)
+                localDestinationHints: FfiConverterOptionSequenceData.read(from: &buf),
+                meet: FfiConverterOptionTypeMobileMeetStateRecord.read(from: &buf)
         )
     }
 
@@ -8162,6 +8622,7 @@ public struct FfiConverterTypeMobileMeshSessionUpdateRecord: FfiConverterRustBuf
         FfiConverterSequenceTypeMobileChatSenderResolutionRecord.write(value.chatSenderResolutions, into: &buf)
         FfiConverterSequenceString.write(value.chatDiagnostics, into: &buf)
         FfiConverterOptionSequenceData.write(value.localDestinationHints, into: &buf)
+        FfiConverterOptionTypeMobileMeetStateRecord.write(value.meet, into: &buf)
     }
 }
 
@@ -13315,6 +13776,12 @@ public struct UlcpSyncRecord: Equatable, Hashable {
     public var bandwidthHz: UInt32?
     public var spreadingFactor: UInt8?
     public var codingRateDenom: UInt8?
+    /**
+     * `PROP_PHY_T_FRAME`: the longest frame's airtime at the current
+     * settings, in ms, when the device reports it. Hand it to
+     * `MobileMeshSession::set_frame_time_ms`.
+     */
+    public var frameTimeMs: UInt32?
     public var dutyCycleNow: UInt16?
     public var dutyCycleLimit: UInt16?
     public var saved: SavedSnapshotRecord?
@@ -13477,7 +13944,12 @@ public struct UlcpSyncRecord: Equatable, Hashable {
         /**
          * `PROP_ALERT`: what the device is doing to make itself findable, when
          * it has said. Live state like `battery`, and absent on the same terms.
-         */alert: UlcpAlertState?, phyEnabled: Bool, frequencyKhz: UInt32, transmitPowerDbm: Int8, bandwidthHz: UInt32?, spreadingFactor: UInt8?, codingRateDenom: UInt8?, dutyCycleNow: UInt16?, dutyCycleLimit: UInt16?, saved: SavedSnapshotRecord?, queuedFrames: UInt16?, droppedFrames: UInt32?, filterCount: UInt32?, hostChannelCount: UInt32?, hostPeerCount: UInt32?, autoAck: Bool?,
+         */alert: UlcpAlertState?, phyEnabled: Bool, frequencyKhz: UInt32, transmitPowerDbm: Int8, bandwidthHz: UInt32?, spreadingFactor: UInt8?, codingRateDenom: UInt8?,
+        /**
+         * `PROP_PHY_T_FRAME`: the longest frame's airtime at the current
+         * settings, in ms, when the device reports it. Hand it to
+         * `MobileMeshSession::set_frame_time_ms`.
+         */frameTimeMs: UInt32?, dutyCycleNow: UInt16?, dutyCycleLimit: UInt16?, saved: SavedSnapshotRecord?, queuedFrames: UInt16?, droppedFrames: UInt32?, filterCount: UInt32?, hostChannelCount: UInt32?, hostPeerCount: UInt32?, autoAck: Bool?,
         /**
          * Present when `supports_repeater` and the device reported the whole
          * policy.
@@ -13581,6 +14053,7 @@ public struct UlcpSyncRecord: Equatable, Hashable {
         self.bandwidthHz = bandwidthHz
         self.spreadingFactor = spreadingFactor
         self.codingRateDenom = codingRateDenom
+        self.frameTimeMs = frameTimeMs
         self.dutyCycleNow = dutyCycleNow
         self.dutyCycleLimit = dutyCycleLimit
         self.saved = saved
@@ -13649,6 +14122,7 @@ public struct FfiConverterTypeUlcpSyncRecord: FfiConverterRustBuffer {
                 bandwidthHz: FfiConverterOptionUInt32.read(from: &buf),
                 spreadingFactor: FfiConverterOptionUInt8.read(from: &buf),
                 codingRateDenom: FfiConverterOptionUInt8.read(from: &buf),
+                frameTimeMs: FfiConverterOptionUInt32.read(from: &buf),
                 dutyCycleNow: FfiConverterOptionUInt16.read(from: &buf),
                 dutyCycleLimit: FfiConverterOptionUInt16.read(from: &buf),
                 saved: FfiConverterOptionTypeSavedSnapshotRecord.read(from: &buf),
@@ -13703,6 +14177,7 @@ public struct FfiConverterTypeUlcpSyncRecord: FfiConverterRustBuffer {
         FfiConverterOptionUInt32.write(value.bandwidthHz, into: &buf)
         FfiConverterOptionUInt8.write(value.spreadingFactor, into: &buf)
         FfiConverterOptionUInt8.write(value.codingRateDenom, into: &buf)
+        FfiConverterOptionUInt32.write(value.frameTimeMs, into: &buf)
         FfiConverterOptionUInt16.write(value.dutyCycleNow, into: &buf)
         FfiConverterOptionUInt16.write(value.dutyCycleLimit, into: &buf)
         FfiConverterOptionTypeSavedSnapshotRecord.write(value.saved, into: &buf)
@@ -15058,6 +15533,280 @@ public func FfiConverterTypeMobileError_lift(_ buf: RustBuffer) throws -> Mobile
 public func FfiConverterTypeMobileError_lower(_ value: MobileError) -> RustBuffer {
     return FfiConverterTypeMobileError.lower(value)
 }
+
+
+/**
+ * Why an exchange ended without contacts crossing.
+ */
+
+public enum MobileMeetEnd: Equatable, Hashable {
+
+    /**
+     * The other holder declined.
+     */
+    case notNow
+    /**
+     * The other device is in another exchange.
+     */
+    case busy
+    /**
+     * A holder found the codes different.
+     */
+    case different
+    /**
+     * The other holder backed out or closed Add Peer.
+     */
+    case left
+    /**
+     * A step took too long.
+     */
+    case timedOut
+    /**
+     * Something did not check out.
+     */
+    case failed
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileMeetEnd: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileMeetEnd: FfiConverterRustBuffer {
+    typealias SwiftType = MobileMeetEnd
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileMeetEnd {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .notNow
+
+        case 2: return .busy
+
+        case 3: return .different
+
+        case 4: return .left
+
+        case 5: return .timedOut
+
+        case 6: return .failed
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: MobileMeetEnd, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .notNow:
+            writeInt(&buf, Int32(1))
+
+
+        case .busy:
+            writeInt(&buf, Int32(2))
+
+
+        case .different:
+            writeInt(&buf, Int32(3))
+
+
+        case .left:
+            writeInt(&buf, Int32(4))
+
+
+        case .timedOut:
+            writeInt(&buf, Int32(5))
+
+
+        case .failed:
+            writeInt(&buf, Int32(6))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileMeetEnd_lift(_ buf: RustBuffer) throws -> MobileMeetEnd {
+    return try FfiConverterTypeMobileMeetEnd.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileMeetEnd_lower(_ value: MobileMeetEnd) -> RustBuffer {
+    return FfiConverterTypeMobileMeetEnd.lower(value)
+}
+
+
+
+/**
+ * Where the exchange stands.
+ */
+
+public enum MobileMeetExchange: Equatable, Hashable {
+
+    /**
+     * Add Peer's exchange is not open.
+     */
+    case closed
+    /**
+     * The session is being set up.
+     */
+    case opening
+    /**
+     * Listed on Nearby, nothing in progress.
+     */
+    case idle
+    /**
+     * This phone asked; waiting for an answer.
+     */
+    case asking(device: MobileMeetDeviceRecord
+    )
+    /**
+     * This phone was asked; waiting for its holder.
+     */
+    case asked(device: MobileMeetDeviceRecord
+    )
+    /**
+     * This phone agreed; waiting for the other device.
+     */
+    case accepted(device: MobileMeetDeviceRecord
+    )
+    /**
+     * Both show `code`. `sent` once this phone's holder pressed Same.
+     */
+    case comparing(device: MobileMeetDeviceRecord, code: UInt32, sent: Bool
+    )
+    case ended(reason: MobileMeetEnd
+    )
+    case exchanged(contact: MobileMeetContactRecord
+    )
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileMeetExchange: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileMeetExchange: FfiConverterRustBuffer {
+    typealias SwiftType = MobileMeetExchange
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileMeetExchange {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .closed
+
+        case 2: return .opening
+
+        case 3: return .idle
+
+        case 4: return .asking(device: try FfiConverterTypeMobileMeetDeviceRecord.read(from: &buf)
+        )
+
+        case 5: return .asked(device: try FfiConverterTypeMobileMeetDeviceRecord.read(from: &buf)
+        )
+
+        case 6: return .accepted(device: try FfiConverterTypeMobileMeetDeviceRecord.read(from: &buf)
+        )
+
+        case 7: return .comparing(device: try FfiConverterTypeMobileMeetDeviceRecord.read(from: &buf), code: try FfiConverterUInt32.read(from: &buf), sent: try FfiConverterBool.read(from: &buf)
+        )
+
+        case 8: return .ended(reason: try FfiConverterTypeMobileMeetEnd.read(from: &buf)
+        )
+
+        case 9: return .exchanged(contact: try FfiConverterTypeMobileMeetContactRecord.read(from: &buf)
+        )
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: MobileMeetExchange, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .closed:
+            writeInt(&buf, Int32(1))
+
+
+        case .opening:
+            writeInt(&buf, Int32(2))
+
+
+        case .idle:
+            writeInt(&buf, Int32(3))
+
+
+        case let .asking(device):
+            writeInt(&buf, Int32(4))
+            FfiConverterTypeMobileMeetDeviceRecord.write(device, into: &buf)
+
+
+        case let .asked(device):
+            writeInt(&buf, Int32(5))
+            FfiConverterTypeMobileMeetDeviceRecord.write(device, into: &buf)
+
+
+        case let .accepted(device):
+            writeInt(&buf, Int32(6))
+            FfiConverterTypeMobileMeetDeviceRecord.write(device, into: &buf)
+
+
+        case let .comparing(device,code,sent):
+            writeInt(&buf, Int32(7))
+            FfiConverterTypeMobileMeetDeviceRecord.write(device, into: &buf)
+            FfiConverterUInt32.write(code, into: &buf)
+            FfiConverterBool.write(sent, into: &buf)
+
+
+        case let .ended(reason):
+            writeInt(&buf, Int32(8))
+            FfiConverterTypeMobileMeetEnd.write(reason, into: &buf)
+
+
+        case let .exchanged(contact):
+            writeInt(&buf, Int32(9))
+            FfiConverterTypeMobileMeetContactRecord.write(contact, into: &buf)
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileMeetExchange_lift(_ buf: RustBuffer) throws -> MobileMeetExchange {
+    return try FfiConverterTypeMobileMeetExchange.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileMeetExchange_lower(_ value: MobileMeetExchange) -> RustBuffer {
+    return FfiConverterTypeMobileMeetExchange.lower(value)
+}
+
 
 
 public
@@ -17854,6 +18603,54 @@ fileprivate struct FfiConverterOptionTypeMobileChatRxMetadataRecord: FfiConverte
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeMobileMeetDeviceRecord: FfiConverterRustBuffer {
+    typealias SwiftType = MobileMeetDeviceRecord?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeMobileMeetDeviceRecord.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeMobileMeetDeviceRecord.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeMobileMeetStateRecord: FfiConverterRustBuffer {
+    typealias SwiftType = MobileMeetStateRecord?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeMobileMeetStateRecord.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeMobileMeetStateRecord.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionTypeMobileMeshExplicitPath: FfiConverterRustBuffer {
     typealias SwiftType = MobileMeshExplicitPath?
 
@@ -18963,6 +19760,31 @@ fileprivate struct FfiConverterSequenceTypeMobileChatSenderResolutionRecord: Ffi
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypeMobileChatSenderResolutionRecord.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeMobileMeetDeviceRecord: FfiConverterRustBuffer {
+    typealias SwiftType = [MobileMeetDeviceRecord]
+
+    public static func write(_ value: [MobileMeetDeviceRecord], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeMobileMeetDeviceRecord.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [MobileMeetDeviceRecord] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [MobileMeetDeviceRecord]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeMobileMeetDeviceRecord.read(from: &buf))
         }
         return seq
     }
@@ -20760,7 +21582,13 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_advertise_identity_scheduled() != 33487) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_answer_exchange() != 54934) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_apply_chat_archive_result() != 29458) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_ask_to_exchange() != 26172) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_begin_management_announce() != 57918) {
@@ -20811,10 +21639,16 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_begin_management_set_many() != 36846) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_cancel_exchange() != 54943) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_clear_peer_route() != 59203) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_clear_wake_listener() != 53225) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_close_meet() != 15318) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_commit_chat_batch() != 61370) {
@@ -20835,6 +21669,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_compose_text() != 46919) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_confirm_code() != 49925) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_discover_identities() != 34081) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -20848,6 +21685,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_node_public_key() != 17261) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_open_meet() != 43663) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_peer_route() != 15956) {
@@ -20905,6 +21745,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_set_flood_hops() != 27711) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_set_frame_time_ms() != 30002) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_set_wake_listener() != 44475) {
@@ -21045,7 +21888,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_set_time() != 47914) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_transmit_raw() != 6208) {
+    if (uniffi_umsh_mobile_core_checksum_method_mobileulcpsession_transmit_raw() != 28787) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobilevirtualradio_attach() != 60687) {

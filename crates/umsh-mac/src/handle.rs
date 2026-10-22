@@ -576,6 +576,12 @@ impl<
         }
     }
 
+    /// The keys of every ephemeral identity registered: the addresses this
+    /// MAC answers to besides its long-term identities'.
+    pub async fn ephemeral_keys(&self) -> heapless::Vec<PublicKey, IDENTITIES> {
+        self.mac.borrow().await.ephemeral_keys().collect()
+    }
+
     /// Return the public key of a local identity, if that slot is occupied.
     pub async fn identity_public_key(&self, id: LocalIdentityId) -> Option<PublicKey> {
         let mac = self.mac.borrow().await;

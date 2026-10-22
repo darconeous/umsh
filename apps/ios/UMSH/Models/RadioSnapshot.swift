@@ -636,3 +636,11 @@ struct RadioSettings: Equatable, Sendable {
     let codingRateDenominator: UInt8?
     let dutyCycleLimit: UInt16?
 }
+
+extension RadioSnapshot {
+    /// The radio can carry this phone's traffic: attached, and set up for
+    /// this phone's identity.
+    var carriesThisPhone: Bool {
+        (linkState == .attached || linkState == .ready) && hostState == .matchesCurrentIdentity
+    }
+}

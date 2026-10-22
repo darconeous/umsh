@@ -250,11 +250,21 @@ Octets | Field              | Value
 Model Identifier    | Meaning
 --------------------|--------------------------------------------------
 `0x0000`            | Unspecified
-`0x0001`–`0xFEFF`   | Assigned, as `model_id` in the board list below
+`0x0001`–`0xFDFF`   | Assigned, as `model_id` in the board list below
+`0xFE00`–`0xFEFF`   | Assigned, as `model_id` in the platform list below
 `0xFF00`–`0xFFFF`   | Private use: hardware with no assignment
 
 ~~~json
 {{#include ../../hardware/boards.json}}
+~~~
+
+A platform identifier names a host with no fixed radio hardware, such as
+a phone running a UMSH application. It appears where a node names its
+model, such as a [Meet Hello](app-meet.md#hello), and never in
+advertising data.
+
+~~~json
+{{#include ../../hardware/platforms.json}}
 ~~~
 
 A model identifier names the same hardware as

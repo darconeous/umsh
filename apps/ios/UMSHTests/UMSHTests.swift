@@ -315,6 +315,60 @@ struct RuntimePersistenceTests {
 }
 
 @Suite @MainActor
+struct ContactExchangeTests {
+    private func contact(secret: Data, name: String) async throws -> MobileMeetContactRecord {
+        let theirs = try MobileIdentity.unlock(secretKey: secret).publicIdentity()
+        let bundle = try await signNodeIdentityBundle(secretKey: secret,
+            profile: NodeIdentityProfileRecord(roleCode: 0, capabilityBits: 0, name: name,
+                latitude: nil, longitude: nil, locationPrecision: nil, altitudeM: nil, timestamp: nil))
+        return MobileMeetContactRecord(peerAddress: theirs.canonicalAddress,
+            identityBundle: bundle, signed: true)
+    }
+
+    @Test func exchangedContactIsRecordedUnsaved() async throws {
+        let fixture = try await StoreFixture()
+        defer { fixture.remove() }
+        let runtime = AppRuntime(radioConnection: FakeRadioConnection(), openStore: { fixture.store })
+        runtime.localIdentity = fixture.identity
+        await runtime.reloadApplicationState()
+        let theirs = try await contact(secret: Data(repeating: 9, count: 32), name: "Maya")
+        await runtime.recordExchanged(theirs)
+        let peer = try #require(runtime.exchangedPeer)
+        #expect(peer.identity.canonicalAddress == theirs.peerAddress)
+        #expect(peer.advertisedName == "Maya")
+        #expect(!peer.isSaved)
+        // The bundle came from the exchange's session key, not the peer's.
+        #expect(!peer.advertisedIdentityAuthenticated)
+    }
+
+    @Test func exchangingWithASavedPeerKeepsItSaved() async throws {
+        let fixture = try await StoreFixture()
+        defer { fixture.remove() }
+        let runtime = AppRuntime(radioConnection: FakeRadioConnection(), openStore: { fixture.store })
+        runtime.localIdentity = fixture.identity
+        let theirs = try await contact(secret: Data(repeating: 9, count: 32), name: "Maya")
+        try await fixture.store.upsertPeer(ownerIdentityID: fixture.identity.id,
+            publicAddress: theirs.peerAddress, alias: "Peer", isSaved: true)
+        await runtime.reloadApplicationState()
+        await runtime.recordExchanged(theirs)
+        let peer = try #require(runtime.exchangedPeer)
+        #expect(peer.isSaved)
+        #expect(peer.alias == "Peer")
+    }
+
+    @Test func ownContactIsNotRecorded() async throws {
+        let fixture = try await StoreFixture()
+        defer { fixture.remove() }
+        let runtime = AppRuntime(radioConnection: FakeRadioConnection(), openStore: { fixture.store })
+        runtime.localIdentity = fixture.identity
+        await runtime.reloadApplicationState()
+        await runtime.recordExchanged(try await contact(secret: Data(repeating: 7, count: 32), name: "Me"))
+        #expect(runtime.exchangedPeer == nil)
+        #expect(runtime.peers.isEmpty)
+    }
+}
+
+@Suite @MainActor
 struct ManualPathTests {
     @Test func savedPathRoundTripsUntilItsHoldEnds() async throws {
         let fixture = try await StoreFixture()

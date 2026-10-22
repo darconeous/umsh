@@ -1,0 +1,10 @@
+{
+  "platforms": [
+    { "id": "iphone", "model_id": 65024, "name": "iPhone", "symbol": "iphone" },
+    { "id": "ipad", "model_id": 65025, "name": "iPad", "symbol": "ipad" },
+    { "id": "android-phone", "model_id": 65026, "name": "Android phone", "symbol": "smartphone" },
+    { "id": "android-tablet", "model_id": 65027, "name": "Android tablet", "symbol": "ipad.landscape" },
+    { "id": "mac", "model_id": 65028, "name": "Mac", "symbol": "laptopcomputer" },
+    { "id": "computer", "model_id": 65029, "name": "Computer", "symbol": "desktopcomputer" }
+  ]
+}

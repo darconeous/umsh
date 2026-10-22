@@ -60,6 +60,7 @@ struct SettingsView: View {
     /// Debug builds only, and meaningful only in staging mode.
     var stagedPeerSendsMessage: ((Bool) -> Void)? = nil
     var stagedPeerReacts: (() -> Void)? = nil
+    var stagedPeerMeets: ((Bool) -> Void)? = nil
     var stagedDropTransmissions: ((Bool) -> Void)? = nil
     /// Staging only: whether the canned remote devices answer at all.
     var stagedRemoteDevicesReachable: ((Bool) -> Void)? = nil
@@ -236,6 +237,14 @@ struct SettingsView: View {
                 if stagingEnabled, let stagedPeerReacts {
                     Button("Staged Reaction in 5 Seconds") {
                         stagedPeerReacts()
+                    }
+                }
+                if stagingEnabled, let stagedPeerMeets {
+                    Button("Staged Peer Opens Add Peer") {
+                        stagedPeerMeets(false)
+                    }
+                    Button("Staged Peer Opens Add Peer and Asks") {
+                        stagedPeerMeets(true)
                     }
                 }
                 // Read once when the staged radio is built, so switching

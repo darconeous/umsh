@@ -378,6 +378,10 @@ pub struct UlcpSyncRecord {
     pub bandwidth_hz: Option<u32>,
     pub spreading_factor: Option<u8>,
     pub coding_rate_denom: Option<u8>,
+    /// `PROP_PHY_T_FRAME`: the longest frame's airtime at the current
+    /// settings, in ms, when the device reports it. Hand it to
+    /// `MobileMeshSession::set_frame_time_ms`.
+    pub frame_time_ms: Option<u32>,
     pub duty_cycle_now: Option<u16>,
     pub duty_cycle_limit: Option<u16>,
     pub saved: Option<SavedSnapshotRecord>,
@@ -2259,10 +2263,14 @@ impl MobileUlcpSession {
     /// confirmation matching. `nocca` sets `TX_FLAG_NOCCA` so the device
     /// transmits without its pre-transmit channel-activity check—used for
     /// immediate MAC acks (see [`MobileMeshOutboundFrameRecord::nocca`]).
+    /// `power_dbm` is the frame's own transmit power, which the device
+    /// clamps to its radio's range (see
+    /// [`MobileMeshOutboundFrameRecord::power_dbm`]).
     pub fn transmit_raw(
         &self,
         data: Vec<u8>,
         nocca: bool,
+        power_dbm: Option<i8>,
     ) -> Result<UlcpSessionUpdateRecord, MobileError> {
         let mut state = self.inner.lock().expect("ULCP session mutex poisoned");
         let raw_pipeline_active = state
@@ -2289,8 +2297,8 @@ impl MobileUlcpSession {
             0
         };
         umsh_ulcp::TxMeta {
+            power: umsh_ulcp::TxMeta::power_for(power_dbm),
             flags,
-            ..umsh_ulcp::TxMeta::default()
         }
         .encode(&mut metadata)
         .map_err(|_| MobileError::InvalidUlcpFrame)?;
@@ -4349,6 +4357,7 @@ pub fn ulcp_inspection_properties(capabilities: Vec<u8>) -> Result<Vec<u32>, Mob
         prop::PHY_ENABLED,
         prop::PHY_FREQ,
         prop::PHY_TX_POWER,
+        prop::PHY_T_FRAME,
     ];
     if has(cap::PHY_LORA) {
         properties.extend([prop::PHY_LORA_BW, prop::PHY_LORA_SF, prop::PHY_LORA_CR]);
@@ -4502,6 +4511,9 @@ pub fn inspect_ulcp_sync(
     let bandwidth_hz = expected.read(lora, prop::PHY_LORA_BW, decode_u32);
     let spreading_factor = expected.read(lora, prop::PHY_LORA_SF, decode_u8);
     let coding_rate_denom = expected.read(lora, prop::PHY_LORA_CR, decode_u8);
+    // A reading derived from the settings rather than one of them, and one
+    // an older device does not have.
+    let frame_time_ms = optional_value(&responses, prop::PHY_T_FRAME, decode_u32);
     let duty = has(cap::PHY_DUTY_LIMIT);
     let duty_cycle_now = expected.read(duty, prop::PHY_DUTY_NOW, decode_u16);
     let duty_cycle_limit = expected.read(duty, prop::PHY_DUTY_LIMIT, decode_u16);
@@ -4712,6 +4724,7 @@ pub fn inspect_ulcp_sync(
         bandwidth_hz,
         spreading_factor,
         coding_rate_denom,
+        frame_time_ms,
         duty_cycle_now,
         duty_cycle_limit,
         saved,
@@ -7928,6 +7941,7 @@ mod tests {
             prop::PHY_ENABLED => vec![1],
             prop::PHY_FREQ => 915_000u32.to_le_bytes().to_vec(),
             prop::PHY_TX_POWER => vec![14],
+            prop::PHY_T_FRAME => 1_200u32.to_le_bytes().to_vec(),
             prop::SAVED => vec![saved::CURRENT],
             prop::HOST_RX_FILTERS => Vec::new(),
             prop::MAC_REPEATER_ENABLED => vec![0],
@@ -8350,6 +8364,7 @@ mod tests {
                 prop::PHY_ENABLED,
                 prop::PHY_FREQ,
                 prop::PHY_TX_POWER,
+                prop::PHY_T_FRAME,
             ]
         );
         let sync = inspect_ulcp_sync(vec![
@@ -8365,6 +8380,19 @@ mod tests {
         assert_eq!(sync.transmit_power_dbm, 14);
         assert!(!sync.has_host_filtering);
         assert_eq!(sync.queued_frames, None);
+        // An older device has no frame time to report.
+        assert_eq!(sync.frame_time_ms, None);
+        let timed = inspect_ulcp_sync(vec![
+            response(prop::CAPS, &[cap::WRITABLE_RAW_STREAM as u8]),
+            response(prop::INTERFACE_TYPE, &[INTERFACE_TYPE as u8]),
+            response(prop::PHY_ENABLED, &[1]),
+            response(prop::PHY_FREQ, &915_000u32.to_le_bytes()),
+            response(prop::PHY_TX_POWER, &[14]),
+            response(prop::PHY_T_FRAME, &1_234u32.to_le_bytes()),
+        ])
+        .unwrap();
+        assert_eq!(timed.frame_time_ms, Some(1_234));
+        assert!(timed.unreadable_properties.is_empty());
     }
 
     #[test]
@@ -8522,6 +8550,7 @@ mod tests {
                     prop::PHY_ENABLED => (property, vec![1]),
                     prop::PHY_FREQ => (property, 915_000u32.to_le_bytes().to_vec()),
                     prop::PHY_TX_POWER => (property, vec![14]),
+                    prop::PHY_T_FRAME => (property, 1_200u32.to_le_bytes().to_vec()),
                     _ => unreachable!(),
                 },
             );
@@ -8689,6 +8718,7 @@ mod tests {
                     prop::PHY_ENABLED => (property, vec![1]),
                     prop::PHY_FREQ => (property, 868_100u32.to_le_bytes().to_vec()),
                     prop::PHY_TX_POWER => (property, vec![14]),
+                    prop::PHY_T_FRAME => (property, 1_200u32.to_le_bytes().to_vec()),
                     prop::SAVED => (property, vec![1]),
                     prop::HOST_RX_FILTERS => (property, Vec::new()),
                     _ => unreachable!(),
@@ -9618,17 +9648,18 @@ mod tests {
                     prop::PHY_ENABLED => (property, vec![1]),
                     prop::PHY_FREQ => (property, 915_000u32.to_le_bytes().to_vec()),
                     prop::PHY_TX_POWER => (property, vec![14]),
+                    prop::PHY_T_FRAME => (property, 1_200u32.to_le_bytes().to_vec()),
                     _ => unreachable!(),
                 },
             );
         assert_eq!(attached.snapshot.phase, UlcpSessionPhase::Attached);
 
-        let transmit = session.transmit_raw(vec![1, 2, 3], false).unwrap();
+        let transmit = session.transmit_raw(vec![1, 2, 3], false, None).unwrap();
         assert!(transmit.raw_transmit_pending);
         assert!(transmit.pending_control_transactions.is_empty());
         assert_eq!(transmit.raw_transmit_result, None);
         assert_eq!(transmit.outbound_frames.len(), 1);
-        let second_transmit = session.transmit_raw(vec![4], false).unwrap();
+        let second_transmit = session.transmit_raw(vec![4], false, None).unwrap();
         assert_ne!(
             transmit.raw_transmit_started_transaction_id,
             second_transmit.raw_transmit_started_transaction_id
@@ -9676,7 +9707,7 @@ mod tests {
 
         // A radio-level rejection completes only that send; the attached
         // session remains usable for the next raw frame.
-        let retryable = session.transmit_raw(vec![5], false).unwrap();
+        let retryable = session.transmit_raw(vec![5], false, None).unwrap();
         let request = Frame::parse(&retryable.outbound_frames[0]).unwrap();
         let busy = session
             .consume(property_response(
@@ -9690,7 +9721,7 @@ mod tests {
             UlcpRawTransmitDisposition::Retry
         );
 
-        let abandoned = session.transmit_raw(vec![6], false).unwrap();
+        let abandoned = session.transmit_raw(vec![6], false, None).unwrap();
         let abandoned_request = Frame::parse(&abandoned.outbound_frames[0]).unwrap();
         assert!(
             !session
@@ -9744,7 +9775,7 @@ mod tests {
             final_update.unwrap().snapshot.phase,
             UlcpSessionPhase::Attached
         );
-        assert!(session.transmit_raw(vec![6], false).is_ok());
+        assert!(session.transmit_raw(vec![6], false, None).is_ok());
     }
 
     #[test]
@@ -9778,6 +9809,7 @@ mod tests {
                     prop::PHY_ENABLED => (property, vec![1]),
                     prop::PHY_FREQ => (property, 915_000u32.to_le_bytes().to_vec()),
                     prop::PHY_TX_POWER => (property, vec![14]),
+                    prop::PHY_T_FRAME => (property, 1_200u32.to_le_bytes().to_vec()),
                     prop::PHY_LORA_BW => (property, 125_000u32.to_le_bytes().to_vec()),
                     prop::PHY_LORA_SF => (property, vec![9]),
                     prop::PHY_LORA_CR => (property, vec![5]),
@@ -9878,6 +9910,7 @@ mod tests {
                 prop::PHY_ENABLED => (property, vec![1]),
                 prop::PHY_FREQ => (property, 910_525u32.to_le_bytes().to_vec()),
                 prop::PHY_TX_POWER => (property, vec![18]),
+                prop::PHY_T_FRAME => (property, 1_200u32.to_le_bytes().to_vec()),
                 prop::PHY_LORA_BW => (property, 62_500u32.to_le_bytes().to_vec()),
                 prop::PHY_LORA_SF => (property, vec![7]),
                 prop::PHY_LORA_CR => (property, vec![5]),
@@ -11191,6 +11224,7 @@ mod tests {
                     prop::PHY_ENABLED => (property, vec![1]),
                     prop::PHY_FREQ => (property, 915_000u32.to_le_bytes().to_vec()),
                     prop::PHY_TX_POWER => (property, vec![14]),
+                    prop::PHY_T_FRAME => (property, 1_200u32.to_le_bytes().to_vec()),
                     _ => unreachable!(),
                 },
             );
@@ -11235,6 +11269,7 @@ mod tests {
                     prop::PHY_ENABLED => (property, vec![1]),
                     prop::PHY_FREQ => (property, 915_000u32.to_le_bytes().to_vec()),
                     prop::PHY_TX_POWER => (property, vec![14]),
+                    prop::PHY_T_FRAME => (property, 1_200u32.to_le_bytes().to_vec()),
                     _ => unreachable!(),
                 },
             );
@@ -11328,6 +11363,7 @@ mod tests {
                     prop::PHY_ENABLED => (property, vec![1]),
                     prop::PHY_FREQ => (property, 915_000u32.to_le_bytes().to_vec()),
                     prop::PHY_TX_POWER => (property, vec![14]),
+                    prop::PHY_T_FRAME => (property, 1_200u32.to_le_bytes().to_vec()),
                     prop::ALERT => (property, vec![0]),
                     _ => unreachable!(),
                 },
@@ -12257,6 +12293,7 @@ mod tests {
                 prop::PHY_ENABLED => (property, vec![1]),
                 prop::PHY_FREQ => (property, 915_000u32.to_le_bytes().to_vec()),
                 prop::PHY_TX_POWER => (property, vec![14]),
+                prop::PHY_T_FRAME => (property, 1_200u32.to_le_bytes().to_vec()),
                 prop::HOST_RX_FILTERS => (property, Vec::new()),
                 _ => unreachable!(),
             },

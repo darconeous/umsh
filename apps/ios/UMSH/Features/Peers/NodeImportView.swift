@@ -1,4 +1,5 @@
 import SwiftUI
+import UMSHMobileCore
 
 struct NodeImportView: View {
     let inspectPeerIdentity: (String) async -> Result<MeshNodeURIPreview, MeshEngineError>
@@ -7,6 +8,9 @@ struct NodeImportView: View {
     // show it and say why; validation then runs immediately instead of
     // waiting for the button.
     var initialInput: String? = nil
+    /// Add Peer's contact exchange, shown as Nearby above the address;
+    /// nil where the sheet only imports.
+    var exchange: ContactExchange? = nil
 
     @Environment(\.dismiss) private var dismiss
     @State private var input = ""
@@ -17,6 +21,9 @@ struct NodeImportView: View {
 
     var body: some View {
         Form {
+            if let exchange {
+                NearbySection(exchange: exchange)
+            }
             Section("Peer identity") {
                 TextField("UMSH URI, Base58 address, or 32-byte hex key", text: $input, axis: .vertical)
                     .textInputAutocapitalization(.never)
@@ -72,7 +79,17 @@ struct NodeImportView: View {
                 Section { Text(problem).foregroundStyle(.red) }
             }
         }
-        .navigationTitle("Import peer")
+        .navigationTitle(exchange == nil ? "Import peer" : "Add peer")
+        .navigationDestination(isPresented: exchangeShown) {
+            if let exchange {
+                ExchangeView(exchange: exchange, leave: { dismiss() })
+            }
+        }
+        .sheet(item: askedBy) { asking in
+            if let exchange {
+                ExchangeAskedCard(device: asking.device, answer: exchange.answer)
+            }
+        }
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
                 Button("Cancel") { dismiss() }
@@ -84,6 +101,35 @@ struct NodeImportView: View {
                 await inspect()
             }
         }
+    }
+
+    /// The exchange screen shows once this phone asked or agreed, and stays
+    /// until the attempt is over. Backing out of it ends the attempt and
+    /// opens a fresh one.
+    ///
+    /// The setters run with the state of the render that built them, which
+    /// may be long gone, so whether there is anything to back out of or
+    /// answer is left to the runtime, which has the live one.
+    private var exchangeShown: Binding<Bool> {
+        Binding(
+            get: { exchange?.state?.exchange.isUnderWay == true },
+            set: { shown in
+                guard !shown, let exchange else { return }
+                Task { await exchange.backOut() }
+            }
+        )
+    }
+
+    /// The device asking to exchange, while it waits for an answer. Swiping
+    /// the card away answers Not now.
+    private var askedBy: Binding<AskingDevice?> {
+        Binding(
+            get: { exchange?.state?.exchange.askedBy.map(AskingDevice.init) },
+            set: { device in
+                guard device == nil, let exchange else { return }
+                Task { await exchange.answer(false) }
+            }
+        )
     }
 
     private func inspect() async {

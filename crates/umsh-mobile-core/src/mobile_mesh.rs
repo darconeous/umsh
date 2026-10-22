@@ -16,7 +16,7 @@ use std::{
     rc::Rc,
     sync::{
         Arc, Mutex,
-        atomic::{AtomicBool, AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering},
         mpsc as std_mpsc,
     },
     time::Duration,
@@ -34,6 +34,7 @@ use umsh_hal::{
     TxOptions,
 };
 use umsh_mac::{Mac, MacHandle, OperatingPolicy, RepeaterConfig, SendOptions};
+use umsh_node::meet::MeetCommand;
 use umsh_node::{
     Host, LocalNode, MacBackend, NodeCapabilities, NodeIdentityPayload, NodeIdentityProfile,
     NodeRole, Transport,
@@ -49,6 +50,7 @@ use umsh_text::node_adapter::{
 };
 use umsh_ulcp::{frame, ids::prop, items};
 
+use crate::meet::{MeetRequest, MobileMeetStateRecord, PhoneMeeting};
 use crate::mobile_chat::{
     ChatDrain, ComposeFailure, MobileChatArchiveLookupRecord, MobileChatArchiveResultKind,
     MobileChatCheckpointRecord, MobileChatComposeBatchRecord, MobileChatDeliveryRecord,
@@ -694,6 +696,8 @@ pub struct MobileMeshSessionUpdateRecord {
     /// (see `MobileUlcpSession::reconcile_host_destination_hints`), or it
     /// passes nothing those sessions carry.
     pub local_destination_hints: Option<Vec<Vec<u8>>>,
+    /// Add Peer's contact exchange, when it changed since the last poll.
+    pub meet: Option<MobileMeetStateRecord>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
@@ -705,6 +709,10 @@ pub struct MobileMeshOutboundFrameRecord {
     /// own the channel-access window the moment the received frame ends; clear
     /// for originated and forwarded traffic, which must listen before talking.
     pub nocca: bool,
+    /// This frame's transmit power in dBm, raised by the device to the
+    /// least its radio can transmit; `None` sends at the configured power.
+    /// Pass it to `MobileUlcpSession::transmit_raw`.
+    pub power_dbm: Option<i8>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
@@ -909,6 +917,11 @@ enum WorkerCommand {
     },
     FailOutboundTransmissions,
     Receive(MobileMeshRxRecord),
+    /// Add Peer's contact exchange. Answers whether the request was taken.
+    Meet {
+        request: MeetRequest,
+        response: oneshot::Sender<bool>,
+    },
     Shutdown,
 }
 
@@ -1059,6 +1072,9 @@ struct BridgeRadio {
     inbound: mpsc::UnboundedReceiver<InboundFrame>,
     outbound: NotifyingSender<MobileMeshOutboundFrameRecord>,
     completions: Arc<BridgeTransmitCompletions>,
+    /// The longest frame's airtime at the radio's settings, in ms, once
+    /// the platform reports it; 0 until then.
+    frame_ms: Arc<AtomicU32>,
 }
 
 impl Radio for BridgeRadio {
@@ -1093,6 +1109,7 @@ impl Radio for BridgeRadio {
                 id,
                 data: data.to_vec(),
                 nocca,
+                power_dbm: options.power_dbm,
             })
             .is_err()
         {
@@ -1152,7 +1169,10 @@ impl Radio for BridgeRadio {
         MAX_FRAME_SIZE
     }
     fn t_frame_ms(&self) -> u32 {
-        DEFAULT_FRAME_TIME_MS
+        match self.frame_ms.load(Ordering::Relaxed) {
+            0 => DEFAULT_FRAME_TIME_MS,
+            ms => ms,
+        }
     }
 }
 
@@ -1322,6 +1342,10 @@ pub struct MobileMeshSession {
     advertisements: Mutex<std_mpsc::Receiver<MobileMeshAdvertisementRecord>>,
     peer_heard: Mutex<std_mpsc::Receiver<MobileMeshPeerHeardRecord>>,
     local_hints: Mutex<std_mpsc::Receiver<Vec<Vec<u8>>>>,
+    meet_states: Mutex<std_mpsc::Receiver<MobileMeetStateRecord>>,
+    /// The longest frame's airtime at the radio's settings, in ms; 0 until
+    /// the platform reports it.
+    frame_ms: Arc<AtomicU32>,
     chat_events: Mutex<std_mpsc::Receiver<MobileChatWorkerEvent>>,
     pending_chat_events: Mutex<Option<PendingChatEventBatch>>,
     next_chat_batch_id: Mutex<u64>,
@@ -2079,6 +2103,49 @@ impl MobileMeshSession {
             .map_err(|_| MobileMeshError::SessionUnavailable)
     }
 
+    /// Open Add Peer's contact exchange (`app-meet.md`) under a fresh
+    /// session key, ending any attempt in progress; Try again and Not now
+    /// call this too. `model` is this phone's platform id
+    /// (`platforms.json`), which its Hellos carry. What Add Peer shows
+    /// arrives as `MobileMeshSessionUpdateRecord::meet`.
+    pub async fn open_meet(&self, model: u16) -> Result<(), MobileMeshError> {
+        self.meet(MeetRequest::Open { model }).await.map(|_| ())
+    }
+
+    /// Close Add Peer's contact exchange, backing out of any attempt.
+    pub async fn close_meet(&self) -> Result<(), MobileMeshError> {
+        self.meet(MeetRequest::Close).await.map(|_| ())
+    }
+
+    /// Ask the device listed as `device` to exchange contacts. Returns
+    /// whether the ask went out.
+    pub async fn ask_to_exchange(&self, device: u32) -> Result<bool, MobileMeshError> {
+        self.meet(MeetRequest::Ask { device }).await
+    }
+
+    /// Answer the device that asked to exchange.
+    pub async fn answer_exchange(&self, accept: bool) -> Result<(), MobileMeshError> {
+        self.meet(MeetRequest::Answer { accept }).await.map(|_| ())
+    }
+
+    /// The holder found the codes the same, sending this phone's identity,
+    /// or different, ending the attempt with nothing kept.
+    pub async fn confirm_code(&self, same: bool) -> Result<(), MobileMeshError> {
+        self.meet(MeetRequest::Confirm { same }).await.map(|_| ())
+    }
+
+    /// Back out of the attempt in progress.
+    pub async fn cancel_exchange(&self) -> Result<(), MobileMeshError> {
+        self.meet(MeetRequest::Cancel).await.map(|_| ())
+    }
+
+    /// The longest frame's airtime at the radio's settings
+    /// (`PROP_PHY_T_FRAME`), in ms, whenever the radio reports it. The MAC
+    /// paces its retries by it, and the exchange its Hellos.
+    pub fn set_frame_time_ms(&self, frame_ms: u32) {
+        self.frame_ms.store(frame_ms, Ordering::Relaxed);
+    }
+
     /// Build and sign this phone's node-identity bundle without transmitting
     /// it, for embedding in the shareable `umsh:n:` URI and QR code.
     pub async fn sign_identity_bundle(
@@ -2448,6 +2515,12 @@ impl MobileMeshSession {
             .lock()
             .ok()
             .and_then(|receiver| receiver.try_iter().last());
+        // Each state is whole, so only the latest matters.
+        let meet = self
+            .meet_states
+            .lock()
+            .ok()
+            .and_then(|receiver| receiver.try_iter().last());
         let mut chat_mutations = Vec::new();
         let mut chat_deliveries = Vec::new();
         let mut chat_archive_lookups = Vec::new();
@@ -2497,11 +2570,22 @@ impl MobileMeshSession {
             chat_sender_resolutions,
             chat_diagnostics,
             local_destination_hints,
+            meet,
         }
     }
 }
 
 impl MobileMeshSession {
+    async fn meet(&self, request: MeetRequest) -> Result<bool, MobileMeshError> {
+        let (response, result) = oneshot::channel();
+        self.commands
+            .send(WorkerCommand::Meet { request, response })
+            .map_err(|_| MobileMeshError::SessionUnavailable)?;
+        result
+            .await
+            .map_err(|_| MobileMeshError::SessionUnavailable)
+    }
+
     /// Allocate an operation identifier and hand the request to the
     /// worker, which owns the administrator engine.
     fn begin_management(
@@ -2579,6 +2663,7 @@ impl MobileMeshSession {
         let (advertisement_tx, advertisements) = std_mpsc::channel();
         let (peer_heard_tx, peer_heard) = std_mpsc::channel();
         let (local_hints_tx, local_hints) = std_mpsc::channel();
+        let (meet_tx, meet_states) = std_mpsc::channel();
         let (chat_event_tx, chat_events) = std_mpsc::channel();
         let outbound_tx = NotifyingSender {
             tx: outbound_tx,
@@ -2604,6 +2689,12 @@ impl MobileMeshSession {
             tx: local_hints_tx,
             wake: wake.clone(),
         };
+        let meet_tx = NotifyingSender {
+            tx: meet_tx,
+            wake: wake.clone(),
+        };
+        let frame_ms = Arc::new(AtomicU32::new(0));
+        let worker_frame_ms = frame_ms.clone();
         let chat_event_tx = NotifyingSender {
             tx: chat_event_tx,
             wake: wake.clone(),
@@ -2654,6 +2745,8 @@ impl MobileMeshSession {
                         advertisement_tx,
                         peer_heard_tx,
                         local_hints_tx,
+                        meet_tx,
+                        worker_frame_ms,
                         chat_event_tx,
                         ready_tx,
                     )),
@@ -2674,6 +2767,8 @@ impl MobileMeshSession {
             advertisements: Mutex::new(advertisements),
             peer_heard: Mutex::new(peer_heard),
             local_hints: Mutex::new(local_hints),
+            meet_states: Mutex::new(meet_states),
+            frame_ms,
             chat_events: Mutex::new(chat_events),
             pending_chat_events: Mutex::new(None),
             next_chat_batch_id: Mutex::new(1),
@@ -3204,6 +3299,8 @@ async fn run_worker(
     advertisements: NotifyingSender<MobileMeshAdvertisementRecord>,
     peer_heard: NotifyingSender<MobileMeshPeerHeardRecord>,
     local_hints: NotifyingSender<Vec<Vec<u8>>>,
+    meet_states: NotifyingSender<MobileMeetStateRecord>,
+    frame_ms: Arc<AtomicU32>,
     chat_events: NotifyingSender<MobileChatWorkerEvent>,
     ready: oneshot::Sender<Result<(), MobileMeshError>>,
 ) {
@@ -3217,6 +3314,7 @@ async fn run_worker(
         inbound: inbound_rx,
         outbound,
         completions: transmit_completions,
+        frame_ms: frame_ms.clone(),
     };
     let mac = MobileMac::new(
         radio,
@@ -3273,6 +3371,10 @@ async fn run_worker(
     // that something else goes on to claim. It never claims one itself.
     let peer_heard_events = peer_heard.clone();
     let peer_heard_subscription = node.on_receive(move |packet| {
+        // A contact exchange's session keys are nobody's address.
+        if packet.payload_type() == PayloadType::Meet {
+            return false;
+        }
         let _ = peer_heard_events.send(MobileMeshPeerHeardRecord {
             peer_address: packet.from_key().map(|peer| encode_peer_address(&peer)),
             node_hint: packet.from_hint().map(|hint| hint.0.to_vec()),
@@ -3334,6 +3436,25 @@ async fn run_worker(
             payload: packet.payload().to_vec(),
             source_authenticated: packet.source_authenticated(),
         });
+        true
+    });
+    // Add Peer's contact exchange, in the order heard; taken by the command
+    // loop, which owns the exchange.
+    let meeting = RefCell::new(PhoneMeeting::new());
+    let heard_meet = Rc::new(RefCell::new(Vec::<HeardMeet>::new()));
+    let heard_meet_callback = heard_meet.clone();
+    let meet_subscription = node.on_receive(move |packet| {
+        if packet.payload_type() != PayloadType::Meet {
+            return false;
+        }
+        if let Some(from) = packet.from_key() {
+            heard_meet_callback.borrow_mut().push(HeardMeet {
+                from,
+                broadcast: packet.packet_family() == umsh_node::PacketFamily::Broadcast,
+                rssi: packet.rssi(),
+                body: packet.payload().to_vec(),
+            });
+        }
         true
     });
     // One device at a time: an administrator has one exchange outstanding
@@ -3419,6 +3540,7 @@ async fn run_worker(
         peer_heard_subscription,
         text_subscription,
         advertisement_subscription,
+        meet_subscription,
         peer_repeaters_subscription,
     );
     let _ = ready.send(Ok(()));
@@ -3435,15 +3557,19 @@ async fn run_worker(
     // release it. As sibling futures of the outer select, the pump makes
     // progress whenever the command loop is waiting.
     let inbound_ready = tokio::sync::Notify::new();
+    let meet_ready = tokio::sync::Notify::new();
     let timeout_servicer = host.protocol_timeout_servicer();
 
-    // Sessions with forward secrecy begin and end in the pump and lapse in
-    // the timeout service, so both check what the phone answers to after
-    // running. Reported only on change: a session starts with none.
+    // What the phone answers to besides its own key is every ephemeral
+    // identity the MAC holds: sessions with forward secrecy, which begin
+    // and end in the pump and lapse in the timeout service, and the
+    // contact exchange's session key. Each of those checks after running.
+    // Reported only on change: a session starts with none.
     let reported_hints = RefCell::new(Vec::<Vec<u8>>::new());
-    let report_local_hints = || {
-        let hints: Vec<Vec<u8>> = node
-            .pfs_local_keys()
+    let report_local_hints = || async {
+        let hints: Vec<Vec<u8>> = handle
+            .ephemeral_keys()
+            .await
             .iter()
             .map(|key| key.hint().0.to_vec())
             .collect();
@@ -3459,9 +3585,12 @@ async fn run_worker(
             if host.pump_once().await.is_err() {
                 return;
             }
-            report_local_hints();
+            report_local_hints().await;
             if !inbound_text.borrow().is_empty() {
                 inbound_ready.notify_one();
+            }
+            if !heard_meet.borrow().is_empty() {
+                meet_ready.notify_one();
             }
         }
     };
@@ -4139,8 +4268,107 @@ async fn run_worker(
                         Some(WorkerCommand::Receive(record)) => {
                             let _ = inbound_tx.send(InboundFrame { record });
                         }
+                        Some(WorkerCommand::Meet { request, response }) => {
+                            let now_ms = handle.now_ms().await;
+                            let taken = match request {
+                                MeetRequest::Open { model } => {
+                                    let frame_ms = frame_ms.load(Ordering::Relaxed);
+                                    meeting.borrow_mut().open(now_ms, model, local_key, frame_ms);
+                                    true
+                                }
+                                MeetRequest::Close => {
+                                    meeting
+                                        .borrow_mut()
+                                        .with(|meeting, changed| {
+                                            meeting.close(now_ms, changed);
+                                            None
+                                        });
+                                    true
+                                }
+                                MeetRequest::Ask { device } => {
+                                    let mut asked = false;
+                                    meeting.borrow_mut().with(|meeting, changed| {
+                                        asked = meeting.ask(now_ms, device, changed);
+                                        None
+                                    });
+                                    asked
+                                }
+                                MeetRequest::Answer { accept } => {
+                                    meeting.borrow_mut().with(|meeting, changed| {
+                                        meeting.answer(now_ms, accept, changed);
+                                        None
+                                    });
+                                    true
+                                }
+                                MeetRequest::Confirm { same: false } => {
+                                    meeting.borrow_mut().with(|meeting, changed| {
+                                        meeting.different(now_ms, changed);
+                                        None
+                                    });
+                                    true
+                                }
+                                MeetRequest::Confirm { same: true } => {
+                                    let comparing = meeting.borrow().meeting.comparing();
+                                    if comparing {
+                                        // Signed now, so the time it names is
+                                        // when it was handed over. Never the
+                                        // location, as for the QR bundle.
+                                        match build_signed_identity_bundle(
+                                            &signer,
+                                            responder_name.as_deref(),
+                                            Some(unix_seconds()),
+                                            None,
+                                        )
+                                        .await
+                                        {
+                                            Ok(identity) => {
+                                                let now_ms = handle.now_ms().await;
+                                                meeting.borrow_mut().with(|meeting, changed| {
+                                                    meeting.same(now_ms, &identity, changed)
+                                                });
+                                            }
+                                            Err(_) => {
+                                                meeting.borrow_mut().with(|meeting, changed| {
+                                                    meeting.cancel(now_ms, changed);
+                                                    None
+                                                });
+                                            }
+                                        }
+                                    }
+                                    comparing
+                                }
+                                MeetRequest::Cancel => {
+                                    meeting.borrow_mut().with(|meeting, changed| {
+                                        meeting.cancel(now_ms, changed);
+                                        None
+                                    });
+                                    true
+                                }
+                            };
+                            drive_meet(&meeting, &node, now_ms, &meet_states).await;
+                            report_local_hints().await;
+                            let _ = response.send(taken);
+                        }
                         Some(WorkerCommand::Shutdown) | None => return,
                     }
+                }
+                _ = meet_ready.notified() => {
+                    let heard = heard_meet.borrow_mut().drain(..).collect::<Vec<_>>();
+                    let now_ms = handle.now_ms().await;
+                    for frame in heard {
+                        meeting.borrow_mut().with(|meeting, changed| {
+                            meeting.hear(
+                                now_ms,
+                                frame.from,
+                                frame.broadcast,
+                                frame.rssi,
+                                &frame.body,
+                                changed,
+                            )
+                        });
+                    }
+                    drive_meet(&meeting, &node, now_ms, &meet_states).await;
+                    report_local_hints().await;
                 }
                 _ = inbound_ready.notified() => {
                     let received = inbound_text.borrow_mut().drain(..).collect::<Vec<_>>();
@@ -4180,8 +4408,12 @@ async fn run_worker(
                 }
                 _ = protocol_timeout_tick.tick() => {
                     timeout_servicer.service().await;
-                    report_local_hints();
+                    report_local_hints().await;
                     let now_ms = handle.now_ms().await;
+                    if meeting.borrow().meeting.is_open() {
+                        meeting.borrow_mut().with(|meeting, changed| meeting.tick(now_ms, changed));
+                        drive_meet(&meeting, &node, now_ms, &meet_states).await;
+                    }
                     service_peer_repeater_pages(&peer_repeater_pages, now_ms);
                     if management.is_some() {
                         // Retries, cursor continuations, and the batches of
@@ -4401,6 +4633,52 @@ fn chat_policy(flood_hops: FloodHopSettings, well_known: WellKnownChannels) -> T
 /// Send what the chat queue holds while its window has room, and publish
 /// what the engine made of any frame that could not be sent. Returns how
 /// many frames were sent.
+/// A Meet frame as the node received it.
+struct HeardMeet {
+    from: PublicKey,
+    broadcast: bool,
+    rssi: Option<i16>,
+    body: Vec<u8>,
+}
+
+/// Carries out what the contact exchange asks of the node, then publishes
+/// what Add Peer shows if it changed.
+async fn drive_meet<M: MacBackend>(
+    meeting: &RefCell<PhoneMeeting>,
+    node: &LocalNode<M>,
+    now_ms: u64,
+    states: &NotifyingSender<MobileMeetStateRecord>,
+) {
+    loop {
+        let command = meeting.borrow_mut().meeting.command();
+        match command {
+            None => break,
+            Some(MeetCommand::Open) => {
+                let session = node.open_meet().await.ok();
+                meeting
+                    .borrow_mut()
+                    .with(|meeting, changed| meeting.opened(now_ms, session, changed));
+            }
+            Some(MeetCommand::Send { to, frame }) => {
+                let _ = node.send_meet(to.as_ref(), &frame).await;
+            }
+            Some(MeetCommand::Close) => node.close_meet().await,
+        }
+    }
+    if let Some(state) = meeting.borrow_mut().take_state() {
+        let _ = states.send(state);
+    }
+}
+
+/// Now, in seconds since the Unix epoch, as a node identity's timestamp.
+fn unix_seconds() -> u32 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since| {
+            u32::try_from(since.as_secs()).unwrap_or(u32::MAX)
+        })
+}
+
 async fn pump_chat<M: MacBackend>(
     node: &LocalNode<M>,
     chat: &mut MobileChatState,
@@ -4526,7 +4804,7 @@ fn decode_channel_keys(keys: Vec<Vec<u8>>) -> Result<Vec<ChannelKey>, MobileMesh
 
 /// The canonical fixed-width Base58 rendering of a peer key, matching what
 /// `decode_peer` accepts and what the platform stores as an address.
-fn encode_peer_address(peer: &PublicKey) -> String {
+pub(crate) fn encode_peer_address(peer: &PublicKey) -> String {
     umsh_core::base58::encode(&peer.0)
         .into_iter()
         .map(char::from)
@@ -8199,5 +8477,161 @@ mod tests {
             "only {transmitted} of {fragments} fragment(s) were transmitted"
         );
         assert_eq!(repairs, 0, "the message needed {repairs} repair request(s)");
+    }
+
+    /// Two phones together, each with Add Peer open, exchange contacts:
+    /// one asks, the other agrees, both see one code and press Same, and
+    /// each ends with the other's signed identity and nothing saved. Every
+    /// frame either sends goes at the exchange's low power, a Hello is
+    /// never taken for a peer, and the radio's filter learns the session
+    /// key only while the session lasts.
+    #[tokio::test]
+    async fn two_phones_exchange_contacts() {
+        use crate::meet::MobileMeetExchange;
+
+        const IPHONE: u16 = 0xFE00;
+        let directory = tempfile::tempdir().unwrap();
+        let session = |seed: u8, name: &str| {
+            let directory = directory.path().join(name);
+            async move {
+                let identity = identity(seed);
+                let session = MobileMeshSession::new(
+                    identity.clone(),
+                    MobileCounterStore::new(directory.display().to_string()).unwrap(),
+                )
+                .await
+                .unwrap();
+                (session, address(&identity))
+            }
+        };
+        let (alice, alice_address) = session(91, "meet-alice").await;
+        let (bob, bob_address) = session(92, "meet-bob").await;
+
+        struct Seen {
+            state: Option<MobileMeetStateRecord>,
+            hints: Vec<Vec<u8>>,
+            ever_hinted: bool,
+            powers: Vec<Option<i8>>,
+            heard_peers: usize,
+        }
+        let mut seen = [(); 2].map(|()| Seen {
+            state: None,
+            hints: Vec::new(),
+            ever_hinted: false,
+            powers: Vec::new(),
+            heard_peers: 0,
+        });
+        let phones = [&alice, &bob];
+        // Moves every frame either sends to the other, as one channel would,
+        // until `done` holds of what each shows.
+        let air = |seen: &mut [Seen; 2], done: &dyn Fn(&[Seen; 2]) -> bool, what: &str| {
+            let deadline = Instant::now() + Duration::from_secs(30);
+            while !done(seen) {
+                for (at, phone) in phones.iter().enumerate() {
+                    let update = phone.poll_update();
+                    let seen = &mut seen[at];
+                    seen.heard_peers += update.peer_heard_events.len();
+                    if let Some(state) = update.meet {
+                        seen.state = Some(state);
+                    }
+                    if let Some(hints) = update.local_destination_hints {
+                        seen.ever_hinted |= !hints.is_empty();
+                        seen.hints = hints;
+                    }
+                    for outbound in update.outbound_frames {
+                        phone.complete_outbound_frame(outbound.id, true).unwrap();
+                        seen.powers.push(outbound.power_dbm);
+                        phones[1 - at]
+                            .receive(MobileMeshRxRecord {
+                                data: outbound.data,
+                                rssi_dbm: Some(-60),
+                                lqi: None,
+                                snr_cb: Some(80),
+                                was_buffered: false,
+                                was_acknowledged: false,
+                                age_seconds: 0,
+                            })
+                            .unwrap();
+                    }
+                }
+                assert!(Instant::now() < deadline, "timed out waiting for {what}");
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        };
+        let exchange = |seen: &Seen| seen.state.as_ref().map(|state| state.exchange.clone());
+
+        alice.open_meet(IPHONE).await.unwrap();
+        bob.open_meet(IPHONE).await.unwrap();
+        air(
+            &mut seen,
+            &|seen| {
+                seen.iter().all(|seen| {
+                    seen.state
+                        .as_ref()
+                        .is_some_and(|state| state.devices.len() == 1)
+                })
+            },
+            "each to list the other",
+        );
+        let listed = seen[0].state.as_ref().unwrap().devices[0];
+        assert_eq!(listed.model, IPHONE);
+        assert_eq!(
+            Some(listed.color_rgb),
+            seen[1].state.as_ref().unwrap().own_color_rgb,
+            "Alice lists Bob in the color Bob shows"
+        );
+        assert!(seen.iter().all(|seen| seen.ever_hinted));
+
+        assert!(alice.ask_to_exchange(listed.id).await.unwrap());
+        air(
+            &mut seen,
+            &|seen| matches!(exchange(&seen[1]), Some(MobileMeetExchange::Asked { .. })),
+            "Bob to be asked",
+        );
+        bob.answer_exchange(true).await.unwrap();
+        air(
+            &mut seen,
+            &|seen| {
+                seen.iter().all(|seen| {
+                    matches!(exchange(seen), Some(MobileMeetExchange::Comparing { .. }))
+                })
+            },
+            "both to compare codes",
+        );
+        let code = |seen: &Seen| match exchange(seen) {
+            Some(MobileMeetExchange::Comparing { code, .. }) => code,
+            other => panic!("not comparing: {other:?}"),
+        };
+        assert_eq!(code(&seen[0]), code(&seen[1]));
+
+        alice.confirm_code(true).await.unwrap();
+        bob.confirm_code(true).await.unwrap();
+        air(
+            &mut seen,
+            &|seen| {
+                seen.iter().all(|seen| {
+                    matches!(exchange(seen), Some(MobileMeetExchange::Exchanged { .. }))
+                        && seen.hints.is_empty()
+                })
+            },
+            "both to exchange and give back their session keys",
+        );
+        for (seen, theirs) in seen.iter().zip([&bob_address, &alice_address]) {
+            let Some(MobileMeetExchange::Exchanged { contact }) = exchange(seen) else {
+                unreachable!();
+            };
+            assert_eq!(&contact.peer_address, theirs);
+            assert!(contact.signed);
+            assert!(!contact.identity_bundle.is_empty());
+            assert!(!seen.powers.is_empty());
+            assert!(
+                seen.powers
+                    .iter()
+                    .all(|power| *power == Some(umsh_node::meet::TX_POWER_DBM)),
+                "every frame of the exchange goes at its power: {:?}",
+                seen.powers
+            );
+            assert_eq!(seen.heard_peers, 0, "a session key was taken for a peer");
+        }
     }
 }

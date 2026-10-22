@@ -180,7 +180,8 @@ struct AppRootView: View {
                         clearMessages: runtime.clearConversationMessages,
                         countMessages: runtime.countConversationMessages
                     ),
-                    discoverPeers: { openDiscovery(nil) }
+                    discoverPeers: { openDiscovery(nil) },
+                    contactExchange: runtime.contactExchange
                 )
                     .appRadioToolbar(runtime.radioSnapshot, reconnectRadio: runtime.reconnectRadio, selectRadio: runtime.selectRadio) {
                         showsRadioDetail = true
@@ -283,6 +284,7 @@ struct AppRootView: View {
                     seedMessages: runtime.seedGeneratedMessages,
                     stagedPeerSendsMessage: runtime.stagedPeerSendsMessage,
                     stagedPeerReacts: runtime.stagedPeerReacts,
+                    stagedPeerMeets: runtime.stagedPeerMeets,
                     stagedDropTransmissions: runtime.stagedDropTransmissions,
                     stagedRemoteDevicesReachable: runtime.stagedRemoteDevicesReachable
                 )

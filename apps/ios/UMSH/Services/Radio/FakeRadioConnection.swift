@@ -57,6 +57,8 @@ actor FakeRadioConnection: RadioConnection {
     private var wifiTheater: Task<Void, Never>?
     /// Staging only: swallow every outbound frame, as a dead link would.
     private var transmissionsFail = false
+    private var meetContinuations: [UUID: AsyncStream<MobileMeetStateRecord?>.Continuation] = [:]
+    private var latestMeetState: MobileMeetStateRecord?
 
     init(
         snapshot: RadioSnapshot = .previewReady,
@@ -81,6 +83,14 @@ actor FakeRadioConnection: RadioConnection {
     func stagedPeerReacts(body: String) async {
         #if DEBUG
         await (air as? StagingMeshAir)?.reactFromPeer(body: body)
+        #endif
+    }
+
+    /// Ask the staging air to have a staged peer open Add Peer, and with
+    /// `asking`, ask the phone to exchange contacts once it lists it.
+    func stagedPeerMeets(asking: Bool) async {
+        #if DEBUG
+        await (air as? StagingMeshAir)?.peerOpensAddPeer(asking: asking)
         #endif
     }
 
@@ -137,6 +147,55 @@ actor FakeRadioConnection: RadioConnection {
 
     func localDestinationHints() -> AsyncStream<[Data]> {
         AsyncStream { _ in }
+    }
+
+    func meetStates() -> AsyncStream<MobileMeetStateRecord?> {
+        AsyncStream(bufferingPolicy: .bufferingNewest(1)) { continuation in
+            let id = UUID()
+            meetContinuations[id] = continuation
+            continuation.yield(latestMeetState)
+            continuation.onTermination = { [weak self] _ in
+                Task { await self?.removeMeetContinuation(id) }
+            }
+        }
+    }
+
+    private func removeMeetContinuation(_ id: UUID) {
+        meetContinuations[id] = nil
+    }
+
+    private func publishMeetState(_ state: MobileMeetStateRecord?) {
+        guard state != latestMeetState else { return }
+        latestMeetState = state
+        for continuation in meetContinuations.values {
+            continuation.yield(state)
+        }
+    }
+
+    func openMeet(model: UInt16) async throws {
+        guard let meshSession else { throw RadioConnectionError.identityUnavailable }
+        try await meshSession.openMeet(model: model)
+    }
+
+    func closeMeet() async throws {
+        try await meshSession?.closeMeet()
+    }
+
+    func askToExchange(device: UInt32) async throws -> Bool {
+        guard let meshSession else { throw RadioConnectionError.identityUnavailable }
+        return try await meshSession.askToExchange(device: device)
+    }
+
+    func answerExchange(accept: Bool) async throws {
+        try await meshSession?.answerExchange(accept: accept)
+    }
+
+    func confirmCode(same: Bool) async throws {
+        try await meshSession?.confirmCode(same: same)
+    }
+
+    func cancelExchange() async throws {
+        try await meshSession?.cancelExchange()
     }
 
     func advertiseIdentity(name: String?) async throws {
@@ -213,6 +272,7 @@ actor FakeRadioConnection: RadioConnection {
 
     func useMeshSession(_ session: MobileMeshSession?) async {
         meshSession = session
+        publishMeetState(nil)
         guard let session else {
             wakeListener = nil
             return
@@ -1191,6 +1251,9 @@ actor FakeRadioConnection: RadioConnection {
             if transmitted {
                 queueForAir(update.outboundFrames.map(\.data))
             }
+        }
+        if let meet = update.meet {
+            publishMeetState(meet)
         }
         yieldChatUpdate(from: update)
     }

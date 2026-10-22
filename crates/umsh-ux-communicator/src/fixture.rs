@@ -1850,17 +1850,23 @@ impl Node for Store {
         let opened = self.meet_opened.get().wrapping_add(1);
         self.meet_opened.set(opened);
         let mut meet = self.meet.borrow_mut();
-        // The mockup's violet first, then far around the circle each time.
-        meet.own_hue = Some(opened.wrapping_mul(97).wrapping_add(123));
+        // The mockup's violet first, then far around the circle each time:
+        // the session colors of hue steps 220, 61, 158, 255, 96, 193, 34
+        // and 131.
+        const OWN: [u32; 8] = [
+            0xC598E7, 0xD0A84B, 0x41BEE4, 0xEB8DAD, 0x8CBF70, 0x92A9FA, 0xEC9669, 0x37C6B7,
+        ];
+        meet.own_color = Some(OWN[usize::from(opened.wrapping_sub(1)) % OWN.len()]);
         if meet.devices.is_empty() {
-            for (id, model, hue, nearness) in [
-                (1, models::LILYGO_T_DECK, 130, 3),
-                (2, models::SEEED_XIAO_ESP32S3_KIT, 40, 1),
+            // The session colors of hue steps 130 and 40.
+            for (id, model, color, nearness) in [
+                (1, models::LILYGO_T_DECK, 0x39C6B5, 3),
+                (2, models::SEEED_XIAO_ESP32S3_KIT, 0xE8995F, 1),
             ] {
                 _ = meet.devices.push(NearbyDevice {
                     id,
                     model,
-                    hue,
+                    color,
                     nearness: Some(nearness),
                 });
             }

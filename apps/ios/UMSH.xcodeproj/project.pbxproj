@@ -7,6 +7,10 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		10000000000000000000AE01 /* UMSH/DesignSystem/MeetGlyph.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20000000000000000000AE01 /* UMSH/DesignSystem/MeetGlyph.swift */; };
+		10000000000000000000AE02 /* UMSH/Features/Peers/NearbyExchange.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20000000000000000000AE02 /* UMSH/Features/Peers/NearbyExchange.swift */; };
+		10000000000000000000AE03 /* UMSH/Features/Peers/ExchangeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20000000000000000000AE03 /* UMSH/Features/Peers/ExchangeView.swift */; };
+		A55000000000000000000009 /* platforms.json in Resources */ = {isa = PBXBuildFile; fileRef = A5500000000000000000000A /* platforms.json */; };
 		E1A000000000000000000011 /* UMSHLanRadio/LanRadioProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = E1A000000000000000000001 /* UMSHLanRadio/LanRadioProvider.swift */; };
 		E1A000000000000000000012 /* UMSH/Services/Radio/VirtualRadioPaths.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2000000000000000000000E4 /* UMSH/Services/Radio/VirtualRadioPaths.swift */; };
 		E1A000000000000000000013 /* UMSHMobileCore in Frameworks */ = {isa = PBXBuildFile; productRef = E1A000000000000000000014 /* UMSHMobileCore */; };
@@ -140,6 +144,10 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		20000000000000000000AE01 /* UMSH/DesignSystem/MeetGlyph.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/DesignSystem/MeetGlyph.swift; sourceTree = "<group>"; };
+		20000000000000000000AE02 /* UMSH/Features/Peers/NearbyExchange.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Features/Peers/NearbyExchange.swift; sourceTree = "<group>"; };
+		20000000000000000000AE03 /* UMSH/Features/Peers/ExchangeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSH/Features/Peers/ExchangeView.swift; sourceTree = "<group>"; };
+		A5500000000000000000000A /* platforms.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; name = platforms.json; path = ../../docs/hardware/platforms.json; sourceTree = SOURCE_ROOT; };
 		E1A000000000000000000001 /* UMSHLanRadio/LanRadioProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UMSHLanRadio/LanRadioProvider.swift; sourceTree = "<group>"; };
 		E1A000000000000000000002 /* UMSHLanRadio/Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = UMSHLanRadio/Info.plist; sourceTree = "<group>"; };
 		E1A000000000000000000003 /* UMSHLanRadio/UMSHLanRadio.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = UMSHLanRadio/UMSHLanRadio.entitlements; sourceTree = "<group>"; };
@@ -345,6 +353,8 @@
 				6D1D031E0577ECAA708A7EF4 /* UMSH/Features/RemoteManagement/RemotePeerNodesScreen.swift */,
 				20000000000000000000002E /* UMSH/Features/Peers/NodeImportView.swift */,
 				20000000000000000000002F /* UMSH/Features/Peers/DiscoverPeersView.swift */,
+				20000000000000000000AE02 /* UMSH/Features/Peers/NearbyExchange.swift */,
+				20000000000000000000AE03 /* UMSH/Features/Peers/ExchangeView.swift */,
 				20000000000000000000003E /* UMSH/Features/Map/NodeMapView.swift */,
 				2CEE4158EA69AD922AEE2AFD /* UMSH/Features/Map/PlacePicker.swift */,
 				20000000000000000000003F /* UMSH/Features/Map/MapNodeModels.swift */,
@@ -387,6 +397,7 @@
 				200000000000000000000044 /* UMSH/DesignSystem/RadioPositionPoll.swift */,
 				200000000000000000000057 /* UMSH/DesignSystem/UMSHAnimation.swift */,
 				200000000000000000000015 /* UMSH/DesignSystem/IdentityQRCodeView.swift */,
+				20000000000000000000AE01 /* UMSH/DesignSystem/MeetGlyph.swift */,
 				200000000000000000000016 /* UMSH/Services/Notifications/ChatNotificationService.swift */,
 				200000000000000000000045 /* UMSH/Services/PhoneLocationService.swift */,
 				200000000000000000000055 /* UMSH/Services/Regions/RegionService.swift */,
@@ -433,6 +444,7 @@
 				200000000000000000000017 /* UMSH/Assets.xcassets */,
 				200000000000000000000050 /* UMSH/PrivacyInfo.xcprivacy */,
 				A55000000000000000000008 /* boards.json */,
+				A5500000000000000000000A /* platforms.json */,
 			);
 			name = Sources;
 			sourceTree = "<group>";
@@ -586,6 +598,7 @@
 				100000000000000000000017 /* UMSH/Assets.xcassets in Resources */,
 				100000000000000000000050 /* UMSH/PrivacyInfo.xcprivacy in Resources */,
 				A55000000000000000000007 /* boards.json in Resources */,
+				A55000000000000000000009 /* platforms.json in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -663,6 +676,9 @@
 				257B387EEEF08BCCD73E5E7C /* UMSH/Features/RemoteManagement/RemotePeerNodesScreen.swift in Sources */,
 				10000000000000000000002E /* UMSH/Features/Peers/NodeImportView.swift in Sources */,
 				10000000000000000000002F /* UMSH/Features/Peers/DiscoverPeersView.swift in Sources */,
+				10000000000000000000AE01 /* UMSH/DesignSystem/MeetGlyph.swift in Sources */,
+				10000000000000000000AE02 /* UMSH/Features/Peers/NearbyExchange.swift in Sources */,
+				10000000000000000000AE03 /* UMSH/Features/Peers/ExchangeView.swift in Sources */,
 				10000000000000000000003E /* UMSH/Features/Map/NodeMapView.swift in Sources */,
 				1F3BF90A09C890F4E762DD71 /* UMSH/Features/Map/PlacePicker.swift in Sources */,
 				10000000000000000000003F /* UMSH/Features/Map/MapNodeModels.swift in Sources */,

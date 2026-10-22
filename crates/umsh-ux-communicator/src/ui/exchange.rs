@@ -83,7 +83,7 @@ fn device_header(
     HStack::new((
         back(m, |s| _ = s.back()),
         HStack::new((
-            with.map(|device| glyph(device.hue, GLYPH)),
+            with.map(|device| glyph(device.color, GLYPH)),
             with.map(|device| {
                 label::<16>(model_name(device.model), &font::BOLD, m.body, theme::TEXT)
                     .fixed_size(true, false)

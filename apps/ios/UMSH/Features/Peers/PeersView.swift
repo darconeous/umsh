@@ -26,12 +26,28 @@ struct PeersView: View {
     var messageActions: ChatMessageActions = .unavailable
     /// Open the Discover Peers sheet, which the app root owns and presents.
     var discoverPeers: () -> Void = {}
+    /// Add Peer's contact exchange, run while the sheet shows.
+    var contactExchange: ContactExchange?
     @State private var showsAddPeer = false
     @State private var pendingImport: PendingPeerImport?
     @AppStorage("peers.sort") private var sortOrder: PeersSortOrder = .alphabetic
     @State private var roleFilter: PeersRoleFilter = .all
     @State private var searchText = ""
     @State private var peerPendingRemoval: PeerSummary?
+
+    /// Held until onDismiss: see PendingPeerImport.
+    private func holdImport(
+        _ preview: MeshNodeURIPreview,
+        _ details: PeerImportDetails,
+        _ startConversation: Bool
+    ) async {
+        pendingImport = PendingPeerImport(
+            preview: preview,
+            details: details,
+            startConversation: startConversation
+        )
+        showsAddPeer = false
+    }
 
     var body: some View {
         // One `List` at the root, with every state inside it, so the search
@@ -92,19 +108,33 @@ struct PeersView: View {
             }
         }
         .sheet(isPresented: $showsAddPeer, onDismiss: completePendingImport) {
-            NavigationStack {
-                NodeImportView(
+            if let contactExchange {
+                AddPeerSheet(
+                    exchange: contactExchange,
                     inspectPeerIdentity: inspectPeerIdentity,
-                    save: { preview, details, startConversation in
-                        // Held until onDismiss: see PendingPeerImport.
-                        pendingImport = PendingPeerImport(
-                            preview: preview,
-                            details: details,
-                            startConversation: startConversation
-                        )
-                        showsAddPeer = false
+                    save: holdImport
+                ) { peer in
+                    // Contacts crossed: the new peer's page, unsaved, with
+                    // its Message and Save Peer.
+                    PeerDetailView(
+                        peer: peer,
+                        radioSnapshot: $radioSnapshot,
+                        conversations: $conversations,
+                        actions: peerActions,
+                        updateDraft: updateDraft,
+                        sendMessage: sendMessage,
+                        messageActions: messageActions
+                    )
+                    .toolbar {
+                        ToolbarItem(placement: .confirmationAction) {
+                            Button("Done") { showsAddPeer = false }
+                        }
                     }
-                )
+                }
+            } else {
+                NavigationStack {
+                    NodeImportView(inspectPeerIdentity: inspectPeerIdentity, save: holdImport)
+                }
             }
         }
         .confirmationDialog(
