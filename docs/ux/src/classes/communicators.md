@@ -155,7 +155,6 @@ since power-on are not read off the clock and may still show.
 - **Name** and **Model**, as the device and its board give them.
 - **Firmware** is the release tag (`fw-YYYY.MM.NN`), or the commit for a
   development build. No build date: builds are reproducible.
-- **Address** shows the hint, with the whole 44-character address under it.
 - **Storage** is the chats' room used of all they may keep.
 - **Credits** lists the firmware's parts with their licenses: UMSH, Twemoji
   (with its copyright, its license, and that the art is rasterized,

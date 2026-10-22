@@ -216,8 +216,6 @@ pub struct Statistics {
 /// What Device › About reads of the node.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct About {
-    /// The node's hint, as an address begins.
-    pub hint: String<8>,
     /// Octets the chats keep, of the most they may.
     pub stored: u32,
     pub quota: u32,

@@ -4199,16 +4199,12 @@
 <text x="12.0" y="149.0" font-size="20" fill="#EEF1F5">Firmware</text>
 <text x="466.0" y="148.0" font-size="17" fill="#9AA3AE" text-anchor="end">fw-2026.10.01</text>
 <path d="M12.0 159.5 L480.0 159.5" stroke="#20252C" stroke-width="1"/>
-<text x="12.0" y="185.0" font-size="20" fill="#EEF1F5">Address</text>
-<text x="466.0" y="184.0" font-size="17" fill="#9AA3AE" text-anchor="end">Geb9</text>
+<text x="12.0" y="185.0" font-size="20" fill="#EEF1F5">Storage</text>
+<text x="466.0" y="184.0" font-size="17" fill="#9AA3AE" text-anchor="end">31 KB of 300 KB</text>
 <path d="M12.0 195.5 L480.0 195.5" stroke="#20252C" stroke-width="1"/>
-<text x="12.0" y="210.0" font-size="16" fill="#9AA3AE">Geb9QfXhe5f1vXHcFDnXbvcXShxAFhAxaRp1jr5Bqe3L</text>
-<text x="12.0" y="247.0" font-size="20" fill="#EEF1F5">Storage</text>
-<text x="466.0" y="246.0" font-size="17" fill="#9AA3AE" text-anchor="end">31 KB of 300 KB</text>
-<path d="M12.0 257.5 L480.0 257.5" stroke="#20252C" stroke-width="1"/>
-<text x="12.0" y="283.0" font-size="20" fill="#EEF1F5">Credits</text>
-<path d="M460 270.0 L466 276.0 L460 282.0" fill="none" stroke="#7F8995" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-<path d="M12.0 293.5 L480.0 293.5" stroke="#20252C" stroke-width="1"/>
+<text x="12.0" y="221.0" font-size="20" fill="#EEF1F5">Credits</text>
+<path d="M460 208.0 L466 214.0 L460 220.0" fill="none" stroke="#7F8995" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M12.0 231.5 L480.0 231.5" stroke="#20252C" stroke-width="1"/>
 </g>
 <rect x="0.0" y="22.0" width="480.0" height="30.0" fill="#0B0D10"/>
 <path d="M0.0 51.5 L480.0 51.5" stroke="#20252C" stroke-width="1"/>
@@ -4237,7 +4233,7 @@
 <path d="M381 6 L391 16" fill="none" stroke="#9AA3AE" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
 </g>
 </g></g>
-<text x="82.0" y="21736.8" font-size="17" fill="#3A3A3C">Device › About. The address is whole under its hint; Storage is the chats’ room used of all they may keep.</text>
+<text x="82.0" y="21736.8" font-size="17" fill="#3A3A3C">Device › About. Storage is the chats’ room used of all they may keep.</text>
 <text x="1128.0" y="21224.8" font-size="22" fill="#1C1C1E" font-weight="700">73 · Credits</text>
 <rect x="1128.0" y="21238.8" width="984.0" height="468.0" fill="#050607" rx="16" filter="url(#shadow)"/>
 <clipPath id="scr74"><rect width="480" height="222"/></clipPath>

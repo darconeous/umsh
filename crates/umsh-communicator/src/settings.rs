@@ -30,7 +30,7 @@
 //! by the Device's Store; see
 //! [`ChannelCrypto::starting_keys`](crate::ChannelCrypto::starting_keys)).
 
-use umsh_core::{ChannelTag, NodeHint};
+use umsh_core::ChannelTag;
 use umsh_ulcp::ids::{cap, keyboard_aids, prop, saved};
 use umsh_ulcp::profiles::VETTED;
 use umsh_ulcp_admin::descriptor::Value;
@@ -458,18 +458,6 @@ impl<P: LocalPort> Settings<P> {
     /// The device identity's address.
     pub fn address(&self) -> String<44> {
         self.key().map(address).unwrap_or_default()
-    }
-
-    /// The device identity's hint, as its address begins.
-    pub fn hint(&self) -> String<8> {
-        let mut hint = String::new();
-        if let Some(key) = self.key() {
-            _ = core::fmt::write(
-                &mut hint,
-                format_args!("{}", NodeHint([key[0], key[1], key[2]])),
-            );
-        }
-        hint
     }
 
     /// The device identity's peers: what `PROP_DEV_PEERS` holds once the

@@ -2,6 +2,7 @@
 //! firmware is built from.
 
 use buoyant::focus::FocusKey;
+use buoyant::view::Lazy;
 use buoyant::view::prelude::*;
 use embedded_graphics::pixelcolor::Rgb565;
 use heapless::{String, Vec};
@@ -13,8 +14,6 @@ use crate::nav::keys;
 use crate::{font, models, theme};
 
 const ROW: u32 = 36;
-/// The address's lines, and their inset.
-const ADDRESS: u32 = 22;
 const INSET: u32 = 12;
 const RADIUS: u16 = 8;
 
@@ -60,7 +59,6 @@ static INDICES: [usize; LICENSES] = {
 pub fn view(state: &State) -> impl View<Rgb565, State> + use<> {
     let m = state.metrics();
     let about = state.node.about();
-    let address = state.node.address();
     let mut storage: String<24> = String::new();
     _ = core::fmt::write(
         &mut storage,
@@ -78,17 +76,6 @@ pub fn view(state: &State) -> impl View<Rgb565, State> + use<> {
                 models::name(state.board.model).unwrap_or_default(),
             ),
             readout("Firmware", keys::ABOUT_FIRMWARE, state.firmware),
-            readout("Address", keys::ABOUT_ADDRESS, &about.hint),
-            super::address(
-                &address,
-                &font::REGULAR,
-                m.small,
-                theme::TEXT_SECONDARY,
-                m.width - 2 * INSET,
-                ADDRESS,
-            )
-            .padding(Edges::Leading, INSET)
-            .padding(Edges::Bottom, 4),
             readout("Storage", keys::ABOUT_STORAGE, &storage),
             row(
                 m,
@@ -144,8 +131,6 @@ pub fn credits(state: &State) -> impl View<Rgb565, State> + use<> {
 
 /// An entry of the credits: `name`, and below it `body`'s lines, which
 /// wrap. It takes focus so the wheel passes through it.
-// Out of line, as `setting::row` is, against the Xtensa back end's failure.
-#[inline(never)]
 fn entry(
     m: &'static Metrics,
     name: &'static str,
@@ -154,53 +139,60 @@ fn entry(
 ) -> impl View<Rgb565, State> + use<> {
     Button::new(
         |_: &mut State| {},
-        move |button: ButtonState| {
-            let focused = button.is_focused();
-            let face = if focused { &font::BOLD } else { &font::REGULAR };
-            VStack::new((
-                Text::new(name, face)
-                    .with_font_size(m.body)
-                    .foreground_color(theme::TEXT),
-                Text::new(body, &font::REGULAR)
-                    .with_font_size(m.small)
-                    .foreground_color(theme::TEXT_SECONDARY),
-            ))
-            .with_alignment(HorizontalAlignment::Leading)
-            .with_spacing(2)
-            .flex_infinite_width(HorizontalAlignment::Leading)
-            .hint_background_color(if focused {
-                theme::FOCUS
-            } else {
-                theme::BACKGROUND
-            })
-            .padding(Edges::Horizontal, INSET - 4)
-            .padding(Edges::Vertical, 6)
-            .background(
-                Alignment::Center,
-                focused.then(|| {
-                    ZStack::new((
-                        RoundedRectangle::new(RADIUS).foreground_color(theme::FOCUS),
-                        RoundedRectangle::new(RADIUS)
-                            .stroked(2)
-                            .foreground_color(theme::ACCENT),
-                    ))
-                }),
-            )
-            .padding(Edges::Horizontal, 4)
-            .padding(Edges::Vertical, 1)
-            .overlay(
-                Alignment::Bottom,
-                (!focused).then(|| {
-                    Rectangle
-                        .foreground_color(theme::LINE)
-                        .frame()
-                        .with_height(1)
-                        .padding(Edges::Leading, INSET)
-                }),
-            )
-        },
+        move |button: ButtonState| Lazy::new((name, body, button.is_focused(), m), entry_look),
     )
     .focus_key(key)
+}
+
+/// What an entry of the credits draws.
+///
+/// Built from its text each time it is drawn ([`Lazy`]): kept in the
+/// render trees, every entry's would outweigh the rest of the screen.
+fn entry_look(
+    &(name, body, focused, m): &(&'static str, &'static str, bool, &'static Metrics),
+) -> impl View<Rgb565, ()> + use<> {
+    let face = if focused { &font::BOLD } else { &font::REGULAR };
+    VStack::new((
+        Text::new(name, face)
+            .with_font_size(m.body)
+            .foreground_color(theme::TEXT),
+        Text::new(body, &font::REGULAR)
+            .with_font_size(m.small)
+            .foreground_color(theme::TEXT_SECONDARY),
+    ))
+    .with_alignment(HorizontalAlignment::Leading)
+    .with_spacing(2)
+    .flex_infinite_width(HorizontalAlignment::Leading)
+    .hint_background_color(if focused {
+        theme::FOCUS
+    } else {
+        theme::BACKGROUND
+    })
+    .padding(Edges::Horizontal, INSET - 4)
+    .padding(Edges::Vertical, 6)
+    .background(
+        Alignment::Center,
+        focused.then(|| {
+            ZStack::new((
+                RoundedRectangle::new(RADIUS).foreground_color(theme::FOCUS),
+                RoundedRectangle::new(RADIUS)
+                    .stroked(2)
+                    .foreground_color(theme::ACCENT),
+            ))
+        }),
+    )
+    .padding(Edges::Horizontal, 4)
+    .padding(Edges::Vertical, 1)
+    .overlay(
+        Alignment::Bottom,
+        (!focused).then(|| {
+            Rectangle
+                .foreground_color(theme::LINE)
+                .frame()
+                .with_height(1)
+                .padding(Edges::Leading, INSET)
+        }),
+    )
 }
 
 /// `bytes` in kilobytes, or in megabytes to a tenth from a megabyte up.

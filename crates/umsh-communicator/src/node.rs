@@ -731,7 +731,6 @@ impl<P: LocalPort, S: ChatStore> Node for CommunicatorNode<P, S> {
     fn about(&self) -> About {
         let usage = self.chats.borrow().store().usage();
         About {
-            hint: self.settings.borrow().hint(),
             stored: u32::try_from(usage.bytes).unwrap_or(u32::MAX),
             quota: u32::try_from(usage.quota).unwrap_or(u32::MAX),
         }

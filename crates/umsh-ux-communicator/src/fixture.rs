@@ -1865,7 +1865,6 @@ impl Node for Store {
     /// A tenth of the chats' room used.
     fn about(&self) -> About {
         About {
-            hint: String::try_from("Geb9").unwrap_or_default(),
             stored: 31_744,
             quota: 307_200,
         }

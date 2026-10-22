@@ -2620,11 +2620,6 @@ def screen_about():
     for i, (label, val) in enumerate(rows):
         body += setting_row(0, y, label, val, focused=i == 0)
         y += 36
-    address = b58(44, 3)
-    body += setting_row(0, y, "Address", address[:4])
-    y += 36
-    body.append(T(12, y + 14, address, F_SMALL, C["text2"]))
-    y += 26
     body += setting_row(0, y, "Storage", "31 KB of 300 KB")
     y += 36
     body += setting_row(0, y, "Credits", None, chev=True)
@@ -3301,8 +3296,8 @@ def main(path, native_dir=None):
         ]),
         ("About", [
             ("About", screen_about(),
-             "Device › About. The address is whole under its hint; Storage "
-             "is the chats’ room used of all they may keep."),
+             "Device › About. Storage is the chats’ room used of all they "
+             "may keep."),
             ("Credits", screen_credits(),
              "The firmware’s parts with their licenses, then the Rust "
              "crates it links, grouped by license. An entry longer than the "

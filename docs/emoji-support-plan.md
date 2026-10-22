@@ -404,8 +404,6 @@ one row each:
 - **Model**: the board, e.g. LILYGO T-LoRa Pager.
 - **Firmware**: the release tag (`fw-YYYY.MM.NN`), or the commit for a
   development build. No build date, so builds stay reproducible.
-- **Address**: the node's address in its fixed 44-character base58 form,
-  and its hint.
 - **Storage**: chat store used of total.
 - **Credits**: opens the credits screen.
 

@@ -142,9 +142,8 @@ pub mod keys {
     pub const ABOUT_NAME: FocusKey = FocusKey(0x2600_0000);
     pub const ABOUT_MODEL: FocusKey = FocusKey(0x2600_0001);
     pub const ABOUT_FIRMWARE: FocusKey = FocusKey(0x2600_0002);
-    pub const ABOUT_ADDRESS: FocusKey = FocusKey(0x2600_0003);
-    pub const ABOUT_STORAGE: FocusKey = FocusKey(0x2600_0004);
-    pub const CREDITS: FocusKey = FocusKey(0x2600_0005);
+    pub const ABOUT_STORAGE: FocusKey = FocusKey(0x2600_0003);
+    pub const CREDITS: FocusKey = FocusKey(0x2600_0004);
     /// The Battery screen's readouts, in order.
     pub const BATTERY_LEVEL: FocusKey = FocusKey(0x2200_0000);
     pub const BATTERY_CHARGE: FocusKey = FocusKey(0x2200_0001);
