@@ -26,6 +26,29 @@ where
     (x as i16, y as i16)
 }
 
+/// A tap anywhere on a code goes back: here, at the screen's far corner,
+/// away from the code and its words.
+#[test]
+fn a_tap_anywhere_on_a_code_goes_back() {
+    use input::TouchPhase::{Ended, Started};
+    let mut app = app!();
+    open_category(&mut app, keys::IDENTITY);
+    turn_to(&mut app, keys::IDENTITY_CODE);
+    run(&mut app, &[Input::Press]);
+    assert!(matches!(
+        app.state().screen(),
+        Screen::Device {
+            page: DevicePage::Share { .. },
+            ..
+        }
+    ));
+    let size = BOARD.metrics.size();
+    let corner = (size.width as i16 - 4, size.height as i16 - 4);
+    input::apply(&mut app, touch(Started, corner, tick(100)), tick(0));
+    input::apply(&mut app, touch(Ended, corner, tick(50)), tick(0));
+    assert_eq!(focus(app.state()), Some(keys::IDENTITY_CODE));
+}
+
 /// A touch the panel reported at `at`.
 fn touch(phase: input::TouchPhase, (x, y): (i16, i16), at: u64) -> Input {
     Input::Touch { phase, x, y, at }

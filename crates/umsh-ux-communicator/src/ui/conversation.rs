@@ -336,19 +336,31 @@ pub(super) fn header(
         Some(ChatKind::Channel { .. }) => _ = distance.push_str("Channel"),
         Some(ChatKind::Peer { hops: None }) | None => {}
     }
+    titled(
+        m,
+        name,
+        if clear { theme::RED } else { theme::TEXT },
+        avatar,
+        &distance,
+    )
+}
+
+/// Back, an avatar when there is one, `name` in `color`, and `about`
+/// after it: a chat's header, or one a screen gives its own words.
+pub(super) fn titled(
+    m: &'static Metrics,
+    name: &str,
+    color: Rgb565,
+    avatar: Option<&AvatarStyle>,
+    about: &str,
+) -> impl View<Rgb565, State> + use<> {
     HStack::new((
         back(m, |s| _ = s.back()),
         HStack::new((
             avatar.map(|style| super::avatar::view(style, AVATAR)),
             // An emoji's name, a channel's title, runs past a name's 32.
-            label::<48>(
-                name,
-                &font::BOLD,
-                m.body,
-                if clear { theme::RED } else { theme::TEXT },
-            )
-            .fixed_size(true, false),
-            label::<16>(&distance, &font::MEDIUM, m.small, theme::TEXT_TERTIARY),
+            label::<48>(name, &font::BOLD, m.body, color).fixed_size(true, false),
+            label::<16>(about, &font::MEDIUM, m.small, theme::TEXT_TERTIARY),
             Spacer::default(),
         ))
         .with_spacing(6),

@@ -1894,7 +1894,8 @@ fn identity_is_renamed_in_place_and_shows_its_code() {
             ..
         }
     ));
-    run(&mut app, &[Input::Backspace]);
+    // A press goes back, as Backspace does.
+    run(&mut app, &[Input::Press]);
     assert_eq!(focus(app.state()), Some(keys::IDENTITY_CODE));
     run(&mut app, &[Input::Backspace]);
     assert_eq!(focus(app.state()), Some(keys::IDENTITY));
