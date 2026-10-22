@@ -28,8 +28,8 @@ use umsh_ulcp::gnss::{self, GnssSnapshot};
 use umsh_ulcp::i2c::{self, BusInfo, DeviceInfo, ScanRequest, TransferRequest};
 use umsh_ulcp::ids::{
     self, DEFAULT_ADVERT_INTERVAL_S, DEFAULT_BEACON_INTERVAL_S, MAX_AUTO_ANNOUNCE_INTERVAL_S,
-    MIN_AUTO_ANNOUNCE_INTERVAL_S, admin_writable, cap, device_writable, keyboard_aids,
-    meshcore_region_policy, prop, stream,
+    MIN_AUTO_ANNOUNCE_INTERVAL_S, MIN_DISPLAY_TIMEOUT_S, admin_writable, cap, device_writable,
+    keyboard_aids, meshcore_region_policy, prop, stream,
 };
 use umsh_ulcp::ip;
 use umsh_ulcp::items::{self, Filter, ItemError, REGION_CODE_LEN};
@@ -185,6 +185,16 @@ impl GnssConfig {
     };
 }
 
+/// That this board has a screen of its own (`CAP_DISPLAY`), and its
+/// settings after a reset.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DisplayConfig {
+    /// Post-reset value of `PROP_DISPLAY_BRIGHTNESS`.
+    pub brightness: u8,
+    /// Post-reset value of `PROP_DISPLAY_TIMEOUT`, in seconds; 0 is never.
+    pub timeout_s: u16,
+}
+
 /// Post-reset value of `PROP_GNSS_IDENT_PRECISION`: a ~38 × 19 m cell,
 /// fine enough to place a node on a street and coarse enough not to place
 /// it in a room.
@@ -257,11 +267,11 @@ pub struct SessionConfig {
     pub temperatures: bool,
     /// Orientation-qualified display wake; enabled by default when supported.
     pub display_motion_wake: bool,
-    /// `None`: the screen's brightness is not adjustable;
-    /// `CAP_DISPLAY_BRIGHTNESS` is absent and `PROP_DISPLAY_BRIGHTNESS`
-    /// is unknown. `Some`: the capability is advertised, and the value is
-    /// the brightness after a reset.
-    pub display_brightness: Option<u8>,
+    /// `None`: the device has no screen whose settings it exposes;
+    /// `CAP_DISPLAY` is absent and `PROP_DISPLAY_BRIGHTNESS` and
+    /// `PROP_DISPLAY_TIMEOUT` are unknown. `Some`: the capability is
+    /// advertised, with the settings after a reset.
+    pub display: Option<DisplayConfig>,
     /// Whether the device has a keyboard of its own. When set,
     /// `CAP_KEYBOARD` is advertised and `PROP_KEYBOARD_LIGHT` and
     /// `PROP_KEYBOARD_AIDS` exist, lit and with every aid on after a
@@ -1075,8 +1085,11 @@ struct DeviceDomain {
     gnss_enabled: bool,
     display_motion_wake_enabled: bool,
     /// `PROP_DISPLAY_BRIGHTNESS`. Meaningful only under
-    /// [`Config::display_brightness`].
+    /// [`Config::display`].
     display_brightness: u8,
+    /// `PROP_DISPLAY_TIMEOUT`, in seconds. Meaningful only under
+    /// [`Config::display`].
+    display_timeout: u16,
     /// `PROP_KEYBOARD_LIGHT`. Meaningful only under [`Config::keyboard`].
     keyboard_light: bool,
     /// `PROP_KEYBOARD_AIDS`, holding only defined flags.
@@ -1166,7 +1179,8 @@ impl DeviceDomain {
             time_24h: true,
             gnss_enabled: config.gnss.is_some_and(|gnss| gnss.default_enabled),
             display_motion_wake_enabled: config.display_motion_wake,
-            display_brightness: config.display_brightness.unwrap_or(u8::MAX),
+            display_brightness: config.display.map_or(u8::MAX, |d| d.brightness),
+            display_timeout: config.display.map_or(0, |d| d.timeout_s),
             keyboard_light: true,
             keyboard_aids: keyboard_aids::ALL,
             gnss_ident_update: false,
@@ -2439,6 +2453,7 @@ const SAVED_SCHEMA: &[SavedProperty] = &[
     saved(prop::WIFI_NETWORK, ApplyPhase::Config, false),
     saved(prop::TZ_RULE, ApplyPhase::Config, false),
     saved(prop::TIME_24H, ApplyPhase::Config, false),
+    saved(prop::DISPLAY_TIMEOUT, ApplyPhase::Config, false),
     saved(prop::IPV4_CONFIG, ApplyPhase::Config, false),
     saved(prop::IPV6_CONFIG, ApplyPhase::Config, false),
     saved(prop::IP_DNS, ApplyPhase::Config, true),
@@ -2586,6 +2601,7 @@ struct SavedState {
     gnss_enabled: bool,
     display_motion_wake_enabled: bool,
     display_brightness: u8,
+    display_timeout: u16,
     keyboard_light: bool,
     keyboard_aids: u8,
     gnss_ident_update: bool,
@@ -2641,6 +2657,7 @@ impl SavedState {
             gnss_enabled: device.gnss_enabled,
             display_motion_wake_enabled: device.display_motion_wake_enabled,
             display_brightness: device.display_brightness,
+            display_timeout: device.display_timeout,
             keyboard_light: device.keyboard_light,
             keyboard_aids: device.keyboard_aids,
             gnss_ident_update: device.gnss_ident_update,
@@ -2703,7 +2720,8 @@ impl SavedState {
             // snapshot saved while it was on would restore it off.
             gnss_enabled: config.gnss.is_some_and(|gnss| gnss.default_enabled),
             display_motion_wake_enabled: config.display_motion_wake,
-            display_brightness: config.display_brightness.unwrap_or(u8::MAX),
+            display_brightness: config.display.map_or(u8::MAX, |d| d.brightness),
+            display_timeout: config.display.map_or(0, |d| d.timeout_s),
             keyboard_light: true,
             keyboard_aids: keyboard_aids::ALL,
             gnss_ident_update: false,
@@ -2848,6 +2866,7 @@ impl SavedState {
                 encoder.put(number, &[self.display_motion_wake_enabled as u8])
             }
             prop::DISPLAY_BRIGHTNESS => encoder.put(number, &[self.display_brightness]),
+            prop::DISPLAY_TIMEOUT => encoder.put(number, &self.display_timeout.to_le_bytes()),
             prop::KEYBOARD_LIGHT => encoder.put(number, &[self.keyboard_light as u8]),
             prop::KEYBOARD_AIDS => encoder.put(number, &[self.keyboard_aids]),
             prop::PHY_DUTY_LIMIT => encoder.put(number, &self.duty_limit.to_le_bytes()),
@@ -3080,6 +3099,9 @@ impl SavedState {
             }
             prop::DISPLAY_BRIGHTNESS => {
                 self.display_brightness = parse_u8(value).map_err(invalid)?
+            }
+            prop::DISPLAY_TIMEOUT => {
+                self.display_timeout = parse_display_timeout(value).map_err(invalid)?
             }
             prop::KEYBOARD_LIGHT => self.keyboard_light = parse_bool(value).map_err(invalid)?,
             // Aids a newer firmware saved are dropped, not the snapshot.
@@ -4038,6 +4060,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                     prop::DISPLAY_BRIGHTNESS => {
                         self.device.display_brightness = saved.display_brightness
                     }
+                    prop::DISPLAY_TIMEOUT => self.device.display_timeout = saved.display_timeout,
                     prop::KEYBOARD_LIGHT => self.device.keyboard_light = saved.keyboard_light,
                     prop::KEYBOARD_AIDS => self.device.keyboard_aids = saved.keyboard_aids,
                     prop::PHY_DUTY_LIMIT => self.config.duty.set_limit(saved.duty_limit),
@@ -5374,9 +5397,13 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     /// `PROP_DISPLAY_BRIGHTNESS`, from 0 to 255; `None` on a board whose
     /// brightness is not adjustable.
     pub fn display_brightness(&self) -> Option<u8> {
-        self.config
-            .display_brightness
-            .map(|_| self.device.display_brightness)
+        self.config.display.map(|_| self.device.display_brightness)
+    }
+
+    /// `PROP_DISPLAY_TIMEOUT`, in seconds, 0 for never; `None` on a board
+    /// without a screen whose settings it exposes.
+    pub fn display_timeout(&self) -> Option<u16> {
+        self.config.display.map(|_| self.device.display_timeout)
     }
 
     /// `PROP_KEYBOARD_LIGHT`; false on a board without a keyboard.
@@ -7489,8 +7516,13 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                 self.bump_dev_domain();
                 Ok(false)
             }
-            prop::DISPLAY_BRIGHTNESS if self.config.display_brightness.is_some() => {
+            prop::DISPLAY_BRIGHTNESS if self.config.display.is_some() => {
                 self.device.display_brightness = parse_u8(value)?;
+                self.bump_dev_domain();
+                Ok(false)
+            }
+            prop::DISPLAY_TIMEOUT if self.config.display.is_some() => {
+                self.device.display_timeout = parse_display_timeout(value)?;
                 self.bump_dev_domain();
                 Ok(false)
             }
@@ -8345,8 +8377,8 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         if key == prop::DISPLAY_MOTION_WAKE_ENABLED {
             return self.config.display_motion_wake;
         }
-        if key == prop::DISPLAY_BRIGHTNESS {
-            return self.config.display_brightness.is_some();
+        if matches!(key, prop::DISPLAY_BRIGHTNESS | prop::DISPLAY_TIMEOUT) {
+            return self.config.display.is_some();
         }
         if matches!(key, prop::KEYBOARD_LIGHT | prop::KEYBOARD_AIDS) {
             return self.config.keyboard;
@@ -8530,8 +8562,8 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                 if self.config.display_motion_wake {
                     len += pui::encode(cap::DISPLAY_MOTION_WAKE, &mut out[len..]).unwrap_or(0);
                 }
-                if self.config.display_brightness.is_some() {
-                    len += pui::encode(cap::DISPLAY_BRIGHTNESS, &mut out[len..]).unwrap_or(0);
+                if self.config.display.is_some() {
+                    len += pui::encode(cap::DISPLAY, &mut out[len..]).unwrap_or(0);
                 }
                 if self.config.keyboard {
                     len += pui::encode(cap::KEYBOARD, &mut out[len..]).unwrap_or(0);
@@ -8727,9 +8759,13 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                 out[0] = self.device.display_motion_wake_enabled as u8;
                 1
             }
-            prop::DISPLAY_BRIGHTNESS if self.config.display_brightness.is_some() => {
+            prop::DISPLAY_BRIGHTNESS if self.config.display.is_some() => {
                 out[0] = self.device.display_brightness;
                 1
+            }
+            prop::DISPLAY_TIMEOUT if self.config.display.is_some() => {
+                out[..2].copy_from_slice(&self.device.display_timeout.to_le_bytes());
+                2
             }
             prop::KEYBOARD_LIGHT if self.config.keyboard => {
                 out[0] = self.device.keyboard_light as u8;
@@ -9241,6 +9277,15 @@ fn parse_u8(value: &[u8]) -> Result<u8, Status> {
     }
 }
 
+/// A `PROP_DISPLAY_TIMEOUT` write: seconds, raised to the shortest a
+/// device keeps, or 0 for never.
+fn parse_display_timeout(value: &[u8]) -> Result<u16, Status> {
+    parse_u16(value).map(|seconds| match seconds {
+        0 => 0,
+        seconds => seconds.max(MIN_DISPLAY_TIMEOUT_S),
+    })
+}
+
 /// A `PROP_KEYBOARD_AIDS` write: one octet whose reserved bits are zero.
 fn parse_keyboard_aids(value: &[u8]) -> Result<u8, Status> {
     match parse_u8(value)? {
@@ -9501,7 +9546,7 @@ mod tests {
             time: Some(TimeConfig),
             gnss: Some(GnssConfig::DEFAULT),
             display_motion_wake: false,
-            display_brightness: None,
+            display: None,
             keyboard: false,
             illuminance: true,
             temperatures: false,
@@ -9607,16 +9652,23 @@ mod tests {
     #[test]
     fn display_and_keyboard_settings_are_saved_device_settings() {
         let config = SessionConfig {
-            display_brightness: Some(113),
+            display: Some(DisplayConfig {
+                brightness: 113,
+                timeout_s: 30,
+            }),
             keyboard: true,
             ..test_config()
         };
         let mut session = Session::new(config, Status::RESET_POWER_ON, test_engine());
         session.attach(true);
         let caps = get(&mut session, prop::CAPS);
-        assert!(caps.contains(&(cap::DISPLAY_BRIGHTNESS as u8)));
+        assert!(caps.contains(&(cap::DISPLAY as u8)));
         assert!(caps.contains(&(cap::KEYBOARD as u8)));
         assert_eq!(get(&mut session, prop::DISPLAY_BRIGHTNESS), [113]);
+        assert_eq!(
+            get(&mut session, prop::DISPLAY_TIMEOUT),
+            30u16.to_le_bytes()
+        );
         assert_eq!(get(&mut session, prop::KEYBOARD_LIGHT), [1]);
         assert_eq!(get(&mut session, prop::KEYBOARD_AIDS), [keyboard_aids::ALL]);
 
@@ -9624,6 +9676,17 @@ mod tests {
         set(&mut session, prop::KEYBOARD_LIGHT, &[0]);
         set(&mut session, prop::KEYBOARD_AIDS, &[keyboard_aids::PERIOD]);
         assert_eq!(session.display_brightness(), Some(0));
+        // Too short a timeout is raised to the shortest kept.
+        set(&mut session, prop::DISPLAY_TIMEOUT, &3u16.to_le_bytes());
+        assert_eq!(
+            get(&mut session, prop::DISPLAY_TIMEOUT),
+            10u16.to_le_bytes()
+        );
+        // 0 is never, and kept as written.
+        set(&mut session, prop::DISPLAY_TIMEOUT, &0u16.to_le_bytes());
+        assert_eq!(session.display_timeout(), Some(0));
+        set(&mut session, prop::DISPLAY_TIMEOUT, &120u16.to_le_bytes());
+        assert_eq!(session.display_timeout(), Some(120));
         assert!(!session.keyboard_light());
         assert_eq!(session.keyboard_aids(), keyboard_aids::PERIOD);
 
@@ -9639,6 +9702,7 @@ mod tests {
         let mut booted: TestSession = Session::new(config, Status::RESET_POWER_ON, test_engine());
         booted.restore_at_boot(&bytes[..len]).unwrap();
         assert_eq!(booted.display_brightness(), Some(0));
+        assert_eq!(booted.display_timeout(), Some(120));
         assert!(!booted.keyboard_light());
         assert_eq!(booted.keyboard_aids(), keyboard_aids::PERIOD);
         booted.reset(Status::RESET_SOFTWARE, &mut |_| {});
@@ -9649,24 +9713,28 @@ mod tests {
             &bytes[..len],
             &[
                 prop::DISPLAY_BRIGHTNESS,
+                prop::DISPLAY_TIMEOUT,
                 prop::KEYBOARD_LIGHT,
                 prop::KEYBOARD_AIDS,
             ],
         );
         booted.restore_at_boot(&old).unwrap();
         assert_eq!(booted.display_brightness(), Some(113));
+        assert_eq!(booted.display_timeout(), Some(30));
         assert!(booted.keyboard_light());
         assert_eq!(booted.keyboard_aids(), keyboard_aids::ALL);
 
         let mut bare = test_session();
         assert_eq!(bare.display_brightness(), None);
+        assert_eq!(bare.display_timeout(), None);
         assert!(!bare.keyboard_light());
         assert_eq!(bare.keyboard_aids(), 0);
         let caps = get(&mut bare, prop::CAPS);
-        assert!(!caps.contains(&(cap::DISPLAY_BRIGHTNESS as u8)));
+        assert!(!caps.contains(&(cap::DISPLAY as u8)));
         assert!(!caps.contains(&(cap::KEYBOARD as u8)));
         for key in [
             prop::DISPLAY_BRIGHTNESS,
+            prop::DISPLAY_TIMEOUT,
             prop::KEYBOARD_LIGHT,
             prop::KEYBOARD_AIDS,
         ] {

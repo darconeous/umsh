@@ -94,7 +94,7 @@ Code | Name               | Requires           | Grants
 59   | `CAP_DISPLAY_MOTION_WAKE` | — | Orientation-qualified display wake and `PROP_DISPLAY_MOTION_WAKE_ENABLED`
 61 | `CAP_TEMPERATURE` | — | `PROP_TEMPERATURES` and `PROP_TEMPERATURE_NAMES`; the inventory may initially be empty
 62 | `CAP_MESHCORE_FORWARDER` | `CAP_REPEATER` | [MeshCore forwarding](#meshcore-forwarding): `PROP_MESHCORE_FORWARDING_ENABLED`, `PROP_MESHCORE_REGION_POLICY`, `PROP_MESHCORE_REGIONS`; with `CAP_STATS`, the [MeshCore counters](ulcp-radio.md#prop-stat-meshcore-seen)
-64 | `CAP_DISPLAY_BRIGHTNESS` | — | A screen whose brightness can be set, and [`PROP_DISPLAY_BRIGHTNESS`](#prop-display-brightness)
+64 | `CAP_DISPLAY` | — | A screen of the device's own: [`PROP_DISPLAY_BRIGHTNESS`](#prop-display-brightness), [`PROP_DISPLAY_TIMEOUT`](#prop-display-timeout)
 65 | `CAP_KEYBOARD` | — | A keyboard of the device's own: [`PROP_KEYBOARD_LIGHT`](#prop-keyboard-light), [`PROP_KEYBOARD_AIDS`](#prop-keyboard-aids)
 
 `CAP_ADVERT` requires `CAP_DEV_IDENTITY` because what an advertisement
@@ -265,6 +265,7 @@ Id | Mnemonic                    | Commands                 | Description
 4876 | `PROP_TEMPERATURE_NAMES` | Get | Ordered temperature sensor names
 4875 | `PROP_DISPLAY_MOTION_WAKE_ENABLED` | Get, Set, Is | Whether movement wakes the display
 4877 | `PROP_DISPLAY_BRIGHTNESS` | Get, Set, Is             | Screen brightness
+4890 | `PROP_DISPLAY_TIMEOUT`    | Get, Set, Is             | How long the screen stays lit without input
 4878 | `PROP_KEYBOARD_LIGHT`     | Get, Set, Is             | Whether the keyboard is lit while the screen is
 4879 | `PROP_KEYBOARD_AIDS`      | Get, Set, Is             | Typing aids in effect
 4866 | `PROP_TIME`               | Get, Set, Is             | Wall clock, or empty when unknown
@@ -2088,7 +2089,7 @@ policy and does not suppress native movement observations for other consumers.
 Exceptionally slow pickups, or pickups completed before verification begins,
 may not qualify. This does not identify every kind of bed or pocket movement.
 
-## Display Brightness and Keyboard
+## Display and Keyboard
 
 A device with a screen and keyboard of its own exposes their settings in
 the device domain, so they are saved with the rest of its configuration
@@ -2098,7 +2099,7 @@ and reachable from wherever it is administered.
 
 * Type: Single-Value, Read-Write
 * Asynchronous Updates: Yes
-* Required: `CAP_DISPLAY_BRIGHTNESS`
+* Required: `CAP_DISPLAY`
 * Value Type: UINT8
 * Post-Reset Value: device-defined, or restored from saved state
 
@@ -2109,6 +2110,33 @@ turns the light off.
 
 The levels in between are the device's to map onto its screen, and it
 reports the value written.
+
+### PROP 4890: `PROP_DISPLAY_TIMEOUT` {#prop-display-timeout}
+
+* Type: Single-Value, Read-Write
+* Asynchronous Updates: Yes
+* Required: `CAP_DISPLAY`
+* Value Type: UINT16
+* Post-Reset Value: device-defined, or restored from saved state
+
+How long, in seconds, the screen stays lit after the last input while it
+is in use, before it goes dark. A device that dims its screen as a warning
+does so within this time, not after it. On a screen that is readable
+unlit, such as e-paper under a front light, it is how long until the light
+goes out and the screen returns to where it rests.
+
+0 is never: no amount of time without input darkens the screen. The
+device still darkens it when asked to, such as by a control that locks
+it.
+
+The value governs the screen in use, not a locked one: how long a locked
+screen stays lit is the device's to decide, and is never longer than this
+value when this value is not 0.
+
+A device keeps 0, or a value of 10 or more. A write of 1 to 9 is applied
+as 10, and answered with the value applied. A device that cannot keep its
+screen lit as long as a value asks applies the longest it can, and answers
+with that.
 
 ### PROP 4878: `PROP_KEYBOARD_LIGHT` {#prop-keyboard-light}
 

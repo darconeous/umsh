@@ -75,7 +75,7 @@ use umsh_pager_peripherals::input::alt_legend;
 use umsh_ux_communicator::board::Board;
 use umsh_ux_communicator::input::{self, Arrow, Input};
 use umsh_ux_communicator::keyboard::Modifier;
-use umsh_ux_communicator::model::{HOLD_MS, NodeEvent, State};
+use umsh_ux_communicator::model::{BatteryReading, Charge, HOLD_MS, NodeEvent, State};
 use umsh_ux_communicator::{fixture, theme, typeface, ui};
 
 /// Where the fixture's chats keep their messages, for the life of the run.
@@ -396,8 +396,17 @@ fn headless(
                     .next()
                     .and_then(|w| w.parse().ok())
                     .ok_or_else(|| format!("line {}: battery needs a percent", number + 1))?;
-                let charging = words.next() == Some("charging");
-                app.state_mut().battery(Some(percent), charging, clock);
+                let charge = if words.next() == Some("charging") {
+                    Charge::Charging
+                } else {
+                    Charge::Discharging
+                };
+                let reading = BatteryReading {
+                    percent: Some(percent),
+                    charge: Some(charge),
+                    millivolts: None,
+                };
+                app.state_mut().battery(reading, clock);
                 app.finalize_view();
                 vec![]
             }

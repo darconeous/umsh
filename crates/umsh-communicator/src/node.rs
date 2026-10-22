@@ -21,7 +21,7 @@ use umsh_ux_communicator::model::{
     ChannelEntry, ChatId, ChatSummary, Chats, ClockSettings, ClockSource, ContactUri, Details,
     EventQueue, Heard, Invite, KeyboardSettings, MAX_HEARD, MeetState, Member, Message, MessageId,
     Messages, NearbyId, Node, NodeEvent, PeerDetail, PeerEntry, PeerId, PeerSummary, Peers,
-    RadioSettings, Reaction, Setting, ShareUri, Shareable,
+    RadioSettings, Reaction, Setting, ShareUri, Shareable, Statistics,
 };
 use umsh_ux_communicator::picker::RecentText;
 use umsh_ux_communicator::text::TextHeap;
@@ -712,6 +712,24 @@ impl<P: LocalPort, S: ChatStore> Node for CommunicatorNode<P, S> {
         self.change(Setting::Brightness, |settings| {
             settings.set_brightness(brightness)
         });
+    }
+
+    fn auto_lock(&self) -> Option<u16> {
+        self.settings.borrow().auto_lock()
+    }
+
+    fn set_auto_lock(&self, seconds: u16) {
+        self.change(Setting::AutoLock, |settings| {
+            settings.set_auto_lock(seconds)
+        });
+    }
+
+    fn statistics(&self) -> Statistics {
+        self.settings.borrow().statistics()
+    }
+
+    fn watch_statistics(&self, on: bool) {
+        self.settings.borrow_mut().watch_statistics(on);
     }
 
     fn bluetooth_enabled(&self) -> Option<bool> {

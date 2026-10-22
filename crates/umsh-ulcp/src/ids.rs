@@ -452,7 +452,7 @@ pub mod prop {
     /// The screen's brightness (`PROP_DISPLAY_BRIGHTNESS`)—UINT8, 255
     /// the brightest. 0 is the dimmest level that is not off; an e-paper
     /// front light is off at 0 and the screen stays readable. Saved.
-    /// Requires `CAP_DISPLAY_BRIGHTNESS`.
+    /// Requires `CAP_DISPLAY`.
     pub const DISPLAY_BRIGHTNESS: u32 = 4877;
     /// Whether the keyboard is lit while the screen is
     /// (`PROP_KEYBOARD_LIGHT`)—BOOL. Saved. Requires `CAP_KEYBOARD`.
@@ -461,6 +461,10 @@ pub mod prop {
     /// [`keyboard_aids`](super::keyboard_aids) flags; the reserved bits
     /// are zero. Saved. Requires `CAP_KEYBOARD`.
     pub const KEYBOARD_AIDS: u32 = 4879;
+    /// How long the screen stays lit without input while it is in use
+    /// (`PROP_DISPLAY_TIMEOUT`)—UINT16 seconds, 0 for never. Saved.
+    /// Requires `CAP_DISPLAY`.
+    pub const DISPLAY_TIMEOUT: u32 = 4890;
 
     /// Whether the Wi-Fi station is up (`PROP_WIFI_ENABLED`), BOOL,
     /// default 0. Requires `CAP_WIFI`.
@@ -885,9 +889,9 @@ pub mod cap {
     /// [`REPEATER`] forwards between the group and its LoRa radio, and has
     /// `PROP_LAN_BEARER_ENABLED` and `PROP_LAN_BEARER_INGRESS_LIMIT` too.
     pub const LAN_BEARER: u32 = 63;
-    /// `CAP_DISPLAY_BRIGHTNESS`: the screen's brightness can be set
-    /// (`PROP_DISPLAY_BRIGHTNESS`).
-    pub const DISPLAY_BRIGHTNESS: u32 = 64;
+    /// `CAP_DISPLAY`: the device has a screen of its own, with its
+    /// settings (`PROP_DISPLAY_BRIGHTNESS`, `PROP_DISPLAY_TIMEOUT`).
+    pub const DISPLAY: u32 = 64;
     /// `CAP_KEYBOARD`: the device has a keyboard of its own
     /// (`PROP_KEYBOARD_LIGHT`, `PROP_KEYBOARD_AIDS`).
     pub const KEYBOARD: u32 = 65;
@@ -953,6 +957,10 @@ pub fn admin_writable(key: u32) -> bool {
 pub fn device_writable(key: u32) -> bool {
     key == prop::DEV_PRIVATE_KEY || admin_writable(key)
 }
+
+/// Shortest `PROP_DISPLAY_TIMEOUT` a device keeps, in seconds, other than
+/// 0 (never): a shorter one is raised to this.
+pub const MIN_DISPLAY_TIMEOUT_S: u16 = 10;
 
 /// Value used in `PROP_PHY_DUTY_LIMIT` to disable duty-cycle limiting.
 pub const DUTY_LIMIT_DISABLED: u16 = 0xFFFF;

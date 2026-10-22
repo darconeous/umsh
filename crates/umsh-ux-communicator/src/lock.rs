@@ -91,7 +91,7 @@ impl State {
         };
         self.picker = None;
         self.banner = None;
-        self.settle_meet();
+        self.settle();
     }
 
     /// Unlocks, back to what was on screen.
@@ -102,7 +102,7 @@ impl State {
         if let Some(key) = held {
             self.focus().request(key);
         }
-        self.settle_meet();
+        self.settle();
     }
 
     /// Whether a press now unlocks: once the steps are turned, or always

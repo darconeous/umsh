@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 mod support;
 
 use support::{Port, SharedFlash, config, device, phone_inserts, provision, starting_keys};
-use umsh_communicator::settings::SAVE_DELAY_MS;
+use umsh_communicator::settings::{SAVE_DELAY_MS, STATISTICS_READ_MS};
 use umsh_communicator::task::Command;
 use umsh_communicator::task::{Arrival, Secrecy};
 use umsh_communicator::{
@@ -318,6 +318,50 @@ fn brightness_and_the_keyboard_are_device_settings() {
     assert_eq!(node.keyboard(), keyboard);
     // Saved with the rest, as a switch at the device is.
     assert_ne!(sim.borrow().saved_snapshot().unwrap(), &before[..]);
+}
+
+#[test]
+fn auto_lock_is_a_device_setting_and_0_is_never() {
+    let sim = device();
+    let (node, clock) = node(&sim);
+    assert_eq!(node.auto_lock(), Some(30));
+    node.set_auto_lock(0);
+    clock.set(1_000);
+    node.pump();
+    assert_eq!(node.auto_lock(), Some(0));
+    // The device raises too short a time to the shortest it keeps.
+    node.set_auto_lock(3);
+    clock.set(2_000);
+    node.pump();
+    assert_eq!(node.auto_lock(), Some(10));
+}
+
+#[test]
+fn statistics_are_read_only_while_watched() {
+    let mut sim = SimulatedDevice::holding_lists(
+        SessionConfig {
+            stats: Some(Box::leak(Box::new(umsh_ulcp::stats::StatsLedger::new()))),
+            ..config()
+        },
+        starting_keys(),
+    );
+    sim.open_device_interface();
+    let sim = Rc::new(RefCell::new(sim));
+    let (node, clock) = node(&sim);
+    events(&node);
+    // Nothing is read until someone looks.
+    assert_eq!(node.statistics().sent, None);
+    node.watch_statistics(true);
+    clock.set(1_000);
+    node.pump();
+    let read = node.statistics();
+    assert_eq!(read.sent, Some(0));
+    assert!(read.uptime.is_some());
+    assert!(events(&node).contains(&NodeEvent::SettingsChanged));
+    // Read again on its schedule, and not once let go of.
+    assert!(node.next_deadline() <= Some(1_000 + STATISTICS_READ_MS));
+    node.watch_statistics(false);
+    assert!(node.next_deadline() > Some(1_000 + STATISTICS_READ_MS));
 }
 
 #[test]

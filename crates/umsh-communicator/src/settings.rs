@@ -40,8 +40,8 @@ use umsh_ulcp_admin::{
 use umsh_ux_communicator::avatar::{AvatarStyle, PeerShape};
 use umsh_ux_communicator::heapless::{Deque, String, Vec};
 use umsh_ux_communicator::model::{
-    ClockSettings, KeyboardSettings, NodeEvent, Profile, RadioSettings, Rule, Setting, ShareUri,
-    brightness_at,
+    ClockSettings, DEFAULT_AUTO_LOCK_S, KeyboardSettings, NodeEvent, Profile, RadioSettings, Rule,
+    Setting, ShareUri, Statistics, brightness_at,
 };
 
 use crate::chat::address;
@@ -53,6 +53,26 @@ pub const SAVE_DELAY_MS: u64 = 2_000;
 /// How often the airtime spent is read again. The device counts it in
 /// four-minute steps.
 pub const AIRTIME_READ_MS: u64 = 60_000;
+
+/// How often the device's counters are read while they are watched.
+pub const STATISTICS_READ_MS: u64 = 5_000;
+
+/// The counters the Statistics screen shows, read together.
+const STATISTICS: [u32; 13] = [
+    prop::STAT_TX_PACKETS,
+    prop::STAT_TX_CHANNEL_BUSY,
+    prop::STAT_RX_PACKETS,
+    prop::STAT_RX_BAD_CRC,
+    prop::STAT_RX_NON_UMSH,
+    prop::STAT_RX_ACCEPTED,
+    prop::STAT_FORWARDED,
+    prop::STAT_FORWARD_DROPPED,
+    prop::STAT_FORWARD_CANCELLED,
+    prop::STAT_MESHCORE_SEEN,
+    prop::STAT_MESHCORE_FORWARDED_ROUTED,
+    prop::STAT_MESHCORE_FORWARDED_FLOOD,
+    prop::STAT_MESHCORE_DECLINED,
+];
 
 /// The screen's brightness until the device reports it.
 pub const DEFAULT_BRIGHTNESS: u8 = brightness_at(5);
@@ -90,6 +110,8 @@ pub struct Settings<P> {
     boot_checked: bool,
     /// When the airtime spent is next read.
     airtime_at: u64,
+    /// When the counters are next read, while they are watched.
+    statistics_at: Option<u64>,
     now_ms: u64,
 }
 
@@ -109,6 +131,7 @@ impl<P: LocalPort> Settings<P> {
             save_at: None,
             boot_checked: false,
             airtime_at: AIRTIME_READ_MS,
+            statistics_at: None,
             now_ms: 0,
         }
     }
@@ -131,6 +154,10 @@ impl<P: LocalPort> Settings<P> {
         if now_ms >= self.airtime_at {
             self.airtime_at = now_ms + AIRTIME_READ_MS;
             self.model.read(prop::PHY_DUTY_NOW);
+        }
+        if self.statistics_at.is_some_and(|at| now_ms >= at) {
+            self.statistics_at = Some(now_ms + STATISTICS_READ_MS);
+            self.read_statistics();
         }
         if self.save_at.is_some_and(|at| now_ms >= at) {
             self.save_at = None;
@@ -156,10 +183,36 @@ impl<P: LocalPort> Settings<P> {
     /// When [`Settings::pump`] next has something to do without being
     /// woken by the device.
     pub fn next_deadline(&self) -> Option<u64> {
-        Some(
-            self.save_at
-                .map_or(self.airtime_at, |at| at.min(self.airtime_at)),
-        )
+        [self.save_at, self.statistics_at]
+            .into_iter()
+            .flatten()
+            .fold(Some(self.airtime_at), |next, at| {
+                next.map(|next| next.min(at))
+            })
+    }
+
+    /// Keeps the counters being read while `on`: at the next pump, and
+    /// every [`STATISTICS_READ_MS`] after.
+    pub fn watch_statistics(&mut self, on: bool) {
+        match (on, self.statistics_at) {
+            (true, None) => self.statistics_at = Some(self.now_ms),
+            (false, Some(_)) => self.statistics_at = None,
+            _ => {}
+        }
+    }
+
+    /// Asks the device for its counters, how long it has run, and the
+    /// airtime spent, as far as it keeps them.
+    fn read_statistics(&mut self) {
+        self.model.read(prop::UPTIME);
+        if self.model.has_cap(cap::PHY_DUTY_LIMIT) == Some(true) {
+            self.model.read(prop::PHY_DUTY_NOW);
+        }
+        if self.model.has_cap(cap::STATS) == Some(true) {
+            for key in STATISTICS {
+                self.model.read(key);
+            }
+        }
     }
 
     fn take(&mut self, event: Event, events: &mut impl FnMut(NodeEvent)) {
@@ -332,6 +385,11 @@ impl<P: LocalPort> Settings<P> {
     pub fn set_brightness(&mut self, brightness: u8) -> bool {
         let write = self.model.set_brightness(brightness);
         self.written(Setting::Brightness, write)
+    }
+
+    pub fn set_auto_lock(&mut self, seconds: u16) -> bool {
+        let write = self.model.set_display_timeout(seconds);
+        self.written(Setting::AutoLock, write)
     }
 
     /// Keeps `key` among the device's peers.
@@ -537,6 +595,35 @@ impl<P: LocalPort> Settings<P> {
             .unwrap_or(DEFAULT_BRIGHTNESS)
     }
 
+    /// How long the screen stays lit without input, in seconds, 0 for
+    /// never, where the device has a screen of its own.
+    pub fn auto_lock(&self) -> Option<u16> {
+        self.model.has_cap(cap::DISPLAY)?.then(|| {
+            self.u16(prop::DISPLAY_TIMEOUT)
+                .unwrap_or(DEFAULT_AUTO_LOCK_S)
+        })
+    }
+
+    /// The device's counters, as last read.
+    pub fn statistics(&self) -> Statistics {
+        Statistics {
+            uptime: self.u32(prop::UPTIME),
+            sent: self.u32(prop::STAT_TX_PACKETS),
+            channel_busy: self.u32(prop::STAT_TX_CHANNEL_BUSY),
+            heard: self.u32(prop::STAT_RX_PACKETS),
+            bad_crc: self.u32(prop::STAT_RX_BAD_CRC),
+            other: self.u32(prop::STAT_RX_NON_UMSH),
+            accepted: self.u32(prop::STAT_RX_ACCEPTED),
+            forwarded: self.u32(prop::STAT_FORWARDED),
+            forward_dropped: self.u32(prop::STAT_FORWARD_DROPPED),
+            forward_cancelled: self.u32(prop::STAT_FORWARD_CANCELLED),
+            meshcore_seen: self.u32(prop::STAT_MESHCORE_SEEN),
+            meshcore_routed: self.u32(prop::STAT_MESHCORE_FORWARDED_ROUTED),
+            meshcore_flooded: self.u32(prop::STAT_MESHCORE_FORWARDED_FLOOD),
+            meshcore_declined: self.u32(prop::STAT_MESHCORE_DECLINED),
+        }
+    }
+
     pub fn clock(&self) -> ClockSettings {
         let zone = match self.model.intended(prop::TZ_RULE) {
             Some(Value::Text(rule)) => Rule::parse(rule).ok(),
@@ -563,6 +650,13 @@ impl<P: LocalPort> Settings<P> {
         }
     }
 
+    fn u16(&self, key: u32) -> Option<u16> {
+        match self.model.intended(key)? {
+            Value::U16(value) => Some(value),
+            _ => None,
+        }
+    }
+
     fn u32(&self, key: u32) -> Option<u32> {
         match self.model.intended(key)? {
             Value::U32(value) => Some(value),
@@ -576,6 +670,10 @@ impl<P: LocalPort> Settings<P> {
 const fn matters(setting: Setting) -> bool {
     !matches!(
         setting,
-        Setting::Keyboard | Setting::Brightness | Setting::Time | Setting::Pairing
+        Setting::Keyboard
+            | Setting::Brightness
+            | Setting::AutoLock
+            | Setting::Time
+            | Setting::Pairing
     )
 }

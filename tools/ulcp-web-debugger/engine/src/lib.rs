@@ -72,7 +72,7 @@ pub fn web_sim_config() -> umsh_ulcp_simdev::SessionConfig {
         time: Some(TimeConfig),
         gnss: Some(GnssConfig::DEFAULT),
         display_motion_wake: false,
-        display_brightness: None,
+        display: None,
         keyboard: false,
         illuminance: true,
         temperatures: true,

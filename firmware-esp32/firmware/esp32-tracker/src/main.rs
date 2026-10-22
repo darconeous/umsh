@@ -504,12 +504,15 @@ fn session_config() -> SessionConfig {
             feature = "board-tlora-pager",
             not(feature = "motion-qualification")
         )),
-        // The communicator owns the screen's brightness and the keyboard,
+        // The communicator owns the screen's settings and the keyboard,
         // and applies what these hold.
         #[cfg(feature = "communicator")]
-        display_brightness: Some(umsh_ux_communicator::model::brightness_at(5)),
+        display: Some(umsh_ulcp_device::DisplayConfig {
+            brightness: umsh_ux_communicator::model::brightness_at(5),
+            timeout_s: umsh_ux_communicator::model::DEFAULT_AUTO_LOCK_S,
+        }),
         #[cfg(not(feature = "communicator"))]
-        display_brightness: None,
+        display: None,
         keyboard: cfg!(feature = "communicator"),
         illuminance: false,
         temperatures: cfg!(feature = "chip-esp32s3"),

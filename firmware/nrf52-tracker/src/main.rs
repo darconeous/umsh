@@ -545,7 +545,7 @@ mod firmware {
             // The T-1000E is the one board here with an ambient light
             // sensor fitted.
             display_motion_wake: false,
-            display_brightness: None,
+            display: None,
             keyboard: false,
             illuminance: cfg!(feature = "cap-illuminance"),
             // Every supported nRF52840 board has the MPSL-managed die sensor.

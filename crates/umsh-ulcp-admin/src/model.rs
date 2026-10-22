@@ -1084,6 +1084,15 @@ impl Model {
         self.set(prop::DISPLAY_BRIGHTNESS, &[brightness])
     }
 
+    /// `PROP_DISPLAY_TIMEOUT`, in seconds, 0 for never.
+    pub fn display_timeout(&self) -> Option<u16> {
+        self.u16(prop::DISPLAY_TIMEOUT)
+    }
+
+    pub fn set_display_timeout(&mut self, seconds: u16) -> Result<WriteId, Refusal> {
+        self.set(prop::DISPLAY_TIMEOUT, &seconds.to_le_bytes())
+    }
+
     /// `PROP_KEYBOARD_LIGHT`.
     pub fn keyboard_light(&self) -> Option<bool> {
         self.bool(prop::KEYBOARD_LIGHT)

@@ -323,8 +323,9 @@ where
                 app.state_mut().adjust_brightness(detents, now);
                 return;
             }
-            // A part of the date and time being changed takes the turn.
-            if app.state_mut().turn_set_time(detents) {
+            // A part of the date and time being changed takes the turn,
+            // and so does the brightness being set.
+            if app.state_mut().turn_set_time(detents) || app.state_mut().turn_brightness(detents) {
                 return;
             }
             // Turning while the wheel is down lets go of the press.
@@ -423,6 +424,14 @@ where
         if let Some(detents) = direction.detents() {
             state.adjust_brightness(detents, now);
         }
+        return;
+    }
+    // The brightness being set: up and right brighten, down and left dim.
+    if state.adjusting_brightness() {
+        state.step_brightness(match direction {
+            Arrow::Up | Arrow::Right => 1,
+            Arrow::Down | Arrow::Left => -1,
+        });
         return;
     }
     // A part of the date and time being changed: up is more, and across

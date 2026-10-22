@@ -13,7 +13,7 @@ use umsh_ulcp::frame;
 use umsh_ulcp::hdlc;
 use umsh_ulcp::ids::prop;
 use umsh_ulcp_admin::{LocalPort, PortBusy, PortFrame};
-use umsh_ulcp_simdev::{DutyLedger, RadioSettings, SessionConfig, SimulatedDevice};
+use umsh_ulcp_simdev::{DisplayConfig, DutyLedger, RadioSettings, SessionConfig, SimulatedDevice};
 
 pub fn config() -> SessionConfig {
     SessionConfig {
@@ -43,7 +43,10 @@ pub fn config() -> SessionConfig {
         time: None,
         gnss: None,
         display_motion_wake: false,
-        display_brightness: Some(113),
+        display: Some(DisplayConfig {
+            brightness: 113,
+            timeout_s: 30,
+        }),
         keyboard: true,
         illuminance: false,
         temperatures: false,

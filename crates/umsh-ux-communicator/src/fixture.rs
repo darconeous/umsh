@@ -8,14 +8,15 @@ use core::cell::{Cell, RefCell, RefMut};
 use crate::avatar::{AvatarStyle, BuiltinChannel, PeerShape};
 use crate::board::Board;
 use crate::model::{
-    Bluetooth, BluetoothReading, Card, ChannelAccess, ChannelEntry, ChatId, ChatKind, ChatSummary,
-    Chats, ClockSettings, ClockSource, Contact, ContactUri, Delivery, Details, Direction,
-    EventQueue, Exchange, ExchangeEnd, Fix, Gnss, GnssReading, Heard, Invite, KeyboardSettings,
-    Links, MAX_CHATS, MAX_HEARD, MAX_PEERS, MESSAGE_LEN, MeetState, Member, Message, MessageId,
-    Messages, NearbyDevice, NearbyId, Node, NodeEvent, Parts, PeerDetail, PeerEntry, PeerId,
-    PeerSummary, Peers, Presence, Profile, Quote, RadioSettings, Reacted, Reaction, Reactions,
-    Reactor, Rule, Sender, Setting, ShareUri, Shareable, State, StatusStrip, TRANSMIT_POWER,
-    brightness_at, push_newest, word_match,
+    BatteryReading, Bluetooth, BluetoothReading, Card, ChannelAccess, ChannelEntry, Charge, ChatId,
+    ChatKind, ChatSummary, Chats, ClockSettings, ClockSource, Contact, ContactUri,
+    DEFAULT_AUTO_LOCK_S, Delivery, Details, Direction, EventQueue, Exchange, ExchangeEnd, Fix,
+    Gnss, GnssReading, Heard, Invite, KeyboardSettings, Links, MAX_CHATS, MAX_HEARD, MAX_PEERS,
+    MESSAGE_LEN, MeetState, Member, Message, MessageId, Messages, NearbyDevice, NearbyId, Node,
+    NodeEvent, Parts, PeerDetail, PeerEntry, PeerId, PeerSummary, Peers, Presence, Profile, Quote,
+    RadioSettings, Reacted, Reaction, Reactions, Reactor, Rule, Sender, Setting, ShareUri,
+    Shareable, State, Statistics, StatusStrip, TRANSMIT_POWER, brightness_at, push_newest,
+    word_match,
 };
 use crate::models;
 use crate::picker::RecentText;
@@ -540,6 +541,9 @@ pub struct Store {
     picks: RefCell<RecentText>,
     clock: Cell<ClockSettings>,
     brightness: Cell<u8>,
+    auto_lock: Cell<u16>,
+    /// Reads of the counters while they are watched, standing in for traffic.
+    statistics_read: Cell<u32>,
     /// Bluetooth and the GNSS receiver, on or off.
     bluetooth: Cell<bool>,
     gnss: Cell<bool>,
@@ -603,6 +607,8 @@ impl Store {
             }),
             picks: RefCell::new(RecentText::new()),
             brightness: Cell::new(brightness_at(5)),
+            auto_lock: Cell::new(DEFAULT_AUTO_LOCK_S),
+            statistics_read: Cell::new(0),
             bluetooth: Cell::new(true),
             gnss: Cell::new(true),
             meet: RefCell::new(MeetState::new()),
@@ -1845,6 +1851,42 @@ impl Node for Store {
         self.setting(Setting::Pairing, || true);
     }
 
+    fn auto_lock(&self) -> Option<u16> {
+        Some(self.auto_lock.get())
+    }
+
+    fn set_auto_lock(&self, seconds: u16) {
+        self.setting(Setting::AutoLock, || {
+            self.auto_lock.set(seconds);
+            true
+        });
+    }
+
+    /// A day's running, and traffic that grows with each read.
+    fn statistics(&self) -> Statistics {
+        let more = self.statistics_read.get();
+        Statistics {
+            uptime: Some(93_784 + 5 * more),
+            sent: Some(412 + more),
+            channel_busy: Some(17),
+            heard: Some(3_906 + 7 * more),
+            bad_crc: Some(88),
+            other: Some(241),
+            accepted: Some(1_175 + 2 * more),
+            forwarded: Some(1_630 + 3 * more),
+            forward_dropped: Some(9),
+            forward_cancelled: Some(214),
+            ..Statistics::default()
+        }
+    }
+
+    fn watch_statistics(&self, on: bool) {
+        if on {
+            self.statistics_read.set(self.statistics_read.get() + 1);
+            self.queue(NodeEvent::SettingsChanged);
+        }
+    }
+
     fn gnss_enabled(&self) -> Option<bool> {
         Some(self.gnss.get())
     }
@@ -2203,6 +2245,11 @@ pub fn state(store: &'static Store, board: &'static Board) -> State {
         gnss: Some(Gnss::Fixed),
         silent: false,
         battery_low: false,
+    };
+    state.battery = BatteryReading {
+        percent: Some(64),
+        charge: Some(Charge::Discharging),
+        millivolts: Some(3_812),
     };
     state.links = Links {
         bluetooth: BluetoothReading {

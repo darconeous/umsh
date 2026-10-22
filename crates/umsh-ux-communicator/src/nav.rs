@@ -12,10 +12,10 @@ use heapless::String;
 pub use crate::clock_settings::{ClockPage, DateParts, Part, ZoneFind};
 use crate::keyboard::Field;
 use crate::model::{
-    ChannelEntry, ChatId, ChatKind, ChatSummary, Details, Exchange, Found, FoundKind, Invite,
-    KeyboardSettings, MAX_CHATS, MAX_FOUND, Member, MessageId, NearbyId, PeerDetail, PeerEntry,
-    PeerId, Profile, RadioSettings, Reaction, Section, Shareable, State, TRANSMIT_POWER,
-    word_match,
+    AUTO_LOCK_CHOICES, ChannelEntry, ChatId, ChatKind, ChatSummary, Details, Exchange, Found,
+    FoundKind, Invite, KeyboardSettings, MAX_CHATS, MAX_FOUND, Member, MessageId, NearbyId,
+    PeerDetail, PeerEntry, PeerId, Profile, RadioSettings, Reaction, Section, Shareable, State,
+    TRANSMIT_POWER, word_match,
 };
 
 use crate::text::SharedText;
@@ -51,6 +51,8 @@ pub mod keys {
     const TIME_PART: u32 = 0x1B00_0000;
     const ZONE_ROW: u32 = 0x1C00_0000;
     const NEARBY: u32 = 0x2000_0000;
+    const AUTO_LOCK_ROW: u32 = 0x2400_0000;
+    const STATISTIC: u32 = 0x2500_0000;
     /// Set in a share key that names a channel.
     const SHARE_CHANNEL: u32 = 0x0080_0000;
 
@@ -126,11 +128,21 @@ pub mod keys {
     pub const IDENTITY: FocusKey = FocusKey(DEVICE);
     pub const CHANNELS: FocusKey = FocusKey(DEVICE | 1);
     pub const RADIO: FocusKey = FocusKey(DEVICE | 2);
+    pub const DISPLAY: FocusKey = FocusKey(DEVICE | 4);
     pub const BLUETOOTH: FocusKey = FocusKey(DEVICE | 5);
     pub const SHUT_DOWN: FocusKey = FocusKey(DEVICE | 7);
     pub const KEYBOARD: FocusKey = FocusKey(DEVICE | 8);
     pub const CLOCK: FocusKey = FocusKey(DEVICE | 9);
     pub const GNSS: FocusKey = FocusKey(DEVICE | 10);
+    pub const BATTERY: FocusKey = FocusKey(DEVICE | 11);
+    pub const STATISTICS: FocusKey = FocusKey(DEVICE | 12);
+    /// The Battery screen's readouts, in order.
+    pub const BATTERY_LEVEL: FocusKey = FocusKey(0x2200_0000);
+    pub const BATTERY_CHARGE: FocusKey = FocusKey(0x2200_0001);
+    pub const BATTERY_VOLTAGE: FocusKey = FocusKey(0x2200_0002);
+    /// The Display screen's rows, in order.
+    pub const BRIGHTNESS: FocusKey = FocusKey(0x2300_0000);
+    pub const AUTO_LOCK: FocusKey = FocusKey(0x2300_0001);
     /// The Bluetooth screen's rows, in order, and Clear pairings'
     /// confirmation.
     pub const BLUETOOTH_ENABLED: FocusKey = FocusKey(0x1E00_0000);
@@ -253,6 +265,19 @@ pub mod keys {
     #[must_use]
     pub const fn found(index: usize) -> FocusKey {
         FocusKey(FOUND | (index as u32 & !KIND))
+    }
+
+    /// One of Auto-Lock's choices, by its place among them.
+    #[must_use]
+    pub const fn auto_lock_choice(index: usize) -> FocusKey {
+        FocusKey(AUTO_LOCK_ROW | (index as u32 & !KIND))
+    }
+
+    /// One of the Statistics screen's readouts, by its place among all
+    /// it can show.
+    #[must_use]
+    pub const fn statistic(index: usize) -> FocusKey {
+        FocusKey(STATISTIC | (index as u32 & !KIND))
     }
 
     /// A radio profile in the list of them, by its place there.
@@ -443,6 +468,15 @@ pub enum DevicePage {
     Bluetooth { confirm: bool },
     /// The GNSS receiver's switch and its solution.
     Gnss,
+    /// The battery's readings.
+    Battery,
+    /// The screen's settings; while `adjusting`, turning changes the
+    /// brightness.
+    Display { adjusting: bool },
+    /// How long the screen stays lit without input.
+    AutoLock,
+    /// The device's counters.
+    Statistics,
 }
 
 /// A screen a new device starts on.
@@ -1191,6 +1225,102 @@ impl State {
         }
     }
 
+    /// Shows the battery's readings, the first focused.
+    pub fn open_battery(&mut self) {
+        let reading = self.battery;
+        let first = if reading.percent.is_some() {
+            keys::BATTERY_LEVEL
+        } else if reading.charge.is_some() {
+            keys::BATTERY_CHARGE
+        } else {
+            keys::BATTERY_VOLTAGE
+        };
+        _ = self.screens.push(Screen::Device {
+            page: DevicePage::Battery,
+            focus: FocusState::requesting(first),
+        });
+    }
+
+    /// Shows the screen's settings, Brightness focused.
+    pub fn open_display(&mut self) {
+        _ = self.screens.push(Screen::Device {
+            page: DevicePage::Display { adjusting: false },
+            focus: FocusState::requesting(keys::BRIGHTNESS),
+        });
+    }
+
+    fn adjusting_mut(&mut self) -> Option<&mut bool> {
+        match self.screens.last_mut() {
+            Some(Screen::Device {
+                page: DevicePage::Display { adjusting },
+                ..
+            }) => Some(adjusting),
+            _ => None,
+        }
+    }
+
+    /// Brightness was pressed: turning starts or stops changing it.
+    pub fn press_brightness(&mut self) {
+        if let Some(adjusting) = self.adjusting_mut() {
+            *adjusting = !*adjusting;
+        }
+    }
+
+    /// Whether turning changes the brightness: it was pressed, and is
+    /// still focused.
+    #[must_use]
+    pub fn adjusting_brightness(&self) -> bool {
+        matches!(
+            self.screen(),
+            Screen::Device {
+                page: DevicePage::Display { adjusting: true },
+                focus,
+            } if focus.current() == Some(keys::BRIGHTNESS)
+        )
+    }
+
+    /// The wheel turned `detents` while the brightness is being changed:
+    /// changes it, turned up brightening, and returns whether it did.
+    pub fn turn_brightness(&mut self, detents: i8) -> bool {
+        if !self.adjusting_brightness() {
+            return false;
+        }
+        self.step_brightness(detents.saturating_neg());
+        true
+    }
+
+    /// Shows Auto-Lock's choices, the one in force focused. Any change of
+    /// brightness under way ends.
+    pub fn open_auto_lock(&mut self) {
+        if let Some(adjusting) = self.adjusting_mut() {
+            *adjusting = false;
+        }
+        let current = self
+            .node
+            .auto_lock()
+            .and_then(|seconds| AUTO_LOCK_CHOICES.iter().position(|&c| c == seconds))
+            .unwrap_or(0);
+        _ = self.screens.push(Screen::Device {
+            page: DevicePage::AutoLock,
+            focus: FocusState::requesting(keys::auto_lock_choice(current)),
+        });
+    }
+
+    /// Sets Auto-Lock to `seconds`, and returns to Display.
+    pub fn choose_auto_lock(&mut self, seconds: u16) {
+        self.node.set_auto_lock(seconds);
+        self.back();
+    }
+
+    /// Shows the device's counters, read for as long as they are shown.
+    pub fn open_statistics(&mut self) {
+        _ = self.screens.push(Screen::Device {
+            page: DevicePage::Statistics,
+            focus: FocusState::requesting(keys::statistic(0)),
+        });
+        self.settle();
+    }
+
     /// Reads the settings shown from the node again: this node's name, and
     /// the radio's and the keyboard's settings.
     pub(crate) fn refresh_settings(&mut self) {
@@ -1691,6 +1821,21 @@ impl State {
         self.follow_meet();
     }
 
+    /// Keeps what the node does for a screen in step with what is shown:
+    /// Add peer's session, and the counters' reads.
+    pub(crate) fn settle(&mut self) {
+        self.settle_meet();
+        let counting = !self.lock.locked
+            && matches!(
+                self.screen(),
+                Screen::Device {
+                    page: DevicePage::Statistics,
+                    ..
+                }
+            );
+        self.node.watch_statistics(counting);
+    }
+
     /// Keeps Add peer's session open while Nearby or the exchange is shown
     /// and the interface is unlocked, and closed otherwise. Whatever opens
     /// it again opens a new one.
@@ -1729,7 +1874,7 @@ impl State {
             Exchange::Exchanged(member) => {
                 let member = member.clone();
                 self.screens.truncate(1);
-                self.settle_meet();
+                self.settle();
                 self.show_known(member);
             }
             Exchange::Asked(_) if nearby => {
@@ -2060,7 +2205,7 @@ impl State {
     fn go_to_chat(&mut self, chat: ChatId) {
         self.close_conversation();
         self.screens.truncate(1);
-        self.settle_meet();
+        self.settle();
         self.section = Section::Chats;
         self.focus().request(keys::chat(chat));
         self.open_chat(chat);
@@ -2088,7 +2233,7 @@ impl State {
         if let Some(Screen::Conversation { .. }) = self.screens.pop() {
             self.close_conversation();
         }
-        self.settle_meet();
+        self.settle();
         // Focus returns where it was, unless the screen was left asking for
         // somewhere else.
         let focus = self.focus();

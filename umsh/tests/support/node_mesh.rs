@@ -117,7 +117,7 @@ impl DeviceSide {
             time: Some(TimeConfig),
             gnss: Some(GnssConfig::DEFAULT),
             display_motion_wake: false,
-            display_brightness: None,
+            display: None,
             keyboard: false,
             illuminance: true,
             temperatures: false,

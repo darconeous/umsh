@@ -20,8 +20,8 @@ use umsh_ux_communicator::buoyant::render_target::{
 use umsh_ux_communicator::buoyant::view::View;
 use umsh_ux_communicator::input::{self, Input};
 use umsh_ux_communicator::model::{
-    Bluetooth, BluetoothReading, ClockSource, Fix, Gnss, GnssReading, Links, Node as _, State,
-    Wifi, brightness_level,
+    BatteryReading, Bluetooth, BluetoothReading, Charge, ClockSource, DEFAULT_AUTO_LOCK_S, Fix,
+    Gnss, GnssReading, Links, Node as _, State, Wifi, brightness_level,
 };
 use umsh_ux_communicator::{theme, typeface, ui};
 use umsh_ux_display_tracker::attention::{Attention, AttentionConfig, DisplayKind, Transition};
@@ -168,8 +168,7 @@ async fn interface(
         "communicator: app={} bytes",
         core::mem::size_of_val(app)
     ));
-    app.state_mut()
-        .battery(battery_percent(), battery_charging(), 0);
+    app.state_mut().battery(battery_reading(), 0);
     let mut costs = Costs::default();
     // The panel's brightness level and the keyboard light, as last set.
     let mut lights = (brightness_level(node.brightness()), node.keyboard().light);
@@ -183,7 +182,7 @@ async fn interface(
     // it: the input layer reads `SCREEN_FADED` and consumes the gesture.
     let mut attention = Attention::new(
         DisplayKind::Emissive,
-        AttentionConfig::EMISSIVE,
+        attention_config(app.state().lock.locked, node.auto_lock()),
         Instant::now().as_millis(),
     );
 
@@ -192,12 +191,7 @@ async fn interface(
     let mut minute = next_minute();
 
     loop {
-        // A locked screen is lit only to glance at.
-        let config = if app.state().lock.locked {
-            AttentionConfig::LOCKED
-        } else {
-            AttentionConfig::EMISSIVE
-        };
+        let config = attention_config(app.state().lock.locked, node.auto_lock());
         if attention.config() != config {
             attention.set_config(config);
         }
@@ -272,12 +266,8 @@ async fn interface(
                 None
             }
             Either4::Third(()) => attention.poll(now()),
-            // A reading redraws the strip but never lights the panel.
-            Either4::Fourth(Either4::First(())) => {
-                app.state_mut()
-                    .battery(battery_percent(), battery_charging(), now());
-                None
-            }
+            // A reading is taken in below, and never lights the panel.
+            Either4::Fourth(Either4::First(())) => None,
             Either4::Fourth(Either4::Second(cause)) => farewell(&mut display, app, cause).await,
             // The session answered, or published: the node takes it in
             // below.
@@ -307,6 +297,10 @@ async fn interface(
         let readings = link_readings();
         if app.state().links != readings {
             app.state_mut().links = readings;
+        }
+        let battery = battery_reading();
+        if app.state().battery_changes(&battery) {
+            app.state_mut().battery(battery, now());
         }
         // Taken in while the panel is still dark, so that a message
         // arriving then is listed for the screen it wakes to.
@@ -474,14 +468,53 @@ fn next_minute() -> Option<Instant> {
         .map(|ms| Instant::now() + Duration::from_millis(u64::from(ms)))
 }
 
-/// The charge the board last read, in percent.
-fn battery_percent() -> Option<u8> {
-    Some(BATTERY_LEVEL.load(Ordering::Acquire)).filter(|&level| level != 0xFF)
+/// How long the panel stays lit without input: as Auto-Lock says while
+/// unlocked, and while locked no longer than that, as a locked screen is
+/// lit only to glance at.
+fn attention_config(locked: bool, auto_lock: Option<u16>) -> AttentionConfig {
+    let timeout = match auto_lock.unwrap_or(DEFAULT_AUTO_LOCK_S) {
+        0 => None,
+        seconds => Some(core::time::Duration::from_secs(u64::from(seconds))),
+    };
+    let unlocked = AttentionConfig::emissive_for(timeout);
+    let shorter = |timeout| {
+        AttentionConfig::LOCKED
+            .timeout
+            .is_some_and(|locked| timeout < locked)
+    };
+    match timeout {
+        Some(timeout) if locked && shorter(timeout) => unlocked,
+        _ if locked => AttentionConfig::LOCKED,
+        _ => unlocked,
+    }
 }
 
-/// Whether external power is charging the battery, or has charged it.
-fn battery_charging() -> bool {
-    matches!(BATTERY_CHARGE.load(Ordering::Acquire), 2 | 3)
+/// The battery as the board last read it.
+fn battery_reading() -> BatteryReading {
+    BatteryReading {
+        percent: Some(BATTERY_LEVEL.load(Ordering::Acquire)).filter(|&level| level != 0xFF),
+        charge: match BATTERY_CHARGE.load(Ordering::Acquire) {
+            1 => Some(Charge::Discharging),
+            2 => Some(Charge::Charging),
+            3 => Some(Charge::Charged),
+            4 => Some(Charge::NotCharging),
+            _ => None,
+        },
+        millivolts: battery_millivolts(),
+    }
+}
+
+/// The cell's voltage as last read. Where the divider reads the supply
+/// rail, a reading is the cell's only while the cell runs the board.
+fn battery_millivolts() -> Option<u16> {
+    let mv = BATTERY_MV.load(Ordering::Acquire);
+    #[cfg(feature = "battery-adc-rail")]
+    return match board::battery::Rail::classify(mv) {
+        board::battery::Rail::Battery(mv) => Some(mv),
+        _ => None,
+    };
+    #[cfg(not(feature = "battery-adc-rail"))]
+    (mv != 0).then_some(mv)
 }
 
 /// The board is turning off, and the panel says so: Shutting down, or with

@@ -13,7 +13,7 @@ use umsh_ux_communicator::input::{self, Arrow, Input};
 use umsh_ux_communicator::keyboard::{Latch, Modifier};
 use umsh_ux_communicator::picker::Pick;
 use umsh_ux_communicator::model::{
-    ChannelAccess, ChannelEntry, ChatKind, ClockSource, Delivery, Direction, Ending, Exchange,
+    BatteryReading, ChannelAccess, Charge, ChannelEntry, ChatKind, ClockSource, Delivery, Direction, Ending, Exchange,
     ExchangeEnd, FoundKind,
     Glance, Node as _, NodeEvent, Notice, Profile, Reaction, Rule, Section, Shareable, State,
     brightness_level,
@@ -1933,14 +1933,27 @@ fn a_joined_channel_opens_from_the_channels_list() {
     assert_in_conversation(app.state(), TRAIL_CREW);
 }
 
+/// A battery at `percent`, charging or running the board.
+fn reading(percent: u8, charging: bool) -> BatteryReading {
+    BatteryReading {
+        percent: Some(percent),
+        charge: Some(if charging {
+            Charge::Charging
+        } else {
+            Charge::Discharging
+        }),
+        millivolts: None,
+    }
+}
+
 #[test]
 fn low_battery_says_so_once_without_taking_a_key() {
     let mut app = app!();
     // Typing in Ridge Medic.
     run(&mut app, &[Input::Press, Input::Enter]);
-    app.state_mut().battery(Some(11), false, 0);
+    app.state_mut().battery(reading(11, false), 0);
     assert!(!app.state().status.battery_low);
-    app.state_mut().battery(Some(9), false, 1000);
+    app.state_mut().battery(reading(9, false), 1000);
     app.finalize_view();
     assert!(app.state().status.battery_low);
     assert_eq!(app.state().status.battery_segments, 0);
@@ -1951,12 +1964,12 @@ fn low_battery_says_so_once_without_taking_a_key() {
     app.state_mut().expire(banner.until);
     assert_eq!(app.state().banner, None);
     // The strip keeps saying it, and wavering does not say it again.
-    app.state_mut().battery(Some(11), false, 6000);
-    app.state_mut().battery(Some(9), false, 7000);
+    app.state_mut().battery(reading(11, false), 6000);
+    app.state_mut().battery(reading(9, false), 7000);
     assert!(app.state().status.battery_low);
     assert_eq!(app.state().banner, None);
     // Charging ends it.
-    app.state_mut().battery(Some(9), true, 8000);
+    app.state_mut().battery(reading(9, true), 8000);
     assert!(!app.state().status.battery_low);
     assert!(app.state().status.charging);
 }
@@ -1965,7 +1978,7 @@ fn low_battery_says_so_once_without_taking_a_key() {
 fn low_battery_while_dark_marks_only_the_strip() {
     let mut app = app!();
     app.state_mut().dark = true;
-    app.state_mut().battery(Some(9), false, 1000);
+    app.state_mut().battery(reading(9, false), 1000);
     assert!(app.state().status.battery_low);
     assert_eq!(app.state().banner, None);
 }
@@ -2926,6 +2939,92 @@ fn gnss_shows_its_fix_while_on() {
     assert_eq!(app.state().node.gnss_enabled(), Some(false));
     run(&mut app, &[Input::Turn(1)]);
     assert_eq!(focus(app.state()), Some(keys::GNSS_ENABLED));
+}
+
+#[test]
+fn brightness_turns_while_pressed_and_auto_lock_picks_from_its_choices() {
+    let mut app = app!();
+    open_category(&mut app, keys::DISPLAY);
+    assert_eq!(focus(app.state()), Some(keys::BRIGHTNESS));
+    let level = |app: &App<_, State, _>| brightness_level(app.state().node.brightness());
+    let before = level(&app);
+    // Turning moves focus until Brightness is pressed; then it brightens,
+    // turned up, until pressed again.
+    run(&mut app, &[Input::Turn(1)]);
+    assert_eq!(focus(app.state()), Some(keys::AUTO_LOCK));
+    run(&mut app, &[Input::Turn(-1), Input::Press, Input::Turn(-2)]);
+    assert_eq!(focus(app.state()), Some(keys::BRIGHTNESS));
+    assert_eq!(level(&app), before + 2);
+    run(&mut app, &[Input::Press, Input::Turn(1)]);
+    assert_eq!(level(&app), before + 2);
+    assert_eq!(focus(app.state()), Some(keys::AUTO_LOCK));
+    // Auto-Lock opens on the choice in force, and a choice goes back.
+    run(&mut app, &[Input::Press]);
+    assert_eq!(focus(app.state()), Some(keys::auto_lock_choice(1)));
+    turn_to(&mut app, keys::auto_lock_choice(0));
+    run(&mut app, &[Input::Press]);
+    assert_eq!(app.state().node.auto_lock(), Some(0));
+    assert_eq!(focus(app.state()), Some(keys::AUTO_LOCK));
+}
+
+#[test]
+fn battery_is_listed_once_the_board_reads_it() {
+    let mut app = app!();
+    app.state_mut().battery(BatteryReading::default(), 0);
+    open_device(&mut app);
+    let listed = |app: &mut App<_, State, _>| {
+        turn_to(app, keys::IDENTITY);
+        let mut passed = Vec::new();
+        while !passed.contains(&focus(app.state())) {
+            passed.push(focus(app.state()));
+            run(app, &[Input::Turn(1)]);
+        }
+        passed.contains(&Some(keys::BATTERY))
+    };
+    assert!(!listed(&mut app));
+    app.state_mut().battery(
+        BatteryReading {
+            percent: None,
+            charge: Some(Charge::Charged),
+            millivolts: Some(4_180),
+        },
+        0,
+    );
+    app.finalize_view();
+    assert!(listed(&mut app));
+    turn_to(&mut app, keys::BATTERY);
+    run(&mut app, &[Input::Press]);
+    // No level to focus, so its first reading.
+    assert_eq!(focus(app.state()), Some(keys::BATTERY_CHARGE));
+    turn_to(&mut app, keys::BATTERY_VOLTAGE);
+    // The voltage is news only while it is shown.
+    let wavered = BatteryReading {
+        millivolts: Some(4_170),
+        ..app.state().battery
+    };
+    assert!(app.state().battery_changes(&wavered));
+    run(&mut app, &[Input::Backspace]);
+    assert!(!app.state().battery_changes(&wavered));
+}
+
+#[test]
+fn statistics_are_read_while_shown() {
+    let mut app = app!();
+    open_category(&mut app, keys::STATISTICS);
+    assert_eq!(focus(app.state()), Some(keys::statistic(0)));
+    // The fixture counts more traffic with each read.
+    let sent = |app: &App<_, State, _>| app.state().node.statistics().sent;
+    let opened = sent(&app);
+    turn_to(&mut app, keys::statistic(2));
+    turn_to(&mut app, keys::statistic(10));
+    // MeshCore is not kept here, so it is not shown.
+    run(&mut app, &[Input::Turn(1)]);
+    assert_eq!(focus(app.state()), Some(keys::statistic(10)));
+    run(&mut app, &[Input::Backspace]);
+    assert_eq!(focus(app.state()), Some(keys::STATISTICS));
+    assert_eq!(sent(&app), opened);
+    run(&mut app, &[Input::Press]);
+    assert!(sent(&app) > opened);
 }
 
 /// Turns to the newest message of the conversation shown: up from the

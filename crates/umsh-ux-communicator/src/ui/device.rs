@@ -13,7 +13,7 @@ use heapless::String;
 use super::conversation::header;
 use super::setting::{End, card, choice, row};
 use crate::board::Metrics;
-use crate::model::{Bluetooth, ChatKind, RadioSettings, State};
+use crate::model::{BatteryReading, Bluetooth, ChatKind, RadioSettings, State};
 use crate::nav::{DevicePage, Screen, keys};
 use crate::theme;
 
@@ -36,6 +36,7 @@ pub fn view(state: &State) -> impl View<Rgb565, State> + use<> {
             ..
         }
     );
+    let battery = state.battery.percent.map(super::battery::percent_text);
     let mut joined: String<24> = String::new();
     _ = core::fmt::write(&mut joined, format_args!("{channels} joined"));
     let category = |name, key, act: fn(&mut State), value: &str| {
@@ -61,6 +62,7 @@ pub fn view(state: &State) -> impl View<Rgb565, State> + use<> {
                 State::open_radio,
                 state.profile_name(&state.node.radio()),
             ),
+            category("Display", keys::DISPLAY, State::open_display, ""),
             category("Keyboard", keys::KEYBOARD, State::open_keyboard, ""),
             category(
                 "Clock",
@@ -85,8 +87,17 @@ pub fn view(state: &State) -> impl View<Rgb565, State> + use<> {
                     .node
                     .gnss_enabled()
                     .map(|_| category("GNSS", keys::GNSS, State::open_gnss, "")),
+                (state.battery != BatteryReading::default()).then(|| {
+                    category(
+                        "Battery",
+                        keys::BATTERY,
+                        State::open_battery,
+                        &battery.unwrap_or_default(),
+                    )
+                }),
             ))
             .with_spacing(0),
+            category("Statistics", keys::STATISTICS, State::open_statistics, ""),
             row(
                 m,
                 "Shut down",
@@ -163,8 +174,26 @@ pub fn page(state: &State, page: &DevicePage) -> impl View<Rgb565, State> + use<
         DevicePage::Keyboard { settings } => super::typing::settings(m, settings),
         DevicePage::TransmitPower { text } => super::typing::transmit_power(m, text),
         DevicePage::Clock { page } => super::clock::page(state, page),
+        DevicePage::Bluetooth { .. }
+        | DevicePage::Gnss
+        | DevicePage::Battery
+        | DevicePage::Display { .. }
+        | DevicePage::AutoLock
+        | DevicePage::Statistics => board_page(state, page),
+    })
+}
+
+/// A screen about the board: its links, its battery, its screen, and its
+/// counters. Apart from [`page`], whose arms `match_view!` limits.
+fn board_page(state: &State, page: &DevicePage) -> impl View<Rgb565, State> + use<> {
+    match_view!(page, {
         DevicePage::Bluetooth { confirm } => super::links::bluetooth(state, *confirm),
         DevicePage::Gnss => super::links::gnss(state),
+        DevicePage::Battery => super::battery::view(state),
+        DevicePage::Display { .. } => super::display::view(state),
+        DevicePage::AutoLock => super::display::auto_lock(state),
+        // Statistics, the only other `page` sends here.
+        _ => super::statistics::view(state),
     })
 }
 

@@ -54,12 +54,12 @@ pub enum DisplayKind {
     Persistent,
 }
 
-/// Timing policy. Held by value so a board can adjust it at runtime—
-/// the plumbing a future `PROP_DISPLAY_TIMEOUT` needs.
+/// Timing policy. Held by value so a board can adjust it at runtime, as
+/// `PROP_DISPLAY_TIMEOUT` does.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct AttentionConfig {
-    /// Inactivity before attention lapses.
-    pub timeout: Duration,
+    /// Inactivity before attention lapses; `None` never lapses.
+    pub timeout: Option<Duration>,
     /// How long before `timeout` an emissive panel dims as a warning.
     /// Zero (or anything at least as large as `timeout`) disables the
     /// dim state. Ignored for persistent panels.
@@ -81,7 +81,7 @@ impl AttentionConfig {
     /// long enough that the warning is a warning rather than the last
     /// moment before the screen is gone.
     pub const EMISSIVE: Self = Self {
-        timeout: Duration::from_secs(30),
+        timeout: Some(Duration::from_secs(30)),
         dim_margin: Duration::from_secs(10),
         dim_ramp: Duration::from_secs(1),
     };
@@ -91,7 +91,7 @@ impl AttentionConfig {
     /// [`EMISSIVE`](Self::EMISSIVE) because a locked screen is glanced
     /// at, not worked in.
     pub const LOCKED: Self = Self {
-        timeout: Duration::from_secs(18),
+        timeout: Some(Duration::from_secs(18)),
         dim_margin: Duration::from_secs(3),
         dim_ramp: Duration::from_secs(1),
     };
@@ -102,21 +102,34 @@ impl AttentionConfig {
     /// because each partial refresh is visible enough that a twitchy
     /// fallback would be an annoyance of its own.
     pub const PERSISTENT: Self = Self {
-        timeout: Duration::from_secs(30),
+        timeout: Some(Duration::from_secs(30)),
         dim_margin: Duration::ZERO,
         dim_ramp: Duration::ZERO,
     };
 
+    /// An emissive panel lit for `timeout` without input, or for as long
+    /// as it is used when `None`: dimmed for the last ten seconds, or the
+    /// last third of a shorter timeout, falling into the dim over a
+    /// second. [`EMISSIVE`](Self::EMISSIVE) is the 30-second one.
+    pub fn emissive_for(timeout: Option<Duration>) -> Self {
+        Self {
+            timeout,
+            dim_margin: timeout.map_or(Duration::ZERO, |timeout| {
+                (timeout / 3).min(Self::EMISSIVE.dim_margin)
+            }),
+            ..Self::EMISSIVE
+        }
+    }
+
     /// The instant, relative to the last activity, at which the panel
     /// should dim. `None` when this config has no dim state.
     fn dim_after(&self, kind: DisplayKind) -> Option<Duration> {
-        if kind != DisplayKind::Emissive
-            || self.dim_margin.is_zero()
-            || self.dim_margin >= self.timeout
+        let timeout = self.timeout?;
+        if kind != DisplayKind::Emissive || self.dim_margin.is_zero() || self.dim_margin >= timeout
         {
             return None;
         }
-        Some(self.timeout - self.dim_margin)
+        Some(timeout - self.dim_margin)
     }
 
     /// How many [`RAMP_STEP`]s the fall into the dim state takes.
@@ -388,7 +401,7 @@ impl Attention {
             return None;
         }
         let idle = Duration::from_millis(now_ms.saturating_sub(self.since_ms));
-        if idle >= self.config.timeout {
+        if self.config.timeout.is_some_and(|timeout| idle >= timeout) {
             self.state = DisplayState::Lapsed;
             return Some(Transition::Lapsed);
         }
@@ -418,14 +431,10 @@ impl Attention {
         if self.held() || self.is_lapsed() {
             return None;
         }
-        let lapse_at = self
-            .since_ms
-            .saturating_add(self.config.timeout.as_millis() as u64);
+        let timeout = self.config.timeout?;
+        let lapse_at = self.since_ms.saturating_add(timeout.as_millis() as u64);
         let after = match self.state {
-            DisplayState::Active => self
-                .config
-                .dim_after(self.kind)
-                .unwrap_or(self.config.timeout),
+            DisplayState::Active => self.config.dim_after(self.kind).unwrap_or(timeout),
             // Still falling: the next step of the ramp. Once it has
             // settled on the floor there is nothing left to do but lapse.
             DisplayState::Dim => match self.config.dim_after(self.kind) {
@@ -608,7 +617,7 @@ mod tests {
     fn no_deadline_ever_overshoots_the_lapse() {
         // A ramp longer than the margin it has to fit inside.
         let config = AttentionConfig {
-            timeout: Duration::from_secs(10),
+            timeout: Some(Duration::from_secs(10)),
             dim_margin: Duration::from_secs(1),
             dim_ramp: Duration::from_secs(5),
         };
@@ -751,7 +760,7 @@ mod tests {
     #[test]
     fn zero_dim_margin_lapses_without_a_dim_state() {
         let config = AttentionConfig {
-            timeout: Duration::from_secs(10),
+            timeout: Some(Duration::from_secs(10)),
             dim_margin: Duration::ZERO,
             ..AttentionConfig::EMISSIVE
         };
@@ -764,7 +773,7 @@ mod tests {
     #[test]
     fn dim_margin_at_or_over_the_timeout_disables_dimming() {
         let config = AttentionConfig {
-            timeout: Duration::from_secs(10),
+            timeout: Some(Duration::from_secs(10)),
             dim_margin: Duration::from_secs(10),
             ..AttentionConfig::EMISSIVE
         };
@@ -774,10 +783,36 @@ mod tests {
     }
 
     #[test]
+    fn without_a_timeout_attention_never_lapses() {
+        let mut a = Attention::new(
+            DisplayKind::Emissive,
+            AttentionConfig::emissive_for(None),
+            0,
+        );
+        assert_eq!(a.next_deadline(), None);
+        assert_eq!(a.poll(u64::MAX / 2), None);
+        assert_eq!(a.state(), DisplayState::Active);
+        // The lock control still darkens it.
+        assert_eq!(a.sleep(1_000), Some(Transition::Lapsed));
+    }
+
+    #[test]
+    fn a_timeout_sets_how_long_the_panel_dims_before_it() {
+        assert_eq!(
+            AttentionConfig::emissive_for(Some(Duration::from_secs(30))),
+            AttentionConfig::EMISSIVE
+        );
+        let long = AttentionConfig::emissive_for(Some(Duration::from_secs(300)));
+        assert_eq!(long.dim_margin, Duration::from_secs(10));
+        let short = AttentionConfig::emissive_for(Some(Duration::from_secs(15)));
+        assert_eq!(short.dim_margin, Duration::from_secs(5));
+    }
+
+    #[test]
     fn a_shorter_timeout_applies_from_the_existing_activity_mark() {
         let mut a = oled();
         a.set_config(AttentionConfig {
-            timeout: Duration::from_secs(5),
+            timeout: Some(Duration::from_secs(5)),
             dim_margin: Duration::ZERO,
             ..AttentionConfig::EMISSIVE
         });
@@ -790,7 +825,7 @@ mod tests {
         let mut a = oled();
         let _ = a.wake(100_000);
         a.set_config(AttentionConfig {
-            timeout: Duration::from_secs(1),
+            timeout: Some(Duration::from_secs(1)),
             dim_margin: Duration::ZERO,
             ..AttentionConfig::EMISSIVE
         });

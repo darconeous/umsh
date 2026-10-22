@@ -15,9 +15,11 @@ use umsh_ulcp::profiles;
 use umsh_ulcp_admin::{LocalPort, PortBusy, PortFrame};
 use umsh_ulcp_simdev::host::HostPlatform;
 use umsh_ulcp_simdev::soft::SoftDevice;
-use umsh_ulcp_simdev::{DutyLedger, LanBearerRole, RadioSettings, SessionConfig, TimeConfig};
+use umsh_ulcp_simdev::{
+    DisplayConfig, DutyLedger, LanBearerRole, RadioSettings, SessionConfig, TimeConfig,
+};
 use umsh_ux_communicator::board::Board;
-use umsh_ux_communicator::model::{Node as _, State, brightness_at};
+use umsh_ux_communicator::model::{DEFAULT_AUTO_LOCK_S, Node as _, State, brightness_at};
 
 use crate::flash::{self, FileFlash};
 
@@ -96,7 +98,10 @@ fn config() -> SessionConfig {
         time: Some(TimeConfig),
         gnss: None,
         display_motion_wake: false,
-        display_brightness: Some(brightness_at(5)),
+        display: Some(DisplayConfig {
+            brightness: brightness_at(5),
+            timeout_s: DEFAULT_AUTO_LOCK_S,
+        }),
         keyboard: true,
         illuminance: false,
         temperatures: false,

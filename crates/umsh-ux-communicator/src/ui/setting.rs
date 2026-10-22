@@ -2,18 +2,24 @@
 //! on/off setting wears, and the card a row's choices open in.
 
 use buoyant::event::{Key, KeyResponse};
-use buoyant::focus::FocusKey;
+use buoyant::focus::{BoundaryBehavior, FocusKey};
 use buoyant::view::prelude::*;
 use embedded_graphics::pixelcolor::Rgb565;
 use heapless::String;
 
+use super::conversation::header;
 use super::label;
 use crate::board::Metrics;
-use crate::model::State;
+use crate::model::{BRIGHTNESS_LEVELS, State};
 use crate::{font, icon, theme};
 
 const INSET: u32 = 12;
 const RADIUS: u16 = 8;
+/// A settings screen's rows.
+const ROW: u32 = 36;
+/// A level's steps.
+const STEP_WIDTH: u32 = 7;
+const STEP_HEIGHT: u32 = 12;
 /// The switch, and its knob's inset.
 const SWITCH_WIDTH: u32 = 40;
 const SWITCH_HEIGHT: u32 = 22;
@@ -38,6 +44,12 @@ pub(super) enum End {
     /// A value, and that pressing changes it.
     ValueChevron(Value),
     Switch(bool),
+    /// A level from 1 to [`BRIGHTNESS_LEVELS`], lit in the accent while
+    /// `active`, as it is being changed.
+    Level {
+        level: u8,
+        active: bool,
+    },
 }
 
 impl End {
@@ -97,12 +109,13 @@ pub(super) fn marked_row<A: Fn(&mut State) + Clone>(
     height: u32,
     checked: Option<bool>,
 ) -> impl View<Rgb565, State> + use<A> {
-    let (value, chevron, switch) = match end {
-        End::Nothing => (None, false, None),
-        End::Chevron => (None, true, None),
-        End::Value(value) => (Some(value), false, None),
-        End::ValueChevron(value) => (Some(value), true, None),
-        End::Switch(on) => (None, false, Some(on)),
+    let (value, chevron, switch, level) = match end {
+        End::Nothing => (None, false, None, None),
+        End::Chevron => (None, true, None, None),
+        End::Value(value) => (Some(value), false, None, None),
+        End::ValueChevron(value) => (Some(value), true, None, None),
+        End::Switch(on) => (None, false, Some(on), None),
+        End::Level { level, active } => (None, false, None, Some((level, active))),
     };
     let flip = act.clone();
     Button::new(act, move |button: ButtonState| {
@@ -133,6 +146,7 @@ pub(super) fn marked_row<A: Fn(&mut State) + Clone>(
                     .foreground_color(theme::TEXT_TERTIARY)
             }),
             switch.map(switch_look),
+            level.map(|(level, active)| level_look(level, active)),
         ))
         .with_spacing(8)
         .hint_background_color(if focused {
@@ -169,10 +183,65 @@ pub(super) fn marked_row<A: Fn(&mut State) + Clone>(
         )
     })
     .focus_key(key)
-    // A switch takes the arrows: toward off, and toward on.
-    .on_key(move |key, s: &mut State| match (key, switch) {
-        (Key::LeftArrow, Some(true)) | (Key::RightArrow, Some(false)) => {
+    // A switch takes the arrows: toward off, and toward on. A level
+    // takes them too: down, and up.
+    .on_key(move |key, s: &mut State| match (key, switch, level) {
+        (Key::LeftArrow, Some(true), _) | (Key::RightArrow, Some(false), _) => {
             flip(s);
+            KeyResponse::Handled
+        }
+        (Key::LeftArrow, _, Some(_)) => {
+            s.step_brightness(-1);
+            KeyResponse::Handled
+        }
+        (Key::RightArrow, _, Some(_)) => {
+            s.step_brightness(1);
+            KeyResponse::Handled
+        }
+        _ => KeyResponse::Ignored,
+    })
+}
+
+/// A level's steps, lit up to `level`: in the accent while `active`.
+fn level_look(level: u8, active: bool) -> impl View<Rgb565, State> + use<> {
+    let lit = if active { theme::ACCENT } else { theme::TEXT };
+    let step = move |i: u8| {
+        RoundedRectangle::new(2)
+            .foreground_color(if i < level { lit } else { theme::LEVEL_OFF })
+            .frame_sized(STEP_WIDTH, STEP_HEIGHT)
+    };
+    const _: () = assert!(BRIGHTNESS_LEVELS == 10);
+    HStack::new((
+        step(0),
+        step(1),
+        step(2),
+        step(3),
+        step(4),
+        step(5),
+        step(6),
+        step(7),
+        step(8),
+        step(9),
+    ))
+    .with_spacing(2)
+}
+
+/// A screen under Device: its header, and `rows` in a list. Backspace goes
+/// back.
+pub(super) fn page<V: View<Rgb565, State>>(
+    m: &'static Metrics,
+    title: &'static str,
+    rows: V,
+) -> impl View<Rgb565, State> + use<V> {
+    VStack::new((
+        header(m, title, None, None),
+        super::list(rows).with_scroll_step(ROW),
+    ))
+    .with_spacing(0)
+    .bound_focus(BoundaryBehavior::Stop)
+    .on_key(|key, s: &mut State| match key {
+        Key::Backspace => {
+            s.back();
             KeyResponse::Handled
         }
         _ => KeyResponse::Ignored,

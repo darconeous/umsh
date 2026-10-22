@@ -135,7 +135,7 @@ Id   | Mnemonic                                                                 
 4874 | [`PROP_BLE_PAIRING`](ulcp-ble.md#prop-ble-pairing)                                    | Get, Set, Is               | `CAP_BLE`
 4875 | [`PROP_DISPLAY_MOTION_WAKE_ENABLED`](ulcp-device.md#prop-display-motion-wake-enabled) | Get, Set, Is | `CAP_DISPLAY_MOTION_WAKE`
 4876 | [`PROP_TEMPERATURE_NAMES`](ulcp-device.md#prop-temperature-names) | Get | `CAP_TEMPERATURE`
-4877 | [`PROP_DISPLAY_BRIGHTNESS`](ulcp-device.md#prop-display-brightness)                   | Get, Set, Is               | `CAP_DISPLAY_BRIGHTNESS`
+4877 | [`PROP_DISPLAY_BRIGHTNESS`](ulcp-device.md#prop-display-brightness)                   | Get, Set, Is               | `CAP_DISPLAY`
 4878 | [`PROP_KEYBOARD_LIGHT`](ulcp-device.md#prop-keyboard-light)                           | Get, Set, Is               | `CAP_KEYBOARD`
 4879 | [`PROP_KEYBOARD_AIDS`](ulcp-device.md#prop-keyboard-aids)                             | Get, Set, Is               | `CAP_KEYBOARD`
 4880 | [`PROP_WIFI_ENABLED`](ulcp-wifi.md#prop-wifi-enabled)                                 | Get, Set, Is               | `CAP_WIFI`
@@ -148,6 +148,7 @@ Id   | Mnemonic                                                                 
 4887 | [`PROP_WIFI_MAC`](ulcp-wifi.md#prop-wifi-mac)                                         | Get                        | `CAP_WIFI`
 4888 | [`PROP_TZ_RULE`](ulcp-device.md#prop-tz-rule)                                         | Get, Set, Is               | `CAP_TIME`
 4889 | [`PROP_TIME_24H`](ulcp-device.md#prop-time-24h)                                       | Get, Set, Is               | `CAP_TIME`
+4890 | [`PROP_DISPLAY_TIMEOUT`](ulcp-device.md#prop-display-timeout)                         | Get, Set, Is               | `CAP_DISPLAY`
 4896 | [`PROP_IPV4_STATE`](ulcp-ip.md#prop-ipv4-state)                                       | Get, Is                    | `CAP_IPV4`
 4897 | [`PROP_IPV4_CONFIG`](ulcp-ip.md#prop-ipv4-config)                                     | Get, Set                   | `CAP_IPV4`
 4898 | [`PROP_IPV4_ADDRESS`](ulcp-ip.md#prop-ipv4-address)                                   | Get, Is                    | `CAP_IPV4`
@@ -231,7 +232,7 @@ Code | Name                      | Defined in
 61   | `CAP_TEMPERATURE` | [Device Domain](ulcp-device.md#capabilities)
 62   | `CAP_MESHCORE_FORWARDER`  | [Device Domain](ulcp-device.md#capabilities)
 63   | `CAP_LAN_BEARER`          | [IP Multicast](ulcp-ip-multicast.md#capabilities)
-64   | `CAP_DISPLAY_BRIGHTNESS`  | [Device Domain](ulcp-device.md#capabilities)
+64   | `CAP_DISPLAY`             | [Device Domain](ulcp-device.md#capabilities)
 65   | `CAP_KEYBOARD`            | [Device Domain](ulcp-device.md#capabilities)
 515  | `CAP_PHY_LORA`            | [Radio Control](ulcp-radio.md#capabilities)
 

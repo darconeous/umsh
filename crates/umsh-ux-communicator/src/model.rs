@@ -11,7 +11,7 @@ use crate::board::{Board, Metrics};
 use crate::clock::Local;
 use crate::keyboard::{Aids, Keyboard};
 use crate::lock::Lock;
-use crate::nav::{Screen, Unsent, keys};
+use crate::nav::{DevicePage, Screen, Unsent, keys};
 use crate::picker::{Picker, RecentText, Recents};
 use crate::text::{DraftText, SharedText, TextHeap};
 
@@ -153,6 +153,64 @@ pub struct GnssReading {
     pub used: u8,
     /// Satellites in view, where the receiver says.
     pub in_view: Option<u8>,
+}
+
+/// The battery as the board last read it, for the Battery screen.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct BatteryReading {
+    /// Remaining charge in percent, when it is known.
+    pub percent: Option<u8>,
+    /// What external power is doing, where the board can tell.
+    pub charge: Option<Charge>,
+    /// The cell's voltage in millivolts, when it is known.
+    pub millivolts: Option<u16>,
+}
+
+impl BatteryReading {
+    /// External power is charging the battery, or has charged it.
+    #[must_use]
+    pub const fn charging(&self) -> bool {
+        matches!(self.charge, Some(Charge::Charging | Charge::Charged))
+    }
+}
+
+/// What external power is doing for the battery.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Charge {
+    /// No external power: the battery runs the board.
+    Discharging,
+    Charging,
+    /// External power, and the battery is full.
+    Charged,
+    /// External power, and the battery is not taking it.
+    NotCharging,
+}
+
+/// The device's counters, as last read, each where the device keeps it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Statistics {
+    /// Seconds since the device started.
+    pub uptime: Option<u32>,
+    /// Frames that reached the air.
+    pub sent: Option<u32>,
+    /// Transmits held back for a busy channel.
+    pub channel_busy: Option<u32>,
+    /// UMSH packets heard, whoever they were for.
+    pub heard: Option<u32>,
+    pub bad_crc: Option<u32>,
+    /// Packets heard that are not UMSH.
+    pub other: Option<u32>,
+    /// Packets this node acted on.
+    pub accepted: Option<u32>,
+    pub forwarded: Option<u32>,
+    /// Forwards the forwarding policy declined.
+    pub forward_dropped: Option<u32>,
+    /// Forwards dropped once their acknowledgement was heard.
+    pub forward_cancelled: Option<u32>,
+    pub meshcore_seen: Option<u32>,
+    pub meshcore_routed: Option<u32>,
+    pub meshcore_flooded: Option<u32>,
+    pub meshcore_declined: Option<u32>,
 }
 
 /// How much of a position the receiver has.
@@ -434,6 +492,14 @@ pub const fn brightness_at(level: u8) -> u8 {
     };
     (((level as u16 - 1) * 255 + steps / 2) / steps) as u8
 }
+
+/// How long the screen stays lit without input, in seconds, until a
+/// device says otherwise.
+pub const DEFAULT_AUTO_LOCK_S: u16 = 30;
+
+/// The times Auto-Lock offers, in seconds, in the order listed: 0 is
+/// never.
+pub const AUTO_LOCK_CHOICES: [u16; 5] = [0, 30, 60, 120, 300];
 
 /// What the text typed into Add peer names, as far as it goes.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1000,6 +1066,7 @@ pub enum Setting {
     Pairing,
     Gnss,
     Radio,
+    AutoLock,
 }
 
 /// What changed in the node without the interface asking. An event names
@@ -1356,6 +1423,20 @@ pub trait Node {
 
     fn set_brightness(&self, brightness: u8);
 
+    /// How long the screen stays lit without input while the interface is
+    /// unlocked, in seconds; 0 is never. `None` where the device does not
+    /// say.
+    fn auto_lock(&self) -> Option<u16>;
+
+    fn set_auto_lock(&self, seconds: u16);
+
+    /// The device's counters, as last read.
+    fn statistics(&self) -> Statistics;
+
+    /// Keeps the counters being read while `on`: at once, and again every
+    /// few seconds, each read followed by [`NodeEvent::SettingsChanged`].
+    fn watch_statistics(&self, on: bool);
+
     /// Whether Bluetooth is on. `None` where the board has none.
     fn bluetooth_enabled(&self) -> Option<bool>;
 
@@ -1436,6 +1517,8 @@ pub enum Section {
 /// Everything the interface draws from.
 pub struct State {
     pub status: StatusStrip,
+    /// The battery as the board last read it.
+    pub battery: BatteryReading,
     /// What the board last read of its links.
     pub links: Links,
     pub section: Section,
@@ -1592,6 +1675,7 @@ impl State {
         _ = screens.push(Screen::chats());
         Self {
             status: StatusStrip::default(),
+            battery: BatteryReading::default(),
             links: Links::default(),
             section: Section::default(),
             chats: Vec::new(),
@@ -2077,12 +2161,13 @@ impl State {
         );
     }
 
-    /// The battery as the board last read it: its charge in percent, when
-    /// that is known, and whether external power is charging it. The strip
-    /// shows it; falling to [`BATTERY_LOW_PERCENT`] with nothing charging
-    /// turns the strip's battery amber, and a banner says so once while the
-    /// panel is lit.
-    pub fn battery(&mut self, percent: Option<u8>, charging: bool, now: u64) {
+    /// The battery as the board last read it. The strip shows its charge,
+    /// and whether external power is charging it; falling to
+    /// [`BATTERY_LOW_PERCENT`] with nothing charging turns the strip's
+    /// battery amber, and a banner says so once while the panel is lit.
+    pub fn battery(&mut self, reading: BatteryReading, now: u64) {
+        self.battery = reading;
+        let (percent, charging) = (reading.percent, reading.charging());
         self.status.battery_segments = percent.map_or(0, battery_segments);
         self.status.battery_percent = percent;
         self.status.charging = charging;
@@ -2102,6 +2187,25 @@ impl State {
                 until: now + BANNER_MS,
             });
         }
+    }
+
+    /// Whether `reading` changes what is shown: its charge or what external
+    /// power is doing, always, and the voltage while the Battery screen
+    /// shows it. A board reading often takes in only these, so that a
+    /// wavering voltage nobody is looking at draws nothing.
+    #[must_use]
+    pub fn battery_changes(&self, reading: &BatteryReading) -> bool {
+        let shown = &self.battery;
+        let voltage_shown = matches!(
+            self.screen(),
+            Screen::Device {
+                page: DevicePage::Battery,
+                ..
+            }
+        );
+        shown.percent != reading.percent
+            || shown.charge != reading.charge
+            || (voltage_shown && shown.millivolts != reading.millivolts)
     }
 
     /// The battery is empty: the screen shows only its icon, `lit` or not.
@@ -2191,12 +2295,19 @@ impl State {
             .or(self.banner.map(|b| Overlay::Banner(b.notice)))
     }
 
+    /// Moves the screen's brightness `steps` levels, more brightening, and
+    /// returns the level it is at.
+    pub fn step_brightness(&mut self, steps: i8) -> u8 {
+        let level = (i16::from(brightness_level(self.node.brightness())) + i16::from(steps))
+            .clamp(1, i16::from(BRIGHTNESS_LEVELS)) as u8;
+        self.node.set_brightness(brightness_at(level));
+        level
+    }
+
     /// Turns the screen's brightness by `detents` levels, and shows it:
     /// turned up, it brightens, and turned down, it dims.
     pub fn adjust_brightness(&mut self, detents: i8, now: u64) {
-        let level = (i16::from(brightness_level(self.node.brightness())) - i16::from(detents))
-            .clamp(1, i16::from(BRIGHTNESS_LEVELS)) as u8;
-        self.node.set_brightness(brightness_at(level));
+        let level = self.step_brightness(detents.saturating_neg());
         self.glance = Some(Glance::Brightness {
             level,
             until: now + GLANCE_MS,

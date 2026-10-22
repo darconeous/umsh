@@ -1,14 +1,11 @@
 //! Bluetooth and GNSS: each one's switch, and what it is doing while on.
 
-use buoyant::event::{Key, KeyResponse};
-use buoyant::focus::BoundaryBehavior;
 use buoyant::view::popover::Dismissal;
 use buoyant::view::prelude::*;
 use embedded_graphics::pixelcolor::Rgb565;
 use heapless::String;
 
-use super::conversation::header;
-use super::setting::{End, card, choice, row};
+use super::setting::{End, card, choice, page, row};
 use crate::board::Metrics;
 use crate::model::{Fix, GnssReading, State};
 use crate::nav::keys;
@@ -277,28 +274,6 @@ fn push_degrees(text: &mut String<32>, micro: i32) {
             tenths_of_micro % 100_000
         ),
     );
-}
-
-/// A screen under Device: its header, and `rows` in a list. Backspace goes
-/// back.
-fn page<V: View<Rgb565, State>>(
-    m: &'static Metrics,
-    title: &'static str,
-    rows: V,
-) -> impl View<Rgb565, State> + use<V> {
-    VStack::new((
-        header(m, title, None, None),
-        super::list(rows).with_scroll_step(ROW),
-    ))
-    .with_spacing(0)
-    .bound_focus(BoundaryBehavior::Stop)
-    .on_key(|key, s: &mut State| match key {
-        Key::Backspace => {
-            s.back();
-            KeyResponse::Handled
-        }
-        _ => KeyResponse::Ignored,
-    })
 }
 
 #[cfg(test)]

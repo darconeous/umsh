@@ -287,9 +287,16 @@ pub const COVERED: &[Descriptor] = &[
     scalar(
         prop::DISPLAY_BRIGHTNESS,
         PropertyType::U8,
-        Some(cap::DISPLAY_BRIGHTNESS),
+        Some(cap::DISPLAY),
         Access::ReadWrite,
         1,
+    ),
+    scalar(
+        prop::DISPLAY_TIMEOUT,
+        PropertyType::U16,
+        Some(cap::DISPLAY),
+        Access::ReadWrite,
+        2,
     ),
     scalar(
         prop::KEYBOARD_LIGHT,
@@ -316,7 +323,34 @@ pub const COVERED: &[Descriptor] = &[
     // The device identity's tables.
     table(prop::DEV_PEERS, cap::DEV_IDENTITY, 32, 32),
     table(prop::DEV_CHANNEL_KEYS, cap::DEV_IDENTITY, 32, 16),
+    // How long the device has run, and what it has counted since: read
+    // while someone is looking, as they move on their own.
+    scalar(prop::UPTIME, PropertyType::U32, None, Access::OnDemand, 0),
+    stat(prop::STAT_TX_PACKETS),
+    stat(prop::STAT_TX_CHANNEL_BUSY),
+    stat(prop::STAT_RX_PACKETS),
+    stat(prop::STAT_RX_BAD_CRC),
+    stat(prop::STAT_RX_NON_UMSH),
+    stat(prop::STAT_RX_ACCEPTED),
+    stat(prop::STAT_FORWARDED),
+    stat(prop::STAT_FORWARD_DROPPED),
+    stat(prop::STAT_FORWARD_CANCELLED),
+    stat(prop::STAT_MESHCORE_SEEN),
+    stat(prop::STAT_MESHCORE_FORWARDED_ROUTED),
+    stat(prop::STAT_MESHCORE_FORWARDED_FLOOD),
+    stat(prop::STAT_MESHCORE_DECLINED),
 ];
+
+/// One of the device's counters (`CAP_STATS`).
+const fn stat(key: u32) -> Descriptor {
+    scalar(
+        key,
+        PropertyType::U32,
+        Some(cap::STATS),
+        Access::OnDemand,
+        0,
+    )
+}
 
 /// The descriptor for `key`, if the model covers it.
 pub fn descriptor(key: u32) -> Option<&'static Descriptor> {
