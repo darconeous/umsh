@@ -67,13 +67,25 @@ pub struct AvatarStyle {
     pub outline: Outline,
     pub fill: Rgb565,
     pub text: Rgb565,
-    /// One or two lines of lettering, stacked.
-    pub lines: [Lettering; 2],
+    /// Both lines of lettering, the first ending at `split`. Every row and
+    /// head holds a style, so one short buffer serves both lines.
+    lettering: Lettering,
+    split: u8,
 }
 
-/// A line of an avatar's lettering: up to two grapheme clusters, such as two
-/// letters, or a letter and an emoji.
-pub type Lettering = String<32>;
+/// An avatar's lettering: up to four grapheme clusters, such as letters, or
+/// letters and emoji.
+pub type Lettering = String<32, u8>;
+
+impl AvatarStyle {
+    /// One or two lines of lettering, stacked; the second is empty when
+    /// there is one.
+    #[must_use]
+    pub fn lines(&self) -> [&str; 2] {
+        let (first, second) = self.lettering.split_at(usize::from(self.split));
+        [first, second]
+    }
+}
 
 /// A channel the two standard names are recognized by, which keep fixed
 /// colors instead of derived ones.
@@ -90,6 +102,7 @@ impl AvatarStyle {
     #[must_use]
     pub fn peer(hint: [u8; 3], hint_text: &str, shape: PeerShape) -> Self {
         let rgb = [hint[0], hint[1], hint[2]];
+        let (lettering, split) = two_lines(hint_text);
         Self {
             outline: Outline::Peer(shape),
             fill: rgb565(rgb),
@@ -98,7 +111,8 @@ impl AvatarStyle {
             } else {
                 BLACK
             },
-            lines: two_lines(hint_text),
+            lettering,
+            split,
         }
     }
 
@@ -123,15 +137,20 @@ impl AvatarStyle {
         } else {
             initials.len()
         };
-        let mut lines = [String::new(), String::new()];
+        let mut lettering = Lettering::new();
+        let mut split = None;
         for (i, initial) in initials.iter().enumerate() {
-            push_uppercase(&mut lines[usize::from(i >= first_line)], initial);
+            if i == first_line {
+                split = Some(lettering.len());
+            }
+            push_uppercase(&mut lettering, initial);
         }
         Self {
             outline: Outline::Channel,
             fill,
             text,
-            lines,
+            split: split.unwrap_or(lettering.len()) as u8,
+            lettering,
         }
     }
 }
@@ -143,13 +162,19 @@ fn rgb565(rgb: [u8; 3]) -> Rgb565 {
     Rgb888::new(rgb[0], rgb[1], rgb[2]).into()
 }
 
-/// The first two clusters, then the next two.
-fn two_lines(s: &str) -> [Lettering; 2] {
-    let mut lines = [String::new(), String::new()];
+/// The first two clusters, then the next two, and where the first line
+/// ends.
+fn two_lines(s: &str) -> (Lettering, u8) {
+    let mut lettering = Lettering::new();
+    let mut split = None;
     for (i, cluster) in umsh_grapheme::clusters(s).take(4).enumerate() {
-        let _ = lines[i / 2].push_str(cluster);
+        if i == 2 {
+            split = Some(lettering.len());
+        }
+        let _ = lettering.push_str(cluster);
     }
-    lines
+    let split = split.unwrap_or(lettering.len()) as u8;
+    (lettering, split)
 }
 
 /// Appends `cluster` uppercased, whole or not at all.
@@ -240,7 +265,9 @@ mod tests {
     use super::*;
 
     fn lettering(title: &str) -> [Lettering; 2] {
-        AvatarStyle::channel(None, title, [0, 0, 0]).lines
+        AvatarStyle::channel(None, title, [0, 0, 0])
+            .lines()
+            .map(|line| line.try_into().unwrap())
     }
 
     #[test]
