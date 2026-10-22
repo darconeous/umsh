@@ -18,6 +18,7 @@ use crate::model::{ChatKind, Ending, Overlay, Section, State};
 use crate::nav::{MemberFrom, Screen, keys};
 use crate::{font, theme};
 
+mod about;
 mod add_channel;
 mod avatar;
 mod banner;

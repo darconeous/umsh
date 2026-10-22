@@ -3027,6 +3027,28 @@ fn statistics_are_read_while_shown() {
     assert!(sent(&app) > opened);
 }
 
+#[test]
+fn about_opens_credits_and_backs_out() {
+    let mut app = app!();
+    open_category(&mut app, keys::ABOUT);
+    assert_eq!(focus(app.state()), Some(keys::ABOUT_NAME));
+    turn_to(&mut app, keys::CREDITS);
+    run(&mut app, &[Input::Press]);
+    assert_eq!(focus(app.state()), Some(keys::credit(0)));
+    // The parts, then the licenses: the longest takes turns to pass.
+    turn_to(&mut app, keys::credit(4));
+    run(&mut app, &[Input::Turn(1)]);
+    assert_eq!(focus(app.state()), Some(keys::credit(4)));
+    for _ in 0..20 {
+        run(&mut app, &[Input::Turn(1)]);
+    }
+    assert!(focus(app.state()) > Some(keys::credit(4)));
+    run(&mut app, &[Input::Backspace]);
+    assert_eq!(focus(app.state()), Some(keys::CREDITS));
+    run(&mut app, &[Input::Backspace]);
+    assert_eq!(focus(app.state()), Some(keys::ABOUT));
+}
+
 /// Turns to the newest message of the conversation shown: up from the
 /// composer, or down from an older message.
 fn to_newest<V, F>(app: &mut App<V, State, F>) -> u32

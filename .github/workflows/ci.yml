@@ -343,3 +343,7 @@ jobs:
           workspaces: firmware-esp32
 
       - run: make ${{ matrix.make_target }}
+
+      # The crates Credits lists, against what the communicator images link.
+      - if: matrix.make_target == 'build-tlora-pager'
+        run: make crate-notices-check

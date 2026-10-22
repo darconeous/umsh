@@ -53,6 +53,7 @@ pub mod keys {
     const NEARBY: u32 = 0x2000_0000;
     const AUTO_LOCK_ROW: u32 = 0x2400_0000;
     const STATISTIC: u32 = 0x2500_0000;
+    const CREDIT: u32 = 0x2700_0000;
     /// Set in a share key that names a channel.
     const SHARE_CHANNEL: u32 = 0x0080_0000;
 
@@ -136,6 +137,14 @@ pub mod keys {
     pub const GNSS: FocusKey = FocusKey(DEVICE | 10);
     pub const BATTERY: FocusKey = FocusKey(DEVICE | 11);
     pub const STATISTICS: FocusKey = FocusKey(DEVICE | 12);
+    pub const ABOUT: FocusKey = FocusKey(DEVICE | 13);
+    /// The About screen's rows, in order.
+    pub const ABOUT_NAME: FocusKey = FocusKey(0x2600_0000);
+    pub const ABOUT_MODEL: FocusKey = FocusKey(0x2600_0001);
+    pub const ABOUT_FIRMWARE: FocusKey = FocusKey(0x2600_0002);
+    pub const ABOUT_ADDRESS: FocusKey = FocusKey(0x2600_0003);
+    pub const ABOUT_STORAGE: FocusKey = FocusKey(0x2600_0004);
+    pub const CREDITS: FocusKey = FocusKey(0x2600_0005);
     /// The Battery screen's readouts, in order.
     pub const BATTERY_LEVEL: FocusKey = FocusKey(0x2200_0000);
     pub const BATTERY_CHARGE: FocusKey = FocusKey(0x2200_0001);
@@ -278,6 +287,12 @@ pub mod keys {
     #[must_use]
     pub const fn statistic(index: usize) -> FocusKey {
         FocusKey(STATISTIC | (index as u32 & !KIND))
+    }
+
+    /// One of the Credits screen's entries, by its place among them.
+    #[must_use]
+    pub const fn credit(index: usize) -> FocusKey {
+        FocusKey(CREDIT | (index as u32 & !KIND))
     }
 
     /// A radio profile in the list of them, by its place there.
@@ -477,6 +492,10 @@ pub enum DevicePage {
     AutoLock,
     /// The device's counters.
     Statistics,
+    /// What the device is and runs.
+    About,
+    /// What the firmware is built from, and its licenses.
+    Credits,
 }
 
 /// A screen a new device starts on.
@@ -1319,6 +1338,22 @@ impl State {
             focus: FocusState::requesting(keys::statistic(0)),
         });
         self.settle();
+    }
+
+    /// Shows what the device is and runs.
+    pub fn open_about(&mut self) {
+        _ = self.screens.push(Screen::Device {
+            page: DevicePage::About,
+            focus: FocusState::requesting(keys::ABOUT_NAME),
+        });
+    }
+
+    /// Shows what the firmware is built from.
+    pub fn open_credits(&mut self) {
+        _ = self.screens.push(Screen::Device {
+            page: DevicePage::Credits,
+            focus: FocusState::requesting(keys::credit(0)),
+        });
     }
 
     /// Reads the settings shown from the node again: this node's name, and

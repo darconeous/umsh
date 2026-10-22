@@ -373,6 +373,7 @@ async fn prime(node: &Node) {
 /// The interface's state over `node`: locked, over the Chats screen.
 fn state(node: &'static Node) -> State {
     let mut state = State::new(node, BOARD);
+    state.firmware = env!("GIT_DESCRIBE");
     state.status.device_name = node.device_name();
     (state.status.bluetooth, state.status.wifi, state.status.gnss) = links();
     state.set_wall_time(umsh_hal::wall_clock::now());

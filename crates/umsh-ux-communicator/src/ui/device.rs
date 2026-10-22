@@ -98,6 +98,7 @@ pub fn view(state: &State) -> impl View<Rgb565, State> + use<> {
             ))
             .with_spacing(0),
             category("Statistics", keys::STATISTICS, State::open_statistics, ""),
+            category("About", keys::ABOUT, State::open_about, ""),
             row(
                 m,
                 "Shut down",
@@ -179,12 +180,14 @@ pub fn page(state: &State, page: &DevicePage) -> impl View<Rgb565, State> + use<
         | DevicePage::Battery
         | DevicePage::Display { .. }
         | DevicePage::AutoLock
-        | DevicePage::Statistics => board_page(state, page),
+        | DevicePage::Statistics
+        | DevicePage::About
+        | DevicePage::Credits => board_page(state, page),
     })
 }
 
-/// A screen about the board: its links, its battery, its screen, and its
-/// counters. Apart from [`page`], whose arms `match_view!` limits.
+/// A screen about the board: its links, its battery, its screen, its
+/// counters, and what it is and runs. Apart from [`page`], whose arms `match_view!` limits.
 fn board_page(state: &State, page: &DevicePage) -> impl View<Rgb565, State> + use<> {
     match_view!(page, {
         DevicePage::Bluetooth { confirm } => super::links::bluetooth(state, *confirm),
@@ -192,8 +195,10 @@ fn board_page(state: &State, page: &DevicePage) -> impl View<Rgb565, State> + us
         DevicePage::Battery => super::battery::view(state),
         DevicePage::Display { .. } => super::display::view(state),
         DevicePage::AutoLock => super::display::auto_lock(state),
-        // Statistics, the only other `page` sends here.
-        _ => super::statistics::view(state),
+        DevicePage::Statistics => super::statistics::view(state),
+        DevicePage::About => super::about::view(state),
+        // Credits, the only other `page` sends here.
+        _ => super::about::credits(state),
     })
 }
 

@@ -162,6 +162,7 @@ pub fn open(dir: &Path, start: Instant) -> std::io::Result<&'static Node> {
 /// Chats screen of `board`.
 pub fn state(node: &'static Node, board: &'static Board) -> State {
     let mut state = State::new(node, board);
+    state.firmware = "simulator";
     state.status.device_name = node.device_name();
     state.set_wall_time(
         std::time::SystemTime::now()

@@ -213,6 +213,16 @@ pub struct Statistics {
     pub meshcore_declined: Option<u32>,
 }
 
+/// What Device › About reads of the node.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct About {
+    /// The node's hint, as an address begins.
+    pub hint: String<8>,
+    /// Octets the chats keep, of the most they may.
+    pub stored: u32,
+    pub quota: u32,
+}
+
 /// How much of a position the receiver has.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Fix {
@@ -1433,6 +1443,8 @@ pub trait Node {
     /// The device's counters, as last read.
     fn statistics(&self) -> Statistics;
 
+    fn about(&self) -> About;
+
     /// Keeps the counters being read while `on`: at once, and again every
     /// few seconds, each read followed by [`NodeEvent::SettingsChanged`].
     fn watch_statistics(&self, on: bool);
@@ -1573,6 +1585,8 @@ pub struct State {
     pub meet: MeetState,
     /// The board this runs on.
     pub board: &'static Board,
+    /// The firmware's release tag, or its commit for a development build.
+    pub firmware: &'static str,
 }
 
 /// The wheel held down. What it presses is pressed when it comes back up,
@@ -1701,6 +1715,7 @@ impl State {
             touching: false,
             meet: MeetState::default(),
             board,
+            firmware: "",
         }
     }
 

@@ -18,10 +18,10 @@ use umsh_ulcp_admin::LocalPort;
 use umsh_ux_communicator::avatar::AvatarStyle;
 use umsh_ux_communicator::heapless::{String, Vec};
 use umsh_ux_communicator::model::{
-    ChannelEntry, ChatId, ChatSummary, Chats, ClockSettings, ClockSource, ContactUri, Details,
-    EventQueue, Heard, Invite, KeyboardSettings, MAX_HEARD, MeetState, Member, Message, MessageId,
-    Messages, NearbyId, Node, NodeEvent, PeerDetail, PeerEntry, PeerId, PeerSummary, Peers,
-    RadioSettings, Reaction, Setting, ShareUri, Shareable, Statistics,
+    About, ChannelEntry, ChatId, ChatSummary, Chats, ClockSettings, ClockSource, ContactUri,
+    Details, EventQueue, Heard, Invite, KeyboardSettings, MAX_HEARD, MeetState, Member, Message,
+    MessageId, Messages, NearbyId, Node, NodeEvent, PeerDetail, PeerEntry, PeerId, PeerSummary,
+    Peers, RadioSettings, Reaction, Setting, ShareUri, Shareable, Statistics,
 };
 use umsh_ux_communicator::picker::RecentText;
 use umsh_ux_communicator::text::TextHeap;
@@ -726,6 +726,15 @@ impl<P: LocalPort, S: ChatStore> Node for CommunicatorNode<P, S> {
 
     fn statistics(&self) -> Statistics {
         self.settings.borrow().statistics()
+    }
+
+    fn about(&self) -> About {
+        let usage = self.chats.borrow().store().usage();
+        About {
+            hint: self.settings.borrow().hint(),
+            stored: u32::try_from(usage.bytes).unwrap_or(u32::MAX),
+            quota: u32::try_from(usage.quota).unwrap_or(u32::MAX),
+        }
     }
 
     fn watch_statistics(&self, on: bool) {

@@ -9,12 +9,12 @@ set is a curated subset of about 800 emoji, chosen by actual usage and
 listed in a committed manifest, so supporting more emoji means adding lines
 to that manifest, not changing code.
 
-Steps 1–3 of the [work order](#work-order) are implemented, apart from
-Device › About. Step 4 is implemented: the picker, its name filter,
-recents, and reaction **More**, with the hand-drawn reaction art retired.
-Of step 5, the reactions clarification (2) is in the spec; the other spec
-edits and the mockups are not. The protocol-facing changes are
-collected in [Protocol changes](#protocol-changes).
+All five steps of the [work order](#work-order) are implemented: the
+store and rendering, the picker, its name filter, recents, reaction
+**More**, Device › About with Credits, the spec clarifications, and the
+mockups drawn from Twemoji. What remains is the `THIRD-PARTY-NOTICES` file
+for releases and the site. The protocol-facing changes are collected in
+[Protocol changes](#protocol-changes).
 
 ## Where things stand
 
@@ -97,8 +97,8 @@ Two more licensing points:
 - **The UX mockups.** `docs/ux/src/hardware/mockups/tlora-pager-src/generate.py`
   draws emoji with `'Apple Color Emoji', 'Noto Color Emoji'`, so the
   published mockup PNGs contain Apple artwork, which is not licensed for
-  redistribution. Switch the generator to the same Twemoji rasters the
-  firmware uses. The mockups then show what the device draws, and no Apple
+  redistribution. Switch the generator to the vendored Twemoji SVGs the
+  firmware rasterizes. The mockups then show what the device draws, and no Apple
   art gets published.
 
 ## Choosing the set
@@ -403,7 +403,7 @@ one row each:
 - **Name**: the device name.
 - **Model**: the board, e.g. LILYGO T-LoRa Pager.
 - **Firmware**: the release tag (`fw-YYYY.MM.NN`), or the commit for a
-  development build, and the build date.
+  development build. No build date, so builds stay reproducible.
 - **Address**: the node's address in its fixed 44-character base58 form,
   and its hint.
 - **Storage**: chat store used of total.
@@ -459,7 +459,7 @@ picks from text:
 | Communicator UI | `umsh-ux-communicator` | `Typeface` (text with emoji beside it), the placeholder, field outlines drawn over text, picker, reaction **More**, avatar clusters, Device › About and Credits; retires the hand-drawn reaction art |
 | Crate notices | `Makefile`, CI | Generates and checks the committed crate list for Credits |
 | Trackers' UX | `umsh-ux-display-tracker` | Segmentation plus one hand-drawn one-bit placeholder per cluster, at each panel font's size |
-| Mockups | `docs/ux/.../generate.py` | Draw Twemoji rasters from `umsh-emoji` instead of Apple Color Emoji |
+| Mockups | `docs/ux/.../generate.py` | Draw the vendored Twemoji SVGs from `umsh-emoji` instead of Apple Color Emoji |
 
 Building firmware still needs only a Rust toolchain. `resvg` and
 `miniz_oxide`'s encoder are build dependencies, the way `swash` is for

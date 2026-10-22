@@ -8,8 +8,8 @@ use core::cell::{Cell, RefCell, RefMut};
 use crate::avatar::{AvatarStyle, BuiltinChannel, PeerShape};
 use crate::board::Board;
 use crate::model::{
-    BatteryReading, Bluetooth, BluetoothReading, Card, ChannelAccess, ChannelEntry, Charge, ChatId,
-    ChatKind, ChatSummary, Chats, ClockSettings, ClockSource, Contact, ContactUri,
+    About, BatteryReading, Bluetooth, BluetoothReading, Card, ChannelAccess, ChannelEntry, Charge,
+    ChatId, ChatKind, ChatSummary, Chats, ClockSettings, ClockSource, Contact, ContactUri,
     DEFAULT_AUTO_LOCK_S, Delivery, Details, Direction, EventQueue, Exchange, ExchangeEnd, Fix,
     Gnss, GnssReading, Heard, Invite, KeyboardSettings, Links, MAX_CHATS, MAX_HEARD, MAX_PEERS,
     MESSAGE_LEN, MeetState, Member, Message, MessageId, Messages, NearbyDevice, NearbyId, Node,
@@ -1862,6 +1862,15 @@ impl Node for Store {
         });
     }
 
+    /// A tenth of the chats' room used.
+    fn about(&self) -> About {
+        About {
+            hint: String::try_from("Geb9").unwrap_or_default(),
+            stored: 31_744,
+            quota: 307_200,
+        }
+    }
+
     /// A day's running, and traffic that grows with each read.
     fn statistics(&self) -> Statistics {
         let more = self.statistics_read.get();
@@ -2235,6 +2244,7 @@ impl Node for Store {
 /// starts on them on `board`.
 pub fn state(store: &'static Store, board: &'static Board) -> State {
     let mut state = State::new(store, board);
+    state.firmware = "fw-2026.10.01";
     state.status = StatusStrip {
         device_name: store.device_name(),
         battery_segments: 3,

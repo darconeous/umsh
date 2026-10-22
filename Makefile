@@ -22,7 +22,7 @@
 	build-tbeam-supreme flash-tbeam-supreme \
 	build-tlora-pager flash-tlora-pager \
 	build-xiao-esp32s3 flash-xiao-esp32s3 \
-	build-tdeck flash-tdeck \
+	build-tdeck flash-tdeck crate-notices crate-notices-check \
 	esp-toolchain-check espflash-check \
 	dfu-zip-techo dfu-zip-t1000e dfu-zip-sensecap-solar \
 	dfu-zip-wio-tracker-l1 dfu-zip-xiao-nrf52 \
@@ -513,6 +513,14 @@ build-tdeck: esp-toolchain-check
 flash-tdeck: espflash-check build-tdeck
 	espflash flash --before usb-reset --after watchdog-reset $(ESPFLASH_PORT_ARG) $(ESPFLASH_LAYOUT_tdeck) \
 		$(ESP32S3_TARGET_DIR)/firmware-tdeck
+
+# The crates Device › About › Credits lists: committed, and regenerated when
+# a communicator image's dependencies change.
+crate-notices: esp-toolchain-check
+	$(ESP_ENV) python3 scripts/crate_notices.py
+
+crate-notices-check: esp-toolchain-check
+	$(ESP_ENV) python3 scripts/crate_notices.py --check
 
 # The single-file image the web flasher writes at offset 0: second-stage
 # bootloader, partition table, and application merged together.
