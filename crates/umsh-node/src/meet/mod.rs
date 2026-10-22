@@ -312,6 +312,17 @@ pub fn commitment(
     SoftwareSha256.hash(&[COMMIT_LABEL, &asker.0, &asked.0, asker_nonce])
 }
 
+/// `H("UMSH meet code" ‖ S_A ‖ S_B ‖ N_A ‖ N_B)`, the digest [`code`]
+/// reduces.
+pub fn code_digest(
+    asker: &PublicKey,
+    asked: &PublicKey,
+    asker_nonce: &[u8; NONCE_LEN],
+    asked_nonce: &[u8; NONCE_LEN],
+) -> [u8; 32] {
+    SoftwareSha256.hash(&[CODE_LABEL, &asker.0, &asked.0, asker_nonce, asked_nonce])
+}
+
 /// The six-digit code both holders compare.
 pub fn code(
     asker: &PublicKey,
@@ -319,7 +330,7 @@ pub fn code(
     asker_nonce: &[u8; NONCE_LEN],
     asked_nonce: &[u8; NONCE_LEN],
 ) -> u32 {
-    let digest = SoftwareSha256.hash(&[CODE_LABEL, &asker.0, &asked.0, asker_nonce, asked_nonce]);
+    let digest = code_digest(asker, asked, asker_nonce, asked_nonce);
     u32::from_be_bytes([digest[0], digest[1], digest[2], digest[3]]) % CODE_MODULUS
 }
 

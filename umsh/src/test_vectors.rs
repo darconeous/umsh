@@ -11,6 +11,7 @@ use crate::{
         CryptoEngine, DerivedChannelKeys, NodeIdentity, PairwiseKeys, SharedSecret,
         software::{SoftwareAes, SoftwareIdentity, SoftwareSha256},
     },
+    node::meet,
 };
 
 type SoftwareCryptoEngine = CryptoEngine<SoftwareAes, SoftwareSha256>;
@@ -427,7 +428,87 @@ pub fn render_phase1_test_vectors_markdown() -> String {
         &vectors.blind_unicast,
     );
 
+    render_contact_exchange(&mut out, &vectors.node_a_public, &vectors.node_b_public);
+
     out
+}
+
+/// Example 9: contact exchange derivations, with Node A asking Node B.
+fn render_contact_exchange(out: &mut String, s_a: &PublicKey, s_b: &PublicKey) {
+    const MODEL_TLORA_PAGER: u16 = 9;
+
+    let n_a: [u8; meet::NONCE_LEN] = core::array::from_fn(|i| i as u8);
+    let n_b: [u8; meet::NONCE_LEN] = core::array::from_fn(|i| 0x10 + i as u8);
+    let commitment = meet::commitment(s_a, s_b, &n_a);
+    let code_digest = meet::code_digest(s_a, s_b, &n_a, &n_b);
+    let code = meet::code(s_a, s_b, &n_a, &n_b);
+    let hue_a = meet::session_hue(s_a);
+    let hue_b = meet::session_hue(s_b);
+    let hello = meet::MeetMessage::Hello {
+        model: MODEL_TLORA_PAGER,
+    }
+    .encode();
+    let request = meet::MeetMessage::Request { commitment }.encode();
+
+    writeln!(out).unwrap();
+    writeln!(out, "## Example 9: Contact Exchange Derivations").unwrap();
+    writeln!(out).unwrap();
+    writeln!(
+        out,
+        "[Contact exchange](app-meet.md) values, taking Node A's public key as the asking device's session key `S_A` and Node B's as the asked device's `S_B`."
+    )
+    .unwrap();
+    writeln!(out).unwrap();
+    writeln!(out, "- `N_A`: `{}`", hex_words(&n_a)).unwrap();
+    writeln!(out, "- `N_B`: `{}`", hex_words(&n_b)).unwrap();
+    writeln!(out).unwrap();
+    writeln!(out, "| Value | Result |").unwrap();
+    writeln!(out, "|---|---|").unwrap();
+    writeln!(out, "| `COMMITMENT` | `{}` |", hex_words(&commitment)).unwrap();
+    writeln!(
+        out,
+        "| Code digest, first four bytes | `{}` |",
+        hex_spaced(&code_digest[..4])
+    )
+    .unwrap();
+    writeln!(out, "| `CODE` | `{:06}` |", code).unwrap();
+    writeln!(
+        out,
+        "| `HUE` of `S_A` | {}, color `{:06X}` |",
+        hue_a,
+        meet::session_color(s_a)
+    )
+    .unwrap();
+    writeln!(
+        out,
+        "| `HUE` of `S_B` | {}, color `{:06X}` |",
+        hue_b,
+        meet::session_color(s_b)
+    )
+    .unwrap();
+    writeln!(out).unwrap();
+    writeln!(
+        out,
+        "Colors at hue steps 0, 64, 128, and 192 are `{:06X}`, `{:06X}`, `{:06X}`, and `{:06X}`.",
+        meet::SESSION_COLORS[0],
+        meet::SESSION_COLORS[64],
+        meet::SESSION_COLORS[128],
+        meet::SESSION_COLORS[192]
+    )
+    .unwrap();
+    writeln!(out).unwrap();
+    writeln!(
+        out,
+        "A Hello from a T-LoRa Pager (model identifier {}), and A's Request:",
+        MODEL_TLORA_PAGER
+    )
+    .unwrap();
+    for message in [&hello, &request] {
+        writeln!(out).unwrap();
+        writeln!(out, "```text").unwrap();
+        writeln!(out, "{}", wrap_hex_lines(message, 16)).unwrap();
+        writeln!(out, "```").unwrap();
+    }
 }
 
 struct Phase1Vectors {
