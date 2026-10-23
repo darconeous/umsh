@@ -379,10 +379,19 @@ struct RemoteTimeScreen: View {
             }
 
             Section {
-                LabeledContent {
-                    Text(edits.tzRule.value.map { formattedTimeZoneRule($0) } ?? "Not read")
-                } label: {
-                    RemoteFieldTitle("Time zone", problem: problems[edits.tzRule.property])
+                if let rule = edits.tzRule.value {
+                    NavigationLink {
+                        RemoteTimeZonePicker(rule: $edits.tzRule.edited.replacingNil(with: rule))
+                    } label: {
+                        LabeledContent {
+                            Text(formattedTimeZoneRule(rule))
+                        } label: {
+                            RemoteFieldTitle("Time zone", problem: problems[edits.tzRule.property])
+                        }
+                    }
+                } else {
+                    LabeledContent("Time zone", value: "Not read")
+                        .labeledContentStyle(SettingsFieldStyle())
                 }
                 if edits.tzRule.isKnown, edits.tzRule.value != phoneTimeZoneRule {
                     Button("Use This iPhone's Time Zone") {
@@ -532,6 +541,71 @@ struct RemoteTimeScreen: View {
             desired.gnssTimeTrust = timeTrust.value
             return desired
         }
+    }
+}
+
+/// Every zone this iPhone knows, for a device that belongs somewhere other
+/// than where the phone is. Choosing one is an edit, applied with the rest
+/// of the Time screen.
+struct RemoteTimeZonePicker: View {
+    @Binding var rule: String
+    @Environment(\.dismiss) private var dismiss
+    @State private var zones: [DeviceTimeZone]?
+    @State private var query = ""
+
+    var body: some View {
+        List {
+            if let zones {
+                let shown = query.isEmpty ? zones : zones.filter { $0.matches(query) }
+                ForEach(shown) { zone in
+                    Button {
+                        rule = zone.rule
+                        dismiss()
+                    } label: {
+                        row(zone)
+                    }
+                    .buttonStyle(.plain)
+                }
+                if shown.isEmpty {
+                    Text("None").foregroundStyle(.secondary)
+                }
+            } else {
+                ProgressView()
+                    .frame(maxWidth: .infinity)
+            }
+        }
+        .searchable(text: $query, prompt: "Zone or city")
+        .navigationTitle("Time Zone")
+        .navigationBarTitleDisplayMode(.inline)
+        .task {
+            zones = await Task.detached(priority: .userInitiated) {
+                DeviceTimeZone.all()
+            }.value
+        }
+    }
+
+    private func row(_ zone: DeviceTimeZone) -> some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(zone.name)
+                if !zone.cities.isEmpty {
+                    Text(zone.cities.joined(separator: ", "))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+            }
+            Spacer()
+            Text(formattedUTCOffset(zone.offsetMinutes))
+                .foregroundStyle(.secondary)
+                .monospacedDigit()
+            Image(systemName: "checkmark")
+                .foregroundStyle(.tint)
+                .opacity(zone.rule == rule ? 1 : 0)
+                .accessibilityHidden(zone.rule != rule)
+        }
+        .contentShape(Rectangle())
+        .accessibilityAddTraits(zone.rule == rule ? .isSelected : [])
     }
 }
 

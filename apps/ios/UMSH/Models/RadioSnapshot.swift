@@ -581,6 +581,68 @@ func formattedTimeZoneRule(_ rule: String, at date: Date = .now) -> String {
     return "\(name) (\(offset))"
 }
 
+/// A time zone a device can be given, as the picker lists it: what this
+/// iPhone calls it, the rule it keeps, and the cities that keep it.
+struct DeviceTimeZone: Identifiable, Hashable, Sendable {
+    let name: String
+    let rule: String
+    /// The offset the rule keeps when the list was made, in minutes east.
+    let offsetMinutes: Int16
+    let cities: [String]
+
+    var id: String { "\(name)\n\(rule)" }
+
+    func matches(_ query: String) -> Bool {
+        name.localizedStandardContains(query)
+            || cities.contains { $0.localizedStandardContains(query) }
+    }
+
+    /// Every zone in this iPhone's database that a device accepts, west to
+    /// east by the offset each keeps at `date`.
+    ///
+    /// Cities that keep the same rule under the same name share a row: the
+    /// device holds the rule alone, so it could not tell them apart. Reads
+    /// the zone database, so it belongs off the main thread.
+    static func all(at date: Date = .now) -> [DeviceTimeZone] {
+        struct Key: Hashable {
+            let name: String
+            let rule: String
+        }
+        let instant = Int64(date.timeIntervalSince1970)
+        var cities: [Key: Set<String>] = [:]
+        for identifier in Set(TimeZone.knownTimeZoneIdentifiers + ["UTC"]) {
+            guard let zone = TimeZone(identifier: identifier),
+                  let rule = zoneRule(identifier: identifier)
+            else { continue }
+            // A zone that never changes is named for the time it keeps:
+            // Arizona is on Mountain Standard Time, not Mountain Time.
+            let style: NSTimeZone.NameStyle =
+                zone.nextDaylightSavingTimeTransition(after: date) == nil ? .standard : .generic
+            guard let name = zone.localizedName(for: style, locale: .current) else { continue }
+            // "America/Argentina/Buenos_Aires" is Buenos Aires; "UTC" is
+            // no city at all.
+            let parts = identifier.split(separator: "/")
+            let city = parts.count > 1 ? parts.last.map { $0.replacingOccurrences(of: "_", with: " ") } : nil
+            cities[Key(name: name, rule: rule), default: []].formUnion(city.map { [$0] } ?? [])
+        }
+        return cities.compactMap { key, cities in
+            ruleOffsetMin(rule: key.rule, unixSeconds: instant).map {
+                DeviceTimeZone(
+                    name: key.name,
+                    rule: key.rule,
+                    offsetMinutes: $0,
+                    cities: cities.sorted { $0.localizedStandardCompare($1) == .orderedAscending }
+                )
+            }
+        }
+        .sorted {
+            $0.offsetMinutes != $1.offsetMinutes
+                ? $0.offsetMinutes < $1.offsetMinutes
+                : $0.name.localizedStandardCompare($1.name) == .orderedAscending
+        }
+    }
+}
+
 extension UlcpFixKind {
     var symbolName: String {
         switch self {
