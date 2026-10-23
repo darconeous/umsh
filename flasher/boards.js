@@ -107,6 +107,9 @@ const WARNINGS = {
   "xiao-esp32s3": [
     "If this board previously ran different firmware, flashing clears whatever settings that firmware had stored on it.",
   ],
+  tdeck: [
+    "If this board previously ran different firmware, flashing clears whatever settings that firmware had stored on it.",
+  ],
 };
 
 /**

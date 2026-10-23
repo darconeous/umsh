@@ -21,6 +21,7 @@ and feature callouts, which would be misleading on this site.
 | `heltec-v2.png` | Heltec | [WiFi LoRa 32 V2](https://heltec.org/project/wifi-lora-32v2/)—[front product photo](https://heltec.org/wp-content/uploads/2024/07/wifi-lora-32-v2-1.png) |
 | `tbeam-supreme.jpg` | LilyGO | [T-Beam SUPREME](https://lilygo.cc/en-us/products/t-beam-supreme)—the gallery's front-and-back shot, whose radio module reads `SX1262`, so it pictures the variant UMSH supports rather than the LR1121 one |
 | `tlora-pager.png` | LilyGO | Front-facing T-LoRa Pager image supplied by the project maintainer as `tlorapager.png`; original publication source not recorded |
+| `tdeck.png` | LilyGO | [T-Deck Plus](https://lilygo.cc/products/t-deck-plus)—the gallery's front shot (`T-DECK-PLUS_1.jpg`), whose screen shows LilyGO's own factory firmware, cut out onto a transparent canvas |
 
 The iOS `board-heltec-v2` and `board-tlora-pager` image sets use these same
 sources, fitted to the accessory picker's 180×120-point canvas at 2× and 3×.
@@ -28,7 +29,8 @@ The website preserves the supplied product images; the app versions are resized
 onto transparent canvases.
 
 The iOS `board-xiao-esp32s3` image set is cut out from the same Seeed Studio
-photograph as `xiao-esp32s3.jpg`, onto a transparent canvas.
+photograph as `xiao-esp32s3.jpg`, onto a transparent canvas. The iOS
+`board-tdeck` image set is `tdeck.png` fitted onto the same canvas.
 
 ## Hero composite
 
