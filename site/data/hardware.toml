@@ -26,6 +26,11 @@ name = "Companion radios and trackers"
 intro = "Radios that pair with the phone app over Bluetooth. This is where most people start."
 
 [[categories]]
+id = "communicator"
+name = "Communicators"
+intro = "Handhelds with a keyboard and a screen, which work without a phone at all."
+
+[[categories]]
 id = "repeater"
 name = "Repeaters"
 intro = "Nodes meant to be installed somewhere and left running, to extend how far a mesh reaches."
@@ -35,27 +40,22 @@ id = "devkit"
 name = "Development boards"
 intro = "Open boards for building something of your own, or for working on UMSH itself."
 
-[[categories]]
-id = "messenger"
-name = "Self-contained messengers"
-intro = "Handhelds with a keyboard and a screen, which work without a phone at all."
-
 [[boards]]
 id = "t1000e"
 name = "SenseCAP T1000-E"
 vendor = "Seeed Studio"
 category = "companion"
 status = "proven"
-status_note = "The reference board for UMSH development, and the one with the most hours on it."
+status_note = "The radio, Bluetooth, and GNSS have all been exercised."
 blurb = """
 A sealed, pocket-sized card tracker with a magnetic charging cable. No screen \
 and one button, so it pairs with the phone app rather than standing alone. \
 The most thoroughly exercised board in the project."""
-mcu = "nRF52840"
+mcu = "Nordic nRF52840"
 radio = "Semtech LR1110"
 gnss = "Airoha AG3335"
 display = "None"
-battery = "Internal Li-ion"
+battery = "Built-in Li-ion"
 extras = "Buzzer, accelerometer, light sensor"
 vendor_url = "https://www.seeedstudio.com/SenseCAP-Card-Tracker-T1000-E-for-Meshtastic-p-5913.html"
 photo = "t1000e.jpg"
@@ -79,17 +79,17 @@ name = "T-Echo"
 vendor = "LilyGO"
 category = "companion"
 status = "proven"
-status_note = "The e-paper display, GNSS, and radio have all been exercised."
+status_note = "The radio, e-paper display, and GNSS have all been exercised."
 blurb = """
 A handheld tracker with a 1.54-inch e-paper display, so it can show messages \
 and status on its own while still working as a phone companion. Low power \
 draw between updates, and readable in direct sun. A built-in backlight makes \
 it readable at night."""
-mcu = "nRF52840"
+mcu = "Nordic nRF52840"
 radio = "Semtech SX1262"
 gnss = "Quectel L76K"
 display = "1.54\" e-paper, 200×200"
-battery = "850 mAh (2400 mAh on the Plus)"
+battery = "850 mAh Li-ion (2400 mAh on the Plus)"
 extras = "Touch button, RGB LED, real-time clock"
 vendor_url = "https://lilygo.cc/products/t-echo"
 photo = "techo.jpg"
@@ -103,8 +103,7 @@ app_base = "0x26000"
 softdevice = "S140 6.1.1"
 volume = "TECHOBOOT"
 dfu_entry = "Double-tap the reset button, or run a 1200-baud touch on the serial port."
-quirks = [
-]
+quirks = []
 
 [[boards]]
 id = "wio-tracker-l1"
@@ -112,17 +111,17 @@ name = "Wio Tracker L1"
 vendor = "Seeed Studio"
 category = "companion"
 status = "proven"
-status_note = "The display, GNSS, and radio have all been exercised."
+status_note = "The radio, display, and GNSS have all been exercised."
 blurb = """
 A tracker with a small OLED display, a navigation button, and a mechanical \
 power switch—the switch cuts the battery, so it survives a long spell in a \
 drawer. The Pro ships assembled in a case, as pictured; the plain L1 is a \
 bare board. The e-ink variant is not yet supported."""
-mcu = "nRF52840"
+mcu = "Nordic nRF52840"
 radio = "Semtech SX1262"
 gnss = "Quectel L76K"
 display = "0.96\" OLED, 128×64"
-battery = "Li-ion with hardware power switch"
+battery = "Li-ion, with a hardware power switch"
 extras = "Buzzer, navigation button"
 vendor_url = "https://www.seeedstudio.com/Wio-Tracker-L1-p-6453.html"
 photo = "wio-tracker-l1.jpg"
@@ -136,8 +135,7 @@ app_base = "0x27000"
 softdevice = "S140 7.3.0"
 volume = "TRACKER L1"
 dfu_entry = "Double-tap the reset button, or run a 1200-baud touch on the serial port."
-quirks = [
-]
+quirks = []
 
 [[boards]]
 id = "tbeam-supreme"
@@ -145,7 +143,7 @@ name = "T-Beam Supreme"
 vendor = "LilyGO"
 category = "devkit"
 status = "proven"
-status_note = "The display, GNSS, and radio have all been exercised."
+status_note = "The radio, display, and GNSS have all been exercised."
 blurb = """
 The best-equipped board UMSH runs on: an OLED display, a GNSS receiver, a \
 real-time clock, an 18650 holder, and a power management chip that owns \
@@ -154,9 +152,9 @@ is doing. Sold with several different radios; UMSH runs on the SX1262 \
 version."""
 mcu = "Espressif ESP32-S3"
 radio = "Semtech SX1262"
-gnss = "Quectel L76K or u-blox MAX-M10, depending on the variant"
+gnss = "Quectel L76K or u-blox MAX-M10, by variant"
 display = "1.3\" OLED, 128×64"
-battery = "18650 cell with onboard charger and fuel gauge"
+battery = "18650 cell, with a fuel gauge"
 extras = "Real-time clock, environmental sensor, IMU, magnetometer, microSD"
 vendor_url = "https://lilygo.cc/en-us/products/t-beam-supreme"
 photo = "tbeam-supreme.jpg"
@@ -165,10 +163,10 @@ photo = "tbeam-supreme.jpg"
 make_target = "flash-tbeam-supreme"
 methods = ["esp-serial"]
 chip = "ESP32-S3"
-dfu_entry = "None needed—the board enters its ROM bootloader on its own when the flashing tool asserts the USB serial control lines. If that ever fails, hold BOOT, tap RESET, release BOOT."
+dfu_entry = "None needed—the board enters its ROM bootloader on its own when the flashing tool asserts the USB serial control lines. If that fails, hold BOOT, tap RESET, then release BOOT."
 quirks = [
   "Building this board needs Espressif's Xtensa Rust toolchain, installed with <code>espup</code>.",
-  "Only the SX1262 variant is supported. The LR1121 version needs a different radio driver and is not built.",
+  "Only the SX1262 version is supported; the LR1121 version needs a radio driver UMSH does not have.",
 ]
 
 [[boards]]
@@ -181,11 +179,11 @@ status_note = "The radio, Bluetooth, GNSS, and power path have all been exercise
 blurb = """
 An outdoor, solar-powered node built to be mounted somewhere and left alone. \
 A 5 W panel and four 18650 cells carry it through bad weather and freezing temperatures."""
-mcu = "nRF52840"
+mcu = "Nordic nRF52840"
 radio = "Semtech SX1262"
 gnss = "Quectel L76K"
 display = "None"
-battery = "4 × 18650 with 5 W solar panel"
+battery = "Four 18650 cells, with a 5 W solar panel"
 extras = "IP-rated enclosure, two buttons, two LEDs"
 vendor_url = "https://www.seeedstudio.com/SenseCAP-Solar-Node-P1-Pro-for-Meshtastic-LoRa-p-6412.html"
 photo = "sensecap-solar.jpg"
@@ -209,7 +207,7 @@ name = "WiFi LoRa 32 V3"
 vendor = "Heltec"
 category = "devkit"
 status = "proven"
-status_note = "Bluetooth pairing and the radio have both been exercised."
+status_note = "The radio and Bluetooth have both been exercised."
 blurb = """
 An inexpensive, widely available development board with an OLED display and exposed \
 pins."""
@@ -217,8 +215,8 @@ mcu = "Espressif ESP32-S3"
 radio = "Semtech SX1262"
 gnss = "None"
 display = "0.96\" OLED, 128×64"
-battery = "LiPo connector with onboard charger"
-extras = "USB-C, exposed GPIO headers"
+battery = "Li-ion via JST connector"
+extras = "Exposed GPIO headers"
 vendor_url = "https://heltec.org/project/wifi-lora-32-v3/"
 photo = "heltec-v3.png"
 
@@ -254,12 +252,12 @@ blurb = """
 A small nRF52 module on a radio carrier board. No buttons are populated, \
 so it is a starting point for a build of your own rather than a finished \
 device—and an inexpensive way to put a node on the air."""
-mcu = "nRF52840"
+mcu = "Nordic nRF52840"
 radio = "Semtech SX1262"
 gnss = "None"
 display = "None"
-battery = "USB + LiPo (via solder pads)"
-extras = "No buttons populated, RGB LED"
+battery = "Li-ion via solder pads"
+extras = "RGB LED, no buttons populated"
 vendor_url = "https://www.seeedstudio.com/XIAO-nRF52840-Wio-SX1262-Kit-for-Meshtastic-p-6400.html"
 photo = "xiao-nrf52.jpg"
 
@@ -272,8 +270,7 @@ app_base = "0x27000"
 softdevice = "S140 7.3.0"
 volume = "XIAO-SENSE"
 dfu_entry = "Double-tap the reset button on the module."
-quirks = [
-]
+quirks = []
 
 [[boards]]
 id = "xiao-esp32s3"
@@ -291,7 +288,7 @@ mcu = "Espressif ESP32-S3"
 radio = "Semtech SX1262"
 gnss = "None"
 display = "None"
-battery = "USB + LiPo (via solder pads)"
+battery = "Li-ion via solder pads"
 extras = "User button, status LED, Wi-Fi"
 vendor_url = "https://www.seeedstudio.com/Wio-SX1262-with-XIAO-ESP32S3-p-5982.html"
 photo = "xiao-esp32s3.jpg"
@@ -310,18 +307,18 @@ quirks = [
 id = "tlora-pager"
 name = "T-LoRa Pager"
 vendor = "LilyGO"
-category = "messenger"
-status = "partial"
-status_note = "Messaging, the keyboard, the screen, and battery reporting run on hardware; the rest is still being exercised."
+category = "communicator"
+status = "proven"
+status_note = "The radio, Bluetooth, screen, keyboard, rotary encoder, GNSS, and fuel gauge have all been exercised."
 blurb = """
 A keyboard handheld with a wide landscape screen and a rotary encoder. \
 It sends and receives messages on its own, no phone needed."""
 mcu = "Espressif ESP32-S3"
-radio = "Semtech SX1262 (other radio modules are offered)"
+radio = "Semtech SX1262"
 gnss = "u-blox MIA-M10Q"
 display = "2.33\" TFT, 480×222"
-battery = "1500 mAh Li-ion with fuel gauge"
-extras = "Backlit QWERTY keyboard, rotary encoder, haptics, SD card"
+battery = "1500 mAh Li-ion, with a fuel gauge"
+extras = "Backlit QWERTY keyboard, rotary encoder, haptics, microSD"
 vendor_url = "https://lilygo.cc/products/t-lora-pager"
 photo = "tlora-pager.png"
 
@@ -329,39 +326,38 @@ photo = "tlora-pager.png"
 make_target = "flash-tlora-pager"
 methods = ["esp-serial"]
 chip = "ESP32-S3"
-dfu_entry = "Connect native USB. If automatic entry fails, hold BOOT, tap RESET, then release BOOT. Tap RESET with BOOT released if the board remains in download mode after flashing."
+dfu_entry = "None needed—the board enters its ROM bootloader on its own when the flashing tool asserts the USB serial control lines. If that fails, hold BOOT, tap RESET, then release BOOT. If the board stays in download mode after flashing, tap RESET."
 quirks = [
+  "Building this board needs Espressif's Xtensa Rust toolchain, installed with <code>espup</code>.",
   "Only the SX1262 version is supported.",
-  "Builds require Espressif's Xtensa Rust toolchain, installed with <code>espup</code>.",
-  "The initial image uses the existing 4 MB UMSH layout; additional fitted flash is unused.",
 ]
 
 [[boards]]
 id = "tdeck"
 name = "T-Deck"
 vendor = "LilyGO"
-category = "messenger"
+category = "communicator"
 status = "proven"
-status_note = "The keyboard, trackball, touch screen, and GNSS have all been exercised."
+status_note = "The radio, Bluetooth, touchscreen, keyboard, trackball, and GNSS have all been exercised."
 blurb = """
-A keyboard handheld with a touch screen and a trackball. It sends and \
+A keyboard handheld with a touchscreen and a trackball. It sends and \
 receives messages on its own, no phone needed. The T-Deck Plus runs the \
 same firmware."""
 mcu = "Espressif ESP32-S3"
 radio = "Semtech SX1262"
-gnss = "Built into the Plus; the T-Deck takes one on its Grove port"
-display = "2.8\" IPS touch screen, 320×240"
-battery = "LiPo via JST connector"
-extras = "QWERTY keyboard, trackball, speaker"
+gnss = "u-blox MIA-M10Q or Quectel L76K on the Plus; Grove port on the T-Deck"
+display = "2.8\" TFT touchscreen, 320×240"
+battery = "Li-ion via JST connector (2000 mAh on the Plus)"
+extras = "Backlit QWERTY keyboard, trackball, speaker, microSD"
 vendor_url = "https://lilygo.cc/products/t-deck"
-photo = "tdeck.jpg"
+photo = "tdeck.png"
 
 [boards.flash]
 make_target = "flash-tdeck"
 methods = ["esp-serial"]
 chip = "ESP32-S3"
-dfu_entry = "Connect native USB. If automatic entry fails, hold the trackball down, press and release the reset button on the left side, then release the trackball."
+dfu_entry = "None needed—the board enters its ROM bootloader on its own when the flashing tool asserts the USB serial control lines. If that fails, hold the trackball down, tap the reset button on the left side, then release the trackball."
 quirks = [
-  "The version without a LoRa radio is not supported.",
-  "Builds require Espressif's Xtensa Rust toolchain, installed with <code>espup</code>.",
+  "Building this board needs Espressif's Xtensa Rust toolchain, installed with <code>espup</code>.",
+  "Only the version with a LoRa radio is supported.",
 ]
