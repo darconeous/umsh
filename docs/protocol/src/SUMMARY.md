@@ -55,6 +55,7 @@
 - [Identity Export Format](identity-export.md)
 - [Internet Bridging](internet-bridging.md)
 - [Security Considerations](security-considerations.md)
+- [Ack Authentication Transition](ack-transition.md)
 - [Amateur Radio Operation](amateur-radio.md)
 - [Limitations & Open Items](limitations.md)
 - [FAQ](faq.md)

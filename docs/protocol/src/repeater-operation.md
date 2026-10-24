@@ -169,7 +169,7 @@ Cancellation acts on the queue, not on the future. It removes whatever matching 
 
 The duplicate-cache entry for a cancelled forward remains. The packet was handled; a later copy of the same attempt is still a duplicate.
 
-A repeater cannot verify the keyed `ack_tag` half of the trailer, so cancellation rests on the public `ack_mic` alone. The [forgery this exposes](security.md#ack-tag-construction) suppresses at most one queued forward per overheard ack and is bounded by the Route Retry path.
+A repeater holds no key to verify the `ack_tag` half of the trailer, so cancellation rests on the public `ack_mic` alone. The [forgery this exposes](security.md#ack-tag-construction) suppresses at most one queued forward per overheard ack and is bounded by the Route Retry path.
 
 ### Route Failure Recovery
 

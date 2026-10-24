@@ -237,3 +237,36 @@ A Hello from a T-LoRa Pager (model identifier 9), and A's Request:
 DC 81 D6 3D DE 8B DD 70 E0 1A 0F 8B 50 BF 5F FA
 66 9E 7D
 ```
+
+## Example 10: MAC Ack
+
+Node B's acknowledgement of Example 4. `ACK MIC` is the first four bytes of Example 4's MIC. `ACK TAG` is `truncate_to_4(S2V(K_mic, S1 = C8, S2 = V, S3 = ACK MIC))`, where `C8` is the ack's AAD (its FCF, with no static options) and `V` is Example 4's full S2V output, which its 16-byte MIC carries whole.
+
+| Field | Value | Hex |
+|---|---|---|
+| FCF | VER=3, TYPE=1 (MAC ack), S=0, R=0, H=0 | `C8` |
+| ACK MIC | First 4 bytes of V | `AA 17 13 06` |
+| ACK TAG | 4-byte MIC | `D2 FB 63 BD` |
+
+```text
+C8 AA 17 13 06 D2 FB 63 BD
+```
+
+Total: 9 bytes.
+
+## Example 11: MAC Ack with Operator Callsign
+
+The acknowledgement of Example 10 as a Licensed-Only node sends it, carrying the operator callsign `N0CALL`. The callsign is a static option, so the ack's AAD is `C8` followed by the option's type-length-value encoding, and the tag differs from Example 10's.
+
+| Field | Value | Hex |
+|---|---|---|
+| FCF | VER=3, TYPE=1 (MAC ack), S=0, R=0, H=0 | `C8` |
+| Options | Operator Callsign (option 4), `N0CALL` | `44 5B BB 08 2C` |
+| ACK MIC | First 4 bytes of V | `AA 17 13 06` |
+| ACK TAG | 4-byte MIC | `A8 78 BE 6E` |
+
+```text
+C8 44 5B BB 08 2C AA 17 13 06 A8 78 BE 6E
+```
+
+Total: 14 bytes.

@@ -5,8 +5,10 @@
 
 use std::fmt::Write;
 
+use hamaddr::HamAddr;
+
 use crate::{
-    core::{ChannelKey, MicSize, NodeHint, PacketBuilder, PacketHeader, PublicKey},
+    core::{ChannelKey, MicSize, NodeHint, OptionNumber, PacketBuilder, PacketHeader, PublicKey},
     crypto::{
         CryptoEngine, DerivedChannelKeys, NodeIdentity, PairwiseKeys, SharedSecret,
         software::{SoftwareAes, SoftwareIdentity, SoftwareSha256},
@@ -430,6 +432,94 @@ pub fn render_phase1_test_vectors_markdown() -> String {
 
     render_contact_exchange(&mut out, &vectors.node_a_public, &vectors.node_b_public);
 
+    let mac_ack_header = parse_header(&vectors.mac_ack);
+    let mac_ack_trailer = &vectors.mac_ack[mac_ack_header.mic_range.clone()];
+    render_example(
+        &mut out,
+        "Example 10: MAC Ack",
+        "Node B's acknowledgement of Example 4. `ACK MIC` is the first four bytes of Example 4's MIC. `ACK TAG` is `truncate_to_4(S2V(K_mic, S1 = C8, S2 = V, S3 = ACK MIC))`, where `C8` is the ack's AAD (its FCF, with no static options) and `V` is Example 4's full S2V output, which its 16-byte MIC carries whole.",
+        &[
+            ("FCF", "VER=3, TYPE=1 (MAC ack), S=0, R=0, H=0", "C8".into()),
+            (
+                "ACK MIC",
+                "First 4 bytes of V",
+                hex_spaced(&mac_ack_trailer[..4]),
+            ),
+            ("ACK TAG", "4-byte MIC", hex_spaced(&mac_ack_trailer[4..])),
+        ],
+        &vectors.mac_ack,
+    );
+
+    let callsign_header = parse_header(&vectors.mac_ack_callsign);
+    let callsign_trailer = &vectors.mac_ack_callsign[callsign_header.mic_range.clone()];
+    render_example(
+        &mut out,
+        "Example 11: MAC Ack with Operator Callsign",
+        "The acknowledgement of Example 10 as a Licensed-Only node sends it, carrying the operator callsign `N0CALL`. The callsign is a static option, so the ack's AAD is `C8` followed by the option's type-length-value encoding, and the tag differs from Example 10's.",
+        &[
+            ("FCF", "VER=3, TYPE=1 (MAC ack), S=0, R=0, H=0", "C8".into()),
+            (
+                "Options",
+                "Operator Callsign (option 4), `N0CALL`",
+                hex_spaced(&vectors.mac_ack_callsign[callsign_header.options_range.clone()]),
+            ),
+            (
+                "ACK MIC",
+                "First 4 bytes of V",
+                hex_spaced(&callsign_trailer[..4]),
+            ),
+            ("ACK TAG", "4-byte MIC", hex_spaced(&callsign_trailer[4..])),
+        ],
+        &vectors.mac_ack_callsign,
+    );
+
+    out
+}
+
+/// Render the legacy-tag vector that closes the ack transition appendix.
+///
+/// `docs/protocol/src/ack-transition.md` is expected to end with this text.
+pub fn render_ack_transition_vector_markdown() -> String {
+    let vectors = generate_phase1_vectors();
+    let header = parse_header(&vectors.mac_ack_legacy);
+    let trailer = &vectors.mac_ack_legacy[header.mic_range.clone()];
+    let mut out = String::new();
+    writeln!(&mut out, "## Test Vector").unwrap();
+    writeln!(&mut out).unwrap();
+    writeln!(
+        &mut out,
+        "Node B's acknowledgement of [Example 4](test-vectors.md#example-4-encrypted-unicast-with-ack-requested-s1), sealed with the legacy construction. `V` is Example 4's 16-byte MIC, and the keys are those of the [test-vector conventions](test-vectors.md#conventions)."
+    )
+    .unwrap();
+    writeln!(&mut out).unwrap();
+    writeln!(&mut out, "| Field | Value | Hex |").unwrap();
+    writeln!(&mut out, "|---|---|---|").unwrap();
+    for (field, value, hex) in [
+        (
+            "FCF",
+            "VER=3, TYPE=1 (MAC ack), S=0, R=0, H=0",
+            "C8".to_string(),
+        ),
+        (
+            "Options",
+            "Legacy Ack Tag (option 254)",
+            hex_spaced(&vectors.mac_ack_legacy[header.options_range.clone()]),
+        ),
+        ("ACK MIC", "First 4 bytes of V", hex_spaced(&trailer[..4])),
+        (
+            "ACK TAG",
+            "`truncate_to_4(AES-256-ECB(K_enc, V))`",
+            hex_spaced(&trailer[4..]),
+        ),
+    ] {
+        writeln!(&mut out, "| {} | {} | `{}` |", field, value, hex).unwrap();
+    }
+    writeln!(&mut out).unwrap();
+    writeln!(&mut out, "```text").unwrap();
+    writeln!(&mut out, "{}", wrap_hex_lines(&vectors.mac_ack_legacy, 16)).unwrap();
+    writeln!(&mut out, "```").unwrap();
+    writeln!(&mut out).unwrap();
+    writeln!(&mut out, "Total: {} bytes.", vectors.mac_ack_legacy.len()).unwrap();
     out
 }
 
@@ -527,6 +617,9 @@ struct Phase1Vectors {
     multicast_authenticated: Vec<u8>,
     unicast_with_options: Vec<u8>,
     blind_unicast: Vec<u8>,
+    mac_ack: Vec<u8>,
+    mac_ack_callsign: Vec<u8>,
+    mac_ack_legacy: Vec<u8>,
 }
 
 fn generate_phase1_vectors() -> Phase1Vectors {
@@ -551,6 +644,13 @@ fn generate_phase1_vectors() -> Phase1Vectors {
     let channel_key = ChannelKey([0x5A; 32]);
     let channel = engine.derive_channel_keys(&channel_key);
     let blind_keys = engine.derive_blind_keys(&pairwise, &channel);
+    let unicast_ackreq_fullsrc =
+        build_unicast_ackreq_fullsrc(&engine, &pairwise, &node_a_public, node_b_public.hint());
+    // A 16-byte MIC is the request's whole S2V output.
+    let ack_v: [u8; 16] = unicast_ackreq_fullsrc[parse_header(&unicast_ackreq_fullsrc).mic_range]
+        .try_into()
+        .unwrap();
+    let callsign = HamAddr::try_from_callsign("N0CALL").unwrap();
 
     Phase1Vectors {
         node_a_private,
@@ -567,12 +667,16 @@ fn generate_phase1_vectors() -> Phase1Vectors {
             &node_a_public,
             node_b_public.hint(),
         ),
-        unicast_ackreq_fullsrc: build_unicast_ackreq_fullsrc(
+        unicast_ackreq_fullsrc,
+        mac_ack: build_mac_ack(&engine, &pairwise, &ack_v, None, false),
+        mac_ack_callsign: build_mac_ack(
             &engine,
             &pairwise,
-            &node_a_public,
-            node_b_public.hint(),
+            &ack_v,
+            Some(callsign.as_trimmed_slice()),
+            false,
         ),
+        mac_ack_legacy: build_mac_ack(&engine, &pairwise, &ack_v, None, true),
         multicast_encrypted: build_multicast_encrypted(&engine, &channel, &node_a_public),
         multicast_authenticated: build_multicast_authenticated(&engine, &channel, &node_a_public),
         unicast_with_options: build_unicast_with_options(
@@ -651,6 +755,27 @@ fn build_unicast_ackreq_fullsrc(
         .unwrap();
     engine.seal_packet(&mut packet, pairwise).unwrap();
     packet.as_bytes().to_vec()
+}
+
+/// Node B's acknowledgement of the packet whose full S2V output is `v`.
+fn build_mac_ack(
+    engine: &SoftwareCryptoEngine,
+    pairwise: &PairwiseKeys,
+    v: &[u8; 16],
+    callsign: Option<&[u8]>,
+    legacy: bool,
+) -> Vec<u8> {
+    let mut buf = [0u8; 64];
+    let mut builder = PacketBuilder::new(&mut buf).mac_ack([0u8; 8]);
+    if let Some(callsign) = callsign {
+        builder = builder.option(OptionNumber::OperatorCallsign, callsign);
+    }
+    if legacy {
+        builder = builder.legacy_ack_tag();
+    }
+    let len = builder.build().unwrap().len();
+    engine.seal_mac_ack(pairwise, v, &mut buf[..len]).unwrap();
+    buf[..len].to_vec()
 }
 
 fn build_multicast_encrypted(
@@ -804,7 +929,7 @@ fn parse_header(bytes: &[u8]) -> PacketHeader {
 mod tests {
     use std::fs;
 
-    use super::render_phase1_test_vectors_markdown;
+    use super::{render_ack_transition_vector_markdown, render_phase1_test_vectors_markdown};
 
     #[test]
     fn phase1_vectors_match_protocol_appendix() {
@@ -815,5 +940,19 @@ mod tests {
         ))
         .expect("read protocol test vectors");
         assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn legacy_ack_vector_matches_transition_appendix() {
+        let expected = render_ack_transition_vector_markdown();
+        let actual = fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../docs/protocol/src/ack-transition.md"
+        ))
+        .expect("read ack transition appendix");
+        assert!(
+            actual.ends_with(&expected),
+            "ack-transition.md must end with:\n{expected}"
+        );
     }
 }

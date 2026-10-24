@@ -348,6 +348,8 @@ The AAD is constructed by concatenating the following fields in order:
 
 Dynamic options and the flood hop count are excluded from the AAD because they may be modified by repeaters during forwarding. The FCF's flood-hops-present (`H`) bit is part of that budget rather than of the packet's identity, and is cleared before the byte enters the AAD: a sender abandoning a source route re-floods a packet that is already sealed, which adds `FHOPS` where the original had none. Masking the bit does not weaken the binding. Flipping it on the wire shifts every field the parser reads after it, so DST/CHANNEL, SRC, and SECINFO enter the AAD as different values and the MIC check still fails.
 
+A [MAC Ack](packet-types.md#mac-ack-packet) has no DST, CHANNEL, SRC, or SECINFO field, so its AAD is the FCF and static options alone (see [Ack Tag Construction](#ack-tag-construction)). For an ack, masking `H` is what lets a re-sent acknowledgement, which may differ from the first only in its flood budget, carry the same tag.
+
 Note that the AAD ordering above is **canonical** and differs from wire ordering. On the wire, static options appear after SECINFO (immediately before the payload); in the AAD they appear at position 2, before DST/CHANNEL. Wire ordering and AAD ordering are intentionally decoupled so that the canonical AAD structure remains stable regardless of where options sit on the wire.
 
 #### Static Option Encoding in AAD
@@ -367,7 +369,7 @@ Using 2-byte fields for both `number` and `length` ensures that option numbers a
 
 ### Ack Tag Construction
 
-When a packet type requests an acknowledgement (UNAR or BUAR), the acknowledgement carries two fields that are computed independently by both the sender and the receiver: an **ack MIC** for correlation and an **ack tag** for authentication.
+When a packet type requests an acknowledgement (UNAR or BUAR), the acknowledgement carries two 4-byte fields: an **ack MIC** for correlation and an **ack tag** for authentication.
 
 The **ack MIC** is simply the first 4 bytes of the original packet's on-wire MIC:
 
@@ -377,28 +379,30 @@ ack_mic = first_4_bytes( on_wire_MIC )
 
 It is public—any node that received the original packet, including forwarding repeaters, can compute it. Its purpose is correlation: it lets the original sender match the ack to the outstanding request it belongs to, and lets a repeater that forwarded the original packet recognize the ack as its acknowledgement (enabling passive-ack optimizations). It is not an authenticator.
 
-The **ack tag** is a keyed value that only the original sender and the final destination can produce. It is computed as follows:
-
-1. Take the full 16-byte S2V output `V` (the same value used to produce the packet MIC, before any truncation).
-2. Encrypt `V` with a single AES-256-ECB block encryption using the pairwise `K_enc`.
-3. Truncate the result to 4 bytes.
+The **ack tag** is the MIC of the acknowledgement itself. Only the original sender and the final destination can produce it, and it covers the acknowledgement's static options as well as the packet it answers:
 
 ```text
-ack_tag = truncate_to_4( AES-256-ECB( key=K_enc, block=V ) )
+ack_tag = truncate_to_4( S2V( K_mic, S1 = AAD_ack, S2 = V, S3 = ack_mic ) )
 ```
 
 Where:
 
-- `K_enc` is the encryption key used for the packet—the pairwise key for unicast (see [HKDF Inputs for Unicast](#hkdf-inputs-for-unicast)), or the combined blind unicast key for blind unicast (see [Blind Unicast Payload Keys](#blind-unicast-payload-keys))
-- `V` is the full 16-byte S2V output computed during packet processing, before truncation to the on-wire MIC length
+- `K_mic` is the MIC key that sealed the original packet—the pairwise key for unicast (see [HKDF Inputs for Unicast](#hkdf-inputs-for-unicast)), or the combined blind unicast key for blind unicast (see [Blind Unicast Payload Keys](#blind-unicast-payload-keys))
+- `V` is the original packet's full 16-byte S2V output, before truncation to its on-wire MIC length
+- `AAD_ack` is the acknowledgement's [associated data](#associated-data): its FCF with the `H` bit cleared, followed by its static options
+
+The three components take the shape of any other packet's MIC: associated data first, `V` where a nonce would sit, and `ack_mic` as the payload. The component count and the acknowledgement's own FCF keep the result distinct from every packet MIC computed under the same key. Dynamic options and the flood hop count stay outside `AAD_ack`, so forwarding does not disturb the tag.
+
+Binding `V` ties the tag to one exchange in one direction. Both peers hold the same pairwise keys, but an acknowledgement of a packet one peer sent cannot pass for one answering a packet the other sent. `V` need not be secret for this; a packet sent with a 16-byte MIC carries all of it.
 
 The standalone [MAC Ack](packet-types.md#mac-ack-packet) carries both fields (`ack_mic` followed by `ack_tag`, 8 bytes total). The [Ack MIC option](packet-options.md#ack-mic-option-8) carries only `ack_mic`, because the packet carrying the option is itself authenticated to the original sender and therefore needs no separate keyed tag.
 
-The `ack_mic` is a prefix of the original packet's on-wire MIC, so it was already visible to anyone who received that packet. The keyed `ack_tag`, by contrast, never appears in the original packet: producing it requires knowledge of `K_enc`, so a passive observer who intercepts the original packet cannot forge a valid standalone ack even though `ack_mic` is public. With a 4-byte keyed tag, a blind forgery succeeds with probability `2^-32` per attempt; over a bandwidth-limited LoRa channel, online guessing at that scale is infeasible. A successful forgery would cause the sender to treat an undelivered packet as delivered and suppress retransmission—a reliability denial-of-service, not a confidentiality or integrity break. A weaker variant needs no forged tag at all: repeaters [cancel queued forwards](repeater-operation.md#ack-cancellation) on the public `ack_mic` alone, so an observer who saw the original packet can suppress its pending forwards at repeaters within earshot. The exposure is the same reliability class, costs the attacker a transmission per suppression, and is bounded by the sender's [Route Retry](packet-options.md#route-retry-option-6) recovery.
+The `ack_mic` is a prefix of the original packet's on-wire MIC, so it was already visible to anyone who received that packet. Producing the `ack_tag` requires `K_mic`, so an observer who intercepts the original packet can neither forge a standalone ack nor alter the static options of a genuine one. With a 4-byte tag, a blind forgery succeeds with probability `2^-32` per attempt, and only while the original packet still awaits acknowledgement: no offline check exists, each guess costs a transmission, and a failed guess draws no response. A successful forgery would cause the sender to treat an undelivered packet as delivered and suppress retransmission, or to act on options the destination never sent—a reliability denial-of-service confined to one exchange, not a confidentiality break. A weaker variant needs no forged tag at all: repeaters [cancel queued forwards](repeater-operation.md#ack-cancellation) on the public `ack_mic` alone, so an observer who saw the original packet can suppress its pending forwards at repeaters within earshot. The exposure is the same reliability class, costs the attacker a transmission per suppression, and is bounded by the sender's [Route Retry](packet-options.md#route-retry-option-6) recovery.
 
 The correlation exposed by `ack_mic` is deliberate. To an observer who already received the original packet, it confirms that the packet was delivered and links the ack to that packet. Because the MAC ack carries no destination hint, it adds no explicit endpoint identifier of its own—which removes the direct sender-identity leak a destination hint would introduce. This is not a guarantee of unlinkability: a determined adversary may still correlate an ack with its endpoints through timing, RF fingerprinting, return-path analysis, or by tying the `ack_mic` back to an original packet that itself exposed endpoint hints. For blind unicast, whose forward frame reveals no endpoint identity to a non-channel observer, omitting the destination hint keeps that concealment from being undone by the ack.
 
-AES-ECB on a single 16-byte block is the raw AES block cipher—a pseudorandom permutation—and does not have the pattern-leakage weakness associated with multi-block ECB encryption.
+> [!NOTE]
+> Until every node implements this construction, an acknowledgement may instead carry the legacy tag described in [Ack Authentication Transition](ack-transition.md), which also defines how a receiver tells the two apart.
 
 ### Blind Unicast Address Encryption
 

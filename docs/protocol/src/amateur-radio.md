@@ -24,7 +24,7 @@ In `Licensed-Only` mode, all locally originated and forwarded traffic is treated
 as amateur-radio traffic.
 
 - Encryption SHALL NOT be enabled for any packet. All encrypted packets encountered SHOULD be immediately dropped.
-- Locally originated packets MUST include an [operator callsign](packet-options.md#operator-callsign-option-4).
+- Locally originated packets, [MAC Acks](packet-types.md#mac-ack-packet) included, MUST include an [operator callsign](packet-options.md#operator-callsign-option-4).
 - Restrictions on transmit power and duty cycle are generally more relaxed.
 - A repeater SHALL NOT forward packets that are missing an operator callsign.
 - A repeater SHALL replace or insert the station callsign option with its own callsign on every forwarded packet.
