@@ -91,15 +91,16 @@ This distinction allows forwarding-related metadata (source routes, trace routes
 
 ### Route Retry (option 6)
 - Type: flag. A sender includes it with no value; a receiver treats the option as present whatever its value, and a forwarder carries the value unchanged.
-- Semantics: indicates that the originator is re-attempting forwarding of the same logical packet after a route it had assumed was considered failed.
+- Semantics: indicates that the originator is re-attempting delivery of the same logical packet after its acknowledgment timed out: either a route it had assumed failed, or, for a packet that assumed none, the acknowledgment was lost on its way back ([Route Failure Recovery](repeater-operation.md#route-failure-recovery)).
 - A sender MUST NOT include more than one. A receiver reads the first and ignores the rest, and a forwarder carries only the first.
-- This option is intended for sender-originated route recovery, not for ordinary first transmission.
+- This option is intended for sender-originated route recovery, not for ordinary first transmission. A sender sends at most one Route Retry of a logical packet.
 - The failed assumption need not be a source route. A sender that narrowed `FHOPS` because it believed the destination was directly reachable, or reachable within a known flood distance, has made the same kind of assumption; nothing on the wire distinguishes that packet from an ordinary short-radius flood, and the recovery is the same.
 - When present, repeaters treat the packet as a distinct forwarding attempt for duplicate-suppression purposes even though the MIC and frame counter are unchanged.
 - The destination does **not** treat this option as creating a new logical packet. Replay acceptance and duplicate application delivery remain governed by the packet's normal security state, especially its frame counter.
+- A Route Retry that duplicates a packet the destination already acknowledged tells it that acknowledgment was lost. The destination re-acknowledges by a scoped, traced flood instead of along the route the lost acknowledgment took ([Lost Acknowledgments](repeater-operation.md#lost-acknowledgments)).
 - A sender using this option for route recovery typically:
   - removes the stale source-route option, if one was present
-  - adds or refreshes flood hops, up to but not beyond the budget the sending application was willing to spend
+  - adds or refreshes flood hops, up to but not beyond the budget the sending application was willing to spend; a packet that already flooded at that budget keeps it
   - includes a trace-route option to learn a replacement route
   - preserves the same frame counter and payload
 

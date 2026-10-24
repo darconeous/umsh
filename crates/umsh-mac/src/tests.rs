@@ -440,6 +440,19 @@ fn duplicate_ack_window_holdoff_paces_flood_copies() {
     assert!(window.can_acknowledge_duplicate(10, &mic, 9_000, 2_000));
 }
 
+/// Only a copy whose original was acknowledged can say the ack was lost.
+#[test]
+fn duplicate_ack_window_records_whether_the_original_was_acknowledged() {
+    let mut window = ReplayWindow::new();
+    let mic = [0xA5; 8];
+    window.accept(10, &mic, 1_000);
+    assert!(!window.duplicate_was_acknowledged(10, &mic, 1_500));
+    window.mark_ack_queued(10, &mic, 2_000);
+    assert!(window.duplicate_was_acknowledged(10, &mic, 2_500));
+    // Not a duplicate at all: a different MIC under the same counter.
+    assert!(!window.duplicate_was_acknowledged(10, &[0x5A; 8], 2_500));
+}
+
 #[test]
 fn receive_one_auto_replies_to_echo_request() {
     let mut mac = make_mac();

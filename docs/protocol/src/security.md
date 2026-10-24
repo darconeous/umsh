@@ -118,6 +118,8 @@ recent acknowledgement of that packet: copies arriving inside the window share
 the acknowledgement already sent, while a sender that lost its acknowledgement
 cannot retransmit before its own confirmation window has lapsed.
 
+A duplicate that carries the [Route Retry option](packet-options.md#route-retry-option-6), of a packet already acknowledged and arriving after this window, shows that the acknowledgement was lost on its way back. Its re-acknowledgement SHOULD NOT follow the route the lost one took ([Lost Acknowledgments](repeater-operation.md#lost-acknowledgments)). Any other late duplicate may have crossed an acknowledgement still in transit and says nothing about the route.
+
 Payload acceptance does not begin the acknowledgement pacing window. A destination may accept an overheard source-routed copy while hints remain, withholding its ACK until the route is consumed. The first eligible copy may then be acknowledged immediately. A duplicate remains the same accepted packet: acknowledging it does not renew its replay-retention interval or deliver the payload again.
 
 #### Counter Persistence

@@ -195,6 +195,21 @@ These edits touch only fields the [associated data](security.md#associated-data)
 
 The restored flood radius SHOULD be the one the sending application asked for. A radius the application chose for itself is not a failed cache entry, and recovery MUST NOT widen it: a sender that was told to reach no further than one hop has not made a stale assumption, it has been given an instruction.
 
+A sender that assumed nothing—it held no route and flooded at the whole budget it was allowed—has no cached route to discard, but its timeout is no more specific about which leg failed. The destination may hold a route back that no longer works, and its acknowledgment may have died on it. A MAC ack is never itself acknowledged, so the destination cannot discover this on its own. Such a sender SHOULD send one Route Retry of the packet when it has heard from the destination recently—within 10 minutes is a reasonable window—at the same flood budget and with a trace route. A sender that has not heard from the destination recently SHOULD NOT: a destination that is unreachable answers a second full flood no more than the first.
+
+Either way, a sender MUST NOT send a Route Retry of a packet that already carries the Route Retry option. A logical packet gets at most one.
+
+#### Lost Acknowledgments {#lost-acknowledgments}
+
+A Route Retry that arrives at the destination as a duplicate of a packet it has already acknowledged, after the [duplicate acknowledgment holdoff](security.md#duplicate-acknowledgement-window), shows that the acknowledgment did not reach the sender: the sender sends a Route Retry only once its whole acknowledgment timeout has run out. The destination SHOULD then:
+
+- retire or demote the route its acknowledgment followed, and not relearn that same path from the retry for a while
+- re-acknowledge by a scoped flood rather than along any cached route: `FHOPS_REM` set to the retry's `FHOPS_ACC` plus a one-hop margin, the retry's region codes, and a trace route with its [trace signal](packet-options.md#trace-signal-option-10), so that the sender learns a path back
+
+A path the retry itself traced MAY still be adopted as an ordinary route candidate, but the re-acknowledgment does not follow it. A route the application has fixed in place MAY stay; the re-acknowledgment floods regardless.
+
+Only an acknowledged original makes the retry evidence of a lost acknowledgment. A destination may have accepted the original without acknowledging it—overheard before its source route was consumed, for instance—and then the retry is the first copy it acknowledges, along its route as usual. A late duplicate without the Route Retry option may have crossed an acknowledgment still in transit, so it is re-acknowledged along the route without retiring it.
+
 This recovery transmission is intentionally the same logical packet, not a new application message. The destination therefore still accepts it at most once according to the normal replay rules. The Route Retry option exists only to let repeaters forward the re-attempted packet even if they already suppressed the original as a duplicate.
 
 This preserves a useful separation of responsibilities:

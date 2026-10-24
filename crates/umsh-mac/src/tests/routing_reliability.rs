@@ -1519,3 +1519,355 @@ fn an_adopted_candidate_brings_its_reading() {
     assert!(!info.route_hand_set);
     assert_eq!(last_hop_dbm(&mac, peer_id), Some(-60));
 }
+
+/// Queue one ack-requested send at `flood_hops`, take it off the queue as if
+/// aired, and let its ack deadline pass. Returns its receipt and whether the
+/// sweep timed it out.
+fn send_and_time_out(
+    mac: &mut TestMac,
+    local_id: LocalIdentityId,
+    key: &PublicKey,
+    flood_hops: u8,
+) -> (SendReceipt, bool) {
+    let receipt = mac
+        .queue_unicast(
+            local_id,
+            key,
+            b"payload",
+            &SendOptions::default()
+                .with_ack_requested(true)
+                .with_flood_hops(flood_hops),
+        )
+        .unwrap()
+        .unwrap();
+    let sent = mac.tx_queue_mut().pop_next().unwrap();
+    assert_eq!(
+        PacketHeader::parse(&sent.frame)
+            .unwrap()
+            .flood_hops
+            .map(|hops| hops.remaining()),
+        Some(flood_hops),
+        "nothing narrowed the send"
+    );
+    (receipt, expire_and_report(mac, local_id, receipt))
+}
+
+/// As [`expire_attempt`], reporting whether the send timed out.
+fn expire_and_report(mac: &mut TestMac, local_id: LocalIdentityId, receipt: SendReceipt) -> bool {
+    let pending = mac
+        .identity_mut(local_id)
+        .unwrap()
+        .pending_ack_mut(&receipt)
+        .unwrap();
+    pending.state = AckState::AwaitingAck;
+    pending.ack_deadline_ms = 0;
+    let mut timed_out = false;
+    mac.service_pending_ack_timeouts(|_, event| {
+        if matches!(event, MacEventRef::AckTimeout { .. }) {
+            timed_out = true;
+        }
+    })
+    .unwrap();
+    timed_out
+}
+
+#[test]
+fn a_full_budget_flood_retries_once_when_the_peer_was_heard_recently() {
+    let (mut mac, local_id, key, peer_id) = mac_with_keyed_peer();
+    mac.clock().advance_ms(1_000);
+    let now = mac.clock().now_ms();
+    mac.peer_registry_mut().touch(peer_id, now);
+    let (receipt, timed_out) = send_and_time_out(&mut mac, local_id, &key, 6);
+    assert!(!timed_out);
+    let retry = mac.tx_queue_mut().pop_next().unwrap();
+    let header = PacketHeader::parse(&retry.frame).unwrap();
+    // The same budget, never a wider one.
+    assert_eq!(header.flood_hops.unwrap().remaining(), 6);
+    let options = ParsedOptions::extract(&retry.frame, header.options_range).unwrap();
+    assert!(options.route_retry);
+    assert!(options.trace_route.is_some());
+    assert!(options.trace_signal.is_some());
+    assert!(options.source_route.is_none());
+    // The retry's deadline is armed from when it may air, not left expired.
+    let pending = mac
+        .identity(local_id)
+        .unwrap()
+        .pending_ack(&receipt)
+        .unwrap();
+    assert!(pending.ack_deadline_ms > now);
+    // Exactly one per packet: the retry's own timeout ends the send.
+    assert!(expire_and_report(&mut mac, local_id, receipt));
+    assert!(mac.tx_queue().is_empty());
+}
+
+#[test]
+fn a_full_budget_flood_to_a_peer_not_heard_recently_just_times_out() {
+    // Never heard: a configured peer nothing has arrived from, even right
+    // after boot.
+    let (mut mac, local_id, key, peer_id) = mac_with_keyed_peer();
+    let (_, timed_out) = send_and_time_out(&mut mac, local_id, &key, 6);
+    assert!(timed_out);
+    assert!(mac.tx_queue().is_empty());
+
+    // Heard, but longer ago than the window.
+    let now = mac.clock().now_ms();
+    mac.peer_registry_mut().touch(peer_id, now);
+    mac.clock()
+        .advance_ms(crate::route_score::CONFIRMATION_TTL_MS + 1);
+    let (_, timed_out) = send_and_time_out(&mut mac, local_id, &key, 6);
+    assert!(timed_out);
+    assert!(mac.tx_queue().is_empty());
+
+    // A send that may not flood at all has nothing to retry with.
+    let now = mac.clock().now_ms();
+    mac.peer_registry_mut().touch(peer_id, now);
+    let receipt = mac
+        .queue_unicast(
+            local_id,
+            &key,
+            b"payload",
+            &SendOptions::default().with_ack_requested(true).no_flood(),
+        )
+        .unwrap()
+        .unwrap();
+    mac.tx_queue_mut().pop_next().unwrap();
+    assert!(expire_and_report(&mut mac, local_id, receipt));
+    assert!(mac.tx_queue().is_empty());
+}
+
+const LOST_REPLY_REGION: [u8; 2] = [0x12, 0x34];
+
+/// One copy of an ack-requested unicast from `remote` at counter 7, as it
+/// arrived: having flooded `accumulated` hops with `trace` recorded, still
+/// to cross `source_route`, and flagged Route Retry when `route_retry`.
+/// Every copy carries the same body and MIC; only dynamic fields differ.
+fn queue_request_copy(
+    mac: &mut TestMac,
+    remote: &DummyIdentity,
+    accumulated: u8,
+    trace: Option<&[RouterHint]>,
+    source_route: Option<&[RouterHint]>,
+    route_retry: bool,
+) {
+    let dst = mac
+        .identity(LocalIdentityId(0))
+        .unwrap()
+        .identity()
+        .public_key()
+        .hint();
+    let mut buf = [0u8; 256];
+    let mut builder = PacketBuilder::new(&mut buf)
+        .unicast(dst)
+        .source_full(remote.public_key())
+        .frame_counter(7)
+        .encrypted()
+        .ack_requested()
+        .flood_hops(6);
+    if let Some(trace) = trace {
+        let (hints, len) = encode_trace(trace);
+        builder = builder.option(OptionNumber::TraceRoute, &hints[..len]);
+    }
+    if let Some(route) = source_route {
+        builder = builder.source_route(route);
+    }
+    if route_retry {
+        builder = builder.option(OptionNumber::RouteRetry, &[]);
+    }
+    let mut packet = builder
+        .region_code(LOST_REPLY_REGION)
+        .payload(b"payload")
+        .build()
+        .unwrap();
+    packet.as_bytes_mut()[1] = FloodHops::new(6 - accumulated, accumulated).unwrap().0;
+    CryptoEngine::new(DummyAes, DummySha)
+        .seal_packet(
+            &mut packet,
+            &PairwiseKeys {
+                k_enc: [1; 32],
+                k_mic: [2; 32],
+            },
+        )
+        .unwrap();
+    mac.radio_mut().queue_received_frame(packet.as_bytes());
+}
+
+/// Receive one queued frame, returning how many payloads it delivered.
+fn receive_counting(mac: &mut TestMac) -> usize {
+    let mut delivered = 0;
+    block_on(mac.receive_one(|_, event| {
+        if is_received_type(&event, PacketType::UnicastAckReq) {
+            delivered += 1;
+        }
+    }))
+    .unwrap();
+    delivered
+}
+
+/// The shape of the next queued MAC ack: `FHOPS_REM`, source route, whether
+/// it traces (with its signal), and its region codes.
+#[derive(Debug, PartialEq, Eq)]
+struct AckShape {
+    flood_hops: Option<u8>,
+    source_route: Option<Vec<RouterHint>>,
+    traced: bool,
+    regions: Vec<[u8; 2]>,
+}
+
+fn queued_ack_shape(mac: &mut TestMac) -> AckShape {
+    let frame = mac.tx_queue_mut().pop_next().unwrap().frame;
+    let header = PacketHeader::parse(&frame).unwrap();
+    assert_eq!(header.packet_type(), PacketType::MacAck);
+    let options = ParsedOptions::extract(&frame, header.options_range.clone()).unwrap();
+    assert_eq!(
+        options.trace_route.is_some(),
+        options.trace_signal.is_some()
+    );
+    let regions = umsh_core::iter_options(&frame, header.options_range.clone())
+        .map(Result::unwrap)
+        .filter(|(number, _)| *number == OptionNumber::RegionCode.as_u16())
+        .map(|(_, value)| [value[0], value[1]])
+        .collect();
+    AckShape {
+        flood_hops: header.flood_hops.map(|hops| hops.remaining()),
+        source_route: options.source_route.map(|route| {
+            frame[route]
+                .chunks_exact(2)
+                .map(|hint| RouterHint([hint[0], hint[1]]))
+                .collect()
+        }),
+        traced: options.trace_route.is_some(),
+        regions,
+    }
+}
+
+/// Past the duplicate-ack holdoff, and then some.
+const LATE_MS: u64 = 60_000;
+
+#[test]
+fn a_route_retry_of_an_acked_request_reacks_by_scoped_flood_and_retires_the_route() {
+    let dead = [RouterHint([4, 5])];
+    let fresh = [RouterHint([6, 7])];
+    // The retry may trace the dead route's own path (a link that works only
+    // toward us) or a different one.
+    for retry_trace in [dead, fresh] {
+        let (mut mac, _, _, peer_id) = mac_with_keyed_peer();
+        let remote = DummyIdentity::new([0xAB; 32]);
+        mac.peer_registry_mut()
+            .update_route(peer_id, CachedRoute::source(&dead).unwrap());
+
+        // The original floods in untraced: a flood distance never displaces
+        // the path held, so the ack goes down the dead route.
+        queue_request_copy(&mut mac, &remote, 2, None, None, false);
+        assert_eq!(receive_counting(&mut mac), 1);
+        assert_eq!(queued_ack_shape(&mut mac).source_route, Some(dead.to_vec()));
+
+        mac.clock().advance_ms(LATE_MS);
+        queue_request_copy(&mut mac, &remote, 3, Some(&retry_trace), None, true);
+        assert_eq!(
+            receive_counting(&mut mac),
+            0,
+            "a duplicate is not delivered"
+        );
+        // The re-ack reaches as far as the retry came, plus a hop, within
+        // its regions, and traces so the sender learns a way back.
+        assert_eq!(
+            queued_ack_shape(&mut mac),
+            AckShape {
+                flood_hops: Some(4),
+                source_route: None,
+                traced: true,
+                regions: vec![LOST_REPLY_REGION],
+            }
+        );
+        assert!(mac.tx_queue().is_empty());
+        // The dead route is retired and not taught straight back; a
+        // different path the retry traced is an ordinary candidate.
+        let expected = (retry_trace != dead).then(|| CachedRoute::source(&fresh).unwrap());
+        assert_eq!(mac.peer_registry().get(peer_id).unwrap().route, expected);
+    }
+}
+
+#[test]
+fn a_late_plain_retransmission_of_an_acked_request_reacks_along_the_route() {
+    let (mut mac, _, _, peer_id) = mac_with_keyed_peer();
+    let remote = DummyIdentity::new([0xAB; 32]);
+    let route = [RouterHint([4, 5])];
+    mac.peer_registry_mut()
+        .update_route(peer_id, CachedRoute::source(&route).unwrap());
+    queue_request_copy(&mut mac, &remote, 2, None, None, false);
+    receive_counting(&mut mac);
+    mac.tx_queue_mut().pop_next().unwrap();
+
+    // Without Route Retry the copy may have crossed our ack on its way, so
+    // it proves nothing about the route.
+    mac.clock().advance_ms(LATE_MS);
+    queue_request_copy(&mut mac, &remote, 2, None, None, false);
+    receive_counting(&mut mac);
+    assert_eq!(
+        queued_ack_shape(&mut mac).source_route,
+        Some(route.to_vec())
+    );
+    assert_eq!(
+        mac.peer_registry().get(peer_id).unwrap().route,
+        CachedRoute::source(&route)
+    );
+}
+
+#[test]
+fn a_route_retry_of_a_request_never_acked_gets_its_first_ack() {
+    let (mut mac, _, _, peer_id) = mac_with_keyed_peer();
+    let remote = DummyIdentity::new([0xAB; 32]);
+    let route = [RouterHint([6, 7])];
+    // Overheard before the last repeater consumed its hint: accepted, and
+    // teaching the route, but not ours to acknowledge yet.
+    queue_request_copy(&mut mac, &remote, 0, Some(&[]), Some(&route), false);
+    assert_eq!(receive_counting(&mut mac), 1);
+    assert!(mac.tx_queue().is_empty());
+    assert_eq!(
+        mac.peer_registry().get(peer_id).unwrap().route,
+        CachedRoute::source(&route)
+    );
+
+    mac.clock().advance_ms(LATE_MS);
+    queue_request_copy(&mut mac, &remote, 0, Some(&route), Some(&[]), true);
+    assert_eq!(receive_counting(&mut mac), 0);
+    // Nothing was lost: the route stands and the ack follows it.
+    assert_eq!(
+        queued_ack_shape(&mut mac).source_route,
+        Some(route.to_vec())
+    );
+    assert_eq!(
+        mac.peer_registry().get(peer_id).unwrap().route,
+        CachedRoute::source(&route)
+    );
+}
+
+#[test]
+fn a_lost_reply_floods_the_reack_but_leaves_a_held_route_held() {
+    let (mut mac, _, _, peer_id, held) = held_route_mac(600_000);
+    let remote = DummyIdentity::new([0xAB; 32]);
+    queue_request_copy(&mut mac, &remote, 2, None, None, false);
+    receive_counting(&mut mac);
+    assert_eq!(
+        queued_ack_shape(&mut mac).source_route,
+        Some(vec![RouterHint([1, 2])])
+    );
+
+    mac.clock().advance_ms(LATE_MS);
+    let fresh = [RouterHint([6, 7])];
+    queue_request_copy(&mut mac, &remote, 3, Some(&fresh), None, true);
+    receive_counting(&mut mac);
+    let shape = queued_ack_shape(&mut mac);
+    assert_eq!(shape.source_route, None);
+    assert_eq!(shape.flood_hops, Some(4));
+    assert!(shape.traced);
+    let now = mac.clock().now_ms();
+    assert_eq!(mac.peer_registry().get(peer_id).unwrap().route, Some(held));
+    assert_eq!(
+        mac.peer_registry()
+            .route_hold(peer_id, now)
+            .and_then(|hold| hold.candidate.as_ref())
+            .map(|candidate| candidate.route.clone()),
+        CachedRoute::source(&fresh)
+    );
+}

@@ -180,6 +180,15 @@ impl ReplayWindow {
             .map(|entry| entry.age_ms(now_ms))
     }
 
+    /// Whether an exact retained duplicate's earlier copy had an ACK queued.
+    /// A copy accepted without one (e.g. overheard before its source route
+    /// ran out) has not been answered, so a later copy is no sign the answer
+    /// was lost.
+    pub fn duplicate_was_acknowledged(&self, counter: u32, mic: &[u8], now_ms: u64) -> bool {
+        self.find_recent_mic(counter, mic, now_ms)
+            .is_some_and(|entry| entry.ack_queued_offset != 0)
+    }
+
     /// Record a successful ACK enqueue, without refreshing acceptance or the
     /// replay baseline. Failed enqueue attempts must not call this method.
     pub fn mark_ack_queued(&mut self, counter: u32, mic: &[u8], now_ms: u64) {

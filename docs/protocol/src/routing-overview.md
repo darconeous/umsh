@@ -80,6 +80,8 @@ If a cached route fails entirely (noticed because of a timeout), the sender can 
 
 A cached source route is the visible case, but not the only one. A sender that believes the destination is directly reachable, or reachable within a known flood distance, narrows `FHOPS` accordingly and carries no option recording that it did so. When such a packet goes unacknowledged, the cached distance is as stale as a dead source-route hint, and the recovery transmission restores the flood budget the sending application originally allowed. A radius the application itself chose is not a stale assumption and is not widened.
 
+A packet that flooded at its whole budget may have failed on the way back instead: the destination's route to the sender may be dead, and a MAC ack is never itself acknowledged. A sender that has heard from the destination recently therefore sends one Route Retry even then, at the same budget. When that retry reaches a destination that already acknowledged the packet, the destination retires the route its acknowledgment took and re-acknowledges by a scoped flood with a trace route. Each logical packet gets at most one Route Retry.
+
 See [Repeater Operation § Forwarding Confirmation](repeater-operation.md#forwarding-confirmation) and [Repeater Operation § Route Failure Recovery](repeater-operation.md#route-failure-recovery).
 
 ## Channel Access

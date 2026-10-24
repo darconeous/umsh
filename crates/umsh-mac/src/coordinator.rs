@@ -90,6 +90,16 @@ const MAC_COMMAND_VERIFY_FRAME_ID: u8 = 12;
 const MAC_COMMAND_FRAME_VERIFIED_ID: u8 = 13;
 /// Domain separation for [`Mac::verify_nonce`].
 const VERIFY_NONCE_LABEL: &[u8] = b"UMSH-VERIFY-FRAME-NONCE";
+/// How recently a peer must have been heard for a full-budget flood that
+/// timed out to earn a Route Retry ([`Mac::can_attempt_route_retry`]).
+///
+/// The same span an acknowledgment vouches for a route: evidence that the
+/// peer and the way to it work, kept as long as the MAC trusts any such
+/// evidence. A peer stuck acking down a dead route is rarely silent that
+/// long, since its own sends to us fail the same way and their retries
+/// flood. A first contact, or a peer not heard for longer, is no likelier
+/// to answer a second full flood than the first.
+const LOST_REPLY_RETRY_WINDOW_MS: u64 = crate::route_score::CONFIRMATION_TTL_MS;
 
 /// The carriage a request arrived on, and so the carriage its response owes
 /// it back.
@@ -113,6 +123,19 @@ enum RouteTraffic {
     Ack,
     /// A MAC ack of a retransmission: the peer missed the earlier ack.
     Reack,
+}
+
+/// Which copy of an acknowledgment-requested frame an ack answers.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum AckOccasion {
+    /// The first copy acknowledged.
+    First,
+    /// A copy of one already acknowledged, after the duplicate holdoff. The
+    /// sender has not heard the earlier ack, which may still be on its way.
+    Repeat,
+    /// A Route Retry of one already acknowledged. The sender waited out its
+    /// whole ack timeout, so the earlier ack was lost on the way back.
+    LostReply,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1896,7 +1919,63 @@ impl<
             &[]
         };
         let mut buf = [0u8; FRAME];
-        let mut builder = PacketBuilder::new(&mut buf).mac_ack(ack_trailer);
+        let frame = Self::build_mac_ack(
+            &mut buf,
+            ack_trailer,
+            flood_hops,
+            trace_route,
+            source_route,
+            regions,
+        )?;
+        self.enqueue_mac_ack(from, peer_id, frame, requires_forwarding)
+    }
+
+    /// Enqueue the re-ack of a request whose earlier ack was lost
+    /// ([`AckOccasion::LostReply`]) as a scoped flood with a trace.
+    ///
+    /// The route the lost ack followed is the one thing known not to work,
+    /// so no cached route is consulted, held or not. The flood reaches as
+    /// far as the request traveled (`request_accumulated`, its `FHOPS_ACC`)
+    /// plus the slack a retransmission earns, within the request's regions,
+    /// and its trace gives the sender a path back here.
+    fn queue_lost_reply_mac_ack(
+        &mut self,
+        from: LocalIdentityId,
+        peer_id: PeerId,
+        ack_trailer: [u8; 8],
+        request_accumulated: u8,
+        request_regions: &[[u8; 2]],
+    ) -> Result<(), SendError> {
+        let slack = established_route_slack(RouteEvidence {
+            peer_retransmitted: true,
+            ..RouteEvidence::default()
+        });
+        let flood_hops = request_accumulated
+            .saturating_add(slack)
+            .clamp(1, MAX_FLOOD_HOPS);
+        let mut buf = [0u8; FRAME];
+        let frame = Self::build_mac_ack(
+            &mut buf,
+            ack_trailer,
+            flood_hops,
+            true,
+            None,
+            request_regions,
+        )?;
+        self.enqueue_mac_ack(from, peer_id, frame, true)
+    }
+
+    /// A MAC ack frame. Zero `flood_hops` is no `FHOPS` field at all; a
+    /// trace route goes out with its trace signal.
+    fn build_mac_ack<'a>(
+        buf: &'a mut [u8; FRAME],
+        ack_trailer: [u8; 8],
+        flood_hops: u8,
+        trace_route: bool,
+        source_route: Option<&[RouterHint]>,
+        regions: &[[u8; 2]],
+    ) -> Result<&'a [u8], SendError> {
+        let mut builder = PacketBuilder::new(buf).mac_ack(ack_trailer);
         if flood_hops > 0 {
             builder = builder.flood_hops(flood_hops);
         }
@@ -1912,7 +1991,18 @@ impl<
         for region in regions {
             builder = builder.region_code(*region);
         }
-        let frame = builder.build()?;
+        Ok(builder.build()?)
+    }
+
+    /// Queue a built MAC ack at its identity's power, tracking it for
+    /// repeat confirmation when `requires_forwarding`.
+    fn enqueue_mac_ack(
+        &mut self,
+        from: LocalIdentityId,
+        peer_id: PeerId,
+        frame: &[u8],
+        requires_forwarding: bool,
+    ) -> Result<(), SendError> {
         if frame.len() > self.radio.max_frame_size() {
             return Err(SendError::Build(BuildError::BufferTooSmall));
         }
@@ -3118,15 +3208,18 @@ impl<
                         &buf[..frame_len],
                     )
                 {
-                    // Before the ack is composed, because the ack is built
-                    // from whatever route this teaches. A retransmission is
-                    // the one frame carrying route information we did not
-                    // already have: the sender reached the retry ladder
-                    // precisely because its first attempt went unanswered,
-                    // and a route-recovery retry attaches a fresh trace to
-                    // say so. Composing the re-ack from the stale cache
-                    // instead throws that away and re-sends the same
-                    // unroutable frame the sender is retrying against.
+                    // Settled first: a lost reply retires the route the
+                    // earlier ack took, before this copy can offer it again.
+                    let occasion =
+                        self.duplicate_ack_occasion(local_id, peer_id, header, &buf[..frame_len]);
+                    // Before the ack is composed, because a routed ack is
+                    // built from whatever route this teaches. A
+                    // retransmission is the one frame carrying route
+                    // information we did not already have: the sender
+                    // reached the retry ladder precisely because its first
+                    // attempt went unanswered. Composing the re-ack from the
+                    // stale cache instead throws that away. A lost reply's
+                    // re-ack floods whatever this installs.
                     self.learn_route_for_peer(peer_id, &buf[..frame_len], header, rx);
                     let ack_trailer = self.compute_received_ack_trailer(
                         &buf[..frame_len],
@@ -3140,7 +3233,7 @@ impl<
                         ack_trailer,
                         &buf[..frame_len],
                         header,
-                        true,
+                        occasion,
                     );
                     handled = true;
                     break;
@@ -3194,7 +3287,7 @@ impl<
                                     ack_trailer,
                                     &buf[..frame_len],
                                     header,
-                                    false,
+                                    AckOccasion::First,
                                 );
                             }
                             handled = true;
@@ -3315,7 +3408,7 @@ impl<
                         ack_trailer,
                         &buf[..frame_len],
                         header,
-                        false,
+                        AckOccasion::First,
                     );
                 }
 
@@ -3527,9 +3620,13 @@ impl<
                                 &buf[..frame_len],
                             )
                         {
-                            // Same reason as the unicast path: the retry is
-                            // what carries the route the first attempt
-                            // lacked, and the re-ack is composed from it.
+                            // Same order and reasons as the unicast path.
+                            let occasion = self.duplicate_ack_occasion(
+                                local_id,
+                                peer_id,
+                                header,
+                                &buf[..frame_len],
+                            );
                             self.learn_route_for_peer(peer_id, &buf[..frame_len], header, rx);
                             let ack_trailer = self.compute_received_ack_trailer(
                                 &buf[..frame_len],
@@ -3543,7 +3640,7 @@ impl<
                                 ack_trailer,
                                 &buf[..frame_len],
                                 header,
-                                true,
+                                occasion,
                             );
                             handled = true;
                             break;
@@ -3606,7 +3703,7 @@ impl<
                                             ack_trailer,
                                             &buf[..frame_len],
                                             header,
-                                            false,
+                                            AckOccasion::First,
                                         );
                                     }
                                     handled = true;
@@ -3732,7 +3829,7 @@ impl<
                                 ack_trailer,
                                 &buf[..frame_len],
                                 header,
-                                false,
+                                AckOccasion::First,
                             );
                         }
 
@@ -3970,7 +4067,12 @@ impl<
                             actions
                                 .push(Action::Abandon { receipt: *receipt })
                                 .map_err(|_| CapacityError)?;
-                        } else if Self::can_attempt_route_retry(pending) {
+                        } else if Self::can_attempt_route_retry(
+                            pending,
+                            self.peer_registry.lookup_by_key(&pending.peer).is_some_and(
+                                |(_, peer)| peer.heard_within(LOST_REPLY_RETRY_WINDOW_MS, now_ms),
+                            ),
+                        ) {
                             let backoff_cap_ms = t_frame_ms;
                             let backoff_ms = if backoff_cap_ms == 0 {
                                 0
@@ -4872,13 +4974,52 @@ impl<
             })
     }
 
+    /// Which copy an eligible duplicate is ([`AckOccasion`]), and what it
+    /// means for the route back.
+    ///
+    /// A copy whose original was accepted but never acknowledged gets its
+    /// first ack. A Route Retry of one already acknowledged proves that ack
+    /// lost, since the sender sends one only after its whole ack timeout:
+    /// the route the ack took is retired, so the re-ack and whatever the
+    /// retry teaches do not follow it again. Any other late copy may cross
+    /// an ack still on its way, and proves nothing about the route.
+    fn duplicate_ack_occasion(
+        &mut self,
+        local_id: LocalIdentityId,
+        peer_id: PeerId,
+        header: &PacketHeader,
+        frame: &[u8],
+    ) -> AckOccasion {
+        let Some((counter, mic)) = Self::replay_metadata(header, frame) else {
+            return AckOccasion::First;
+        };
+        let now_ms = self.clock.now_ms();
+        let acknowledged = self
+            .identity(local_id)
+            .and_then(|slot| slot.peer_crypto().get(&peer_id))
+            .is_some_and(|state| {
+                state
+                    .replay_window
+                    .duplicate_was_acknowledged(counter, mic, now_ms)
+            });
+        if !acknowledged {
+            return AckOccasion::First;
+        }
+        let route_retry = ParsedOptions::extract(frame, header.options_range.clone())
+            .is_ok_and(|options| options.route_retry);
+        if !route_retry {
+            return AckOccasion::Repeat;
+        }
+        self.peer_registry.retire_route(peer_id, now_ms);
+        AckOccasion::LostReply
+    }
+
     /// Record acknowledgement only after a frame was actually queued.
     ///
-    /// `retransmission`: `frame` is a copy of one already accepted, arriving
-    /// after the duplicate holdoff. The sender is retrying because no ack
-    /// reached it, so this one keeps the slack whatever the route's
-    /// evidence says. (A copy whose original was overheard early and never
-    /// acknowledged reaches here too, and spends one hop it did not need.)
+    /// An [`AckOccasion::Repeat`] keeps the route's slack whatever its
+    /// evidence says: no ack has reached the sender yet. An
+    /// [`AckOccasion::LostReply`] ignores any cached route and floods
+    /// instead ([`Mac::queue_lost_reply_mac_ack`]).
     fn queue_received_mac_ack(
         &mut self,
         local_id: LocalIdentityId,
@@ -4886,12 +5027,59 @@ impl<
         ack_trailer: [u8; 8],
         frame: &[u8],
         header: &PacketHeader,
-        retransmission: bool,
+        occasion: AckOccasion,
     ) {
         let Ok(options) = ParsedOptions::extract(frame, header.options_range.clone()) else {
             return;
         };
         let regions = Self::region_codes_from_options(frame, header.options_range.clone());
+        let queued = if occasion == AckOccasion::LostReply {
+            self.queue_lost_reply_mac_ack(
+                local_id,
+                peer_id,
+                ack_trailer,
+                header.flood_hops.map_or(0, |hops| hops.accumulated()),
+                &regions,
+            )
+        } else {
+            self.queue_answering_mac_ack(
+                local_id,
+                peer_id,
+                ack_trailer,
+                frame,
+                header,
+                &options,
+                &regions,
+                occasion == AckOccasion::Repeat,
+            )
+        };
+        if queued.is_ok()
+            && let Some((counter, mic)) = Self::replay_metadata(header, frame)
+        {
+            let now_ms = self.clock.now_ms();
+            if let Some(state) = self
+                .identity_mut(local_id)
+                .and_then(|slot| slot.peer_crypto_mut().get_mut(&peer_id))
+            {
+                state.replay_window.mark_ack_queued(counter, mic, now_ms);
+            }
+        }
+    }
+
+    /// The routed ack of a received frame: along the cached route, tracing
+    /// when the frame had to flood here or carried a trace of its own.
+    #[allow(clippy::too_many_arguments)]
+    fn queue_answering_mac_ack(
+        &mut self,
+        local_id: LocalIdentityId,
+        peer_id: PeerId,
+        ack_trailer: [u8; 8],
+        frame: &[u8],
+        header: &PacketHeader,
+        options: &ParsedOptions,
+        regions: &[[u8; 2]],
+        retransmission: bool,
+    ) -> Result<(), SendError> {
         // An ack is a response like any other: it traces when the packet it
         // answers had to flood to get here, and may mirror a trace that
         // packet carried.
@@ -4911,27 +5099,15 @@ impl<
                 .saturating_add(established_route_slack(RouteEvidence::default()))
                 .max(5)
         });
-        if self
-            .queue_routed_mac_ack(
-                local_id,
-                peer_id,
-                ack_trailer,
-                options.trace_route.is_some() || flooded,
-                &regions,
-                unknown_budget,
-                retransmission,
-            )
-            .is_ok()
-            && let Some((counter, mic)) = Self::replay_metadata(header, frame)
-        {
-            let now_ms = self.clock.now_ms();
-            if let Some(state) = self
-                .identity_mut(local_id)
-                .and_then(|slot| slot.peer_crypto_mut().get_mut(&peer_id))
-            {
-                state.replay_window.mark_ack_queued(counter, mic, now_ms);
-            }
-        }
+        self.queue_routed_mac_ack(
+            local_id,
+            peer_id,
+            ack_trailer,
+            options.trace_route.is_some() || flooded,
+            regions,
+            unknown_budget,
+            retransmission,
+        )
     }
 
     /// Settle an Echo Response that answers our counter-resync probe.
@@ -6683,7 +6859,7 @@ impl<
             .as_ref()
             .filter(|route| !route.is_empty());
         if source_route.is_none() && resend.requested_flood_hops.is_none() {
-            // Neither a route to abandon nor an application budget to restore.
+            // Neither a route to abandon nor an application budget to flood.
             return None;
         }
 
@@ -6817,7 +6993,8 @@ impl<
         // below what was asked for. Rediscovery has to reach past the break,
         // so prefer the budget the application was willing to spend; it is
         // also the ceiling, since route recovery may undo the MAC's narrowing
-        // but not exceed the caller's own limit.
+        // but not exceed the caller's own limit. A send that already flooded
+        // at that budget retries at it unchanged.
         let requested = requested
             .filter(|hops| *hops > 0)
             .map(|hops| hops.clamp(1, MAX_FLOOD_HOPS));
@@ -7308,21 +7485,26 @@ impl<
         self.radio.t_frame_ms()
     }
 
-    /// Whether a timed-out send carries a route assumption worth abandoning.
+    /// Whether a timed-out send earns its one Route Retry.
     ///
-    /// An attached source route is the obvious case: the named path did not
-    /// deliver. The subtler one is a flood budget the MAC narrowed on the
-    /// sender's behalf. A peer cached as [`CachedRoute::Direct`] transmits at
-    /// one flood hop at most, and often none, however wide a flood the
-    /// application asked for, so a peer that has since moved out of direct range cannot be
-    /// reached by repeating the same frame—and nothing in the options records
-    /// that a route was ever assumed. That is the same staleness as a dead
+    /// A send that carried a route assumption always does. An attached source
+    /// route is the obvious case: the named path did not deliver. The subtler
+    /// one is a flood budget the MAC narrowed on the sender's behalf. A peer
+    /// cached as [`CachedRoute::Direct`] transmits at one flood hop at most,
+    /// and often none, however wide a flood the application asked for, so a
+    /// peer that has since moved out of direct range cannot be reached by
+    /// repeating the same frame—and nothing in the options records that a
+    /// route was ever assumed. That is the same staleness as a dead
     /// source-route hint, kept in `FHOPS` instead of in an option.
     ///
-    /// A budget the *application* chose is left alone. Route recovery exists to
-    /// undo the MAC's own narrowing, not to flood wider than the caller was
-    /// willing to.
-    fn can_attempt_route_retry(pending: &PendingAck<FRAME>) -> bool {
+    /// A send that assumed nothing—a flood at the whole budget asked for—
+    /// earns it only when `peer_heard_recently`. Then the likelier failure is
+    /// the way back: the peer holds a route to us that no longer works, and
+    /// its ack died on it. A MAC ack is never itself acknowledged, so only a
+    /// second copy of the request, arriving after the peer already answered
+    /// the first, can tell the peer so. The retry floods at the same budget;
+    /// it never widens what the application was willing to spend.
+    fn can_attempt_route_retry(pending: &PendingAck<FRAME>, peer_heard_recently: bool) -> bool {
         // Route recovery re-attempts delivery of a packet whose fate is
         // knowable. A send with no ack to wait for never learns whether the
         // route failed, so it has nothing to recover from.
@@ -7360,10 +7542,11 @@ impl<
             .flood_hops
             .map(|hops| hops.remaining())
             .unwrap_or_default();
-        pending
+        let narrowed = pending
             .resend
             .requested_flood_hops
-            .is_some_and(|requested| requested > sent)
+            .is_some_and(|requested| requested > sent);
+        narrowed || peer_heard_recently
     }
 
     fn direct_ack_timeout_ms(&self) -> u64 {

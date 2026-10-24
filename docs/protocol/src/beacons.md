@@ -128,6 +128,10 @@ Trading a source route for flood hops rewrites only fields the [associated data]
 
 Recovery stays within the sender's original flood ceiling; disabled flooding does not authorize a flooded retry. Once a replacement route is learned, normal routed transmission can resume. An ACK following Route Retry confirms delivery of the logical packet but does not identify which attempt delivered it.
 
+A sender that held no route and flooded at its whole budget has no route to discard, yet the timeout may still be the destination's fault: a route back to the sender that no longer works, on which the ACK died. When it has heard from the destination recently, the sender sends one Route Retry anyway, at the same budget and with a trace route. A logical packet gets at most one Route Retry.
+
+The destination learns from that retry. A Route Retry duplicating a packet it already acknowledged shows the ACK was lost, so the destination retires or demotes the route the ACK followed and re-acknowledges by a flood scoped to the retry's `FHOPS_ACC` plus one hop, within the retry's regions, carrying a trace route. A path the retry traced may become an ordinary route candidate; the re-acknowledgment does not follow it. See [Lost Acknowledgments](repeater-operation.md#lost-acknowledgments).
+
 ## Scoping Flood Hops to a Known Route
 
 A wide flood hop count is a first-contact cost. Once routing state exists for a destination, the sender SHOULD scope `FHOPS_REM` to what the known path actually costs, plus a margin where the far end of the path is in doubt:

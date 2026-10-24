@@ -147,7 +147,10 @@ pub struct PeerInfo {
     /// The peer's latest packet reached us by flooding, and nothing traced
     /// has gone back since: the next packet to it owes a trace route.
     pub(crate) trace_owed: bool,
-    /// Most recent observation timestamp.
+    /// When the peer was last heard, offset so that it is never zero: zero
+    /// means it has not been heard since it was registered, as for a peer
+    /// the application configured. Use [`PeerInfo::heard_within`] to
+    /// read it.
     pub last_seen_ms: u64,
     /// Highest RX frame counter loaded from persistent storage at boot.
     ///
@@ -181,6 +184,12 @@ impl PeerInfo {
     /// was. A point-to-point entry marks a hop with no radio in it.
     pub fn route_last_hop(&self) -> Option<TraceSignalEntry> {
         self.route_last_hop
+    }
+
+    /// Whether the peer was heard within the last `window_ms` before
+    /// `now_ms`. A peer registered but never heard was not.
+    pub fn heard_within(&self, window_ms: u64, now_ms: u64) -> bool {
+        self.last_seen_ms != 0 && now_ms.saturating_sub(self.last_seen_ms) <= window_ms
     }
 
     /// Whether the peer advertises itself as mobile.
@@ -489,7 +498,7 @@ impl<const N: usize, const H: usize> PeerRegistry<N, H> {
             .enumerate()
             .find(|(_, peer)| peer.public_key == key)
         {
-            peer.last_seen_ms = now_ms;
+            peer.last_seen_ms = seen_ms(now_ms);
             return Ok(AutoPeerUpdate {
                 peer_id: PeerId(id as u8),
                 evicted_key: None,
@@ -498,7 +507,7 @@ impl<const N: usize, const H: usize> PeerRegistry<N, H> {
 
         if self.peers.len() < N {
             self.peers
-                .push(PeerInfo::new(key, false, now_ms))
+                .push(PeerInfo::new(key, false, seen_ms(now_ms)))
                 .map_err(|_| CapacityError)?;
             return Ok(AutoPeerUpdate {
                 peer_id: PeerId((self.peers.len() - 1) as u8),
@@ -520,7 +529,7 @@ impl<const N: usize, const H: usize> PeerRegistry<N, H> {
 
         let evicted_key = oldest.public_key;
         self.drop_hold(PeerId(index as u8));
-        self.peers[index] = PeerInfo::new(key, false, now_ms);
+        self.peers[index] = PeerInfo::new(key, false, seen_ms(now_ms));
         Ok(AutoPeerUpdate {
             peer_id: PeerId(index as u8),
             evicted_key: Some(evicted_key),
@@ -770,6 +779,16 @@ impl<const N: usize, const H: usize> PeerRegistry<N, H> {
         if revision == 0 || peer.route_revision != revision {
             return RouteFailure::Unrelated;
         }
+        self.retire_route(id, now_ms)
+    }
+
+    /// Retire `id`'s selected route, whatever it is: a reply sent along it
+    /// was lost. Like a failed send, it is suppressed for passive learning
+    /// for a while, and a held route stays.
+    pub(crate) fn retire_route(&mut self, id: PeerId, now_ms: u64) -> RouteFailure {
+        if self.get(id).is_none() {
+            return RouteFailure::Unrelated;
+        }
         if self.hold_index(id, now_ms).is_some() {
             return RouteFailure::Held;
         }
@@ -836,9 +855,15 @@ impl<const N: usize, const H: usize> PeerRegistry<N, H> {
     /// Refresh the last-seen timestamp for `id`.
     pub fn touch(&mut self, id: PeerId, now_ms: u64) {
         if let Some(peer) = self.get_mut(id) {
-            peer.last_seen_ms = now_ms;
+            peer.last_seen_ms = seen_ms(now_ms);
         }
     }
+}
+
+/// `now_ms` as a [`PeerInfo::last_seen_ms`]: never zero, which is reserved
+/// for a peer not yet heard. Clocks start at zero at boot.
+fn seen_ms(now_ms: u64) -> u64 {
+    now_ms.max(1)
 }
 
 /// The better of a held route's candidate and a new offer.
