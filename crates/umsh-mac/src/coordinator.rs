@@ -192,6 +192,16 @@ struct VerifiedFrame {
 /// copies of the same ack can still teach a route.
 const RECENT_ACKS: usize = 4;
 
+/// What an outgoing MAC ack's trailer is made from.
+#[derive(Clone, Copy)]
+enum AckTrailer<'a> {
+    /// Sealed under the keys of the request it answers, bound to that
+    /// request's S2V output.
+    Sealed { v: [u8; 16], keys: &'a PairwiseKeys },
+    /// Carried as given.
+    Verbatim([u8; 8]),
+}
+
 /// An acknowledgment that completed a send, kept for its later copies.
 ///
 /// The first copy of an ack to arrive completes the send and is gone from
@@ -1848,8 +1858,9 @@ impl<
         self.queue_multicast(from, channel_id, payload, options)
     }
 
-    /// Enqueue an ACK using the cached route plus whatever flood slack the
-    /// route's far end earns (see [`established_route_slack`]).
+    /// Enqueue an ACK carrying `ack_trailer` as given, using the cached
+    /// route plus whatever flood slack the route's far end earns (see
+    /// [`established_route_slack`]).
     pub fn queue_mac_ack_for_peer(
         &mut self,
         from: LocalIdentityId,
@@ -1857,7 +1868,15 @@ impl<
         ack_trailer: [u8; 8],
         trace_route: bool,
     ) -> Result<(), SendError> {
-        self.queue_routed_mac_ack(from, peer_id, ack_trailer, trace_route, &[], None, false)
+        self.queue_routed_mac_ack(
+            from,
+            peer_id,
+            AckTrailer::Verbatim(ack_trailer),
+            trace_route,
+            &[],
+            None,
+            false,
+        )
     }
 
     /// `retransmission`: the frame acknowledged is a copy of one already
@@ -1866,7 +1885,7 @@ impl<
         &mut self,
         from: LocalIdentityId,
         peer_id: PeerId,
-        ack_trailer: [u8; 8],
+        ack_trailer: AckTrailer<'_>,
         trace_route: bool,
         request_regions: &[[u8; 2]],
         unknown_route_budget: Option<u8>,
@@ -1919,7 +1938,7 @@ impl<
             &[]
         };
         let mut buf = [0u8; FRAME];
-        let frame = Self::build_mac_ack(
+        let frame = self.build_mac_ack(
             &mut buf,
             ack_trailer,
             flood_hops,
@@ -1942,7 +1961,7 @@ impl<
         &mut self,
         from: LocalIdentityId,
         peer_id: PeerId,
-        ack_trailer: [u8; 8],
+        ack_trailer: AckTrailer<'_>,
         request_accumulated: u8,
         request_regions: &[[u8; 2]],
     ) -> Result<(), SendError> {
@@ -1954,7 +1973,7 @@ impl<
             .saturating_add(slack)
             .clamp(1, MAX_FLOOD_HOPS);
         let mut buf = [0u8; FRAME];
-        let frame = Self::build_mac_ack(
+        let frame = self.build_mac_ack(
             &mut buf,
             ack_trailer,
             flood_hops,
@@ -1967,15 +1986,35 @@ impl<
 
     /// A MAC ack frame. Zero `flood_hops` is no `FHOPS` field at all; a
     /// trace route goes out with its trace signal.
+    ///
+    /// A sealed ack is this node's own, so it carries the operator
+    /// callsign when one is configured. That is its only static option,
+    /// and the [tag construction] follows it: an ack with a static option
+    /// is sealed with the MIC; any other keeps the legacy tag and says so.
+    ///
+    /// [tag construction]: https://darconeous.github.io/umsh/docs/protocol/ack-transition.html
     fn build_mac_ack<'a>(
+        &self,
         buf: &'a mut [u8; FRAME],
-        ack_trailer: [u8; 8],
+        ack_trailer: AckTrailer<'_>,
         flood_hops: u8,
         trace_route: bool,
         source_route: Option<&[RouterHint]>,
         regions: &[[u8; 2]],
     ) -> Result<&'a [u8], SendError> {
-        let mut builder = PacketBuilder::new(buf).mac_ack(ack_trailer);
+        let (placeholder, seal) = match ack_trailer {
+            AckTrailer::Sealed { v, keys } => {
+                let mut placeholder = [0u8; 8];
+                placeholder[..4].copy_from_slice(&v[..4]);
+                (placeholder, Some((v, keys)))
+            }
+            AckTrailer::Verbatim(trailer) => (trailer, None),
+        };
+        let callsign = self
+            .operating_policy
+            .operator_callsign
+            .filter(|_| seal.is_some());
+        let mut builder = PacketBuilder::new(buf).mac_ack(placeholder);
         if flood_hops > 0 {
             builder = builder.flood_hops(flood_hops);
         }
@@ -1985,13 +2024,23 @@ impl<
         if let Some(route) = source_route {
             builder = builder.source_route(route);
         }
+        if let Some(callsign) = callsign {
+            builder = builder.option(OptionNumber::OperatorCallsign, callsign.as_trimmed_slice());
+        }
         if trace_route {
             builder = builder.trace_signal();
         }
         for region in regions {
             builder = builder.region_code(*region);
         }
-        Ok(builder.build()?)
+        if seal.is_some() && callsign.is_none() {
+            builder = builder.legacy_ack_tag();
+        }
+        let len = builder.build()?.len();
+        if let Some((v, keys)) = seal {
+            self.crypto.seal_mac_ack(keys, &v, &mut buf[..len])?;
+        }
+        Ok(&buf[..len])
     }
 
     /// Queue a built MAC ack at its identity's power, tracking it for
@@ -2064,7 +2113,8 @@ impl<
         Some(receipt)
     }
 
-    /// Enqueues an immediate direct MAC ACK frame.
+    /// Enqueues an immediate direct MAC ACK frame carrying `ack_trailer` as
+    /// given.
     pub fn queue_mac_ack(&mut self, ack_trailer: [u8; 8]) -> Result<(), SendError> {
         let mut buf = [0u8; FRAME];
         let frame = PacketBuilder::new(&mut buf).mac_ack(ack_trailer).build()?;
@@ -3118,11 +3168,11 @@ impl<
         forwarding_confirmed: bool,
         mut on_event: impl FnMut(LocalIdentityId, crate::MacEventRef<'_>),
     ) -> bool {
-        // MAC acks carry no destination hint. Correlation is by the 8-byte
-        // ack trailer (`ack_mic || ack_tag`): the public `ack_mic` half links
-        // the ack to an outstanding request, and the keyed `ack_tag` half
-        // authenticates it. A colliding `ack_mic` from an unrelated exchange
-        // fails the full-trailer comparison and falls through to forwarding.
+        // MAC acks carry no destination hint. The public `ack_mic` half of
+        // the trailer links the ack to an outstanding request, and the keyed
+        // `ack_tag` half authenticates it under that request's keys. A
+        // colliding `ack_mic` from an unrelated exchange fails verification
+        // and falls through to forwarding.
         if header.mic_range.len() != 8 {
             return forwarding_confirmed
                 || self.maybe_forward_received(&buf[..frame_len], header, rx, false);
@@ -3134,10 +3184,12 @@ impl<
         // queued forward it may be holding is not this ack's business to
         // match against.
         self.cancel_forwards_for_ack_mic(&ack_trailer[..4], false);
-        if let Some(target_peer) = self.peer_for_ack_trailer(&ack_trailer)
+        if let Some((index, receipt, target_peer)) = self.pending_answered_by(&buf[..frame_len])
             && let Some((identity_id, receipt, via_route_retry, _)) =
-                self.complete_ack_reporting_retry(&target_peer, |pending| *pending == ack_trailer)
+                self.complete_pending_ack(index, receipt)
         {
+            // Every copy of one ack carries the same trailer: its tag covers
+            // only what no repeater may change.
             self.remember_completed_ack(ack_trailer, target_peer);
             // The path the ack came back by is evidence like any other
             // frame's. Scoring is what keeps an asymmetric return path from
@@ -3221,16 +3273,15 @@ impl<
                     // stale cache instead throws that away. A lost reply's
                     // re-ack floods whatever this installs.
                     self.learn_route_for_peer(peer_id, &buf[..frame_len], header, rx);
-                    let ack_trailer = self.compute_received_ack_trailer(
-                        &buf[..frame_len],
-                        header,
-                        body_range.clone(),
-                        &keys,
-                    );
+                    let ack_v =
+                        self.received_ack_v(&buf[..frame_len], header, body_range.clone(), &keys);
                     self.queue_received_mac_ack(
                         local_id,
                         peer_id,
-                        ack_trailer,
+                        AckTrailer::Sealed {
+                            v: ack_v,
+                            keys: &keys,
+                        },
                         &buf[..frame_len],
                         header,
                         occasion,
@@ -3275,7 +3326,7 @@ impl<
                             if header.ack_requested()
                                 && self.should_emit_destination_ack(&buf[..frame_len], header, rx)
                             {
-                                let ack_trailer = self.compute_received_ack_trailer(
+                                let ack_v = self.received_ack_v(
                                     &buf[..frame_len],
                                     header,
                                     body_range.clone(),
@@ -3284,7 +3335,10 @@ impl<
                                 self.queue_received_mac_ack(
                                     local_id,
                                     peer_id,
-                                    ack_trailer,
+                                    AckTrailer::Sealed {
+                                        v: ack_v,
+                                        keys: &keys,
+                                    },
                                     &buf[..frame_len],
                                     header,
                                     AckOccasion::First,
@@ -3331,11 +3385,14 @@ impl<
                                 // falls behind the baseline the resync sets.
                                 if self.is_counter_discontinuity(local_id, peer_id, header) {
                                     if header.ack_requested() {
-                                        let ack_trailer = self.compute_received_ack_trailer(
-                                            &buf[..frame_len],
-                                            header,
-                                            body_range.clone(),
-                                            &keys,
+                                        let ack_trailer = self.crypto.compute_ack_trailer(
+                                            &self.received_ack_v(
+                                                &buf[..frame_len],
+                                                header,
+                                                body_range.clone(),
+                                                &keys,
+                                            ),
+                                            &keys.k_enc,
                                         );
                                         if self
                                             .hold_and_verify(
@@ -3396,16 +3453,15 @@ impl<
                     && header.ack_requested()
                     && self.should_emit_destination_ack(&buf[..frame_len], header, rx)
                 {
-                    let ack_trailer = self.compute_received_ack_trailer(
-                        &buf[..frame_len],
-                        header,
-                        body_range.clone(),
-                        &keys,
-                    );
+                    let ack_v =
+                        self.received_ack_v(&buf[..frame_len], header, body_range.clone(), &keys);
                     self.queue_received_mac_ack(
                         local_id,
                         peer_id,
-                        ack_trailer,
+                        AckTrailer::Sealed {
+                            v: ack_v,
+                            keys: &keys,
+                        },
                         &buf[..frame_len],
                         header,
                         AckOccasion::First,
@@ -3628,7 +3684,7 @@ impl<
                                 &buf[..frame_len],
                             );
                             self.learn_route_for_peer(peer_id, &buf[..frame_len], header, rx);
-                            let ack_trailer = self.compute_received_ack_trailer(
+                            let ack_v = self.received_ack_v(
                                 &buf[..frame_len],
                                 header,
                                 body_range.clone(),
@@ -3637,7 +3693,10 @@ impl<
                             self.queue_received_mac_ack(
                                 local_id,
                                 peer_id,
-                                ack_trailer,
+                                AckTrailer::Sealed {
+                                    v: ack_v,
+                                    keys: &blind_keys,
+                                },
                                 &buf[..frame_len],
                                 header,
                                 occasion,
@@ -3691,7 +3750,7 @@ impl<
                                             rx,
                                         )
                                     {
-                                        let ack_trailer = self.compute_received_ack_trailer(
+                                        let ack_v = self.received_ack_v(
                                             &buf[..frame_len],
                                             header,
                                             body_range.clone(),
@@ -3700,7 +3759,10 @@ impl<
                                         self.queue_received_mac_ack(
                                             local_id,
                                             peer_id,
-                                            ack_trailer,
+                                            AckTrailer::Sealed {
+                                                v: ack_v,
+                                                keys: &blind_keys,
+                                            },
                                             &buf[..frame_len],
                                             header,
                                             AckOccasion::First,
@@ -3748,13 +3810,15 @@ impl<
                                         if self.is_counter_discontinuity(local_id, peer_id, header)
                                         {
                                             if header.ack_requested() {
-                                                let ack_trailer = self
-                                                    .compute_received_ack_trailer(
+                                                let ack_trailer = self.crypto.compute_ack_trailer(
+                                                    &self.received_ack_v(
                                                         &buf[..frame_len],
                                                         header,
                                                         body_range.clone(),
                                                         &blind_keys,
-                                                    );
+                                                    ),
+                                                    &blind_keys.k_enc,
+                                                );
                                                 if self
                                                     .hold_and_verify(
                                                         local_id,
@@ -3817,7 +3881,7 @@ impl<
                             && header.ack_requested()
                             && self.should_emit_destination_ack(&buf[..frame_len], header, rx)
                         {
-                            let ack_trailer = self.compute_received_ack_trailer(
+                            let ack_v = self.received_ack_v(
                                 &buf[..frame_len],
                                 header,
                                 body_range.clone(),
@@ -3826,7 +3890,10 @@ impl<
                             self.queue_received_mac_ack(
                                 local_id,
                                 peer_id,
-                                ack_trailer,
+                                AckTrailer::Sealed {
+                                    v: ack_v,
+                                    keys: &blind_keys,
+                                },
                                 &buf[..frame_len],
                                 header,
                                 AckOccasion::First,
@@ -3913,92 +3980,152 @@ impl<
             .await)
     }
 
-    /// Mark a pending receipt as acknowledged and emit an event through `on_event`.
+    /// Mark the pending send to `peer` whose legacy trailer
+    /// ([`PendingAck::ack_trailer`]) is `ack_trailer` as acknowledged.
     pub fn complete_ack(
         &mut self,
         peer: &PublicKey,
         ack_trailer: &[u8; 8],
     ) -> Option<(LocalIdentityId, SendReceipt)> {
-        self.complete_ack_reporting_retry(peer, |pending| pending == ack_trailer)
+        self.complete_ack_reporting_retry(peer, |pending| pending.ack_trailer == *ack_trailer)
             .map(|(identity_id, receipt, _, _)| (identity_id, receipt))
     }
 
     /// [`Self::complete_ack`], also reporting whether the attempt the ack
     /// answered was the route-retry flood rather than the original send,
-    /// and the full trailer of the send it completed.
+    /// and the legacy trailer of the send it completed.
     ///
-    /// `matches` is shown each pending send's expected trailer. A standalone
-    /// ack matches all eight octets; a piggy-backed one, authenticated by
-    /// its own packet, matches the `ack_mic` half.
+    /// `matches` is shown each outstanding send to `peer`. A piggy-backed
+    /// ack, authenticated by its own packet, matches the `ack_mic` half.
     fn complete_ack_reporting_retry(
         &mut self,
         peer: &PublicKey,
-        matches: impl Fn(&[u8; 8]) -> bool,
+        matches: impl Fn(&PendingAck<FRAME>) -> bool,
+    ) -> Option<(LocalIdentityId, SendReceipt, bool, [u8; 8])> {
+        let (index, receipt) = self
+            .identities
+            .iter()
+            .enumerate()
+            .find_map(|(index, slot)| {
+                slot.as_ref()?
+                    .pending_acks
+                    .iter()
+                    .find_map(|(receipt, pending)| {
+                        (pending.expects_ack() && pending.peer == *peer && matches(pending))
+                            .then_some((index, *receipt))
+                    })
+            })?;
+        self.complete_pending_ack(index, receipt)
+    }
+
+    /// The outstanding send a standalone MAC ack answers, found by its
+    /// `ack_mic` and verified under the keys the send was sealed with.
+    fn pending_answered_by(&self, ack: &[u8]) -> Option<(usize, SendReceipt, PublicKey)> {
+        let header = PacketHeader::parse(ack).ok()?;
+        let ack_mic = ack.get(header.mic_range.start..header.mic_range.start + 4)?;
+        self.identities
+            .iter()
+            .enumerate()
+            .find_map(|(index, slot)| {
+                let slot = slot.as_ref()?;
+                slot.pending_acks.iter().find_map(|(receipt, pending)| {
+                    (pending.expects_ack()
+                        && pending.ack_trailer[..4] == *ack_mic
+                        && self.ack_verifies(slot, pending, ack))
+                    .then_some((index, *receipt, pending.peer))
+                })
+            })
+    }
+
+    /// Whether `ack` carries a valid tag for `pending`: under the pairwise
+    /// keys, or for a blind unicast under the keys combined with a channel
+    /// the request's channel identifier names.
+    fn ack_verifies(
+        &self,
+        slot: &IdentitySlot<P::Identity, PEERS, ACKS, FRAME>,
+        pending: &PendingAck<FRAME>,
+        ack: &[u8],
+    ) -> bool {
+        let Some(pairwise) = self
+            .peer_registry
+            .lookup_by_key(&pending.peer)
+            .and_then(|(peer_id, _)| slot.peer_crypto().get(&peer_id))
+            .map(|state| &state.pairwise_keys)
+        else {
+            return false;
+        };
+        let request = PacketHeader::parse(pending.resend.frame.as_slice()).ok();
+        match request {
+            Some(request) if request.fcf.packet_type() == PacketType::BlindUnicastAckReq => {
+                let Some(channel_id) = request.channel else {
+                    return false;
+                };
+                self.channels.lookup_by_id(&channel_id).any(|channel| {
+                    let keys = self.crypto.derive_blind_keys(pairwise, &channel.derived);
+                    self.crypto
+                        .verify_mac_ack(&keys, &pending.ack_v, ack)
+                        .is_some()
+                })
+            }
+            _ => self
+                .crypto
+                .verify_mac_ack(pairwise, &pending.ack_v, ack)
+                .is_some(),
+        }
+    }
+
+    /// Complete identity `index`'s outstanding send `receipt`, crediting
+    /// the route it went out on and withdrawing anything still queued for
+    /// it.
+    fn complete_pending_ack(
+        &mut self,
+        index: usize,
+        receipt: SendReceipt,
     ) -> Option<(LocalIdentityId, SendReceipt, bool, [u8; 8])> {
         let now_ms = self.clock.now_ms();
-        for (index, slot) in self.identities.iter_mut().enumerate() {
-            let Some(slot) = slot.as_mut() else {
-                continue;
-            };
-
-            let found = slot.pending_acks.iter().find_map(|(receipt, pending)| {
-                (pending.expects_ack() && pending.peer == *peer && matches(&pending.ack_trailer))
-                    .then_some((*receipt, pending.ack_trailer))
-            });
-
-            if let Some((receipt, trailer)) = found {
-                let mut via_route_retry = false;
-                if let Some(pending) = slot.pending_acks.remove(&receipt) {
-                    via_route_retry = Self::frame_is_route_retry(pending.resend.frame.as_slice());
-                    // The acknowledgment of a Frame Verified: the requester
-                    // now holds our answer, so the counter its Verify Frame
-                    // carried is its baseline—unless something accepted from
-                    // it since has already put the window in step.
-                    if let Some(adoption) = pending.adopt_on_ack
-                        && let Some((peer_id, _)) = self.peer_registry.lookup_by_key(peer)
-                        && let Some(state) = slot.peer_crypto_mut().get_mut(&peer_id)
-                        && state.replay_window.last_accepted == adoption.seen_last_accepted
-                    {
-                        Self::adopt_rx_baseline_in(state, adoption.counter, None, now_ms);
-                    }
-                    self.peer_registry
-                        .confirm_route(peer, pending.cached_route_revision, now_ms);
-                    if pending.held_route_missed {
-                        self.peer_registry.note_held_outcome(
-                            peer,
-                            HeldRouteOutcome::FallbackAcked,
-                            now_ms,
-                        );
-                    } else if pending.cached_route_revision != 0 {
-                        // The revision survives only while the attempt is
-                        // still on the route it was sent with.
-                        self.peer_registry.note_held_outcome(
-                            peer,
-                            HeldRouteOutcome::RouteAcked,
-                            now_ms,
-                        );
-                    }
-                }
-                let identity_id = LocalIdentityId(index as u8);
-                // A retransmission may already be queued behind this ack.
-                // Nothing downstream re-checks, so it would otherwise go out
-                // after the send it belongs to has been confirmed.
-                self.tx_queue.remove_all_matching(|entry| {
-                    entry.receipt == Some(receipt) && entry.identity_id == Some(identity_id)
-                });
-                if self
-                    .post_tx_listen
-                    .as_ref()
-                    .map(|listen| listen.identity_id == identity_id && listen.receipt == receipt)
-                    .unwrap_or(false)
-                {
-                    self.post_tx_listen = None;
-                }
-                return Some((identity_id, receipt, via_route_retry, trailer));
-            }
+        let slot = self.identities.get_mut(index)?.as_mut()?;
+        let pending = slot.pending_acks.remove(&receipt)?;
+        let peer = &pending.peer;
+        let trailer = pending.ack_trailer;
+        let via_route_retry = Self::frame_is_route_retry(pending.resend.frame.as_slice());
+        // The acknowledgment of a Frame Verified: the requester
+        // now holds our answer, so the counter its Verify Frame
+        // carried is its baseline—unless something accepted from
+        // it since has already put the window in step.
+        if let Some(adoption) = pending.adopt_on_ack
+            && let Some((peer_id, _)) = self.peer_registry.lookup_by_key(peer)
+            && let Some(state) = slot.peer_crypto_mut().get_mut(&peer_id)
+            && state.replay_window.last_accepted == adoption.seen_last_accepted
+        {
+            Self::adopt_rx_baseline_in(state, adoption.counter, None, now_ms);
         }
-
-        None
+        self.peer_registry
+            .confirm_route(peer, pending.cached_route_revision, now_ms);
+        if pending.held_route_missed {
+            self.peer_registry
+                .note_held_outcome(peer, HeldRouteOutcome::FallbackAcked, now_ms);
+        } else if pending.cached_route_revision != 0 {
+            // The revision survives only while the attempt is
+            // still on the route it was sent with.
+            self.peer_registry
+                .note_held_outcome(peer, HeldRouteOutcome::RouteAcked, now_ms);
+        }
+        let identity_id = LocalIdentityId(index as u8);
+        // A retransmission may already be queued behind this ack.
+        // Nothing downstream re-checks, so it would otherwise go out
+        // after the send it belongs to has been confirmed.
+        self.tx_queue.remove_all_matching(|entry| {
+            entry.receipt == Some(receipt) && entry.identity_id == Some(identity_id)
+        });
+        if self
+            .post_tx_listen
+            .as_ref()
+            .map(|listen| listen.identity_id == identity_id && listen.receipt == receipt)
+            .unwrap_or(false)
+        {
+            self.post_tx_listen = None;
+        }
+        Some((identity_id, receipt, via_route_retry, trailer))
     }
 
     /// Whether `frame` is a route-retry rebuild of an earlier send.
@@ -4585,6 +4712,7 @@ impl<
         } else {
             PendingAck::direct(ack_trailer, peer, resend)
         };
+        pending.ack_v = full_mac;
         pending.cached_route_revision = cached_route_revision;
         slot.try_insert_pending_ack(receipt, pending)
             .map_err(|_| SendError::PendingAckFull)?;
@@ -4886,19 +5014,20 @@ impl<
         Ok(LocalIdentityId(next_id as u8))
     }
 
-    fn compute_received_ack_trailer(
+    /// A received frame's full S2V output, V, which its acknowledgment's
+    /// tag is bound to.
+    fn received_ack_v(
         &self,
         buf: &[u8],
         header: &PacketHeader,
         body_range: core::ops::Range<usize>,
         keys: &PairwiseKeys,
-    ) -> [u8; 8] {
-        let full_mac = self.crypto.s2v_tag(
+    ) -> [u8; 16] {
+        self.crypto.s2v_tag(
             &keys.k_mic,
             |cmac| feed_aad(header, buf, |chunk| cmac.update(chunk)),
             &buf[body_range],
-        );
-        self.crypto.compute_ack_trailer(&full_mac, &keys.k_enc)
+        )
     }
 
     fn accept_unicast_replay(
@@ -5024,7 +5153,7 @@ impl<
         &mut self,
         local_id: LocalIdentityId,
         peer_id: PeerId,
-        ack_trailer: [u8; 8],
+        ack_trailer: AckTrailer<'_>,
         frame: &[u8],
         header: &PacketHeader,
         occasion: AckOccasion,
@@ -5073,7 +5202,7 @@ impl<
         &mut self,
         local_id: LocalIdentityId,
         peer_id: PeerId,
-        ack_trailer: [u8; 8],
+        ack_trailer: AckTrailer<'_>,
         frame: &[u8],
         header: &PacketHeader,
         options: &ParsedOptions,
@@ -7327,7 +7456,7 @@ impl<
             return;
         };
         let Some((identity_id, receipt, via_route_retry, trailer)) =
-            self.complete_ack_reporting_retry(peer, |trailer| trailer[..4] == ack_mic)
+            self.complete_ack_reporting_retry(peer, |pending| pending.ack_trailer[..4] == ack_mic)
         else {
             return;
         };
@@ -7774,31 +7903,6 @@ impl<
             }
         }
         Some((identity_id, receipt))
-    }
-
-    /// Find the destination peer of the outstanding ack-requested send whose
-    /// expected ack trailer (`ack_mic || ack_tag`) equals `ack_trailer`,
-    /// searching every local identity's pending table.
-    fn peer_for_ack_trailer(&self, ack_trailer: &[u8; 8]) -> Option<PublicKey> {
-        self.identities
-            .iter()
-            .filter_map(|slot| slot.as_ref())
-            .find_map(|slot| self.match_pending_peer_for_ack(slot, ack_trailer))
-    }
-
-    fn match_pending_peer_for_ack(
-        &self,
-        slot: &IdentitySlot<P::Identity, PEERS, ACKS, FRAME>,
-        ack_trailer_bytes: &[u8],
-    ) -> Option<PublicKey> {
-        if ack_trailer_bytes.len() != 8 {
-            return None;
-        }
-
-        slot.pending_acks.iter().find_map(|(_, pending)| {
-            (pending.expects_ack() && pending.ack_trailer == ack_trailer_bytes)
-                .then_some(pending.peer)
-        })
     }
 }
 

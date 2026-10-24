@@ -389,10 +389,10 @@ pub enum CompletionSignal {
 /// repeaters and therefore retries until a repeat is heard ([`CompletionSignal`]). The
 /// record holds everything needed to detect completion, detect timeout, and retransmit:
 ///
-/// - **`ack_trailer`**—the 8-byte `ack_mic || ack_tag` value that will appear as the
-///   destination's MAC ACK trailer. The `ack_mic` half correlates the ack to this request;
-///   the keyed `ack_tag` half can only be produced by a node that received and successfully
-///   decrypted the original frame, so a matching trailer is cryptographic proof of delivery.
+/// - **`ack_trailer`** and **`ack_v`**—the request's `ack_mic`, which correlates the
+///   destination's MAC ACK to this request, and the S2V output its keyed `ack_tag` is
+///   bound to. Only a node that received and authenticated the original frame can produce
+///   that tag, so an ack that verifies is cryptographic proof of delivery.
 /// - **`peer`**—the destination's full public key, used to look up the correct pending
 ///   entry when matching an inbound MAC ACK against the pending table.
 /// - **`resend`**—a verbatim copy of the sealed frame for retransmission. See
@@ -415,9 +415,21 @@ pub enum CompletionSignal {
 /// overheard repeat.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PendingAck<const FRAME: usize = MAX_RESEND_FRAME_LEN> {
-    /// Expected 8-byte MAC ack trailer (`ack_mic || ack_tag`) used for inbound
-    /// matching. Never matched for [`CompletionSignal::RepeatOnly`] entries.
+    /// The request's ack trailer (`ack_mic || ack_tag`) under the
+    /// [legacy construction][legacy]: the local name of this send, which an
+    /// [Ack MIC option] and a held frame's nonce derive from. An inbound
+    /// ack is verified against `ack_v` instead. Never matched for
+    /// [`CompletionSignal::RepeatOnly`] entries.
+    ///
+    /// [legacy]: https://darconeous.github.io/umsh/docs/protocol/ack-transition.html
+    /// [Ack MIC option]: https://darconeous.github.io/umsh/docs/protocol/packet-options.html#ack-mic-option-8
     pub ack_trailer: [u8; 8],
+    /// The request's full 16-byte S2V output, V, that its acknowledgment's
+    /// [ack tag] is bound to. Zero until the send is sealed, and for a
+    /// [`CompletionSignal::RepeatOnly`] entry.
+    ///
+    /// [ack tag]: https://darconeous.github.io/umsh/docs/protocol/security.html#ack-tag-construction
+    pub(crate) ack_v: [u8; 16],
     /// Final destination peer.
     pub peer: PublicKey,
     /// Retransmission data.
@@ -472,6 +484,7 @@ impl<const FRAME: usize> PendingAck<FRAME> {
     pub fn direct(ack_trailer: [u8; 8], peer: PublicKey, resend: ResendRecord<FRAME>) -> Self {
         Self {
             ack_trailer,
+            ack_v: [0u8; 16],
             peer,
             resend,
             sent_ms: 0,
@@ -493,6 +506,7 @@ impl<const FRAME: usize> PendingAck<FRAME> {
     pub fn forwarded(ack_trailer: [u8; 8], peer: PublicKey, resend: ResendRecord<FRAME>) -> Self {
         Self {
             ack_trailer,
+            ack_v: [0u8; 16],
             peer,
             resend,
             sent_ms: 0,
@@ -515,6 +529,7 @@ impl<const FRAME: usize> PendingAck<FRAME> {
     pub fn repeat_only(peer: PublicKey, resend: ResendRecord<FRAME>) -> Self {
         Self {
             ack_trailer: [0u8; 8],
+            ack_v: [0u8; 16],
             peer,
             resend,
             sent_ms: 0,
