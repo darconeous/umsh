@@ -7,8 +7,8 @@ use std::ops::Range;
 use hamaddr::HamAddr;
 use umsh::core::options::OptionDecoder;
 use umsh::core::{
-    OptionNumber, PacketHeader, PacketType, PayloadType, PublicKey, RegionCode, RouterHint,
-    SourceAddrRef,
+    OptionNumber, PacketHeader, PacketType, ParsedOptions, PayloadType, PublicKey, RegionCode,
+    RouterHint, SourceAddrRef,
 };
 
 use crate::output::styled;
@@ -356,6 +356,9 @@ fn summary_line(packet: &[u8], header: &PacketHeader, color: bool) -> String {
     // A MAC ack's whole content is its two fixed fields, so show them rather
     // than a length: the ack MIC correlates the ack with the packet it
     // acknowledges, and the ack tag is what actually authenticates it.
+    // Which construction the tag uses shows when the options settle it:
+    // the legacy marker names the legacy tag, and a static option rules
+    // it out. With neither, either construction is possible.
     if packet_type == PacketType::MacAck {
         let ack = header.body_range.start;
         match packet.get(ack..ack + 8) {
@@ -370,6 +373,15 @@ fn summary_line(packet: &[u8], header: &PacketHeader, color: bool) -> String {
                     Field::AckTag,
                     color,
                 ));
+                let options = ParsedOptions::extract(packet, header.options_range.clone()).ok();
+                let construction = match options {
+                    Some(options) if options.legacy_ack_tag => Some("legacy"),
+                    Some(options) if options.has_static => Some("mic"),
+                    _ => None,
+                };
+                if let Some(construction) = construction {
+                    chips.push(tint(construction, Field::AckTag, color));
+                }
             }
             None => chips.push("<truncated ack>".to_owned()),
         }
@@ -476,6 +488,7 @@ fn option_chip(number: u16, value: &[u8]) -> String {
         OptionNumber::RouteRetry => format!("retry={}", hex_text(value)),
         OptionNumber::OperatorCallsign => format!("op={}", callsign_text(value)),
         OptionNumber::StationCallsign => format!("via={}", callsign_text(value)),
+        OptionNumber::LegacyAckTag if value.is_empty() => "legacy-tag".to_owned(),
         // Either an unknown option or a known one carrying a malformed value.
         // Critical options carry an odd number and are marked, since a
         // receiver that does not understand one has to drop the frame.
@@ -620,6 +633,45 @@ mod tests {
         assert_eq!(
             hex_lines(&MAC_ACK, &map, false),
             vec!["c9 10 8cb68f5d 9700ede7"],
+        );
+    }
+
+    /// The spec's MAC ack vectors (test-vectors.md Examples 10 and 11, and
+    /// the transition appendix's): the options name the tag construction
+    /// when they settle it, and otherwise nothing is claimed.
+    #[test]
+    fn mac_ack_names_the_tag_construction_its_options_settle() {
+        let unsettled = [0xc8, 0xaa, 0x17, 0x13, 0x06, 0xd2, 0xfb, 0x63, 0xbd];
+        let header = PacketHeader::parse(&unsettled).unwrap();
+        assert_eq!(
+            summary_line(&unsettled, &header, false),
+            "MacAck  ack_mic=aa171306  ack_tag=d2fb63bd",
+        );
+
+        let callsign = [
+            0xc8, 0x44, 0x5b, 0xbb, 0x08, 0x2c, 0xaa, 0x17, 0x13, 0x06, 0xa8, 0x78, 0xbe, 0x6e,
+        ];
+        let header = PacketHeader::parse(&callsign).unwrap();
+        assert_eq!(
+            summary_line(&callsign, &header, false),
+            "MacAck  ack_mic=aa171306  ack_tag=a878be6e  mic",
+        );
+        assert_eq!(
+            options_line(&callsign, &header, false).unwrap(),
+            "opts  op=N0CALL",
+        );
+
+        let legacy = [
+            0xc8, 0xd0, 0xf1, 0xaa, 0x17, 0x13, 0x06, 0x99, 0xfc, 0x2d, 0x9f,
+        ];
+        let header = PacketHeader::parse(&legacy).unwrap();
+        assert_eq!(
+            summary_line(&legacy, &header, false),
+            "MacAck  ack_mic=aa171306  ack_tag=99fc2d9f  legacy",
+        );
+        assert_eq!(
+            options_line(&legacy, &header, false).unwrap(),
+            "opts  legacy-tag",
         );
     }
 
