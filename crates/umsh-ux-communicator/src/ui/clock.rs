@@ -5,9 +5,11 @@
 use buoyant::event::{Key, KeyResponse};
 use buoyant::focus::BoundaryBehavior;
 use buoyant::match_view;
+use buoyant::view::LazyForEach;
+use buoyant::view::lazy_foreach::Extent;
 use buoyant::view::prelude::*;
 use embedded_graphics::pixelcolor::Rgb565;
-use heapless::{String, Vec};
+use heapless::String;
 
 use super::conversation::header;
 use super::setting::{End, marked_row, readout, row};
@@ -29,20 +31,9 @@ const PART_TOP: u32 = 30;
 const COLON: u32 = 8;
 /// The least room left at the screen's edges.
 const INSET: u32 = 8;
-/// The most zones the list holds at once, around the focused one.
-const WINDOW: usize = 12;
-
-/// Indices `ForEach` can hold without borrowing the state.
-static INDICES: [usize; WINDOW] = {
-    let mut a = [0; WINDOW];
-    let mut i = 0;
-    while i < WINDOW {
-        a[i] = i;
-        i += 1;
-    }
-    a
-};
-
+/// The most zones the list builds at once: those the view shows and some
+/// way beyond, wherever it is scrolled to.
+const ZONE_ROWS: usize = 16;
 pub fn page(state: &State, page: &ClockPage) -> impl View<Rgb565, State> + use<> {
     match_view!(page, {
         ClockPage::Main => main(state),
@@ -351,30 +342,9 @@ pub fn zone_list(
 ) -> impl View<Rgb565, State> + use<> {
     let m = state.metrics();
     let shown = matching(find);
+    let keyed = shown.clone();
     let current = zones::find(&state.clock.zone);
-    let focus = state.screen().focus();
-    let focused = focus
-        .current()
-        .or(focus.pending())
-        .and_then(keys::zone_of)
-        .and_then(|zone| shown.iter().position(|&i| usize::from(i) == zone))
-        .unwrap_or(0);
-    let start = focused
-        .saturating_sub(WINDOW / 2)
-        .min(shown.len().saturating_sub(WINDOW));
-    let window: Vec<u8, WINDOW> = shown.iter().skip(start).take(WINDOW).copied().collect();
     let now = state.wall_time.map_or(0, i64::from);
-    let offsets: Vec<String<12>, WINDOW> = window
-        .iter()
-        .map(|&i| {
-            let zone = &ZONES[usize::from(i)];
-            if zone.named_by_offset() {
-                String::new()
-            } else {
-                zones::offset_text(zone.read().offset_at(now))
-            }
-        })
-        .collect();
     let find = find.clone();
     VStack::new((
         header(m, title, None, None),
@@ -386,20 +356,26 @@ pub fn zone_list(
                 .with_height(24)
         }),
         super::list(
-            ForEach::<WINDOW>::new_vertical(&INDICES[..window.len()], move |&i| {
-                let index = usize::from(window[i]);
+            LazyForEach::<ZONE_ROWS>::new_vertical(shown.len(), Extent::Fixed(ROW), move |i| {
+                let index = usize::from(shown[i]);
+                let zone = &ZONES[index];
+                let offset = if zone.named_by_offset() {
+                    String::<12>::new()
+                } else {
+                    zones::offset_text(zone.read().offset_at(now))
+                };
                 marked_row(
                     m,
-                    ZONES[index].name,
+                    zone.name,
                     keys::zone(index),
                     move |s: &mut State| s.choose_zone(index),
-                    End::value(&offsets[i]),
+                    End::value(&offset),
                     false,
                     ROW,
                     Some(current == Some(index)),
                 )
             })
-            .keyed(move |&i| keys::zone(usize::from(shown[start + i]))),
+            .keyed(move |i| keys::zone(usize::from(keyed[i]))),
         )
         .with_scroll_step(ROW),
     ))

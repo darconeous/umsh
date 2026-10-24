@@ -198,7 +198,10 @@ async fn interface(
         }
         SCREEN_FADED.store(attention.is_faded(), Ordering::Release);
         let lit = attention.accepts_redraw();
-        let tick = Instant::now() + if animating && lit { FRAME } else { REPORT };
+        // A frame that asked for another, as a list running short of the
+        // rows it built does at the end of a glide, gets it a frame later.
+        let next_frame = animating || app.should_redraw();
+        let tick = Instant::now() + if next_frame && lit { FRAME } else { REPORT };
         let wake_at = [
             attention.next_deadline(),
             app.state().next_deadline(),

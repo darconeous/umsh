@@ -313,3 +313,140 @@ fn a_flick_through_the_history_selects_nothing() {
     }
     assert_eq!(seen, [was]);
 }
+
+/// A screen that keeps nothing drawn to it.
+struct Blank(embedded_graphics::geometry::Size);
+
+impl embedded_graphics::geometry::OriginDimensions for Blank {
+    fn size(&self) -> embedded_graphics::geometry::Size {
+        self.0
+    }
+}
+
+impl embedded_graphics::draw_target::DrawTarget for Blank {
+    type Color = embedded_graphics::pixelcolor::Rgb565;
+    type Error = core::convert::Infallible;
+
+    fn draw_iter<I>(&mut self, pixels: I) -> Result<(), Self::Error>
+    where
+        I: IntoIterator<Item = embedded_graphics::Pixel<Self::Color>>,
+    {
+        pixels.into_iter().for_each(drop);
+        Ok(())
+    }
+}
+
+/// Paints a frame, as the board does whenever the app asks, which is where
+/// a long list builds the rows the frame shows.
+fn paint<V, F>(app: &mut App<V, State, F>)
+where
+    V: buoyant::view::View<embedded_graphics::pixelcolor::Rgb565, State>,
+    V::FocusTree: DefaultFocus,
+    F: Fn(&State) -> V,
+{
+    use embedded_graphics::pixelcolor::{Rgb565, RgbColor as _};
+    let mut screen = Blank(BOARD.metrics.size());
+    let mut target = buoyant::render_target::EmbeddedGraphicsRenderTarget::new(&mut screen);
+    app.render_animated(&mut target, &Rgb565::WHITE);
+}
+
+/// Flicks the content up from `y`, 25 px every 20 ms from `ms`, and paints
+/// each frame until it comes to rest. Returns when it did.
+fn flick_up<V, F>(app: &mut App<V, State, F>, mut ms: u64, y: i16) -> u64
+where
+    V: buoyant::view::View<embedded_graphics::pixelcolor::Rgb565, State>,
+    V::FocusTree: DefaultFocus,
+    F: Fn(&State) -> V,
+{
+    use input::TouchPhase::{Ended, Moved, Started};
+    use std::time::Duration;
+    let x = 160;
+    app.set_time(Duration::from_millis(ms));
+    apply_touch(app, Started, (x, y), ms);
+    for step in 1..=6 {
+        ms += 20;
+        app.set_time(Duration::from_millis(ms));
+        apply_touch(app, Moved, (x, y - 25 * step), ms);
+        paint(app);
+    }
+    ms += 20;
+    app.set_time(Duration::from_millis(ms));
+    apply_touch(app, Ended, (x, y - 150), ms);
+    for _ in 0..150 {
+        ms += 20;
+        app.set_time(Duration::from_millis(ms));
+        input::expire(app, ms);
+        app.finalize_view();
+        paint(app);
+    }
+    ms
+}
+
+/// The time zones, past the dozen built around the one set, are all there
+/// to flick through, and a tap on one far down sets it.
+#[test]
+fn a_flick_through_the_time_zones_reaches_far_down_and_a_tap_sets_one() {
+    use input::TouchPhase::{Ended, Started};
+    use std::time::Duration;
+    let mut app = app!();
+    open_clock(&mut app);
+    turn_to(&mut app, keys::CLOCK_ZONE);
+    run(&mut app, &[Input::Press]);
+    let was = focus(app.state()).and_then(keys::zone_of).unwrap();
+    let mut ms = tick(1000);
+    paint(&mut app);
+    for _ in 0..3 {
+        ms = flick_up(&mut app, ms, 210);
+    }
+    // The zone in the middle of the screen, by touch.
+    let (x, y) = (160, 130);
+    ms += 1000;
+    app.set_time(Duration::from_millis(ms));
+    apply_touch(&mut app, Started, (x, y), ms);
+    ms += 50;
+    app.set_time(Duration::from_millis(ms));
+    apply_touch(&mut app, Ended, (x, y), ms);
+    app.finalize_view();
+    let set = zones::find(&app.state().clock.zone).unwrap();
+    assert!(set > was + 12, "set {set}, from {was}");
+}
+
+/// Flung, with nothing more from the panel, the list asks for frames that
+/// build the rows to come, and a board that paints when asked builds them.
+#[test]
+fn a_fling_through_the_time_zones_asks_for_the_rows_to_come() {
+    use input::TouchPhase::{Ended, Moved, Started};
+    use std::time::Duration;
+    let mut app = app!();
+    open_clock(&mut app);
+    turn_to(&mut app, keys::CLOCK_ZONE);
+    run(&mut app, &[Input::Press]);
+    let mut ms = tick(1000);
+    paint(&mut app);
+    let (x, y) = (160, 210);
+    app.set_time(Duration::from_millis(ms));
+    apply_touch(&mut app, Started, (x, y), ms);
+    for step in 1..=6 {
+        ms += 20;
+        app.set_time(Duration::from_millis(ms));
+        apply_touch(&mut app, Moved, (x, y - 25 * step), ms);
+    }
+    ms += 20;
+    app.set_time(Duration::from_millis(ms));
+    apply_touch(&mut app, Ended, (x, y - 150), ms);
+    paint(&mut app);
+    let mut asked = 0;
+    for _ in 0..150 {
+        ms += 20;
+        app.set_time(Duration::from_millis(ms));
+        paint(&mut app);
+        // A frame near the end of the rows built asks for another...
+        if app.should_redraw() {
+            asked += 1;
+            // ...which builds them, and asks for nothing more.
+            paint(&mut app);
+            assert!(!app.should_redraw());
+        }
+    }
+    assert!(asked > 0);
+}

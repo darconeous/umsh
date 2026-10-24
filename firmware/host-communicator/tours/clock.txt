@@ -2,7 +2,7 @@
 backspace
 turn 2
 press
-turn 6
+turn 5
 press
 shot clock
 press
@@ -14,6 +14,7 @@ shot set-time-editing
 backspace
 backspace
 shot clock-manual
-turn 1
+press
+turn 2
 press
 shot zones
