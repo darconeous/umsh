@@ -100,6 +100,7 @@ fn session_config() -> SessionConfig {
         ble_pin: true,
         reboot: true,
         dev_identity: true,
+        messaging: false,
         stats: None,
         mac_node: true,
         meshcore_forwarder: false,
@@ -323,8 +324,9 @@ impl SimDevice {
             // No test reads PROP_IDENT yet; the simulator mirrors a
             // platform without a signer until the shared identity
             // responder lands.
-            Some(Effect::SignIdentity { tid }) => {
-                self.session.respond_identity_blob(tid, Err(()), &mut emit);
+            Some(Effect::SignIdentity { tid, form }) => {
+                self.session
+                    .respond_identity_blob(tid, form, Err(()), &mut emit);
             }
             // A whole scan in the four frames the spec orders, from a
             // stack that hands its results back at the end.
