@@ -700,6 +700,10 @@ fn shapes() -> String {
         let c = s / 2.0;
         let triangle_height = s * 1.16;
         let half_base = triangle_height / 3f32.sqrt();
+        let triangle_corner = s * 0.16;
+        // A base corner rounded at 60° reaches (√3 - 1) times its radius
+        // short of its vertex across.
+        let triangle_half_width = half_base - triangle_corner * (3f32.sqrt() - 1.0);
         let half_width = s / 3f32.sqrt();
         let outlines = [
             ("CIRCLE", rounded_polygon(&circle_points(c, c, c), 0.0)),
@@ -711,7 +715,7 @@ fn shapes() -> String {
                         (c + half_base, s),
                         (c - half_base, s),
                     ],
-                    s * 0.16,
+                    triangle_corner,
                 ),
             ),
             (
@@ -734,12 +738,12 @@ fn shapes() -> String {
             ),
         ];
         for (name, path) in outlines {
-            // The hexagon is wider than tall; every mask is centered in a
-            // frame wide enough for it.
-            let width = if name == "HEXAGON" {
-                (2.0 * half_width).ceil() as u32
-            } else {
-                size
+            // The triangle and the hexagon are wider than tall; every mask
+            // is centered in a frame wide enough for it.
+            let width = match name {
+                "TRIANGLE" => (2.0 * triangle_half_width).ceil() as u32,
+                "HEXAGON" => (2.0 * half_width).ceil() as u32,
+                _ => size,
             };
             let dx = (width as f32 - s) / 2.0;
             let (alpha, placement) = swash::zeno::Mask::new(path.as_str())
