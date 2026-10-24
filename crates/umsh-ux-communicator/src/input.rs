@@ -180,7 +180,7 @@ where
     if app.state().ending.is_some() {
         return;
     }
-    app.state_mut().uptime = now;
+    advance_clock(app, now);
     if let Input::Touch { phase, x, y, at } = input {
         // Timed when the panel reported it, not when it is taken in, so a
         // flick keeps its speed through a slow frame.
@@ -193,7 +193,7 @@ where
             return;
         }
         app.finalize_view();
-        app.state_mut().sync_keyboard();
+        sync_keyboard(app);
         return;
     }
     if app.state().lock.locked {
@@ -201,14 +201,50 @@ where
         app.finalize_view();
         return;
     }
-    app.state_mut().sync_keyboard();
+    sync_keyboard(app);
     if app.state().picker.is_some() {
         pick(app, input, now);
     } else {
         deliver(app, input, now);
     }
     app.finalize_view();
-    app.state_mut().sync_keyboard();
+    sync_keyboard(app);
+}
+
+/// Moves the interface's clock to `now`. Ages are shown in whole seconds,
+/// so the view is rebuilt for the clock only when a second turns over: a
+/// touch, or a pass of the board's loop, that changed nothing else leaves
+/// the view as it was.
+fn advance_clock<V, F>(app: &mut App<V, State, F>, now: u64)
+where
+    V: ViewLayout<State>,
+    V::FocusTree: DefaultFocus,
+    V::Renderables: AnimatedJoin,
+    F: Fn(&State) -> V,
+{
+    let mut state = app.state_mut();
+    let turned = state.uptime / 1000 != now / 1000;
+    state.untracked().uptime = now;
+    if turned {
+        state.mark_changed();
+    }
+}
+
+/// Keeps the keyboard with the focused field, rebuilding the view only
+/// when that changed the keyboard.
+fn sync_keyboard<V, F>(app: &mut App<V, State, F>)
+where
+    V: ViewLayout<State>,
+    V::FocusTree: DefaultFocus,
+    V::Renderables: AnimatedJoin,
+    F: Fn(&State) -> V,
+{
+    let mut state = app.state_mut();
+    let keyboard = state.keyboard;
+    state.untracked().sync_keyboard();
+    if state.keyboard != keyboard {
+        state.mark_changed();
+    }
 }
 
 /// An input while locked: the wheel turns toward unlocking and a press
@@ -261,7 +297,10 @@ where
     V::Renderables: AnimatedJoin,
     F: Fn(&State) -> V,
 {
-    let mut state = app.state_mut();
+    // What a touch keeps of itself is read as it is taken in, and shows
+    // nowhere: only closing the picker changes the view.
+    let mut tracked = app.state_mut();
+    let state = tracked.untracked();
     match phase {
         TouchPhase::Started => {
             if state.lock.locked {
@@ -269,6 +308,7 @@ where
             }
             if state.picker.take().is_some() {
                 state.keyboard.other();
+                tracked.mark_changed();
                 return;
             }
             state.touch = Some(TouchHold {
@@ -292,14 +332,14 @@ where
         }
     }
     state.touching = true;
-    drop(state);
+    drop(tracked);
     app.send_touch(&Touch::new(
         0,
         TouchPoint::new(point.x, point.y),
         phase.phase(),
         Tool::Finger,
     ));
-    app.state_mut().touching = false;
+    app.state_mut().untracked().touching = false;
 }
 
 /// Lets go of whatever has had its time by `now`, as [`State::expire`]
@@ -342,7 +382,7 @@ where
     F: Fn(&State) -> V,
 {
     let node = app.state().node;
-    app.state_mut().uptime = now;
+    advance_clock(app, now);
     let mut attention = false;
     let mut any = false;
     while let Some(event) = node.next_event() {

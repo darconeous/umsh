@@ -98,7 +98,7 @@ pub enum Spaced {
     Light,
 }
 
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 struct Key {
     latch: Latch,
     down: bool,
@@ -137,7 +137,7 @@ enum Run {
     AltSpace(u64),
 }
 
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Keyboard {
     shift: Key,
     alt: Key,

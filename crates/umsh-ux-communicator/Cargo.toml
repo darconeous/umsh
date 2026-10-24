@@ -27,7 +27,7 @@ fixture = ["dep:umsh-core", "dep:umsh-ulcp"]
 # place, and scroll views that take focus when nothing in them can. Branch
 # `umsh` of
 # darconeous/buoyant.
-buoyant = { git = "https://github.com/darconeous/buoyant", rev = "e3de0052465c42228edc0870ce5bc66275341baa", default-features = false, features = ["embedded-graphics", "unicode-segmentation"] }
+buoyant = { git = "https://github.com/darconeous/buoyant", rev = "7ea0843e1aeb92c54f8725f17bfce49a9812c7e5", default-features = false, features = ["embedded-graphics", "unicode-segmentation"] }
 embedded-graphics = { version = "0.8", default-features = false }
 # The touches Buoyant takes.
 embedded-touch = "0.3"

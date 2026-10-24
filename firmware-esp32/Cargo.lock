@@ -213,7 +213,7 @@ checksum = "72f5acc6cb2ba439de613abc23857ec3d78374d8ed5ac84e9d11336e87da8649"
 [[package]]
 name = "buoyant"
 version = "0.8.0-alpha.1"
-source = "git+https://github.com/darconeous/buoyant?rev=e3de0052465c42228edc0870ce5bc66275341baa#e3de0052465c42228edc0870ce5bc66275341baa"
+source = "git+https://github.com/darconeous/buoyant?rev=7ea0843e1aeb92c54f8725f17bfce49a9812c7e5#7ea0843e1aeb92c54f8725f17bfce49a9812c7e5"
 dependencies = [
  "embedded-graphics",
  "embedded-graphics-core",

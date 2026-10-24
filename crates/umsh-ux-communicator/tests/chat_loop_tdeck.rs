@@ -450,3 +450,39 @@ fn a_fling_through_the_time_zones_asks_for_the_rows_to_come() {
     }
     assert!(asked > 0);
 }
+
+/// A finger dragging a list, and a pass of the board's loop with nothing
+/// waiting, leave the view as it was once the drag has taken the touch from
+/// the row it began on. The clock rebuilds it only as its second turns over.
+#[test]
+fn only_a_turning_second_rebuilds_the_view_under_a_drag() {
+    use input::TouchPhase::{Moved, Started};
+    let mut app = app!();
+    open_clock(&mut app);
+    turn_to(&mut app, keys::CLOCK_ZONE);
+    run(&mut app, &[Input::Press]);
+    // Early in a second, with the rest of it to drag in.
+    let ms = (tick(1000) / 1000 + 1) * 1000 + 100;
+    app.set_time(std::time::Duration::from_millis(ms));
+    input::events(&mut app, ms);
+    paint(&mut app);
+    let (x, y) = (160, 210);
+    apply_touch(&mut app, Started, (x, y), ms + 10);
+    paint(&mut app);
+    for step in 1..=5 {
+        let at = ms + 10 + 20 * step as u64;
+        let (this, next) = (
+            touch(Moved, (x, y - 10 * step), at),
+            touch(Moved, (x, y - 10 * (step + 1)), at + 20),
+        );
+        app.set_time(std::time::Duration::from_millis(at));
+        input::apply_before(&mut app, this, Some(&next), at);
+        // The first move lets go of the row pressed.
+        assert_eq!(app.state_mut().has_changed(), step == 1, "move {step}");
+        paint(&mut app);
+        input::events(&mut app, at);
+        assert!(!app.state_mut().has_changed(), "pass {step}");
+    }
+    input::events(&mut app, ms + 1000);
+    assert!(app.state_mut().has_changed());
+}
