@@ -7,11 +7,12 @@
 use buoyant::event::{Key, KeyResponse};
 use buoyant::focus::{BoundaryBehavior, Role};
 use buoyant::primitives::Size;
+use buoyant::view::lazy_foreach::Natural;
 use buoyant::view::popover::Dismissal;
 use buoyant::view::prelude::*;
 use buoyant::view::scroll_view::ScrollBarVisibility;
 use buoyant::view::text_field::TextFieldStatus;
-use buoyant::view::{GeometryReader, Lazy, TextArea};
+use buoyant::view::{GeometryReader, Lazy, LazyForEach, TextArea};
 use embedded_graphics::pixelcolor::Rgb565;
 use embedded_graphics::prelude::RgbColor;
 use heapless::Vec;
@@ -23,8 +24,8 @@ use crate::board::Metrics;
 use crate::clock::{Local, MONTHS, WEEKDAYS, civil};
 use crate::model;
 use crate::model::{
-    ChannelAccess, ChatId, ChatKind, Delivery, Direction, Draft, MAX_MESSAGES, Message, MessageId,
-    Messages, Parts, Presence, Quote, REACTIONS, Reacted, Reaction, Reactions, Rule, State,
+    ChannelAccess, ChatId, ChatKind, Delivery, Direction, Draft, LatestSent, Message, MessageId,
+    Neighbor, Node, Parts, Presence, Quote, REACTIONS, Reacted, Reaction, Reactions, Rule, State,
     hops_text,
 };
 use crate::nav::{Screen, Unsent, keys};
@@ -86,23 +87,20 @@ const SCROLL_STEP: u32 = 24;
 type Placeholder = heapless::String<48>;
 /// An action in the actions menu, which can name a channel.
 type MenuText = heapless::String<40>;
-/// Indices `ForEach` can hold without borrowing the state.
-static INDICES: [usize; MAX_MESSAGES] = {
-    let mut a = [0; MAX_MESSAGES];
-    let mut i = 0;
-    while i < MAX_MESSAGES {
-        a[i] = i;
-        i += 1;
-    }
-    a
-};
+/// The most messages built at once: those shown, the shortest kind of row
+/// filling the history, with room to spare.
+const HISTORY_ROWS: usize = 16;
+/// How many heights of messages no longer built the history remembers.
+const REMEMBERED: usize = 16;
+/// What a message is taken to be, until it is built: one line.
+const fn row_estimate(m: &Metrics) -> u32 {
+    GAP_SAME + body_line(m) + 2 * BUBBLE_PAD_Y
+}
 
 pub fn view(state: &State, chat: ChatId) -> impl View<Rgb565, State> + use<> {
     let m = state.metrics();
     let summary = state.chat(chat);
-    let conversation = state.conversation(chat);
-    let messages = conversation.map_or(&[][..], |c| &c.messages);
-    let sent = conversation.map_or(0, |c| c.sent);
+    let sent = state.conversation(chat).map_or(0, |c| c.sent);
     let (actions, reply, unsent) = match state.screen() {
         Screen::Conversation {
             actions,
@@ -119,7 +117,7 @@ pub fn view(state: &State, chat: ChatId) -> impl View<Rgb565, State> + use<> {
             .focus()
             .current()
             .is_some_and(keys::is_message);
-    let find = |id: Option<MessageId>| id.and_then(|id| messages.iter().find(|m| m.id == id));
+    let find = |id: Option<MessageId>| id.and_then(|id| state.open_message(id));
     // The menu offers my reaction as the one already chosen, and a
     // member's message offers its sender.
     let over = find(actions)
@@ -147,7 +145,7 @@ pub fn view(state: &State, chat: ChatId) -> impl View<Rgb565, State> + use<> {
             Unsent::Resend(_) => Over::Resend,
             Unsent::ConfirmDelete(_) => Over::ConfirmDelete,
         }));
-    let quoted = find(reply).map(|message| quote(m, message, summary.map_or("", |s| &s.name)));
+    let quoted = find(reply).map(|message| quote(m, &message, summary.map_or("", |s| &s.name)));
     let kind = summary.map(|s| s.kind);
     let channel = matches!(kind, Some(ChatKind::Channel { .. }));
     let open = kind.is_some_and(ChatKind::is_open);
@@ -175,7 +173,8 @@ pub fn view(state: &State, chat: ChatId) -> impl View<Rgb565, State> + use<> {
         ),
         history(
             m,
-            messages,
+            state.node,
+            chat,
             sent,
             actions,
             channel,
@@ -184,8 +183,6 @@ pub fn view(state: &State, chat: ChatId) -> impl View<Rgb565, State> + use<> {
                 now: state.wall_time,
                 zone: state.clock.zone,
                 hour24: state.hour24(),
-                // A full window may have more behind it.
-                older: messages.len() == MAX_MESSAGES,
             },
         ),
         state.airtime_wait.map(|wait| airtime_line(m, wait)),
@@ -408,36 +405,40 @@ pub(super) fn back(
 /// than the space sits on the composer. The message whose actions are open
 /// stays marked while focus is in them. A message sent brings the newest
 /// into view, however far back the history was read.
+#[allow(clippy::too_many_arguments)]
 fn history(
     m: &'static Metrics,
-    messages: &[Message],
+    node: &'static dyn Node,
+    chat: ChatId,
     sent: u32,
     acting_on: Option<MessageId>,
     channel: bool,
     open: bool,
     times: Times,
 ) -> impl View<Rgb565, State> + use<> {
-    let messages = Messages::from_slice(messages).unwrap_or_default();
-    let ids: Vec<MessageId, MAX_MESSAGES> = messages.iter().map(|m| m.id).collect();
-    // Delivery shows under the newest message sent, the newest delivered,
-    // and every one unconfirmed.
-    let newest_sent = messages
-        .iter()
-        .rposition(|m| m.direction == Direction::Outbound);
-    let newest_delivered = messages
-        .iter()
-        .rposition(|m| m.direction == Direction::Outbound && m.delivery == Delivery::Delivered);
-    let count = messages.len();
+    let latest = node.latest_sent(chat);
+    let row = Row {
+        m,
+        node,
+        chat,
+        latest,
+        acting_on,
+        channel,
+        open,
+        times,
+    };
     ScrollView::new(
-        ForEach::<MAX_MESSAGES>::new_vertical(&INDICES[..count], move |&i| {
-            // A deleted one has nothing left to deliver.
-            let delivery = !messages[i].deleted
-                && (Some(i) == newest_sent
-                    || Some(i) == newest_delivered
-                    || messages[i].delivery == Delivery::Unconfirmed);
-            item(m, &messages, i, delivery, acting_on, channel, open, times)
-        })
-        .keyed(move |&i| keys::message(ids[i])),
+        LazyForEach::<HISTORY_ROWS>::new_natural(
+            node.rows(chat),
+            Natural::<REMEMBERED>::new(row_estimate(m)),
+            move |i| {
+                node.row_message(chat, i)
+                    .map(|message| item(&row, &message, i))
+            },
+        )
+        // A row gone since the count was read builds nothing, under a key
+        // no message has.
+        .keyed(move |i| keys::message(node.row_id(chat, i).unwrap_or(MessageId::MAX))),
     )
     .with_bar_visibility(ScrollBarVisibility::Never)
     .with_initial_pin_to_end(true)
@@ -447,44 +448,47 @@ fn history(
     .with_scroll_step(SCROLL_STEP)
 }
 
-/// A message, with its delivery below it when asked. In a channel, each run
-/// of messages from one member has the member's name above its first and
-/// their avatar beside its last.
-#[allow(clippy::too_many_arguments)]
-fn item(
+/// What every row of the history reads beyond its own message.
+#[derive(Clone, Copy)]
+struct Row {
     m: &'static Metrics,
-    messages: &Messages,
-    i: usize,
-    delivery: bool,
+    node: &'static dyn Node,
+    chat: ChatId,
+    /// Delivery shows under the newest message sent, the newest delivered,
+    /// and every one unconfirmed.
+    latest: LatestSent,
     acting_on: Option<MessageId>,
     channel: bool,
     open: bool,
     times: Times,
-) -> impl View<Rgb565, State> + use<> {
-    let message = &messages[i];
-    // A run of messages on their way again shows as the first of them.
-    let pending = message.presence == Presence::PendingRepair;
-    let collapsed = pending
-        && i.checked_sub(1)
-            .is_some_and(|p| messages[p].presence == Presence::PendingRepair);
-    let separator = (!collapsed)
-        .then(|| separator(messages, i, times))
-        .flatten();
+}
+
+/// A message, the row `i` of the history, with its delivery below it when
+/// it shows. In a channel, each run of messages from one member has the
+/// member's name above its first and their avatar beside its last.
+fn item(row: &Row, message: &Message, i: usize) -> impl View<Rgb565, State> + use<> {
+    let m = row.m;
+    let same = |n: &Neighbor| n.direction == message.direction && n.sender == message.sender;
+    let separator = message
+        .time
+        .and_then(|time| separator(time, row.node.time_before(row.chat, i), row.times));
     let follows_same = separator.is_none()
-        && i.checked_sub(1).is_some_and(|p| {
-            messages[p].direction == message.direction && messages[p].sender == message.sender
-        });
-    let gap = if collapsed {
-        0
-    } else if i == 0 || follows_same {
+        && i.checked_sub(1)
+            .and_then(|p| row.node.neighbor(row.chat, p))
+            .is_some_and(|p| same(&p));
+    let gap = if i == 0 || follows_same {
         GAP_SAME
     } else {
         GAP_CHANGE
     };
-    // What stands in the place of a message that is not there.
-    let stand_in = if collapsed {
-        None
-    } else if pending {
+    // A deleted one has nothing left to deliver.
+    let delivery = !message.deleted
+        && (Some(message.id) == row.latest.sent
+            || Some(message.id) == row.latest.delivered
+            || message.delivery == Delivery::Unconfirmed);
+    // What stands in the place of a message that is not there. A run of
+    // messages on their way again is one row.
+    let stand_in = if message.presence == Presence::PendingRepair {
         Some(StandIn::Coming)
     } else if message.presence == Presence::Unavailable {
         Some(StandIn::Gone("Message unavailable"))
@@ -493,25 +497,24 @@ fn item(
     } else {
         None
     };
-    let shown = !collapsed && stand_in.is_none();
+    let shown = stand_in.is_none();
     let outbound = message.direction == Direction::Outbound;
     let alignment = if outbound {
         HorizontalAlignment::Trailing
     } else {
         HorizontalAlignment::Leading
     };
-    let sender = (!follows_same && !collapsed)
-        .then(|| message.sender.clone())
-        .flatten();
-    let ends_run = messages
-        .get(i + 1)
-        .is_none_or(|next| next.direction != message.direction || next.sender != message.sender);
+    let sender = (!follows_same).then(|| message.sender.clone()).flatten();
+    let ends_run = row
+        .node
+        .neighbor(row.chat, i + 1)
+        .is_none_or(|next| !same(&next));
     // A channel's received bubbles stand clear of their senders' avatars.
-    let beside_avatar = channel && !outbound;
+    let beside_avatar = row.channel && !outbound;
     let avatar = message
         .sender
         .as_ref()
-        .filter(|_| beside_avatar && ends_run && !collapsed)
+        .filter(|_| beside_avatar && ends_run)
         .map(|sender| {
             Lazy::new(sender.avatar.clone(), member_avatar)
                 .padding(Edges::Leading, MEMBER_AVATAR_X)
@@ -542,7 +545,7 @@ fn item(
     VStack::new((
         head.map(|head| Lazy::new((head, m), |(head, m)| head_view(m, head))),
         shown.then(|| {
-            bubble(m, message, acting_on == Some(message.id), open)
+            bubble(m, message, row.acting_on == Some(message.id), row.open)
                 .padding(Edges::Leading, lead - SIDE)
         }),
         notes.map(|notes| Lazy::new((notes, outbound, beside_avatar, m), notes_view)),
@@ -1281,23 +1284,17 @@ struct Times {
     now: Option<u32>,
     zone: Rule,
     hour24: bool,
-    /// Messages older than those shown may be kept.
-    older: bool,
 }
 
 /// How long a lull runs before the conversation says when it picked up
 /// again: an hour, as on iOS.
 const LULL: u32 = 60 * 60;
 
-/// The day and the time over the message `i`, when a lull went before it,
-/// or when it is the first there is.
-fn separator(messages: &Messages, i: usize, times: Times) -> Option<Stamp> {
-    let time = messages[i].time?;
-    let lull = match messages[..i].iter().rev().find_map(|m| m.time) {
-        Some(before) => time.saturating_sub(before) >= LULL,
-        None => !times.older,
-    };
-    if !lull {
+/// The day and the time over a message sent or received at `time`, when a
+/// lull went before it since the message `before` it that has a time, or
+/// when no message before it has one.
+fn separator(time: u32, before: Option<u32>, times: Times) -> Option<Stamp> {
+    if before.is_some_and(|before| time.saturating_sub(before) < LULL) {
         return None;
     }
     // Each in the offset the zone kept then: a message from before a
@@ -1799,4 +1796,25 @@ fn item_in(
 /// run would outweigh the messages themselves.
 fn member_avatar(style: &AvatarStyle) -> impl View<Rgb565, ()> + use<> {
     super::avatar::view(style, MEMBER_AVATAR)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const TIMES: Times = Times {
+        now: None,
+        zone: Rule::UTC,
+        hour24: true,
+    };
+
+    /// The first message with a time, the whole history's or the first
+    /// after a lull, says when it came.
+    #[test]
+    fn a_stamp_goes_over_the_first_message_and_after_a_lull() {
+        let at = 1_800_000_000;
+        assert!(separator(at, None, TIMES).is_some());
+        assert!(separator(at, Some(at - LULL), TIMES).is_some());
+        assert!(separator(at, Some(at - LULL + 1), TIMES).is_none());
+    }
 }

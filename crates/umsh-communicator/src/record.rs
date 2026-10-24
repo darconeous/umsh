@@ -185,6 +185,20 @@ pub struct MessageRecord {
     pub reactions: Reactions,
 }
 
+/// What a message's neighbors in its transcript need of it: who sent it,
+/// how, and when, whether it is there, and how it fared.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MessageMeta {
+    pub chat: ChatId,
+    pub direction: Direction,
+    pub sender: SenderScope,
+    pub sender_handle: Option<Name>,
+    pub presence: Presence,
+    pub flags: MessageFlags,
+    pub delivery: Delivery,
+    pub time: Option<u32>,
+}
+
 impl MessageRecord {
     /// The wire coordinates a later reference to it would carry, in
     /// `conversation`.

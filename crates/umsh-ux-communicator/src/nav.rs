@@ -848,24 +848,15 @@ impl State {
     }
 
     /// The invitation `message` in the open chat carries.
-    fn invite(&self, message: MessageId) -> Option<&Invite> {
-        self.conversation
-            .as_ref()?
-            .messages
-            .iter()
-            .find(|m| m.id == message)?
-            .invite()
+    fn invite(&self, message: MessageId) -> Option<Invite> {
+        self.open_message(message)?.invite().cloned()
     }
 
     /// The link of the contact `message` in the open chat carries.
     fn contact_link(&self, message: MessageId) -> Option<SharedText> {
-        self.conversation
-            .as_ref()?
-            .messages
-            .iter()
-            .find(|m| m.id == message)
+        self.open_message(message)
             .filter(|m| m.contact().is_some())
-            .map(|m| m.text.clone())
+            .map(|m| m.text)
     }
 
     /// Shows the node the contact of the message whose actions menu is open
@@ -952,7 +943,7 @@ impl State {
         let Some(message) = self.close_actions() else {
             return;
         };
-        let Some(invite) = self.invite(message).cloned() else {
+        let Some(invite) = self.invite(message) else {
             return;
         };
         let name = JoinName::with_text(String::try_from(invite.name.as_str()).unwrap_or_default());
@@ -1673,11 +1664,13 @@ impl State {
         let Some(key) = focus.current() else {
             return false;
         };
+        // Read from the newest, where focus mostly is.
+        let node = self.node;
         let Some(id) = self.conversation.as_ref().and_then(|c| {
-            c.messages
-                .iter()
-                .find(|m| keys::message(m.id) == key)
-                .map(|m| m.id)
+            (0..node.rows(c.chat))
+                .rev()
+                .filter_map(|row| node.row_id(c.chat, row))
+                .find(|&id| keys::message(id) == key)
         }) else {
             return false;
         };

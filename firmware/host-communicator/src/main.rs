@@ -24,6 +24,9 @@
 //! identity asked for arrives two seconds later, as the fixture's own
 //! clock has it.
 //!
+//! With `--long-history`, the fixture's public channel holds several
+//! hundred messages over days in place of its own.
+//!
 //! Headless, for scripted runs and comparisons with the mockup:
 //!
 //!     host-communicator [--board B] [--node DIR] --script steps.txt --out shots/
@@ -78,9 +81,15 @@ use umsh_ux_communicator::keyboard::Modifier;
 use umsh_ux_communicator::model::{BatteryReading, Charge, HOLD_MS, NodeEvent, State};
 use umsh_ux_communicator::{fixture, theme, typeface, ui};
 
-/// Where the fixture's chats keep their messages, for the life of the run.
-fn store() -> &'static fixture::Store {
-    Box::leak(Box::new(fixture::Store::new(&std::alloc::System)))
+/// Where the fixture's chats keep their messages, for the life of the run,
+/// with a long history when asked.
+fn store(long: bool) -> &'static fixture::Store {
+    let store = fixture::Store::new(&std::alloc::System);
+    Box::leak(Box::new(if long {
+        store.with_long_history()
+    } else {
+        store
+    }))
 }
 
 /// Moves the fixture on to `now` on the board's clock, in milliseconds, and
@@ -177,6 +186,13 @@ fn main() -> ExitCode {
         }
         None => &Board::PAGER,
     };
+    let long = match args.iter().position(|a| a == "--long-history") {
+        Some(at) => {
+            args.remove(at);
+            true
+        }
+        None => false,
+    };
     let (backend, dir, args) = match args.as_slice() {
         [node_flag, dir, rest @ ..] if node_flag == "--node" => {
             match node::open(Path::new(dir), std::time::Instant::now()) {
@@ -190,7 +206,7 @@ fn main() -> ExitCode {
                 }
             }
         }
-        rest => (Backend::Fixture(store()), None, rest),
+        rest => (Backend::Fixture(store(long)), None, rest),
     };
     match args {
         [] => {
@@ -243,7 +259,11 @@ fn bench(board: &'static Board, count: u32) {
 
     let size = board.metrics.size();
     let mut display: SimulatorDisplay<Rgb565> = SimulatorDisplay::new(size);
-    let mut app = App::new(fixture::state(store(), board), size.into(), ui::root_view);
+    let mut app = App::new(
+        fixture::state(store(false), board),
+        size.into(),
+        ui::root_view,
+    );
     ui::bind(&mut app);
     let (mut layout, mut paint) = (Duration::ZERO, Duration::ZERO);
     for turn in 0..count {

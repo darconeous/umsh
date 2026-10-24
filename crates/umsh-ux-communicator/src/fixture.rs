@@ -11,12 +11,11 @@ use crate::model::{
     About, BatteryReading, Bluetooth, BluetoothReading, Card, ChannelAccess, ChannelEntry, Charge,
     ChatId, ChatKind, ChatSummary, Chats, ClockSettings, ClockSource, Contact, ContactUri,
     DEFAULT_AUTO_LOCK_S, Delivery, Details, Direction, EventQueue, Exchange, ExchangeEnd, Fix,
-    Gnss, GnssReading, Heard, Invite, KeyboardSettings, Links, MAX_CHATS, MAX_HEARD, MAX_PEERS,
-    MESSAGE_LEN, MeetState, Member, Message, MessageId, Messages, NearbyDevice, NearbyId, Node,
-    NodeEvent, Parts, PeerDetail, PeerEntry, PeerId, PeerSummary, Peers, Presence, Profile, Quote,
-    RadioSettings, Reacted, Reaction, Reactions, Reactor, Rule, Sender, Setting, ShareUri,
-    Shareable, State, Statistics, StatusStrip, TRANSMIT_POWER, brightness_at, push_newest,
-    word_match,
+    Gnss, GnssReading, Heard, Invite, KeyboardSettings, LatestSent, Links, MAX_CHATS, MAX_HEARD,
+    MAX_PEERS, MESSAGE_LEN, MeetState, Member, Message, MessageId, NearbyDevice, NearbyId,
+    Neighbor, Node, NodeEvent, Parts, PeerDetail, PeerEntry, PeerId, PeerSummary, Peers, Presence,
+    Profile, Quote, RadioSettings, Reacted, Reaction, Reactions, Reactor, Rule, Sender, Setting,
+    ShareUri, Shareable, State, Statistics, StatusStrip, TRANSMIT_POWER, brightness_at, word_match,
 };
 use crate::models;
 use crate::picker::RecentText;
@@ -459,14 +458,8 @@ fn mockup_message(
     };
     Some(Message {
         id: mockup_id(chat, index),
-        direction: match from {
-            From::Me => Direction::Outbound,
-            From::Peer | From::Member(_) => Direction::Inbound,
-        },
-        sender: match from {
-            From::Member(name) => Some(member(name)),
-            From::Me | From::Peer => None,
-        },
+        direction: direction_of(from),
+        sender: sender_of(from),
         text,
         delivery: delivery(chat, index),
         reactions: their_reactions(chat, index)
@@ -489,9 +482,115 @@ fn mockup_message(
     })
 }
 
+/// The chat a long history, when the fixture keeps one, stands in for: the
+/// public channel, busy for days.
+const LONG: ChatId = 4;
+/// How many messages the long history holds.
+const LONG_COUNT: usize = 600;
+/// Where the long history's messages are numbered from: above the
+/// fixture's own, below those sent or received since it started.
+const LONG_FIRST: MessageId = 0x8000;
+/// The long history's runs of messages asked for again: one in the middle
+/// and one at its newest end, each longer than a transcript builds rows.
+const LONG_PENDING: [core::ops::Range<usize>; 2] = [300..340, LONG_COUNT - 24..LONG_COUNT];
+/// How long the long history's lulls run, in seconds, and how many
+/// messages apart they come.
+const LONG_LULL: u32 = 4 * 60 * 60;
+const LONG_LULL_EVERY: usize = 100;
+
+/// Who sent the long history's message `index`: members in runs, and now
+/// and then me.
+fn long_from(index: usize) -> From {
+    const SENDERS: [From; 5] = [
+        From::Member("Kit"),
+        From::Member("Lee Park"),
+        From::Me,
+        From::Member("Ranger Station"),
+        From::Member("Member 4Fz*"),
+    ];
+    // Runs of one to four.
+    let run = (index + index / 5 + index / 11) / 3;
+    SENDERS[run % SENDERS.len()]
+}
+
+/// When the long history's message `index` was sent: a minute apart, its
+/// newest when the channel was last active, with a lull now and then. Every
+/// thirteenth was kept with no clock.
+fn long_time(index: usize) -> Option<u32> {
+    if index % 13 == 5 {
+        return None;
+    }
+    let lulls = (index / LONG_LULL_EVERY..(LONG_COUNT - 1) / LONG_LULL_EVERY).len() as u32;
+    Some(STARTED - quiet_for(LONG) - 60 * (LONG_COUNT - 1 - index) as u32 - LONG_LULL * lulls)
+}
+
+fn long_presence(index: usize) -> Presence {
+    if LONG_PENDING.iter().any(|run| run.contains(&index)) {
+        Presence::PendingRepair
+    } else {
+        Presence::Present
+    }
+}
+
+/// The long history's message `index`, with its text kept on `heap`, when
+/// there is room.
+fn long_message(heap: TextHeap, index: usize) -> Option<Message> {
+    const SAID: [&str; 6] = [
+        "Copy.",
+        "Trail is clear to the junction",
+        "Snow above the hut",
+        "Water at the spring is running, filter it",
+        "Heading down before the weather turns. See you at the trailhead, \
+         the lot is half full",
+        "Radio check at 19:00 on the usual channel. Bring the spare antenna \
+         and a battery: the cold eats them, and the ridge blocks the \
+         repeater after dark",
+    ];
+    let from = long_from(index);
+    let mut text = String::<192>::new();
+    _ = core::fmt::write(
+        &mut text,
+        format_args!("#{index} {}", SAID[(index * 7 + index / 3) % SAID.len()]),
+    );
+    Some(Message {
+        id: LONG_FIRST + index as MessageId,
+        direction: direction_of(from),
+        sender: sender_of(from),
+        text: SharedText::new(heap, &text)?,
+        delivery: Delivery::Delivered,
+        reactions: Reactions::new(),
+        card: None,
+        reply: None,
+        time: long_time(index),
+        presence: long_presence(index),
+        edited: false,
+        deleted: false,
+        late: false,
+        forward_secret: false,
+        parts: None,
+    })
+}
+
+fn direction_of(from: From) -> Direction {
+    match from {
+        From::Me => Direction::Outbound,
+        From::Peer | From::Member(_) => Direction::Inbound,
+    }
+}
+
+fn sender_of(from: From) -> Option<Sender> {
+    match from {
+        From::Member(name) => Some(member(name)),
+        From::Me | From::Peer => None,
+    }
+}
+
 /// How many messages sent or received since it started the fixture keeps,
 /// across all chats, and how many of each thing made since.
 const KEPT: usize = 8;
+/// How many messages a chat of the fixture's holds at most: the long
+/// history, and those kept since.
+const POSITIONS: usize = LONG_COUNT + KEPT;
 /// How many chats the fixture keeps: its own, and those made since.
 const CHATS: usize = 7 + 2 * KEPT;
 /// How many events wait for the interface before they overflow.
@@ -506,6 +605,13 @@ pub struct Store {
     chats: RefCell<Vec<ChatRow, CHATS>>,
     chats_made: Cell<bool>,
     kept: RefCell<Vec<(ChatId, Message), KEPT>>,
+    /// The public channel holds a long history in place of its own.
+    long: Cell<bool>,
+    /// How many of the long history's oldest messages have been let go.
+    evicted: Cell<usize>,
+    /// Where the rows of the chat last read by row start among its
+    /// messages, with how many it held then.
+    row_starts: RefCell<Option<(ChatId, usize, Vec<u16, POSITIONS>)>>,
     /// How many of the fixture's arrivals have arrived.
     arrived: Cell<usize>,
     /// My reactions, by message.
@@ -578,6 +684,9 @@ impl Store {
             chats: RefCell::new(Vec::new()),
             chats_made: Cell::new(false),
             kept: RefCell::new(Vec::new()),
+            long: Cell::new(false),
+            evicted: Cell::new(0),
+            row_starts: RefCell::new(None),
             arrived: Cell::new(0),
             mine: RefCell::new(Vec::new()),
             retried: RefCell::new(Vec::new()),
@@ -624,6 +733,21 @@ impl Store {
             arrival_at: Cell::new(None),
             identity_at: Cell::new(None),
         }
+    }
+
+    /// The same, the public channel holding a long history: several
+    /// hundred messages over days, with runs asked for again.
+    #[must_use]
+    pub fn with_long_history(self) -> Self {
+        self.long.set(true);
+        self
+    }
+
+    /// Lets go of the long history's oldest `count` messages, unannounced,
+    /// as a full store does to make room.
+    pub fn evict_oldest(&self, count: usize) {
+        let evicted = self.evicted.get() + count;
+        self.evicted.set(evicted.min(LONG_COUNT));
     }
 }
 
@@ -834,7 +958,7 @@ fn private_uri(key: &str, name: &str) -> Option<ShareUri> {
 
 impl Store {
     /// The chats, the mockup's made the first time they are read.
-    fn rows(&self) -> RefMut<'_, Vec<ChatRow, CHATS>> {
+    fn chat_rows(&self) -> RefMut<'_, Vec<ChatRow, CHATS>> {
         let mut rows = self.chats.borrow_mut();
         if !self.chats_made.replace(true) {
             for row in mockup_chats(self.heap) {
@@ -1117,7 +1241,7 @@ impl Store {
 
     /// Whether `chat` is a channel.
     fn is_channel(&self, chat: ChatId) -> bool {
-        self.rows()
+        self.chat_rows()
             .iter()
             .find(|row| row.id == chat)
             .is_some_and(|row| matches!(row.kind, ChatKind::Channel { .. }))
@@ -1126,7 +1250,7 @@ impl Store {
     /// Moves `chat` to the top, active now, and returns it.
     fn touch(&self, chat: ChatId) -> Option<RefMut<'_, ChatRow>> {
         let time = self.time();
-        let mut rows = self.rows();
+        let mut rows = self.chat_rows();
         let index = rows.iter().position(|row| row.id == chat)?;
         let mut row = rows.remove(index);
         row.activity = time;
@@ -1147,7 +1271,7 @@ impl Store {
             activity: self.time(),
             draft: None,
         };
-        let mut rows = self.rows();
+        let mut rows = self.chat_rows();
         if rows.is_full() {
             rows.pop();
         }
@@ -1193,20 +1317,186 @@ impl Store {
 
     /// The newest message of `chat`.
     fn last_message(&self, chat: ChatId) -> Option<Message> {
-        let kept = self
-            .kept
-            .borrow()
-            .iter()
-            .rev()
-            .find(|(c, _)| *c == chat)
-            .map(|(_, message)| message.clone());
-        let mut message = kept.or_else(|| {
-            let all = messages(chat);
-            let last = all.len().checked_sub(1)?;
-            mockup_message(self.heap, chat, last, all[last])
-        })?;
+        self.message_at(chat, self.count(chat).checked_sub(1)?)
+    }
+
+    // ─── A chat's messages, by where they stand ──────────────────────────
+
+    /// The long history stands in for `chat`'s own messages.
+    fn is_long(&self, chat: ChatId) -> bool {
+        self.long.get() && chat == LONG
+    }
+
+    /// Where `chat`'s own message `index` stands in the whole long history,
+    /// counting those let go.
+    fn long_index(&self, index: usize) -> usize {
+        index + self.evicted.get()
+    }
+
+    /// How many of its own messages `chat` holds, before those kept since.
+    fn own_count(&self, chat: ChatId) -> usize {
+        if self.is_long(chat) {
+            LONG_COUNT - self.evicted.get()
+        } else {
+            messages(chat).len()
+        }
+    }
+
+    fn own_id(&self, chat: ChatId, index: usize) -> MessageId {
+        if self.is_long(chat) {
+            LONG_FIRST + self.long_index(index) as MessageId
+        } else {
+            mockup_id(chat, index)
+        }
+    }
+
+    /// Where the message `id` stands among `chat`'s own, if it is one.
+    fn own_index(&self, chat: ChatId, id: MessageId) -> Option<usize> {
+        let index = if self.is_long(chat) {
+            (id.checked_sub(LONG_FIRST)? as usize).checked_sub(self.evicted.get())?
+        } else {
+            (id & 0xFF) as usize
+        };
+        (index < self.own_count(chat) && self.own_id(chat, index) == id).then_some(index)
+    }
+
+    /// `chat`'s own message `index`, as the fixture keeps it.
+    fn own_message(&self, chat: ChatId, index: usize) -> Option<Message> {
+        if self.is_long(chat) {
+            long_message(self.heap, self.long_index(index))
+        } else {
+            mockup_message(self.heap, chat, index, *messages(chat).get(index)?)
+        }
+    }
+
+    /// What the rows beside `chat`'s own message `index` need of it, read
+    /// without its text.
+    fn own_neighbor(&self, chat: ChatId, index: usize) -> Option<Neighbor> {
+        if self.is_long(chat) {
+            let index = self.long_index(index);
+            let from = long_from(index);
+            return Some(Neighbor {
+                direction: direction_of(from),
+                sender: sender_of(from),
+                presence: long_presence(index),
+                time: long_time(index),
+            });
+        }
+        let (from, _) = *messages(chat).get(index)?;
+        Some(Neighbor {
+            direction: direction_of(from),
+            sender: sender_of(from),
+            presence: condition(chat, index).presence,
+            time: Some(mockup_time(chat, index)),
+        })
+    }
+
+    /// How many messages `chat` holds: its own, then those kept since.
+    fn count(&self, chat: ChatId) -> usize {
+        let kept = self.kept.borrow();
+        self.own_count(chat) + kept.iter().filter(|(c, _)| *c == chat).count()
+    }
+
+    /// The message kept since the fixture started that stands `at` among
+    /// those of `chat`.
+    fn kept_at<T>(&self, chat: ChatId, at: usize, read: impl FnOnce(&Message) -> T) -> Option<T> {
+        let kept = self.kept.borrow();
+        let at = at.checked_sub(self.own_count(chat))?;
+        let (_, message) = kept.iter().filter(|(c, _)| *c == chat).nth(at)?;
+        Some(read(message))
+    }
+
+    fn id_at(&self, chat: ChatId, at: usize) -> Option<MessageId> {
+        if at < self.own_count(chat) {
+            Some(self.own_id(chat, at))
+        } else {
+            self.kept_at(chat, at, |message| message.id)
+        }
+    }
+
+    /// The message standing `at` among `chat`'s, as it is now.
+    fn message_at(&self, chat: ChatId, at: usize) -> Option<Message> {
+        let mut message = if at < self.own_count(chat) {
+            self.own_message(chat, at)?
+        } else {
+            self.kept_at(chat, at, Message::clone)?
+        };
         self.overlay(&mut message);
         Some(message)
+    }
+
+    /// What the rows beside the message standing `at` among `chat`'s need
+    /// of it, as it is now.
+    fn neighbor_at(&self, chat: ChatId, at: usize) -> Option<Neighbor> {
+        let mut neighbor = if at < self.own_count(chat) {
+            self.own_neighbor(chat, at)?
+        } else {
+            self.kept_at(chat, at, |message| Neighbor {
+                direction: message.direction,
+                sender: message.sender.clone(),
+                presence: message.presence,
+                time: message.time,
+            })?
+        };
+        if self.identified.get()
+            && let Some(sender) = neighbor.sender.as_mut().filter(|s| s.name == UNIDENTIFIED)
+        {
+            *sender = self.card(UNIDENTIFIED).sender;
+        }
+        Some(neighbor)
+    }
+
+    /// How the message standing `at` among `chat`'s fared, as it is now.
+    fn delivery_at(&self, chat: ChatId, at: usize) -> Option<(Direction, Delivery)> {
+        let (id, direction, delivery) = if at < self.own_count(chat) {
+            let neighbor = self.own_neighbor(chat, at)?;
+            let delivery = if self.is_long(chat) {
+                Delivery::Delivered
+            } else {
+                delivery(chat, at)
+            };
+            (self.own_id(chat, at), neighbor.direction, delivery)
+        } else {
+            self.kept_at(chat, at, |message| {
+                (message.id, message.direction, message.delivery)
+            })?
+        };
+        let delivery = if self.retried.borrow().contains(&id) {
+            Delivery::Sending
+        } else {
+            delivery
+        };
+        Some((direction, delivery))
+    }
+
+    /// Where the row `row` of `chat` starts among its messages: a message
+    /// each, except that a run of messages on their way again is one row.
+    fn row_start(&self, chat: ChatId, row: usize) -> Option<usize> {
+        self.with_row_starts(chat, |starts| starts.get(row).map(|&at| usize::from(at)))
+    }
+
+    fn with_row_starts<T>(&self, chat: ChatId, read: impl FnOnce(&[u16]) -> T) -> T {
+        let count = self.count(chat);
+        let mut kept = self.row_starts.borrow_mut();
+        // What a message is never changes once kept: only their number.
+        let (_, _, starts) = match &mut *kept {
+            Some(starts) if starts.0 == chat && starts.1 == count => starts,
+            kept => {
+                let mut starts = Vec::new();
+                let mut pending = false;
+                for at in 0..count {
+                    let follows = pending;
+                    pending = self
+                        .neighbor_at(chat, at)
+                        .is_some_and(|n| n.presence == Presence::PendingRepair);
+                    if !(pending && follows) {
+                        _ = starts.push(at as u16);
+                    }
+                }
+                kept.insert((chat, count, starts))
+            }
+        };
+        read(starts)
     }
 
     /// Applies to `message` what has happened to it since the fixture
@@ -1316,13 +1606,13 @@ impl Node for Store {
     }
 
     fn chats(&self, into: &mut Chats) {
-        for row in self.rows().iter().take(MAX_CHATS) {
+        for row in self.chat_rows().iter().take(MAX_CHATS) {
             _ = into.push(self.summary(row));
         }
     }
 
     fn chat(&self, chat: ChatId) -> Option<ChatSummary> {
-        let rows = self.rows();
+        let rows = self.chat_rows();
         let row = rows.iter().find(|row| row.id == chat)?;
         Some(self.summary(row))
     }
@@ -1352,20 +1642,6 @@ impl Node for Store {
         }
     }
 
-    fn load(&self, chat: ChatId, into: &mut Messages) {
-        for (index, &entry) in messages(chat).iter().enumerate() {
-            if let Some(message) = mockup_message(self.heap, chat, index, entry) {
-                push_newest(into, message);
-            }
-        }
-        for (_, kept) in self.kept.borrow().iter().filter(|(c, _)| *c == chat) {
-            push_newest(into, kept.clone());
-        }
-        for message in into.iter_mut() {
-            self.overlay(message);
-        }
-    }
-
     fn message(&self, chat: ChatId, message: MessageId) -> Option<Message> {
         let mut found = if message >= FIRST_KEPT {
             let kept = self.kept.borrow();
@@ -1373,18 +1649,52 @@ impl Node for Store {
                 .find(|(c, m)| *c == chat && m.id == message)
                 .map(|(_, m)| m.clone())?
         } else {
-            let index = (message & 0xFF) as usize;
-            if mockup_id(chat, index) != message {
-                return None;
-            }
-            mockup_message(self.heap, chat, index, *messages(chat).get(index)?)?
+            self.own_message(chat, self.own_index(chat, message)?)?
         };
         self.overlay(&mut found);
         Some(found)
     }
 
+    fn rows(&self, chat: ChatId) -> usize {
+        self.with_row_starts(chat, <[u16]>::len)
+    }
+
+    fn row_id(&self, chat: ChatId, row: usize) -> Option<MessageId> {
+        self.id_at(chat, self.row_start(chat, row)?)
+    }
+
+    fn row_message(&self, chat: ChatId, row: usize) -> Option<Message> {
+        self.message_at(chat, self.row_start(chat, row)?)
+    }
+
+    fn neighbor(&self, chat: ChatId, row: usize) -> Option<Neighbor> {
+        self.neighbor_at(chat, self.row_start(chat, row)?)
+    }
+
+    fn latest_sent(&self, chat: ChatId) -> LatestSent {
+        let mut latest = LatestSent::default();
+        for at in (0..self.count(chat)).rev() {
+            let Some((Direction::Outbound, delivery)) = self.delivery_at(chat, at) else {
+                continue;
+            };
+            latest.sent = latest.sent.or_else(|| self.id_at(chat, at));
+            if delivery == Delivery::Delivered {
+                latest.delivered = self.id_at(chat, at);
+                break;
+            }
+        }
+        latest
+    }
+
+    fn time_before(&self, chat: ChatId, row: usize) -> Option<u32> {
+        let at = self.row_start(chat, row)?;
+        (0..at)
+            .rev()
+            .find_map(|at| self.neighbor_at(chat, at).and_then(|n| n.time))
+    }
+
     fn opened(&self, chat: ChatId) {
-        if let Some(row) = self.rows().iter_mut().find(|row| row.id == chat) {
+        if let Some(row) = self.chat_rows().iter_mut().find(|row| row.id == chat) {
             row.unread = false;
         }
     }
@@ -1401,7 +1711,7 @@ impl Node for Store {
         let draft = (!text.trim().is_empty())
             .then(|| SharedText::new(self.heap, text))
             .flatten();
-        if let Some(row) = self.rows().iter_mut().find(|row| row.id == chat) {
+        if let Some(row) = self.chat_rows().iter_mut().find(|row| row.id == chat) {
             row.draft = draft;
         }
     }
@@ -1477,10 +1787,8 @@ impl Node for Store {
             let (_, kept) = kept.iter().find(|(_, m)| m.id == message)?;
             kept.sender.as_ref()?.name.clone()
         } else {
-            match messages(chat).get((message & 0xFF) as usize)? {
-                (From::Member(name), _) => s(name),
-                _ => return None,
-            }
+            let index = self.own_index(chat, message)?;
+            self.own_neighbor(chat, index)?.sender?.name
         };
         Some(self.card(&name))
     }
@@ -1684,7 +1992,7 @@ impl Node for Store {
     }
 
     fn delete_chat(&self, chat: ChatId) {
-        let mut rows = self.rows();
+        let mut rows = self.chat_rows();
         let Some(index) = rows.iter().position(|row| row.id == chat) else {
             return;
         };
@@ -1695,14 +2003,14 @@ impl Node for Store {
     }
 
     fn rename_chat(&self, chat: ChatId, name: Option<&str>) {
-        if let Some(row) = self.rows().iter_mut().find(|row| row.id == chat) {
+        if let Some(row) = self.chat_rows().iter_mut().find(|row| row.id == chat) {
             row.alias = name.map(cut);
         }
         self.queue(NodeEvent::ChatChanged(chat));
     }
 
     fn set_muted(&self, chat: ChatId, muted: bool) {
-        if let Some(row) = self.rows().iter_mut().find(|row| row.id == chat) {
+        if let Some(row) = self.chat_rows().iter_mut().find(|row| row.id == chat) {
             row.muted = muted;
         }
         self.queue(NodeEvent::ChatChanged(chat));
@@ -2210,10 +2518,8 @@ impl Node for Store {
             let (_, kept) = kept.iter().find(|(_, m)| m.id == message)?;
             (kept.direction == Direction::Outbound, kept.time)
         } else {
-            let index = (message & 0xFF) as usize;
-            let (from, _) = *messages(chat).get(index)?;
-            let time = Some(mockup_time(chat, index));
-            (matches!(from, From::Me), time)
+            let neighbor = self.own_neighbor(chat, self.own_index(chat, message)?)?;
+            (neighbor.direction == Direction::Outbound, neighbor.time)
         };
         let mut details = if outbound {
             Details {
@@ -2309,4 +2615,64 @@ pub fn state(store: &'static Store, board: &'static Board) -> State {
     state.reload();
     state.focus_list();
     state
+}
+
+#[cfg(test)]
+mod tests {
+    extern crate std;
+
+    use super::*;
+
+    fn store() -> &'static Store {
+        std::boxed::Box::leak(std::boxed::Box::new(
+            Store::new(&std::alloc::System).with_long_history(),
+        ))
+    }
+
+    /// The long history reads by row, its runs on their way again a row
+    /// each, and its own messages are found by their IDs.
+    #[test]
+    fn the_long_history_reads_by_row() {
+        let store = store();
+        let folded: usize = LONG_PENDING.iter().map(|run| run.len() - 1).sum();
+        assert_eq!(store.rows(LONG), LONG_COUNT - folded);
+        let middle = LONG_PENDING[0].start;
+        assert_eq!(
+            store.row_id(LONG, middle),
+            Some(LONG_FIRST + middle as MessageId)
+        );
+        assert_eq!(
+            store.neighbor(LONG, middle).unwrap().presence,
+            Presence::PendingRepair
+        );
+        let after = LONG_PENDING[0].end;
+        assert_eq!(
+            store.row_id(LONG, middle + 1),
+            Some(LONG_FIRST + after as MessageId)
+        );
+        // The newest row stands for the run at the newest end.
+        let last = store.rows(LONG) - 1;
+        assert_eq!(
+            store.neighbor(LONG, last).unwrap().presence,
+            Presence::PendingRepair
+        );
+        let id = store.row_id(LONG, 10).unwrap();
+        assert_eq!(store.row_message(LONG, 10).unwrap().id, id);
+        assert_eq!(store.message(LONG, id).unwrap().id, id);
+        assert!(store.member(LONG, LONG_FIRST).is_some());
+        // A message kept with no clock looks back past it.
+        assert_eq!(long_time(5), None);
+        assert_eq!(store.time_before(LONG, 6), long_time(4));
+        let latest = store.latest_sent(LONG);
+        assert!(latest.sent.is_some());
+        assert_eq!(latest.sent, latest.delivered);
+    }
+
+    /// Without it, the public channel holds its own message.
+    #[test]
+    fn the_public_channel_is_short_without_it() {
+        let store = std::boxed::Box::leak(std::boxed::Box::new(Store::new(&std::alloc::System)));
+        assert_eq!(store.rows(LONG), 1);
+        assert_eq!(store.row_id(LONG, 0), Some(mockup_id(LONG, 0)));
+    }
 }

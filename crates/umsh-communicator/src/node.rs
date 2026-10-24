@@ -19,9 +19,9 @@ use umsh_ux_communicator::avatar::AvatarStyle;
 use umsh_ux_communicator::heapless::{String, Vec};
 use umsh_ux_communicator::model::{
     About, ChannelEntry, ChatId, ChatSummary, Chats, ClockSettings, ClockSource, ContactUri,
-    Details, EventQueue, Heard, Invite, KeyboardSettings, MAX_HEARD, MeetState, Member, Message,
-    MessageId, Messages, NearbyId, Node, NodeEvent, PeerDetail, PeerEntry, PeerId, PeerSummary,
-    Peers, RadioSettings, Reaction, Setting, ShareUri, Shareable, Statistics,
+    Details, EventQueue, Heard, Invite, KeyboardSettings, LatestSent, MAX_HEARD, MeetState, Member,
+    Message, MessageId, NearbyId, Neighbor, Node, NodeEvent, PeerDetail, PeerEntry, PeerId,
+    PeerSummary, Peers, RadioSettings, Reaction, Setting, ShareUri, Shareable, Statistics,
 };
 use umsh_ux_communicator::picker::RecentText;
 use umsh_ux_communicator::text::TextHeap;
@@ -428,12 +428,28 @@ impl<P: LocalPort, S: ChatStore> Node for CommunicatorNode<P, S> {
             .peers(peers, self.clock.now_ms(), self.clock.wall());
     }
 
-    fn load(&self, chat: ChatId, messages: &mut Messages) {
-        self.chats.borrow().load(chat, messages);
-    }
-
     fn message(&self, chat: ChatId, message: MessageId) -> Option<Message> {
         self.chats.borrow().message(chat, message)
+    }
+
+    fn rows(&self, chat: ChatId) -> usize {
+        self.chats.borrow().rows(chat)
+    }
+
+    fn row_id(&self, chat: ChatId, row: usize) -> Option<MessageId> {
+        self.chats.borrow().row_id(chat, row)
+    }
+
+    fn neighbor(&self, chat: ChatId, row: usize) -> Option<Neighbor> {
+        self.chats.borrow().neighbor(chat, row)
+    }
+
+    fn latest_sent(&self, chat: ChatId) -> LatestSent {
+        self.chats.borrow().latest_sent(chat)
+    }
+
+    fn time_before(&self, chat: ChatId, row: usize) -> Option<u32> {
+        self.chats.borrow().time_before(chat, row)
     }
 
     fn opened(&self, chat: ChatId) {

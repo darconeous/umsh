@@ -23,8 +23,8 @@ use umsh_sync::AsyncRefCell;
 use umsh_ulcp::ids::prop;
 use umsh_ulcp_simdev::SimulatedDevice;
 use umsh_ux_communicator::model::{
-    ChatKind, Delivery, Exchange, ExchangeEnd, MeetState, Member, Messages, NearbyDevice, Node,
-    NodeEvent, Peers,
+    ChatKind, Delivery, Exchange, ExchangeEnd, MeetState, Member, NearbyDevice, Node, NodeEvent,
+    Peers,
 };
 use umsh_ux_communicator::models;
 
@@ -182,6 +182,9 @@ async fn a_direct_message_is_delivered() {
                 arrived.is_some() && delivery == Delivery::Delivered
             })
             .await;
+            let latest = alice.node.latest_sent(chat.id);
+            assert_eq!(latest.sent, Some(sent.id));
+            assert_eq!(latest.delivered, Some(sent.id));
             let (chat, message) = arrived.unwrap();
             let message = bob.node.message(chat, message).unwrap();
             assert_eq!(&*message.text, "Meet at the ridge");
@@ -357,10 +360,8 @@ async fn what_is_said_under_forward_secrecy_lands_in_the_same_chat() {
 
             // Each side's details say which messages had forward secrecy.
             let secrecy = |board: &Board, chat| {
-                let mut messages = Messages::new();
-                board.node.load(chat, &mut messages);
-                messages
-                    .iter()
+                (0..board.node.rows(chat))
+                    .filter_map(|row| board.node.row_message(chat, row))
                     .map(|m| {
                         let details = board.node.details(chat, m.id).unwrap();
                         (m.text.to_string(), details.forward_secret)
@@ -470,10 +471,9 @@ async fn a_deleted_chat_starts_over_with_the_next_message() {
             assert!(bob.node.chat(first).is_none());
 
             let second = say("Meet at the ridge").await;
-            let mut messages = Messages::new();
-            bob.node.load(second, &mut messages);
-            assert_eq!(messages.len(), 1);
-            assert_eq!(&*messages[0].text, "Meet at the ridge");
+            assert_eq!(bob.node.rows(second), 1);
+            let message = bob.node.row_message(second, 0).unwrap();
+            assert_eq!(&*message.text, "Meet at the ridge");
         })
         .await;
 }

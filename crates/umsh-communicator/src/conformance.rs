@@ -26,8 +26,8 @@ use crate::batch::{Batch, CommitStep, Committed, Subject};
 use crate::ids::{ChatId, MessageId};
 use crate::reaction::{Cluster, Reacted, Reaction};
 use crate::record::{
-    ChannelAccess, ChannelChange, ChannelRecord, ChatChange, ChatRecord, LinkInfo, MessageRecord,
-    PeerChange, PeerFilter, PeerRecord, ReactorRecord, StoreError, Usage, WireAlias,
+    ChannelAccess, ChannelChange, ChannelRecord, ChatChange, ChatRecord, LinkInfo, MessageMeta,
+    MessageRecord, PeerChange, PeerFilter, PeerRecord, ReactorRecord, StoreError, Usage, WireAlias,
 };
 use crate::store::ChatStore;
 
@@ -50,6 +50,7 @@ pub trait Harness {
 pub fn run<H: Harness>(harness: &mut H) {
     transcript(harness);
     paging(harness);
+    positions(harness);
     delivery(harness);
     interruption(harness);
     wire_aliases(harness);
@@ -461,6 +462,61 @@ pub fn paging<H: Harness>(harness: &mut H) {
     assert_eq!(page, [ids[5], ids[4], ids[3]]);
     assert_eq!(store.messages(chat, Some(ids[0])).count(), 0);
     assert_eq!(store.messages(ChatId(u32::MAX), None).count(), 0);
+}
+
+/// A chat's messages stand at positions, oldest first, as it pages them;
+/// what a message's neighbors read of it is what its record says.
+pub fn positions<H: Harness>(harness: &mut H) {
+    let mut store = harness.fresh();
+    let mut rig = Rig::new();
+    let (handle, deleted) = rig.say(&mut store, direct(), "gone soon");
+    for n in 0..4 {
+        rig.say(&mut store, direct(), &alloc::format!("m{n}"));
+        rig.hear_text(&mut store, direct(), &alloc::format!("r{n}"));
+        rig.hear_text(&mut store, group(), &alloc::format!("g{n}"));
+    }
+    rig.send(
+        &mut store,
+        direct(),
+        ComposeIntent::Delete {
+            original: ComposeRef::Handle(handle),
+        },
+    );
+    for conversation in [direct(), group()] {
+        let chat = store.chat_for(&conversation).unwrap();
+        let mut paged: Vec<MessageId> = store
+            .messages(chat, None)
+            .map(|record| record.unwrap().id)
+            .collect();
+        paged.reverse();
+        assert_eq!(store.message_count(chat), paged.len());
+        let placed: Vec<MessageId> = (0..store.message_count(chat))
+            .map(|index| store.message_id_at(chat, index).unwrap())
+            .collect();
+        assert_eq!(placed, paged);
+        assert_eq!(store.message_id_at(chat, paged.len()), None);
+        for id in paged {
+            let record = record(&store, id);
+            let meta = store.message_meta(id).unwrap().unwrap();
+            assert_eq!(
+                meta,
+                MessageMeta {
+                    chat: record.chat,
+                    direction: record.direction,
+                    sender: record.sender,
+                    sender_handle: record.sender_handle,
+                    presence: record.presence,
+                    flags: record.flags,
+                    delivery: record.delivery,
+                    time: record.time,
+                }
+            );
+        }
+    }
+    assert!(store.message_meta(deleted).unwrap().unwrap().flags.deleted);
+    assert_eq!(store.message_count(ChatId(u32::MAX)), 0);
+    assert_eq!(store.message_id_at(ChatId(u32::MAX), 0), None);
+    assert_eq!(store.message_meta(MessageId(u32::MAX)).unwrap(), None);
 }
 
 /// Word on a transmission reaches its message.

@@ -15,7 +15,7 @@ use umsh_ux_communicator::picker::Pick;
 use umsh_ux_communicator::model::{
     BatteryReading, ChannelAccess, Charge, ChannelEntry, ChatKind, ClockSource, Delivery, Direction, Ending, Exchange,
     ExchangeEnd, FoundKind,
-    Glance, Node as _, NodeEvent, Notice, Profile, Reaction, Rule, Section, Shareable, State,
+    Glance, Node as _, NodeEvent, Notice, Presence, Profile, Reaction, Rule, Section, Shareable, State,
     brightness_level,
 };
 use umsh_ux_communicator::nav::{ChatMenu, DevicePage, MemberFrom, Screen, Unsent, keys};
@@ -25,6 +25,15 @@ use umsh_ux_communicator::{fixture, ui, zones};
 const RIDGE: u32 = 1;
 const PAT: u32 = 3;
 const RIDGE_DRAFT: &str = "On my way, save me some hot coffee";
+
+/// The open chat's messages, oldest first, as its rows show them: a run
+/// on its way again as the first of it.
+fn messages(state: &State) -> Vec<umsh_ux_communicator::model::Message> {
+    let chat = state.conversation.as_ref().expect("a chat is open").chat;
+    (0..state.node.rows(chat))
+        .filter_map(|row| state.node.row_message(chat, row))
+        .collect()
+}
 
 /// Where the fixture's chats keep their messages, for the life of a test.
 fn store() -> &'static fixture::Store {
@@ -277,8 +286,8 @@ fn enter_sends_the_draft() {
     let mut app = app!();
     // Enter wakes the field, then sends.
     run(&mut app, &[Input::Press, Input::Enter, Input::Enter]);
-    let conversation = app.state().conversation(RIDGE).expect("chat exists");
-    let sent = conversation.messages.last().expect("a message");
+    assert!(app.state().conversation(RIDGE).is_some(), "chat exists");
+    let sent = messages(app.state()).pop().expect("a message");
     assert_eq!(sent.direction, Direction::Outbound);
     assert_eq!(sent.text.as_str(), RIDGE_DRAFT);
     assert_eq!(sent.delivery, Delivery::Sending);
@@ -300,8 +309,8 @@ fn a_draft_longer_than_a_fragment_is_sent_whole() {
     run(&mut app, &typed(&long));
     assert_eq!(draft(app.state(), PAT), long);
     run(&mut app, &[Input::Enter]);
-    let conversation = app.state().conversation(PAT).expect("chat is open");
-    let sent = conversation.messages.last().expect("a message");
+    assert!(app.state().conversation(PAT).is_some(), "chat is open");
+    let sent = messages(app.state()).pop().expect("a message");
     assert_eq!(sent.text.as_str(), long);
 }
 
@@ -319,12 +328,9 @@ fn a_sent_message_is_there_when_the_chat_opens_again() {
 
     run(&mut app, &[Input::Press]);
     assert_in_conversation(app.state(), RIDGE);
-    let conversation = app.state().conversation(RIDGE).expect("chat is open");
-    let texts: Vec<&str> = conversation
-        .messages
-        .iter()
-        .map(|m| m.text.as_str())
-        .collect();
+    assert!(app.state().conversation(RIDGE).is_some(), "chat is open");
+    let shown = messages(app.state());
+    let texts: Vec<&str> = shown.iter().map(|m| m.text.as_str()).collect();
     assert_eq!(texts.len(), 4);
     assert_eq!(texts[3], RIDGE_DRAFT);
 }
@@ -523,12 +529,7 @@ fn reply(state: &State) -> Option<u32> {
 }
 
 fn reactions(state: &State, message: u32) -> Vec<(Reaction, u8, bool)> {
-    let conversation = state.conversation.as_ref().expect("a chat is open");
-    let message = conversation
-        .messages
-        .iter()
-        .find(|m| m.id == message)
-        .expect("the message");
+    let message = state.open_message(message).expect("the message");
     message
         .reactions
         .iter()
@@ -671,23 +672,11 @@ fn details_open_from_the_actions_and_back_returns_to_the_message() {
 const ANTENNA: u32 = (PAT << 8) | 2;
 
 fn message(state: &State, message: u32) -> umsh_ux_communicator::model::Message {
-    let conversation = state.conversation.as_ref().expect("a chat is open");
-    conversation
-        .messages
-        .iter()
-        .find(|m| m.id == message)
-        .expect("the message")
-        .clone()
+    state.open_message(message).expect("the message")
 }
 
 fn delivery(state: &State, message: u32) -> Delivery {
-    let conversation = state.conversation.as_ref().expect("a chat is open");
-    conversation
-        .messages
-        .iter()
-        .find(|m| m.id == message)
-        .expect("the message")
-        .delivery
+    self::message(state, message).delivery
 }
 
 fn spend_airtime<V, F>(app: &mut App<V, State, F>, wait: Option<u16>)
@@ -773,9 +762,7 @@ fn unsent(state: &State) -> Option<u32> {
 }
 
 fn forward_secret(state: &State, message: u32) -> bool {
-    let conversation = state.conversation.as_ref().expect("a chat is open");
-    let message = conversation.messages.iter().find(|m| m.id == message);
-    message.expect("the message").forward_secret
+    self::message(state, message).forward_secret
 }
 
 #[test]
@@ -828,7 +815,7 @@ fn spent_airtime_keeps_the_draft_and_holds_a_retry() {
     run(&mut app, &typed("Also the 18650s"));
     run(&mut app, &[Input::Enter]);
     assert_eq!(draft(app.state(), PAT), "Also the 18650s");
-    assert_eq!(app.state().conversation.as_ref().unwrap().messages.len(), 3);
+    assert_eq!(messages(app.state()).len(), 3);
     run(&mut app, &[Input::Turn(-1), Input::Press]);
     assert_eq!(delivery(app.state(), ANTENNA), Delivery::Unconfirmed);
 
@@ -907,16 +894,13 @@ fn a_message_in_the_open_chat_joins_it_without_a_banner() {
     let store = store();
     let mut app = app!(store);
     open_chat(&mut app, TRAIL_CREW);
-    let before =app.state().conversation.as_ref().unwrap().messages.len();
+    let before = messages(app.state()).len();
     assert!(!arrive(&mut app, store, 0));
     assert_eq!(app.state().banner, None);
     assert!(!app.state().chats[0].unread);
-    let conversation = app.state().conversation.as_ref().unwrap();
-    assert_eq!(conversation.messages.len(), before + 1);
-    assert_eq!(
-        conversation.messages.last().unwrap().direction,
-        Direction::Inbound
-    );
+    let shown = messages(app.state());
+    assert_eq!(shown.len(), before + 1);
+    assert_eq!(shown.last().unwrap().direction, Direction::Inbound);
 }
 
 #[test]
@@ -1149,8 +1133,7 @@ fn a_channel_send_ends_at_sent() {
     run(&mut app, &[Input::Enter]);
     run(&mut app, &typed("Switchbacks, 15 min out"));
     run(&mut app, &[Input::Enter]);
-    let conversation = app.state().conversation.as_ref().expect("a chat is open");
-    let sent = conversation.messages.last().expect("the message sent");
+    let sent = messages(app.state()).pop().expect("the message sent");
     assert_eq!(sent.text.as_str(), "Switchbacks, 15 min out");
     // Multicast has no acknowledgment to wait for.
     assert_eq!(sent.delivery, Delivery::Sent);
@@ -1262,10 +1245,10 @@ fn an_identity_that_arrives_names_the_member_everywhere() {
     assert_eq!(member.hint.as_str(), "4FzR");
     assert!(member.address.is_some());
     assert_eq!(focus(app.state()), Some(keys::MESSAGE_MEMBER));
-    let conversation = app.state().conversation.as_ref().expect("a chat is open");
-    let sender = conversation.messages.iter().find(|m| m.id == BEHIND_YOU);
+    let sender = app.state().open_message(BEHIND_YOU);
     assert_eq!(
         sender
+            .as_ref()
             .and_then(|m| m.sender.as_ref())
             .map(|s| s.name.as_str()),
         Some("Robin Hale")
@@ -1404,9 +1387,8 @@ fn emergency_is_open_and_its_sends_end_at_sent() {
     run(&mut app, &[Input::Enter]);
     run(&mut app, &typed("Heading down"));
     run(&mut app, &[Input::Enter]);
-    let conversation = app.state().conversation.as_ref().expect("a chat is open");
     assert_eq!(
-        conversation.messages.last().map(|m| m.delivery),
+        messages(app.state()).last().map(|m| m.delivery),
         Some(Delivery::Sent)
     );
 }
@@ -2644,16 +2626,13 @@ fn a_resync_reads_everything_again_and_keeps_the_draft_being_written() {
     // Typing, the cursor two back from the end.
     run(&mut app, &typed("Bring"));
     run(&mut app, &[Input::Turn(-2)]);
-    let before = app.state().conversation.as_ref().map(|c| c.messages.len());
+    let before = messages(app.state()).len();
     let chats = app.state().chats.len();
     app.state_mut().apply(NodeEvent::Resync, 0);
     app.finalize_view();
     assert_in_conversation(app.state(), PAT);
     assert_eq!(draft(app.state(), PAT), "Bring");
-    assert_eq!(
-        app.state().conversation.as_ref().map(|c| c.messages.len()),
-        before
-    );
+    assert_eq!(messages(app.state()).len(), before);
     assert_eq!(app.state().chats.len(), chats);
     assert_eq!(draft(app.state(), RIDGE), RIDGE_DRAFT);
     // Typing goes on where it was.
@@ -2695,11 +2674,8 @@ fn a_message_arriving_in_the_chat_being_read_is_read() {
     assert!(!arrive(&mut app, store, 0));
     assert!(!store.chat(TRAIL_CREW).expect("the chat").unread);
     // Taken in twice, it is shown once.
-    let conversation = app.state().conversation.as_ref().expect("a chat is open");
-    let (count, newest) = (
-        conversation.messages.len(),
-        conversation.messages.last().unwrap().id,
-    );
+    let shown = messages(app.state());
+    let (count, newest) = (shown.len(), shown.last().unwrap().id);
     app.state_mut().apply(
         NodeEvent::Arrived {
             chat: TRAIL_CREW,
@@ -2707,10 +2683,7 @@ fn a_message_arriving_in_the_chat_being_read_is_read() {
         },
         0,
     );
-    assert_eq!(
-        app.state().conversation.as_ref().map(|c| c.messages.len()),
-        Some(count)
-    );
+    assert_eq!(messages(app.state()).len(), count);
 }
 
 #[test]
@@ -3194,13 +3167,7 @@ where
     V::Renderables: AnimatedJoin,
     F: Fn(&State) -> V,
 {
-    let newest = app
-        .state()
-        .conversation
-        .as_ref()
-        .and_then(|c| c.messages.last())
-        .map(|m| m.id)
-        .expect("a message");
+    let newest = messages(app.state()).last().map(|m| m.id).expect("a message");
     for _ in 0..40 {
         let at = focus(app.state());
         if at == Some(keys::message(newest)) {
@@ -3228,12 +3195,7 @@ fn a_contact_is_shared_as_a_card_that_saves_nothing_by_itself() {
     run(&mut app, &[Input::Press]);
     assert_in_conversation(app.state(), first);
     let card = to_newest(&mut app);
-    let message = app
-        .state()
-        .conversation
-        .as_ref()
-        .and_then(|c| c.messages.iter().find(|m| m.id == card))
-        .unwrap();
+    let message = app.state().open_message(card).unwrap();
     assert!(message.text.as_str().starts_with("umsh:n:YmRG"));
     assert_eq!(message.contact().map(|c| c.name.as_str()), Some("Pat Okafor"));
     let preview = app.state().chat(first).unwrap().preview.as_str();
@@ -3266,4 +3228,223 @@ fn a_contact_is_shared_as_a_card_that_saves_nothing_by_itself() {
     turn_to(&mut app, keys::SAVE_PEER);
     run(&mut app, &[Input::Press]);
     assert_eq!(app.state().peers.len(), peers);
+}
+
+/// A screen that keeps nothing drawn to it.
+struct Blank(embedded_graphics::geometry::Size);
+
+impl embedded_graphics::geometry::OriginDimensions for Blank {
+    fn size(&self) -> embedded_graphics::geometry::Size {
+        self.0
+    }
+}
+
+impl embedded_graphics::draw_target::DrawTarget for Blank {
+    type Color = embedded_graphics::pixelcolor::Rgb565;
+    type Error = core::convert::Infallible;
+
+    fn draw_iter<I>(&mut self, pixels: I) -> Result<(), Self::Error>
+    where
+        I: IntoIterator<Item = embedded_graphics::Pixel<Self::Color>>,
+    {
+        pixels.into_iter().for_each(drop);
+        Ok(())
+    }
+}
+
+/// Paints a frame, as the board does whenever the app asks, which is where
+/// a long list builds the rows the frame shows.
+fn paint<V, F>(app: &mut App<V, State, F>)
+where
+    V: buoyant::view::View<embedded_graphics::pixelcolor::Rgb565, State>,
+    V::FocusTree: DefaultFocus,
+    F: Fn(&State) -> V,
+{
+    use embedded_graphics::pixelcolor::{Rgb565, RgbColor as _};
+    let mut screen = Blank(BOARD.metrics.size());
+    let mut target = buoyant::render_target::EmbeddedGraphicsRenderTarget::new(&mut screen);
+    app.render_animated(&mut target, &Rgb565::WHITE);
+}
+
+// ─── A long chat ─────────────────────────────────────────────────────────
+
+/// The public channel, which holds the fixture's long history when asked.
+const PUBLIC: u32 = 4;
+
+fn long_store() -> &'static fixture::Store {
+    Box::leak(Box::new(
+        fixture::Store::new(&std::alloc::System).with_long_history(),
+    ))
+}
+
+/// The keys of the long chat's rows that focus lands on, oldest first:
+/// every row but those standing in for messages on their way again.
+fn focusable_rows(state: &State) -> Vec<FocusKey> {
+    let node = state.node;
+    (0..node.rows(PUBLIC))
+        .filter(|&row| {
+            node.neighbor(PUBLIC, row)
+                .is_some_and(|n| n.presence != Presence::PendingRepair)
+        })
+        .filter_map(|row| node.row_id(PUBLIC, row))
+        .map(keys::message)
+        .collect()
+}
+
+/// Paints the screen as it is once what the last input set moving has come
+/// to rest, and once more, as a board does when a frame asks for another.
+fn settle<V, F>(app: &mut App<V, State, F>)
+where
+    V: buoyant::view::View<embedded_graphics::pixelcolor::Rgb565, State>,
+    V::FocusTree: DefaultFocus,
+    F: Fn(&State) -> V,
+{
+    app.set_time(std::time::Duration::from_millis(tick(1000)));
+    paint(app);
+    paint(app);
+}
+
+/// Where the focused element is on screen.
+fn focus_box<V, F>(app: &mut App<V, State, F>) -> buoyant::primitives::geometry::Rectangle
+where
+    V: ViewLayout<State>,
+    V::FocusTree: DefaultFocus,
+    V::Renderables: AnimatedJoin,
+    F: Fn(&State) -> V,
+{
+    app.focus_shape()
+        .bounding_box()
+        .expect("the focused element is on screen")
+}
+
+/// Turns the wheel back through the long chat's messages from the composer
+/// until `count` have had focus, painting each. Returns the last.
+fn read_back<V, F>(app: &mut App<V, State, F>, count: usize) -> FocusKey
+where
+    V: buoyant::view::View<embedded_graphics::pixelcolor::Rgb565, State>,
+    V::FocusTree: DefaultFocus,
+    V::Renderables: AnimatedJoin,
+    F: Fn(&State) -> V,
+{
+    let mut seen = 0;
+    let mut at = focus(app.state());
+    while seen < count {
+        run(app, &[Input::Turn(-1)]);
+        settle(app);
+        let now = focus(app.state());
+        if now != at && now.is_some_and(keys::is_message) {
+            seen += 1;
+        }
+        at = now;
+    }
+    at.expect("a message has focus")
+}
+
+/// The wheel reaches every message of a long chat, newest to oldest and
+/// back, each in view as it has focus, a run on its way again with them.
+#[test]
+fn the_wheel_walks_a_long_chat_to_its_oldest_message_and_back() {
+    let store = long_store();
+    // Still far more than the history builds at once, and both runs on
+    // their way again with it, in half the steps.
+    store.evict_oldest(250);
+    let mut app = app!(store);
+    open_chat(&mut app, PUBLIC);
+    settle(&mut app);
+    let rows = focusable_rows(app.state());
+    assert!(rows.len() > 250, "{} rows", rows.len());
+    let height = BOARD.metrics.size().height as i32;
+    let walk = |app: &mut App<_, State, _>, step: i8, to: FocusKey| {
+        let mut seen: Vec<FocusKey> = Vec::new();
+        for _ in 0..rows.len() * 3 {
+            run(app, &[Input::Turn(step)]);
+            app.set_time(std::time::Duration::from_millis(tick(1000)));
+            paint(app);
+            let Some(at) = focus(app.state()).filter(|&key| keys::is_message(key)) else {
+                continue;
+            };
+            if seen.last() != Some(&at) {
+                let area = focus_box(app);
+                let bottom = area.origin.y + area.size.height as i32;
+                assert!(area.origin.y < height && bottom > 0, "{at:?} at {area:?}");
+                seen.push(at);
+            }
+            if at == to {
+                break;
+            }
+        }
+        seen
+    };
+    let mut back = walk(&mut app, -1, rows[0]);
+    back.reverse();
+    assert_eq!(back, rows);
+    let ahead = walk(&mut app, 1, *rows.last().unwrap());
+    assert_eq!(ahead, rows[1..]);
+}
+
+/// A message arriving while the chat is read far back leaves the message
+/// being read where it is on screen, as does the store letting go of the
+/// oldest to make room.
+#[test]
+fn what_is_read_far_back_stays_put_as_messages_come_and_go() {
+    let store = long_store();
+    let mut app = app!(store);
+    open_chat(&mut app, PUBLIC);
+    settle(&mut app);
+    let reading = read_back(&mut app, 40);
+    let was = focus_box(&mut app);
+
+    arrive_in(&mut app, store, PUBLIC, "Checking in from the hut", tick(1000));
+    settle(&mut app);
+    assert_eq!(focus(app.state()), Some(reading));
+    assert_eq!(focus_box(&mut app), was);
+
+    // Most of the history goes, the message being read with it in view.
+    store.evict_oldest(450);
+    input::events(&mut app, tick(1000));
+    settle(&mut app);
+    assert_eq!(focus(app.state()), Some(reading));
+    assert_eq!(focus_box(&mut app), was);
+}
+
+/// A message arriving while the newest is read comes into view below it.
+#[test]
+fn a_message_arriving_at_the_end_of_a_long_chat_shows() {
+    let store = long_store();
+    let mut app = app!(store);
+    open_chat(&mut app, PUBLIC);
+    settle(&mut app);
+    let newest = read_back(&mut app, 1);
+    assert_eq!(Some(&newest), focusable_rows(app.state()).last());
+    let was = focus_box(&mut app);
+    arrive_in(&mut app, store, PUBLIC, "Checking in from the hut", tick(1000));
+    settle(&mut app);
+    let now = focus_box(&mut app);
+    assert!(now.origin.y < was.origin.y, "{now:?} from {was:?}");
+}
+
+/// A message far back in a long chat opens its actions.
+#[test]
+fn a_message_far_back_opens_its_actions() {
+    let mut app = app!(long_store());
+    open_chat(&mut app, PUBLIC);
+    settle(&mut app);
+    let reading = read_back(&mut app, 60);
+    let id = app
+        .state()
+        .node
+        .row_id(
+            PUBLIC,
+            (0..app.state().node.rows(PUBLIC))
+                .find(|&row| {
+                    app.state().node.row_id(PUBLIC, row).map(keys::message) == Some(reading)
+                })
+                .expect("the row read"),
+        )
+        .unwrap();
+    run(&mut app, &[Input::Press]);
+    assert_eq!(actions(app.state()), Some(id));
+    run(&mut app, &[Input::Backspace]);
+    assert_eq!(actions(app.state()), None);
+    assert_eq!(focus(app.state()), Some(reading));
 }

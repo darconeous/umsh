@@ -30,7 +30,8 @@ use umsh_ux_communicator::avatar::{self, AvatarStyle, PeerShape};
 use umsh_ux_communicator::buoyant::view::{EditBuffer, EditText as _};
 use umsh_ux_communicator::heapless::String;
 use umsh_ux_communicator::model::{
-    self, ChatKind, ChatSummary, Details, Member, Message, NodeEvent, Presence, Sender,
+    self, ChatKind, ChatSummary, Details, LatestSent, Member, Message, Neighbor, NodeEvent,
+    Presence, Sender,
 };
 use umsh_ux_communicator::picker::RecentText;
 use umsh_ux_communicator::text::{DraftText, SharedText, TextHeap};
@@ -39,7 +40,7 @@ use crate::batch::{Batch, Committed, Subject};
 use crate::ids::{ChatId, MessageId};
 use crate::record::{
     self, BODY_MAX, BuiltinChannel, ChannelAccess, ChannelChange, ChatChange, ChatRecord, LinkInfo,
-    MessageRecord,
+    MessageMeta, MessageRecord,
 };
 use crate::store::ChatStore;
 use crate::task::Command;
@@ -74,6 +75,43 @@ const FLOOD_HOPS: u8 = WELL_KNOWN_CHANNEL_MAX_FLOOD_HOPS;
 ///
 /// [`Delivery`]: crate::Delivery
 const FRAGMENTS: u8 = 16;
+
+/// A chat's transcript as rows, oldest first: a message each, except that
+/// a run of messages on their way again is one row, the first of them.
+#[derive(Debug)]
+struct Rows {
+    chat: model::ChatId,
+    /// How many messages the chat held: a change in their number, as an
+    /// insert or an eviction makes, makes the rows stale.
+    count: usize,
+    /// Where each row's message stands among the chat's, when a run
+    /// folds; `None` when every message is a row.
+    firsts: Option<Vec<usize>>,
+    /// Where the newest message sent stands, and the newest delivered, as
+    /// the store has them.
+    sent: Option<usize>,
+    delivered: Option<usize>,
+}
+
+impl Rows {
+    fn len(&self) -> usize {
+        self.firsts.as_ref().map_or(self.count, Vec::len)
+    }
+
+    /// Where the message of row `row` stands among the chat's.
+    fn first(&self, row: usize) -> Option<usize> {
+        match &self.firsts {
+            Some(firsts) => firsts.get(row).copied(),
+            None => (row < self.count).then_some(row),
+        }
+    }
+}
+
+/// Whether the peer's radio acknowledged every fragment of an outbound
+/// message.
+fn acknowledged(delivery: &record::Delivery) -> bool {
+    delivery.acked != 0 && delivery.sent & !delivery.acked == 0
+}
 
 /// What the node needs of the board's cryptography, which it does not
 /// carry itself.
@@ -167,6 +205,10 @@ pub(crate) struct Chats<S> {
     saved: Vec<[u8; 32]>,
     /// Room for one body, read before it goes onto the text heap.
     body: RefCell<Vec<u8>>,
+    /// The rows of the chat last read by row, until the store changes
+    /// what they are: a commit can change whether a message is on its way
+    /// again, and how one sent fared.
+    rows: RefCell<Option<Rows>>,
 }
 
 impl<S: ChatStore> Chats<S> {
@@ -195,6 +237,7 @@ impl<S: ChatStore> Chats<S> {
             commands: VecDeque::new(),
             saved: Vec::new(),
             body: RefCell::new(vec![0; BODY_MAX]),
+            rows: RefCell::new(None),
         }
     }
 
@@ -224,6 +267,7 @@ impl<S: ChatStore> Chats<S> {
             return;
         }
         // Left unwritten, those messages read as sending until retried.
+        self.rows.replace(None);
         _ = self.store.interrupt();
         let mut facade = ChatFacade::new(
             DirectChannelProfile,
@@ -444,6 +488,7 @@ impl<S: ChatStore> Chats<S> {
             }
             // A received message the store cannot keep is lost to the
             // transcript; there is nothing to take back.
+            self.rows.replace(None);
             let Ok(committed) = self.store.commit(&batch) else {
                 return;
             };
@@ -645,6 +690,7 @@ impl<S: ChatStore> Chats<S> {
         let resolve = |_| None;
         let mut batch = Batch::new(time, &resolve);
         batch.secrecy(Subject::Kept(record.id), false);
+        self.rows.replace(None);
         let Ok(committed) = self.store.commit(&batch) else {
             return false;
         };
@@ -771,6 +817,7 @@ impl<S: ChatStore> Chats<S> {
                     }
                 }
             }
+            self.rows.replace(None);
             self.store.commit(&batch)
         };
         let Ok(committed) = kept else {
@@ -947,29 +994,116 @@ impl<S: ChatStore> Chats<S> {
         self.summary(&record)
     }
 
-    pub fn load(&self, chat: model::ChatId, messages: &mut model::Messages) {
-        let Some(conversation) = self.conversation(chat) else {
-            return;
-        };
-        let newest: Vec<MessageRecord> = self
-            .store
-            .messages(ChatId(chat), None)
-            .flatten()
-            .take(model::MAX_MESSAGES)
-            .collect();
-        for record in newest.iter().rev() {
-            if let Some(message) = self.message_of(record, &conversation) {
-                model::push_newest(messages, message);
-            }
-        }
-    }
-
     pub fn message(&self, chat: model::ChatId, message: model::MessageId) -> Option<Message> {
         let record = self.store.message(MessageId(message)).ok()??;
         if record.chat.0 != chat {
             return None;
         }
         self.message_of(&record, &self.conversation(chat)?)
+    }
+
+    pub fn rows(&self, chat: model::ChatId) -> usize {
+        self.rows_of(chat, Rows::len)
+    }
+
+    pub fn row_id(&self, chat: model::ChatId, row: usize) -> Option<model::MessageId> {
+        let at = self.rows_of(chat, |rows| rows.first(row))?;
+        Some(self.store.message_id_at(ChatId(chat), at)?.0)
+    }
+
+    pub fn neighbor(&self, chat: model::ChatId, row: usize) -> Option<Neighbor> {
+        let at = self.rows_of(chat, |rows| rows.first(row))?;
+        let meta = self.meta_at(chat, at)?;
+        let conversation = self.conversation(chat)?;
+        Some(Neighbor {
+            direction: direction(meta.direction),
+            sender: self.sender(
+                meta.direction,
+                meta.sender,
+                meta.sender_handle.as_deref(),
+                &conversation,
+            ),
+            presence: presence(meta.presence),
+            time: meta.time,
+        })
+    }
+
+    pub fn latest_sent(&self, chat: model::ChatId) -> LatestSent {
+        let (sent, delivered) = self.rows_of(chat, |rows| (rows.sent, rows.delivered));
+        let id_at = |at| self.store.message_id_at(ChatId(chat), at);
+        // A message sent again is on its way until word on it comes back,
+        // which leaves the one delivered before it the newest delivered.
+        let delivered = delivered.and_then(|newest| {
+            (0..=newest).rev().find(|&at| {
+                id_at(at).is_some_and(|id| !self.retrying.contains(&id))
+                    && self.meta_at(chat, at).is_some_and(|meta| {
+                        meta.direction == engine::Direction::Outbound
+                            && acknowledged(&meta.delivery)
+                    })
+            })
+        });
+        LatestSent {
+            sent: sent.and_then(id_at).map(|id| id.0),
+            delivered: delivered.and_then(id_at).map(|id| id.0),
+        }
+    }
+
+    pub fn time_before(&self, chat: model::ChatId, row: usize) -> Option<u32> {
+        let at = self.rows_of(chat, |rows| rows.first(row))?;
+        (0..at)
+            .rev()
+            .find_map(|at| self.meta_at(chat, at).and_then(|meta| meta.time))
+    }
+
+    /// What `read` finds in the rows of `chat`, taken again when they may
+    /// have changed.
+    fn rows_of<T>(&self, chat: model::ChatId, read: impl FnOnce(&Rows) -> T) -> T {
+        let count = self.store.message_count(ChatId(chat));
+        let mut kept = self.rows.borrow_mut();
+        let rows = match &mut *kept {
+            Some(rows) if rows.chat == chat && rows.count == count => rows,
+            kept => kept.insert(self.take_rows(chat, count)),
+        };
+        read(rows)
+    }
+
+    fn take_rows(&self, chat: model::ChatId, count: usize) -> Rows {
+        let mut rows = Rows {
+            chat,
+            count,
+            firsts: None,
+            sent: None,
+            delivered: None,
+        };
+        let mut pending = false;
+        for at in 0..count {
+            let meta = self.meta_at(chat, at);
+            let follows = pending;
+            pending = meta
+                .as_ref()
+                .is_some_and(|meta| meta.presence == engine::Presence::GapPending);
+            match (&mut rows.firsts, pending && follows) {
+                (None, true) => rows.firsts = Some((0..at).collect()),
+                (Some(firsts), false) => firsts.push(at),
+                _ => {}
+            }
+            if let Some(meta) = meta
+                && meta.direction == engine::Direction::Outbound
+            {
+                rows.sent = Some(at);
+                if acknowledged(&meta.delivery) {
+                    rows.delivered = Some(at);
+                }
+            }
+        }
+        rows
+    }
+
+    /// What the message standing at `at` among those of `chat` shows its
+    /// neighbors.
+    fn meta_at(&self, chat: model::ChatId, at: usize) -> Option<MessageMeta> {
+        let id = self.store.message_id_at(ChatId(chat), at)?;
+        self.store.message_meta(id).ok()?
     }
 
     pub fn opened(&mut self, chat: model::ChatId) {
@@ -1116,8 +1250,8 @@ impl<S: ChatStore> Chats<S> {
             return None;
         }
         let conversation = self.conversation(chat)?;
-        let (hint, key) = self.sender_key(&record, &conversation)?;
-        let sender = self.sender(&record, &conversation)?;
+        let (hint, key) = self.sender_key(record.sender, &conversation)?;
+        let sender = self.record_sender(&record, &conversation)?;
         let mut hint_text = String::new();
         _ = write!(hint_text, "{hint}");
         let kept = key.and_then(|key| self.store.peer(&key).ok().flatten());
@@ -1309,10 +1443,7 @@ impl<S: ChatStore> Chats<S> {
                 .flatten();
             (SharedText::new(self.heap, body)?, card)
         };
-        let direction = match record.direction {
-            engine::Direction::Inbound => model::Direction::Inbound,
-            engine::Direction::Outbound => model::Direction::Outbound,
-        };
+        let direction = direction(record.direction);
         let channel = matches!(conversation, ConversationKey::ChannelGroup { .. });
         let delivery = match direction {
             model::Direction::Inbound => model::Delivery::Delivered,
@@ -1322,7 +1453,7 @@ impl<S: ChatStore> Chats<S> {
                     model::Delivery::Sending
                 } else if delivery.failed != 0 {
                     model::Delivery::Unconfirmed
-                } else if delivery.acked != 0 && delivery.sent & !delivery.acked == 0 {
+                } else if acknowledged(&delivery) {
                     model::Delivery::Delivered
                 } else if delivery.sent != 0 && channel {
                     model::Delivery::Sent
@@ -1341,15 +1472,11 @@ impl<S: ChatStore> Chats<S> {
                 mine: reacted.mine,
             })
             .collect();
-        let presence = match record.presence {
-            engine::Presence::Present => Presence::Present,
-            engine::Presence::GapPending => Presence::PendingRepair,
-            engine::Presence::Unavailable => Presence::Unavailable,
-        };
+        let presence = presence(record.presence);
         Some(Message {
             id: record.id.0,
             direction,
-            sender: self.sender(record, conversation),
+            sender: self.record_sender(record, conversation),
             text,
             delivery,
             reactions,
@@ -1396,7 +1523,7 @@ impl<S: ChatStore> Chats<S> {
         let name = match record.direction {
             engine::Direction::Outbound => None,
             engine::Direction::Inbound => {
-                let name = match self.sender(&record, conversation) {
+                let name = match self.record_sender(&record, conversation) {
                     Some(sender) => cut::<32>(&sender.name),
                     None => {
                         let chat = self.store.chat_for(conversation)?;
@@ -1414,13 +1541,13 @@ impl<S: ChatStore> Chats<S> {
     /// key behind it when one is known.
     fn sender_key(
         &self,
-        record: &MessageRecord,
+        scope: SenderScope,
         conversation: &ConversationKey,
     ) -> Option<(NodeHint, Option<PublicKey>)> {
         let ConversationKey::ChannelGroup { channel } = conversation else {
             return None;
         };
-        match record.sender {
+        match scope {
             SenderScope::ClaimedMember(hint) => Some((
                 hint,
                 self.facade
@@ -1435,11 +1562,32 @@ impl<S: ChatStore> Chats<S> {
 
     /// Who sent an incoming channel message, as the channel shows them:
     /// by the name they gave, or else by their address.
-    fn sender(&self, record: &MessageRecord, conversation: &ConversationKey) -> Option<Sender> {
-        if record.direction != engine::Direction::Inbound {
+    fn record_sender(
+        &self,
+        record: &MessageRecord,
+        conversation: &ConversationKey,
+    ) -> Option<Sender> {
+        self.sender(
+            record.direction,
+            record.sender,
+            record.sender_handle.as_deref(),
+            conversation,
+        )
+    }
+
+    /// Who sent a message `direction` from `scope`, giving themself
+    /// `handle`, as `conversation` shows them.
+    fn sender(
+        &self,
+        direction: engine::Direction,
+        scope: SenderScope,
+        handle: Option<&str>,
+        conversation: &ConversationKey,
+    ) -> Option<Sender> {
+        if direction != engine::Direction::Inbound {
             return None;
         }
-        let (hint, key) = self.sender_key(record, conversation)?;
+        let (hint, key) = self.sender_key(scope, conversation)?;
         let mut lettering = String::<8>::new();
         let shape = match key {
             Some(key) => {
@@ -1453,7 +1601,7 @@ impl<S: ChatStore> Chats<S> {
             }
         };
         let mut name = String::new();
-        match record.sender_handle.as_deref() {
+        match handle {
             Some(handle) if !handle.trim().is_empty() => push_cut(&mut name, handle),
             _ => name = unnamed_member(&lettering),
         }
@@ -1461,6 +1609,21 @@ impl<S: ChatStore> Chats<S> {
             name,
             avatar: AvatarStyle::peer(hint.0, &lettering, shape),
         })
+    }
+}
+
+fn direction(direction: engine::Direction) -> model::Direction {
+    match direction {
+        engine::Direction::Inbound => model::Direction::Inbound,
+        engine::Direction::Outbound => model::Direction::Outbound,
+    }
+}
+
+fn presence(presence: engine::Presence) -> Presence {
+    match presence {
+        engine::Presence::Present => Presence::Present,
+        engine::Presence::GapPending => Presence::PendingRepair,
+        engine::Presence::Unavailable => Presence::Unavailable,
     }
 }
 

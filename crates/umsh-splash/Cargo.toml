@@ -15,7 +15,7 @@ documentation = "https://darconeous.github.io/umsh/docs/rust/umsh_splash/"
 
 [dependencies]
 # The same pin as umsh-ux-communicator's.
-buoyant = { git = "https://github.com/darconeous/buoyant", rev = "7ea0843e1aeb92c54f8725f17bfce49a9812c7e5", default-features = false }
+buoyant = { git = "https://github.com/darconeous/buoyant", rev = "306ac8166b2d3a80af027ec2576252eebc5b7634", default-features = false }
 embedded-graphics = { version = "0.8", default-features = false }
 
 [dev-dependencies]

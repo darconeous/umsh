@@ -16,7 +16,6 @@
 use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::string::String;
 use alloc::vec::Vec;
-use core::ops::Bound;
 
 use umsh_core::{ChannelTag, NodeHint, PublicKey};
 use umsh_text::chat::{self, Insert, Mutation};
@@ -29,8 +28,8 @@ use crate::ids::{ChatId, MessageId, PeerId};
 use crate::reaction::{REACTIONS, Reacted, Reaction, Reactions};
 use crate::record::{
     self, BODY_MAX, ChannelChange, ChannelRecord, ChatChange, ChatRecord, Delivery, IDENTITY_MAX,
-    LinkInfo, MessageFlags, MessageRecord, PeerChange, PeerFilter, PeerRecord, ROUTE_MAX,
-    ReactorRecord, StoreError, Usage, WireAlias,
+    LinkInfo, MessageFlags, MessageMeta, MessageRecord, PeerChange, PeerFilter, PeerRecord,
+    ROUTE_MAX, ReactorRecord, StoreError, Usage, WireAlias,
 };
 use crate::store::ChatStore;
 use crate::wire::{AliasCode, ArchiveCode, ConversationCode, SenderCode, archive_code};
@@ -199,7 +198,8 @@ impl Dirty {
 struct Index {
     chat_for: BTreeMap<ConversationCode, u32>,
     by_activity: BTreeMap<u64, u32>,
-    chat_messages: BTreeMap<u32, BTreeSet<u32>>,
+    /// Each chat's messages, by ID, oldest first.
+    chat_messages: BTreeMap<u32, Vec<u32>>,
     aliases: BTreeMap<AliasCode, BTreeSet<u32>>,
     hints: BTreeMap<[u8; 3], BTreeSet<[u8; 32]>>,
     /// Heard peers that are not saved, by when they were heard.
@@ -237,10 +237,10 @@ impl Index {
     }
 
     fn add_message(&mut self, id: u32, message: &MessageEntry) {
-        self.chat_messages
-            .entry(message.record.chat.0)
-            .or_default()
-            .insert(id);
+        let ids = self.chat_messages.entry(message.record.chat.0).or_default();
+        if let Err(slot) = ids.binary_search(&id) {
+            ids.insert(slot, id);
+        }
         if let Some(alias) = alias_code(message) {
             self.aliases.entry(alias).or_default().insert(id);
         }
@@ -248,8 +248,10 @@ impl Index {
     }
 
     fn remove_message(&mut self, id: u32, message: &MessageEntry) {
-        if let Some(messages) = self.chat_messages.get_mut(&message.record.chat.0) {
-            messages.remove(&id);
+        if let Some(ids) = self.chat_messages.get_mut(&message.record.chat.0)
+            && let Ok(slot) = ids.binary_search(&id)
+        {
+            ids.remove(slot);
         }
         if let Some(alias) = alias_code(message)
             && let Some(ids) = self.aliases.get_mut(&alias)
@@ -934,7 +936,7 @@ impl<D: Durable> MemoryStore<D> {
                     .index
                     .chat_messages
                     .get(&message.record.chat.0)
-                    .map_or(0, BTreeSet::len);
+                    .map_or(0, Vec::len);
                 (held > keep).then_some(id)
             });
             let Some(victim) = victim else {
@@ -998,17 +1000,46 @@ impl<D: Durable> ChatStore for MemoryStore<D> {
         chat: ChatId,
         before: Option<MessageId>,
     ) -> impl Iterator<Item = Result<MessageRecord, StoreError>> + '_ {
-        let upper = before.map_or(Bound::Unbounded, |before| Bound::Excluded(before.0));
         self.index
             .chat_messages
             .get(&chat.0)
             .into_iter()
-            .flat_map(move |ids| ids.range((Bound::Unbounded, upper)).rev())
+            .flat_map(move |ids| {
+                let end =
+                    before.map_or(ids.len(), |before| ids.partition_point(|&id| id < before.0));
+                ids[..end].iter().rev()
+            })
             .map(|&id| self.record(id).ok_or(StoreError::Corrupt))
     }
 
     fn message(&self, id: MessageId) -> Result<Option<MessageRecord>, StoreError> {
         Ok(self.record(id.0))
+    }
+
+    fn message_count(&self, chat: ChatId) -> usize {
+        self.index.chat_messages.get(&chat.0).map_or(0, Vec::len)
+    }
+
+    fn message_id_at(&self, chat: ChatId, index: usize) -> Option<MessageId> {
+        let ids = self.index.chat_messages.get(&chat.0)?;
+        ids.get(index).copied().map(MessageId)
+    }
+
+    fn message_meta(&self, id: MessageId) -> Result<Option<MessageMeta>, StoreError> {
+        let meta = self.disk.messages.get(&id.0).map(|message| {
+            let record = &message.record;
+            MessageMeta {
+                chat: record.chat,
+                direction: record.direction,
+                sender: record.sender,
+                sender_handle: record.sender_handle.clone(),
+                presence: record.presence,
+                flags: record.flags,
+                delivery: record.delivery,
+                time: record.time,
+            }
+        });
+        Ok(meta)
     }
 
     fn body<'b>(&self, id: MessageId, out: &'b mut [u8]) -> Result<Option<&'b str>, StoreError> {
@@ -1743,6 +1774,12 @@ mod tests {
         let oldest = busy[200 - kept];
         assert!(store.message(oldest).unwrap().is_some());
         assert!(store.message(busy[199 - kept]).unwrap().is_none());
+
+        // What is left stands at positions from the oldest kept.
+        let chat = store.chat_for(&group()).unwrap();
+        assert_eq!(store.message_count(chat), kept);
+        assert_eq!(store.message_id_at(chat, 0), Some(oldest));
+        assert_eq!(store.message_id_at(chat, kept - 1), Some(busy[199]));
 
         // An evicted message's resend material went with it.
         assert_eq!(archived(&store, group(), first_wire.unwrap()), None);

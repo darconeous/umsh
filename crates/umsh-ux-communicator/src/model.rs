@@ -19,8 +19,6 @@ use crate::text::{DraftText, SharedText, TextHeap};
 pub const MAX_CHATS: usize = 12;
 /// How many saved peers the Peers list holds.
 pub const MAX_PEERS: usize = 12;
-/// The most messages a conversation keeps; older ones are dropped.
-pub const MAX_MESSAGES: usize = 16;
 /// The longest message, in bytes: a UMSH text message is at most ten
 /// fragments of 160 bytes.
 pub const MESSAGE_LEN: usize = 1600;
@@ -876,6 +874,27 @@ pub struct Message {
     pub parts: Option<Parts>,
 }
 
+/// What the rows beside a message in its transcript need of it: whether
+/// it continues their run, and when it came.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Neighbor {
+    pub direction: Direction,
+    /// Who sent an incoming channel message, as its row shows them.
+    pub sender: Option<Sender>,
+    pub presence: Presence,
+    /// When it was sent or received, in Unix seconds, when the clock was
+    /// known.
+    pub time: Option<u32>,
+}
+
+/// The messages of a chat whose delivery shows below them, besides those
+/// unconfirmed: the newest sent, and the newest delivered.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct LatestSent {
+    pub sent: Option<MessageId>,
+    pub delivered: Option<MessageId>,
+}
+
 /// A reply's quote of the message it answers.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Quote {
@@ -1025,56 +1044,13 @@ pub struct Reactor {
     pub reaction: Reaction,
 }
 
-/// The newest messages of the open chat, oldest first.
-pub type Messages = Vec<Message, MAX_MESSAGES>;
-
-/// The open chat's messages, as many as the screen keeps.
+/// The open chat. Its messages are read from the node as they are shown.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Conversation {
     pub chat: ChatId,
-    pub messages: Messages,
     /// How many messages have been sent here, which brings the newest into
     /// view each time it changes.
     pub sent: u32,
-}
-
-impl Conversation {
-    /// Adds `message` as the newest, dropping the oldest when full.
-    pub fn push(&mut self, message: Message) {
-        push_newest(&mut self.messages, message);
-    }
-
-    /// Takes in `message` where it belongs among those listed: in place of
-    /// what is listed for it, or in the order of its ID, which is the order
-    /// the node keeps a chat's messages in. One older than everything
-    /// listed while the list is full is not among the newest, and stays out.
-    pub fn place(&mut self, message: Message) {
-        if let Some(listed) = self.messages.iter_mut().find(|m| m.id == message.id) {
-            *listed = message;
-            return;
-        }
-        let mut index = self
-            .messages
-            .iter()
-            .position(|m| m.id > message.id)
-            .unwrap_or(self.messages.len());
-        if self.messages.is_full() {
-            if index == 0 {
-                return;
-            }
-            self.messages.remove(0);
-            index -= 1;
-        }
-        _ = self.messages.insert(index, message);
-    }
-}
-
-/// Adds `message` to `messages` as the newest, dropping the oldest when full.
-pub fn push_newest(messages: &mut Messages, message: Message) {
-    if messages.is_full() {
-        messages.remove(0);
-    }
-    _ = messages.push(message);
 }
 
 /// A setting the node can refuse.
@@ -1229,12 +1205,32 @@ pub trait Node {
     /// heard first, as many as it holds.
     fn peers(&self, peers: &mut Peers);
 
-    /// Fills `messages`, which is empty, with the newest messages of `chat`.
-    /// A chat's messages are in the order of their IDs.
-    fn load(&self, chat: ChatId, messages: &mut Messages);
-
     /// The message `message` of `chat`. `None` once it is gone.
     fn message(&self, chat: ChatId, message: MessageId) -> Option<Message>;
+
+    /// How many rows the transcript of `chat` has: a message each, except
+    /// that a run of messages on their way again is one row.
+    fn rows(&self, chat: ChatId) -> usize;
+
+    /// The message the row `row` of `chat` shows, its oldest row at 0: for
+    /// a run of messages on their way again, the first of them.
+    fn row_id(&self, chat: ChatId, row: usize) -> Option<MessageId>;
+
+    /// The message the row `row` of `chat` shows, as [`Node::message`]
+    /// gives it.
+    fn row_message(&self, chat: ChatId, row: usize) -> Option<Message> {
+        self.message(chat, self.row_id(chat, row)?)
+    }
+
+    /// What the rows beside the row `row` of `chat` need of its message.
+    fn neighbor(&self, chat: ChatId, row: usize) -> Option<Neighbor>;
+
+    /// The newest message of `chat` sent, and the newest delivered.
+    fn latest_sent(&self, chat: ChatId) -> LatestSent;
+
+    /// When the newest message of `chat` before the row `row` that has a
+    /// time came.
+    fn time_before(&self, chat: ChatId, row: usize) -> Option<u32>;
 
     /// `chat` has been read: none of its messages are unread.
     fn opened(&self, chat: ChatId);
@@ -1789,18 +1785,12 @@ impl State {
         self.chat_mut(chat).map(|c| &mut c.draft)
     }
 
-    /// Reads the newest messages of `chat` from the node, as the open
-    /// chat's.
+    /// Opens `chat` as the open chat.
     pub(crate) fn load_conversation(&mut self, chat: ChatId) {
-        // Filled where it lies: a conversation is too large to build aside.
-        let conversation = self.conversation.get_or_insert_with(|| Conversation {
-            chat,
-            messages: Vec::new(),
-            sent: 0,
-        });
+        let conversation = self
+            .conversation
+            .get_or_insert(Conversation { chat, sent: 0 });
         conversation.chat = chat;
-        conversation.messages.clear();
-        self.node.load(chat, &mut conversation.messages);
     }
 
     /// Sends the draft of `chat`: it becomes the newest message, and the
@@ -1839,7 +1829,6 @@ impl State {
         summary.last_activity = message.time;
         _ = self.chats.insert(0, summary);
         if let Some(conversation) = self.conversation.as_mut().filter(|c| c.chat == chat) {
-            conversation.push(message);
             conversation.sent = conversation.sent.wrapping_add(1);
         }
     }
@@ -1907,7 +1896,9 @@ impl State {
     pub fn apply(&mut self, event: NodeEvent, now: u64) -> bool {
         match event {
             NodeEvent::Arrived { chat, message } => return self.receive(chat, message, now),
-            NodeEvent::MessageChanged { chat, message } => self.refresh_message(chat, message),
+            // The transcript reads its messages from the node as it is
+            // built, which this rebuilds.
+            NodeEvent::MessageChanged { .. } => {}
             NodeEvent::ChatChanged(chat) => self.refresh_chat(chat),
             NodeEvent::ChatRemoved(chat) => self.remove_chat(chat),
             NodeEvent::IdentitiesLearned => self.identities_learned(),
@@ -1964,24 +1955,6 @@ impl State {
         match self.node.chat(chat) {
             Some(fresh) => _ = self.place(fresh),
             None => self.remove_chat(chat),
-        }
-    }
-
-    /// Reads `message` of the open chat from the node again, taking it in
-    /// when it is new among the newest: a placeholder for a missing message,
-    /// or one still arriving in parts.
-    fn refresh_message(&mut self, chat: ChatId, message: MessageId) {
-        let node = self.node;
-        let Some(conversation) = self.conversation.as_mut().filter(|c| c.chat == chat) else {
-            return;
-        };
-        match node.message(chat, message) {
-            Some(fresh) => conversation.place(fresh),
-            None => {
-                if let Some(index) = conversation.messages.iter().position(|m| m.id == message) {
-                    conversation.messages.remove(index);
-                }
-            }
         }
     }
 
@@ -2064,27 +2037,30 @@ impl State {
 }
 
 impl State {
+    /// `message` of the open chat, as the node has it.
+    #[must_use]
+    pub fn open_message(&self, message: MessageId) -> Option<Message> {
+        self.node.message(self.conversation.as_ref()?.chat, message)
+    }
+
     /// Whether `message` in the open chat was received rather than sent.
     #[must_use]
     pub fn inbound(&self, message: MessageId) -> bool {
-        self.conversation
-            .as_ref()
-            .and_then(|c| c.messages.iter().find(|m| m.id == message))
+        self.open_message(message)
             .is_some_and(|m| m.direction == Direction::Inbound)
     }
 
     /// Reacts to `message` in the open chat with `reaction`, in place of any
     /// reaction I had; choosing the one I had withdraws it.
     pub fn react(&mut self, message: MessageId, reaction: Reaction) {
-        let Some(conversation) = self.conversation.as_mut() else {
+        let Some(chat) = self.conversation.as_ref().map(|c| c.chat) else {
             return;
         };
-        let Some(target) = conversation.messages.iter_mut().find(|m| m.id == message) else {
+        let Some(target) = self.node.message(chat, message) else {
             return;
         };
         let mine = (target.my_reaction() != Some(reaction)).then_some(reaction);
-        target.set_my_reaction(mine);
-        self.node.react(conversation.chat, message, mine);
+        self.node.react(chat, message, mine);
     }
 
     /// Sends `message` in the open chat again, if it is unconfirmed and
@@ -2109,12 +2085,9 @@ impl State {
 
     /// The unconfirmed `message` of the open chat. One deleted is gone,
     /// confirmed or not.
-    pub(crate) fn unconfirmed(&mut self, message: MessageId) -> Option<&mut Message> {
-        self.conversation
-            .as_mut()?
-            .messages
-            .iter_mut()
-            .find(|m| m.id == message && m.delivery == Delivery::Unconfirmed && !m.deleted)
+    pub(crate) fn unconfirmed(&self, message: MessageId) -> Option<Message> {
+        self.open_message(message)
+            .filter(|m| m.delivery == Delivery::Unconfirmed && !m.deleted)
     }
 
     /// Closes what is open over an unconfirmed message: the choices of how
@@ -2148,21 +2121,17 @@ impl State {
         if self.airtime_wait.is_some() {
             return;
         }
-        let node = self.node;
         let Some(chat) = self.conversation.as_ref().map(|c| c.chat) else {
             return;
         };
-        let Some(target) = self.unconfirmed(message) else {
+        if self.unconfirmed(message).is_none() {
             return;
-        };
-        let queued = if without_secrecy {
-            node.retry_without_secrecy(chat, message)
+        }
+        // The node shows it on its way again as soon as it is queued.
+        if without_secrecy {
+            self.node.retry_without_secrecy(chat, message);
         } else {
-            node.retry(chat, message)
-        };
-        if queued {
-            target.delivery = Delivery::Sending;
-            target.forward_secret &= !without_secrecy;
+            self.node.retry(chat, message);
         }
     }
 
@@ -2191,9 +2160,6 @@ impl State {
         summary.unread = !reading;
         let muted = summary.muted;
         _ = self.chats.insert(0, summary);
-        if let Some(conversation) = self.conversation.as_mut().filter(|c| c.chat == chat) {
-            conversation.place(message.clone());
-        }
         let away = self.dark || self.lock.locked;
         if away {
             self.list_arrival(chat, &message, now);
@@ -2405,70 +2371,4 @@ impl State {
 fn push_cut<const N: usize>(into: &mut String<N>, s: &str) {
     let room = N - into.len();
     let _ = into.push_str(umsh_grapheme::cut(s, room));
-}
-
-#[cfg(test)]
-mod tests {
-    extern crate std;
-
-    use super::*;
-
-    static HEAP: std::alloc::System = std::alloc::System;
-
-    fn message(id: MessageId, text: &str) -> Message {
-        Message {
-            id,
-            direction: Direction::Inbound,
-            sender: None,
-            text: SharedText::new(&HEAP, text).unwrap(),
-            delivery: Delivery::Sent,
-            reactions: Reactions::new(),
-            card: None,
-            reply: None,
-            time: None,
-            presence: Presence::Present,
-            edited: false,
-            deleted: false,
-            late: false,
-            forward_secret: false,
-            parts: None,
-        }
-    }
-
-    fn ids(conversation: &Conversation) -> std::vec::Vec<MessageId> {
-        conversation.messages.iter().map(|m| m.id).collect()
-    }
-
-    #[test]
-    fn a_message_takes_its_place_among_the_newest() {
-        let mut conversation = Conversation {
-            chat: 1,
-            messages: Messages::new(),
-            sent: 0,
-        };
-        for id in [10, 12, 13] {
-            conversation.place(message(id, "listed"));
-        }
-        // A missing message's placeholder, then its late arrival.
-        conversation.place(Message {
-            presence: Presence::PendingRepair,
-            ..message(11, "")
-        });
-        assert_eq!(ids(&conversation), [10, 11, 12, 13]);
-        conversation.place(message(11, "late"));
-        assert_eq!(ids(&conversation), [10, 11, 12, 13]);
-        assert_eq!(conversation.messages[1].text.as_str(), "late");
-        assert_eq!(conversation.messages[1].presence, Presence::Present);
-
-        // Full, a newer message drops the oldest; an older one stays out.
-        for id in 20..20 + MAX_MESSAGES as MessageId - 4 {
-            conversation.place(message(id, "newer"));
-        }
-        assert!(conversation.messages.is_full());
-        conversation.place(message(14, "between"));
-        assert_eq!(conversation.messages[0].id, 11);
-        assert_eq!(conversation.messages[3].id, 14);
-        conversation.place(message(5, "old"));
-        assert!(conversation.messages.iter().all(|m| m.id != 5));
-    }
 }

@@ -55,8 +55,8 @@ pub use memory::{MemoryStore, Quota};
 pub use reaction::{CLUSTER_MAX, Cluster, REACTIONS, Reacted, Reaction, Reactions};
 pub use record::{
     BODY_MAX, BuiltinChannel, ChannelAccess, ChannelChange, ChannelRecord, ChatChange, ChatRecord,
-    Delivery, IDENTITY_MAX, LinkInfo, MessageFlags, MessageRecord, NAME_MAX, Name, PeerChange,
-    PeerFilter, PeerRecord, ROUTE_MAX, ReactorRecord, StoreError, Usage, WireAlias,
+    Delivery, IDENTITY_MAX, LinkInfo, MessageFlags, MessageMeta, MessageRecord, NAME_MAX, Name,
+    PeerChange, PeerFilter, PeerRecord, ROUTE_MAX, ReactorRecord, StoreError, Usage, WireAlias,
 };
 pub use store::ChatStore;
 

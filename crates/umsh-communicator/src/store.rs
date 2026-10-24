@@ -7,8 +7,8 @@ use umsh_text::engine::{ArchiveKey, StreamCheckpoint};
 use crate::batch::{Batch, Committed};
 use crate::ids::{ChatId, MessageId, PeerId};
 use crate::record::{
-    ChannelChange, ChannelRecord, ChatChange, ChatRecord, MessageRecord, PeerChange, PeerFilter,
-    PeerRecord, ReactorRecord, StoreError, Usage, WireAlias,
+    ChannelChange, ChannelRecord, ChatChange, ChatRecord, MessageMeta, MessageRecord, PeerChange,
+    PeerFilter, PeerRecord, ReactorRecord, StoreError, Usage, WireAlias,
 };
 
 /// A communicator's durable chat state.
@@ -30,6 +30,13 @@ pub trait ChatStore {
         before: Option<MessageId>,
     ) -> impl Iterator<Item = Result<MessageRecord, StoreError>> + '_;
     fn message(&self, id: MessageId) -> Result<Option<MessageRecord>, StoreError>;
+    /// How many messages the chat holds.
+    fn message_count(&self, chat: ChatId) -> usize;
+    /// The chat's message at `index`, its oldest at 0.
+    fn message_id_at(&self, chat: ChatId, index: usize) -> Option<MessageId>;
+    /// What a message's neighbors in its transcript need of it, read
+    /// without its body or its reactions.
+    fn message_meta(&self, id: MessageId) -> Result<Option<MessageMeta>, StoreError>;
     fn body<'b>(&self, id: MessageId, out: &'b mut [u8]) -> Result<Option<&'b str>, StoreError>;
     /// Who reacted to the message, and how: the latest from each sender,
     /// in the order they came. Their counts are the record's `reactions`.

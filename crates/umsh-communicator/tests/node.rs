@@ -2,7 +2,8 @@
 //! own interface, and fed channel frames as the device node hands them
 //! over.
 
-use std::cell::RefCell;
+use std::alloc::{GlobalAlloc, Layout, System};
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -37,8 +38,8 @@ use umsh_ulcp::ids::prop;
 use umsh_ulcp::profiles::VETTED;
 use umsh_ulcp_simdev::{SessionConfig, SimulatedDevice, TimeConfig};
 use umsh_ux_communicator::model::{
-    ChannelAccess, ChannelEntry, ChatKind, Chats, Delivery, Direction, KeyboardSettings, Messages,
-    Node, NodeEvent, PeerEntry, Peers, Profile, Reaction, Rule, Setting, Shareable,
+    ChannelAccess, ChannelEntry, ChatKind, Chats, Delivery, Direction, KeyboardSettings, Node,
+    NodeEvent, PeerEntry, Peers, Presence, Profile, Reaction, Rule, Setting, Shareable,
 };
 
 /// 14:32 UTC, when the test clock starts.
@@ -754,10 +755,8 @@ fn a_public_message_arrives_with_its_sender_and_details() {
     assert_eq!(member.sender.name, "Robin");
     assert_eq!(member.address.unwrap().len(), 44);
 
-    let mut messages = Messages::new();
-    node.load(chat, &mut messages);
-    assert_eq!(messages.len(), 1);
-    assert_eq!(messages[0].id, message);
+    assert_eq!(node.rows(chat), 1);
+    assert_eq!(node.row_message(chat, 0).unwrap().id, message);
 
     node.opened(chat);
     assert!(!node.chat(chat).unwrap().unread);
@@ -792,6 +791,270 @@ fn drafts_are_kept_until_cleared() {
     assert_eq!(node.chat(chat).unwrap().draft.text(), "Back at six");
     node.save_draft(chat, "   ");
     assert_eq!(node.chat(chat).unwrap().draft.text(), "");
+}
+
+// ─── The transcript by row ───────────────────────────────────────────
+
+/// A member's own chat session on the channel `key`, under the Sender
+/// Handle `handle`, and the conversation it speaks in.
+fn member_session(from: PublicKey, key: ChannelKey, handle: &str) -> (ChatFacade, ConversationKey) {
+    let mut facade: ChatFacade = ChatFacade::new(
+        DirectChannelProfile,
+        from,
+        EngineConfig::default(),
+        Seeds {
+            session_id: 7,
+            jitter_seed: 8,
+        },
+    );
+    facade.channels_mut().register(tag(&key), key, None);
+    facade.set_local_handle(handle);
+    (facade, ConversationKey::ChannelGroup { channel: tag(&key) })
+}
+
+/// What `facade` sends of `intent`, the payload of one frame, and what a
+/// later message can say it is about.
+fn spoken(
+    facade: &mut ChatFacade,
+    conversation: ConversationKey,
+    intent: ComposeIntent<'_>,
+) -> (Option<RegardingRef>, Vec<u8>) {
+    let batch = facade.compose(conversation, 1, intent, None, 0).unwrap();
+    let handle = batch
+        .mutations
+        .first()
+        .map(|mutation| RegardingRef::Handle(mutation.handle));
+    let outbound = facade.commit(batch).unwrap();
+    (handle, outbound.transmissions()[0].payload.to_vec())
+}
+
+fn text(body: &str) -> ComposeIntent<'_> {
+    ComposeIntent::Text {
+        body,
+        status: false,
+    }
+}
+
+/// The chat on Public, once something has been heard on it.
+fn public_chat(node: &CommunicatorNode<Port>) -> u32 {
+    chats(node)
+        .iter()
+        .find(|chat| chat.name == "Public")
+        .expect("Public is listed")
+        .id
+}
+
+/// Each row's message of `chat`, oldest first.
+fn row_ids(node: &CommunicatorNode<Port>, chat: u32) -> Vec<u32> {
+    (0..node.rows(chat))
+        .map(|row| node.row_id(chat, row).unwrap())
+        .collect()
+}
+
+/// Each row's text of `chat`, oldest first.
+fn row_texts(node: &CommunicatorNode<Port>, chat: u32) -> Vec<String> {
+    (0..node.rows(chat))
+        .map(|row| String::from(&*node.row_message(chat, row).unwrap().text))
+        .collect()
+}
+
+/// A channel's transcript reads by row, oldest first: who said each, and
+/// when, as its neighbors see it.
+#[test]
+fn a_channel_reads_by_row() {
+    let sim = device();
+    let (node, clock) = started(&sim);
+    let public = WellKnownChannels::derive().public;
+    let (mut robin, conversation) = member_session(PublicKey([0x37; 32]), public, "Robin");
+    let (mut ash, _) = member_session(PublicKey([0x38; 32]), public, "Ash");
+    for (at, (from, body)) in [
+        (0x37, "Anyone near the trailhead?"),
+        (0x37, "Two of us"),
+        (0x38, "Behind you"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        clock.set(1_000 * (at as u64 + 1));
+        let session = if from == 0x37 { &mut robin } else { &mut ash };
+        let (_, payload) = spoken(session, conversation, text(body));
+        node.arrive(Arrival::Text(received(
+            &public,
+            PublicKey([from; 32]),
+            &payload,
+        )));
+    }
+    let chat = public_chat(&node);
+    clock.set(4_000);
+    let mine = node.send(chat, "On my way", None, false).unwrap();
+    events(&node);
+
+    assert_eq!(
+        row_texts(&node, chat),
+        [
+            "Anyone near the trailhead?",
+            "Two of us",
+            "Behind you",
+            "On my way"
+        ]
+    );
+    assert_eq!(*row_ids(&node, chat).last().unwrap(), mine.id);
+    assert_eq!(node.row_id(chat, 4), None);
+    let names: Vec<Option<String>> = (0..4)
+        .map(|row| {
+            let neighbor = node.neighbor(chat, row).unwrap();
+            assert_eq!(neighbor.presence, Presence::Present);
+            neighbor
+                .sender
+                .map(|sender| String::from(sender.name.as_str()))
+        })
+        .collect();
+    assert_eq!(
+        names,
+        [
+            Some("Robin".into()),
+            Some("Robin".into()),
+            Some("Ash".into()),
+            None
+        ]
+    );
+    assert_eq!(
+        node.neighbor(chat, 3).unwrap().direction,
+        Direction::Outbound
+    );
+    assert_eq!(node.time_before(chat, 0), None);
+    assert_eq!(node.time_before(chat, 2), Some(STARTED + 2));
+    // Mine went out once, and a channel acknowledges nothing.
+    assert!(node.depart().is_some());
+    let latest = node.latest_sent(chat);
+    assert_eq!(latest.sent, Some(mine.id));
+    assert_eq!(latest.delivered, None);
+}
+
+/// Messages missed and asked for again are one row while they are on
+/// their way, and their own rows as each comes.
+#[test]
+fn a_run_on_its_way_again_is_one_row_until_it_comes() {
+    let sim = device();
+    let (node, _) = started(&sim);
+    let public = WellKnownChannels::derive().public;
+    let key = PublicKey([0x37; 32]);
+    let (mut robin, conversation) = member_session(key, public, "Robin");
+    let payloads: Vec<Vec<u8>> = ["one", "two", "three", "four"]
+        .into_iter()
+        .map(|body| spoken(&mut robin, conversation, text(body)).1)
+        .collect();
+    let hear = |payload: &[u8]| node.arrive(Arrival::Text(received(&public, key, payload)));
+    hear(&payloads[0]);
+    hear(&payloads[3]);
+    let chat = public_chat(&node);
+    assert_eq!(node.rows(chat), 3, "{:?}", row_ids(&node, chat));
+    let pending = node.neighbor(chat, 1).unwrap();
+    assert_eq!(pending.presence, Presence::PendingRepair);
+    assert_eq!(node.neighbor(chat, 2).unwrap().presence, Presence::Present);
+
+    hear(&payloads[1]);
+    assert_eq!(node.rows(chat), 4);
+    assert_eq!(node.neighbor(chat, 1).unwrap().presence, Presence::Present);
+    assert_eq!(
+        node.neighbor(chat, 2).unwrap().presence,
+        Presence::PendingRepair
+    );
+
+    hear(&payloads[2]);
+    assert_eq!(row_texts(&node, chat), ["one", "two", "three", "four"]);
+}
+
+/// The heap, counted while one thread asks it to be.
+struct Counting;
+
+thread_local! {
+    static COUNTING: Cell<bool> = const { Cell::new(false) };
+    static ALLOCATIONS: Cell<usize> = const { Cell::new(0) };
+}
+
+// SAFETY: every call goes on to the system allocator unchanged.
+unsafe impl GlobalAlloc for Counting {
+    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        _ = COUNTING.try_with(|counting| {
+            if counting.get() {
+                ALLOCATIONS.set(ALLOCATIONS.get() + 1);
+            }
+        });
+        // SAFETY: the caller's promises are the system allocator's.
+        unsafe { System.alloc(layout) }
+    }
+
+    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+        // SAFETY: as for `alloc`.
+        unsafe { System.dealloc(ptr, layout) }
+    }
+}
+
+#[global_allocator]
+static HEAP: Counting = Counting;
+
+/// How many times `read` took from the heap.
+fn allocations(read: impl FnOnce()) -> usize {
+    ALLOCATIONS.set(0);
+    COUNTING.set(true);
+    read();
+    COUNTING.set(false);
+    ALLOCATIONS.get()
+}
+
+/// What a row's neighbors read of it takes nothing from the heap, even
+/// beside messages that carry reactions.
+#[test]
+fn reading_a_row_for_its_neighbors_allocates_nothing() {
+    let sim = device();
+    let (node, clock) = started(&sim);
+    let public = WellKnownChannels::derive().public;
+    let robin_key = PublicKey([0x37; 32]);
+    let ash_key = PublicKey([0x38; 32]);
+    let (mut robin, conversation) = member_session(robin_key, public, "Robin");
+    let (mut ash, _) = member_session(ash_key, public, "Ash");
+    let (asked, payload) = spoken(&mut robin, conversation, text("Anyone near the trailhead?"));
+    node.arrive(Arrival::Text(received(&public, robin_key, &payload)));
+    clock.set(2_000);
+    let (_, payload) = spoken(&mut ash, conversation, text("Behind you"));
+    node.arrive(Arrival::Text(received(&public, ash_key, &payload)));
+    let (_, payload) = spoken(
+        &mut robin,
+        conversation,
+        ComposeIntent::Reply {
+            body: "+1",
+            regarding: asked.unwrap(),
+            status: true,
+        },
+    );
+    node.arrive(Arrival::Text(received(&public, robin_key, &payload)));
+    let chat = public_chat(&node);
+    clock.set(3_000);
+    node.send(chat, "On my way", None, false).unwrap();
+    let last = node.rows(chat) - 1;
+    node.react(
+        chat,
+        node.row_id(chat, last).unwrap(),
+        Some(Reaction::Heart),
+    );
+    assert!(!node.row_message(chat, 0).unwrap().reactions.is_empty());
+    assert!(!node.row_message(chat, last).unwrap().reactions.is_empty());
+
+    // The rows are taken once, after the store changes; what is read of
+    // them after takes nothing.
+    assert_eq!(node.rows(chat), 3);
+    let taken = allocations(|| {
+        for row in 0..3 {
+            assert!(node.neighbor(chat, row).is_some());
+            node.time_before(chat, row);
+            node.row_id(chat, row);
+        }
+        node.latest_sent(chat);
+    });
+    assert_eq!(taken, 0);
+    // The whole message, its reactions with it, does.
+    assert!(allocations(|| _ = node.row_message(chat, 0)) > 0);
 }
 
 // ─── Sending ─────────────────────────────────────────────────────────
@@ -838,6 +1101,12 @@ fn a_direct_message_goes_out_and_can_be_retried() {
         node.message(chat.id, message.id).unwrap().delivery,
         Delivery::Sending
     );
+    // Read by row too, before any word on it.
+    assert_eq!(
+        node.row_message(chat.id, 0).unwrap().delivery,
+        Delivery::Sending
+    );
+    assert_eq!(node.latest_sent(chat.id).sent, Some(message.id));
     let again = node.depart().expect("the message leaves again");
     assert!(node.departed(again, Sent::Unsendable));
     assert_eq!(
@@ -988,6 +1257,7 @@ fn a_reaction_is_kept_and_sent() {
             .iter()
             .any(|r| r.reaction == Reaction::Heart && r.mine)
     );
+    assert_eq!(node.row_message(chat, 0).unwrap(), reacted);
     assert!(node.depart().is_some());
 }
 

@@ -314,45 +314,20 @@ fn a_flick_through_the_history_selects_nothing() {
     assert_eq!(seen, [was]);
 }
 
-/// A screen that keeps nothing drawn to it.
-struct Blank(embedded_graphics::geometry::Size);
-
-impl embedded_graphics::geometry::OriginDimensions for Blank {
-    fn size(&self) -> embedded_graphics::geometry::Size {
-        self.0
-    }
-}
-
-impl embedded_graphics::draw_target::DrawTarget for Blank {
-    type Color = embedded_graphics::pixelcolor::Rgb565;
-    type Error = core::convert::Infallible;
-
-    fn draw_iter<I>(&mut self, pixels: I) -> Result<(), Self::Error>
-    where
-        I: IntoIterator<Item = embedded_graphics::Pixel<Self::Color>>,
-    {
-        pixels.into_iter().for_each(drop);
-        Ok(())
-    }
-}
-
-/// Paints a frame, as the board does whenever the app asks, which is where
-/// a long list builds the rows the frame shows.
-fn paint<V, F>(app: &mut App<V, State, F>)
+/// Flicks the content up from `y`, 25 px every 20 ms from `ms`, and paints
+/// each frame until it comes to rest. Returns when it did.
+fn flick_up<V, F>(app: &mut App<V, State, F>, ms: u64, y: i16) -> u64
 where
     V: buoyant::view::View<embedded_graphics::pixelcolor::Rgb565, State>,
     V::FocusTree: DefaultFocus,
     F: Fn(&State) -> V,
 {
-    use embedded_graphics::pixelcolor::{Rgb565, RgbColor as _};
-    let mut screen = Blank(BOARD.metrics.size());
-    let mut target = buoyant::render_target::EmbeddedGraphicsRenderTarget::new(&mut screen);
-    app.render_animated(&mut target, &Rgb565::WHITE);
+    flick(app, ms, y, -25)
 }
 
-/// Flicks the content up from `y`, 25 px every 20 ms from `ms`, and paints
+/// Flicks the content from `y`, `by` px every 20 ms from `ms`, and paints
 /// each frame until it comes to rest. Returns when it did.
-fn flick_up<V, F>(app: &mut App<V, State, F>, mut ms: u64, y: i16) -> u64
+fn flick<V, F>(app: &mut App<V, State, F>, mut ms: u64, y: i16, by: i16) -> u64
 where
     V: buoyant::view::View<embedded_graphics::pixelcolor::Rgb565, State>,
     V::FocusTree: DefaultFocus,
@@ -366,12 +341,12 @@ where
     for step in 1..=6 {
         ms += 20;
         app.set_time(Duration::from_millis(ms));
-        apply_touch(app, Moved, (x, y - 25 * step), ms);
+        apply_touch(app, Moved, (x, y + by * step), ms);
         paint(app);
     }
     ms += 20;
     app.set_time(Duration::from_millis(ms));
-    apply_touch(app, Ended, (x, y - 150), ms);
+    apply_touch(app, Ended, (x, y + by * 6), ms);
     for _ in 0..150 {
         ms += 20;
         app.set_time(Duration::from_millis(ms));
@@ -485,4 +460,52 @@ fn only_a_turning_second_rebuilds_the_view_under_a_drag() {
     }
     input::events(&mut app, ms + 1000);
     assert!(app.state_mut().has_changed());
+}
+
+/// A flick travels far back through a long chat, building the messages it
+/// passes, and a tap selects the message under it.
+#[test]
+fn a_flick_travels_far_back_through_a_long_chat_and_a_tap_selects_a_message() {
+    use input::TouchPhase::{Ended, Started};
+    use std::time::Duration;
+    let mut app = app!(long_store());
+    open_chat(&mut app, PUBLIC);
+    // The newest message keeps focus, and is kept built, as the content
+    // moves: where it goes is how far the content went.
+    read_back(&mut app, 1);
+    let mut ms = tick(1000);
+    app.set_time(Duration::from_millis(ms));
+    paint(&mut app);
+    let mut was = focus_box(&mut app).origin.y;
+    let mut went = Vec::new();
+    for _ in 0..3 {
+        ms = flick(&mut app, ms, 60, 25);
+        let now = focus_box(&mut app).origin.y;
+        went.push(now - was);
+        was = now;
+    }
+    // Each coasts on well past the finger's 150 px, as far as the last:
+    // rows not yet measured cut none short.
+    assert!(went[0] > 300, "{went:?}");
+    assert!(went.iter().all(|&far| far == went[0]), "{went:?}");
+    let rows = focusable_rows(app.state());
+    // Down the middle of the history, until a tap lands on a message.
+    let mut tapped = None;
+    for y in (60..180).step_by(10) {
+        ms += 1000;
+        app.set_time(Duration::from_millis(ms));
+        apply_touch(&mut app, Started, (120, y), ms);
+        ms += 50;
+        app.set_time(Duration::from_millis(ms));
+        apply_touch(&mut app, Ended, (120, y), ms);
+        app.finalize_view();
+        tapped = focus(app.state()).filter(|&key| keys::is_message(key));
+        if tapped.is_some() {
+            break;
+        }
+    }
+    let tapped = tapped.expect("a tap on a message");
+    assert_eq!(actions(app.state()), None);
+    let back = rows.len() - rows.iter().position(|&row| row == tapped).unwrap();
+    assert!(back > 15, "{back} back from the newest");
 }
