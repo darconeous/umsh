@@ -729,9 +729,15 @@ struct PendingTx {
 
 /// A delegated MAC acknowledgement ready to transmit.
 struct AckPlan {
-    /// The 8-byte ack trailer (`ack_mic || ack_tag`). The ack carries no
-    /// destination hint—it is correlated by this trailer.
-    trailer: [u8; 8],
+    /// The acknowledged frame's full S2V output, V. The ack carries no
+    /// destination hint—it is correlated by `V[..4]`, and its tag is bound
+    /// to all of V.
+    v: [u8; 16],
+    /// The keys that authenticated the acknowledged frame, which seal the
+    /// ack ([Ack Tag Construction]).
+    ///
+    /// [Ack Tag Construction]: https://darconeous.github.io/umsh/docs/protocol/security.html#ack-tag-construction
+    keys: PairwiseKeys,
     /// The way back to the sender.
     route: AckReturn,
     /// Flood hops the way back costs before any slack: the sender's
@@ -799,7 +805,13 @@ impl AckPlan {
     /// the first repeater that heard it otherwise. Whether the sender is
     /// mobile is not something the device knows, and the frame has only
     /// just measured the path.
-    fn new(trailer: [u8; 8], frame: &[u8], header: &PacketHeader, rx: &RadioRxInfo) -> Self {
+    fn new(
+        v: [u8; 16],
+        keys: PairwiseKeys,
+        frame: &[u8],
+        header: &PacketHeader,
+        rx: &RadioRxInfo,
+    ) -> Self {
         // This reception, as the last hop of a way back nothing relayed.
         let heard_directly = rx
             .rssi_dbm
@@ -835,7 +847,8 @@ impl AckPlan {
                 None => direct,
             };
             return Self {
-                trailer,
+                v,
+                keys,
                 route,
                 distance,
                 floor,
@@ -892,7 +905,8 @@ impl AckPlan {
             }
         }
         Self {
-            trailer,
+            v,
+            keys,
             route,
             distance,
             floor,
@@ -4864,12 +4878,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             // duplicate's plan uses the retransmission's own routing
             // state, which may be the fresh trace a route-recovery
             // retry attached.
-            AckPlan::new(
-                self.engine.compute_ack_trailer(&full_mac, &keys.k_enc),
-                data,
-                &header,
-                info,
-            )
+            AckPlan::new(full_mac, keys.clone(), data, &header, info)
         });
         let identity = RxIdentity::new(counter, mic);
         if let Some(plan) = plan.as_mut() {
@@ -4934,7 +4943,10 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         }
         // Includes a full trace/source route, flood allowance, and regions.
         let mut buf = [0u8; 96];
-        let mut builder = PacketBuilder::new(&mut buf).mac_ack(plan.trailer);
+        // Sealing fills the tag half.
+        let mut placeholder = [0u8; 8];
+        placeholder[..4].copy_from_slice(&plan.v[..4]);
+        let mut builder = PacketBuilder::new(&mut buf).mac_ack(placeholder);
         let flood_hops = plan.flood_hops();
         if flood_hops > 0 {
             builder = builder.flood_hops(flood_hops);
@@ -4954,7 +4966,13 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         for region in &plan.regions {
             builder = builder.region_code(*region);
         }
-        let frame_len = builder.build().ok()?.len();
+        // The device has no operator callsign, so its ack carries no static
+        // option: it keeps the legacy tag and says so
+        // (ack-transition.md § Sending).
+        let frame_len = builder.legacy_ack_tag().build().ok()?.len();
+        self.engine
+            .seal_mac_ack(&plan.keys, &plan.v, &mut buf[..frame_len])
+            .ok()?;
         if frame_len > usize::from(self.config.mtu) {
             return None;
         }
@@ -15645,7 +15663,8 @@ mod tests {
     }
 
     /// Assert the staged transmit is a MAC ack (which carries no
-    /// destination hint), and complete it.
+    /// destination hint) that marks its tag as the legacy construction,
+    /// and complete it.
     fn expect_ack_transmit(
         session: &mut TestSession,
         effect: Option<Effect>,
@@ -15654,12 +15673,39 @@ mod tests {
         assert_eq!(effect, Some(Effect::StartTransmit));
         let header = PacketHeader::parse(session.tx_data()).unwrap();
         assert_eq!(header.fcf.packet_type(), PacketType::MacAck);
+        let options =
+            ParsedOptions::extract(session.tx_data(), header.options_range.clone()).unwrap();
+        assert!(options.legacy_ack_tag);
+        assert!(!options.has_static);
         if let Some(trailer) = trailer {
             assert_eq!(session.tx_data()[header.mic_range.clone()], trailer);
         }
         session.on_tx_result(TxOutcome::Sent, 0, &mut |_: &[u8]| {
             panic!("autonomous ack must be silent")
         });
+    }
+
+    /// The sender's verifier accepts a delegated ack, and as the
+    /// construction its marker names.
+    #[test]
+    fn a_delegated_ack_verifies_as_the_legacy_construction() {
+        let mut session = auto_ack_session();
+        let keys = test_pairwise();
+        let frame = sealed_unar(100, &keys, false);
+        let effect = rx_effect(&mut session, &frame, 1_000);
+        assert_eq!(effect, Some(Effect::StartTransmit));
+
+        let engine = test_engine();
+        let header = PacketHeader::parse(&frame).unwrap();
+        let v = engine.s2v_tag(
+            &keys.k_mic,
+            |cmac| umsh_core::feed_aad(&header, &frame, |chunk| cmac.update(chunk)),
+            &frame[header.body_range.clone()],
+        );
+        assert_eq!(
+            engine.verify_mac_ack(&keys, &v, session.tx_data()),
+            Some(umsh_crypto::AckTagConstruction::Legacy)
+        );
     }
 
     #[test]
