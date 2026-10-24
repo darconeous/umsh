@@ -68,6 +68,13 @@ impl Typeface {
     pub const fn new(text: PrerenderedFont) -> Self {
         Self { text }
     }
+
+    /// Whether `cluster` at `size` is drawn as an emoji rather than from the
+    /// face: centered on its line, not set on the baseline.
+    #[must_use]
+    pub fn shows_emoji(&self, size: u32, cluster: &str) -> bool {
+        emoji(self.text.face(size), cluster).is_some()
+    }
 }
 
 impl Deref for Typeface {
@@ -99,6 +106,10 @@ struct Cell {
     top: i32,
     /// From one emoji to the next.
     advance: u32,
+    /// From the start of an emoji's advance to its glyph: half the gap
+    /// between emoji, the other half after it, so that one alone centered
+    /// by its advance is centered.
+    lead: i32,
 }
 
 impl Cell {
@@ -107,10 +118,14 @@ impl Cell {
         // Centered on the line, so a line of emoji alone sits as evenly in
         // its bubble or row as a line of text does.
         let line = i32::from(face.ascent) - i32::from(face.descent) + i32::from(face.line_gap);
+        let gap = (u32::from(store.size) / 10).max(1);
         Self {
             store,
-            top: (line - i32::from(store.size)) / 2,
-            advance: u32::from(store.size) + (u32::from(store.size) / 10).max(1),
+            // Rounded down the line, as a view centering the line rounds up
+            // it, so that the two halves cancel.
+            top: (line - i32::from(store.size) + 1) / 2,
+            advance: u32::from(store.size) + gap,
+            lead: (gap / 2) as i32,
         }
     }
 
@@ -198,7 +213,7 @@ impl FontMetrics for Metrics<'_> {
                 let size = u32::from(cell.store.size);
                 let width = cell.width(self.font, shown) - (cell.advance - size);
                 Some(Rectangle::new(
-                    Point::new(0, cell.top),
+                    Point::new(cell.lead, cell.top),
                     Size::new(width, size),
                 ))
             }
@@ -248,7 +263,7 @@ impl FontRender<Rgb565> for Typeface {
             return;
         };
         let cell = Cell::of(face);
-        let at = offset + Point::new(0, cell.top);
+        let at = offset + Point::new(cell.lead, cell.top);
         match shown {
             Shown::Glyph(id) => glyph(cell.store, id, at, background_color, surface),
             Shown::Parts(ids, count) => {

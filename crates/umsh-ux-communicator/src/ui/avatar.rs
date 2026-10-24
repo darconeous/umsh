@@ -46,6 +46,13 @@ fn look((style, size): &(AvatarStyle, u32)) -> impl View<Rgb565, ()> + use<> {
         i32::from(shown.ascent) - i32::from(shown.descent) + i32::from(shown.line_gap)
     };
     let two = !lines[1].is_empty();
+    // Capitals are centered by dropping them below the middle of their
+    // line; an emoji is drawn centered on its line already.
+    let drop = if !two && face.shows_emoji(text_size, lines[0]) {
+        0
+    } else {
+        cap_drop(face, text_size)
+    };
     let line = |s: &str, offset: i32| {
         Text::new(Lettering::try_from(s).unwrap_or_default(), face)
             .with_font_size(text_size)
@@ -61,7 +68,7 @@ fn look((style, size): &(AvatarStyle, u32)) -> impl View<Rgb565, ()> + use<> {
             line(lines[0], if two { -(pitch / 2) } else { 0 }),
             two.then(|| line(lines[1], pitch - pitch / 2)),
         ))
-        .offset(0, below as i32 + cap_drop(face, text_size))
+        .offset(0, below as i32 + drop)
         .hint_background_color(style.fill),
     ))
     .frame()
