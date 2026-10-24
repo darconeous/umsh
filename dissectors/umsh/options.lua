@@ -213,6 +213,7 @@ M.OPT_ACK_MIC          = 8   -- Non-Critical, Static,  4 bytes
 M.OPT_MIN_SNR          = 9   -- Critical,     Static,  0-1 bytes
 M.OPT_TRACE_SIGNAL     = 10  -- Non-Critical, Dynamic, 2 bytes per repeater
 M.OPT_REGION_CODE      = 11  -- Critical,     Dynamic, 2 bytes
+M.OPT_LEGACY_ACK_TAG   = 254 -- Non-Critical, Dynamic, 0 bytes (flag, MAC ack only)
 
 M.KNOWN_OPTION_NAMES = {
   [0] = "Reserved",
@@ -227,6 +228,7 @@ M.KNOWN_OPTION_NAMES = {
   [9] = "Min SNR",
   [10] = "Trace Signal",
   [11] = "Region Code",
+  [254] = "Legacy Ack Tag",
 }
 
 -- Options the spec says a packet must be dropped for carrying twice.
@@ -239,6 +241,7 @@ M.SINGLETON_OPTIONS = {
   [M.OPT_MIN_RSSI]     = true,
   [M.OPT_ROUTE_RETRY]  = true,
   [M.OPT_MIN_SNR]      = true,
+  [M.OPT_LEGACY_ACK_TAG] = true,
 }
 
 return M

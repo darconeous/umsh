@@ -268,9 +268,9 @@ end
 -- AAD construction
 -- fcf_byte:             1-byte string (raw FCF)
 -- static_opts:          ordered list of {number=N, value=bytes_str}
--- dst_or_chan_bytes:     2-byte channel OR 3-byte dst hint
+-- dst_or_chan_bytes:     2-byte channel OR 3-byte dst hint, or nil (MAC ack)
 -- src_bytes_or_nil:     3-byte hint, 32-byte key, or nil (when encrypted)
--- secinfo_bytes:        5-or-7 byte string
+-- secinfo_bytes:        5-or-7 byte string, or nil (MAC ack)
 -- ---------------------------------------------------------------------------
 
 function M.build_aad(fcf_byte, static_opts, dst_or_chan_bytes,
@@ -283,11 +283,11 @@ function M.build_aad(fcf_byte, static_opts, dst_or_chan_bytes,
     parts[#parts+1] = uint16_be(#opt.value)
     parts[#parts+1] = opt.value
   end
-  parts[#parts+1] = dst_or_chan_bytes
-  if src_bytes_or_nil then
-    parts[#parts+1] = src_bytes_or_nil
+  -- A MAC ack has no DST, SRC, or SECINFO; its AAD ends at the options.
+  local tail = {dst_or_chan_bytes, src_bytes_or_nil, secinfo_bytes}
+  for i = 1, 3 do
+    if tail[i] then parts[#parts+1] = tail[i] end
   end
-  parts[#parts+1] = secinfo_bytes
   return table.concat(parts)
 end
 
@@ -376,17 +376,47 @@ function M.verify_and_decrypt(keys, pkt)
 end
 
 -- ---------------------------------------------------------------------------
--- Compute the 4-byte keyed ACK tag from a full 16-byte S2V tag and k_enc.
---   ack_tag = truncate_4( AES-ECB(k_enc, full_tag) )
--- This is the authenticating half of the MAC ack trailer. The other half,
--- ack_mic = first_4( on-wire MIC ), is public and needs no key (the caller
--- reads it straight off the wire), so it is not computed here.
+-- MAC ack tag: the authenticating half of the ack trailer. The other half,
+-- ack_mic = first_4(V), is public and needs no key (the caller reads it
+-- straight off the wire). V is the acknowledged packet's full S2V output.
+-- The tag has two constructions:
+--   MIC:    ack_tag = truncate_4( S2V(k_mic, S1 = ack AAD, S2 = V, S3 = ack_mic) )
+--   legacy: ack_tag = truncate_4( AES-ECB(k_enc, V) )
+-- The ack AAD is the canonical AAD with no DST, SRC, or SECINFO: the FCF
+-- with H cleared, then the ack's static options. An ack carrying option 254
+-- uses the legacy tag. The keys are those that sealed the acknowledged
+-- packet: pairwise, or the combined blind keys.
 -- ---------------------------------------------------------------------------
 
-function M.compute_ack_tag(full_tag, k_enc)
+function M.legacy_ack_tag(k_enc, v)
   if not _has_aes then return nil end
-  local encrypted = aes_ecb_fn(k_enc, full_tag)
-  return encrypted:sub(1, 4)
+  return aes_ecb_fn(k_enc, v):sub(1, 4)
+end
+
+function M.ack_tag_mic(k_mic, fcf_byte, static_opts, v)
+  if not _has_aes then return nil end
+  local full = M.s2v(k_mic, {M.build_aad(fcf_byte, static_opts), v}, v:sub(1, 4))
+  return full and full:sub(1, 4)
+end
+
+-- Verify a received ack's tag against the packet it answers.
+-- keys:        {k_enc, k_mic} that sealed the acknowledged packet
+-- has_marker:  the ack carries option 254 (Legacy Ack Tag)
+-- Returns "mic" or "legacy" for the construction that verified, or nil.
+-- The marker admits only the legacy tag, and a static option only the MIC;
+-- an ack with neither is tried both ways, which accepts legacy acks from
+-- nodes that predate the marker and marker-free MIC acks alike.
+function M.verify_mac_ack(keys, v, fcf_byte, static_opts, has_marker, tag)
+  if not _has_aes then return nil end
+  if not has_marker
+     and M.ack_tag_mic(keys.k_mic, fcf_byte, static_opts, v) == tag then
+    return "mic"
+  end
+  if (has_marker or #(static_opts or {}) == 0)
+     and M.legacy_ack_tag(keys.k_enc, v) == tag then
+    return "legacy"
+  end
+  return nil
 end
 
 -- ---------------------------------------------------------------------------

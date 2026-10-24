@@ -305,7 +305,7 @@ vectors are always exercised there.
 | Type | Name | Decryption |
 |---|---|---|
 | 0 | BCST (Broadcast/Beacon) | N/A (no crypto) |
-| 1 | UACK (MAC Ack) | N/A (no crypto) |
+| 1 | UACK (MAC Ack) | Tag verified when the acknowledged packet decrypted |
 | 2 | UNIC (Unicast) | Private key required |
 | 3 | UNAR (Unicast Ack-Req) | Private key required |
 | 4 | MCST (Multicast) | Channel key required |
@@ -350,6 +350,19 @@ as its own packet, so it is resolved to the frame it acknowledges the same
 way a standalone ack is—by the public four-byte MIC prefix, which needs no
 keys. The acknowledged frame is linked in the tree and named on the summary
 line.
+
+The Legacy Ack Tag option (254) is named too. On a MAC ack it says the tag
+uses the legacy construction rather than the MIC over the ack's static
+options; see the spec's Ack Authentication Transition appendix.
+
+## MAC Ack Verification
+
+A MAC ack is matched to the packet it acknowledges by its public `ACK MIC`.
+When a configured key decrypted that packet, the ack's `ACK TAG` is verified
+too, and `umsh.ack.verified` says whether it held. `umsh.ack.construction`
+names the construction that verified, `MIC` or `Legacy`. A tag that fails
+leaves the ack linked as a correlation only, with the expected tag shown for
+each construction the ack's options allow.
 
 ## Address Presentation
 

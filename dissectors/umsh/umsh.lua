@@ -77,6 +77,7 @@ f.opt_min_snr      = ProtoField.int8   ("umsh.opt.min_snr",       "Min SNR",    
 f.opt_route_retry  = ProtoField.none   ("umsh.opt.route_retry",   "Route Retry")
 f.opt_ack_mic      = ProtoField.bytes  ("umsh.opt.ack_mic",       "Ack MIC")
 f.opt_trace_signal = ProtoField.bytes  ("umsh.opt.trace_signal",  "Trace Signal")
+f.opt_legacy_tag   = ProtoField.none   ("umsh.opt.legacy_ack_tag","Legacy Ack Tag")
 f.opt_signal_entry = ProtoField.string ("umsh.opt.signal_entry",  "Signal Quality")
 f.opt_unknown      = ProtoField.bytes  ("umsh.opt.unknown",       "Unknown Option")
 -- The piggy-backed ack names the frame it acknowledges, the same way a
@@ -142,6 +143,7 @@ f.ack_rsp_frame = ProtoField.framenum("umsh.ack.response_frame","Acknowledged in
 f.ack_rsp_time  = ProtoField.string  ("umsh.ack.response_time", "ACK Response Time")
 f.ack_expected  = ProtoField.bytes   ("umsh.ack.expected_tag",  "Expected ACK Tag")
 f.ack_verified  = ProtoField.bool    ("umsh.ack.verified",      "Keyed ACK Tag Verified")
+f.ack_construction = ProtoField.string("umsh.ack.construction", "ACK Tag Construction")
 
 umsh.fields = {
   f.fcf, f.fcf_version, f.fcf_type, f.fcf_full_src, f.fcf_reserved, f.fcf_fhops,
@@ -149,14 +151,14 @@ umsh.fields = {
   f.options, f.opt_region_code, f.opt_traceroute, f.opt_srcroute, f.opt_router_hint,
   f.opt_op_callsign, f.opt_sta_callsign, f.opt_min_rssi, f.opt_min_snr,
   f.opt_route_retry, f.opt_ack_mic, f.opt_ack_frame,
-  f.opt_trace_signal, f.opt_signal_entry, f.opt_unknown,
+  f.opt_trace_signal, f.opt_signal_entry, f.opt_legacy_tag, f.opt_unknown,
   f.dst_hint, f.src_hint, f.src_key, f.channel_id, f.ack_mic, f.ack_tag,
   f.src_name, f.dst_name, f.channel_name, f.src_addr, f.dst_addr, f.violation,
   f.secinfo, f.scf, f.scf_enc, f.scf_mic_size, f.scf_salt_bit,
   f.frame_ctr, f.salt, f.mic,
   f.payload_raw, f.payload_dec, f.enc_body, f.enc_addr, f.dec_dst, f.dec_src,
   f.ack_req_frame, f.ack_correlate_frame, f.ack_rsp_frame, f.ack_rsp_time,
-  f.ack_expected, f.ack_verified,
+  f.ack_expected, f.ack_verified, f.ack_construction,
 }
 
 -- ──────────────────────────────────────────────────────────────────────────
@@ -215,14 +217,16 @@ local _registered_port = 0
 -- Correlation is keyed by the public ack_mic (the first 4 bytes of the
 -- acknowledged packet's on-wire MIC), so it works WITHOUT any keys: an
 -- ack-requested packet exposes its MIC on the wire, and the returning MAC
--- ack echoes that prefix. When a private key is available the expected keyed
--- ack_tag is also recorded, letting a matched ack be cryptographically
--- verified (not just correlated).
+-- ack echoes that prefix. When a private key is available the packet's full
+-- S2V output V and the keys that sealed it are also recorded, letting a
+-- matched ack's keyed tag be cryptographically verified (not just
+-- correlated).
 --
 -- _ack_by_mic:   ack_mic_hex → {frame=N, timestamp=T, src_label=S,
 --                               dst_label=D, src_addr=A, dst_addr=A,
 --                               src_name=N, dst_name=N,
---                               exp_tag_hex=<4B hex or nil>}
+--                               ack_v=<16B V or nil>,
+--                               ack_keys=<{k_enc, k_mic} or nil>}
 --                 The labels are what the columns show; the addresses are
 --                 the canonical umsh.src_addr/umsh.dst_addr strings, and the
 --                 names whatever the keystore resolved. Any of them is nil
@@ -512,10 +516,11 @@ end
 -- parse_options
 -- Decodes the CoAP-style options block starting at `start_off` up to `bound`.
 -- Populates `static_opts_out` with {number, value} pairs for AAD construction.
--- Returns the new offset (after the 0xFF terminator, or at `bound` if absent).
+-- Returns the new offset (after the 0xFF terminator, or at `bound` if absent)
+-- and a table counting each option number seen.
 -- ──────────────────────────────────────────────────────────────────────────
 local function parse_options(buf, start_off, bound, tree, static_opts_out, pinfo)
-  if start_off >= bound then return start_off end
+  if start_off >= bound then return start_off, {} end
 
   local avail = bound - start_off
   local raw   = tvb_bytes(buf, start_off, avail)
@@ -524,7 +529,7 @@ local function parse_options(buf, start_off, bound, tree, static_opts_out, pinfo
   if not pcall(function() total_len = options.scan_length(raw, 1) end)
      or not total_len then
     tree:add_proto_expert_info(ef.truncated)
-    return start_off
+    return start_off, {}
   end
 
   -- A block that is nothing but its terminator carries no options. Adding a
@@ -532,7 +537,7 @@ local function parse_options(buf, start_off, bound, tree, static_opts_out, pinfo
   -- says nothing at all, so it is left out; the byte itself is still visible
   -- in the bytes pane.
   if total_len == 1 and raw:byte(1) == 0xFF then
-    return start_off + 1
+    return start_off + 1, {}
   end
 
   local opts_tree = tree:add(f.options, buf(start_off, total_len))
@@ -666,6 +671,14 @@ local function parse_options(buf, start_off, bound, tree, static_opts_out, pinfo
           end
         end
 
+      elseif num == options.OPT_LEGACY_ACK_TAG then
+        -- A zero-length flag, meaningful only on a MAC ack: its tag uses
+        -- the legacy construction.
+        local item = opts_tree:add(f.opt_legacy_tag, buf(opt_off, consumed))
+        if val_len ~= 0 then
+          item:set_text(string.format("Legacy Ack Tag (%d unexpected bytes)", val_len))
+        end
+
       else
         local crit = options.is_critical(num)
         local item = opts_tree:add(f.opt_unknown, buf(opt_off, consumed))
@@ -694,7 +707,7 @@ local function parse_options(buf, start_off, bound, tree, static_opts_out, pinfo
     end
   end
 
-  return start_off + total_len
+  return start_off + total_len, seen
 end
 
 -- ──────────────────────────────────────────────────────────────────────────
@@ -730,14 +743,17 @@ end
 -- ──────────────────────────────────────────────────────────────────────────
 -- MAC Ack
 -- ──────────────────────────────────────────────────────────────────────────
-local function dissect_uack(buf, pinfo, tree, off)
+local function dissect_uack(buf, pinfo, tree, off, fcf_byte, static_opts)
   local buf_len = buf:len()
 
   -- A MAC ack carries no destination hint: OPTIONS follow the header
   -- directly, then a fixed 8-byte trailer (ack_mic(4) || ack_tag(4)). No
   -- 0xFF terminator, since the trailer is at a fixed offset from the end.
-  local dummy_opts = {}
-  off = parse_options(buf, off, buf_len - 8, tree, dummy_opts, pinfo)
+  -- The static options enter the MIC construction's AAD; option 254 says
+  -- the tag uses the legacy construction instead.
+  local seen
+  off, seen = parse_options(buf, off, buf_len - 8, tree, static_opts, pinfo)
+  local has_marker = (seen[options.OPT_LEGACY_ACK_TAG] or 0) > 0
 
   -- Anything between an end-of-options marker and the trailer is not part
   -- of a MAC ack: there is no payload field for it to be.
@@ -772,14 +788,36 @@ local function dissect_uack(buf, pinfo, tree, off)
     _ack_origin[pinfo.number] = origin
   end
   if origin then
-    -- If a key let us precompute the expected keyed tag, verify it. A public
+    -- If a key recovered the request's V, verify the keyed tag. A public
     -- ack_mic match establishes only correlation; when a configured key proves
     -- the tag wrong the frame is NOT a valid acknowledgement, so we downgrade
     -- to a "correlates with" forensic link and suppress the ack/back-reference.
     local verified = nil
-    if origin.exp_tag_hex then
-      verified = (origin.exp_tag_hex == bytes_to_hex(tag_bytes))
-      tree:add(f.ack_verified, buf(off + 4, 4), verified)
+    if origin.ack_v and crypto then
+      local tag_range = buf(off + 4, 4)
+      local construction = crypto.verify_mac_ack(origin.ack_keys, origin.ack_v,
+                                                 fcf_byte, static_opts,
+                                                 has_marker, tag_bytes)
+      verified = construction ~= nil
+      local item = tree:add(f.ack_verified, tag_range, verified)
+      if construction then
+        local label = construction == "mic" and "MIC" or "Legacy"
+        item:append_text(" (" .. label .. ")")
+        tree:add(f.ack_construction, tag_range, label):set_generated()
+      else
+        -- What each construction the ack's options admit would have given.
+        if not has_marker then
+          local exp = crypto.ack_tag_mic(origin.ack_keys.k_mic, fcf_byte,
+                                         static_opts, origin.ack_v)
+          tree:add(f.ack_expected, tag_range, exp):set_text(
+            "Expected ACK Tag (MIC): " .. bytes_to_hex(exp)):set_generated()
+        end
+        if has_marker or #static_opts == 0 then
+          local exp = crypto.legacy_ack_tag(origin.ack_keys.k_enc, origin.ack_v)
+          tree:add(f.ack_expected, tag_range, exp):set_text(
+            "Expected ACK Tag (Legacy): " .. bytes_to_hex(exp)):set_generated()
+        end
+      end
     end
     local rsp_time = pinfo.abs_ts - origin.timestamp
     tree:add(f.ack_rsp_time, buf(off, 8),
@@ -874,7 +912,7 @@ local function dissect_unicast(buf, pinfo, tree, off, full_src, fcf_byte, static
   -- ACK correlation (keyless): an ack-requested packet publishes its MIC on
   -- the wire, and the returning MAC ack echoes the first 4 bytes as its
   -- ack_mic. Record that prefix now so the ack matches even with no keys.
-  -- A keyed expected-tag (filled in below when we can decrypt) is preserved.
+  -- V and the keys (filled in below when we can decrypt) are preserved.
   if ack_req and mic_len >= 4 and not pinfo.visited then
     local mic_hex = bytes_to_hex(mic_bytes:sub(1, 4))
     local prior = _ack_by_mic[mic_hex]
@@ -887,7 +925,8 @@ local function dissect_unicast(buf, pinfo, tree, off, full_src, fcf_byte, static
       dst_addr    = hint_short(dst_bytes),
       src_name    = src_name,
       dst_name    = dst_name,
-      exp_tag_hex = prior and prior.exp_tag_hex or nil,
+      ack_v       = prior and prior.ack_v,
+      ack_keys    = prior and prior.ack_keys,
     }
   end
 
@@ -916,38 +955,34 @@ local function dissect_unicast(buf, pinfo, tree, off, full_src, fcf_byte, static
     _ctx.mic_verified = true
     if app then pcall(app.dissect, plain, tree, pinfo, keystore, crypto, _ctx) end
 
-    -- ACK tracking: compute the expected keyed ACK tag for UNAR packets and
-    -- attach it to the (already recorded) ack_mic entry, so a matched ack can
-    -- be cryptographically verified rather than merely correlated.
+    -- ACK tracking: attach V and the keys to the (already recorded) ack_mic
+    -- entry, so a matched ack can be cryptographically verified rather than
+    -- merely correlated. Which tag construction to expect depends on the
+    -- ack's own options, so the tag itself is computed when the ack arrives.
     if ack_req and dec_keys and full_cmac then
-      local ack_tag = crypto.compute_ack_tag(full_cmac, dec_keys.k_enc)
-      if ack_tag then
-        local tag_hex = bytes_to_hex(ack_tag)
-        tree:add(f.ack_expected, buf(off, mic_len), ack_tag)
-          :set_text("Expected ACK Tag: " .. tag_hex)
-        if not pinfo.visited and mic_len >= 4 then
-          local mic_hex = bytes_to_hex(mic_bytes:sub(1, 4))
-          local entry = _ack_by_mic[mic_hex] or {
-            frame     = pinfo.number,
-            timestamp = pinfo.abs_ts,
-            src_label = sl,
-            dst_label = dl,
-            src_addr  = addr_short(src_bytes),
-            dst_addr  = hint_short(dst_bytes),
-            src_name  = src_name,
-            dst_name  = dst_name,
-          }
-          entry.exp_tag_hex = tag_hex
-          _ack_by_mic[mic_hex] = entry
-        end
-        -- Back-annotation: show UACK frame if already matched
-        local back = _ack_by_frame[pinfo.number]
-        if back then
-          tree:add(f.ack_rsp_frame, buf(0, 0), back.ack_frame)
-          tree:add(f.ack_rsp_time, buf(0, 0),
-            string.format("%.6f seconds", back.rsp_time)):set_text(
-            string.format("ACK Response Time: %.3f ms", back.rsp_time * 1000))
-        end
+      if not pinfo.visited and mic_len >= 4 then
+        local mic_hex = bytes_to_hex(mic_bytes:sub(1, 4))
+        local entry = _ack_by_mic[mic_hex] or {
+          frame     = pinfo.number,
+          timestamp = pinfo.abs_ts,
+          src_label = sl,
+          dst_label = dl,
+          src_addr  = addr_short(src_bytes),
+          dst_addr  = hint_short(dst_bytes),
+          src_name  = src_name,
+          dst_name  = dst_name,
+        }
+        entry.ack_v    = full_cmac
+        entry.ack_keys = dec_keys
+        _ack_by_mic[mic_hex] = entry
+      end
+      -- Back-annotation: show UACK frame if already matched
+      local back = _ack_by_frame[pinfo.number]
+      if back then
+        tree:add(f.ack_rsp_frame, buf(0, 0), back.ack_frame)
+        tree:add(f.ack_rsp_time, buf(0, 0),
+          string.format("%.6f seconds", back.rsp_time)):set_text(
+          string.format("ACK Response Time: %.3f ms", back.rsp_time * 1000))
       end
     end
   else
@@ -1155,7 +1190,8 @@ local function dissect_blind_unicast(buf, pinfo, tree, off, full_src, fcf_byte, 
         dst_addr    = prior and prior.dst_addr,
         src_name    = prior and prior.src_name,
         dst_name    = prior and prior.dst_name,
-        exp_tag_hex = prior and prior.exp_tag_hex or nil,
+        ack_v       = prior and prior.ack_v,
+        ack_keys    = prior and prior.ack_keys,
       }
     end
 
@@ -1203,33 +1239,28 @@ local function dissect_blind_unicast(buf, pinfo, tree, off, full_src, fcf_byte, 
       end
       -- ACK tracking for BUAR
       if ack_req and dec_keys and full_cmac then
-        local ack_tag = crypto.compute_ack_tag(full_cmac, dec_keys.k_enc)
-        if ack_tag then
-          local tag_hex = bytes_to_hex(ack_tag)
-          tree:add(f.ack_expected, buf(off, mic_len), ack_tag)
-            :set_text("Expected ACK Tag: " .. tag_hex)
-          if not pinfo.visited and mic_len >= 4 then
-            local mic_hex = bytes_to_hex(mic_bytes:sub(1, 4))
-            local entry = _ack_by_mic[mic_hex] or {
-              frame     = pinfo.number,
-              timestamp = pinfo.abs_ts,
-            }
-            entry.src_label   = s_name or (dec_src and addr_short(dec_src)) or "?"
-            entry.dst_label   = d_name or (dst_hint and hint_short(dst_hint)) or "?"
-            entry.src_addr    = dec_src and addr_short(dec_src)
-            entry.dst_addr    = dst_hint and hint_short(dst_hint)
-            entry.src_name    = s_name
-            entry.dst_name    = d_name
-            entry.exp_tag_hex = tag_hex
-            _ack_by_mic[mic_hex] = entry
-          end
-          local back = _ack_by_frame[pinfo.number]
-          if back then
-            tree:add(f.ack_rsp_frame, buf(0, 0), back.ack_frame)
-            tree:add(f.ack_rsp_time, buf(0, 0),
-              string.format("%.6f seconds", back.rsp_time)):set_text(
-              string.format("ACK Response Time: %.3f ms", back.rsp_time * 1000))
-          end
+        if not pinfo.visited and mic_len >= 4 then
+          local mic_hex = bytes_to_hex(mic_bytes:sub(1, 4))
+          local entry = _ack_by_mic[mic_hex] or {
+            frame     = pinfo.number,
+            timestamp = pinfo.abs_ts,
+          }
+          entry.src_label = s_name or (dec_src and addr_short(dec_src)) or "?"
+          entry.dst_label = d_name or (dst_hint and hint_short(dst_hint)) or "?"
+          entry.src_addr  = dec_src and addr_short(dec_src)
+          entry.dst_addr  = dst_hint and hint_short(dst_hint)
+          entry.src_name  = s_name
+          entry.dst_name  = d_name
+          entry.ack_v     = full_cmac
+          entry.ack_keys  = dec_keys
+          _ack_by_mic[mic_hex] = entry
+        end
+        local back = _ack_by_frame[pinfo.number]
+        if back then
+          tree:add(f.ack_rsp_frame, buf(0, 0), back.ack_frame)
+          tree:add(f.ack_rsp_time, buf(0, 0),
+            string.format("%.6f seconds", back.rsp_time)):set_text(
+            string.format("ACK Response Time: %.3f ms", back.rsp_time * 1000))
         end
       end
     elseif ok2 and status == "mic_mismatch" then
@@ -1281,7 +1312,8 @@ local function dissect_blind_unicast(buf, pinfo, tree, off, full_src, fcf_byte, 
         dst_addr    = hint_short(dst_bytes),
         src_name    = src_name,
         dst_name    = dst_name,
-        exp_tag_hex = prior and prior.exp_tag_hex or nil,
+        ack_v       = prior and prior.ack_v,
+        ack_keys    = prior and prior.ack_keys,
       }
     end
 
@@ -1338,33 +1370,28 @@ local function dissect_blind_unicast(buf, pinfo, tree, off, full_src, fcf_byte, 
           if app then pcall(app.dissect, plain, tree, pinfo, keystore, crypto, _ctx) end
           -- ACK tracking for E=0 BUAR
           if ack_req and blind_keys and full_cmac then
-            local ack_tag = crypto.compute_ack_tag(full_cmac, blind_keys.k_enc)
-            if ack_tag then
-              local tag_hex = bytes_to_hex(ack_tag)
-              tree:add(f.ack_expected, buf(off, mic_len), ack_tag)
-                :set_text("Expected ACK Tag: " .. tag_hex)
-              if not pinfo.visited and mic_len >= 4 then
-                local mic_hex = bytes_to_hex(mic_bytes:sub(1, 4))
-                local entry = _ack_by_mic[mic_hex] or {
-                  frame     = pinfo.number,
-                  timestamp = pinfo.abs_ts,
-                  src_label = sl,
-                  dst_label = dl,
-                  src_addr  = addr_short(src_bytes),
-                  dst_addr  = hint_short(dst_bytes),
-                  src_name  = src_name,
-                  dst_name  = dst_name,
-                }
-                entry.exp_tag_hex = tag_hex
-                _ack_by_mic[mic_hex] = entry
-              end
-              local back = _ack_by_frame[pinfo.number]
-              if back then
-                tree:add(f.ack_rsp_frame, buf(0, 0), back.ack_frame)
-                tree:add(f.ack_rsp_time, buf(0, 0),
-                  string.format("%.6f seconds", back.rsp_time)):set_text(
-                  string.format("ACK Response Time: %.3f ms", back.rsp_time * 1000))
-              end
+            if not pinfo.visited and mic_len >= 4 then
+              local mic_hex = bytes_to_hex(mic_bytes:sub(1, 4))
+              local entry = _ack_by_mic[mic_hex] or {
+                frame     = pinfo.number,
+                timestamp = pinfo.abs_ts,
+                src_label = sl,
+                dst_label = dl,
+                src_addr  = addr_short(src_bytes),
+                dst_addr  = hint_short(dst_bytes),
+                src_name  = src_name,
+                dst_name  = dst_name,
+              }
+              entry.ack_v    = full_cmac
+              entry.ack_keys = blind_keys
+              _ack_by_mic[mic_hex] = entry
+            end
+            local back = _ack_by_frame[pinfo.number]
+            if back then
+              tree:add(f.ack_rsp_frame, buf(0, 0), back.ack_frame)
+              tree:add(f.ack_rsp_time, buf(0, 0),
+                string.format("%.6f seconds", back.rsp_time)):set_text(
+                string.format("ACK Response Time: %.3f ms", back.rsp_time * 1000))
             end
           end
           found = true; break
@@ -1466,7 +1493,7 @@ function umsh.dissector(buf, pinfo, tree)
   if pkt_type == 0 then
     dissect_broadcast(buf, pinfo, root, off, full_src, fcf_byte, static_opts)
   elseif pkt_type == 1 then
-    dissect_uack(buf, pinfo, root, off)
+    dissect_uack(buf, pinfo, root, off, fcf_byte, static_opts)
   elseif pkt_type == 2 or pkt_type == 3 then
     dissect_unicast(buf, pinfo, root, off, full_src, fcf_byte, static_opts, pkt_type == 3)
   elseif pkt_type == 4 then

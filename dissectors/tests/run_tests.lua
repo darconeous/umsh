@@ -192,6 +192,15 @@ check("source route is critical",    options.is_critical(3), true)
 check("route retry is dynamic",      options.is_static(6),   false)
 check("ack mic is static",           options.is_static(8),   true)
 
+-- Option 254 marks a MAC ack whose tag uses the legacy construction.
+check("option 254 (Legacy Ack Tag) is named",
+      options.KNOWN_OPTION_NAMES[options.OPT_LEGACY_ACK_TAG], "Legacy Ack Tag")
+check("legacy ack tag is 254",                 options.OPT_LEGACY_ACK_TAG, 254)
+check("legacy ack tag is non-critical",        options.is_critical(254), false)
+check("legacy ack tag is dynamic",             options.is_static(254),   false)
+check("legacy ack tag is single-occurrence",
+      options.SINGLETON_OPTIONS[options.OPT_LEGACY_ACK_TAG], true)
+
 -- ─────────────────────────────────────────────────────────────────────────────
 -- Canonical address presentation
 -- Vectors from crates/umsh-core/src/base58.rs, which is the definition.
@@ -698,6 +707,67 @@ else
   check("s2v: AD changes the tag",
         s2v_ad ~= crypto.s2v(cmac_key, {"tampered"}, "payload longer than a block...."),
         true)
+
+  -- ── MAC ack tag, answering Example 4's request ──
+  -- The request's 16-byte MIC is its whole S2V output V, so the acks below
+  -- need nothing beyond the published packet and the pairwise keys. The
+  -- tags are the spec's: Examples 10 and 11 in test-vectors.md, and the
+  -- legacy vector in ack-transition.md.
+  local pkt_e4 = {
+    fcf_byte         = from_hex("DC"),
+    static_opts      = {},
+    dst_or_chan      = from_hex("6C28FD"),
+    src_bytes_or_nil = from_hex(NODE_A_PUB),
+    secinfo_raw      = from_hex("E000000001"),
+    body_bytes       = from_hex("F882EE"),
+    mic_bytes        = from_hex("AA171306261CE7FFF2FF017F9010A7D9"),
+    is_encrypted     = true,
+  }
+  local plain_e4, status_e4, v_e4 = crypto.verify_and_decrypt(pw, pkt_e4)
+  check("Example4 MIC OK",          status_e4, "ok")
+  check("Example4 plaintext=hey",   plain_e4, "hey")
+  check("Example4 V is its 16-byte MIC", v_e4, pkt_e4.mic_bytes)
+
+  -- The ack AAD is the FCF with H cleared, then the static options; there
+  -- is no DST, SRC, or SECINFO.
+  local UACK_FCF = from_hex("C8")
+  local CALLSIGN = {{number = options.OPT_OP_CALLSIGN, value = from_hex("5BBB082C")}}
+  check("operator callsign value reads N0CALL",
+        options.decode_arnce(CALLSIGN[1].value), "N0CALL")
+  check("ack AAD with no static option is the bare FCF",
+        crypto.build_aad(UACK_FCF, {}), from_hex("C8"))
+  check("ack AAD masks H",
+        crypto.build_aad(from_hex("C9"), {}), from_hex("C8"))
+  check("ack AAD carries static options as TLVs",
+        crypto.build_aad(UACK_FCF, CALLSIGN), from_hex("C8 0004 0004 5BBB082C"))
+
+  local LEGACY_TAG       = from_hex("99FC2D9F")
+  local MIC_TAG          = from_hex("D2FB63BD")
+  local MIC_TAG_CALLSIGN = from_hex("A878BE6E")
+  check("legacy ack tag = truncate4(AES-ECB(k_enc, V))",
+        crypto.legacy_ack_tag(pw.k_enc, v_e4), LEGACY_TAG)
+  check("MIC ack tag, no static option",
+        crypto.ack_tag_mic(pw.k_mic, UACK_FCF, {}, v_e4), MIC_TAG)
+  check("MIC ack tag, operator callsign",
+        crypto.ack_tag_mic(pw.k_mic, UACK_FCF, CALLSIGN, v_e4), MIC_TAG_CALLSIGN)
+
+  -- The receiver table: the marker admits only the legacy tag, a static
+  -- option only the MIC, and an ack with neither is tried both ways.
+  local function verify(opts, marker, tag)
+    return crypto.verify_mac_ack(pw, v_e4, UACK_FCF, opts, marker, tag)
+  end
+  check("marker + legacy tag verifies as legacy",   verify({}, true, LEGACY_TAG), "legacy")
+  check("marker + MIC tag is rejected",             verify({}, true, MIC_TAG), nil)
+  check("callsign + MIC tag verifies as MIC",       verify(CALLSIGN, false, MIC_TAG_CALLSIGN), "mic")
+  check("callsign + legacy tag is rejected",        verify(CALLSIGN, false, LEGACY_TAG), nil)
+  check("bare MIC ack verifies as MIC",             verify({}, false, MIC_TAG), "mic")
+  check("bare legacy ack (no marker) verifies as legacy",
+        verify({}, false, LEGACY_TAG), "legacy")
+  check("tampered callsign is rejected",
+        verify({{number = 4, value = from_hex("5BBB082D")}}, false, MIC_TAG_CALLSIGN), nil)
+  check("H set on the ack still verifies",
+        crypto.verify_mac_ack(pw, v_e4, from_hex("C9"), CALLSIGN, false, MIC_TAG_CALLSIGN),
+        "mic")
 
   -- ── Ed25519 → X25519 conversion and ECDH (intermediate test vectors) ──
   local NODE_A_SEED = from_hex(
@@ -1354,6 +1424,100 @@ check("a frame verified that asks for no ack is flagged",
 
 local vf_multicast = dissect_payload("02 0C 0A0B0C0D", 4, "11223344")
 check("a multicast verify frame is flagged", #vf_multicast.violations > 0, true)
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- MAC ack verification, end to end through umsh.lua
+--
+-- Node B's key decrypts Example 4's request, which records V for its ack_mic;
+-- each ack below then answers it. Option 254 encodes as D0 F1 (delta nibble
+-- 13 plus one extended byte), and 44 5BBB082C is Operator Callsign N0CALL.
+-- ─────────────────────────────────────────────────────────────────────────────
+section("MAC ack verification")
+
+if not (crypto and crypto.available()) then
+  io.write("  SKIP  (luagcrypt not available)\n")
+else
+  -- What the entry point touches beyond the stubs above: preferences,
+  -- dissector tables, and the registration calls made at load.
+  frametype = enum_table()
+  ProtoField.framenum = field_ctor("framenum")
+  Pref = {
+    string = function(_, default) return {default = default} end,
+    uint   = function(_, default) return {default = default} end,
+  }
+  DissectorTable = {get = function() return {add = function() end, remove = function() end} end}
+  local umsh_proto
+  function Proto(abbrev, desc)
+    -- Reading a preference yields its value, which starts as the default.
+    local prefs = setmetatable({}, {__newindex = function(t, k, pref)
+      rawset(t, k, pref.default)
+    end})
+    umsh_proto = {abbrev = abbrev, name = desc, prefs = prefs,
+                  register_heuristic = function() end}
+    return umsh_proto
+  end
+  function TreeItem:set_generated() return self end
+  function TreeItem:set_hidden()    return self end
+
+  dofile(_dir .. "../umsh/umsh.lua")
+  umsh_proto.prefs.privkeys =
+    "3132333435363738393A3B3C3D3E3F404142434445464748494A4B4C4D4E4F50:NodeB"
+  umsh_proto.prefs_changed()
+  umsh_proto.init()
+
+  local frame_number = 0
+  local function dissect_frame(frame_hex)
+    frame_number = frame_number + 1
+    tree_log = {}
+    local info = {text = ""}
+    function info:append(s) self.text = self.text .. s end
+    function info:set(s)    self.text = s end
+    local cols = setmetatable({}, {
+      __index    = {info = info},
+      __newindex = function(t, k, v)
+        if k == "info" then info:set(v) else rawset(t, k, v) end
+      end,
+    })
+    local pinfo = {number = frame_number, visited = false,
+                   abs_ts = frame_number, cols = cols}
+    umsh_proto.dissector(ByteArray.new(frame_hex):tvb(), pinfo, record("Frame"))
+    return {items = tree_log, info = info.text}
+  end
+
+  local EXAMPLE_4 = "DC 6C28FD ED54A59FB1AC3A51239351362941B868E85A60E3D7B2485D828821DC7A69C279"
+                 .. " E0 00000001 FF F882EE AA171306261CE7FFF2FF017F9010A7D9"
+  local request = dissect_frame(EXAMPLE_4)
+  check("the request decrypts", has(request, "Decrypted Payload (3 B): 686579"), true)
+
+  local function ack_case(name, frame_hex, construction)
+    local ack = dissect_frame(frame_hex)
+    if construction then
+      check(name .. ": acks the request", ack.info, "UMSH UACK (ack for #1)")
+      check(name .. ": verified as " .. construction,
+            has(ack, "Keyed ACK Tag Verified: true (" .. construction .. ")"), true)
+    else
+      check(name .. ": correlates only", ack.info,
+            "UMSH UACK (correlates with #1, TAG MISMATCH)")
+      check(name .. ": not verified", has(ack, "Keyed ACK Tag Verified: false"), true)
+    end
+    return ack
+  end
+
+  local marked = ack_case("legacy + marker", "C8 D0F1 AA171306 99FC2D9F", "Legacy")
+  check("the marker is named", has(marked, "Legacy Ack Tag"), true)
+  ack_case("MIC, no static option",  "C8 AA171306 D2FB63BD",             "MIC")
+  ack_case("MIC + operator callsign", "C8 445BBB082C AA171306 A878BE6E", "MIC")
+  ack_case("legacy without the marker", "C8 AA171306 99FC2D9F",          "Legacy")
+  ack_case("re-ack with flood hops", "C9 21 445BBB082C AA171306 A878BE6E", "MIC")
+  ack_case("MIC tag under the marker", "C8 D0F1 AA171306 D2FB63BD", nil)
+  local wrong = ack_case("legacy tag beside a callsign",
+                         "C8 445BBB082C AA171306 99FC2D9F", nil)
+  check("a mismatch shows the MIC it expected",
+        has(wrong, "Expected ACK Tag (MIC): A878BE6E"), true)
+  check("a mismatch offers no legacy tag a callsign rules out",
+        has(wrong, "Expected ACK Tag (Legacy)"), false)
+  ack_case("tampered callsign", "C8 445BBB082D AA171306 A878BE6E", nil)
+end
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- Results
