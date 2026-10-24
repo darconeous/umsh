@@ -1,0 +1,338 @@
+{
+  "schema_version": 1,
+  "release": {
+    "version": "2026.10.24",
+    "tag": "fw-2026.10.24",
+    "date": "2026-10-24",
+    "commit": "b541a90ebea1bdee5e6d2a3fbf0857c0c11a5a42",
+    "channel": "preview",
+    "release_url": "https://github.com/darconeous/umsh/releases/tag/fw-2026.10.24"
+  },
+  "build": {
+    "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
+    "rustc_xtensa": "rustc 1.95.0-nightly (95e5bda86 2026-04-15) (1.95.0.0)",
+    "host": "Darwin-arm64"
+  },
+  "boards": [
+    {
+      "id": "tlora-pager",
+      "name": "LILYGO T-LoRa Pager SX1262",
+      "chip": "esp32s3",
+      "model": "LILYGO T-LoRa Pager SX1262",
+      "flash_methods": [
+        "esp-serial"
+      ],
+      "esp": {
+        "chip": "esp32s3",
+        "offset": "0x0",
+        "flash_size": "16MB",
+        "partition_table": "partitions-umsh-communicator.csv"
+      },
+      "files": [
+        {
+          "role": "merged-bin",
+          "name": "umsh-tlora-pager-2026.10.24.bin",
+          "size": 5794336,
+          "sha256": "197aed10e8273a8fb1ec83e7592626f34e8707fd44882df035a26e72cbb426e3",
+          "url": "https://github.com/darconeous/umsh/releases/download/fw-2026.10.24/umsh-tlora-pager-2026.10.24.bin",
+          "path": "/firmware/2026.10.24/umsh-tlora-pager-2026.10.24.bin"
+        }
+      ]
+    },
+    {
+      "id": "techo",
+      "name": "LilyGO T-Echo",
+      "chip": "nrf52840",
+      "model": "LilyGO T-Echo",
+      "flash_methods": [
+        "uf2",
+        "serial-dfu"
+      ],
+      "uf2": {
+        "family_id": "0xADA52840",
+        "app_base": "0x00026000",
+        "volume": "TECHOBOOT"
+      },
+      "files": [
+        {
+          "role": "uf2",
+          "name": "umsh-techo-2026.10.24.uf2",
+          "size": 1498112,
+          "sha256": "696d3406deb894acd9284f29ca5ae704b59703c687beff9d34b1f6e82ca40586",
+          "url": "https://github.com/darconeous/umsh/releases/download/fw-2026.10.24/umsh-techo-2026.10.24.uf2",
+          "path": null
+        },
+        {
+          "role": "dfu-zip",
+          "name": "umsh-techo-2026.10.24-dfu.zip",
+          "size": 749803,
+          "sha256": "c050313f0146e041dd8de9fe11e66bcca0d2e8d4975e32123064e6ada346173e",
+          "sd_req": "0x00B6",
+          "url": "https://github.com/darconeous/umsh/releases/download/fw-2026.10.24/umsh-techo-2026.10.24-dfu.zip",
+          "path": "/firmware/2026.10.24/umsh-techo-2026.10.24-dfu.zip"
+        }
+      ]
+    },
+    {
+      "id": "t1000e",
+      "name": "Seeed SenseCAP T1000-E",
+      "chip": "nrf52840",
+      "model": "Seeed SenseCAP T1000-E",
+      "flash_methods": [
+        "uf2",
+        "serial-dfu"
+      ],
+      "uf2": {
+        "family_id": "0x28860057",
+        "app_base": "0x00027000",
+        "volume": "T1000-E"
+      },
+      "files": [
+        {
+          "role": "uf2",
+          "name": "umsh-t1000e-2026.10.24.uf2",
+          "size": 1413120,
+          "sha256": "7b33e12a2fc142c3ed89e3696bf1630c95d9a316ce7a10ffaa78d113eb69c5d1",
+          "url": "https://github.com/darconeous/umsh/releases/download/fw-2026.10.24/umsh-t1000e-2026.10.24.uf2",
+          "path": null
+        },
+        {
+          "role": "dfu-zip",
+          "name": "umsh-t1000e-2026.10.24-dfu.zip",
+          "size": 707249,
+          "sha256": "a12299f2380327e6f70b930dd4d957684b2594ba2da2b535eeb6dfc2a0c19a8c",
+          "sd_req": "0x0123",
+          "url": "https://github.com/darconeous/umsh/releases/download/fw-2026.10.24/umsh-t1000e-2026.10.24-dfu.zip",
+          "path": "/firmware/2026.10.24/umsh-t1000e-2026.10.24-dfu.zip"
+        }
+      ]
+    },
+    {
+      "id": "sensecap-solar",
+      "name": "SenseCAP Solar Node P1 / P1-Pro",
+      "chip": "nrf52840",
+      "model": "SenseCAP Solar Node P1 / P1-Pro",
+      "flash_methods": [
+        "uf2",
+        "serial-dfu"
+      ],
+      "uf2": {
+        "family_id": "0x28860044",
+        "app_base": "0x00027000",
+        "volume": "SENSECAP"
+      },
+      "files": [
+        {
+          "role": "uf2",
+          "name": "umsh-sensecap-solar-2026.10.24.uf2",
+          "size": 1407488,
+          "sha256": "1ca47bfe4805becafbf9782894e2e3a51e9a687204a83dad2357bf562765ec13",
+          "url": "https://github.com/darconeous/umsh/releases/download/fw-2026.10.24/umsh-sensecap-solar-2026.10.24.uf2",
+          "path": null
+        },
+        {
+          "role": "dfu-zip",
+          "name": "umsh-sensecap-solar-2026.10.24-dfu.zip",
+          "size": 704545,
+          "sha256": "57dc265fb0267cf1fad7a38babe58401bb3a4b9534a5f6b386f3de41f57c72f7",
+          "sd_req": "0x0123",
+          "url": "https://github.com/darconeous/umsh/releases/download/fw-2026.10.24/umsh-sensecap-solar-2026.10.24-dfu.zip",
+          "path": "/firmware/2026.10.24/umsh-sensecap-solar-2026.10.24-dfu.zip"
+        }
+      ]
+    },
+    {
+      "id": "wio-tracker-l1",
+      "name": "Seeed Wio Tracker L1 / L1 Pro",
+      "chip": "nrf52840",
+      "model": "Seeed Wio Tracker L1 / L1 Pro",
+      "flash_methods": [
+        "uf2",
+        "serial-dfu"
+      ],
+      "uf2": {
+        "family_id": "0x28861667",
+        "app_base": "0x00027000",
+        "volume": "TRACKER L1"
+      },
+      "files": [
+        {
+          "role": "uf2",
+          "name": "umsh-wio-tracker-l1-2026.10.24.uf2",
+          "size": 1491456,
+          "sha256": "845835e0bc33d0ac7291ffe0741f9f6a1d2761c46cb8b2552d035eb47b7dc14a",
+          "url": "https://github.com/darconeous/umsh/releases/download/fw-2026.10.24/umsh-wio-tracker-l1-2026.10.24.uf2",
+          "path": null
+        },
+        {
+          "role": "dfu-zip",
+          "name": "umsh-wio-tracker-l1-2026.10.24-dfu.zip",
+          "size": 746561,
+          "sha256": "50c6acfccc7d64dd24936b287cb8b9d3005384a9484984a502cf2720a191b450",
+          "sd_req": "0x0123",
+          "url": "https://github.com/darconeous/umsh/releases/download/fw-2026.10.24/umsh-wio-tracker-l1-2026.10.24-dfu.zip",
+          "path": "/firmware/2026.10.24/umsh-wio-tracker-l1-2026.10.24-dfu.zip"
+        }
+      ]
+    },
+    {
+      "id": "xiao-nrf52",
+      "name": "Seeed XIAO nRF52840 + Wio-SX1262 Kit",
+      "chip": "nrf52840",
+      "model": "Seeed XIAO nRF52840 + Wio-SX1262 Kit",
+      "flash_methods": [
+        "uf2",
+        "serial-dfu"
+      ],
+      "uf2": {
+        "family_id": "0xADA52840",
+        "app_base": "0x00027000",
+        "volume": "XIAO-SENSE"
+      },
+      "files": [
+        {
+          "role": "uf2",
+          "name": "umsh-xiao-nrf52-2026.10.24.uf2",
+          "size": 1382912,
+          "sha256": "1c7fe748e09f03f6358e23e2dd2febd4aae68cdb83532e391e07fa26bde0689f",
+          "url": "https://github.com/darconeous/umsh/releases/download/fw-2026.10.24/umsh-xiao-nrf52-2026.10.24.uf2",
+          "path": null
+        },
+        {
+          "role": "dfu-zip",
+          "name": "umsh-xiao-nrf52-2026.10.24-dfu.zip",
+          "size": 692073,
+          "sha256": "84848ca566f77bf49885910ceef26528fe974aaa1d26d5b1a0693f97c815b17e",
+          "sd_req": "0x0123",
+          "url": "https://github.com/darconeous/umsh/releases/download/fw-2026.10.24/umsh-xiao-nrf52-2026.10.24-dfu.zip",
+          "path": "/firmware/2026.10.24/umsh-xiao-nrf52-2026.10.24-dfu.zip"
+        }
+      ]
+    },
+    {
+      "id": "heltec-v3",
+      "name": "Heltec WiFi LoRa 32 V3",
+      "chip": "esp32s3",
+      "model": "Heltec WiFi LoRa 32 V3",
+      "flash_methods": [
+        "esp-serial"
+      ],
+      "esp": {
+        "chip": "esp32s3",
+        "offset": "0x0",
+        "flash_size": "4MB",
+        "partition_table": "partitions-umsh.csv"
+      },
+      "files": [
+        {
+          "role": "merged-bin",
+          "name": "umsh-heltec-v3-2026.10.24.bin",
+          "size": 1307232,
+          "sha256": "dd4c995434655c4ff469ff012e603dfb727e050fe94e94169d60c84ec35fa0d6",
+          "url": "https://github.com/darconeous/umsh/releases/download/fw-2026.10.24/umsh-heltec-v3-2026.10.24.bin",
+          "path": "/firmware/2026.10.24/umsh-heltec-v3-2026.10.24.bin"
+        }
+      ]
+    },
+    {
+      "id": "heltec-v3-bridge",
+      "name": "Heltec WiFi LoRa 32 V3",
+      "chip": "esp32s3",
+      "model": "Heltec WiFi LoRa 32 V3",
+      "flash_methods": [
+        "esp-serial"
+      ],
+      "esp": {
+        "chip": "esp32s3",
+        "offset": "0x0",
+        "flash_size": "4MB",
+        "partition_table": "partitions-umsh.csv"
+      },
+      "files": [
+        {
+          "role": "merged-bin",
+          "name": "umsh-heltec-v3-bridge-2026.10.24.bin",
+          "size": 1365680,
+          "sha256": "18cd3b4c9f82c6f44a8cd6dd426e8df8085a206c80e2afa5dda575cebb256e1e",
+          "url": "https://github.com/darconeous/umsh/releases/download/fw-2026.10.24/umsh-heltec-v3-bridge-2026.10.24.bin",
+          "path": "/firmware/2026.10.24/umsh-heltec-v3-bridge-2026.10.24.bin"
+        }
+      ]
+    },
+    {
+      "id": "tbeam-supreme",
+      "name": "LILYGO T-Beam Supreme SX1262",
+      "chip": "esp32s3",
+      "model": "LILYGO T-Beam Supreme SX1262",
+      "flash_methods": [
+        "esp-serial"
+      ],
+      "esp": {
+        "chip": "esp32s3",
+        "offset": "0x0",
+        "flash_size": "4MB",
+        "partition_table": "partitions-umsh.csv"
+      },
+      "files": [
+        {
+          "role": "merged-bin",
+          "name": "umsh-tbeam-supreme-2026.10.24.bin",
+          "size": 1853536,
+          "sha256": "3b46870b4cbb41042739a6730f895f9d3dcceab5e717f6da53d53da7bbc09c63",
+          "url": "https://github.com/darconeous/umsh/releases/download/fw-2026.10.24/umsh-tbeam-supreme-2026.10.24.bin",
+          "path": "/firmware/2026.10.24/umsh-tbeam-supreme-2026.10.24.bin"
+        }
+      ]
+    },
+    {
+      "id": "tdeck",
+      "name": "LILYGO T-Deck",
+      "chip": "esp32s3",
+      "model": "LILYGO T-Deck",
+      "flash_methods": [
+        "esp-serial"
+      ],
+      "esp": {
+        "chip": "esp32s3",
+        "offset": "0x0",
+        "flash_size": "16MB",
+        "partition_table": "partitions-umsh-communicator.csv"
+      },
+      "files": [
+        {
+          "role": "merged-bin",
+          "name": "umsh-tdeck-2026.10.24.bin",
+          "size": 5602128,
+          "sha256": "643ecbd5b14bec831e2e6e28c01063b172c1527825e39175380db72007ef73c3",
+          "url": "https://github.com/darconeous/umsh/releases/download/fw-2026.10.24/umsh-tdeck-2026.10.24.bin",
+          "path": "/firmware/2026.10.24/umsh-tdeck-2026.10.24.bin"
+        }
+      ]
+    },
+    {
+      "id": "xiao-esp32s3",
+      "name": "Seeed XIAO ESP32S3 + Wio-SX1262 Kit",
+      "chip": "esp32s3",
+      "model": "Seeed XIAO ESP32S3 + Wio-SX1262 Kit",
+      "flash_methods": [
+        "esp-serial"
+      ],
+      "esp": {
+        "chip": "esp32s3",
+        "offset": "0x0",
+        "flash_size": "4MB",
+        "partition_table": "partitions-umsh.csv"
+      },
+      "files": [
+        {
+          "role": "merged-bin",
+          "name": "umsh-xiao-esp32s3-2026.10.24.bin",
+          "size": 1737920,
+          "sha256": "62a822ecd9ec4396ac849366d54814e04c000996851de8be849d88d87def805b",
+          "url": "https://github.com/darconeous/umsh/releases/download/fw-2026.10.24/umsh-xiao-esp32s3-2026.10.24.bin",
+          "path": "/firmware/2026.10.24/umsh-xiao-esp32s3-2026.10.24.bin"
+        }
+      ]
+    }
+  ]
+}
