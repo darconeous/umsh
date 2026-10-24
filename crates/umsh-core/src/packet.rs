@@ -609,6 +609,7 @@ pub enum OptionNumber {
     AckMic,
     MinSnr,
     TraceSignal,
+    LegacyAckTag,
     Unknown(u16),
 }
 
@@ -626,6 +627,7 @@ impl OptionNumber {
             Self::AckMic => 8,
             Self::MinSnr => 9,
             Self::TraceSignal => 10,
+            Self::LegacyAckTag => 254,
             Self::Unknown(value) => value,
         }
     }
@@ -667,6 +669,7 @@ impl From<u16> for OptionNumber {
             9 => Self::MinSnr,
             10 => Self::TraceSignal,
             11 => Self::RegionCode,
+            254 => Self::LegacyAckTag,
             other => Self::Unknown(other),
         }
     }
@@ -1003,6 +1006,11 @@ pub struct ParsedOptions {
     pub min_rssi: Option<i16>,
     pub min_snr: Option<i8>,
     pub route_retry: bool,
+    /// A MAC ack's tag uses the legacy construction (option 254). A flag:
+    /// meaningful only on a MAC ack, ignored elsewhere.
+    pub legacy_ack_tag: bool,
+    /// Some option, known or not, enters the AAD.
+    pub has_static: bool,
     pub has_unknown_critical: bool,
     /// A recognized critical option whose value is malformed, or a
     /// critical singleton that appears more than once. Forwarding treats
@@ -1032,6 +1040,7 @@ impl ParsedOptions {
             let value_start = range.start + decoder.position() - value.len();
             let value_range = value_start..value_start + value.len();
             let option = OptionNumber::from(number);
+            parsed.has_static |= !option.is_dynamic();
             if option.is_singleton() {
                 let bit = 1u16 << number;
                 if seen & bit != 0 {
@@ -1053,6 +1062,10 @@ impl ParsedOptions {
                 // A flag: its presence is the meaning. Senders send it
                 // empty; a value is reserved and does not hide the flag.
                 OptionNumber::RouteRetry => parsed.route_retry = true,
+                // Also a flag. Not a singleton: its number is past the
+                // range the singleton bitmap tracks, and a repeat changes
+                // nothing.
+                OptionNumber::LegacyAckTag => parsed.legacy_ack_tag = true,
                 // Minimum RSSI (option 5): unsigned 1-byte value read as a
                 // negative dBm threshold (e.g. 130 → -130 dBm). A zero-length
                 // value selects the default threshold. Longer values are
@@ -1094,6 +1107,24 @@ mod parsed_options_tests {
         let parsed = ParsedOptions::extract(&buf, 0..buf.len()).unwrap();
         assert!(parsed.route_retry);
         assert!(!parsed.has_malformed_critical);
+    }
+
+    #[test]
+    fn the_legacy_ack_tag_marker_is_a_dynamic_flag() {
+        // Trace Route (2), then option 254: delta 252 is nibble 13 plus one
+        // extended byte (252 - 13), length 0.
+        let buf = [0x20u8, 0xD0, 239];
+        let parsed = ParsedOptions::extract(&buf, 0..buf.len()).unwrap();
+        assert!(parsed.legacy_ack_tag);
+        assert!(!parsed.has_static, "neither option enters the AAD");
+        assert!(OptionNumber::LegacyAckTag.is_dynamic());
+        assert!(!OptionNumber::LegacyAckTag.is_critical());
+
+        // Operator Callsign (4) is static.
+        let buf = [0x41u8, 0x99];
+        let parsed = ParsedOptions::extract(&buf, 0..buf.len()).unwrap();
+        assert!(parsed.has_static);
+        assert!(!parsed.legacy_ack_tag);
     }
 
     #[test]

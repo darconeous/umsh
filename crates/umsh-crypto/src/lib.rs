@@ -27,8 +27,8 @@
 use core::ops::Range;
 
 use umsh_core::{
-    ChannelId, ChannelKey, ChannelTag, PacketHeader, PacketType, PublicKey, SourceAddrRef,
-    UnsealedPacket, feed_aad,
+    ChannelId, ChannelKey, ChannelTag, PacketHeader, PacketType, ParsedOptions, PublicKey,
+    SourceAddrRef, UnsealedPacket, feed_aad,
 };
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
@@ -125,6 +125,18 @@ pub enum ChannelNameError {
 pub struct PairwiseKeys {
     pub k_enc: [u8; 32],
     pub k_mic: [u8; 32],
+}
+
+/// How a MAC ack's tag was computed. See the spec's *Ack Tag Construction*
+/// and its transition appendix.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AckTagConstruction {
+    /// `truncate4(S2V(K_mic, ack AAD, V, ack_mic))`: covers the ack's static
+    /// options.
+    Mic,
+    /// `truncate4(AES-256-ECB(K_enc, V))`, marked by option 254: covers V
+    /// alone.
+    Legacy,
 }
 
 /// Derived multicast or channel transport keys.
@@ -601,29 +613,132 @@ impl<A: AesProvider, S: Sha256Provider> CryptoEngine<A, S> {
         s2v.finalize(plaintext)
     }
 
-    /// Compute the 8-byte MAC ack trailer (`ack_mic || ack_tag`) from a full
-    /// S2V tag and `k_enc`.
+    /// The MIC construction of a MAC ack's tag:
+    /// `truncate4(S2V(k_mic, S1 = ack AAD, S2 = v, S3 = v[..4]))`.
     ///
-    /// The trailer splits into two 4-byte halves:
-    ///
-    /// - **`ack_mic`** = the first 4 bytes of `full_tag`. Because the on-wire
-    ///   MIC is a prefix-truncation of the full tag, this equals the first
-    ///   4 bytes of the acknowledged packet's on-wire MIC—a *public*
-    ///   correlation handle any node that received the original packet
-    ///   (including forwarding repeaters) can compute.
-    /// - **`ack_tag`** = `truncate_4( AES-256-ECB(k_enc, full_tag) )`. A keyed
-    ///   value only the original sender and final destination can produce; it
-    ///   authenticates the standalone ack.
-    ///
-    /// See the spec's *Ack Tag Construction* section.
-    pub fn compute_ack_trailer(&self, full_tag: &[u8; 16], k_enc: &[u8; 32]) -> [u8; 8] {
+    /// `v` is the full S2V output of the packet being acknowledged; its first
+    /// four bytes are the ack's public `ack_mic`. The AAD (streamed through
+    /// `aad`) is the ack's FCF with H cleared and its static options. The
+    /// three components mirror an ordinary packet's—AAD, then `v` where a
+    /// nonce would sit, then `ack_mic` as the payload—and the component
+    /// count, with the ack's own FCF, keeps the result apart from any other
+    /// MIC under the same key.
+    pub fn ack_tag_mic(
+        &self,
+        k_mic: &[u8; 32],
+        aad: impl FnOnce(&mut CmacState<&A::Cipher>),
+        v: &[u8; 16],
+    ) -> [u8; 4] {
+        let cipher = self.aes.new_cipher(k_mic);
+        let mut s2v = S2vState::new(&cipher);
+        s2v.push_component(aad);
+        s2v.push_component(|cmac| cmac.update(v));
+        let full = s2v.finalize(&v[..4]);
+        let mut tag = [0u8; 4];
+        tag.copy_from_slice(&full[..4]);
+        tag
+    }
+
+    /// The legacy construction of a MAC ack's tag:
+    /// `truncate4(AES-256-ECB(k_enc, v))`. It covers `v` alone, none of the
+    /// ack's options; an ack sealed this way carries option 254.
+    pub fn legacy_ack_tag(&self, k_enc: &[u8; 32], v: &[u8; 16]) -> [u8; 4] {
         let cipher = self.aes.new_cipher(k_enc);
-        let mut block = *full_tag;
+        let mut block = *v;
         cipher.encrypt_block(&mut block);
+        let mut tag = [0u8; 4];
+        tag.copy_from_slice(&block[..4]);
+        tag
+    }
+
+    /// The 8-byte trailer `ack_mic || ack_tag` of an ack sealed with the
+    /// legacy construction, computed before the ack exists.
+    pub fn compute_ack_trailer(&self, full_tag: &[u8; 16], k_enc: &[u8; 32]) -> [u8; 8] {
         let mut trailer = [0u8; 8];
-        trailer[..4].copy_from_slice(&full_tag[..4]); // ack_mic (public)
-        trailer[4..].copy_from_slice(&block[..4]); // ack_tag (keyed)
+        trailer[..4].copy_from_slice(&full_tag[..4]);
+        trailer[4..].copy_from_slice(&self.legacy_ack_tag(k_enc, full_tag));
         trailer
+    }
+
+    /// Seal a built MAC ack in place, writing its trailer
+    /// `ack_mic || ack_tag` for the packet whose full S2V output is `v`.
+    ///
+    /// The ack's own options say which construction: the legacy tag when it
+    /// carries option 254, the MIC otherwise. Choosing the options is the
+    /// sender's business; this only makes the trailer match them. `keys` are
+    /// the keys that sealed the acknowledged packet—pairwise, or the combined
+    /// blind keys.
+    pub fn seal_mac_ack(
+        &self,
+        keys: &PairwiseKeys,
+        v: &[u8; 16],
+        frame: &mut [u8],
+    ) -> Result<AckTagConstruction, CryptoError> {
+        let (header, options) = parse_mac_ack(frame)?;
+        let construction = if options.legacy_ack_tag {
+            AckTagConstruction::Legacy
+        } else {
+            AckTagConstruction::Mic
+        };
+        let tag = self.mac_ack_tag(keys, v, &header, frame, construction);
+        let trailer = frame
+            .get_mut(header.mic_range.clone())
+            .filter(|trailer| trailer.len() == 8)
+            .ok_or(CryptoError::InvalidPacket)?;
+        trailer[..4].copy_from_slice(&v[..4]);
+        trailer[4..].copy_from_slice(&tag);
+        Ok(construction)
+    }
+
+    /// Verify a received MAC ack against the packet whose full S2V output is
+    /// `v`, returning the construction that verified.
+    ///
+    /// The ack's `ack_mic` must be `v`'s prefix. Then option 254 admits only
+    /// the legacy tag; a static option admits only the MIC; an ack with
+    /// neither is tried as the MIC and then the legacy tag, which accepts
+    /// both acks from nodes that predate the marker and marker-free MIC acks.
+    pub fn verify_mac_ack(
+        &self,
+        keys: &PairwiseKeys,
+        v: &[u8; 16],
+        frame: &[u8],
+    ) -> Option<AckTagConstruction> {
+        let (header, options) = parse_mac_ack(frame).ok()?;
+        let trailer = frame
+            .get(header.mic_range.clone())
+            .filter(|trailer| trailer.len() == 8)?;
+        if trailer[..4] != v[..4] {
+            return None;
+        }
+        let candidates: &[AckTagConstruction] = if options.legacy_ack_tag {
+            &[AckTagConstruction::Legacy]
+        } else if options.has_static {
+            &[AckTagConstruction::Mic]
+        } else {
+            &[AckTagConstruction::Mic, AckTagConstruction::Legacy]
+        };
+        candidates.iter().copied().find(|&construction| {
+            let tag = self.mac_ack_tag(keys, v, &header, frame, construction);
+            constant_time_eq(&tag, &trailer[4..])
+        })
+    }
+
+    fn mac_ack_tag(
+        &self,
+        keys: &PairwiseKeys,
+        v: &[u8; 16],
+        header: &PacketHeader,
+        frame: &[u8],
+        construction: AckTagConstruction,
+    ) -> [u8; 4] {
+        match construction {
+            AckTagConstruction::Mic => self.ack_tag_mic(
+                &keys.k_mic,
+                |cmac| feed_aad(header, frame, |chunk| cmac.update(chunk)),
+                v,
+            ),
+            AckTagConstruction::Legacy => self.legacy_ack_tag(&keys.k_enc, v),
+        }
     }
 
     /// Create a reusable incremental CMAC state.
@@ -750,6 +865,17 @@ fn increment_counter(counter: &mut [u8; 16]) {
             break;
         }
     }
+}
+
+/// Parse `frame` as a MAC ack with well-formed options.
+fn parse_mac_ack(frame: &[u8]) -> Result<(PacketHeader, ParsedOptions), CryptoError> {
+    let header = PacketHeader::parse(frame).map_err(|_| CryptoError::InvalidPacket)?;
+    if header.packet_type() != PacketType::MacAck {
+        return Err(CryptoError::InvalidPacket);
+    }
+    let options = ParsedOptions::extract(frame, header.options_range.clone())
+        .map_err(|_| CryptoError::InvalidPacket)?;
+    Ok((header, options))
 }
 
 fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
@@ -1487,6 +1613,186 @@ mod tests {
         assert_ne!(t_a, t_b);
         assert_ne!(t_a, [0u8; 8]);
         assert_ne!(t_b, [0u8; 8]);
+    }
+
+    #[cfg(feature = "software-crypto")]
+    fn ack_test_keys() -> PairwiseKeys {
+        PairwiseKeys {
+            k_enc: [0x11; 32],
+            k_mic: [0x22; 32],
+        }
+    }
+
+    #[cfg(feature = "software-crypto")]
+    const ACK_TEST_V: [u8; 16] = [
+        0xAA, 0x17, 0x13, 0x06, 0x26, 0x1C, 0xE7, 0xFF, 0xF2, 0xFF, 0x01, 0x7F, 0x90, 0x10, 0xA7,
+        0xD9,
+    ];
+
+    /// Build an unsealed ack into `buf` and return its length.
+    #[cfg(feature = "software-crypto")]
+    fn build_test_ack(
+        buf: &mut [u8; 64],
+        flood_hops: Option<u8>,
+        trace: bool,
+        callsign: Option<&[u8]>,
+        marker: bool,
+    ) -> usize {
+        let mut builder = PacketBuilder::new(buf).mac_ack([0u8; 8]);
+        if let Some(hops) = flood_hops {
+            builder = builder.flood_hops(hops);
+        }
+        if trace {
+            builder = builder.trace_route();
+        }
+        if let Some(callsign) = callsign {
+            builder = builder.option(umsh_core::OptionNumber::OperatorCallsign, callsign);
+        }
+        if marker {
+            builder = builder.legacy_ack_tag();
+        }
+        builder.build().unwrap().len()
+    }
+
+    #[cfg(feature = "software-crypto")]
+    #[test]
+    fn seal_follows_the_construction_the_options_declare() {
+        let engine = SoftwareCryptoEngine::new(SoftwareAes, SoftwareSha256);
+        let keys = ack_test_keys();
+        let v = ACK_TEST_V;
+        let callsign: &[u8] = &[0x12, 0x34, 0x56, 0x78];
+        for (marker, callsign, expected) in [
+            (false, None, AckTagConstruction::Mic),
+            (true, None, AckTagConstruction::Legacy),
+            (false, Some(callsign), AckTagConstruction::Mic),
+        ] {
+            let mut buf = [0u8; 64];
+            let len = build_test_ack(&mut buf, None, false, callsign, marker);
+            let frame = &mut buf[..len];
+            assert_eq!(engine.seal_mac_ack(&keys, &v, frame), Ok(expected));
+            assert_eq!(frame[len - 8..len - 4], v[..4], "ack_mic is v's prefix");
+            assert_eq!(engine.verify_mac_ack(&keys, &v, frame), Some(expected));
+        }
+
+        let mut buf = [0u8; 64];
+        let len = build_test_ack(&mut buf, None, false, None, true);
+        engine.seal_mac_ack(&keys, &v, &mut buf[..len]).unwrap();
+        assert_eq!(
+            buf[len - 4..len],
+            engine.legacy_ack_tag(&keys.k_enc, &v),
+            "the legacy construction is unchanged"
+        );
+    }
+
+    /// A node that predates option 254 sends the legacy tag with no marker.
+    #[cfg(feature = "software-crypto")]
+    #[test]
+    fn verify_accepts_a_legacy_ack_without_the_marker() {
+        let engine = SoftwareCryptoEngine::new(SoftwareAes, SoftwareSha256);
+        let keys = ack_test_keys();
+        let mut buf = [0u8; 64];
+        let len = build_test_ack(&mut buf, Some(2), true, None, false);
+        buf[len - 8..len].copy_from_slice(&engine.compute_ack_trailer(&ACK_TEST_V, &keys.k_enc));
+        assert_eq!(
+            engine.verify_mac_ack(&keys, &ACK_TEST_V, &buf[..len]),
+            Some(AckTagConstruction::Legacy)
+        );
+    }
+
+    #[cfg(feature = "software-crypto")]
+    #[test]
+    fn verify_admits_only_the_construction_the_options_allow() {
+        let engine = SoftwareCryptoEngine::new(SoftwareAes, SoftwareSha256);
+        let keys = ack_test_keys();
+        let v = ACK_TEST_V;
+        let legacy = engine.compute_ack_trailer(&v, &keys.k_enc);
+
+        // A static option admits only the MIC.
+        let mut buf = [0u8; 64];
+        let len = build_test_ack(&mut buf, None, false, Some(&[0x12, 0x34]), false);
+        buf[len - 8..len].copy_from_slice(&legacy);
+        assert_eq!(engine.verify_mac_ack(&keys, &v, &buf[..len]), None);
+
+        // The marker admits only the legacy tag. It is dynamic, so a MIC
+        // sealed without it covers the same AAD and would otherwise pass.
+        let mut plain = [0u8; 64];
+        let plain_len = build_test_ack(&mut plain, None, false, None, false);
+        engine
+            .seal_mac_ack(&keys, &v, &mut plain[..plain_len])
+            .unwrap();
+        let mut marked = [0u8; 64];
+        let marked_len = build_test_ack(&mut marked, None, false, None, true);
+        marked[marked_len - 8..marked_len].copy_from_slice(&plain[plain_len - 8..plain_len]);
+        assert_eq!(
+            engine.verify_mac_ack(&keys, &v, &marked[..marked_len]),
+            None
+        );
+    }
+
+    #[cfg(feature = "software-crypto")]
+    #[test]
+    fn the_mic_covers_static_options_and_ignores_dynamic_ones() {
+        let engine = SoftwareCryptoEngine::new(SoftwareAes, SoftwareSha256);
+        let keys = ack_test_keys();
+        let v = ACK_TEST_V;
+        let mut sealed = [0u8; 64];
+        let sealed_len = build_test_ack(&mut sealed, None, false, Some(&[0x12, 0x34]), false);
+        engine
+            .seal_mac_ack(&keys, &v, &mut sealed[..sealed_len])
+            .unwrap();
+        let trailer = &sealed[sealed_len - 8..sealed_len];
+
+        // Forwarding adds flood hops and a trace; the tag still holds.
+        let mut forwarded = [0u8; 64];
+        let forwarded_len =
+            build_test_ack(&mut forwarded, Some(3), true, Some(&[0x12, 0x34]), false);
+        forwarded[forwarded_len - 8..forwarded_len].copy_from_slice(trailer);
+        assert_eq!(
+            engine.verify_mac_ack(&keys, &v, &forwarded[..forwarded_len]),
+            Some(AckTagConstruction::Mic)
+        );
+
+        // A changed static option does not.
+        let mut tampered = [0u8; 64];
+        let tampered_len = build_test_ack(&mut tampered, None, false, Some(&[0x12, 0x35]), false);
+        tampered[tampered_len - 8..tampered_len].copy_from_slice(trailer);
+        assert_eq!(
+            engine.verify_mac_ack(&keys, &v, &tampered[..tampered_len]),
+            None
+        );
+    }
+
+    /// The tag binds the whole of `v`, not just the public `ack_mic`, and the
+    /// keys that sealed the request.
+    #[cfg(feature = "software-crypto")]
+    #[test]
+    fn verify_rejects_another_requests_ack() {
+        let engine = SoftwareCryptoEngine::new(SoftwareAes, SoftwareSha256);
+        let keys = ack_test_keys();
+        let v = ACK_TEST_V;
+        let mut buf = [0u8; 64];
+        let len = build_test_ack(&mut buf, None, false, None, false);
+        engine.seal_mac_ack(&keys, &v, &mut buf[..len]).unwrap();
+
+        let mut same_prefix = v;
+        same_prefix[15] ^= 1;
+        assert_eq!(
+            engine.verify_mac_ack(&keys, &same_prefix, &buf[..len]),
+            None
+        );
+
+        let mut other_prefix = v;
+        other_prefix[0] ^= 1;
+        assert_eq!(
+            engine.verify_mac_ack(&keys, &other_prefix, &buf[..len]),
+            None
+        );
+
+        let other_keys = PairwiseKeys {
+            k_enc: [0x33; 32],
+            k_mic: [0x44; 32],
+        };
+        assert_eq!(engine.verify_mac_ack(&other_keys, &v, &buf[..len]), None);
     }
 
     #[cfg(feature = "software-crypto")]

@@ -40,8 +40,9 @@ impl<'a> PacketBuilder<'a> {
     ///
     /// The ack carries no destination hint—it is a return-routed token
     /// correlated by its trailer. `ack_trailer` is the 8-byte
-    /// `ack_mic || ack_tag` value (see the crypto engine's
-    /// `compute_ack_trailer`).
+    /// `ack_mic || ack_tag` value. The tag covers the ack's own options, so
+    /// a real ack is built with any placeholder and then sealed in place
+    /// (see the crypto engine's `seal_mac_ack`).
     pub fn mac_ack(self, ack_trailer: [u8; 8]) -> MacAckBuilder<'a, state::Configuring> {
         let mut builder = Builder::new(self.buf, PacketType::MacAck);
         builder.ack_tag = Some(ack_trailer);
@@ -483,6 +484,15 @@ macro_rules! impl_configuring_common {
             }
         }
     };
+}
+
+impl<'a> MacAckBuilder<'a, state::Configuring> {
+    /// Mark the ack's tag as the legacy construction (option 254). Options
+    /// go in ascending number order, so this is added last.
+    pub fn legacy_ack_tag(mut self) -> Self {
+        self.push_option(OptionNumber::LegacyAckTag.as_u16(), &[]);
+        self
+    }
 }
 
 impl_configuring_common!(BroadcastBuilder<state::Configuring>);
