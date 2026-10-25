@@ -320,6 +320,7 @@ pub trait Platform {
 
 mod cache;
 mod coordinator;
+mod echo_watch;
 pub mod forward_id;
 mod handle;
 mod observations;
@@ -336,6 +337,7 @@ pub use coordinator::{
     LocalIdentityId, Mac, MacCounters, MacError, OperatingPolicy, RepeaterConfig, SendError,
     WakeReason,
 };
+pub use echo_watch::ECHO_WATCH_MS;
 pub use handle::MacHandle;
 pub use observations::{
     MAX_TRANSMITTER_OBSERVATIONS, TransmitterObservation, TransmitterObservations,

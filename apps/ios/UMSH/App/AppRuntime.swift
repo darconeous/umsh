@@ -3096,8 +3096,11 @@ final class AppRuntime {
     private func transcriptPage(_ stored: StoredChatMessagePage?) async -> TranscriptPage? {
         guard let stored else { return nil }
         let nodeHints = await renderedNodeHints(in: stored.messages)
+        let repeaterLabels = await leadRepeaterLabels(in: stored.messages)
         return TranscriptPage(
-            messages: stored.messages.map { Self.messageSummary(from: $0, nodeHints: nodeHints) },
+            messages: stored.messages.map {
+                Self.messageSummary(from: $0, nodeHints: nodeHints, repeaterLabels: repeaterLabels)
+            },
             hasOlder: stored.hasOlder,
             hasNewer: stored.hasNewer
         )
@@ -3135,6 +3138,9 @@ final class AppRuntime {
         }
         for delivery in update.deliveries {
             unresolved.insert(ChatMessageKey(sessionID: delivery.sessionId, handle: delivery.handle))
+        }
+        for repeats in update.repeats {
+            unresolved.insert(ChatMessageKey(sessionID: repeats.sessionId, handle: repeats.handle))
         }
         var unresolvable = false
         for key in unresolved {
@@ -3898,6 +3904,10 @@ final class AppRuntime {
                 )
                 postDeliveryFailureNotifications(failures)
             }
+            try await applicationStore.applyChatRepeats(
+                ownerIdentityID: localIdentity.id,
+                repeats: update.repeats
+            )
             await noteChatMessagesChanged(by: update)
             for lookup in update.archiveLookups {
                 let payload = try? await applicationStore.chatArchive(
@@ -4416,7 +4426,8 @@ final class AppRuntime {
 
     private static func messageSummary(
         from stored: StoredChatMessage,
-        nodeHints: [Data: MeshNodeHint] = [:]
+        nodeHints: [Data: MeshNodeHint] = [:],
+        repeaterLabels: [Data: String] = [:]
     ) -> ChatMessageSummary {
         ChatMessageSummary(
             id: stored.id,
@@ -4443,7 +4454,14 @@ final class AppRuntime {
             senderNodeHint: stored.senderHint.flatMap { nodeHints[$0] },
             reception: stored.reception,
             reactions: stored.reactions.map(messageReaction(from:)),
-            reply: stored.quote.map { messageQuote(from: $0, nodeHints: nodeHints) }
+            reply: stored.quote.map { messageQuote(from: $0, nodeHints: nodeHints) },
+            repeats: stored.repeats.map { repeats in
+                MessageRepeats(
+                    lead: repeats.repeaters.first.flatMap { repeaterLabels[$0] },
+                    count: repeats.count,
+                    progressAt: repeats.progressAt
+                )
+            }
         )
     }
 
@@ -4486,6 +4504,22 @@ final class AppRuntime {
     /// group bubble can carry its sender's avatar without re-deriving it per
     /// row. Rendering is an FFI round trip and the answer never changes, so the
     /// coordinator keeps what it has already resolved for the whole session.
+    /// What to call the first repeater each outbound message on a page was
+    /// heard through: the node its hint most plausibly names, or the hint.
+    private func leadRepeaterLabels(in messages: [StoredChatMessage]) async -> [Data: String] {
+        let hints = Set(messages.compactMap { $0.repeats?.repeaters.first })
+        var labels: [Data: String] = [:]
+        for hint in hints {
+            if coordinator.renderedRouterHints[hint] == nil,
+               let value = try? await meshEngine.renderRouterHint(hint) {
+                coordinator.renderedRouterHints[hint] = value
+            }
+            guard let rendered = coordinator.renderedRouterHints[hint] else { continue }
+            labels[hint] = RouterHintNaming.label(rendered, among: peers)
+        }
+        return labels
+    }
+
     private func renderedNodeHints(in messages: [StoredChatMessage]) async -> [Data: MeshNodeHint] {
         let hints = messages.compactMap(\.senderHint)
             + messages.compactMap { $0.quote?.original?.senderHint }
@@ -4571,6 +4605,8 @@ private final class AppStateCoordinator {
     /// an FFI round trip and the answer never changes, so a transcript page
     /// pays for each distinct hint at most once per process.
     var renderedNodeHints: [Data: MeshNodeHint] = [:]
+    /// The same, for the repeaters heard carrying our messages.
+    var renderedRouterHints: [Data: MeshRouterHint] = [:]
 
     /// Record that these conversations' messages changed. Callers that cannot
     /// resolve which conversation a change belongs to pass every address they

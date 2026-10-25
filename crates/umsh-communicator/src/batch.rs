@@ -208,6 +208,7 @@ impl<'a> Batch<'a> {
             }
             ChatOutput::Lookup(_)
             | ChatOutput::SenderResolved(_)
+            | ChatOutput::Repeats(_)
             | ChatOutput::Event(_)
             | ChatOutput::Diagnostic(_) => return false,
         }

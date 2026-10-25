@@ -12111,6 +12111,171 @@ fn a_real_repeater_rewrite_confirms_the_senders_repeat_only_entry() {
     );
 }
 
+/// Forward `frame` through a repeater whose identity is seeded with `seed`,
+/// returning the rewrite it queued and the router hint it signs it with.
+fn forward_through(seed: u8, frame: &[u8]) -> (heapless::Vec<u8, 256>, RouterHint) {
+    let mut repeater = make_mac();
+    repeater.repeater_config_mut().enabled = true;
+    repeater.repeater_config_mut().default_region = Some([0x78, 0x53]);
+    let identity = DummyIdentity::new([seed; 32]);
+    let hint = identity.public_key().router_hint();
+    let _ = repeater.add_identity(identity).unwrap();
+    repeater.radio_mut().queue_received_frame(frame);
+    assert!(block_on(repeater.receive_one(|_, _| {})).unwrap());
+    let rewritten = repeater
+        .tx_queue_mut()
+        .pop_next()
+        .expect("a queued forward");
+    let mut stored = heapless::Vec::new();
+    stored
+        .extend_from_slice(rewritten.frame.as_slice())
+        .unwrap();
+    (stored, hint)
+}
+
+/// Every `Forwarded` event `mac` raises on hearing `frame`.
+fn heard_forwards(
+    mac: &mut TestMac,
+    frame: &[u8],
+) -> std::vec::Vec<(LocalIdentityId, SendReceipt, Option<RouterHint>)> {
+    mac.radio_mut().queue_received_frame(frame);
+    let mut heard = std::vec::Vec::new();
+    let _ = block_on(mac.receive_one(|identity, event| {
+        if let MacEventRef::Forwarded {
+            receipt, repeater, ..
+        } = event
+        {
+            heard.push((identity, receipt, repeater));
+        }
+    }))
+    .unwrap();
+    heard
+}
+
+/// Each repeater that carries a send is reported, not only the first, and
+/// by the hint it put at the head of the trace route rather than by the
+/// frame's source.
+#[test]
+fn every_overheard_forward_names_its_repeater() {
+    let (mut sender, local_id, peer_key) = make_sender_mac();
+    let _ = sender
+        .queue_unicast(
+            local_id,
+            &peer_key,
+            b"hello",
+            &SendOptions::default()
+                .with_ack_requested(true)
+                .with_trace_route(),
+        )
+        .unwrap();
+    let receipt = sole_tracked_receipt(&sender, local_id);
+    let _ = block_on(sender.transmit_next(&mut |_, _| {})).unwrap();
+    let original = sender.radio().transmitted[0].clone();
+
+    let (first, first_hint) = forward_through(0x30, original.as_slice());
+    let (second, second_hint) = forward_through(0x40, original.as_slice());
+    assert_ne!(first_hint, second_hint);
+
+    assert_eq!(
+        heard_forwards(&mut sender, first.as_slice()),
+        [(local_id, receipt, Some(first_hint))]
+    );
+    assert_eq!(
+        heard_forwards(&mut sender, second.as_slice()),
+        [(local_id, receipt, Some(second_hint))],
+        "a second repeater is reported after the send stopped waiting for one"
+    );
+}
+
+/// A channel message has no acknowledgment to wait for, but its forwards
+/// are reported all the same.
+#[test]
+fn an_overheard_multicast_forward_is_reported() {
+    let mut mac = make_mac();
+    let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
+    let channel_key = ChannelKey([0x5A; 32]);
+    let channel_id = mac.crypto().derive_channel_id(&channel_key);
+    mac.add_channel(channel_key).unwrap();
+    let receipt = mac
+        .queue_multicast(
+            local_id,
+            &channel_id,
+            b"hello",
+            &SendOptions::default().with_flood_hops(3),
+        )
+        .unwrap();
+    let _ = block_on(mac.transmit_next(&mut |_, _| {})).unwrap();
+    let original = mac.radio().transmitted[0].clone();
+
+    let forwarded = rewrite_forwarded_fixture(original.as_slice());
+    assert_eq!(
+        heard_forwards(&mut mac, forwarded.as_slice()),
+        [(local_id, receipt, None)],
+        "a flood without a trace says only that someone forwarded it"
+    );
+}
+
+/// A forward heard after the watch has lapsed is not reported.
+#[test]
+fn a_forward_after_the_echo_watch_is_not_reported() {
+    let mut mac = make_mac();
+    let local_id = mac.add_identity(DummyIdentity::new([0x10; 32])).unwrap();
+    let channel_key = ChannelKey([0x5A; 32]);
+    let channel_id = mac.crypto().derive_channel_id(&channel_key);
+    mac.add_channel(channel_key).unwrap();
+    let _ = mac
+        .queue_multicast(
+            local_id,
+            &channel_id,
+            b"hello",
+            &SendOptions::default().with_flood_hops(3),
+        )
+        .unwrap();
+    let _ = block_on(mac.transmit_next(&mut |_, _| {})).unwrap();
+    let original = mac.radio().transmitted[0].clone();
+
+    mac.clock().advance_ms(crate::ECHO_WATCH_MS);
+    let forwarded = rewrite_forwarded_fixture(original.as_slice());
+    assert!(heard_forwards(&mut mac, forwarded.as_slice()).is_empty());
+}
+
+/// Without a trace, a source-routed forward names its repeater by the hint
+/// it removed—until a flood hop is spent, after which the route says
+/// nothing more.
+#[test]
+fn a_source_routed_forward_names_the_hint_it_removed() {
+    let source = DummyIdentity::new([0x10; 32]);
+    let keys = PairwiseKeys {
+        k_enc: [1; 32],
+        k_mic: [2; 32],
+    };
+    let dst = test_pubkey(0xAB).hint();
+    let first = RouterHint([0x01, 0x02]);
+    let second = RouterHint([0x03, 0x04]);
+    let route = [first, second];
+    let repeater_of = |flood_hops: Option<(u8, u8)>, left: &[RouterHint]| {
+        let frame = build_received_unicast_frame(
+            &source,
+            &keys,
+            &dst,
+            b"hello",
+            false,
+            flood_hops,
+            None,
+            Some(left),
+        );
+        let header = PacketHeader::parse(frame.as_slice()).unwrap();
+        let options =
+            ParsedOptions::extract(frame.as_slice(), header.options_range.clone()).unwrap();
+        crate::echo_watch::forwarding_repeater(&header, &options, frame.as_slice(), &route)
+    };
+
+    assert_eq!(repeater_of(None, &[second]), Some(first));
+    assert_eq!(repeater_of(None, &[]), Some(second));
+    assert_eq!(repeater_of(Some((2, 1)), &[]), None);
+    assert_eq!(repeater_of(None, &route), None, "nothing was removed");
+}
+
 /// The post-transmit listen window that parks all other traffic belongs to
 /// ACK-requested sends only; a best-effort flood send must not stall the
 /// node's queue for a confirmation it is merely hoping for.

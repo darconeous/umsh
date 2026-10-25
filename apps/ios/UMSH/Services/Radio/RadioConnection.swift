@@ -522,6 +522,8 @@ struct RadioChatUpdate: Sendable {
     let batchID: UInt64
     let mutations: [MobileChatMutationRecord]
     let deliveries: [MobileChatDeliveryRecord]
+    /// Repeaters overheard carrying our messages, a whole tally per fragment.
+    let repeats: [MobileChatRepeatRecord]
     let archiveLookups: [MobileChatArchiveLookupRecord]
     /// Channel members whose claimed hint has resolved to a real address.
     let senderResolutions: [MobileChatSenderResolutionRecord]

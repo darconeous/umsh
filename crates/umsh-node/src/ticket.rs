@@ -1,7 +1,40 @@
 use alloc::rc::Rc;
 use core::cell::RefCell;
 
+use umsh_core::RouterHint;
 use umsh_mac::{LocalIdentityId, SendReceipt};
+
+/// Distinct named repeaters a [`RepeatTally`] remembers. Past this, a newly
+/// named repeater is counted as an anonymous one.
+pub const MAX_TALLIED_REPEATERS: usize = 8;
+
+/// The repeaters overheard carrying a send.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct RepeatTally {
+    /// Repeaters the forwards named, each once, in the order first heard.
+    pub repeaters: heapless::Vec<RouterHint, MAX_TALLIED_REPEATERS>,
+    /// Forwards that named no repeater. Each repeater forwards a frame once,
+    /// so each is taken for a repeater not otherwise counted.
+    pub anonymous: u16,
+    /// Bumped whenever the tally changes, so a poller can tell.
+    pub revision: u32,
+}
+
+impl RepeatTally {
+    /// Repeaters heard in all, named or not.
+    pub fn count(&self) -> usize {
+        self.repeaters.len() + usize::from(self.anonymous)
+    }
+
+    pub(crate) fn note(&mut self, repeater: Option<RouterHint>) {
+        match repeater {
+            Some(hint) if self.repeaters.contains(&hint) => return,
+            Some(hint) if self.repeaters.push(hint).is_ok() => {}
+            _ => self.anonymous = self.anonymous.saturating_add(1),
+        }
+        self.revision = self.revision.wrapping_add(1);
+    }
+}
 
 /// Identity-scoped send token.
 ///
@@ -30,8 +63,8 @@ impl SendToken {
 pub(crate) struct TicketState {
     /// Frame was handed to the radio at least once.
     pub transmitted: bool,
-    /// A repeater was overheard forwarding this frame.
-    pub repeated: bool,
+    /// Repeaters overheard forwarding this frame.
+    pub repeats: RepeatTally,
     /// Transport ACK received from the destination.
     pub acked: bool,
     /// The ACK answered the route-retry flood that followed a missed route.
@@ -104,7 +137,13 @@ impl SendProgressTicket {
 
     /// True after a repeater was overheard forwarding this frame.
     pub fn was_repeated(&self) -> bool {
-        self.state.borrow().repeated
+        self.state.borrow().repeats.count() > 0
+    }
+
+    /// The repeaters overheard forwarding this frame so far. Forwards keep
+    /// arriving after the send is otherwise finished.
+    pub fn repeats(&self) -> RepeatTally {
+        self.state.borrow().repeats.clone()
     }
 
     /// True after a transport ACK was received from the destination.
@@ -187,7 +226,7 @@ mod tests {
         state.borrow_mut().transmitted = true;
         assert!(ticket.was_transmitted());
 
-        state.borrow_mut().repeated = true;
+        state.borrow_mut().repeats.note(None);
         assert!(ticket.was_repeated());
 
         state.borrow_mut().acked = true;
@@ -198,6 +237,19 @@ mod tests {
 
         state.borrow_mut().finished = true;
         assert!(ticket.is_finished());
+    }
+
+    #[test]
+    fn repeat_tally_names_each_repeater_once() {
+        let mut tally = RepeatTally::default();
+        let hint = RouterHint([1, 2]);
+        tally.note(Some(hint));
+        tally.note(Some(hint));
+        tally.note(None);
+        assert_eq!(tally.repeaters.as_slice(), &[hint]);
+        assert_eq!(tally.anonymous, 1);
+        assert_eq!(tally.count(), 2);
+        assert_eq!(tally.revision, 2, "a repeater heard again is no change");
     }
 
     #[test]

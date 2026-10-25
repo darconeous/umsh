@@ -186,7 +186,7 @@ pub use peer_repeaters::{
 pub use receive::{
     ChannelInfoRef, PacketFamily, ReceivedPacketRef, RepeaterHints, RxMetadata, Snr,
 };
-pub use ticket::{SendProgressTicket, SendToken};
+pub use ticket::{MAX_TALLIED_REPEATERS, RepeatTally, SendProgressTicket, SendToken};
 pub use transport::Transport;
 
 #[cfg(test)]

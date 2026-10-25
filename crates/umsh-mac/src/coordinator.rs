@@ -1106,6 +1106,7 @@ pub struct Mac<
     peer_registry: PeerRegistry<PEERS, HOLDS>,
     transmitter_observations: crate::TransmitterObservations,
     uplinks: crate::uplinks::UplinkObservations,
+    echo_watches: crate::echo_watch::EchoWatches,
     recent_acks: Deque<CompletedAck, RECENT_ACKS>,
     channels: ChannelTable<CHANNELS, RN, HN>,
     dup_cache: DuplicateCache<DUP>,
@@ -1161,6 +1162,7 @@ impl<
             peer_registry: PeerRegistry::new(),
             transmitter_observations: crate::TransmitterObservations::new(),
             uplinks: crate::uplinks::UplinkObservations::new(),
+            echo_watches: crate::echo_watch::EchoWatches::new(),
             recent_acks: Deque::new(),
             channels: ChannelTable::new(),
             dup_cache: DuplicateCache::new(),
@@ -2655,6 +2657,13 @@ impl<
         }
         if let Some(receipt) = receipt {
             self.note_transmitted_tracked(receipt, queued.frame.as_slice());
+            if let Some(identity_id) = identity_id
+                && Self::frame_solicits_repeat(queued.frame.as_slice())
+            {
+                let now_ms = self.clock.now_ms();
+                self.echo_watches
+                    .arm(identity_id, receipt, queued.frame.as_slice(), now_ms);
+            }
         }
         Ok(receipt)
     }
@@ -3031,31 +3040,22 @@ impl<
         // carrying the acknowledged packet—not at this frame's
         // addressee.
         self.cancel_forwards_for_ack_mic_option(&buf[..frame_len], &header);
-        let forwarding_confirmed = if let Some((identity_id, receipt)) =
-            self.observe_forwarding_confirmation(&buf[..frame_len])
-        {
-            let hint = match header.source {
-                SourceAddrRef::Hint(h) => Some(RouterHint([h.0[0], h.0[1]])),
-                SourceAddrRef::FullKeyAt { offset } => {
-                    let mut key_bytes = [0u8; 32];
-                    key_bytes.copy_from_slice(&buf[offset..offset + 32]);
-                    let h = PublicKey(key_bytes).hint();
-                    Some(RouterHint([h.0[0], h.0[1]]))
-                }
-                _ => None,
-            };
+        // The pending table decides what the repeat means for a retry; the
+        // watch, which also covers sends with no retry to call off, decides
+        // whom to tell.
+        let forwarding_confirmed = self
+            .observe_forwarding_confirmation(&buf[..frame_len])
+            .is_some();
+        if let Some(echo) = self.echo_watches.heard(&buf[..frame_len], received_at_ms) {
             on_event(
-                identity_id,
+                echo.identity_id,
                 crate::MacEventRef::Forwarded {
-                    identity_id,
-                    receipt,
-                    hint,
+                    identity_id: echo.identity_id,
+                    receipt: echo.receipt,
+                    repeater: echo.repeater,
                 },
             );
-            true
-        } else {
-            false
-        };
+        }
 
         match header.packet_type() {
             PacketType::Broadcast => {

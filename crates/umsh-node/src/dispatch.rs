@@ -44,14 +44,16 @@ impl EventDispatcher {
                     });
                 }
             }
+            // Forwards go on arriving after a send that asked for no
+            // acknowledgment is finished, and still count.
             MacEventRef::Forwarded {
                 identity_id: fwd_id,
                 receipt,
-                ..
+                repeater,
             } => {
                 let token = SendToken::new(fwd_id, receipt);
                 self.update_ticket(&token, |state| {
-                    state.repeated = true;
+                    state.repeats.note(repeater);
                 });
             }
             MacEventRef::AckReceived {

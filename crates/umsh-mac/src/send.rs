@@ -1457,12 +1457,18 @@ pub enum MacEventRef<'a> {
         receipt: Option<SendReceipt>,
         wire_bytes: &'a [u8],
     },
-    /// A repeater was overheard forwarding this frame
-    /// (AwaitingForward → AwaitingAck transition).
+    /// A repeater was overheard forwarding this frame.
+    ///
+    /// Fires for every forward heard within
+    /// [`ECHO_WATCH_MS`](crate::ECHO_WATCH_MS) of the frame airing, not only
+    /// the first, and for every tracked send that solicits a repeat,
+    /// multicast included.
     Forwarded {
         identity_id: LocalIdentityId,
         receipt: SendReceipt,
-        hint: Option<RouterHint>,
+        /// The repeater that transmitted the forward, when the frame names
+        /// it: by trace route, or by the hint missing from our source route.
+        repeater: Option<RouterHint>,
     },
     /// The frame was dropped before it ever aired: every channel-activity
     /// -detection attempt found the channel busy and the retry budget ran

@@ -1331,6 +1331,7 @@ actor FakeRadioConnection: RadioConnection {
             batchID: batchID,
             mutations: update.chatMutations,
             deliveries: update.chatDeliveries,
+            repeats: update.chatRepeats,
             archiveLookups: update.chatArchiveLookups,
             senderResolutions: update.chatSenderResolutions,
             diagnostics: update.chatDiagnostics

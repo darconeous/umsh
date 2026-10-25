@@ -679,3 +679,18 @@ struct PeerAvatarTests {
         #expect(unknown.roleLabel == nil)
     }
 }
+
+@Suite
+struct RepeatCaptionTests {
+    @Test func namesTheLeadRepeaterAndCountsTheRest() {
+        #expect(RepeatCaption.text(lead: nil, count: 0) == "Sent")
+        #expect(RepeatCaption.text(lead: "Tallac Ridge", count: 1) == "Sent via Tallac Ridge")
+        #expect(RepeatCaption.text(lead: "Tallac Ridge", count: 2) == "Sent via Tallac Ridge and 1 other")
+        #expect(RepeatCaption.text(lead: "Tallac Ridge", count: 3) == "Sent via Tallac Ridge and 2 others")
+    }
+
+    @Test func countsRepeatersThatNamedNobody() {
+        #expect(RepeatCaption.text(lead: nil, count: 1) == "Sent via a repeater")
+        #expect(RepeatCaption.text(lead: nil, count: 3) == "Sent via 3 repeaters")
+    }
+}

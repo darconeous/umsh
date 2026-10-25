@@ -6898,6 +6898,89 @@ public func FfiConverterTypeMobileChatRegardingRef_lower(_ value: MobileChatRega
 
 
 /**
+ * The repeaters overheard carrying one fragment of a message of ours, as
+ * tallied so far. Each record holds the whole tally, so a later one
+ * supersedes an earlier one for the same fragment.
+ */
+public struct MobileChatRepeatRecord: Equatable, Hashable {
+    public var sessionId: UInt64
+    public var handle: UInt32
+    public var fragmentIndex: UInt8?
+    /**
+     * Repeaters the forwards named, each once, in the order first heard.
+     */
+    public var repeaters: [RouterHintRecord]
+    /**
+     * Forwards that named no repeater, each taken for a repeater of its own.
+     */
+    public var anonymousRepeats: UInt16
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(sessionId: UInt64, handle: UInt32, fragmentIndex: UInt8?,
+        /**
+         * Repeaters the forwards named, each once, in the order first heard.
+         */repeaters: [RouterHintRecord],
+        /**
+         * Forwards that named no repeater, each taken for a repeater of its own.
+         */anonymousRepeats: UInt16) {
+        self.sessionId = sessionId
+        self.handle = handle
+        self.fragmentIndex = fragmentIndex
+        self.repeaters = repeaters
+        self.anonymousRepeats = anonymousRepeats
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileChatRepeatRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileChatRepeatRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileChatRepeatRecord {
+        return
+            try MobileChatRepeatRecord(
+                sessionId: FfiConverterUInt64.read(from: &buf),
+                handle: FfiConverterUInt32.read(from: &buf),
+                fragmentIndex: FfiConverterOptionUInt8.read(from: &buf),
+                repeaters: FfiConverterSequenceTypeRouterHintRecord.read(from: &buf),
+                anonymousRepeats: FfiConverterUInt16.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileChatRepeatRecord, into buf: inout [UInt8]) {
+        FfiConverterUInt64.write(value.sessionId, into: &buf)
+        FfiConverterUInt32.write(value.handle, into: &buf)
+        FfiConverterOptionUInt8.write(value.fragmentIndex, into: &buf)
+        FfiConverterSequenceTypeRouterHintRecord.write(value.repeaters, into: &buf)
+        FfiConverterUInt16.write(value.anonymousRepeats, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileChatRepeatRecord_lift(_ buf: RustBuffer) throws -> MobileChatRepeatRecord {
+    return try FfiConverterTypeMobileChatRepeatRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileChatRepeatRecord_lower(_ value: MobileChatRepeatRecord) -> RustBuffer {
+    return FfiConverterTypeMobileChatRepeatRecord.lower(value)
+}
+
+
+/**
  * Physical-layer metadata for a record produced by a live received frame.
  *
  * The engine is transport-agnostic and carries none of this, so the facade
@@ -8542,6 +8625,11 @@ public struct MobileMeshSessionUpdateRecord: Equatable, Hashable {
     public var chatBatchId: UInt64?
     public var chatMutations: [MobileChatMutationRecord]
     public var chatDeliveries: [MobileChatDeliveryRecord]
+    /**
+     * Repeaters overheard carrying our messages, a whole tally per
+     * fragment each time it grows.
+     */
+    public var chatRepeats: [MobileChatRepeatRecord]
     public var chatArchiveLookups: [MobileChatArchiveLookupRecord]
     /**
      * Channel members whose claimed hint has resolved to a full address. The
@@ -8577,7 +8665,11 @@ public struct MobileMeshSessionUpdateRecord: Equatable, Hashable {
         /**
          * Chat effects remain in the facade until Swift durably applies them and
          * acknowledges this batch. Repeated polls may return the same batch.
-         */chatBatchId: UInt64?, chatMutations: [MobileChatMutationRecord], chatDeliveries: [MobileChatDeliveryRecord], chatArchiveLookups: [MobileChatArchiveLookupRecord],
+         */chatBatchId: UInt64?, chatMutations: [MobileChatMutationRecord], chatDeliveries: [MobileChatDeliveryRecord],
+        /**
+         * Repeaters overheard carrying our messages, a whole tally per
+         * fragment each time it grows.
+         */chatRepeats: [MobileChatRepeatRecord], chatArchiveLookups: [MobileChatArchiveLookupRecord],
         /**
          * Channel members whose claimed hint has resolved to a full address. The
          * platform should upgrade rows it stored anonymously under that hint.
@@ -8600,6 +8692,7 @@ public struct MobileMeshSessionUpdateRecord: Equatable, Hashable {
         self.chatBatchId = chatBatchId
         self.chatMutations = chatMutations
         self.chatDeliveries = chatDeliveries
+        self.chatRepeats = chatRepeats
         self.chatArchiveLookups = chatArchiveLookups
         self.chatSenderResolutions = chatSenderResolutions
         self.chatDiagnostics = chatDiagnostics
@@ -8631,6 +8724,7 @@ public struct FfiConverterTypeMobileMeshSessionUpdateRecord: FfiConverterRustBuf
                 chatBatchId: FfiConverterOptionUInt64.read(from: &buf),
                 chatMutations: FfiConverterSequenceTypeMobileChatMutationRecord.read(from: &buf),
                 chatDeliveries: FfiConverterSequenceTypeMobileChatDeliveryRecord.read(from: &buf),
+                chatRepeats: FfiConverterSequenceTypeMobileChatRepeatRecord.read(from: &buf),
                 chatArchiveLookups: FfiConverterSequenceTypeMobileChatArchiveLookupRecord.read(from: &buf),
                 chatSenderResolutions: FfiConverterSequenceTypeMobileChatSenderResolutionRecord.read(from: &buf),
                 chatDiagnostics: FfiConverterSequenceString.read(from: &buf),
@@ -8648,6 +8742,7 @@ public struct FfiConverterTypeMobileMeshSessionUpdateRecord: FfiConverterRustBuf
         FfiConverterOptionUInt64.write(value.chatBatchId, into: &buf)
         FfiConverterSequenceTypeMobileChatMutationRecord.write(value.chatMutations, into: &buf)
         FfiConverterSequenceTypeMobileChatDeliveryRecord.write(value.chatDeliveries, into: &buf)
+        FfiConverterSequenceTypeMobileChatRepeatRecord.write(value.chatRepeats, into: &buf)
         FfiConverterSequenceTypeMobileChatArchiveLookupRecord.write(value.chatArchiveLookups, into: &buf)
         FfiConverterSequenceTypeMobileChatSenderResolutionRecord.write(value.chatSenderResolutions, into: &buf)
         FfiConverterSequenceString.write(value.chatDiagnostics, into: &buf)
@@ -19765,6 +19860,31 @@ fileprivate struct FfiConverterSequenceTypeMobileChatMutationRecord: FfiConverte
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypeMobileChatMutationRecord.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeMobileChatRepeatRecord: FfiConverterRustBuffer {
+    typealias SwiftType = [MobileChatRepeatRecord]
+
+    public static func write(_ value: [MobileChatRepeatRecord], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeMobileChatRepeatRecord.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [MobileChatRepeatRecord] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [MobileChatRepeatRecord]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeMobileChatRepeatRecord.read(from: &buf))
         }
         return seq
     }

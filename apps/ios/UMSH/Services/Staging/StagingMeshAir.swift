@@ -71,6 +71,46 @@ actor StagingMeshAir: FakeRadioAir {
             )
             pumpPeer(index)
         }
+        echoFromRepeaters(data)
+    }
+
+    /// Let the phone hear its flood carried onward, as a real mesh would
+    /// answer it. The staged repeaters do not forward, so each one's copy is
+    /// fabricated: a moment apart, one flood hop spent, and no trace to say
+    /// whose it is.
+    private func echoFromRepeaters(_ data: Data) {
+        guard let onAir, let echo = Self.forwarded(data) else { return }
+        let repeaters = StagingScenario.nodes.filter { $0.role == .repeater }
+        for index in repeaters.indices {
+            Task {
+                try? await Task.sleep(for: .milliseconds(400 + 600 * index))
+                onAir([
+                    MobileMeshRxRecord(
+                        data: echo,
+                        rssiDbm: -96,
+                        lqi: nil,
+                        snrCb: 40,
+                        wasBuffered: false,
+                        wasAcknowledged: false,
+                        ageSeconds: 0
+                    )
+                ])
+            }
+        }
+    }
+
+    /// `frame` as a flood repeater sends it on, or `nil` when it may not
+    /// travel further.
+    private static func forwarded(_ frame: Data) -> Data? {
+        var bytes = [UInt8](frame)
+        // The frame control field's low bit says a flood-hops byte follows;
+        // its high nibble is the hops left and its low the hops spent.
+        guard bytes.count > 1, bytes[0] & 0x01 != 0 else { return nil }
+        let remaining = bytes[1] >> 4
+        let spent = bytes[1] & 0x0F
+        guard remaining > 0, spent < 0x0F else { return nil }
+        bytes[1] = ((remaining - 1) << 4) | (spent + 1)
+        return Data(bytes)
     }
 
     /// Drain one staged peer: complete its transmissions, feed them to the

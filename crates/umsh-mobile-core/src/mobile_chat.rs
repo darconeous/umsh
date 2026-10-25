@@ -11,7 +11,7 @@
 use umsh_core::{ChannelTag, NodeHint, PublicKey};
 use umsh_text::chat::{
     ArchiveLookup, Change, ChannelRegistry, ChatComposeError, ChatFacade, ChatOutput, Delivery,
-    Drain, Mutation, Outbound, PendingBatch, Seeds, SenderResolution,
+    Drain, Mutation, Outbound, PendingBatch, Repeats, Seeds, SenderResolution,
 };
 use umsh_text::engine::sequence::MessageHandle;
 use umsh_text::engine::{
@@ -234,6 +234,20 @@ pub struct MobileChatDeliveryRecord {
     pub via_flood: bool,
 }
 
+/// The repeaters overheard carrying one fragment of a message of ours, as
+/// tallied so far. Each record holds the whole tally, so a later one
+/// supersedes an earlier one for the same fragment.
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct MobileChatRepeatRecord {
+    pub session_id: u64,
+    pub handle: u32,
+    pub fragment_index: Option<u8>,
+    /// Repeaters the forwards named, each once, in the order first heard.
+    pub repeaters: Vec<crate::RouterHintRecord>,
+    /// Forwards that named no repeater, each taken for a repeater of its own.
+    pub anonymous_repeats: u16,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
 pub struct MobileChatArchiveLookupRecord {
     pub request_id: u32,
@@ -282,6 +296,7 @@ pub(crate) struct ChatDrain {
     pub outbound: Outbound,
     pub mutations: Vec<MobileChatMutationRecord>,
     pub deliveries: Vec<MobileChatDeliveryRecord>,
+    pub repeats: Vec<MobileChatRepeatRecord>,
     pub lookups: Vec<MobileChatArchiveLookupRecord>,
     pub resolutions: Vec<MobileChatSenderResolutionRecord>,
     pub diagnostics: Vec<String>,
@@ -637,6 +652,7 @@ fn drain_records(drain: Drain) -> ChatDrain {
         outbound: drain.outbound,
         mutations: Vec::new(),
         deliveries: Vec::new(),
+        repeats: Vec::new(),
         lookups: Vec::new(),
         resolutions: Vec::new(),
         diagnostics: Vec::new(),
@@ -652,6 +668,9 @@ fn drain_records(drain: Drain) -> ChatDrain {
                 records
                     .deliveries
                     .push(delivery_record(session_id, &delivery));
+            }
+            ChatOutput::Repeats(repeats) => {
+                records.repeats.push(repeat_record(session_id, &repeats));
             }
             ChatOutput::Lookup(lookup) => {
                 if let Some(record) = lookup_record(&lookup) {
@@ -683,6 +702,23 @@ fn delivery_record(session_id: u64, delivery: &Delivery) -> MobileChatDeliveryRe
             DeliveryState::Failed => MobileChatDeliveryState::Failed,
         },
         via_flood: delivery.via_flood,
+    }
+}
+
+fn repeat_record(session_id: u64, repeats: &Repeats) -> MobileChatRepeatRecord {
+    MobileChatRepeatRecord {
+        session_id,
+        handle: repeats.handle.0,
+        fragment_index: repeats.fragment,
+        repeaters: repeats
+            .repeaters
+            .iter()
+            .map(|hint| crate::RouterHintRecord {
+                bytes: hint.0.to_vec(),
+                text: hint.to_string(),
+            })
+            .collect(),
+        anonymous_repeats: repeats.anonymous,
     }
 }
 

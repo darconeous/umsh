@@ -209,14 +209,71 @@ struct PersistenceSmokeTest {
         _ = try SQLiteApplicationStore(path: historicalURL.path)
 
         try await checkReplies(store)
+        try await checkRepeats(store)
 
-        print("SQLite tier, delete/demote, retention, migration, upgrade, and reply checks passed")
+        print("SQLite tier, delete/demote, retention, migration, upgrade, reply, and repeat checks passed")
 
         // Seeding tens of thousands of rows takes long enough that the ordinary
         // smoke run should not pay for it.
         if ProcessInfo.processInfo.environment["UMSH_CHAT_BENCH"] == "1" {
             try await runChatScaleBenchmark()
         }
+    }
+
+    /// The repeaters heard carrying a message fold across its fragments and
+    /// across each fragment's transmissions: named ones merged, anonymous
+    /// ones counted as the most any fragment heard.
+    private static func checkRepeats(_ store: SQLiteApplicationStore) async throws {
+        let peer = "repeat-peer"
+        _ = try await store.applyChatMutations(ownerIdentityID: "alice", mutations: [
+            MobileChatMutationRecord(
+                sessionId: 300, handle: 1, revision: 0, kind: .insert,
+                conversationAddress: peer, senderAddress: nil, senderHint: nil,
+                direction: .outbound, messageType: 0, wireId: 1, epoch: 0,
+                clientToken: nil, senderHandle: nil, regardingHandle: nil,
+                regardingWireId: nil, regardingDirection: nil,
+                regardingSenderHint: nil, backgroundColor: nil, textColor: nil,
+                originalHandle: nil, originalWireId: nil, originalDirection: nil,
+                originalSenderHint: nil, body: "Anyone on the ridge?", complete: true,
+                presentFragments: 2, fragmentCount: 2, finalized: true, presence: .present,
+                receivedLate: false, notify: false, rx: nil
+            ),
+        ])
+        func stored() async throws -> StoredChatMessage {
+            let page = try await store.chatMessagePage(
+                ownerIdentityID: "alice", conversationAddress: peer, newest: 10
+            )
+            return page.messages[0]
+        }
+        let unsent = try await stored()
+        precondition(unsent.repeats == nil, "nothing sent, so no repeats yet")
+
+        try await store.applyChatDeliveries(ownerIdentityID: "alice", deliveries: [
+            .init(sessionId: 300, handle: 1, fragmentIndex: 0, state: .sent, viaFlood: false),
+        ])
+        let sent = try await stored()
+        precondition(sent.deliveryState == "sent")
+        precondition(sent.repeats?.count == 0, "sending stamps the message's progress")
+
+        let ridge = RouterHintRecord(bytes: Data([0x01, 0x02]), text: "ridge")
+        let butte = RouterHintRecord(bytes: Data([0x03, 0x04]), text: "butte")
+        let peak = RouterHintRecord(bytes: Data([0x05, 0x06]), text: "peak")
+        try await store.applyChatRepeats(ownerIdentityID: "alice", repeats: [
+            .init(sessionId: 300, handle: 1, fragmentIndex: 0, repeaters: [ridge],
+                  anonymousRepeats: 1),
+            .init(sessionId: 300, handle: 1, fragmentIndex: 1, repeaters: [ridge, butte],
+                  anonymousRepeats: 0),
+            // A resend of the first fragment tallies afresh.
+            .init(sessionId: 300, handle: 1, fragmentIndex: 0, repeaters: [peak],
+                  anonymousRepeats: 0),
+        ])
+        let repeats = try await stored().repeats
+        precondition(repeats?.repeaters.first == Data([0x01, 0x02]))
+        precondition(Set(repeats?.repeaters ?? []) == [
+            Data([0x01, 0x02]), Data([0x03, 0x04]), Data([0x05, 0x06]),
+        ])
+        precondition(repeats?.anonymous == 1)
+        precondition(repeats?.count == 4)
     }
 
     /// A reply quotes its original as that reads now: found by live handle or

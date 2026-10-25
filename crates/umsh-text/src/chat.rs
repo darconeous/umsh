@@ -25,7 +25,7 @@ use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::string::String;
 use alloc::vec::Vec;
 
-use umsh_core::{ChannelKey, ChannelTag, NodeHint, PublicKey};
+use umsh_core::{ChannelKey, ChannelTag, NodeHint, PublicKey, RouterHint};
 
 use crate::engine::sequence::MessageHandle;
 use crate::engine::{
@@ -349,6 +349,17 @@ pub struct Delivery {
     pub via_flood: bool,
 }
 
+/// The repeaters overheard carrying one of our frames, as tallied so far.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Repeats {
+    pub handle: MessageHandle,
+    pub fragment: Option<u8>,
+    /// Repeaters the forwards named, each once, in the order first heard.
+    pub repeaters: Vec<RouterHint>,
+    /// Forwards that named no repeater, each taken for a repeater of its own.
+    pub anonymous: u16,
+}
+
 /// Look up resendable material; answer with [`ChatFacade::archive_result`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ArchiveLookup {
@@ -392,6 +403,8 @@ pub struct SenderResolution {
 pub enum ChatOutput {
     Mutation(Mutation),
     Delivery(Delivery),
+    /// The whole tally so far, each time it grows.
+    Repeats(Repeats),
     Lookup(ArchiveLookup),
     SenderResolved(SenderResolution),
     StoreArchive(ArchiveWrite),
@@ -837,6 +850,29 @@ impl<P: TextProfile + Clone, const SLOTS: usize, const PAGES: usize> ChatFacade<
         };
         self.engine.transmit_update(transmission_id, state, now_ms);
         self.stage();
+    }
+
+    /// The message and fragment a frame released in `session_id` carries,
+    /// while the engine still tracks it: a frame that will never be
+    /// acknowledged is let go once it is sent.
+    pub fn in_flight_frame(
+        &self,
+        session_id: u64,
+        transmission_id: u32,
+    ) -> Option<(MessageHandle, Option<u8>)> {
+        if session_id != self.session_id {
+            return None;
+        }
+        self.engine.in_flight_frame(transmission_id)
+    }
+
+    /// Report the repeaters overheard carrying a frame released in
+    /// `session_id`. Reports for an earlier session are ignored.
+    pub fn transmit_repeats(&mut self, session_id: u64, repeats: Repeats) {
+        if session_id != self.session_id {
+            return;
+        }
+        self.staged.push(ChatOutput::Repeats(repeats));
     }
 
     /// Everything produced since the last drain, in order.

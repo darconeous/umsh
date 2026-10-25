@@ -55,7 +55,7 @@ use crate::mobile_chat::{
     ChatDrain, ComposeFailure, MobileChatArchiveLookupRecord, MobileChatArchiveResultKind,
     MobileChatCheckpointRecord, MobileChatComposeBatchRecord, MobileChatDeliveryRecord,
     MobileChatDirection, MobileChatMutationKind, MobileChatMutationRecord, MobileChatOriginalRef,
-    MobileChatPresence, MobileChatRegardingRef, MobileChatRxMetadataRecord,
+    MobileChatPresence, MobileChatRegardingRef, MobileChatRepeatRecord, MobileChatRxMetadataRecord,
     MobileChatSenderResolutionRecord, MobileChatState,
 };
 use crate::ulcp::{MobileAnnouncementRecord, UlcpPropertyFrameRecord, UlcpSyncRecord};
@@ -685,6 +685,9 @@ pub struct MobileMeshSessionUpdateRecord {
     pub chat_batch_id: Option<u64>,
     pub chat_mutations: Vec<MobileChatMutationRecord>,
     pub chat_deliveries: Vec<MobileChatDeliveryRecord>,
+    /// Repeaters overheard carrying our messages, a whole tally per
+    /// fragment each time it grows.
+    pub chat_repeats: Vec<MobileChatRepeatRecord>,
     pub chat_archive_lookups: Vec<MobileChatArchiveLookupRecord>,
     /// Channel members whose claimed hint has resolved to a full address. The
     /// platform should upgrade rows it stored anonymously under that hint.
@@ -981,6 +984,7 @@ enum MobileChatWorkerEvent {
     Mutation(MobileChatMutationRecord),
     SenderResolution(MobileChatSenderResolutionRecord),
     Delivery(MobileChatDeliveryRecord),
+    Repeats(MobileChatRepeatRecord),
     ArchiveLookup(MobileChatArchiveLookupRecord),
     Diagnostic(String),
 }
@@ -2546,6 +2550,7 @@ impl MobileMeshSession {
             .and_then(|receiver| receiver.try_iter().last());
         let mut chat_mutations = Vec::new();
         let mut chat_deliveries = Vec::new();
+        let mut chat_repeats = Vec::new();
         let mut chat_archive_lookups = Vec::new();
         let mut chat_sender_resolutions = Vec::new();
         let mut chat_diagnostics = Vec::new();
@@ -2569,6 +2574,7 @@ impl MobileMeshSession {
                     match event {
                         MobileChatWorkerEvent::Mutation(record) => chat_mutations.push(record),
                         MobileChatWorkerEvent::Delivery(record) => chat_deliveries.push(record),
+                        MobileChatWorkerEvent::Repeats(record) => chat_repeats.push(record),
                         MobileChatWorkerEvent::ArchiveLookup(record) => {
                             chat_archive_lookups.push(record);
                         }
@@ -2589,6 +2595,7 @@ impl MobileMeshSession {
             chat_batch_id,
             chat_mutations,
             chat_deliveries,
+            chat_repeats,
             chat_archive_lookups,
             chat_sender_resolutions,
             chat_diagnostics,
@@ -4726,6 +4733,9 @@ fn publish_chat_drain(
     }
     for delivery in drain.deliveries {
         let _ = events.send(MobileChatWorkerEvent::Delivery(delivery));
+    }
+    for repeats in drain.repeats {
+        let _ = events.send(MobileChatWorkerEvent::Repeats(repeats));
     }
     for lookup in drain.lookups {
         let _ = events.send(MobileChatWorkerEvent::ArchiveLookup(lookup));
@@ -8363,6 +8373,7 @@ mod tests {
     fn assert_batch_id_matches_events(update: &MobileMeshSessionUpdateRecord) {
         let has_events = !update.chat_mutations.is_empty()
             || !update.chat_deliveries.is_empty()
+            || !update.chat_repeats.is_empty()
             || !update.chat_archive_lookups.is_empty()
             || !update.chat_sender_resolutions.is_empty()
             || !update.chat_diagnostics.is_empty();
@@ -8372,6 +8383,78 @@ mod tests {
             "batch id {:?} disagrees with the batch's contents",
             update.chat_batch_id
         );
+    }
+
+    /// A repeater overheard carrying a channel message is reported against
+    /// the message, though no acknowledgment is ever coming for it.
+    #[tokio::test]
+    async fn an_overheard_forward_of_a_channel_message_is_reported() {
+        let directory = tempfile::tempdir().unwrap();
+        let alice_identity = identity(73);
+        let alice = MobileMeshSession::new(
+            alice_identity,
+            MobileCounterStore::new(directory.path().join("echo-alice").display().to_string())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+        let key = vec![0x9Bu8; 32];
+        let conversation = crate::channel_conversation_address(key.clone()).unwrap();
+        alice
+            .register_channels(channel_registrations(vec![key]))
+            .await
+            .unwrap();
+        let batch = alice
+            .compose_text(conversation, 1, "is anyone there".into())
+            .await
+            .unwrap();
+        let handle = batch.mutations[0].handle;
+        alice.commit_chat_batch(batch.batch_id).await.unwrap();
+
+        let mut echoed = false;
+        let mut repeats = None;
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while repeats.is_none() {
+            let update = alice.poll_update();
+            assert_batch_id_matches_events(&update);
+            for frame in update.outbound_frames {
+                alice.complete_outbound_frame(frame.id, true).unwrap();
+                if echoed {
+                    continue;
+                }
+                echoed = true;
+                // What a repeater that adds no trace sends on: the same
+                // frame with a flood hop spent.
+                let mut forwarded = frame.data;
+                let header = umsh_core::PacketHeader::parse(&forwarded).unwrap();
+                let hops = header.flood_hops.expect("a channel message floods");
+                forwarded[1] = hops.decremented().0;
+                alice
+                    .receive(MobileMeshRxRecord {
+                        data: forwarded,
+                        rssi_dbm: Some(-70),
+                        lqi: None,
+                        snr_cb: Some(60),
+                        was_buffered: false,
+                        was_acknowledged: false,
+                        age_seconds: 0,
+                    })
+                    .unwrap();
+            }
+            repeats = update
+                .chat_repeats
+                .iter()
+                .find(|record| record.handle == handle)
+                .cloned();
+            if let Some(batch_id) = update.chat_batch_id {
+                alice.acknowledge_chat_batch(batch_id).unwrap();
+            }
+            assert!(Instant::now() < deadline, "no repeat was reported");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let repeats = repeats.unwrap();
+        assert!(repeats.repeaters.is_empty());
+        assert_eq!(repeats.anonymous_repeats, 1);
     }
 
     /// A fragmented group message must arrive whole.

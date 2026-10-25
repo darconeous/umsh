@@ -347,19 +347,25 @@ struct ChatMessageBubble: View, @MainActor Equatable {
                                     : ReactionBadgeView.reach(for: message.reactions)
                             )
                     }
-                    if let caption {
-                        Text(caption)
-                            .font(.caption2)
-                            .fontWeight(isFailed ? .semibold : .regular)
-                            .foregroundStyle(isFailed ? AnyShapeStyle(.red) : AnyShapeStyle(.secondary))
-                            .padding(.horizontal, 4)
-                            // Sent becoming Delivered crossfades the words in
-                            // place. Only the text: the caption's own arrival
-                            // and departure change the row's height, and this
-                            // row sits at the live edge where the scroll is
-                            // being held.
-                            .contentTransition(.opacity)
-                            .animation(UMSHAnimation.accessory, value: caption)
+                    // Redrawn once more when a direct message's repeats have
+                    // gone quiet, to settle into waiting for its ack.
+                    if caption(at: .now) != nil {
+                        TimelineView(.explicit(captionSettlesAt.map { [$0] } ?? [])) { _ in
+                            if let caption = caption(at: .now) {
+                                Text(caption)
+                                    .font(.caption2)
+                                    .fontWeight(isFailed ? .semibold : .regular)
+                                    .foregroundStyle(isFailed ? AnyShapeStyle(.red) : AnyShapeStyle(.secondary))
+                                    .padding(.horizontal, 4)
+                                    // Sent becoming Delivered crossfades the words
+                                    // in place. Only the text: the caption's own
+                                    // arrival and departure change the row's
+                                    // height, and this row sits at the live edge
+                                    // where the scroll is being held.
+                                    .contentTransition(.opacity)
+                                    .animation(UMSHAnimation.accessory, value: caption)
+                            }
+                        }
                     }
                 }
                 if !message.isOutbound { Spacer(minLength: Self.oppositeMargin) }
@@ -620,15 +626,26 @@ struct ChatMessageBubble: View, @MainActor Equatable {
             )
     }
 
-    private var caption: String? {
+    private func caption(at now: Date) -> String? {
         var parts: [String] = []
         if message.isEdited { parts.append("Edited") }
         if message.isReceivedLate { parts.append("Received late") }
-        if message.isOutbound, let label = deliveryLabel { parts.append(label) }
+        if message.isOutbound, let label = deliveryLabel(at: now) { parts.append(label) }
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 
-    private var deliveryLabel: String? {
+    /// When a direct message still waiting on its ack stops naming its
+    /// repeaters, or `nil` when its caption is not waiting to change on its
+    /// own.
+    private var captionSettlesAt: Date? {
+        guard message.isOutbound, expectsAcknowledgment,
+              message.deliveryState?.lowercased() == "sent",
+              let progressAt = message.repeats?.progressAt
+        else { return nil }
+        return progressAt.addingTimeInterval(RepeatCaption.settle)
+    }
+
+    private func deliveryLabel(at now: Date) -> String? {
         guard let state = message.deliveryState else { return nil }
         switch state.lowercased() {
         case "failed": return "Not Delivered"
@@ -641,12 +658,42 @@ struct ChatMessageBubble: View, @MainActor Equatable {
             if message.isDeliveredFlooded { return "Delivered · Flooded" }
             return isMostRecentOutbound ? "Delivered" : nil
         case "sent":
+            let repeats = RepeatCaption.text(
+                lead: message.repeats?.lead,
+                count: message.repeats?.count ?? 0
+            )
             // Still waiting on the ack: not settled, so every row says so,
-            // just as one says "Sending…". Only where no ack is coming is
+            // just as one says "Sending…"—first who carried it, then, once
+            // that has gone quiet, the wait. Only where no ack is coming is
             // "Sent" the last word, and then it is as quiet as Delivered.
-            if expectsAcknowledgment { return "Confirming Delivery…" }
-            return isMostRecentOutbound ? "Sent" : nil
+            if expectsAcknowledgment {
+                guard let settlesAt = captionSettlesAt, now < settlesAt else {
+                    return "Confirming Delivery…"
+                }
+                return repeats
+            }
+            return isMostRecentOutbound ? repeats : nil
         default: return "Sending…"
+        }
+    }
+}
+
+/// How an outbound caption names the repeaters overheard carrying its
+/// message.
+enum RepeatCaption {
+    /// How long after its delivery last moved a direct message goes on
+    /// naming its repeaters before it settles into waiting for its ack.
+    static let settle: TimeInterval = 2
+
+    static func text(lead: String?, count: Int) -> String {
+        guard count > 0 else { return "Sent" }
+        guard let lead else {
+            return count == 1 ? "Sent via a repeater" : "Sent via \(count) repeaters"
+        }
+        switch count - 1 {
+        case 0: return "Sent via \(lead)"
+        case 1: return "Sent via \(lead) and 1 other"
+        case let others: return "Sent via \(lead) and \(others) others"
         }
     }
 }

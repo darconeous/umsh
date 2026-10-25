@@ -350,6 +350,18 @@ enum ConversationListItem: Identifiable, Hashable, Sendable {
     }
 }
 
+/// The repeaters overheard carrying an outbound message, as its caption
+/// names them.
+struct MessageRepeats: Hashable, Sendable {
+    /// What to call the first repeater that named itself, or `nil` when
+    /// none has.
+    let lead: String?
+    /// Repeaters heard in all, named or not.
+    let count: Int
+    /// When the message's delivery last moved.
+    let progressAt: Date
+}
+
 struct ChatMessageSummary: Identifiable, Hashable, Sendable {
     let id: String
     let body: String
@@ -408,6 +420,8 @@ struct ChatMessageSummary: Identifiable, Hashable, Sendable {
     var reactions: [MessageReaction] = []
     /// What this message replies to, when it is a reply.
     var reply: MessageQuote? = nil
+    /// The repeaters heard carrying an outbound message, once it is sent.
+    var repeats: MessageRepeats? = nil
 
     /// The reaction this user has on this message, if any. What the picker
     /// shows as chosen, and what tapping the same emoji again withdraws.

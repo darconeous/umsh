@@ -5,12 +5,12 @@ use alloc::collections::{BTreeSet, VecDeque};
 use alloc::vec::Vec;
 
 use umsh_core::{ChannelKey, ChannelTag, PayloadType, PublicKey};
-use umsh_mac::{SendOptions, SendReceipt};
+use umsh_mac::{ECHO_WATCH_MS, SendOptions, SendReceipt};
 #[cfg(feature = "software-crypto")]
 use umsh_node::{BoundChannel, Transport};
 use umsh_node::{LocalNode, MacBackend, SendProgressTicket};
 
-use crate::chat::{ChannelRegistry, ChatFacade, Outbound, TransmitUpdate};
+use crate::chat::{ChannelRegistry, ChatFacade, Outbound, Repeats, TransmitUpdate};
 use crate::engine::sequence::MessageHandle;
 use crate::engine::{Destination, Transmission};
 use crate::node_adapter::WellKnownChannels;
@@ -95,6 +95,9 @@ pub struct TransmitQueue {
     window: usize,
     pending: VecDeque<Queued>,
     in_flight: Vec<InFlight>,
+    /// Sent frames that will never be acknowledged, still listened to for
+    /// repeaters carrying them. They take no room in the window.
+    watching: Vec<Watching>,
     /// Peers that have acknowledged a frame since the last one failed:
     /// they know our key.
     pipeline_ready: BTreeSet<[u8; 32]>,
@@ -123,6 +126,49 @@ struct InFlight {
     /// messages hanging on "Sending" for no reason.
     queued_at_ms: u64,
     stall_reported: bool,
+    /// Whether repeaters heard carrying this frame are worth reporting:
+    /// it carries a message of ours, to a peer or a whole channel.
+    reports_repeats: bool,
+    /// The message and fragment the frame carries, taken when it is sent:
+    /// the engine lets go of a frame it expects no acknowledgment for.
+    frame: Option<(MessageHandle, Option<u8>)>,
+    /// The tally revision last reported.
+    repeats_reported: u32,
+}
+
+struct Watching {
+    session_id: u64,
+    frame: (MessageHandle, Option<u8>),
+    ticket: SendProgressTicket,
+    repeats_reported: u32,
+    until_ms: u64,
+}
+
+/// Report `ticket`'s repeaters for `frame` if they changed since
+/// `reported`.
+fn report_repeats<P, const SLOTS: usize, const PAGES: usize>(
+    chat: &mut ChatFacade<P, SLOTS, PAGES>,
+    session_id: u64,
+    frame: (MessageHandle, Option<u8>),
+    ticket: &SendProgressTicket,
+    reported: &mut u32,
+) where
+    P: TextProfile + Clone,
+{
+    let tally = ticket.repeats();
+    if tally.revision == *reported {
+        return;
+    }
+    *reported = tally.revision;
+    chat.transmit_repeats(
+        session_id,
+        Repeats {
+            handle: frame.0,
+            fragment: frame.1,
+            repeaters: tally.repeaters.iter().copied().collect(),
+            anonymous: tally.anonymous,
+        },
+    );
 }
 
 impl TransmitQueue {
@@ -133,6 +179,7 @@ impl TransmitQueue {
             window: window.max(1),
             pending: VecDeque::new(),
             in_flight: Vec::new(),
+            watching: Vec::new(),
             pipeline_ready: BTreeSet::new(),
         }
     }
@@ -290,21 +337,32 @@ impl TransmitQueue {
                 return Departed::Busy;
             }
         };
+        let transmission = &departure.queued.transmission;
+        // A repair goes to one member, and the multicast it repairs has
+        // already had its repeaters counted.
+        let reports_repeats = transmission.message.is_some()
+            && matches!(
+                transmission.destination,
+                Destination::Peer(_) | Destination::Channel(_)
+            );
         self.in_flight.push(InFlight {
             session_id: departure.queued.session_id,
-            transmission_id: departure.queued.transmission.transmission_id,
+            transmission_id: transmission.transmission_id,
             gate_peer: departure.gate_peer,
             ticket,
             sent_reported: false,
             non_ack: departure.gate_peer.is_none(),
             queued_at_ms: now_ms,
             stall_reported: false,
+            reports_repeats,
+            frame: None,
+            repeats_reported: 0,
         });
         Departed::Sent
     }
 
-    /// Report what the tickets say to the engine: transmitted, acknowledged,
-    /// or failed. Returns the frames newly found overdue.
+    /// Report what the tickets say to the engine: transmitted, repeated,
+    /// acknowledged, or failed. Returns the frames newly found overdue.
     pub fn service<P, const SLOTS: usize, const PAGES: usize>(
         &mut self,
         chat: &mut ChatFacade<P, SLOTS, PAGES>,
@@ -337,6 +395,9 @@ impl TransmitQueue {
             }
             if entry.ticket.was_transmitted() && !entry.sent_reported {
                 entry.sent_reported = true;
+                if entry.reports_repeats {
+                    entry.frame = chat.in_flight_frame(entry.session_id, entry.transmission_id);
+                }
                 chat.transmit_update(
                     entry.session_id,
                     entry.transmission_id,
@@ -344,11 +405,30 @@ impl TransmitQueue {
                     now_ms,
                 );
             }
+            if let Some(frame) = entry.frame {
+                report_repeats(
+                    chat,
+                    entry.session_id,
+                    frame,
+                    &entry.ticket,
+                    &mut entry.repeats_reported,
+                );
+            }
             let entry = &self.in_flight[index];
             if entry.non_ack && entry.sent_reported {
-                // Nothing further can happen to this one; retiring it here is
-                // what keeps channel sends from accumulating in flight.
-                self.in_flight.swap_remove(index);
+                // Nothing further can happen to this one but repeats, which
+                // it is listened to for outside the window; retiring it here
+                // is what keeps channel sends from accumulating in flight.
+                let entry = self.in_flight.swap_remove(index);
+                if let Some(frame) = entry.frame {
+                    self.watching.push(Watching {
+                        session_id: entry.session_id,
+                        frame,
+                        ticket: entry.ticket,
+                        repeats_reported: entry.repeats_reported,
+                        until_ms: now_ms.saturating_add(ECHO_WATCH_MS),
+                    });
+                }
             } else if entry.ticket.was_acked() {
                 if let Some(peer) = entry.gate_peer {
                     self.pipeline_ready.insert(peer.0);
@@ -379,6 +459,16 @@ impl TransmitQueue {
                 index += 1;
             }
         }
+        self.watching.retain_mut(|watching| {
+            report_repeats(
+                chat,
+                watching.session_id,
+                watching.frame,
+                &watching.ticket,
+                &mut watching.repeats_reported,
+            );
+            now_ms < watching.until_ms
+        });
         stalls
     }
 
@@ -401,6 +491,7 @@ impl TransmitQueue {
                 now_ms,
             );
         }
+        self.watching.clear();
         let mut receipts = Vec::new();
         for entry in self.in_flight.drain(..) {
             if let Some(receipt) = entry.ticket.receipt() {

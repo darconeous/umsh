@@ -352,6 +352,9 @@ struct StoredChatMessage: Equatable, Sendable, Identifiable {
     /// What it replies to, as it reads now: read with the page, so an edit
     /// or a deletion of the original shows in every quote of it.
     var quote: StoredMessageQuote?
+    /// The repeaters heard carrying an outbound message, once any of it has
+    /// been sent.
+    var repeats: StoredMessageRepeats?
 
     var isGapPlaceholder: Bool { presence == 1 }
     var isUnavailable: Bool { presence == 2 }
@@ -394,6 +397,20 @@ struct StoredChatMessagePage: Equatable, Sendable {
     let hasNewer: Bool
 
     static let empty = StoredChatMessagePage(messages: [], hasOlder: false, hasNewer: false)
+}
+
+/// The repeaters overheard carrying an outbound message.
+struct StoredMessageRepeats: Hashable, Sendable {
+    /// Two-byte hints of the repeaters that named themselves, first heard
+    /// first.
+    let repeaters: [Data]
+    /// Repeaters heard that did not.
+    let anonymous: Int
+    /// When the message's delivery last moved: its first frame going out, or
+    /// a repeater being heard.
+    let progressAt: Date
+
+    var count: Int { repeaters.count + anonymous }
 }
 
 /// A stored message's durable identity.
@@ -545,7 +562,7 @@ actor SQLiteApplicationStore {
     /// store refuses to open any database above this constant, so a stale value
     /// lets the new schema apply once and then locks the user out of their own
     /// data on the next launch. ``migrate(_:)`` checks the two agree.
-    static let currentSchemaVersion: Int32 = 26
+    static let currentSchemaVersion: Int32 = 27
 
     nonisolated(unsafe) private let database: OpaquePointer
 
@@ -2665,6 +2682,12 @@ actor SQLiteApplicationStore {
         let message = try prepare(
             """
             UPDATE chat_message SET
+                -- Restamped while nothing has been sent, so it holds the
+                -- moment the first frame was.
+                delivery_progress_at_ms = CASE
+                    WHEN chat_message.delivery_state = 'pending' THEN ?4
+                    ELSE chat_message.delivery_progress_at_ms
+                END,
                 delivered_flooded = EXISTS (
                     SELECT 1 FROM chat_delivery_fragment f
                     WHERE f.owner_identity_id = chat_message.owner_identity_id
@@ -2708,14 +2731,115 @@ actor SQLiteApplicationStore {
                 ) THEN 'sent'
                 ELSE 'pending'
             END
-            WHERE owner_identity_id = ? AND delivery_session_id = ? AND delivery_handle = ?
+            WHERE owner_identity_id = ?1 AND delivery_session_id = ?2 AND delivery_handle = ?3
             """
         )
         defer { sqlite3_finalize(message) }
         try bind(ownerIdentityID, to: message, at: 1)
         try bind(deliverySessionID, to: message, at: 2)
         try check(sqlite3_bind_int64(message, 3, Int64(deliveryHandle)))
+        try check(sqlite3_bind_int64(message, 4, Self.nowMilliseconds()))
         try stepDone(message)
+    }
+
+    /// Record the repeaters overheard carrying our frames.
+    ///
+    /// Each record is one transmission's whole tally, and a fragment sent
+    /// again starts a fresh one, so a fragment keeps the union of the
+    /// repeaters every transmission of it named, and the most any of them
+    /// heard anonymously. A message's delivery is stamped as having moved
+    /// whenever one of its fragments gains a repeater.
+    func applyChatRepeats(
+        ownerIdentityID: String,
+        repeats: [MobileChatRepeatRecord]
+    ) throws {
+        guard !repeats.isEmpty else { return }
+        try transaction {
+            for record in repeats {
+                let sessionID = String(record.sessionId)
+                let fragmentIndex = record.fragmentIndex.map(Int32.init) ?? -1
+                let existing = try prepare(
+                    """
+                    SELECT repeaters, anonymous_repeats FROM chat_delivery_fragment
+                    WHERE owner_identity_id = ? AND session_id = ? AND handle = ?
+                        AND fragment_index = ?
+                    """
+                )
+                defer { sqlite3_finalize(existing) }
+                try bind(ownerIdentityID, to: existing, at: 1)
+                try bind(sessionID, to: existing, at: 2)
+                try check(sqlite3_bind_int64(existing, 3, Int64(record.handle)))
+                try check(sqlite3_bind_int(existing, 4, fragmentIndex))
+                var hints: [Data] = []
+                var anonymous: Int64 = 0
+                if sqlite3_step(existing) == SQLITE_ROW {
+                    hints = Self.repeaterHints(Self.optionalDataColumn(existing, at: 0))
+                    anonymous = sqlite3_column_int64(existing, 1)
+                }
+                let before = (hints, anonymous)
+                for repeater in record.repeaters where repeater.bytes.count == 2 {
+                    let hint = Data(repeater.bytes)
+                    if !hints.contains(hint) { hints.append(hint) }
+                }
+                anonymous = max(anonymous, Int64(record.anonymousRepeats))
+                guard before != (hints, anonymous) else { continue }
+
+                // A repeat is heard only of a frame that went out, so a
+                // fragment with no delivery record yet is a sent one.
+                let upsert = try prepare(
+                    """
+                    INSERT INTO chat_delivery_fragment (
+                        owner_identity_id, session_id, handle, fragment_index, state,
+                        repeaters, anonymous_repeats
+                    ) VALUES (?, ?, ?, ?, 'sent', ?, ?)
+                    ON CONFLICT(owner_identity_id, session_id, handle, fragment_index)
+                    DO UPDATE SET
+                        repeaters = excluded.repeaters,
+                        anonymous_repeats = excluded.anonymous_repeats
+                    """
+                )
+                defer { sqlite3_finalize(upsert) }
+                try bind(ownerIdentityID, to: upsert, at: 1)
+                try bind(sessionID, to: upsert, at: 2)
+                try check(sqlite3_bind_int64(upsert, 3, Int64(record.handle)))
+                try check(sqlite3_bind_int(upsert, 4, fragmentIndex))
+                try bind(hints.reduce(Data(), +), to: upsert, at: 5)
+                try check(sqlite3_bind_int64(upsert, 6, anonymous))
+                try stepDone(upsert)
+
+                let progress = try prepare(
+                    """
+                    UPDATE chat_message SET delivery_progress_at_ms = ?
+                    WHERE owner_identity_id = ? AND delivery_session_id = ? AND delivery_handle = ?
+                    """
+                )
+                defer { sqlite3_finalize(progress) }
+                try check(sqlite3_bind_int64(progress, 1, Self.nowMilliseconds()))
+                try bind(ownerIdentityID, to: progress, at: 2)
+                try bind(sessionID, to: progress, at: 3)
+                try check(sqlite3_bind_int64(progress, 4, Int64(record.handle)))
+                try stepDone(progress)
+            }
+        }
+    }
+
+    /// The bytes SQLite's `hex()` spelled out.
+    private static func hexData(_ text: Substring) -> Data {
+        var data = Data()
+        var index = text.startIndex
+        while let next = text.index(index, offsetBy: 2, limitedBy: text.endIndex), index < next {
+            guard let byte = UInt8(text[index..<next], radix: 16) else { return data }
+            data.append(byte)
+            index = next
+        }
+        return data
+    }
+
+    /// Split a stored run of two-byte repeater hints.
+    private static func repeaterHints(_ blob: Data?) -> [Data] {
+        guard let blob else { return [] }
+        let bytes = [UInt8](blob)
+        return stride(from: 0, to: bytes.count - 1, by: 2).map { Data(bytes[$0..<$0 + 2]) }
     }
 
     /// The delivery state of whichever row is currently reporting this
@@ -2922,7 +3046,18 @@ actor SQLiteApplicationStore {
         rx_rssi_dbm, rx_snr_cb, rx_lqi, rx_hop_count,
         rx_route_hints, rx_source_authenticated, rowid, delivered_flooded,
         regarding_handle IS NOT NULL OR regarding_wire_id IS NOT NULL,
-        regarding_target_session_id, regarding_target_handle
+        regarding_target_session_id, regarding_target_handle,
+        delivery_progress_at_ms,
+        (SELECT group_concat(hex(f.repeaters), ',') FROM chat_delivery_fragment f
+            WHERE f.owner_identity_id = chat_message.owner_identity_id
+                AND f.session_id = chat_message.delivery_session_id
+                AND f.handle = chat_message.delivery_handle
+                AND f.repeaters IS NOT NULL
+            ORDER BY f.fragment_index),
+        (SELECT MAX(f.anonymous_repeats) FROM chat_delivery_fragment f
+            WHERE f.owner_identity_id = chat_message.owner_identity_id
+                AND f.session_id = chat_message.delivery_session_id
+                AND f.handle = chat_message.delivery_handle)
         """
 
     /// How many messages a transcript read will accept in one page, whatever
@@ -3632,7 +3767,30 @@ actor SQLiteApplicationStore {
                     sessionID: session,
                     handle: UInt32(truncatingIfNeeded: sqlite3_column_int64(statement, 27))
                 )
+            },
+            repeats: repeats(statement, at: 28)
+        )
+    }
+
+    /// The repeaters heard carrying a message, from the progress stamp and
+    /// the per-fragment tallies `chatMessageColumns` folds in. Fragments are
+    /// each heard by much the same repeaters, so named ones are merged and
+    /// anonymous ones are counted as the most any fragment heard.
+    private static func repeats(_ statement: OpaquePointer, at offset: Int32) -> StoredMessageRepeats? {
+        guard sqlite3_column_type(statement, offset) != SQLITE_NULL else { return nil }
+        let progressAt = Date(
+            timeIntervalSince1970: Double(sqlite3_column_int64(statement, offset)) / 1_000
+        )
+        var hints: [Data] = []
+        for run in (optionalStringColumn(statement, at: offset + 1) ?? "").split(separator: ",") {
+            for hint in repeaterHints(hexData(run)) where !hints.contains(hint) {
+                hints.append(hint)
             }
+        }
+        return StoredMessageRepeats(
+            repeaters: hints,
+            anonymous: Int(sqlite3_column_int64(statement, offset + 2)),
+            progressAt: progressAt
         )
     }
 
@@ -5285,6 +5443,32 @@ actor SQLiteApplicationStore {
                         ON chat_message (owner_identity_id, conversation_address, direction, wire_id);
 
                     PRAGMA user_version = 26;
+                    """
+                )
+                try execute(database, sql: "COMMIT")
+            } catch {
+                try? execute(database, sql: "ROLLBACK")
+                throw error
+            }
+        }
+
+        if version < 27 {
+            try execute(database, sql: "BEGIN IMMEDIATE")
+            do {
+                // The repeaters overheard carrying each frame: the two-byte
+                // hints of those that named themselves, in the order first
+                // heard, and a count of those that did not. A message keeps
+                // when its delivery last moved, so the transcript can tell a
+                // send still collecting repeats from one gone quiet.
+                try execute(
+                    database,
+                    sql: """
+                    ALTER TABLE chat_delivery_fragment ADD COLUMN repeaters BLOB;
+                    ALTER TABLE chat_delivery_fragment
+                        ADD COLUMN anonymous_repeats INTEGER NOT NULL DEFAULT 0;
+                    ALTER TABLE chat_message ADD COLUMN delivery_progress_at_ms INTEGER;
+
+                    PRAGMA user_version = 27;
                     """
                 )
                 try execute(database, sql: "COMMIT")
