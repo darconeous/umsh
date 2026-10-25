@@ -7047,6 +7047,11 @@ mod firmware {
                 GNSS_TX.init([0; 16]),
             );
             spawner.spawn(gnss_task(gnss_uart, BoardGnss::new(p.P1_02, p.P1_05)).unwrap());
+
+            // The L76K's 1PPS (P1.04) is unused. The module drives it, so
+            // release it explicitly—no pull, input buffer disconnected—so
+            // its edges cannot toggle the buffer and draw current.
+            tristate_pin(Port::P1, 4);
         }
 
         #[cfg(feature = "t1000e")]
