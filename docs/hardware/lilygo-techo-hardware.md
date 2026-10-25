@@ -47,6 +47,8 @@ Known LilyGO README pin-table conflicts handled in this document:
   gate node—and hardware behavior confirms it (see the power-control
   section). The Meshtastic/MeshCore variant files call it the red LED
   channel; treat that as wrong for this pin.
+- RGB LED: the variant files' green P0.15 and red P0.13 are wrong. The
+  pins are red P1.03, green P1.01, blue P0.14—see the RGB LED section.
 - E-paper SPI MOSI: use P0.29 from firmware, not the README's conflicting display-MOSI entry.
 
 ## Reconstructed pin map
@@ -61,10 +63,10 @@ Known LilyGO README pin-table conflicts handled in this document:
 | User button | P1.10 | 42 | `PIN_BUTTON1`, `BUTTON_PIN`, `PIN_USER_BTN` | Active low. |
 | Reset button | P0.18 | 18 | `PIN_BUTTON2` in Meshtastic; reset in LilyGO docs | LilyGO describes this as reset / DFU button. Meshtastic notes the bootloader configures it as a regular GPIO. |
 | Touch button | P0.11 | 11 | `PIN_BUTTON_TOUCH`, `TP_SER_IO`, `PIN_BUTTON2` in MeshCore | Firmware-confirmed touch-button input. Polarity differs by firmware abstraction; verify behavior in the button driver before relying on edge polarity. |
-| Blue LED | P0.14 | 14 | `LED_BLUE`, `PIN_LED1` | RGB LED blue channel. Active low in firmware. |
-| Green LED | P0.15 | 15 | `LED_GREEN`, `PIN_LED2` | RGB LED green channel. Active low in firmware. |
-| Red LED | unverified | — | `LED_RED`, `PIN_LED3` in variant files point at P0.13 | P0.13 is `PWR_EN`, not an LED (confirmed: driving it low lights nothing). If a red MCU channel exists at all it may be the README's P1.03; unverified. |
-| GNSS 1PPS LED | driven by L76K | — | — | Internal blue LED on the module's 1PPS pin through 1 kΩ (schematic). A faint steady glow when "off" means the peripheral rail has not fully collapsed—see P0.13. |
+| RGB LED red | P1.03 | 35 | `RedLed_Pin` (LilyGO); variant files' `LED_RED`/`PIN_LED3` wrongly point at P0.13 | Active low. Hardware-confirmed 2026-10-20. |
+| RGB LED green | P1.01 | 33 | `GreenLed_Pin` (LilyGO); variant files' `LED_GREEN`/`PIN_LED2` wrongly point at P0.15 | Active low. Hardware-confirmed 2026-10-20. |
+| RGB LED blue | P0.14 | 14 | `BlueLed_Pin` (LilyGO), `LED_BLUE`, `PIN_LED1` | Active low. The one channel every source agrees on. |
+| GNSS 1PPS LED (LED6) | driven by L76K | — | — | Internal blue LED on the module's 1PPS output through R0 (1 kΩ). Not MCU-controllable—see the LED6 section. |
 | Charger-status LED | not MCU-controlled | — | — | Separate red LED controlled by charger circuit: on = charging, blink = battery fault/not connected, off = full. |
 
 ### LoRa / SX1262
@@ -123,7 +125,7 @@ Meshtastic includes a shutdown-specific detail: before powering off, it sets e-p
 |---|---:|---:|---|---|
 | **GPS TX → MCU RX** | **P1.09** | 41 | `GPS_RX_PIN`, `PIN_GPS_TX`, `PIN_SERIAL1_TX` | **Measured.** Data from L76K to nRF52840, despite the pin names. |
 | **GPS RX ← MCU TX** | **P1.08** | 40 | `GPS_TX_PIN`, `PIN_GPS_RX`, `PIN_SERIAL1_RX` | **Measured.** Data from nRF52840 to L76K. |
-| GPS PPS | P1.04 | 36 | `PIN_GPS_PPS` | PPS input. LilyGO table gives P1.4 / Arduino 36. Never observed to toggle; not used. |
+| GPS PPS | P1.04 | 36 | `PIN_GPS_PPS` | PPS input. LilyGO table gives P1.4 / Arduino 36. Never observed to toggle; not used. Shares the net with LED6's anode, so an MCU pull-up here lights LED6; UMSH firmware disconnects the pin, no pull. |
 | GPS wakeup / standby | P1.02 | 34 | `PIN_GPS_STANDBY`, `GPS_EN` | High wakes, low sleeps. Confirmed: the module stops transmitting within a second of the pin going low. Quectel HW design: internally pulled up—**floating means awake**, so it must be actively driven low to sleep. |
 | GPS reset | P1.05 | 37 | `PIN_GPS_REINIT`, `PIN_GPS_RESET` | Active low, held >100 ms. Quectel HW design: `RESET_N` internally pulled up to 3.3 V, "leave N/C if unused"—tri-stating releases it. Do **not** park it driven low: on USB the module stays powered regardless of the PWR pins, and a powered module held in reset is its worst state (and lights the 1PPS LED via its pull-up). |
 
@@ -229,22 +231,88 @@ The README further warns that a USB-A to USB-C cable is required for power, and 
 
 ### RGB LED pins
 
-Confirmed channels, active-low:
+One common-anode RGB LED, active-low, hardware-confirmed 2026-10-20:
 
 ```text
+Red   → P1.03 / Arduino 35
+Green → P1.01 / Arduino 33
 Blue  → P0.14 / Arduino 14
-Green → P0.15 / Arduino 15
 ```
 
-An earlier revision of this document sided with the Meshtastic/MeshCore
-variant files and called P0.13 the red channel "definitively". The
-schematic names P0.13 `PWR_EN`, and hardware agrees: driving it low
-lights no LED and gates the peripheral rail (see the power-control
-section). This is a case where every firmware inherited the same wrong
-pin table—it went unnoticed because driving P0.13 high as "LED off"
-also happens to enable the rail. Whether a red MCU-driven channel exists
-elsewhere (the README's P1.03?) is unverified; the red LED normally seen
-on this board is the hardware-driven charger LED.
+The sources disagree, and only these agree with the hardware:
+
+| Source | Red | Green | Blue |
+|---|---|---|---|
+| LilyGO factory firmware (`examples/Factory/utilities.h`), `Sleep_Display` example, and a LilyGO engineer ([meshtastic/firmware#1493](https://github.com/meshtastic/firmware/issues/1493#issuecomment-1205024423)) | P1.03 | P1.01 | P0.14 |
+| SoftRF (same thread; mass-production PCB dated 2021-03-26) | P1.03 | P1.01 | P0.14 |
+| LilyGO schematic (2021-06-23) net labels | P0.14 | P1.03 | P1.01 |
+| Meshtastic/MeshCore variant files | P0.13 | P0.15 | P0.14 |
+
+Per the Meshtastic maintainers, the variant files' table most likely
+dates from pre-retail developer boards. P0.13 is `PWR_EN` (see the power-control section); driving it high as
+"red LED off" also enables the rail, which is why the mistake went
+unnoticed. The red LED normally seen on this board is the separate,
+hardware-driven charger LED.
+
+### GNSS 1PPS LED (LED6)
+
+LED6 is the small blue LED inside the case, between the radio and the
+GNSS module. It hangs off the L76K's 1PPS output: module 1PPS → R0
+(1 kΩ) → PPS net (also P1.04) → LED6 → GND. Nothing on the MCU side
+switches it. It lights whenever the module drives 1PPS high, and it can
+glow faintly when the module is powered but idle, including while the
+board is "off" on USB, where the module cannot be unpowered (see the
+power-control section). A pull-up on P1.04 also lights it.
+
+LilyGO's position, repeated in several threads, is that LED6 cannot be
+turned off in software short of unpowering the module, and that users
+bothered by it should desolder LED6 or raise R0. The community threads
+([meshtastic/firmware#1493](https://github.com/meshtastic/firmware/issues/1493),
+[Xinyuan-LilyGO/T-Echo#17](https://github.com/Xinyuan-LilyGO/T-Echo/issues/17),
+[#29](https://github.com/Xinyuan-LilyGO/T-Echo/issues/29)) report
+batteries drained flat over weeks "off", and one measurement of 2.5 V on
+1PPS with the module in Standby (WAKEUP measured low) and the nRF in
+System OFF. Why a module in Standby holds 1PPS partly high was never
+answered.
+
+#### LilyGO's 2024 low-power test
+
+In 2021 LilyGO quoted a sleep current of about 0.25 mA and said there
+were no plans to reduce it. In 2024 it published `examples/Sleep_Display`
+with a power report (`T-Echo_V1.0_PowerConsumptionTest_BLU939(20240909).pdf`,
+board dated 2021-06-28, measured at the battery at 4.2 V). Before
+measuring, LilyGO modified the board:
+
+1. Removed LED6.
+2. Removed R34, a 100 kΩ resistor straight across VBAT to GND—a
+   constant ~42 µA at full charge that no firmware can switch off.
+3. Removed BAT1, the backup cell on RTC3V3 that feeds the PCF8563 and
+   the L76K's V_BCKP.
+
+Measured averages, each step adding to the last:
+
+| State | Current |
+|---|---|
+| Everything on | 51.50 mA |
+| Backlight off | 32.10 mA |
+| USB CDC closed | 31.94 mA |
+| SX1262 asleep | 31.49 mA |
+| QSPI flash in deep power-down | 29.59 mA |
+| L76K in Standby | 1.95 mA |
+| I²C released | 1.94 mA |
+| RGB LED off | 363.79 µA |
+| Peripheral rail off, nRF idle | 59.53 µA |
+| nRF52840 System OFF | 56.77 µA |
+
+So even with three parts removed, LilyGO's own floor is about 57 µA.
+An unmodified board adds R34's draw on top.
+
+The example's teardown differs from UMSH's in ways that matter for
+LED6. It drives only P0.12 low and never configures P0.13; it holds the
+L76K's RESET low with a pull-down, which on a powered module is the
+state that lights LED6; and it puts pull-ups on P1.04 and on both GNSS
+UART lines. With LED6 removed, none of that is visible in its
+measurements.
 
 ### Firmware-visible charger interface
 

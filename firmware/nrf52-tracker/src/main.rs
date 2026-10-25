@@ -5716,16 +5716,16 @@ mod firmware {
         // Nothing below this point awaits, so the heartbeat task cannot run
         // again and take the status LED back.
         //
-        // The LED and the e-paper backlight are the two pins still driving a
-        // load, and driven levels are retained through System OFF. Both are
+        // The RGB LED and the e-paper backlight are the pins still driving a
+        // load, and driven levels are retained through System OFF. All are
         // pinned to their off state rather than tri-stated: their loads hang
         // off the always-on rail, where a floating pin is not provably dark.
-        // The remaining RGB channel (P0.15) is never configured by this
-        // firmware, so it sits at reset—a disconnected input that cannot
-        // sink the LED. (P0.13, which the Meshtastic/MeshCore variant files
-        // call the red channel, is PWR_EN per the schematic and is handled
-        // with the rail below.)
-        drive_pin_high(Port::P0, 14); // status LED, active-low → high is off
+        // (P0.13, which the Meshtastic/MeshCore variant files call the red
+        // channel, is PWR_EN per the schematic and is handled with the rail
+        // below.)
+        drive_pin_high(Port::P1, 3); // RGB red, active-low → high is off
+        drive_pin_high(Port::P1, 1); // RGB green, ditto
+        drive_pin_high(Port::P0, 14); // RGB blue, ditto
         drive_pin_low(Port::P1, 11); // e-paper backlight, active-high
 
         // The L76K GNSS. Dropping the rail below unpowers it on battery, but
@@ -6243,8 +6243,15 @@ mod firmware {
                 cortex_m::peripheral::NVIC::unmask(embassy_nrf::pac::Interrupt::TIMER2);
             }
         }
+        // T-Echo: the RGB LED, **active-low**—Level::High is off. Pins are
+        // LilyGO's factory firmware's; the schematic and the Meshtastic
+        // variant file each disagree with it and with each other.
         #[cfg(feature = "board-techo")]
-        let led = Output::new(p.P0_14, Level::High, OutputDrive::Standard);
+        let led = StatusLed {
+            red: Output::new(p.P1_03, Level::High, OutputDrive::Standard),
+            green: Output::new(p.P1_01, Level::High, OutputDrive::Standard),
+            blue: Output::new(p.P0_14, Level::High, OutputDrive::Standard),
+        };
         // SenseCAP Solar: LED_B (P0.19, blue, active-high) is the heartbeat.
         #[cfg(feature = "board-sensecap-solar")]
         let led = Output::new(p.P0_19, Level::Low, OutputDrive::Standard);
@@ -6259,7 +6266,7 @@ mod firmware {
             green: Output::new(p.P0_30, Level::High, OutputDrive::Standard),
             blue: Output::new(p.P0_06, Level::High, OutputDrive::Standard),
         };
-        #[cfg(not(any(feature = "t1000e", feature = "board-xiao-nrf52")))]
+        #[cfg(not(any(feature = "t1000e", feature = "led-rgb")))]
         let led = StatusLed(led);
         #[cfg(feature = "t1000e")]
         let led = {
@@ -7374,25 +7381,25 @@ mod firmware {
     }
 
     /// The heartbeat task's single-color LED.
-    #[cfg(not(any(feature = "t1000e", feature = "board-xiao-nrf52")))]
+    #[cfg(not(any(feature = "t1000e", feature = "led-rgb")))]
     struct StatusLed(Output<'static>);
 
-    #[cfg(not(any(feature = "t1000e", feature = "board-xiao-nrf52")))]
+    #[cfg(not(any(feature = "t1000e", feature = "led-rgb")))]
     impl StatusLed {
         fn show(&mut self, indication: Indication) {
             drive_led(&mut self.0, indication != Indication::Off);
         }
     }
 
-    /// The XIAO's RGB LED, one pin per cathode.
-    #[cfg(feature = "board-xiao-nrf52")]
+    /// An RGB status LED, one pin per color.
+    #[cfg(feature = "led-rgb")]
     struct StatusLed {
         red: Output<'static>,
         green: Output<'static>,
         blue: Output<'static>,
     }
 
-    #[cfg(feature = "board-xiao-nrf52")]
+    #[cfg(feature = "led-rgb")]
     impl StatusLed {
         fn show(&mut self, indication: Indication) {
             self.show_rgb(match indication {
@@ -7409,8 +7416,8 @@ mod firmware {
             drive_led(&mut self.blue, blue);
         }
 
-        /// Red, green, blue, then white: on a headless board, the one
-        /// unmistakable sign that it has just rebooted.
+        /// Red, green, blue, then white: an unmistakable sign that the
+        /// board has just rebooted.
         async fn play_boot_sequence(&mut self, wdt: &mut WatchdogHandle) {
             const STEPS: [((bool, bool, bool), u64); 4] = [
                 ((true, false, false), 250),
@@ -7429,7 +7436,7 @@ mod firmware {
     }
 
     /// Drive one LED pin, honoring the board's polarity: active-low
-    /// (T-Echo P0.14, the XIAO's cathodes) inverts; active-high (Solar P1
+    /// (the T-Echo's and XIAO's RGB cathodes) inverts; active-high (Solar P1
     /// LED_B P0.19) drives directly.
     #[cfg(not(feature = "t1000e"))]
     fn drive_led(pin: &mut Output<'static>, on: bool) {
@@ -7443,7 +7450,7 @@ mod firmware {
     #[cfg(not(feature = "t1000e"))]
     #[embassy_executor::task]
     async fn heartbeat(mut led: StatusLed, mut wdt: WatchdogHandle) -> ! {
-        #[cfg(feature = "board-xiao-nrf52")]
+        #[cfg(feature = "led-rgb")]
         led.play_boot_sequence(&mut wdt).await;
         let mut engine = LedEngine::new(LedTimings::default(), Instant::now().as_millis());
         loop {

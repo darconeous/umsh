@@ -23,11 +23,11 @@ ulcp-i2c = ["umsh-ulcp-runtime/i2c", "umsh-bsp-xiao-nrf52/ulcp-i2c"]
 # both upstream firmwares define USE_LFXO), so this board does NOT take
 # `lfclk-rc`.
 default = ["board-xiao-nrf52"]
-board-techo = ["ulcp-i2c", "display-epd", "button-nav", "system-off-techo", "led-active-low", "cap-battery-saadc", "cap-gnss", "meshcore-forwarder"]
+board-techo = ["ulcp-i2c", "display-epd", "button-nav", "system-off-techo", "led-active-low", "led-rgb", "cap-battery-saadc", "cap-gnss", "meshcore-forwarder"]
 board-t1000e = ["ulcp-i2c", "t1000e", "cap-battery-saadc", "cap-gnss", "gnss-holds-the-clock", "cap-illuminance"]
 board-sensecap-solar = ["ulcp-i2c", "cap-battery-saadc", "power-button", "cap-gnss", "meshcore-forwarder"]
 board-wio-tracker-l1 = ["ulcp-i2c", "display-oled", "dpad-nav", "system-off-wio", "cap-battery-saadc", "cap-buzzer", "cap-gnss", "gnss-holds-the-clock", "meshcore-forwarder"]
-board-xiao-nrf52 = ["ulcp-i2c", "cap-battery-saadc", "led-active-low", "meshcore-forwarder"]
+board-xiao-nrf52 = ["ulcp-i2c", "cap-battery-saadc", "led-active-low", "led-rgb", "meshcore-forwarder"]
 t1000e = []
 cap-battery-saadc = []
 # An ambient light sensor is fitted. Advertises `CAP_ILLUMINANCE` and
@@ -56,6 +56,8 @@ dpad-nav = ["button-nav"]
 system-off-techo = []
 system-off-wio = []
 led-active-low = []
+# The status LED is RGB, one pin per color, so each indication has its own.
+led-rgb = []
 # LFCLK from the internal RC oscillator (crystal-less XIAO-based boards).
 lfclk-rc = []
 # Dedicated hardware power button + System OFF teardown / GPIO-DETECT wake

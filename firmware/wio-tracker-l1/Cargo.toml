@@ -17,11 +17,11 @@ ulcp-i2c = ["umsh-ulcp-runtime/i2c", "umsh-bsp-wio-tracker-l1/ulcp-i2c"]
 # battery monitor + piezo + nav button. The L1 e-ink variant is a
 # different display path (SPI1) and is not covered by this image.
 default = ["board-wio-tracker-l1"]
-board-techo = ["ulcp-i2c", "display-epd", "button-nav", "system-off-techo", "led-active-low", "cap-battery-saadc", "cap-gnss", "meshcore-forwarder"]
+board-techo = ["ulcp-i2c", "display-epd", "button-nav", "system-off-techo", "led-active-low", "led-rgb", "cap-battery-saadc", "cap-gnss", "meshcore-forwarder"]
 board-t1000e = ["ulcp-i2c", "t1000e", "cap-battery-saadc", "cap-gnss", "gnss-holds-the-clock", "cap-illuminance"]
 board-sensecap-solar = ["ulcp-i2c", "cap-battery-saadc", "power-button", "cap-gnss", "meshcore-forwarder"]
 board-wio-tracker-l1 = ["ulcp-i2c", "display-oled", "dpad-nav", "system-off-wio", "cap-battery-saadc", "cap-buzzer", "cap-gnss", "gnss-holds-the-clock", "meshcore-forwarder"]
-board-xiao-nrf52 = ["ulcp-i2c", "cap-battery-saadc", "led-active-low", "meshcore-forwarder"]
+board-xiao-nrf52 = ["ulcp-i2c", "cap-battery-saadc", "led-active-low", "led-rgb", "meshcore-forwarder"]
 t1000e = []
 cap-battery-saadc = []
 # An ambient light sensor is fitted. Advertises `CAP_ILLUMINANCE` and
@@ -50,6 +50,8 @@ dpad-nav = ["button-nav"]
 system-off-techo = []
 system-off-wio = []
 led-active-low = []
+# The status LED is RGB, one pin per color, so each indication has its own.
+led-rgb = []
 # LFCLK from the internal RC oscillator (crystal-less XIAO-based boards).
 #
 # Whether the Wio Tracker L1 populates a 32.768 kHz crystal is the one

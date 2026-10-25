@@ -9,7 +9,7 @@
 //!
 //! - peripheral power switch (P0.12, active-high)
 //! - USB-CDC handles (over the nRF native USB peripheral)
-//! - blue LED (P0.14, active-low)
+//! - RGB LED (red P1.03, green P1.01, blue P0.14; active-low)
 //! - e-paper SPI bus + control pins for the SSD1681 display
 //! - battery voltage / charge state (SAADC on AIN2/P0.04)
 //! - GNSS power sequencing for the Quectel L76K
@@ -44,7 +44,7 @@ pub use power::{PowerSignaler, SHUTDOWN_SIGNAL};
 //   pub mod pins;          // typed pin handles per lilygo-techo-hardware.md.
 //   pub mod board;          // `Board::init()` and the composed Platform impl.
 //   pub mod power;          // P0.12 peripheral-rail switch.
-//   pub mod indicators;      // blue LED (P0.14, active-low).
+//   pub mod indicators;      // RGB LED (P1.03/P1.01/P0.14, active-low).
 //   pub mod usb;            // USB-CDC plumbing on top of umsh-bsp-nrf52840.
 
 #[cfg(all(target_os = "none", feature = "ulcp-i2c"))]
