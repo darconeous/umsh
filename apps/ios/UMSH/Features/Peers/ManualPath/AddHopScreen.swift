@@ -239,7 +239,7 @@ struct AddHopScreen: View {
     private var knownRepeaters: [PeerSummary] {
         actions.knownPeers
             .filter { $0.id != destination.id && !$0.isUlcpDevice }
-            .filter { $0.isLikelyRepeater || $0.role == .bridge }
+            .filter(\.isLikelyRepeater)
             .filter { $0.matches(searchQuery: query) }
             .sorted { ($0.lastHeard ?? .distantPast) > ($1.lastHeard ?? .distantPast) }
     }

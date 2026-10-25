@@ -415,7 +415,7 @@ struct PeersView: View {
         case .sensors:
             return peer.role == .sensor || peer.role == .tracker
         case .repeatersAndBridges:
-            return peer.role == .bridge || peer.isLikelyRepeater
+            return peer.isLikelyRepeater
         }
     }
 
