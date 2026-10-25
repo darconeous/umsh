@@ -3096,10 +3096,10 @@ final class AppRuntime {
     private func transcriptPage(_ stored: StoredChatMessagePage?) async -> TranscriptPage? {
         guard let stored else { return nil }
         let nodeHints = await renderedNodeHints(in: stored.messages)
-        let repeaterLabels = await leadRepeaterLabels(in: stored.messages)
+        let repeaters = await namedRepeaters(in: stored.messages)
         return TranscriptPage(
             messages: stored.messages.map {
-                Self.messageSummary(from: $0, nodeHints: nodeHints, repeaterLabels: repeaterLabels)
+                Self.messageSummary(from: $0, nodeHints: nodeHints, repeaters: repeaters)
             },
             hasOlder: stored.hasOlder,
             hasNewer: stored.hasNewer
@@ -3965,7 +3965,9 @@ final class AppRuntime {
             Self.chatLogger.debug(
                 "Applied chat batch \(update.batchID, privacy: .public)"
             )
-            if !update.mutations.isEmpty || !update.deliveries.isEmpty {
+            // The reload is what carries the revisions bumped above to an
+            // open transcript, so a batch of repeats alone needs it too.
+            if !update.mutations.isEmpty || !update.deliveries.isEmpty || !update.repeats.isEmpty {
                 await reloadApplicationState()
             }
             await postNotifications(
@@ -4427,7 +4429,7 @@ final class AppRuntime {
     private static func messageSummary(
         from stored: StoredChatMessage,
         nodeHints: [Data: MeshNodeHint] = [:],
-        repeaterLabels: [Data: String] = [:]
+        repeaters: [Data: MessageRepeats.Repeater] = [:]
     ) -> ChatMessageSummary {
         ChatMessageSummary(
             id: stored.id,
@@ -4457,8 +4459,13 @@ final class AppRuntime {
             reply: stored.quote.map { messageQuote(from: $0, nodeHints: nodeHints) },
             repeats: stored.repeats.map { repeats in
                 MessageRepeats(
-                    lead: repeats.repeaters.first.flatMap { repeaterLabels[$0] },
-                    count: repeats.count,
+                    repeaters: repeats.repeaters.map { hint in
+                        repeaters[hint] ?? .init(
+                            hint: hint.map { String(format: "%02x", $0) }.joined(),
+                            name: nil
+                        )
+                    },
+                    anonymous: repeats.anonymous,
                     progressAt: repeats.progressAt
                 )
             }
@@ -4498,28 +4505,31 @@ final class AppRuntime {
         )
     }
 
-
-
-    /// Render every distinct sender hint in a transcript page once, so each
-    /// group bubble can carry its sender's avatar without re-deriving it per
-    /// row. Rendering is an FFI round trip and the answer never changes, so the
-    /// coordinator keeps what it has already resolved for the whole session.
-    /// What to call the first repeater each outbound message on a page was
-    /// heard through: the node its hint most plausibly names, or the hint.
-    private func leadRepeaterLabels(in messages: [StoredChatMessage]) async -> [Data: String] {
-        let hints = Set(messages.compactMap { $0.repeats?.repeaters.first })
-        var labels: [Data: String] = [:]
+    /// The repeaters the outbound messages on a page were heard through:
+    /// each hint rendered, with the node it most plausibly names.
+    private func namedRepeaters(
+        in messages: [StoredChatMessage]
+    ) async -> [Data: MessageRepeats.Repeater] {
+        let hints = Set(messages.flatMap { $0.repeats?.repeaters ?? [] })
+        var repeaters: [Data: MessageRepeats.Repeater] = [:]
         for hint in hints {
             if coordinator.renderedRouterHints[hint] == nil,
                let value = try? await meshEngine.renderRouterHint(hint) {
                 coordinator.renderedRouterHints[hint] = value
             }
             guard let rendered = coordinator.renderedRouterHints[hint] else { continue }
-            labels[hint] = RouterHintNaming.label(rendered, among: peers)
+            repeaters[hint] = MessageRepeats.Repeater(
+                hint: rendered.text,
+                name: RouterHintNaming.match(rendered, among: peers)?.displayName
+            )
         }
-        return labels
+        return repeaters
     }
 
+    /// Render every distinct sender hint in a transcript page once, so each
+    /// group bubble can carry its sender's avatar without re-deriving it per
+    /// row. Rendering is an FFI round trip and the answer never changes, so the
+    /// coordinator keeps what it has already resolved for the whole session.
     private func renderedNodeHints(in messages: [StoredChatMessage]) async -> [Data: MeshNodeHint] {
         let hints = messages.compactMap(\.senderHint)
             + messages.compactMap { $0.quote?.original?.senderHint }

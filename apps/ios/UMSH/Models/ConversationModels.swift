@@ -350,16 +350,31 @@ enum ConversationListItem: Identifiable, Hashable, Sendable {
     }
 }
 
-/// The repeaters overheard carrying an outbound message, as its caption
-/// names them.
+/// The repeaters overheard carrying an outbound message.
 struct MessageRepeats: Hashable, Sendable {
-    /// What to call the first repeater that named itself, or `nil` when
-    /// none has.
-    let lead: String?
-    /// Repeaters heard in all, named or not.
-    let count: Int
+    /// A repeater whose forward said who it was.
+    struct Repeater: Hashable, Sendable {
+        /// Its router hint as the core renders it.
+        let hint: String
+        /// The node the hint most plausibly names, when one does: a guess,
+        /// since a two-byte hint cannot prove which node forwarded a frame.
+        let name: String?
+
+        var label: String { name ?? hint }
+    }
+
+    /// The repeaters that named themselves, first heard first.
+    let repeaters: [Repeater]
+    /// Repeaters heard that did not.
+    let anonymous: Int
     /// When the message's delivery last moved.
     let progressAt: Date
+
+    /// What to call the first repeater that named itself, or `nil` when
+    /// none has.
+    var lead: String? { repeaters.first?.label }
+    /// Repeaters heard in all, named or not.
+    var count: Int { repeaters.count + anonymous }
 }
 
 struct ChatMessageSummary: Identifiable, Hashable, Sendable {

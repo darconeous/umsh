@@ -216,6 +216,37 @@ struct MessageDetailsSheet: View {
                     LabeledContent("Wire ID", value: "\(wireID)")
                 }
             }
+            if message.isOutbound, let repeats = message.repeats {
+                Section {
+                    ForEach(Array(repeats.repeaters.enumerated()), id: \.offset) { _, repeater in
+                        Group {
+                            if let name = repeater.name {
+                                LabeledContent(name) {
+                                    Text(repeater.hint)
+                                        .font(.body.monospaced())
+                                }
+                            } else {
+                                Text(repeater.hint)
+                                    .font(.body.monospaced())
+                            }
+                        }
+                        .copyable(repeater.hint)
+                    }
+                    if repeats.anonymous > 0 {
+                        LabeledContent("Unidentified", value: "\(repeats.anonymous)")
+                    }
+                    if repeats.count == 0 {
+                        Text("None heard")
+                            .foregroundStyle(.secondary)
+                    }
+                } header: {
+                    Text("Repeated By")
+                } footer: {
+                    if repeats.repeaters.contains(where: { $0.name != nil }) {
+                        Text(RouterHintNaming.ambiguityNote)
+                    }
+                }
+            }
             if let hint = message.senderHintLabel {
                 Section("Sender") {
                     LabeledContent("Hint") {
