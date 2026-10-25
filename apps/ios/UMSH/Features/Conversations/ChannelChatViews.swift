@@ -198,10 +198,18 @@ struct ChannelMemberSheet: View {
 struct MessageDetailsSheet: View {
     let message: ChatMessageSummary
     var renderRouterHint: ((Data) async -> MeshRouterHint?)? = nil
+    /// How a repeater this phone knows opens its page.
+    var peerBrowsing: RemotePeerBrowsing? = nil
+    /// Asks the node behind a hint who it is, by way of the repeaters
+    /// before it.
+    var identifyRepeater: ((Data, [Data]) async -> Bool)? = nil
     let dismiss: () -> Void
 
-    /// The route's hints as the core renders them, sender toward this phone.
+    /// The route's hints as the core renders them, in trace-route order:
+    /// nearest this phone first.
     @State private var route: [MeshRouterHint] = []
+
+    private var knownPeers: [PeerSummary] { peerBrowsing?.knownPeers ?? [] }
 
     var body: some View {
         Form {
@@ -218,19 +226,10 @@ struct MessageDetailsSheet: View {
             }
             if message.isOutbound, let repeats = message.repeats {
                 Section {
-                    ForEach(Array(repeats.repeaters.enumerated()), id: \.offset) { _, repeater in
-                        Group {
-                            if let name = repeater.name {
-                                LabeledContent(name) {
-                                    Text(repeater.hint)
-                                        .font(.body.monospaced())
-                                }
-                            } else {
-                                Text(repeater.hint)
-                                    .font(.body.monospaced())
-                            }
-                        }
-                        .copyable(repeater.hint)
+                    // Each was heard forwarding this phone's own frame, so it
+                    // is in direct range: asked with no repeaters before it.
+                    ForEach(repeats.repeaters, id: \.hint) { repeater in
+                        hintRow(repeater.hint, precededBy: [])
                     }
                     if repeats.anonymous > 0 {
                         LabeledContent("Unidentified", value: "\(repeats.anonymous)")
@@ -242,9 +241,7 @@ struct MessageDetailsSheet: View {
                 } header: {
                     Text("Repeated By")
                 } footer: {
-                    if repeats.repeaters.contains(where: { $0.name != nil }) {
-                        Text(RouterHintNaming.ambiguityNote)
-                    }
+                    ambiguityNote(for: repeats.repeaters.map(\.hint))
                 }
             }
             if let hint = message.senderHintLabel {
@@ -288,13 +285,19 @@ struct MessageDetailsSheet: View {
                         "Source",
                         value: reception.sourceAuthenticated ? "Authenticated" : "Unauthenticated"
                     )
-                    if !route.isEmpty {
-                        let text = route.map(\.text).joined(separator: " → ")
-                        LabeledContent("Route") {
-                            Text(text)
-                                .font(.caption.monospaced())
+                }
+                if !route.isEmpty {
+                    Section {
+                        // Listed the way the message traveled, sender first.
+                        // Each hop is asked by way of the ones nearer this
+                        // phone, which come before it in trace order.
+                        ForEach(Array(route.enumerated().reversed()), id: \.offset) { index, hint in
+                            hintRow(hint, precededBy: Array(route[..<index]))
                         }
-                        .copyable(text)
+                    } header: {
+                        Text("Route")
+                    } footer: {
+                        ambiguityNote(for: route)
                     }
                 }
             } else if !message.isOutbound {
@@ -312,11 +315,8 @@ struct MessageDetailsSheet: View {
                 route = []
                 return
             }
-            // Stored in trace-route order, nearest us first; reversed here so
-            // the arrows read the way the message traveled—sender toward this
-            // phone.
             var rendered: [MeshRouterHint] = []
-            for hint in hints.reversed() {
+            for hint in hints {
                 guard let value = await renderRouterHint(hint) else { return }
                 rendered.append(value)
             }
@@ -326,6 +326,35 @@ struct MessageDetailsSheet: View {
             ToolbarItem(placement: .confirmationAction) {
                 Button("Done") { dismiss() }
             }
+        }
+    }
+
+    /// One repeater. A node this phone knows opens its page; a hint that
+    /// names none offers to ask the node behind it.
+    @ViewBuilder
+    private func hintRow(_ hint: MeshRouterHint, precededBy preceding: [MeshRouterHint]) -> some View {
+        let named = RouterHintNaming.match(hint, among: knownPeers)
+        if let named, let peerBrowsing {
+            NavigationLink {
+                peerBrowsing.open(named)
+            } label: {
+                RouterHintRow(hint: hint, named: named)
+            }
+        } else {
+            RouterHintRow(
+                hint: hint,
+                named: named,
+                discover: identifyRepeater.map { identify in
+                    { await identify(hint.bytes, preceding.map(\.bytes)) }
+                }
+            )
+        }
+    }
+
+    @ViewBuilder
+    private func ambiguityNote(for hints: [MeshRouterHint]) -> some View {
+        if hints.contains(where: { RouterHintNaming.match($0, among: knownPeers) != nil }) {
+            Text(RouterHintNaming.ambiguityNote)
         }
     }
 }

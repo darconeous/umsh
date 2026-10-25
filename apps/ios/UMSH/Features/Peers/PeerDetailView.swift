@@ -1122,7 +1122,7 @@ struct PeerDetailView: View {
                     Task {
                         // Marked only once the radio has it, so the caption
                         // never claims an ask that never went out.
-                        guard await identifyRepeater(hint, hop.precedingRepeaters) else { return }
+                        guard await identifyRepeater(hint.bytes, hop.precedingRepeaters.map(\.bytes)) else { return }
                         askedRepeaters.insert(hint.bytes)
                         // The caption is a timed state, not a latched one, and
                         // this is how long a round trip is worth waiting on: a
@@ -1132,7 +1132,7 @@ struct PeerDetailView: View {
                         // answer was still coming, and gating on the row having
                         // a name would suppress the caption exactly when a
                         // named-by-guess row is asked to confirm itself.
-                        try? await Task.sleep(for: .seconds(15))
+                        try? await Task.sleep(for: HintDiscoveryButton.wait)
                         askedRepeaters.remove(hint.bytes)
                     }
                 } label: {

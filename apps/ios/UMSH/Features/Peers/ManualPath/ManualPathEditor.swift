@@ -32,18 +32,10 @@ struct ManualPathHopRow: View {
     let knownPeers: [PeerSummary]
 
     var body: some View {
-        let named = hop.named(among: knownPeers)
         var detail: [String] = []
-        if named != nil { detail.append("Router hint \(hop.hint.text)") }
         if hop.enteredByHand { detail.append("Entered by hand · \(hop.hint.hexText)") }
         if let signal = hop.signal { detail.append(signal) }
-        return PeerRow(
-            hint: named?.identity.hint ?? MeshNodeHint(bytes: hop.hint.bytes, text: hop.hint.text),
-            shape: named?.avatarShape ?? .hexagon,
-            title: named?.displayName ?? "Router hint \(hop.hint.text)",
-            subtitle: detail.isEmpty ? nil : detail.joined(separator: " · "),
-            size: .compact
-        )
+        return RouterHintRow(hint: hop.hint, named: hop.named(among: knownPeers), detail: detail)
     }
 }
 

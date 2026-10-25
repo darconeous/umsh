@@ -354,13 +354,13 @@ enum ConversationListItem: Identifiable, Hashable, Sendable {
 struct MessageRepeats: Hashable, Sendable {
     /// A repeater whose forward said who it was.
     struct Repeater: Hashable, Sendable {
-        /// Its router hint as the core renders it.
-        let hint: String
+        /// Its router hint, as the core renders it.
+        let hint: MeshRouterHint
         /// The node the hint most plausibly names, when one does: a guess,
         /// since a two-byte hint cannot prove which node forwarded a frame.
         let name: String?
 
-        var label: String { name ?? hint }
+        var label: String { name ?? hint.text }
     }
 
     /// The repeaters that named themselves, first heard first.
@@ -1012,12 +1012,12 @@ struct PeerActions {
     var loadRoute: ((PeerSummary) async -> PeerRoute)? = nil
     /// Discard that route, reporting whether one was held.
     var resetRoute: ((PeerSummary) async -> Bool)? = nil
-    /// Ask one intermediate repeater on a route to identify itself, given its
-    /// hint and the repeaters ahead of it in send order.
+    /// Ask the node behind a hint to identify itself, given the hint and the
+    /// two-byte router hints of the repeaters ahead of it in send order.
     ///
     /// A route names its hops by two bytes and nothing else, so the answer is
     /// the only way to know who is actually carrying the traffic.
-    var identifyRepeater: ((MeshRouterHint, [MeshRouterHint]) async -> Bool)? = nil
+    var identifyRepeater: ((Data, [Data]) async -> Bool)? = nil
     /// What a repeater last said about its neighbors, from this phone's cache.
     /// Nothing goes on the air.
     var cachedPeerRepeaters: ((PeerSummary) async -> PeerRepeaterListing?)? = nil

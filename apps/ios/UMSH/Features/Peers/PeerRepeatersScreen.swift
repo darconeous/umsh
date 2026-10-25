@@ -24,6 +24,9 @@ struct PeerRepeatersScreen: View {
     @State private var isFresh = false
     @State private var problem: String?
     @State private var hasLoadedCache = false
+    /// The route to this repeater, which an ask after one of its neighbors
+    /// goes down.
+    @State private var route: PeerRoute?
 
     var body: some View {
         List {
@@ -49,6 +52,7 @@ struct PeerRepeatersScreen: View {
             }
         }
         .task {
+            route = await actions.loadRoute?(peer)
             // The cache and nothing else: opening the screen must not ask.
             guard !hasLoadedCache else { return }
             hasLoadedCache = true
@@ -105,8 +109,8 @@ struct PeerRepeatersScreen: View {
     }
 
     /// One neighbor. A neighbor this phone knows opens that node's page;
-    /// one it does not is a row with nowhere further to go, since a hint
-    /// alone is not a key to address.
+    /// one it does not offers to ask it who it is, since a hint alone is not
+    /// a key to address.
     @ViewBuilder
     private func row(_ neighbor: PeerRepeaterNeighbor) -> some View {
         let resolved = neighbor.resolve(among: actions.knownPeers)
@@ -118,7 +122,11 @@ struct PeerRepeatersScreen: View {
                     NeighborRow(neighbor: neighbor, reporter: peer, knownPeers: actions.knownPeers)
                 }
             } else {
-                NeighborRow(neighbor: neighbor, reporter: peer, knownPeers: actions.knownPeers)
+                NeighborRow(neighbor: neighbor, reporter: peer, knownPeers: actions.knownPeers) {
+                    if let identify = actions.identifyRepeater, let path = pathToRepeater {
+                        HintDiscoveryButton { await identify(neighbor.hint, path) }
+                    }
+                }
             }
         }
         .modifier(
@@ -127,6 +135,16 @@ struct PeerRepeatersScreen: View {
                 pinName: neighbor.title(among: actions.knownPeers)
             )
         )
+    }
+
+    /// The repeaters an ask after a neighbor goes down, ending at this
+    /// repeater so the neighbor hears it one hop on. `nil` when the route
+    /// cannot honestly land there.
+    private var pathToRepeater: [Data]? {
+        guard let vantage = SolicitVantage(peer: peer, route: route), vantage.landsAtPeer else {
+            return nil
+        }
+        return vantage.repeaters
     }
 
     // MARK: - Asking

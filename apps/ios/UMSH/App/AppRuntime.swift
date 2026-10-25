@@ -2484,11 +2484,11 @@ final class AppRuntime {
     /// receiving, so a request whose route still names it is one it drops.
     /// The ask is steered to the hop *before* it—`precedingRepeaters`, which
     /// is empty for a first hop, since that one is in direct range by
-    /// construction—and narrowed to the repeater's own two bytes, so it is
-    /// the only node in that neighborhood that answers.
+    /// construction—and narrowed to the repeater's own hint, so it is the
+    /// only node in that neighborhood that answers.
     private func identifyRepeater(
-        _ hint: MeshRouterHint,
-        precededBy precedingRepeaters: [MeshRouterHint]
+        _ hint: Data,
+        precededBy precedingRepeaters: [Data]
     ) async -> Bool {
         guard radioSnapshot.linkState == .attached || radioSnapshot.linkState == .ready,
               radioSnapshot.hostState == .matchesCurrentIdentity
@@ -2496,8 +2496,8 @@ final class AppRuntime {
         do {
             try await radioConnection.requestNearbyIdentities(
                 roleFilter: nil,
-                nodeHint: hint.bytes,
-                sourceRoute: precedingRepeaters.map(\.bytes)
+                nodeHint: hint,
+                sourceRoute: precedingRepeaters
             )
             return true
         } catch {
@@ -4461,7 +4461,10 @@ final class AppRuntime {
                 MessageRepeats(
                     repeaters: repeats.repeaters.map { hint in
                         repeaters[hint] ?? .init(
-                            hint: hint.map { String(format: "%02x", $0) }.joined(),
+                            hint: MeshRouterHint(
+                                bytes: hint,
+                                text: hint.map { String(format: "%02x", $0) }.joined()
+                            ),
                             name: nil
                         )
                     },
@@ -4519,7 +4522,7 @@ final class AppRuntime {
             }
             guard let rendered = coordinator.renderedRouterHints[hint] else { continue }
             repeaters[hint] = MessageRepeats.Repeater(
-                hint: rendered.text,
+                hint: rendered,
                 name: RouterHintNaming.match(rendered, among: peers)?.displayName
             )
         }

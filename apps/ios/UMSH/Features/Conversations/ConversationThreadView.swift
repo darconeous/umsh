@@ -579,7 +579,9 @@ struct ConversationThreadView: View {
             NavigationStack {
                 MessageDetailsSheet(
                     message: message,
-                    renderRouterHint: peerActions.renderRouterHint
+                    renderRouterHint: peerActions.renderRouterHint,
+                    peerBrowsing: peerBrowsing,
+                    identifyRepeater: peerActions.identifyRepeater
                 ) { inspectedMessage = nil }
             }
         }
@@ -1341,6 +1343,26 @@ struct ConversationThreadView: View {
     private func memberPeer(for member: ChannelMember) -> PeerSummary? {
         guard let address = member.address else { return nil }
         return knownPeer(address: address)
+    }
+
+    /// How a sheet opened from here opens a node: the same peer page a
+    /// member's sheet leads to.
+    private var peerBrowsing: RemotePeerBrowsing {
+        RemotePeerBrowsing(knownPeers: peerActions.knownPeers) { peer in
+            AnyView(
+                PeerDetailView(
+                    peer: peer,
+                    radioSnapshot: .constant(radioSnapshot),
+                    conversations: $conversations,
+                    actions: peerActions,
+                    updateDraft: updateDraft,
+                    sendMessage: { conversation, body in
+                        await sendMessage(.direct(conversation), body)
+                    },
+                    messageActions: messageActions
+                )
+            )
+        }
     }
 
     /// Link states with no radio in hand: nothing attached, and nothing in the
