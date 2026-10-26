@@ -1,7 +1,7 @@
 //! `<peer-ref>` token resolution used by every peer-naming command.
 //!
 //! Accepts any of:
-//! - a registered alias (ASCII, up to 16 chars),
+//! - a registered alias,
 //! - the canonical fixed-width base58 address (exactly 44 chars),
 //! - hex-encoded 32-byte pubkey (64 hex chars, optional `0x` prefix),
 //! - base64-encoded 32-byte pubkey (standard or URL-safe alphabet).
@@ -18,8 +18,7 @@ use umsh_core::PublicKey;
 /// length) are tried first via [`PublicKey::from_str`], then base64.
 ///
 /// After successful decoding the bytes are validated as a well-formed
-/// Ed25519 compressed public-key point on the curve (when the
-/// `software-crypto` feature is enabled). Bytes that decode to 32 bytes but
+/// Ed25519 compressed public-key point on the curve. Bytes that decode to 32 bytes but
 /// do not lie on the curve return `None` so a typo'd hex string can never
 /// be accepted as a peer key.
 ///
@@ -32,13 +31,7 @@ pub fn try_parse_pubkey(token: &str) -> Option<PublicKey> {
         .parse::<PublicKey>()
         .ok()
         .or_else(|| try_b64(token))?;
-    #[cfg(feature = "software-crypto")]
-    {
-        if !umsh_crypto::is_valid_ed25519_public_key(&key) {
-            return None;
-        }
-    }
-    Some(key)
+    umsh_crypto::is_valid_ed25519_public_key(&key).then_some(key)
 }
 
 fn try_b64(token: &str) -> Option<PublicKey> {

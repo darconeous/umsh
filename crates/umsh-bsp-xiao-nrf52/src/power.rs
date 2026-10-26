@@ -3,8 +3,7 @@
 //!
 //! Two pieces:
 //!
-//! - [`PowerSignaler`]—the `umsh_hal::PowerControl` bridge, raising
-//!   [`SHUTDOWN_SIGNAL`] for the headless System OFF teardown in
+//! - [`SHUTDOWN_SIGNAL`], which drives the headless System OFF teardown in
 //!   [`crate::shutdown`].
 //! - The battery monitor ([`run_battery_monitor`], [`sample_battery`],
 //!   [`BatterySample`], [`battery_state`])—the same shape as the other
@@ -80,27 +79,6 @@ use umsh_bsp_nrf52840::system_off::ShutdownReason;
 /// LPCOMP battery-recovery wake: the cutoff wants it, a deliberate
 /// power-off does not.
 pub static SHUTDOWN_SIGNAL: Signal<ThreadModeRawMutex, ShutdownReason> = Signal::new();
-
-/// `umsh_hal::PowerControl` implementation for the XIAO nRF52840 kit.
-///
-/// Provided for the CLI firmware's `PowerControl` bridge, which is what
-/// consumes this trait; the ULCP device image does not use it. Wiring a
-/// remote power-off command to it would work, but think first—see
-/// [`crate::shutdown`] on why System OFF is close to one-way here.
-///
-/// - `request_power_off` raises [`SHUTDOWN_SIGNAL`].
-/// - `request_reboot` triggers an ARM Cortex-M `SYSRESETREQ`.
-pub struct PowerSignaler;
-
-impl umsh_hal::PowerControl for PowerSignaler {
-    fn request_power_off(&self) {
-        SHUTDOWN_SIGNAL.signal(ShutdownReason::Requested);
-    }
-
-    fn request_reboot(&self) {
-        cortex_m::peripheral::SCB::sys_reset();
-    }
-}
 
 #[cfg(target_os = "none")]
 pub use monitor::*;

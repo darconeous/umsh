@@ -290,99 +290,6 @@ pub trait Clock {
     }
 }
 
-/// Persistent peer directory for the node layer.
-///
-/// Stores and retrieves peer records keyed by the raw 32-byte Ed25519 public
-/// key. `alias` is an optional UTF-8 label (the implementation may silently
-/// truncate values longer than 16 bytes). Implementors MUST treat `store_peer`
-/// as an upsert—calling it twice for the same key overwrites the record.
-pub trait PeerStore {
-    type Error;
-
-    /// Upsert the peer record for `key`. `alias`, if present, is a UTF-8
-    /// display label; passing `None` removes any existing alias.
-    async fn store_peer(&self, key: &[u8; 32], alias: Option<&[u8]>) -> Result<(), Self::Error>;
-
-    /// Remove the peer record for `key`. A no-op if the key is not present.
-    async fn delete_peer(&self, key: &[u8; 32]) -> Result<(), Self::Error>;
-
-    /// Invoke `f` for every persisted peer record.
-    ///
-    /// `alias` is `None` when no alias was stored for that key. Callers that
-    /// cannot handle an error mid-iteration should collect into a local buffer
-    /// first, then process asynchronously.
-    async fn for_each_peer(
-        &self,
-        f: &mut dyn FnMut(&[u8; 32], Option<&[u8]>),
-    ) -> Result<(), Self::Error>;
-}
-
-/// No-op peer store—use when peer persistence is not needed.
-pub struct NoPeerStore;
-
-impl PeerStore for NoPeerStore {
-    type Error = core::convert::Infallible;
-
-    async fn store_peer(&self, _: &[u8; 32], _: Option<&[u8]>) -> Result<(), Self::Error> {
-        Ok(())
-    }
-
-    async fn delete_peer(&self, _: &[u8; 32]) -> Result<(), Self::Error> {
-        Ok(())
-    }
-
-    async fn for_each_peer(
-        &self,
-        _: &mut dyn FnMut(&[u8; 32], Option<&[u8]>),
-    ) -> Result<(), Self::Error> {
-        Ok(())
-    }
-}
-
-/// Persistent channel directory for the node layer.
-///
-/// Stores and retrieves shared channel keys keyed by channel name (UTF-8,
-/// up to 16 bytes). Implementors MUST treat `store_channel` as an upsert.
-pub trait ChannelStore {
-    type Error;
-
-    /// Upsert the channel record for `name`.
-    async fn store_channel(&self, name: &[u8], key: &[u8; 32]) -> Result<(), Self::Error>;
-
-    /// Remove the channel record for `name`. A no-op if not present.
-    async fn delete_channel(&self, name: &[u8]) -> Result<(), Self::Error>;
-
-    /// Invoke `f` for every persisted channel record.
-    ///
-    /// `name` is UTF-8 channel name bytes; `key` is the 32-byte channel key.
-    async fn for_each_channel(
-        &self,
-        f: &mut dyn FnMut(&[u8], &[u8; 32]),
-    ) -> Result<(), Self::Error>;
-}
-
-/// No-op channel store—use when channel persistence is not needed.
-pub struct NoChannelStore;
-
-impl ChannelStore for NoChannelStore {
-    type Error = core::convert::Infallible;
-
-    async fn store_channel(&self, _: &[u8], _: &[u8; 32]) -> Result<(), Self::Error> {
-        Ok(())
-    }
-
-    async fn delete_channel(&self, _: &[u8]) -> Result<(), Self::Error> {
-        Ok(())
-    }
-
-    async fn for_each_channel(
-        &self,
-        _: &mut dyn FnMut(&[u8], &[u8; 32]),
-    ) -> Result<(), Self::Error> {
-        Ok(())
-    }
-}
-
 /// Persistent frame-counter storage.
 pub trait CounterStore {
     type Error;
@@ -417,30 +324,6 @@ impl CounterStore for NoCounterStore {
     async fn flush(&self) -> Result<(), Self::Error> {
         Ok(())
     }
-}
-
-/// Optional power-control hook for higher layers (e.g. the CLI).
-///
-/// Implementations request a controlled shutdown—the actual sequencing
-/// (display, storage flush, GPIO sense, entering System OFF, etc.) lives
-/// in the firmware that owns those peripherals. This call MUST return
-/// promptly; it's typically a `Signal::signal(())` to a shutdown task.
-pub trait PowerControl {
-    fn request_power_off(&self);
-
-    /// Request a soft reboot. The default implementation is a no-op; targets
-    /// without a wired reboot path can leave it as such. Like
-    /// [`request_power_off`](Self::request_power_off), this MUST return
-    /// promptly—typically a `Signal::signal(())` to a reboot task that
-    /// performs any final flushes before triggering a system reset.
-    fn request_reboot(&self) {}
-}
-
-/// No-op power control—use when shutdown is not implemented for the target.
-pub struct NoPowerControl;
-
-impl PowerControl for NoPowerControl {
-    fn request_power_off(&self) {}
 }
 
 /// Persistent key-value store used by higher layers for cached state.

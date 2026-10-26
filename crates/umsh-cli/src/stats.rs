@@ -12,5 +12,4 @@ pub struct Stats {
     pub last_rx_ms: u64,
     pub last_rssi: Option<i16>,
     pub last_snr: Option<i16>,
-    pub events_dropped: u64,
 }

@@ -45,7 +45,7 @@ btleplug = { version = "0.11", optional = true }
 futures-util = { version = "0.3", optional = true }
 uuid = { version = "1", optional = true }
 umsh-lan-bearer = { path = "../crates/umsh-lan-bearer", optional = true, features = ["tokio"] }
-umsh-cli = { path = "../crates/umsh-cli", optional = true, features = ["tokio-stdio"] }
+umsh-cli = { path = "../crates/umsh-cli", optional = true }
 
 [dev-dependencies]
 # The adapter-free full-protocol integration tests drive the real device

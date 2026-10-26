@@ -4706,13 +4706,11 @@ dependencies = [
 name = "umsh-cli"
 version = "0.1.0"
 dependencies = [
- "embedded-io-async 0.6.1",
  "futures",
- "heapless 0.8.0",
+ "indexmap",
  "tokio",
  "umsh-core",
  "umsh-crypto",
- "umsh-hal",
  "umsh-mac",
  "umsh-node",
  "umsh-sync",

@@ -2,10 +2,8 @@
 //!
 //! Two pieces:
 //!
-//! - [`PowerSignaler`] and the [`SHUTDOWN_SIGNAL`] static, which bridge
-//!   the CLI's `umsh_hal::PowerControl` trait into board-level power
-//!   events. See `umsh-bsp-t1000e::power` for the design rationale—the
-//!   shape is identical here. The board-specific teardown sequence lives
+//! - The [`SHUTDOWN_SIGNAL`] static. See `umsh-bsp-t1000e::power` for the
+//!   design rationale—the shape is identical here. The board-specific teardown sequence lives
 //!   in the firmware's shutdown task, which awaits [`SHUTDOWN_SIGNAL`].
 //! - The battery monitor ([`run_battery_monitor`], [`sample_battery`],
 //!   [`BatterySample`], [`battery_state`])—the same shape as the
@@ -49,9 +47,8 @@ use embassy_sync::blocking_mutex::raw::ThreadModeRawMutex;
 use embassy_sync::signal::Signal;
 use umsh_bsp_nrf52840::system_off::ShutdownReason;
 
-/// Single-consumer shutdown trigger, raised by
-/// [`PowerSignaler::request_power_off`], by the nav button's four-second
-/// hold, and by the protective low-battery cutoff in
+/// Single-consumer shutdown trigger, raised by the nav button's
+/// four-second hold and by the protective low-battery cutoff in
 /// [`run_battery_monitor`]. The firmware's shutdown task is the only
 /// consumer.
 ///
@@ -59,23 +56,6 @@ use umsh_bsp_nrf52840::system_off::ShutdownReason;
 /// the battery divider connected and arms LPCOMP battery-recovery wake:
 /// the cutoff wants that, a requested power-off does not.
 pub static SHUTDOWN_SIGNAL: Signal<ThreadModeRawMutex, ShutdownReason> = Signal::new();
-
-/// `umsh_hal::PowerControl` implementation for the Wio Tracker L1.
-///
-/// - `request_power_off` raises [`SHUTDOWN_SIGNAL`].
-/// - `request_reboot` triggers an ARM Cortex-M `SYSRESETREQ` with no
-///   flushing or teardown.
-pub struct PowerSignaler;
-
-impl umsh_hal::PowerControl for PowerSignaler {
-    fn request_power_off(&self) {
-        SHUTDOWN_SIGNAL.signal(ShutdownReason::Requested);
-    }
-
-    fn request_reboot(&self) {
-        cortex_m::peripheral::SCB::sys_reset();
-    }
-}
 
 #[cfg(feature = "battery")]
 pub use monitor::*;

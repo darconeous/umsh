@@ -1,19 +1,10 @@
 //! Event queue variants pushed by subscription callbacks and consumed by
 //! `CliSession::service_events`.
 //!
-//! All variants store bounded data; `OwnedMacCommand` (which contains an
-//! unbounded `Vec<u8>`) is never used as a blanket carrier—only the MAC
+//! `OwnedMacCommand` is never used as a blanket carrier—only the MAC
 //! commands the CLI actually cares about get dedicated variants.
 
-use heapless::{String, Vec};
 use umsh_core::{NodeHint, PublicKey};
-
-/// Maximum payload length recorded in inbound events (per-event cap).
-pub const EVENT_PAYLOAD_MAX: usize = 64;
-/// Maximum length of a formatted output line buffered for writing.
-pub const EVENT_LINE_MAX: usize = 256;
-/// Maximum raw on-wire frame bytes recorded per RawTx/RawRx event.
-pub const EVENT_RAW_MAX: usize = 256;
 
 #[derive(Debug)]
 pub enum CliEvent {
@@ -23,7 +14,7 @@ pub enum CliEvent {
         hops: u8,
         rssi: i16,
         snr: i16,
-        prefix: Vec<u8, EVENT_PAYLOAD_MAX>,
+        payload: Vec<u8>,
     },
     AckReceived {
         peer: PublicKey,
@@ -33,7 +24,7 @@ pub enum CliEvent {
     },
     NodeDiscovered {
         from: PublicKey,
-        name: Option<String<32>>,
+        name: Option<String>,
     },
     Beacon {
         /// 3-byte source hint from the packet header—always present.
@@ -64,10 +55,10 @@ pub enum CliEvent {
         cmd_id: u8,
     },
     RawTx {
-        bytes: Vec<u8, EVENT_RAW_MAX>,
+        bytes: Vec<u8>,
     },
     RawRx {
-        bytes: Vec<u8, EVENT_RAW_MAX>,
+        bytes: Vec<u8>,
     },
 
     // ─── Outbound ────────────────────────────────────────────────────────────
@@ -78,11 +69,11 @@ pub enum CliEvent {
     // rate-limiting and cancel hooks) or remove them and the dead arms in
     // `handle_event` to clean up the mismatch.
     OutputLine {
-        line: String<EVENT_LINE_MAX>,
+        line: String,
     },
     SendText {
         peer: PublicKey,
-        body: String<EVENT_LINE_MAX>,
+        body: String,
     },
     StartPfs {
         peer: PublicKey,
@@ -93,11 +84,11 @@ pub enum CliEvent {
     },
     ChannelSend {
         channel_slot: u8,
-        body: String<EVENT_LINE_MAX>,
+        body: String,
     },
     SendBeacon,
     SendRaw {
         peer: PublicKey,
-        bytes: Vec<u8, EVENT_PAYLOAD_MAX>,
+        bytes: Vec<u8>,
     },
 }

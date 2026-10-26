@@ -1,12 +1,10 @@
-//! Power control glue for the T1000-E: the [`SHUTDOWN_SIGNAL`] static, a
-//! [`PowerSignaler`] that bridges the CLI's `umsh_hal::PowerControl`
-//! trait into board-level power events, and the [`run_battery_monitor`]
-//! task that triggers a protective shutdown on low VBAT.
+//! Power control glue for the T1000-E: the [`SHUTDOWN_SIGNAL`] static and
+//! the [`run_battery_monitor`] task that triggers a protective shutdown on
+//! low VBAT.
 //!
-//! The BSP owns these because the *signaling* shape is uniform—fire a
-//! signal for soft-poweroff, hit `SYSRESETREQ` for reboot. The actual
-//! board-specific teardown sequence lives in [`crate::shutdown::run`],
-//! which awaits [`SHUTDOWN_SIGNAL`].
+//! The BSP owns the signal because the *signaling* shape is uniform. The
+//! actual board-specific teardown sequence lives in
+//! [`crate::shutdown::run`], which awaits [`SHUTDOWN_SIGNAL`].
 
 use core::sync::atomic::{AtomicU8, AtomicU32, Ordering};
 
@@ -28,9 +26,9 @@ use umsh_ux_tracker::battery::{
 };
 use umsh_ux_tracker::power::LowBatteryDetector;
 
-/// Single-consumer shutdown trigger. Fired by [`PowerSignaler::request_power_off`]
-/// (via the CLI `/poweroff` command) and by any firmware-local source that wants
-/// to drive the shutdown sequence (e.g. button long-press, low-battery cutoff).
+/// Single-consumer shutdown trigger. Fired by any firmware-local source that
+/// wants to drive the shutdown sequence (e.g. button long-press, low-battery
+/// cutoff).
 ///
 /// The firmware's `shutdown_task` is the only consumer.
 pub static SHUTDOWN_SIGNAL: Signal<ThreadModeRawMutex, ()> = Signal::new();
@@ -124,27 +122,6 @@ pub async fn sample_battery() -> BatterySample {
     BATTERY_SAMPLE_REPLY.reset();
     BATTERY_SAMPLE_REQUEST.signal(());
     BATTERY_SAMPLE_REPLY.wait().await
-}
-
-/// `umsh_hal::PowerControl` implementation for the T1000-E.
-///
-/// - `request_power_off` raises [`SHUTDOWN_SIGNAL`] so the firmware's
-///   `shutdown_task` can run its board-specific teardown sequence.
-/// - `request_reboot` triggers an ARM Cortex-M `SYSRESETREQ` directly.
-///   Deliberately performs no flushing or teardown—that would mask
-///   persistence and state-recovery bugs we want the `/reboot` command
-///   to surface.
-pub struct PowerSignaler;
-
-impl umsh_hal::PowerControl for PowerSignaler {
-    fn request_power_off(&self) {
-        crate::preferences::set_asleep(true);
-        SHUTDOWN_SIGNAL.signal(());
-    }
-
-    fn request_reboot(&self) {
-        cortex_m::peripheral::SCB::sys_reset();
-    }
 }
 
 /// Monitors battery voltage via the nRF52840 SAADC (P0.02 = AIN0, 2:1 divider),

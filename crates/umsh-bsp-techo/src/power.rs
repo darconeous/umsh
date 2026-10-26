@@ -2,10 +2,8 @@
 //!
 //! Two pieces:
 //!
-//! - [`PowerSignaler`] and the [`SHUTDOWN_SIGNAL`] static, which bridge
-//!   the CLI's `umsh_hal::PowerControl` trait into board-level power
-//!   events. See `umsh-bsp-t1000e::power` for the design rationale—the
-//!   shape is identical here. The board-specific teardown sequence lives
+//! - The [`SHUTDOWN_SIGNAL`] static. See `umsh-bsp-t1000e::power` for the
+//!   design rationale—the shape is identical here. The board-specific teardown sequence lives
 //!   in the firmware's `shutdown_task`, which awaits [`SHUTDOWN_SIGNAL`].
 //! - The battery monitor ([`run_battery_monitor`], [`sample_battery`],
 //!   [`BatterySample`], [`battery_state`])—the same shape as the
@@ -53,29 +51,11 @@
 use embassy_sync::blocking_mutex::raw::ThreadModeRawMutex;
 use embassy_sync::signal::Signal;
 
-/// Single-consumer shutdown trigger, raised by
-/// [`PowerSignaler::request_power_off`] and by the protective low-battery
+/// Single-consumer shutdown trigger, raised by the protective low-battery
 /// cutoff in [`run_battery_monitor`]. The firmware's `shutdown_task` is
 /// the only consumer; it also has its own button-driven trigger and waits
 /// on both.
 pub static SHUTDOWN_SIGNAL: Signal<ThreadModeRawMutex, ()> = Signal::new();
-
-/// `umsh_hal::PowerControl` implementation for the T-Echo.
-///
-/// - `request_power_off` raises [`SHUTDOWN_SIGNAL`].
-/// - `request_reboot` triggers an ARM Cortex-M `SYSRESETREQ` with no
-///   flushing or teardown.
-pub struct PowerSignaler;
-
-impl umsh_hal::PowerControl for PowerSignaler {
-    fn request_power_off(&self) {
-        SHUTDOWN_SIGNAL.signal(());
-    }
-
-    fn request_reboot(&self) {
-        cortex_m::peripheral::SCB::sys_reset();
-    }
-}
 
 #[cfg(all(target_os = "none", feature = "battery"))]
 pub use monitor::*;

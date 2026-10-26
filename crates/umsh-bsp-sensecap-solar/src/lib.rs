@@ -74,8 +74,6 @@ pub mod shutdown;
 
 #[cfg(target_os = "none")]
 pub use platform::{SensecapSolarMac, SensecapSolarPlatform};
-#[cfg(target_os = "none")]
-pub use power::PowerSignaler;
 
 // TODO:
 //   Phase 2: pub mod power—port the T1000-E battery monitor

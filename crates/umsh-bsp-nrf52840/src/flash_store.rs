@@ -1,7 +1,7 @@
 //! NVMC-backed instantiation of the chip-agnostic [`umsh_flash_store`]
 //! engine.
 //!
-//! All of the map logic—identity, peers, channels, counters, key-value—
+//! All of the map logic—identity, counters, key-value—
 //! lives in [`umsh_flash_store`], generic over the async flash driver and
 //! the sharing mutex. This module supplies the nRF52840 backing
 //! (`BlockingAsync<Nvmc>` + `ThreadModeRawMutex`) and the fixed storage
@@ -18,10 +18,7 @@ use embassy_embedded_hal::adapter::BlockingAsync;
 use embassy_nrf::nvmc::Nvmc;
 use embassy_sync::blocking_mutex::raw::ThreadModeRawMutex;
 
-pub use umsh_flash_store::{
-    ALIAS_HEADER_LEN, MAX_ALIAS_LEN, MAX_CHANNEL_NAME_LEN, MAX_CHANNELS, MAX_KEY_LEN,
-    MAX_PEER_RECORD_LEN, MAX_PEERS, SCRATCH_LEN,
-};
+pub use umsh_flash_store::{MAX_KEY_LEN, SCRATCH_LEN};
 
 /// Storage range reserved on internal NVMC.
 ///
@@ -59,9 +56,3 @@ pub type NvmcKeyValueStore = umsh_flash_store::KeyValueView<FlashDriver, ThreadM
 
 /// View implementing `umsh_hal::CounterStore` over a shared [`NvmcStorage`].
 pub type NvmcCounterStore = umsh_flash_store::CounterView<FlashDriver, ThreadModeRawMutex>;
-
-/// View implementing `umsh_hal::PeerStore` over a shared [`NvmcStorage`].
-pub type NvmcPeerStore = umsh_flash_store::PeerView<FlashDriver, ThreadModeRawMutex>;
-
-/// View implementing `umsh_hal::ChannelStore` over a shared [`NvmcStorage`].
-pub type NvmcChannelStore = umsh_flash_store::ChannelView<FlashDriver, ThreadModeRawMutex>;

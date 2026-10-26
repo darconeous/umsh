@@ -1,6 +1,6 @@
 //! ESP32 instantiation of the chip-agnostic [`umsh_flash_store`] engine.
 //!
-//! All of the map logic—identity, peers, channels, counters, key-value—
+//! All of the map logic—identity, counters, key-value—
 //! lives in [`umsh_flash_store`], generic over the async flash driver and
 //! the sharing mutex. This module supplies the Espressif backing
 //! (`BlockingAsync<esp_storage::FlashStorage>` + `CriticalSectionRawMutex`)
@@ -72,12 +72,6 @@ pub type EspKeyValueStore = umsh_flash_store::KeyValueView<FlashDriver, Critical
 
 /// View implementing `umsh_hal::CounterStore` over a shared [`EspStorage`].
 pub type EspCounterStore = umsh_flash_store::CounterView<FlashDriver, CriticalSectionRawMutex>;
-
-/// View implementing `umsh_hal::PeerStore` over a shared [`EspStorage`].
-pub type EspPeerStore = umsh_flash_store::PeerView<FlashDriver, CriticalSectionRawMutex>;
-
-/// View implementing `umsh_hal::ChannelStore` over a shared [`EspStorage`].
-pub type EspChannelStore = umsh_flash_store::ChannelView<FlashDriver, CriticalSectionRawMutex>;
 
 /// Why the storage region could not be located at boot.
 #[derive(Debug)]

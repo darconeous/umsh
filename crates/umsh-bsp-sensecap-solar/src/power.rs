@@ -2,9 +2,7 @@
 //!
 //! Two pieces:
 //!
-//! - [`PowerSignaler`]—the CLI's `umsh_hal::PowerControl` bridge.
-//!   `request_power_off` raises [`SHUTDOWN_SIGNAL`] for the teardown in
-//!   [`crate::shutdown`]; `request_reboot` is a plain `SYSRESETREQ`.
+//! - [`SHUTDOWN_SIGNAL`], which drives the teardown in [`crate::shutdown`].
 //! - The battery monitor ([`run_battery_monitor`], [`sample_battery`],
 //!   [`BatterySample`], [`battery_state`])—ported from the T1000-E BSP
 //!   with this board's wiring, so the device's `CAP_BATTERY`
@@ -35,7 +33,7 @@ use umsh_bsp_nrf52840::system_off::ShutdownReason;
 
 /// Single-consumer power-off trigger. Fired by the dedicated PWR-button
 /// state machine (hold-to-off), the low-battery protective cutoff in
-/// [`run_battery_monitor`], and [`PowerSignaler::request_power_off`]. The
+/// [`run_battery_monitor`], and any other firmware-local source. The
 /// firmware's sensecap shutdown task ([`crate::shutdown::run`]) is the
 /// only consumer; it runs the System OFF teardown and arms PWR wake.
 ///
@@ -44,23 +42,6 @@ use umsh_bsp_nrf52840::system_off::ShutdownReason;
 /// while the low-battery cutoff leaves the divider live and arms LPCOMP so
 /// the panel can bring the node back unattended. See [`crate::shutdown`].
 pub static SHUTDOWN_SIGNAL: Signal<ThreadModeRawMutex, ShutdownReason> = Signal::new();
-
-/// `umsh_hal::PowerControl` implementation for the SenseCAP Solar Node.
-///
-/// - `request_power_off` raises [`SHUTDOWN_SIGNAL`] so the firmware's
-///   sensecap shutdown task runs the System OFF teardown.
-/// - `request_reboot` triggers an ARM Cortex-M `SYSRESETREQ`.
-pub struct PowerSignaler;
-
-impl umsh_hal::PowerControl for PowerSignaler {
-    fn request_power_off(&self) {
-        SHUTDOWN_SIGNAL.signal(ShutdownReason::Requested);
-    }
-
-    fn request_reboot(&self) {
-        cortex_m::peripheral::SCB::sys_reset();
-    }
-}
 
 #[cfg(target_os = "none")]
 pub use monitor::*;

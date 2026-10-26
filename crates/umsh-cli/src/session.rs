@@ -24,25 +24,23 @@
 //! }
 //! ```
 
-use alloc::rc::Rc;
-use alloc::string::String;
-use alloc::vec::Vec;
-use core::cell::RefCell;
-use core::fmt::Write as _;
+use std::cell::RefCell;
+use std::collections::VecDeque;
+use std::fmt::Write as _;
+use std::rc::Rc;
 
-use heapless::{Deque, FnvIndexMap, String as HString, Vec as HVec};
+use indexmap::IndexMap;
 use umsh_core::PublicKey;
 use umsh_mac::SendOptions;
 use umsh_node::{LocalNode, MacBackend, NodeError, OwnedMacCommand, Subscription};
 use umsh_text::UnicastTextChatWrapper;
 
 use crate::commands::{Command, ParseError, parse};
-use crate::events::{CliEvent, EVENT_LINE_MAX, EVENT_RAW_MAX};
+use crate::events::CliEvent;
 use crate::io::{CliInput, CliOutput};
 use crate::logger::{CliLogger, LogLevel};
 use crate::settings::SessionSettings;
 use crate::stats::Stats;
-use umsh_hal::{ChannelStore, PeerStore, PowerControl};
 use umsh_sync::AsyncCondition;
 
 /// Errors surfaced from `CliSession::run`.
@@ -75,14 +73,14 @@ type SharedQueue<T> = Rc<RefCell<T>>;
 #[derive(Debug, Clone)]
 pub struct PeerEntry {
     pub key: PublicKey,
-    pub alias: Option<HString<16>>,
+    pub alias: Option<String>,
 }
 
 /// Entry in the CLI channel table. Stores the raw key bytes so the `Channel`
 /// descriptor can be reconstructed for leave/bind operations.
 #[derive(Debug, Clone)]
 pub struct ChannelEntry {
-    pub name: HString<16>,
+    pub name: String,
     pub key_bytes: [u8; 32],
 }
 
@@ -96,40 +94,22 @@ enum ExecOutcome {
 /// The CLI driver. Owns the output half of the CLI transport; the input half
 /// is passed to [`CliSession::run`] so the driver can hold a long-lived read
 /// future across wake events without blocking writes to `out`.
-pub struct CliSession<
-    M,
-    OUT,
-    LOG,
-    PS,
-    CS,
-    PC,
-    const N_PEERS: usize,
-    const N_ALIASES: usize,
-    const N_CHANNELS: usize,
-    const N_EVENTS: usize,
-    const LINE_MAX: usize,
-> where
+pub struct CliSession<M, OUT, LOG>
+where
     M: MacBackend,
     M::SendError: core::fmt::Debug,
     M::CapacityError: core::fmt::Debug,
     OUT: CliOutput,
     LOG: CliLogger,
-    PS: PeerStore,
-    CS: ChannelStore,
-    PC: PowerControl,
 {
     pub(crate) node: LocalNode<M>,
     pub(crate) local_key: PublicKey,
     pub(crate) out: OUT,
     pub(crate) logger: LOG,
-    pub(crate) peer_store: PS,
-    pub(crate) channel_store: CS,
-    pub(crate) power: PC,
-    pub(crate) peers: FnvIndexMap<PublicKey, PeerEntry, N_PEERS>,
-    pub(crate) aliases: FnvIndexMap<HString<16>, PublicKey, N_ALIASES>,
-    pub(crate) channels: FnvIndexMap<HString<16>, ChannelEntry, N_CHANNELS>,
-    pub(crate) events: SharedQueue<Deque<CliEvent, N_EVENTS>>,
-    pub(crate) events_dropped: SharedQueue<u64>,
+    pub(crate) peers: IndexMap<PublicKey, PeerEntry>,
+    pub(crate) aliases: IndexMap<String, PublicKey>,
+    pub(crate) channels: IndexMap<String, ChannelEntry>,
+    pub(crate) events: SharedQueue<VecDeque<CliEvent>>,
     pub(crate) stats: SharedQueue<Stats>,
     pub(crate) wake: Rc<AsyncCondition>,
     pub(crate) current_peer: Option<PublicKey>,
@@ -138,75 +118,34 @@ pub struct CliSession<
     _subs: Vec<Subscription>,
 }
 
-impl<
-    M,
-    OUT,
-    LOG,
-    PS,
-    CS,
-    PC,
-    const N_PEERS: usize,
-    const N_ALIASES: usize,
-    const N_CHANNELS: usize,
-    const N_EVENTS: usize,
-    const LINE_MAX: usize,
-> CliSession<M, OUT, LOG, PS, CS, PC, N_PEERS, N_ALIASES, N_CHANNELS, N_EVENTS, LINE_MAX>
+impl<M, OUT, LOG> CliSession<M, OUT, LOG>
 where
     M: MacBackend,
     M::SendError: core::fmt::Debug,
     M::CapacityError: core::fmt::Debug,
     OUT: CliOutput,
     LOG: CliLogger,
-    PS: PeerStore,
-    CS: ChannelStore,
-    PC: PowerControl,
 {
     /// Construct a new session around a cloned `LocalNode<M>`. `local_key`
     /// is passed in because the caller already has it; no node-crate accessor
     /// for the local key is added. The session owns the `out` half of the
     /// CLI transport; the input half is supplied to [`Self::run`].
-    ///
-    /// `peer_store` and `channel_store` are called on join/leave and add/rm
-    /// to persist changes. Pass [`umsh_hal::NoPeerStore`] /
-    /// [`umsh_hal::NoChannelStore`] when persistence is not needed.
-    ///
-    /// `power` is invoked by `/poweroff`; pass [`umsh_hal::NoPowerControl`]
-    /// on targets without a power-off path.
-    pub fn new(
-        node: LocalNode<M>,
-        local_key: PublicKey,
-        out: OUT,
-        logger: LOG,
-        peer_store: PS,
-        channel_store: CS,
-        power: PC,
-    ) -> Self {
-        let events: SharedQueue<Deque<CliEvent, N_EVENTS>> = Rc::new(RefCell::new(Deque::new()));
-        let events_dropped: SharedQueue<u64> = Rc::new(RefCell::new(0));
+    pub fn new(node: LocalNode<M>, local_key: PublicKey, out: OUT, logger: LOG) -> Self {
+        let events: SharedQueue<VecDeque<CliEvent>> = Rc::new(RefCell::new(VecDeque::new()));
         let stats: SharedQueue<Stats> = Rc::new(RefCell::new(Stats::default()));
         let wake = Rc::new(AsyncCondition::new());
 
-        let subs = register_subscriptions(
-            &node,
-            events.clone(),
-            events_dropped.clone(),
-            stats.clone(),
-            wake.clone(),
-        );
+        let subs = register_subscriptions(&node, events.clone(), stats.clone(), wake.clone());
 
         Self {
             node,
             local_key,
             out,
             logger,
-            peer_store,
-            channel_store,
-            power,
-            peers: FnvIndexMap::new(),
-            aliases: FnvIndexMap::new(),
-            channels: FnvIndexMap::new(),
+            peers: IndexMap::new(),
+            aliases: IndexMap::new(),
+            channels: IndexMap::new(),
             events,
-            events_dropped,
             stats,
             wake,
             current_peer: None,
@@ -218,17 +157,15 @@ where
     /// Resolve a `<peer-ref>` token to a `PublicKey`. Alias table first,
     /// then encoded forms (hex / base58 / base64).
     pub fn resolve_peer(&self, token: &str) -> Option<PublicKey> {
-        if let Ok(s) = HString::<16>::try_from(token) {
-            if let Some(k) = self.aliases.get(&s) {
-                return Some(*k);
-            }
+        if let Some(k) = self.aliases.get(token) {
+            return Some(*k);
         }
         crate::peer_ref::try_parse_pubkey(token)
     }
 
     /// Pre-register a peer at startup (e.g. from `--peer` CLI args).
-    /// Returns `false` if either the peer or alias table is full, or if the
-    /// MAC rejects the key (full peer table at the MAC layer).
+    /// Returns `false` if the MAC rejects the key (full peer table at the
+    /// MAC layer).
     ///
     /// Also registers the peer in the MAC-layer peer table via `node.peer`
     /// so inbound frames from this peer can be validated before the user
@@ -237,111 +174,17 @@ where
         if self.peers.contains_key(&key) {
             return true;
         }
-        let alias_heap = alias.and_then(|a| HString::<16>::try_from(a).ok());
-        if self
-            .peers
-            .insert(
-                key,
-                PeerEntry {
-                    key,
-                    alias: alias_heap.clone(),
-                },
-            )
-            .is_err()
-        {
-            return false;
-        }
-        if let Some(a) = alias_heap {
-            if self.aliases.insert(a, key).is_err() {
-                let _ = self.peers.remove(&key);
-                return false;
-            }
-        }
         // Register at the MAC layer too—otherwise inbound unicast/auth
         // packets from this peer would be dropped for missing keys.
         if self.node.peer(key).await.is_err() {
-            let _ = self.peers.remove(&key);
-            if let Some(a) = alias.and_then(|s| HString::<16>::try_from(s).ok()) {
-                let _ = self.aliases.remove(&a);
-            }
             return false;
         }
+        let alias = alias.map(String::from);
+        if let Some(a) = &alias {
+            self.aliases.insert(a.clone(), key);
+        }
+        self.peers.insert(key, PeerEntry { key, alias });
         true
-    }
-
-    /// Pre-register a channel at startup (e.g. from persisted storage).
-    ///
-    /// Joins the channel at the MAC layer and inserts it into the session
-    /// channel table. Returns `false` if the channel or MAC table is full, or
-    /// if the key is invalid. Does NOT call `channel_store`—use this only
-    /// when restoring data that is already durable.
-    #[cfg(feature = "software-crypto")]
-    pub async fn register_channel(&mut self, name: &str, key_bytes: [u8; 32]) -> bool {
-        let hname = match HString::<16>::try_from(name) {
-            Ok(s) => s,
-            Err(_) => return false,
-        };
-        if self.channels.contains_key(&hname) {
-            return true;
-        }
-        let channel_key = umsh_core::ChannelKey(key_bytes);
-        let channel = umsh_node::Channel::private(channel_key, name);
-        if self.node.join(&channel).await.is_err() {
-            return false;
-        }
-        let entry = ChannelEntry {
-            name: hname.clone(),
-            key_bytes,
-        };
-        if self.channels.insert(hname, entry).is_err() {
-            let _ = self.node.leave(&channel).await;
-            return false;
-        }
-        true
-    }
-
-    /// Populate the in-session peer and channel tables from persistent storage.
-    ///
-    /// Loads every peer and channel record from the backing stores and registers
-    /// them with both the MAC layer (idempotent) and the CLI display tables.
-    /// Call this once before [`run`](Self::run), or rely on `run` calling it
-    /// automatically at startup.
-    pub async fn load_from_stores(&mut self) {
-        // Collect into a local Vec first—the callback is sync, but
-        // `register_peer`/`register_channel` are async.
-        let mut peers: Vec<([u8; 32], Option<HString<16>>)> = Vec::new();
-        let _ = self
-            .peer_store
-            .for_each_peer(&mut |pk, alias| {
-                let alias_str = alias
-                    .and_then(|a| core::str::from_utf8(a).ok())
-                    .and_then(|s| HString::<16>::try_from(s).ok());
-                let _ = peers.push((*pk, alias_str));
-            })
-            .await;
-        for (pk, alias) in peers {
-            let _ = self
-                .register_peer(PublicKey(pk), alias.as_ref().map(|s| s.as_str()))
-                .await;
-        }
-
-        #[cfg(feature = "software-crypto")]
-        {
-            let mut channels: Vec<(HString<16>, [u8; 32])> = Vec::new();
-            let _ = self
-                .channel_store
-                .for_each_channel(&mut |name, key| {
-                    if let Ok(s) = core::str::from_utf8(name) {
-                        if let Ok(h) = HString::<16>::try_from(s) {
-                            let _ = channels.push((h, *key));
-                        }
-                    }
-                })
-                .await;
-            for (name, key_bytes) in channels {
-                let _ = self.register_channel(name.as_str(), key_bytes).await;
-            }
-        }
     }
 
     /// Build `SendOptions` from current CLI preferences.
@@ -368,25 +211,21 @@ where
     {
         use futures::future::{Either, select};
 
-        self.load_from_stores().await;
-
         // Service any events that arrived before first user input
         // (e.g. from a previously started host).
         self.service_events().await?;
 
-        let mut buf = [0u8; LINE_MAX];
         let wake = self.wake.clone();
         loop {
             // Arm a single read future and keep it alive across wake events.
-            let read_fut = input.read_line(&mut buf);
+            let read_fut = input.read_line();
             futures::pin_mut!(read_fut);
             let owned: Option<String> = loop {
                 let wait_fut = wake.wait();
                 futures::pin_mut!(wait_fut);
                 match select(read_fut.as_mut(), wait_fut).await {
                     Either::Left((result, _)) => match result {
-                        Ok(Some(s)) => break Some(String::from(s)),
-                        Ok(None) => break None,
+                        Ok(line) => break line,
                         Err(e) => return Err(CliError::Io(e)),
                     },
                     Either::Right(((), _)) => {
@@ -435,14 +274,14 @@ where
                 hops: _,
                 rssi,
                 snr,
-                prefix,
+                payload,
             } => {
                 // Try to decode as text.
-                if let Some([pt, rest @ ..]) = prefix.as_slice().get(0..) {
+                if let [pt, rest @ ..] = payload.as_slice() {
                     if *pt == umsh_core::PayloadType::TextMessage as u8 {
                         if let Ok(msg) = umsh_text::parse_text_message(rest) {
                             let alias = self.peer_alias_display(&from);
-                            let mut line: HString<EVENT_LINE_MAX> = HString::new();
+                            let mut line = String::new();
                             let _ = write!(
                                 &mut line,
                                 "<{}> {}",
@@ -451,9 +290,9 @@ where
                             );
                             self.out.write_line(&line).await?;
                             if self.settings.show_hex {
-                                let mut hex: HString<EVENT_LINE_MAX> = HString::new();
+                                let mut hex = String::new();
                                 let _ = write!(&mut hex, "  hex:");
-                                for b in prefix.iter() {
+                                for b in payload.iter() {
                                     let _ = write!(&mut hex, " {:02x}", b);
                                 }
                                 self.out.write_line(&hex).await?;
@@ -464,7 +303,7 @@ where
                 }
                 // Unknown payload—show origin + hint.
                 let alias = self.peer_alias_display(&from);
-                let mut line: HString<EVENT_LINE_MAX> = HString::new();
+                let mut line = String::new();
                 let _ = write!(
                     &mut line,
                     "[pkt from {} rssi={:?} snr={:?}]",
@@ -475,21 +314,21 @@ where
 
             CliEvent::AckReceived { peer } => {
                 let alias = self.peer_alias_display(&peer);
-                let mut line: HString<EVENT_LINE_MAX> = HString::new();
+                let mut line = String::new();
                 let _ = write!(&mut line, "[ack from {}]", alias);
                 self.out.write_line(&line).await?;
             }
 
             CliEvent::AckTimeout { peer } => {
                 let alias = self.peer_alias_display(&peer);
-                let mut line: HString<EVENT_LINE_MAX> = HString::new();
+                let mut line = String::new();
                 let _ = write!(&mut line, "[ack timeout → {}]", alias);
                 self.out.write_line(&line).await?;
             }
 
             CliEvent::NodeDiscovered { from, name } => {
                 let alias = self.peer_alias_display(&from);
-                let mut line: HString<EVENT_LINE_MAX> = HString::new();
+                let mut line = String::new();
                 let _ = write!(
                     &mut line,
                     "[node discovered: {}{}]",
@@ -500,7 +339,7 @@ where
             }
 
             CliEvent::Beacon { hint, from } => {
-                let mut line: HString<EVENT_LINE_MAX> = HString::new();
+                let mut line = String::new();
                 match from {
                     Some(key) => {
                         let alias = self.peer_alias_display(&key);
@@ -516,21 +355,21 @@ where
 
             CliEvent::PfsEstablished { peer } => {
                 let alias = self.peer_alias_display(&peer);
-                let mut line: HString<EVENT_LINE_MAX> = HString::new();
+                let mut line = String::new();
                 let _ = write!(&mut line, "[pfs established with {}]", alias);
                 self.out.write_line(&line).await?;
             }
 
             CliEvent::PfsEnded { peer } => {
                 let alias = self.peer_alias_display(&peer);
-                let mut line: HString<EVENT_LINE_MAX> = HString::new();
+                let mut line = String::new();
                 let _ = write!(&mut line, "[pfs ended with {}]", alias);
                 self.out.write_line(&line).await?;
             }
 
             CliEvent::PfsFailed { peer, reason } => {
                 let alias = self.peer_alias_display(&peer);
-                let mut line: HString<EVENT_LINE_MAX> = HString::new();
+                let mut line = String::new();
                 let _ = write!(
                     &mut line,
                     "[pfs failed with {}: {}]",
@@ -542,21 +381,21 @@ where
 
             CliEvent::Pong { peer, rtt_ms } => {
                 let alias = self.peer_alias_display(&peer);
-                let mut line: HString<EVENT_LINE_MAX> = HString::new();
+                let mut line = String::new();
                 let _ = write!(&mut line, "pong {} rtt={} ms", alias, rtt_ms);
                 self.out.write_line(&line).await?;
             }
 
             CliEvent::PingTimeout { peer } => {
                 let alias = self.peer_alias_display(&peer);
-                let mut line: HString<EVENT_LINE_MAX> = HString::new();
+                let mut line = String::new();
                 let _ = write!(&mut line, "[ping timeout: {}]", alias);
                 self.out.write_line(&line).await?;
             }
 
             CliEvent::UnknownMacCmdIn { peer, cmd_id } => {
                 let alias = self.peer_alias_display(&peer);
-                let mut line: HString<EVENT_LINE_MAX> = HString::new();
+                let mut line = String::new();
                 let _ = write!(&mut line, "[mac cmd 0x{:02x} from {}]", cmd_id, alias);
                 self.out.write_line(&line).await?;
             }
@@ -567,7 +406,7 @@ where
 
             CliEvent::RawTx { bytes } => {
                 if self.settings.show_raw {
-                    let mut line: HString<EVENT_LINE_MAX> = HString::new();
+                    let mut line = String::new();
                     let _ = write!(&mut line, "tx");
                     for b in bytes.iter() {
                         let _ = write!(&mut line, " {:02x}", b);
@@ -578,7 +417,7 @@ where
 
             CliEvent::RawRx { bytes } => {
                 if self.settings.show_raw {
-                    let mut line: HString<EVENT_LINE_MAX> = HString::new();
+                    let mut line = String::new();
                     let _ = write!(&mut line, "rx");
                     for b in bytes.iter() {
                         let _ = write!(&mut line, " {:02x}", b);
@@ -661,21 +500,7 @@ where
             Command::Raw { peer, hex } => {
                 self.cmd_raw(peer, hex).await.map(|_| ExecOutcome::Continue)
             }
-            Command::PowerOff => self.cmd_power_off().await.map(|_| ExecOutcome::Continue),
-            Command::Reboot => self.cmd_reboot().await.map(|_| ExecOutcome::Continue),
         }
-    }
-
-    async fn cmd_power_off(&mut self) -> Result<(), CliError<OUT::Error>> {
-        self.out.write_line("powering off").await?;
-        self.power.request_power_off();
-        Ok(())
-    }
-
-    async fn cmd_reboot(&mut self) -> Result<(), CliError<OUT::Error>> {
-        self.out.write_line("rebooting").await?;
-        self.power.request_reboot();
-        Ok(())
     }
 
     // ─── Local-state commands ────────────────────────────────────────────────
@@ -690,8 +515,6 @@ where
             "  /quit                       exit the CLI",
             "  /whoami                     print the local public key",
             "  /log <level>                set verbosity: error|warn|info|debug|trace",
-            "  /poweroff                   request a hardware power-off (alias: /off)",
-            "  /reboot                     request a soft reboot",
             "",
             "peers:",
             "  /peer add <pubkey> [alias]  register a peer (base58/base64/hex, 32 bytes)",
@@ -746,18 +569,6 @@ where
                 "/log <level>—set log verbosity.",
                 "  levels: error, warn, info, debug, trace",
             ],
-            "poweroff" | "off" => &[
-                "/poweroff—request a controlled power-off.",
-                "  Persists any pending counters, sleeps the display, drops the",
-                "  peripheral rail, and enters System OFF. On supported boards a",
-                "  button press resumes the device (via reset + reboot).",
-                "  Alias: /off.",
-            ],
-            "reboot" => &[
-                "/reboot—request a soft reboot.",
-                "  Persists any pending counters, then triggers a system reset.",
-                "  The device comes back up running the same firmware image.",
-            ],
             "peer" => &[
                 "/peer add <pubkey> [alias]—register a peer.",
                 "  <pubkey> accepts base58, base64, or hex (32-byte Ed25519 key).",
@@ -788,8 +599,7 @@ where
             "beacon" => &["/beacon—broadcast a beacon frame announcing this node."],
             "stats" => &[
                 "/stats—print counters maintained by the CLI.",
-                "  TX/RX packets, ACK outcomes, last RSSI/SNR, event-queue depth,",
-                "  and events_dropped (non-zero if the inbound queue overflowed).",
+                "  TX/RX packets, ACK outcomes, last RSSI/SNR, and event-queue depth.",
             ],
             "counters" => &[
                 "/counters—show the local TX frame counter and each known peer's RX counter (live and persisted boundaries).",
@@ -815,7 +625,7 @@ where
                 "  show_raw       bool (default false)—log every TX/RX packet as hex",
             ],
             other => {
-                let mut msg: HString<EVENT_LINE_MAX> = HString::new();
+                let mut msg = String::new();
                 let _ = write!(
                     &mut msg,
                     "no help for '{}'—try /help for the full list",
@@ -831,7 +641,7 @@ where
     }
 
     async fn cmd_whoami(&mut self) -> Result<(), CliError<OUT::Error>> {
-        let mut line: HString<EVENT_LINE_MAX> = HString::new();
+        let mut line = String::new();
         let _ = write!(&mut line, "local: {}", self.local_key);
         self.out.write_line(&line).await?;
         Ok(())
@@ -846,47 +656,19 @@ where
             Some(k) => k,
             None => return self.write_err("invalid pubkey").await,
         };
-        let alias_heap = match alias {
-            Some(a) => match HString::<16>::try_from(a) {
-                Ok(s) => Some(s),
-                Err(_) => return self.write_err("alias too long (max 16 chars)").await,
-            },
-            None => None,
-        };
         if self.peers.contains_key(&key) {
             return self.write_err("peer already registered").await;
         }
-        if self
-            .peers
-            .insert(
-                key,
-                PeerEntry {
-                    key,
-                    alias: alias_heap.clone(),
-                },
-            )
-            .is_err()
-        {
-            return self.write_err("peer table full").await;
-        }
-        if let Some(a) = alias_heap.clone() {
-            if self.aliases.insert(a, key).is_err() {
-                let _ = self.peers.remove(&key);
-                return self.write_err("alias table full").await;
-            }
-        }
         // Register at MAC layer so inbound frames from this peer validate.
         if let Err(e) = self.node.peer(key).await {
-            let _ = self.peers.remove(&key);
-            if let Some(a) = alias_heap {
-                let _ = self.aliases.remove(&a);
-            }
             let msg = node_err_str(&e);
             return self.write_err(&msg).await;
         }
-        // Persist to flash (best-effort; the peer is usable even if storage fails).
-        let alias_bytes = alias_heap.as_ref().map(|s: &HString<16>| s.as_bytes());
-        let _ = self.peer_store.store_peer(&key.0, alias_bytes).await;
+        let alias = alias.map(String::from);
+        if let Some(a) = &alias {
+            self.aliases.insert(a.clone(), key);
+        }
+        self.peers.insert(key, PeerEntry { key, alias });
         self.out.write_line("ok").await?;
         Ok(())
     }
@@ -895,18 +677,16 @@ where
         let Some(key) = self.resolve_peer(peer) else {
             return self.write_err("unknown peer").await;
         };
-        let entry = match self.peers.remove(&key) {
+        let entry = match self.peers.shift_remove(&key) {
             Some(e) => e,
             None => return self.write_err("peer not in table").await,
         };
         if let Some(a) = entry.alias {
-            let _ = self.aliases.remove(&a);
+            self.aliases.shift_remove(&a);
         }
         if self.current_peer == Some(key) {
             self.current_peer = None;
         }
-        // Remove from persistent storage (best-effort).
-        let _ = self.peer_store.delete_peer(&key.0).await;
         self.out.write_line("ok").await?;
         Ok(())
     }
@@ -919,29 +699,14 @@ where
         let Some(key) = self.resolve_peer(peer) else {
             return self.write_err("unknown peer").await;
         };
-        let new_alias_heap = match HString::<16>::try_from(new_alias) {
-            Ok(s) => s,
-            Err(_) => return self.write_err("alias too long (max 16 chars)").await,
-        };
         // Remove old alias from lookup table.
-        if let Some(entry) = self.peers.get(&key) {
-            if let Some(old_alias) = entry.alias.clone() {
-                let _ = self.aliases.remove(&old_alias);
-            }
+        if let Some(old_alias) = self.peers.get(&key).and_then(|e| e.alias.as_ref()) {
+            self.aliases.shift_remove(old_alias);
         }
-        // Insert new alias into lookup table.
-        if self.aliases.insert(new_alias_heap.clone(), key).is_err() {
-            return self.write_err("alias table full").await;
-        }
-        // Update the peer entry.
+        self.aliases.insert(String::from(new_alias), key);
         if let Some(entry) = self.peers.get_mut(&key) {
-            entry.alias = Some(new_alias_heap.clone());
+            entry.alias = Some(String::from(new_alias));
         }
-        // Persist (best-effort).
-        let _ = self
-            .peer_store
-            .store_peer(&key.0, Some(new_alias_heap.as_bytes()))
-            .await;
         self.out.write_line("ok").await?;
         Ok(())
     }
@@ -951,13 +716,11 @@ where
             self.out.write_line("(no peers)").await?;
             return Ok(());
         }
-        let mut lines: Vec<String> = Vec::new();
-        for (_k, entry) in self.peers.iter() {
-            let mut line: HString<EVENT_LINE_MAX> = HString::new();
-            let alias = entry.alias.as_deref().unwrap_or("-");
-            let _ = write!(&mut line, "{:16} {}", alias, entry.key);
-            lines.push(String::from(line.as_str()));
-        }
+        let lines: Vec<String> = self
+            .peers
+            .values()
+            .map(|entry| format!("{:16} {}", entry.alias.as_deref().unwrap_or("-"), entry.key))
+            .collect();
         for l in lines {
             self.out.write_line(&l).await?;
         }
@@ -974,7 +737,7 @@ where
     }
 
     async fn cmd_set_show(&mut self) -> Result<(), CliError<OUT::Error>> {
-        let mut line: HString<EVENT_LINE_MAX> = HString::new();
+        let mut line = String::new();
         let _ = write!(
             &mut line,
             "flood_hops={} ack_requested={} show_hex={} show_raw={}",
@@ -1041,13 +804,12 @@ where
 
     async fn cmd_stats(&mut self) -> Result<(), CliError<OUT::Error>> {
         let s = self.stats.borrow().clone();
-        let dropped = *self.events_dropped.borrow();
         let depth = self.events.borrow().len();
-        let mut line: HString<EVENT_LINE_MAX> = HString::new();
+        let mut line = String::new();
         let _ = write!(
             &mut line,
             "rx={} tx={} ack_ok={} ack_timeout={} beacons={} discovered={} \
-             event_depth={} dropped_events={}",
+             event_depth={}",
             s.packets_rx,
             s.packets_tx,
             s.acks_ok,
@@ -1055,11 +817,10 @@ where
             s.beacons_rx,
             s.nodes_discovered,
             depth,
-            dropped,
         );
         self.out.write_line(&line).await?;
         if let Some(rssi) = s.last_rssi {
-            let mut line: HString<EVENT_LINE_MAX> = HString::new();
+            let mut line = String::new();
             let _ = write!(&mut line, "last_rssi={} last_snr={:?}", rssi, s.last_snr);
             self.out.write_line(&line).await?;
         }
@@ -1069,12 +830,12 @@ where
     async fn cmd_counters(&mut self) -> Result<(), CliError<OUT::Error>> {
         let tx = self.node.frame_counter().await.unwrap_or(0);
         let persisted = self.node.persisted_frame_counter().await.unwrap_or(0);
-        let mut line: HString<EVENT_LINE_MAX> = HString::new();
+        let mut line = String::new();
         let _ = write!(&mut line, "local: tx={} (persisted {})", tx, persisted);
         self.out.write_line(&line).await?;
 
         // Collect first (callback can't await), then format with alias lookup.
-        let mut entries: alloc::vec::Vec<(PublicKey, u32, u32)> = alloc::vec::Vec::new();
+        let mut entries: Vec<(PublicKey, u32, u32)> = Vec::new();
         self.node
             .for_each_peer_counter(&mut |pk, last_accepted, persisted_rx| {
                 entries.push((pk, last_accepted, persisted_rx));
@@ -1083,7 +844,7 @@ where
 
         for (pk, last_accepted, persisted_rx) in entries {
             let alias = self.peer_alias_display(&pk);
-            let mut s: HString<EVENT_LINE_MAX> = HString::new();
+            let mut s = String::new();
             let _ = write!(
                 &mut s,
                 "{:16} rx={} (persisted {})",
@@ -1100,10 +861,7 @@ where
             self.out.write_line("(no channels)").await?;
             return Ok(());
         }
-        let mut lines: Vec<String> = Vec::new();
-        for (_k, entry) in self.channels.iter() {
-            lines.push(String::from(entry.name.as_str()));
-        }
+        let lines: Vec<String> = self.channels.keys().cloned().collect();
         for l in lines {
             self.out.write_line(&l).await?;
         }
@@ -1128,7 +886,7 @@ where
                 self.out.write_line("ok").await?;
             }
             Err(e) => {
-                self.write_err(&alloc::format!("{:?}", e)).await?;
+                self.write_err(&format!("{:?}", e)).await?;
             }
         }
         Ok(())
@@ -1154,18 +912,15 @@ where
                 self.stats.borrow_mut().packets_tx += 1;
             }
             Err(e) => {
-                self.write_err(&alloc::format!("{:?}", e)).await?;
+                self.write_err(&format!("{:?}", e)).await?;
             }
         }
         Ok(())
     }
 
     async fn cmd_me(&mut self, action: &str) -> Result<(), CliError<OUT::Error>> {
-        let mut body: HString<EVENT_LINE_MAX> = HString::new();
-        let _ = write!(&mut body, "* {}", action);
-        let owned = String::from(body.as_str());
         // Send as a bare text line directed at current peer.
-        self.cmd_text(&owned).await
+        self.cmd_text(&format!("* {}", action)).await
     }
 
     async fn cmd_ping(
@@ -1194,7 +949,7 @@ where
             Ok(_) => {
                 self.stats.borrow_mut().packets_tx += 1;
                 let alias_str = self.peer_alias_display(&key);
-                let mut line: HString<EVENT_LINE_MAX> = HString::new();
+                let mut line = String::new();
                 let _ = write!(&mut line, "ping {} ({} bytes)", alias_str, total.max(2));
                 self.out.write_line(&line).await?;
             }
@@ -1210,80 +965,53 @@ where
         peer: &str,
         minutes: Option<u16>,
     ) -> Result<(), CliError<OUT::Error>> {
-        #[cfg(feature = "software-crypto")]
-        {
-            let Some(key) = self.resolve_peer(peer) else {
-                return self.write_err("unknown peer").await;
-            };
-            let minutes = minutes.unwrap_or(60);
-            let opts = self.send_opts();
-            match self.node.request_pfs(&key, minutes, &opts).await {
-                Ok(_) => self.out.write_line("pfs request sent").await?,
-                Err(e) => self.write_err(&node_err_str(&e)).await?,
-            }
-        }
-        #[cfg(not(feature = "software-crypto"))]
-        {
-            let _ = (peer, minutes);
-            self.write_err("pfs requires software-crypto feature")
-                .await?;
+        let Some(key) = self.resolve_peer(peer) else {
+            return self.write_err("unknown peer").await;
+        };
+        let minutes = minutes.unwrap_or(60);
+        let opts = self.send_opts();
+        match self.node.request_pfs(&key, minutes, &opts).await {
+            Ok(_) => self.out.write_line("pfs request sent").await?,
+            Err(e) => self.write_err(&node_err_str(&e)).await?,
         }
         Ok(())
     }
 
     async fn cmd_pfs_end(&mut self, peer: &str) -> Result<(), CliError<OUT::Error>> {
-        #[cfg(feature = "software-crypto")]
-        {
-            let Some(key) = self.resolve_peer(peer) else {
-                return self.write_err("unknown peer").await;
-            };
-            let opts = self.send_opts();
-            match self.node.end_pfs(&key, &opts).await {
-                Ok(_) => self.out.write_line("pfs ended").await?,
-                Err(e) => self.write_err(&node_err_str(&e)).await?,
-            }
-        }
-        #[cfg(not(feature = "software-crypto"))]
-        {
-            let _ = peer;
-            self.write_err("pfs requires software-crypto feature")
-                .await?;
+        let Some(key) = self.resolve_peer(peer) else {
+            return self.write_err("unknown peer").await;
+        };
+        let opts = self.send_opts();
+        match self.node.end_pfs(&key, &opts).await {
+            Ok(_) => self.out.write_line("pfs ended").await?,
+            Err(e) => self.write_err(&node_err_str(&e)).await?,
         }
         Ok(())
     }
 
     async fn cmd_pfs_status(&mut self, peer: Option<&str>) -> Result<(), CliError<OUT::Error>> {
-        #[cfg(feature = "software-crypto")]
-        {
-            let targets: Vec<PublicKey> = match peer {
-                Some(r) => match self.resolve_peer(r) {
-                    Some(k) => alloc::vec![k],
-                    None => return self.write_err("unknown peer").await,
-                },
-                None => self.peers.keys().copied().collect(),
-            };
-            for key in targets {
-                // Compute owned values before write_line to avoid borrow conflicts.
-                let result = self.node.pfs_status(&key).await;
-                let alias = self.peer_alias_display(&key);
-                match result {
-                    Ok(s) => {
-                        let mut line: HString<EVENT_LINE_MAX> = HString::new();
-                        let _ = write!(&mut line, "{}: {:?}", alias, s);
-                        self.out.write_line(&line).await?;
-                    }
-                    Err(e) => {
-                        let msg = node_err_str(&e);
-                        self.write_err(&msg).await?;
-                    }
+        let targets: Vec<PublicKey> = match peer {
+            Some(r) => match self.resolve_peer(r) {
+                Some(k) => vec![k],
+                None => return self.write_err("unknown peer").await,
+            },
+            None => self.peers.keys().copied().collect(),
+        };
+        for key in targets {
+            // Compute owned values before write_line to avoid borrow conflicts.
+            let result = self.node.pfs_status(&key).await;
+            let alias = self.peer_alias_display(&key);
+            match result {
+                Ok(s) => {
+                    let mut line = String::new();
+                    let _ = write!(&mut line, "{}: {:?}", alias, s);
+                    self.out.write_line(&line).await?;
+                }
+                Err(e) => {
+                    let msg = node_err_str(&e);
+                    self.write_err(&msg).await?;
                 }
             }
-        }
-        #[cfg(not(feature = "software-crypto"))]
-        {
-            let _ = peer;
-            self.write_err("pfs requires software-crypto feature")
-                .await?;
         }
         Ok(())
     }
@@ -1307,81 +1035,45 @@ where
     async fn cmd_channel_join(
         &mut self,
         name: &str,
-        _key_b58: &str,
+        key_b58: &str,
     ) -> Result<(), CliError<OUT::Error>> {
-        #[cfg(feature = "software-crypto")]
-        {
-            let hname = match HString::<16>::try_from(name) {
-                Ok(s) => s,
-                Err(_) => return self.write_err("channel name too long (max 16 chars)").await,
-            };
-            if self.channels.contains_key(&hname) {
-                return self.write_err("already joined").await;
-            }
-            // Decode the b58 channel key.
-            let key_bytes = match umsh_core::base58::decode(_key_b58.as_bytes()) {
-                Ok(bytes) => bytes,
-                Err(_) => {
-                    return self
-                        .write_err("key must be a 44-character base58 channel key")
-                        .await;
-                }
-            };
-            let channel_key = umsh_core::ChannelKey(key_bytes);
-            let channel = umsh_node::Channel::private(channel_key, name);
-            match self.node.join(&channel).await {
-                Ok(_) => {
-                    let entry = ChannelEntry {
-                        name: HString::try_from(name).unwrap(),
-                        key_bytes,
-                    };
-                    if self.channels.insert(hname, entry).is_err() {
-                        let _ = self.node.leave(&channel).await;
-                        return self.write_err("channel table full").await;
-                    }
-                    // Persist (best-effort).
-                    let _ = self
-                        .channel_store
-                        .store_channel(name.as_bytes(), &key_bytes)
-                        .await;
-                    self.out.write_line("joined").await?;
-                }
-                Err(e) => self.write_err(&node_err_str(&e)).await?,
-            }
+        if self.channels.contains_key(name) {
+            return self.write_err("already joined").await;
         }
-        #[cfg(not(feature = "software-crypto"))]
-        {
-            let _ = (name, _key_b58);
-            self.write_err("channels require software-crypto feature")
-                .await?;
+        // Decode the b58 channel key.
+        let key_bytes = match umsh_core::base58::decode(key_b58.as_bytes()) {
+            Ok(bytes) => bytes,
+            Err(_) => {
+                return self
+                    .write_err("key must be a 44-character base58 channel key")
+                    .await;
+            }
+        };
+        let channel_key = umsh_core::ChannelKey(key_bytes);
+        let channel = umsh_node::Channel::private(channel_key, name);
+        match self.node.join(&channel).await {
+            Ok(_) => {
+                let entry = ChannelEntry {
+                    name: String::from(name),
+                    key_bytes,
+                };
+                self.channels.insert(String::from(name), entry);
+                self.out.write_line("joined").await?;
+            }
+            Err(e) => self.write_err(&node_err_str(&e)).await?,
         }
         Ok(())
     }
 
     async fn cmd_channel_leave(&mut self, name: &str) -> Result<(), CliError<OUT::Error>> {
-        #[cfg(feature = "software-crypto")]
-        {
-            let hname = match HString::<16>::try_from(name) {
-                Ok(s) => s,
-                Err(_) => return self.write_err("unknown channel").await,
-            };
-            let key_bytes = match self.channels.remove(&hname) {
-                Some(e) => e.key_bytes,
-                None => return self.write_err("not joined to that channel").await,
-            };
-            let channel_key = umsh_core::ChannelKey(key_bytes);
-            let channel = umsh_node::Channel::private(channel_key, name);
-            let _ = self.node.leave(&channel).await;
-            // Persist deletion (best-effort).
-            let _ = self.channel_store.delete_channel(name.as_bytes()).await;
-            self.out.write_line("left").await?;
-        }
-        #[cfg(not(feature = "software-crypto"))]
-        {
-            let _ = name;
-            self.write_err("channels require software-crypto feature")
-                .await?;
-        }
+        let key_bytes = match self.channels.shift_remove(name) {
+            Some(e) => e.key_bytes,
+            None => return self.write_err("not joined to that channel").await,
+        };
+        let channel_key = umsh_core::ChannelKey(key_bytes);
+        let channel = umsh_node::Channel::private(channel_key, name);
+        let _ = self.node.leave(&channel).await;
+        self.out.write_line("left").await?;
         Ok(())
     }
 
@@ -1390,37 +1082,24 @@ where
         name: &str,
         text: &str,
     ) -> Result<(), CliError<OUT::Error>> {
-        #[cfg(feature = "software-crypto")]
-        {
-            let hname = match HString::<16>::try_from(name) {
-                Ok(s) => s,
-                Err(_) => return self.write_err("unknown channel").await,
-            };
-            let key_bytes = match self.channels.get(&hname) {
-                Some(e) => e.key_bytes,
-                None => return self.write_err("not joined to that channel").await,
-            };
-            let channel_key = umsh_core::ChannelKey(key_bytes);
-            let channel = umsh_node::Channel::private(channel_key, name);
-            let bound = match self.node.bound_channel(&channel) {
-                Some(b) => b,
-                None => return self.write_err("channel no longer active").await,
-            };
-            let wrapper = umsh_text::MulticastTextChatWrapper::new(bound);
-            let opts = self.send_opts();
-            match wrapper.send_text(text, &opts).await {
-                Ok(_) => {
-                    self.stats.borrow_mut().packets_tx += 1;
-                    self.out.write_line("ok").await?;
-                }
-                Err(e) => self.write_err(&alloc::format!("{:?}", e)).await?,
+        let key_bytes = match self.channels.get(name) {
+            Some(e) => e.key_bytes,
+            None => return self.write_err("not joined to that channel").await,
+        };
+        let channel_key = umsh_core::ChannelKey(key_bytes);
+        let channel = umsh_node::Channel::private(channel_key, name);
+        let bound = match self.node.bound_channel(&channel) {
+            Some(b) => b,
+            None => return self.write_err("channel no longer active").await,
+        };
+        let wrapper = umsh_text::MulticastTextChatWrapper::new(bound);
+        let opts = self.send_opts();
+        match wrapper.send_text(text, &opts).await {
+            Ok(_) => {
+                self.stats.borrow_mut().packets_tx += 1;
+                self.out.write_line("ok").await?;
             }
-        }
-        #[cfg(not(feature = "software-crypto"))]
-        {
-            let _ = (name, text);
-            self.write_err("channels require software-crypto feature")
-                .await?;
+            Err(e) => self.write_err(&format!("{:?}", e)).await?,
         }
         Ok(())
     }
@@ -1429,8 +1108,7 @@ where
         let Some(key) = self.resolve_peer(peer) else {
             return self.write_err("unknown peer").await;
         };
-        // Decode hex into a bounded buffer.
-        let mut bytes: HVec<u8, 128> = HVec::new();
+        let mut bytes: Vec<u8> = Vec::new();
         let hex = hex.trim_start_matches("0x");
         if hex.len() % 2 != 0 {
             return self.write_err("hex must have even length").await;
@@ -1439,11 +1117,7 @@ where
             let hi = hex_nib(chunk[0]);
             let lo = hex_nib(chunk[1]);
             match (hi, lo) {
-                (Some(h), Some(l)) => {
-                    if bytes.push((h << 4) | l).is_err() {
-                        return self.write_err("hex too long (max 128 bytes)").await;
-                    }
-                }
+                (Some(h), Some(l)) => bytes.push((h << 4) | l),
                 _ => return self.write_err("invalid hex digit").await,
             }
         }
@@ -1456,7 +1130,7 @@ where
             Ok(_) => {
                 self.stats.borrow_mut().packets_tx += 1;
                 if self.settings.show_hex {
-                    let mut line: HString<EVENT_LINE_MAX> = HString::new();
+                    let mut line = String::new();
                     let _ = write!(&mut line, "sent {} bytes:", bytes.len());
                     for b in bytes.iter() {
                         let _ = write!(&mut line, " {:02x}", b);
@@ -1474,7 +1148,7 @@ where
     // ─── Helpers ─────────────────────────────────────────────────────────────
 
     async fn write_err(&mut self, msg: &str) -> Result<(), CliError<OUT::Error>> {
-        let mut line: HString<EVENT_LINE_MAX> = HString::new();
+        let mut line = String::new();
         let _ = write!(&mut line, "error: {}", msg);
         self.out.write_line(&line).await?;
         Ok(())
@@ -1495,24 +1169,18 @@ where
 
 // ─── Subscription wiring (free function to avoid borrow conflicts) ────────────
 
-fn push_event<const N: usize>(
-    events: &SharedQueue<Deque<CliEvent, N>>,
-    dropped: &SharedQueue<u64>,
+fn push_event(
+    events: &SharedQueue<VecDeque<CliEvent>>,
     wake: &Rc<AsyncCondition>,
     event: CliEvent,
 ) {
-    let mut q = events.borrow_mut();
-    if q.push_back(event).is_err() {
-        *dropped.borrow_mut() += 1;
-    }
-    drop(q);
+    events.borrow_mut().push_back(event);
     wake.trigger();
 }
 
-fn register_subscriptions<M, const N: usize>(
+fn register_subscriptions<M>(
     node: &LocalNode<M>,
-    events: SharedQueue<Deque<CliEvent, N>>,
-    dropped: SharedQueue<u64>,
+    events: SharedQueue<VecDeque<CliEvent>>,
     stats: SharedQueue<Stats>,
     wake: Rc<AsyncCondition>,
 ) -> Vec<Subscription>
@@ -1524,7 +1192,6 @@ where
     // on_receive—raw inbound packets
     {
         let ev = events.clone();
-        let dr = dropped.clone();
         let st = stats.clone();
         let wk = wake.clone();
         subs.push(node.on_receive(move |pkt| {
@@ -1541,25 +1208,17 @@ where
                 s.last_rssi = pkt.rssi();
                 s.last_snr = pkt.snr().map(|snr| snr.as_centibels());
             }
-            let mut prefix: HVec<u8, 64> = HVec::new();
-            let payload = pkt.payload_bytes();
-            let n = payload.len().min(64);
-            let _ = prefix.extend_from_slice(&payload[..n]);
-            let wire = pkt.wire_bytes();
-            let raw_n = wire.len().min(EVENT_RAW_MAX);
-            let mut raw_bytes: HVec<u8, EVENT_RAW_MAX> = HVec::new();
-            let _ = raw_bytes.extend_from_slice(&wire[..raw_n]);
-            push_event(&ev, &dr, &wk, CliEvent::RawRx { bytes: raw_bytes });
+            let bytes = pkt.wire_bytes().to_vec();
+            push_event(&ev, &wk, CliEvent::RawRx { bytes });
             push_event(
                 &ev,
-                &dr,
                 &wk,
                 CliEvent::Received {
                     from,
                     hops,
                     rssi,
                     snr,
-                    prefix,
+                    payload: pkt.payload_bytes().to_vec(),
                 },
             );
             false // don't consume—let other handlers see it too
@@ -1569,56 +1228,48 @@ where
     // on_transmitted—raw outbound MAC frames
     {
         let ev = events.clone();
-        let dr = dropped.clone();
         let wk = wake.clone();
         subs.push(node.on_transmitted(move |wire: &[u8]| {
-            let raw_n = wire.len().min(EVENT_RAW_MAX);
-            let mut raw_bytes: HVec<u8, EVENT_RAW_MAX> = HVec::new();
-            let _ = raw_bytes.extend_from_slice(&wire[..raw_n]);
-            push_event(&ev, &dr, &wk, CliEvent::RawTx { bytes: raw_bytes });
+            let bytes = wire.to_vec();
+            push_event(&ev, &wk, CliEvent::RawTx { bytes });
         }));
     }
 
     // on_ack_received
     {
         let ev = events.clone();
-        let dr = dropped.clone();
         let st = stats.clone();
         let wk = wake.clone();
         subs.push(node.on_ack_received(move |peer, _token| {
             st.borrow_mut().acks_ok += 1;
-            push_event(&ev, &dr, &wk, CliEvent::AckReceived { peer });
+            push_event(&ev, &wk, CliEvent::AckReceived { peer });
         }));
     }
 
     // on_ack_timeout
     {
         let ev = events.clone();
-        let dr = dropped.clone();
         let st = stats.clone();
         let wk = wake.clone();
         subs.push(node.on_ack_timeout(move |peer, _token| {
             st.borrow_mut().acks_timeout += 1;
-            push_event(&ev, &dr, &wk, CliEvent::AckTimeout { peer });
+            push_event(&ev, &wk, CliEvent::AckTimeout { peer });
         }));
     }
 
     // on_node_discovered
     {
         let ev = events.clone();
-        let dr = dropped.clone();
         let st = stats.clone();
         let wk = wake.clone();
         subs.push(node.on_node_discovered(move |peer, name| {
             st.borrow_mut().nodes_discovered += 1;
-            let name_h = name.and_then(|n| HString::<32>::try_from(n).ok());
             push_event(
                 &ev,
-                &dr,
                 &wk,
                 CliEvent::NodeDiscovered {
                     from: peer,
-                    name: name_h,
+                    name: name.map(String::from),
                 },
             );
         }));
@@ -1627,42 +1278,38 @@ where
     // on_beacon
     {
         let ev = events.clone();
-        let dr = dropped.clone();
         let st = stats.clone();
         let wk = wake.clone();
         subs.push(node.on_beacon(move |hint, key| {
             st.borrow_mut().beacons_rx += 1;
-            push_event(&ev, &dr, &wk, CliEvent::Beacon { hint, from: key });
+            push_event(&ev, &wk, CliEvent::Beacon { hint, from: key });
         }));
     }
 
     // on_pfs_established
     {
         let ev = events.clone();
-        let dr = dropped.clone();
         let wk = wake.clone();
         subs.push(node.on_pfs_established(move |peer| {
-            push_event(&ev, &dr, &wk, CliEvent::PfsEstablished { peer });
+            push_event(&ev, &wk, CliEvent::PfsEstablished { peer });
         }));
     }
 
     // on_pfs_ended
     {
         let ev = events.clone();
-        let dr = dropped.clone();
         let wk = wake.clone();
         subs.push(node.on_pfs_ended(move |peer| {
-            push_event(&ev, &dr, &wk, CliEvent::PfsEnded { peer });
+            push_event(&ev, &wk, CliEvent::PfsEnded { peer });
         }));
     }
 
     // on_pfs_failed
     {
         let ev = events.clone();
-        let dr = dropped.clone();
         let wk = wake.clone();
         subs.push(node.on_pfs_failed(move |peer, reason| {
-            push_event(&ev, &dr, &wk, CliEvent::PfsFailed { peer, reason });
+            push_event(&ev, &wk, CliEvent::PfsFailed { peer, reason });
         }));
     }
 
@@ -1672,7 +1319,6 @@ where
     // dispatch_mac_command fires).
     {
         let ev = events.clone();
-        let dr = dropped.clone();
         let wk = wake.clone();
         subs.push(node.on_mac_command(move |peer, cmd| {
             let event = match cmd {
@@ -1684,27 +1330,25 @@ where
                     CliEvent::UnknownMacCmdIn { peer, cmd_id }
                 }
             };
-            push_event(&ev, &dr, &wk, event);
+            push_event(&ev, &wk, event);
         }));
     }
 
     // on_pong—fired by node-layer ping tracking when an EchoResponse matches.
     {
         let ev = events.clone();
-        let dr = dropped.clone();
         let wk = wake.clone();
         subs.push(node.on_pong(move |peer, rtt_ms| {
-            push_event(&ev, &dr, &wk, CliEvent::Pong { peer, rtt_ms });
+            push_event(&ev, &wk, CliEvent::Pong { peer, rtt_ms });
         }));
     }
 
     // on_ping_timeout—fired when a pending ping exceeds its deadline.
     {
         let ev = events.clone();
-        let dr = dropped.clone();
         let wk = wake.clone();
         subs.push(node.on_ping_timeout(move |peer| {
-            push_event(&ev, &dr, &wk, CliEvent::PingTimeout { peer });
+            push_event(&ev, &wk, CliEvent::PingTimeout { peer });
         }));
     }
 
@@ -1748,7 +1392,7 @@ where
     M::SendError: core::fmt::Debug,
     M::CapacityError: core::fmt::Debug,
 {
-    alloc::format!("{:?}", e)
+    format!("{:?}", e)
 }
 
 fn parse_bool(s: &str) -> Option<bool> {

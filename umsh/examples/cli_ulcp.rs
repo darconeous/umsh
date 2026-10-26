@@ -40,7 +40,7 @@ use umsh::{
     tokio_support::{StdClock, TokioFileCounterStore, TokioFileKeyValueStore, TokioPlatform},
 };
 use umsh_cli::{
-    DefaultCliSession, NoChannelStore, NoPeerStore, NoPowerControl,
+    CliSession,
     io::{StdioOutput, stdio_split},
     logger::{CliLogger, LogLevel},
 };
@@ -60,7 +60,7 @@ type CliMac<R> = Mac<P<R>, IDENTITIES, PEERS, CHANNELS, ACKS, TX, FRAME, DUP>;
 type CliHandle<'a, R> = MacHandle<'a, P<R>, IDENTITIES, PEERS, CHANNELS, ACKS, TX, FRAME, DUP>;
 type CliHost<'a, R> = Host<CliHandle<'a, R>>;
 
-type Session<'a, R> = DefaultCliSession<CliHandle<'a, R>, StdioOutput, StderrLogger>;
+type Session<'a, R> = CliSession<CliHandle<'a, R>, StdioOutput, StderrLogger>;
 
 // ─── StderrLogger ────────────────────────────────────────────────────────────
 
@@ -175,15 +175,7 @@ where
     let logger = StderrLogger {
         level: LogLevel::Info,
     };
-    let mut cli: Session<'_, _> = Session::new(
-        node,
-        local_key,
-        stdout_out,
-        logger,
-        NoPeerStore,
-        NoChannelStore,
-        NoPowerControl,
-    );
+    let mut cli: Session<'_, _> = Session::new(node, local_key, stdout_out, logger);
 
     // Pre-register peers from --peer args.
     for (key, alias) in cfg.peers {

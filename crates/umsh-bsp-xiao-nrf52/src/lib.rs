@@ -122,8 +122,6 @@ pub mod shutdown;
 
 #[cfg(target_os = "none")]
 pub use platform::{XiaoNrf52Mac, XiaoNrf52Platform};
-#[cfg(target_os = "none")]
-pub use power::PowerSignaler;
 
 #[cfg(all(target_os = "none", feature = "ulcp-i2c"))]
 pub mod i2c;

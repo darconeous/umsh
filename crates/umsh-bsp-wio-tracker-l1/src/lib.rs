@@ -12,7 +12,7 @@
 //! What lives here:
 //!
 //! - [`display`]—SH1106 OLED over I²C (SDA=P0.06, SCL=P0.05, addr 0x3D)
-//! - [`power`]—`PowerControl` bridge, shutdown signal, and the SAADC
+//! - [`power`]—shutdown signal and the SAADC
 //!   battery monitor (AIN7/P0.31, divider gated active-high on P0.04)
 //! - [`buzzer`]—piezo on P1.00, driven straight from PWM
 //! - [`gnss`]—Quectel L76K standby control (P1.09); the module has no
@@ -49,8 +49,6 @@ pub mod power;
 
 #[cfg(all(target_os = "none", feature = "platform"))]
 pub use platform::{WioMac, WioTrackerPlatform};
-#[cfg(all(target_os = "none", feature = "power"))]
-pub use power::PowerSignaler;
 
 #[cfg(all(target_os = "none", feature = "ulcp-i2c"))]
 pub mod i2c;

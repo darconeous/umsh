@@ -38,7 +38,7 @@ pub mod power;
 #[cfg(all(target_os = "none", feature = "platform"))]
 pub use platform::{TechoMac, TechoPlatform};
 #[cfg(all(target_os = "none", feature = "power"))]
-pub use power::{PowerSignaler, SHUTDOWN_SIGNAL};
+pub use power::SHUTDOWN_SIGNAL;
 
 // TODO: implement:
 //   pub mod pins;          // typed pin handles per lilygo-techo-hardware.md.

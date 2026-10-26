@@ -32,7 +32,7 @@ use umsh::{
     },
 };
 use umsh_cli::{
-    DefaultCliSession, NoChannelStore, NoPeerStore, NoPowerControl,
+    CliSession,
     io::{StdioOutput, stdio_split},
     logger::{CliLogger, LogLevel},
 };
@@ -54,7 +54,7 @@ type CliHost<'a, R> = Host<CliHandle<'a, R>>;
 
 // ─── Session type alias ───────────────────────────────────────────────────────
 
-type Session<'a, R> = DefaultCliSession<CliHandle<'a, R>, StdioOutput, StderrLogger>;
+type Session<'a, R> = CliSession<CliHandle<'a, R>, StdioOutput, StderrLogger>;
 
 // ─── StderrLogger ─────────────────────────────────────────────────────────────
 
@@ -110,15 +110,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Build CLI session.
     let (mut stdin_in, stdout_out) = stdio_split();
     let logger = StderrLogger::new(LogLevel::Info);
-    let mut cli: Session<'_, _> = Session::new(
-        node,
-        local_key,
-        stdout_out,
-        logger,
-        NoPeerStore,
-        NoChannelStore,
-        NoPowerControl,
-    );
+    let mut cli: Session<'_, _> = Session::new(node, local_key, stdout_out, logger);
 
     // Pre-register peers from --peer args.
     for (key, alias) in cfg.peers {

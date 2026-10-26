@@ -1,8 +1,6 @@
 //! Parsed-command enum and parser. The dispatcher lives in
 //! [`crate::session`].
 
-use alloc::string::String;
-
 /// A parsed CLI input line. Borrows from the input buffer—the caller is
 /// expected to own that buffer on the stack while dispatching.
 #[derive(Debug, PartialEq, Eq)]
@@ -83,9 +81,6 @@ pub enum Command<'a> {
         peer: &'a str,
         hex: &'a str,
     },
-
-    PowerOff,
-    Reboot,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -167,8 +162,6 @@ pub fn parse(line: &str) -> Result<Command<'_>, ParseError> {
             require(hex, "hex")?;
             Ok(Command::Raw { peer, hex })
         }
-        "poweroff" | "off" => Ok(Command::PowerOff),
-        "reboot" => Ok(Command::Reboot),
 
         other => {
             let mut s = String::new();
@@ -353,11 +346,6 @@ mod tests {
     #[test]
     fn counters() {
         assert_eq!(parse("/counters"), Ok(Command::Counters));
-    }
-
-    #[test]
-    fn reboot() {
-        assert_eq!(parse("/reboot"), Ok(Command::Reboot));
     }
 
     #[test]
