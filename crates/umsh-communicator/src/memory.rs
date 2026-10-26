@@ -1279,6 +1279,7 @@ impl<D: Durable> ChatStore for MemoryStore<D> {
                         route: None,
                         forward_secrecy: false,
                         saved: false,
+                        alias: None,
                     },
                     heard: 0,
                 }
@@ -1295,22 +1296,15 @@ impl<D: Durable> ChatStore for MemoryStore<D> {
                 peer.heard = self.disk.tick();
                 peer.record.last_heard = at.or(peer.record.last_heard);
                 // Someone else's word never overrides the node's own.
-                if linked || !peer.record.linked {
-                    // What it calls itself, unless someone here named it.
-                    if let Some(name) = name
-                        && !(peer.record.saved && peer.record.name.is_some())
-                    {
-                        peer.record.name = Some(record::name(name));
-                    }
+                if (name.is_some() || identity.is_some()) && (linked || !peer.record.linked) {
+                    peer.record.name = name.map(record::name);
                     if let Some(identity) = identity
                         && identity.len() <= IDENTITY_MAX
                     {
                         peer.record.identity =
                             heapless::Vec::from_slice(identity).unwrap_or_default();
                     }
-                    if name.is_some() || identity.is_some() {
-                        peer.record.linked = linked;
-                    }
+                    peer.record.linked = linked;
                 }
             }
             PeerChange::Route(route) => {
@@ -1321,7 +1315,10 @@ impl<D: Durable> ChatStore for MemoryStore<D> {
             }
             PeerChange::Save { name } => {
                 peer.record.saved = true;
-                if let Some(name) = name {
+                // Someone else's word, until it names itself.
+                if let Some(name) = name
+                    && !peer.record.linked
+                {
                     peer.record.name = Some(record::name(name));
                 }
             }
@@ -1329,7 +1326,7 @@ impl<D: Durable> ChatStore for MemoryStore<D> {
                 peer.record.saved = false;
                 peer.heard = self.disk.tick();
             }
-            PeerChange::Rename(name) => peer.record.name = name.map(record::name),
+            PeerChange::Alias(alias) => peer.record.alias = alias.map(record::name),
             PeerChange::ForwardSecrecy(preferred) => peer.record.forward_secrecy = preferred,
             PeerChange::Forget => unreachable!(),
         }

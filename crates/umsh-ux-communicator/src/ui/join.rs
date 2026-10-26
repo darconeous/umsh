@@ -71,6 +71,7 @@ pub fn view(
 fn name_row(m: &'static Metrics, name: &JoinName) -> impl View<Rgb565, State> + use<> {
     edited_name(
         m,
+        "Name",
         name,
         State::join_name_mut,
         State::field_active,
@@ -78,10 +79,12 @@ fn name_row(m: &'static Metrics, name: &JoinName) -> impl View<Rgb565, State> + 
     )
 }
 
-/// A row named Name whose value is edited where it stands: `edit` reaches
-/// the text, and `active` hears the edit begin and end. Enter ends it.
+/// A row named `label` whose value, a name, is edited where it stands:
+/// `edit` reaches the text, and `active` hears the edit begin and end.
+/// Enter ends it.
 pub(super) fn edited_name<const N: usize>(
     m: &'static Metrics,
+    label: &'static str,
     name: &EditBuffer<String<N>>,
     edit: fn(&mut State) -> Option<&mut EditBuffer<String<N>>>,
     active: fn(&mut State, bool),
@@ -95,12 +98,13 @@ pub(super) fn edited_name<const N: usize>(
         // Enter ends the edit.
         .on_submit(|_: &mut State| {})
         .on_active(active)
-        .with_label(move |status, area| name_look(m, status, area, &shown))
+        .with_label(move |status, area| name_look(m, label, status, area, &shown))
         .focus_key(key)
 }
 
 fn name_look<const N: usize>(
     m: &'static Metrics,
+    name: &'static str,
     status: TextFieldStatus,
     area: TextArea<'static, String<N>, Typeface>,
     shown: &str,
@@ -115,10 +119,10 @@ fn name_look<const N: usize>(
     };
     // Set at the end, as a value is, and edited where it stands: the area
     // is as wide as the text and its caret, up to the room the row leaves.
-    let room = m.width - 8 - (INSET - 4) - 10 - 2 * 8 - super::advance("Name", face, m.body);
+    let room = m.width - 8 - (INSET - 4) - 10 - 2 * 8 - super::advance(name, face, m.body);
     let wide = super::advance(shown, &font::REGULAR, m.secondary) + CARET;
     HStack::new((
-        label::<8>("Name", face, m.body, theme::TEXT),
+        label::<16>(name, face, m.body, theme::TEXT),
         Spacer::default(),
         editing.then(|| {
             area.colors(AreaColors {

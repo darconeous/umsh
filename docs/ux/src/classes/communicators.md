@@ -88,6 +88,14 @@ contact card, as an invitation is for a channel. Pressing it opens the same
 unsaved-peer sheet. A saved peer's page has **Share contact**, which sends
 that contact to a chosen chat.
 
+**Names.** A peer goes by the name its latest identity gives, which
+replaces whatever it was called before, the name it was saved by included.
+**Alias** on a saved peer's page is what it is called here, edited where it
+stands: it goes before the peer's own name everywhere, its chat and its
+channel messages included, and nothing the peer advertises replaces it.
+While an alias hides a different name, **Advertised name** shows that one.
+Emptied, the alias goes, and the peer's own name is back.
+
 | | |
 |---|---|
 | ![Contact in a chat](../hardware/mockups/tlora-pager-native/43-contact-in-a-chat.png) | ![Contact opened](../hardware/mockups/tlora-pager-native/44-contact-opened.png) |

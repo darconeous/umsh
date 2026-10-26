@@ -1951,6 +1951,30 @@ fn forward_secrecy_switches_and_a_ping_is_answered() {
 }
 
 #[test]
+fn a_saved_peer_is_given_an_alias_where_it_stands() {
+    let mut app = app!();
+    open_pat(&mut app);
+    let Screen::Peer { peer, .. } = *app.state().screen() else {
+        panic!("not on a peer");
+    };
+    let name = |app: &App<_, State, _>| app.state().peer(peer).unwrap().name.clone();
+    turn_to(&mut app, keys::PEER_ALIAS);
+    run(&mut app, &[Input::Press]);
+    run(&mut app, &typed("Pat"));
+    run(&mut app, &[Input::Enter]);
+    assert_eq!(name(&app).as_str(), "Pat");
+    let detail = peer_detail(app.state());
+    assert_eq!(detail.alias.as_deref(), Some("Pat"));
+    assert_eq!(detail.advertised.as_deref(), Some("Pat Okafor"));
+    // Emptied, they go by their own name again.
+    run(&mut app, &[Input::Press]);
+    run(&mut app, &[Input::Backspace; 3]);
+    run(&mut app, &[Input::Enter]);
+    assert_eq!(name(&app).as_str(), "Pat Okafor");
+    assert_eq!(peer_detail(app.state()).alias, None);
+}
+
+#[test]
 fn a_saved_peer_is_asked_for_their_identity() {
     let mut app = app!();
     open_pat(&mut app);

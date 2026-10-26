@@ -403,6 +403,8 @@ impl<S: ChatStore> Chats<S> {
                 .unwrap_or_default(),
             forward_secrecy: kept.forward_secrecy,
             ping: None,
+            alias: kept.alias.as_deref().map(cut),
+            advertised: kept.name.as_deref().map(cut),
         };
         if let Some(&round_trip_ms) = self.pings.get(&kept.key.0) {
             let tenths = round_trip_ms.div_ceil(100);
@@ -494,6 +496,35 @@ impl<S: ChatStore> Chats<S> {
             if was == Session::Held {
                 self.shown_changed(&kept.key, events);
             }
+        }
+    }
+
+    /// Calls the saved peer `peer` `alias` here, or by its own name again
+    /// when `None`.
+    pub fn set_peer_alias(
+        &mut self,
+        peer: model::PeerId,
+        alias: Option<&str>,
+        events: &mut dyn FnMut(NodeEvent),
+    ) {
+        let Some(kept) = self.saved_peer(peer) else {
+            return;
+        };
+        if self
+            .store
+            .update_peer(&kept.key, PeerChange::Alias(alias))
+            .is_err()
+        {
+            return;
+        }
+        events(NodeEvent::PeerChanged(peer));
+        // Its chat and the members it may be are shown by it.
+        events(NodeEvent::IdentitiesLearned);
+        if let Some(chat) = self
+            .store
+            .chat_for(&ConversationKey::Direct { peer: kept.key })
+        {
+            events(NodeEvent::ChatChanged(chat.0));
         }
     }
 
@@ -597,7 +628,7 @@ impl<S: ChatStore> Chats<S> {
                     .peer(&key)
                     .ok()
                     .flatten()
-                    .is_none_or(|kept| kept.name.is_none());
+                    .is_none_or(|kept| kept.shown_name().is_none());
                 let lettering = address(&key.0);
                 let name = (unnamed
                     && !name_given.trim().is_empty()
@@ -640,8 +671,8 @@ impl<S: ChatStore> Chats<S> {
             };
             let key = PublicKey(key);
             let kept = self.store.peer(&key).ok().flatten();
-            // A known node's own name; else the one its invitation gives.
-            let named = kept.as_ref().and_then(|kept| kept.name.as_deref()).map(cut);
+            // A known node's name here; else the one its invitation gives.
+            let named = kept.as_ref().and_then(PeerRecord::shown_name).map(cut);
             let invited = identity
                 .and_then(|identity| self.bundle(&key, identity))
                 .and_then(|bundle| bundle.identity.name)
@@ -691,9 +722,9 @@ impl<S: ChatStore> Chats<S> {
         let link = self.node_link(body)?;
         let kept = self.store.peer(&link.key).ok().flatten();
         // Called as it is kept here; else as its link calls it.
-        let named = kept.as_ref().and_then(|kept| kept.name.clone());
+        let named = kept.as_ref().and_then(PeerRecord::shown_name);
         let given = link.bundle.and_then(|bundle| bundle.identity.name);
-        let name = match named.as_deref().or(given.as_deref()) {
+        let name = match named.or(given.as_deref()) {
             Some(name) => SharedText::new(self.heap, name)?,
             None => SharedText::new(self.heap, &name(&link.key, None))?,
         };
@@ -826,7 +857,7 @@ impl<S: ChatStore> Chats<S> {
     pub fn find_heard(&self, query: &str, now_ms: u64, wall: Option<u32>) -> Vec<Heard, MAX_HEARD> {
         let mut found = Vec::new();
         for kept in self.store.peers(PeerFilter::Heard).flatten() {
-            let Some(name) = kept.name.as_deref() else {
+            let Some(name) = kept.shown_name() else {
                 continue;
             };
             if word_match(name, query).is_none() {
@@ -897,10 +928,10 @@ fn avatar(key: &PublicKey, kept: Option<&PeerRecord>) -> AvatarStyle {
     )
 }
 
-/// What a node is called: the name it is kept under, else its address's
+/// What a node is called: its alias or its name, else its address's
 /// first characters.
 fn name(key: &PublicKey, kept: Option<&PeerRecord>) -> String<32> {
-    match kept.and_then(|kept| kept.name.as_deref()) {
+    match kept.and_then(PeerRecord::shown_name) {
         Some(name) => cut(name),
         None => cut(address(&key.0).get(..4).unwrap_or_default()),
     }

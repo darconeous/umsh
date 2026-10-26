@@ -97,6 +97,7 @@ pub mod keys {
     pub const FORGET_CONFIRM: FocusKey = FocusKey(0x0C00_0007);
     pub const FORGET_CANCEL: FocusKey = FocusKey(0x0C00_0008);
     pub const PEER_SHARE: FocusKey = FocusKey(0x0C00_0009);
+    pub const PEER_ALIAS: FocusKey = FocusKey(0x0C00_000A);
     /// A chat's menu, which holding the wheel on its row opens: its peer
     /// or channel, and Delete or Leave; and their confirmation.
     pub const CHAT_SHOW: FocusKey = FocusKey(0x1D00_0000);
@@ -200,7 +201,7 @@ pub mod keys {
         use super::Field;
         match key {
             COMPOSER => Some(Field::Prose),
-            NAME_FIELD | JOIN_NAME | IDENTITY_NAME | CHANNEL_NAME => Some(Field::Name),
+            NAME_FIELD | JOIN_NAME | IDENTITY_NAME | CHANNEL_NAME | PEER_ALIAS => Some(Field::Name),
             FIND_FIELD | PEER_FIELD | CHANNEL_FIELD => Some(Field::Literal),
             POWER_FIELD => Some(Field::Number),
             _ => None,
@@ -537,6 +538,8 @@ pub enum Screen {
     Peer {
         peer: PeerId,
         detail: PeerDetail,
+        /// What they are called here, edited in place.
+        alias: JoinName,
         /// Forget is asking to be confirmed.
         confirm: bool,
         /// Their identity has been asked for.
@@ -1016,9 +1019,11 @@ impl State {
         let Some(detail) = self.node.peer_detail(peer) else {
             return;
         };
+        let alias = JoinName::with_text(detail.alias.clone().unwrap_or_default());
         _ = self.screens.push(Screen::Peer {
             peer,
             detail,
+            alias,
             confirm: false,
             requested: false,
             focus: FocusState::requesting(keys::PEER_MESSAGE),
@@ -1040,6 +1045,50 @@ impl State {
             && let Some(fresh) = node.peer_detail(*peer)
         {
             *detail = fresh;
+        }
+    }
+
+    /// The alias being edited on the saved peer's screen.
+    pub fn peer_alias_mut(&mut self) -> Option<&mut JoinName> {
+        match self.screens.last_mut() {
+            Some(Screen::Peer { alias, .. }) => Some(alias),
+            _ => None,
+        }
+    }
+
+    /// The alias begins or ends an edit. An edit ended keeps the alias as
+    /// typed.
+    pub fn peer_alias_active(&mut self, active: bool) {
+        self.field_active(active);
+        if !active {
+            self.alias_peer();
+        }
+    }
+
+    /// Calls the saved peer shown what its screen's alias says, or by
+    /// their own name when that is empty, and shows the alias as it then
+    /// stands.
+    pub fn alias_peer(&mut self) {
+        let Some(Screen::Peer {
+            peer,
+            detail,
+            alias,
+            ..
+        }) = self.screens.last()
+        else {
+            return;
+        };
+        let peer = *peer;
+        let typed: String<32> = String::try_from(alias.text().trim()).unwrap_or_default();
+        if detail.alias.as_deref().unwrap_or_default() != typed {
+            self.node
+                .set_peer_alias(peer, (!typed.is_empty()).then_some(typed.as_str()));
+            self.peers.clear();
+            self.node.peers(&mut self.peers);
+            self.refresh_peer();
+        }
+        if let Some(Screen::Peer { detail, alias, .. }) = self.screens.last_mut() {
+            *alias = JoinName::with_text(detail.alias.clone().unwrap_or_default());
         }
     }
 

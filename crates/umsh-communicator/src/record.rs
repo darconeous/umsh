@@ -258,6 +258,8 @@ pub enum ChatChange<'a> {
 pub struct PeerRecord {
     pub id: PeerId,
     pub key: PublicKey,
+    /// What it calls itself, or what someone said it is called until it
+    /// says: the name of its latest identity.
     pub name: Option<Name>,
     /// Its advertised identity, as advertised: the whole payload when it
     /// came signed and fits, else its role and capabilities alone. Either
@@ -275,6 +277,16 @@ pub struct PeerRecord {
     pub forward_secrecy: bool,
     /// Saved, rather than only heard. Only saved peers stay for good.
     pub saved: bool,
+    /// What it is called here, which nothing it says replaces.
+    pub alias: Option<Name>,
+}
+
+impl PeerRecord {
+    /// What it is shown as: its alias, else its name.
+    #[must_use]
+    pub fn shown_name(&self) -> Option<&str> {
+        self.alias.as_deref().or(self.name.as_deref())
+    }
 }
 
 /// A change to a peer.
@@ -282,8 +294,9 @@ pub struct PeerRecord {
 pub enum PeerChange<'a> {
     /// It was heard, at `at`, saying what it says about itself. A peer
     /// not yet known is kept as heard.
-    /// A `linked` name and identity replace an unlinked one, but never
-    /// the other way round.
+    /// A name and identity replace the last ones whole, a name that is
+    /// absent included, except that an unlinked pair never replaces a
+    /// `linked` one.
     Heard {
         at: Option<u32>,
         name: Option<&'a str>,
@@ -292,13 +305,15 @@ pub enum PeerChange<'a> {
     },
     /// A route back was learned, or the old one is no good.
     Route(Option<&'a [RouterHint]>),
-    /// Keep it for good. A peer not yet known is kept as saved.
+    /// Keep it for good. A peer not yet known is kept as saved. `name`
+    /// is what it was seen called, kept as someone else's word for it.
     Save {
         name: Option<&'a str>,
     },
     /// Back to heard only, which the newest heard peers outlive.
     Unsave,
-    Rename(Option<&'a str>),
+    /// Call it this here, or by its own name again when `None`.
+    Alias(Option<&'a str>),
     ForwardSecrecy(bool),
     /// Forget it. Heard again later, it is a new peer to the store.
     Forget,

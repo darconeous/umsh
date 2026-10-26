@@ -65,6 +65,7 @@ pub fn view(
             ),
             edited_name(
                 m,
+                "Name",
                 name,
                 State::channel_name_mut,
                 State::channel_name_active,

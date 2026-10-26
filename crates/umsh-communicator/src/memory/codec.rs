@@ -202,6 +202,7 @@ pub(super) fn record(disk: &Disk, key: &RecordKey, out: &mut Vec<u8>) -> bool {
             out.flag(record.saved);
             out.u64(peer.heard);
             out.flag(record.linked);
+            out.name(record.alias.as_deref());
         }
         RecordKey::Channel(tag) => {
             let Some(channel) = disk.channels.get(tag) else {
@@ -325,6 +326,8 @@ fn restore_one(disk: &mut Disk, key: &[u8], record: &[u8]) -> Option<()> {
             let heard = input.u64()?;
             // Kept from before provenance was: nothing says whose word it is.
             let linked = input.flag().unwrap_or(false);
+            // Kept from before aliases were.
+            let alias = input.name().unwrap_or(None);
             disk.peers.insert(
                 key.0,
                 PeerEntry {
@@ -338,6 +341,7 @@ fn restore_one(disk: &mut Disk, key: &[u8], record: &[u8]) -> Option<()> {
                         route,
                         forward_secrecy,
                         saved,
+                        alias,
                     },
                     heard,
                 },

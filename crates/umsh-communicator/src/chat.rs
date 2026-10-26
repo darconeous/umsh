@@ -40,7 +40,7 @@ use crate::batch::{Batch, Committed, Subject};
 use crate::ids::{ChatId, MessageId};
 use crate::record::{
     self, BODY_MAX, BuiltinChannel, ChannelAccess, ChannelChange, ChatChange, ChatRecord, LinkInfo,
-    MessageMeta, MessageRecord,
+    MessageMeta, MessageRecord, PeerRecord,
 };
 use crate::store::ChatStore;
 use crate::task::Command;
@@ -1289,7 +1289,7 @@ impl<S: ChatStore> Chats<S> {
         };
         let named = key
             .and_then(|key| self.store.peer(&key).ok().flatten())
-            .and_then(|kept| kept.name.as_deref().map(cut));
+            .and_then(|kept| kept.shown_name().map(cut));
         let name = named.unwrap_or_else(|| cut(&unnamed_member(&lettering)));
         Some((name, AvatarStyle::peer(hint.0, &lettering, shape)))
     }
@@ -1467,12 +1467,15 @@ impl<S: ChatStore> Chats<S> {
                 let kept = self.store.peer(&peer).ok().flatten();
                 let lettering = address(&peer.0);
                 let lettering = lettering.get(..4).unwrap_or_default();
-                let name = match record.name.as_deref() {
+                // The name the chat was opened with only stands in for
+                // one the node gives itself.
+                let name = match kept
+                    .as_ref()
+                    .and_then(PeerRecord::shown_name)
+                    .or(record.name.as_deref())
+                {
                     Some(name) => cut(name),
-                    None => match kept.as_ref().and_then(|kept| kept.name.as_deref()) {
-                        Some(name) => cut(name),
-                        None => cut(lettering),
-                    },
+                    None => cut(lettering),
                 };
                 let hint = peer.hint().0;
                 let hops = self.links.get(&peer.0).and_then(Link::hops);
@@ -1662,8 +1665,13 @@ impl<S: ChatStore> Chats<S> {
                 PeerShape::Hexagon
             }
         };
+        // What they are called here comes before what they call
+        // themselves.
+        let alias = key
+            .and_then(|key| self.store.peer(&key).ok().flatten())
+            .and_then(|kept| kept.alias);
         let mut name = String::new();
-        match handle {
+        match alias.as_deref().or(handle) {
             Some(handle) if !handle.trim().is_empty() => push_cut(&mut name, handle),
             _ => name = unnamed_member(&lettering),
         }

@@ -882,11 +882,58 @@ pub fn peers<H: Harness>(harness: &mut H) {
     assert_eq!(record.last_heard, Some(10));
     assert!(!record.saved);
 
-    // A saved peer keeps the name it was given.
-    store.update_peer(&key(1), heard(11)).unwrap();
+    // The name a peer was saved by gives way to the one it gives itself,
+    // and that to the next it gives, or to none.
     assert_eq!(
         store.peer(&key(1)).unwrap().unwrap().name.as_deref(),
         Some("Robin")
+    );
+    store.update_peer(&key(1), heard(11)).unwrap();
+    let record = store.peer(&key(1)).unwrap().unwrap();
+    assert_eq!(record.name.as_deref(), Some("trail node"));
+    assert_eq!(record.shown_name(), Some("trail node"));
+    let renamed = |name| PeerChange::Heard {
+        at: None,
+        name,
+        identity: Some(&[1, 2, 3]),
+        linked: true,
+    };
+    store
+        .update_peer(&key(1), renamed(Some("ridge node")))
+        .unwrap();
+    assert_eq!(
+        store.peer(&key(1)).unwrap().unwrap().name.as_deref(),
+        Some("ridge node")
+    );
+    store.update_peer(&key(1), renamed(None)).unwrap();
+    assert_eq!(store.peer(&key(1)).unwrap().unwrap().name, None);
+    // An alias is shown over its name, and nothing it says replaces it.
+    store
+        .update_peer(&key(1), PeerChange::Alias(Some("Robin")))
+        .unwrap();
+    store.update_peer(&key(1), heard(12)).unwrap();
+    let record = store.peer(&key(1)).unwrap().unwrap();
+    assert_eq!(record.alias.as_deref(), Some("Robin"));
+    assert_eq!(record.name.as_deref(), Some("trail node"));
+    assert_eq!(record.shown_name(), Some("Robin"));
+    store.update_peer(&key(1), PeerChange::Alias(None)).unwrap();
+    assert_eq!(
+        store.peer(&key(1)).unwrap().unwrap().shown_name(),
+        Some("trail node")
+    );
+    // Saved again under another name, a peer that named itself keeps its
+    // own.
+    store
+        .update_peer(
+            &key(1),
+            PeerChange::Save {
+                name: Some("Robin"),
+            },
+        )
+        .unwrap();
+    assert_eq!(
+        store.peer(&key(1)).unwrap().unwrap().name.as_deref(),
+        Some("trail node")
     );
     let route = [RouterHint([9, 9]), RouterHint([8, 8])];
     store
@@ -1048,6 +1095,9 @@ pub fn remount<H: Harness>(harness: &mut H) {
         .unwrap();
     store
         .update_peer(&PEER, PeerChange::Save { name: Some("Sam") })
+        .unwrap();
+    store
+        .update_peer(&PEER, PeerChange::Alias(Some("Sammy")))
         .unwrap();
     store
         .update_peer(

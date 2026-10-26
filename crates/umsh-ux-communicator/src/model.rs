@@ -314,6 +314,10 @@ pub struct PeerDetail {
     pub forward_secrecy: bool,
     /// The round trip of the last ping they answered, such as `1.4 s`.
     pub ping: Option<String<8>>,
+    /// What they are called here, which nothing they say replaces.
+    pub alias: Option<String<32>>,
+    /// What they call themselves, when they have said.
+    pub advertised: Option<String<32>>,
 }
 
 /// A node heard nearby but not saved, as Find shows it.
@@ -1379,6 +1383,10 @@ pub trait Node {
 
     /// Turns forward secrecy with `peer` on or off.
     fn set_forward_secrecy(&self, peer: PeerId, on: bool);
+
+    /// Calls `peer` `alias` here, or by their own name again when `None`.
+    /// The change comes as [`NodeEvent::PeerChanged`].
+    fn set_peer_alias(&self, peer: PeerId, alias: Option<&str>);
 
     /// Pings `peer`. Its answer shows in their detail.
     fn ping(&self, peer: PeerId);

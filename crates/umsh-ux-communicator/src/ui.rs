@@ -181,12 +181,13 @@ fn peer_or_channel(state: &State) -> impl View<Rgb565, State> + use<> {
         Screen::Peer {
             peer,
             detail,
+            alias,
             confirm,
             requested,
             ..
         } => state
             .peer(*peer)
-            .map(|summary| peer::view(m, summary, detail, *confirm, *requested)),
+            .map(|summary| peer::view(m, summary, detail, alias, *confirm, *requested)),
         Screen::ShareContact { peer, .. } => state
             .peer(*peer)
             .map(|summary| share_contact::view(state, &summary.name)),

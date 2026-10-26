@@ -571,6 +571,11 @@ impl<P: LocalPort, S: ChatStore> Node for CommunicatorNode<P, S> {
         self.wake();
     }
 
+    fn set_peer_alias(&self, peer: PeerId, alias: Option<&str>) {
+        self.with_chats(|chats, _, _, events| chats.set_peer_alias(peer, alias, events));
+        self.wake();
+    }
+
     fn ping(&self, peer: PeerId) {
         self.chats.borrow_mut().ping(peer);
         self.wake();

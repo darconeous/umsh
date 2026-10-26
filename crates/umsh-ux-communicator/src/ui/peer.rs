@@ -1,6 +1,7 @@
 //! A saved peer: who they are, their whole address, then one focusable list
-//! of actions and readouts that the wheel scrolls through. Forget is last
-//! and asks to confirm. Backspace goes back.
+//! of actions and readouts that the wheel scrolls through. Their alias is
+//! edited in place; Forget is last and asks to confirm. Backspace goes
+//! back.
 
 use buoyant::event::{Key, KeyResponse};
 use buoyant::focus::BoundaryBehavior;
@@ -9,11 +10,12 @@ use buoyant::view::prelude::*;
 use embedded_graphics::pixelcolor::Rgb565;
 use heapless::String;
 
+use super::join::edited_name;
 use super::member::detail_head;
 use super::setting::{End, card, choice, readout, row};
 use crate::board::Metrics;
 use crate::model::{PeerDetail, PeerSummary, State, hops_text};
-use crate::nav::keys;
+use crate::nav::{JoinName, keys};
 use crate::{font, theme};
 
 const ROW: u32 = 34;
@@ -27,9 +29,15 @@ pub fn view(
     m: &'static Metrics,
     summary: &PeerSummary,
     detail: &PeerDetail,
+    alias: &JoinName,
     confirm: bool,
     requested: bool,
 ) -> impl View<Rgb565, State> + use<> {
+    // What the peer calls itself, when an alias here hides it.
+    let advertised = detail
+        .advertised
+        .as_deref()
+        .filter(|own| detail.alias.as_deref().is_some_and(|alias| alias != *own));
     let mut about: String<48> = String::new();
     _ = about.push_str("Saved peer");
     if let Some(hops) = summary.hops {
@@ -67,8 +75,23 @@ pub fn view(
                 false,
                 ROW,
             ),
-            readout(m, "Route", detail.route.as_deref().unwrap_or_default(), ROW),
-            readout(m, "Last heard", &detail.heard, ROW),
+            VStack::new((
+                edited_name(
+                    m,
+                    "Alias",
+                    alias,
+                    State::peer_alias_mut,
+                    State::peer_alias_active,
+                    keys::PEER_ALIAS,
+                ),
+                advertised.map(|own| readout(m, "Advertised name", own, ROW)),
+            ))
+            .with_spacing(0),
+            VStack::new((
+                readout(m, "Route", detail.route.as_deref().unwrap_or_default(), ROW),
+                readout(m, "Last heard", &detail.heard, ROW),
+            ))
+            .with_spacing(0),
             row(
                 m,
                 "Forward secrecy",

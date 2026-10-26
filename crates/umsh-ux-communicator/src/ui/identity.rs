@@ -45,6 +45,7 @@ pub fn view(state: &State, name: &NameText) -> impl View<Rgb565, State> + use<> 
                 .padding(Edges::Top, GAP),
                 edited_name(
                     m,
+                    "Name",
                     name,
                     State::identity_name_mut,
                     State::identity_name_active,

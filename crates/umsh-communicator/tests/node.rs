@@ -1631,6 +1631,64 @@ fn a_saved_peer_is_asked_for_their_identity() {
     assert_eq!(peers(&node)[0].name, "Robin");
 }
 
+/// A member saved by the name they gave in a channel goes by each name
+/// their identity gives after; an alias given here goes before all of
+/// them, in their chat as well, until it is taken away.
+#[test]
+fn a_saved_peer_follows_their_identity_until_given_an_alias() {
+    let sim = device();
+    let (node, _clock) = started(&sim);
+    let public = WellKnownChannels::derive().public;
+    let robin = PublicKey([0x37; 32]);
+    let payload = composed(robin, public, "Robin", "Anyone near the trailhead?");
+    node.arrive(Arrival::Text(received(&public, robin, &payload)));
+    let Some(NodeEvent::Arrived { chat, message }) = events(&node)
+        .into_iter()
+        .find(|event| matches!(event, NodeEvent::Arrived { .. }))
+    else {
+        panic!("nothing arrived");
+    };
+    let member = node.member(chat, message).unwrap();
+    let peer = node.save_peer(&member).unwrap().id;
+    assert_eq!(peers(&node)[0].name, "Robin");
+    let avatar = node.avatar();
+    let direct = node
+        .direct_chat(&address_of(&robin), "Robin", &avatar)
+        .unwrap()
+        .id;
+    let identify = |name| {
+        node.arrive(Arrival::Identity {
+            key: robin,
+            identity: chatter(name),
+            payload: Vec::new(),
+            rx: rx(1),
+        })
+    };
+    let chat_name = || node.chat(direct).unwrap().name;
+
+    identify("Robin Ridge");
+    assert_eq!(peers(&node)[0].name, "Robin Ridge");
+    identify("Ridge Camp");
+    assert_eq!(peers(&node)[0].name, "Ridge Camp");
+    assert_eq!(chat_name(), "Ridge Camp");
+    events(&node);
+
+    node.set_peer_alias(peer, Some("Rob"));
+    let changed = events(&node);
+    assert!(changed.contains(&NodeEvent::PeerChanged(peer)));
+    assert!(changed.contains(&NodeEvent::ChatChanged(direct)));
+    identify("Trail Boss");
+    assert_eq!(peers(&node)[0].name, "Rob");
+    assert_eq!(chat_name(), "Rob");
+    let detail = node.peer_detail(peer).unwrap();
+    assert_eq!(detail.alias.as_deref(), Some("Rob"));
+    assert_eq!(detail.advertised.as_deref(), Some("Trail Boss"));
+
+    node.set_peer_alias(peer, None);
+    assert_eq!(peers(&node)[0].name, "Trail Boss");
+    assert_eq!(node.peer_detail(peer).unwrap().alias, None);
+}
+
 /// A session with forward secrecy is asked for when a saved peer comes to
 /// prefer one, again when it ends, and when next needed after one could
 /// not be had; it is ended when they no longer prefer one.

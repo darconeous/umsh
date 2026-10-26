@@ -703,6 +703,7 @@ pub struct Store {
     /// Peers with forward secrecy turned on, peers pinged, and peers forgotten.
     secrecy: RefCell<Vec<PeerId, KEPT>>,
     pinged: RefCell<Vec<PeerId, KEPT>>,
+    aliases: RefCell<Vec<(PeerId, String<32>), KEPT>>,
     forgotten: RefCell<Vec<PeerId, KEPT>>,
     /// This node's name, once it is given one.
     name: RefCell<Option<String<24>>>,
@@ -775,6 +776,7 @@ impl Store {
             joined: RefCell::new(Vec::new()),
             secrecy: RefCell::new(Vec::new()),
             pinged: RefCell::new(Vec::new()),
+            aliases: RefCell::new(Vec::new()),
             forgotten: RefCell::new(Vec::new()),
             name: RefCell::new(None),
             radio_enabled: Cell::new(true),
@@ -1050,6 +1052,15 @@ impl Store {
 
     fn queue(&self, event: NodeEvent) {
         self.events.borrow_mut().push(event);
+    }
+
+    /// What `peer` is called here, if anything.
+    fn alias(&self, peer: PeerId) -> Option<String<32>> {
+        let aliases = self.aliases.borrow();
+        aliases
+            .iter()
+            .find(|(p, _)| *p == peer)
+            .map(|(_, a)| a.clone())
     }
 
     /// The exchange ends for `end`, or else goes on to `next`.
@@ -1846,12 +1857,17 @@ impl Node for Store {
         let members = saved
             .iter()
             .rev()
-            .map(|(_, summary)| summary.clone())
+            .map(|(_, summary)| PeerSummary {
+                name: self
+                    .alias(summary.id)
+                    .unwrap_or_else(|| summary.name.clone()),
+                ..summary.clone()
+            })
             .filter(|summary| !forgotten.contains(&summary.id));
         let mockup = (1..).zip(PEERS.iter()).map(|(id, peer)| PeerSummary {
             id,
             avatar: AvatarStyle::peer(peer.color, peer.hint, PeerShape::Circle),
-            name: s(peer.name),
+            name: self.alias(id).unwrap_or_else(|| s(peer.name)),
             hops: peer.hops,
             signal: peer.signal,
             heard: s(peer.heard),
@@ -2066,16 +2082,27 @@ impl Node for Store {
         if self.forgotten.borrow().contains(&peer) {
             return None;
         }
-        let (address, route, heard) = match peer.checked_sub(1).and_then(|i| PEERS.get(i as usize))
-        {
-            Some(saved) => (s(saved.address), saved.route.map(s), saved.heard_long),
-            // A member saved since the fixture started.
-            None => {
-                let saved = self.saved.borrow();
-                let index = peer.checked_sub(FIRST_SAVED)? as usize;
-                (saved.get(index)?.0.clone(), None, "2 min ago")
-            }
-        };
+        let (address, route, heard, advertised) =
+            match peer.checked_sub(1).and_then(|i| PEERS.get(i as usize)) {
+                Some(saved) => (
+                    s(saved.address),
+                    saved.route.map(s),
+                    saved.heard_long,
+                    Some(s(saved.name)),
+                ),
+                // A member saved since the fixture started.
+                None => {
+                    let saved = self.saved.borrow();
+                    let index = peer.checked_sub(FIRST_SAVED)? as usize;
+                    let (address, summary) = saved.get(index)?;
+                    (
+                        address.clone(),
+                        None,
+                        "2 min ago",
+                        Some(summary.name.clone()),
+                    )
+                }
+            };
         Some(PeerDetail {
             address,
             route,
@@ -2083,7 +2110,19 @@ impl Node for Store {
             forward_secrecy: self.secrecy.borrow().contains(&peer),
             // A ping is answered at once.
             ping: self.pinged.borrow().contains(&peer).then(|| s("1.4 s")),
+            alias: self.alias(peer),
+            advertised,
         })
+    }
+
+    fn set_peer_alias(&self, peer: PeerId, alias: Option<&str>) {
+        let mut aliases = self.aliases.borrow_mut();
+        aliases.retain(|(p, _)| *p != peer);
+        if let Some(alias) = alias {
+            _ = aliases.push((peer, s(alias)));
+        }
+        drop(aliases);
+        self.queue(NodeEvent::PeerChanged(peer));
     }
 
     fn set_forward_secrecy(&self, peer: PeerId, on: bool) {
