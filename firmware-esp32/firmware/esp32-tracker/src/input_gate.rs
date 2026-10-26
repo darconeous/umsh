@@ -268,10 +268,13 @@ pub async fn shutdown() {
 }
 
 /// The panel has lit or gone dark. Lit, the CPU runs at full speed, so
-/// that drawing is quick; dark, it returns to [`CPU_CLOCK`].
+/// that drawing is quick; dark, it returns to [`CPU_CLOCK`]. Either way
+/// the battery estimator hears of it, where the board has one.
 fn display_lit(lit: bool) {
     set_cpu_clock(if lit { CpuClock::max() } else { CPU_CLOCK });
     board_input::lit(lit);
+    #[cfg(feature = "battery-adc-rail")]
+    crate::note_screen_lit(lit);
 }
 
 /// Moves the CPU to `clock` while running. The PLL stays at 480 MHz, so APB

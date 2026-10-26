@@ -139,10 +139,13 @@ fn meshcore_storage(
 
 // ─── Bring-up ────────────────────────────────────────────────────────────────
 
-/// No ESP32 board has a battery-level estimator to feed. A board with a
-/// status LED flashes it when a button check-in is accepted.
+/// A board whose divider reads the rail marks each transmission for its
+/// battery-level estimator. A board with a status LED flashes it when a
+/// button check-in is accepted.
 fn hooks() -> node::NodeHooks {
     node::NodeHooks {
+        #[cfg(feature = "battery-adc-rail")]
+        note_external_load: crate::note_external_load,
         #[cfg(feature = "status-led")]
         beacon_confirm: crate::status_led::confirm_action,
         ..node::NodeHooks::default()

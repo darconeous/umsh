@@ -180,8 +180,15 @@ use umsh_ux_display_tracker::menu::UiNotice;
 use umsh_ux_display_tracker::{menu::UiInput, screen};
 #[cfg(feature = "battery-telemetry")]
 use umsh_ux_tracker::battery::ChargeClass;
-#[cfg(any(feature = "battery-adc", feature = "pmic-axp2101"))]
+#[cfg(any(
+    all(feature = "battery-adc", not(feature = "battery-adc-rail")),
+    feature = "pmic-axp2101"
+))]
 use umsh_ux_tracker::battery::soc_from_ocv;
+#[cfg(feature = "battery-adc-rail")]
+use umsh_ux_tracker::battery::{
+    BatteryThresholds, LevelEstimator, LevelSample, classify, load_recent,
+};
 #[cfg(not(feature = "input-gate"))]
 use umsh_ux_tracker::button::{ButtonEdge, ButtonEvent, ButtonFsm};
 
@@ -765,6 +772,33 @@ static BATTERY_LEVEL: AtomicU8 = AtomicU8::new(0xFF);
 /// 3 charged, 4 powered but not charging. Display only.
 #[cfg(feature = "battery-telemetry")]
 static BATTERY_CHARGE: AtomicU8 = AtomicU8::new(0);
+/// When the last transmission ran, in milliseconds on the board's clock
+/// (`u32::MAX`: never), so the level estimator treats a reading near it
+/// as sagged rather than resting.
+#[cfg(feature = "battery-adc-rail")]
+static LAST_LOAD_MS: AtomicU32 = AtomicU32::new(u32::MAX);
+
+/// A transmission just ran, or is about to: readings near it are sagged.
+#[cfg(feature = "battery-adc-rail")]
+pub(crate) fn note_external_load() {
+    LAST_LOAD_MS.store(Instant::now().as_millis() as u32, Ordering::Release);
+}
+
+/// The panel is lit: its backlight, the keyboard's, and the faster CPU
+/// clock hold the cell down for as long as it is, so no reading then is
+/// resting. Lit from boot until it first goes dark.
+#[cfg(feature = "battery-adc-rail")]
+static SCREEN_LIT: AtomicBool = AtomicBool::new(true);
+
+/// The panel has lit or gone dark. Going dark ends a load, which the cell
+/// takes the sag window to recover from, as it does a transmission.
+#[cfg(feature = "battery-adc-rail")]
+pub(crate) fn note_screen_lit(lit: bool) {
+    SCREEN_LIT.store(lit, Ordering::Release);
+    if !lit {
+        note_external_load();
+    }
+}
 /// Battery request/reply pair between the session env and the sampler
 /// task, which owns the ADC (or the PMIC telemetry cadence).
 #[cfg(feature = "battery-telemetry")]
@@ -949,13 +983,14 @@ async fn rtc_writeback(rtc: &'static RtcMutex, epoch: u32) {
 /// estimator's five-point step so every board announces level movement at
 /// the same granularity.
 ///
-/// The estimator is deliberately not used here. It releases its
-/// never-rise-while-discharging clamp only on a `Charging` or `Charged`
-/// classification, and this board cannot produce either—the LGS4056H's
-/// status output drives the orange LED and reaches no GPIO. Fed
-/// perpetually-discharging samples the clamp would never lift, so a fully
-/// recharged pack would keep reporting the level it bottomed out at until
-/// the next reboot.
+/// The estimator is deliberately not used where the divider reads the
+/// cell alone. It releases its never-rise-while-discharging clamp only on
+/// a `Charging` or `Charged` classification, and those boards cannot
+/// produce either—the LGS4056H's status output drives the orange LED and
+/// reaches no GPIO. Fed perpetually-discharging samples the clamp would
+/// never lift, so a fully recharged pack would keep reporting the level
+/// it bottomed out at until the next reboot. Where the divider reads the
+/// rail, external power shows in the reading, and the estimator is used.
 #[cfg(feature = "battery-adc")]
 const BATTERY_LEVEL_STEP: u8 = 5;
 
@@ -996,6 +1031,8 @@ async fn battery_task(mut sampler: BatterySampler) {
     // Level last announced; `None` until the first sample, which always
     // announces.
     let mut announced: Option<u8> = None;
+    #[cfg(feature = "battery-adc-rail")]
+    let mut estimator = LevelEstimator::new();
     // Whether the rail was last on external power.
     #[cfg(feature = "battery-adc-rail")]
     let mut external = false;
@@ -1028,7 +1065,12 @@ async fn battery_task(mut sampler: BatterySampler) {
             continue;
         };
         BATTERY_MV.store(mv, Ordering::Release);
-        BATTERY_LEVEL.store(battery_level_from_mv(mv).unwrap_or(0xFF), Ordering::Release);
+        #[cfg(feature = "battery-adc-rail")]
+        let level = estimated_level(&mut estimator, mv);
+        #[cfg(not(feature = "battery-adc-rail"))]
+        let level = battery_level_from_mv(mv);
+        let level = level.unwrap_or(0xFF);
+        BATTERY_LEVEL.store(level, Ordering::Release);
         // Power plugged in lights the screen to say so, as a phone's does.
         #[cfg(feature = "battery-adc-rail")]
         {
@@ -1060,7 +1102,6 @@ async fn battery_task(mut sampler: BatterySampler) {
         // is charger-driven and invisible to the MCU. Where the divider
         // reads the rail, external power coming or going takes the level
         // to or from none, which is a move.
-        let level = battery_level_from_mv(mv).unwrap_or(0xFF);
         let moved = match announced {
             Some(previous) => level.abs_diff(previous) >= BATTERY_LEVEL_STEP,
             None => true,
@@ -1103,7 +1144,11 @@ fn battery_snapshot(mv: u16) -> umsh_ulcp::battery::BatteryStatus {
         voltage_mv: battery_level_from_mv(mv).map(|_| mv),
         #[cfg(feature = "battery-adc-rail")]
         voltage_mv: (board::battery::Rail::classify(mv) != board::battery::Rail::Off).then_some(mv),
+        #[cfg(not(feature = "battery-adc-rail"))]
         level_percent: battery_level_from_mv(mv),
+        // The estimator's level, which the sample just taken has gone into.
+        #[cfg(feature = "battery-adc-rail")]
+        level_percent: Some(BATTERY_LEVEL.load(Ordering::Acquire)).filter(|&level| level != 0xFF),
         #[cfg(not(feature = "battery-adc-rail"))]
         charge_state: None,
         #[cfg(feature = "battery-adc-rail")]
@@ -1119,16 +1164,35 @@ fn battery_snapshot(mv: u16) -> umsh_ulcp::battery::BatteryStatus {
     }
 }
 
-/// The cell's charge from an ADC reading. Where the divider reads the
-/// supply rail rather than the cell, a reading above any cell is external
-/// power, and says nothing about the cell.
-#[cfg(feature = "battery-adc")]
-fn battery_level_from_mv(mv: u16) -> Option<u8> {
-    #[cfg(feature = "battery-adc-rail")]
-    let mv = match board::battery::Rail::classify(mv) {
-        board::battery::Rail::Battery(mv) => mv,
-        _ => return None,
+/// The rail's reading `mv` given to the level estimator, as the nRF
+/// boards give theirs, and the level it then supports. External power
+/// stands in for charging: the charger's status reaches no GPIO, so a
+/// charge is never seen to finish, and there is no level while the board
+/// is plugged in. A rail that is off says nothing.
+#[cfg(feature = "battery-adc-rail")]
+fn estimated_level(estimator: &mut LevelEstimator, mv: u16) -> Option<u8> {
+    let (battery_mv, external) = match board::battery::Rail::classify(mv) {
+        board::battery::Rail::Battery(mv) => (mv, false),
+        board::battery::Rail::External => (mv, true),
+        board::battery::Rail::Off => return estimator.level(),
     };
+    let now_ms = Instant::now().as_millis() as u32;
+    let last_load_ms = match LAST_LOAD_MS.load(Ordering::Acquire) {
+        u32::MAX => None,
+        at => Some(at),
+    };
+    estimator.sample(LevelSample {
+        battery_mv,
+        state: classify(battery_mv, external, external, BatteryThresholds::default()),
+        load_recent: SCREEN_LIT.load(Ordering::Acquire) || load_recent(now_ms, last_load_ms),
+        now_ms,
+    });
+    estimator.level()
+}
+
+/// The cell's charge from an ADC reading of the cell.
+#[cfg(all(feature = "battery-adc", not(feature = "battery-adc-rail")))]
+fn battery_level_from_mv(mv: u16) -> Option<u8> {
     Some(soc_from_ocv(mv))
 }
 
@@ -1540,6 +1604,11 @@ impl DeviceEnv for BoardDeviceEnv {
     fn queue_emptied(&mut self) {
         QUEUED_FRAMES.store(0, Ordering::Release);
         UI_REFRESH.signal(());
+    }
+
+    #[cfg(feature = "battery-adc-rail")]
+    fn note_transmit_load(&mut self) {
+        note_external_load();
     }
 
     async fn persist_identity(&mut self, bytes: &[u8]) -> Result<(), ()> {
