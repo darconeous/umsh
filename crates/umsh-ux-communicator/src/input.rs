@@ -441,9 +441,16 @@ where
                 app.select();
             }
         }
+        // What takes Enter has it; otherwise it selects what is focused,
+        // as a press does.
         Input::Enter => {
             app.state_mut().keyboard.other();
-            press(app, Key::Enter);
+            let taken = !matches!(app.key_down(Key::Enter), EventResult::Deferred);
+            app.key_up(Key::Enter);
+            if !taken {
+                app.finalize_view();
+                app.select();
+            }
         }
         Input::Backspace => {
             app.state_mut().keyboard.other();

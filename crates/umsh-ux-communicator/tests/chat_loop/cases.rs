@@ -232,6 +232,25 @@ fn press_and_enter_both_open_the_focused_chat() {
 }
 
 #[test]
+fn enter_opens_a_focused_row_as_a_press_does() {
+    // A rail entry, then a settings row: neither takes Enter of its own.
+    let opened = |input: Input| {
+        let mut app = app!();
+        run(&mut app, &[Input::Backspace]);
+        turn_to(&mut app, keys::rail(Section::Device));
+        run(&mut app, &[input]);
+        assert_eq!(app.state().section, Section::Device);
+        assert_eq!(focus(app.state()), Some(keys::IDENTITY));
+        turn_to(&mut app, keys::DISPLAY);
+        run(&mut app, &[input]);
+        (format!("{:?}", app.state().screen()), focus(app.state()))
+    };
+    let pressed = opened(Input::Press);
+    assert_ne!(pressed.1, Some(keys::DISPLAY), "the press opened the row");
+    assert_eq!(opened(Input::Enter), pressed);
+}
+
+#[test]
 fn typing_edits_at_the_cursor_and_back_keeps_the_draft() {
     let mut app = app!();
     run(&mut app, &[Input::Press]);
