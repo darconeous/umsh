@@ -1,8 +1,8 @@
 # host-communicator
 
 `host-communicator` is a UMSH communicator that runs on your computer. Its screen
-is a window showing the interface of a LILYGO T-LoRa Pager or T-Deck, and its
-keyboard is yours. Behind the window is a real UMSH device: the Pager's own ULCP
+is a window showing the interface of a LILYGO T-Deck or T-LoRa Pager, and its
+keyboard and mouse are yours. Behind the window is a real UMSH device: the Pager's own ULCP
 session driver, radio multiplexer, and device node from `umsh-ulcp-runtime`, the
 same code the firmware runs. Its radio is an IP multicast group, the
 [UMSH over IP Multicast](https://darconeous.github.io/umsh/docs/protocol/ip-multicast.html)
@@ -34,22 +34,22 @@ From the repository root:
 make run-simulator-communicator
 ```
 
-That builds the release binary and runs the instance named `default`. The device
-boots locked, as the boards do. On the Pager, scroll down with the Down arrow or
-the mouse wheel, then press with the Right arrow or a click, to unlock it.
+That builds the release binary and runs the instance named `default`, a T-Deck.
+The device boots locked, as the boards do: press the trackball, with Control or
+a right click, to unlock it.
 
 To run two devices on one computer, give each a name:
 
 ```sh
 make run-simulator-communicator NAME=alice
-make run-simulator-communicator NAME=bob SIMULATOR_ARGS="--board tdeck"
+make run-simulator-communicator NAME=bob SIMULATOR_ARGS="--board pager"
 ```
 
 The binary takes the same arguments directly:
 
 ```sh
 target/release/host-communicator alice
-target/release/host-communicator bob --board tdeck --host-local
+target/release/host-communicator bob --board pager --host-local
 ```
 
 `host-communicator --help` lists every option.
@@ -105,27 +105,31 @@ other.
 
 ## Controls
 
-### T-LoRa Pager (`--board pager`, the default)
+### T-Deck (`--board tdeck`, the default)
+
+| Input | T-Deck control |
+|---|---|
+| Left mouse button | A finger on the touchscreen: click to tap, drag to scroll, hold to long-press |
+| Arrows, mouse wheel | Roll the trackball |
+| Control, right mouse button | Press the trackball |
+| Escape | Lock, as the screen going dark would |
+| Letters, digits, Return, Backspace, Space | Type, with Shift as the T-Deck's own keyboard applies it |
+
+The touchscreen takes no touches while the device is locked, as on the T-Deck.
+
+### T-LoRa Pager (`--board pager`)
 
 | Key | Pager control |
 |---|---|
 | Up, Down, mouse wheel | Turn the wheel |
 | Right, left click | Press the wheel; hold it to open a menu |
+| Left | Back, as Backspace is, except while typing in a field |
 | Escape | The lock button |
 | Return, Backspace, Space, letters | The same keys |
 | Shift | CAP |
 | Alt | The orange key |
 
 The Pager's keyboard does not repeat, and neither does this one.
-
-### T-Deck (`--board tdeck`)
-
-| Key | T-Deck control |
-|---|---|
-| Arrows | Roll the trackball |
-| Control | Press the trackball |
-| Escape | Lock, as the screen going dark would |
-| Letters, digits, Return, Backspace, Space | Type, with Shift as the T-Deck's own keyboard applies it |
 
 Sounds the device would play are printed on standard error, as `sound: …`.
 
@@ -162,6 +166,7 @@ board's clock.
 | `move up\|down\|left\|right [N]` | Rolls the trackball, N times |
 | `press` | Presses and releases the wheel or the ball |
 | `hold` | Holds it long enough to open a menu |
+| `tap X Y` | Touches the screen at X, Y and lifts, on the T-Deck |
 | `enter`, `backspace`, `space` | The keys |
 | `type TEXT` | Types TEXT as it is |
 | `keys TEXT` | Presses TEXT as Pager keys, so the modifiers and typing aids act on it |
@@ -180,8 +185,8 @@ board's clock.
 | `shot NAME` | Writes `NAME.png` once everything has settled |
 | `peek MS NAME` | Writes `NAME.png` MS milliseconds into what the last steps started |
 
-The scripts in [`tours/`](tours/) walk through the whole interface. To run them
-all into `target/tours/`:
+The scripts in [`tours/`](tours/) walk through the whole interface on the
+Pager, so run one with `--board pager`. To run them all into `target/tours/`:
 
 ```sh
 make simulator-communicator-tours

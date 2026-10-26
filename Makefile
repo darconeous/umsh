@@ -679,8 +679,8 @@ install-umsh-bridge:
 
 # ─── Communicator simulator ──────────────────────────────────────────────────
 #
-# A communicator on the host (firmware/host-communicator): the T-LoRa Pager's
-# or the T-Deck's interface in a window, over the Pager's own session and
+# A communicator on the host (firmware/host-communicator): the T-Deck's or
+# the T-LoRa Pager's interface in a window, over the Pager's own session and
 # device node, with the UMSH-over-IP-Multicast group as its radio. Needs SDL2
 # (`brew install sdl2`). Built for release: unoptimized, layout and painting
 # lag the input. See firmware/host-communicator/README.md.
@@ -688,9 +688,9 @@ install-umsh-bridge:
 # NAME picks the instance (each is its own device, kept under
 # ~/.config/umsh-host-communicator/NAME); SIMULATOR_ARGS passes anything else:
 #   make run-simulator-communicator NAME=alice
-#   make run-simulator-communicator NAME=bob SIMULATOR_ARGS="--board tdeck"
+#   make run-simulator-communicator NAME=bob SIMULATOR_ARGS="--board pager"
 #   make run-simulator-communicator-demo
-#   make simulator-communicator-tours
+#   make simulator-communicator-tours    # the Pager's walkthroughs
 
 TOURS_OUT ?= target/tours
 
@@ -707,7 +707,7 @@ simulator-communicator-tours: build-simulator-communicator
 	@for tour in firmware/host-communicator/tours/*.txt; do \
 		name=$$(basename $$tour .txt); \
 		echo "tour $$name"; \
-		target/release/host-communicator --demo $(SIMULATOR_ARGS) --script $$tour --out $(TOURS_OUT)/$$name || exit 1; \
+		target/release/host-communicator --demo --board pager $(SIMULATOR_ARGS) --script $$tour --out $(TOURS_OUT)/$$name || exit 1; \
 	done
 
 # ─── Wireshark ───────────────────────────────────────────────────────────────

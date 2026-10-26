@@ -28,7 +28,7 @@ use embedded_graphics_simulator::{OutputSettings, SimulatorDisplay};
 use umsh::tokio_support::LanConfig;
 use umsh_pager_peripherals::input::alt_legend;
 use umsh_ux_communicator::board::Board;
-use umsh_ux_communicator::input::{self, Arrow, Input};
+use umsh_ux_communicator::input::{self, Arrow, Input, TouchPhase};
 use umsh_ux_communicator::keyboard::Modifier;
 use umsh_ux_communicator::model::{BatteryReading, Charge, HOLD_MS, NodeEvent, State};
 use umsh_ux_communicator::{fixture, theme, typeface, ui};
@@ -47,7 +47,7 @@ struct Args {
     data_dir: Option<PathBuf>,
 
     /// The board whose screen and controls to show.
-    #[arg(long, value_enum, default_value_t = BoardName::Pager)]
+    #[arg(long, value_enum, default_value_t = BoardName::Tdeck)]
     board: BoardName,
 
     /// Join the group on this interface's address, not the one the
@@ -100,10 +100,10 @@ fn instance_name(name: &str) -> Result<String, String> {
 
 #[derive(Clone, Copy, ValueEnum)]
 enum BoardName {
+    /// The LILYGO T-Deck: 320x240, a touchscreen and a trackball.
+    Tdeck,
     /// The LILYGO T-LoRa Pager: 480x222, a wheel.
     Pager,
-    /// The LILYGO T-Deck: 320x240, a trackball.
-    Tdeck,
 }
 
 impl BoardName {
@@ -380,6 +380,25 @@ fn headless(
                 vec![Input::Move(arrow); count]
             }
             "press" => vec![Input::Press, Input::Release],
+            // A finger down and up again at a point on a touchscreen.
+            "tap" => {
+                let point: Vec<i16> = rest
+                    .split_whitespace()
+                    .map(str::parse)
+                    .collect::<Result<_, _>>()
+                    .map_err(|_| format!("line {}: tap needs x and y", number + 1))?;
+                let [x, y] = point[..] else {
+                    return Err(format!("line {}: tap needs x and y", number + 1));
+                };
+                [TouchPhase::Started, TouchPhase::Ended]
+                    .map(|phase| Input::Touch {
+                        phase,
+                        x,
+                        y,
+                        at: clock + INPUT_MS,
+                    })
+                    .to_vec()
+            }
             // Down long enough to open a menu, then up.
             "hold" => {
                 input::apply(&mut app, Input::Press, clock);
@@ -584,6 +603,18 @@ fn window(board: &'static Board, backend: Backend, title: &str) -> ExitCode {
     let start = std::time::Instant::now();
     let mut app = App::new(backend.state(board), size.into(), ui::root_view);
     ui::bind(&mut app);
+    // Whether the left button is down on the T-Deck's touchscreen.
+    let mut touching = false;
+    /// A finger at `point` on the touchscreen, at `now`.
+    fn touch(phase: TouchPhase, point: embedded_graphics::prelude::Point, now: u64) -> Input {
+        let clamp = |v: i32| v.clamp(0, i32::from(i16::MAX)) as i16;
+        Input::Touch {
+            phase,
+            x: clamp(point.x),
+            y: clamp(point.y),
+            at: now,
+        }
+    }
     loop {
         app.set_time(start.elapsed());
         let now = start.elapsed().as_millis() as u64;
@@ -617,6 +648,9 @@ fn window(board: &'static Board, backend: Backend, title: &str) -> ExitCode {
                     Keycode::Up => Some(Input::Turn(-1)),
                     Keycode::Down => Some(Input::Turn(1)),
                     Keycode::Right if !repeat => Some(Input::Press),
+                    // Back, as the Pager's Backspace goes back; never into
+                    // text being edited, which it would delete from.
+                    Keycode::Left => (!app.state().keyboard.active()).then_some(Input::Backspace),
                     Keycode::Return => Some(Input::Enter),
                     Keycode::Backspace => Some(Input::Backspace),
                     Keycode::Space => Some(Input::Space),
@@ -655,6 +689,47 @@ fn window(board: &'static Board, backend: Backend, title: &str) -> ExitCode {
                         modifier,
                         down: false,
                     })
+                }
+                // On the T-Deck the mouse is a finger on its touchscreen,
+                // and the right button and the wheel are its trackball.
+                SimulatorEvent::MouseButtonDown {
+                    mouse_btn: MouseButton::Left,
+                    point,
+                } if tdeck => {
+                    touching = true;
+                    Some(touch(TouchPhase::Started, point, now))
+                }
+                SimulatorEvent::MouseMove { point } if tdeck && touching => {
+                    Some(touch(TouchPhase::Moved, point, now))
+                }
+                SimulatorEvent::MouseButtonUp {
+                    mouse_btn: MouseButton::Left,
+                    point,
+                } if tdeck && touching => {
+                    touching = false;
+                    Some(touch(TouchPhase::Ended, point, now))
+                }
+                SimulatorEvent::MouseButtonDown {
+                    mouse_btn: MouseButton::Right,
+                    ..
+                } if tdeck => Some(Input::Press),
+                SimulatorEvent::MouseButtonUp {
+                    mouse_btn: MouseButton::Right,
+                    ..
+                } if tdeck => Some(Input::Release),
+                SimulatorEvent::MouseWheel { scroll_delta, .. } if tdeck => {
+                    Some(Input::Move(if scroll_delta.y > 0 {
+                        Arrow::Up
+                    } else {
+                        Arrow::Down
+                    }))
+                }
+                SimulatorEvent::MouseButtonDown { .. }
+                | SimulatorEvent::MouseButtonUp { .. }
+                | SimulatorEvent::MouseMove { .. }
+                    if tdeck =>
+                {
+                    None
                 }
                 SimulatorEvent::MouseWheel { scroll_delta, .. } => {
                     Some(Input::Turn(if scroll_delta.y > 0 { -1 } else { 1 }))
