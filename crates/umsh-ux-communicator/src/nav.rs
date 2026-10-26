@@ -14,9 +14,9 @@ pub use crate::clock_settings::{ClockPage, DateParts, Part, ZoneFind};
 use crate::keyboard::Field;
 use crate::model::{
     AUTO_LOCK_CHOICES, ChannelEntry, ChatId, ChatKind, ChatSummary, Details, Exchange, Found,
-    FoundKind, Invite, KeyboardSettings, MAX_FOUND, Member, MessageId, NearbyId, PeerDetail,
-    PeerEntry, PeerId, Profile, RadioSettings, Reaction, Section, Shareable, State, TRANSMIT_POWER,
-    word_match,
+    FoundKind, Invite, KeyboardSettings, MAX_FOUND, MAX_REPEATERS, Member, MessageId, NearbyId,
+    PeerDetail, PeerEntry, PeerId, Profile, RadioSettings, Reaction, Section, Shareable, State,
+    TRANSMIT_POWER, word_match,
 };
 
 use crate::text::SharedText;
@@ -33,6 +33,14 @@ pub type NameText = EditBuffer<String<24>>;
 pub type FindText = EditBuffer<String<24>>;
 /// A transmit power in dBm, as it is typed.
 pub type PowerText = EditBuffer<String<4>>;
+
+/// How long a repeater asked who it is is waited on, in milliseconds.
+const IDENTIFY_WAIT_MS: u64 = 15_000;
+
+/// The steps of the spinner of a repeater asked who it is, and how long
+/// each is shown.
+pub const SPIN_PHASES: u8 = 8;
+const SPIN_STEP_MS: u64 = 125;
 
 /// The names of focusable elements. The high byte says what kind of element
 /// a key names, so keys of different kinds never collide.
@@ -68,8 +76,10 @@ pub mod keys {
     pub const DELETE_MESSAGE: FocusKey = FocusKey(ACTION | 0x105);
     /// The actions menu's Show, on a message carrying a contact.
     pub const VIEW_CONTACT: FocusKey = FocusKey(ACTION | 0x106);
-    /// What the details screen shows, which the wheel scrolls through.
+    /// What the details screen shows, which the wheel scrolls through,
+    /// and what it says under its repeaters.
     pub const DETAIL_LIST: FocusKey = FocusKey(0x0600_0000);
+    pub const DETAIL_NOTE: FocusKey = FocusKey(0x0600_0100);
     /// The member screen's Request identity, Message, and Save peer.
     pub const REQUEST_IDENTITY: FocusKey = FocusKey(0x0700_0000);
     pub const MESSAGE_MEMBER: FocusKey = FocusKey(0x0700_0001);
@@ -332,6 +342,12 @@ pub mod keys {
         FocusKey(MESSAGE | (message & !KIND))
     }
 
+    /// A repeater's row on the details screen, by its place.
+    #[must_use]
+    pub const fn repeater(index: usize) -> FocusKey {
+        FocusKey(DETAIL_LIST.0 | (index as u32 + 1))
+    }
+
     /// The section whose rail item `key` names.
     #[must_use]
     pub const fn section(key: FocusKey) -> Option<Section> {
@@ -491,10 +507,13 @@ pub enum Screen {
         /// What is open over an unconfirmed message.
         unsent: Option<Unsent>,
     },
-    /// How a message reached this device.
+    /// How a message reached this device, or how mine went.
     Details {
         message: MessageId,
         details: Details,
+        /// The unknown repeaters asked who they are, and until when the
+        /// answer is waited for, on the board's clock.
+        asked: heapless::Vec<([u8; 2], u64), MAX_REPEATERS>,
         focus: FocusState,
     },
     /// The member who sent a channel message, or the unsaved peer of a
@@ -2228,8 +2247,94 @@ impl State {
         _ = self.screens.push(Screen::Details {
             message,
             details,
+            asked: heapless::Vec::new(),
             focus: FocusState::requesting(keys::DETAIL_LIST),
         });
+    }
+
+    /// Reads the details shown of `message` from the node again, or of
+    /// whichever message they are when `message` is `None`.
+    pub(crate) fn refresh_details(&mut self, message: Option<MessageId>) {
+        let node = self.node;
+        let chat = self.conversation.as_ref().map(|c| c.chat);
+        if let Some(Screen::Details {
+            message: shown,
+            details,
+            ..
+        }) = self.screens.last_mut()
+            && message.is_none_or(|message| message == *shown)
+            && let Some(fresh) = chat.and_then(|chat| node.details(chat, *shown))
+        {
+            *details = fresh;
+        }
+    }
+
+    /// Opens the node the repeater at `index` on the details screen most
+    /// plausibly is, or asks who it is when no known node could be.
+    pub fn open_repeater(&mut self, index: usize) {
+        let uptime = self.uptime;
+        let Some(Screen::Details { details, asked, .. }) = self.screens.last_mut() else {
+            return;
+        };
+        let Some(repeater) = details.repeaters.get(index) else {
+            return;
+        };
+        match repeater.address.clone() {
+            Some(address) => {
+                if let Some(member) = self.node.known_member(&address) {
+                    self.show_known(member);
+                }
+            }
+            None => {
+                let hint = repeater.hint;
+                if asked
+                    .iter()
+                    .any(|&(asked, until)| asked == hint && until > uptime)
+                {
+                    return;
+                }
+                asked.retain(|(asked, _)| *asked != hint);
+                if asked.push((hint, uptime + IDENTIFY_WAIT_MS)).is_ok() {
+                    self.node.identify_repeater(hint);
+                }
+            }
+        }
+    }
+
+    /// The unknown repeaters on the details screen whose identity is still
+    /// waited for.
+    #[must_use]
+    pub fn identifying(&self) -> heapless::Vec<[u8; 2], MAX_REPEATERS> {
+        match self.screens.last() {
+            Some(Screen::Details { asked, .. }) => asked
+                .iter()
+                .filter(|&&(_, until)| until > self.uptime)
+                .map(|&(hint, _)| hint)
+                .collect(),
+            _ => heapless::Vec::new(),
+        }
+    }
+
+    /// Where the spinner of a repeater asked who it is stands, by the
+    /// board's clock.
+    #[must_use]
+    pub fn spinner_phase(&self) -> u8 {
+        ((self.uptime / SPIN_STEP_MS) % u64::from(SPIN_PHASES)) as u8
+    }
+
+    /// When the details screen next changes by itself: its spinner's next
+    /// step while it waits on a repeater, and when it gives up.
+    pub(crate) fn details_deadline(&self) -> Option<u64> {
+        let Some(Screen::Details { asked, .. }) = self.screens.last() else {
+            return None;
+        };
+        let waiting = asked
+            .iter()
+            .map(|&(_, until)| until)
+            .filter(|&until| until > self.uptime);
+        let until = waiting.min()?;
+        let step = (self.uptime / SPIN_STEP_MS + 1) * SPIN_STEP_MS;
+        Some(step.min(until))
     }
 
     /// Shows the member who sent the message whose actions menu is open.
@@ -2281,6 +2386,7 @@ impl State {
             self.load_conversation(chat);
         }
         self.refresh_members();
+        self.refresh_details(None);
     }
 
     /// Reads the members shown from the node again. Focus on a Request

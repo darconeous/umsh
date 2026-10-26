@@ -1,6 +1,6 @@
 //! The interface every back end implements.
 
-use umsh_core::{ChannelTag, NodeHint, PublicKey};
+use umsh_core::{ChannelTag, NodeHint, PublicKey, RouterHint};
 use umsh_text::ConversationKey;
 use umsh_text::engine::{ArchiveKey, StreamCheckpoint};
 
@@ -60,6 +60,9 @@ pub trait ChatStore {
 
     fn peer(&self, key: &PublicKey) -> Result<Option<PeerRecord>, StoreError>;
     fn peers_with_hint(&self, hint: NodeHint) -> impl Iterator<Item = PublicKey> + '_;
+    /// The peers whose hint starts with `hint`, the shorter one a repeater
+    /// names itself by.
+    fn peers_with_router_hint(&self, hint: RouterHint) -> impl Iterator<Item = PublicKey> + '_;
     fn peers(
         &self,
         filter: PeerFilter,

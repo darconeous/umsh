@@ -10,7 +10,7 @@ use core::task::Poll;
 
 use embassy_sync::waitqueue::WakerRegistration;
 
-use umsh_core::{ChannelKey, PublicKey};
+use umsh_core::{ChannelKey, PublicKey, RouterHint};
 use umsh_text::chat::Seeds;
 use umsh_text::node_adapter::{Departure, Sent};
 use umsh_ulcp::profiles::VETTED;
@@ -529,6 +529,11 @@ impl<P: LocalPort, S: ChatStore> Node for CommunicatorNode<P, S> {
 
     fn request_identity(&self, chat: ChatId, message: MessageId) {
         self.chats.borrow_mut().request_identity(chat, message);
+        self.wake();
+    }
+
+    fn identify_repeater(&self, hint: [u8; 2]) {
+        self.chats.borrow_mut().identify_repeater(RouterHint(hint));
         self.wake();
     }
 

@@ -13,7 +13,7 @@ use umsh_ux_communicator::input::{self, Arrow, Input};
 use umsh_ux_communicator::keyboard::{Latch, Modifier};
 use umsh_ux_communicator::picker::Pick;
 use umsh_ux_communicator::model::{
-    BatteryReading, ChannelAccess, Charge, ChannelEntry, ChatKind, ClockSource, Delivery, Direction, Ending, Exchange,
+    BatteryReading, ChannelAccess, Charge, ChannelEntry, ChatKind, ClockSource, Delivery, Details, Direction, Ending, Exchange,
     ExchangeEnd, FoundKind,
     Glance, Node as _, NodeEvent, Notice, Presence, Profile, Reaction, Rule, Section, Shareable, State,
     brightness_level,
@@ -666,6 +666,130 @@ fn details_open_from_the_actions_and_back_returns_to_the_message() {
     run(&mut app, &[Input::Backspace]);
     assert_eq!(focus(app.state()), Some(keys::message(QUESTION)));
     assert_eq!(actions(app.state()), None);
+}
+
+/// Turns the wheel down until `key` has focus, through rows the wheel
+/// scrolls a step at a time.
+fn scroll_to<V, F>(app: &mut App<V, State, F>, key: FocusKey)
+where
+    V: ViewLayout<State>,
+    V::FocusTree: DefaultFocus,
+    V::Renderables: AnimatedJoin,
+    F: Fn(&State) -> V,
+{
+    for _ in 0..32 {
+        if focus(app.state()) == Some(key) {
+            return;
+        }
+        run(app, &[Input::Turn(1)]);
+    }
+    panic!("never reached {key:?}: {:?}", focus(app.state()));
+}
+
+/// The details of my answer to Ridge Medic, which list the repeaters that
+/// carried it.
+fn answer_details<V, F>(app: &mut App<V, State, F>) -> Details
+where
+    V: ViewLayout<State>,
+    V::FocusTree: DefaultFocus,
+    V::Renderables: AnimatedJoin,
+    F: Fn(&State) -> V,
+{
+    if !matches!(app.state().screen(), Screen::Details { .. }) {
+        run(app, &[Input::Press, Input::Turn(-2), Input::Press]);
+        turn_to(app, keys::DETAILS);
+        run(app, &[Input::Press]);
+    }
+    let Screen::Details {
+        message, details, ..
+    } = app.state().screen()
+    else {
+        panic!("expected details, got {:?}", app.state().screen());
+    };
+    assert_eq!(*message, ANSWER);
+    details.clone()
+}
+
+#[test]
+fn my_messages_details_list_the_repeaters_that_carried_it() {
+    let mut app = app!();
+    let details = answer_details(&mut app);
+    let names: Vec<&str> = details.repeaters.iter().map(|r| &*r.name).collect();
+    assert_eq!(names, ["Riverbend Camp", "3w*"]);
+    assert!(details.repeaters[0].address.is_some());
+    assert_eq!(details.repeaters[1].address, None);
+    assert_eq!(details.anonymous, 1);
+    // Its caption names the first of them.
+    let via = message(app.state(), ANSWER).via.expect("repeaters were heard");
+    assert_eq!(via.lead.as_deref(), Some("Riverbend Camp"));
+    assert_eq!(via.count, 3);
+
+    // A known one opens as the node it is.
+    scroll_to(&mut app, keys::repeater(0));
+    run(&mut app, &[Input::Press]);
+    assert_eq!(
+        shown_member(app.state()).0.sender.name.as_str(),
+        "Riverbend Camp"
+    );
+}
+
+#[test]
+fn a_repeater_known_by_its_hint_is_asked_who_it_is_and_named_once_it_answers() {
+    let store = store();
+    let mut app = app!(store);
+    let details = answer_details(&mut app);
+    let hint = details.repeaters[1].hint;
+    scroll_to(&mut app, keys::repeater(1));
+    run(&mut app, &[Input::Press]);
+    assert_eq!(app.state().identifying().as_slice(), [hint]);
+    // The spinner keeps the screen coming back while it waits.
+    assert!(app.state().next_deadline().is_some());
+
+    let at = store.next_deadline().expect("the answer is due");
+    store.advance(at);
+    input::events(&mut app, at);
+    let details = answer_details(&mut app);
+    assert_eq!(&*details.repeaters[1].name, "Bald Knob");
+    assert!(details.repeaters[1].address.is_some());
+    assert_eq!(
+        message(app.state(), ANSWER).via.unwrap().lead.as_deref(),
+        Some("Riverbend Camp")
+    );
+}
+
+#[test]
+fn a_message_to_a_peer_names_its_repeaters_then_waits_then_is_delivered() {
+    let store = store();
+    let mut app = app!(store);
+    open_chat(&mut app, RIDGE);
+    let sent = app
+        .state()
+        .node
+        .send(RIDGE, "At the hut", None, false)
+        .expect("sent");
+    let mut seen = Vec::new();
+    let mut now = 0;
+    while let Some(at) = store.next_deadline() {
+        now = at;
+        store.advance(now);
+        input::events(&mut app, now);
+        let shown = message(app.state(), sent.id);
+        let step = (shown.delivery, shown.via.map(|via| via.count));
+        if seen.last() != Some(&step) {
+            seen.push(step);
+        }
+    }
+    assert!(now > 0);
+    assert_eq!(
+        seen,
+        [
+            (Delivery::Sent, None),
+            (Delivery::Sent, Some(1)),
+            (Delivery::Sent, Some(2)),
+            (Delivery::Confirming, Some(2)),
+            (Delivery::Delivered, Some(2)),
+        ]
+    );
 }
 
 /// Pat Okafor's last message, which went unconfirmed.

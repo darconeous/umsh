@@ -138,6 +138,8 @@ fn screens(state: &State) -> impl View<Rgb565, State> + use<> {
                 details
                     .time
                     .map(|time| state.local(time).time(state.hour24())),
+                &state.identifying(),
+                state.spinner_phase(),
             ),
             Screen::Member {
                 from,

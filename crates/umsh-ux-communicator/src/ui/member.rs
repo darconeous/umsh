@@ -204,31 +204,45 @@ pub(super) fn action(
     Button::new(act, move |button: ButtonState| {
         let focused = button.is_focused();
         let face = if focused { &font::BOLD } else { &font::REGULAR };
-        HStack::new((
-            label::<24>(text, face, m.body, theme::TEXT),
-            Spacer::default(),
-            match end {
-                End::Value(value) => Some(label::<16>(
-                    value,
-                    &font::REGULAR,
-                    m.secondary,
-                    theme::TEXT_SECONDARY,
-                )),
-                End::Nothing | End::Chevron => None,
-            },
-            matches!(end, End::Chevron).then(|| {
-                Image::new(&icon::CHEVRON)
-                    .as_template()
-                    .foreground_color(theme::TEXT_TERTIARY)
-            }),
-        ))
-        .with_spacing(8)
+        action_look(
+            HStack::new((
+                label::<24>(text, face, m.body, theme::TEXT),
+                Spacer::default(),
+                match end {
+                    End::Value(value) => Some(label::<16>(
+                        value,
+                        &font::REGULAR,
+                        m.secondary,
+                        theme::TEXT_SECONDARY,
+                    )),
+                    End::Nothing | End::Chevron => None,
+                },
+                matches!(end, End::Chevron).then(|| {
+                    Image::new(&icon::CHEVRON)
+                        .as_template()
+                        .foreground_color(theme::TEXT_TERTIARY)
+                }),
+            ))
+            .with_spacing(8)
+            .padding(Edges::Leading, INSET - 4),
+            focused,
+        )
+    })
+    .focus_key(key)
+}
+
+/// An action row's look around `content`, which starts at its leading
+/// edge: filled and outlined when focused, ruled under when not.
+pub(super) fn action_look<C, V: View<Rgb565, C>>(
+    content: V,
+    focused: bool,
+) -> impl View<Rgb565, C> + use<C, V> {
+    content
         .hint_background_color(if focused {
             theme::FOCUS
         } else {
             theme::BACKGROUND
         })
-        .padding(Edges::Leading, INSET - 4)
         .padding(Edges::Trailing, 10)
         .frame()
         .with_height(ROW - 2)
@@ -255,6 +269,4 @@ pub(super) fn action(
                     .padding(Edges::Leading, INSET)
             }),
         )
-    })
-    .focus_key(key)
 }

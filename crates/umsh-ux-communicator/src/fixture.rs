@@ -14,8 +14,9 @@ use crate::model::{
     Gnss, GnssReading, Heard, Invite, KeyboardSettings, LatestSent, Links, MAX_CHATS, MAX_HEARD,
     MAX_PEERS, MESSAGE_LEN, MeetState, Member, Message, MessageId, NearbyDevice, NearbyId,
     Neighbor, Node, NodeEvent, Parts, PeerDetail, PeerEntry, PeerId, PeerSummary, Peers, Presence,
-    Profile, Quote, RadioSettings, Reacted, Reaction, Reactions, Reactor, Rule, Sender, Setting,
-    ShareUri, Shareable, State, Statistics, StatusStrip, TRANSMIT_POWER, brightness_at, word_match,
+    Profile, Quote, RadioSettings, Reacted, Reaction, Reactions, Reactor, Repeater, Rule, Sender,
+    Setting, ShareUri, Shareable, State, Statistics, StatusStrip, TRANSMIT_POWER, Via,
+    brightness_at, word_match,
 };
 use crate::models;
 use crate::picker::RecentText;
@@ -330,6 +331,70 @@ fn their_reactions(chat: ChatId, index: usize) -> &'static [(From, Reaction)] {
     }
 }
 
+/// A repeater heard carrying a message of mine.
+#[derive(Clone, Copy)]
+struct Carrier {
+    address: &'static str,
+    name: &'static str,
+    color: [u8; 3],
+    /// Known before anything is asked. One that is not is known once it
+    /// is identified.
+    known: bool,
+}
+
+/// The heard repeater nearby.
+const RIVERBEND: Carrier = Carrier {
+    address: HEARD[0].address,
+    name: HEARD[0].name,
+    color: HEARD[0].color,
+    known: true,
+};
+
+/// A repeater known by its hint until it is identified.
+const BALD_KNOB: Carrier = Carrier {
+    address: "3w4meSvtz177QUBweGC9mGX9kGeF1g26kcN9tJv8y4WG",
+    name: "Bald Knob",
+    color: [196, 120, 40],
+    known: false,
+};
+
+/// The repeaters heard carrying my message `index` in `chat`, and how many
+/// more named none.
+fn carriers(chat: ChatId, index: usize) -> (&'static [Carrier], u16) {
+    match (chat, index) {
+        (1, 1) => (&[RIVERBEND, BALD_KNOB], 1),
+        (5, 0) => (&[BALD_KNOB], 0),
+        _ => (&[], 0),
+    }
+}
+
+/// The repeaters that carry a message sent since the fixture started, and
+/// how long after it is sent each is heard.
+const SENT_CARRIERS: [Carrier; 2] = [RIVERBEND, BALD_KNOB];
+const CARRIED_AFTER: [u64; 2] = [900, 1_600];
+/// How long after it is sent a message to a peer has gone, is waiting on
+/// its acknowledgment, and is acknowledged.
+const SENT_AFTER: u64 = 400;
+const CONFIRMING_AFTER: u64 = 3_600;
+const DELIVERED_AFTER: u64 = 6_000;
+/// Each time after it is sent that how a message shows changes.
+const STAGES: [u64; 5] = [
+    SENT_AFTER,
+    CARRIED_AFTER[0],
+    CARRIED_AFTER[1],
+    CONFIRMING_AFTER,
+    DELIVERED_AFTER,
+];
+
+/// The router hint `address` forwards under, and how it is written.
+fn router_hint(address: &str) -> Option<([u8; 2], String<8>)> {
+    let key = umsh_core::base58::decode(address.as_bytes()).ok()?;
+    let hint = umsh_core::RouterHint([key[0], key[1]]);
+    let mut text = String::new();
+    core::fmt::write(&mut text, format_args!("{hint}")).ok()?;
+    Some((hint.0, text))
+}
+
 /// Messages that arrive after the fixture starts, in order.
 const ARRIVALS: [(ChatId, From, &str); 3] = [
     (
@@ -479,6 +544,7 @@ fn mockup_message(
         late: condition.late,
         forward_secret: condition.forward_secret,
         parts: condition.parts,
+        via: None,
     })
 }
 
@@ -568,6 +634,7 @@ fn long_message(heap: TextHeap, index: usize) -> Option<Message> {
         late: false,
         forward_secret: false,
         parts: None,
+        via: None,
     })
 }
 
@@ -674,6 +741,12 @@ pub struct Store {
     /// for come.
     arrival_at: Cell<Option<u64>>,
     identity_at: Cell<Option<u64>>,
+    /// When each message sent since the fixture started went, on the
+    /// board's clock.
+    sends: RefCell<Vec<(MessageId, u64), KEPT>>,
+    /// When the unknown repeater is identified, once it is asked about.
+    repeater_at: Cell<Option<u64>>,
+    repeater_identified: Cell<bool>,
 }
 
 impl Store {
@@ -732,6 +805,9 @@ impl Store {
             clock_source: Cell::new((ClockSource::Gnss, 0)),
             arrival_at: Cell::new(None),
             identity_at: Cell::new(None),
+            sends: RefCell::new(Vec::new()),
+            repeater_at: Cell::new(None),
+            repeater_identified: Cell::new(false),
         }
     }
 
@@ -1055,7 +1131,26 @@ impl Store {
     /// its clock, and what it has to do by then. An identity asked for
     /// arrives a moment after the first time it is moved on.
     pub fn advance(&self, now: u64) {
-        self.now.set(now);
+        let before = self.now.replace(now);
+        for &(id, at) in self.sends.borrow().iter() {
+            if STAGES
+                .iter()
+                .any(|after| before < at + after && at + after <= now)
+                && let Some(chat) = self
+                    .kept
+                    .borrow()
+                    .iter()
+                    .find(|(_, m)| m.id == id)
+                    .map(|k| k.0)
+            {
+                self.queue(NodeEvent::MessageChanged { chat, message: id });
+            }
+        }
+        if self.repeater_at.get().is_some_and(|at| at <= now) {
+            self.repeater_at.set(None);
+            self.repeater_identified.set(true);
+            self.queue(NodeEvent::IdentitiesLearned);
+        }
         if self.identity_asked() {
             match self.identity_at.get() {
                 None => self.identity_at.set(Some(now + IDENTITY_DELAY)),
@@ -1074,10 +1169,96 @@ impl Store {
     /// When, on the board's clock, the fixture next has something to do.
     #[must_use]
     pub fn next_deadline(&self) -> Option<u64> {
-        match (self.arrival_at.get(), self.identity_at.get()) {
-            (Some(a), Some(b)) => Some(a.min(b)),
-            (a, b) => a.or(b),
+        let now = self.now.get();
+        let stages = self
+            .sends
+            .borrow()
+            .iter()
+            .flat_map(|&(_, at)| STAGES.map(|after| at + after))
+            .filter(|&at| at > now)
+            .min();
+        [
+            self.arrival_at.get(),
+            self.identity_at.get(),
+            self.repeater_at.get(),
+            stages,
+        ]
+        .into_iter()
+        .flatten()
+        .min()
+    }
+
+    /// How long ago my message `id` was sent, when it was sent since the
+    /// fixture started.
+    fn sent_ago(&self, id: MessageId) -> Option<u64> {
+        let sends = self.sends.borrow();
+        let &(_, at) = sends.iter().find(|(sent, _)| *sent == id)?;
+        Some(self.now.get().saturating_sub(at))
+    }
+
+    /// How far my message `id`, kept as `delivery`, has got by now. Only
+    /// one to a peer is kept as on its way: a channel's has no
+    /// acknowledgment to wait for.
+    fn staged(&self, id: MessageId, delivery: Delivery) -> Delivery {
+        match self.sent_ago(id) {
+            Some(_) if delivery != Delivery::Sending => delivery,
+            Some(ago) if ago < SENT_AFTER => Delivery::Sending,
+            Some(ago) if ago < CONFIRMING_AFTER => Delivery::Sent,
+            Some(ago) if ago < DELIVERED_AFTER => Delivery::Confirming,
+            Some(_) => Delivery::Delivered,
+            None => delivery,
         }
+    }
+
+    /// The repeaters heard carrying my message `id` in `chat` by now, and
+    /// how many more named none.
+    fn carried(&self, chat: ChatId, id: MessageId) -> (&'static [Carrier], u16) {
+        if id < FIRST_KEPT {
+            return carriers(chat, (id & 0xFF) as usize);
+        }
+        let Some(ago) = self.sent_ago(id) else {
+            return (&[], 0);
+        };
+        let heard = CARRIED_AFTER.iter().filter(|&&after| ago >= after).count();
+        (&SENT_CARRIERS[..heard], 0)
+    }
+
+    /// A repeater as a message's details list it.
+    fn repeater(&self, carrier: &Carrier) -> Option<Repeater> {
+        let (hint, text) = router_hint(carrier.address)?;
+        if carrier.known || self.repeater_identified.get() {
+            Some(Repeater {
+                hint,
+                name: SharedText::new(self.heap, carrier.name)?,
+                avatar: AvatarStyle::peer(
+                    carrier.color,
+                    &carrier.address[..4],
+                    PeerShape::Triangle,
+                ),
+                address: Some(SharedText::new(self.heap, carrier.address)?),
+            })
+        } else {
+            Some(Repeater {
+                hint,
+                name: SharedText::new(self.heap, &text)?,
+                avatar: AvatarStyle::router_hint(&text),
+                address: None,
+            })
+        }
+    }
+
+    /// The repeaters heard carrying my message `id` in `chat`, as its
+    /// caption names them.
+    fn via(&self, chat: ChatId, id: MessageId) -> Option<Via> {
+        let (carriers, anonymous) = self.carried(chat, id);
+        let count = carriers.len() as u8 + anonymous as u8;
+        (count > 0).then(|| Via {
+            lead: carriers
+                .first()
+                .and_then(|carrier| self.repeater(carrier))
+                .map(|repeater| repeater.name),
+            count,
+        })
     }
 
     /// The next message arrives at `at` on the board's clock, and each one
@@ -1199,6 +1380,21 @@ impl Store {
                 address: Some(s(address)),
                 heard: s(saved.heard),
                 saved: !self.forgotten.borrow().contains(&peer),
+            };
+        }
+        if let Some(carrier) = [RIVERBEND, BALD_KNOB]
+            .into_iter()
+            .find(|carrier| carrier.address == address)
+        {
+            return Member {
+                sender: Sender {
+                    name: s(carrier.name),
+                    avatar: AvatarStyle::peer(carrier.color, &address[..4], PeerShape::Triangle),
+                },
+                hint: s(&address[..4]),
+                address: Some(s(address)),
+                heard: s("12m"),
+                saved: false,
             };
         }
         let named = ["Sam", "Kit Moreno", "Lee Park", "Ranger Station"]
@@ -1421,7 +1617,7 @@ impl Store {
         } else {
             self.kept_at(chat, at, Message::clone)?
         };
-        self.overlay(&mut message);
+        self.overlay(chat, &mut message);
         Some(message)
     }
 
@@ -1464,7 +1660,7 @@ impl Store {
         let delivery = if self.retried.borrow().contains(&id) {
             Delivery::Sending
         } else {
-            delivery
+            self.staged(id, delivery)
         };
         Some((direction, delivery))
     }
@@ -1499,9 +1695,14 @@ impl Store {
         read(starts)
     }
 
-    /// Applies to `message` what has happened to it since the fixture
-    /// started: my reaction, a retry, and its sender identified.
-    fn overlay(&self, message: &mut Message) {
+    /// Applies to `message` in `chat` what has happened to it since the
+    /// fixture started: how far it got, my reaction, a retry, and its
+    /// sender identified.
+    fn overlay(&self, chat: ChatId, message: &mut Message) {
+        if message.direction == Direction::Outbound {
+            message.delivery = self.staged(message.id, message.delivery);
+            message.via = self.via(chat, message.id);
+        }
         if let Some(&(_, reaction)) = self.mine.borrow().iter().find(|(id, _)| *id == message.id) {
             message.set_my_reaction(Some(reaction));
         }
@@ -1566,6 +1767,7 @@ impl Store {
             late: false,
             forward_secret,
             parts: None,
+            via: None,
         };
         self.next.set(message.id + 1);
         let mut kept = self.kept.borrow_mut();
@@ -1651,7 +1853,7 @@ impl Node for Store {
         } else {
             self.own_message(chat, self.own_index(chat, message)?)?
         };
-        self.overlay(&mut found);
+        self.overlay(chat, &mut found);
         Some(found)
     }
 
@@ -1724,6 +1926,12 @@ impl Node for Store {
         forward_secret: bool,
     ) -> Option<Message> {
         let message = self.keep(chat, From::Me, text, reply_to, forward_secret)?;
+        let mut sends = self.sends.borrow_mut();
+        if sends.is_full() {
+            sends.remove(0);
+        }
+        _ = sends.push((message.id, self.now.get()));
+        drop(sends);
         if let Some(mut row) = self.touch(chat) {
             row.draft = None;
         }
@@ -1796,6 +2004,16 @@ impl Node for Store {
     fn request_identity(&self, _chat: ChatId, _message: MessageId) {
         // Only the unidentified member has an identity to come.
         self.asked.set(true);
+    }
+
+    fn identify_repeater(&self, hint: [u8; 2]) {
+        // Only the one repeater not known has an identity to come.
+        if !self.repeater_identified.get()
+            && self.repeater_at.get().is_none()
+            && router_hint(BALD_KNOB.address).is_some_and(|(known, _)| known == hint)
+        {
+            self.repeater_at.set(Some(self.now.get() + IDENTITY_DELAY));
+        }
     }
 
     fn direct_chat(&self, address: &str, name: &str, avatar: &AvatarStyle) -> Option<ChatSummary> {
@@ -2570,6 +2788,11 @@ impl Node for Store {
                 avatar: self.avatar(),
                 reaction,
             });
+        }
+        if outbound {
+            let (carriers, anonymous) = self.carried(chat, message);
+            details.repeaters = carriers.iter().filter_map(|c| self.repeater(c)).collect();
+            details.anonymous = anonymous;
         }
         Some(details)
     }

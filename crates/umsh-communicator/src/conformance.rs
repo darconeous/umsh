@@ -905,6 +905,16 @@ pub fn peers<H: Harness>(harness: &mut H) {
         [key(1)]
     );
     assert_eq!(
+        store
+            .peers_with_router_hint(RouterHint([1, 0xEE]))
+            .collect::<Vec<_>>(),
+        [key(1)]
+    );
+    assert_eq!(
+        store.peers_with_router_hint(RouterHint([0xEE, 1])).count(),
+        0
+    );
+    assert_eq!(
         store.update_peer(&key(99), PeerChange::Route(None)),
         Err(StoreError::NotFound)
     );

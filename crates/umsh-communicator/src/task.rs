@@ -17,7 +17,7 @@ use embassy_futures::select::select3;
 use embassy_sync::blocking_mutex::Mutex;
 use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_sync::signal::Signal;
-use umsh_core::{ChannelKey, NodeHint, PayloadType, PublicKey};
+use umsh_core::{ChannelKey, NodeHint, PayloadType, PublicKey, RouterHint};
 use umsh_mac::SendOptions;
 use umsh_node::{
     LocalNode, MacBackend, NodeIdentityPayload, Subscription, identity_is_trustworthy,
@@ -114,6 +114,9 @@ pub enum Command {
         peer: PublicKey,
         options: SendOptions,
     },
+    /// Ask the nodes in earshot whose hint starts with a router hint for
+    /// their identity.
+    AskRepeater { hint: RouterHint },
     /// Ask a channel for the identity of whoever holds a hint.
     AskChannel {
         channel: ChannelKey,
@@ -371,6 +374,13 @@ async fn execute<M: MacBackend>(mesh: &LocalNode<M>, command: Command) -> Option
             hint,
             options,
         } => ask_channel(mesh, &channel, &hint, &options).await,
+        Command::AskRepeater { hint } => {
+            let filter = umsh_node::IdentityFilter {
+                hint_prefix: Some(&hint.0),
+                ..Default::default()
+            };
+            _ = mesh.request_identities(&filter, &[]).await;
+        }
         #[cfg(feature = "software-crypto")]
         Command::OpenMeet => return Some(Arrival::MeetOpened(mesh.open_meet().await.ok())),
         // One that cannot go is as good as lost on the air: the exchange

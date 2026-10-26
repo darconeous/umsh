@@ -7,7 +7,7 @@
 
 use core::fmt::Write as _;
 
-use umsh_core::{NodeHint, PublicKey, base58};
+use umsh_core::{NodeHint, PublicKey, RouterHint, base58};
 use umsh_mac::SendOptions;
 use umsh_node::{NodeCapabilities, NodeIdentityPayload, NodeRole, PING_MIC_SIZE};
 use umsh_text::node_adapter::{RxSummary, channel_reach, with_flood_reach};
@@ -259,6 +259,49 @@ impl<S: ChatStore> Chats<S> {
         let mut keys = self.store.peers_with_hint(hint);
         let key = keys.next()?;
         keys.next().is_none().then_some(key)
+    }
+
+    /// The known node a repeater's `hint` most plausibly names: the one it
+    /// could be that forwards, else the one it could be at all. Two octets
+    /// never prove which node it was.
+    pub(super) fn name_router_hint(&self, hint: RouterHint) -> Option<PeerRecord> {
+        let candidates: alloc::vec::Vec<PeerRecord> = self
+            .store
+            .peers_with_router_hint(hint)
+            .filter_map(|key| self.store.peer(&key).ok().flatten())
+            .collect();
+        let mut forwarding = candidates.iter().filter(|kept| forwards(kept));
+        if let (Some(only), None) = (forwarding.next(), forwarding.next()) {
+            return Some(only.clone());
+        }
+        match candidates.as_slice() {
+            [only] => Some(only.clone()),
+            _ => None,
+        }
+    }
+
+    /// How a repeater that forwarded under `hint` is shown: as the node it
+    /// most plausibly is, else by the hint alone.
+    pub(super) fn repeater(&self, hint: RouterHint) -> Option<model::Repeater> {
+        let (name, avatar, known) = match self.name_router_hint(hint) {
+            Some(kept) => (
+                name(&kept.key, Some(&kept)),
+                avatar(&kept.key, Some(&kept)),
+                Some(SharedText::new(self.heap, &address(&kept.key.0))?),
+            ),
+            None => {
+                let mut text = String::<32>::new();
+                _ = write!(text, "{hint}");
+                let avatar = AvatarStyle::router_hint(&text);
+                (text, avatar, None)
+            }
+        };
+        Some(model::Repeater {
+            name: SharedText::new(self.heap, &name)?,
+            avatar,
+            address: known,
+            hint: hint.0,
+        })
     }
 
     // ─── Saved peers ─────────────────────────────────────────────────
@@ -807,6 +850,12 @@ impl<S: ChatStore> Chats<S> {
         found
     }
 
+    /// Asks the repeater that forwards under `hint` who it is: only the
+    /// nodes in earshot, as one heard carrying our own frame is.
+    pub fn identify_repeater(&mut self, hint: RouterHint) {
+        self.commands.push_back(Command::AskRepeater { hint });
+    }
+
     /// Asks the channel `message` came on for the identity of the member
     /// who sent it.
     pub fn request_identity(&mut self, chat: model::ChatId, message: model::MessageId) {
@@ -855,6 +904,18 @@ fn name(key: &PublicKey, kept: Option<&PeerRecord>) -> String<32> {
         Some(name) => cut(name),
         None => cut(address(&key.0).get(..4).unwrap_or_default()),
     }
+}
+
+/// Whether a node forwards others' traffic, by the identity it is kept
+/// with.
+fn forwards(kept: &PeerRecord) -> bool {
+    let Some(&[role, capabilities]) = kept.identity.get(..2) else {
+        return false;
+    };
+    umsh_node::forwards(
+        NodeRole::from_byte(role),
+        NodeCapabilities::from_bits_truncate(capabilities),
+    )
 }
 
 /// The outline of what a node says it is: a node that chats, a repeater

@@ -743,8 +743,13 @@ pub enum Direction {
 pub enum Delivery {
     /// Not every fragment has been sent yet.
     Sending,
-    /// Every fragment has been sent: as far as a channel's message goes.
+    /// Every fragment has been sent: as far as a channel's message goes,
+    /// and where a direct one stands while repeaters are still heard
+    /// carrying it.
     Sent,
+    /// A direct message has been sent and its repeaters have gone quiet:
+    /// it waits on the peer's acknowledgment.
+    Confirming,
     /// The peer's radio acknowledged every fragment. That says it arrived,
     /// never that it was read.
     Delivered,
@@ -872,6 +877,18 @@ pub struct Message {
     pub forward_secret: bool,
     /// How far it has come, while it is still arriving in parts.
     pub parts: Option<Parts>,
+    /// The repeaters overheard carrying mine, once any were.
+    pub via: Option<Via>,
+}
+
+/// The repeaters overheard carrying a message of mine.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Via {
+    /// What the first repeater named is called: its name, else its hint.
+    /// `None` when none of them was named.
+    pub lead: Option<SharedText>,
+    /// Repeaters heard in all, named or not.
+    pub count: u8,
 }
 
 /// What the rows beside a message in its transcript need of it: whether
@@ -1011,7 +1028,7 @@ impl Message {
     }
 }
 
-/// How a message reached this device, for its details.
+/// How a message reached this device, or how mine went, for its details.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Details {
     /// When it was received or sent, in Unix seconds, when the clock was
@@ -1030,6 +1047,26 @@ pub struct Details {
     pub forward_secret: bool,
     /// Who reacted to it, and how, in the order they did.
     pub reactors: Vec<Reactor, MAX_REACTORS>,
+    /// The repeaters overheard carrying mine that named themselves, in the
+    /// order first heard.
+    pub repeaters: Vec<Repeater, MAX_REPEATERS>,
+    /// How many more were heard carrying it without naming themselves.
+    pub anonymous: u16,
+}
+
+/// The most repeaters a message's details list.
+pub const MAX_REPEATERS: usize = 8;
+
+/// A repeater overheard carrying a message of mine.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Repeater {
+    /// The router hint it forwarded under.
+    pub hint: [u8; 2],
+    /// The node it most plausibly is, by name, else its hint.
+    pub name: SharedText,
+    pub avatar: AvatarStyle,
+    /// The address of the node it most plausibly is, when one is known.
+    pub address: Option<SharedText>,
 }
 
 /// The most reactions a message's details list: the latest.
@@ -1082,9 +1119,10 @@ pub enum NodeEvent {
         chat: ChatId,
         message: MessageId,
     },
-    /// `message` in `chat` changed: its delivery, its reactions, its text,
-    /// or its sender. When that changes how its chat is listed,
-    /// [`NodeEvent::ChatChanged`] says so too.
+    /// `message` in `chat` changed: its delivery, the repeaters heard
+    /// carrying it, its reactions, its text, or its sender. When that
+    /// changes how its chat is listed, [`NodeEvent::ChatChanged`] says so
+    /// too.
     MessageChanged {
         chat: ChatId,
         message: MessageId,
@@ -1270,6 +1308,10 @@ pub trait Node {
     /// Asks the channel `chat` for the identity of the member who sent
     /// `message`.
     fn request_identity(&self, chat: ChatId, message: MessageId);
+
+    /// Asks the repeater that forwards under `hint`, a router hint, who it
+    /// is: of the nodes in earshot, the ones whose hint it is.
+    fn identify_repeater(&self, hint: [u8; 2]);
 
     /// The direct chat with the peer at `address`, made if there is none yet,
     /// named `name` and drawn as `avatar`. `None` when there is no room for it.
@@ -1897,8 +1939,8 @@ impl State {
         match event {
             NodeEvent::Arrived { chat, message } => return self.receive(chat, message, now),
             // The transcript reads its messages from the node as it is
-            // built, which this rebuilds.
-            NodeEvent::MessageChanged { .. } => {}
+            // built, which this rebuilds; the details shown are read again.
+            NodeEvent::MessageChanged { message, .. } => self.refresh_details(Some(message)),
             NodeEvent::ChatChanged(chat) => self.refresh_chat(chat),
             NodeEvent::ChatRemoved(chat) => self.remove_chat(chat),
             NodeEvent::IdentitiesLearned => self.identities_learned(),
@@ -1906,6 +1948,7 @@ impl State {
                 self.peers.clear();
                 self.node.peers(&mut self.peers);
                 self.refresh_peer();
+                self.refresh_details(None);
             }
             NodeEvent::PeerRemoved(peer) => self.remove_peer(peer),
             NodeEvent::PingAnswered(_) => self.refresh_peer(),
@@ -2300,6 +2343,7 @@ impl State {
             self.press.and_then(|p| p.hold_until),
             self.touch.and_then(|t| t.hold_until),
             self.recents.save_at,
+            self.details_deadline(),
         ]
         .into_iter()
         .flatten()

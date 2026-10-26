@@ -593,7 +593,7 @@ fn head_view(m: &'static Metrics, head: &Head) -> impl View<Rgb565, ()> + use<> 
 
 /// What goes with a message besides its bubble: what stands in its place
 /// when it is not there, or the line about it and the dots of its parts.
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 enum Notes {
     StandIn(StandIn),
     Below {
@@ -607,12 +607,13 @@ enum Notes {
 /// Built from its data each time it is drawn ([`Lazy`]), as a bubble's
 /// contents are.
 fn notes_view(
-    &(notes, outbound, beside_avatar, m): &(Notes, bool, bool, &'static Metrics),
+    (notes, outbound, beside_avatar, m): &(Notes, bool, bool, &'static Metrics),
 ) -> impl View<Rgb565, ()> + use<> {
+    let (outbound, beside_avatar, m) = (*outbound, *beside_avatar, *m);
     let lead = if beside_avatar { IN_X } else { SIDE };
     let (stand_in, caption, parts) = match notes {
-        Notes::StandIn(stand_in) => (Some(stand_in), None, None),
-        Notes::Below { caption, parts } => (None, caption, parts),
+        Notes::StandIn(stand_in) => (Some(*stand_in), None, None),
+        Notes::Below { caption, parts } => (None, caption.as_ref(), *parts),
     };
     VStack::new((
         stand_in.map(|stand_in| {
@@ -1122,24 +1123,36 @@ fn chips(
 
 /// What the line under a message says: that it was changed or came late,
 /// and, when asked, how its delivery went.
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct Caption {
     edited: bool,
-    status: Option<&'static str>,
+    status: Option<Status>,
     color: Rgb565,
+}
+
+/// How a message's delivery or arrival reads.
+#[derive(Clone)]
+enum Status {
+    Said(&'static str),
+    /// Sent, by the repeaters overheard carrying it.
+    Via(model::Via),
 }
 
 fn caption(message: &Message, delivery: bool) -> Option<Caption> {
     let mut color = theme::TEXT_TERTIARY;
     let status = match message.direction {
-        Direction::Inbound if message.late => Some("Received late"),
+        Direction::Inbound if message.late => Some(Status::Said("Received late")),
         Direction::Outbound if delivery => Some(match message.delivery {
-            Delivery::Sending => "Sending",
-            Delivery::Sent => "Sent",
-            Delivery::Delivered => "Delivered",
+            Delivery::Sending => Status::Said("Sending"),
+            Delivery::Sent => match &message.via {
+                Some(via) => Status::Via(via.clone()),
+                None => Status::Said("Sent"),
+            },
+            Delivery::Confirming => Status::Said("Confirming delivery"),
+            Delivery::Delivered => Status::Said("Delivered"),
             Delivery::Unconfirmed => {
                 color = theme::AMBER;
-                "Unconfirmed"
+                Status::Said("Unconfirmed")
             }
         }),
         _ => None,
@@ -1151,20 +1164,55 @@ fn caption(message: &Message, delivery: bool) -> Option<Caption> {
     })
 }
 
+/// The most of a repeater's name a caption shows, in grapheme clusters
+/// and in octets, so the count after it stays in view.
+const LEAD_MAX: usize = 16;
+const LEAD_BYTES: usize = 40;
+
+/// Writes how a caption names the `count` repeaters overheard carrying a
+/// message, `lead` the first of them named, as the phone's caption does.
+fn repeat_caption<W: core::fmt::Write>(out: &mut W, lead: Option<&str>, count: u8) {
+    _ = match (lead, count) {
+        (_, 0) => out.write_str("Sent"),
+        (None, 1) => out.write_str("Sent via a repeater"),
+        (None, count) => write!(out, "Sent via {count} repeaters"),
+        (Some(lead), count) => {
+            _ = out.write_str("Sent via ");
+            let mut shown = 0;
+            for (n, cluster) in umsh_grapheme::clusters(lead).enumerate() {
+                if n == LEAD_MAX || shown + cluster.len() > LEAD_BYTES {
+                    _ = out.write_char('\u{2026}');
+                    break;
+                }
+                _ = out.write_str(cluster);
+                shown += cluster.len();
+            }
+            match count - 1 {
+                0 => Ok(()),
+                1 => out.write_str(" and 1 other"),
+                others => write!(out, " and {others} others"),
+            }
+        }
+    };
+}
+
 fn caption_line(
     m: &'static Metrics,
-    caption: Caption,
+    caption: &Caption,
     outbound: bool,
 ) -> impl View<Rgb565, ()> + use<> {
-    let mut text: heapless::String<40> = heapless::String::new();
+    let mut text: heapless::String<80> = heapless::String::new();
     if caption.edited {
         _ = text.push_str("Edited");
     }
-    if let Some(status) = caption.status {
+    if let Some(status) = &caption.status {
         if !text.is_empty() {
             _ = text.push_str(" \u{B7} ");
         }
-        _ = text.push_str(status);
+        match status {
+            Status::Said(said) => _ = text.push_str(said),
+            Status::Via(via) => repeat_caption(&mut text, via.lead.as_deref(), via.count),
+        }
     }
     Text::new(text, &font::SEMIBOLD)
         .with_font_size(m.small)
@@ -1810,6 +1858,31 @@ mod tests {
 
     /// The first message with a time, the whole history's or the first
     /// after a lull, says when it came.
+    fn said(lead: Option<&str>, count: u8) -> heapless::String<80> {
+        let mut text = heapless::String::new();
+        repeat_caption(&mut text, lead, count);
+        text
+    }
+
+    /// A caption names the first repeater heard, as the phone's does, and
+    /// cuts a long name short so the count stays in view.
+    #[test]
+    fn a_caption_names_the_repeaters_heard() {
+        assert_eq!(said(None, 0), "Sent");
+        assert_eq!(said(None, 1), "Sent via a repeater");
+        assert_eq!(said(None, 3), "Sent via 3 repeaters");
+        assert_eq!(said(Some("Tallac"), 1), "Sent via Tallac");
+        assert_eq!(said(Some("Tallac"), 2), "Sent via Tallac and 1 other");
+        assert_eq!(said(Some("Tallac"), 4), "Sent via Tallac and 3 others");
+        assert_eq!(
+            said(Some("Tallac Ridge Fire Lookout"), 3),
+            "Sent via Tallac Ridge Fir\u{2026} and 2 others"
+        );
+        // Wide clusters are cut by their octets.
+        let peaks = said(Some("🏔️🏔️🏔️🏔️🏔️🏔️🏔️🏔️🏔️🏔️"), 2);
+        assert!(peaks.ends_with("\u{2026} and 1 other"), "{peaks}");
+    }
+
     #[test]
     fn a_stamp_goes_over_the_first_message_and_after_a_lull() {
         let at = 1_800_000_000;

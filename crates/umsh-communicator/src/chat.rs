@@ -47,6 +47,7 @@ use crate::task::Command;
 
 mod channels;
 mod peers;
+mod repeats;
 
 pub(crate) use channels::Joined;
 
@@ -193,6 +194,8 @@ pub(crate) struct Chats<S> {
     token: u32,
     /// Messages sent again that have had no word since.
     retrying: BTreeSet<MessageId>,
+    /// The repeaters heard carrying the messages sent most recently.
+    heard: BTreeMap<MessageId, repeats::Heard>,
     /// How each node was last heard, which the store does not keep.
     links: BTreeMap<[u8; 32], Link>,
     /// The round trip of each peer's last answered ping, in milliseconds.
@@ -231,6 +234,7 @@ impl<S: ChatStore> Chats<S> {
             },
             token: 0,
             retrying: BTreeSet::new(),
+            heard: BTreeMap::new(),
             links: BTreeMap::new(),
             pings: BTreeMap::new(),
             secrecy: BTreeMap::new(),
@@ -428,6 +432,7 @@ impl<S: ChatStore> Chats<S> {
         facade.tick(now_ms);
         self.settle(None, now_ms, time, events);
         self.lapse_links(now_ms, events);
+        self.lapse_repeats(now_ms, events);
     }
 
     /// Commits what the facade produced and answers what it asked. `link`
@@ -462,6 +467,8 @@ impl<S: ChatStore> Chats<S> {
                         }
                     }
                     ChatOutput::SenderResolved(_) => events(NodeEvent::IdentitiesLearned),
+                    ChatOutput::Repeats(repeats) => self.heard_repeats(repeats, now_ms, events),
+                    ChatOutput::Delivery(delivery) => self.heard_delivery(delivery, now_ms),
                     _ => {}
                 }
             }
@@ -1141,8 +1148,8 @@ impl<S: ChatStore> Chats<S> {
         _ = self.store.keep_recent_picks(record);
     }
 
-    /// How `message` reached this device, and who reacted to it: this
-    /// node drawn as `mine`.
+    /// How `message` reached this device, or which repeaters carried mine,
+    /// and who reacted to it: this node drawn as `mine`.
     pub fn details(
         &self,
         chat: model::ChatId,
@@ -1187,6 +1194,9 @@ impl<S: ChatStore> Chats<S> {
                     reaction: reaction(reactor.reaction),
                 });
             }
+        }
+        if record.direction == engine::Direction::Outbound {
+            (details.repeaters, details.anonymous) = self.repeaters(record.id);
         }
         Some(details)
     }
@@ -1455,10 +1465,12 @@ impl<S: ChatStore> Chats<S> {
                     model::Delivery::Unconfirmed
                 } else if acknowledged(&delivery) {
                     model::Delivery::Delivered
-                } else if delivery.sent != 0 && channel {
-                    model::Delivery::Sent
-                } else {
+                } else if delivery.sent == 0 {
                     model::Delivery::Sending
+                } else if !channel && self.confirming(record.id) {
+                    model::Delivery::Confirming
+                } else {
+                    model::Delivery::Sent
                 }
             }
         };
@@ -1507,6 +1519,10 @@ impl<S: ChatStore> Chats<S> {
                         lost: if finalized { all & !present } else { 0 },
                     })
                 }
+            },
+            via: match direction {
+                model::Direction::Outbound => self.via(record.id),
+                model::Direction::Inbound => None,
             },
         })
     }

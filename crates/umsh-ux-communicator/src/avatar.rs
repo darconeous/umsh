@@ -119,6 +119,14 @@ impl AvatarStyle {
         }
     }
 
+    /// A repeater known by nothing but the hint it forwarded under: a
+    /// hexagon lettered `hint_text`, in gray, as two octets are too few to
+    /// color.
+    #[must_use]
+    pub fn router_hint(hint_text: &str) -> Self {
+        Self::peer([0x80; 3], hint_text, PeerShape::Hexagon)
+    }
+
     /// A channel's badge: initials from its name, fill from its key's tint.
     /// An initial is the first grapheme cluster of a word, so "Hot Topic"
     /// is lettered HT. A name led by an emoji is lettered with that emoji

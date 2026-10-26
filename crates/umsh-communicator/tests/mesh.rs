@@ -23,8 +23,8 @@ use umsh_sync::AsyncRefCell;
 use umsh_ulcp::ids::prop;
 use umsh_ulcp_simdev::SimulatedDevice;
 use umsh_ux_communicator::model::{
-    ChatKind, Delivery, Exchange, ExchangeEnd, MeetState, Member, NearbyDevice, Node, NodeEvent,
-    Peers,
+    ChatKind, Chats, Delivery, Exchange, ExchangeEnd, MeetState, Member, MessageId, NearbyDevice,
+    Node, NodeEvent, Peers, Via,
 };
 use umsh_ux_communicator::models;
 
@@ -131,6 +131,41 @@ async fn board(radio: SimulatedRadio, secret: [u8; 32]) -> Board {
         .await;
     });
     board
+}
+
+/// Brings a repeater up on `radio` as the identity `secret` makes: a MAC
+/// that forwards and does nothing else. Returns its key.
+async fn repeater(radio: SimulatedRadio, secret: [u8; 32]) -> PublicKey {
+    let identity = SoftwareIdentity::from_secret_bytes(&secret);
+    let key = *identity.public_key();
+    let mut config = RepeaterConfig::default();
+    config.enabled = true;
+    let mac: &'static AsyncRefCell<MeshMac> = Box::leak(Box::new(AsyncRefCell::new(Mac::new(
+        radio,
+        CryptoEngine::new(SoftwareAes, SoftwareSha256),
+        StdClock::new(),
+        rand::rng(),
+        MemoryCounterStore::default(),
+        config,
+        OperatingPolicy::default(),
+    ))));
+    let handle = MacHandle::new(mac);
+    handle.add_identity(identity).await.unwrap();
+    spawn_local(async move {
+        loop {
+            if let Ok(served) = tokio::time::timeout(TURN, handle.next_event(|_, _| {})).await {
+                served.unwrap();
+            }
+        }
+    });
+    key
+}
+
+/// Who carried `message` in `chat`, sent by `board`, and how far it got,
+/// as its row shows them.
+fn how_sent(board: &Board, chat: u32, message: MessageId) -> (Delivery, Option<Via>) {
+    let message = board.node.message(chat, message).unwrap();
+    (message.delivery, message.via)
 }
 
 fn address(key: &PublicKey) -> String {
@@ -706,6 +741,126 @@ async fn try_again_uses_a_fresh_session() {
             // A new pair of keys and nonces: the colors and the code are
             // drawn anew, and match only by chance.
             assert!(meet(&alice).own_color != before || again != first);
+        })
+        .await;
+}
+
+/// A message to a peer two hops away says the repeater between carried it,
+/// then that it was delivered; its details list the repeater.
+#[tokio::test(flavor = "current_thread")]
+async fn a_direct_message_names_the_repeater_that_carried_it() {
+    LocalSet::new()
+        .run_until(async {
+            let network = SimulatedNetwork::new();
+            let near = network.add_radio_with_config(255, 20);
+            let middle = network.add_radio_with_config(255, 20);
+            let far = network.add_radio_with_config(255, 20);
+            network.connect_bidirectional(near.id(), middle.id());
+            network.connect_bidirectional(middle.id(), far.id());
+            let alice = board(near, [0x11; 32]).await;
+            let ridge = repeater(middle, [0x33; 32]).await;
+            let bob = board(far, [0x22; 32]).await;
+
+            let chat = alice
+                .node
+                .direct_chat(&address(&bob.key), "Bob", &alice.node.avatar())
+                .unwrap();
+            let sent = alice
+                .node
+                .send(chat.id, "Meet at the ridge", None, false)
+                .unwrap();
+            let mut carried = None;
+            until("the message was not delivered", || {
+                let (delivery, via) = how_sent(&alice, chat.id, sent.id);
+                carried = carried.take().or(via);
+                delivery == Delivery::Delivered
+            })
+            .await;
+            let carried = carried.expect("the repeater was heard carrying it");
+            assert_eq!(carried.count, 1);
+            let details = alice.node.details(chat.id, sent.id).unwrap();
+            assert_eq!(details.repeaters.len() + usize::from(details.anonymous), 1);
+            if let Some(named) = details.repeaters.first() {
+                assert_eq!(named.hint, [ridge.0[0], ridge.0[1]]);
+                assert_eq!(named.address, None, "the repeater is not known yet");
+                assert_eq!(carried.lead.as_deref(), Some(&*named.name));
+            }
+        })
+        .await;
+}
+
+/// A message to a peer no one hears goes on naming the repeater that
+/// carried it until that goes quiet, then waits on its acknowledgment.
+#[tokio::test(flavor = "current_thread")]
+async fn a_direct_message_waits_on_its_acknowledgment_once_its_repeaters_go_quiet() {
+    LocalSet::new()
+        .run_until(async {
+            let network = SimulatedNetwork::new();
+            // Frames slow enough that the acknowledgment is waited on for
+            // longer than the repeaters take to go quiet.
+            let near = network.add_radio_with_config(255, 400);
+            let middle = network.add_radio_with_config(255, 400);
+            network.connect_bidirectional(near.id(), middle.id());
+            let alice = board(near, [0x11; 32]).await;
+            repeater(middle, [0x33; 32]).await;
+            let nowhere = *SoftwareIdentity::from_secret_bytes(&[0x44; 32]).public_key();
+
+            let chat = alice
+                .node
+                .direct_chat(&address(&nowhere), "Nowhere", &alice.node.avatar())
+                .unwrap();
+            let sent = alice
+                .node
+                .send(chat.id, "Anyone out there?", None, false)
+                .unwrap();
+            until("the repeater was not heard carrying it", || {
+                matches!(
+                    how_sent(&alice, chat.id, sent.id),
+                    (Delivery::Sent, Some(_))
+                )
+            })
+            .await;
+            until("it never settled into waiting", || {
+                how_sent(&alice, chat.id, sent.id).0 == Delivery::Confirming
+            })
+            .await;
+        })
+        .await;
+}
+
+/// A channel's message, which no one acknowledges, ends at Sent, naming
+/// the repeater that carried it.
+#[tokio::test(flavor = "current_thread")]
+async fn a_channel_message_ends_at_sent_via_its_repeater() {
+    LocalSet::new()
+        .run_until(async {
+            let network = SimulatedNetwork::new();
+            let near = network.add_radio_with_config(255, 20);
+            let middle = network.add_radio_with_config(255, 20);
+            network.connect_bidirectional(near.id(), middle.id());
+            let alice = board(near, [0x11; 32]).await;
+            repeater(middle, [0x33; 32]).await;
+            let key = WellKnownChannels::derive().public;
+            alice
+                .mesh
+                .join(&umsh::node::Channel::private(key, ""))
+                .await
+                .unwrap();
+
+            let mut chats = Chats::new();
+            alice.node.chats(&mut chats);
+            let public = chats
+                .iter()
+                .find(|chat| &*chat.name == "Public")
+                .expect("the public channel")
+                .id;
+            let sent = alice.node.send(public, "Radio check", None, false).unwrap();
+            until("the repeater was not heard carrying it", || {
+                matches!(how_sent(&alice, public, sent.id), (Delivery::Sent, Some(_)))
+            })
+            .await;
+            tokio::time::sleep(Duration::from_millis(3_000)).await;
+            assert_eq!(how_sent(&alice, public, sent.id).0, Delivery::Sent);
         })
         .await;
 }

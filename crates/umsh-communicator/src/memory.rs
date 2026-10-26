@@ -17,7 +17,7 @@ use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::string::String;
 use alloc::vec::Vec;
 
-use umsh_core::{ChannelTag, NodeHint, PublicKey};
+use umsh_core::{ChannelTag, NodeHint, PublicKey, RouterHint};
 use umsh_text::chat::{self, Insert, Mutation};
 use umsh_text::engine::{ArchiveKey, Direction, Presence, ResolvedRef, StreamCheckpoint};
 use umsh_text::{ConversationKey, MessageType, SenderScope, WireRef};
@@ -1211,6 +1211,15 @@ impl<D: Durable> ChatStore for MemoryStore<D> {
             .get(&hint.0)
             .into_iter()
             .flatten()
+            .map(|key| PublicKey(*key))
+    }
+
+    fn peers_with_router_hint(&self, hint: RouterHint) -> impl Iterator<Item = PublicKey> + '_ {
+        let [a, b] = hint.0;
+        self.index
+            .hints
+            .range([a, b, 0x00]..=[a, b, 0xFF])
+            .flat_map(|(_, keys)| keys)
             .map(|key| PublicKey(*key))
     }
 

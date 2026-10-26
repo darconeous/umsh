@@ -1,0 +1,14 @@
+# The repeaters that carried a message of mine, and asking one known only
+# by its hint who it is.
+press
+turn -2
+press
+turn 1
+press
+shot repeaters
+turn 3
+shot repeaters-unknown
+press
+shot repeaters-asking
+wait 3
+shot repeaters-named
