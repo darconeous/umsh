@@ -22,7 +22,7 @@ use crate::pfs::{PfsSessionManager, PfsState};
 use crate::receive::ReceivedPacketRef;
 use crate::ticket::{SendProgressTicket, SendToken};
 use crate::transport::Transport;
-use crate::{AppEncodeError, OwnedMacCommand};
+use crate::{AppEncodeError, NodeCapabilities, NodeRole, OwnedMacCommand};
 
 /// Octets one Peer Repeaters Response body may occupy.
 ///
@@ -352,6 +352,8 @@ pub enum NodeError<M: MacBackend> {
     PeerMissing,
     /// Control-payload encode failure.
     AppEncode(AppEncodeError),
+    /// A source route longer than a frame can carry.
+    RouteTooLong,
     /// The referenced PFS session was missing.
     #[cfg(feature = "software-crypto")]
     PfsSessionMissing,
@@ -399,6 +401,7 @@ where
             Self::ChannelLeft => f.write_str("ChannelLeft"),
             Self::PeerMissing => f.write_str("PeerMissing"),
             Self::AppEncode(e) => f.debug_tuple("AppEncode").field(e).finish(),
+            Self::RouteTooLong => f.write_str("RouteTooLong"),
             #[cfg(feature = "software-crypto")]
             Self::PfsSessionMissing => f.write_str("PfsSessionMissing"),
             #[cfg(feature = "software-crypto")]
@@ -437,6 +440,17 @@ impl<M: MacBackend> From<umsh_crypto::CryptoError> for NodeError<M> {
 /// `LocalNode` owns its channel membership set via shared interior state.
 /// Different `LocalNode` instances (for different identities) may join
 /// different channel sets.
+/// What an [Identity Request](LocalNode::request_identities) asks of the
+/// nodes it reaches. Nothing set asks every one of them.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct IdentityFilter<'a> {
+    /// The leading bytes of the answering node's key: one to three, so a
+    /// router hint names a repeater.
+    pub hint_prefix: Option<&'a [u8]>,
+    pub role: Option<NodeRole>,
+    pub capabilities: Option<NodeCapabilities>,
+}
+
 #[derive(Clone)]
 pub struct LocalNode<M: MacBackend> {
     identity_id: LocalIdentityId,
@@ -963,6 +977,73 @@ impl<M: MacBackend> LocalNode<M> {
             peers.retain(|peer| !own_key.0.starts_with(&peer.hint));
         }
         peers
+    }
+
+    /// Ask for the identities of the nodes an aimed request reaches: an
+    /// Identity Request (command 1) narrowed by `filter`, with a random
+    /// NONCE for each answer to echo.
+    ///
+    /// It goes along `route`, the repeaters ahead of where it is aimed in
+    /// send order, and an empty route keeps it to direct range. It never
+    /// floods. A role- or capability-filtered request is answered by every
+    /// node it reaches, and even a hint-filtered one is aimed at a place
+    /// rather than the mesh: a route that cannot be expressed is a
+    /// failure, not a license to broadcast.
+    ///
+    /// The answers arrive as `PayloadType::NodeIdentity` frames on the
+    /// normal receive path.
+    pub async fn request_identities(
+        &self,
+        filter: &IdentityFilter<'_>,
+        route: &[RouterHint],
+    ) -> Result<SendProgressTicket, NodeError<M>> {
+        let mut nonce_bytes = [0u8; 4];
+        self.fill_random(&mut nonce_bytes).await;
+        // Options are emitted in ascending key order: the nonce, the hint
+        // filter, the role, the capabilities.
+        let mut builder = crate::mac_command::IdentityRequestBuilder::new()
+            .nonce(u32::from_be_bytes(nonce_bytes))?;
+        if let Some(hint) = filter.hint_prefix {
+            builder = builder.filter_hint_prefix(hint)?;
+        }
+        if let Some(role) = filter.role {
+            builder = builder.filter_role(role)?;
+        }
+        // A broadcast request must carry at least one filter option. An
+        // unrestricted ask carries a zero-bit capability filter, which every
+        // node satisfies; any other filter already narrows it, and padding
+        // it would only cost bytes.
+        let unfiltered = filter.hint_prefix.is_none() && filter.role.is_none();
+        let capabilities = filter
+            .capabilities
+            .or(unfiltered.then(NodeCapabilities::empty));
+        if let Some(capabilities) = capabilities {
+            builder = builder.filter_caps(capabilities)?;
+        }
+        let options_block = builder.build();
+        let command = crate::mac_command::MacCommand::IdentityRequest {
+            options: &options_block,
+        };
+        let mut frame = [0u8; 128];
+        frame[0] = umsh_core::PayloadType::MacCommand as u8;
+        let length = crate::mac_command::encode(&command, &mut frame[1..])? + 1;
+
+        // Full source lets a stranger unicast back.
+        let mut options = SendOptions::default().with_full_source();
+        if !route.is_empty() {
+            options = options
+                .try_with_source_route(route)
+                .map_err(|_| NodeError::RouteTooLong)?
+                // The trace the request accumulates is the answering
+                // strangers' only path home: a broadcast teaches the MAC no
+                // route, and the reply carries no flood budget.
+                .with_trace_route();
+        }
+        // Last, always: a source route back-fills a flood budget from its
+        // length, and any FHOPS field at all makes the far end drop an
+        // unhinted solicitation.
+        let options = options.no_flood();
+        self.send_all(&frame[..length], &options).await
     }
 
     /// Build and send one page of this node's peer-repeater list.

@@ -34,6 +34,28 @@ impl RepeatTally {
         }
         self.revision = self.revision.wrapping_add(1);
     }
+
+    /// Take in another tally of the same message: a fragment of it, or a
+    /// send of it again. Named repeaters are added after those already
+    /// here; the unnamed count is the larger of the two, since every send
+    /// of a message is heard by the same repeaters. Returns whether a
+    /// repeater was added.
+    pub fn merge(&mut self, repeaters: &[RouterHint], anonymous: u16) -> bool {
+        let mut added = false;
+        for &hint in repeaters {
+            if !self.repeaters.contains(&hint) && self.repeaters.push(hint).is_ok() {
+                added = true;
+            }
+        }
+        if anonymous > self.anonymous {
+            self.anonymous = anonymous;
+            added = true;
+        }
+        if added {
+            self.revision = self.revision.wrapping_add(1);
+        }
+        added
+    }
 }
 
 /// Identity-scoped send token.
@@ -181,6 +203,25 @@ mod tests {
 
     fn make_token() -> SendToken {
         SendToken::new(LocalIdentityId(0), SendReceipt(42))
+    }
+
+    #[test]
+    fn merging_tallies_adds_new_repeaters_and_keeps_the_larger_unnamed_count() {
+        let mut tally = RepeatTally::default();
+        assert!(tally.merge(&[RouterHint([1, 2])], 1));
+        let revision = tally.revision;
+
+        // The same word again changes nothing.
+        assert!(!tally.merge(&[RouterHint([1, 2])], 1));
+        assert_eq!(tally.revision, revision);
+
+        // A smaller unnamed count is the same repeaters, heard less.
+        assert!(tally.merge(&[RouterHint([3, 4]), RouterHint([1, 2])], 0));
+        assert_eq!(tally.repeaters, [RouterHint([1, 2]), RouterHint([3, 4])]);
+        assert_eq!(tally.anonymous, 1);
+
+        assert!(tally.merge(&[], 2));
+        assert_eq!(tally.count(), 4);
     }
 
     fn make_ticket() -> (SendProgressTicket, Rc<RefCell<TicketState>>) {

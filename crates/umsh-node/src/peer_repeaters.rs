@@ -26,7 +26,7 @@ use alloc::vec::Vec;
 use umsh_core::{NodeHint, PublicKey, RouterHint};
 use umsh_hal::Snr;
 
-use crate::identity::{NodeCapabilities, NodeIdentityPayload, NodeRole};
+use crate::identity::NodeIdentityPayload;
 use crate::location::NodeLocation;
 
 /// How many identity-bearing repeaters the table remembers.
@@ -80,14 +80,10 @@ impl PeerRepeaterTable {
         Self::default()
     }
 
-    /// Whether an identity describes a repeater, and so belongs here.
-    ///
-    /// The capability is the claim that matters—a node may forward while
-    /// presenting itself as something else—but a node whose whole role is
-    /// repeating counts even if it advertises no capability bitmap.
+    /// Whether an identity describes a repeater, and so belongs here: one
+    /// that [forwards](crate::forwards).
     pub fn is_repeater(identity: &NodeIdentityPayload) -> bool {
-        identity.capabilities.contains(NodeCapabilities::REPEATER)
-            || identity.role == NodeRole::Repeater
+        crate::forwards(identity.role, identity.capabilities)
     }
 
     /// Record what an identity heard directly said.
@@ -295,6 +291,7 @@ fn minutes_since(then_ms: Option<u64>, now_ms: u64) -> Option<u16> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::identity::{NodeCapabilities, NodeRole};
 
     fn key(seed: u8) -> PublicKey {
         PublicKey([seed; 32])
@@ -355,6 +352,13 @@ mod tests {
         forwarding_handset.capabilities |= NodeCapabilities::REPEATER;
         assert!(table.observe_identity(&key(1), &forwarding_handset, None, 0));
         assert_eq!(table.len(), 1);
+
+        // A bridge is a node with its repeater enabled, whatever bitmap it
+        // advertises.
+        let mut bridge = chat.clone();
+        bridge.role = NodeRole::Bridge;
+        assert!(table.observe_identity(&key(2), &bridge, None, 0));
+        assert_eq!(table.len(), 2);
     }
 
     /// The newest identity is the node's own account of itself, so one that

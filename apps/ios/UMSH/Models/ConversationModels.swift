@@ -50,15 +50,13 @@ struct PeerSummary: Identifiable, Hashable, Sendable {
         return PeerRole(roleCode: advertisedIdentity.roleCode)
     }
 
-    /// Whether this node plausibly forwards other nodes' traffic: advertising
-    /// the repeater or bridge role—a bridge is a node with its repeater
-    /// enabled—or the repeater capability alongside some other role. An
-    /// advertisement is the node's own claim, not proof.
+    /// Whether this node plausibly forwards other nodes' traffic, as its
+    /// advertisement says by the core's shared rule; without one, by the
+    /// role stored for it—a repeater, or a bridge, which is a node with its
+    /// repeater enabled. An advertisement is the node's own claim, not proof.
     var isLikelyRepeater: Bool {
-        role == .repeater
-            || role == .bridge
-            || advertisedIdentity?.capabilities
-                .contains(MeshNodeIdentity.repeaterCapabilityLabel) == true
+        if let advertisedIdentity { return advertisedIdentity.forwards }
+        return storedRole == .repeater || storedRole == .bridge
     }
 
     /// Whether this node says it exchanges text messages: the chat role, or

@@ -81,6 +81,16 @@ bitflags! {
     }
 }
 
+/// Whether a node forwards other nodes' traffic, by what its identity says:
+/// the `REP` capability, which advertises repeater duty whatever the role,
+/// or a role that is forwarding—a repeater, or a bridge, which is a node
+/// with its repeater enabled. An identity is its node's own claim, not
+/// proof.
+pub fn forwards(role: NodeRole, capabilities: NodeCapabilities) -> bool {
+    capabilities.contains(NodeCapabilities::REPEATER)
+        || matches!(role, NodeRole::Repeater | NodeRole::Bridge)
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NodeIdentityPayload {
     pub role: NodeRole,

@@ -4018,78 +4018,15 @@ async fn run_worker(
                             response,
                         }) => {
                             let result = async {
-                                let mut builder = umsh_node::mac_command::IdentityRequestBuilder::new();
-                                let mut nonce_bytes = [0u8; 4];
-                                handle.fill_random(&mut nonce_bytes).await;
-                                builder = builder
-                                    .nonce(u32::from_be_bytes(nonce_bytes))
-                                    .map_err(|_| MobileMeshError::SendFailed)?;
-                                // Options are emitted in ascending key order, so
-                                // the hint filter goes between the nonce and
-                                // the role.
-                                if let Some(hint) = node_hint.as_deref() {
-                                    builder = builder
-                                        .filter_hint_prefix(hint)
-                                        .map_err(|_| MobileMeshError::SendFailed)?;
-                                }
-                                if let Some(role) = role_code {
-                                    builder = builder
-                                        .filter_role(NodeRole::from_byte(role))
-                                        .map_err(|_| MobileMeshError::SendFailed)?;
-                                }
-                                // A broadcast request must carry at least one
-                                // filter option. An unrestricted ask carries a
-                                // zero-bit capability filter, which every node
-                                // satisfies—but a hint filter already narrows
-                                // the ask, and padding it would only cost bytes.
-                                let unfiltered = role_code.is_none() && node_hint.is_none();
-                                let capability_bits =
-                                    capability_bits.or(if unfiltered { Some(0) } else { None });
-                                if let Some(bits) = capability_bits {
-                                    builder = builder
-                                        .filter_caps(NodeCapabilities::from_bits_truncate(bits))
-                                        .map_err(|_| MobileMeshError::SendFailed)?;
-                                }
-                                let options_block = builder.build();
-                                let cmd = umsh_node::MacCommand::IdentityRequest {
-                                    options: &options_block,
+                                let route = router_hints(&source_route)?;
+                                let capabilities =
+                                    capability_bits.map(NodeCapabilities::from_bits_truncate);
+                                let filter = umsh_node::IdentityFilter {
+                                    hint_prefix: node_hint.as_deref(),
+                                    role: role_code.map(NodeRole::from_byte),
+                                    capabilities,
                                 };
-                                let mut frame = [0u8; 128];
-                                frame[0] = PayloadType::MacCommand as u8;
-                                let length = umsh_node::mac_command::encode(&cmd, &mut frame[1..])
-                                    .map_err(|_| MobileMeshError::SendFailed)?
-                                    + 1;
-                                // Full source lets a stranger unicast back.
-                                let mut options = SendOptions::default().with_full_source();
-                                if !source_route.is_empty() {
-                                    let hops = router_hints(&source_route)
-                                        .map_err(|_| MobileMeshError::SendFailed)?;
-                                    // Unlike a hint-filtered ask over a
-                                    // channel, this one must never fall back to
-                                    // flooding. A role- or capability-filtered
-                                    // request is answered by every node it
-                                    // reaches, and even a hint-filtered one is
-                                    // aimed at a particular place rather than
-                                    // at the mesh: a route we cannot express is
-                                    // a failure, not a license to broadcast.
-                                    options = options
-                                        .try_with_source_route(&hops)
-                                        .map_err(|_| MobileMeshError::SendFailed)?
-                                        // The trace the request accumulates is
-                                        // the answering strangers' only path
-                                        // home: a broadcast teaches the MAC no
-                                        // route, and the reply carries no flood
-                                        // budget.
-                                        .with_trace_route();
-                                }
-                                // Last, always: try_with_source_route back-fills
-                                // a flood budget from the route length, and any
-                                // FHOPS field at all makes the far end drop an
-                                // unhinted solicitation. A hint filter would
-                                // license a flood budget, but this ask is aimed
-                                // and has no use for one.
-                                let options = options.no_flood();
-                                node.send_all(&frame[..length], &options)
+                                node.request_identities(&filter, &route)
                                     .await
                                     .map(|_| ())
                                     .map_err(|_| MobileMeshError::SendFailed)

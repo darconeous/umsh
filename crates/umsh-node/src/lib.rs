@@ -166,7 +166,7 @@ pub use app_payload::{
 #[cfg(feature = "software-crypto")]
 pub use channel::Channel;
 pub use host::{Host, HostError, identity_is_trustworthy};
-pub use identity::{IdentitySignature, NodeCapabilities, NodeIdentityPayload, NodeRole};
+pub use identity::{IdentitySignature, NodeCapabilities, NodeIdentityPayload, NodeRole, forwards};
 pub use identity_responder::{
     IdentityRequestContext, NodeIdentityProfile, RespondDecision, default_respond_policy,
     never_respond_policy,
@@ -178,7 +178,7 @@ pub use mac_command::{CommandId, MacCommand};
 pub use node::BoundChannel;
 #[cfg(feature = "software-crypto")]
 pub use node::PfsStatus;
-pub use node::{LocalNode, NodeError, PfsFailure, PongMetadata, Subscription};
+pub use node::{IdentityFilter, LocalNode, NodeError, PfsFailure, PongMetadata, Subscription};
 pub use peer::{PING_MIC_SIZE, PeerConnection};
 pub use peer_repeaters::{
     MAX_PEER_REPEATERS, MergedPeerRepeater, PeerRepeaterRecord, PeerRepeaterTable,
@@ -1014,6 +1014,7 @@ mod tests {
         next_ephemeral_id: u8,
         now_ms: u64,
         unicasts: Vec<SentUnicast>,
+        broadcasts: Vec<(Vec<u8>, SendOptions)>,
         removed_ephemerals: Vec<LocalIdentityId>,
         peers: Vec<(PublicKey, PeerId)>,
         channels: Vec<umsh_core::ChannelKey>,
@@ -1048,6 +1049,10 @@ mod tests {
 
         fn take_unicasts(&self) -> Vec<SentUnicast> {
             core::mem::take(&mut self.state.borrow_mut().unicasts)
+        }
+
+        fn take_broadcasts(&self) -> Vec<(Vec<u8>, SendOptions)> {
+            core::mem::take(&mut self.state.borrow_mut().broadcasts)
         }
 
         fn holds_channel(&self, key: &umsh_core::ChannelKey) -> bool {
@@ -1130,9 +1135,13 @@ mod tests {
         async fn send_broadcast(
             &self,
             _from: LocalIdentityId,
-            _payload: &[u8],
-            _options: &SendOptions,
+            payload: &[u8],
+            options: &SendOptions,
         ) -> Result<SendReceipt, MacBackendError<Self::SendError, Self::CapacityError>> {
+            self.state
+                .borrow_mut()
+                .broadcasts
+                .push((payload.to_vec(), options.clone()));
             Ok(SendReceipt(99))
         }
 
@@ -1565,6 +1574,49 @@ mod tests {
                 .is_none(),
             "a prefix naming another router selects nobody here"
         );
+    }
+
+    /// An ask after a hint goes where it is aimed and never floods: to
+    /// direct range with no route, or along the one given, traced so the
+    /// answer has a way home.
+    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
+    #[test]
+    fn an_identity_request_is_aimed_and_never_floods() {
+        let mac = FakeMac::new(vec![[0x12; 32], [0x13; 32]]);
+        let node = responder_node(&mac);
+        let hint = umsh_core::RouterHint([0xA0, 0x9A]);
+        let filter = crate::IdentityFilter {
+            hint_prefix: Some(&hint.0),
+            ..Default::default()
+        };
+
+        block_on_ready(node.request_identities(&filter, &[])).unwrap();
+        let sent = mac.take_broadcasts();
+        let [(payload, options)] = &sent[..] else {
+            panic!("one request");
+        };
+        let Ok(crate::MacCommand::IdentityRequest { options: body }) =
+            crate::mac_command::parse(&payload[1..])
+        else {
+            panic!("an identity request");
+        };
+        let filters = crate::mac_command::IdentityRequestFilters::new(body);
+        assert!(filters.hint_filtered());
+        assert!(filters.nonce().unwrap().is_some());
+        assert!(options.full_source);
+        assert_eq!(options.flood_hops, None);
+        assert_eq!(options.source_route, None);
+        assert!(!options.trace_route);
+
+        let route = [umsh_core::RouterHint([1, 2])];
+        block_on_ready(node.request_identities(&filter, &route)).unwrap();
+        let sent = mac.take_broadcasts();
+        let [(_, options)] = &sent[..] else {
+            panic!("one request");
+        };
+        assert_eq!(options.source_route.as_deref(), Some(&route[..]));
+        assert!(options.trace_route);
+        assert_eq!(options.flood_hops, None, "a route lends no flood budget");
     }
 
     /// One solicitation gets one reply, however many copies of it arrive.

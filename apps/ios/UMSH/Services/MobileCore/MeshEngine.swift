@@ -89,6 +89,9 @@ struct MeshNodeIdentity: Hashable, Sendable {
     /// The same capabilities the labels name, as bits. A node may set bits
     /// this build has no label for; they survive here and match nothing.
     let capabilityBits: MeshNodeCapabilities
+    /// Whether the node says it forwards other nodes' traffic, by the rule
+    /// the Rust core applies on every platform.
+    let forwards: Bool
     let name: String?
     let latitude: Double?
     let longitude: Double?
@@ -97,9 +100,6 @@ struct MeshNodeIdentity: Hashable, Sendable {
     let altitudeMeters: Int32?
     let timestamp: UInt32?
     let signature: MeshIdentitySignatureState
-
-    /// Canonical label the Rust core renders for the repeater capability bit.
-    static let repeaterCapabilityLabel = "Repeater"
 }
 
 struct MeshNodeURIPreview: Equatable, Sendable {

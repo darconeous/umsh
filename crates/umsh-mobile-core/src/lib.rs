@@ -72,7 +72,7 @@ uniffi::setup_scaffolding!();
 ///
 /// Increment this when a binding-visible operation, record, or error contract
 /// changes incompatibly. It is independent of the UMSH wire version.
-pub const MOBILE_API_VERSION: u16 = 59;
+pub const MOBILE_API_VERSION: u16 = 60;
 
 /// Stable error categories consumed by platform adapters.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Error)]
@@ -271,6 +271,9 @@ pub struct NodeIdentityRecord {
     /// The same capabilities as the advertised bitfield, for filtering. Bits
     /// this build has no label for are still set here.
     pub capability_bits: u8,
+    /// Whether the node says it forwards other nodes' traffic, by the one
+    /// rule every platform shares ([`umsh_node::forwards`]).
+    pub forwards: bool,
     pub name: Option<String>,
     /// Center of the advertised location grid cell, in degrees.
     pub latitude: Option<f64>,
@@ -660,6 +663,7 @@ fn node_identity_record(
         role_label,
         capabilities,
         capability_bits,
+        forwards: umsh_node::forwards(identity.role, identity.capabilities),
         name: identity.name,
         latitude,
         longitude,
@@ -1114,6 +1118,7 @@ mod tests {
         let decoded = decode_node_identity(address, bundle).unwrap();
         assert_eq!(decoded.signature, IdentitySignatureState::Valid);
         assert_eq!(decoded.role_label, "Repeater");
+        assert!(decoded.forwards);
         assert_eq!(decoded.name.as_deref(), Some("Ridge Repeater"));
         assert_eq!(decoded.altitude_m, Some(1_204));
         assert_eq!(decoded.timestamp, Some(1_760_000_000));
