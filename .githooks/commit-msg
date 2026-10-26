@@ -1,0 +1,14 @@
+#!/bin/sh
+# Reject commit messages carrying a Co-Authored-By trailer. GitHub turns that
+# trailer into a co-author avatar on the project, so attribution to an LLM goes
+# in an `LLM: ...` line instead.
+#
+# Enabled per clone with:  git config core.hooksPath .githooks
+#
+# Trailer keys are case-insensitive, so the match is too. Lines git will strip
+# as comments start with `#` and can't match the anchored pattern.
+
+if grep -qiE '^[[:space:]]*co-authored-by[[:space:]]*:' "$1"; then
+    echo "commit-msg: remove the Co-Authored-By line; use 'LLM: ...' instead." >&2
+    exit 1
+fi
