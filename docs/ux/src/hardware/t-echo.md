@@ -84,8 +84,9 @@ without a completion signal there is no later moment to recalibrate against,
 so for as long as the board is plugged in it has no state of charge at all.
 The indicator therefore shows a bolt with no body beside it and never a plug,
 the diagnostic row reads `chg` instead of a percentage, and `PROP_BATTERY`
-omits the level while continuing to report voltage and charge state. A real
-level returns on the first quiet sample after the charger goes away.
+omits the level while continuing to report voltage and charge state. A level
+returns on the first sample after the charger goes away, and a quiet one
+refines it.
 
 The capacitive touch control sits outside the attention and gate models
 entirely. It is a momentary light for reading a bistable panel in the dark, not

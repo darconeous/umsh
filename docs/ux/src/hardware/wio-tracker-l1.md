@@ -84,7 +84,8 @@ Like the T-Echo, this board sees only VBUS presence and never charge
 completion, so while it is plugged in it has no trustworthy state of charge.
 The indicator shows a bolt with no body beside it and never a plug, and
 `PROP_BATTERY` omits the level while still reporting voltage and charge state.
-A level returns on the first quiet sample after unplugging.
+A level returns on the first sample after unplugging, and a quiet one refines
+it.
 
 ### Display attention
 

@@ -235,10 +235,15 @@ pub const fn load_recent(now_ms: u32, last_load_ms: Option<u32>) -> bool {
 ///   discharge clamp re-established.
 ///
 /// Anchored levels never rise while discharging, so the output is stable
-/// and monotone between charge sessions. A charge since the last anchor
-/// invalidates the stored level in both directions, so until the next
-/// anchor the ceiling replaces it rather than capping it—which is how
-/// a partial charge shows up without waiting out a full window.
+/// and monotone between charge sessions. Until the first anchor after
+/// start-up or a charge, the stored level is provisional, so the ceiling
+/// replaces it rather than capping it—which is how a partial charge shows
+/// up without waiting out a full window.
+///
+/// With no level at all, a sagged reading gives a provisional one rather
+/// than none, so there is something to show from the first reading after
+/// start-up or unplugging, even on a board busy with a lit screen. Sag
+/// reads low, and the first quiet reading replaces it.
 ///
 /// While external input is present without a confirmed completion, there is
 /// no level: terminal voltage is not comparable to the discharge table, so
@@ -252,7 +257,9 @@ pub struct LevelEstimator {
     window_len: usize,
     level: Option<u8>,
     last_disturbance_ms: u32,
-    charged_since_anchor: bool,
+    /// No anchor since start-up or the last charge: the level is
+    /// provisional, and may rise as well as fall.
+    unanchored: bool,
     started: bool,
 }
 
@@ -263,13 +270,13 @@ impl LevelEstimator {
             window_len: 0,
             level: None,
             last_disturbance_ms: 0,
-            charged_since_anchor: false,
+            unanchored: true,
             started: false,
         }
     }
 
-    /// The current estimate, or `None` when no trustworthy one exists—
-    /// before the first quiet sample, and while external input is present
+    /// The current estimate, or `None` when there is none—before the
+    /// first discharging sample, and while external input is present
     /// without a confirmed completion.
     pub const fn level(&self) -> Option<u8> {
         self.level
@@ -286,7 +293,7 @@ impl LevelEstimator {
                 // inferred 100% level.
                 self.level = Some(100);
                 self.disturb(s.now_ms);
-                self.charged_since_anchor = true;
+                self.unanchored = true;
             }
             BatteryState::BatteryCharging | BatteryState::BatteryNotCharging => {
                 // Externally powered terminal voltage does not map through the
@@ -298,13 +305,19 @@ impl LevelEstimator {
                 // until a quiet reading says otherwise.
                 self.level = None;
                 self.disturb(s.now_ms);
-                self.charged_since_anchor = true;
+                self.unanchored = true;
             }
             BatteryState::BatteryOnly
             | BatteryState::BatteryLow
             | BatteryState::BatteryCritical => {
                 if s.load_recent {
-                    // Sagged sample: not OCV, restart the quiet window.
+                    // Sagged sample: not OCV, restart the quiet window. With
+                    // no level yet it is still the best there is; it reads
+                    // low, and the level is provisional until an anchor, so
+                    // the first quiet reading replaces it.
+                    if self.level.is_none() {
+                        self.level = Some(quantize(soc_from_ocv(s.battery_mv)));
+                    }
                     self.disturb(s.now_ms);
                     return;
                 }
@@ -331,7 +344,7 @@ impl LevelEstimator {
                     // stored level in *both* directions, so the bound
                     // replaces it rather than capping it: the pack may
                     // genuinely hold more than it did before.
-                    Some(_) if self.charged_since_anchor => bound,
+                    Some(_) if self.unanchored => bound,
                     Some(current) => current.min(bound),
                     None => bound,
                 });
@@ -342,13 +355,13 @@ impl LevelEstimator {
                     // Discharge never raises the level; a completed or
                     // partial charge since the last anchor releases the
                     // clamp exactly once.
-                    if !self.charged_since_anchor
+                    if !self.unanchored
                         && let Some(current) = self.level
                     {
                         candidate = candidate.min(current);
                     }
                     self.level = Some(candidate);
-                    self.charged_since_anchor = false;
+                    self.unanchored = false;
                 }
             }
         }
@@ -461,6 +474,38 @@ mod tests {
         assert_eq!(estimator.level(), None);
         estimator.sample(quiet(3_850, 0));
         assert_eq!(estimator.level(), Some(60));
+    }
+
+    fn sagged(mv: u16, now_ms: u32) -> LevelSample {
+        LevelSample {
+            load_recent: true,
+            ..quiet(mv, now_ms)
+        }
+    }
+
+    /// A board that starts busy—a lit screen, a transmission—shows a level
+    /// from its first reading, and a quiet one refines it either way.
+    #[test]
+    fn a_sagged_first_reading_gives_a_level_a_quiet_one_replaces() {
+        let mut estimator = LevelEstimator::new();
+        estimator.sample(sagged(3_700, 0));
+        assert_eq!(estimator.level(), Some(30));
+        // Still busy: no better word, so it holds.
+        estimator.sample(sagged(3_650, 1_000));
+        assert_eq!(estimator.level(), Some(30));
+        // Resting, the cell reads higher than it sagged, and that stands.
+        estimator.sample(quiet(3_850, 60_000));
+        assert_eq!(estimator.level(), Some(60));
+        // So it does after unplugging.
+        estimator.sample(LevelSample {
+            battery_mv: 4_300,
+            state: BatteryState::BatteryCharging,
+            load_recent: true,
+            now_ms: 90_000,
+        });
+        assert_eq!(estimator.level(), None);
+        estimator.sample(sagged(3_900, 120_000));
+        assert_eq!(estimator.level(), Some(65));
     }
 
     #[test]
