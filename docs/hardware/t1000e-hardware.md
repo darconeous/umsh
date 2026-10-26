@@ -190,6 +190,41 @@ In practice, there may also be:
 
 but the firmware alone does not prove those details.
 
+### UMSH's critical-battery latch
+
+UMSH does not rely on any of those either. The cutoff that every nRF52 board
+runs (`LowBatteryDetector`: 3.1 V or below held for five minutes, whether or
+not USB is present) forces a shutdown, and on the T1000-E it also sets a
+`battery_critical` bit in `POWER.GPREGRET2` before entering System OFF. That
+register survives resets and System OFF, and already holds the Sleep and
+Silence preferences (`umsh_bsp_t1000e::preferences`).
+
+The bit implements the UX spec's Battery-Critical lockout: normal wake stays
+locked out until external power is present. Early in boot, before anything
+else draws current:
+
+- **Bit set, no USB power:** the board returns straight to System OFF. A
+  button press does not bring it up.
+- **Bit set, USB power present:** the bit clears and boot continues.
+- **While running:** any sample that sees charging, charge-complete, or
+  external power clears the bit.
+
+This is stricter than the boot gate every nRF52 board shares, which only
+refuses to boot while the median of five readings is below 3.3 V. A Li-ion
+cell recovers some voltage once its load is removed, so a cell cut off at
+3.1 V can rest above 3.3 V. With only the gate, a button press would boot it,
+run it down, and cut off again five minutes later. The latch keeps it off
+until it has been charged.
+
+The T1000-E needs this more than the other boards because it cannot wake
+itself on recovery: its battery divider sits on a rail that is off in System
+OFF, so there is no LPCOMP wake, and only the button or USB insertion brings
+it back.
+
+The bit is a live protective condition, not a preference. Persisting the
+Sleep and Silence preferences to flash clears it first, so restoring them
+after a cold power loss never brings back a stale lockout.
+
 ## GNSS / GPS control
 
 The AG3335 is on UART1—RX P0.14, TX P0.13, 115200 baud—with six control
