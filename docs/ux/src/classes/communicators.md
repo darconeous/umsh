@@ -148,9 +148,10 @@ either way.
 
 A communicator locks when its screen times out and a second passes without
 input, or at once on a short press of the lock button, which shows the lock
-screen. A dark screen is always a locked one. On the lock screen, the lock
-button darkens it; while dark, it wakes to the lock screen. Holding it still
-shuts down.
+screen. A board without a lock button, the T-Deck, locks on Backspace from
+the rail, where there is nowhere further back to go. A dark screen is always
+a locked one. On the lock screen, the lock button darkens it; while dark, it
+wakes to the lock screen. Holding it still shuts down.
 
 - **The lock screen** shows the device name, the time and date when the clock
   is known, the unread count, and one card per chat heard from since locking.

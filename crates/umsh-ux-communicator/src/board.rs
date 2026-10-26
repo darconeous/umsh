@@ -39,6 +39,7 @@ impl Board {
             unlock: Unlock::TurnThenPress,
             touch: false,
             keyboard: KeyboardKind::Legends,
+            lock_button: true,
         },
     };
 
@@ -64,6 +65,7 @@ impl Board {
             unlock: Unlock::Press,
             touch: true,
             keyboard: KeyboardKind::Characters,
+            lock_button: false,
         },
     };
 }
@@ -123,6 +125,9 @@ pub struct Controls {
     /// A touchscreen.
     pub touch: bool,
     pub keyboard: KeyboardKind,
+    /// A button that locks. Without one, Backspace locks from the rail,
+    /// where there is nowhere further back to go.
+    pub lock_button: bool,
 }
 
 /// What unlocks the lock screen.

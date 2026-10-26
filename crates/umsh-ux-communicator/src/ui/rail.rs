@@ -32,8 +32,14 @@ pub fn view(
     .with_spacing(0)
     .with_alignment(HorizontalAlignment::Leading)
     .bound_focus(BoundaryBehavior::Stop)
-    // The arrow toward the list enters the section, as a press does.
+    // The arrow toward the list enters the section, as a press does. With
+    // nowhere further back to go, Backspace locks a board that has no lock
+    // button.
     .on_key(|key, s: &mut State| match key {
+        Key::Backspace if !s.board.controls.lock_button => {
+            s.lock();
+            KeyResponse::Handled
+        }
         Key::RightArrow => match s.focus().current().and_then(keys::section) {
             Some(section) => {
                 s.enter_section(section);

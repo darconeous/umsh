@@ -357,6 +357,23 @@ fn backspace_on_the_list_goes_to_the_rail_and_press_returns() {
 }
 
 #[test]
+fn backspace_on_the_rail_locks_a_board_without_a_lock_button() {
+    let mut app = app!();
+    run(&mut app, &[Input::Backspace]);
+    assert_eq!(focus(app.state()), Some(keys::rail(Section::Chats)));
+    assert!(!app.state().lock.locked);
+    run(&mut app, &[Input::Backspace]);
+    let locks = !BOARD.controls.lock_button;
+    assert_eq!(app.state().lock.locked, locks);
+    if !locks {
+        assert_eq!(focus(app.state()), Some(keys::rail(Section::Chats)));
+    }
+    // Held down, it does nothing more.
+    run(&mut app, &[Input::Backspace]);
+    assert_eq!(app.state().lock.locked, locks);
+}
+
+#[test]
 fn open_back_and_open_again_with_no_frame_between() {
     let mut app = app!();
     run(&mut app, &[Input::Press, Input::Backspace, Input::Press]);
