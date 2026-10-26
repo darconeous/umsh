@@ -1,0 +1,15 @@
+[package]
+name = "umsh-android"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+[workspace]
+[lib]
+crate-type = ["cdylib", "rlib"]
+[dependencies]
+umsh-mobile-core = { path = "../../../crates/umsh-mobile-core", features = ["android-json"] }
+jni = "0.21"
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "time"] }
+# Android exposes no public system libsqlite3 for the Rust region database.
+rusqlite = { version = "0.32", features = ["bundled"] }
