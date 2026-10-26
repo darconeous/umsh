@@ -26,7 +26,9 @@ struct Sides {
 
 struct Deployment {
     server: String,
-    client: String,
+    /// The client's configuration, for a server whose tunnel listener
+    /// ended up at the given address.
+    client: Box<dyn Fn(SocketAddr) -> String>,
     segment_port: u16,
     lan_port: u16,
 }
@@ -44,7 +46,6 @@ fn deployment(dir: &Path, sides: Sides) -> Deployment {
     };
     let (server_address, client_address) = (address("server.key"), address("client.key"));
 
-    let tunnel_port = free_port();
     let segment_port = free_udp_port();
     let lan_port = free_udp_port();
     let d = dir.display();
@@ -63,27 +64,25 @@ fn deployment(dir: &Path, sides: Sides) -> Deployment {
         out
     };
 
+    let client_key = format!("{d}/client.key");
+    let client_tables = tables("client", sides.client);
     Deployment {
         server: format!(
             "[identity]\nkey_file = \"{d}/server.key\"\n\
-             [server]\nlisten = [\"127.0.0.1:{tunnel_port}\"]\n{}\
+             [server]\nlisten = [\"127.0.0.1:0\"]\n{}\
              [[server.clients]]\nname = \"cabin\"\naddress = \"{client_address}\"\n",
             tables("server", sides.server)
         ),
-        client: format!(
-            "[identity]\nkey_file = \"{d}/client.key\"\n\
-             [client]\nserver = \"127.0.0.1:{tunnel_port}\"\n\
-             server_address = \"{server_address}\"\n{}",
-            tables("client", sides.client)
-        ),
+        client: Box::new(move |tunnel| {
+            format!(
+                "[identity]\nkey_file = \"{client_key}\"\n\
+                 [client]\nserver = \"{tunnel}\"\n\
+                 server_address = \"{server_address}\"\n{client_tables}"
+            )
+        }),
         segment_port,
         lan_port,
     }
-}
-
-fn free_port() -> u16 {
-    let listener = std::net::TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], 0))).unwrap();
-    listener.local_addr().unwrap().port()
 }
 
 /// A UDP port nothing holds. The groups' ports are UDP, and a free TCP
@@ -99,15 +98,25 @@ fn parse(text: &str) -> Config {
     config
 }
 
+/// Start both ends. The server's tunnel listener binds port 0 and the
+/// client is pointed at whatever port it got, so tests running side by
+/// side cannot be handed the same one.
 async fn start(deployment: &Deployment) {
-    for text in [&deployment.server, &deployment.client] {
-        let config = parse(text);
-        tokio::task::spawn_local(async move {
-            if let Err(error) = umsh_bridge::server::run_config(config).await {
-                eprintln!("bridge: {error:#}");
-            }
-        });
-    }
+    let server = umsh_bridge::server::bind_config(parse(&deployment.server))
+        .await
+        .expect("binding the server");
+    let tunnel = server.tunnel_addrs()[0];
+    let client = parse(&(deployment.client)(tunnel));
+    tokio::task::spawn_local(async move {
+        if let Err(error) = server.run().await {
+            eprintln!("bridge: {error:#}");
+        }
+    });
+    tokio::task::spawn_local(async move {
+        if let Err(error) = umsh_bridge::server::run_config(client).await {
+            eprintln!("bridge: {error:#}");
+        }
+    });
     tokio::time::sleep(Duration::from_millis(300)).await;
 }
 

@@ -9,6 +9,7 @@
 //! one.
 
 use std::collections::HashMap;
+use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -17,7 +18,7 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc;
 use tokio_rustls::TlsAcceptor;
 
-use crate::config::Config;
+use crate::config::{Config, ServerConfig};
 use crate::device::DeviceRelay;
 use crate::hub::Hub;
 use crate::identity::BridgeIdentity;
@@ -32,8 +33,26 @@ use crate::tunnel::{TunnelQueue, TunnelReader, TunnelWriter, pump_writer};
 /// a burst.
 const HUB_BACKLOG: usize = 64;
 
-pub async fn run(identity: BridgeIdentity, config: Config) -> Result<()> {
-    let mut server = config.server.expect("validated as a server configuration");
+/// A bridge server ready to serve: everything that can refuse the
+/// configuration has run, and every listener it names is open.
+pub struct BoundServer {
+    identity: BridgeIdentity,
+    server: ServerConfig,
+    interfaces: Arc<Interfaces>,
+    policy: Policy,
+    acceptor: TlsAcceptor,
+    by_address: HashMap<Address, usize>,
+    tunnel_listeners: Vec<TcpListener>,
+    /// One per [`ServerConfig::hosts`] entry, in the same order.
+    host_listeners: Vec<TcpListener>,
+}
+
+/// Check a server configuration and open its listeners.
+///
+/// Every socket is bound here, before anything is served, so a port the
+/// server cannot have stops it at startup.
+pub async fn bind(identity: BridgeIdentity, config: Config) -> Result<BoundServer> {
+    let server = config.server.expect("validated as a server configuration");
     let credential =
         Credential::for_identity(&identity).context("minting the server's TLS credential")?;
 
@@ -52,69 +71,6 @@ pub async fn run(identity: BridgeIdentity, config: Config) -> Result<()> {
     let interfaces = Arc::new(Interfaces::build(&server));
     let policy = Policy::build(&server, &interfaces)?;
 
-    tracing::info!(
-        address = %identity.public_key(),
-        exit_clamp = server
-            .limits
-            .exit_clamp
-            .map_or_else(|| "off".to_string(), |clamp| clamp.to_string()),
-        "bridge server starting"
-    );
-    for iface in &interfaces.all {
-        tracing::info!(
-            iface = %iface.name,
-            fan_out = %policy.describe_fan_out(iface.id),
-            "interface"
-        );
-    }
-
-    let (ingress_tx, ingress_rx) = mpsc::channel(HUB_BACKLOG);
-
-    if let Some(radio) = interfaces.radio {
-        let iface = interfaces.get(radio).clone();
-        let inbound = Arc::new(TunnelQueue::new(
-            server.tunnel.queue_depth,
-            Duration::from_secs(server.tunnel.max_frame_age_secs),
-        ));
-        let relay = DeviceRelay::new(
-            std::mem::take(&mut server.radio),
-            inbound.clone(),
-            iface.egress.clone(),
-        );
-        tokio::task::spawn_local(async move { relay.run().await });
-        spawn_ingress(inbound, radio, ingress_tx.clone());
-    }
-
-    if let (Some(lan), Some(entry)) = (interfaces.lan, &server.lan) {
-        let iface = interfaces.get(lan).clone();
-        let inbound = Arc::new(TunnelQueue::new(
-            server.tunnel.queue_depth,
-            Duration::from_secs(server.tunnel.max_frame_age_secs),
-        ));
-        let relay = LanRelay::new(entry.socket_config(), inbound.clone(), iface.egress.clone());
-        tokio::task::spawn_local(async move { relay.run().await });
-        spawn_ingress(inbound, lan, ingress_tx.clone());
-    }
-
-    // Host interfaces need no credential and no radio: each is a socket
-    // presenting a simulated device whose radio is this hub.
-    for (index, entry) in server.hosts.iter().enumerate() {
-        let iface = interfaces
-            .by_host(index)
-            .ok_or_else(|| anyhow!("host {index} has no interface"))?
-            .clone();
-        let relay = crate::host::HostRelay::new(entry, iface, ingress_tx.clone());
-        let name = entry.name.clone();
-        tokio::task::spawn_local(async move {
-            if let Err(error) = relay.run().await {
-                tracing::error!(iface = %name, "host interface stopped: {error:#}");
-            }
-        });
-    }
-
-    let hub = Hub::new(interfaces.clone(), policy, server.limits.exit_clamp);
-    tokio::task::spawn_local(hub.run(ingress_rx));
-
     // An identity names exactly one client; the configuration
     // guarantees no two share one.
     let by_address: HashMap<Address, usize> = server
@@ -124,40 +80,149 @@ pub async fn run(identity: BridgeIdentity, config: Config) -> Result<()> {
         .map(|(index, client)| (client.address, index))
         .collect();
     let accepted: Vec<Address> = by_address.keys().copied().collect();
+    let acceptor = TlsAcceptor::from(tls::server_config(&credential, accepted)?);
 
-    let tls_config = tls::server_config(&credential, accepted)?;
-    let acceptor = TlsAcceptor::from(tls_config);
-    let shared = Arc::new(Shared {
-        interfaces,
-        by_address,
-        tunnel: server.tunnel,
-        client_names: server
-            .clients
-            .iter()
-            .map(|client| client.name.clone())
-            .collect(),
-        ingress: ingress_tx,
-    });
-
-    let mut listeners = Vec::new();
+    let mut tunnel_listeners = Vec::new();
     for address in &server.listen {
         let listener = TcpListener::bind(address)
             .await
             .with_context(|| format!("listening on {address}"))?;
-        tracing::info!(%address, "listening");
-        listeners.push(listener);
+        tunnel_listeners.push(listener);
     }
-    if listeners.is_empty() {
+    if tunnel_listeners.is_empty() {
         return Err(anyhow!("no listener could be opened"));
     }
-
-    for listener in listeners {
-        let acceptor = acceptor.clone();
-        let shared = shared.clone();
-        tokio::task::spawn_local(async move { accept_loop(listener, acceptor, shared).await });
+    let mut host_listeners = Vec::new();
+    for entry in &server.hosts {
+        host_listeners.push(crate::host::bind(entry).await?);
     }
 
-    std::future::pending().await
+    Ok(BoundServer {
+        identity,
+        server,
+        interfaces,
+        policy,
+        acceptor,
+        by_address,
+        tunnel_listeners,
+        host_listeners,
+    })
+}
+
+impl BoundServer {
+    /// Where the tunnel listeners are, in configuration order. A
+    /// configured port of 0 reads as the port the system chose.
+    pub fn tunnel_addrs(&self) -> Vec<SocketAddr> {
+        self.tunnel_listeners
+            .iter()
+            .filter_map(|listener| listener.local_addr().ok())
+            .collect()
+    }
+
+    /// Where the host interface named `name` listens.
+    pub fn host_addr(&self, name: &str) -> Option<SocketAddr> {
+        let index = self
+            .server
+            .hosts
+            .iter()
+            .position(|host| host.name == name)?;
+        self.host_listeners[index].local_addr().ok()
+    }
+
+    /// Serve until the process ends.
+    pub async fn run(self) -> Result<()> {
+        let Self {
+            identity,
+            mut server,
+            interfaces,
+            policy,
+            acceptor,
+            by_address,
+            tunnel_listeners,
+            host_listeners,
+        } = self;
+
+        tracing::info!(
+            address = %identity.public_key(),
+            exit_clamp = server
+                .limits
+                .exit_clamp
+                .map_or_else(|| "off".to_string(), |clamp| clamp.to_string()),
+            "bridge server starting"
+        );
+        for iface in &interfaces.all {
+            tracing::info!(
+                iface = %iface.name,
+                fan_out = %policy.describe_fan_out(iface.id),
+                "interface"
+            );
+        }
+
+        let (ingress_tx, ingress_rx) = mpsc::channel(HUB_BACKLOG);
+
+        if let Some(radio) = interfaces.radio {
+            let iface = interfaces.get(radio).clone();
+            let inbound = Arc::new(TunnelQueue::new(
+                server.tunnel.queue_depth,
+                Duration::from_secs(server.tunnel.max_frame_age_secs),
+            ));
+            let relay = DeviceRelay::new(
+                std::mem::take(&mut server.radio),
+                inbound.clone(),
+                iface.egress.clone(),
+            );
+            tokio::task::spawn_local(async move { relay.run().await });
+            spawn_ingress(inbound, radio, ingress_tx.clone());
+        }
+
+        if let (Some(lan), Some(entry)) = (interfaces.lan, &server.lan) {
+            let iface = interfaces.get(lan).clone();
+            let inbound = Arc::new(TunnelQueue::new(
+                server.tunnel.queue_depth,
+                Duration::from_secs(server.tunnel.max_frame_age_secs),
+            ));
+            let relay = LanRelay::new(entry.socket_config(), inbound.clone(), iface.egress.clone());
+            tokio::task::spawn_local(async move { relay.run().await });
+            spawn_ingress(inbound, lan, ingress_tx.clone());
+        }
+
+        // Host interfaces need no credential and no radio: each is a socket
+        // presenting a simulated device whose radio is this hub.
+        for (index, (entry, listener)) in server.hosts.iter().zip(host_listeners).enumerate() {
+            let iface = interfaces
+                .by_host(index)
+                .ok_or_else(|| anyhow!("host {index} has no interface"))?
+                .clone();
+            let relay = crate::host::HostRelay::new(entry, listener, iface, ingress_tx.clone());
+            tokio::task::spawn_local(relay.run());
+        }
+
+        let hub = Hub::new(interfaces.clone(), policy, server.limits.exit_clamp);
+        tokio::task::spawn_local(hub.run(ingress_rx));
+
+        let shared = Arc::new(Shared {
+            interfaces,
+            by_address,
+            tunnel: server.tunnel,
+            client_names: server
+                .clients
+                .iter()
+                .map(|client| client.name.clone())
+                .collect(),
+            ingress: ingress_tx,
+        });
+
+        for listener in tunnel_listeners {
+            if let Ok(address) = listener.local_addr() {
+                tracing::info!(%address, "listening");
+            }
+            let acceptor = acceptor.clone();
+            let shared = shared.clone();
+            tokio::task::spawn_local(async move { accept_loop(listener, acceptor, shared).await });
+        }
+
+        std::future::pending().await
+    }
 }
 
 struct Shared {
@@ -299,15 +364,26 @@ fn spawn_ingress(inbound: Arc<TunnelQueue>, iface: InterfaceId, ingress: mpsc::S
 
 /// Wire a validated configuration to whichever role it describes.
 pub async fn run_config(mut config: Config) -> Result<()> {
-    let identity = BridgeIdentity::load(
+    let identity = load_identity(&mut config)?;
+    match config.client {
+        Some(client) => crate::client::run(identity, client).await,
+        None => bind(identity, config).await?.run().await,
+    }
+}
+
+/// [`bind`] a validated server configuration, loading the identity it
+/// names.
+pub async fn bind_config(mut config: Config) -> Result<BoundServer> {
+    let identity = load_identity(&mut config)?;
+    bind(identity, config).await
+}
+
+fn load_identity(config: &mut Config) -> Result<BridgeIdentity> {
+    BridgeIdentity::load(
         &config
             .identity
             .take()
             .expect("validated: every role has an identity")
             .key_file,
-    )?;
-    match config.client {
-        Some(client) => crate::client::run(identity, client).await,
-        None => run(identity, config).await,
-    }
+    )
 }

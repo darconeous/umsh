@@ -129,11 +129,20 @@ fn unmeasured() -> Vec<u8> {
     meta.to_vec()
 }
 
+/// Open a host interface's listener. The server binds every one before
+/// it starts serving, so a port it cannot have stops it at startup
+/// rather than leaving the interface down.
+pub async fn bind(entry: &HostEntry) -> Result<TcpListener> {
+    TcpListener::bind(entry.listen)
+        .await
+        .with_context(|| format!("listening on {} for host \"{}\"", entry.listen, entry.name))
+}
+
 /// One host interface: its listener, its device, and the relay between
 /// them.
 pub struct HostRelay {
     name: String,
-    listen: std::net::SocketAddr,
+    listener: TcpListener,
     iface: Arc<Interface>,
     ingress: mpsc::Sender<Ingress>,
     /// Monotonic clock for the session, in milliseconds since start.
@@ -141,10 +150,16 @@ pub struct HostRelay {
 }
 
 impl HostRelay {
-    pub fn new(entry: &HostEntry, iface: Arc<Interface>, ingress: mpsc::Sender<Ingress>) -> Self {
+    /// `listener` is the one [`bind`] opened for `entry`.
+    pub fn new(
+        entry: &HostEntry,
+        listener: TcpListener,
+        iface: Arc<Interface>,
+        ingress: mpsc::Sender<Ingress>,
+    ) -> Self {
         Self {
             name: entry.name.clone(),
-            listen: entry.listen,
+            listener,
             iface,
             ingress,
             started: tokio::time::Instant::now(),
@@ -155,19 +170,20 @@ impl HostRelay {
     ///
     /// One device, many connections: the session is built once here, and
     /// each accepted socket attaches to it and detaches on the way out.
-    pub async fn run(self) -> Result<()> {
-        let listener = TcpListener::bind(self.listen)
-            .await
-            .with_context(|| format!("listening on {} for host \"{}\"", self.listen, self.name))?;
-        if self.listen.ip().is_loopback() {
-            tracing::info!(iface = %self.name, listen = %self.listen, "host interface listening");
-        } else {
-            tracing::warn!(
-                iface = %self.name,
-                listen = %self.listen,
-                "host interface listening off the loopback: this socket is unauthenticated and \
-                 whoever reaches it has an RF presence on every segment this bridge touches"
-            );
+    pub async fn run(self) {
+        let listener = &self.listener;
+        if let Ok(listen) = listener.local_addr() {
+            if listen.ip().is_loopback() {
+                tracing::info!(iface = %self.name, %listen, "host interface listening");
+            } else {
+                tracing::warn!(
+                    iface = %self.name,
+                    %listen,
+                    "host interface listening off the loopback: this socket is unauthenticated \
+                     and whoever reaches it has an RF presence on every segment this bridge \
+                     touches"
+                );
+            }
         }
 
         let mut device = SimulatedDevice::new(session_config());
@@ -177,7 +193,7 @@ impl HostRelay {
 
         loop {
             let event = self
-                .next_event(&listener, current.as_mut(), session, &mut buf)
+                .next_event(listener, current.as_mut(), session, &mut buf)
                 .await;
 
             match event {

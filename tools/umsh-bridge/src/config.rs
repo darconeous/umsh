@@ -568,7 +568,9 @@ impl ServerConfig {
                     host.name
                 );
             }
-            if !listens.insert(host.listen) {
+            // Port 0 asks the system for a port, so any number of hosts
+            // can ask without sharing one.
+            if host.listen.port() != 0 && !listens.insert(host.listen) {
                 bail!(
                     "host \"{}\" listens on {}, which another host already holds",
                     host.name,
@@ -951,6 +953,17 @@ mod tests {
         );
         let error = parse(&text).unwrap_err().to_string();
         assert!(error.contains("21838"), "{error}");
+
+        // Port 0 is a port each listener is given at bind, not one they
+        // share.
+        let text = server_config(
+            "[server.radio]\ntype = \"ble\"\n\
+             [[server.hosts]]\nname = \"phone\"\nlisten = \"127.0.0.1:0\"\n\
+             max_frames_per_minute = 60\n\
+             [[server.hosts]]\nname = \"laptop\"\nlisten = \"127.0.0.1:0\"\n\
+             max_frames_per_minute = 60\n",
+        );
+        assert!(parse(&text).is_ok());
     }
 
     #[test]

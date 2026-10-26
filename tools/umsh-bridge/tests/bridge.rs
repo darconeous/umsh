@@ -15,12 +15,13 @@
 //! where they live.
 
 use std::net::{Ipv4Addr, SocketAddr};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use umsh::tokio_support::UdpMulticastRadio;
 use umsh_bridge::config::Config;
 use umsh_bridge::identity::BridgeIdentity;
+use umsh_bridge::server::BoundServer;
 use umsh_bridge::tls::Credential;
 use umsh_core::{FloodHops, NodeHint, OptionNumber, PacketBuilder, PacketHeader, ParsedOptions};
 use umsh_hal::{CadPolicy, Radio, TxOptions};
@@ -32,12 +33,30 @@ const SEGMENT_B: Ipv4Addr = Ipv4Addr::new(239, 255, 42, 62);
 
 struct Deployment {
     server: String,
-    client: String,
+    dir: PathBuf,
+    server_address: String,
     server_port: u16,
     client_port: u16,
 }
 
-/// Issue everything a deployment needs and write both configurations.
+impl Deployment {
+    /// The client's configuration, for a server whose tunnel listener
+    /// ended up at `tunnel`.
+    fn client(&self, tunnel: SocketAddr) -> String {
+        let d = self.dir.display();
+        format!(
+            "[identity]\nkey_file = \"{d}/cabin.key\"\n\
+             [client]\nserver = \"{tunnel}\"\n\
+             server_address = \"{}\"\n\
+             [client.radio]\ntype = \"udp-multicast\"\ngroup = \"{SEGMENT_B}\"\n\
+             port = {}\n",
+            self.server_address, self.client_port
+        )
+    }
+}
+
+/// Issue everything a deployment needs and write the server's
+/// configuration; the client's follows from where the server listens.
 fn deployment(dir: &Path, extra_limits: &str) -> Deployment {
     umsh_bridge::keygen::write_identity(&dir.join("identity.key"), false).unwrap();
     umsh_bridge::keygen::write_identity(&dir.join("cabin.key"), false).unwrap();
@@ -51,7 +70,6 @@ fn deployment(dir: &Path, extra_limits: &str) -> Deployment {
         .public_key()
         .to_string();
 
-    let tunnel_port = free_port();
     let server_port = free_port();
     let client_port = free_port();
     let d = dir.display();
@@ -59,25 +77,21 @@ fn deployment(dir: &Path, extra_limits: &str) -> Deployment {
     Deployment {
         server: format!(
             "[identity]\nkey_file = \"{d}/identity.key\"\n\
-             [server]\nlisten = [\"127.0.0.1:{tunnel_port}\"]\n\
+             [server]\nlisten = [\"127.0.0.1:0\"]\n\
              [server.radio]\ntype = \"udp-multicast\"\ngroup = \"{SEGMENT_A}\"\n\
              port = {server_port}\n{extra_limits}\
              [[server.clients]]\nname = \"cabin\"\naddress = \"{cabin_address}\"\n"
         ),
-        client: format!(
-            "[identity]\nkey_file = \"{d}/cabin.key\"\n\
-             [client]\nserver = \"127.0.0.1:{tunnel_port}\"\n\
-             server_address = \"{server_address}\"\n\
-             [client.radio]\ntype = \"udp-multicast\"\ngroup = \"{SEGMENT_B}\"\n\
-             port = {client_port}\n"
-        ),
+        dir: dir.to_path_buf(),
+        server_address,
         server_port,
         client_port,
     }
 }
 
 /// A port nothing is listening on, by asking the OS for one and letting
-/// it go again.
+/// it go again. Only for the radios' ports: every listener binds port 0
+/// and reports what it got, which no other test can be handed meanwhile.
 fn free_port() -> u16 {
     let listener = std::net::TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], 0))).unwrap();
     listener.local_addr().unwrap().port()
@@ -89,15 +103,33 @@ fn parse(text: &str) -> Config {
     config
 }
 
-/// Start both ends and give them a moment to attach.
-async fn start(deployment: &Deployment) {
-    let server = parse(&deployment.server);
-    let client = parse(&deployment.client);
+/// Bind a server, without serving it yet.
+async fn bind_server(text: &str) -> BoundServer {
+    umsh_bridge::server::bind_config(parse(text))
+        .await
+        .expect("binding the server")
+}
+
+fn spawn_server(server: BoundServer) {
     tokio::task::spawn_local(async move {
-        if let Err(error) = umsh_bridge::server::run_config(server).await {
+        if let Err(error) = server.run().await {
             eprintln!("server: {error:#}");
         }
     });
+}
+
+/// Serve `text` and return where its tunnel listener is.
+async fn serve(text: &str) -> SocketAddr {
+    let server = bind_server(text).await;
+    let tunnel = server.tunnel_addrs()[0];
+    spawn_server(server);
+    tunnel
+}
+
+/// Start both ends and give them a moment to attach.
+async fn start(deployment: &Deployment) {
+    let tunnel = serve(&deployment.server).await;
+    let client = parse(&deployment.client(tunnel));
     tokio::task::spawn_local(async move {
         if let Err(error) = umsh_bridge::server::run_config(client).await {
             eprintln!("client: {error:#}");
@@ -349,15 +381,12 @@ fn a_reconnecting_client_displaces_its_predecessor_without_being_torn_down() {
         let mut segment_a = UdpMulticastRadio::bind_v4(SEGMENT_A, deployment.server_port)
             .await
             .unwrap();
-        let server = parse(&deployment.server);
-        tokio::task::spawn_local(async move {
-            let _ = umsh_bridge::server::run_config(server).await;
-        });
+        let tunnel = serve(&deployment.server).await;
         tokio::time::sleep(Duration::from_millis(200)).await;
 
         // The first connection attaches, silently loses its network
         // path, and the reconnection displaces it.
-        let config = parse(&deployment.client);
+        let config = parse(&deployment.client(tunnel));
         let stale = connect_pinned(&config).await;
         tokio::time::sleep(Duration::from_millis(100)).await;
         let live = connect_pinned(&config).await;
@@ -419,15 +448,14 @@ fn a_client_the_server_does_not_pin_is_refused_at_the_handshake() {
         let dir = tempfile::tempdir().unwrap();
         let deployment = deployment(dir.path(), "");
 
+        let tunnel = serve(&deployment.server).await;
+        tokio::time::sleep(Duration::from_millis(200)).await;
+
         // An identity the server has never heard of.
         umsh_bridge::keygen::write_identity(&dir.path().join("stranger.key"), false).unwrap();
-        let stranger = deployment.client.replace("cabin.key", "stranger.key");
-
-        let server = parse(&deployment.server);
-        tokio::task::spawn_local(async move {
-            let _ = umsh_bridge::server::run_config(server).await;
-        });
-        tokio::time::sleep(Duration::from_millis(200)).await;
+        let stranger = deployment
+            .client(tunnel)
+            .replace("cabin.key", "stranger.key");
 
         let config = parse(&stranger);
         let identity = BridgeIdentity::load(&config.identity.as_ref().unwrap().key_file).unwrap();
@@ -452,10 +480,7 @@ fn a_client_cannot_wear_a_pinned_address_without_holding_its_key() {
         let dir = tempfile::tempdir().unwrap();
         let deployment = deployment(dir.path(), "");
 
-        let server = parse(&deployment.server);
-        tokio::task::spawn_local(async move {
-            let _ = umsh_bridge::server::run_config(server).await;
-        });
+        let tunnel = serve(&deployment.server).await;
         tokio::time::sleep(Duration::from_millis(200)).await;
 
         // The attacker presents cabin's certificate—public material—
@@ -536,7 +561,7 @@ fn a_client_cannot_wear_a_pinned_address_without_holding_its_key() {
         .with_client_cert_resolver(Arc::new(Forged(Arc::new(forged))));
         tls.alpn_protocols = vec![umsh_bridge::tls::ALPN.to_vec()];
 
-        let client = parse(&deployment.client).client.unwrap();
+        let client = parse(&deployment.client(tunnel)).client.unwrap();
         let connector = tokio_rustls::TlsConnector::from(Arc::new(tls));
         let stream = tokio::net::TcpStream::connect(client.server.as_str())
             .await
@@ -555,13 +580,10 @@ fn a_server_whose_identity_does_not_match_is_refused_by_the_client() {
         let dir = tempfile::tempdir().unwrap();
         let deployment = deployment(dir.path(), "");
 
-        let server = parse(&deployment.server);
-        tokio::task::spawn_local(async move {
-            let _ = umsh_bridge::server::run_config(server).await;
-        });
+        let tunnel = serve(&deployment.server).await;
         tokio::time::sleep(Duration::from_millis(200)).await;
 
-        let config = parse(&deployment.client);
+        let config = parse(&deployment.client(tunnel));
         let identity = BridgeIdentity::load(&config.identity.as_ref().unwrap().key_file).unwrap();
         let credential = Credential::for_identity(&identity).unwrap();
         let client = config.client.unwrap();
@@ -591,22 +613,27 @@ fn a_server_whose_identity_does_not_match_is_refused_by_the_client() {
 /// A server that is nothing but host interfaces: no radio, no clients,
 /// no hardware anywhere. Two hosts on it are a two-node mesh on one
 /// machine, which is what host interfaces exist for.
-fn host_only_deployment(dir: &Path, ports: (u16, u16), limits: (u32, u32)) -> String {
+fn host_only_deployment(dir: &Path, limits: (u32, u32)) -> String {
     umsh_bridge::keygen::write_identity(&dir.join("identity.key"), false).unwrap();
     let d = dir.display();
     format!(
         "[identity]\nkey_file = \"{d}/identity.key\"\n\
-         [server]\nlisten = [\"127.0.0.1:{}\"]\n\
-         [[server.hosts]]\nname = \"alice\"\nlisten = \"127.0.0.1:{}\"\n\
+         [server]\nlisten = [\"127.0.0.1:0\"]\n\
+         [[server.hosts]]\nname = \"alice\"\nlisten = \"127.0.0.1:0\"\n\
          max_frames_per_minute = {}\n\
-         [[server.hosts]]\nname = \"bob\"\nlisten = \"127.0.0.1:{}\"\n\
+         [[server.hosts]]\nname = \"bob\"\nlisten = \"127.0.0.1:0\"\n\
          max_frames_per_minute = {}\n",
-        free_port(),
-        ports.0,
-        limits.0,
-        ports.1,
-        limits.1,
+        limits.0, limits.1,
     )
+}
+
+/// Serve a [`host_only_deployment`] and return alice's and bob's ports.
+async fn serve_hosts(dir: &Path, limits: (u32, u32)) -> (u16, u16) {
+    let server = bind_server(&host_only_deployment(dir, limits)).await;
+    let port = |name| server.host_addr(name).expect("a configured host").port();
+    let ports = (port("alice"), port("bob"));
+    spawn_server(server);
+    ports
 }
 
 /// Attach to a host interface exactly as `umshctl --tcp` does: the same
@@ -665,13 +692,7 @@ async fn transmit_from_host(
 fn two_hosts_reach_each_other_with_no_radio_anywhere() {
     with_local(|| async {
         let dir = tempfile::tempdir().unwrap();
-        let ports = (free_port(), free_port());
-        let config = parse(&host_only_deployment(dir.path(), ports, (600, 600)));
-        tokio::task::spawn_local(async move {
-            if let Err(error) = umsh_bridge::server::run_config(config).await {
-                eprintln!("server: {error:#}");
-            }
-        });
+        let ports = serve_hosts(dir.path(), (600, 600)).await;
         tokio::time::sleep(Duration::from_millis(300)).await;
 
         let mut alice = attach_host(ports.0).await;
@@ -694,15 +715,9 @@ fn two_hosts_reach_each_other_with_no_radio_anywhere() {
 fn a_hosts_frames_stop_at_the_hub_once_its_budget_is_spent() {
     with_local(|| async {
         let dir = tempfile::tempdir().unwrap();
-        let ports = (free_port(), free_port());
         // One frame a minute for alice: the second is refused by the
         // hub, not by her device.
-        let config = parse(&host_only_deployment(dir.path(), ports, (1, 600)));
-        tokio::task::spawn_local(async move {
-            if let Err(error) = umsh_bridge::server::run_config(config).await {
-                eprintln!("server: {error:#}");
-            }
-        });
+        let ports = serve_hosts(dir.path(), (1, 600)).await;
         tokio::time::sleep(Duration::from_millis(300)).await;
 
         let mut alice = attach_host(ports.0).await;
@@ -730,13 +745,7 @@ fn a_hosts_frames_stop_at_the_hub_once_its_budget_is_spent() {
 fn a_host_that_reconnects_finds_the_device_where_it_left_it() {
     with_local(|| async {
         let dir = tempfile::tempdir().unwrap();
-        let ports = (free_port(), free_port());
-        let config = parse(&host_only_deployment(dir.path(), ports, (600, 600)));
-        tokio::task::spawn_local(async move {
-            if let Err(error) = umsh_bridge::server::run_config(config).await {
-                eprintln!("server: {error:#}");
-            }
-        });
+        let ports = serve_hosts(dir.path(), (600, 600)).await;
         tokio::time::sleep(Duration::from_millis(300)).await;
 
         // The device outlives the host, as a radio outlives whoever
@@ -770,13 +779,7 @@ fn a_host_that_reconnects_finds_the_device_where_it_left_it() {
 fn a_host_interface_does_not_pretend_to_have_a_node() {
     with_local(|| async {
         let dir = tempfile::tempdir().unwrap();
-        let ports = (free_port(), free_port());
-        let config = parse(&host_only_deployment(dir.path(), ports, (600, 600)));
-        tokio::task::spawn_local(async move {
-            if let Err(error) = umsh_bridge::server::run_config(config).await {
-                eprintln!("server: {error:#}");
-            }
-        });
+        let ports = serve_hosts(dir.path(), (600, 600)).await;
         tokio::time::sleep(Duration::from_millis(300)).await;
 
         let mut device = attach_host(ports.0).await;
@@ -798,13 +801,7 @@ fn a_host_interface_does_not_pretend_to_have_a_node() {
 fn a_second_host_displaces_the_first() {
     with_local(|| async {
         let dir = tempfile::tempdir().unwrap();
-        let ports = (free_port(), free_port());
-        let config = parse(&host_only_deployment(dir.path(), ports, (600, 600)));
-        tokio::task::spawn_local(async move {
-            if let Err(error) = umsh_bridge::server::run_config(config).await {
-                eprintln!("server: {error:#}");
-            }
-        });
+        let ports = serve_hosts(dir.path(), (600, 600)).await;
         tokio::time::sleep(Duration::from_millis(300)).await;
 
         // The first host attaches and is deliberately left holding its
