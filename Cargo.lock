@@ -741,7 +741,6 @@ checksum = "8ec610d8f49840a5b376c69663b6369e71f4b34484b9b2eb29fb918d92516cb9"
 dependencies = [
  "bare-metal",
  "bitfield",
- "critical-section",
  "embedded-hal 0.2.7",
  "volatile-register",
 ]
@@ -1677,26 +1676,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "firmware-sensecap-solar-console"
-version = "0.1.0"
-dependencies = [
- "cortex-m",
- "cortex-m-rt",
- "defmt 0.3.100",
- "embassy-executor",
- "embassy-futures",
- "embassy-nrf",
- "embassy-sync",
- "embassy-time",
- "embassy-usb",
- "heapless 0.8.0",
- "static_cell",
- "umsh-bsp-nrf52840",
- "umsh-bsp-sensecap-solar",
- "umsh-ux-tracker",
-]
-
-[[package]]
 name = "firmware-t1000e"
 version = "0.1.0"
 dependencies = [
@@ -1737,39 +1716,6 @@ dependencies = [
  "umsh-ulcp-device",
  "umsh-ulcp-runtime",
  "umsh-ux-display-tracker",
- "umsh-ux-tracker",
-]
-
-[[package]]
-name = "firmware-t1000e-console"
-version = "0.1.0"
-dependencies = [
- "cortex-m",
- "cortex-m-rt",
- "defmt 0.3.100",
- "embassy-executor",
- "embassy-futures",
- "embassy-nrf",
- "embassy-sync",
- "embassy-time",
- "embassy-usb",
- "embedded-alloc",
- "embedded-hal-bus",
- "heapless 0.8.0",
- "lora-phy",
- "rand 0.10.1",
- "static_cell",
- "umsh-app-ulcp-cli",
- "umsh-bsp-nrf52840",
- "umsh-bsp-t1000e",
- "umsh-cli",
- "umsh-core",
- "umsh-crypto",
- "umsh-hal",
- "umsh-mac",
- "umsh-node",
- "umsh-radio-loraphy",
- "umsh-sync",
  "umsh-ux-tracker",
 ]
 
@@ -1822,39 +1768,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "firmware-techo-console"
-version = "0.1.0"
-dependencies = [
- "cortex-m",
- "cortex-m-rt",
- "defmt 0.3.100",
- "embassy-executor",
- "embassy-futures",
- "embassy-nrf",
- "embassy-sync",
- "embassy-time",
- "embassy-usb",
- "embedded-alloc",
- "embedded-graphics",
- "embedded-hal-bus",
- "heapless 0.8.0",
- "lora-phy",
- "rand 0.10.1",
- "static_cell",
- "umsh-bsp-nrf52840",
- "umsh-bsp-techo",
- "umsh-cli",
- "umsh-core",
- "umsh-crypto",
- "umsh-hal",
- "umsh-mac",
- "umsh-node",
- "umsh-radio-loraphy",
- "umsh-sync",
- "umsh-ux-tracker",
-]
-
-[[package]]
 name = "firmware-wio-tracker-l1"
 version = "0.1.0"
 dependencies = [
@@ -1897,39 +1810,6 @@ dependencies = [
  "umsh-ulcp-device",
  "umsh-ulcp-runtime",
  "umsh-ux-display-tracker",
- "umsh-ux-tracker",
-]
-
-[[package]]
-name = "firmware-wio-tracker-l1-console"
-version = "0.1.0"
-dependencies = [
- "cortex-m",
- "cortex-m-rt",
- "defmt 0.3.100",
- "embassy-executor",
- "embassy-futures",
- "embassy-nrf",
- "embassy-sync",
- "embassy-time",
- "embassy-usb",
- "embedded-alloc",
- "embedded-graphics",
- "embedded-hal-bus",
- "heapless 0.8.0",
- "lora-phy",
- "rand 0.10.1",
- "static_cell",
- "umsh-bsp-nrf52840",
- "umsh-bsp-wio-tracker-l1",
- "umsh-cli",
- "umsh-core",
- "umsh-crypto",
- "umsh-hal",
- "umsh-mac",
- "umsh-node",
- "umsh-radio-loraphy",
- "umsh-sync",
  "umsh-ux-tracker",
 ]
 
@@ -4633,10 +4513,6 @@ dependencies = [
  "umsh-uri",
  "uuid",
 ]
-
-[[package]]
-name = "umsh-app-ulcp-cli"
-version = "0.1.0"
 
 [[package]]
 name = "umsh-bhi260"

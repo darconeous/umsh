@@ -33,7 +33,6 @@ From the repo root, via the Makefile (preferred):
 make build-heltec-v3
 make flash-heltec-v3             # espflash over the CP2102, then monitor
 make flash-heltec-v3-bridge      # the same board as an internet bridge
-make flash-heltec-v3-console ESPFLASH_PORT=/dev/cu.usbserial-0001
 make build-heltec-v2
 make flash-heltec-v2
 make build-tbeam-supreme
@@ -150,7 +149,7 @@ light sleep through its wake source, sleep veto, and next-event deadline. The
 CPU runs at 80 MHz while awake. BLE timing uses the main crystal, which remains
 powered through sleep; no external 32 kHz crystal is required. The esp-hal
 driver fork below fixes controller initialization and teardown sleep boundaries.
-The original ESP32/Heltec V2 and the bring-up console keep modem sleep disabled.
+The original ESP32/Heltec V2 keeps modem sleep disabled.
 
 `EspCryptoRng` owns a BLE controller with modem sleep disabled and holds the
 Bluetooth peripheral exclusively for its lifetime. The tracker uses it only

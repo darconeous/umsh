@@ -66,8 +66,7 @@ use temperature::{NoTemperature, TemperatureSensor};
 
 /// Tally a reception the demodulator rejected on CRC.
 ///
-/// A board with no ledger passes `None` and the counting costs nothing;
-/// the bringup consoles do exactly that.
+/// A board with no ledger passes `None` and the counting costs nothing.
 fn note_bad_crc(stats: Option<&'static StatsLedger>) {
     if let Some(stats) = stats {
         stats.bump(Counter::RxBadCrc);

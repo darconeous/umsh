@@ -48,11 +48,6 @@ members = [
     "crates/umsh-ux-display-tracker",
     "crates/umsh-ux-communicator",
     "crates/umsh-communicator",
-    "crates/umsh-app-ulcp-cli",
-    "firmware/t1000e-console",
-    "firmware/techo-console",
-    "firmware/wio-tracker-l1-console",
-    "firmware/sensecap-solar-console",
     "firmware/t1000e",
     "firmware/techo",
     "firmware/sensecap-solar",
@@ -67,8 +62,8 @@ members = [
 ]
 # Root `cargo build` / `cargo check` skips firmware/* so we don't try to
 # cross-compile every binary on the developer's host. Firmware crates are
-# explicitly built with `cargo build -p firmware-t1000e-console`
-# (or by running cargo from inside the firmware directory).
+# built from inside their own directory so the per-firmware
+# `.cargo/config.toml` is picked up (or through the Makefile).
 default-members = [
     "crates/umsh-sensor-bme280",
     "crates/umsh-bridge-client",
@@ -117,7 +112,6 @@ default-members = [
     "crates/umsh-ux-display-tracker",
     "crates/umsh-ux-communicator",
     "crates/umsh-communicator",
-    "crates/umsh-app-ulcp-cli",
     "tools/ulcp-web-debugger/engine",
     "tools/umsh-bridge",
     "tools/umshctl",

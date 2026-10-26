@@ -209,8 +209,7 @@ changing this pin assignment. External expansion peripherals need suitable
 I2C pull-ups.
 
 Wio's radio moves from SPIM1 to SPIM2, keeping the same pins, to free TWIM1
-for Grove. Its OLED driver takes a shared bus handle in the device image;
-the console harness can still give it an owned controller. Shutdown paths
+for Grove. Its OLED driver takes a shared bus handle in the device image. Shutdown paths
 park the newly claimed bus pins alongside the other peripheral signals.
 
 The spec makes the
@@ -304,11 +303,9 @@ Board capability refactor, 2026-09-16:
   capacity, and table-size validation against the property encoder.
 - All four ESP32 device images type-check both with host I2C enabled and
   with its board-feature forwarding temporarily removed. Heltec V2 uses
-  `ESP_HAL_CONFIG_MIN_CHIP_REVISION=100`. The Heltec V3 console harness also
-  type-checks with the shared display handle.
+  `ESP_HAL_CONFIG_MIN_CHIP_REVISION=100`.
 - All five nRF device images type-check both with host I2C enabled and
-  with its board-feature forwarding temporarily removed. The Wio console
-  harness also type-checks with its owned display controller.
+  with its board-feature forwarding temporarily removed.
 - All five nRF device images link in release mode with host I2C enabled.
 - Pager, Heltec V3, and T-Beam Supreme release builds pass after write
   coalescing, including their stack checks. Main-stack space / largest frame

@@ -10,7 +10,7 @@
 //! the privately owned controller provides that guarantee by construction.
 //!
 //! Trackers use this RNG only to harvest seeds for the persisted entropy pool
-//! and software CSPRNGs. The bring-up console keeps it for the MAC's lifetime.
+//! and software CSPRNGs.
 //! The SAR ADC entropy source is not used; the ADC belongs to battery sampling.
 
 use core::convert::Infallible;

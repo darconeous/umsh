@@ -9,8 +9,8 @@ If you are adding a board, this is the document to read first.
 
 UMSH firmware varies along two axes:
 
-- **Firmware type**: the shipping device image, plus a per-board console
-  harness used during bringup.
+- **Firmware type**: the shipping device image, plus a second image where a
+  board cannot fit everything into one.
 - **Hardware platform**: five boards across two MCU families (nRF52840 and
   ESP32-S3), with more over time.
 
@@ -88,17 +88,6 @@ S140 v7.3.0, so its application starts at `0x27000` rather than the
 T-Echo's `0x26000`—the one thing in its build that cannot be copied
 from a sibling board.
 
-### `*-console` is a bringup harness, not a product
-
-Each board also has a `<board>-console` binary, excluded from the shipping
-matrix above. These earn their place for one reason: they are the only thing
-exercising the non-BLE path end to end, and they are the natural tool for a
-new board before BLE stands up. Treat them as diagnostics—a board with a
-working console image and no device image is a board in bringup.
-
-Console binaries compose a BSP with `umsh-app-ulcp-cli`, and each keeps its
-own `src/main.rs`; they do not share the shipping sources.
-
 ## The layering
 
 ```
@@ -109,11 +98,9 @@ crates/
   umsh-ulcp-runtime/        (board-agnostic ULCP device runtime)
   umsh-ulcp-admin/          (ULCP property client: a cached model of a device's settings)
   umsh-communicator/        (a communicator's node and durable chat state)
-  umsh-app-ulcp-cli/        (console-harness app)
 firmware/
   nrf52-tracker/src/        (shipping sources shared by all four nRF52840 boards)
   <board>/                  (thin manifest: features + memory.x + target triple)
-  <board>-console/          (console binary: own main.rs)
 ```
 
 - A **BSP crate** owns the messy hardware-specific code: pinout, peripheral
@@ -185,8 +172,8 @@ necessarily per-family.
 Why a separate UX layer:
 
 - **Mechanism is reusable across images on the same device class.** A board's
-  device image uses the same button FSM and LED heartbeat as its console
-  harness; only the *mapping* of button events to actions differs.
+  device images share one button FSM and LED heartbeat; only the *mapping*
+  of button events to actions differs.
 - **Mechanism belongs outside the app.** If another image on the same board
   would want the code, it belongs in the UX crate, not the app crate. Button,
   LED, and buzzer mechanism is class-mechanism, not policy.
@@ -294,9 +281,7 @@ background temperature polling or persisted sensor inventory.
 | `crates/umsh-ulcp-runtime/` | Board-agnostic ULCP device runtime consumed by every shipping image. | — |
 | `crates/umsh-ulcp-admin/` | ULCP property client: a device's settings, cached, over a local or mesh exchange. | — |
 | `crates/umsh-communicator/` | A communicator's node and durable chat state: `CommunicatorNode`, the `ChatStore` trait, and its back ends. | `MemoryStore`, `FlashMapStore` |
-| `crates/umsh-app-<firmware>/` | App policy for a non-shipping image, hardware-agnostic. | `umsh-app-ulcp-cli` |
 | `firmware/<board>/` | Shipping board package. Thin manifest, no source. | `firmware/t1000e`, `firmware/techo` |
-| `firmware/<board>-console/` | Console harness binary. Own `main.rs`. | `firmware/t1000e-console` |
 
 The chip-BSP / board-BSP split exists because chips get reused across boards.
 All four nRF52840 boards share `umsh-bsp-nrf52840` for USB setup, GPREGRET
@@ -382,7 +367,6 @@ members = [
     "crates/umsh-core",
     # … every crate, plus:
     "firmware/t1000e",
-    "firmware/t1000e-console",
     "tools/ulcp-web-debugger/engine",
     "umsh",
 ]
@@ -423,7 +407,6 @@ converts the ELF with the board's UF2 base address and family ID; hand-rolled
 `objcopy` / `uf2conv` / `espflash` invocations get these wrong.
 
 - `make build-<board>` / `make flash-<board>`—shipping image
-- `make build-<board>-console` / `make flash-<board>-console`—bringup harness
 
 nRF52840 firmware **only links in `--release`**; dev builds overflow flash.
 `cargo check` is fine at any profile. Flashing requires the device in DFU mode
@@ -466,8 +449,7 @@ If the chip is new, you also need a chip-BSP. Otherwise just a board-BSP.
    different pairs:
    - The board-BSP's `pub const USB: UsbIdentity` (from
      `umsh_bsp_nrf52840::usb`) carries the **application** pair: the vendor
-     ID and product ID the vendor's stock firmware reports. The shipping
-     image and the console harness both read it. Sources, in order of
+     ID and product ID the vendor's stock firmware reports. Sources, in order of
      trust: the running stock firmware (`ioreg -p IOUSB -l` on macOS), the
      vendor's Arduino core `boards.txt` (`build.vid`/`build.pid`), and the
      first `hwids` entry in a Meshtastic or MeshCore board JSON. Adafruit-
@@ -492,8 +474,7 @@ If the chip is new, you also need a chip-BSP. Otherwise just a board-BSP.
     a transparent background at 180×120 pt (`@2x` 360×240 and `@3x`
     540×360 PNGs). Without it the picker shows the board's name over a
     generic antenna symbol, and nothing fails to say so.
-11. **Add it to the CI matrix**—both the shipping image and the console
-    harness.
+11. **Add it to the CI matrix.**
 
 A board on a new MCU family that cannot share the existing sources needs its
 own `firmware/<family>/src/` (or its own sibling workspace, per the inclusion

@@ -4,18 +4,12 @@
 	regions-build-fixture regions-check regions-test regions-diff \
 	regions-map regions-map-check regions-stage regions-map-serve \
 	gh-pages-site gh-pages-with-regions \
-	build-techo-console flash-techo-console \
-	build-wio-tracker-l1-console flash-wio-tracker-l1-console \
 	build-wio-tracker-l1 flash-wio-tracker-l1 \
-	build-t1000e-console flash-t1000e-console \
-	flash-t1000e-console-serial \
-	build-sensecap-solar-console flash-sensecap-solar-console \
 	build-sensecap-solar flash-sensecap-solar flash-ble-sensecap-solar \
 	build-xiao-nrf52 flash-xiao-nrf52 flash-ble-xiao-nrf52 \
 	install-ble-dfu-setup scan-ble-dfu ble-dfu-check \
 	build-t1000e flash-t1000e-serial \
 	build-techo flash-techo flash-techo-serial \
-	build-heltec-v3-console flash-heltec-v3-console \
 	build-heltec-v3 flash-heltec-v3 \
 	build-heltec-v3-bridge flash-heltec-v3-bridge \
 	build-heltec-v2 flash-heltec-v2 \
@@ -56,10 +50,7 @@
 #
 # `flash-<board>` flashes the **shipping image** for that board: a
 # repeater and a companion radio are the same image holding different
-# property values (docs/firmware-architecture.md). `<board>-console`
-# is the per-board bringup harness—the only thing exercising the
-# non-BLE path end to end, and the right tool before BLE stands up on a
-# new board.
+# property values (docs/firmware-architecture.md).
 
 TARGET_DIR := target/thumbv7em-none-eabihf/release
 
@@ -127,14 +118,6 @@ RELEASE_BOARDS_NRF52 = techo t1000e sensecap-solar wio-tracker-l1 xiao-nrf52
 RELEASE_BOARDS_ESP32 = heltec-v3 heltec-v3-bridge tbeam-supreme tlora-pager \
 	tdeck xiao-esp32s3
 
-build-techo-console:
-	cd firmware/techo-console && cargo build --release
-	scripts/mkimage.py --board techo $(TARGET_DIR)/firmware-techo-console
-
-flash-techo-console: build-techo-console
-	scripts/flash.py --board techo --copy-default \
-		$(TARGET_DIR)/firmware-techo-console.uf2
-
 build-techo:
 	cd firmware/techo && cargo build --release
 	scripts/mkimage.py --board techo --hex $(TARGET_DIR)/firmware-techo
@@ -143,14 +126,6 @@ flash-techo: build-techo
 	scripts/flash.py --board techo --copy-default \
 		$(TARGET_DIR)/firmware-techo.uf2
 
-build-wio-tracker-l1-console:
-	cd firmware/wio-tracker-l1-console && cargo build --release
-	scripts/mkimage.py --board wio-tracker-l1 $(TARGET_DIR)/firmware-wio-tracker-l1-console
-
-flash-wio-tracker-l1-console: build-wio-tracker-l1-console
-	scripts/flash.py --board wio-tracker-l1 --copy-default \
-		$(TARGET_DIR)/firmware-wio-tracker-l1-console.uf2
-
 build-wio-tracker-l1:
 	cd firmware/wio-tracker-l1 && cargo build --release
 	scripts/mkimage.py --board wio-tracker-l1 --hex $(TARGET_DIR)/firmware-wio-tracker-l1
@@ -158,14 +133,6 @@ build-wio-tracker-l1:
 flash-wio-tracker-l1: build-wio-tracker-l1
 	scripts/flash.py --board wio-tracker-l1 --copy-default \
 		$(TARGET_DIR)/firmware-wio-tracker-l1.uf2
-
-build-t1000e-console:
-	cd firmware/t1000e-console && cargo build --release
-	scripts/mkimage.py --board t1000e --hex $(TARGET_DIR)/firmware-t1000e-console
-
-flash-t1000e-console: build-t1000e-console
-	scripts/flash.py --board t1000e --copy-default \
-		$(TARGET_DIR)/firmware-t1000e-console.uf2
 
 # Serial DFU goes straight to adafruit-nrfutil—there is nothing for us
 # to add. pip installs it outside PATH on macOS, so override NRFUTIL with
@@ -206,21 +173,10 @@ define dfu-serial
 		-p $(DFU_SERIAL_PORT) -b 115200
 endef
 
-flash-t1000e-console-serial: build-t1000e-console
-	$(call dfu-serial,$(TARGET_DIR)/firmware-t1000e-console,$(SD_REQ_S140_7_3_0))
-
 # SenseCAP Solar Node P1-Pro. Same UF2/DFU posture as the Wio Tracker
 # (Seeed XIAO nRF52840 bootloader, UF2 mass-storage drive). The board
 # preset in scripts/firmware_image.py is EXPECTED pending Phase 0 confirmation of
 # the family ID and volume name.
-build-sensecap-solar-console:
-	cd firmware/sensecap-solar-console && cargo build --release
-	scripts/mkimage.py --board sensecap-solar $(TARGET_DIR)/firmware-sensecap-solar-console
-
-flash-sensecap-solar-console: build-sensecap-solar-console
-	scripts/flash.py --board sensecap-solar --copy-default \
-		$(TARGET_DIR)/firmware-sensecap-solar-console.uf2
-
 build-sensecap-solar:
 	cd firmware/sensecap-solar && cargo build --release
 	scripts/mkimage.py --board sensecap-solar --hex $(TARGET_DIR)/firmware-sensecap-solar
@@ -439,13 +395,6 @@ espflash-check:
 			"See $(ESP_SETUP_URL)." \
 			'' >&2; \
 		exit 1; }
-
-build-heltec-v3-console: esp-toolchain-check
-	$(ESP_ENV) cd firmware-esp32/firmware/heltec-v3-console && cargo build --release
-
-flash-heltec-v3-console: espflash-check build-heltec-v3-console
-	espflash flash --monitor $(ESPFLASH_PORT_ARG) $(ESPFLASH_PARTITIONS) \
-		$(ESP32S3_TARGET_DIR)/firmware-heltec-v3-console
 
 build-heltec-v3: esp-toolchain-check
 	$(ESP_ENV) cd firmware-esp32/firmware/heltec-v3 && cargo build --release $(ESP32_CARGO_FLAGS)

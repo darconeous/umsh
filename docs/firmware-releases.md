@@ -83,9 +83,6 @@ Releases are cut **locally, not in CI**: this is where the Xtensa toolchain
 for the merged ESP32 image lives, and CI does not build `xiao-nrf52`. Moving
 it into a `workflow_dispatch` job is a reasonable follow-on.
 
-Only shipping images are released. The `*-console` builds are per-board
-bringup harnesses, not products.
-
 ## Artifacts
 
 | Image | Chip | Artifacts |

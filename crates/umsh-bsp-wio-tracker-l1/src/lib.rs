@@ -17,8 +17,7 @@
 //! - [`buzzer`]—piezo on P1.00, driven straight from PWM
 //! - [`gnss`]—Quectel L76K standby control (P1.09); the module has no
 //!   rail this board can cut, so its backup domain is the board's clock
-//! - [`platform`]—the `Platform` type bundle used by the console
-//!   bringup harness
+//! - [`platform`]—the `Platform` type bundle
 //!
 //! Concrete pins for the radio (SX1262 on TWISPI1 plus the external
 //! RXEN on P1.08), the user LED (P1.01, active-high), the Back button

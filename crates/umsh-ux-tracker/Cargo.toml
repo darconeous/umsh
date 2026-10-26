@@ -13,11 +13,10 @@ repository.workspace = true
 #   * piezo buzzer
 #   * battery powered, no display, no speaker, no keyboard
 #
-# Consumed by any app targeting this device class (CLI console,
-# repeater, debug CLI, ...). Boards in this class (T1000-E, SenseCap
-# Solar P1, ...) provide the GPIO / PWM / ADC handles via their
-# board-BSP; this crate provides the pure-logic engines that interpret
-# inputs and arbitrate outputs.
+# Consumed by any firmware targeting this device class. Boards in this
+# class (T1000-E, SenseCap Solar P1, ...) provide the GPIO / PWM / ADC
+# handles via their board-BSP; this crate provides the pure-logic
+# engines that interpret inputs and arbitrate outputs.
 #
 # Devices in a different class—handheld with screen + speaker +
 # keyboard, headless mesh nodes with just radios—get their own

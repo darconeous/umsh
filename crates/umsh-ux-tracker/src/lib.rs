@@ -23,9 +23,8 @@
 //!   protects the Li-ion cell when no hardware undervoltage cutoff
 //!   exists.
 //!
-//! Policy (which event maps to which action, which CLI commands
-//! exist, how the MAC integrates) belongs in the consuming app
-//! crate, e.g. `umsh-app-ulcp-cli`.
+//! Policy (which event maps to which action, how the MAC
+//! integrates) belongs in the consuming firmware.
 //!
 //! Devices in a different class (handheld with screen + speaker +
 //! keyboard, headless mesh nodes) need their own `umsh-ux-<class>`

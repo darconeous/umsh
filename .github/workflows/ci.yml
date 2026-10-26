@@ -175,22 +175,12 @@ jobs:
           # build recipe developers use locally.
           - board: techo
             make_target: build-techo
-          - board: techo-console
-            make_target: build-techo-console
           - board: t1000e
             make_target: build-t1000e
-          - board: t1000e-console
-            make_target: build-t1000e-console
           - board: sensecap-solar
             make_target: build-sensecap-solar
-          - board: sensecap-solar-console
-            make_target: build-sensecap-solar-console
           - board: wio-tracker-l1
             make_target: build-wio-tracker-l1
-          - board: wio-tracker-l1-console
-            make_target: build-wio-tracker-l1-console
-          # No console harness for this board—new boards ship the device
-          # image only.
           - board: xiao-nrf52
             make_target: build-xiao-nrf52
     steps:
@@ -315,7 +305,6 @@ jobs:
           [
             build-heltec-v3,
             build-heltec-v3-bridge,
-            build-heltec-v3-console,
             build-heltec-v2,
             build-tbeam-supreme,
             build-tlora-pager,
