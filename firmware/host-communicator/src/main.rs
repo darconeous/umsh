@@ -46,6 +46,11 @@ struct Args {
     #[arg(long, value_name = "DIR", conflicts_with = "demo")]
     data_dir: Option<PathBuf>,
 
+    /// Erase the device first, so that it starts from nothing: a new
+    /// identity, no settings, and no chats.
+    #[arg(long, conflicts_with = "demo")]
+    reset: bool,
+
     /// The board whose screen and controls to show.
     #[arg(long, value_enum, default_value_t = BoardName::Tdeck)]
     board: BoardName,
@@ -267,7 +272,7 @@ fn main() -> ExitCode {
         if args.verbose {
             umsh_ulcp_runtime::log::set_debug_log(|line| eprintln!("{line}"));
         }
-        match board::Board::start(&dir, name.clone().leak(), network) {
+        match board::Board::start(&dir, name.clone().leak(), network, args.reset) {
             Ok(device) => {
                 device.node.set_model(board.model);
                 (Backend::Device(Box::leak(Box::new(device))), name)
@@ -603,8 +608,10 @@ fn window(board: &'static Board, backend: Backend, title: &str) -> ExitCode {
     let start = std::time::Instant::now();
     let mut app = App::new(backend.state(board), size.into(), ui::root_view);
     ui::bind(&mut app);
-    // Whether the left button is down on the T-Deck's touchscreen.
+    // Whether the left button is down on the T-Deck's touchscreen, or
+    // pressing its trackball because the screen was locked.
     let mut touching = false;
+    let mut pressing = false;
     /// A finger at `point` on the touchscreen, at `now`.
     fn touch(phase: TouchPhase, point: embedded_graphics::prelude::Point, now: u64) -> Input {
         let clamp = |v: i32| v.clamp(0, i32::from(i16::MAX)) as i16;
@@ -691,7 +698,23 @@ fn window(board: &'static Board, backend: Backend, title: &str) -> ExitCode {
                     })
                 }
                 // On the T-Deck the mouse is a finger on its touchscreen,
-                // and the right button and the wheel are its trackball.
+                // and the right button and the wheel are its trackball. The
+                // locked screen takes no touches, so there the left button
+                // presses the trackball too, to unlock it.
+                SimulatorEvent::MouseButtonDown {
+                    mouse_btn: MouseButton::Left,
+                    ..
+                } if tdeck && app.state().lock.locked => {
+                    pressing = true;
+                    Some(Input::Press)
+                }
+                SimulatorEvent::MouseButtonUp {
+                    mouse_btn: MouseButton::Left,
+                    ..
+                } if tdeck && pressing => {
+                    pressing = false;
+                    Some(Input::Release)
+                }
                 SimulatorEvent::MouseButtonDown {
                     mouse_btn: MouseButton::Left,
                     point,

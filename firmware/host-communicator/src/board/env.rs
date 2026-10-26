@@ -123,20 +123,7 @@ impl driver::DeviceEnv for HostEnv {
     async fn factory_reset(&mut self) -> ! {
         debug_log(format_args!("FACTORY RESET: erasing storage + restart"));
         device_node::quiesce_for_reboot().await;
-        // Everything the instance keeps, but the lock it is held by.
-        if let Ok(entries) = std::fs::read_dir(&self.dir) {
-            for entry in entries.flatten() {
-                if entry.file_name() == "lock" {
-                    continue;
-                }
-                let path = entry.path();
-                let _ = if path.is_dir() {
-                    std::fs::remove_dir_all(&path)
-                } else {
-                    std::fs::remove_file(&path)
-                };
-            }
-        }
+        super::erase(&self.dir);
         self.restart()
     }
 

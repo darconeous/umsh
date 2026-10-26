@@ -35,8 +35,7 @@ make run-simulator-communicator
 ```
 
 That builds the release binary and runs the instance named `default`, a T-Deck.
-The device boots locked, as the boards do: press the trackball, with Control or
-a right click, to unlock it.
+The device boots locked, as the boards do: click it to unlock it.
 
 To run two devices on one computer, give each a name:
 
@@ -75,8 +74,10 @@ is already running fails and says so. Two copies sharing an identity would
 send under one key with two frame counters, and each would see the other's
 frames as replays.
 
-To start an instance over from nothing, quit it and delete its folder. A
-factory reset sent by an administrator over the mesh does the same from inside:
+To start an instance over from nothing, run it with `--reset`: it erases
+everything the device keeps before it boots, so it comes up with a new
+identity, no settings, and no chats, as a new device does. Files of anyone
+else's in its folder are left alone. A factory reset sent by an administrator over the mesh does the same from inside:
 the device erases everything it keeps, then restarts with a new identity. A
 reboot restarts the process in place.
 
@@ -109,13 +110,14 @@ other.
 
 | Input | T-Deck control |
 |---|---|
-| Left mouse button | A finger on the touchscreen: click to tap, drag to scroll, hold to long-press |
+| Left mouse button | A finger on the touchscreen: click to tap, drag to scroll, hold to long-press; on the lock screen, the trackball press |
 | Arrows, mouse wheel | Roll the trackball |
 | Control, right mouse button | Press the trackball |
 | Escape | Lock, as the screen going dark would |
 | Letters, digits, Return, Backspace, Space | Type, with Shift as the T-Deck's own keyboard applies it |
 
-The touchscreen takes no touches while the device is locked, as on the T-Deck.
+The touchscreen takes no touches while the device is locked, as on the T-Deck,
+so there a click presses the trackball instead.
 
 ### T-LoRa Pager (`--board pager`)
 

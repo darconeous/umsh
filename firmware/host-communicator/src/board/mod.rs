@@ -116,10 +116,18 @@ impl std::fmt::Display for BootError {
 
 impl Board {
     /// Boots the device kept in `dir`, named `name` until it is given a
-    /// name of its own.
-    pub fn start(dir: &Path, name: &'static str, network: Network) -> Result<Self, BootError> {
+    /// name of its own; with `reset`, from nothing, as if new.
+    pub fn start(
+        dir: &Path,
+        name: &'static str,
+        network: Network,
+        reset: bool,
+    ) -> Result<Self, BootError> {
         std::fs::create_dir_all(dir)?;
         let lock = StateLock::try_acquire(dir)?.ok_or(BootError::Running)?;
+        if reset {
+            erase(dir);
+        }
         time::start();
         // The host's clock is the device's real-time clock.
         if let Some(epoch) = std::time::SystemTime::now()
@@ -331,6 +339,31 @@ fn chats(dir: &Path, files: &mut HostPlatform) -> io::Result<&'static Node> {
             jitter_seed: u64::from_be_bytes(jitter_seed[..8].try_into().unwrap()),
         },
     ))))
+}
+
+/// What a device keeps in its directory, and the staged copies its files
+/// are written through. Nothing else there is the device's to erase.
+const KEPT: &[&str] = &[
+    "identity.key",
+    "identity.key.new",
+    "snapshot.bin",
+    "snapshot.bin.new",
+    "lists.bin",
+    "lists.bin.new",
+    "chats.flash",
+    "counters",
+];
+
+/// Erases everything the device in `dir` keeps, as a factory reset does.
+fn erase(dir: &Path) {
+    for name in KEPT {
+        let path = dir.join(name);
+        let _ = if path.is_dir() {
+            std::fs::remove_dir_all(&path)
+        } else {
+            std::fs::remove_file(&path)
+        };
+    }
 }
 
 /// Where instance `name` keeps itself by default:
