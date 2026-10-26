@@ -1934,6 +1934,7 @@ dependencies = [
  "umsh-mac",
  "umsh-node",
  "umsh-radio-loraphy",
+ "umsh-sound",
  "umsh-splash",
  "umsh-sync",
  "umsh-tdeck-peripherals",
@@ -1997,6 +1998,7 @@ dependencies = [
  "umsh-node",
  "umsh-pager-peripherals",
  "umsh-radio-loraphy",
+ "umsh-sound",
  "umsh-splash",
  "umsh-sync",
  "umsh-ulcp",
@@ -4186,6 +4188,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "umsh-sound"
+version = "0.1.0"
+dependencies = [
+ "umsh-ux-tracker",
+]
+
+[[package]]
 name = "umsh-splash"
 version = "0.1.0"
 dependencies = [
@@ -4298,6 +4307,7 @@ dependencies = [
  "umsh-emoji",
  "umsh-grapheme",
  "umsh-hal",
+ "umsh-sound",
 ]
 
 [[package]]

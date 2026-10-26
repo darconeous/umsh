@@ -5133,6 +5133,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "umsh-sound"
+version = "0.1.0"
+dependencies = [
+ "umsh-ux-tracker",
+]
+
+[[package]]
 name = "umsh-splash"
 version = "0.1.0"
 dependencies = [
@@ -5294,6 +5301,7 @@ dependencies = [
  "umsh-emoji",
  "umsh-grapheme",
  "umsh-hal",
+ "umsh-sound",
  "umsh-ulcp",
  "umsh-ux-communicator",
 ]

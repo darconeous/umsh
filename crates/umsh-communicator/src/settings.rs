@@ -15,8 +15,8 @@
 //! change made here (`ulcp-saved-state.md`, Changes Made at the Device),
 //! but never makes one. So the first boot saves one, and a change whose
 //! loss would matter—the name, the radio—is followed by a save when the
-//! device has none in effect. Brightness, the keyboard, and pairing never
-//! ask for one.
+//! device has none in effect. Brightness, the volume, the keyboard, and
+//! pairing never ask for one.
 //!
 //! **The radio.** A reset leaves the radio off until a host turns it on
 //! (`ulcp-radio.md`). A communicator is its own host, so its first boot
@@ -31,7 +31,7 @@
 //! [`ChannelCrypto::starting_keys`](crate::ChannelCrypto::starting_keys)).
 
 use umsh_core::ChannelTag;
-use umsh_ulcp::ids::{cap, keyboard_aids, prop, saved};
+use umsh_ulcp::ids::{DEFAULT_SOUND_VOLUME, cap, keyboard_aids, prop, saved};
 use umsh_ulcp::profiles::VETTED;
 use umsh_ulcp_admin::descriptor::Value;
 use umsh_ulcp_admin::{
@@ -321,6 +321,16 @@ impl<P: LocalPort> Settings<P> {
     pub fn set_bluetooth_enabled(&mut self, on: bool) -> bool {
         let write = self.model.set_bluetooth_enabled(on);
         self.written(Setting::Bluetooth, write)
+    }
+
+    pub fn set_sound_enabled(&mut self, on: bool) -> bool {
+        let write = self.model.set_sound_enabled(on);
+        self.written(Setting::Sound, write)
+    }
+
+    pub fn set_sound_volume(&mut self, volume: u8) -> bool {
+        let write = self.model.set_sound_volume(volume);
+        self.written(Setting::Volume, write)
     }
 
     pub fn set_pairing(&mut self, open: bool) -> bool {
@@ -619,6 +629,17 @@ impl<P: LocalPort> Settings<P> {
             .then(|| self.bool(prop::BLE_ENABLED).unwrap_or(true))
     }
 
+    /// Whether the device plays its sounds, where it has a sounder.
+    pub fn sound_enabled(&self) -> Option<bool> {
+        self.model
+            .has_cap(cap::SOUND)?
+            .then(|| self.bool(prop::SOUND_ENABLED).unwrap_or(true))
+    }
+
+    pub fn sound_volume(&self) -> u8 {
+        self.u8(prop::SOUND_VOLUME).unwrap_or(DEFAULT_SOUND_VOLUME)
+    }
+
     /// Whether the GNSS receiver is on, where the device has one.
     pub fn gnss_enabled(&self) -> Option<bool> {
         self.model
@@ -717,6 +738,7 @@ const fn matters(setting: Setting) -> bool {
         setting,
         Setting::Keyboard
             | Setting::Brightness
+            | Setting::Volume
             | Setting::AutoLock
             | Setting::Time
             | Setting::Pairing

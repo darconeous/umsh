@@ -316,6 +316,12 @@ async fn interface(
                 transition = Some(woke);
             }
         }
+        // What an input or an event called for is heard.
+        if app.state().has_cue()
+            && let Some(cue) = app.state_mut().take_cue()
+        {
+            chime(cue, node.sound_volume());
+        }
         mark(app.state(), Phase::Events);
         // A key, or the node, may have changed the lights.
         let set = (brightness_level(node.brightness()), node.keyboard().light);
@@ -469,6 +475,19 @@ fn link_readings() -> Links {
 }
 
 /// When the clock next turns to a new minute, while it is known.
+/// Plays what the theme has `cue` play at `volume`, on the board's
+/// speaker.
+fn chime(cue: umsh_ux_communicator::model::Cue, volume: u8) {
+    let request = crate::audio_stream::Request {
+        choice: umsh_sound::Theme::DEFAULT.choice(cue),
+        volume,
+    };
+    #[cfg(feature = "board-tlora-pager")]
+    pager::alert::play(request);
+    #[cfg(feature = "board-tdeck")]
+    tdeck::sound::play(request);
+}
+
 fn next_minute() -> Option<Instant> {
     umsh_hal::wall_clock::millis_to_next_minute()
         .map(|ms| Instant::now() + Duration::from_millis(u64::from(ms)))

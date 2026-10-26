@@ -19,6 +19,7 @@ use umsh_ux_communicator::model::{
     brightness_level,
 };
 use umsh_ux_communicator::nav::{ChatMenu, DevicePage, MemberFrom, Screen, Unsent, keys};
+use umsh_ux_communicator::model::Cue;
 use umsh_ux_communicator::{fixture, ui, zones};
 
 /// The fixture's chats, in list order.
@@ -1047,6 +1048,147 @@ fn a_muted_chat_does_not_call_for_attention() {
     assert!(!arrive_in(&mut app, store, 4, "Mill Creek is clear", 0));
     assert_eq!(app.state().banner, None);
     assert_eq!(app.state().chats[0].id, 4);
+}
+
+// ─── Sounds ──────────────────────────────────────────────────────────
+
+#[test]
+fn a_direct_message_and_a_channel_message_each_sound_their_own() {
+    let store = store();
+    let mut app = app!(store);
+    assert_eq!(app.state_mut().take_cue(), None);
+    assert!(arrive_in(&mut app, store, PAT, "Got it", tick(1000)));
+    assert_eq!(app.state_mut().take_cue(), Some(Cue::Direct));
+    assert!(arrive_in(&mut app, store, TRAIL_CREW, "Heading up", tick(1000)));
+    assert_eq!(app.state_mut().take_cue(), Some(Cue::Channel));
+    assert_eq!(app.state_mut().take_cue(), None);
+}
+
+#[test]
+fn a_muted_chat_makes_no_sound() {
+    let store = store();
+    let mut app = app!(store);
+    // The public channel is muted.
+    arrive_in(&mut app, store, 4, "Mill Creek is clear", tick(1000));
+    assert_eq!(app.state_mut().take_cue(), None);
+}
+
+#[test]
+fn a_message_in_the_open_chat_sounds_quietly() {
+    let store = store();
+    let mut app = app!(store);
+    open_chat(&mut app, TRAIL_CREW);
+    assert!(!arrive(&mut app, store, tick(1000)));
+    assert_eq!(app.state_mut().take_cue(), Some(Cue::InChat));
+}
+
+#[test]
+fn a_burst_of_messages_sounds_once_for_the_one_that_matters_most() {
+    let store = store();
+    let mut app = app!(store);
+    store.arrive_in(TRAIL_CREW, "One");
+    store.arrive_in(PAT, "Two");
+    store.arrive_in(TRAIL_CREW, "Three");
+    assert!(input::events(&mut app, tick(1000)));
+    assert_eq!(app.state_mut().take_cue(), Some(Cue::Direct));
+    assert_eq!(app.state_mut().take_cue(), None);
+}
+
+#[test]
+fn a_message_sounds_as_it_is_sent_and_again_as_it_comes_out() {
+    let store = store();
+    let mut app = app!(store);
+    app.state_mut().send(RIDGE);
+    assert_eq!(app.state_mut().take_cue(), Some(Cue::Sent));
+    let mut cues = Vec::new();
+    while let Some(at) = store.next_deadline() {
+        store.advance(at);
+        input::events(&mut app, at);
+        cues.extend(app.state_mut().take_cue());
+    }
+    assert_eq!(cues, [Cue::Delivered]);
+    // One that went unconfirmed sounds unlike one delivered.
+    store.settle(PAT, ANTENNA);
+    input::events(&mut app, tick(1000));
+    assert_eq!(app.state_mut().take_cue(), Some(Cue::Unconfirmed));
+}
+
+#[test]
+fn with_sounds_off_nothing_sounds_and_the_strip_says_so() {
+    let store = store();
+    let mut app = app!(store);
+    assert!(!app.state().status.silent);
+    app.state_mut().open_sounds();
+    app.finalize_view();
+    assert_eq!(focus(app.state()), Some(keys::SOUNDS_ENABLED));
+    run(&mut app, &[Input::Press]);
+    assert_eq!(app.state().node.sound_enabled(), Some(false));
+    assert!(app.state().status.silent);
+    // Still called to attention, in silence.
+    assert!(arrive_in(&mut app, store, PAT, "Got it", tick(1000)));
+    assert_eq!(app.state_mut().take_cue(), None);
+    app.state_mut().send(RIDGE);
+    assert_eq!(app.state_mut().take_cue(), None);
+
+    run(&mut app, &[Input::Press]);
+    assert_eq!(app.state().node.sound_enabled(), Some(true));
+    assert!(!app.state().status.silent);
+    assert!(arrive_in(&mut app, store, PAT, "Again", tick(1000)));
+    assert_eq!(app.state_mut().take_cue(), Some(Cue::Direct));
+}
+
+#[test]
+fn pressing_volume_lets_turning_change_it_and_plays_it_at_each_level() {
+    let store = store();
+    let mut app = app!(store);
+    app.state_mut().open_sounds();
+    app.finalize_view();
+    run(&mut app, &[Input::Turn(1)]);
+    assert_eq!(focus(app.state()), Some(keys::VOLUME));
+    let before = app.state().node.sound_volume();
+    run(&mut app, &[Input::Press]);
+    assert!(app.state().adjusting_volume());
+    // Turned up, louder, and heard at the new level.
+    run(&mut app, &[Input::Turn(-1)]);
+    assert!(app.state().node.sound_volume() > before);
+    assert_eq!(app.state_mut().take_cue(), Some(Cue::Direct));
+    assert_eq!(focus(app.state()), Some(keys::VOLUME));
+    run(&mut app, &[Input::Turn(3)]);
+    assert!(app.state().node.sound_volume() < before);
+    // Pressed again, turning moves on.
+    run(&mut app, &[Input::Press, Input::Turn(-1)]);
+    assert!(!app.state().adjusting_volume());
+    assert_eq!(focus(app.state()), Some(keys::SOUNDS_ENABLED));
+}
+
+#[test]
+fn a_level_rows_arrows_change_its_own_setting_and_no_other() {
+    let store = store();
+    let mut app = app!(store);
+    let levels = |app: &App<_, State, _>| {
+        let node = app.state().node;
+        (node.brightness(), node.sound_volume())
+    };
+    // Brightness focused, not pressed: across, the trackball sets the
+    // brightness.
+    open_category(&mut app, keys::DISPLAY);
+    assert_eq!(focus(app.state()), Some(keys::BRIGHTNESS));
+    let (brightness, volume) = levels(&app);
+    run(&mut app, &[Input::Move(Arrow::Left)]);
+    assert!(levels(&app).0 < brightness);
+    assert_eq!(levels(&app).1, volume);
+    // And Volume's sets the volume.
+    app.state_mut().open_sounds();
+    app.finalize_view();
+    run(&mut app, &[Input::Turn(1)]);
+    assert_eq!(focus(app.state()), Some(keys::VOLUME));
+    let (brightness, volume) = levels(&app);
+    run(&mut app, &[Input::Move(Arrow::Left)]);
+    assert_eq!(levels(&app).0, brightness);
+    assert!(levels(&app).1 < volume);
+    run(&mut app, &[Input::Move(Arrow::Right), Input::Move(Arrow::Right)]);
+    assert_eq!(levels(&app).0, brightness);
+    assert!(levels(&app).1 > volume);
 }
 
 /// Jo Reyes, the chat of the fixture's last arrival.
@@ -2711,14 +2853,14 @@ fn ages_count_to_the_wall_clock() {
 
 #[test]
 fn brightness_levels_cover_the_whole_range() {
-    use umsh_ux_communicator::model::{BRIGHTNESS_LEVELS, brightness_at};
+    use umsh_ux_communicator::model::{LEVELS, brightness_at};
     assert_eq!(brightness_at(1), 0);
-    assert_eq!(brightness_at(BRIGHTNESS_LEVELS), 255);
-    for level in 1..=BRIGHTNESS_LEVELS {
+    assert_eq!(brightness_at(LEVELS), 255);
+    for level in 1..=LEVELS {
         assert_eq!(brightness_level(brightness_at(level)), level);
     }
     assert_eq!(brightness_level(0), 1);
-    assert_eq!(brightness_level(255), BRIGHTNESS_LEVELS);
+    assert_eq!(brightness_level(255), LEVELS);
 }
 
 #[test]

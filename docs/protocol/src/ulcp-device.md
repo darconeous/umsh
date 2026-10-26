@@ -97,6 +97,7 @@ Code | Name               | Requires           | Grants
 62 | `CAP_MESHCORE_FORWARDER` | `CAP_REPEATER` | [MeshCore forwarding](#meshcore-forwarding): `PROP_MESHCORE_FORWARDING_ENABLED`, `PROP_MESHCORE_REGION_POLICY`, `PROP_MESHCORE_REGIONS`; with `CAP_STATS`, the [MeshCore counters](ulcp-radio.md#prop-stat-meshcore-seen)
 64 | `CAP_DISPLAY` | — | A screen of the device's own: [`PROP_DISPLAY_BRIGHTNESS`](#prop-display-brightness), [`PROP_DISPLAY_TIMEOUT`](#prop-display-timeout)
 65 | `CAP_KEYBOARD` | — | A keyboard of the device's own: [`PROP_KEYBOARD_LIGHT`](#prop-keyboard-light), [`PROP_KEYBOARD_AIDS`](#prop-keyboard-aids)
+66 | `CAP_SOUND` | — | A sounder the device plays optional sounds on: [`PROP_SOUND_ENABLED`](#prop-sound-enabled), [`PROP_SOUND_VOLUME`](#prop-sound-volume)
 
 `CAP_ADVERT` requires `CAP_DEV_IDENTITY` because what an advertisement
 carries *is* the device identity, and a beacon's source address names
@@ -270,6 +271,8 @@ Id | Mnemonic                    | Commands                 | Description
 4890 | `PROP_DISPLAY_TIMEOUT`    | Get, Set, Is             | How long the screen stays lit without input
 4878 | `PROP_KEYBOARD_LIGHT`     | Get, Set, Is             | Whether the keyboard is lit while the screen is
 4879 | `PROP_KEYBOARD_AIDS`      | Get, Set, Is             | Typing aids in effect
+4891 | `PROP_SOUND_ENABLED`      | Get, Set, Is             | Whether optional sounds are played
+4892 | `PROP_SOUND_VOLUME`       | Get, Set, Is             | How loud optional sounds are played
 4866 | `PROP_TIME`               | Get, Set, Is             | Wall clock, or empty when unknown
 4888 | `PROP_TZ_RULE`            | Get, Set, Is             | Local time zone, as a POSIX TZ rule
 4889 | `PROP_TIME_24H`           | Get, Set, Is             | Whether shown clocks use 24-hour time
@@ -1373,7 +1376,8 @@ intermittent rather than continuous, and it does not defer or inhibit a
 protective shutdown.
 
 **The alert overrides local quiet settings.** A device whose buzzer has
-been silenced through a local control still sounds `ALERT_LOCATE`:
+been silenced, through a local control or
+[`PROP_SOUND_ENABLED`](#prop-sound-enabled), still sounds `ALERT_LOCATE`:
 locating a misplaced radio is precisely the case that silencing must not
 defeat. The alert *suspends* the local setting rather than changing it,
 so clearing the alert leaves the device as quiet as it was before.
@@ -2204,4 +2208,46 @@ answered `STATUS_INVALID_ARGUMENT`.
 
 All three properties are included in `CMD_SAVE`, and are asynchronous
 because the device's own controls change them (see [Changes Made at the
+Device](ulcp-saved-state.md#changes-made-at-the-device)).
+
+## Sound
+
+A device with a sounder of its own exposes whether it plays optional
+sounds, and how loud, in the device domain, so the choice is saved with
+the rest of its configuration and reachable from wherever it is
+administered.
+
+### PROP 4891: `PROP_SOUND_ENABLED` {#prop-sound-enabled}
+
+* Type: Single-Value, Read-Write
+* Asynchronous Updates: Yes
+* Required: `CAP_SOUND`
+* Value Type: BOOL
+* Post-Reset Value: 1 (true), or restored from saved state
+
+Whether the device plays its optional sounds: the notifications and
+feedback cues it makes of its own accord. Cleared, the device makes none
+of them.
+
+It governs sound alone. Haptics and visual indication are unaffected, and
+a [locate alert](#prop-alert) sounds whatever this property says.
+
+### PROP 4892: `PROP_SOUND_VOLUME` {#prop-sound-volume}
+
+* Type: Single-Value, Read-Write
+* Asynchronous Updates: Yes
+* Required: `CAP_SOUND`
+* Value Type: UINT8
+* Post-Reset Value: device-defined, or restored from saved state
+
+How loud the device plays its optional sounds. 255 is the loudest it plays
+them, and 0 the quietest level that is not silent: volume never silences
+the device, which is [`PROP_SOUND_ENABLED`](#prop-sound-enabled)'s to do.
+
+The levels in between are the device's to map onto its sounder, and it
+reports the value written. A locate alert is not governed by this
+property: it sounds as loud as the device makes it.
+
+Both properties are included in `CMD_SAVE`, and are asynchronous because
+the device's own controls change them (see [Changes Made at the
 Device](ulcp-saved-state.md#changes-made-at-the-device)).

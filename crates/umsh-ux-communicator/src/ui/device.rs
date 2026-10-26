@@ -71,6 +71,10 @@ pub fn view(state: &State) -> impl View<Rgb565, State> + use<> {
                 super::clock::summary(state),
             ),
             VStack::new((
+                state
+                    .node
+                    .sound_enabled()
+                    .map(|_| category("Sounds", keys::SOUNDS, State::open_sounds, "")),
                 state.node.bluetooth_enabled().map(|_| {
                     category(
                         "Bluetooth",
@@ -179,6 +183,7 @@ pub fn page(state: &State, page: &DevicePage) -> impl View<Rgb565, State> + use<
         DevicePage::Bluetooth { .. }
         | DevicePage::Gnss
         | DevicePage::Battery
+        | DevicePage::Sounds { .. }
         | DevicePage::Display { .. }
         | DevicePage::AutoLock
         | DevicePage::Statistics
@@ -194,6 +199,7 @@ fn board_page(state: &State, page: &DevicePage) -> impl View<Rgb565, State> + us
         DevicePage::Bluetooth { confirm } => super::links::bluetooth(state, *confirm),
         DevicePage::Gnss => super::links::gnss(state),
         DevicePage::Battery => super::battery::view(state),
+        DevicePage::Sounds { .. } => super::sounds::view(state),
         DevicePage::Display { .. } => super::display::view(state),
         DevicePage::AutoLock => super::display::auto_lock(state),
         DevicePage::Statistics => super::statistics::view(state),

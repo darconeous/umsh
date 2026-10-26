@@ -278,6 +278,7 @@ umsh-pager-peripherals = { path = "../../../crates/umsh-pager-peripherals" }
 critical-section = "1"
 umsh-radio-loraphy = { path = "../../../crates/umsh-radio-loraphy", default-features = false }
 umsh-ux-tracker = { path = "../../../crates/umsh-ux-tracker" }
+umsh-sound = { path = "../../../crates/umsh-sound" }
 umsh-ux-display-tracker = { path = "../../../crates/umsh-ux-display-tracker", features = ["screen"] }
 umsh-ux-communicator = { path = "../../../crates/umsh-ux-communicator", optional = true }
 umsh-splash = { path = "../../../crates/umsh-splash", optional = true }

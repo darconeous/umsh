@@ -48,6 +48,7 @@ pub fn config() -> SessionConfig {
             timeout_s: 30,
         }),
         keyboard: true,
+        sound: true,
         illuminance: false,
         temperatures: false,
         ble: true,

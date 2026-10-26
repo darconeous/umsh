@@ -312,6 +312,20 @@ pub const COVERED: &[Descriptor] = &[
         Access::ReadWrite,
         1,
     ),
+    scalar(
+        prop::SOUND_ENABLED,
+        PropertyType::Bool,
+        Some(cap::SOUND),
+        Access::ReadWrite,
+        1,
+    ),
+    scalar(
+        prop::SOUND_VOLUME,
+        PropertyType::U8,
+        Some(cap::SOUND),
+        Access::ReadWrite,
+        1,
+    ),
     // The device identity as it advertises itself, signed.
     scalar(
         prop::IDENT,

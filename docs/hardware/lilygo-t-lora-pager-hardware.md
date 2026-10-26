@@ -199,6 +199,8 @@ Meshtastic declares `HAS_DRV2605`. LilyGoLib initializes DRV2605 at I2C address 
 
 Meshtastic’s variant-specific late init configures an ES8311 codec with I2C and I2S pins, line input, all outputs, 16-bit samples, 44 kHz rate, and 75% volume.
 
+The firmware drives the codec and amplifier for the locate alert and for the communicator's sounds, one at a time, through one audio task; see [Locate alerts](#locate-alerts).
+
 ### NFC
 
 | Signal | ESP32-S3 GPIO | Notes |

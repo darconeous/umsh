@@ -131,6 +131,8 @@ pub const fn property_name(key: u32) -> Option<&'static str> {
         prop::KEYBOARD_LIGHT => "PROP_KEYBOARD_LIGHT",
         prop::KEYBOARD_AIDS => "PROP_KEYBOARD_AIDS",
         prop::DISPLAY_TIMEOUT => "PROP_DISPLAY_TIMEOUT",
+        prop::SOUND_ENABLED => "PROP_SOUND_ENABLED",
+        prop::SOUND_VOLUME => "PROP_SOUND_VOLUME",
         prop::WIFI_ENABLED => "PROP_WIFI_ENABLED",
         prop::BRIDGE_ENABLED => "PROP_BRIDGE_ENABLED",
         prop::BRIDGE_HOST => "PROP_BRIDGE_HOST",
@@ -287,6 +289,8 @@ pub const PROPERTIES: &[u32] = &[
     prop::KEYBOARD_LIGHT,
     prop::KEYBOARD_AIDS,
     prop::DISPLAY_TIMEOUT,
+    prop::SOUND_ENABLED,
+    prop::SOUND_VOLUME,
     prop::WIFI_ENABLED,
     prop::WIFI_NETWORKS,
     prop::WIFI_NETWORK,
@@ -426,6 +430,8 @@ pub const fn property_type(key: u32) -> Option<PropertyType> {
         // A bitmap, shown as its octet.
         prop::KEYBOARD_AIDS => U8,
         prop::DISPLAY_TIMEOUT => U16,
+        prop::SOUND_ENABLED => Bool,
+        prop::SOUND_VOLUME => U8,
         prop::GNSS_ALTITUDE => I32,
         prop::GNSS_FIX => U8,
         prop::GNSS_PRECISION => U16,
@@ -541,6 +547,7 @@ pub const fn capability_name(code: u32) -> Option<&'static str> {
         cap::LAN_BEARER => "LAN_BEARER",
         cap::DISPLAY => "DISPLAY",
         cap::KEYBOARD => "KEYBOARD",
+        cap::SOUND => "SOUND",
         _ => return None,
     })
 }
@@ -747,6 +754,16 @@ mod tests {
     }
 
     #[test]
+    fn the_sound_property_has_a_name_and_type() {
+        assert_eq!(property_name(4891), Some("PROP_SOUND_ENABLED"));
+        assert_eq!(property_type(4891), Some(PropertyType::Bool));
+        assert!(PROPERTIES.contains(&4891));
+        assert_eq!(property_name(4892), Some("PROP_SOUND_VOLUME"));
+        assert_eq!(property_type(4892), Some(PropertyType::U8));
+        assert_eq!(capability_name(66), Some("SOUND"));
+    }
+
+    #[test]
     fn describes_status_and_malformed_frames() {
         let mut buf = [0u8; 8];
         let len = frame::last_status(&mut buf, 4, Status::OK).unwrap();
@@ -889,7 +906,8 @@ mod tests {
         );
         assert_eq!(capability_name(cap::LAN_BEARER), Some("LAN_BEARER"));
         assert_eq!(capability_name(cap::KEYBOARD), Some("KEYBOARD"));
-        assert_eq!(capability_name(cap::KEYBOARD + 1), None);
+        assert_eq!(capability_name(cap::SOUND), Some("SOUND"));
+        assert_eq!(capability_name(cap::SOUND + 1), None);
     }
 
     #[test]

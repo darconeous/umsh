@@ -6,7 +6,7 @@ pub const CODEC: u8 = 0x18;
 pub const HAPTIC: u8 = 0x5a;
 pub const PERIOD_MS: u64 = 3_000;
 pub const PULSE_MS: u64 = 600;
-// Unity codec gain; the PCM generator retains approximately 12 dB of headroom.
+// Unity codec gain; the tones `umsh-sound` makes keep about 12 dB of headroom.
 // The ES8311 uses 0.5 dB steps relative to 0xbf (0 dB).
 pub const DAC_VOLUME: u8 = 0xbf;
 
@@ -103,38 +103,6 @@ impl<I: I2c> Haptic<I> {
     pub async fn sleep(&mut self) -> Result<(), I::Error> {
         self.play(false).await?;
         self.0.write(HAPTIC, &[0x01, 0x40]).await
-    }
-}
-
-/// Allocation-free 16 kHz sine oscillator, ~-12 dBFS, with a 5 ms
-/// envelope at both ends of each 150 ms note. Identical stereo samples.
-#[derive(Default)]
-pub struct ToneSamples {
-    phase: u32,
-}
-impl ToneSamples {
-    pub fn frame(&mut self, hz: u16, note_sample: u32) -> [u8; 4] {
-        const QUARTER: [i32; 17] = [
-            0, 803, 1598, 2378, 3135, 3862, 4551, 5197, 5793, 6333, 6811, 7225, 7568, 7839, 8035,
-            8153, 8192,
-        ];
-        if hz == 0 {
-            self.phase = 0;
-            return [0; 4];
-        }
-        let i = (self.phase >> 26) as usize;
-        let v = match i / 16 {
-            0 => QUARTER[i],
-            1 => QUARTER[32 - i],
-            2 => -QUARTER[i - 32],
-            _ => -QUARTER[64 - i],
-        };
-        self.phase = self
-            .phase
-            .wrapping_add(((u64::from(hz) << 32) / 16_000) as u32);
-        let envelope = note_sample.min(2399u32.saturating_sub(note_sample)).min(80) as i32;
-        let bytes = ((v * envelope / 80) as i16).to_le_bytes();
-        [bytes[0], bytes[1], bytes[0], bytes[1]]
     }
 }
 
@@ -248,39 +216,5 @@ mod tests {
             assert!(!bright(base + 600));
             assert!(!bright(base + 2999));
         }
-    }
-    #[test]
-    fn tones_have_the_requested_fundamental_at_16khz() {
-        for hz in [1900, 2600] {
-            let mut samples = ToneSamples::default();
-            let mut previous = 0i16;
-            let mut crossings = 0u16;
-            for _ in 0..16_000 {
-                let frame = samples.frame(hz, 1000);
-                let sample = i16::from_le_bytes([frame[0], frame[1]]);
-                if previous <= 0 && sample > 0 {
-                    crossings += 1;
-                }
-                previous = sample;
-            }
-            assert!(crossings.abs_diff(hz) <= 1, "{hz}: {crossings}");
-        }
-    }
-    #[test]
-    fn samples_are_stereo_bounded_and_ramped() {
-        let mut s = ToneSamples::default();
-        let mut peak = 0;
-        for i in 0..2400 {
-            let f = s.frame(2600, i);
-            assert_eq!(&f[..2], &f[2..]);
-            let v = i16::from_le_bytes([f[0], f[1]]).unsigned_abs();
-            peak = peak.max(v);
-            assert!(v <= 8192);
-            if i == 0 || i == 2399 {
-                assert_eq!(v, 0);
-            }
-        }
-        assert!(peak > 8000);
-        assert_eq!(s.frame(0, 100), [0; 4]);
     }
 }

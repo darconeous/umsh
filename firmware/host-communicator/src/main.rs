@@ -154,6 +154,12 @@ impl Backend {
                 input::events(app, now);
             }
         }
+        // There is nothing to play it on: what would sound is said.
+        if app.state().has_cue()
+            && let Some(cue) = app.state_mut().take_cue()
+        {
+            eprintln!("sound: {cue:?}");
+        }
     }
 
     /// Tab: the fixture's next message arrives. The node has none to give.

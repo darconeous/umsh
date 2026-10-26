@@ -48,6 +48,7 @@ mod setting;
 mod setup;
 mod share;
 mod share_contact;
+mod sounds;
 mod statistics;
 mod status;
 mod typing;

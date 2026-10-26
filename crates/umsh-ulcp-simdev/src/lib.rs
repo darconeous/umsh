@@ -933,6 +933,7 @@ mod tests {
                 timeout_s: 30,
             }),
             keyboard: true,
+            sound: true,
             illuminance: true,
             temperatures: true,
             ble: true,

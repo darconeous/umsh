@@ -5,6 +5,7 @@ use buoyant::primitives::Point;
 use buoyant::view::EditBuffer;
 use heapless::{String, Vec};
 pub use umsh_hal::tz::Rule;
+pub use umsh_sound::Cue;
 
 use crate::avatar::{AvatarStyle, BuiltinChannel, Title, channel_title};
 use crate::board::{Board, Metrics};
@@ -487,29 +488,59 @@ impl Default for ClockSettings {
     }
 }
 
-/// The screen's brightness levels, from 1 to this.
-pub const BRIGHTNESS_LEVELS: u8 = 10;
+/// The levels a setting set by level has, from 1 to this: the screen's
+/// brightness, and the volume.
+pub const LEVELS: u8 = 10;
 
-/// The level a brightness of `brightness`, from 0 to 255, is nearest.
+/// The level a setting's `value`, from 0 to 255, is nearest.
 #[must_use]
-pub const fn brightness_level(brightness: u8) -> u8 {
-    let steps = BRIGHTNESS_LEVELS as u16 - 1;
-    ((brightness as u16 * steps + 127) / 255) as u8 + 1
+pub const fn level_of(value: u8) -> u8 {
+    let steps = LEVELS as u16 - 1;
+    ((value as u16 * steps + 127) / 255) as u8 + 1
 }
 
-/// The brightness, from 0 to 255, of `level`, from 1 to
-/// [`BRIGHTNESS_LEVELS`].
+/// The value, from 0 to 255, of `level`, from 1 to [`LEVELS`].
 #[must_use]
-pub const fn brightness_at(level: u8) -> u8 {
-    let steps = BRIGHTNESS_LEVELS as u16 - 1;
+pub const fn value_at(level: u8) -> u8 {
+    let steps = LEVELS as u16 - 1;
     let level = if level < 1 {
         1
-    } else if level > BRIGHTNESS_LEVELS {
-        BRIGHTNESS_LEVELS
+    } else if level > LEVELS {
+        LEVELS
     } else {
         level
     };
     (((level as u16 - 1) * 255 + steps / 2) / steps) as u8
+}
+
+/// The level `value` is `steps` levels from, kept within [`LEVELS`].
+#[must_use]
+pub fn stepped(value: u8, steps: i8) -> u8 {
+    (i16::from(level_of(value)) + i16::from(steps)).clamp(1, i16::from(LEVELS)) as u8
+}
+
+/// The level a brightness of `brightness`, from 0 to 255, is nearest.
+#[must_use]
+pub const fn brightness_level(brightness: u8) -> u8 {
+    level_of(brightness)
+}
+
+/// The brightness, from 0 to 255, of `level`, from 1 to [`LEVELS`].
+#[must_use]
+pub const fn brightness_at(level: u8) -> u8 {
+    value_at(level)
+}
+
+/// The level a volume of `volume`, from 0 to 255, is nearest.
+#[must_use]
+pub const fn volume_level(volume: u8) -> u8 {
+    level_of(volume)
+}
+
+/// The volume, from 0 to 255, of `level`, from 1 to [`LEVELS`].
+#[must_use]
+pub const fn volume_at(level: u8) -> u8 {
+    value_at(level)
 }
 
 /// How long the screen stays lit without input, in seconds, until a
@@ -1107,6 +1138,8 @@ pub enum Setting {
     Gnss,
     Radio,
     AutoLock,
+    Sound,
+    Volume,
 }
 
 /// What changed in the node without the interface asking. An event names
@@ -1124,6 +1157,13 @@ pub enum NodeEvent {
     /// changes how its chat is listed, [`NodeEvent::ChatChanged`] says so
     /// too.
     MessageChanged {
+        chat: ChatId,
+        message: MessageId,
+    },
+    /// My `message` in `chat` became [`Delivery::Delivered`] or
+    /// [`Delivery::Unconfirmed`]: it changed, as
+    /// [`NodeEvent::MessageChanged`] says, and that is how it came out.
+    Settled {
         chat: ChatId,
         message: MessageId,
     },
@@ -1171,6 +1211,7 @@ impl NodeEvent {
             Self::Airtime { .. } => (10, 0),
             Self::Resync => (11, 0),
             Self::MeetChanged => (12, 0),
+            Self::Settled { message, .. } => (13, message),
         }
     }
 }
@@ -1535,6 +1576,18 @@ pub trait Node {
     fn gnss_enabled(&self) -> Option<bool>;
 
     fn set_gnss_enabled(&self, on: bool);
+
+    /// Whether the device plays its sounds. `None` where the board has
+    /// nothing to play them on.
+    fn sound_enabled(&self) -> Option<bool>;
+
+    fn set_sound_enabled(&self, on: bool);
+
+    /// How loud the device plays its sounds: 0 is the quietest that is
+    /// not silent, and 255 the loudest.
+    fn sound_volume(&self) -> u8;
+
+    fn set_sound_volume(&self, volume: u8);
 }
 
 /// At or below this charge, in percent, the battery is low.
@@ -1658,6 +1711,9 @@ pub struct State {
     pub board: &'static Board,
     /// The firmware's release tag, or its commit for a development build.
     pub firmware: &'static str,
+    /// The sound to play for what happened since the board last took one:
+    /// see [`State::take_cue`].
+    cue: Option<Cue>,
 }
 
 /// The wheel held down. What it presses is pressed when it comes back up,
@@ -1787,6 +1843,28 @@ impl State {
             meet: MeetState::default(),
             board,
             firmware: "",
+            cue: None,
+        }
+    }
+
+    /// The sound to play for what happened since this was last asked, if
+    /// anything did that makes one. Of several, only the one that matters
+    /// most is kept: a burst of messages sounds once.
+    pub fn take_cue(&mut self) -> Option<Cue> {
+        self.cue.take()
+    }
+
+    /// Whether a sound waits to be taken, which a board asks before taking
+    /// it: reaching into the state to take one rebuilds the view.
+    #[must_use]
+    pub const fn has_cue(&self) -> bool {
+        self.cue.is_some()
+    }
+
+    /// Plays `cue`, unless sounds are off.
+    pub(crate) fn chime(&mut self, cue: Cue) {
+        if self.node.sound_enabled() == Some(true) {
+            self.cue = Some(cue.over(self.cue));
         }
     }
 
@@ -1873,6 +1951,7 @@ impl State {
         if let Some(conversation) = self.conversation.as_mut().filter(|c| c.chat == chat) {
             conversation.sent = conversation.sent.wrapping_add(1);
         }
+        self.chime(Cue::Sent);
     }
 
     /// How long ago `chat` was last active, as its row says it.
@@ -1941,6 +2020,10 @@ impl State {
             // The transcript reads its messages from the node as it is
             // built, which this rebuilds; the details shown are read again.
             NodeEvent::MessageChanged { message, .. } => self.refresh_details(Some(message)),
+            NodeEvent::Settled { chat, message } => {
+                self.refresh_details(Some(message));
+                self.settled(chat, message);
+            }
             NodeEvent::ChatChanged(chat) => self.refresh_chat(chat),
             NodeEvent::ChatRemoved(chat) => self.remove_chat(chat),
             NodeEvent::IdentitiesLearned => self.identities_learned(),
@@ -2171,17 +2254,30 @@ impl State {
             return;
         }
         // The node shows it on its way again as soon as it is queued.
-        if without_secrecy {
-            self.node.retry_without_secrecy(chat, message);
+        let queued = if without_secrecy {
+            self.node.retry_without_secrecy(chat, message)
         } else {
-            self.node.retry(chat, message);
+            self.node.retry(chat, message)
+        };
+        if queued {
+            self.chime(Cue::Sent);
+        }
+    }
+
+    /// Sounds how my `message` in `chat` came out.
+    fn settled(&mut self, chat: ChatId, message: MessageId) {
+        match self.node.message(chat, message).map(|m| m.delivery) {
+            Some(Delivery::Delivered) => self.chime(Cue::Delivered),
+            Some(Delivery::Unconfirmed) => self.chime(Cue::Unconfirmed),
+            _ => {}
         }
     }
 
     /// Takes in `message`, which arrived in `chat` and is already kept by
     /// the node, at `now` on the board's clock. The chat moves to the top of
     /// the list. Returns whether the message calls for attention: it does
-    /// not while its chat is being read, or when the chat is muted.
+    /// not while its chat is being read, or when the chat is muted. It
+    /// sounds unless its chat is muted, quietly while it is being read.
     ///
     /// One that arrives while the panel is dark, or the interface locked,
     /// is listed on the lock screen, and locks the interface if the panel
@@ -2193,6 +2289,10 @@ impl State {
         let Some(message) = self.node.message(chat, message) else {
             self.refresh_chat(chat);
             return false;
+        };
+        let cue = match fresh.kind {
+            ChatKind::Channel { .. } => Cue::Channel,
+            ChatKind::Peer { .. } => Cue::Direct,
         };
         let reading = self.reading(chat);
         if reading {
@@ -2208,9 +2308,14 @@ impl State {
             self.list_arrival(chat, &message, now);
             self.lock();
         }
-        if reading || muted {
+        if muted {
             return false;
         }
+        if reading {
+            self.chime(Cue::InChat);
+            return false;
+        }
+        self.chime(cue);
         if !away && !matches!(self.screen(), Screen::Chats { .. }) {
             // The list shows it arrive; anywhere else, a banner does.
             self.banner = Some(Banner {
@@ -2385,10 +2490,17 @@ impl State {
     /// Moves the screen's brightness `steps` levels, more brightening, and
     /// returns the level it is at.
     pub fn step_brightness(&mut self, steps: i8) -> u8 {
-        let level = (i16::from(brightness_level(self.node.brightness())) + i16::from(steps))
-            .clamp(1, i16::from(BRIGHTNESS_LEVELS)) as u8;
+        let level = stepped(self.node.brightness(), steps);
         self.node.set_brightness(brightness_at(level));
         level
+    }
+
+    /// Changes the volume by `steps` levels, up louder, and plays a
+    /// direct message's sound at it.
+    pub fn step_volume(&mut self, steps: i8) {
+        let level = stepped(self.node.sound_volume(), steps);
+        self.node.set_sound_volume(volume_at(level));
+        self.chime(Cue::Direct);
     }
 
     /// Turns the screen's brightness by `detents` levels, and shows it:

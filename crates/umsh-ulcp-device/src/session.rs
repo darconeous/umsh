@@ -27,9 +27,9 @@ use umsh_ulcp::frame::{
 use umsh_ulcp::gnss::{self, GnssSnapshot};
 use umsh_ulcp::i2c::{self, BusInfo, DeviceInfo, ScanRequest, TransferRequest};
 use umsh_ulcp::ids::{
-    self, DEFAULT_ADVERT_INTERVAL_S, DEFAULT_BEACON_INTERVAL_S, MAX_AUTO_ANNOUNCE_INTERVAL_S,
-    MIN_AUTO_ANNOUNCE_INTERVAL_S, MIN_DISPLAY_TIMEOUT_S, admin_writable, cap, device_writable,
-    keyboard_aids, meshcore_region_policy, prop, stream,
+    self, DEFAULT_ADVERT_INTERVAL_S, DEFAULT_BEACON_INTERVAL_S, DEFAULT_SOUND_VOLUME,
+    MAX_AUTO_ANNOUNCE_INTERVAL_S, MIN_AUTO_ANNOUNCE_INTERVAL_S, MIN_DISPLAY_TIMEOUT_S,
+    admin_writable, cap, device_writable, keyboard_aids, meshcore_region_policy, prop, stream,
 };
 use umsh_ulcp::ip;
 use umsh_ulcp::items::{self, Filter, ItemError, REGION_CODE_LEN};
@@ -277,6 +277,11 @@ pub struct SessionConfig {
     /// `PROP_KEYBOARD_AIDS` exist, lit and with every aid on after a
     /// reset; otherwise both are unknown.
     pub keyboard: bool,
+    /// Whether the device has a sounder it plays optional sounds on. When
+    /// set, `CAP_SOUND` is advertised and `PROP_SOUND_ENABLED` and
+    /// `PROP_SOUND_VOLUME` exist, on and at `DEFAULT_SOUND_VOLUME` after a
+    /// reset; otherwise both are unknown.
+    pub sound: bool,
     /// Whether the device has a Bluetooth transport it can make
     /// unreachable on demand. When set, `CAP_BLE` is advertised and
     /// `PROP_BLE_ENABLED` and `PROP_BLE_LINK` exist; otherwise both
@@ -1144,6 +1149,10 @@ struct DeviceDomain {
     keyboard_light: bool,
     /// `PROP_KEYBOARD_AIDS`, holding only defined flags.
     keyboard_aids: u8,
+    /// `PROP_SOUND_ENABLED`. Meaningful only under [`Config::sound`].
+    sound_enabled: bool,
+    /// `PROP_SOUND_VOLUME`. Meaningful only under [`Config::sound`].
+    sound_volume: u8,
     /// `PROP_GNSS_IDENT_UPDATE`: whether fixes refresh the advertised node
     /// identity's location. Off by default: broadcasting where you are is
     /// a decision, not a default.
@@ -1233,6 +1242,8 @@ impl DeviceDomain {
             display_timeout: config.display.map_or(0, |d| d.timeout_s),
             keyboard_light: true,
             keyboard_aids: keyboard_aids::ALL,
+            sound_enabled: true,
+            sound_volume: DEFAULT_SOUND_VOLUME,
             gnss_ident_update: false,
             gnss_ident_precision: DEFAULT_IDENT_PRECISION,
             gnss_time_trust: true,
@@ -2504,6 +2515,8 @@ const SAVED_SCHEMA: &[SavedProperty] = &[
     saved(prop::TZ_RULE, ApplyPhase::Config, false),
     saved(prop::TIME_24H, ApplyPhase::Config, false),
     saved(prop::DISPLAY_TIMEOUT, ApplyPhase::Config, false),
+    saved(prop::SOUND_ENABLED, ApplyPhase::Config, false),
+    saved(prop::SOUND_VOLUME, ApplyPhase::Config, false),
     saved(prop::IPV4_CONFIG, ApplyPhase::Config, false),
     saved(prop::IPV6_CONFIG, ApplyPhase::Config, false),
     saved(prop::IP_DNS, ApplyPhase::Config, true),
@@ -2654,6 +2667,8 @@ struct SavedState {
     display_timeout: u16,
     keyboard_light: bool,
     keyboard_aids: u8,
+    sound_enabled: bool,
+    sound_volume: u8,
     gnss_ident_update: bool,
     gnss_ident_precision: u8,
     gnss_time_trust: bool,
@@ -2710,6 +2725,8 @@ impl SavedState {
             display_timeout: device.display_timeout,
             keyboard_light: device.keyboard_light,
             keyboard_aids: device.keyboard_aids,
+            sound_enabled: device.sound_enabled,
+            sound_volume: device.sound_volume,
             gnss_ident_update: device.gnss_ident_update,
             gnss_ident_precision: device.gnss_ident_precision,
             gnss_time_trust: device.gnss_time_trust,
@@ -2774,6 +2791,8 @@ impl SavedState {
             display_timeout: config.display.map_or(0, |d| d.timeout_s),
             keyboard_light: true,
             keyboard_aids: keyboard_aids::ALL,
+            sound_enabled: true,
+            sound_volume: DEFAULT_SOUND_VOLUME,
             gnss_ident_update: false,
             gnss_ident_precision: DEFAULT_IDENT_PRECISION,
             gnss_time_trust: true,
@@ -2919,6 +2938,8 @@ impl SavedState {
             prop::DISPLAY_TIMEOUT => encoder.put(number, &self.display_timeout.to_le_bytes()),
             prop::KEYBOARD_LIGHT => encoder.put(number, &[self.keyboard_light as u8]),
             prop::KEYBOARD_AIDS => encoder.put(number, &[self.keyboard_aids]),
+            prop::SOUND_ENABLED => encoder.put(number, &[self.sound_enabled as u8]),
+            prop::SOUND_VOLUME => encoder.put(number, &[self.sound_volume]),
             prop::PHY_DUTY_LIMIT => encoder.put(number, &self.duty_limit.to_le_bytes()),
             prop::DEV_ADMINS => {
                 for public_key in self.dev_admins.iter() {
@@ -3154,6 +3175,8 @@ impl SavedState {
                 self.display_timeout = parse_display_timeout(value).map_err(invalid)?
             }
             prop::KEYBOARD_LIGHT => self.keyboard_light = parse_bool(value).map_err(invalid)?,
+            prop::SOUND_ENABLED => self.sound_enabled = parse_bool(value).map_err(invalid)?,
+            prop::SOUND_VOLUME => self.sound_volume = parse_u8(value).map_err(invalid)?,
             // Aids a newer firmware saved are dropped, not the snapshot.
             prop::KEYBOARD_AIDS => {
                 self.keyboard_aids = parse_u8(value).map_err(invalid)? & keyboard_aids::ALL
@@ -4113,6 +4136,8 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                     prop::DISPLAY_TIMEOUT => self.device.display_timeout = saved.display_timeout,
                     prop::KEYBOARD_LIGHT => self.device.keyboard_light = saved.keyboard_light,
                     prop::KEYBOARD_AIDS => self.device.keyboard_aids = saved.keyboard_aids,
+                    prop::SOUND_ENABLED => self.device.sound_enabled = saved.sound_enabled,
+                    prop::SOUND_VOLUME => self.device.sound_volume = saved.sound_volume,
                     prop::PHY_DUTY_LIMIT => self.config.duty.set_limit(saved.duty_limit),
                     prop::TZ_RULE => self.device.tz_rule = saved.tz_rule.clone(),
                     prop::TIME_24H => self.device.time_24h = saved.time_24h,
@@ -5465,6 +5490,17 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     /// `PROP_KEYBOARD_LIGHT`; false on a board without a keyboard.
     pub fn keyboard_light(&self) -> bool {
         self.config.keyboard && self.device.keyboard_light
+    }
+
+    /// `PROP_SOUND_ENABLED`; false on a board without a sounder.
+    pub fn sound_enabled(&self) -> bool {
+        self.config.sound && self.device.sound_enabled
+    }
+
+    /// `PROP_SOUND_VOLUME`, 255 the loudest; `None` on a board without a
+    /// sounder.
+    pub fn sound_volume(&self) -> Option<u8> {
+        self.config.sound.then_some(self.device.sound_volume)
     }
 
     /// `PROP_KEYBOARD_AIDS`, as [`keyboard_aids`] flags; none on a board
@@ -7587,6 +7623,16 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                 self.bump_dev_domain();
                 Ok(false)
             }
+            prop::SOUND_ENABLED if self.config.sound => {
+                self.device.sound_enabled = parse_bool(value)?;
+                self.bump_dev_domain();
+                Ok(false)
+            }
+            prop::SOUND_VOLUME if self.config.sound => {
+                self.device.sound_volume = parse_u8(value)?;
+                self.bump_dev_domain();
+                Ok(false)
+            }
             prop::KEYBOARD_AIDS if self.config.keyboard => {
                 self.device.keyboard_aids = parse_keyboard_aids(value)?;
                 self.bump_dev_domain();
@@ -8439,6 +8485,9 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         if matches!(key, prop::KEYBOARD_LIGHT | prop::KEYBOARD_AIDS) {
             return self.config.keyboard;
         }
+        if matches!(key, prop::SOUND_ENABLED | prop::SOUND_VOLUME) {
+            return self.config.sound;
+        }
         if matches!(key, prop::TEMPERATURES | prop::TEMPERATURE_NAMES) {
             return self.config.temperatures;
         }
@@ -8623,6 +8672,9 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                 }
                 if self.config.keyboard {
                     len += pui::encode(cap::KEYBOARD, &mut out[len..]).unwrap_or(0);
+                }
+                if self.config.sound {
+                    len += pui::encode(cap::SOUND, &mut out[len..]).unwrap_or(0);
                 }
                 if self.config.temperatures {
                     len += pui::encode(cap::TEMPERATURE, &mut out[len..]).unwrap_or(0);
@@ -8825,6 +8877,14 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             }
             prop::KEYBOARD_LIGHT if self.config.keyboard => {
                 out[0] = self.device.keyboard_light as u8;
+                1
+            }
+            prop::SOUND_ENABLED if self.config.sound => {
+                out[0] = self.device.sound_enabled as u8;
+                1
+            }
+            prop::SOUND_VOLUME if self.config.sound => {
+                out[0] = self.device.sound_volume;
                 1
             }
             prop::KEYBOARD_AIDS if self.config.keyboard => {
@@ -9605,6 +9665,7 @@ mod tests {
             display_motion_wake: false,
             display: None,
             keyboard: false,
+            sound: false,
             illuminance: true,
             temperatures: false,
             ble: true,
@@ -9796,6 +9857,56 @@ mod tests {
             prop::KEYBOARD_LIGHT,
             prop::KEYBOARD_AIDS,
         ] {
+            let (emitted, _) = set(&mut bare, key, &[1]);
+            let (_, _, value) = parse_prop_is(&emitted[0]);
+            assert_eq!(pui::decode(&value).unwrap().0, Status::PROP_NOT_FOUND.0);
+        }
+    }
+
+    #[test]
+    fn sound_is_a_saved_device_setting() {
+        let config = SessionConfig {
+            sound: true,
+            ..test_config()
+        };
+        let mut session = Session::new(config, Status::RESET_POWER_ON, test_engine());
+        session.attach(true);
+        assert!(get(&mut session, prop::CAPS).contains(&(cap::SOUND as u8)));
+        assert_eq!(get(&mut session, prop::SOUND_ENABLED), [1]);
+        assert!(session.sound_enabled());
+
+        assert_eq!(
+            get(&mut session, prop::SOUND_VOLUME),
+            [DEFAULT_SOUND_VOLUME]
+        );
+
+        set(&mut session, prop::SOUND_ENABLED, &[0]);
+        assert!(!session.sound_enabled());
+        assert_eq!(get(&mut session, prop::SOUND_ENABLED), [0]);
+        set(&mut session, prop::SOUND_VOLUME, &[40]);
+        assert_eq!(session.sound_volume(), Some(40));
+
+        save(&mut session);
+        let mut bytes = [0; SNAPSHOT_MAX];
+        let len = session.encode_snapshot(&mut bytes).unwrap();
+        let mut booted: TestSession = Session::new(config, Status::RESET_POWER_ON, test_engine());
+        booted.restore_at_boot(&bytes[..len]).unwrap();
+        assert!(!booted.sound_enabled());
+        assert_eq!(booted.sound_volume(), Some(40));
+        booted.reset(Status::RESET_SOFTWARE, &mut |_| {});
+        assert!(!booted.sound_enabled());
+
+        // A snapshot from before they existed restores the defaults.
+        let old = strip_snapshot_options(&bytes[..len], &[prop::SOUND_ENABLED, prop::SOUND_VOLUME]);
+        booted.restore_at_boot(&old).unwrap();
+        assert!(booted.sound_enabled());
+        assert_eq!(booted.sound_volume(), Some(DEFAULT_SOUND_VOLUME));
+
+        let mut bare = test_session();
+        assert!(!bare.sound_enabled());
+        assert_eq!(bare.sound_volume(), None);
+        assert!(!get(&mut bare, prop::CAPS).contains(&(cap::SOUND as u8)));
+        for key in [prop::SOUND_ENABLED, prop::SOUND_VOLUME] {
             let (emitted, _) = set(&mut bare, key, &[1]);
             let (_, _, value) = parse_prop_is(&emitted[0]);
             assert_eq!(pui::decode(&value).unwrap().0, Status::PROP_NOT_FOUND.0);

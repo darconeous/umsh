@@ -39,6 +39,7 @@ umsh-ulcp = { path = "../umsh-ulcp", optional = true }
 umsh-hal = { path = "../umsh-hal", default-features = false }
 umsh-grapheme = { path = "../umsh-grapheme" }
 umsh-emoji = { path = "../umsh-emoji" }
+umsh-sound = { path = "../umsh-sound" }
 
 [dev-dependencies]
 # The tests drive the fixture's chats.

@@ -1,17 +1,28 @@
-//! Board presentation of the session-owned locate alert.
+//! Board presentation of the session-owned locate alert, and the sounds
+//! the communicator plays, on the codec, the amplifier, and the haptic
+//! driver.
 use super::*;
-use esp_hal::{dma::DmaTxStreamBuf, rtc_cntl::WakeLock};
+use crate::audio_stream::{self, Request, Stream};
+use esp_hal::rtc_cntl::WakeLock;
 use umsh_pager_peripherals::{
-    alert::{Codec, Haptic, PERIOD_MS, PULSE_MS, ToneSamples},
+    alert::{Codec, Haptic, PERIOD_MS, PULSE_MS},
     power::{AMPLIFIER_ENABLE, HAPTIC_ENABLE},
 };
-use umsh_ux_tracker::buzzer::{BuzzerDecision, BuzzerEngine, melodies};
+use umsh_sound::{Level, Player, Sound, Wave, melodies};
 
-// The display's first redraw can starve a 40 ms stream. Keep enough queued
-// audio for that CPU work, while leaving room for a ramp/tail inside 250 ms.
+/// How long the stream buffer holds, in milliseconds: how long after the
+/// alert stops it is still being heard.
 const BUFFER_MS: u64 = 128;
+/// Silence after the codec is unmuted and the amplifier enabled, before
+/// the first note. Powered up from cold, the ES8311's analog path and the
+/// NS4150B are not yet heard when the buffer's own silence has played out:
+/// the start of a sound was lost without this. Tuned by ear on the bench.
+const WARM_UP_MS: u32 = 250;
 
 static ACTIVE: AtomicBool = AtomicBool::new(false);
+/// A sound other than the alert is under way.
+static CHIMING: AtomicBool = AtomicBool::new(false);
+static PLAY: Signal<CriticalSectionRawMutex, Request> = Signal::new();
 static BRIGHT: AtomicBool = AtomicBool::new(false);
 static STOPPING: AtomicBool = AtomicBool::new(false);
 static CHANGED: Signal<CriticalSectionRawMutex, ()> = Signal::new();
@@ -44,6 +55,17 @@ pub fn set(active: bool) {
 }
 pub fn cancel() {
     CANCEL.signal(());
+}
+/// Plays `request` once on the speaker. An alert under way has the
+/// speaker; the sound is dropped.
+pub fn play(request: Request) {
+    if !active() && !STOPPING.load(Ordering::Acquire) {
+        PLAY.signal(request);
+    }
+}
+/// Whether the speaker is wanted: for the alert, or for a sound.
+fn sounding() -> bool {
+    active() || CHIMING.load(Ordering::Acquire)
 }
 /// One short haptic buzz, for something that calls for attention without an
 /// alert. An alert under way already has the motor; the tick is dropped.
@@ -82,7 +104,7 @@ async fn enable(expander: &'static board::SharedExpander, mask: u16, on: bool) -
         with_timeout(Duration::from_millis(100), async {
             let mut expander = expander.lock().await;
             // A control change may have arrived while acquiring the bus owner.
-            expander.set(mask, on && active()).await
+            expander.set(mask, on && sounding()).await
         })
         .await,
         Ok(Ok(()))
@@ -184,6 +206,82 @@ async fn cleanup(
     }
 }
 
+/// Plays `request` once: the codec and the amplifier up, the sound out, and
+/// both down again. An alert that starts takes the speaker: the sound is
+/// cut short and the session ends, for the alert's own to begin.
+#[allow(clippy::too_many_arguments)]
+async fn chime(
+    request: Request,
+    codec: &mut Codec<board::I2cHandle>,
+    expander: &'static board::SharedExpander,
+    buffer: &mut Option<esp_hal::dma::DmaTxStreamBuf>,
+    i2s: &mut peripherals::I2S0<'static>,
+    dma: &mut peripherals::DMA_CH1<'static>,
+    mclk: &mut peripherals::GPIO10<'static>,
+    bclk: &mut peripherals::GPIO11<'static>,
+    ws: &mut peripherals::GPIO18<'static>,
+    dout: &mut peripherals::GPIO45<'static>,
+) {
+    let mut player = Player::new();
+    player.set_volume(request.volume);
+    if !player.play_choice(request.choice) {
+        return;
+    }
+    let _guard = WakeLock::new();
+    CHIMING.store(true, Ordering::Release);
+    let mut transfer = None;
+    if codec_init(codec).await {
+        let tx = board::audio::transmitter(
+            i2s.reborrow(),
+            dma.reborrow(),
+            mclk.reborrow(),
+            bclk.reborrow(),
+            ws.reborrow(),
+            dout.reborrow(),
+        );
+        match audio_stream::start(tx, buffer.take().unwrap()) {
+            Ok(t) => transfer = Some(t),
+            Err(returned) => {
+                debug_log(format_args!("pager: sound DMA start failed"));
+                *buffer = Some(returned);
+            }
+        }
+    } else {
+        debug_log(format_args!("pager: sound codec initialization failed"));
+    }
+    if let Some(t) = transfer.as_mut() {
+        if codec_mute(codec, false).await && enable(expander, AMPLIFIER_ENABLE, true).await {
+            let mut stream = Stream::after(WARM_UP_MS);
+            loop {
+                if active() {
+                    stream.cut();
+                }
+                stream.fill(t, &mut player);
+                if stream.drained() || STOPPING.load(Ordering::Acquire) {
+                    break;
+                }
+                if let Either::Second(Err(error)) =
+                    select(CHANGED.wait(), t.wait_for_available_async()).await
+                {
+                    debug_log(format_args!("pager: sound DMA failed: {error:?}"));
+                    break;
+                }
+            }
+        } else {
+            debug_log(format_args!("pager: sound amplifier/unmute failed"));
+        }
+    }
+    let _ = codec_mute(codec, true).await;
+    CHIMING.store(false, Ordering::Release);
+    if !enable(expander, AMPLIFIER_ENABLE, false).await {
+        debug_log(format_args!("pager: sound amplifier cleanup failed"));
+    }
+    if let Some(t) = transfer.take() {
+        *buffer = Some(audio_stream::finish(t));
+    }
+    codec_sleep(codec).await;
+}
+
 // Keep task construction out of the already large board bring-up frame.
 #[inline(never)]
 pub fn spawn(
@@ -212,8 +310,7 @@ pub async fn task(
     mut ws: peripherals::GPIO18<'static>,
     mut dout: peripherals::GPIO45<'static>,
 ) {
-    // Four 32 ms descriptors in static internal RAM.
-    let mut buffer = Some(esp_hal::dma_tx_stream_buffer!(8192, 2048));
+    let mut buffer = Some(audio_stream::stream_buffer!());
     let mut codec = Codec(I2cDevice::new(bus));
     let mut haptic = Haptic(I2cDevice::new(bus));
     loop {
@@ -222,11 +319,28 @@ pub async fn task(
                 STOPPED.signal(());
                 return;
             }
-            if let Either::Second(()) = select(CHANGED.wait(), TICK.wait()).await {
-                tick_buzz(expander, &mut haptic).await;
+            match select3(CHANGED.wait(), TICK.wait(), PLAY.wait()).await {
+                Either3::First(()) => {}
+                Either3::Second(()) => tick_buzz(expander, &mut haptic).await,
+                Either3::Third(request) => {
+                    chime(
+                        request,
+                        &mut codec,
+                        expander,
+                        &mut buffer,
+                        &mut i2s,
+                        &mut dma,
+                        &mut mclk,
+                        &mut bclk,
+                        &mut ws,
+                        &mut dout,
+                    )
+                    .await
+                }
             }
         }
         TICK.reset();
+        PLAY.reset();
         let guard = WakeLock::new();
         let mut haptic_ok =
             enable(expander, HAPTIC_ENABLE, true).await && haptic_init(&mut haptic).await;
@@ -248,16 +362,10 @@ pub async fn task(
                 ws.reborrow(),
                 dout.reborrow(),
             );
-            let mut tx_buffer = buffer.take().unwrap();
-            tx_buffer.push_with(|bytes| {
-                bytes.fill(0);
-                bytes.len()
-            });
-            match tx.write(tx_buffer) {
+            match audio_stream::start(tx, buffer.take().unwrap()) {
                 Ok(t) => Some(t),
-                Err((_, tx, returned)) => {
+                Err(returned) => {
                     debug_log(format_args!("pager: alert DMA start failed"));
-                    drop(tx);
                     buffer = Some(returned);
                     audio_ok = false;
                     None
@@ -266,7 +374,9 @@ pub async fn task(
         } else {
             None
         };
-        let origin = Instant::now().as_millis() + BUFFER_MS;
+        // The flash and the motor keep step with the first warble, which
+        // follows the buffer's silence and the warm-up.
+        let origin = Instant::now().as_millis() + BUFFER_MS + u64::from(WARM_UP_MS);
         if audio_ok && active() {
             audio_ok = codec_mute(&mut codec, false).await
                 && enable(expander, AMPLIFIER_ENABLE, true).await;
@@ -280,26 +390,25 @@ pub async fn task(
         }
         if !audio_ok {
             if let Some(t) = transfer.take() {
-                let (tx, returned) = t.stop();
-                drop(tx);
-                buffer = Some(returned);
+                buffer = Some(audio_stream::finish(t));
             }
             codec_sleep(&mut codec).await;
         }
-        let mut engine = BuzzerEngine::new();
-        engine.play_alert(&melodies::LOCATE, origin, PERIOD_MS);
-        let mut samples = ToneSamples::default();
-        let mut frames = 0u64;
+        // The first frame after the prefill is the alert's first.
+        let mut player = Player::new();
+        player.play_every(
+            &Sound::Tones(melodies::LOCATE.notes, Wave::Sine),
+            Level::Full,
+            PERIOD_MS as u32,
+        );
+        let mut stream = Stream::after(WARM_UP_MS);
         let mut haptic_on = false;
         let mut stopping_at = None;
-        let mut tail_frames = 0u32;
-        let mut last_sample = 0i16;
-        let mut tail_sample = 0i16;
         loop {
             let now = Instant::now().as_millis();
             if !active() && stopping_at.is_none() {
                 stopping_at = Some(now + BUFFER_MS + 20);
-                tail_sample = last_sample;
+                stream.cut();
                 phase(false);
                 if haptic_ok {
                     let _ = haptic_play(&mut haptic, false).await;
@@ -323,34 +432,7 @@ pub async fn task(
                 }
             }
             if let Some(t) = transfer.as_mut() {
-                while t.available_bytes() > 0 {
-                    let n = t.push_with(|bytes| {
-                        for frame in bytes.chunks_exact_mut(4) {
-                            let data = if stopping_at.is_some() {
-                                let gain = 80u32.saturating_sub(tail_frames);
-                                tail_frames = tail_frames.saturating_add(1);
-                                let v = (i32::from(tail_sample) * gain as i32 / 80) as i16;
-                                let b = v.to_le_bytes();
-                                [b[0], b[1], b[0], b[1]]
-                            } else {
-                                let hz = match engine.tick(origin + frames / 16) {
-                                    BuzzerDecision::Tone { frequency_hz, .. } if audio_ok => {
-                                        frequency_hz
-                                    }
-                                    _ => 0,
-                                };
-                                samples.frame(hz, (frames % 2400) as u32)
-                            };
-                            last_sample = i16::from_le_bytes([data[0], data[1]]);
-                            frame.copy_from_slice(&data);
-                            frames += 1;
-                        }
-                        bytes.len() / 4 * 4
-                    });
-                    if n == 0 {
-                        break;
-                    }
-                }
+                stream.fill(t, &mut player);
             }
             let deadline = stopping_at.unwrap_or_else(|| {
                 if now < origin {
@@ -378,16 +460,10 @@ pub async fn task(
             .await
             {
                 Either3::Third(Err(error)) => {
-                    println!(
-                        "pager: alert DMA failed: {error:?} at {elapsed} ms, generated {} frames",
-                        frames
-                    );
-                    audio_ok = false;
+                    println!("pager: alert DMA failed: {error:?} at {elapsed} ms");
                     let _ = enable(expander, AMPLIFIER_ENABLE, false).await;
                     if let Some(t) = transfer.take() {
-                        let (tx, returned) = t.stop();
-                        drop(tx);
-                        buffer = Some(returned);
+                        buffer = Some(audio_stream::finish(t));
                     }
                     codec_sleep(&mut codec).await;
                 }
@@ -399,16 +475,9 @@ pub async fn task(
         let _ = codec_mute(&mut codec, true).await;
         let _ = enable(expander, AMPLIFIER_ENABLE, false).await;
         if let Some(t) = transfer.take() {
-            let (tx, returned) = t.stop();
-            drop(tx);
-            buffer = Some(returned);
+            buffer = Some(audio_stream::finish(t));
         }
-        drop(transfer);
-        engine.stop_alert();
         cleanup(&mut codec, &mut haptic, expander).await;
-        // A stopped streaming buffer retains its prefill cursor. Reconstruct it.
-        let (descriptors, bytes) = buffer.take().unwrap().split();
-        buffer = Some(DmaTxStreamBuf::new(descriptors, bytes).expect("same Pager audio buffer"));
         phase(false);
         drop(guard);
     }

@@ -16,7 +16,7 @@ use super::setting::{End, row};
 use super::{label, line};
 use crate::board::{Board, Metrics};
 use crate::keyboard::Field;
-use crate::model::{BRIGHTNESS_LEVELS, Glance, KeyboardSettings, State};
+use crate::model::{Glance, KeyboardSettings, LEVELS, State};
 use crate::nav::{PowerText, keys};
 use crate::picker::{COLUMNS, FILTER, ROWS, Shown, TABS, Tab};
 use crate::{font, icon, theme};
@@ -347,7 +347,7 @@ fn level_bar(level: u8) -> impl View<Rgb565, State> + use<> {
             })
             .frame_sized(14, 12)
     };
-    const _: () = assert!(BRIGHTNESS_LEVELS == 10);
+    const _: () = assert!(LEVELS == 10);
     HStack::new((
         step(0),
         step(1),

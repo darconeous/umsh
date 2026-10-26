@@ -170,8 +170,10 @@ pub mod melodies {
         },
     ]);
 
-    /// A direct message was taken in for a host that is not here: a
-    /// four-note run up E-G-B to C, about a fifth of a second all told.
+    /// A direct message arrived: a four-note run up E-G-B to C, about a
+    /// fifth of a second all told. A tracker plays it when the message is
+    /// taken in for a host that is not here, a communicator when it is
+    /// shown.
     ///
     /// Lifted from MeshCore, whose companion firmware plays it for the
     /// same event—`MsgRcv3:d=4,o=6,b=200:32e,32g,32b,16c7` in RTTTL,
@@ -198,8 +200,9 @@ pub mod melodies {
         },
     ]);
 
-    /// Group traffic was taken in for an absent host: two notes falling
-    /// G-sharp to C-sharp, an eighth of a second.
+    /// Group traffic arrived: two notes falling G-sharp to C-sharp, an
+    /// eighth of a second. A tracker plays it for traffic taken in for an
+    /// absent host, a communicator for a channel message.
     ///
     /// MeshCore's again—`kerplop:d=16,o=6,b=120:32g#,32c#`, what it
     /// plays for a channel message. Told apart from [`QUEUED_DIRECT`]
@@ -215,6 +218,47 @@ pub mod melodies {
         Tone {
             frequency_hz: 1_109,
             duration: Duration::from_millis(63),
+        },
+    ]);
+
+    /// A message arrived in the conversation being read: one short pip,
+    /// meant to be played quietly. The reader is looking at it already,
+    /// so this only says that it came in.
+    pub static IN_CHAT: Melody = Melody::new(&[Tone {
+        frequency_hz: 1_568,
+        duration: Duration::from_millis(30),
+    }]);
+
+    /// A message was handed to the radio: one short pip, meant to be
+    /// played quietly. It says the send was taken, not that anyone
+    /// received it—[`DELIVERED`] says that.
+    pub static SENT: Melody = Melody::new(&[Tone {
+        frequency_hz: 1_319,
+        duration: Duration::from_millis(30),
+    }]);
+
+    /// A message was acknowledged by the peer it was sent to: one low,
+    /// short note, meant to be played quietly. Good news that needs no
+    /// attention should sound like a soft thump, not a chime.
+    pub static DELIVERED: Melody = Melody::new(&[Tone {
+        frequency_hz: 349,
+        duration: Duration::from_millis(60),
+    }]);
+
+    /// A message went unconfirmed: two short pulses of a low A, meant to
+    /// be played as a square wave—a buzz, unlike any arrival.
+    pub static UNCONFIRMED: Melody = Melody::new(&[
+        Tone {
+            frequency_hz: 110,
+            duration: Duration::from_millis(70),
+        },
+        Tone {
+            frequency_hz: 0,
+            duration: Duration::from_millis(60),
+        },
+        Tone {
+            frequency_hz: 110,
+            duration: Duration::from_millis(70),
         },
     ]);
 

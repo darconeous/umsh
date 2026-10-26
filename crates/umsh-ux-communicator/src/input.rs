@@ -411,7 +411,10 @@ where
             }
             // A part of the date and time being changed takes the turn,
             // and so does the brightness being set.
-            if app.state_mut().turn_set_time(detents) || app.state_mut().turn_brightness(detents) {
+            if app.state_mut().turn_set_time(detents)
+                || app.state_mut().turn_brightness(detents)
+                || app.state_mut().turn_volume(detents)
+            {
                 return;
             }
             // Turning while the wheel is down lets go of the press.
@@ -515,6 +518,14 @@ where
     // The brightness being set: up and right brighten, down and left dim.
     if state.adjusting_brightness() {
         state.step_brightness(match direction {
+            Arrow::Up | Arrow::Right => 1,
+            Arrow::Down | Arrow::Left => -1,
+        });
+        return;
+    }
+    // The volume being set: up and right louder, down and left quieter.
+    if state.adjusting_volume() {
+        state.step_volume(match direction {
             Arrow::Up | Arrow::Right => 1,
             Arrow::Down | Arrow::Left => -1,
         });

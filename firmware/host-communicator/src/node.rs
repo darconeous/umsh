@@ -103,6 +103,7 @@ fn config() -> SessionConfig {
             timeout_s: DEFAULT_AUTO_LOCK_S,
         }),
         keyboard: true,
+        sound: true,
         illuminance: false,
         temperatures: false,
         ble: false,

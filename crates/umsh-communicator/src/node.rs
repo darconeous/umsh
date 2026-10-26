@@ -796,6 +796,24 @@ impl<P: LocalPort, S: ChatStore> Node for CommunicatorNode<P, S> {
         self.change(Setting::Pairing, |settings| settings.set_pairing(open));
     }
 
+    fn sound_enabled(&self) -> Option<bool> {
+        self.settings.borrow().sound_enabled()
+    }
+
+    fn set_sound_enabled(&self, on: bool) {
+        self.change(Setting::Sound, |settings| settings.set_sound_enabled(on));
+    }
+
+    fn sound_volume(&self) -> u8 {
+        self.settings.borrow().sound_volume()
+    }
+
+    fn set_sound_volume(&self, volume: u8) {
+        self.change(Setting::Volume, |settings| {
+            settings.set_sound_volume(volume)
+        });
+    }
+
     fn clear_pairings(&self) {
         self.change(Setting::Pairing, Settings::clear_pairings);
     }

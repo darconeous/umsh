@@ -20,6 +20,7 @@ use crate::model::{
 };
 
 use crate::text::SharedText;
+use umsh_sound::Cue;
 
 /// What a joined channel is to be called here, as it is edited.
 pub type JoinName = EditBuffer<String<32>>;
@@ -157,6 +158,7 @@ pub mod keys {
     pub const BATTERY: FocusKey = FocusKey(DEVICE | 11);
     pub const STATISTICS: FocusKey = FocusKey(DEVICE | 12);
     pub const ABOUT: FocusKey = FocusKey(DEVICE | 13);
+    pub const SOUNDS: FocusKey = FocusKey(DEVICE | 14);
     /// A Device screen with nothing in it to focus, as a whole: turning
     /// scrolls it.
     pub const READING: FocusKey = FocusKey(0x2800_0000);
@@ -174,6 +176,9 @@ pub mod keys {
     pub const CLEAR_PAIRINGS_CANCEL: FocusKey = FocusKey(0x1E00_0007);
     /// The GNSS screen's switch.
     pub const GNSS_ENABLED: FocusKey = FocusKey(0x1F00_0000);
+    /// The Sounds screen's rows, in order.
+    pub const SOUNDS_ENABLED: FocusKey = FocusKey(0x2A00_0000);
+    pub const VOLUME: FocusKey = FocusKey(0x2A00_0001);
     /// The Clock screen's rows, in order.
     pub const CLOCK_AUTOMATIC: FocusKey = FocusKey(0x1A00_0000);
     pub const CLOCK_TIME: FocusKey = FocusKey(0x1A00_0001);
@@ -459,6 +464,9 @@ pub enum DevicePage {
     Gnss,
     /// The battery's readings.
     Battery,
+    /// Whether the device plays sounds, and how loud; while `adjusting`,
+    /// turning changes the volume.
+    Sounds { adjusting: bool },
     /// The screen's settings; while `adjusting`, turning changes the
     /// brightness.
     Display { adjusting: bool },
@@ -953,6 +961,7 @@ impl State {
         summary.preview(&message);
         summary.last_activity = message.time;
         _ = self.chats.insert(0, summary);
+        self.chime(Cue::Sent);
         self.go_to_chat(chat);
     }
 
@@ -1279,6 +1288,55 @@ impl State {
         }
     }
 
+    /// Shows whether the device plays sounds, its switch focused.
+    pub fn open_sounds(&mut self) {
+        _ = self.screens.push(Screen::Device {
+            page: DevicePage::Sounds { adjusting: false },
+            focus: FocusState::requesting(keys::SOUNDS_ENABLED),
+        });
+    }
+
+    /// Volume was pressed: turning starts or stops changing it.
+    pub fn press_volume(&mut self) {
+        if let Some(Screen::Device {
+            page: DevicePage::Sounds { adjusting },
+            ..
+        }) = self.screens.last_mut()
+        {
+            *adjusting = !*adjusting;
+        }
+    }
+
+    /// Whether turning changes the volume: it was pressed, and is still
+    /// focused.
+    #[must_use]
+    pub fn adjusting_volume(&self) -> bool {
+        matches!(
+            self.screen(),
+            Screen::Device {
+                page: DevicePage::Sounds { adjusting: true },
+                focus,
+            } if focus.current() == Some(keys::VOLUME)
+        )
+    }
+
+    /// The wheel turned `detents` while the volume is being changed:
+    /// changes it, turned up louder, and returns whether it did.
+    pub fn turn_volume(&mut self, detents: i8) -> bool {
+        if !self.adjusting_volume() {
+            return false;
+        }
+        self.step_volume(detents.saturating_neg());
+        true
+    }
+
+    pub fn toggle_sound(&mut self) {
+        if let Some(on) = self.node.sound_enabled() {
+            self.node.set_sound_enabled(!on);
+            self.status.silent = on;
+        }
+    }
+
     /// Shows the battery's readings.
     pub fn open_battery(&mut self) {
         _ = self.screens.push(Screen::Device {
@@ -1388,6 +1446,7 @@ impl State {
     pub(crate) fn refresh_settings(&mut self) {
         let node = self.node;
         self.status.device_name = node.device_name();
+        self.status.silent = node.sound_enabled() == Some(false);
         self.clock = node.clock();
         for screen in &mut self.screens {
             match screen {

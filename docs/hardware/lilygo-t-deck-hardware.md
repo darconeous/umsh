@@ -700,6 +700,12 @@ Meshtastic's `DAC_I2S_MCLK 21 // GPIO lrck mic` collides with the ES7210's
 LRCK and is not used by the amplifier. The speaker key on the keyboard is just
 the `$` key.
 
+The firmware plays the communicator's sounds on I2S0 and DMA channel 1, at
+16 kHz, 16-bit stereo, with no MCLK. With no control line, the amplifier is
+silenced by stopping the I2S clocks: the transmitter is dropped between
+sounds. Its level is the amplifier's fixed gain applied to tones at about
+−12 dBFS; how loud that is on the fitted speaker has not been measured.
+
 ## 14. MicroSD
 
 CS GPIO39 on the shared bus (§6), card supply on V3V, 22 Ω series resistors on

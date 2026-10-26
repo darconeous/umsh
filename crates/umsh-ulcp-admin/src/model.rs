@@ -1102,6 +1102,24 @@ impl Model {
         self.set(prop::KEYBOARD_LIGHT, &[u8::from(lit)])
     }
 
+    /// `PROP_SOUND_ENABLED`.
+    pub fn sound_enabled(&self) -> Option<bool> {
+        self.bool(prop::SOUND_ENABLED)
+    }
+
+    pub fn set_sound_enabled(&mut self, enabled: bool) -> Result<WriteId, Refusal> {
+        self.set(prop::SOUND_ENABLED, &[u8::from(enabled)])
+    }
+
+    /// `PROP_SOUND_VOLUME`, 255 the loudest.
+    pub fn sound_volume(&self) -> Option<u8> {
+        self.u8(prop::SOUND_VOLUME)
+    }
+
+    pub fn set_sound_volume(&mut self, volume: u8) -> Result<WriteId, Refusal> {
+        self.set(prop::SOUND_VOLUME, &[volume])
+    }
+
     /// `PROP_KEYBOARD_AIDS`, as [`umsh_ulcp::ids::keyboard_aids`] flags.
     pub fn keyboard_aids(&self) -> Option<u8> {
         self.u8(prop::KEYBOARD_AIDS)

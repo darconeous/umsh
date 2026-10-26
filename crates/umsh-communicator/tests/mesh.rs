@@ -207,16 +207,30 @@ async fn a_direct_message_is_delivered() {
                 .send(chat.id, "Meet at the ridge", None, false)
                 .unwrap();
             let mut arrived = None;
+            let settled = NodeEvent::Settled {
+                chat: chat.id,
+                message: sent.id,
+            };
+            let mut settlings = 0;
             until("the message was not delivered", || {
                 while let Some(event) = bob.node.next_event() {
                     if let NodeEvent::Arrived { chat, message } = event {
                         arrived = Some((chat, message));
                     }
                 }
+                while let Some(event) = alice.node.next_event() {
+                    settlings += usize::from(event == settled);
+                }
                 let delivery = alice.node.message(chat.id, sent.id).unwrap().delivery;
                 arrived.is_some() && delivery == Delivery::Delivered
             })
             .await;
+            // Its acknowledgment is announced as how it came out, once.
+            tokio::time::sleep(Duration::from_millis(200)).await;
+            while let Some(event) = alice.node.next_event() {
+                settlings += usize::from(event == settled);
+            }
+            assert_eq!(settlings, 1);
             let latest = alice.node.latest_sent(chat.id);
             assert_eq!(latest.sent, Some(sent.id));
             assert_eq!(latest.delivered, Some(sent.id));
@@ -240,6 +254,54 @@ async fn a_direct_message_is_delivered() {
                 answered && delivery == Delivery::Delivered
             })
             .await;
+        })
+        .await;
+}
+
+/// A message too long for one frame is announced as having come out once,
+/// when its last fragment is acknowledged, not as each one is.
+#[tokio::test(flavor = "current_thread")]
+async fn a_long_message_settles_once_all_of_it_is_acknowledged() {
+    LocalSet::new()
+        .run_until(async {
+            let network = SimulatedNetwork::new();
+            let near = network.add_radio_with_config(255, 20);
+            let far = network.add_radio_with_config(255, 20);
+            network.connect_bidirectional(near.id(), far.id());
+            let alice = board(near, [0x11; 32]).await;
+            let bob = board(far, [0x22; 32]).await;
+
+            let chat = alice
+                .node
+                .direct_chat(&address(&bob.key), "Bob", &alice.node.avatar())
+                .unwrap();
+            while alice.node.next_event().is_some() {}
+            let text = "Meet at the ridge, then the saddle, then down the far side. ".repeat(8);
+            let sent = alice.node.send(chat.id, &text, None, false).unwrap();
+            let settled = NodeEvent::Settled {
+                chat: chat.id,
+                message: sent.id,
+            };
+            let mut settlings = 0;
+            let mut changes = 0;
+            until("the message was not delivered", || {
+                while bob.node.next_event().is_some() {}
+                while let Some(event) = alice.node.next_event() {
+                    settlings += usize::from(event == settled);
+                    changes += usize::from(matches!(
+                        event,
+                        NodeEvent::MessageChanged { message, .. } if message == sent.id
+                    ));
+                }
+                alice.node.message(chat.id, sent.id).unwrap().delivery == Delivery::Delivered
+            })
+            .await;
+            tokio::time::sleep(Duration::from_millis(200)).await;
+            while let Some(event) = alice.node.next_event() {
+                settlings += usize::from(event == settled);
+            }
+            assert!(changes > 0, "its fragments were heard of on the way");
+            assert_eq!(settlings, 1);
         })
         .await;
 }
@@ -861,6 +923,10 @@ async fn a_channel_message_ends_at_sent_via_its_repeater() {
             .await;
             tokio::time::sleep(Duration::from_millis(3_000)).await;
             assert_eq!(how_sent(&alice, public, sent.id).0, Delivery::Sent);
+            // Nothing came of it to announce.
+            while let Some(event) = alice.node.next_event() {
+                assert!(!matches!(event, NodeEvent::Settled { .. }), "{event:?}");
+            }
         })
         .await;
 }

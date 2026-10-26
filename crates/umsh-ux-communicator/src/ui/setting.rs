@@ -11,7 +11,7 @@ use heapless::String;
 use super::conversation::header;
 use super::label;
 use crate::board::Metrics;
-use crate::model::{BRIGHTNESS_LEVELS, State};
+use crate::model::{LEVELS, State};
 use crate::nav::keys;
 use crate::{font, icon, theme};
 
@@ -46,11 +46,13 @@ pub(super) enum End {
     /// A value, and that pressing changes it.
     ValueChevron(Value),
     Switch(bool),
-    /// A level from 1 to [`BRIGHTNESS_LEVELS`], lit in the accent while
-    /// `active`, as it is being changed.
+    /// A level from 1 to [`LEVELS`], lit in the accent while
+    /// `active`, as it is being changed. The arrows take it down and up
+    /// by `step`, which each level's row names for its own setting.
     Level {
         level: u8,
         active: bool,
+        step: fn(&mut State, i8),
     },
 }
 
@@ -117,7 +119,11 @@ pub(super) fn marked_row<A: Fn(&mut State) + Clone>(
         End::Value(value) => (Some(value), false, None, None),
         End::ValueChevron(value) => (Some(value), true, None, None),
         End::Switch(on) => (None, false, Some(on), None),
-        End::Level { level, active } => (None, false, None, Some((level, active))),
+        End::Level {
+            level,
+            active,
+            step,
+        } => (None, false, None, Some((level, active, step))),
     };
     let flip = act.clone();
     Button::new(act, move |button: ButtonState| {
@@ -126,7 +132,7 @@ pub(super) fn marked_row<A: Fn(&mut State) + Clone>(
             name,
             value: value.clone(),
             chevron,
-            level,
+            level: level.map(|(level, active, _)| (level, active)),
             checked,
             danger,
             focused,
@@ -172,12 +178,12 @@ pub(super) fn marked_row<A: Fn(&mut State) + Clone>(
             flip(s);
             KeyResponse::Handled
         }
-        (Key::LeftArrow, _, Some(_)) => {
-            s.step_brightness(-1);
+        (Key::LeftArrow, _, Some((_, _, step))) => {
+            step(s, -1);
             KeyResponse::Handled
         }
-        (Key::RightArrow, _, Some(_)) => {
-            s.step_brightness(1);
+        (Key::RightArrow, _, Some((_, _, step))) => {
+            step(s, 1);
             KeyResponse::Handled
         }
         _ => KeyResponse::Ignored,
@@ -296,7 +302,7 @@ fn level_look(level: u8, active: bool) -> impl View<Rgb565, ()> + use<> {
             .foreground_color(if i < level { lit } else { theme::LEVEL_OFF })
             .frame_sized(STEP_WIDTH, STEP_HEIGHT)
     };
-    const _: () = assert!(BRIGHTNESS_LEVELS == 10);
+    const _: () = assert!(LEVELS == 10);
     HStack::new((
         step(0),
         step(1),

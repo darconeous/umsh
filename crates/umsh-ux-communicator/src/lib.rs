@@ -24,6 +24,7 @@
 
 pub use buoyant;
 pub use heapless;
+pub use umsh_sound;
 
 pub mod avatar;
 pub mod board;

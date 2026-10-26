@@ -547,6 +547,7 @@ mod firmware {
             display_motion_wake: false,
             display: None,
             keyboard: false,
+            sound: false,
             illuminance: cfg!(feature = "cap-illuminance"),
             // Every supported nRF52840 board has the MPSL-managed die sensor.
             temperatures: true,

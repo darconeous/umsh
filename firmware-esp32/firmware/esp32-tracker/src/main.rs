@@ -187,6 +187,9 @@ use umsh_ux_tracker::button::{ButtonEdge, ButtonEvent, ButtonFsm};
 
 use transport_policy::{Transport, generation_checked};
 
+#[cfg(any(feature = "board-tlora-pager", feature = "board-tdeck"))]
+mod audio_stream;
+
 // One facade, two bodies: the transport, or its absence.
 #[cfg_attr(not(feature = "ble"), path = "ble_stub.rs")]
 mod ble;
@@ -516,6 +519,7 @@ fn session_config() -> SessionConfig {
         #[cfg(not(feature = "communicator"))]
         display: None,
         keyboard: cfg!(feature = "communicator"),
+        sound: cfg!(any(feature = "board-tlora-pager", feature = "board-tdeck")),
         illuminance: false,
         temperatures: cfg!(feature = "chip-esp32s3"),
         // The ESP32-S3 radio is always up on this board, but the
@@ -3292,6 +3296,16 @@ async fn main(spawner: Spawner) {
         );
         spawner.spawn(tdeck::input::press_task(press).unwrap());
         tdeck::input::spawn_bus_tasks(peripherals.FROM_CPU_INTR2, i2c_bus, peripherals.GPIO16);
+        spawner.spawn(
+            tdeck::sound::task(
+                peripherals.I2S0,
+                peripherals.DMA_CH1,
+                peripherals.GPIO7,
+                peripherals.GPIO5,
+                peripherals.GPIO6,
+            )
+            .unwrap(),
+        );
         spawner.spawn(tdeck::heartbeat_task(rtc, sleep.deep_sleep).unwrap());
     }
     #[cfg(feature = "board-tlora-pager")]

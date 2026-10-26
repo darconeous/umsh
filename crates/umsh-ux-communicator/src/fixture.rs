@@ -722,6 +722,8 @@ pub struct Store {
     statistics_read: Cell<u32>,
     /// Bluetooth and the GNSS receiver, on or off.
     bluetooth: Cell<bool>,
+    sound: Cell<bool>,
+    volume: Cell<u8>,
     gnss: Cell<bool>,
     /// What Add peer shows, and whether the other holder of the exchange
     /// pressed Same.
@@ -795,6 +797,8 @@ impl Store {
             auto_lock: Cell::new(DEFAULT_AUTO_LOCK_S),
             statistics_read: Cell::new(0),
             bluetooth: Cell::new(true),
+            sound: Cell::new(true),
+            volume: Cell::new(191),
             gnss: Cell::new(true),
             meet: RefCell::new(MeetState::new()),
             meet_theirs: Cell::new(false),
@@ -1115,6 +1119,12 @@ impl Store {
         }
     }
 
+    /// Says that my `message` in `chat` came out as it is kept, as the
+    /// node does when an acknowledgment arrives or the wait for one ends.
+    pub fn settle(&self, chat: ChatId, message: MessageId) {
+        self.queue(NodeEvent::Settled { chat, message });
+    }
+
     /// The fixture's clock: the mockup's time, moved on with the board's.
     #[must_use]
     pub fn time(&self) -> u32 {
@@ -1143,7 +1153,17 @@ impl Store {
                     .find(|(_, m)| m.id == id)
                     .map(|k| k.0)
             {
-                self.queue(NodeEvent::MessageChanged { chat, message: id });
+                let delivered_at = at + DELIVERED_AFTER;
+                let settled = before < delivered_at
+                    && delivered_at <= now
+                    && self
+                        .message(chat, id)
+                        .is_some_and(|m| m.delivery == Delivery::Delivered);
+                self.queue(if settled {
+                    NodeEvent::Settled { chat, message: id }
+                } else {
+                    NodeEvent::MessageChanged { chat, message: id }
+                });
             }
         }
         if self.repeater_at.get().is_some_and(|at| at <= now) {
@@ -2401,6 +2421,28 @@ impl Node for Store {
 
     fn set_pairing(&self, _open: bool) {
         self.setting(Setting::Pairing, || true);
+    }
+
+    fn sound_enabled(&self) -> Option<bool> {
+        Some(self.sound.get())
+    }
+
+    fn set_sound_enabled(&self, on: bool) {
+        self.setting(Setting::Sound, || {
+            self.sound.set(on);
+            true
+        });
+    }
+
+    fn sound_volume(&self) -> u8 {
+        self.volume.get()
+    }
+
+    fn set_sound_volume(&self, volume: u8) {
+        self.setting(Setting::Volume, || {
+            self.volume.set(volume);
+            true
+        });
     }
 
     fn clear_pairings(&self) {

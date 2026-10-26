@@ -99,6 +99,9 @@ pub fn display(
 #[path = "tdeck_input.rs"]
 pub mod input;
 
+#[path = "tdeck_sound.rs"]
+pub mod sound;
+
 /// The RWDT feed, and the shutdown sequence: the farewell, the capture
 /// tasks stopped, the radio asleep, the rail down, and deep sleep until
 /// the trackball is pressed. The slide switch is the only hard off.
@@ -112,6 +115,7 @@ pub async fn heartbeat_task(mut rtc: Rtc<'static>, mut sleep: esp_rtos::sleep::D
     };
     debug_log(format_args!("shutdown: {cause:?}"));
     ui::begin_farewell(cause);
+    sound::shutdown().await;
     crate::input_gate::shutdown().await;
     DEVICE_CTL.shutdown();
     ui::end_farewell().await;
@@ -150,6 +154,10 @@ pub async fn heartbeat_task(mut rtc: Rtc<'static>, mut sleep: esp_rtos::sleep::D
             peripherals::GPIO2::steal().into(),
             peripherals::GPIO15::steal().into(),
             peripherals::GPIO1::steal().into(),
+            // The speaker amplifier's I2S lines.
+            peripherals::GPIO7::steal().into(),
+            peripherals::GPIO5::steal().into(),
+            peripherals::GPIO6::steal().into(),
         ] {
             let pin: esp_hal::gpio::AnyPin<'static> = pin;
             core::mem::forget(Input::new(pin, InputConfig::default()));

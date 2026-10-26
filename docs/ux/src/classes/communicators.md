@@ -112,6 +112,30 @@ every keystroke by default.
 Modifiers, typing aids, the character picker, and the keyboard light are in
 [Communicator Keyboard](communicator-keyboard.md).
 
+## Sounds
+
+A communicator with a speaker sounds what happens to messages. Each event has
+a shape of its own, so they can be told apart from a pocket:
+
+| Event | Shape |
+|---|---|
+| A direct message arrives | Four notes running up |
+| A channel message arrives | Two notes falling |
+| A message arrives in the conversation being read | One quiet pip |
+| A message is sent | One quiet pip |
+| A message is delivered | One soft, low thump |
+| A message goes unconfirmed | Two low buzzes |
+
+A muted chat's arrivals make no sound; what becomes of my own messages in it
+still does. Of several events at once, only the one that matters most sounds:
+a direct message, then an unconfirmed message, then a channel message.
+
+**Device → Sounds** turns them all off, and sets their volume; changing the
+volume plays a direct message's sound at each level. While they are off, the
+status strip shows a bell with a slash through it. Turning sounds off leaves the haptic
+motor, the screen, and the locate alert as they were; a locate alert sounds
+either way.
+
 ## Locking
 
 A communicator locks when its screen times out and a second passes without

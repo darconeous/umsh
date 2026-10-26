@@ -31,7 +31,11 @@ pub fn view(state: &State) -> impl View<Rgb565, State> + use<> {
                 "Brightness",
                 keys::BRIGHTNESS,
                 State::press_brightness,
-                End::Level { level, active },
+                End::Level {
+                    level,
+                    active,
+                    step: |s, steps| _ = s.step_brightness(steps),
+                },
                 false,
                 ROW,
             ),

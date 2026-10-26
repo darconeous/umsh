@@ -470,6 +470,19 @@ pub mod prop {
     /// (`PROP_DISPLAY_TIMEOUT`)—UINT16 seconds, 0 for never. Saved.
     /// Requires `CAP_DISPLAY`.
     pub const DISPLAY_TIMEOUT: u32 = 4890;
+    /// Whether the device plays its optional sounds
+    /// (`PROP_SOUND_ENABLED`)—BOOL, default true. Saved. Requires
+    /// `CAP_SOUND`.
+    ///
+    /// Optional sounds are notifications and feedback cues. A locate
+    /// alert sounds whatever this says (`PROP_ALERT`), and haptics and
+    /// visual indication are not governed by it.
+    pub const SOUND_ENABLED: u32 = 4891;
+    /// How loud the device plays its optional sounds
+    /// (`PROP_SOUND_VOLUME`)—UINT8, 255 the loudest. 0 is the quietest
+    /// level that is not silent; silence is `PROP_SOUND_ENABLED`'s.
+    /// Saved. Requires `CAP_SOUND`.
+    pub const SOUND_VOLUME: u32 = 4892;
 
     /// Whether the Wi-Fi station is up (`PROP_WIFI_ENABLED`), BOOL,
     /// default 0. Requires `CAP_WIFI`.
@@ -900,6 +913,9 @@ pub mod cap {
     /// `CAP_KEYBOARD`: the device has a keyboard of its own
     /// (`PROP_KEYBOARD_LIGHT`, `PROP_KEYBOARD_AIDS`).
     pub const KEYBOARD: u32 = 65;
+    /// `CAP_SOUND`: the device has a sounder it plays optional sounds on
+    /// (`PROP_SOUND_ENABLED`, `PROP_SOUND_VOLUME`).
+    pub const SOUND: u32 = 66;
 }
 
 /// `PROP_KEYBOARD_AIDS` flags.
@@ -962,6 +978,9 @@ pub fn admin_writable(key: u32) -> bool {
 pub fn device_writable(key: u32) -> bool {
     key == prop::DEV_PRIVATE_KEY || admin_writable(key)
 }
+
+/// `PROP_SOUND_VOLUME` after a reset.
+pub const DEFAULT_SOUND_VOLUME: u8 = 191;
 
 /// Shortest `PROP_DISPLAY_TIMEOUT` a device keeps, in seconds, other than
 /// 0 (never): a shorter one is raised to this.

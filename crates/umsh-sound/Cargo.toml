@@ -1,0 +1,15 @@
+[package]
+name = "umsh-sound"
+description = "Sounds of UMSH devices with a speaker: what each is, which event plays which, and the samples they make"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+# Pure logic over 16 kHz mono samples; no I2S, no codec, no DMA. A board
+# streams what a `Source` fills to its own output. The tones are the ones
+# the tracker-class buzzers play, so two radios on one table agree about
+# what an arriving message sounds like.
+
+[dependencies]
+umsh-ux-tracker = { path = "../umsh-ux-tracker" }

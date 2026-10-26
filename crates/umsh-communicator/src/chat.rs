@@ -114,6 +114,16 @@ fn acknowledged(delivery: &record::Delivery) -> bool {
     delivery.acked != 0 && delivery.sent & !delivery.acked == 0
 }
 
+/// How an outbound message came out, once it has: delivered (`true`) or
+/// unconfirmed (`false`), as [`model::Delivery`] reads it.
+fn outcome(delivery: &record::Delivery) -> Option<bool> {
+    if delivery.failed != 0 {
+        Some(false)
+    } else {
+        acknowledged(delivery).then_some(true)
+    }
+}
+
 /// What the node needs of the board's cryptography, which it does not
 /// carry itself.
 #[derive(Clone, Copy)]
@@ -482,6 +492,25 @@ impl<S: ChatStore> Chats<S> {
         time: Option<u32>,
         events: &mut dyn FnMut(NodeEvent),
     ) {
+        // How the messages whose delivery this reports stood before it, so
+        // that one it brings to an outcome is announced as settled. One
+        // being sent again has no outcome yet, whatever it last came to.
+        let before: Vec<(MessageId, Option<bool>)> = outputs
+            .iter()
+            .filter_map(|output| match output {
+                ChatOutput::Delivery(delivery) => self.handles.get(&delivery.handle).copied(),
+                _ => None,
+            })
+            .filter_map(|id| {
+                let record = self.store.message(id).ok()??;
+                let was = if self.retrying.contains(&id) {
+                    None
+                } else {
+                    outcome(&record.delivery)
+                };
+                Some((id, was))
+            })
+            .collect();
         let committed = {
             let handles = &self.handles;
             let resolve = |handle| handles.get(&handle).copied();
@@ -529,15 +558,30 @@ impl<S: ChatStore> Chats<S> {
             })
             .filter_map(|mutation| self.handles.get(&mutation.handle).copied())
             .collect();
-        self.announce(&committed, &arrived, events);
+        let settled: Vec<MessageId> = before
+            .into_iter()
+            .filter(|&(id, was)| {
+                let now = self
+                    .store
+                    .message(id)
+                    .ok()
+                    .flatten()
+                    .and_then(|record| outcome(&record.delivery));
+                now.is_some() && now != was
+            })
+            .map(|(id, _)| id)
+            .collect();
+        self.announce(&committed, &arrived, &settled, events);
     }
 
     /// Tells the interface what a commit changed. The messages in
-    /// `arrived` are announced as arrivals.
+    /// `arrived` are announced as arrivals, and those in `settled` as
+    /// having come out.
     fn announce(
         &self,
         committed: &Committed,
         arrived: &[MessageId],
+        settled: &[MessageId],
         events: &mut dyn FnMut(NodeEvent),
     ) {
         for &id in &committed.messages {
@@ -547,6 +591,8 @@ impl<S: ChatStore> Chats<S> {
             let (chat, message) = (record.chat.0, id.0);
             events(if arrived.contains(&id) {
                 NodeEvent::Arrived { chat, message }
+            } else if settled.contains(&id) {
+                NodeEvent::Settled { chat, message }
             } else {
                 NodeEvent::MessageChanged { chat, message }
             });
@@ -701,7 +747,7 @@ impl<S: ChatStore> Chats<S> {
         let Ok(committed) = self.store.commit(&batch) else {
             return false;
         };
-        self.announce(&committed, &[], events);
+        self.announce(&committed, &[], &[], events);
         self.retry(chat, message, now_ms, time, events)
     }
 
@@ -837,7 +883,7 @@ impl<S: ChatStore> Chats<S> {
         {
             self.outbox.enqueue(outbound);
         }
-        self.announce(&committed, &[], events);
+        self.announce(&committed, &[], &[], events);
         Some(committed)
     }
 

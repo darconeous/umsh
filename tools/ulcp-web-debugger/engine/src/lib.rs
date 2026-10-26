@@ -74,6 +74,7 @@ pub fn web_sim_config() -> umsh_ulcp_simdev::SessionConfig {
         display_motion_wake: false,
         display: None,
         keyboard: false,
+        sound: false,
         illuminance: true,
         temperatures: true,
         // The simulator has no radio at all, but it does have a

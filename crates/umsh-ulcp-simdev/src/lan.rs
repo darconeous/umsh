@@ -81,6 +81,7 @@ pub fn session_config(dev_version: &'static str) -> SessionConfig {
         display_motion_wake: false,
         display: None,
         keyboard: false,
+        sound: false,
         illuminance: false,
         temperatures: false,
         ble: false,

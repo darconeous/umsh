@@ -322,6 +322,23 @@ fn brightness_and_the_keyboard_are_device_settings() {
 }
 
 #[test]
+fn sound_is_a_saved_device_setting() {
+    let sim = device();
+    let (node, clock) = node(&sim);
+    assert_eq!(node.sound_enabled(), Some(true));
+    assert_eq!(node.sound_volume(), 191);
+    let before = sim.borrow().saved_snapshot().unwrap().to_vec();
+    node.set_sound_enabled(false);
+    node.set_sound_volume(40);
+    assert_eq!(node.sound_enabled(), Some(false));
+    clock.set(1_000);
+    node.pump();
+    assert_eq!(node.sound_enabled(), Some(false));
+    assert_eq!(node.sound_volume(), 40);
+    assert_ne!(sim.borrow().saved_snapshot().unwrap(), &before[..]);
+}
+
+#[test]
 fn auto_lock_is_a_device_setting_and_0_is_never() {
     let sim = device();
     let (node, clock) = node(&sim);
@@ -1089,10 +1106,12 @@ fn a_direct_message_goes_out_and_can_be_retried() {
     assert!(node.depart().is_none(), "one frame");
 
     assert!(node.departed(departure, Sent::Unsendable));
-    assert!(events(&node).contains(&NodeEvent::MessageChanged {
+    // Announced as having come out, so the interface can say so.
+    let settled = NodeEvent::Settled {
         chat: chat.id,
-        message: message.id
-    }));
+        message: message.id,
+    };
+    assert!(events(&node).contains(&settled));
     let failed = node.message(chat.id, message.id).unwrap();
     assert_eq!(failed.delivery, Delivery::Unconfirmed);
 
@@ -1108,11 +1127,14 @@ fn a_direct_message_goes_out_and_can_be_retried() {
     );
     assert_eq!(node.latest_sent(chat.id).sent, Some(message.id));
     let again = node.depart().expect("the message leaves again");
+    events(&node);
     assert!(node.departed(again, Sent::Unsendable));
     assert_eq!(
         node.message(chat.id, message.id).unwrap().delivery,
         Delivery::Unconfirmed
     );
+    // Failing again comes out again.
+    assert!(events(&node).contains(&settled));
 }
 
 /// A node over the store kept on `flash`, started.

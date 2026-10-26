@@ -86,6 +86,7 @@ fn session_config() -> SessionConfig {
         display_motion_wake: false,
         display: None,
         keyboard: false,
+        sound: false,
         illuminance: false,
         temperatures: false,
         ble: false,

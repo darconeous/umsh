@@ -4,6 +4,7 @@
 //! are fitted varies by unit and is found at boot. Register references and
 //! the hardware checklist are in `docs/hardware/lilygo-t-deck-hardware.md`.
 #![no_std]
+pub mod audio;
 pub mod battery;
 pub mod display;
 pub mod gnss;
