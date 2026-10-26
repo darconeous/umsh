@@ -8528,7 +8528,11 @@ mod tests {
     async fn two_phones_exchange_contacts() {
         use crate::meet::MobileMeetExchange;
 
+        // Of two same-model devices whose colors are alike, one renews its
+        // session key, and the other lists the old key until its row ages
+        // out. Different models keep this test to one key each.
         const IPHONE: u16 = 0xFE00;
+        const IPAD: u16 = 0xFE01;
         let directory = tempfile::tempdir().unwrap();
         let session = |seed: u8, name: &str| {
             let directory = directory.path().join(name);
@@ -8600,7 +8604,7 @@ mod tests {
         let exchange = |seen: &Seen| seen.state.as_ref().map(|state| state.exchange.clone());
 
         alice.open_meet(IPHONE).await.unwrap();
-        bob.open_meet(IPHONE).await.unwrap();
+        bob.open_meet(IPAD).await.unwrap();
         air(
             &mut seen,
             &|seen| {
@@ -8613,7 +8617,7 @@ mod tests {
             "each to list the other",
         );
         let listed = seen[0].state.as_ref().unwrap().devices[0];
-        assert_eq!(listed.model, IPHONE);
+        assert_eq!(listed.model, IPAD);
         assert_eq!(
             Some(listed.color_rgb),
             seen[1].state.as_ref().unwrap().own_color_rgb,
