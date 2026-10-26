@@ -7,8 +7,10 @@ license.workspace = true
 repository.workspace = true
 
 # A communicator-class device whose screen is a window and whose radio is
-# the LAN bearer. It runs the same umsh-ux-communicator code as the
-# T-LoRa Pager, at the Pager's 480x222.
+# an IP multicast group (UMSH over IP Multicast). It runs the same
+# umsh-ux-communicator interface as the T-LoRa Pager and the T-Deck, over
+# the Pager's own ULCP session driver and device node from
+# umsh-ulcp-runtime. See README.md.
 #
 # Without the `window` feature it needs no SDL and runs only headless:
 # a scripted input sequence, with screenshots written as PNG.
@@ -25,16 +27,29 @@ window = ["embedded-graphics-simulator/with-sdl"]
 umsh-ux-communicator = { path = "../../crates/umsh-ux-communicator", features = ["fixture"] }
 umsh-communicator = { path = "../../crates/umsh-communicator", features = ["software-crypto", "flash"] }
 embedded-storage-async = "0.4.1"
-umsh-ulcp-admin = { path = "../../crates/umsh-ulcp-admin" }
+umsh-ulcp-admin = { path = "../../crates/umsh-ulcp-admin", features = ["driver"] }
 umsh-ulcp = { path = "../../crates/umsh-ulcp" }
+umsh-ulcp-device = { path = "../../crates/umsh-ulcp-device" }
 umsh-ulcp-simdev = { path = "../../crates/umsh-ulcp-simdev", features = ["host"] }
+# The Pager's session driver, radio multiplexer, and device node.
+umsh-ulcp-runtime = { path = "../../crates/umsh-ulcp-runtime", features = ["device-node", "communicator"] }
+umsh-journal-store = { path = "../../crates/umsh-journal-store" }
+umsh-radio-loraphy = { path = "../../crates/umsh-radio-loraphy" }
+umsh-hal = { path = "../../crates/umsh-hal", features = ["embassy"] }
+umsh-crypto = { path = "../../crates/umsh-crypto", features = ["software-crypto"] }
 umsh-pager-peripherals = { path = "../../crates/umsh-pager-peripherals" }
 embedded-graphics = "0.8"
 embedded-graphics-simulator = { version = "0.8", default-features = false }
 heapless = "0.9"
-# The device node: a MAC on the LAN bearer, on a runtime the window drives.
+# The group the device transmits on, and the node's frame counters.
 umsh = { path = "../../umsh", default-features = false, features = ["std", "software-crypto", "tokio-support"] }
-umsh-sync = { path = "../../crates/umsh-sync" }
 embassy-sync = "0.8"
-tokio = { version = "1", features = ["rt", "sync", "time"] }
+# The runtime keeps its time on embassy-time; this binary is its driver
+# (`board::time`), so `embassy-time/std` is never enabled for anyone else.
+embassy-time = "0.5"
+embassy-time-driver = "0.2"
+embassy-time-queue-utils = "0.3"
+critical-section = { version = "1", features = ["std"] }
+tokio = { version = "1", features = ["rt", "sync", "time", "macros"] }
 rand = { workspace = true, features = ["std", "thread_rng"] }
+clap = { version = "4", features = ["derive", "wrap_help"] }

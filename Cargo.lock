@@ -1613,7 +1613,12 @@ checksum = "5baebc0774151f905a1a2cc41989300b1e6fbb29aff0ceffa1064fdd3088d582"
 name = "firmware-host-communicator"
 version = "0.1.0"
 dependencies = [
+ "clap",
+ "critical-section",
  "embassy-sync",
+ "embassy-time",
+ "embassy-time-driver",
+ "embassy-time-queue-utils",
  "embedded-graphics",
  "embedded-graphics-simulator",
  "embedded-storage-async",
@@ -1622,10 +1627,15 @@ dependencies = [
  "tokio",
  "umsh",
  "umsh-communicator",
+ "umsh-crypto",
+ "umsh-hal",
+ "umsh-journal-store",
  "umsh-pager-peripherals",
- "umsh-sync",
+ "umsh-radio-loraphy",
  "umsh-ulcp",
  "umsh-ulcp-admin",
+ "umsh-ulcp-device",
+ "umsh-ulcp-runtime",
  "umsh-ulcp-simdev",
  "umsh-ux-communicator",
 ]

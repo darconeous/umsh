@@ -7,7 +7,7 @@
 //! which a host may read but not set. The device makes its identity as it
 //! first comes up, as firmware does.
 
-use std::fs;
+use std::fs::{self, File, TryLockError};
 use std::io;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -21,6 +21,30 @@ use crate::soft::{DeviceSession, SoftPlatform};
 const SNAPSHOT_FILE: &str = "snapshot.bin";
 const IDENTITY_FILE: &str = "identity.key";
 const LISTS_FILE: &str = "lists.bin";
+
+/// Exclusive use of one device's state directory, for as long as it is
+/// held.
+///
+/// Two devices sharing an identity would send under one key with two
+/// frame counters, and each would see the other's frames as replays. The
+/// lock is the operating system's, so it holds across processes—a tool
+/// and its twin, or an app and its extension—and is released when its
+/// holder exits, however it exits.
+pub struct StateLock {
+    _file: File,
+}
+
+impl StateLock {
+    /// Take the lock on `dir`, or `None` if another holder has it.
+    pub fn try_acquire(dir: &Path) -> io::Result<Option<Self>> {
+        let file = File::create(dir.join("lock"))?;
+        match file.try_lock() {
+            Ok(()) => Ok(Some(Self { _file: file })),
+            Err(TryLockError::WouldBlock) => Ok(None),
+            Err(TryLockError::Error(error)) => Err(error),
+        }
+    }
+}
 
 /// Files under one directory, the OS generator, and the system clock.
 pub struct HostPlatform {
@@ -162,6 +186,18 @@ mod tests {
             std::env::temp_dir().join(format!("umsh-host-platform-{tag}-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         dir
+    }
+
+    #[test]
+    fn one_holder_at_a_time() {
+        let dir = scratch("lock");
+        fs::create_dir_all(&dir).unwrap();
+        let first = StateLock::try_acquire(&dir).unwrap();
+        assert!(first.is_some());
+        assert!(StateLock::try_acquire(&dir).unwrap().is_none());
+        drop(first);
+        assert!(StateLock::try_acquire(&dir).unwrap().is_some());
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]

@@ -1,68 +1,19 @@
-//! A communicator on the host. The screen is a window the size of a
-//! board's: the T-LoRa Pager's 480x222, or with `--board tdeck` the
-//! T-Deck's 320x240. The keyboard is the Pager's keyboard.
-//!
-//! Interactive (needs the `window` feature):
-//!
-//!     host-communicator [--board pager|tdeck]
-//!     host-communicator [--board pager|tdeck] --node DIR
-//!
-//! The first shows the fixture's chats. The second runs the communicator's
-//! node, as the Pager does, with its settings served by a soft device that
-//! keeps its saved state and identity under DIR, and a device node on the
-//! LAN bearer.
-//!
-//! On the Pager, Up and Down arrows or the mouse wheel turn the wheel; the
-//! Right arrow or a click presses it. Escape is the lock button. Return,
-//! Backspace, Space, and the letters are the Pager's; Shift is CAP, and Alt
-//! the orange key.
-//!
-//! On the T-Deck, the arrows roll the trackball and Control presses it.
-//! Escape locks, as the screen going dark would. The keyboard types
-//! characters, with Shift applied as the T-Deck's keyboard applies its own.
-//! With the fixture, Tab brings its next message in, as if it arrived. An
-//! identity asked for arrives two seconds later, as the fixture's own
-//! clock has it.
-//!
-//! With `--long-history`, the fixture's public channel holds several
-//! hundred messages over days in place of its own.
-//!
-//! Headless, for scripted runs and comparisons with the mockup:
-//!
-//!     host-communicator [--board B] [--node DIR] --script steps.txt --out shots/
-//!
-//! Each script line is one step: `turn N` (negative is up), `move up`,
-//! `move down`, `move left`, or `move right` with a count after it if more
-//! than one (the trackball), `press`,
-//! `enter`, `backspace`, `type TEXT` (typed as it is), `keys TEXT` (pressed
-//! as Pager keys, so the modifiers and typing aids act on them), `space`,
-//! `shift` and `alt` (tapped), `alt-down` and `alt-up`, `airtime SECONDS`
-//! (spent airtime that returns in that long; 0 for none), `arrive` (the
-//! fixture's next message arrives), `identify` (the identity asked for
-//! arrives at once), `meet STEP` (the fixture's other holder of a contact
-//! exchange `asks`, `accepts`, `declines`, presses `same` or `different`,
-//! or `leaves`), `wait SECONDS` (the board's clock moves on, and the
-//! fixture's with it), `dark` and `lit`
-//! (the panel goes dark, which locks it a second later, and lights again),
-//! `lock` (the lock button), `battery PERCENT [charging]`,
-//! `battery-empty` (with `off` for the blink's dark half), `first-run`,
-//! `shot NAME`, which writes `NAME.png` into the output directory once
-//! everything has settled, or `peek MS NAME`, which writes it MS
-//! milliseconds into what the last steps started. `#` starts a comment.
-//! Each input takes 50 ms of the board's clock.
-//!
-//! Timing, and something for a profiler to watch:
-//!
-//!     host-communicator [--board B] --bench N
-//!
-//! Turns the wheel N times, down the list and back, and reports the mean
-//! layout and paint time of a frame.
+//! A communicator on the host: the T-LoRa Pager's or the T-Deck's
+//! interface in a window, over the Pager's own ULCP session and device
+//! node, with an IP multicast group (UMSH over IP Multicast) for its
+//! radio. See `README.md` beside this crate for how to run it, its
+//! controls, its instances, and the script language its headless runs
+//! take.
 
+use std::net::Ipv4Addr;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+use std::time::Duration;
 
+use clap::{Parser, ValueEnum};
+
+mod board;
 mod flash;
-mod mesh;
 mod node;
 
 use umsh_ux_communicator::buoyant;
@@ -74,6 +25,7 @@ use buoyant::render_target::{EmbeddedGraphicsRenderTarget, RenderTarget as _};
 use buoyant::view::ViewLayout;
 use embedded_graphics::pixelcolor::Rgb565;
 use embedded_graphics_simulator::{OutputSettings, SimulatorDisplay};
+use umsh::tokio_support::LanConfig;
 use umsh_pager_peripherals::input::alt_legend;
 use umsh_ux_communicator::board::Board;
 use umsh_ux_communicator::input::{self, Arrow, Input};
@@ -81,7 +33,89 @@ use umsh_ux_communicator::keyboard::Modifier;
 use umsh_ux_communicator::model::{BatteryReading, Charge, HOLD_MS, NodeEvent, State};
 use umsh_ux_communicator::{fixture, theme, typeface, ui};
 
-/// Where the fixture's chats keep their messages, for the life of the run,
+/// A communicator on this computer, on the network as a UMSH node.
+#[derive(Parser)]
+#[command(name = "host-communicator", version)]
+struct Args {
+    /// The instance to run, `default` if none is named. Each instance is
+    /// its own device, with its own identity, settings, and chats.
+    #[arg(conflicts_with_all = ["data_dir", "demo"], value_parser = instance_name)]
+    name: Option<String>,
+
+    /// Keep the device here instead of the instance's own folder.
+    #[arg(long, value_name = "DIR", conflicts_with = "demo")]
+    data_dir: Option<PathBuf>,
+
+    /// The board whose screen and controls to show.
+    #[arg(long, value_enum, default_value_t = BoardName::Pager)]
+    board: BoardName,
+
+    /// Join the group on this interface's address, not the one the
+    /// routing table picks.
+    #[arg(long, value_name = "ADDRESS", conflicts_with_all = ["host_local", "demo"])]
+    interface: Option<Ipv4Addr>,
+
+    /// Join the group on the loopback interface: reach only the other
+    /// devices on this computer.
+    #[arg(long, conflicts_with = "demo")]
+    host_local: bool,
+
+    /// Print the device's debug log on standard error.
+    #[arg(long, short, conflicts_with = "demo")]
+    verbose: bool,
+
+    /// Show the demo's made-up chats instead of running a device.
+    #[arg(long)]
+    demo: bool,
+
+    /// With --demo, a public channel several hundred messages long.
+    #[arg(long, requires = "demo")]
+    long_history: bool,
+
+    /// Run headless: the steps in FILE, with screenshots written to --out.
+    /// Runs the demo unless an instance or --data-dir is named.
+    #[arg(long, value_name = "FILE", requires = "out", conflicts_with = "bench")]
+    script: Option<PathBuf>,
+
+    /// Where a script's screenshots go.
+    #[arg(long, value_name = "DIR", requires = "script")]
+    out: Option<PathBuf>,
+
+    /// Turn the wheel N times over the demo and report the time a frame takes.
+    #[arg(long, value_name = "N")]
+    bench: Option<u32>,
+}
+
+/// An instance's name: a folder's name, and the device's until it is given
+/// one of its own.
+fn instance_name(name: &str) -> Result<String, String> {
+    let folder =
+        !name.is_empty() && name != "." && name != ".." && !name.contains(['/', '\\', '\0']);
+    if folder && name.len() <= umsh_ulcp_device::MAX_DEVICE_NAME_LEN {
+        Ok(name.to_string())
+    } else {
+        Err("an instance is named like a folder, in at most 64 bytes".to_string())
+    }
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum BoardName {
+    /// The LILYGO T-LoRa Pager: 480x222, a wheel.
+    Pager,
+    /// The LILYGO T-Deck: 320x240, a trackball.
+    Tdeck,
+}
+
+impl BoardName {
+    fn board(self) -> &'static Board {
+        match self {
+            Self::Pager => &Board::PAGER,
+            Self::Tdeck => &Board::TDECK,
+        }
+    }
+}
+
+/// Where the demo's chats keep their messages, for the life of the run,
 /// with a long history when asked.
 fn store(long: bool) -> &'static fixture::Store {
     let store = fixture::Store::new(&std::alloc::System);
@@ -92,9 +126,9 @@ fn store(long: bool) -> &'static fixture::Store {
     }))
 }
 
-/// Moves the fixture on to `now` on the board's clock, in milliseconds, and
+/// Moves the demo on to `now` on the board's clock, in milliseconds, and
 /// takes in what that brings as a board would: the minute turning over,
-/// and what the fixture has to say.
+/// and what the demo has to say.
 fn advance<V, F>(app: &mut App<V, State, F>, store: &fixture::Store, now: u64)
 where
     V: ViewLayout<State>,
@@ -103,12 +137,22 @@ where
     F: Fn(&State) -> V,
 {
     store.advance(now);
-    let time = store.time();
-    if app.state().wall_time.map(|t| t / 60) != Some(time / 60) {
-        app.state_mut().set_wall_time(Some(time));
+    set_wall_time(app, Some(store.time()));
+    input::events(app, now);
+}
+
+/// Takes in the wall clock's minute when it turns over.
+fn set_wall_time<V, F>(app: &mut App<V, State, F>, time: Option<u32>)
+where
+    V: ViewLayout<State>,
+    V::FocusTree: DefaultFocus,
+    V::Renderables: AnimatedJoin,
+    F: Fn(&State) -> V,
+{
+    if app.state().wall_time.map(|t| t / 60) != time.map(|t| t / 60) {
+        app.state_mut().set_wall_time(time);
         app.finalize_view();
     }
-    input::events(app, now);
 }
 
 /// Lets go of whatever on screen has had its time by `now`.
@@ -124,18 +168,18 @@ where
     }
 }
 
-/// What the window shows: the fixture's chats, or the communicator's node.
+/// What the window shows: the demo's chats, or a device.
 #[derive(Clone, Copy)]
 enum Backend {
-    Fixture(&'static fixture::Store),
-    Node(&'static node::Node),
+    Demo(&'static fixture::Store),
+    Device(&'static board::Board),
 }
 
 impl Backend {
     fn state(self, board: &'static Board) -> State {
         match self {
-            Self::Fixture(store) => fixture::state(store, board),
-            Self::Node(node) => node::state(node, board),
+            Self::Demo(store) => fixture::state(store, board),
+            Self::Device(device) => node::state(device.node, board),
         }
     }
 
@@ -148,9 +192,10 @@ impl Backend {
         F: Fn(&State) -> V,
     {
         match self {
-            Self::Fixture(store) => advance(app, store, now),
-            Self::Node(node) => {
-                node.pump();
+            Self::Demo(store) => advance(app, store, now),
+            Self::Device(device) => {
+                device.node.pump();
+                set_wall_time(app, umsh_hal::wall_clock::now());
                 input::events(app, now);
             }
         }
@@ -162,9 +207,17 @@ impl Backend {
         }
     }
 
-    /// Tab: the fixture's next message arrives. The node has none to give.
+    /// Lets the device run for `span`, or waits it out over the demo.
+    fn run_for(self, span: Duration) {
+        match self {
+            Self::Demo(_) => std::thread::sleep(span),
+            Self::Device(device) => device.run_for(span),
+        }
+    }
+
+    /// Tab: the demo's next message arrives. A device has none to give.
     fn tab(self) {
-        if let Self::Fixture(store) = self {
+        if let Self::Demo(store) = self {
             store.arrive();
         }
     }
@@ -172,91 +225,75 @@ impl Backend {
 
 fn main() -> ExitCode {
     typeface::install(Box::leak(Box::new(typeface::EmojiCache::new())));
-    let mut args: Vec<String> = std::env::args().skip(1).collect();
-    let board = match args.iter().position(|a| a == "--board") {
-        Some(at) if at + 1 < args.len() => {
-            let name = args.remove(at + 1);
-            args.remove(at);
-            match name.as_str() {
-                "pager" => &Board::PAGER,
-                "tdeck" => &Board::TDECK,
-                other => {
-                    eprintln!("host-communicator: no board {other:?}; pager or tdeck");
-                    return ExitCode::from(2);
-                }
+    let args = Args::parse();
+    let board = args.board.board();
+    if let Some(count) = args.bench {
+        bench(board, count);
+        return ExitCode::SUCCESS;
+    }
+    // A script runs the demo unless it names a device, and a device it
+    // runs never joins its group, so that what it shows is only what it
+    // did.
+    let named = args.name.is_some() || args.data_dir.is_some();
+    let demo = args.demo || (args.script.is_some() && !named);
+    let (backend, name) = if demo {
+        (Backend::Demo(store(args.long_history)), "demo".to_string())
+    } else {
+        // A device kept elsewhere is named for its folder until it is
+        // given a name of its own.
+        let name = match (&args.name, &args.data_dir) {
+            (Some(name), _) => name.clone(),
+            (None, Some(dir)) => dir
+                .file_name()
+                .and_then(|name| instance_name(&name.to_string_lossy()).ok())
+                .unwrap_or_else(|| "default".into()),
+            (None, None) => "default".into(),
+        };
+        let Some(dir) = args.data_dir.clone().or_else(|| board::instance_dir(&name)) else {
+            eprintln!("host-communicator: no home folder to keep instances in; use --data-dir");
+            return ExitCode::FAILURE;
+        };
+        let network = if args.script.is_some() {
+            board::Network::Offline
+        } else {
+            let mut base = LanConfig::lan();
+            if args.host_local {
+                base.interface = Ipv4Addr::LOCALHOST;
+            } else if let Some(interface) = args.interface {
+                base.interface = interface;
+            }
+            board::Network::Lan(base)
+        };
+        if args.verbose {
+            umsh_ulcp_runtime::log::set_debug_log(|line| eprintln!("{line}"));
+        }
+        match board::Board::start(&dir, name.clone().leak(), network) {
+            Ok(device) => {
+                device.node.set_model(board.model);
+                (Backend::Device(Box::leak(Box::new(device))), name)
+            }
+            Err(board::BootError::Running) => {
+                eprintln!(
+                    "host-communicator: {} is already running; start another instance with `host-communicator NAME`",
+                    dir.display()
+                );
+                return ExitCode::FAILURE;
+            }
+            Err(error) => {
+                eprintln!("host-communicator: {}: {error}", dir.display());
+                return ExitCode::FAILURE;
             }
         }
-        Some(_) => {
-            eprintln!("host-communicator: --board needs a name");
-            return ExitCode::from(2);
-        }
-        None => &Board::PAGER,
     };
-    let long = match args.iter().position(|a| a == "--long-history") {
-        Some(at) => {
-            args.remove(at);
-            true
-        }
-        None => false,
-    };
-    let (backend, dir, args) = match args.as_slice() {
-        [node_flag, dir, rest @ ..] if node_flag == "--node" => {
-            match node::open(Path::new(dir), std::time::Instant::now()) {
-                Ok(node) => {
-                    node.set_model(board.model);
-                    (Backend::Node(node), Some(dir), rest)
-                }
-                Err(e) => {
-                    eprintln!("host-communicator: {dir}: {e}");
-                    return ExitCode::FAILURE;
-                }
-            }
-        }
-        rest => (Backend::Fixture(store(long)), None, rest),
-    };
-    match args {
-        [] => {
-            // Interactive, the node has a radio. A script runs without one,
-            // so that what it shows is only what it did.
-            let mesh = match (backend, dir) {
-                (Backend::Node(node), Some(dir)) => match mesh::Mesh::start(Path::new(dir), node) {
-                    Ok(mesh) => Some(mesh),
-                    Err(e) => {
-                        eprintln!("host-communicator: the device node: {e}");
-                        return ExitCode::FAILURE;
-                    }
-                },
-                _ => None,
-            };
-            window(board, backend, mesh)
-        }
-        [script_flag, script, out_flag, out]
-            if script_flag == "--script" && out_flag == "--out" =>
-        {
-            match headless(board, Path::new(script), &PathBuf::from(out), backend) {
-                Ok(()) => ExitCode::SUCCESS,
-                Err(e) => {
-                    eprintln!("host-communicator: {e}");
-                    ExitCode::FAILURE
-                }
-            }
-        }
-        [bench_flag, count] if bench_flag == "--bench" => match count.parse() {
-            Ok(count) => {
-                bench(board, count);
-                ExitCode::SUCCESS
-            }
-            Err(_) => {
-                eprintln!("host-communicator: --bench needs a count");
-                ExitCode::from(2)
+    match (&args.script, &args.out) {
+        (Some(script), Some(out)) => match headless(board, script, out, backend) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(e) => {
+                eprintln!("host-communicator: {e}");
+                ExitCode::FAILURE
             }
         },
-        _ => {
-            eprintln!(
-                "usage: host-communicator [--board pager|tdeck] [--node DIR] [--script FILE --out DIR | --bench N]"
-            );
-            ExitCode::from(2)
-        }
+        _ => window(board, backend, &format!("UMSH communicator — {name}")),
     }
 }
 
@@ -376,8 +413,8 @@ fn headless(
                 vec![]
             }
             "arrive" | "identify" => {
-                let Backend::Fixture(store) = backend else {
-                    return Err(format!("line {}: {word} needs the fixture", number + 1));
+                let Backend::Demo(store) = backend else {
+                    return Err(format!("line {}: {word} needs the demo", number + 1));
                 };
                 if word == "arrive" {
                     store.arrive();
@@ -388,8 +425,8 @@ fn headless(
             }
             "meet" => {
                 use umsh_ux_communicator::fixture::MeetStep;
-                let Backend::Fixture(store) = backend else {
-                    return Err(format!("line {}: meet needs the fixture", number + 1));
+                let Backend::Demo(store) = backend else {
+                    return Err(format!("line {}: meet needs the demo", number + 1));
                 };
                 store.meet_peer(match rest {
                     "asks" => MeetStep::Asks,
@@ -488,6 +525,10 @@ fn headless(
             input::apply(&mut app, input, clock);
             backend.advance(&mut app, clock);
         }
+        // A device takes what the step started in on its own clock.
+        if let Backend::Device(device) = backend {
+            device.run_for(Duration::from_millis(INPUT_MS));
+        }
         backend.advance(&mut app, clock);
     }
     Ok(())
@@ -514,7 +555,7 @@ fn tap(modifier: Modifier) -> [Input; 2] {
 }
 
 #[cfg(feature = "window")]
-fn window(board: &'static Board, backend: Backend, mesh: Option<mesh::Mesh>) -> ExitCode {
+fn window(board: &'static Board, backend: Backend, title: &str) -> ExitCode {
     use embedded_graphics_simulator::sdl2::{Keycode, MouseButton};
     use embedded_graphics_simulator::{SimulatorEvent, Window};
 
@@ -528,7 +569,7 @@ fn window(board: &'static Board, backend: Backend, mesh: Option<mesh::Mesh>) -> 
     }
 
     let mut window = Window::new(
-        "UMSH communicator",
+        title,
         &OutputSettings {
             scale: 2,
             ..OutputSettings::default()
@@ -639,10 +680,7 @@ fn window(board: &'static Board, backend: Backend, mesh: Option<mesh::Mesh>) -> 
             window.update(target.display());
         }
         let frame = std::time::Duration::from_millis(8);
-        match &mesh {
-            Some(mesh) => mesh.run_for(frame),
-            None => std::thread::sleep(frame),
-        }
+        backend.run_for(frame);
     }
 }
 
@@ -687,7 +725,7 @@ fn tdeck_key(
 }
 
 #[cfg(not(feature = "window"))]
-fn window(_board: &'static Board, _backend: Backend, _mesh: Option<mesh::Mesh>) -> ExitCode {
+fn window(_board: &'static Board, _backend: Backend, _title: &str) -> ExitCode {
     eprintln!("host-communicator: built without the window feature; use --script");
     ExitCode::from(2)
 }

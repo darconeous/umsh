@@ -18,7 +18,6 @@
 //! driver serves an in-memory pipe, a local socket ([`serve`]), and
 //! anything else that carries HDLC-Lite.
 
-use std::fs::{File, TryLockError};
 use std::io;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::path::Path;
@@ -102,30 +101,6 @@ pub fn session_config(dev_version: &'static str) -> SessionConfig {
         bridge_client: false,
         i2c_buses: &[],
         i2c_devices: &[],
-    }
-}
-
-/// Exclusive use of one virtual radio's state directory, for as long as
-/// it is held.
-///
-/// Two devices sharing an identity would send under one key with two
-/// frame counters, and each would see the other's frames as replays. The
-/// lock is the operating system's, so it holds across processes—a tool
-/// and its twin, or an app and its extension—and is released when its
-/// holder exits, however it exits.
-pub struct StateLock {
-    _file: File,
-}
-
-impl StateLock {
-    /// Take the lock on `dir`, or `None` if another holder has it.
-    pub fn try_acquire(dir: &Path) -> io::Result<Option<Self>> {
-        let file = File::create(dir.join("lock"))?;
-        match file.try_lock() {
-            Ok(()) => Ok(Some(Self { _file: file })),
-            Err(TryLockError::WouldBlock) => Ok(None),
-            Err(TryLockError::Error(error)) => Err(error),
-        }
     }
 }
 
@@ -279,7 +254,8 @@ pub async fn run<P: SoftPlatform>(
 
 /// Make the local socket a host attaches through at `path`, replacing
 /// whatever a previous holder of the state left there. The caller holds
-/// the state's [`StateLock`], so no live device owns that file.
+/// the state's [`StateLock`](crate::host::StateLock), so no live device
+/// owns that file.
 #[cfg(unix)]
 pub fn bind_local_socket(path: &Path) -> io::Result<UnixListener> {
     use std::os::unix::fs::PermissionsExt;
@@ -419,17 +395,6 @@ mod tests {
             host,
             tokio::spawn(run(device, host_local(), events, |_| {})),
         )
-    }
-
-    #[test]
-    fn one_holder_at_a_time() {
-        let dir = scratch("lock");
-        let first = StateLock::try_acquire(&dir).unwrap();
-        assert!(first.is_some());
-        assert!(StateLock::try_acquire(&dir).unwrap().is_none());
-        drop(first);
-        assert!(StateLock::try_acquire(&dir).unwrap().is_some());
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// The device answers only while attached, announces each attach with

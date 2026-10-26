@@ -19,8 +19,8 @@ use anyhow::{Context as _, Result, anyhow, bail};
 use tokio::io::{AsyncReadExt, AsyncWriteExt, DuplexStream};
 use tokio::sync::mpsc;
 use umsh::tokio_support::LanConfig;
-use umsh_ulcp_simdev::host::HostPlatform;
-use umsh_ulcp_simdev::lan::{self, HostEvent, StateLock};
+use umsh_ulcp_simdev::host::{HostPlatform, StateLock};
+use umsh_ulcp_simdev::lan::{self, HostEvent};
 use umsh_ulcp_simdev::soft::SoftDevice;
 
 /// How much of the pipe to take in one read. ULCP frames are small; this

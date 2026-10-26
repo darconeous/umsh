@@ -21,8 +21,8 @@ use std::sync::{Arc, Mutex};
 use tokio::sync::{mpsc, oneshot};
 use umsh_lan_bearer::socket::LanConfig;
 use umsh_ulcp_device::{QueuedClass, QueuedNotice};
-use umsh_ulcp_simdev::host::HostPlatform;
-use umsh_ulcp_simdev::lan::{self, HostEvent, StateLock};
+use umsh_ulcp_simdev::host::{HostPlatform, StateLock};
+use umsh_ulcp_simdev::lan::{self, HostEvent};
 use umsh_ulcp_simdev::soft::SoftDevice;
 
 /// What the device reports itself as.

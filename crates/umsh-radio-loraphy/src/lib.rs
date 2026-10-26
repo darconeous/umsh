@@ -578,6 +578,58 @@ impl<M: RawMutex> DeviceControl<M> {
             }
         }
     }
+
+    /// Runner side, for a runner other than [`device_runner`]: wait for
+    /// the next thing asked of the radio. A runner with no LoRa chip
+    /// behind it serves the same control this way.
+    pub async fn next_request(&self) -> ControlRequest {
+        match select(
+            self.settings.wait(),
+            select(self.rssi_req.wait(), self.temperature_req.wait()),
+        )
+        .await
+        {
+            Either::First(settings) => ControlRequest::Settings(settings),
+            Either::Second(Either::First(())) => ControlRequest::Rssi,
+            Either::Second(Either::Second(id)) => ControlRequest::Temperature(id),
+        }
+    }
+
+    /// Runner side: the sample a [`ControlRequest::Rssi`] asked for, or
+    /// `Err(())` where there is none to take.
+    pub fn answer_rssi(&self, sample: Result<i16, ()>) {
+        self.rssi_resp.signal(sample);
+    }
+
+    /// Runner side: the reading a [`ControlRequest::Temperature`] asked
+    /// for, under the request's own id.
+    pub fn answer_temperature(&self, id: u32, value: Option<u16>) {
+        self.temperature_resp.signal((id, value));
+    }
+
+    /// Runner side: whether [`shutdown`](Self::shutdown) was asked for.
+    pub fn shutdown_requested(&self) -> bool {
+        self.shutdown.load(Ordering::Acquire)
+    }
+
+    /// Runner side: the radio has stopped, as
+    /// [`wait_shutdown`](Self::wait_shutdown) waits to hear.
+    pub fn shutdown_complete(&self) {
+        self.shutdown_done.signal(());
+    }
+}
+
+/// What a [`DeviceControl`] asks of its runner.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum ControlRequest {
+    /// New settings to run with.
+    Settings(DeviceSettings),
+    /// An instantaneous RSSI sample, answered with
+    /// [`DeviceControl::answer_rssi`].
+    Rssi,
+    /// A temperature reading, answered with
+    /// [`DeviceControl::answer_temperature`] under this id.
+    Temperature(u32),
 }
 
 impl<M: RawMutex> Default for DeviceControl<M> {

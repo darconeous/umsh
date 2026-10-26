@@ -88,10 +88,9 @@ use crate::reseed::{ReseedSlot, ReseedingRng};
 /// intrude on. Boards without that constraint take the portable default.
 ///
 /// `embassy_sync` only defines `ThreadModeRawMutex` for bare-metal targets,
-/// so the host build takes the portable default regardless of the feature.
-/// Nothing on the host runs the device node—it builds there for tests and
-/// rustdoc—and the portable lock is the correct choice under a hosted OS
-/// anyway.
+/// so the host build takes the portable default regardless of the feature,
+/// which is the correct choice under a hosted OS anyway: the host
+/// communicator runs the device node there.
 #[cfg(all(feature = "node-thread-mode-mutex", target_os = "none"))]
 pub type NodeMutex = embassy_sync::blocking_mutex::raw::ThreadModeRawMutex;
 #[cfg(not(all(feature = "node-thread-mode-mutex", target_os = "none")))]

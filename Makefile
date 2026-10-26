@@ -26,6 +26,7 @@
 	release-artifacts release-stage release-publish release-mirror \
 	ios-mobile-core ios-archive ios-upload \
 	build-simulator-communicator run-simulator-communicator \
+	run-simulator-communicator-demo simulator-communicator-tours \
 	install-umshctl install-umsh-bridge install-dissector install-extcap \
 	install-colorfilters clean-workspaces
 
@@ -678,21 +679,36 @@ install-umsh-bridge:
 
 # ─── Communicator simulator ──────────────────────────────────────────────────
 #
-# The communicator interface in a window on the host, at the T-LoRa Pager's
-# 480x222, over the fixture's chats (firmware/host-communicator). The window
-# needs SDL2 (`brew install sdl2`). Its controls are in the crate's docs.
-# Built for release: unoptimized, layout and painting lag the input.
+# A communicator on the host (firmware/host-communicator): the T-LoRa Pager's
+# or the T-Deck's interface in a window, over the Pager's own session and
+# device node, with the UMSH-over-IP-Multicast group as its radio. Needs SDL2
+# (`brew install sdl2`). Built for release: unoptimized, layout and painting
+# lag the input. See firmware/host-communicator/README.md.
 #
-# SIMULATOR_ARGS passes arguments through, for a scripted run instead of
-# the window or a benchmark:
-#   make run-simulator-communicator SIMULATOR_ARGS="--script steps.txt --out shots"
-#   make run-simulator-communicator SIMULATOR_ARGS="--bench 200"
+# NAME picks the instance (each is its own device, kept under
+# ~/.config/umsh-host-communicator/NAME); SIMULATOR_ARGS passes anything else:
+#   make run-simulator-communicator NAME=alice
+#   make run-simulator-communicator NAME=bob SIMULATOR_ARGS="--board tdeck"
+#   make run-simulator-communicator-demo
+#   make simulator-communicator-tours
+
+TOURS_OUT ?= target/tours
 
 build-simulator-communicator:
 	cargo build --release -p firmware-host-communicator
 
 run-simulator-communicator:
-	cargo run --release -p firmware-host-communicator -- $(SIMULATOR_ARGS)
+	cargo run --release -p firmware-host-communicator -- $(NAME) $(SIMULATOR_ARGS)
+
+run-simulator-communicator-demo:
+	cargo run --release -p firmware-host-communicator -- --demo $(SIMULATOR_ARGS)
+
+simulator-communicator-tours: build-simulator-communicator
+	@for tour in firmware/host-communicator/tours/*.txt; do \
+		name=$$(basename $$tour .txt); \
+		echo "tour $$name"; \
+		target/release/host-communicator --demo $(SIMULATOR_ARGS) --script $$tour --out $(TOURS_OUT)/$$name || exit 1; \
+	done
 
 # ─── Wireshark ───────────────────────────────────────────────────────────────
 #
