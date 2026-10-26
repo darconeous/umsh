@@ -460,12 +460,16 @@ fn profile_name() -> Option<alloc::string::String> {
 /// fixed tracker are both expressible.
 ///
 /// With no role configured the device derives one, which is what makes
-/// the default sensible rather than a lie: a forwarding node is a
-/// repeater, and anything else is a tracker. A communicator, whose device
-/// identity is its person's messaging identity, is a chat node either
-/// way, takes text messages, and says it forwards by `REP` alone.
+/// the default sensible rather than a lie: a forwarding node with a link
+/// beyond its radio—a backhauled host or a bridge client—is a bridge,
+/// any other forwarding node is a repeater, and anything else is a
+/// tracker. A link that nothing is forwarded across bridges nothing. A
+/// communicator, whose device identity is its person's messaging
+/// identity, is a chat node either way, takes text messages, and says it
+/// forwards by `REP` alone.
 fn advertised_identity(
     is_repeater: bool,
+    is_bridged: bool,
     is_mobile: bool,
     configured_role: Option<u8>,
 ) -> (NodeRole, NodeCapabilities) {
@@ -473,6 +477,7 @@ fn advertised_identity(
     let role = match configured_role {
         Some(byte) => NodeRole::from_byte(byte),
         None if messaging => NodeRole::Chat,
+        None if is_repeater && is_bridged => NodeRole::Bridge,
         None if is_repeater => NodeRole::Repeater,
         None => NodeRole::Tracker,
     };
@@ -575,6 +580,7 @@ pub async fn dev_sync_loop<CS: CounterStore + 'static>(
         }
         let (role, capabilities) = advertised_identity(
             snapshot.repeater_enabled,
+            snapshot.bridged,
             snapshot.ident_mobile,
             snapshot.ident_role,
         );
@@ -1523,7 +1529,7 @@ pub async fn bring_up<CS: CounterStore + 'static>(
     {
         use umsh_crypto::NodeIdentity as _;
         let public_key = *SoftwareIdentity::from_secret_bytes(identity_secret).public_key();
-        let (role, capabilities) = advertised_identity(false, false, None);
+        let (role, capabilities) = advertised_identity(false, false, false, None);
         let mut profile = NodeIdentityProfile::new(public_key, role, capabilities);
         profile.name = profile_name();
         node.enable_identity_responder_default(profile);
@@ -1550,8 +1556,10 @@ mod tests {
     use super::*;
     use umsh_ulcp::ids::{MAX_AUTO_ANNOUNCE_INTERVAL_S, MIN_AUTO_ANNOUNCE_INTERVAL_S};
 
-    /// With no role configured, a forwarding device is a repeater and any
-    /// other a tracker; a configured role is advertised as configured.
+    /// With no role configured, a forwarding device is a bridge when it
+    /// has a link beyond its radio and a repeater otherwise, and any other
+    /// device—linked or not—is a tracker; a configured role is advertised
+    /// as configured.
     #[cfg(not(feature = "communicator"))]
     #[test]
     fn the_role_follows_forwarding_unless_configured() {
@@ -1561,21 +1569,29 @@ mod tests {
             caps
         };
         assert_eq!(
-            advertised_identity(true, false, None),
+            advertised_identity(true, false, false, None),
             (NodeRole::Repeater, caps(true))
         );
         assert_eq!(
-            advertised_identity(false, false, None),
+            advertised_identity(true, true, false, None),
+            (NodeRole::Bridge, caps(true))
+        );
+        assert_eq!(
+            advertised_identity(false, true, false, None),
             (NodeRole::Tracker, caps(false))
         );
         assert_eq!(
-            advertised_identity(true, false, Some(NodeRole::Sensor.as_byte())),
+            advertised_identity(false, false, false, None),
+            (NodeRole::Tracker, caps(false))
+        );
+        assert_eq!(
+            advertised_identity(true, true, false, Some(NodeRole::Sensor.as_byte())),
             (NodeRole::Sensor, caps(true))
         );
     }
 
     /// A communicator is a chat node that takes text messages, forwarding
-    /// or not; forwarding shows in `REP` alone.
+    /// or not and bridged or not; forwarding shows in `REP` alone.
     #[cfg(feature = "communicator")]
     #[test]
     fn a_communicator_chats_whether_or_not_it_forwards() {
@@ -1585,15 +1601,19 @@ mod tests {
             caps
         };
         assert_eq!(
-            advertised_identity(true, false, None),
+            advertised_identity(true, false, false, None),
             (NodeRole::Chat, caps(true))
         );
         assert_eq!(
-            advertised_identity(false, false, None),
+            advertised_identity(true, true, false, None),
+            (NodeRole::Chat, caps(true))
+        );
+        assert_eq!(
+            advertised_identity(false, false, false, None),
             (NodeRole::Chat, caps(false))
         );
         assert_eq!(
-            advertised_identity(false, false, Some(NodeRole::Tracker.as_byte())),
+            advertised_identity(false, false, false, Some(NodeRole::Tracker.as_byte())),
             (NodeRole::Tracker, caps(false))
         );
     }

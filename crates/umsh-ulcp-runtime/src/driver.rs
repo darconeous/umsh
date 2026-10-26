@@ -357,6 +357,13 @@ pub struct DevDomainSnapshot {
     /// capability bit—a fact about what the node does, not a choice
     /// about what it calls itself.
     pub repeater_enabled: bool,
+    /// Whether the device node has a link beyond its radio: a host
+    /// attached under `PROP_MAC_BACKHAUL`, or a bridge client that is
+    /// enabled and configured. A node that forwards across such a link is
+    /// a bridge, and the derived role is built from this snapshot. The
+    /// backhaul switch is session state rather than device domain, which
+    /// is why this is computed here and not read back from either.
+    pub bridged: bool,
     /// `PROP_MAC_REPEATER_REGIONS` as the MAC's forwarding filter needs
     /// it: the 2-octet code derived from each configured region. Empty
     /// imposes no restriction.
@@ -392,7 +399,7 @@ pub struct DevDomainSnapshot {
         { umsh_ulcp_device::MAX_MESHCORE_REGIONS },
     >,
     /// `PROP_IDENT_ROLE`: the advertised `ROLE` byte, or `None` to
-    /// derive it from the forwarding state.
+    /// derive it from the forwarding state and [`Self::bridged`].
     pub ident_role: Option<u8>,
     /// `PROP_IDENT_MOBILE`: whether to advertise the `MOB` capability
     /// bit.
@@ -1439,11 +1446,6 @@ async fn write_device_changes<A, S, const TXQ: usize, E>(
     }
 }
 
-/// Mirror the session's device-domain node tables to the device node
-/// when their generation moved (device-node plan increment 3).
-/// `synced_version` is the caller's cache of the last published
-/// generation. Cheap when nothing changed—one u32 compare—so the
-/// loop runs it after every session interaction.
 /// Generate, persist, and install a fresh device identity.
 ///
 /// The counterpart to first-boot generation, for the one runtime path
@@ -1482,26 +1484,44 @@ async fn regenerate_device_identity<A, S, const TXQ: usize, E>(
     }
 }
 
+/// Mirror the session's device-domain node tables to the device node
+/// when their generation moved (device-node plan increment 3), or when
+/// the backhaul switch did, which the derived role depends on.
+/// `synced` is the caller's cache of the last published pair, `None`
+/// before the first. Cheap when nothing changed—one compare—so the
+/// loop runs it after every session interaction.
 fn sync_dev_domain<A, S, const TXQ: usize, E>(
     session: &Session<A, S, TXQ>,
-    synced_version: &mut u32,
+    synced: &mut Option<(u32, bool)>,
     env: &mut E,
 ) where
     A: AesProvider,
     S: Sha256Provider,
     E: DeviceEnv,
 {
-    if session.dev_domain_version() == *synced_version {
+    let current = (session.dev_domain_version(), session.backhaul());
+    if *synced == Some(current) {
         return;
     }
-    *synced_version = session.dev_domain_version();
+    *synced = Some(current);
+    // The client's settings are device domain, so a change to them has
+    // already moved the generation. Enabled without a host or a pinned
+    // key, it makes no connection and bridges nothing.
+    #[cfg(feature = "bridge-client")]
+    let bridging_client = {
+        let bridge = session.bridge_config();
+        bridge.enabled && bridge.configured()
+    };
+    #[cfg(not(feature = "bridge-client"))]
+    let bridging_client = false;
     let mut snapshot = DevDomainSnapshot {
-        version: *synced_version,
+        version: current.0,
         channel_keys: heapless::Vec::new(),
         peers: heapless::Vec::new(),
         admins: heapless::Vec::new(),
         dev_key: session.dev_key().copied(),
         repeater_enabled: session.repeater_enabled(),
+        bridged: current.1 || bridging_client,
         repeater_region_codes: session.repeater_region_codes().collect(),
         repeater_region_names: session
             .repeater_region_names()
@@ -2053,10 +2073,10 @@ where
 {
     let mut emitter = Emitter::new();
     let mut arbitration = SessionArbitration::new(rt.session_gen.load(Ordering::Acquire));
-    // Last device-domain generation mirrored to the device node.
-    // Force the first publication even on a bare device with no identity or
-    // snapshot, then use generation changes for subsequent publications.
-    let mut dev_domain_synced: u32 = session.dev_domain_version().wrapping_sub(1);
+    // Last device-domain generation and backhaul switch mirrored to the
+    // device node. `None` forces the first publication even on a bare
+    // device with no identity or snapshot; changes drive the rest.
+    let mut dev_domain_synced: Option<(u32, bool)> = None;
     // Shared staging buffer for the durable-write effect arms
     // (save/wipe). Held across their persist awaits, so as a
     // loop-lifetime local it costs one future slot instead of one

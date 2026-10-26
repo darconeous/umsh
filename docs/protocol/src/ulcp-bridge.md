@@ -3,7 +3,9 @@
 An integrated [internet bridge](internet-bridging.md) client connects the device's
 node to a bridge server over IP. Configuration belongs to the device domain and
 is independent of the attached host. Enabling the client does not enable Wi-Fi,
-change IP configuration, or change `PROP_MAC_REPEATER_ENABLED`.
+change IP configuration, or change `PROP_MAC_REPEATER_ENABLED`. While
+forwarding, a node with an enabled and configured client derives the role
+`Bridge` (see [`PROP_IDENT_ROLE`](ulcp-device.md#prop-ident-role)).
 
 ## Capabilities
 

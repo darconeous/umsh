@@ -3830,8 +3830,8 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     }
 
     /// `PROP_MAC_REPEATER_ENABLED`: whether the device node should
-    /// autonomously forward overheard routable frames and advertise
-    /// `NodeRole::Repeater`. Part of the device domain, so it changes
+    /// autonomously forward overheard routable frames and advertise the
+    /// `REP` capability bit. Part of the device domain, so it changes
     /// [`Session::dev_domain_version`] and the firmware reconciles it
     /// against the live MAC on the next sync.
     pub fn repeater_enabled(&self) -> bool {

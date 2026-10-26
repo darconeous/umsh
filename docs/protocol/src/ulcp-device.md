@@ -1068,8 +1068,12 @@ The `ROLE` byte the device identity advertises (see [Node
 Primary Role](node-identity.md#node-primary-role)).
 
 An **empty** value—the factory default—means the device derives the
-role from what it is actually doing: `Repeater` while
-`PROP_MAC_REPEATER_ENABLED` is set, `Tracker` otherwise. On a device
+role from what it is actually doing. While `PROP_MAC_REPEATER_ENABLED`
+is set, it derives `Bridge` if the device node also has a link beyond
+its radio—[`PROP_MAC_BACKHAUL`](ulcp-host.md#prop-mac-backhaul) is set,
+or the [bridge client](ulcp-bridge.md) is enabled with a host and server
+key—and `Repeater` if it does not. Otherwise it derives `Tracker`,
+whatever links it has. On a device
 whose device identity is a messaging identity (see [The Device
 Identity](#device-identity)), it derives `Chat` whether or not the device
 forwards. Any other value is advertised verbatim.
