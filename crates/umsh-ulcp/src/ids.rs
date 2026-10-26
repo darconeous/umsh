@@ -483,6 +483,13 @@ pub mod prop {
     /// level that is not silent; silence is `PROP_SOUND_ENABLED`'s.
     /// Saved. Requires `CAP_SOUND`.
     pub const SOUND_VOLUME: u32 = 4892;
+    /// Whether the device has been set up through its own interface
+    /// (`PROP_SETUP_COMPLETE`)—BOOL, default false. Saved. Requires
+    /// `CAP_KEYBOARD`.
+    ///
+    /// The device sets it when its first-run setup finishes. While it is
+    /// clear, unlocking the device's interface opens that setup.
+    pub const SETUP_COMPLETE: u32 = 4893;
 
     /// Whether the Wi-Fi station is up (`PROP_WIFI_ENABLED`), BOOL,
     /// default 0. Requires `CAP_WIFI`.
@@ -911,7 +918,8 @@ pub mod cap {
     /// settings (`PROP_DISPLAY_BRIGHTNESS`, `PROP_DISPLAY_TIMEOUT`).
     pub const DISPLAY: u32 = 64;
     /// `CAP_KEYBOARD`: the device has a keyboard of its own
-    /// (`PROP_KEYBOARD_LIGHT`, `PROP_KEYBOARD_AIDS`).
+    /// (`PROP_KEYBOARD_LIGHT`, `PROP_KEYBOARD_AIDS`), and with it an
+    /// interface it is set up through (`PROP_SETUP_COMPLETE`).
     pub const KEYBOARD: u32 = 65;
     /// `CAP_SOUND`: the device has a sounder it plays optional sounds on
     /// (`PROP_SOUND_ENABLED`, `PROP_SOUND_VOLUME`).

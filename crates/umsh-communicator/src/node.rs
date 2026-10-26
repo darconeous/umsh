@@ -819,6 +819,16 @@ impl<P: LocalPort, S: ChatStore> Node for CommunicatorNode<P, S> {
         });
     }
 
+    fn setup_complete(&self) -> bool {
+        self.settings.borrow().setup_complete().unwrap_or(true)
+    }
+
+    fn set_setup_complete(&self, complete: bool) {
+        self.change(Setting::Setup, |settings| {
+            settings.set_setup_complete(complete)
+        });
+    }
+
     fn clear_pairings(&self) {
         self.change(Setting::Pairing, Settings::clear_pairings);
     }

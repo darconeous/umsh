@@ -725,6 +725,8 @@ pub struct Store {
     bluetooth: Cell<bool>,
     sound: Cell<bool>,
     volume: Cell<u8>,
+    /// Whether first run has finished: a fixture device has been set up.
+    setup_complete: Cell<bool>,
     gnss: Cell<bool>,
     /// What Add peer shows, and whether the other holder of the exchange
     /// pressed Same.
@@ -801,6 +803,7 @@ impl Store {
             bluetooth: Cell::new(true),
             sound: Cell::new(true),
             volume: Cell::new(191),
+            setup_complete: Cell::new(true),
             gnss: Cell::new(true),
             meet: RefCell::new(MeetState::new()),
             meet_theirs: Cell::new(false),
@@ -2480,6 +2483,17 @@ impl Node for Store {
     fn set_sound_volume(&self, volume: u8) {
         self.setting(Setting::Volume, || {
             self.volume.set(volume);
+            true
+        });
+    }
+
+    fn setup_complete(&self) -> bool {
+        self.setup_complete.get()
+    }
+
+    fn set_setup_complete(&self, complete: bool) {
+        self.setting(Setting::Setup, || {
+            self.setup_complete.set(complete);
             true
         });
     }

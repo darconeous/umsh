@@ -2448,6 +2448,64 @@ fn first_run_takes_a_name_a_profile_and_a_zone_and_ends_on_the_chats() {
     assert_eq!(app.state().clock.zone.std_offset_min(), -480);
 }
 
+/// Unlocks the way the board's control does.
+fn unlock<V, F>(app: &mut App<V, State, F>)
+where
+    V: ViewLayout<State>,
+    V::FocusTree: DefaultFocus,
+    V::Renderables: AnimatedJoin,
+    F: Fn(&State) -> V,
+{
+    if turning_unlocks() {
+        quick(app, &[Input::Turn(5)]);
+    }
+    quick(app, &[Input::Press]);
+}
+
+#[test]
+fn unlocking_a_device_not_set_up_opens_first_run_until_it_finishes() {
+    let mut app = app!();
+    app.state().node.set_setup_complete(false);
+    lock(&mut app);
+    unlock(&mut app);
+    assert!(!app.state().lock.locked);
+    assert!(app.state().in_setup());
+    assert_eq!(focus(app.state()), Some(keys::NAME_FIELD));
+    run(&mut app, &typed("Wren"));
+    run(&mut app, &[Input::Enter]);
+    let profile = focus(app.state());
+    assert!(app.state().in_setup());
+    assert_ne!(profile, Some(keys::NAME_FIELD));
+    // Locked partway, it unlocks back to first run as it was left.
+    lock(&mut app);
+    unlock(&mut app);
+    assert!(app.state().in_setup());
+    assert_eq!(focus(app.state()), profile);
+    // The profile as it is, and the zone as it is.
+    run(&mut app, &[Input::Press, Input::Press]);
+    assert!(!app.state().in_setup());
+    assert!(matches!(app.state().screen(), Screen::Chats { .. }));
+    assert!(app.state().node.setup_complete());
+    // Set up, it unlocks to where it was.
+    let held = focus(app.state());
+    lock(&mut app);
+    unlock(&mut app);
+    assert!(!app.state().in_setup());
+    assert!(matches!(app.state().screen(), Screen::Chats { .. }));
+    assert_eq!(focus(app.state()), held);
+}
+
+#[test]
+fn unlocking_a_device_set_up_skips_first_run() {
+    let mut app = app!();
+    assert!(app.state().node.setup_complete());
+    lock(&mut app);
+    unlock(&mut app);
+    assert!(!app.state().lock.locked);
+    assert!(!app.state().in_setup());
+    assert!(matches!(app.state().screen(), Screen::Chats { .. }));
+}
+
 #[test]
 fn typing_on_the_list_finds_and_enter_opens_the_top_result() {
     let mut app = app!();

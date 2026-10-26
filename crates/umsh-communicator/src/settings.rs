@@ -333,6 +333,11 @@ impl<P: LocalPort> Settings<P> {
         self.written(Setting::Volume, write)
     }
 
+    pub fn set_setup_complete(&mut self, complete: bool) -> bool {
+        let write = self.model.set_setup_complete(complete);
+        self.written(Setting::Setup, write)
+    }
+
     pub fn set_pairing(&mut self, open: bool) -> bool {
         let write = self.model.set_pairing(open);
         self.written(Setting::Pairing, write)
@@ -638,6 +643,11 @@ impl<P: LocalPort> Settings<P> {
 
     pub fn sound_volume(&self) -> u8 {
         self.u8(prop::SOUND_VOLUME).unwrap_or(DEFAULT_SOUND_VOLUME)
+    }
+
+    /// Whether the device has been set up, once read.
+    pub fn setup_complete(&self) -> Option<bool> {
+        self.bool(prop::SETUP_COMPLETE)
     }
 
     /// Whether the GNSS receiver is on, where the device has one.

@@ -1144,6 +1144,7 @@ pub enum Setting {
     AutoLock,
     Sound,
     Volume,
+    Setup,
 }
 
 /// What changed in the node without the interface asking. An event names
@@ -1596,6 +1597,12 @@ pub trait Node {
     fn sound_volume(&self) -> u8;
 
     fn set_sound_volume(&self, volume: u8);
+
+    /// Whether the device has been set up. True where it does not say, so
+    /// that only a device known not to be set up opens setup.
+    fn setup_complete(&self) -> bool;
+
+    fn set_setup_complete(&self, complete: bool);
 }
 
 /// At or below this charge, in percent, the battery is low.

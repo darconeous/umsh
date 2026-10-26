@@ -96,7 +96,7 @@ Code | Name               | Requires           | Grants
 61 | `CAP_TEMPERATURE` | — | `PROP_TEMPERATURES` and `PROP_TEMPERATURE_NAMES`; the inventory may initially be empty
 62 | `CAP_MESHCORE_FORWARDER` | `CAP_REPEATER` | [MeshCore forwarding](#meshcore-forwarding): `PROP_MESHCORE_FORWARDING_ENABLED`, `PROP_MESHCORE_REGION_POLICY`, `PROP_MESHCORE_REGIONS`; with `CAP_STATS`, the [MeshCore counters](ulcp-radio.md#prop-stat-meshcore-seen)
 64 | `CAP_DISPLAY` | — | A screen of the device's own: [`PROP_DISPLAY_BRIGHTNESS`](#prop-display-brightness), [`PROP_DISPLAY_TIMEOUT`](#prop-display-timeout)
-65 | `CAP_KEYBOARD` | — | A keyboard of the device's own: [`PROP_KEYBOARD_LIGHT`](#prop-keyboard-light), [`PROP_KEYBOARD_AIDS`](#prop-keyboard-aids)
+65 | `CAP_KEYBOARD` | — | A keyboard of the device's own: [`PROP_KEYBOARD_LIGHT`](#prop-keyboard-light), [`PROP_KEYBOARD_AIDS`](#prop-keyboard-aids), [`PROP_SETUP_COMPLETE`](#prop-setup-complete)
 66 | `CAP_SOUND` | — | A sounder the device plays optional sounds on: [`PROP_SOUND_ENABLED`](#prop-sound-enabled), [`PROP_SOUND_VOLUME`](#prop-sound-volume)
 
 `CAP_ADVERT` requires `CAP_DEV_IDENTITY` because what an advertisement
@@ -273,6 +273,7 @@ Id | Mnemonic                    | Commands                 | Description
 4879 | `PROP_KEYBOARD_AIDS`      | Get, Set, Is             | Typing aids in effect
 4891 | `PROP_SOUND_ENABLED`      | Get, Set, Is             | Whether optional sounds are played
 4892 | `PROP_SOUND_VOLUME`       | Get, Set, Is             | How loud optional sounds are played
+4893 | `PROP_SETUP_COMPLETE`     | Get, Set, Is             | Whether the device has been set up through its own interface
 4866 | `PROP_TIME`               | Get, Set, Is             | Wall clock, or empty when unknown
 4888 | `PROP_TZ_RULE`            | Get, Set, Is             | Local time zone, as a POSIX TZ rule
 4889 | `PROP_TIME_24H`           | Get, Set, Is             | Whether shown clocks use 24-hour time
@@ -2254,4 +2255,29 @@ property: it sounds as loud as the device makes it.
 
 Both properties are included in `CMD_SAVE`, and are asynchronous because
 the device's own controls change them (see [Changes Made at the
+Device](ulcp-saved-state.md#changes-made-at-the-device)).
+
+## Setup
+
+A device with a messaging interface of its own says whether it has been
+set up through that interface, so a host can tell a device new from the
+box, or from a factory reset, from one already in use.
+
+### PROP 4893: `PROP_SETUP_COMPLETE` {#prop-setup-complete}
+
+* Type: Single-Value, Read-Write
+* Asynchronous Updates: Yes
+* Required: `CAP_KEYBOARD`
+* Value Type: BOOL
+* Post-Reset Value: 0 (false), or restored from saved state
+
+Whether the device has been set up through its own interface. The device
+sets it when its first-run setup finishes. While it is clear, unlocking
+the device's interface opens that setup, so a host that clears it sends
+whoever holds the device through setup again, and one that sets it skips
+setup.
+
+The property is included in `CMD_SAVE`, so `CMD_FACTORY_RESET` clears it
+with the rest of the saved state. It is asynchronous because the device
+sets it itself (see [Changes Made at the
 Device](ulcp-saved-state.md#changes-made-at-the-device)).

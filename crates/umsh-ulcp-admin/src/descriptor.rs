@@ -326,6 +326,13 @@ pub const COVERED: &[Descriptor] = &[
         Access::ReadWrite,
         1,
     ),
+    scalar(
+        prop::SETUP_COMPLETE,
+        PropertyType::Bool,
+        Some(cap::KEYBOARD),
+        Access::ReadWrite,
+        1,
+    ),
     // The device identity as it advertises itself, signed.
     scalar(
         prop::IDENT,

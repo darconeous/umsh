@@ -1120,6 +1120,15 @@ impl Model {
         self.set(prop::SOUND_VOLUME, &[volume])
     }
 
+    /// `PROP_SETUP_COMPLETE`.
+    pub fn setup_complete(&self) -> Option<bool> {
+        self.bool(prop::SETUP_COMPLETE)
+    }
+
+    pub fn set_setup_complete(&mut self, complete: bool) -> Result<WriteId, Refusal> {
+        self.set(prop::SETUP_COMPLETE, &[u8::from(complete)])
+    }
+
     /// `PROP_KEYBOARD_AIDS`, as [`umsh_ulcp::ids::keyboard_aids`] flags.
     pub fn keyboard_aids(&self) -> Option<u8> {
         self.u8(prop::KEYBOARD_AIDS)

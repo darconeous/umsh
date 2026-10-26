@@ -1700,8 +1700,9 @@ impl State {
         });
     }
 
-    /// Ends first run on the Chats screen.
+    /// Ends first run on the Chats screen, the device now set up.
     pub(crate) fn finish_setup(&mut self) {
+        self.node.set_setup_complete(true);
         self.screens.truncate(1);
         self.focus_list();
     }

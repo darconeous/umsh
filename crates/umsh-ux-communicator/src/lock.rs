@@ -7,7 +7,8 @@
 //! it within [`UNLOCK_WINDOW_MS`]. Turning up takes steps back. On a board
 //! whose press is hard to make by accident, such as a trackball's, a press
 //! alone unlocks. Keys do nothing while locked; what was on screen is kept,
-//! and unlocking returns to it.
+//! and unlocking returns to it, or opens first run on a device not yet set
+//! up.
 
 use buoyant::focus::FocusKey;
 
@@ -94,12 +95,15 @@ impl State {
         self.settle();
     }
 
-    /// Unlocks, back to what was on screen.
+    /// Unlocks, back to what was on screen, or into first run while the
+    /// device has not been set up and it is not already under way.
     fn unlock(&mut self) {
         let held = self.lock.held;
         self.lock = Lock::default();
         self.arrived.clear();
-        if let Some(key) = held {
+        if !self.node.setup_complete() && !self.in_setup() {
+            self.start_setup();
+        } else if let Some(key) = held {
             self.focus().request(key);
         }
         self.settle();

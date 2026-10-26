@@ -273,9 +273,10 @@ pub struct SessionConfig {
     /// advertised, with the settings after a reset.
     pub display: Option<DisplayConfig>,
     /// Whether the device has a keyboard of its own. When set,
-    /// `CAP_KEYBOARD` is advertised and `PROP_KEYBOARD_LIGHT` and
-    /// `PROP_KEYBOARD_AIDS` exist, lit and with every aid on after a
-    /// reset; otherwise both are unknown.
+    /// `CAP_KEYBOARD` is advertised and `PROP_KEYBOARD_LIGHT`,
+    /// `PROP_KEYBOARD_AIDS`, and `PROP_SETUP_COMPLETE` exist: lit, with
+    /// every aid on, and not set up after a reset. Otherwise all three
+    /// are unknown.
     pub keyboard: bool,
     /// Whether the device has a sounder it plays optional sounds on. When
     /// set, `CAP_SOUND` is advertised and `PROP_SOUND_ENABLED` and
@@ -1153,6 +1154,8 @@ struct DeviceDomain {
     sound_enabled: bool,
     /// `PROP_SOUND_VOLUME`. Meaningful only under [`Config::sound`].
     sound_volume: u8,
+    /// `PROP_SETUP_COMPLETE`. Meaningful only under [`Config::keyboard`].
+    setup_complete: bool,
     /// `PROP_GNSS_IDENT_UPDATE`: whether fixes refresh the advertised node
     /// identity's location. Off by default: broadcasting where you are is
     /// a decision, not a default.
@@ -1244,6 +1247,7 @@ impl DeviceDomain {
             keyboard_aids: keyboard_aids::ALL,
             sound_enabled: true,
             sound_volume: DEFAULT_SOUND_VOLUME,
+            setup_complete: false,
             gnss_ident_update: false,
             gnss_ident_precision: DEFAULT_IDENT_PRECISION,
             gnss_time_trust: true,
@@ -2517,6 +2521,7 @@ const SAVED_SCHEMA: &[SavedProperty] = &[
     saved(prop::DISPLAY_TIMEOUT, ApplyPhase::Config, false),
     saved(prop::SOUND_ENABLED, ApplyPhase::Config, false),
     saved(prop::SOUND_VOLUME, ApplyPhase::Config, false),
+    saved(prop::SETUP_COMPLETE, ApplyPhase::Config, false),
     saved(prop::IPV4_CONFIG, ApplyPhase::Config, false),
     saved(prop::IPV6_CONFIG, ApplyPhase::Config, false),
     saved(prop::IP_DNS, ApplyPhase::Config, true),
@@ -2669,6 +2674,7 @@ struct SavedState {
     keyboard_aids: u8,
     sound_enabled: bool,
     sound_volume: u8,
+    setup_complete: bool,
     gnss_ident_update: bool,
     gnss_ident_precision: u8,
     gnss_time_trust: bool,
@@ -2727,6 +2733,7 @@ impl SavedState {
             keyboard_aids: device.keyboard_aids,
             sound_enabled: device.sound_enabled,
             sound_volume: device.sound_volume,
+            setup_complete: device.setup_complete,
             gnss_ident_update: device.gnss_ident_update,
             gnss_ident_precision: device.gnss_ident_precision,
             gnss_time_trust: device.gnss_time_trust,
@@ -2793,6 +2800,7 @@ impl SavedState {
             keyboard_aids: keyboard_aids::ALL,
             sound_enabled: true,
             sound_volume: DEFAULT_SOUND_VOLUME,
+            setup_complete: false,
             gnss_ident_update: false,
             gnss_ident_precision: DEFAULT_IDENT_PRECISION,
             gnss_time_trust: true,
@@ -2940,6 +2948,7 @@ impl SavedState {
             prop::KEYBOARD_AIDS => encoder.put(number, &[self.keyboard_aids]),
             prop::SOUND_ENABLED => encoder.put(number, &[self.sound_enabled as u8]),
             prop::SOUND_VOLUME => encoder.put(number, &[self.sound_volume]),
+            prop::SETUP_COMPLETE => encoder.put(number, &[self.setup_complete as u8]),
             prop::PHY_DUTY_LIMIT => encoder.put(number, &self.duty_limit.to_le_bytes()),
             prop::DEV_ADMINS => {
                 for public_key in self.dev_admins.iter() {
@@ -3177,6 +3186,7 @@ impl SavedState {
             prop::KEYBOARD_LIGHT => self.keyboard_light = parse_bool(value).map_err(invalid)?,
             prop::SOUND_ENABLED => self.sound_enabled = parse_bool(value).map_err(invalid)?,
             prop::SOUND_VOLUME => self.sound_volume = parse_u8(value).map_err(invalid)?,
+            prop::SETUP_COMPLETE => self.setup_complete = parse_bool(value).map_err(invalid)?,
             // Aids a newer firmware saved are dropped, not the snapshot.
             prop::KEYBOARD_AIDS => {
                 self.keyboard_aids = parse_u8(value).map_err(invalid)? & keyboard_aids::ALL
@@ -4138,6 +4148,7 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                     prop::KEYBOARD_AIDS => self.device.keyboard_aids = saved.keyboard_aids,
                     prop::SOUND_ENABLED => self.device.sound_enabled = saved.sound_enabled,
                     prop::SOUND_VOLUME => self.device.sound_volume = saved.sound_volume,
+                    prop::SETUP_COMPLETE => self.device.setup_complete = saved.setup_complete,
                     prop::PHY_DUTY_LIMIT => self.config.duty.set_limit(saved.duty_limit),
                     prop::TZ_RULE => self.device.tz_rule = saved.tz_rule.clone(),
                     prop::TIME_24H => self.device.time_24h = saved.time_24h,
@@ -5501,6 +5512,11 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
     /// sounder.
     pub fn sound_volume(&self) -> Option<u8> {
         self.config.sound.then_some(self.device.sound_volume)
+    }
+
+    /// `PROP_SETUP_COMPLETE`; false on a board without a keyboard.
+    pub fn setup_complete(&self) -> bool {
+        self.config.keyboard && self.device.setup_complete
     }
 
     /// `PROP_KEYBOARD_AIDS`, as [`keyboard_aids`] flags; none on a board
@@ -7633,6 +7649,11 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
                 self.bump_dev_domain();
                 Ok(false)
             }
+            prop::SETUP_COMPLETE if self.config.keyboard => {
+                self.device.setup_complete = parse_bool(value)?;
+                self.bump_dev_domain();
+                Ok(false)
+            }
             prop::KEYBOARD_AIDS if self.config.keyboard => {
                 self.device.keyboard_aids = parse_keyboard_aids(value)?;
                 self.bump_dev_domain();
@@ -8482,7 +8503,10 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
         if matches!(key, prop::DISPLAY_BRIGHTNESS | prop::DISPLAY_TIMEOUT) {
             return self.config.display.is_some();
         }
-        if matches!(key, prop::KEYBOARD_LIGHT | prop::KEYBOARD_AIDS) {
+        if matches!(
+            key,
+            prop::KEYBOARD_LIGHT | prop::KEYBOARD_AIDS | prop::SETUP_COMPLETE
+        ) {
             return self.config.keyboard;
         }
         if matches!(key, prop::SOUND_ENABLED | prop::SOUND_VOLUME) {
@@ -8885,6 +8909,10 @@ impl<A: AesProvider, S: Sha256Provider, const TX: usize> Session<A, S, TX> {
             }
             prop::SOUND_VOLUME if self.config.sound => {
                 out[0] = self.device.sound_volume;
+                1
+            }
+            prop::SETUP_COMPLETE if self.config.keyboard => {
+                out[0] = self.device.setup_complete as u8;
                 1
             }
             prop::KEYBOARD_AIDS if self.config.keyboard => {
@@ -9911,6 +9939,73 @@ mod tests {
             let (_, _, value) = parse_prop_is(&emitted[0]);
             assert_eq!(pui::decode(&value).unwrap().0, Status::PROP_NOT_FOUND.0);
         }
+    }
+
+    #[test]
+    fn setup_is_a_saved_device_setting() {
+        let config = SessionConfig {
+            keyboard: true,
+            ..test_config()
+        };
+        let mut session = Session::new(config, Status::RESET_POWER_ON, test_engine());
+        session.attach(true);
+        assert_eq!(get(&mut session, prop::SETUP_COMPLETE), [0]);
+        assert!(!session.setup_complete());
+
+        set(&mut session, prop::SETUP_COMPLETE, &[1]);
+        assert!(session.setup_complete());
+        assert_eq!(get(&mut session, prop::SETUP_COMPLETE), [1]);
+
+        save(&mut session);
+        let mut bytes = [0; SNAPSHOT_MAX];
+        let len = session.encode_snapshot(&mut bytes).unwrap();
+        let mut booted: TestSession = Session::new(config, Status::RESET_POWER_ON, test_engine());
+        booted.restore_at_boot(&bytes[..len]).unwrap();
+        assert!(booted.setup_complete());
+        booted.reset(Status::RESET_SOFTWARE, &mut |_| {});
+        assert!(booted.setup_complete());
+
+        // A snapshot from before it existed restores a device not set up.
+        let old = strip_snapshot_options(&bytes[..len], &[prop::SETUP_COMPLETE]);
+        booted.restore_at_boot(&old).unwrap();
+        assert!(!booted.setup_complete());
+
+        let mut bare = test_session();
+        assert!(!bare.setup_complete());
+        let (emitted, _) = set(&mut bare, prop::SETUP_COMPLETE, &[1]);
+        let (_, _, value) = parse_prop_is(&emitted[0]);
+        assert_eq!(pui::decode(&value).unwrap().0, Status::PROP_NOT_FOUND.0);
+    }
+
+    /// A factory reset leaves the device not set up: the wipe takes the
+    /// snapshot with it, and so does `CMD_CLEAR` followed by `CMD_RST`.
+    #[test]
+    fn a_factory_reset_leaves_the_device_not_set_up() {
+        let config = SessionConfig {
+            keyboard: true,
+            ..test_config()
+        };
+        let mut session: TestSession = Session::new(config, Status::RESET_POWER_ON, test_engine());
+        session.attach(true);
+        set(&mut session, prop::SETUP_COMPLETE, &[1]);
+        save(&mut session);
+
+        let mut buf = [0u8; 8];
+        let len = frame::factory_reset(&mut buf, 4).unwrap();
+        let (_, effect) = dispatch(&mut session, &buf[..len], 0);
+        assert_eq!(effect, Some(Effect::FactoryReset));
+        // The board wipes its storage and restarts with nothing to restore.
+        let wiped: TestSession = Session::new(config, Status::RESET_POWER_ON, test_engine());
+        assert!(!wiped.setup_complete());
+
+        let len = frame::clear(&mut buf, 5).unwrap();
+        let (_, effect) = dispatch(&mut session, &buf[..len], 0);
+        assert_eq!(effect, Some(Effect::ClearSaved { tid: 5 }));
+        session.respond_clear(5, Ok(()), &mut |_: &[u8]| {});
+        session.reset(Status::RESET_SOFTWARE, &mut |_: &[u8]| {});
+        session.attach(true);
+        assert!(!session.setup_complete());
+        assert_eq!(get(&mut session, prop::SETUP_COMPLETE), [0]);
     }
 
     /// A board with neither a clock nor a receiver, for the tests that

@@ -152,6 +152,7 @@ Id   | Mnemonic                                                                 
 4890 | [`PROP_DISPLAY_TIMEOUT`](ulcp-device.md#prop-display-timeout)                         | Get, Set, Is               | `CAP_DISPLAY`
 4891 | [`PROP_SOUND_ENABLED`](ulcp-device.md#prop-sound-enabled)                             | Get, Set, Is               | `CAP_SOUND`
 4892 | [`PROP_SOUND_VOLUME`](ulcp-device.md#prop-sound-volume)                               | Get, Set, Is               | `CAP_SOUND`
+4893 | [`PROP_SETUP_COMPLETE`](ulcp-device.md#prop-setup-complete)                           | Get, Set, Is               | `CAP_KEYBOARD`
 4896 | [`PROP_IPV4_STATE`](ulcp-ip.md#prop-ipv4-state)                                       | Get, Is                    | `CAP_IPV4`
 4897 | [`PROP_IPV4_CONFIG`](ulcp-ip.md#prop-ipv4-config)                                     | Get, Set                   | `CAP_IPV4`
 4898 | [`PROP_IPV4_ADDRESS`](ulcp-ip.md#prop-ipv4-address)                                   | Get, Is                    | `CAP_IPV4`

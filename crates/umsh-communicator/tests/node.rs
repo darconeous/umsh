@@ -339,6 +339,20 @@ fn sound_is_a_saved_device_setting() {
 }
 
 #[test]
+fn a_new_device_is_not_set_up_until_setup_finishes() {
+    let sim = device();
+    let (node, clock) = node(&sim);
+    assert!(!node.setup_complete());
+    let before = sim.borrow().saved_snapshot().unwrap().to_vec();
+    node.set_setup_complete(true);
+    assert!(node.setup_complete());
+    clock.set(1_000);
+    node.pump();
+    assert!(node.setup_complete());
+    assert_ne!(sim.borrow().saved_snapshot().unwrap(), &before[..]);
+}
+
+#[test]
 fn auto_lock_is_a_device_setting_and_0_is_never() {
     let sim = device();
     let (node, clock) = node(&sim);

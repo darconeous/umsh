@@ -157,7 +157,8 @@ wakes to the lock screen. Holding it still shuts down.
   is known, the unread count, and one card per chat heard from since locking.
 - **Unlocking** is five wheel steps down, which fill a bar, then a press within
   2 s. Turning up empties the bar; keys do nothing. Unlocking returns to
-  where the user was.
+  where the user was, or, on a device not yet set up, opens first run
+  (`PROP_SETUP_COMPLETE`). A device always starts on the lock screen.
 - **While locked**, the screen stays lit 15 s, then fades and goes dark. Every
   message that would alert lights it again, with its tick, and restarts the
   15 s.
