@@ -33,7 +33,7 @@
 	ios-mobile-core ios-archive ios-upload \
 	build-simulator-communicator run-simulator-communicator \
 	install-umshctl install-umsh-bridge install-dissector install-extcap \
-	install-colorfilters
+	install-colorfilters clean-workspaces
 
 # ─── Firmware build / flash ──────────────────────────────────────────────────
 #
@@ -1114,3 +1114,7 @@ gh-pages-site: site docs
 	$(gh-pages-open)
 	$(gh-pages-lay)
 	$(call gh-pages-commit,Update GitHub Pages: site and spec)
+
+
+clean-workspaces:
+	for DIR in .claude/worktrees/* ; do ( cd $$DIR ; cargo clean && rm -fr target packages/UMSHMobileCore/Artifacts/UMSHMobileCoreFFI.xcframework docs/protocol/book && cd firmware-esp32 && rm -fr target && cargo clean )  ; done
