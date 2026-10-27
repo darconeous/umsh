@@ -575,6 +575,53 @@ mod tests {
         assert_eq!(pongs.borrow().as_slice(), &[250]);
     }
 
+    /// A traced reply reports how each repeater heard the hop beyond it, but
+    /// only when the signal pairs with the trace entry for entry: a signal
+    /// that does not cannot say which hop a reading belongs to.
+    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
+    #[test]
+    fn a_pong_reports_the_trace_signal_that_pairs_with_its_trace() {
+        use umsh_core::options::TraceSignalEntry;
+
+        for (signal, expected) in [
+            (
+                &[97u8, 65, 0, 0][..],
+                vec![
+                    TraceSignalEntry::new(-97, 65),
+                    TraceSignalEntry::POINT_TO_POINT,
+                ],
+            ),
+            (&[97u8, 65][..], Vec::new()),
+        ] {
+            let mac = FakeMac::new(vec![[7u8; 32]]);
+            let node = test_node(mac.clone());
+            let peer = PublicKey([0x55; 32]);
+            let peer_connection = block_on_ready(node.peer(peer)).unwrap();
+            let seen = Rc::new(RefCell::new(None));
+            let log = seen.clone();
+            let _subscription = node.on_pong_with_metadata(move |_, pong| {
+                *log.borrow_mut() = Some(pong.clone());
+            });
+
+            block_on_ready(peer_connection.ping(4, &SendOptions::default(), 1_000)).unwrap();
+            let sent = mac.take_unicasts().pop().expect("ping send");
+            let nonce = match parse_owned_mac_command(&sent.payload) {
+                OwnedMacCommand::EchoRequest { data } => [data[0], data[1]],
+                other => panic!("unexpected ping payload: {other:?}"),
+            };
+
+            let trace: &'static [u8] = &[0xAA, 0x01, 0xBB, 0x02];
+            let signal: &'static [u8] = Box::leak(signal.to_vec().into_boxed_slice());
+            let packet =
+                test_broadcast_packet_with_traces(peer, None, None, Some(trace), Some(signal));
+            node.match_pong(peer, &nonce, &packet, 1_250);
+
+            let pong = seen.borrow_mut().take().expect("pong");
+            assert_eq!(pong.route_hints.len(), 2);
+            assert_eq!(pong.trace_signal, expected);
+        }
+    }
+
     #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
     #[test]
     fn pfs_routed_send_tracks_ack_against_ephemeral_identity() {

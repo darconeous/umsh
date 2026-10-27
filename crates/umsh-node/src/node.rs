@@ -4,6 +4,7 @@ use alloc::vec::Vec;
 use core::cell::RefCell;
 use core::num::NonZeroU32;
 
+use umsh_core::options::TraceSignalEntry;
 use umsh_core::{ChannelId, NodeHint, PublicKey, RouterHint};
 use umsh_mac::{CachedRoute, LocalIdentityId, SendOptions};
 
@@ -162,6 +163,11 @@ pub struct PongMetadata {
     /// [`ReceivedPacketRef::hop_count`](umsh_mac::ReceivedPacketRef::hop_count).
     pub hop_count: Option<u8>,
     pub route_hints: Vec<RouterHint>,
+    /// How each repeater in `route_hints` heard the node beyond it, entry
+    /// for entry: the first is how the repeater nearest this node heard the
+    /// one before it. Empty unless the response carried a trace signal that
+    /// pairs one-to-one with its trace route.
+    pub trace_signal: Vec<TraceSignalEntry>,
     pub rssi_dbm: Option<i16>,
     pub snr_centibels: Option<i16>,
     pub lqi: Option<u8>,
@@ -1344,10 +1350,23 @@ impl<M: MacBackend> LocalNode<M> {
             let ping = state.pending_pings.swap_remove(idx);
             let rtt_ms = now_ms.saturating_sub(ping.sent_at_ms);
             let route_hints = packet.trace_route_hints().collect::<Vec<_>>();
+            // Only a signal that pairs with the trace entry for entry says
+            // which hop each reading belongs to.
+            let trace_signal = packet
+                .trace_signal()
+                .filter(|signal| signal.len() == 2 * route_hints.len())
+                .map(|signal| {
+                    signal
+                        .chunks_exact(2)
+                        .map(|entry| TraceSignalEntry::from_bytes([entry[0], entry[1]]))
+                        .collect()
+                })
+                .unwrap_or_default();
             let metadata = PongMetadata {
                 round_trip_ms: rtt_ms,
                 hop_count: packet.hop_count(),
                 route_hints,
+                trace_signal,
                 rssi_dbm: packet.rssi(),
                 snr_centibels: packet.snr().map(|snr| snr.as_centibels()),
                 lqi: packet.lqi().map(core::num::NonZeroU8::get),
