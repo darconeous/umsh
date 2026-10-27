@@ -102,6 +102,11 @@ pub mod input;
 #[path = "tdeck_sound.rs"]
 pub mod sound;
 
+/// How often the RWDT is fed, inside its 8 s [`WDT_TIMEOUT`]: the RWDT
+/// runs through light sleep and the feed is a timer wake, so this caps
+/// how long the chip sleeps.
+const HEARTBEAT_FEED: Duration = Duration::from_secs(6);
+
 /// The RWDT feed, and the shutdown sequence: the farewell, the capture
 /// tasks stopped, the radio asleep, the rail down, and deep sleep until
 /// the trackball is pressed. The slide switch is the only hard off.
@@ -109,7 +114,7 @@ pub mod sound;
 pub async fn heartbeat_task(mut rtc: Rtc<'static>, mut sleep: esp_rtos::sleep::DeepSleep) -> ! {
     let cause = loop {
         rtc.rwdt.feed();
-        if let Ok(cause) = with_timeout(Duration::from_secs(2), SHUTDOWN_REQUEST.wait()).await {
+        if let Ok(cause) = with_timeout(HEARTBEAT_FEED, SHUTDOWN_REQUEST.wait()).await {
             break cause;
         }
     };

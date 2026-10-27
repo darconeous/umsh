@@ -202,7 +202,10 @@ async fn interface(
         // A frame that asked for another, as a list running short of the
         // rows it built does at the end of a glide, gets it a frame later.
         let next_frame = animating || app.should_redraw();
-        let tick = Instant::now() + if next_frame && lit { FRAME } else { REPORT };
+        // Lit, a pass runs at least once a [`REPORT`], which keeps the
+        // links' readings current; dark, only for a deadline, since the
+        // pass that lights the panel reads them anyway.
+        let tick = lit.then(|| Instant::now() + if next_frame { FRAME } else { REPORT });
         let wake_at = [
             attention.next_deadline(),
             app.state().next_deadline(),
@@ -211,7 +214,15 @@ async fn interface(
         ]
         .into_iter()
         .flatten()
-        .fold(tick, |at, deadline| at.min(Instant::from_millis(deadline)));
+        .map(Instant::from_millis)
+        .chain(tick)
+        .min();
+        let timer = async {
+            match wake_at {
+                Some(at) => Timer::at(at).await,
+                None => core::future::pending().await,
+            }
+        };
         let now = || Instant::now().as_millis();
         let woken = select4(
             INPUT.receive(),
@@ -220,7 +231,7 @@ async fn interface(
                 input_gate::LOCK.wait(),
                 umsh_hal::wall_clock::changed(),
             ),
-            Timer::at(wake_at),
+            timer,
             select4(
                 BATTERY_UI_CHANGED.wait(),
                 DISPLAY_SHUTDOWN.wait(),
@@ -284,7 +295,7 @@ async fn interface(
             minute = next_minute();
         }
         // The links are read on every pass, which is at least once a
-        // second, and redraw the strip only when one has changed.
+        // second while lit, and redraw the strip only when one has changed.
         let read = links();
         let status = &app.state().status;
         if (status.bluetooth, status.wifi, status.gnss) != read {

@@ -795,10 +795,17 @@ static SCREEN_LIT: AtomicBool = AtomicBool::new(true);
 #[cfg(feature = "battery-adc-rail")]
 pub(crate) fn note_screen_lit(lit: bool) {
     SCREEN_LIT.store(lit, Ordering::Release);
-    if !lit {
+    if lit {
+        SCREEN_LIGHTS.signal(());
+    } else {
         note_external_load();
     }
 }
+
+/// The panel has lit: the battery is read at once, and then at the lit
+/// pace.
+#[cfg(feature = "battery-adc-rail")]
+static SCREEN_LIGHTS: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 /// Battery request/reply pair between the session env and the sampler
 /// task, which owns the ADC (or the PMIC telemetry cadence).
 #[cfg(feature = "battery-telemetry")]
@@ -1016,11 +1023,13 @@ static BATTERY_UI_CHANGED: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 /// How often the battery is read on its own.
 #[cfg(all(feature = "battery-adc", not(feature = "battery-adc-rail")))]
 const BATTERY_PERIOD: Duration = Duration::from_secs(60);
-/// On the rail, external power coming or going shows only in a reading,
-/// which costs well under a millisecond: it is read often enough for the
-/// screen to follow a plug at once.
+/// On the rail, external power coming or going shows only in a reading:
+/// while lit it is read often enough for the screen to follow a plug at
+/// once, and while dark rarely, so the chip sleeps.
 #[cfg(feature = "battery-adc-rail")]
 const BATTERY_PERIOD: Duration = Duration::from_secs(1);
+#[cfg(feature = "battery-adc-rail")]
+const BATTERY_PERIOD_DARK: Duration = Duration::from_secs(60);
 
 /// Owns the ADC divider. Samples on a slow cadence for the OLED and
 /// immediately on session request (`Effect::SampleBattery`).
@@ -1037,9 +1046,21 @@ async fn battery_task(mut sampler: BatterySampler) {
     #[cfg(feature = "battery-adc-rail")]
     let mut external = false;
     loop {
+        #[cfg(feature = "battery-adc-rail")]
+        let (period, lights) = {
+            SCREEN_LIGHTS.reset();
+            let period = if SCREEN_LIT.load(Ordering::Acquire) {
+                BATTERY_PERIOD
+            } else {
+                BATTERY_PERIOD_DARK
+            };
+            (period, SCREEN_LIGHTS.wait())
+        };
+        #[cfg(not(feature = "battery-adc-rail"))]
+        let (period, lights) = (BATTERY_PERIOD, core::future::pending::<()>());
         let requested = matches!(
-            select(Timer::after(BATTERY_PERIOD), BATTERY_REQUEST.wait()).await,
-            Either::Second(())
+            select3(Timer::after(period), BATTERY_REQUEST.wait(), lights).await,
+            Either3::Second(())
         );
         // V2: ADC2 belongs to the radio while the BLE controller is up
         // (`Adc::new` would panic), so sampling waits for a BLE-off
