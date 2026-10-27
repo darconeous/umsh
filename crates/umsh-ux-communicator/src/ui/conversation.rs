@@ -88,8 +88,10 @@ type Placeholder = heapless::String<48>;
 /// An action in the actions menu, which can name a channel.
 type MenuText = heapless::String<40>;
 /// The most messages built at once: those shown, the shortest kind of row
-/// filling the history, with room to spare.
-const HISTORY_ROWS: usize = 16;
+/// (a stand-in's line) filling the history, and the two a list keeps built
+/// for focus. No more: the rows are most of the screen's render tree, which
+/// building it copies through the stack several times over.
+const HISTORY_ROWS: usize = 10;
 /// How many heights of messages no longer built the history remembers.
 const REMEMBERED: usize = 16;
 /// What a message is taken to be, until it is built: one line.
