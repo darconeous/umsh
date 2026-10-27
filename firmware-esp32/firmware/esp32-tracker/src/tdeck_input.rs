@@ -1,9 +1,9 @@
 //! The T-Deck's controls: the trackball, its press, the keyboard, and the
 //! touch panel.
 //! The trackball and the touch panel's INT are captured by interrupt while
-//! the panel is lit and not at all while it is dark, so neither a roll nor
-//! a touch wakes it; the press and the keys do. What a gesture means is
-//! the input gate's.
+//! the panel is lit and not at all while it is dark, and the keyboard is
+//! not read while it is dark, so only the press wakes it. What a gesture
+//! means is the input gate's.
 //! The keyboard and the touch panel are read on an executor of their own,
 //! above thread mode, so a frame being laid out and painted never holds a
 //! read back.
@@ -33,7 +33,7 @@ pub(crate) fn to_input(input: UiItem) -> UiItem {
     input
 }
 
-static KEYBOARD_RETRY: Signal<CriticalSectionRawMutex, ()> = Signal::new();
+static KEYBOARD_SHOWN: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 static STOP_PRESS: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 static STOP_KEYBOARD: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 static STOP_TOUCH: Signal<CriticalSectionRawMutex, ()> = Signal::new();
@@ -46,9 +46,10 @@ pub(crate) fn stop() {
     STOP_TOUCH.signal(());
 }
 
-/// The panel lit: a keyboard that failed is tried again at once.
+/// The panel lit: the keyboard is read again, and one that failed is
+/// tried again at once.
 pub(crate) fn shown() {
-    KEYBOARD_RETRY.signal(());
+    KEYBOARD_SHOWN.signal(());
 }
 
 pub(crate) fn lit(_lit: bool) {}
@@ -160,7 +161,7 @@ fn arrow(direction: Direction) -> Arrow {
 }
 
 /// Lit, the trackball is captured; dark, nothing here holds the chip
-/// awake, and the press or a key brings the panel back.
+/// awake, and the press brings the panel back.
 #[embassy_executor::task]
 pub async fn coordinator() {
     loop {
@@ -267,11 +268,9 @@ async fn keyboard_task(bus: &'static board::I2cBus) {
 /// When the keyboard's controller first answers: about half a second
 /// after the rail it shares rises, which is at boot.
 const KEYBOARD_START: Instant = Instant::from_millis(500);
-/// How often the keyboard is read: often enough while lit that two keys
-/// in quick succession are both seen (it holds only the last), and
-/// rarely while dark, when a key only wakes the panel.
-const KEYBOARD_LIT: Duration = Duration::from_millis(30);
-const KEYBOARD_DARK: Duration = Duration::from_millis(250);
+/// How often the keyboard is read while lit: often enough that two keys
+/// in quick succession are both seen (it holds only the last).
+const KEYBOARD_PERIOD: Duration = Duration::from_millis(30);
 /// The wait before the controller is tried again after a failure: it
 /// doubles while failures repeat, and a display wake cuts it short.
 const KEYBOARD_RETRY_FIRST: Duration = Duration::from_millis(250);
@@ -286,15 +285,20 @@ async fn run_keyboard(bus: &'static board::I2cBus) {
     let mut keyboard = I2cDevice::new(bus);
     Timer::at(KEYBOARD_START).await;
     let mut retry = KEYBOARD_RETRY_FIRST;
-    // The light wanted, and the light last set.
-    let mut light = true;
+    // The light wanted while lit, and the light last set.
+    let mut wanted = true;
     let mut set = None;
     // When the controller can take the light, once it is answering. A
     // controller that stopped answering may have restarted, with its
     // light off.
     let mut light_from = None;
+    // A key pressed while dark is still held by the controller; the first
+    // read once lit takes it, and it goes no further.
+    let mut stale = false;
     loop {
         use embedded_hal_async::i2c::I2c as _;
+        let lit = control(|c| c.policy.mode == Mode::Interactive);
+        let light = wanted && lit;
         if set != Some(light) && light_from.is_some_and(|from| Instant::now() >= from) {
             let duty = if light { KEYBOARD_LIGHT_DUTY } else { 0 };
             // Firmware older than the light command ignores it.
@@ -307,6 +311,15 @@ async fn run_keyboard(bus: &'static board::I2cBus) {
                 set = Some(light);
             }
         }
+        // Dark, the keyboard is left alone until the panel lights again.
+        if !lit {
+            KEYBOARD_SHOWN.reset();
+            if control(|c| c.policy.mode != Mode::Interactive) {
+                KEYBOARD_SHOWN.wait().await;
+            }
+            stale = true;
+            continue;
+        }
         let mut byte = [0];
         match with_timeout(
             Duration::from_millis(50),
@@ -317,7 +330,9 @@ async fn run_keyboard(bus: &'static board::I2cBus) {
             Ok(Ok(())) => {
                 retry = KEYBOARD_RETRY_FIRST;
                 light_from.get_or_insert_with(|| Instant::now() + KEYBOARD_LIGHT_SETTLE);
-                if let Some(key) = keys::key(byte[0]) {
+                if !core::mem::take(&mut stale)
+                    && let Some(key) = keys::key(byte[0])
+                {
                     deliver(key);
                 }
             }
@@ -328,21 +343,19 @@ async fn run_keyboard(bus: &'static board::I2cBus) {
                     "tdeck: keyboard not answering; retry in {} ms",
                     retry.as_millis()
                 ));
-                KEYBOARD_RETRY.reset();
-                select(Timer::after(retry), KEYBOARD_RETRY.wait()).await;
+                KEYBOARD_SHOWN.reset();
+                select(Timer::after(retry), KEYBOARD_SHOWN.wait()).await;
                 retry = (retry * 2).min(KEYBOARD_RETRY_MOST);
                 continue;
             }
         }
-        let period = if control(|c| c.policy.mode == Mode::Interactive) {
-            KEYBOARD_LIT
-        } else {
-            KEYBOARD_DARK
-        };
-        if let Either::Second(lit) =
-            select(Timer::after(period), board::display::KEYBOARD_LIGHT.wait()).await
+        if let Either::Second(light) = select(
+            Timer::after(KEYBOARD_PERIOD),
+            board::display::KEYBOARD_LIGHT.wait(),
+        )
+        .await
         {
-            light = lit;
+            wanted = light;
         }
     }
 }
