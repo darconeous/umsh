@@ -690,7 +690,7 @@ struct RepeatCaptionTests {
     }
 
     @Test func countsRepeatersThatNamedNobody() {
-        #expect(RepeatCaption.text(lead: nil, count: 1) == "Sent via a repeater")
-        #expect(RepeatCaption.text(lead: nil, count: 3) == "Sent via 3 repeaters")
+        #expect(RepeatCaption.text(lead: nil, count: 1) == "Heard a repeat")
+        #expect(RepeatCaption.text(lead: nil, count: 3) == "Heard 3 repeats")
     }
 }

@@ -91,12 +91,15 @@ pub struct Delivery {
 
 impl Delivery {
     /// Takes the latest word on one fragment. A failed fragment that is
-    /// sent again, or acknowledged after all, has not failed.
+    /// sent again, or acknowledged after all, has not failed. An
+    /// acknowledged one was delivered, so a resend of it that goes
+    /// unanswered does not fail it.
     pub fn set(&mut self, fragment: Option<u8>, state: DeliveryState) {
         let bit = 1u16 << fragment.unwrap_or(0).min(15);
         match state {
             DeliveryState::Sent => self.sent |= bit,
             DeliveryState::Acked => self.acked |= bit,
+            DeliveryState::Failed if self.acked & bit != 0 => {}
             DeliveryState::Failed => self.failed |= bit,
         }
         if state != DeliveryState::Failed {
@@ -407,4 +410,33 @@ pub enum StoreError {
     BufferTooSmall,
     /// The store lost power, and has not been mounted again.
     PoweredOff,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_acknowledged_fragment_outlasts_a_resend_that_fails() {
+        let mut delivery = Delivery::default();
+        delivery.set(None, DeliveryState::Sent);
+        delivery.set(None, DeliveryState::Acked);
+        // A peer asked for it again, and the resend went unanswered.
+        delivery.set(None, DeliveryState::Sent);
+        delivery.set(None, DeliveryState::Failed);
+        assert_eq!(delivery.failed, 0);
+        assert_eq!(delivery.state(None), Some(DeliveryState::Acked));
+        assert!(!delivery.awaited(false));
+    }
+
+    #[test]
+    fn an_unacknowledged_fragment_fails() {
+        let mut delivery = Delivery::default();
+        delivery.set(Some(0), DeliveryState::Sent);
+        delivery.set(Some(0), DeliveryState::Acked);
+        delivery.set(Some(1), DeliveryState::Sent);
+        delivery.set(Some(1), DeliveryState::Failed);
+        assert_eq!(delivery.state(Some(0)), Some(DeliveryState::Acked));
+        assert_eq!(delivery.state(Some(1)), Some(DeliveryState::Failed));
+    }
 }

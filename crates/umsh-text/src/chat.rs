@@ -356,7 +356,8 @@ pub struct Repeats {
     pub fragment: Option<u8>,
     /// Repeaters the forwards named, each once, in the order first heard.
     pub repeaters: Vec<RouterHint>,
-    /// Forwards that named no repeater, each taken for a repeater of its own.
+    /// Forwards that named no repeater, which may include one repeater's
+    /// several.
     pub anonymous: u16,
 }
 

@@ -924,7 +924,7 @@ pub struct Via {
     /// What the first repeater named is called: its name, else its hint.
     /// `None` when none of them was named.
     pub lead: Option<SharedText>,
-    /// Repeaters heard in all, named or not.
+    /// Named repeaters plus unnamed repeats.
     pub count: u8,
 }
 
@@ -1087,7 +1087,7 @@ pub struct Details {
     /// The repeaters overheard carrying mine that named themselves, in the
     /// order first heard.
     pub repeaters: Vec<Repeater, MAX_REPEATERS>,
-    /// How many more were heard carrying it without naming themselves.
+    /// How many more repeats of it were heard naming no repeater.
     pub anonymous: u16,
 }
 

@@ -687,8 +687,10 @@ enum RepeatCaption {
 
     static func text(lead: String?, count: Int) -> String {
         guard count > 0 else { return "Sent" }
+        // Repeats that named no repeater may be one repeater's several, so
+        // they are counted as repeats, not repeaters.
         guard let lead else {
-            return count == 1 ? "Sent via a repeater" : "Sent via \(count) repeaters"
+            return count == 1 ? "Heard a repeat" : "Heard \(count) repeats"
         }
         switch count - 1 {
         case 0: return "Sent via \(lead)"

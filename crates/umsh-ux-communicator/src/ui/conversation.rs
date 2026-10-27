@@ -1173,11 +1173,13 @@ const LEAD_BYTES: usize = 40;
 
 /// Writes how a caption names the `count` repeaters overheard carrying a
 /// message, `lead` the first of them named, as the phone's caption does.
+/// Repeats that named no repeater may be one repeater's several, so with
+/// none named they are counted as repeats, not repeaters.
 fn repeat_caption<W: core::fmt::Write>(out: &mut W, lead: Option<&str>, count: u8) {
     _ = match (lead, count) {
         (_, 0) => out.write_str("Sent"),
-        (None, 1) => out.write_str("Sent via a repeater"),
-        (None, count) => write!(out, "Sent via {count} repeaters"),
+        (None, 1) => out.write_str("Heard a repeat"),
+        (None, count) => write!(out, "Heard {count} repeats"),
         (Some(lead), count) => {
             _ = out.write_str("Sent via ");
             let mut shown = 0;
@@ -1871,8 +1873,8 @@ mod tests {
     #[test]
     fn a_caption_names_the_repeaters_heard() {
         assert_eq!(said(None, 0), "Sent");
-        assert_eq!(said(None, 1), "Sent via a repeater");
-        assert_eq!(said(None, 3), "Sent via 3 repeaters");
+        assert_eq!(said(None, 1), "Heard a repeat");
+        assert_eq!(said(None, 3), "Heard 3 repeats");
         assert_eq!(said(Some("Tallac"), 1), "Sent via Tallac");
         assert_eq!(said(Some("Tallac"), 2), "Sent via Tallac and 1 other");
         assert_eq!(said(Some("Tallac"), 4), "Sent via Tallac and 3 others");

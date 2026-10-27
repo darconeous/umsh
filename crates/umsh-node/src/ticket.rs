@@ -13,15 +13,15 @@ pub const MAX_TALLIED_REPEATERS: usize = 8;
 pub struct RepeatTally {
     /// Repeaters the forwards named, each once, in the order first heard.
     pub repeaters: heapless::Vec<RouterHint, MAX_TALLIED_REPEATERS>,
-    /// Forwards that named no repeater. Each repeater forwards a frame once,
-    /// so each is taken for a repeater not otherwise counted.
+    /// Forwards that named no repeater. One repeater may forward a frame
+    /// more than once, so this counts repeats, not repeaters.
     pub anonymous: u16,
     /// Bumped whenever the tally changes, so a poller can tell.
     pub revision: u32,
 }
 
 impl RepeatTally {
-    /// Repeaters heard in all, named or not.
+    /// Named repeaters plus unnamed repeats.
     pub fn count(&self) -> usize {
         self.repeaters.len() + usize::from(self.anonymous)
     }
