@@ -14,11 +14,11 @@ use super::conversation::header;
 use super::setting::{End, card, choice, readout, row};
 use crate::board::Metrics;
 use crate::model::{BatteryReading, Bluetooth, ChatKind, RadioSettings, State};
-use crate::nav::{DevicePage, Screen, keys};
+use crate::nav::{DeviceConfirm, DevicePage, Screen, keys};
 use crate::theme;
 
 const ROW: u32 = 36;
-/// Shut down's confirmation.
+/// Shut down's and Factory reset's confirmations.
 const CONFIRM_WIDTH: u32 = 220;
 
 /// The categories, beside the rail.
@@ -29,13 +29,10 @@ pub fn view(state: &State) -> impl View<Rgb565, State> + use<> {
         .iter()
         .filter(|c| matches!(c.kind, ChatKind::Channel { .. }))
         .count();
-    let confirm = matches!(
-        state.screen(),
-        Screen::Chats {
-            confirm_shut_down: true,
-            ..
-        }
-    );
+    let confirm = match state.screen() {
+        Screen::Chats { confirm, .. } => *confirm,
+        _ => None,
+    };
     let battery = state.battery.percent.map(super::battery::percent_text);
     let mut joined: String<24> = String::new();
     _ = core::fmt::write(&mut joined, format_args!("{channels} joined"));
@@ -103,15 +100,29 @@ pub fn view(state: &State) -> impl View<Rgb565, State> + use<> {
             .with_spacing(0),
             category("Statistics", keys::STATISTICS, State::open_statistics, ""),
             category("About", keys::ABOUT, State::open_about, ""),
-            row(
-                m,
-                "Shut down",
-                keys::SHUT_DOWN,
-                State::ask_shut_down,
-                End::Nothing,
-                false,
-                ROW,
-            ),
+            VStack::new((
+                row(
+                    m,
+                    "Shut down",
+                    keys::SHUT_DOWN,
+                    State::ask_shut_down,
+                    End::Nothing,
+                    false,
+                    ROW,
+                ),
+                state.node.can_factory_reset().then(|| {
+                    row(
+                        m,
+                        "Factory reset",
+                        keys::FACTORY_RESET,
+                        State::ask_factory_reset,
+                        End::Nothing,
+                        false,
+                        ROW,
+                    )
+                }),
+            ))
+            .with_spacing(0),
         ))
         .with_spacing(0),
     )
@@ -125,24 +136,24 @@ pub fn view(state: &State) -> impl View<Rgb565, State> + use<> {
         }
         _ => KeyResponse::Ignored,
     })
-    .popover(confirm.then_some(()).as_ref(), |()| {
-        shut_down_confirmation(m)
-    })
+    .popover(confirm.as_ref(), move |confirm| confirmation(m, *confirm))
     // A tap outside is Cancel.
     .on_blur(|s: &mut State| {
-        s.cancel_shut_down();
+        s.cancel_device_confirm();
         Dismissal::Dismiss
     })
 }
 
-/// Shut down, confirmed, or Cancel, which is focused.
+/// What `confirm` asks: two choices, the one that acts and Cancel, which
+/// is focused. Factory reset's second asking puts Cancel where the first
+/// put Factory reset.
 // Out of line, as `setting::row` is, against the Xtensa back end's failure.
 #[inline(never)]
-fn shut_down_confirmation(m: &'static Metrics) -> impl View<Rgb565, State> + use<> {
+fn confirmation(m: &'static Metrics, confirm: DeviceConfirm) -> impl View<Rgb565, State> + use<> {
     let text = |text: &str| String::try_from(text).unwrap_or_default();
-    card(
-        m,
-        VStack::new((
+    let cancel = |key, act| choice(m, text("Cancel"), key, act, theme::TEXT, None);
+    let (first, second, dismiss): (_, _, fn(&mut State)) = match confirm {
+        DeviceConfirm::ShutDown => (
             choice(
                 m,
                 text("Shut down"),
@@ -151,19 +162,40 @@ fn shut_down_confirmation(m: &'static Metrics) -> impl View<Rgb565, State> + use
                 theme::TEXT,
                 None,
             ),
+            cancel(keys::SHUT_DOWN_CANCEL, State::cancel_shut_down),
+            State::cancel_shut_down,
+        ),
+        DeviceConfirm::FactoryReset => (
             choice(
                 m,
-                text("Cancel"),
-                keys::SHUT_DOWN_CANCEL,
-                State::cancel_shut_down,
-                theme::TEXT,
+                text("Factory reset"),
+                keys::FACTORY_RESET_CONFIRM,
+                State::confirm_factory_reset,
+                theme::RED,
                 None,
             ),
-        ))
-        .with_spacing(0),
+            cancel(keys::FACTORY_RESET_CANCEL, State::cancel_factory_reset),
+            State::cancel_factory_reset,
+        ),
+        DeviceConfirm::Erase => (
+            cancel(keys::ERASE_CANCEL, State::cancel_factory_reset),
+            choice(
+                m,
+                text("Erase everything"),
+                keys::ERASE_CONFIRM,
+                State::factory_reset,
+                theme::RED,
+                None,
+            ),
+            State::cancel_factory_reset,
+        ),
+    };
+    card(
+        m,
+        VStack::new((first, second)).with_spacing(0),
         CONFIRM_WIDTH,
         HorizontalAlignment::Center,
-        State::cancel_shut_down,
+        dismiss,
     )
 }
 

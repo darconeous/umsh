@@ -5,3 +5,12 @@ press
 shot device-list
 turn 9
 shot device-lower
+# Factory reset, asked twice, the second time the other way around.
+turn 20
+shot device-bottom
+press
+turn -1
+shot factory-reset
+press
+shot factory-reset-again
+backspace

@@ -1603,6 +1603,12 @@ pub trait Node {
     fn setup_complete(&self) -> bool;
 
     fn set_setup_complete(&self, complete: bool);
+
+    /// Whether the device can be reset to how it left the factory.
+    fn can_factory_reset(&self) -> bool;
+
+    /// Erases everything the device keeps, and restarts it as new.
+    fn factory_reset(&self);
 }
 
 /// At or below this charge, in percent, the battery is low.

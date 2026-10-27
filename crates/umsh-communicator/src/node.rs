@@ -833,6 +833,14 @@ impl<P: LocalPort, S: ChatStore> Node for CommunicatorNode<P, S> {
         self.change(Setting::Pairing, Settings::clear_pairings);
     }
 
+    fn can_factory_reset(&self) -> bool {
+        self.settings.borrow().can_factory_reset()
+    }
+
+    fn factory_reset(&self) {
+        self.settings.borrow_mut().factory_reset();
+    }
+
     fn gnss_enabled(&self) -> Option<bool> {
         self.settings.borrow().gnss_enabled()
     }

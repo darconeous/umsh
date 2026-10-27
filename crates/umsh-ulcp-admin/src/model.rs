@@ -144,6 +144,7 @@ enum Write {
         selector: Vec<u8>,
     },
     Save,
+    FactoryReset,
 }
 
 impl Write {
@@ -152,7 +153,7 @@ impl Write {
         let (set, single) = match self {
             Self::Set(entries) => (Some(entries), None),
             Self::Insert { key, .. } | Self::Remove { key, .. } => (None, Some(*key)),
-            Self::Save => (None, None),
+            Self::Save | Self::FactoryReset => (None, None),
         };
         set.into_iter().flatten().map(|(key, _)| *key).chain(single)
     }
@@ -316,6 +317,21 @@ impl Model {
         self.queue.push_back(Queued::Write {
             id,
             write: Write::Save,
+        });
+        Ok(id)
+    }
+
+    /// Erase everything the device keeps and restart it,
+    /// `CMD_FACTORY_RESET`. The device answers only a refusal; once it
+    /// obeys, it restarts and the link drops.
+    pub fn factory_reset(&mut self) -> Result<WriteId, Refusal> {
+        if self.has_cap(cap::REBOOT) != Some(true) {
+            return Err(Refusal::Unsupported);
+        }
+        let id = self.next_id();
+        self.queue.push_back(Queued::Write {
+            id,
+            write: Write::FactoryReset,
         });
         Ok(id)
     }
@@ -678,6 +694,8 @@ impl Model {
                 }
                 self.events.push_back(Event::Saved { id, result });
             }
+            // Only a refusal is ever answered; there is nothing to keep.
+            Write::FactoryReset => {}
         }
     }
 
@@ -1236,6 +1254,7 @@ fn submit_write<E: Exchange>(exchange: &mut E, write: &Write) -> Result<Ticket, 
             selector,
         }),
         Write::Save => exchange.submit(&Request::Save),
+        Write::FactoryReset => exchange.submit(&Request::FactoryReset),
     }
 }
 

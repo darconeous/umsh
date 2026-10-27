@@ -28,6 +28,9 @@ pub enum Request<'a> {
     Remove { key: u32, selector: &'a [u8] },
     /// `CMD_SAVE`.
     Save,
+    /// `CMD_FACTORY_RESET`, which the device answers only by refusing: it
+    /// erases everything and restarts, and the link drops.
+    FactoryReset,
 }
 
 impl Request<'_> {
@@ -41,6 +44,7 @@ impl Request<'_> {
             Self::Insert { key, item } => frame::prop_insert(out, tid, key, item),
             Self::Remove { key, selector } => frame::prop_remove(out, tid, key, selector),
             Self::Save => frame::save(out, tid),
+            Self::FactoryReset => frame::factory_reset(out, tid),
         }
     }
 }

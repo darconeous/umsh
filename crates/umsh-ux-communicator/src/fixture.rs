@@ -727,6 +727,8 @@ pub struct Store {
     volume: Cell<u8>,
     /// Whether first run has finished: a fixture device has been set up.
     setup_complete: Cell<bool>,
+    /// How many times the device was reset to how it left the factory.
+    factory_resets: Cell<u32>,
     gnss: Cell<bool>,
     /// What Add peer shows, and whether the other holder of the exchange
     /// pressed Same.
@@ -804,6 +806,7 @@ impl Store {
             sound: Cell::new(true),
             volume: Cell::new(191),
             setup_complete: Cell::new(true),
+            factory_resets: Cell::new(0),
             gnss: Cell::new(true),
             meet: RefCell::new(MeetState::new()),
             meet_theirs: Cell::new(false),
@@ -1362,6 +1365,13 @@ impl Store {
             self.queue(NodeEvent::IdentitiesLearned);
         }
         answered
+    }
+
+    /// How many times the device has been reset to how it left the
+    /// factory.
+    #[must_use]
+    pub fn factory_resets(&self) -> u32 {
+        self.factory_resets.get()
     }
 
     /// The radio is set, by other means than this interface, to settings
@@ -2496,6 +2506,14 @@ impl Node for Store {
             self.setup_complete.set(complete);
             true
         });
+    }
+
+    fn can_factory_reset(&self) -> bool {
+        true
+    }
+
+    fn factory_reset(&self) {
+        self.factory_resets.set(self.factory_resets.get() + 1);
     }
 
     fn clear_pairings(&self) {

@@ -2462,9 +2462,12 @@ fn first_run_takes_a_name_a_profile_and_a_zone_and_ends_on_the_chats() {
         .unwrap();
     assert_eq!(focus(app.state()), Some(keys::zone(pacific)));
     run(&mut app, &[Input::Press]);
+    assert_eq!(app.state().clock.zone.std_offset_min(), -480);
+    // Set up, it says so, and goes on to the Chats list.
+    assert!(app.state().in_setup());
+    run(&mut app, &[Input::Backspace]);
     assert!(!app.state().in_setup());
     assert!(matches!(app.state().screen(), Screen::Chats { .. }));
-    assert_eq!(app.state().clock.zone.std_offset_min(), -480);
 }
 
 /// Unlocks the way the board's control does.
@@ -2500,11 +2503,15 @@ fn unlocking_a_device_not_set_up_opens_first_run_until_it_finishes() {
     unlock(&mut app);
     assert!(app.state().in_setup());
     assert_eq!(focus(app.state()), profile);
-    // The profile as it is, and the zone as it is.
+    // The profile as it is, and the zone as it is: set up, it says so.
     run(&mut app, &[Input::Press, Input::Press]);
+    assert!(app.state().in_setup());
+    assert!(app.state().node.setup_complete());
+    assert_eq!(focus(app.state()), Some(keys::CONTINUE));
+    // Back from there is the Chats list.
+    run(&mut app, &[Input::Backspace]);
     assert!(!app.state().in_setup());
     assert!(matches!(app.state().screen(), Screen::Chats { .. }));
-    assert!(app.state().node.setup_complete());
     // Set up, it unlocks to where it was.
     let held = focus(app.state());
     lock(&mut app);
@@ -2512,6 +2519,24 @@ fn unlocking_a_device_not_set_up_opens_first_run_until_it_finishes() {
     assert!(!app.state().in_setup());
     assert!(matches!(app.state().screen(), Screen::Chats { .. }));
     assert_eq!(focus(app.state()), held);
+}
+
+#[test]
+fn first_run_ends_on_add_peer() {
+    let mut app = app!();
+    app.state().node.set_setup_complete(false);
+    lock(&mut app);
+    unlock(&mut app);
+    run(&mut app, &typed("Wren"));
+    run(&mut app, &[Input::Enter, Input::Press, Input::Press]);
+    assert_eq!(focus(app.state()), Some(keys::CONTINUE));
+    run(&mut app, &[Input::Press]);
+    assert!(matches!(app.state().screen(), Screen::Nearby { .. }));
+    // Back from Add peer is the Peers list, on Add peer.
+    run(&mut app, &[Input::Backspace]);
+    assert!(matches!(app.state().screen(), Screen::Chats { .. }));
+    assert_eq!(app.state().section, Section::Peers);
+    assert_eq!(focus(app.state()), Some(keys::ADD_PEER));
 }
 
 #[test]
@@ -2598,6 +2623,40 @@ fn shut_down_asks_first_and_then_ends_input() {
     // Nothing moves under the card.
     run(&mut app, &[Input::Turn(-3), Input::Backspace]);
     assert_eq!(focus(app.state()), Some(keys::SHUT_DOWN));
+}
+
+#[test]
+fn factory_reset_asks_twice_with_its_choices_swapped() {
+    let store = store();
+    let mut app = app!(store);
+    open_device(&mut app);
+    turn_to(&mut app, keys::FACTORY_RESET);
+    // Cancel is focused, under Factory reset, and Backspace cancels too.
+    run(&mut app, &[Input::Press]);
+    assert_eq!(focus(app.state()), Some(keys::FACTORY_RESET_CANCEL));
+    run(&mut app, &[Input::Turn(-1)]);
+    assert_eq!(focus(app.state()), Some(keys::FACTORY_RESET_CONFIRM));
+    run(&mut app, &[Input::Backspace]);
+    assert_eq!(focus(app.state()), Some(keys::FACTORY_RESET));
+
+    run(&mut app, &[Input::Press]);
+    turn_to(&mut app, keys::FACTORY_RESET_CONFIRM);
+    run(&mut app, &[Input::Press]);
+    // Asked again, Cancel is where Factory reset was, and focused.
+    assert_eq!(focus(app.state()), Some(keys::ERASE_CANCEL));
+    run(&mut app, &[Input::Turn(1)]);
+    assert_eq!(focus(app.state()), Some(keys::ERASE_CONFIRM));
+    run(&mut app, &[Input::Turn(-1), Input::Press]);
+    assert_eq!(focus(app.state()), Some(keys::FACTORY_RESET));
+    assert_eq!(store.factory_resets(), 0);
+
+    run(&mut app, &[Input::Press]);
+    turn_to(&mut app, keys::FACTORY_RESET_CONFIRM);
+    run(&mut app, &[Input::Press]);
+    turn_to(&mut app, keys::ERASE_CONFIRM);
+    run(&mut app, &[Input::Press]);
+    assert_eq!(store.factory_resets(), 1);
+    assert_eq!(focus(app.state()), Some(keys::FACTORY_RESET));
 }
 
 /// A key of the Pager's keyboard: its letter, and its top-row digit under

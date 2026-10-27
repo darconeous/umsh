@@ -1,7 +1,8 @@
 //! First run: what to call this node, its radio profile, and its time
-//! zone. The name may be left empty, and peers then see the bare hint; the
-//! profile is needed before the radio sends.
+//! zone, then Add peer. The name may be left empty, and peers then see the
+//! bare hint; the profile is needed before the radio sends.
 
+use buoyant::event::{Key, KeyResponse};
 use buoyant::focus::BoundaryBehavior;
 use buoyant::match_view;
 use buoyant::view::prelude::*;
@@ -33,6 +34,52 @@ pub fn view(state: &State, page: &SetupPage) -> impl View<Rgb565, State> + use<>
         SetupPage::Name { text } => name(state, text),
         SetupPage::Profile => super::profile::view(state, "Radio profile"),
         SetupPage::Zone { find } => super::clock::zone_list(state, find, "Time zone"),
+        SetupPage::Done => done(state),
+    })
+}
+
+/// Set up: Add peer next. Back goes to the Chats list instead.
+// Out of line, as `setting::row` is, against the Xtensa back end's failure.
+#[inline(never)]
+fn done(state: &State) -> impl View<Rgb565, State> + use<> {
+    let m = state.metrics();
+    VStack::new((
+        detail_head(
+            m,
+            &state.node.avatar(),
+            "You're all set",
+            &state.status.device_name,
+            false,
+        ),
+        label::<32>(
+            "Next, add peers to talk to.",
+            &font::MEDIUM,
+            m.small,
+            theme::TEXT_TERTIARY,
+        )
+        .padding(Edges::Leading, 10)
+        .flex_infinite_width(HorizontalAlignment::Leading)
+        .frame()
+        .with_height(NOTE),
+        row(
+            m,
+            "Add peers",
+            keys::CONTINUE,
+            State::add_peers_after_setup,
+            End::Chevron,
+            false,
+            ROW,
+        ),
+    ))
+    .with_spacing(0)
+    .padding(Edges::Top, TOP)
+    .bound_focus(BoundaryBehavior::Stop)
+    .on_key(|key, s: &mut State| match key {
+        Key::Backspace => {
+            s.leave_setup();
+            KeyResponse::Handled
+        }
+        _ => KeyResponse::Ignored,
     })
 }
 

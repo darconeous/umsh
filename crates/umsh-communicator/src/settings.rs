@@ -348,6 +348,12 @@ impl<P: LocalPort> Settings<P> {
         self.written(Setting::Pairing, write)
     }
 
+    /// Erases everything the device keeps and restarts it. Returns whether
+    /// it was asked.
+    pub fn factory_reset(&mut self) -> bool {
+        self.model.factory_reset().is_ok()
+    }
+
     pub fn set_gnss_enabled(&mut self, on: bool) -> bool {
         let write = self.model.set_gnss_enabled(on);
         self.written(Setting::Gnss, write)
@@ -643,6 +649,11 @@ impl<P: LocalPort> Settings<P> {
 
     pub fn sound_volume(&self) -> u8 {
         self.u8(prop::SOUND_VOLUME).unwrap_or(DEFAULT_SOUND_VOLUME)
+    }
+
+    /// Whether the device can be reset to how it left the factory.
+    pub fn can_factory_reset(&self) -> bool {
+        self.model.has_cap(cap::REBOOT) == Some(true)
     }
 
     /// Whether the device has been set up, once read.

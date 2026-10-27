@@ -153,6 +153,7 @@ pub mod keys {
     pub const DISPLAY: FocusKey = FocusKey(DEVICE | 4);
     pub const BLUETOOTH: FocusKey = FocusKey(DEVICE | 5);
     pub const SHUT_DOWN: FocusKey = FocusKey(DEVICE | 7);
+    pub const FACTORY_RESET: FocusKey = FocusKey(DEVICE | 15);
     pub const KEYBOARD: FocusKey = FocusKey(DEVICE | 8);
     pub const CLOCK: FocusKey = FocusKey(DEVICE | 9);
     pub const GNSS: FocusKey = FocusKey(DEVICE | 10);
@@ -218,6 +219,11 @@ pub mod keys {
     /// Shut down's confirmation.
     pub const SHUT_DOWN_CONFIRM: FocusKey = FocusKey(0x1600_0000);
     pub const SHUT_DOWN_CANCEL: FocusKey = FocusKey(0x1600_0001);
+    /// Factory reset's two confirmations.
+    pub const FACTORY_RESET_CONFIRM: FocusKey = FocusKey(0x1600_0002);
+    pub const FACTORY_RESET_CANCEL: FocusKey = FocusKey(0x1600_0003);
+    pub const ERASE_CONFIRM: FocusKey = FocusKey(0x1600_0004);
+    pub const ERASE_CANCEL: FocusKey = FocusKey(0x1600_0005);
     /// The Radio screen's switch, its Profile, and its other switches.
     pub const RADIO_ENABLED: FocusKey = FocusKey(0x0E00_0005);
     pub const PROFILE: FocusKey = FocusKey(0x0E00_0000);
@@ -490,6 +496,19 @@ pub enum SetupPage {
     Profile,
     /// The time zone.
     Zone { find: ZoneFind },
+    /// Set up, and Add peer next.
+    Done,
+}
+
+/// What the Device list is asking to confirm.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DeviceConfirm {
+    ShutDown,
+    /// Factory reset, asked once.
+    FactoryReset,
+    /// Factory reset, asked again, its choices the other way around, so
+    /// that pressing twice in one place does not erase the device.
+    Erase,
 }
 
 /// A screen on the navigation stack.
@@ -501,8 +520,8 @@ pub enum Screen {
         row: Option<FocusKey>,
         /// What the Chats list is filtered by, while Find is open.
         find: Option<FindText>,
-        /// The Device list is asking to confirm Shut down.
-        confirm_shut_down: bool,
+        /// What the Device list is asking to confirm.
+        confirm: Option<DeviceConfirm>,
         /// A chat's menu is open, or Delete is asking to be confirmed.
         menu: Option<ChatMenu>,
     },
@@ -586,7 +605,7 @@ impl Screen {
             focus: FocusState::new(),
             row: None,
             find: None,
-            confirm_shut_down: false,
+            confirm: None,
             menu: None,
         }
     }
@@ -1700,50 +1719,95 @@ impl State {
         });
     }
 
-    /// Ends first run on the Chats screen, the device now set up.
+    /// Ends first run, the device now set up: says so, Add peer next.
     pub(crate) fn finish_setup(&mut self) {
         self.node.set_setup_complete(true);
+        self.screens.truncate(1);
+        _ = self.screens.push(Screen::Setup {
+            page: SetupPage::Done,
+            focus: FocusState::requesting(keys::CONTINUE),
+        });
+    }
+
+    /// Leaves first run's last page for Add peer, over the Peers list.
+    pub fn add_peers_after_setup(&mut self) {
+        self.screens.truncate(1);
+        self.section = Section::Peers;
+        self.focus().request(keys::ADD_PEER);
+        self.open_add_peer();
+    }
+
+    /// Leaves first run's last page for the Chats list.
+    pub fn leave_setup(&mut self) {
         self.screens.truncate(1);
         self.focus_list();
     }
 
     /// Shows the joined channels, Add channel focused.
+    /// Asks the Device list to confirm `asked`, with `key` focused, or
+    /// stops asking and focuses `key`.
+    fn device_confirm(&mut self, asked: Option<DeviceConfirm>, key: FocusKey) {
+        if let Some(Screen::Chats { confirm, focus, .. }) = self.screens.last_mut() {
+            *confirm = asked;
+            focus.request(key);
+        }
+    }
+
     /// Asks to confirm turning the board off.
     pub fn ask_shut_down(&mut self) {
-        if let Some(Screen::Chats {
-            confirm_shut_down,
-            focus,
-            ..
-        }) = self.screens.last_mut()
-        {
-            *confirm_shut_down = true;
-            focus.request(keys::SHUT_DOWN_CANCEL);
-        }
+        self.device_confirm(Some(DeviceConfirm::ShutDown), keys::SHUT_DOWN_CANCEL);
     }
 
     /// Keeps the board on after all.
     pub fn cancel_shut_down(&mut self) {
-        if let Some(Screen::Chats {
-            confirm_shut_down,
-            focus,
-            ..
-        }) = self.screens.last_mut()
-        {
-            *confirm_shut_down = false;
-            focus.request(keys::SHUT_DOWN);
-        }
+        self.device_confirm(None, keys::SHUT_DOWN);
     }
 
     /// Turns the board off, confirmed: the screen says so, and the board,
     /// finding [`State::ending`] set by an input, does it.
     pub fn shut_down(&mut self) {
-        if let Some(Screen::Chats {
-            confirm_shut_down, ..
-        }) = self.screens.last_mut()
-        {
-            *confirm_shut_down = false;
+        if let Some(Screen::Chats { confirm, .. }) = self.screens.last_mut() {
+            *confirm = None;
         }
         self.shutting_down();
+    }
+
+    /// Asks to confirm erasing the device.
+    pub fn ask_factory_reset(&mut self) {
+        self.device_confirm(
+            Some(DeviceConfirm::FactoryReset),
+            keys::FACTORY_RESET_CANCEL,
+        );
+    }
+
+    /// Confirmed once: asks again.
+    pub fn confirm_factory_reset(&mut self) {
+        self.device_confirm(Some(DeviceConfirm::Erase), keys::ERASE_CANCEL);
+    }
+
+    /// Keeps the device as it is after all.
+    pub fn cancel_factory_reset(&mut self) {
+        self.device_confirm(None, keys::FACTORY_RESET);
+    }
+
+    /// Erases the device, confirmed twice. It restarts as new.
+    pub fn factory_reset(&mut self) {
+        self.device_confirm(None, keys::FACTORY_RESET);
+        self.node.factory_reset();
+    }
+
+    /// Stops asking the Device list to confirm anything.
+    pub fn cancel_device_confirm(&mut self) {
+        match self.screen() {
+            Screen::Chats {
+                confirm: Some(DeviceConfirm::ShutDown),
+                ..
+            } => self.cancel_shut_down(),
+            Screen::Chats {
+                confirm: Some(_), ..
+            } => self.cancel_factory_reset(),
+            _ => {}
+        }
     }
 
     /// The wheel, or a finger, was held down long enough on what is

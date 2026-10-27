@@ -77,9 +77,10 @@ frames as replays.
 To start an instance over from nothing, run it with `--reset`: it erases
 everything the device keeps before it boots, so it comes up with a new
 identity, no settings, and no chats, as a new device does. Files of anyone
-else's in its folder are left alone. A factory reset sent by an administrator over the mesh does the same from inside:
-the device erases everything it keeps, then restarts with a new identity. A
-reboot restarts the process in place.
+else's in its folder are left alone. A factory reset does the same from
+inside, whether chosen under Device › Factory reset or sent by an
+administrator over the mesh: the device erases everything it keeps, then
+restarts with a new identity. A reboot restarts the process in place.
 
 ## Network
 

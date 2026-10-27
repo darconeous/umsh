@@ -6,3 +6,7 @@ enter
 shot setup-profile
 press
 shot setup-zone
+press
+shot setup-done
+press
+shot setup-add-peer
