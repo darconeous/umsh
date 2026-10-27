@@ -262,7 +262,13 @@ async fn interface(
                 if app.state().ending.is_some() {
                     SHUTDOWN_REQUEST.signal(ShutdownCause::Asked);
                 }
-                attention.wake(now())
+                // Backspace on the lock screen darkens it, as the lock
+                // button does.
+                if app.state().lock.wants_dark() {
+                    app.state_mut().lock_control(&mut attention, now())
+                } else {
+                    attention.wake(now())
+                }
             }
             Either4::Second(Either3::First(())) => attention.wake(now()),
             Either4::Second(Either3::Second(())) => {

@@ -6,7 +6,8 @@
 //! to make: turning the wheel down [`UNLOCK_STEPS`] detents, then pressing
 //! it within [`UNLOCK_WINDOW_MS`]. Turning up takes steps back. On a board
 //! whose press is hard to make by accident, such as a trackball's, a press
-//! alone unlocks. Keys do nothing while locked; what was on screen is kept,
+//! alone unlocks. Keys do nothing while locked but Backspace, which puts
+//! the panel to sleep as the lock button does; what was on screen is kept,
 //! and unlocking returns to it, or opens first run on a device not yet set
 //! up.
 
@@ -38,6 +39,9 @@ pub struct Lock {
     ready_until: Option<u64>,
     /// What was focused when it locked, for unlocking to return to.
     held: Option<FocusKey>,
+    /// Backspace asked for the panel to go dark, for the board to take as
+    /// a press of its lock control.
+    darken: bool,
 }
 
 /// How long the panel stays lit without input: as Auto-Lock says while
@@ -67,6 +71,13 @@ impl Lock {
     #[must_use]
     pub const fn ready(&self) -> bool {
         self.ready_until.is_some()
+    }
+
+    /// Whether Backspace asked for the panel to go dark: the board then
+    /// calls [`State::lock_control`].
+    #[must_use]
+    pub const fn wants_dark(&self) -> bool {
+        self.darken
     }
 
     /// The next moment the lock changes by itself.
@@ -101,6 +112,11 @@ impl State {
         self.lock.at = None;
         self.lock.reset();
         self.uptime = now;
+    }
+
+    /// Backspace on the lock screen: the panel is to go dark.
+    pub(crate) fn ask_dark(&mut self) {
+        self.lock.darken = true;
     }
 
     /// Locks the interface, keeping what is on screen for unlocking.
@@ -166,10 +182,12 @@ impl State {
         }
     }
 
-    /// The board's lock control was pressed at `now`: it locks a lit
-    /// screen to the lock screen, darkens the lock screen, and lights a
-    /// dark one to it. Returns what the panel is to do.
+    /// The board's lock control was pressed at `now`, or Backspace on the
+    /// lock screen asked for the same: it locks a lit screen to the lock
+    /// screen, darkens the lock screen, and lights a dark one to it.
+    /// Returns what the panel is to do.
     pub fn lock_control(&mut self, attention: &mut Attention, now: u64) -> Option<Transition> {
+        self.lock.darken = false;
         if !attention.accepts_redraw() {
             attention.wake(now)
         } else if self.lock.locked {

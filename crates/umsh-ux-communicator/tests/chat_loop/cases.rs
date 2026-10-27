@@ -428,9 +428,37 @@ fn backspace_on_the_rail_locks_a_board_without_a_lock_button() {
     if !locks {
         assert_eq!(focus(app.state()), Some(keys::rail(Section::Chats)));
     }
-    // Held down, it does nothing more.
+    // Again, it stays locked, and on the lock screen asks for the dark.
     run(&mut app, &[Input::Backspace]);
     assert_eq!(app.state().lock.locked, locks);
+    assert_eq!(app.state().lock.wants_dark(), locks);
+}
+
+#[test]
+fn backspace_on_the_lock_screen_darkens_it_as_the_lock_control_does() {
+    use umsh_ux_communicator::lock::attention_config;
+    use umsh_ux_display_tracker::attention::{Attention, DisplayKind, Transition};
+    let mut app = app!();
+    let mut attention = Attention::new(DisplayKind::Emissive, attention_config(false, None), 0);
+    // Unlocked, it is Back, and asks nothing of the panel.
+    run(&mut app, &[Input::Backspace]);
+    assert!(!app.state().lock.wants_dark());
+    lock(&mut app);
+    run(&mut app, &[Input::Backspace]);
+    assert!(app.state().lock.locked);
+    assert!(app.state().lock.wants_dark());
+    // The board takes it as its lock control: lit and locked, it goes dark.
+    assert_eq!(
+        app.state_mut().lock_control(&mut attention, 10),
+        Some(Transition::Lapsed)
+    );
+    assert!(!app.state().lock.wants_dark());
+    assert!(app.state().lock.locked);
+    // Unlocked after it, the ask is gone.
+    run(&mut app, &[Input::Backspace]);
+    unlock(&mut app);
+    assert!(!app.state().lock.locked);
+    assert!(!app.state().lock.wants_dark());
 }
 
 #[test]

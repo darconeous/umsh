@@ -248,7 +248,8 @@ where
 }
 
 /// An input while locked: the wheel turns toward unlocking and a press
-/// unlocks once it has, and keys do nothing. Turned with Alt held, the
+/// unlocks once it has, Backspace puts the panel to sleep, and other keys
+/// do nothing. Turned with Alt held, the
 /// wheel still sets the brightness, as a trackball does rolled up or down;
 /// rolled otherwise, it does nothing.
 fn locked<V, F>(app: &mut App<V, State, F>, input: Input, now: u64)
@@ -273,10 +274,11 @@ where
             }
         }
         Input::Press => state.press_to_unlock(now),
+        // The lock screen shows nothing of it.
+        Input::Backspace => state.untracked().ask_dark(),
         Input::Modifier { modifier, down } => state.keyboard.modifier(modifier, down, now),
         Input::Release
         | Input::Enter
-        | Input::Backspace
         | Input::Key { .. }
         | Input::Space
         | Input::Character(_)
