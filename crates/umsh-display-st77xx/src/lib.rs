@@ -63,11 +63,7 @@ impl<S: SpiDevice<u8>, P: OutputPin> St77xx<S, P> {
         // 120 ms before SLPOUT. Use that interval on both cold and warm
         // boots; prior mode is unknown.
         delay.delay_ms(120).await;
-        self.command(0x11, &[]).await?;
-        // ST7796S §9.2.13: new commands may follow SLPOUT after 5 ms. The
-        // separate 120 ms restriction applies to SLPIN, which this driver
-        // never sends.
-        delay.delay_ms(5).await;
+        self.wake(delay).await?;
         for &(cmd, data) in self.spec.init {
             self.command(cmd, data).await?;
         }
@@ -76,10 +72,22 @@ impl<S: SpiDevice<u8>, P: OutputPin> St77xx<S, P> {
     pub async fn on(&mut self, on: bool) -> Result<(), Error<S::Error, P::Error>> {
         self.command(if on { 0x29 } else { 0x28 }, &[]).await
     }
-    /// Sleep in, for a panel that keeps its supply while the board is off.
-    /// Only [`init`](Self::init) brings it back.
+    /// Sleep in: the controller's converter, oscillator, and scanning stop.
+    /// Its memory keeps the frame and still takes writes. ST7796S §9.2.12:
+    /// no sooner than 120 ms after [`init`](Self::init) or
+    /// [`wake`](Self::wake), which the caller times.
     pub async fn sleep(&mut self) -> Result<(), Error<S::Error, P::Error>> {
         self.command(0x10, &[]).await
+    }
+    /// Sleep out, with the frame [`sleep`](Self::sleep) left in memory.
+    pub async fn wake(
+        &mut self,
+        delay: &mut impl DelayNs,
+    ) -> Result<(), Error<S::Error, P::Error>> {
+        self.command(0x11, &[]).await?;
+        // ST7796S §9.2.13: new commands may follow SLPOUT after 5 ms.
+        delay.delay_ms(5).await;
+        Ok(())
     }
     /// Writes whole rows from row `y`. With `continues`, the rows follow
     /// straight on from the last ones written, and only the pixels go out;

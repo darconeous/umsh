@@ -214,6 +214,15 @@ fn init_wraps_the_panels_list_in_reset_sleep_out_and_display_off() {
 }
 
 #[test]
+fn sleep_and_wake_leave_the_settings_and_frame_alone() {
+    let commands = sent(&ST7796_PAGER, async |panel| {
+        panel.sleep().await.unwrap();
+        panel.wake(&mut NoDelay).await.unwrap();
+    });
+    assert_eq!(commands, [(0x10, vec![]), (0x11, vec![])]);
+}
+
+#[test]
 fn a_stripe_sets_its_window_to_the_bottom_then_follows_on() {
     let pixels = vec![0x5a; ST7796_PAGER.stripe_bytes()];
     let commands = sent(&ST7796_PAGER, async |panel| {
