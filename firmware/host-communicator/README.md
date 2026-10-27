@@ -107,25 +107,34 @@ other.
 
 ## Controls
 
+The window shows the board's front: its screen, its keyboard, and its wheel
+and lock button or its trackball. Click a key, the wheel, or the trackball
+to press it, or use your own keyboard and mouse as below.
+
 ### T-Deck (`--board tdeck`, the default)
 
 | Input | T-Deck control |
 |---|---|
-| Left mouse button | A finger on the touchscreen: click to tap, drag to scroll, hold to long-press; on the lock screen, the trackball press |
+| Left mouse button on the screen | A finger on the touchscreen: click to tap, drag to scroll, hold to long-press; on the lock screen, the trackball press |
 | Arrows, mouse wheel | Roll the trackball |
 | Control, right mouse button | Press the trackball |
-| Escape | Lock, as the screen going dark would |
+| Escape | A lock button, as the Pager's: lock, then darken, then light again |
 | Letters, digits, Return, Backspace, Space | Type, with Shift as the T-Deck's own keyboard applies it |
 
 The touchscreen takes no touches while the device is locked, as on the T-Deck,
-so there a click presses the trackball instead.
+so there a click presses the trackball instead. The T-Deck has no lock button;
+Escape stands in for one.
+
+On the drawn keyboard, Shift, sym, and alt are held for the next key, as the
+T-Deck's keyboard applies them to the key pressed with them: click sym, then
+W, to type `1`. Where its modifier keys sit is approximate.
 
 ### T-LoRa Pager (`--board pager`)
 
 | Key | Pager control |
 |---|---|
 | Up, Down, mouse wheel | Turn the wheel |
-| Right, left click | Press the wheel; hold it to open a menu |
+| Right, left click on the screen | Press the wheel; hold it to open a menu |
 | Left | Back, as Backspace is, except while typing in a field |
 | Escape | The lock button |
 | Return, Backspace, Space, letters | The same keys |
@@ -135,6 +144,13 @@ so there a click presses the trackball instead.
 The Pager's keyboard does not repeat, and neither does this one.
 
 Sounds the device would play are printed on standard error, as `sound: …`.
+
+### The screen
+
+The window can be resized; the screen keeps its shape. As on the boards, the
+screen dims, then goes dark and locks, after the time set under Device ›
+Display › Auto-Lock passes without input. An input while it is dim or dark
+only lights it.
 
 ## The demo
 

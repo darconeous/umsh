@@ -19,12 +19,13 @@ use umsh_ux_communicator::buoyant::render_target::{
 };
 use umsh_ux_communicator::buoyant::view::View;
 use umsh_ux_communicator::input::{self, Input};
+use umsh_ux_communicator::lock::attention_config;
 use umsh_ux_communicator::model::{
-    BatteryReading, Bluetooth, BluetoothReading, Charge, ClockSource, DEFAULT_AUTO_LOCK_S, Fix,
-    Gnss, GnssReading, Links, Node as _, State, Wifi, brightness_level,
+    BatteryReading, Bluetooth, BluetoothReading, Charge, ClockSource, Fix, Gnss, GnssReading,
+    Links, Node as _, State, Wifi, brightness_level,
 };
 use umsh_ux_communicator::{theme, typeface, ui};
-use umsh_ux_display_tracker::attention::{Attention, AttentionConfig, DisplayKind, Transition};
+use umsh_ux_display_tracker::attention::{Attention, DisplayKind, Transition};
 
 /// The board the interface runs on. The boot splash sets its version in
 /// this board's body face too.
@@ -253,18 +254,9 @@ async fn interface(
                 attention.wake(now())
             }
             Either4::Second(Either3::First(())) => attention.wake(now()),
-            // The lock control locks a lit screen to the lock screen,
-            // darkens the lock screen, and lights a dark one to it.
-            Either4::Second(Either3::Second(()))
-                if attention.accepts_redraw() && !app.state().lock.locked =>
-            {
-                app.state_mut().lock();
-                attention.wake(now())
+            Either4::Second(Either3::Second(())) => {
+                app.state_mut().lock_control(&mut attention, now())
             }
-            Either4::Second(Either3::Second(())) if attention.accepts_redraw() => {
-                attention.sleep(now())
-            }
-            Either4::Second(Either3::Second(())) => attention.wake(now()),
             // The clock was set, or moved: it is read again below.
             Either4::Second(Either3::Third(())) => {
                 minute = Some(Instant::now());
@@ -491,27 +483,6 @@ fn chime(cue: umsh_ux_communicator::model::Cue, volume: u8) {
 fn next_minute() -> Option<Instant> {
     umsh_hal::wall_clock::millis_to_next_minute()
         .map(|ms| Instant::now() + Duration::from_millis(u64::from(ms)))
-}
-
-/// How long the panel stays lit without input: as Auto-Lock says while
-/// unlocked, and while locked no longer than that, as a locked screen is
-/// lit only to glance at.
-fn attention_config(locked: bool, auto_lock: Option<u16>) -> AttentionConfig {
-    let timeout = match auto_lock.unwrap_or(DEFAULT_AUTO_LOCK_S) {
-        0 => None,
-        seconds => Some(core::time::Duration::from_secs(u64::from(seconds))),
-    };
-    let unlocked = AttentionConfig::emissive_for(timeout);
-    let shorter = |timeout| {
-        AttentionConfig::LOCKED
-            .timeout
-            .is_some_and(|locked| timeout < locked)
-    };
-    match timeout {
-        Some(timeout) if locked && shorter(timeout) => unlocked,
-        _ if locked => AttentionConfig::LOCKED,
-        _ => unlocked,
-    }
 }
 
 /// The battery as the board last read it.

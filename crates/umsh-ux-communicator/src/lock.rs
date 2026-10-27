@@ -11,9 +11,10 @@
 //! up.
 
 use buoyant::focus::FocusKey;
+use umsh_ux_display_tracker::attention::{Attention, AttentionConfig, Transition};
 
 use crate::board::Unlock;
-use crate::model::State;
+use crate::model::{DEFAULT_AUTO_LOCK_S, State};
 
 /// How many detents down unlock.
 pub const UNLOCK_STEPS: u8 = 5;
@@ -37,6 +38,28 @@ pub struct Lock {
     ready_until: Option<u64>,
     /// What was focused when it locked, for unlocking to return to.
     held: Option<FocusKey>,
+}
+
+/// How long the panel stays lit without input: as Auto-Lock says while
+/// unlocked, and while locked no longer than that, as a locked screen is
+/// lit only to glance at.
+#[must_use]
+pub fn attention_config(locked: bool, auto_lock: Option<u16>) -> AttentionConfig {
+    let timeout = match auto_lock.unwrap_or(DEFAULT_AUTO_LOCK_S) {
+        0 => None,
+        seconds => Some(core::time::Duration::from_secs(u64::from(seconds))),
+    };
+    let unlocked = AttentionConfig::emissive_for(timeout);
+    let shorter = |timeout| {
+        AttentionConfig::LOCKED
+            .timeout
+            .is_some_and(|locked| timeout < locked)
+    };
+    match timeout {
+        Some(timeout) if locked && shorter(timeout) => unlocked,
+        _ if locked => AttentionConfig::LOCKED,
+        _ => unlocked,
+    }
 }
 
 impl Lock {
@@ -140,6 +163,20 @@ impl State {
         self.expire_lock(now);
         if self.unlock_ready() {
             self.unlock();
+        }
+    }
+
+    /// The board's lock control was pressed at `now`: it locks a lit
+    /// screen to the lock screen, darkens the lock screen, and lights a
+    /// dark one to it. Returns what the panel is to do.
+    pub fn lock_control(&mut self, attention: &mut Attention, now: u64) -> Option<Transition> {
+        if !attention.accepts_redraw() {
+            attention.wake(now)
+        } else if self.lock.locked {
+            attention.sleep(now)
+        } else {
+            self.lock();
+            attention.wake(now)
         }
     }
 

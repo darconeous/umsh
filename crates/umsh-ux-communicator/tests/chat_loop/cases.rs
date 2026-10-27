@@ -376,6 +376,46 @@ fn backspace_on_the_list_goes_to_the_rail_and_press_returns() {
 }
 
 #[test]
+fn the_lock_control_locks_then_darkens_then_lights() {
+    use umsh_ux_communicator::lock::attention_config;
+    use umsh_ux_display_tracker::attention::{Attention, DisplayKind, Transition};
+    let mut app = app!();
+    let mut attention = Attention::new(DisplayKind::Emissive, attention_config(false, None), 0);
+    // Lit and unlocked, it locks and stays lit.
+    assert_eq!(app.state_mut().lock_control(&mut attention, 10), None);
+    assert!(app.state().lock.locked);
+    assert!(attention.accepts_redraw());
+    // Lit and locked, it goes dark.
+    assert_eq!(
+        app.state_mut().lock_control(&mut attention, 20),
+        Some(Transition::Lapsed)
+    );
+    assert!(!attention.accepts_redraw());
+    // Dark, it lights, still locked.
+    assert_eq!(
+        app.state_mut().lock_control(&mut attention, 30),
+        Some(Transition::Woke)
+    );
+    assert!(app.state().lock.locked);
+}
+
+#[test]
+fn auto_lock_sets_how_long_the_panel_stays_lit() {
+    use core::time::Duration;
+    use umsh_ux_communicator::lock::attention_config;
+    use umsh_ux_display_tracker::attention::AttentionConfig;
+    let secs = |s| Some(Duration::from_secs(s));
+    assert_eq!(attention_config(false, Some(60)).timeout, secs(60));
+    assert_eq!(attention_config(false, None).timeout, secs(30));
+    // Never, unless locked: a locked screen is only glanced at.
+    assert_eq!(attention_config(false, Some(0)).timeout, None);
+    assert_eq!(attention_config(true, Some(0)), AttentionConfig::LOCKED);
+    assert_eq!(attention_config(true, Some(60)), AttentionConfig::LOCKED);
+    // Locked, no longer than Auto-Lock says.
+    assert_eq!(attention_config(true, Some(10)).timeout, secs(10));
+}
+
+#[test]
 fn backspace_on_the_rail_locks_a_board_without_a_lock_button() {
     let mut app = app!();
     run(&mut app, &[Input::Backspace]);

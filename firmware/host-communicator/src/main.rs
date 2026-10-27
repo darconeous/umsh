@@ -13,8 +13,13 @@ use std::time::Duration;
 use clap::{Parser, ValueEnum};
 
 mod board;
+// Drawn and tested without a window too.
+#[cfg_attr(not(feature = "window"), allow(dead_code))]
+mod face;
 mod flash;
 mod node;
+#[cfg(feature = "window")]
+mod screen;
 
 use umsh_ux_communicator::buoyant;
 
@@ -134,7 +139,7 @@ fn store(long: bool) -> &'static fixture::Store {
 /// Moves the demo on to `now` on the board's clock, in milliseconds, and
 /// takes in what that brings as a board would: the minute turning over,
 /// and what the demo has to say.
-fn advance<V, F>(app: &mut App<V, State, F>, store: &fixture::Store, now: u64)
+fn advance<V, F>(app: &mut App<V, State, F>, store: &fixture::Store, now: u64) -> bool
 where
     V: ViewLayout<State>,
     V::FocusTree: DefaultFocus,
@@ -143,7 +148,7 @@ where
 {
     store.advance(now);
     set_wall_time(app, Some(store.time()));
-    input::events(app, now);
+    input::events(app, now)
 }
 
 /// Takes in the wall clock's minute when it turns over.
@@ -189,27 +194,29 @@ impl Backend {
     }
 
     /// Moves the backend on to `now` and takes in what it has to say.
-    fn advance<V, F>(self, app: &mut App<V, State, F>, now: u64)
+    /// Returns whether anything came that lights the panel.
+    fn advance<V, F>(self, app: &mut App<V, State, F>, now: u64) -> bool
     where
         V: ViewLayout<State>,
         V::FocusTree: DefaultFocus,
         V::Renderables: AnimatedJoin,
         F: Fn(&State) -> V,
     {
-        match self {
+        let arrived = match self {
             Self::Demo(store) => advance(app, store, now),
             Self::Device(device) => {
                 device.node.pump();
                 set_wall_time(app, umsh_hal::wall_clock::now());
-                input::events(app, now);
+                input::events(app, now)
             }
-        }
+        };
         // There is nothing to play it on: what would sound is said.
         if app.state().has_cue()
             && let Some(cue) = app.state_mut().take_cue()
         {
             eprintln!("sound: {cue:?}");
         }
+        arrived
     }
 
     /// Lets the device run for `span`, or waits it out over the demo.
@@ -547,13 +554,13 @@ fn headless(
         for input in inputs {
             clock += INPUT_MS;
             input::apply(&mut app, input, clock);
-            backend.advance(&mut app, clock);
+            _ = backend.advance(&mut app, clock);
         }
         // A device takes what the step started in on its own clock.
         if let Backend::Device(device) = backend {
             device.run_for(Duration::from_millis(INPUT_MS));
         }
-        backend.advance(&mut app, clock);
+        _ = backend.advance(&mut app, clock);
     }
     Ok(())
 }
@@ -580,8 +587,13 @@ fn tap(modifier: Modifier) -> [Input; 2] {
 
 #[cfg(feature = "window")]
 fn window(board: &'static Board, backend: Backend, title: &str) -> ExitCode {
-    use embedded_graphics_simulator::sdl2::{Keycode, MouseButton};
-    use embedded_graphics_simulator::{SimulatorEvent, Window};
+    use embedded_graphics::prelude::Point;
+    use face::{Control, Face, Keys};
+    use sdl2::event::{Event, WindowEvent};
+    use sdl2::keyboard::Keycode;
+    use sdl2::mouse::MouseButton;
+    use umsh_ux_communicator::lock::attention_config;
+    use umsh_ux_display_tracker::attention::{Attention, DisplayKind, Transition};
 
     /// The Pager modifier a host key stands for.
     fn modifier(key: Keycode) -> Option<Modifier> {
@@ -592,65 +604,121 @@ fn window(board: &'static Board, backend: Backend, title: &str) -> ExitCode {
         }
     }
 
-    let mut window = Window::new(
-        title,
-        &OutputSettings {
-            scale: 2,
-            ..OutputSettings::default()
-        },
-    );
+    /// Whether `input` carries on a gesture already begun, rather than
+    /// starting one.
+    fn continues(input: &Input) -> bool {
+        matches!(
+            input,
+            Input::Release
+                | Input::Modifier { down: false, .. }
+                | Input::Touch {
+                    phase: TouchPhase::Moved | TouchPhase::Ended,
+                    ..
+                }
+        )
+    }
+
+    let size = board.metrics.size();
+    // The board's front: its keys, and its wheel or trackball, to click.
+    let face = Face::of(board);
+    let mut screen = match screen::Screen::new(title, face.size, face.screen) {
+        Ok(screen) => screen,
+        Err(error) => {
+            eprintln!("host-communicator: no window: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
     // The T-Deck's trackball and keyboard, or the Pager's wheel and keys.
     let tdeck = board == &Board::TDECK;
-    let size = board.metrics.size();
     let mut display: SimulatorDisplay<Rgb565> = SimulatorDisplay::new(size);
     let mut target = EmbeddedGraphicsRenderTarget::new_hinted(&mut display, theme::BACKGROUND);
-    window.update(target.display());
     let start = std::time::Instant::now();
+    let clock = || start.elapsed().as_millis() as u64;
     let mut app = App::new(backend.state(board), size.into(), ui::root_view);
     ui::bind(&mut app);
+    // The panel dims, then goes dark and locks, after a while without
+    // input, as the board's does.
+    let config = |state: &State| attention_config(state.lock.locked, state.node.auto_lock());
+    let mut attention = Attention::new(DisplayKind::Emissive, config(app.state()), clock());
+    let mut face_display: SimulatorDisplay<Rgb565> = SimulatorDisplay::new(face.size);
+    // The part of the face held down with the left button, and the T-Deck
+    // chord keys clicked for its next key.
+    let mut held: Option<usize> = None;
+    let mut keys = Keys::default();
+    let mut face_changed = true;
     // Whether the left button is down on the T-Deck's touchscreen, or
-    // pressing its trackball because the screen was locked.
+    // pressing the wheel or trackball from the screen.
     let mut touching = false;
     let mut pressing = false;
-    /// A finger at `point` on the touchscreen, at `now`.
-    fn touch(phase: TouchPhase, point: embedded_graphics::prelude::Point, now: u64) -> Input {
+    // A gesture begun against a dimmed or dark panel only lights it, as
+    // on the board: the rest of it is not taken either.
+    let mut waking = false;
+    /// A finger at `(x, y)` on the face, which is `at` on the
+    /// touchscreen, at `now`.
+    fn touch(phase: TouchPhase, at: Point, x: i32, y: i32, now: u64) -> Input {
+        let (x, y) = (x - at.x, y - at.y);
         let clamp = |v: i32| v.clamp(0, i32::from(i16::MAX)) as i16;
         Input::Touch {
             phase,
-            x: clamp(point.x),
-            y: clamp(point.y),
+            x: clamp(x),
+            y: clamp(y),
             at: now,
         }
     }
+    let mut redraw = true;
     loop {
         app.set_time(start.elapsed());
-        let now = start.elapsed().as_millis() as u64;
+        let now = clock();
+        let config = config(app.state());
+        if attention.config() != config {
+            attention.set_config(config);
+        }
         expire(&mut app, now);
-        for event in window.events() {
+        let mut transition = attention.poll(now);
+        for event in screen.events() {
+            // What a click on the face sends.
+            let mut inputs: Vec<Input> = Vec::new();
             let input = match event {
-                SimulatorEvent::Quit => return ExitCode::SUCCESS,
-                SimulatorEvent::KeyDown {
-                    keycode,
+                Event::Quit { .. } => return ExitCode::SUCCESS,
+                Event::Window {
+                    win_event: WindowEvent::Exposed | WindowEvent::SizeChanged(..),
+                    ..
+                } => {
+                    screen.present();
+                    None
+                }
+                // The lock button.
+                Event::KeyDown {
+                    keycode: Some(Keycode::Escape),
+                    repeat: false,
+                    ..
+                } => {
+                    transition = app
+                        .state_mut()
+                        .lock_control(&mut attention, now)
+                        .or(transition);
+                    None
+                }
+                Event::KeyDown {
+                    keycode: Some(keycode),
                     keymod,
                     repeat,
+                    ..
                 } if tdeck => tdeck_key(keycode, keymod, repeat).or_else(|| {
-                    match keycode {
-                        Keycode::Tab => backend.tab(),
-                        Keycode::Escape => {
-                            app.state_mut().lock();
-                            app.finalize_view();
-                        }
-                        _ => {}
+                    if keycode == Keycode::Tab {
+                        backend.tab();
                     }
                     None
                 }),
-                SimulatorEvent::KeyUp {
-                    keycode: Keycode::LCtrl | Keycode::RCtrl,
+                Event::KeyUp {
+                    keycode: Some(Keycode::LCtrl | Keycode::RCtrl),
                     ..
                 } if tdeck => Some(Input::Release),
-                SimulatorEvent::KeyUp { .. } if tdeck => None,
-                SimulatorEvent::KeyDown {
-                    keycode, repeat, ..
+                Event::KeyUp { .. } if tdeck => None,
+                Event::KeyDown {
+                    keycode: Some(keycode),
+                    repeat,
+                    ..
                 } => match keycode {
                     Keycode::Up => Some(Input::Turn(-1)),
                     Keycode::Down => Some(Input::Turn(1)),
@@ -663,11 +731,6 @@ fn window(board: &'static Board, backend: Backend, title: &str) -> ExitCode {
                     Keycode::Space => Some(Input::Space),
                     Keycode::Tab => {
                         backend.tab();
-                        None
-                    }
-                    Keycode::Escape => {
-                        app.state_mut().lock();
-                        app.finalize_view();
                         None
                     }
                     // The Pager's keyboard does not repeat.
@@ -687,95 +750,173 @@ fn window(board: &'static Board, backend: Backend, title: &str) -> ExitCode {
                             }
                         }),
                 },
-                SimulatorEvent::KeyUp {
-                    keycode: Keycode::Right,
+                Event::KeyUp {
+                    keycode: Some(Keycode::Right),
                     ..
                 } => Some(Input::Release),
-                SimulatorEvent::KeyUp { keycode, .. } => {
-                    modifier(keycode).map(|modifier| Input::Modifier {
-                        modifier,
-                        down: false,
-                    })
+                Event::KeyUp {
+                    keycode: Some(keycode),
+                    ..
+                } => modifier(keycode).map(|modifier| Input::Modifier {
+                    modifier,
+                    down: false,
+                }),
+                // A click beside the screen presses what it lands on.
+                Event::MouseButtonDown {
+                    mouse_btn: MouseButton::Left,
+                    x,
+                    y,
+                    ..
+                } if !face.screen.contains(Point::new(x, y)) => {
+                    if let Some(index) = face.hit(Point::new(x, y)) {
+                        held = Some(index);
+                        face_changed = true;
+                        match face.parts[index].control {
+                            Control::Lock => {
+                                transition = app
+                                    .state_mut()
+                                    .lock_control(&mut attention, now)
+                                    .or(transition);
+                            }
+                            control => inputs = keys.down(control, tdeck),
+                        }
+                    }
+                    None
+                }
+                Event::MouseButtonUp {
+                    mouse_btn: MouseButton::Left,
+                    ..
+                } if held.is_some() => {
+                    if let Some(index) = held.take() {
+                        inputs = Keys::up(face.parts[index].control);
+                    }
+                    face_changed = true;
+                    None
                 }
                 // On the T-Deck the mouse is a finger on its touchscreen,
                 // and the right button and the wheel are its trackball. The
                 // locked screen takes no touches, so there the left button
                 // presses the trackball too, to unlock it.
-                SimulatorEvent::MouseButtonDown {
+                Event::MouseButtonDown {
                     mouse_btn: MouseButton::Left,
                     ..
                 } if tdeck && app.state().lock.locked => {
                     pressing = true;
                     Some(Input::Press)
                 }
-                SimulatorEvent::MouseButtonUp {
+                Event::MouseButtonUp {
                     mouse_btn: MouseButton::Left,
                     ..
                 } if tdeck && pressing => {
                     pressing = false;
                     Some(Input::Release)
                 }
-                SimulatorEvent::MouseButtonDown {
+                Event::MouseButtonDown {
                     mouse_btn: MouseButton::Left,
-                    point,
+                    x,
+                    y,
+                    ..
                 } if tdeck => {
                     touching = true;
-                    Some(touch(TouchPhase::Started, point, now))
+                    Some(touch(TouchPhase::Started, face.screen.top_left, x, y, now))
                 }
-                SimulatorEvent::MouseMove { point } if tdeck && touching => {
-                    Some(touch(TouchPhase::Moved, point, now))
+                Event::MouseMotion { x, y, .. } if tdeck && touching => {
+                    Some(touch(TouchPhase::Moved, face.screen.top_left, x, y, now))
                 }
-                SimulatorEvent::MouseButtonUp {
+                Event::MouseButtonUp {
                     mouse_btn: MouseButton::Left,
-                    point,
+                    x,
+                    y,
+                    ..
                 } if tdeck && touching => {
                     touching = false;
-                    Some(touch(TouchPhase::Ended, point, now))
+                    Some(touch(TouchPhase::Ended, face.screen.top_left, x, y, now))
                 }
-                SimulatorEvent::MouseButtonDown {
+                Event::MouseButtonDown {
                     mouse_btn: MouseButton::Right,
                     ..
                 } if tdeck => Some(Input::Press),
-                SimulatorEvent::MouseButtonUp {
+                Event::MouseButtonUp {
                     mouse_btn: MouseButton::Right,
                     ..
                 } if tdeck => Some(Input::Release),
-                SimulatorEvent::MouseWheel { scroll_delta, .. } if tdeck => {
-                    Some(Input::Move(if scroll_delta.y > 0 {
-                        Arrow::Up
-                    } else {
-                        Arrow::Down
-                    }))
+                Event::MouseWheel { y, .. } if tdeck && y != 0 => {
+                    Some(Input::Move(if y > 0 { Arrow::Up } else { Arrow::Down }))
                 }
-                SimulatorEvent::MouseButtonDown { .. }
-                | SimulatorEvent::MouseButtonUp { .. }
-                | SimulatorEvent::MouseMove { .. }
-                    if tdeck =>
-                {
-                    None
+                Event::MouseWheel { y, .. } if !tdeck && y != 0 => {
+                    Some(Input::Turn(if y > 0 { -1 } else { 1 }))
                 }
-                SimulatorEvent::MouseWheel { scroll_delta, .. } => {
-                    Some(Input::Turn(if scroll_delta.y > 0 { -1 } else { 1 }))
-                }
-                SimulatorEvent::MouseButtonDown {
+                // On the Pager, a click on the screen presses the wheel.
+                Event::MouseButtonDown {
                     mouse_btn: MouseButton::Left,
                     ..
-                } => Some(Input::Press),
-                SimulatorEvent::MouseButtonUp {
+                } if !tdeck => {
+                    pressing = true;
+                    Some(Input::Press)
+                }
+                Event::MouseButtonUp {
                     mouse_btn: MouseButton::Left,
                     ..
-                } => Some(Input::Release),
+                } if !tdeck && pressing => {
+                    pressing = false;
+                    Some(Input::Release)
+                }
                 _ => None,
             };
-            if let Some(input) = input {
+            inputs.extend(input);
+            let Some(first) = inputs.first() else {
+                continue;
+            };
+            if waking || (attention.is_faded() && !continues(first)) {
+                // Until the press, or the finger, that woke it lets go.
+                waking = matches!(
+                    inputs.last(),
+                    Some(
+                        Input::Press
+                            | Input::Touch {
+                                phase: TouchPhase::Started | TouchPhase::Moved,
+                                ..
+                            }
+                    )
+                );
+                transition = attention.wake(now).or(transition);
+                continue;
+            }
+            for input in inputs {
                 input::apply(&mut app, input, now);
             }
+            transition = attention.wake(now).or(transition);
         }
-        backend.advance(&mut app, now);
-        if app.should_redraw() || target.clear_animation_status() {
+        if face_changed {
+            face_changed = false;
+            face.draw(&mut face_display, held, &keys);
+            screen.update_face(&face_display);
+        }
+        if backend.advance(&mut app, now) {
+            transition = attention.wake(now).or(transition);
+        }
+        match transition {
+            Some(Transition::Woke) => {
+                if app.state().dark {
+                    app.state_mut().screen_on(now);
+                }
+                screen.set_on(true);
+                redraw = true;
+            }
+            Some(Transition::Dimming) => screen.set_brightness(attention.brightness_permille()),
+            Some(Transition::Lapsed) => {
+                screen.set_on(false);
+                app.state_mut().screen_off(now);
+            }
+            None => {}
+        }
+        if attention.accepts_redraw()
+            && (redraw || app.should_redraw() || target.clear_animation_status())
+        {
+            redraw = false;
             target.clear(theme::BACKGROUND);
             app.render_animated(&mut target, &theme::TEXT);
-            window.update(target.display());
+            screen.update(target.display());
         }
         let frame = std::time::Duration::from_millis(8);
         backend.run_for(frame);
@@ -786,11 +927,11 @@ fn window(board: &'static Board, backend: Backend, title: &str) -> ExitCode {
 /// Control presses it, and the rest type as its keyboard does.
 #[cfg(feature = "window")]
 fn tdeck_key(
-    key: embedded_graphics_simulator::sdl2::Keycode,
-    keymod: embedded_graphics_simulator::sdl2::Mod,
+    key: sdl2::keyboard::Keycode,
+    keymod: sdl2::keyboard::Mod,
     repeat: bool,
 ) -> Option<Input> {
-    use embedded_graphics_simulator::sdl2::{Keycode, Mod};
+    use sdl2::keyboard::{Keycode, Mod};
     let input = match key {
         Keycode::Up => Input::Move(Arrow::Up),
         Keycode::Down => Input::Move(Arrow::Down),

@@ -4261,6 +4261,7 @@ dependencies = [
  "umsh-grapheme",
  "umsh-hal",
  "umsh-sound",
+ "umsh-ux-display-tracker",
 ]
 
 [[package]]

@@ -21,7 +21,7 @@ path = "src/main.rs"
 
 [features]
 default = ["window"]
-window = ["embedded-graphics-simulator/with-sdl"]
+window = ["dep:sdl2", "dep:umsh-ux-display-tracker"]
 
 [dependencies]
 umsh-ux-communicator = { path = "../../crates/umsh-ux-communicator", features = ["fixture"] }
@@ -40,6 +40,9 @@ umsh-crypto = { path = "../../crates/umsh-crypto", features = ["software-crypto"
 umsh-pager-peripherals = { path = "../../crates/umsh-pager-peripherals" }
 embedded-graphics = "0.8"
 embedded-graphics-simulator = { version = "0.8", default-features = false }
+# The window, and when its panel dims and goes dark.
+sdl2 = { version = "0.38", optional = true }
+umsh-ux-display-tracker = { path = "../../crates/umsh-ux-display-tracker", optional = true }
 heapless = "0.9"
 # The group the device transmits on, and the node's frame counters.
 umsh = { path = "../../umsh", default-features = false, features = ["std", "software-crypto", "tokio-support"] }

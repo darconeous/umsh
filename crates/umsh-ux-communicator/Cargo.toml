@@ -40,6 +40,8 @@ umsh-hal = { path = "../umsh-hal", default-features = false }
 umsh-grapheme = { path = "../umsh-grapheme" }
 umsh-emoji = { path = "../umsh-emoji" }
 umsh-sound = { path = "../umsh-sound" }
+# When the panel dims and goes dark: the tracker family's attention policy.
+umsh-ux-display-tracker = { path = "../umsh-ux-display-tracker" }
 
 [dev-dependencies]
 # The tests drive the fixture's chats.
