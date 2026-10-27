@@ -109,7 +109,9 @@ other.
 
 The window shows the board's front: its screen, its keyboard, and its wheel
 and lock button or its trackball. Click a key, the wheel, or the trackball
-to press it, or use your own keyboard and mouse as below.
+to press it, or use your own keyboard and mouse as below. Your keyboard
+types what it always does, with its own Shift, Caps Lock, and symbols, on
+either board.
 
 ### T-Deck (`--board tdeck`, the default)
 
@@ -119,7 +121,8 @@ to press it, or use your own keyboard and mouse as below.
 | Arrows, mouse wheel | Roll the trackball |
 | Control, right mouse button | Press the trackball |
 | Escape | A lock button, as the Pager's: lock, then darken, then light again |
-| Letters, digits, Return, Backspace, Space | Type, with Shift as the T-Deck's own keyboard applies it |
+| Return, Backspace, Space | The same keys |
+| Alt (Option) | The T-Deck's alt: Alt+Space or Alt+C opens the character picker, Alt with the trackball sets brightness |
 
 The touchscreen takes no touches while the device is locked, as on the T-Deck,
 so there a click presses the trackball instead. The T-Deck has no lock button;
@@ -137,11 +140,8 @@ W, to type `1`. Where its modifier keys sit is approximate.
 | Right, left click on the screen | Press the wheel; hold it to open a menu |
 | Left | Back, as Backspace is, except while typing in a field |
 | Escape | The lock button |
-| Return, Backspace, Space, letters | The same keys |
-| Shift | CAP |
-| Alt | The orange key |
-
-The Pager's keyboard does not repeat, and neither does this one.
+| Return, Backspace, Space | The same keys |
+| Alt (Option) | The orange key: Alt+Space opens the character picker, Alt with the wheel sets brightness |
 
 Sounds the device would play are printed on standard error, as `sound: …`.
 

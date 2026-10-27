@@ -78,6 +78,8 @@ impl Screen {
             panel.size.width,
             panel.size.height,
         );
+        // Typing comes as the text the host keyboard makes of it.
+        video.text_input().start();
         let events = sdl.event_pump()?;
         Ok(Self {
             canvas,

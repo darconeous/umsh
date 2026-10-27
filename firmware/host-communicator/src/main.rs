@@ -595,13 +595,10 @@ fn window(board: &'static Board, backend: Backend, title: &str) -> ExitCode {
     use umsh_ux_communicator::lock::attention_config;
     use umsh_ux_display_tracker::attention::{Attention, DisplayKind, Transition};
 
-    /// The Pager modifier a host key stands for.
-    fn modifier(key: Keycode) -> Option<Modifier> {
-        match key {
-            Keycode::LShift | Keycode::RShift => Some(Modifier::Shift),
-            Keycode::LAlt | Keycode::RAlt => Some(Modifier::Alt),
-            _ => None,
-        }
+    /// Whether a host key is Alt, which is the board's Alt for its chords:
+    /// with Space, the picker; with the wheel or trackball, brightness.
+    fn alt(key: Keycode) -> bool {
+        matches!(key, Keycode::LAlt | Keycode::RAlt)
     }
 
     /// Whether `input` carries on a gesture already begun, rather than
@@ -699,17 +696,47 @@ fn window(board: &'static Board, backend: Backend, title: &str) -> ExitCode {
                         .or(transition);
                     None
                 }
-                Event::KeyDown {
-                    keycode: Some(keycode),
-                    keymod,
-                    repeat,
-                    ..
-                } if tdeck => tdeck_key(keycode, keymod, repeat).or_else(|| {
-                    if keycode == Keycode::Tab {
-                        backend.tab();
+                // What the host keyboard types, as it types it: its own
+                // Shift, Caps Lock, and symbols applied. Space is a key of
+                // its own, for its chords; under Alt nothing types, as the
+                // chord is the key's.
+                Event::TextInput { text, .. } => {
+                    if !app.state().keyboard.alt_held() {
+                        inputs = text
+                            .chars()
+                            .filter(|c| !c.is_whitespace() && !c.is_control())
+                            .map(Input::Character)
+                            .collect();
                     }
                     None
+                }
+                Event::KeyDown {
+                    keycode: Some(keycode),
+                    repeat,
+                    ..
+                } if alt(keycode) => (!repeat).then_some(Input::Modifier {
+                    modifier: Modifier::Alt,
+                    down: true,
                 }),
+                Event::KeyUp {
+                    keycode: Some(keycode),
+                    ..
+                } if alt(keycode) => Some(Input::Modifier {
+                    modifier: Modifier::Alt,
+                    down: false,
+                }),
+                Event::KeyDown {
+                    keycode: Some(keycode),
+                    repeat,
+                    ..
+                } if tdeck => {
+                    tdeck_key(keycode, repeat, app.state().keyboard.alt_held()).or_else(|| {
+                        if keycode == Keycode::Tab {
+                            backend.tab();
+                        }
+                        None
+                    })
+                }
                 Event::KeyUp {
                     keycode: Some(Keycode::LCtrl | Keycode::RCtrl),
                     ..
@@ -733,34 +760,12 @@ fn window(board: &'static Board, backend: Backend, title: &str) -> ExitCode {
                         backend.tab();
                         None
                     }
-                    // The Pager's keyboard does not repeat.
-                    _ if repeat => None,
-                    other => modifier(other)
-                        .map(|modifier| Input::Modifier {
-                            modifier,
-                            down: true,
-                        })
-                        .or_else(|| {
-                            // Letters, by their key names.
-                            let name = other.name();
-                            let mut chars = name.chars();
-                            match (chars.next(), chars.next()) {
-                                (Some(c), None) if c.is_ascii_alphabetic() => Some(pager_key(c)),
-                                _ => None,
-                            }
-                        }),
+                    _ => None,
                 },
                 Event::KeyUp {
                     keycode: Some(Keycode::Right),
                     ..
                 } => Some(Input::Release),
-                Event::KeyUp {
-                    keycode: Some(keycode),
-                    ..
-                } => modifier(keycode).map(|modifier| Input::Modifier {
-                    modifier,
-                    down: false,
-                }),
                 // A click beside the screen presses what it lands on.
                 Event::MouseButtonDown {
                     mouse_btn: MouseButton::Left,
@@ -923,42 +928,26 @@ fn window(board: &'static Board, backend: Backend, title: &str) -> ExitCode {
     }
 }
 
-/// What a host key does on the T-Deck: the arrows roll the trackball,
-/// Control presses it, and the rest type as its keyboard does.
+/// What a host key does on the T-Deck, besides the text it types: the
+/// arrows roll the trackball, Control presses it, and C under Alt opens
+/// the picker, as the T-Deck's Alt+C does.
 #[cfg(feature = "window")]
-fn tdeck_key(
-    key: sdl2::keyboard::Keycode,
-    keymod: sdl2::keyboard::Mod,
-    repeat: bool,
-) -> Option<Input> {
-    use sdl2::keyboard::{Keycode, Mod};
+fn tdeck_key(key: sdl2::keyboard::Keycode, repeat: bool, alt: bool) -> Option<Input> {
+    use sdl2::keyboard::Keycode;
     let input = match key {
         Keycode::Up => Input::Move(Arrow::Up),
         Keycode::Down => Input::Move(Arrow::Down),
         Keycode::Left => Input::Move(Arrow::Left),
         Keycode::Right => Input::Move(Arrow::Right),
-        // Its keyboard does not repeat, and the ball's press is one press.
+        Keycode::Backspace => Input::Backspace,
+        // The ball's press is one press.
         _ if repeat => return None,
         Keycode::LCtrl | Keycode::RCtrl => Input::Press,
         Keycode::Return => Input::Enter,
-        Keycode::Backspace => Input::Backspace,
         Keycode::Space => Input::Space,
-        other => {
-            let name = other.name();
-            let mut chars = name.chars();
-            let (Some(c), None) = (chars.next(), chars.next()) else {
-                return None;
-            };
-            if !c.is_ascii_alphanumeric() {
-                return None;
-            }
-            let shift = keymod.intersects(Mod::LSHIFTMOD | Mod::RSHIFTMOD);
-            Input::Character(if shift {
-                c.to_ascii_uppercase()
-            } else {
-                c.to_ascii_lowercase()
-            })
-        }
+        // Alt is already down.
+        Keycode::C if alt => Input::Space,
+        _ => return None,
     };
     Some(input)
 }
