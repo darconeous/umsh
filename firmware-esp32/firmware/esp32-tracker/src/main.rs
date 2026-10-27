@@ -2065,9 +2065,11 @@ async fn gnss_task(
     .await
 }
 
-/// The wake lock the pump holds while it waits to hear the receiver.
-/// Light sleep stops the UART, so the receiver's output is otherwise
-/// heard only while the board is awake for some other reason.
+/// The wake lock the pump holds when it has gone too long without a fix
+/// ([`umsh_gnss::pump::QUIET_MS`]), until the next one or for at most
+/// [`umsh_gnss::pump::LISTEN_MS`]. Light sleep stops the UART, so the
+/// receiver's output is otherwise heard only while the board is awake for
+/// some other reason.
 #[cfg(feature = "gnss")]
 struct GnssAwake(core::cell::RefCell<Option<esp_hal::rtc_cntl::WakeLock>>);
 
