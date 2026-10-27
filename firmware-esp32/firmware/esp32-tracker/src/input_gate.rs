@@ -227,7 +227,9 @@ pub async fn navigation_task() {
         if board_input::alert_active() || !NAVIGATION_PENDING.swap(false, Ordering::AcqRel) {
             continue;
         }
-        UI_WAKE.signal(());
+        // The input wakes the interface itself, which keeps the panel lit
+        // for it. No wake is raised beside it: one left over after an input
+        // that darkened the panel would light it again.
         // Do not suspend with an already-dequeued input across an alert edge.
         if !forward(input) {
             INPUT_OVERFLOW.store(true, Ordering::Release);
