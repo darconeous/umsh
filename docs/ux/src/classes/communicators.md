@@ -103,6 +103,19 @@ Emptied, the alias goes, and the peer's own name is back.
 **Enter an address** still takes a 44-character address or a `umsh:n:`
 invitation, for when nobody is nearby.
 
+## Route and ping
+
+A saved peer's **Route** row opens the route their next message takes, as the
+[route and ping mockups](../hardware/mockups/communicator-route-ping.svg) draw
+it: this device, each repeater, then the peer. A press on a repeater opens it,
+or asks who it is when only its hint is known. A route doesn't say how each
+hop was heard; only a direct one shows a reading. **Reset route** forgets it,
+and the next message floods.
+
+**Ping** opens a screen of its own and sends one. The answer shows the round
+trip and the path it took, with how each hop was heard. **Ping again** keeps
+the earlier results below.
+
 ## Keyboard and auxiliary controls
 
 Use hardware navigation controls for focus and scrolling; use the keyboard for

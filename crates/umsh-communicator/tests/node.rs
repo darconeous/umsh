@@ -16,14 +16,15 @@ use umsh_communicator::task::{Arrival, Secrecy};
 use umsh_communicator::{
     ChannelCrypto, Clock, CommunicatorNode, FlashMap, FlashMapStore, MemoryStore, Quota, Seeds,
 };
+use umsh_core::options::TraceSignalEntry;
 use umsh_core::{
     ChannelId, ChannelKey, ChannelTag, Fcf, PacketHeader, PacketType, ParsedOptions, PayloadType,
-    PublicKey, SourceAddrRef,
+    PublicKey, RouterHint, SourceAddrRef,
 };
 use umsh_crypto::CryptoEngine;
 use umsh_crypto::NodeIdentity;
 use umsh_crypto::software::{SoftwareAes, SoftwareIdentity, SoftwareSha256};
-use umsh_mac::{ChannelInfoRef, ReceivedPacketRef, RxMetadata, Snr};
+use umsh_mac::{CachedRoute, ChannelInfoRef, ReceivedPacketRef, RxMetadata, Snr};
 use umsh_node::{NodeCapabilities, NodeIdentityPayload, NodeRole};
 use umsh_text::ConversationKey;
 use umsh_text::chat::ChatFacade;
@@ -38,8 +39,9 @@ use umsh_ulcp::ids::prop;
 use umsh_ulcp::profiles::VETTED;
 use umsh_ulcp_simdev::{SessionConfig, SimulatedDevice, TimeConfig};
 use umsh_ux_communicator::model::{
-    ChannelAccess, ChannelEntry, ChatKind, Chats, Delivery, Direction, KeyboardSettings, Node,
-    NodeEvent, PeerEntry, Peers, Presence, Profile, Reaction, Rule, Setting, Shareable,
+    ChannelAccess, ChannelEntry, ChatKind, Chats, Delivery, Direction, KeyboardSettings, Leg, Node,
+    NodeEvent, PeerEntry, Peers, PingView, Presence, Profile, Reaction, RouteKind, Rule, Setting,
+    Shareable, Signal,
 };
 
 /// 14:32 UTC, when the test clock starts.
@@ -1588,8 +1590,6 @@ fn a_saved_peers_row_follows_how_they_are_heard() {
     assert!(events(&node).contains(&NodeEvent::PeerChanged(peer)));
     assert_eq!(peers(&node)[0].hops, Some(1));
     assert!(peers(&node)[0].signal.is_some());
-    let route = node.peer_detail(peer).unwrap().route.unwrap();
-    assert!(route.starts_with("Direct \u{B7} "), "{route}");
 
     // Through one repeater: two hops, and no signal of theirs to show.
     let payload = composed(robin, public, "Robin", "Past the ridge now");
@@ -1598,10 +1598,6 @@ fn a_saved_peers_row_follows_how_they_are_heard() {
     node.arrive(Arrival::Text(relayed));
     assert_eq!(peers(&node)[0].hops, Some(2));
     assert_eq!(peers(&node)[0].signal, None);
-    assert_eq!(
-        node.peer_detail(peer).unwrap().route.as_deref(),
-        Some("2 hops")
-    );
     events(&node);
 
     clock.set(5_000 + 29 * 60 * 1_000);
@@ -2070,4 +2066,206 @@ fn a_saved_peer_is_shared_with_their_own_signed_identity() {
         node.contact_uri(saved.id).unwrap().as_str(),
         format!("umsh:n:{}", address_of(&ash))
     );
+}
+
+/// Whether `node` asks the device node for something `wanted` picks out,
+/// among what it asks for now.
+fn asks(node: &CommunicatorNode<Port>, wanted: impl Fn(&Command) -> bool) -> bool {
+    core::iter::from_fn(|| node.command()).any(|command| wanted(&command))
+}
+
+/// Robin, saved on the device, and the ID the node lists them by.
+fn saved_robin(
+    sim: &Rc<RefCell<SimulatedDevice>>,
+    node: &CommunicatorNode<Port>,
+    clock: &TestClock,
+) -> (PublicKey, u32) {
+    let robin = PublicKey([0x37; 32]);
+    phone_inserts(sim, prop::DEV_PEERS, &robin.0);
+    clock.set(2_000);
+    node.pump();
+    let peer = peers(node)[0].id;
+    events(node);
+    (robin, peer)
+}
+
+/// The route to a saved peer is the device node's, read when asked for,
+/// once however often it is asked, and again whenever they are heard.
+#[test]
+fn a_saved_peers_route_is_read_from_the_device_node() {
+    let sim = device();
+    let (node, clock) = started(&sim);
+    let (robin, peer) = saved_robin(&sim, &node, clock);
+    assert_eq!(node.peer_route(peer), None);
+    node.load_route(peer);
+    node.load_route(peer);
+    assert!(matches!(node.command(), Some(Command::ReadRoute { peer }) if peer == robin));
+    assert!(node.command().is_none(), "read once");
+
+    let hints = [RouterHint([0xA1, 0x01]), RouterHint([0xB2, 0x02])];
+    let route = || CachedRoute::source(&hints);
+    clock.set(62_000);
+    node.arrive(Arrival::Route {
+        peer: robin,
+        route: route(),
+        confirmed_age_ms: Some(60_000),
+    });
+    assert_eq!(events(&node), [NodeEvent::RouteChanged(peer)]);
+    let shown = node.peer_route(peer).unwrap();
+    assert_eq!(shown.kind, RouteKind::Source);
+    assert_eq!(shown.hops, Some(3));
+    let named: Vec<[u8; 2]> = shown.repeaters.iter().map(|r| r.hint).collect();
+    assert_eq!(named, [[0xA1, 0x01], [0xB2, 0x02]]);
+    assert_eq!(shown.confirmed.as_deref(), Some("1 min ago"));
+    assert_eq!(
+        node.peer_detail(peer).unwrap().route.as_deref(),
+        Some("3 hops")
+    );
+    // The same route read again a moment later changes nothing.
+    clock.set(62_300);
+    node.arrive(Arrival::Route {
+        peer: robin,
+        route: route(),
+        confirmed_age_ms: Some(60_300),
+    });
+    assert!(events(&node).is_empty());
+
+    let public = WellKnownChannels::derive().public;
+    let payload = composed(robin, public, "Robin", "Anyone near the trailhead?");
+    node.arrive(Arrival::Text(received(&public, robin, &payload)));
+    assert!(asks(
+        &node,
+        |c| matches!(c, Command::ReadRoute { peer } if *peer == robin)
+    ));
+
+    node.reset_route(peer);
+    assert!(asks(
+        &node,
+        |c| matches!(c, Command::ResetRoute { peer } if *peer == robin)
+    ));
+    node.arrive(Arrival::Route {
+        peer: robin,
+        route: None,
+        confirmed_age_ms: None,
+    });
+    assert!(events(&node).contains(&NodeEvent::RouteChanged(peer)));
+    assert_eq!(node.peer_route(peer).unwrap().kind, RouteKind::Unknown);
+    assert_eq!(
+        node.peer_detail(peer).unwrap().route.as_deref(),
+        Some("Not learned")
+    );
+}
+
+/// A direct route shows how this device last heard the peer, and a flood
+/// route as many unnamed repeaters as it crosses.
+#[test]
+fn a_direct_route_has_its_reading_and_a_flood_its_unnamed_repeaters() {
+    let sim = device();
+    let (node, clock) = started(&sim);
+    let (robin, peer) = saved_robin(&sim, &node, clock);
+    let public = WellKnownChannels::derive().public;
+    let payload = composed(robin, public, "Robin", "Anyone near the trailhead?");
+    let mut inbound = received(&public, robin, &payload);
+    inbound.rx = rx(1);
+    node.arrive(Arrival::Text(inbound));
+    node.arrive(Arrival::Route {
+        peer: robin,
+        route: Some(CachedRoute::Direct),
+        confirmed_age_ms: None,
+    });
+    let shown = node.peer_route(peer).unwrap();
+    assert_eq!(shown.kind, RouteKind::Direct);
+    assert_eq!(shown.signal, Some(Signal { rssi: -97, snr: 65 }));
+    assert_eq!(shown.confirmed, None);
+
+    node.arrive(Arrival::Route {
+        peer: robin,
+        route: CachedRoute::flood(3, &[]),
+        confirmed_age_ms: None,
+    });
+    let shown = node.peer_route(peer).unwrap();
+    assert_eq!(shown.kind, RouteKind::Flood);
+    assert_eq!((shown.hops, shown.unnamed), (Some(4), 3));
+    assert_eq!(
+        node.peer_detail(peer).unwrap().route.as_deref(),
+        Some("Flood \u{B7} 4 hops")
+    );
+}
+
+/// A ping waits until its answer comes, then keeps the path the answer
+/// took and how each hop of it was heard, the hop into this device first.
+#[test]
+fn a_ping_answer_keeps_its_path_and_how_each_hop_was_heard() {
+    let sim = device();
+    let (node, clock) = started(&sim);
+    let (robin, peer) = saved_robin(&sim, &node, clock);
+    node.ping(peer);
+    assert!(matches!(node.command(), Some(Command::Ping { peer, .. }) if peer == robin));
+    assert_eq!(node.ping_view(peer), Some(PingView::Waiting));
+
+    let mut heard = rx(4);
+    heard.route_hints = vec![RouterHint([0xA1, 0x01]), RouterHint([0xB2, 0x02])];
+    node.arrive(Arrival::Pong {
+        peer: robin,
+        round_trip_ms: 1_380,
+        rx: heard,
+        signal: vec![
+            TraceSignalEntry::new(-104, 38),
+            TraceSignalEntry::POINT_TO_POINT,
+        ],
+    });
+    assert!(events(&node).contains(&NodeEvent::PingSettled(peer)));
+    let Some(PingView::Reply(reply)) = node.ping_view(peer) else {
+        panic!("no reply");
+    };
+    assert_eq!(reply.round_trip_ms, 1_380);
+    assert_eq!(reply.hops, Some(4));
+    let named: Vec<[u8; 2]> = reply.repeaters.iter().map(|r| r.hint).collect();
+    assert_eq!(named, [[0xA1, 0x01], [0xB2, 0x02]]);
+    // One hop more than were traced: a repeater that named none.
+    assert_eq!(reply.unnamed, 1);
+    assert_eq!(
+        reply.legs.as_slice(),
+        [
+            Leg::Heard(Signal { rssi: -97, snr: 65 }),
+            Leg::Heard(Signal {
+                rssi: -104,
+                snr: 38
+            }),
+            Leg::Bridge,
+        ]
+    );
+    // The answer can have taught the device node a route.
+    assert!(matches!(node.command(), Some(Command::ReadRoute { peer }) if peer == robin));
+}
+
+/// A ping nobody answers ends as no reply; word of a timeout with no ping
+/// waiting changes nothing.
+#[test]
+fn a_ping_unanswered_settles_as_no_reply() {
+    let sim = device();
+    let (node, clock) = started(&sim);
+    let (robin, peer) = saved_robin(&sim, &node, clock);
+    node.arrive(Arrival::PingTimeout { peer: robin });
+    assert!(events(&node).is_empty());
+    assert_eq!(node.ping_view(peer), None);
+
+    node.ping(peer);
+    node.arrive(Arrival::PingTimeout { peer: robin });
+    assert_eq!(events(&node), [NodeEvent::PingSettled(peer)]);
+    assert_eq!(node.ping_view(peer), Some(PingView::NoReply));
+}
+
+/// A repeater on a route is asked who it is by way of the repeaters before
+/// it.
+#[test]
+fn a_repeater_is_asked_by_way_of_those_before_it() {
+    let sim = device();
+    let (node, _) = started(&sim);
+    node.identify_repeater([0xB2, 0x02], &[[0xA1, 0x01]]);
+    let Some(Command::AskRepeater { hint, route }) = node.command() else {
+        panic!("nothing asked");
+    };
+    assert_eq!(hint, RouterHint([0xB2, 0x02]));
+    assert_eq!(route, [RouterHint([0xA1, 0x01])]);
 }

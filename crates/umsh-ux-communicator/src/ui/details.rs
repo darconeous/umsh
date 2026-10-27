@@ -19,12 +19,12 @@ use crate::nav::{SPIN_PHASES, keys};
 use crate::{font, icon, theme};
 
 const ROW: u32 = 36;
-const INSET: u32 = 12;
+pub(super) const INSET: u32 = 12;
 /// The caption over the reactions.
 const CAPTION: u32 = 30;
-const AVATAR: u32 = 26;
+pub(super) const AVATAR: u32 = 26;
 /// A reactor's name, past their avatar.
-const NAME_X: u32 = INSET + AVATAR + 10;
+pub(super) const NAME_X: u32 = INSET + AVATAR + 10;
 
 // The repeaters are counted off the same indices.
 const _: () = assert!(MAX_REPEATERS <= MAX_REACTORS);
@@ -206,7 +206,7 @@ fn repeater(
 ///
 /// Built from the repeater each time it is drawn ([`Lazy`]): kept in the
 /// render trees, every row's would outweigh the rest of the screen.
-fn repeater_look(
+pub(super) fn repeater_look(
     (repeater, focused, waiting, phase, m): &(Repeater, bool, bool, u8, &'static Metrics),
 ) -> impl View<Rgb565, ()> + use<> {
     let known = repeater.address.is_some();
@@ -242,7 +242,7 @@ fn repeater_look(
 }
 
 /// A ring of dots, the one at `phase` lit and the two before it fading.
-fn spinner(phase: u8) -> impl View<Rgb565, ()> + use<> {
+pub(super) fn spinner<C>(phase: u8) -> impl View<Rgb565, C> + use<C> {
     // Each dot's place on the ring, clockwise from the top.
     const AT: [(i32, i32); SPIN_PHASES as usize] = [
         (0, -SPINNER),

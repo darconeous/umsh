@@ -20,6 +20,9 @@ use crate::text::{DraftText, SharedText, TextHeap};
 pub const MAX_CHATS: usize = 12;
 /// How many saved peers the Peers list holds.
 pub const MAX_PEERS: usize = 12;
+/// The most screens open at once, the Chats screen included: deep enough
+/// for a peer's route, a repeater on it, and that repeater's route.
+pub const MAX_SCREENS: usize = 6;
 /// The longest message, in bytes: a UMSH text message is at most ten
 /// fragments of 160 bytes.
 pub const MESSAGE_LEN: usize = 1600;
@@ -307,13 +310,12 @@ impl ChatSummary {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PeerDetail {
     pub address: String<44>,
-    /// How they are reached, such as `Direct · −97 dBm`, when known.
+    /// How far the route to them goes, such as `Direct` or `3 hops`, once
+    /// it has been read.
     pub route: Option<String<24>>,
     /// When they were last heard, such as `5 min ago`.
     pub heard: String<12>,
     pub forward_secrecy: bool,
-    /// The round trip of the last ping they answered, such as `1.4 s`.
-    pub ping: Option<String<8>>,
     /// What they are called here, which nothing they say replaces.
     pub alias: Option<String<32>>,
     /// What they call themselves, when they have said.
@@ -1104,6 +1106,100 @@ pub struct Repeater {
     pub address: Option<SharedText>,
 }
 
+/// The most repeaters a path names: as many as a source route can.
+pub const MAX_PATH: usize = 15;
+
+/// How a signal was heard: its strength in dBm, and its signal-to-noise
+/// ratio in tenths of a dB.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Signal {
+    pub rssi: i16,
+    pub snr: i16,
+}
+
+/// How the route to a saved peer was learned, or that none was.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RouteKind {
+    /// None is held: the next message floods.
+    Unknown,
+    Direct,
+    /// Through the repeaters it names.
+    Source,
+    /// By flood, as far as it was last heard from.
+    Flood,
+}
+
+/// The route the next message to a saved peer takes.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PeerRoute {
+    pub kind: RouteKind,
+    /// How many hops it takes: one when direct.
+    pub hops: Option<u8>,
+    /// The repeaters it names, the one nearest this device first.
+    pub repeaters: Vec<Repeater, MAX_PATH>,
+    /// How many repeaters it crosses without naming them, as a flood
+    /// route's.
+    pub unnamed: u8,
+    /// How long ago it was last confirmed, such as `4 min ago`.
+    pub confirmed: Option<String<12>>,
+    /// How this device heard the peer, when the route is direct.
+    pub signal: Option<Signal>,
+}
+
+/// How far `route` goes, and how: such as `Direct`, `3 hops`, `Flood ·
+/// 4 hops`, or `Not learned`.
+#[must_use]
+pub fn route_text(route: &PeerRoute) -> String<24> {
+    let mut text = String::new();
+    match (route.kind, route.hops) {
+        (RouteKind::Unknown, _) => _ = text.push_str("Not learned"),
+        (RouteKind::Flood, Some(hops)) => {
+            _ = text.push_str("Flood \u{B7} ");
+            _ = text.push_str(&hops_text(hops));
+        }
+        (RouteKind::Flood, None) => _ = text.push_str("Flood"),
+        (_, Some(hops)) => _ = text.push_str(&hops_text(hops)),
+        (_, None) => {}
+    }
+    text
+}
+
+/// One hop of a path a ping's reply took, as the node nearer this device
+/// heard it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Leg {
+    Heard(Signal),
+    /// It crossed a bridge rather than the air: there was nothing to hear.
+    Bridge,
+    /// Nobody said.
+    Unknown,
+}
+
+/// The answer to a ping.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PingReply {
+    /// The round trip, in milliseconds.
+    pub round_trip_ms: u32,
+    /// How many hops the reply took: one when direct.
+    pub hops: Option<u8>,
+    /// The repeaters that carried it, the one nearest this device first.
+    pub repeaters: Vec<Repeater, MAX_PATH>,
+    /// How many more it crossed without naming them, past the last one
+    /// named.
+    pub unnamed: u8,
+    /// Its hops, in the same order: the first into this device, and each
+    /// after it beyond the repeater before it.
+    pub legs: Vec<Leg, { MAX_PATH + 1 }>,
+}
+
+/// Where the latest ping to a saved peer stands.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PingView {
+    Waiting,
+    NoReply,
+    Reply(PingReply),
+}
+
 /// The most reactions a message's details list: the latest.
 pub const MAX_REACTORS: usize = 8;
 
@@ -1181,8 +1277,10 @@ pub enum NodeEvent {
     /// A saved peer changed, or is newly saved.
     PeerChanged(PeerId),
     PeerRemoved(PeerId),
-    /// The peer answered a ping.
-    PingAnswered(PeerId),
+    /// The peer answered a ping, or it went unanswered.
+    PingSettled(PeerId),
+    /// The route to a saved peer changed.
+    RouteChanged(PeerId),
     /// Settings were applied, as set or adjusted.
     SettingsChanged,
     /// A setting was refused, and stays as it was.
@@ -1210,13 +1308,14 @@ impl NodeEvent {
             Self::IdentitiesLearned => (4, 0),
             Self::PeerChanged(peer) => (5, peer),
             Self::PeerRemoved(peer) => (6, peer),
-            Self::PingAnswered(peer) => (7, peer),
+            Self::PingSettled(peer) => (7, peer),
             Self::SettingsChanged => (8, 0),
             Self::SettingRefused(setting) => (9, setting as u32),
             Self::Airtime { .. } => (10, 0),
             Self::Resync => (11, 0),
             Self::MeetChanged => (12, 0),
             Self::Settled { message, .. } => (13, message),
+            Self::RouteChanged(peer) => (14, peer),
         }
     }
 }
@@ -1356,8 +1455,10 @@ pub trait Node {
     fn request_identity(&self, chat: ChatId, message: MessageId);
 
     /// Asks the repeater that forwards under `hint`, a router hint, who it
-    /// is: of the nodes in earshot, the ones whose hint it is.
-    fn identify_repeater(&self, hint: [u8; 2]);
+    /// is: of the nodes in earshot of the last of the repeaters `before`,
+    /// router hints in the order they forward, or of this device when there
+    /// are none, the ones whose hint it is.
+    fn identify_repeater(&self, hint: [u8; 2], before: &[[u8; 2]]);
 
     /// The direct chat with the peer at `address`, made if there is none yet,
     /// named `name` and drawn as `avatar`. `None` when there is no room for it.
@@ -1389,8 +1490,23 @@ pub trait Node {
     /// The change comes as [`NodeEvent::PeerChanged`].
     fn set_peer_alias(&self, peer: PeerId, alias: Option<&str>);
 
-    /// Pings `peer`. Its answer shows in their detail.
+    /// Pings `peer`. How it went comes as [`NodeEvent::PingSettled`].
     fn ping(&self, peer: PeerId);
+
+    /// Where the latest ping to `peer` stands; `None` when none was sent.
+    fn ping_view(&self, peer: PeerId) -> Option<PingView>;
+
+    /// Reads the route to `peer` the radio holds now. When it differs from
+    /// what [`Node::peer_route`] says, that comes as
+    /// [`NodeEvent::RouteChanged`].
+    fn load_route(&self, peer: PeerId);
+
+    /// The route to `peer` as last read; `None` before it has been.
+    fn peer_route(&self, peer: PeerId) -> Option<PeerRoute>;
+
+    /// Forgets the route to `peer`, so that the next message floods. The
+    /// change comes as [`NodeEvent::RouteChanged`].
+    fn reset_route(&self, peer: PeerId);
 
     /// The clock's settings as they stand.
     fn clock(&self) -> ClockSettings;
@@ -1691,7 +1807,7 @@ pub struct State {
     /// The open chat's messages, while one is open.
     pub conversation: Option<Conversation>,
     /// The screens, the one shown last. The Chats screen is always first.
-    pub screens: Vec<Screen, 4>,
+    pub screens: Vec<Screen, MAX_SCREENS>,
     pub node: &'static dyn Node,
     /// Seconds until sending is allowed again, while the airtime it may use
     /// is spent.
@@ -2024,6 +2140,7 @@ impl State {
         }
         self.refresh_settings();
         self.refresh_peer();
+        self.refresh_ping(None);
         self.refresh_members();
         self.node.meet(&mut self.meet);
     }
@@ -2055,7 +2172,9 @@ impl State {
                 self.refresh_details(None);
             }
             NodeEvent::PeerRemoved(peer) => self.remove_peer(peer),
-            NodeEvent::PingAnswered(_) => self.refresh_peer(),
+            NodeEvent::PingSettled(peer) => self.refresh_ping(Some(peer)),
+            // The route screen reads the node as it is drawn.
+            NodeEvent::RouteChanged(_) => self.refresh_peer(),
             NodeEvent::SettingsChanged | NodeEvent::SettingRefused(_) => self.refresh_settings(),
             NodeEvent::Airtime { wait } => self.airtime_wait = wait,
             NodeEvent::MeetChanged => self.refresh_meet(),
@@ -2469,7 +2588,7 @@ impl State {
             self.press.and_then(|p| p.hold_until),
             self.touch.and_then(|t| t.hold_until),
             self.recents.save_at,
-            self.details_deadline(),
+            self.screen_deadline(),
         ]
         .into_iter()
         .flatten()

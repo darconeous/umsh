@@ -20,6 +20,7 @@ use umsh_ux_communicator::model::{
 };
 use umsh_ux_communicator::nav::{ChatMenu, DevicePage, MemberFrom, Screen, Unsent, keys};
 use umsh_ux_communicator::model::Cue;
+use umsh_ux_communicator::model::{Leg, PeerRoute, PingView, RouteKind};
 use umsh_ux_communicator::{fixture, ui, zones};
 
 /// The fixture's chats, in list order.
@@ -2013,7 +2014,7 @@ fn a_saved_peer_shows_its_detail_and_messages_in_its_own_chat() {
 }
 
 #[test]
-fn forward_secrecy_switches_and_a_ping_is_answered() {
+fn forward_secrecy_switches_and_a_ping_opens_its_screen() {
     let mut app = app!();
     open_pat(&mut app);
     turn_to(&mut app, keys::PEER_SECRECY);
@@ -2023,7 +2024,7 @@ fn forward_secrecy_switches_and_a_ping_is_answered() {
     assert!(!peer_detail(app.state()).forward_secrecy);
     turn_to(&mut app, keys::PEER_PING);
     run(&mut app, &[Input::Press]);
-    assert_eq!(peer_detail(app.state()).ping.as_deref(), Some("1.4 s"));
+    assert_eq!(shown_ping(app.state()), Some(PingView::Waiting));
 }
 
 #[test]
@@ -3930,4 +3931,211 @@ fn a_message_far_back_opens_its_actions() {
     run(&mut app, &[Input::Backspace]);
     assert_eq!(actions(app.state()), None);
     assert_eq!(focus(app.state()), Some(reading));
+}
+
+/// The route on the screen shown, once it has been read.
+fn shown_route(state: &State) -> Option<PeerRoute> {
+    match state.screen() {
+        Screen::Route { peer, .. } => state.node.peer_route(*peer),
+        other => panic!("expected a route, got {other:?}"),
+    }
+}
+
+/// How the latest ping on the screen shown went.
+fn shown_ping(state: &State) -> Option<PingView> {
+    match state.screen() {
+        Screen::Ping { peer, .. } => state.node.ping_view(*peer),
+        other => panic!("expected a ping, got {other:?}"),
+    }
+}
+
+/// Opens the saved peer `name` from the Peers list.
+fn open_peer<V, F>(app: &mut App<V, State, F>, name: &str)
+where
+    V: ViewLayout<State>,
+    V::FocusTree: DefaultFocus,
+    V::Renderables: AnimatedJoin,
+    F: Fn(&State) -> V,
+{
+    run(app, &[Input::Backspace]);
+    turn_to(app, keys::rail(Section::Peers));
+    run(app, &[Input::Press]);
+    let peer = app
+        .state()
+        .peers
+        .iter()
+        .find(|p| p.name.as_str() == name)
+        .map(|p| p.id)
+        .expect("saved");
+    turn_to(app, keys::peer(peer));
+    run(app, &[Input::Press]);
+    assert!(matches!(app.state().screen(), Screen::Peer { .. }));
+}
+
+/// Opens the route to the saved peer `name`.
+fn open_route_to<V, F>(app: &mut App<V, State, F>, name: &str)
+where
+    V: ViewLayout<State>,
+    V::FocusTree: DefaultFocus,
+    V::Renderables: AnimatedJoin,
+    F: Fn(&State) -> V,
+{
+    open_peer(app, name);
+    turn_to(app, keys::PEER_ROUTE);
+    run(app, &[Input::Press]);
+    assert!(shown_route(app.state()).is_some());
+}
+
+#[test]
+fn a_route_lists_its_repeaters_and_backspace_returns_to_the_peer() {
+    let mut app = app!();
+    open_peer(&mut app, "Jo Reyes");
+    assert_eq!(peer_detail(app.state()).route.as_deref(), Some("3 hops"));
+    turn_to(&mut app, keys::PEER_ROUTE);
+    run(&mut app, &[Input::Press]);
+    let route = shown_route(app.state()).unwrap();
+    assert_eq!(route.kind, RouteKind::Source);
+    assert_eq!(route.repeaters.len(), 2);
+    // The wheel stops on the repeaters and Reset route, never on this
+    // device or the peer.
+    let mut stops: Vec<_> = focus(app.state()).into_iter().collect();
+    for _ in 0..6 {
+        run(&mut app, &[Input::Turn(1)]);
+        if let Some(key) = focus(app.state())
+            && !stops.contains(&key)
+        {
+            stops.push(key);
+        }
+    }
+    for key in &stops {
+        assert!(
+            [keys::path(0), keys::path(1), keys::ROUTE_RESET, keys::READING].contains(key),
+            "stopped on {key:?}"
+        );
+    }
+    assert!(stops.contains(&keys::path(0)));
+    assert!(stops.contains(&keys::path(1)));
+    assert!(stops.contains(&keys::ROUTE_RESET));
+    run(&mut app, &[Input::Backspace]);
+    assert!(matches!(app.state().screen(), Screen::Peer { .. }));
+    assert_eq!(focus(app.state()), Some(keys::PEER_ROUTE));
+}
+
+#[test]
+fn an_unknown_repeater_on_a_route_is_asked_by_way_of_those_before_it() {
+    let store = store();
+    let mut app = app!(store);
+    open_route_to(&mut app, "Jo Reyes");
+    let route = shown_route(app.state()).unwrap();
+    let (nearby, unknown) = (route.repeaters[0].hint, route.repeaters[1].hint);
+    assert!(route.repeaters[1].address.is_none());
+    turn_to(&mut app, keys::path(1));
+    run(&mut app, &[Input::Press]);
+    assert_eq!(app.state().identifying().as_slice(), [unknown]);
+    assert_eq!(store.repeater_route().as_slice(), [nearby]);
+    assert!(app.state().next_deadline().is_some());
+
+    let at = store.next_deadline().expect("the answer is due");
+    store.advance(at);
+    input::events(&mut app, at);
+    let route = shown_route(app.state()).unwrap();
+    assert_eq!(&*route.repeaters[1].name, "Bald Knob");
+    assert!(route.repeaters[1].address.is_some());
+}
+
+#[test]
+fn a_known_repeater_on_a_route_opens_and_backspace_returns() {
+    let mut app = app!();
+    open_route_to(&mut app, "Jo Reyes");
+    turn_to(&mut app, keys::path(0));
+    run(&mut app, &[Input::Press]);
+    assert_eq!(&*shown_member(app.state()).0.sender.name, "Riverbend Camp");
+    run(&mut app, &[Input::Backspace]);
+    assert!(shown_route(app.state()).is_some());
+    assert_eq!(focus(app.state()), Some(keys::path(0)));
+}
+
+#[test]
+fn a_route_reset_is_not_learned_and_offers_a_ping() {
+    let mut app = app!();
+    open_route_to(&mut app, "Pat Okafor");
+    assert_eq!(shown_route(app.state()).unwrap().kind, RouteKind::Direct);
+    turn_to(&mut app, keys::ROUTE_RESET);
+    run(&mut app, &[Input::Press]);
+    let route = shown_route(app.state()).unwrap();
+    assert_eq!(route.kind, RouteKind::Unknown);
+    assert_eq!(route.confirmed, None);
+    turn_to(&mut app, keys::ROUTE_PING);
+    run(&mut app, &[Input::Press]);
+    assert_eq!(shown_ping(app.state()), Some(PingView::Waiting));
+    run(&mut app, &[Input::Backspace, Input::Backspace]);
+    assert_eq!(peer_detail(app.state()).route.as_deref(), Some("Not learned"));
+}
+
+#[test]
+fn a_ping_waits_then_shows_the_path_its_answer_took() {
+    let store = store();
+    let mut app = app!(store);
+    open_peer(&mut app, "Jo Reyes");
+    turn_to(&mut app, keys::PEER_PING);
+    run(&mut app, &[Input::Press]);
+    assert_eq!(shown_ping(app.state()), Some(PingView::Waiting));
+    assert!(app.state().ping_elapsed().is_some());
+    // The count and the spinner keep the screen coming back.
+    assert!(app.state().next_deadline().is_some());
+
+    let at = store.next_deadline().expect("the answer is due");
+    store.advance(at);
+    input::events(&mut app, at);
+    let Some(PingView::Reply(reply)) = shown_ping(app.state()) else {
+        panic!("no reply: {:?}", shown_ping(app.state()));
+    };
+    assert_eq!(reply.round_trip_ms, 1_400);
+    assert_eq!(reply.hops, Some(3));
+    assert_eq!(reply.repeaters.len(), 2);
+    assert_eq!(reply.legs.len(), 3);
+    assert!(matches!(reply.legs[0], Leg::Heard(_)));
+    assert_eq!(app.state().ping_elapsed(), None);
+    assert_eq!(focus(app.state()), Some(keys::PING_AGAIN));
+
+    run(&mut app, &[Input::Press]);
+    assert_eq!(shown_ping(app.state()), Some(PingView::Waiting));
+    let Screen::Ping { earlier, .. } = app.state().screen() else {
+        panic!("not on a ping");
+    };
+    assert_eq!(earlier.len(), 1);
+    assert_eq!(earlier[0].round_trip_ms, Some(1_400));
+    assert_eq!(earlier[0].hops, Some(3));
+}
+
+#[test]
+fn a_ping_nobody_answers_ends_as_no_reply() {
+    let store = store();
+    let mut app = app!(store);
+    open_peer(&mut app, "Dana Cho");
+    turn_to(&mut app, keys::PEER_PING);
+    run(&mut app, &[Input::Press]);
+    let at = store.next_deadline().expect("the wait ends");
+    store.advance(at);
+    input::events(&mut app, at);
+    assert_eq!(shown_ping(app.state()), Some(PingView::NoReply));
+    assert_eq!(focus(app.state()), Some(keys::PING_AGAIN));
+}
+
+#[test]
+fn a_peer_forgotten_while_its_ping_is_open_backs_out() {
+    let store = store();
+    let mut app = app!(store);
+    open_route_to(&mut app, "Pat Okafor");
+    turn_to(&mut app, keys::ROUTE_RESET);
+    run(&mut app, &[Input::Press]);
+    turn_to(&mut app, keys::ROUTE_PING);
+    run(&mut app, &[Input::Press]);
+    let Screen::Ping { peer, .. } = *app.state().screen() else {
+        panic!("not on a ping");
+    };
+    store.forget_peer(peer);
+    input::events(&mut app, 0);
+    assert!(matches!(app.state().screen(), Screen::Chats { .. }));
+    assert!(app.state().peer(peer).is_none());
 }

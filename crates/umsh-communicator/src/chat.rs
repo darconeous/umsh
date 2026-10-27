@@ -48,6 +48,7 @@ use crate::task::Command;
 mod channels;
 mod peers;
 mod repeats;
+mod routes;
 
 pub(crate) use channels::Joined;
 
@@ -208,8 +209,12 @@ pub(crate) struct Chats<S> {
     heard: BTreeMap<MessageId, repeats::Heard>,
     /// How each node was last heard, which the store does not keep.
     links: BTreeMap<[u8; 32], Link>,
-    /// The round trip of each peer's last answered ping, in milliseconds.
-    pings: BTreeMap<[u8; 32], u64>,
+    /// The pings to each peer pinged lately.
+    pings: BTreeMap<[u8; 32], routes::Ping>,
+    /// The routes to the peers read lately, as the device node holds them.
+    routes: BTreeMap<[u8; 32], routes::Route>,
+    /// The peers whose route the device node is asked for.
+    reading: BTreeSet<[u8; 32]>,
     /// Sessions with forward secrecy, asked for or held, by peer.
     secrecy: BTreeMap<[u8; 32], peers::Session>,
     /// What the chats ask of the device node besides sending frames.
@@ -247,6 +252,8 @@ impl<S: ChatStore> Chats<S> {
             heard: BTreeMap::new(),
             links: BTreeMap::new(),
             pings: BTreeMap::new(),
+            routes: BTreeMap::new(),
+            reading: BTreeSet::new(),
             secrecy: BTreeMap::new(),
             commands: VecDeque::new(),
             saved: Vec::new(),

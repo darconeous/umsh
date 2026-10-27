@@ -195,22 +195,20 @@ fn row_look(
 fn route_line(m: &Metrics, peer: &PeerSummary) -> impl View<Rgb565, ()> + use<> {
     let route = peer.hops.map(hops_text).unwrap_or_default();
     HStack::new((
-        peer.signal.filter(|_| peer.hops == Some(1)).map(bars),
+        peer.signal
+            .filter(|_| peer.hops == Some(1))
+            .map(|lit| bars(lit, theme::GREEN)),
         line(route, &font::REGULAR, m.secondary, theme::TEXT_TERTIARY),
     ))
     .with_spacing(6)
     .with_alignment(VerticalAlignment::Center)
 }
 
-/// `lit` of four bars, rising.
-fn bars(lit: u8) -> impl View<Rgb565, ()> + use<> {
+/// `lit` of four bars, rising, the lit ones in `color`.
+pub(super) fn bars<C>(lit: u8, color: Rgb565) -> impl View<Rgb565, C> + use<C> {
     let bar = move |i: u8| {
         RoundedRectangle::new(1)
-            .foreground_color(if i < lit {
-                theme::GREEN
-            } else {
-                theme::TEXT_TERTIARY
-            })
+            .foreground_color(if i < lit { color } else { theme::TEXT_TERTIARY })
             .frame_sized(BAR, BAR_BASE + u32::from(i) * BAR_STEP)
     };
     HStack::new((bar(0), bar(1), bar(2), bar(3)))

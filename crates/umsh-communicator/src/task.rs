@@ -17,8 +17,9 @@ use embassy_futures::select::select3;
 use embassy_sync::blocking_mutex::Mutex;
 use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_sync::signal::Signal;
+use umsh_core::options::TraceSignalEntry;
 use umsh_core::{ChannelKey, NodeHint, PayloadType, PublicKey, RouterHint};
-use umsh_mac::SendOptions;
+use umsh_mac::{CachedRoute, SendOptions};
 use umsh_node::{
     LocalNode, MacBackend, NodeIdentityPayload, Subscription, identity_is_trustworthy,
 };
@@ -58,11 +59,22 @@ pub enum Arrival {
         payload: Vec<u8>,
         rx: RxSummary,
     },
-    /// A peer answered a ping.
+    /// A peer answered a ping. `signal` is what each repeater the answer
+    /// came by measured, the nearest first, when there is one for each.
     Pong {
         peer: PublicKey,
         round_trip_ms: u64,
         rx: RxSummary,
+        signal: Vec<TraceSignalEntry>,
+    },
+    /// A ping went unanswered, or could not be sent.
+    PingTimeout { peer: PublicKey },
+    /// The route the device node holds to a peer, and how long ago a send
+    /// on it was last acknowledged.
+    Route {
+        peer: PublicKey,
+        route: Option<CachedRoute>,
+        confirmed_age_ms: Option<u64>,
     },
     /// A session with forward secrecy began, ended, or could not be had.
     Secrecy { peer: PublicKey, change: Secrecy },
@@ -114,9 +126,17 @@ pub enum Command {
         peer: PublicKey,
         options: SendOptions,
     },
-    /// Ask the nodes in earshot whose hint starts with a router hint for
-    /// their identity.
-    AskRepeater { hint: RouterHint },
+    /// Ask the nodes whose hint starts with a router hint for their
+    /// identity: by way of `route`, or those in earshot when it is empty.
+    AskRepeater {
+        hint: RouterHint,
+        route: Vec<RouterHint>,
+    },
+    /// Read the route the device node holds to a peer.
+    ReadRoute { peer: PublicKey },
+    /// Have the device node forget its route to a peer, then read the one
+    /// it holds after.
+    ResetRoute { peer: PublicKey },
     /// Ask a channel for the identity of whoever holds a hint.
     AskChannel {
         channel: ChannelKey,
@@ -188,8 +208,8 @@ impl<R: RawMutex> Default for Inbox<R> {
 
 /// Copies what `node`, the device identity `local_key`'s node, receives
 /// for the chats into `inbox`: text frames, other nodes' identities,
-/// answers to pings, the course of sessions with forward secrecy, and
-/// contact-exchange frames. It
+/// answers to pings and their timeouts, the course of sessions with
+/// forward secrecy, and contact-exchange frames. It
 /// wakes the inbox on word of a frame sent. The
 /// channel rules for `public` and `EMERGENCY` are applied here: a frame
 /// they refuse is left for any other listener.
@@ -249,8 +269,10 @@ where
                     forward_secret: false,
                     buffered_age_s: 0,
                 },
+                signal: pong.trace_signal.clone(),
             });
         }),
+        node.on_ping_timeout(move |peer| inbox.push(Arrival::PingTimeout { peer })),
         node.on_transmitted(|_| inbox.wake()),
         node.on_ack_received(|_, _| inbox.wake()),
         node.on_ack_timeout(|_, _| inbox.wake()),
@@ -349,10 +371,16 @@ where
 async fn execute<M: MacBackend>(mesh: &LocalNode<M>, command: Command) -> Option<Arrival> {
     match command {
         Command::Ping { peer, options } => {
-            if let Ok(connection) = mesh.peer(peer).await {
-                _ = connection
+            let sent = match mesh.peer(peer).await {
+                Ok(connection) => connection
                     .ping(PING_PADDING, &options, PING_TIMEOUT_MS)
-                    .await;
+                    .await
+                    .is_ok(),
+                Err(_) => false,
+            };
+            // One that never went has no answer to wait for.
+            if !sent {
+                return Some(Arrival::PingTimeout { peer });
             }
         }
         Command::StartSecrecy { peer, options } => {
@@ -374,12 +402,17 @@ async fn execute<M: MacBackend>(mesh: &LocalNode<M>, command: Command) -> Option
             hint,
             options,
         } => ask_channel(mesh, &channel, &hint, &options).await,
-        Command::AskRepeater { hint } => {
+        Command::AskRepeater { hint, route } => {
             let filter = umsh_node::IdentityFilter {
                 hint_prefix: Some(&hint.0),
                 ..Default::default()
             };
-            _ = mesh.request_identities(&filter, &[]).await;
+            _ = mesh.request_identities(&filter, &route).await;
+        }
+        Command::ReadRoute { peer } => return Some(read_route(mesh, peer).await),
+        Command::ResetRoute { peer } => {
+            mesh.clear_peer_route(&peer).await;
+            return Some(read_route(mesh, peer).await);
         }
         #[cfg(feature = "software-crypto")]
         Command::OpenMeet => return Some(Arrival::MeetOpened(mesh.open_meet().await.ok())),
@@ -391,6 +424,16 @@ async fn execute<M: MacBackend>(mesh: &LocalNode<M>, command: Command) -> Option
         Command::CloseMeet => mesh.close_meet().await,
     }
     None
+}
+
+/// The route the device node holds to `peer`.
+async fn read_route<M: MacBackend>(mesh: &LocalNode<M>, peer: PublicKey) -> Arrival {
+    let status = mesh.peer_route_status(&peer).await;
+    Arrival::Route {
+        peer,
+        confirmed_age_ms: status.as_ref().and_then(|status| status.confirmed_age_ms),
+        route: status.and_then(|status| status.route),
+    }
 }
 
 /// Asks `peer` for a session with forward secrecy. Returns whether the

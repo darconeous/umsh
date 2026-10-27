@@ -23,8 +23,8 @@ use umsh_sync::AsyncRefCell;
 use umsh_ulcp::ids::prop;
 use umsh_ulcp_simdev::SimulatedDevice;
 use umsh_ux_communicator::model::{
-    ChatKind, Chats, Delivery, Exchange, ExchangeEnd, MeetState, Member, MessageId, NearbyDevice,
-    Node, NodeEvent, Peers, Via,
+    ChatKind, Chats, Delivery, Exchange, ExchangeEnd, Leg, MeetState, Member, MessageId,
+    NearbyDevice, Node, NodeEvent, Peers, PingView, Via,
 };
 use umsh_ux_communicator::models;
 
@@ -927,6 +927,55 @@ async fn a_channel_message_ends_at_sent_via_its_repeater() {
             while let Some(event) = alice.node.next_event() {
                 assert!(!matches!(event, NodeEvent::Settled { .. }), "{event:?}");
             }
+        })
+        .await;
+}
+
+/// A ping to a peer beyond a repeater is answered by way of it: the answer
+/// names the repeater and says how each hop was heard, and the route to
+/// the peer is read once it has come.
+#[tokio::test(flavor = "current_thread")]
+async fn a_ping_through_a_repeater_names_it_and_reads_each_hop() {
+    LocalSet::new()
+        .run_until(async {
+            let network = SimulatedNetwork::new();
+            let near = network.add_radio_with_config(255, 20);
+            let middle = network.add_radio_with_config(255, 20);
+            let far = network.add_radio_with_config(255, 20);
+            network.connect_bidirectional(near.id(), middle.id());
+            network.connect_bidirectional(middle.id(), far.id());
+            let alice = board(near, [0x11; 32]).await;
+            let ridge = repeater(middle, [0x33; 32]).await;
+            let bob = board(far, [0x22; 32]).await;
+
+            phone_inserts(&alice.sim, prop::DEV_PEERS, &bob.key.0);
+            alice.node.pump();
+            let mut listed = Peers::new();
+            alice.node.peers(&mut listed);
+            let peer = listed[0].id;
+            alice.node.ping(peer);
+            assert_eq!(alice.node.ping_view(peer), Some(PingView::Waiting));
+            until("the ping was not answered", || {
+                matches!(alice.node.ping_view(peer), Some(PingView::Reply(_)))
+            })
+            .await;
+            let Some(PingView::Reply(reply)) = alice.node.ping_view(peer) else {
+                unreachable!();
+            };
+            assert_eq!(reply.hops, Some(2));
+            let named: Vec<[u8; 2]> = reply.repeaters.iter().map(|r| r.hint).collect();
+            assert_eq!(named, [[ridge.0[0], ridge.0[1]]]);
+            assert_eq!(reply.unnamed, 0);
+            assert_eq!(reply.legs.len(), 2);
+            assert!(
+                reply.legs.iter().all(|leg| matches!(leg, Leg::Heard(_))),
+                "{:?}",
+                reply.legs
+            );
+            until("the route was not read", || {
+                alice.node.peer_route(peer).is_some()
+            })
+            .await;
         })
         .await;
 }

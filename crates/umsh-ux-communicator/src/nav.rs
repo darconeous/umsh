@@ -14,9 +14,9 @@ pub use crate::clock_settings::{ClockPage, DateParts, Part, ZoneFind};
 use crate::keyboard::Field;
 use crate::model::{
     AUTO_LOCK_CHOICES, ChannelEntry, ChatId, ChatKind, ChatSummary, Details, Exchange, Found,
-    FoundKind, Invite, KeyboardSettings, MAX_FOUND, MAX_REPEATERS, Member, MessageId, NearbyId,
-    PeerDetail, PeerEntry, PeerId, Profile, RadioSettings, Reaction, Section, Shareable, State,
-    TRANSMIT_POWER, word_match,
+    FoundKind, Invite, KeyboardSettings, MAX_FOUND, MAX_PATH, MAX_REPEATERS, Member, MessageId,
+    NearbyId, PeerDetail, PeerEntry, PeerId, PingView, Profile, RadioSettings, Reaction, Repeater,
+    Section, Shareable, State, TRANSMIT_POWER, word_match,
 };
 
 use crate::text::SharedText;
@@ -43,6 +43,24 @@ const IDENTIFY_WAIT_MS: u64 = 15_000;
 pub const SPIN_PHASES: u8 = 8;
 const SPIN_STEP_MS: u64 = 125;
 
+/// The unknown repeaters a screen has asked who they are, and until when
+/// each answer is waited for, on the board's clock.
+pub type Asked = heapless::Vec<([u8; 2], u64), MAX_REPEATERS>;
+
+/// The most earlier pings the Ping screen lists.
+pub const MAX_EARLIER: usize = 3;
+
+/// A ping the Ping screen sent before the latest.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PingSummary {
+    /// Its round trip in milliseconds; `None` when it went unanswered.
+    pub round_trip_ms: Option<u32>,
+    /// How many hops its reply took.
+    pub hops: Option<u8>,
+    /// When it settled, on the board's clock.
+    pub at: u64,
+}
+
 /// The names of focusable elements. The high byte says what kind of element
 /// a key names, so keys of different kinds never collide.
 pub mod keys {
@@ -62,6 +80,7 @@ pub mod keys {
     const ZONE_ROW: u32 = 0x1C00_0000;
     const NEARBY: u32 = 0x2000_0000;
     const AUTO_LOCK_ROW: u32 = 0x2400_0000;
+    const PATH: u32 = 0x2B00_0000;
 
     /// A conversation's composer. Only one conversation is shown at a time.
     pub const COMPOSER: FocusKey = FocusKey(0x0400_0000);
@@ -90,6 +109,7 @@ pub mod keys {
     /// A saved peer's screen: its actions, in order, and Forget's
     /// confirmation.
     pub const PEER_MESSAGE: FocusKey = FocusKey(0x0C00_0000);
+    pub const PEER_ROUTE: FocusKey = FocusKey(0x0C00_0001);
     pub const PEER_SECRECY: FocusKey = FocusKey(0x0C00_0003);
     pub const PEER_PING: FocusKey = FocusKey(0x0C00_0004);
     pub const PEER_FORGET: FocusKey = FocusKey(0x0C00_0005);
@@ -98,6 +118,11 @@ pub mod keys {
     pub const FORGET_CANCEL: FocusKey = FocusKey(0x0C00_0008);
     pub const PEER_SHARE: FocusKey = FocusKey(0x0C00_0009);
     pub const PEER_ALIAS: FocusKey = FocusKey(0x0C00_000A);
+    /// The Route screen's Reset route, and its Ping when no route is held.
+    pub const ROUTE_RESET: FocusKey = FocusKey(0x2C00_0000);
+    pub const ROUTE_PING: FocusKey = FocusKey(0x2C00_0001);
+    /// The Ping screen's Ping again.
+    pub const PING_AGAIN: FocusKey = FocusKey(0x2C00_0002);
     /// A chat's menu, which holding the wheel on its row opens: its peer
     /// or channel, and Delete or Leave; and their confirmation.
     pub const CHAT_SHOW: FocusKey = FocusKey(0x1D00_0000);
@@ -360,6 +385,13 @@ pub mod keys {
         FocusKey(DETAIL_LIST.0 | (index as u32 + 1))
     }
 
+    /// A repeater's row on a path, the Route screen's or the Ping screen's,
+    /// by its place from this device.
+    #[must_use]
+    pub const fn path(index: usize) -> FocusKey {
+        FocusKey(PATH | (index as u32 & !KIND))
+    }
+
     /// The section whose rail item `key` names.
     #[must_use]
     pub const fn section(key: FocusKey) -> Option<Section> {
@@ -541,7 +573,7 @@ pub enum Screen {
         details: Details,
         /// The unknown repeaters asked who they are, and until when the
         /// answer is waited for, on the board's clock.
-        asked: heapless::Vec<([u8; 2], u64), MAX_REPEATERS>,
+        asked: Asked,
         focus: FocusState,
     },
     /// The member who sent a channel message, or the unsaved peer of a
@@ -567,6 +599,26 @@ pub enum Screen {
     },
     /// The chats a saved peer's contact can be sent to.
     ShareContact { peer: PeerId, focus: FocusState },
+    /// The route the next message to a saved peer takes, as the node holds
+    /// it.
+    Route {
+        peer: PeerId,
+        asked: Asked,
+        focus: FocusState,
+    },
+    /// Pings to a saved peer, and the path the latest answer took. How the
+    /// latest went is the node's.
+    Ping {
+        peer: PeerId,
+        /// When the latest ping was sent, on the board's clock.
+        sent_at: u64,
+        /// When it settled, answered or not; `None` while it waits.
+        settled_at: Option<u64>,
+        /// The pings before it, the latest first.
+        earlier: heapless::Vec<PingSummary, MAX_EARLIER>,
+        asked: Asked,
+        focus: FocusState,
+    },
     /// A joined channel.
     Channel {
         chat: ChatId,
@@ -623,6 +675,8 @@ impl Screen {
             | Self::EnterAddress { focus, .. }
             | Self::Peer { focus, .. }
             | Self::ShareContact { focus, .. }
+            | Self::Route { focus, .. }
+            | Self::Ping { focus, .. }
             | Self::Channel { focus, .. }
             | Self::Device { focus, .. }
             | Self::Setup { focus, .. } => focus,
@@ -645,6 +699,37 @@ impl Screen {
         }
     }
 
+    /// The saved peer this is one of the screens of.
+    #[must_use]
+    pub fn peer(&self) -> Option<PeerId> {
+        match self {
+            Self::Peer { peer, .. }
+            | Self::ShareContact { peer, .. }
+            | Self::Route { peer, .. }
+            | Self::Ping { peer, .. } => Some(*peer),
+            _ => None,
+        }
+    }
+
+    /// The unknown repeaters this screen has asked who they are.
+    fn asked(&self) -> Option<&Asked> {
+        match self {
+            Self::Details { asked, .. } | Self::Route { asked, .. } | Self::Ping { asked, .. } => {
+                Some(asked)
+            }
+            _ => None,
+        }
+    }
+
+    fn asked_mut(&mut self) -> Option<&mut Asked> {
+        match self {
+            Self::Details { asked, .. } | Self::Route { asked, .. } | Self::Ping { asked, .. } => {
+                Some(asked)
+            }
+            _ => None,
+        }
+    }
+
     pub fn focus_mut(&mut self) -> &mut FocusState {
         match self {
             Self::Chats { focus, .. }
@@ -657,6 +742,8 @@ impl Screen {
             | Self::EnterAddress { focus, .. }
             | Self::Peer { focus, .. }
             | Self::ShareContact { focus, .. }
+            | Self::Route { focus, .. }
+            | Self::Ping { focus, .. }
             | Self::Channel { focus, .. }
             | Self::Device { focus, .. }
             | Self::Setup { focus, .. } => focus,
@@ -1030,11 +1117,13 @@ impl State {
         }
     }
 
-    /// Shows the saved peer `peer`, Message focused.
+    /// Shows the saved peer `peer`, Message focused, reading their route
+    /// again.
     pub fn open_peer(&mut self, peer: PeerId) {
         if self.peer(peer).is_none() {
             return;
         }
+        self.node.load_route(peer);
         let Some(detail) = self.node.peer_detail(peer) else {
             return;
         };
@@ -1057,13 +1146,38 @@ impl State {
         }
     }
 
-    /// Reads the saved peer shown from the node again.
+    /// Reads the saved peers open from the node again.
     pub(crate) fn refresh_peer(&mut self) {
         let node = self.node;
-        if let Some(Screen::Peer { peer, detail, .. }) = self.screens.last_mut()
-            && let Some(fresh) = node.peer_detail(*peer)
-        {
-            *detail = fresh;
+        for screen in &mut self.screens {
+            if let Screen::Peer { peer, detail, .. } = screen
+                && let Some(fresh) = node.peer_detail(*peer)
+            {
+                *detail = fresh;
+            }
+        }
+    }
+
+    /// Notes the pings open that the node says have settled: those to
+    /// `peer`, or all of them when `peer` is `None`. One that has just
+    /// settled is marked as settled now, and Ping again is focused.
+    pub(crate) fn refresh_ping(&mut self, peer: Option<PeerId>) {
+        let node = self.node;
+        let uptime = self.uptime;
+        for screen in &mut self.screens {
+            if let Screen::Ping {
+                peer: shown,
+                settled_at,
+                focus,
+                ..
+            } = screen
+                && peer.is_none_or(|peer| peer == *shown)
+                && settled_at.is_none()
+                && !matches!(node.ping_view(*shown), None | Some(PingView::Waiting))
+            {
+                *settled_at = Some(uptime);
+                focus.request(keys::PING_AGAIN);
+            }
         }
     }
 
@@ -1138,12 +1252,99 @@ impl State {
         self.refresh_peer();
     }
 
-    /// Pings the saved peer shown.
-    pub fn ping_peer(&mut self) {
-        if let Some(peer) = self.shown_peer() {
-            self.node.ping(peer);
-            self.refresh_peer();
+    /// Shows the route to the saved peer shown, reading it again.
+    pub fn open_route(&mut self) {
+        let Some(peer) = self.shown_peer() else {
+            return;
+        };
+        self.node.load_route(peer);
+        _ = self.screens.push(Screen::Route {
+            peer,
+            asked: Asked::new(),
+            focus: FocusState::new(),
+        });
+    }
+
+    /// Forgets the route shown, so that the next message floods.
+    pub fn reset_route(&mut self) {
+        if let Some(&Screen::Route { peer, .. }) = self.screens.last() {
+            self.node.reset_route(peer);
         }
+    }
+
+    /// Pings the saved peer shown, or whose route is shown, and shows how
+    /// it goes.
+    pub fn open_ping(&mut self) {
+        let Some(peer) = self.screens.last().and_then(Screen::peer) else {
+            return;
+        };
+        self.node.ping(peer);
+        _ = self.screens.push(Screen::Ping {
+            peer,
+            sent_at: self.uptime,
+            settled_at: None,
+            earlier: heapless::Vec::new(),
+            asked: Asked::new(),
+            focus: FocusState::new(),
+        });
+    }
+
+    /// Pings the peer of the Ping screen again, listing the ping before
+    /// among the earlier ones.
+    pub fn ping_again(&mut self) {
+        let uptime = self.uptime;
+        let node = self.node;
+        let Some(Screen::Ping {
+            peer,
+            sent_at,
+            settled_at,
+            earlier,
+            asked,
+            ..
+        }) = self.screens.last_mut()
+        else {
+            return;
+        };
+        let Some(at) = settled_at.take() else {
+            return;
+        };
+        let (round_trip_ms, hops) = match node.ping_view(*peer) {
+            Some(PingView::Reply(reply)) => (Some(reply.round_trip_ms), reply.hops),
+            _ => (None, None),
+        };
+        if earlier.is_full() {
+            earlier.pop();
+        }
+        _ = earlier.insert(
+            0,
+            PingSummary {
+                round_trip_ms,
+                hops,
+                at,
+            },
+        );
+        asked.clear();
+        *sent_at = uptime;
+        node.ping(*peer);
+    }
+
+    /// How long the ping shown has been waiting for an answer.
+    #[must_use]
+    pub fn ping_elapsed(&self) -> Option<u64> {
+        match self.screens.last() {
+            Some(&Screen::Ping {
+                sent_at,
+                settled_at: None,
+                ..
+            }) => Some(self.uptime.saturating_sub(sent_at)),
+            _ => None,
+        }
+    }
+
+    /// How long ago an earlier ping settled.
+    #[must_use]
+    pub fn since(&self, at: u64) -> u64 {
+        self.uptime.saturating_sub(at)
     }
 
     /// Asks the saved peer shown for their identity.
@@ -1194,8 +1395,12 @@ impl State {
             .get(index)
             .or_else(|| self.peers.last())
             .map_or(keys::ADD_PEER, |p| keys::peer(p.id));
-        if self.shown_peer() == Some(peer) {
-            self.back();
+        // Its screens close, from its route or a ping on down.
+        let mut left = false;
+        while self.screen().peer() == Some(peer) && self.back() {
+            left = true;
+        }
+        if left {
             self.focus().request(next);
         }
         if let Some(Screen::Chats { focus, row, .. }) = self.screens.first_mut() {
@@ -2442,19 +2647,36 @@ impl State {
         }
     }
 
-    /// Opens the node the repeater at `index` on the details screen most
-    /// plausibly is, or asks who it is when no known node could be.
+    /// Opens the node the repeater at `index` on the screen shown most
+    /// plausibly is, or asks who it is when no known node could be. A
+    /// repeater on a path is asked by way of the repeaters before it.
     pub fn open_repeater(&mut self, index: usize) {
         let uptime = self.uptime;
-        let Some(Screen::Details { details, asked, .. }) = self.screens.last_mut() else {
+        let node = self.node;
+        // A path is the node's, read as it stands; a message's repeaters
+        // are its details'.
+        let (repeater, before) = match self.screens.last() {
+            Some(Screen::Details { details, .. }) => {
+                (details.repeaters.get(index).cloned(), heapless::Vec::new())
+            }
+            Some(&Screen::Route { peer, .. }) => {
+                path_stop(node.peer_route(peer).map(|r| r.repeaters), index)
+            }
+            Some(&Screen::Ping { peer, .. }) => match node.ping_view(peer) {
+                Some(PingView::Reply(reply)) => path_stop(Some(reply.repeaters), index),
+                _ => (None, heapless::Vec::new()),
+            },
+            _ => (None, heapless::Vec::new()),
+        };
+        let Some(repeater) = repeater else {
             return;
         };
-        let Some(repeater) = details.repeaters.get(index) else {
+        let Some(asked) = self.screens.last_mut().and_then(Screen::asked_mut) else {
             return;
         };
-        match repeater.address.clone() {
+        match repeater.address {
             Some(address) => {
-                if let Some(member) = self.node.known_member(&address) {
+                if let Some(member) = node.known_member(&address) {
                     self.show_known(member);
                 }
             }
@@ -2466,26 +2688,30 @@ impl State {
                 {
                     return;
                 }
-                asked.retain(|(asked, _)| *asked != hint);
+                // Those that gave up waiting make room.
+                asked.retain(|&(asked, until)| asked != hint && until > uptime);
                 if asked.push((hint, uptime + IDENTIFY_WAIT_MS)).is_ok() {
-                    self.node.identify_repeater(hint);
+                    node.identify_repeater(hint, &before);
                 }
             }
         }
     }
 
-    /// The unknown repeaters on the details screen whose identity is still
+    /// The unknown repeaters on the screen shown whose identity is still
     /// waited for.
     #[must_use]
-    pub fn identifying(&self) -> heapless::Vec<[u8; 2], MAX_REPEATERS> {
-        match self.screens.last() {
-            Some(Screen::Details { asked, .. }) => asked
-                .iter()
-                .filter(|&&(_, until)| until > self.uptime)
-                .map(|&(hint, _)| hint)
-                .collect(),
-            _ => heapless::Vec::new(),
-        }
+    pub fn identifying(&self) -> heapless::Vec<[u8; 2], MAX_PATH> {
+        self.screens
+            .last()
+            .and_then(Screen::asked)
+            .map(|asked| {
+                asked
+                    .iter()
+                    .filter(|&&(_, until)| until > self.uptime)
+                    .map(|&(hint, _)| hint)
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 
     /// Where the spinner of a repeater asked who it is stands, by the
@@ -2495,18 +2721,24 @@ impl State {
         ((self.uptime / SPIN_STEP_MS) % u64::from(SPIN_PHASES)) as u8
     }
 
-    /// When the details screen next changes by itself: its spinner's next
-    /// step while it waits on a repeater, and when it gives up.
-    pub(crate) fn details_deadline(&self) -> Option<u64> {
-        let Some(Screen::Details { asked, .. }) = self.screens.last() else {
-            return None;
-        };
-        let waiting = asked
+    /// When the screen shown next changes by itself: a spinner's next step
+    /// while it waits on a repeater or a ping, and when it gives up on a
+    /// repeater.
+    pub(crate) fn screen_deadline(&self) -> Option<u64> {
+        let screen = self.screens.last()?;
+        let step = (self.uptime / SPIN_STEP_MS + 1) * SPIN_STEP_MS;
+        if let Screen::Ping {
+            settled_at: None, ..
+        } = screen
+        {
+            return Some(step);
+        }
+        let waiting = screen
+            .asked()?
             .iter()
             .map(|&(_, until)| until)
             .filter(|&until| until > self.uptime);
         let until = waiting.min()?;
-        let step = (self.uptime / SPIN_STEP_MS + 1) * SPIN_STEP_MS;
         Some(step.min(until))
     }
 
@@ -2685,4 +2917,18 @@ impl State {
         }
         true
     }
+}
+
+/// The repeater at `index` on a path through `repeaters`, the one nearest
+/// this device first, and the hints of those before it, which an ask to it
+/// goes by way of.
+fn path_stop(
+    repeaters: Option<heapless::Vec<Repeater, MAX_PATH>>,
+    index: usize,
+) -> (Option<Repeater>, heapless::Vec<[u8; 2], MAX_PATH>) {
+    let Some(repeaters) = repeaters else {
+        return (None, heapless::Vec::new());
+    };
+    let before = repeaters.iter().take(index).map(|r| r.hint).collect();
+    (repeaters.get(index).cloned(), before)
 }

@@ -88,7 +88,15 @@ pub fn view(
             ))
             .with_spacing(0),
             VStack::new((
-                readout(m, "Route", detail.route.as_deref().unwrap_or_default(), ROW),
+                row(
+                    m,
+                    "Route",
+                    keys::PEER_ROUTE,
+                    State::open_route,
+                    End::value_chevron(detail.route.as_deref().unwrap_or_default()),
+                    false,
+                    ROW,
+                ),
                 readout(m, "Last heard", &detail.heard, ROW),
             ))
             .with_spacing(0),
@@ -105,8 +113,8 @@ pub fn view(
                 m,
                 "Ping",
                 keys::PEER_PING,
-                State::ping_peer,
-                detail.ping.as_deref().map_or(End::Chevron, End::value),
+                State::open_ping,
+                End::Chevron,
                 false,
                 ROW,
             ),

@@ -11,12 +11,13 @@ use crate::model::{
     About, BatteryReading, Bluetooth, BluetoothReading, Card, ChannelAccess, ChannelEntry, Charge,
     ChatId, ChatKind, ChatSummary, Chats, ClockSettings, ClockSource, Contact, ContactUri,
     DEFAULT_AUTO_LOCK_S, Delivery, Details, Direction, EventQueue, Exchange, ExchangeEnd, Fix,
-    Gnss, GnssReading, Heard, Invite, KeyboardSettings, LatestSent, Links, MAX_CHATS, MAX_HEARD,
-    MAX_PEERS, MESSAGE_LEN, MeetState, Member, Message, MessageId, NearbyDevice, NearbyId,
-    Neighbor, Node, NodeEvent, Parts, PeerDetail, PeerEntry, PeerId, PeerSummary, Peers, Presence,
-    Profile, Quote, RadioSettings, Reacted, Reaction, Reactions, Reactor, Repeater, Rule, Sender,
-    Setting, ShareUri, Shareable, State, Statistics, StatusStrip, TRANSMIT_POWER, Via,
-    brightness_at, word_match,
+    Gnss, GnssReading, Heard, Invite, KeyboardSettings, LatestSent, Leg, Links, MAX_CHATS,
+    MAX_HEARD, MAX_PATH, MAX_PEERS, MESSAGE_LEN, MeetState, Member, Message, MessageId,
+    NearbyDevice, NearbyId, Neighbor, Node, NodeEvent, Parts, PeerDetail, PeerEntry, PeerId,
+    PeerRoute, PeerSummary, Peers, PingReply, PingView, Presence, Profile, Quote, RadioSettings,
+    Reacted, Reaction, Reactions, Reactor, Repeater, RouteKind, Rule, Sender, Setting, ShareUri,
+    Shareable, Signal, State, Statistics, StatusStrip, TRANSMIT_POWER, Via, brightness_at,
+    route_text, word_match,
 };
 use crate::models;
 use crate::picker::RecentText;
@@ -35,6 +36,23 @@ const STARTED: u32 = 1_792_247_520;
 
 /// How long an identity asked for takes to arrive, in milliseconds.
 const IDENTITY_DELAY: u64 = 2000;
+/// How long a ping is answered after, and how long one nobody answers is
+/// waited on.
+pub const PING_DELAY: u64 = 1_500;
+pub const PING_TIMEOUT: u64 = 8_000;
+/// How long a ping to `peer` is waited on before it settles.
+fn ping_wait(peer: PeerId) -> u64 {
+    if peer == SILENT_PEER {
+        PING_TIMEOUT
+    } else {
+        PING_DELAY
+    }
+}
+
+/// The saved peer who never answers a ping.
+const SILENT_PEER: PeerId = 4;
+/// How each saved peer is heard: Pat directly.
+const DIRECT_SIGNAL: Signal = Signal { rssi: -97, snr: 65 };
 /// How long after an arrival, when arrivals are paced, the next comes.
 const ARRIVAL_SPACING: u64 = 40_000;
 
@@ -700,9 +718,12 @@ pub struct Store {
     direct: RefCell<Vec<String<44>, KEPT>>,
     /// Channels joined since, by name, and who can read them.
     joined: RefCell<Vec<(String<32>, ChannelAccess), KEPT>>,
-    /// Peers with forward secrecy turned on, peers pinged, and peers forgotten.
+    /// Peers with forward secrecy turned on, peers pinged, when on the
+    /// board's clock and whether it has settled, peers whose route was
+    /// reset, and peers forgotten.
     secrecy: RefCell<Vec<PeerId, KEPT>>,
-    pinged: RefCell<Vec<PeerId, KEPT>>,
+    pinged: RefCell<Vec<(PeerId, u64, bool), KEPT>>,
+    reset: RefCell<Vec<PeerId, KEPT>>,
     aliases: RefCell<Vec<(PeerId, String<32>), KEPT>>,
     forgotten: RefCell<Vec<PeerId, KEPT>>,
     /// This node's name, once it is given one.
@@ -754,6 +775,8 @@ pub struct Store {
     /// When the unknown repeater is identified, once it is asked about.
     repeater_at: Cell<Option<u64>>,
     repeater_identified: Cell<bool>,
+    /// The repeaters the last repeater asked who it is was asked by way of.
+    repeater_route: RefCell<Vec<[u8; 2], MAX_PATH>>,
 }
 
 impl Store {
@@ -780,6 +803,7 @@ impl Store {
             joined: RefCell::new(Vec::new()),
             secrecy: RefCell::new(Vec::new()),
             pinged: RefCell::new(Vec::new()),
+            reset: RefCell::new(Vec::new()),
             aliases: RefCell::new(Vec::new()),
             forgotten: RefCell::new(Vec::new()),
             name: RefCell::new(None),
@@ -820,6 +844,7 @@ impl Store {
             sends: RefCell::new(Vec::new()),
             repeater_at: Cell::new(None),
             repeater_identified: Cell::new(false),
+            repeater_route: RefCell::new(Vec::new()),
         }
     }
 
@@ -882,8 +907,6 @@ struct SavedPeer {
     /// their screen does.
     heard: &'static str,
     heard_long: &'static str,
-    /// How they are reached.
-    route: Option<&'static str>,
     /// The chat with them, when there is one.
     chat: Option<ChatId>,
 }
@@ -899,7 +922,6 @@ const PEERS: [SavedPeer; 4] = [
         signal: Some(3),
         heard: "5m",
         heard_long: "5 min ago",
-        route: Some("Direct \u{B7} \u{2212}97 dBm"),
         chat: Some(3),
     },
     SavedPeer {
@@ -911,7 +933,6 @@ const PEERS: [SavedPeer; 4] = [
         signal: None,
         heard: "1h",
         heard_long: "1 hr ago",
-        route: Some("3 hops"),
         chat: Some(5),
     },
     SavedPeer {
@@ -923,7 +944,6 @@ const PEERS: [SavedPeer; 4] = [
         signal: None,
         heard: "3h",
         heard_long: "3 hr ago",
-        route: Some("3 hops"),
         chat: None,
     },
     SavedPeer {
@@ -935,7 +955,6 @@ const PEERS: [SavedPeer; 4] = [
         signal: None,
         heard: "4h",
         heard_long: "4 hr ago",
-        route: Some("2 hops"),
         chat: None,
     },
 ];
@@ -1183,6 +1202,12 @@ impl Store {
                 });
             }
         }
+        for (peer, sent, settled) in self.pinged.borrow_mut().iter_mut() {
+            if !*settled && *sent + ping_wait(*peer) <= now {
+                *settled = true;
+                self.queue(NodeEvent::PingSettled(*peer));
+            }
+        }
         if self.repeater_at.get().is_some_and(|at| at <= now) {
             self.repeater_at.set(None);
             self.repeater_identified.set(true);
@@ -1218,6 +1243,12 @@ impl Store {
             self.arrival_at.get(),
             self.identity_at.get(),
             self.repeater_at.get(),
+            self.pinged
+                .borrow()
+                .iter()
+                .filter(|&&(_, _, settled)| !settled)
+                .map(|&(peer, sent, _)| sent + ping_wait(peer))
+                .min(),
             stages,
         ]
         .into_iter()
@@ -1258,6 +1289,41 @@ impl Store {
         };
         let heard = CARRIED_AFTER.iter().filter(|&&after| ago >= after).count();
         (&SENT_CARRIERS[..heard], 0)
+    }
+
+    /// The repeaters the last repeater asked who it is was asked by way
+    /// of, in the order they forward.
+    #[must_use]
+    pub fn repeater_route(&self) -> Vec<[u8; 2], MAX_PATH> {
+        self.repeater_route.borrow().clone()
+    }
+
+    /// The answer to a ping to `peer`: from Pat directly, from Jo by way of
+    /// the route to them, and from Rick across a bridge and a repeater
+    /// nobody named.
+    fn ping_reply(&self, peer: PeerId) -> Option<PingReply> {
+        let heard = |rssi, snr| Leg::Heard(Signal { rssi, snr });
+        let (carriers, unnamed, legs, round_trip_ms): (&[Carrier], u8, &[Leg], u32) = match peer {
+            1 => (&[], 0, &[Leg::Heard(DIRECT_SIGNAL)], 400),
+            2 => (
+                &[RIVERBEND, BALD_KNOB],
+                0,
+                &[heard(-97, 65), heard(-104, 38), heard(-110, -15)],
+                1_400,
+            ),
+            _ => (&[RIVERBEND], 1, &[heard(-101, 20), Leg::Bridge], 2_100),
+        };
+        let repeaters: Vec<Repeater, MAX_PATH> = carriers
+            .iter()
+            .filter_map(|carrier| self.repeater(carrier))
+            .collect();
+        Some(PingReply {
+            round_trip_ms,
+            hops: u8::try_from(repeaters.len() + 1).ok().map(|h| h + unnamed),
+            repeaters,
+            unnamed,
+            legs: legs.iter().copied().collect(),
+        })
     }
 
     /// A repeater as a message's details list it.
@@ -2055,7 +2121,8 @@ impl Node for Store {
         self.asked.set(true);
     }
 
-    fn identify_repeater(&self, hint: [u8; 2]) {
+    fn identify_repeater(&self, hint: [u8; 2], before: &[[u8; 2]]) {
+        *self.repeater_route.borrow_mut() = before.iter().copied().collect();
         // Only the one repeater not known has an identity to come.
         if !self.repeater_identified.get()
             && self.repeater_at.get().is_none()
@@ -2095,25 +2162,16 @@ impl Node for Store {
         if self.forgotten.borrow().contains(&peer) {
             return None;
         }
-        let (address, route, heard, advertised) =
+        let route = self.peer_route(peer).map(|route| route_text(&route));
+        let (address, heard, advertised) =
             match peer.checked_sub(1).and_then(|i| PEERS.get(i as usize)) {
-                Some(saved) => (
-                    s(saved.address),
-                    saved.route.map(s),
-                    saved.heard_long,
-                    Some(s(saved.name)),
-                ),
+                Some(saved) => (s(saved.address), saved.heard_long, Some(s(saved.name))),
                 // A member saved since the fixture started.
                 None => {
                     let saved = self.saved.borrow();
                     let index = peer.checked_sub(FIRST_SAVED)? as usize;
                     let (address, summary) = saved.get(index)?;
-                    (
-                        address.clone(),
-                        None,
-                        "2 min ago",
-                        Some(summary.name.clone()),
-                    )
+                    (address.clone(), "2 min ago", Some(summary.name.clone()))
                 }
             };
         Some(PeerDetail {
@@ -2121,8 +2179,6 @@ impl Node for Store {
             route,
             heard: s(heard),
             forward_secrecy: self.secrecy.borrow().contains(&peer),
-            // A ping is answered at once.
-            ping: self.pinged.borrow().contains(&peer).then(|| s("1.4 s")),
             alias: self.alias(peer),
             advertised,
         })
@@ -2150,11 +2206,78 @@ impl Node for Store {
 
     fn ping(&self, peer: PeerId) {
         let mut pinged = self.pinged.borrow_mut();
-        if !pinged.contains(&peer) {
-            _ = pinged.push(peer);
+        pinged.retain(|(p, _, _)| *p != peer);
+        _ = pinged.push((peer, self.now.get(), false));
+    }
+
+    fn ping_view(&self, peer: PeerId) -> Option<PingView> {
+        let &(_, _, settled) = self.pinged.borrow().iter().find(|(p, _, _)| *p == peer)?;
+        Some(match (settled, peer) {
+            (false, _) => PingView::Waiting,
+            (true, SILENT_PEER) => PingView::NoReply,
+            (true, _) => PingView::Reply(self.ping_reply(peer)?),
+        })
+    }
+
+    fn load_route(&self, _peer: PeerId) {
+        // The fixture's routes are always read.
+    }
+
+    fn peer_route(&self, peer: PeerId) -> Option<PeerRoute> {
+        let unknown = PeerRoute {
+            kind: RouteKind::Unknown,
+            hops: None,
+            repeaters: Vec::new(),
+            unnamed: 0,
+            confirmed: None,
+            signal: None,
+        };
+        if self.forgotten.borrow().contains(&peer) {
+            return None;
         }
-        drop(pinged);
-        self.queue(NodeEvent::PingAnswered(peer));
+        if self.reset.borrow().contains(&peer) {
+            return Some(unknown);
+        }
+        let confirmed = Some(s("4 min ago"));
+        Some(match peer {
+            // Pat, heard directly.
+            1 => PeerRoute {
+                kind: RouteKind::Direct,
+                hops: Some(1),
+                confirmed,
+                signal: Some(DIRECT_SIGNAL),
+                ..unknown
+            },
+            // Jo, through the repeater nearby and the one known by its hint.
+            2 => PeerRoute {
+                kind: RouteKind::Source,
+                hops: Some(3),
+                repeaters: [RIVERBEND, BALD_KNOB]
+                    .iter()
+                    .filter_map(|carrier| self.repeater(carrier))
+                    .collect(),
+                confirmed,
+                ..unknown
+            },
+            // Rick, by flood.
+            3 => PeerRoute {
+                kind: RouteKind::Flood,
+                hops: Some(3),
+                unnamed: 2,
+                confirmed,
+                ..unknown
+            },
+            _ => unknown,
+        })
+    }
+
+    fn reset_route(&self, peer: PeerId) {
+        let mut reset = self.reset.borrow_mut();
+        if !reset.contains(&peer) {
+            _ = reset.push(peer);
+        }
+        drop(reset);
+        self.queue(NodeEvent::RouteChanged(peer));
     }
 
     fn clock(&self) -> ClockSettings {

@@ -36,9 +36,6 @@ const LINKS_KEPT: usize = 64;
 /// again.
 const LINK_FRESH_MS: u64 = 30 * 60 * 1_000;
 
-/// How many pings' answers are kept.
-const PINGS_KEPT: usize = 16;
-
 /// What a peer invitation starts with.
 const INVITATION: &str = "umsh:n:";
 
@@ -87,6 +84,15 @@ impl Link {
         self.hop_count == Some(1)
     }
 
+    /// How strongly it came in, when it came directly.
+    pub(super) fn direct_signal(&self) -> Option<model::Signal> {
+        let signal = model::Signal {
+            rssi: self.rssi_dbm?,
+            snr: self.snr_centibels?,
+        };
+        self.direct().then_some(signal)
+    }
+
     /// Whether it still says where the node is.
     fn placed(&self) -> bool {
         self.hop_count.is_some() || self.rssi_dbm.is_some() || self.snr_centibels.is_some()
@@ -124,6 +130,10 @@ impl<S: ChatStore> Chats<S> {
             },
         );
         self.shown_changed(key, events);
+        // What was heard can have taught the device node a route.
+        if self.routed(key) {
+            self.read_route(*key);
+        }
     }
 
     /// Forgets where nodes not heard for [`LINK_FRESH_MS`] were heard
@@ -215,25 +225,6 @@ impl<S: ChatStore> Chats<S> {
             if let Some(chat) = self.store.chat_for(&ConversationKey::Direct { peer: key }) {
                 events(NodeEvent::ChatChanged(chat.0));
             }
-        }
-    }
-
-    /// Takes a peer's answer to a ping.
-    pub fn pong(
-        &mut self,
-        peer: PublicKey,
-        round_trip_ms: u64,
-        rx: &RxSummary,
-        now_ms: u64,
-        events: &mut dyn FnMut(NodeEvent),
-    ) {
-        self.hear(&peer, rx, now_ms, events);
-        if !self.pings.contains_key(&peer.0) && self.pings.len() >= PINGS_KEPT {
-            self.pings.pop_first();
-        }
-        self.pings.insert(peer.0, round_trip_ms);
-        if let Ok(Some(record)) = self.store.peer(&peer) {
-            events(NodeEvent::PingAnswered(record.id.0));
         }
     }
 
@@ -379,7 +370,7 @@ impl<S: ChatStore> Chats<S> {
     }
 
     /// The saved peer `peer`.
-    fn saved_peer(&self, peer: model::PeerId) -> Option<PeerRecord> {
+    pub(super) fn saved_peer(&self, peer: model::PeerId) -> Option<PeerRecord> {
         self.store
             .peers(PeerFilter::Saved)
             .flatten()
@@ -393,26 +384,19 @@ impl<S: ChatStore> Chats<S> {
         wall: Option<u32>,
     ) -> Option<PeerDetail> {
         let kept = self.saved_peer(peer)?;
-        let link = self.links.get(&kept.key.0);
-        let mut detail = PeerDetail {
+        Some(PeerDetail {
             address: address(&kept.key.0),
-            route: link.and_then(route),
+            route: self
+                .peer_route(peer, now_ms)
+                .map(|route| model::route_text(&route)),
             heard: self
                 .heard_ago(&kept.key, Some(&kept), now_ms, wall)
                 .map(long_age)
                 .unwrap_or_default(),
             forward_secrecy: kept.forward_secrecy,
-            ping: None,
             alias: kept.alias.as_deref().map(cut),
             advertised: kept.name.as_deref().map(cut),
-        };
-        if let Some(&round_trip_ms) = self.pings.get(&kept.key.0) {
-            let tenths = round_trip_ms.div_ceil(100);
-            let mut ping = String::new();
-            _ = write!(ping, "{}.{} s", tenths / 10, tenths % 10);
-            detail.ping = Some(ping);
-        }
-        Some(detail)
+        })
     }
 
     /// Keeps `member` among the saved peers, called by the name they gave
@@ -455,7 +439,7 @@ impl<S: ChatStore> Chats<S> {
         let kept = self.saved_peer(peer)?;
         self.store.update_peer(&kept.key, PeerChange::Unsave).ok()?;
         self.saved.retain(|key| *key != kept.key.0);
-        self.pings.remove(&kept.key.0);
+        self.forget_way(&kept.key);
         events(NodeEvent::PeerRemoved(peer));
         Some(kept.key)
     }
@@ -573,10 +557,11 @@ impl<S: ChatStore> Chats<S> {
     }
 
     /// Asks the device node to ping `peer`.
-    pub fn ping(&mut self, peer: model::PeerId) {
+    pub fn ping(&mut self, peer: model::PeerId, now_ms: u64) {
         let Some(kept) = self.saved_peer(peer) else {
             return;
         };
+        self.pinged(kept.key, now_ms);
         // By full key, in case the peer has not registered us.
         let options = with_flood_reach(SendOptions::default(), FLOOD_HOPS)
             .with_full_source()
@@ -881,10 +866,14 @@ impl<S: ChatStore> Chats<S> {
         found
     }
 
-    /// Asks the repeater that forwards under `hint` who it is: only the
-    /// nodes in earshot, as one heard carrying our own frame is.
-    pub fn identify_repeater(&mut self, hint: RouterHint) {
-        self.commands.push_back(Command::AskRepeater { hint });
+    /// Asks the repeater that forwards under `hint` who it is, by way of
+    /// the repeaters `before` it: with none, only the nodes in earshot, as
+    /// one heard carrying our own frame is.
+    pub fn identify_repeater(&mut self, hint: RouterHint, before: &[RouterHint]) {
+        self.commands.push_back(Command::AskRepeater {
+            hint,
+            route: before.to_vec(),
+        });
     }
 
     /// Asks the channel `message` came on for the identity of the member
@@ -979,21 +968,6 @@ fn bars(snr_centibels: i16) -> u8 {
     }
 }
 
-/// How a node is reached, such as `Direct · −97 dBm` or `3 hops`.
-fn route(link: &Link) -> Option<String<24>> {
-    let mut route = String::new();
-    let hops = link.hops()?;
-    _ = route.push_str(&model::hops_text(hops));
-    if let Some(rssi) = link.rssi_dbm.filter(|_| link.direct()) {
-        _ = route.push_str(" \u{B7} ");
-        if rssi < 0 {
-            _ = route.push('\u{2212}');
-        }
-        _ = write!(route, "{} dBm", rssi.unsigned_abs());
-    }
-    Some(route)
-}
-
 /// How far away a heard node is, as Find says it.
 fn distance(hops: Option<u8>) -> String<12> {
     match hops {
@@ -1009,7 +983,7 @@ pub(super) fn short_age(seconds: u32) -> Age {
 }
 
 /// `seconds` ago, as a peer's screen says it, such as `5 min ago`.
-fn long_age(seconds: u32) -> String<12> {
+pub(super) fn long_age(seconds: u32) -> String<12> {
     const MINUTE: u32 = 60;
     const HOUR: u32 = 60 * MINUTE;
     const DAY: u32 = 24 * HOUR;

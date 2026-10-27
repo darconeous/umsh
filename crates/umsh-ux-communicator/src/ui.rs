@@ -40,10 +40,13 @@ mod links;
 mod lock;
 mod member;
 mod nearby;
+mod path;
 mod peer;
 mod peers;
+mod ping;
 mod profile;
 mod rail;
+mod route;
 mod setting;
 mod setup;
 mod share;
@@ -164,8 +167,11 @@ fn screens(state: &State) -> impl View<Rgb565, State> + use<> {
             Screen::Join { invite, name, .. } => join::view(m, invite, name),
             Screen::Nearby { .. } | Screen::Exchange { .. } | Screen::EnterAddress { .. } =>
                 add_peer(state),
-            Screen::Peer { .. } | Screen::ShareContact { .. } | Screen::Channel { .. } =>
-                peer_or_channel(state),
+            Screen::Peer { .. }
+            | Screen::ShareContact { .. }
+            | Screen::Route { .. }
+            | Screen::Ping { .. }
+            | Screen::Channel { .. } => peer_or_channel(state),
             Screen::Device { page, .. } => device::page(state, page),
             Screen::Setup { page, .. } => setup::view(state, page),
         })
@@ -191,6 +197,12 @@ fn peer_or_channel(state: &State) -> impl View<Rgb565, State> + use<> {
         Screen::ShareContact { peer, .. } => state
             .peer(*peer)
             .map(|summary| share_contact::view(state, &summary.name)),
+        Screen::Route { peer, .. } => state
+            .peer(*peer)
+            .map(|summary| route::view(state, *peer, summary)),
+        Screen::Ping { peer, earlier, .. } => state
+            .peer(*peer)
+            .map(|summary| ping::view(state, *peer, summary, earlier)),
         // A channel's, the only other screen sent here.
         _ => channel_screen(state),
     })

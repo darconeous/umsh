@@ -68,6 +68,8 @@ pub const GLANCE: Rgb565 = rgb(0x1E2631);
 pub const GLANCE_LINE: Rgb565 = rgb(0x34414F);
 /// A level bar's unlit steps.
 pub const LEVEL_OFF: Rgb565 = rgb(0x3A414B);
+/// The rail joining the nodes of a path.
+pub const RAIL: Rgb565 = rgb(0x3A414B);
 pub const MENU_LINE: Rgb565 = rgb(0x2E3540);
 /// Behind each reaction in the actions menu's palette.
 pub const REACTION_PAD: Rgb565 = rgb(0x2A313B);

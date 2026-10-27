@@ -19,9 +19,10 @@ use umsh_ux_communicator::avatar::AvatarStyle;
 use umsh_ux_communicator::heapless::{String, Vec};
 use umsh_ux_communicator::model::{
     About, ChannelEntry, ChatId, ChatSummary, Chats, ClockSettings, ClockSource, ContactUri,
-    Details, EventQueue, Heard, Invite, KeyboardSettings, LatestSent, MAX_HEARD, MeetState, Member,
-    Message, MessageId, NearbyId, Neighbor, Node, NodeEvent, PeerDetail, PeerEntry, PeerId,
-    PeerSummary, Peers, RadioSettings, Reaction, Setting, ShareUri, Shareable, Statistics,
+    Details, EventQueue, Heard, Invite, KeyboardSettings, LatestSent, MAX_HEARD, MAX_PATH,
+    MeetState, Member, Message, MessageId, NearbyId, Neighbor, Node, NodeEvent, PeerDetail,
+    PeerEntry, PeerId, PeerRoute, PeerSummary, Peers, PingView, RadioSettings, Reaction, Setting,
+    ShareUri, Shareable, Statistics,
 };
 use umsh_ux_communicator::picker::RecentText;
 use umsh_ux_communicator::text::TextHeap;
@@ -184,7 +185,14 @@ impl<P: LocalPort, S: ChatStore> CommunicatorNode<P, S> {
                 peer,
                 round_trip_ms,
                 rx,
-            } => chats.pong(peer, round_trip_ms, &rx, now_ms, events),
+                signal,
+            } => chats.pong(peer, round_trip_ms, &rx, &signal, now_ms, events),
+            Arrival::PingTimeout { peer } => chats.ping_timed_out(peer, now_ms, events),
+            Arrival::Route {
+                peer,
+                route,
+                confirmed_age_ms,
+            } => chats.route_read(peer, route, confirmed_age_ms, now_ms, events),
             Arrival::Secrecy { peer, change } => chats.secrecy(peer, change, events),
             #[cfg(feature = "software-crypto")]
             Arrival::Meet { .. } | Arrival::MeetOpened(_) => {}
@@ -532,8 +540,11 @@ impl<P: LocalPort, S: ChatStore> Node for CommunicatorNode<P, S> {
         self.wake();
     }
 
-    fn identify_repeater(&self, hint: [u8; 2]) {
-        self.chats.borrow_mut().identify_repeater(RouterHint(hint));
+    fn identify_repeater(&self, hint: [u8; 2], before: &[[u8; 2]]) {
+        let before: Vec<RouterHint, MAX_PATH> = before.iter().copied().map(RouterHint).collect();
+        self.chats
+            .borrow_mut()
+            .identify_repeater(RouterHint(hint), &before);
         self.wake();
     }
 
@@ -577,7 +588,25 @@ impl<P: LocalPort, S: ChatStore> Node for CommunicatorNode<P, S> {
     }
 
     fn ping(&self, peer: PeerId) {
-        self.chats.borrow_mut().ping(peer);
+        self.with_chats(|chats, now_ms, _, _| chats.ping(peer, now_ms));
+        self.wake();
+    }
+
+    fn ping_view(&self, peer: PeerId) -> Option<PingView> {
+        self.chats.borrow().ping_view(peer)
+    }
+
+    fn load_route(&self, peer: PeerId) {
+        self.chats.borrow_mut().load_route(peer);
+        self.wake();
+    }
+
+    fn peer_route(&self, peer: PeerId) -> Option<PeerRoute> {
+        self.chats.borrow().peer_route(peer, self.clock.now_ms())
+    }
+
+    fn reset_route(&self, peer: PeerId) {
+        self.chats.borrow_mut().reset_route(peer);
         self.wake();
     }
 
