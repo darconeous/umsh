@@ -719,12 +719,17 @@ static DEPTHS: embassy_sync::blocking_mutex::Mutex<
     core::cell::RefCell<Depths>,
 > = embassy_sync::blocking_mutex::Mutex::new(core::cell::RefCell::new(Depths::new()));
 
+// `Depths::fallen` has a bit for each screen.
+#[cfg(feature = "debug-log")]
+const _: () = assert!(SCREENS.len() <= u32::BITS as usize);
+
 #[cfg(feature = "debug-log")]
 struct Depths {
     /// Bytes, or `NONE` for a phase not seen on a screen.
     least: [[u16; PHASES]; SCREENS.len()],
-    /// The screens whose least has fallen since they were reported.
-    fallen: u16,
+    /// The screens whose least has fallen since they were reported, one
+    /// bit each.
+    fallen: u32,
     /// The screen last measured.
     shown: usize,
     /// The last report was of the stack.
