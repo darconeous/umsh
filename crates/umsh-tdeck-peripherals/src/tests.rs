@@ -1,6 +1,7 @@
 use crate::battery::Rail;
+use crate::es7210;
 use crate::gt911::{Gt911, Point, Polarity, Report, landscape};
-use crate::keyboard::{Key, key};
+use crate::keyboard::{Identity, Key, identity, key};
 use crate::trackball::{AXIS_LOCK_MS, Direction::*, IDLE_MS, Trackball};
 use embedded_hal::i2c::{ErrorKind, ErrorType};
 use embedded_hal_async::i2c::{I2c, Operation};
@@ -59,6 +60,28 @@ fn key_mode_bytes_map_to_keys() {
     assert_eq!(key(0x11), Some(Key::Character('1')));
     assert_eq!(key(0x7f), None);
     assert_eq!(key(0xe0), None);
+}
+
+#[test]
+fn umsh_firmware_identifies_itself_and_stock_gives_a_key() {
+    // What the keyboard firmware sends for protocol 1.1 with sleep.
+    let ours = [0xa5, 0x5a, 1, 1, 0x00, 0x01, 0x07];
+    let found = identity(&ours).unwrap();
+    assert_eq!(
+        found,
+        Identity {
+            major: 1,
+            minor: 1,
+            capabilities: 1
+        }
+    );
+    assert!(found.sleeps());
+    // A damaged reply is not trusted.
+    let mut damaged = ours;
+    damaged[5] = 0;
+    assert_eq!(identity(&damaged), None);
+    // Stock firmware: a key, then whatever the bus gives.
+    assert_eq!(identity(&[b'q', 0xff, 0xff, 0xff, 0xff, 0xff, 0xff]), None);
 }
 
 #[test]
@@ -210,6 +233,24 @@ fn a_report_around_the_sample_leaves_the_polarity_unknown() {
             panic!("not found");
         };
         assert_eq!(touch.idle_polarity(|| true).await, Ok(None));
+    });
+}
+
+#[test]
+fn the_microphone_adc_powers_down_microphones_then_analog_then_clocks() {
+    embassy_futures::block_on(async {
+        let mut bus = Bus(VecDeque::from([
+            Op::Write(0x40, vec![0x47, 0xff]),
+            Op::Write(0x40, vec![0x48, 0xff]),
+            Op::Write(0x40, vec![0x49, 0xff]),
+            Op::Write(0x40, vec![0x4a, 0xff]),
+            Op::Write(0x40, vec![0x4b, 0xff]),
+            Op::Write(0x40, vec![0x4c, 0xff]),
+            Op::Write(0x40, vec![0x40, 0xc0]),
+            Op::Write(0x40, vec![0x01, 0x7f]),
+            Op::Write(0x40, vec![0x06, 0x07]),
+        ]));
+        es7210::power_down(&mut bus).await.unwrap();
     });
 }
 

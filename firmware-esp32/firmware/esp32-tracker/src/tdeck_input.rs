@@ -2,8 +2,10 @@
 //! touch panel.
 //! The trackball and the touch panel's INT are captured by interrupt while
 //! the panel is lit and not at all while it is dark, and the keyboard is
-//! not read while it is dark, so only the press wakes it. What a gesture
-//! means is the input gate's.
+//! not read while it is dark, so only the press wakes it. Dark, the touch
+//! controller sleeps, and so, after it, does a keyboard whose controller
+//! runs UMSH's firmware. The microphone ADC is powered down at boot. What a
+//! gesture means is the input gate's.
 //! The keyboard and the touch panel are read on an executor of their own,
 //! above thread mode, so a frame being laid out and painted never holds a
 //! read back.
@@ -12,12 +14,15 @@ use crate::input_gate::{
     self, CHANGED, control, finish_gesture, hold, note_activity, send, start_gesture, wake_display,
 };
 use core::cell::RefCell;
-use esp_hal::gpio::Io;
+use embassy_sync::watch::Watch;
+use embassy_time::TimeoutError;
+use esp_hal::gpio::{Flex, Io};
 use esp_hal::interrupt::Priority;
 use esp_hal::peripherals;
 use esp_hal::ram;
 use esp_hal::rtc_cntl::WakeLock;
 use esp_rtos::embassy::InterruptExecutor;
+use umsh_tdeck_peripherals::es7210;
 use umsh_tdeck_peripherals::gt911::{Gt911, Polarity, Report};
 use umsh_tdeck_peripherals::keyboard::{self as keys, Key};
 use umsh_tdeck_peripherals::trackball::{Direction, Trackball};
@@ -118,10 +123,9 @@ fn listen(on: bool) {
             }
         }
     });
-    // Lit, whatever the controller holds is read at once.
-    if on {
-        TOUCH_READY.signal(());
-    }
+    // Lit, whatever the controller holds is read at once; dark, the
+    // controller is put to sleep.
+    TOUCH_READY.signal(());
 }
 
 #[esp_hal::handler]
@@ -280,6 +284,12 @@ const KEYBOARD_LIGHT_DUTY: u8 = 127;
 /// How long after the controller first answers before the light is set:
 /// it answers before it has set up the light, which it then turns off.
 const KEYBOARD_LIGHT_SETTLE: Duration = Duration::from_millis(500);
+/// The longest a keyboard transfer may take.
+const KEYBOARD_TRANSFER: Duration = Duration::from_millis(50);
+/// A sleeping keyboard leaves the read that wakes it unanswered, so it is
+/// tried again this often, this many times.
+const KEYBOARD_WAKE_RETRY: Duration = Duration::from_millis(2);
+const KEYBOARD_WAKE_TRIES: u32 = 15;
 
 async fn run_keyboard(bus: &'static board::I2cBus) {
     let mut keyboard = I2cDevice::new(bus);
@@ -295,6 +305,12 @@ async fn run_keyboard(bus: &'static board::I2cBus) {
     // A key pressed while dark is still held by the controller; the first
     // read once lit takes it, and it goes no further.
     let mut stale = false;
+    // What the controller says it is (`Some(None)` for stock firmware),
+    // asked when it first answers, and again after it stops answering,
+    // since it may have restarted.
+    let mut identity: Option<Option<keys::Identity>> = None;
+    // Its only receiver: there is one keyboard task, run once.
+    let mut touch_quiet = TOUCH_QUIET.receiver().unwrap();
     loop {
         use embedded_hal_async::i2c::I2c as _;
         let lit = control(|c| c.policy.mode == Mode::Interactive);
@@ -302,43 +318,68 @@ async fn run_keyboard(bus: &'static board::I2cBus) {
         if set != Some(light) && light_from.is_some_and(|from| Instant::now() >= from) {
             let duty = if light { KEYBOARD_LIGHT_DUTY } else { 0 };
             // Firmware older than the light command ignores it.
-            if let Ok(Ok(())) = with_timeout(
-                Duration::from_millis(50),
-                keyboard.write(keys::ADDRESS, &keys::backlight(duty)),
-            )
-            .await
-            {
+            if answered(
+                with_timeout(
+                    KEYBOARD_TRANSFER,
+                    keyboard.write(keys::ADDRESS, &keys::backlight(duty)),
+                )
+                .await,
+            ) {
                 set = Some(light);
             }
         }
-        // Dark, the keyboard is left alone until the panel lights again.
+        // Dark, the keyboard is left alone until the panel lights again,
+        // asleep if it can sleep. Sleep goes after the light, in a write of
+        // its own, and after touch has done with the bus.
         if !lit {
             KEYBOARD_SHOWN.reset();
+            let sleeps = identity.flatten().is_some_and(|it| it.sleeps());
+            if sleeps {
+                let _ = with_timeout(TOUCH_QUIET_WAIT, touch_quiet.get_and(|&quiet| quiet)).await;
+            }
+            let asleep = sleeps
+                && answered(
+                    with_timeout(
+                        KEYBOARD_TRANSFER,
+                        keyboard.write(keys::ADDRESS, &keys::SLEEP),
+                    )
+                    .await,
+                );
             if control(|c| c.policy.mode != Mode::Interactive) {
                 KEYBOARD_SHOWN.wait().await;
             }
-            stale = true;
+            // Waking takes a read, which takes the stale key with it.
+            stale = !(asleep && wake_keyboard(&mut keyboard).await);
             continue;
         }
-        let mut byte = [0];
-        match with_timeout(
-            Duration::from_millis(50),
-            keyboard.read(keys::ADDRESS, &mut byte),
-        )
-        .await
-        {
-            Ok(Ok(())) => {
+        let answer = match identity {
+            Some(_) => read_key(&mut keyboard).await,
+            None => identify_keyboard(&mut keyboard).await.map(|(found, byte)| {
+                match found {
+                    Some(it) => debug_log(format_args!(
+                        "tdeck: keyboard runs UMSH firmware {}.{}",
+                        it.major, it.minor
+                    )),
+                    None => debug_log(format_args!("tdeck: keyboard runs stock firmware")),
+                }
+                identity = Some(found);
+                byte
+            }),
+        };
+        match answer {
+            Ok(byte) => {
                 retry = KEYBOARD_RETRY_FIRST;
                 light_from.get_or_insert_with(|| Instant::now() + KEYBOARD_LIGHT_SETTLE);
                 if !core::mem::take(&mut stale)
-                    && let Some(key) = keys::key(byte[0])
+                    && let Some(key) = keys::key(byte)
                 {
                     deliver(key);
                 }
             }
-            _ => {
+            Err(()) => {
                 light_from = None;
                 set = None;
+                identity = None;
                 debug_log(format_args!(
                     "tdeck: keyboard not answering; retry in {} ms",
                     retry.as_millis()
@@ -358,6 +399,56 @@ async fn run_keyboard(bus: &'static board::I2cBus) {
             wanted = light;
         }
     }
+}
+
+/// Whether a keyboard transfer went through in time.
+fn answered<E>(transfer: Result<Result<(), E>, TimeoutError>) -> bool {
+    matches!(transfer, Ok(Ok(())))
+}
+
+/// One key-mode read.
+async fn read_key(keyboard: &mut impl embedded_hal_async::i2c::I2c) -> Result<u8, ()> {
+    let mut byte = [0];
+    answered(with_timeout(KEYBOARD_TRANSFER, keyboard.read(keys::ADDRESS, &mut byte)).await)
+        .then_some(byte[0])
+        .ok_or(())
+}
+
+/// Asks the controller what it is. Stock firmware ignores the question and
+/// answers the read with the key it was holding, which comes back with no
+/// identity; UMSH's firmware gives no key.
+async fn identify_keyboard(
+    keyboard: &mut impl embedded_hal_async::i2c::I2c,
+) -> Result<(Option<keys::Identity>, u8), ()> {
+    let mut reply = [0; keys::IDENTIFY_LEN];
+    if !answered(
+        with_timeout(
+            KEYBOARD_TRANSFER,
+            keyboard.write(keys::ADDRESS, &keys::IDENTIFY),
+        )
+        .await,
+    ) || !answered(
+        with_timeout(KEYBOARD_TRANSFER, keyboard.read(keys::ADDRESS, &mut reply)).await,
+    ) {
+        return Err(());
+    }
+    Ok(match keys::identity(&reply) {
+        Some(found) => (Some(found), 0),
+        None => (None, reply[0]),
+    })
+}
+
+/// Wakes a keyboard sent to sleep, and says whether it answered. The read
+/// that wakes it goes unanswered, so it is tried again for a little while;
+/// the key it reads is from before the sleep, and goes no further.
+async fn wake_keyboard(keyboard: &mut impl embedded_hal_async::i2c::I2c) -> bool {
+    for _ in 0..KEYBOARD_WAKE_TRIES {
+        if read_key(keyboard).await.is_ok() {
+            return true;
+        }
+        Timer::after(KEYBOARD_WAKE_RETRY).await;
+    }
+    false
 }
 
 fn deliver(key: Key) {
@@ -410,9 +501,10 @@ type TouchPanel = Gt911<board::I2cHandle>;
 /// How long INT is driven high to wake a sleeping controller (§7.5).
 const TOUCH_WAKE: Duration = Duration::from_millis(8);
 
-/// The touch panel's INT, once its sense is known.
+/// The touch panel's INT, once its sense is known. Driven only to wake
+/// the controller.
 struct TouchLine {
-    pin: Input<'static>,
+    pin: Flex<'static>,
     polarity: Polarity,
 }
 
@@ -433,6 +525,13 @@ impl TouchLine {
 
 static TOUCH_LINE: critical_section::Mutex<RefCell<Option<TouchLine>>> =
     critical_section::Mutex::new(RefCell::new(None));
+/// Whether the touch panel will say nothing more on the bus until the
+/// panel lights: its controller is asleep, or there is none. Any traffic
+/// wakes a sleeping keyboard, so the keyboard is sent to sleep after this.
+static TOUCH_QUIET: Watch<CriticalSectionRawMutex, bool, 1> = Watch::new();
+/// The longest the keyboard waits for [`TOUCH_QUIET`]: touch still
+/// looking for its controller says nothing of it.
+const TOUCH_QUIET_WAIT: Duration = Duration::from_millis(200);
 /// INT was raised, or the panel lit, since the touch task last looked.
 static TOUCH_READY: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 /// When INT was last raised, in ms, until a read takes it.
@@ -476,22 +575,28 @@ pub fn spawn_bus_tasks(
 async fn bus_tasks(bus: BusHandoff, int: peripherals::GPIO16<'static>) {
     // SAFETY: this task is polled by the bus executor, an Embassy one.
     let spawner = unsafe { Spawner::for_current_executor() }.await;
-    spawner.spawn(keyboard_task(bus.0).unwrap());
     spawner.spawn(touch_task(bus.0, int).unwrap());
+    // Nothing records. Before the keyboard starts, which may sleep, since
+    // any traffic would wake it again.
+    let _ = with_timeout(
+        Duration::from_millis(50),
+        es7210::power_down(&mut I2cDevice::new(bus.0)),
+    )
+    .await;
+    spawner.spawn(keyboard_task(bus.0).unwrap());
 }
 
 #[embassy_executor::task]
-async fn touch_task(bus: &'static board::I2cBus, mut int: peripherals::GPIO16<'static>) {
+async fn touch_task(bus: &'static board::I2cBus, int: peripherals::GPIO16<'static>) {
     // The controller is reset only by its own power-on, so one put to
     // sleep at shutdown still sleeps after the S3 boots again, and answers
     // no probe until INT wakes it.
-    drop(Output::new(
-        int.reborrow(),
-        Level::High,
-        OutputConfig::default(),
-    ));
+    let mut int = Flex::new(int);
+    int.apply_input_config(&InputConfig::default());
+    int.set_input_enable(true);
+    drive_touch_wake(&mut int, true);
     Timer::after(TOUCH_WAKE).await;
-    let int = Input::new(int, InputConfig::default());
+    drive_touch_wake(&mut int, false);
     let mut panel = None;
     select(run_touch(bus, int, &mut panel), STOP_TOUCH.wait()).await;
     // The controller keeps power through deep sleep.
@@ -501,11 +606,8 @@ async fn touch_task(bus: &'static board::I2cBus, mut int: peripherals::GPIO16<'s
     input_gate::stopped();
 }
 
-async fn run_touch(
-    bus: &'static board::I2cBus,
-    int: Input<'static>,
-    slot: &mut Option<TouchPanel>,
-) {
+async fn run_touch(bus: &'static board::I2cBus, int: Flex<'static>, slot: &mut Option<TouchPanel>) {
+    let quiet = TOUCH_QUIET.sender();
     let mut device = I2cDevice::new(bus);
     let mut tries = 0;
     let panel = loop {
@@ -516,6 +618,7 @@ async fn run_touch(
         tries += 1;
         if tries == TOUCH_PROBES {
             debug_log(format_args!("tdeck: no touch panel"));
+            quiet.send(true);
             return core::future::pending().await;
         }
         Timer::after(TOUCH_PROBE_GAP).await;
@@ -543,8 +646,16 @@ async fn run_touch(
                 send(touch(TouchPhase::Cancelled, x, y, Instant::now()));
                 lag.end(true);
             }
+            // Dark, nothing reads the controller, so it sleeps. One that
+            // missed the command keeps scanning, and says nothing unread.
+            let _ = with_timeout(TOUCH_READ, panel.sleep()).await;
+            quiet.send(true);
             // Lighting the panel raises the signal.
-            TOUCH_READY.wait().await;
+            while control(|c| c.policy.mode != Mode::Interactive) {
+                TOUCH_READY.wait().await;
+            }
+            quiet.send(false);
+            wake_touch().await;
             continue;
         }
         let edge = TOUCH_EDGE.swap(NO_EDGE, Ordering::Relaxed);
@@ -605,9 +716,35 @@ async fn run_touch(
     }
 }
 
+/// Drives INT high to wake the controller (§7.5), or lets it go.
+fn drive_touch_wake(int: &mut Flex<'static>, high: bool) {
+    if high {
+        int.set_high();
+    }
+    int.set_output_enable(high);
+}
+
+/// Wakes the controller from sleep, with INT's edges unheard while it is
+/// driven.
+async fn wake_touch() {
+    critical_section::with(|cs| {
+        if let Some(line) = TOUCH_LINE.borrow_ref_mut(cs).as_mut() {
+            line.pin.unlisten();
+            drive_touch_wake(&mut line.pin, true);
+        }
+    });
+    Timer::after(TOUCH_WAKE).await;
+    critical_section::with(|cs| {
+        if let Some(line) = TOUCH_LINE.borrow_ref_mut(cs).as_mut() {
+            drive_touch_wake(&mut line.pin, false);
+            line.listen(control(|c| c.policy.mode == Mode::Interactive));
+        }
+    });
+}
+
 /// INT's sense, from its level while the controller reports nothing. A
 /// finger on the panel at boot puts it off until the finger lifts.
-async fn idle_polarity(panel: &mut TouchPanel, int: &Input<'static>) -> Polarity {
+async fn idle_polarity(panel: &mut TouchPanel, int: &Flex<'static>) -> Polarity {
     loop {
         // Whatever is waiting is acknowledged, then a finger on the panel
         // is given the time to report again.

@@ -391,7 +391,9 @@ asserted with no further edges, so reports are read on a timer while it does.
 
 Writing `0x05` to the command register `0x8040` puts the GT911 to sleep;
 driving INT high for a few milliseconds wakes it. LilyGoLib drives INT high for
-8 ms before probing, then returns it to an input.
+8 ms before probing, then returns it to an input. The firmware sleeps it while
+the panel is dark, and does so before sending the keyboard to sleep, since any
+I²C traffic wakes the keyboard ([`../tdeck-keyboard-firmware.md`](../tdeck-keyboard-firmware.md)).
 
 Only the RC power-on resets the controller, and it stays powered while the
 switch is on. A controller put to sleep before a deep-sleep wake, a reset, or a
@@ -700,7 +702,12 @@ while it is parked, TX idles high rather than floating.
 | Microphone | ES7210 4-channel ADC (I²C `0x40`); MIC1 and MIC3 fitted | MCLK 48, LRCK 21, SCLK 47, SDOUT→S3 14 |
 
 Meshtastic's `DAC_I2S_MCLK 21 // GPIO lrck mic` collides with the ES7210's
-LRCK and is not used by the amplifier. The speaker key on the keyboard is just
+LRCK and is not used by the amplifier.
+
+Nothing records, so the firmware powers the ES7210 down at boot with
+Espressif's stop sequence (esp-adf `es7210_stop`): `0xFF` to `0x47`–`0x4C`,
+`0xC0` to `0x40`, `0x7F` to `0x01`, `0x07` to `0x06`. Its power-on state and
+current have not been measured. The speaker key on the keyboard is just
 the `$` key.
 
 The firmware plays the communicator's sounds on I2S0 and DMA channel 1, at

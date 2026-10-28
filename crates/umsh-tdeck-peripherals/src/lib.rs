@@ -4,6 +4,7 @@
 #![no_std]
 
 pub mod battery;
+pub mod es7210;
 pub mod gt911;
 pub mod keyboard;
 pub mod trackball;
