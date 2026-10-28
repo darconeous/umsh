@@ -56,6 +56,13 @@ pub(crate) fn cancel_alert() {
     super::alert::cancel();
 }
 
+/// The Pager's keyboard is scanned by the S3, through no firmware of its
+/// own.
+#[cfg(feature = "communicator")]
+pub(crate) fn keyboard_firmware() -> Option<umsh_ux_communicator::model::KeyboardFirmware> {
+    None
+}
+
 #[cfg(feature = "communicator")]
 pub(crate) fn to_input(input: UiInput) -> umsh_ux_communicator::input::Input {
     use umsh_ux_communicator::input::Input;

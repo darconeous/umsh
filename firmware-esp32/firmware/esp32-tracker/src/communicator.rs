@@ -312,6 +312,10 @@ async fn interface(
         if app.state().links != readings {
             app.state_mut().links = readings;
         }
+        let keyboard = crate::board_input::keyboard_firmware();
+        if app.state().keyboard_firmware != keyboard {
+            app.state_mut().keyboard_firmware = keyboard;
+        }
         let battery = battery_reading();
         if app.state().battery_changes(&battery) {
             app.state_mut().battery(battery, now());

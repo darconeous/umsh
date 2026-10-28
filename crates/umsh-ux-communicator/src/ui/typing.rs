@@ -12,11 +12,11 @@ use heapless::String;
 
 use super::conversation::header;
 use super::enter_address::field_look;
-use super::setting::{End, row};
+use super::setting::{End, readout, row};
 use super::{label, line};
 use crate::board::{Board, Metrics};
 use crate::keyboard::Field;
-use crate::model::{Glance, KeyboardSettings, LEVELS, State};
+use crate::model::{Glance, KeyboardFirmware, KeyboardSettings, LEVELS, State};
 use crate::nav::{PowerText, keys};
 use crate::picker::{COLUMNS, FILTER, ROWS, Shown, TABS, Tab};
 use crate::{font, icon, theme};
@@ -81,11 +81,23 @@ const fn glance_top(m: &Metrics) -> u32 {
     (m.height - GLANCE_HEIGHT) / 2 + 8
 }
 
-/// The keyboard's settings.
+/// The keyboard's settings, and its firmware where its controller has
+/// said.
 pub fn settings(
     m: &'static Metrics,
     settings: &KeyboardSettings,
+    firmware: Option<KeyboardFirmware>,
 ) -> impl View<Rgb565, State> + use<> {
+    let firmware = firmware.map(|firmware| {
+        let mut text = String::<16>::new();
+        _ = match firmware {
+            KeyboardFirmware::Stock => core::fmt::write(&mut text, format_args!("Stock")),
+            KeyboardFirmware::Umsh { major, minor } => {
+                core::fmt::write(&mut text, format_args!("UMSH {major}.{minor}"))
+            }
+        };
+        text
+    });
     VStack::new((
         header(m, "Keyboard", None, None),
         row(
@@ -115,6 +127,7 @@ pub fn settings(
             false,
             ROW,
         ),
+        firmware.map(|firmware| readout(m, "Firmware", &firmware, ROW)),
     ))
     .with_spacing(0)
     .flex_infinite_height(VerticalAlignment::Top)

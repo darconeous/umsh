@@ -209,7 +209,7 @@ pub fn page(state: &State, page: &DevicePage) -> impl View<Rgb565, State> + use<
         DevicePage::Channels => super::channels::view(state),
         DevicePage::AddChannel { text } => super::add_channel::view(state, text),
         DevicePage::Profiles => super::profile::view(state, "Profile"),
-        DevicePage::Keyboard { settings } => super::typing::settings(m, settings),
+        DevicePage::Keyboard { settings } => super::typing::settings(m, settings, state.keyboard_firmware),
         DevicePage::TransmitPower { text } => super::typing::transmit_power(m, text),
         DevicePage::Clock { page } => super::clock::page(state, page),
         DevicePage::Bluetooth { .. }

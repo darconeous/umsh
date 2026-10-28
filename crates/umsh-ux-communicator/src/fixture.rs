@@ -11,8 +11,8 @@ use crate::model::{
     About, BatteryReading, Bluetooth, BluetoothReading, Card, ChannelAccess, ChannelEntry, Charge,
     ChatId, ChatKind, ChatSummary, Chats, ClockSettings, ClockSource, Contact, ContactUri,
     DEFAULT_AUTO_LOCK_S, Delivery, Details, Direction, EventQueue, Exchange, ExchangeEnd, Fix,
-    Gnss, GnssReading, Heard, Invite, KeyboardSettings, LatestSent, Leg, Links, MAX_CHATS,
-    MAX_HEARD, MAX_PATH, MAX_PEERS, MESSAGE_LEN, MeetState, Member, Message, MessageId,
+    Gnss, GnssReading, Heard, Invite, KeyboardFirmware, KeyboardSettings, LatestSent, Leg, Links,
+    MAX_CHATS, MAX_HEARD, MAX_PATH, MAX_PEERS, MESSAGE_LEN, MeetState, Member, Message, MessageId,
     NearbyDevice, NearbyId, Neighbor, Node, NodeEvent, Parts, PeerDetail, PeerEntry, PeerId,
     PeerRoute, PeerSummary, Peers, PingReply, PingView, Presence, Profile, Quote, RadioSettings,
     Reacted, Reaction, Reactions, Reactor, Repeater, RouteKind, Rule, Sender, Setting, ShareUri,
@@ -3071,6 +3071,7 @@ pub fn state(store: &'static Store, board: &'static Board) -> State {
             receiver: Some("u-blox MIA-M10Q"),
         },
     };
+    state.keyboard_firmware = Some(KeyboardFirmware::Umsh { major: 1, minor: 1 });
     state.set_wall_time(Some(store.time()));
     state.reload();
     state.focus_list();

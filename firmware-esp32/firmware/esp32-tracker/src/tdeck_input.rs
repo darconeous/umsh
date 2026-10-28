@@ -28,6 +28,7 @@ use umsh_tdeck_peripherals::keyboard::{self as keys, Key};
 use umsh_tdeck_peripherals::trackball::{Direction, Trackball};
 use umsh_ux_communicator::input::{Arrow, Input as UiItem, TouchPhase};
 use umsh_ux_communicator::keyboard::Modifier;
+use umsh_ux_communicator::model::KeyboardFirmware;
 use umsh_ux_display_tracker::input_power::{Gesture, Mode};
 use umsh_ux_tracker::debounce::{Debounce, PressLatch};
 
@@ -363,6 +364,7 @@ async fn run_keyboard(bus: &'static board::I2cBus) {
                     None => debug_log(format_args!("tdeck: keyboard runs stock firmware")),
                 }
                 identity = Some(found);
+                publish_identity(identity);
                 byte
             }),
         };
@@ -380,6 +382,7 @@ async fn run_keyboard(bus: &'static board::I2cBus) {
                 light_from = None;
                 set = None;
                 identity = None;
+                publish_identity(identity);
                 debug_log(format_args!(
                     "tdeck: keyboard not answering; retry in {} ms",
                     retry.as_millis()
@@ -399,6 +402,26 @@ async fn run_keyboard(bus: &'static board::I2cBus) {
             wanted = light;
         }
     }
+}
+
+/// What the keyboard's controller says it runs, for the keyboard screen.
+static KEYBOARD_FIRMWARE: critical_section::Mutex<core::cell::Cell<Option<KeyboardFirmware>>> =
+    critical_section::Mutex::new(core::cell::Cell::new(None));
+
+pub(crate) fn keyboard_firmware() -> Option<KeyboardFirmware> {
+    critical_section::with(|cs| KEYBOARD_FIRMWARE.borrow(cs).get())
+}
+
+/// Publishes what is known of the controller: nothing until it answers.
+fn publish_identity(identity: Option<Option<keys::Identity>>) {
+    let firmware = identity.map(|found| match found {
+        Some(it) => KeyboardFirmware::Umsh {
+            major: it.major,
+            minor: it.minor,
+        },
+        None => KeyboardFirmware::Stock,
+    });
+    critical_section::with(|cs| KEYBOARD_FIRMWARE.borrow(cs).set(firmware));
 }
 
 /// Whether a keyboard transfer went through in time.

@@ -454,6 +454,15 @@ pub struct KeyboardSettings {
     pub light: bool,
 }
 
+/// The firmware on a keyboard with a controller of its own.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum KeyboardFirmware {
+    /// The maker's own.
+    Stock,
+    /// UMSH's, speaking this version of its protocol.
+    Umsh { major: u8, minor: u8 },
+}
+
 impl KeyboardSettings {
     #[must_use]
     pub const fn aids(self) -> Aids {
@@ -1796,6 +1805,8 @@ pub struct State {
     pub battery: BatteryReading,
     /// What the board last read of its links.
     pub links: Links,
+    /// The keyboard's firmware, once its controller has said.
+    pub keyboard_firmware: Option<KeyboardFirmware>,
     pub section: Section,
     /// Newest first.
     pub chats: Chats,
@@ -1957,6 +1968,7 @@ impl State {
             status: StatusStrip::default(),
             battery: BatteryReading::default(),
             links: Links::default(),
+            keyboard_firmware: None,
             section: Section::default(),
             chats: Vec::new(),
             peers: Vec::new(),
