@@ -19,6 +19,13 @@ rustflags = [
     "-C", "link-arg=-Wl,-Tlinkall.x",
 ]
 
+# The T-Deck keyboard's ESP32-C3.
+[target.riscv32imc-unknown-none-elf]
+runner = "espflash flash --monitor"
+rustflags = [
+    "-C", "link-arg=-Tlinkall.x",
+]
+
 [env]
 ESP_LOG = "info"
 

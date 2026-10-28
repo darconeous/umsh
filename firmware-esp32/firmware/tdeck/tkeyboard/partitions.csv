@@ -1,0 +1,10 @@
+# The keyboard's 4 MiB flash. Two app slots and the reserved key store are
+# here from the start: the S3 cannot reach the C3's programming header, so
+# a later update over I2C, or keys kept on the C3, must not need a
+# repartition by hand. Flashing writes ota_0 and erases otadata, so the
+# bootloader boots ota_0.
+# Name,   Type, SubType,   Offset,   Size
+otadata,  data, ota,       0x9000,   0x2000
+ota_0,    app,  ota_0,     0x10000,  0x180000
+ota_1,    app,  ota_1,     0x190000, 0x180000
+keystore, data, undefined, 0x310000, 0x10000

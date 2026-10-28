@@ -1,0 +1,38 @@
+[package]
+name = "firmware-tdeck-tkeyboard"
+description = "Firmware for the T-Deck keyboard's ESP32-C3: a drop-in replacement for LilyGO's"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+# The keyboard's own controller, not a device image: it carries none of the
+# board feature table, and `scripts/check_esp32_manifests.py` passes it by.
+#
+# The library is everything the keyboard does, as pure logic with no
+# dependencies, so its tests run on the host (`make test-tdeck-keyboard`).
+# The binary is the hardware around it, and its dependencies exist only for
+# the C3's target.
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "firmware-tdeck-tkeyboard"
+path = "src/firmware/main.rs"
+test = false
+bench = false
+
+[target.'cfg(target_arch = "riscv32")'.dependencies]
+critical-section = "1"
+embassy-executor = { version = "0.10", default-features = false }
+embassy-futures = { version = "0.1", default-features = false }
+embassy-sync = { version = "0.8", default-features = false }
+embassy-time = { version = "0.5", default-features = false }
+esp-bootloader-esp-idf = { version = "0.6", features = ["esp32c3"] }
+esp-hal = { version = "1.2", features = ["esp32c3", "unstable"] }
+# UART0 only, which reaches the programming header. The default probes the
+# USB-Serial-JTAG peripheral, whose pins are matrix rows here.
+esp-println = { version = "0.18", default-features = false, features = ["esp32c3", "uart", "critical-section"] }
+esp-rtos = { version = "0.4", features = ["esp32c3", "embassy"] }
+static_cell = "2"

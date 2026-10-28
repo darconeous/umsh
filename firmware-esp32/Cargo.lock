@@ -1419,6 +1419,7 @@ dependencies = [
  "document-features",
  "esp-metadata-generated",
  "esp32",
+ "esp32c3",
  "esp32s3",
 ]
 
@@ -1460,6 +1461,7 @@ dependencies = [
  "esp-rom-sys",
  "esp-sync",
  "esp32",
+ "esp32c3",
  "esp32s3",
 ]
 
@@ -1913,6 +1915,22 @@ dependencies = [
  "umsh-ux-communicator",
  "umsh-ux-display-tracker",
  "umsh-ux-tracker",
+]
+
+[[package]]
+name = "firmware-tdeck-tkeyboard"
+version = "0.1.0"
+dependencies = [
+ "critical-section",
+ "embassy-executor",
+ "embassy-futures",
+ "embassy-sync 0.8.0",
+ "embassy-time",
+ "esp-bootloader-esp-idf",
+ "esp-hal",
+ "esp-println",
+ "esp-rtos",
+ "static_cell",
 ]
 
 [[package]]

@@ -1,0 +1,6 @@
+# ESP32-C3 target selection. Build from inside this directory so this file
+# is picked up (the Makefile targets do); it overrides the T-Deck's own in
+# the directory above. Runner and rustflags come from the workspace-level
+# `.cargo/config.toml`.
+[build]
+target = "riscv32imc-unknown-none-elf"

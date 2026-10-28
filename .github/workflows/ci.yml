@@ -59,6 +59,12 @@ jobs:
       - name: ESP32 manifest feature tables
         run: python3 scripts/check_esp32_manifests.py
 
+      # The T-Deck keyboard's logic against a model of the stock firmware.
+      # It lives in the firmware-esp32 workspace, which `cargo test` above
+      # does not see.
+      - name: T-Deck keyboard tests
+        run: make test-tdeck-keyboard
+
       # NOTE: plain `cargo test`, not `--workspace`—the latter drags in
       # firmware/* crates that aren't meant to build on host and currently
       # fail (umsh-ulcp-runtime needs an embedded-target embassy feature).
@@ -310,6 +316,7 @@ jobs:
             build-tlora-pager,
             build-xiao-esp32s3,
             build-tdeck,
+            build-tdeck-keyboard,
           ]
     steps:
       - uses: actions/checkout@v4

@@ -463,6 +463,9 @@ power-cycle the C3 through GPIO10, but GPIO9's pull-up to the same rail makes it
 boot normally every time. In-field updates from the S3 would need C3 firmware
 that accepts an image over I²C, installed once through the header.
 
+UMSH has its own C3 firmware, compatible with every host of the stock one:
+see [`../tdeck-keyboard-firmware.md`](../tdeck-keyboard-firmware.md).
+
 ### 8.4 Key mode (default)
 
 A 1-byte read returns the last key pressed, or `0x00` for none.

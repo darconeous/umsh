@@ -17,6 +17,7 @@
 	build-tlora-pager flash-tlora-pager \
 	build-xiao-esp32s3 flash-xiao-esp32s3 \
 	build-tdeck flash-tdeck crate-notices crate-notices-check \
+	build-tdeck-keyboard flash-tdeck-keyboard backup-tdeck-keyboard test-tdeck-keyboard \
 	esp-toolchain-check espflash-check \
 	dfu-zip-techo dfu-zip-t1000e dfu-zip-sensecap-solar \
 	dfu-zip-wio-tracker-l1 dfu-zip-xiao-nrf52 \
@@ -463,6 +464,37 @@ build-tdeck: esp-toolchain-check
 flash-tdeck: espflash-check build-tdeck
 	espflash flash --before usb-reset --after watchdog-reset $(ESPFLASH_PORT_ARG) $(ESPFLASH_LAYOUT_tdeck) \
 		$(ESP32S3_TARGET_DIR)/firmware-tdeck
+
+# The keyboard's own ESP32-C3 (firmware-esp32/firmware/tdeck/tkeyboard).
+# The S3 cannot reach it: flashing goes through the 6-pin header beside the
+# keyboard's reset button with a 3.3 V USB-UART adapter, BOOT held to
+# ground at power-on. Read the stock image out with backup-tdeck-keyboard
+# before flashing for the first time, and keep it; `espflash write-bin 0
+# <file>` puts it back. The backup reads at 460800 baud, a quarter of the
+# time; without an adapter that resets the C3, it stays at that rate, so
+# enter its bootloader again before flashing.
+TKEYBOARD_DIR := firmware-esp32/firmware/tdeck/tkeyboard
+TKEYBOARD_ELF := firmware-esp32/target/riscv32imc-unknown-none-elf/release/firmware-tdeck-tkeyboard
+TKEYBOARD_BACKUP ?= tdeck-keyboard-backup.bin
+TKEYBOARD_BACKUP_BAUD ?= 460800
+HOST_TRIPLE = $(shell rustc +stable -vV | sed -n 's/^host: //p')
+
+build-tdeck-keyboard: esp-toolchain-check
+	cd $(TKEYBOARD_DIR) && cargo build --release $(ESP32_CARGO_FLAGS)
+
+flash-tdeck-keyboard: espflash-check build-tdeck-keyboard
+	espflash flash --monitor --chip esp32c3 $(ESPFLASH_PORT_ARG) \
+		--partition-table $(TKEYBOARD_DIR)/partitions.csv --target-app-partition ota_0 \
+		--erase-parts otadata -s 4mb $(TKEYBOARD_ELF)
+
+backup-tdeck-keyboard: espflash-check
+	espflash read-flash --chip esp32c3 $(ESPFLASH_PORT_ARG) -B $(TKEYBOARD_BACKUP_BAUD) \
+		0 0x400000 $(TKEYBOARD_BACKUP)
+
+# The keyboard's logic against a model of the stock firmware, on the host.
+# Stable, since the workspace's `esp` channel builds `core` for the C3 only.
+test-tdeck-keyboard:
+	cd $(TKEYBOARD_DIR) && cargo +stable test --lib --target $(HOST_TRIPLE)
 
 # The crates Device › About › Credits lists: committed, and regenerated when
 # a communicator image's dependencies change.

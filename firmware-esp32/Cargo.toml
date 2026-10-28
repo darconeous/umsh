@@ -20,6 +20,7 @@ members = [
     "firmware/heltec-v3-bridge",
     "firmware/tbeam-supreme",
     "firmware/tdeck",
+    "firmware/tdeck/tkeyboard",
     "firmware/tlora-pager",
     "firmware/xiao-esp32s3",
 ]
