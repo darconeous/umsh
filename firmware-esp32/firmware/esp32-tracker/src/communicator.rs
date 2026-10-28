@@ -476,6 +476,7 @@ fn link_readings() -> Links {
             altitude: snapshot.altitude_m,
             used: snapshot.sats_used,
             in_view: snapshot.sats_in_view,
+            receiver: crate::gnss_receiver(),
         }
     };
     #[cfg(not(feature = "gnss"))]

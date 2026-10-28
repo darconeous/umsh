@@ -155,6 +155,8 @@ pub struct GnssReading {
     pub used: u8,
     /// Satellites in view, where the receiver says.
     pub in_view: Option<u8>,
+    /// The receiver's name, once it has given one.
+    pub receiver: Option<&'static str>,
 }
 
 /// The battery as the board last read it, for the Battery screen.

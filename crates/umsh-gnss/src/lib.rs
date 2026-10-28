@@ -12,6 +12,7 @@
 
 pub mod driver;
 pub mod epoch;
+pub mod identify;
 pub mod nmea;
 #[cfg(feature = "pump")]
 pub mod pump;

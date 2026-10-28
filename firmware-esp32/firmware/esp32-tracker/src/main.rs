@@ -2302,6 +2302,7 @@ async fn find_gnss_baud(slot: &core::cell::RefCell<GnssUartSlot>) -> bool {
             if baud != last {
                 debug_log(format_args!("gnss: receiver heard at {baud} baud"));
             }
+            identify_gnss(uart).await;
             slot.baud = baud;
             return true;
         }
@@ -2310,6 +2311,51 @@ async fn find_gnss_baud(slot: &core::cell::RefCell<GnssUartSlot>) -> bool {
         _ = uart.apply_config(&gnss_uart_config(last));
     }
     false
+}
+
+/// The receiver's name, once it has given one this boot.
+#[cfg(feature = "gnss")]
+static GNSS_RECEIVER: OnceLock<umsh_gnss::identify::Name> = OnceLock::new();
+
+#[cfg(feature = "gnss")]
+pub(crate) fn gnss_receiver() -> Option<&'static str> {
+    GNSS_RECEIVER.try_get().map(|name| name.as_str())
+}
+
+/// Asks a receiver just heard what it is, once a boot. One that answers
+/// neither query within [`GNSS_LISTEN`] stays unnamed.
+#[cfg(feature = "gnss")]
+async fn identify_gnss(uart: &mut Uart<'static, Async>) {
+    if GNSS_RECEIVER.try_get().is_some() {
+        return;
+    }
+    for query in umsh_gnss::identify::QUERIES {
+        if embedded_io_async::Write::write_all(uart, query)
+            .await
+            .is_err()
+        {
+            return;
+        }
+    }
+    let mut identifier = umsh_gnss::identify::Identifier::new();
+    let mut buf = [0u8; 64];
+    let deadline = Instant::now() + GNSS_LISTEN;
+    loop {
+        let Some(left) = deadline.checked_duration_since(Instant::now()) else {
+            return;
+        };
+        match with_timeout(left, embedded_io_async::Read::read(uart, &mut buf)).await {
+            Ok(Ok(read)) => {
+                if let Some(name) = buf[..read].iter().find_map(|&byte| identifier.push(byte)) {
+                    debug_log(format_args!("gnss: receiver is {}", name.as_str()));
+                    _ = GNSS_RECEIVER.init(name);
+                    return;
+                }
+            }
+            Ok(Err(_)) => Timer::after_millis(u64::from(umsh_gnss::pump::ERROR_BACKOFF_MS)).await,
+            Err(_) => return,
+        }
+    }
 }
 
 /// Whether a whole, checksummed sentence arrives within [`GNSS_LISTEN`].

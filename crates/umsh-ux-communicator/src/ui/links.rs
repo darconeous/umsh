@@ -125,8 +125,8 @@ fn clear_confirmation(m: &'static Metrics) -> impl View<Rgb565, State> + use<> {
     )
 }
 
-/// The GNSS receiver's switch; while it is on, its fix, where it is, and
-/// the satellites it uses.
+/// The GNSS receiver's switch and, once known, its name; while it is on,
+/// its fix, where it is, and the satellites it uses.
 pub fn gnss(state: &State) -> impl View<Rgb565, State> + use<> {
     let m = state.metrics();
     let on = state.node.gnss_enabled().unwrap_or(false);
@@ -145,6 +145,9 @@ pub fn gnss(state: &State) -> impl View<Rgb565, State> + use<> {
                 false,
                 ROW,
             ),
+            reading
+                .receiver
+                .map(|receiver| readout(m, "Receiver", receiver, ROW)),
             on.then(|| {
                 VStack::new((
                     readout(

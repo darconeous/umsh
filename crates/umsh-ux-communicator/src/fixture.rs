@@ -3068,6 +3068,7 @@ pub fn state(store: &'static Store, board: &'static Board) -> State {
             altitude: Some(1_646),
             used: 9,
             in_view: Some(14),
+            receiver: Some("u-blox MIA-M10Q"),
         },
     };
     state.set_wall_time(Some(store.time()));
