@@ -266,6 +266,9 @@ where
     /// The padding is bounded by what one frame can carry, not by this call:
     /// a ping too large to build fails with the MAC's own send error rather
     /// than being quietly shortened into a measurement of a smaller frame.
+    ///
+    /// A new ping cancels any ping to this peer still waiting for an answer:
+    /// a late echo to the old one is ignored, and its deadline never fires.
     pub async fn ping(
         &self,
         extra_bytes: usize,

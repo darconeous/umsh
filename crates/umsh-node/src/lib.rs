@@ -575,6 +575,46 @@ mod tests {
         assert_eq!(pongs.borrow().as_slice(), &[250]);
     }
 
+    /// A new ping to a peer cancels the one still waiting: the old one's
+    /// echo is ignored and its deadline never fires, while the new one is
+    /// answered and timed on its own.
+    #[cfg(all(feature = "software-crypto", feature = "unsafe-advanced"))]
+    #[test]
+    fn a_new_ping_cancels_the_one_still_waiting() {
+        let mac = FakeMac::new(vec![[7u8; 32], [9u8; 32]]);
+        let node = test_node(mac.clone());
+        let peer = PublicKey([0x55; 32]);
+        let peer_connection = block_on_ready(node.peer(peer)).unwrap();
+        let pongs = Rc::new(RefCell::new(Vec::new()));
+        let timeouts = Rc::new(RefCell::new(0));
+        let pong_log = pongs.clone();
+        let timeout_log = timeouts.clone();
+        let _pong_subscription = node.on_pong(move |_, rtt_ms| pong_log.borrow_mut().push(rtt_ms));
+        let _timeout_subscription = node.on_ping_timeout(move |_| *timeout_log.borrow_mut() += 1);
+        let nonce_of = |mac: &FakeMac| match parse_owned_mac_command(
+            &mac.take_unicasts().pop().unwrap().payload,
+        ) {
+            OwnedMacCommand::EchoRequest { data } => [data[0], data[1]],
+            other => panic!("unexpected ping payload: {other:?}"),
+        };
+
+        block_on_ready(peer_connection.ping(4, &SendOptions::default(), 1_000)).unwrap();
+        let old = nonce_of(&mac);
+        block_on_ready(peer_connection.ping(4, &SendOptions::default(), 1_000)).unwrap();
+        let new = nonce_of(&mac);
+        let packet = test_broadcast_packet_with_traces(peer, None, None, None, None);
+
+        node.match_pong(peer, &old, &packet, 250);
+        assert!(
+            pongs.borrow().is_empty(),
+            "the canceled ping's echo is ignored"
+        );
+        node.match_pong(peer, &new, &packet, 250);
+        assert_eq!(pongs.borrow().len(), 1, "the new ping is answered");
+        node.expire_pings(10_000);
+        assert_eq!(*timeouts.borrow(), 0, "neither ping is left to time out");
+    }
+
     /// A traced reply reports how each repeater heard the hop beyond it, but
     /// only when the signal pairs with the trace entry for entry: a signal
     /// that does not cannot say which hop a reading belongs to.

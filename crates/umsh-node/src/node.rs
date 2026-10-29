@@ -1306,6 +1306,9 @@ impl<M: MacBackend> LocalNode<M> {
         Subscription::new(move || state.borrow_mut().ping_timeout_handlers.remove(handle))
     }
 
+    /// Wait for `peer` to answer the ping with `nonce`. A ping still waiting
+    /// on the same peer is canceled: neither its echo nor its deadline is
+    /// reported, because the newer ping asks the same question afresh.
     pub(crate) fn record_ping(
         &self,
         nonce: u16,
@@ -1313,7 +1316,9 @@ impl<M: MacBackend> LocalNode<M> {
         sent_at_ms: u64,
         deadline_ms: u64,
     ) {
-        self.state.borrow_mut().pending_pings.push(PendingPing {
+        let mut state = self.state.borrow_mut();
+        state.pending_pings.retain(|ping| ping.peer != peer);
+        state.pending_pings.push(PendingPing {
             nonce,
             peer,
             sent_at_ms,
