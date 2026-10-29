@@ -1,24 +1,5 @@
 import SwiftUI
 
-struct AdvertisedIdentitySection: View {
-    let identity: MeshNodeIdentity
-    let isAttributable: Bool
-
-    var body: some View {
-        Section {
-            AdvertisedIdentityRows(identity: identity)
-        } header: {
-            Text("Advertised identity")
-        } footer: {
-            // Identity replies can be authenticated by their enclosing unicast
-            // without carrying a signature of their own.
-            Text(isAttributable
-                 ? "These details are claims made by the peer. Nothing here is independently verified."
-                 : "These details are unsigned, so they may not have come from the peer at all. Nothing here is independently verified.")
-        }
-    }
-}
-
 /// A signature notice for an advertised identity, shown only when the
 /// signature does not verify.
 ///
@@ -54,8 +35,8 @@ struct AdvertisedIdentityWarning: View {
 }
 
 /// Rows describing a decoded advertised node identity: the peer's own claims
-/// about itself, none of them independently verified. Shared by the peer
-/// sheet and the import preview.
+/// about itself, none of them independently verified. Shown by the import
+/// preview.
 struct AdvertisedIdentityRows: View {
     let identity: MeshNodeIdentity
 
@@ -63,10 +44,10 @@ struct AdvertisedIdentityRows: View {
         if let name = identity.name {
             LabeledContent("Name", value: name)
         }
-        LabeledContent("Role", value: identity.roleLabel)
-        if !identity.capabilities.isEmpty {
+        LabeledContent("Role", value: PeerRole.label(forCode: identity.roleCode))
+        if !identity.capabilityBits.listText.isEmpty {
             LabeledContent("Capabilities") {
-                Text(identity.capabilities.joined(separator: ", "))
+                Text(identity.capabilityBits.listText)
                     .multilineTextAlignment(.trailing)
             }
         }
@@ -97,7 +78,11 @@ struct AdvertisedIdentityRows: View {
             )
         }
         if let altitude = identity.altitudeMeters {
-            LabeledContent("Altitude", value: "\(altitude) m")
+            LabeledContent(
+                "Altitude",
+                value: Measurement(value: Double(altitude), unit: UnitLength.meters)
+                    .formatted(.measurement(width: .abbreviated, usage: .asProvided))
+            )
         }
         if let timestamp = identity.timestamp {
             LabeledContent("Reported") {

@@ -72,7 +72,7 @@ uniffi::setup_scaffolding!();
 ///
 /// Increment this when a binding-visible operation, record, or error contract
 /// changes incompatibly. It is independent of the UMSH wire version.
-pub const MOBILE_API_VERSION: u16 = 60;
+pub const MOBILE_API_VERSION: u16 = 61;
 
 /// Stable error categories consumed by platform adapters.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Error)]
@@ -263,13 +263,12 @@ pub enum IdentitySignatureState {
 /// Decoded advertised node identity (node-identity.md), UI-safe fields only.
 #[derive(Clone, Debug, PartialEq, uniffi::Record)]
 pub struct NodeIdentityRecord {
+    /// The advertised role, as on the wire. Labeling it is the platform's
+    /// job: display text never crosses this boundary, so it can be
+    /// localized where it is shown.
     pub role_code: u8,
-    /// Canonical English role label; UI may localize by `role_code`.
-    pub role_label: String,
-    /// Canonical capability labels in wire bit order.
-    pub capabilities: Vec<String>,
-    /// The same capabilities as the advertised bitfield, for filtering. Bits
-    /// this build has no label for are still set here.
+    /// The advertised capabilities bitfield, as on the wire, including bits
+    /// this build has no name for.
     pub capability_bits: u8,
     /// Whether the node says it forwards other nodes' traffic, by the one
     /// rule every platform shares ([`umsh_node::forwards`]).
@@ -619,30 +618,6 @@ fn node_identity_record(
         umsh_node::IdentitySignature::Invalid => IdentitySignatureState::Invalid,
     };
 
-    let role_label = match identity.role {
-        umsh_node::NodeRole::Unspecified => "Unspecified".to_owned(),
-        umsh_node::NodeRole::Repeater => "Repeater".to_owned(),
-        umsh_node::NodeRole::Chat => "Chat".to_owned(),
-        umsh_node::NodeRole::Tracker => "Tracker".to_owned(),
-        umsh_node::NodeRole::Sensor => "Sensor".to_owned(),
-        umsh_node::NodeRole::Bridge => "Bridge".to_owned(),
-        umsh_node::NodeRole::ChatRoom => "Chat room".to_owned(),
-        umsh_node::NodeRole::TemporarySession => "Temporary session".to_owned(),
-        umsh_node::NodeRole::Unknown(code) => format!("Unknown ({code})"),
-    };
-
-    let capabilities = [
-        (umsh_node::NodeCapabilities::REPEATER, "Repeater"),
-        (umsh_node::NodeCapabilities::MOBILE, "Mobile"),
-        (umsh_node::NodeCapabilities::TEXT_MESSAGES, "Text messages"),
-        (umsh_node::NodeCapabilities::TELEMETRY, "Telemetry"),
-        (umsh_node::NodeCapabilities::CHAT_ROOM, "Chat room"),
-        (umsh_node::NodeCapabilities::COAP, "CoAP"),
-    ]
-    .into_iter()
-    .filter(|(bit, _)| identity.capabilities.contains(*bit))
-    .map(|(_, label)| label.to_owned())
-    .collect();
     let capability_bits = identity.capabilities.bits();
 
     let location = identity.location.filter(|loc| !loc.is_unspecified());
@@ -660,8 +635,6 @@ fn node_identity_record(
 
     Ok(NodeIdentityRecord {
         role_code: identity.role.as_byte(),
-        role_label,
-        capabilities,
         capability_bits,
         forwards: umsh_node::forwards(identity.role, identity.capabilities),
         name: identity.name,
@@ -677,7 +650,7 @@ fn node_identity_record(
 /// The claims a node makes about itself, as an identity bundle carries them.
 ///
 /// The decoded counterpart is [`NodeIdentityRecord`]; this is the same
-/// statement on the way in, without the derived labels and the signature
+/// statement on the way in, without the derived `forwards` and the signature
 /// state, which are results of encoding rather than inputs to it.
 #[derive(Clone, Debug, PartialEq, uniffi::Record)]
 pub struct NodeIdentityProfileRecord {
@@ -1117,7 +1090,7 @@ mod tests {
 
         let decoded = decode_node_identity(address, bundle).unwrap();
         assert_eq!(decoded.signature, IdentitySignatureState::Valid);
-        assert_eq!(decoded.role_label, "Repeater");
+        assert_eq!(decoded.role_code, umsh_node::NodeRole::Repeater.as_byte());
         assert!(decoded.forwards);
         assert_eq!(decoded.name.as_deref(), Some("Ridge Repeater"));
         assert_eq!(decoded.altitude_m, Some(1_204));
@@ -1441,12 +1414,8 @@ mod tests {
         assert_eq!(preview.identity_payload.as_deref(), Some(bundle));
         let record = preview.identity.unwrap();
         assert_eq!(record.signature, IdentitySignatureState::Valid);
-        assert_eq!(record.role_label, "Chat");
+        assert_eq!(record.role_code, umsh_node::NodeRole::Chat.as_byte());
         assert_eq!(record.name.as_deref(), Some("Basecamp"));
-        assert_eq!(
-            record.capabilities,
-            vec!["Mobile".to_owned(), "Text messages".to_owned()]
-        );
         assert_eq!(
             record.capability_bits,
             (umsh_node::NodeCapabilities::TEXT_MESSAGES | umsh_node::NodeCapabilities::MOBILE)

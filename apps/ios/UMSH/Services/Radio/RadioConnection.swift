@@ -536,15 +536,30 @@ struct RadioPingReply: Equatable, Sendable {
     /// phone's radio: a direct reply is one hop. `nil` when the reply came
     /// source-routed without a trace route—hops it took went unrecorded.
     let hopCount: UInt8?
+    /// The repeaters the reply crossed, the one nearest this phone first.
     let routeHints: [Data]
+    /// How each repeater in `routeHints` heard the node one step farther
+    /// out, entry for entry. Empty when the reply carried no such readings.
+    let traceSignal: [MeshLegSignal]
+    /// How this phone's radio heard the last hop.
     let rssiDBm: Int16?
     let signalToNoiseCentibels: Int16?
     let linkQuality: UInt8?
 }
 
+/// How one hop of a path was heard. Both readings are absent when the hop
+/// was a point-to-point link—a bridge—that measured nothing.
+struct MeshLegSignal: Hashable, Sendable {
+    let rssiDBm: Int16?
+    let signalToNoiseCentibels: Int16?
+}
+
 enum RadioPingResult: Equatable, Sendable {
     case reply(RadioPingReply)
     case timedOut
+    /// A newer ping to the same peer replaced this one before it was
+    /// answered.
+    case canceled
 }
 
 extension RadioConnection {

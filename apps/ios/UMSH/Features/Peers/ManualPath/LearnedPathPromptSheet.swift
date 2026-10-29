@@ -73,13 +73,15 @@ struct LearnedPathPromptSheet: View {
         HStack {
             Text(title)
             Spacer()
-            Text(ManualPathEditor.hopsText(hops))
+            Text(verbatim: RoutePresentation.hopsText(hops))
         }
     }
 
     private var manualPathText: String {
         if !route.hints.isEmpty { return pathText(route.hints) }
-        return route.heldFloodFromStart == nil ? "Direct" : "Flood"
+        return route.heldFloodFromStart == nil
+            ? String(localized: "Direct", comment: "Route kind: in radio range, no repeaters.")
+            : String(localized: "Flood", comment: "Route kind: every repeater rebroadcasts the frame. A routing term, not water.")
     }
 
     private func pathText(_ hints: [MeshRouterHint]) -> String {

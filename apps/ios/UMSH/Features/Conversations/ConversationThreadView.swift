@@ -87,6 +87,7 @@ struct ConversationThreadView: View {
     @State private var revealRequest = TranscriptRestoreAnchor()
     @Environment(\.visibleConversationReporter) private var visibleConversationReporter
     @Environment(\.transcriptLoader) private var transcriptLoader
+    @Environment(\.showOnMap) private var showOnMap
     @State private var transcript = TranscriptWindow()
     /// Where the reader is, held by reference so that following a scroll costs
     /// nothing to draw. Every one of these changes many times per drag, and as
@@ -514,42 +515,7 @@ struct ConversationThreadView: View {
         .toolbar(.hidden, for: .navigationBar)
         .safeAreaInset(edge: .top) { header }
         .background { InteractivePopGestureRestorer() }
-        .sheet(isPresented: $showsConversationInfo) {
-            NavigationStack {
-                Group {
-                    if case let .direct(direct) = conversation {
-                        DirectConversationDetailView(
-                            conversation: direct,
-                            radioSnapshot: radioSnapshot,
-                            conversations: $conversations,
-                            peerActions: peerActions,
-                            messageActions: messageActions,
-                            updateDraft: updateDraft,
-                            sendMessage: { conversation, body in
-                                await sendMessage(.direct(conversation), body)
-                            },
-                            clearMessages: clearMessages,
-                            countMessages: countMessages
-                        )
-                    } else if let channelConversation {
-                        ChannelConversationDetailView(
-                            conversation: channelConversation,
-                            radioSnapshot: radioSnapshot,
-                            channelActions: channelManagementActions,
-                            setNotifications: channelActions.setNotifications,
-                            clearMessages: clearMessages,
-                            countMessages: countMessages
-                        )
-                    }
-                }
-                .navigationBarTitleDisplayMode(.inline)
-                .toolbar {
-                    ToolbarItem(placement: .confirmationAction) {
-                        Button("Done") { showsConversationInfo = false }
-                    }
-                }
-            }
-        }
+        .sheet(isPresented: $showsConversationInfo) { conversationInfoSheet }
         .sheet(item: $inspectedMember) { inspected in
             // Resolved here rather than at the tap, so an identity arriving
             // while the sheet is open reaches it.
@@ -658,6 +624,57 @@ struct ConversationThreadView: View {
                     }
                 }
             }
+        }
+    }
+
+    /// What the header opens: the peer's own page, or the channel behind a
+    /// group conversation.
+    private var conversationInfoSheet: some View {
+        NavigationStack {
+            Group {
+                if case let .direct(direct) = conversation {
+                    // The node's own page: everything this phone knows
+                    // about who is on the other end, with this
+                    // conversation's switch and Clear Messages folded in.
+                    PeerDetailView(
+                        peer: direct.peer,
+                        radioSnapshot: .constant(radioSnapshot),
+                        conversations: $conversations,
+                        actions: peerActions,
+                        updateDraft: updateDraft,
+                        sendMessage: { conversation, body in
+                            await sendMessage(.direct(conversation), body)
+                        },
+                        messageActions: messageActions,
+                        returnToConversation: { showsConversationInfo = false }
+                    )
+                    .environment(\.showOnMap, showOnMapClosingInfo)
+                } else if let channelConversation {
+                    ChannelConversationDetailView(
+                        conversation: channelConversation,
+                        radioSnapshot: radioSnapshot,
+                        channelActions: channelManagementActions,
+                        setNotifications: channelActions.setNotifications,
+                        clearMessages: clearMessages,
+                        countMessages: countMessages
+                    )
+                }
+            }
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { showsConversationInfo = false }
+                }
+            }
+        }
+    }
+
+    /// The map opens behind this sheet, so the sheet goes first.
+    private var showOnMapClosingInfo: (@MainActor (PeerSummary) -> Void)? {
+        guard let showOnMap else { return nil }
+        return { peer in
+            showsConversationInfo = false
+            showOnMap(peer)
         }
     }
 

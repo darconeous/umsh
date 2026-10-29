@@ -552,6 +552,27 @@ struct MapNodeTests {
         #expect(MapRecencyFilter.any.admits(nil, now: now))
     }
 
+    /// Showing one node on the map widens each filter only as far as it must.
+    @Test func filtersWidenJustEnoughToShowANode() {
+        let twoDaysAgo = now.addingTimeInterval(-2 * 86_400)
+        #expect(MapRecencyFilter.hour.widened(toAdmit: twoDaysAgo, now: now) == .week)
+        #expect(MapRecencyFilter.week.widened(toAdmit: now, now: now) == .week)
+        #expect(MapRecencyFilter.day.widened(toAdmit: nil, now: now) == .any)
+
+        let repeaters: MeshNodeCapabilities = [.repeater]
+        #expect(MapCapabilityFilterOption.widened(repeaters, toAdmit: [.repeater, .mobile]) == repeaters)
+        #expect(
+            MapCapabilityFilterOption.widened(repeaters, toAdmit: [.textMessages, .mobile])
+                == [.repeater, .mobile]
+        )
+        #expect(MapCapabilityFilterOption.widened(repeaters, toAdmit: []) == [])
+
+        let saved = peer(id: 1)
+        #expect(MapTierFilter.favorites.widened(toInclude: saved) == (saved.isSaved ? .saved : .all))
+        #expect(MapTierFilter.saved.widened(toInclude: nil) == .all)
+        #expect(MapTierFilter.all.widened(toInclude: nil) == .all)
+    }
+
     @Test func aRouterPlacesANodeThatHasNotSpokenSinceItAnswered() {
         let router = peer(id: 2)
         let neighbor = peer(id: 1, ownAdvertisementAt: now.addingTimeInterval(-7_200))

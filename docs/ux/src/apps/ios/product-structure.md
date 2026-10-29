@@ -242,7 +242,7 @@ channel, and offer **New Message…** and **New Channel Chat…**.
 The navigation title uses the local mnemonic alias, falling back to advertised
 name or **Unnamed node**. The peer's deterministic NodeHint avatar appears in
 the header. The complete address or canonical rendered hint is available in
-Peer Detail. A subtitle/status can say **Direct** or **Last seen 12 min ago**;
+the peer page. A subtitle/status can say **Direct** or **Last seen 12 min ago**;
 it must not claim presence from stale traffic, and radio connection state stays
 in the app-level toolbar control rather than the conversation subtitle.
 
@@ -251,14 +251,13 @@ corresponding outer-ring treatment and visible text beside the title states the 
 condition, for example **PFS active · 24 min remaining**. The deterministic
 avatar color never changes for security state.
 
-Tapping the avatar/title opens the **conversation info sheet**, which both kinds
-of conversation share. It answers what the conversation *is*: a row leading to
-whoever—or whatever—is on the other end (Peer Detail for a direct chat,
-Channel Detail for a group one), what the transcript holds, and the
-conversation-level actions. It is deliberately not the peer or channel sheet
-itself; those describe a node and a key, which outlive any one conversation
-with them. From a group conversation, Channel Detail does not offer **Enter
-Conversation**—entering it is what got the user there.
+Tapping the avatar/title opens a sheet. For a direct chat it is the peer's
+own page, with the conversation's **Messages** switch and **Clear Messages…**
+on it; **Message** there returns to the chat. For a group conversation it is
+the **conversation info sheet**: a row leading to Channel Detail, what the
+transcript holds, and the conversation-level actions. From a group
+conversation, Channel Detail does not offer **Enter Conversation**—entering
+it is what got the user there.
 
 **Clear All Messages** erases the transcript while keeping the conversation:
 the row, its draft, and its place in the wire stream all survive, so it is the
@@ -443,38 +442,51 @@ selected node can occupy the detail column.
 
 ### Peer detail
 
-Peer Detail is the dedicated view for a known person or other directly
-addressable peer. Its header contains the deterministic NodeHint avatar, local
-mnemonic alias or fallback name, advertised name when different, canonical
-NodeHint, and observation age. The compact companion-radio control remains in
-the centered top-toolbar group above the Peer Detail content.
+The peer page is ordered by how often each part is wanted. Board-by-board
+mockups are under D in [mockups](mockups.md).
 
-Primary actions are **Message**, **Ping**, and **Show QR**. The system Share
-action exports the peer's public identity URI. **Ping** sends one Echo Request,
-shows progress, and reports response latency only after the matching Echo
-Response. A timeout says **No response before timeout** rather than **Offline**.
+- **Name.** The NodeHint avatar, the name as an editable field (emptied, it
+  falls back to the advertised name), and under it the role, plus the
+  advertised name in quotes when a local name hides it.
+- **Tiles.** Verbs chosen from the node's advertised capabilities, never its
+  role: **Message** unless the capabilities leave out text messages,
+  **Neighbors** unless they leave out repeating, and **Ping** and **Manage**
+  always. A node that has advertised nothing leads with **Identify**.
+- **Add to Peers**, for a node this phone has heard of but not saved.
+- **Strip.** **Heard**, **Route** (which opens the Route screen), and
+  **Distance** with a north-up bearing arrow. Distance is measured from the
+  phone when location access was already granted, else from the companion
+  radio's fix; the page never asks for access. Unknown values show a dash.
+- **Map** of the reported cell, with when and how precisely it was reported.
+  Tapping it opens the Map tab on the node.
+- **Notifications.** **Messages** (when a conversation exists) and **Next
+  Time Heard**.
+- **About.** The address, **Capabilities**, and **Advertised**, with a
+  refresh control that asks the node again. A signature that is missing and
+  unauthenticated, or that fails, is called out here.
+- **Clear Messages…** and **Remove Peer…**.
 
-The Identity group contains **Set alias** or **Edit alias**, advertised name,
-the exact 44-character Base58 public key with Copy, and QR/share actions. A
-local alias takes display precedence everywhere but never overwrites the
-advertised name or changes the public key.
+The bar carries a favorite star and **Share**, which opens the QR code, the
+link, **Copy Link**, and **Share…**. Tapping the address row copies the plain
+address and shows **Address copied** briefly; the row shows the address in
+groups of four.
 
-The Security group shows **Standard encryption**, **Establishing PFS**, or
-**PFS active** with the accepted expiration. **Establish PFS session** first
-opens a native duration confirmation; **End PFS session** is visible only while
-active or establishing. Session expiration and either device reboot return the
-relationship to standard long-term pairwise encryption. Ephemeral addresses
-are available only in advanced session details and never replace the stable
-peer avatar.
+**Ping** opens a sheet that sends at once and shows the elapsed time until a
+reply. A reply shows the round trip, the hops, and the path, with a signal
+reading on each leg: the phone's own reception for the leg into the phone,
+and the Trace Signal readings for the rest. No reply draws an X across the
+line and says **No reply** rather than **Offline**. The sheet offers **Ping
+Again** and **Reset Route**, and lists this visit's earlier pings.
 
-Peer Detail is reached from a direct chat's conversation info sheet, a peer row
-in Peers or discovery, or a sender identity in a channel transcript. Returning
-to chat preserves the draft and transcript position.
+The peer page is reached from a peer row in Peers, the Map, or discovery, a
+sender identity in a channel transcript, a direct chat's header, and a link.
+Returning to chat preserves the draft and transcript position.
 
 When a saved companion radio exposes its own UMSH public identity, that
 identity is also represented by exactly one `NodeRecord` and appears in the
-Peers list as a peer, in its own section after every other saved peer. Peer Detail labels it **Companion radio identity** and
-links to Radio Detail. The record is system-managed: ordinary peer removal is
+Peers list as a peer, in its own section after every other saved peer. Its
+page is titled **Companion radio**, offers Ping and Manage, and names the
+radio. The record is system-managed: ordinary peer removal is
 unavailable while the associated radio remains saved. This does not
 make the radio identity the phone's identity or grant infrastructure-management
 authority.
@@ -490,32 +502,34 @@ A manual path is a source route the person chooses for one peer, held for a
 chosen time ahead of anything the phone learns. Wireframes D3–D7 in
 [mockups](mockups.md) show each screen.
 
-**Route section.** Peer Detail's Route section offers **Set Manual Path…**
-whenever no manual path is held. While one is held, the section shows
-**Next send** as **Manual** with the hop count (or **Direct**), the flood
-allowance, **Held until**, **Last ack**, one row per hop, **Edit Path…**, and **Clear Manual Path**. The summary row at
-the top of Peer Detail carries a **Manual** badge. Clearing returns the peer
-to its learned route, or to flooding when none is held, without a
+**Route screen.** Reached from the peer page's strip. It shows the path the
+next frame takes, **Next send**, **Confirmed** (when the route last carried an
+acknowledgment), any regions, **Ask Near This Node**, and **Reset Route**.
+While a manual path is held, **Next send** reads **Manual**, **Then flood**
+and **Held until** appear, and **Clear Manual Path** replaces **Reset
+Route**. The strip's Route cell reads **Manual** too. Clearing returns the
+peer to its learned route, or to flooding when none is held, without a
 confirmation, since nothing is lost that cannot be re-entered.
 
-**Editor.** A modal sheet titled **Manual Path**, always in edit mode, between
-the fixed endpoints **This phone** and the peer. A new path starts from the
+**Editor.** **Edit** in the Route screen's bar turns the screen into the
+editor, in place, with **Cancel** and **Save**. The path runs between the
+fixed endpoints **This phone** and the peer. A new path starts from the
 current learned route; an empty one starts with only the endpoints. Hops are
 removed with the delete control and reordered by dragging. **Add Hop…**
 disappears at 15 repeaters, the most a source route carries. Each hop row uses
 the Peer Repeaters row form: the node's name and avatar when this phone knows
 it, otherwise **Router hint** and a gray hexagon. **Ping Along Path** sends a
-traced Echo Request down the unsaved draft and reports the reply as the Ping
-result does. **Then flood** sets how many hops the frame may flood past the
-last repeater, from Off to 15; with no repeaters the row reads **Flood** and the
-path is direct. A path with no repeaters saves as a direct path.
+traced Echo Request down the unsaved draft and reports the reply. **Then
+flood** sets how many hops the frame may flood past the last repeater, from
+Off to 15; with no repeaters the row reads **Flood** and the path is direct.
+A path with no repeaters saves as a direct path.
 
-**Hold.** **Hold for** is a menu of 30 Minutes, 1 Hour, 4 Hours, 12 Hours, and
-1 Day, defaulting to 1 Hour; there is no indefinite hold. **Until** shows the
+**Hold.** **Hold for** is a menu of 30 minutes, 1 hour, 4 hours, 12 hours, and
+1 day, defaulting to 1 hour; there is no indefinite hold. **Until** shows the
 resulting local time. Editing a
 held path restarts the hold from the moment of saving. When the hold ends, the
 path stays in place as an ordinary route that the next measured path replaces.
-The badge and **Held until** row disappear at that point.
+**Manual** and the **Held until** row disappear at that point.
 
 **Add Hop.** A sheet titled for the hop being added, with the path so far as a
 breadcrumb, a search field, and two sources:
@@ -585,7 +599,7 @@ algorithm. Primary actions are capability-driven:
 - **Save Peer**, or rename and favorite one already saved.
 
 When the node is a known directly addressable peer, this content is presented
-through Peer Detail rather than as a second competing detail screen. Sensor,
+through the peer page rather than as a second competing detail screen. Sensor,
 repeater, bridge, and room-specific sections extend the same underlying node
 record.
 

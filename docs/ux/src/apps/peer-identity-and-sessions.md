@@ -142,18 +142,21 @@ show ephemeral addresses with explicit **Ephemeral session address** labels.
 
 Peer Detail is the authoritative user-facing view of one known peer. It is
 reachable from a direct-conversation title/avatar, a discovery or Peers row,
-a channel sender, and other peer references. It contains:
+the map, a channel sender, and other peer references. It contains:
 
 - deterministic NodeHint avatar and any local replacement;
-- local alias with **Set alias** or **Edit alias**;
-- advertised name, role, capabilities, and observation age;
-- complete 44-character Base58 public key, with Copy;
-- **Show QR code** and system **Share** for the peer's public identity URI;
-- **Message**, when the peer supports text;
-- **Ping**, when an authenticated unicast Echo Request can be sent;
+- local alias, edited in place, with the advertised name shown beside it when
+  the alias hides it;
+- verbs chosen from the advertised capabilities, never the role: **Message**
+  unless the capabilities leave out text messages, **Neighbors** unless they
+  leave out repeating, and **Ping** and **Manage** always; a node that has
+  advertised nothing offers **Identify** first;
+- when the node was last heard, how it is reached, and how far away it is;
+- reported location;
+- complete 44-character Base58 public key, copied by tapping it;
+- system **Share** for the peer's public identity URI, with its QR code;
 - PFS status and **Establish PFS session** or **End PFS session**;
-- activity, reported location, routing evidence, services, and advanced data as
-  applicable.
+- capabilities, when the node last advertised, and services as applicable.
 
 QR and sharing expose public identity information only. They never export a
 private key, local alias unless explicitly selected as share metadata, or PFS
@@ -162,10 +165,11 @@ ephemeral private material.
 ## Ping behavior
 
 **Ping** sends one MAC Echo Request and measures round-trip time only when the
-matching Echo Response returns. Show **Sending ping…**, then a result such as
-**Reply in 2.4 s · just now**. A timeout says **No response before timeout**;
-it does not say the peer is offline, because packets or responses may be lost
-and MAC-command support is optional.
+matching Echo Response returns. While waiting, show the time elapsed; then the
+round trip, the hop count, and the path the reply took, with a signal reading
+for each leg. A timeout says **No reply**; it does not say the peer is
+offline, because packets or responses may be lost and MAC-command support is
+optional.
 
 Ping is a deliberate action, not continuous presence polling. Repeated or
 automatic pings consume shared airtime and must not run merely because Peer

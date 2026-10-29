@@ -17,6 +17,8 @@ struct AppRootView: View {
     @State private var selectedTab: AppTab = .conversations
     @State private var showsRadioDetail = false
     @State private var showsDiscovery = false
+    /// A node the Map tab has been asked to fly to, by its row.
+    @State private var mapFocus: Int64?
     /// Where the Discover sheet's next ask is aimed. Held here because the
     /// sheet lives here, and because a peer page deep-linking into an already
     /// open sheet has to be able to re-aim it.
@@ -222,7 +224,8 @@ struct AppRootView: View {
                         openedConversation = conversation
                     },
                     discoverPeers: { openDiscovery(nil) },
-                    refreshPosition: runtime.refreshRadioPosition
+                    refreshPosition: runtime.refreshRadioPosition,
+                    focusRequest: $mapFocus
                 )
                     .appRadioToolbar(runtime.radioSnapshot, reconnectRadio: runtime.reconnectRadio, selectRadio: runtime.selectRadio) {
                         showsRadioDetail = true
@@ -506,6 +509,11 @@ struct AppRootView: View {
         // database answers, and nothing it is asked about is stored.
         .environment(\.regionService, runtime.regionService)
         .environment(\.readPhonePosition) { await runtime.locationService.readOnce() }
+        // A peer page measures how far away its node is, but never asks for
+        // the permission to do it.
+        .environment(\.readPhonePositionIfAuthorized) { await runtime.locationService.readOnceIfAuthorized() }
+        // Any peer page below this can open the Map tab on its node.
+        .environment(\.showOnMap, showOnMap)
         // A composer with no radio behind it offers the way to attach one, and
         // the sheet that does it lives here.
         .environment(\.openRadioDetail) { showsRadioDetail = true }
@@ -573,6 +581,15 @@ struct AppRootView: View {
     /// Open Discover Peers with its ask aimed at `vantage`—nil for this
     /// phone's own neighborhood.
     @MainActor
+    /// Fly the Map tab to a node, from wherever its page was open. A sheet
+    /// over the tabs would hide the map, so it goes first.
+    private func showOnMap(_ peer: PeerSummary) {
+        linkedPeer = nil
+        showsDiscovery = false
+        mapFocus = peer.id
+        selectedTab = .map
+    }
+
     private func openDiscovery(_ vantage: SolicitVantage?) {
         discoveryVantage = vantage
         showsDiscovery = true

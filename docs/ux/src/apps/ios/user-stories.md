@@ -358,9 +358,10 @@ the peer advertises.
 
 Acceptance criteria:
 
-- Peer Detail offers **Set alias** or **Edit alias**.
+- The name on Peer Detail is an editable field; emptying it removes the alias.
 - The alias becomes the primary label throughout the app.
-- The advertised name remains visible in Peer Detail and searchable.
+- The advertised name remains visible in Peer Detail, in quotes under the
+  alias, and searchable.
 - The alias is local-only unless the user explicitly includes it in shared
   metadata.
 - Removing the alias restores the advertised-name or unnamed-node fallback.
@@ -373,10 +374,12 @@ security actions.
 Acceptance criteria:
 
 - Tapping a direct-chat title/avatar or peer row opens the same Peer Detail.
-- The screen shows the exact 44-character Base58 public key and canonical
-  NodeHint.
-- Copy, Show QR, and system Share expose public identity information only.
-- Message, Ping, and PFS actions appear only when the peer is eligible.
+- The screen shows the exact 44-character Base58 public key, in groups of
+  four; tapping it copies the key without spaces and says so briefly.
+- Share shows the QR code and the link, and offers Copy Link and the system
+  share sheet. Each exposes public identity information only.
+- Message, Neighbors, Ping, and Manage follow the node's advertised
+  capabilities; PFS actions appear only when the peer is eligible.
 - Returning to a direct chat preserves its draft and transcript position.
 
 ### IOS-PEER-04: Ping a peer
@@ -386,9 +389,11 @@ offline verdict.
 
 Acceptance criteria:
 
-- Ping sends one Echo Request and shows **Sending ping…**.
-- A matching Echo Response reports round-trip time and observation time.
-- Timeout reports **No response before timeout**, not **Offline**.
+- Ping opens a sheet that sends one Echo Request and counts the time
+  waiting.
+- A matching Echo Response reports round-trip time, hops, and the path, with a
+  signal reading for each leg.
+- Timeout reports **No reply**, not **Offline**, and crosses out the line.
 - Opening Peer Detail does not automatically or repeatedly ping.
 
 ### IOS-PEER-05: Establish and inspect a PFS session

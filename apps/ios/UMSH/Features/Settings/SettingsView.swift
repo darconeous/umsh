@@ -526,6 +526,7 @@ struct IdentityDetailView: View {
             eraseSection
         }
         .navigationTitle("Your identity")
+        .transientNoticePresenter()
         .alert(
             "Warning",
             isPresented: Binding(

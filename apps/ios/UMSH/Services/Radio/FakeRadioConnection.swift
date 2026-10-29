@@ -507,6 +507,11 @@ actor FakeRadioConnection: RadioConnection {
                 roundTripMilliseconds: 42,
                 hopCount: UInt8(clamping: route.count + 1),
                 routeHints: route,
+                // Each repeater heard the hop beyond it a little worse than
+                // the last, so a rendered path has distinct readings.
+                traceSignal: route.indices.map {
+                    MeshLegSignal(rssiDBm: Int16(-90 - 6 * $0), signalToNoiseCentibels: Int16(55 - 30 * $0))
+                },
                 rssiDBm: -72,
                 signalToNoiseCentibels: 650,
                 linkQuality: 180

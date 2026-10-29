@@ -33,30 +33,46 @@ enum LocationPresentation {
     /// measurement rather than a sentence.
     static func precisionLabel(precisionBytes: UInt8) -> String {
         guard let meters = cellMeters(precisionBytes: precisionBytes) else {
-            return "\(precisionBytes) bytes"
+            return String(
+                localized: "\(Int(precisionBytes)) bytes",
+                comment: "A location precision this app cannot size, by its encoded length. Has plural variants."
+            )
         }
         return cellSizeText(meters: meters)
     }
 
     /// How large the cell is, stated plainly: "about 611 m".
     static func cellLabel(precisionBytes: UInt8) -> String? {
-        cellMeters(precisionBytes: precisionBytes).map(cellLabel(meters:))
+        cellMeters(precisionBytes: precisionBytes).map { cellLabel(meters: $0) }
     }
 
-    static func cellLabel(meters: Double) -> String {
-        "about \(cellSizeText(meters: meters))"
+    static func cellLabel(meters: Double, locale: Locale = .current) -> String {
+        let size = cellSizeText(meters: meters, locale: locale)
+        return String(
+            localized: "about \(size)",
+            locale: locale,
+            comment: "The approximate width of a location cell. The placeholder is a length, such as 611 m."
+        )
     }
 
     /// The bare measurement, in whichever unit keeps it readable.
-    static func cellSizeText(meters: Double) -> String {
-        if meters >= 1_000 {
-            return "\((meters / 1_000).formatted(.number.precision(.fractionLength(0)))) km"
-        }
-        if meters >= 1 {
-            let digits = meters < 10 ? 1 : 0
-            return "\(meters.formatted(.number.precision(.fractionLength(digits)))) m"
-        }
-        return "\((meters * 100).formatted(.number.precision(.fractionLength(0)))) cm"
+    static func cellSizeText(meters: Double, locale: Locale = .current) -> String {
+        let (value, unit, digits): (Double, UnitLength, Int) =
+            if meters >= 1_000 {
+                (meters / 1_000, .kilometers, 0)
+            } else if meters >= 1 {
+                (meters, .meters, meters < 10 ? 1 : 0)
+            } else {
+                (meters * 100, .centimeters, 0)
+            }
+        return Measurement(value: value, unit: unit).formatted(
+            .measurement(
+                width: .abbreviated,
+                usage: .asProvided,
+                numberFormatStyle: .number.precision(.fractionLength(digits))
+            )
+            .locale(locale)
+        )
     }
 
     /// Decimal places worth showing for a cell of this size. Digits finer
@@ -113,8 +129,8 @@ enum LocationPresentation {
     /// distance in meters reads as an altitude next to the other figures on
     /// a node row. Tenths below five, whole units from there. One style for
     /// every place the app states how far apart two nodes are.
-    static func distanceText(meters: Double) -> String {
-        let unit: UnitLength = switch Locale.current.measurementSystem {
+    static func distanceText(meters: Double, locale: Locale = .current) -> String {
+        let unit: UnitLength = switch locale.measurementSystem {
         case .us, .uk: .miles
         default: .kilometers
         }
@@ -126,6 +142,40 @@ enum LocationPresentation {
                 usage: .asProvided,
                 numberFormatStyle: .number.precision(.fractionLength(digits))
             )
+            .locale(locale)
         )
+    }
+
+    /// The initial great-circle bearing from one point to another, in
+    /// degrees clockwise from true north, 0 up to 360.
+    static func bearingDegrees(
+        fromLatitude: Double,
+        longitude fromLongitude: Double,
+        toLatitude: Double,
+        longitude toLongitude: Double
+    ) -> Double {
+        let φ1 = fromLatitude * .pi / 180
+        let φ2 = toLatitude * .pi / 180
+        let Δλ = (toLongitude - fromLongitude) * .pi / 180
+        let y = sin(Δλ) * cos(φ2)
+        let x = cos(φ1) * sin(φ2) - sin(φ1) * cos(φ2) * cos(Δλ)
+        let degrees = atan2(y, x) * 180 / .pi
+        return (degrees + 360).truncatingRemainder(dividingBy: 360)
+    }
+
+    /// A bearing as the nearest of eight compass points, for VoiceOver to
+    /// read beside a distance: "northeast".
+    static func compassText(degrees: Double, locale: Locale = .current) -> String {
+        let point = Int(((degrees.truncatingRemainder(dividingBy: 360) + 360) / 45).rounded()) % 8
+        return switch point {
+        case 0: String(localized: "north", locale: locale, comment: "Compass direction, read by VoiceOver after a distance.")
+        case 1: String(localized: "northeast", locale: locale, comment: "Compass direction, read by VoiceOver after a distance.")
+        case 2: String(localized: "east", locale: locale, comment: "Compass direction, read by VoiceOver after a distance.")
+        case 3: String(localized: "southeast", locale: locale, comment: "Compass direction, read by VoiceOver after a distance.")
+        case 4: String(localized: "south", locale: locale, comment: "Compass direction, read by VoiceOver after a distance.")
+        case 5: String(localized: "southwest", locale: locale, comment: "Compass direction, read by VoiceOver after a distance.")
+        case 6: String(localized: "west", locale: locale, comment: "Compass direction, read by VoiceOver after a distance.")
+        default: String(localized: "northwest", locale: locale, comment: "Compass direction, read by VoiceOver after a distance.")
+        }
     }
 }

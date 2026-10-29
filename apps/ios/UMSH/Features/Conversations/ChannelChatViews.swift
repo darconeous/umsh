@@ -270,12 +270,12 @@ struct MessageDetailsSheet: View {
                             ?? "Unknown source route"
                     )
                     if let rssi = reception.rssiDbm {
-                        LabeledContent("Signal", value: "\(rssi) dBm")
+                        LabeledContent("Signal", value: SignalPresentation.rssiText(Int16(clamping: rssi)))
                     }
                     if let snr = reception.snrCentibels {
                         LabeledContent(
                             "Signal-to-noise",
-                            value: String(format: "%.1f dB", Double(snr) / 10)
+                            value: SignalPresentation.decibelsText(SignalPresentation.decibels(centibels: Int16(clamping: snr)))
                         )
                     }
                     if let lqi = reception.lqi {

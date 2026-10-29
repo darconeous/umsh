@@ -68,6 +68,14 @@ struct PeerSummary: Identifiable, Hashable, Sendable {
             || advertisedIdentity?.capabilityBits.contains(.textMessages) == true
     }
 
+    /// The capabilities the node's advertisement names, or `nil` when there
+    /// is no advertisement. Every advertisement carries the bitmap, so an
+    /// empty set means the node can do none of them. A node's verbs follow
+    /// these, not its role: a chat device can repeat too.
+    var advertisedCapabilities: MeshNodeCapabilities? {
+        advertisedIdentity?.capabilityBits
+    }
+
     /// The role as a peer row's second line, or `nil` when it is unknown and
     /// the row should have no second line.
     var roleLabel: String? {
@@ -158,6 +166,8 @@ enum PeerRole: String, CaseIterable, Hashable, Sendable, Identifiable {
     case tracker
     case sensor
     case bridge
+    case chatRoom
+    case temporarySession
     /// No identity has been heard for this node yet, or the role byte it
     /// claimed is one this app has no name for. An unrecognized byte still
     /// round-trips on the wire; it just cannot be described here.
@@ -169,14 +179,17 @@ enum PeerRole: String, CaseIterable, Hashable, Sendable, Identifiable {
     /// among them: it describes an absence, not a choice.
     static let selectable: [PeerRole] = [.repeater, .chat, .tracker, .sensor, .bridge]
 
+    /// The role's name, in the reader's language.
     var label: String {
         switch self {
-        case .repeater: "Repeater"
-        case .chat: "Chat"
-        case .tracker: "Tracker"
-        case .sensor: "Sensor"
-        case .bridge: "Bridge"
-        case .unknown: "Unknown"
+        case .repeater: String(localized: "Repeater", comment: "Node role: forwards other nodes' traffic.")
+        case .chat: String(localized: "Chat", comment: "Node role: a person's messaging device.")
+        case .tracker: String(localized: "Tracker", comment: "Node role: reports its position.")
+        case .sensor: String(localized: "Sensor", comment: "Node role: reports measurements.")
+        case .bridge: String(localized: "Bridge", comment: "Node role: links the mesh to another network.")
+        case .chatRoom: String(localized: "Chat room", comment: "Node role: hosts a shared conversation.")
+        case .temporarySession: String(localized: "Temporary session", comment: "Node role: a short-lived identity.")
+        case .unknown: String(localized: "Unknown", comment: "Node role: none advertised, or one this app cannot name.")
         }
     }
 
@@ -188,12 +201,14 @@ enum PeerRole: String, CaseIterable, Hashable, Sendable, Identifiable {
         case .tracker: 3
         case .sensor: 4
         case .bridge: 5
+        case .chatRoom: 6
+        case .temporarySession: 7
         case .unknown: nil
         }
     }
 
     init(roleCode: UInt8) {
-        self = PeerRole.selectable.first { $0.roleCode == roleCode } ?? .unknown
+        self = PeerRole.allCases.first { $0.roleCode == roleCode } ?? .unknown
     }
 
     /// How a role byte is described, keeping an unrecognized one visible as a
@@ -201,7 +216,30 @@ enum PeerRole: String, CaseIterable, Hashable, Sendable, Identifiable {
     /// something.
     static func label(forCode code: UInt8) -> String {
         let role = PeerRole(roleCode: code)
-        return role == .unknown ? "Role \(code)" : role.label
+        return role == .unknown
+            ? String(localized: "Role \(code)", comment: "A node role this app has no name for, by its number.")
+            : role.label
+    }
+}
+
+extension MeshNodeCapabilities {
+    /// Each capability this app has a name for, in wire bit order.
+    static let named: [(MeshNodeCapabilities, LocalizedStringResource)] = [
+        (.repeater, LocalizedStringResource("Repeater", comment: "Node capability: forwards other nodes' traffic.")),
+        (.mobile, LocalizedStringResource("Mobile", comment: "Node capability: moves around.")),
+        (.textMessages, LocalizedStringResource("Text messages", comment: "Node capability: sends and receives text messages.")),
+        (.telemetry, LocalizedStringResource("Telemetry", comment: "Node capability: reports measurements.")),
+        (.chatRoom, LocalizedStringResource("Chat room", comment: "Node capability: hosts a shared conversation.")),
+        (.coap, LocalizedStringResource("CoAP", comment: "Node capability: answers CoAP requests. A protocol name; usually left untranslated.")),
+    ]
+
+    /// The names of the capabilities set here, as one list in the reader's
+    /// language ("Mobile and Text messages"). Bits with no name are left out.
+    var listText: String {
+        Self.named
+            .filter { contains($0.0) }
+            .map { String(localized: $0.1) }
+            .formatted(.list(type: .and))
     }
 }
 
@@ -652,9 +690,13 @@ struct PeerPingReply: Equatable, Sendable {
     /// phone's radio: a direct reply is one hop. `nil` when the reply came
     /// source-routed without a trace route—hops it took went unrecorded.
     let hopCount: UInt8?
-    /// Intermediate repeaters in source-to-destination order, already rendered
-    /// by the Rust core. The two endpoints are not included.
+    /// The repeaters the reply crossed, the one nearest this phone first,
+    /// already rendered by the Rust core. The two endpoints are not included.
     let routeHints: [MeshRouterHint]
+    /// How each repeater in `routeHints` heard the node one step farther
+    /// out, entry for entry. Empty when the reply carried no such readings.
+    let traceSignal: [MeshLegSignal]
+    /// How this phone's radio heard the last hop.
     let rssiDBm: Int16?
     let signalToNoiseCentibels: Int16?
     let linkQuality: UInt8?
@@ -767,14 +809,9 @@ enum ManualPathHold: CaseIterable, Identifiable, Hashable, Sendable {
         }
     }
 
+    /// The hold's length, in the reader's language: "30 min", "4 hr".
     var title: String {
-        switch self {
-        case .thirtyMinutes: "30 Minutes"
-        case .oneHour: "1 Hour"
-        case .fourHours: "4 Hours"
-        case .twelveHours: "12 Hours"
-        case .oneDay: "1 Day"
-        }
+        Duration.seconds(duration).formatted(.units(allowed: [.days, .hours, .minutes], width: .wide))
     }
 }
 
@@ -883,8 +920,12 @@ enum RouterHintNaming {
 
     /// The sentence to append wherever a name came from `match`, since a
     /// two-byte hint can never prove which node forwarded a frame.
-    static let ambiguityNote =
-        "Repeater names are matched by a two-byte hint and may not be the node shown."
+    static var ambiguityNote: String {
+        String(
+            localized: "Repeater names are matched by a two-byte hint and may not be the node shown.",
+            comment: "Footer under a path whose repeaters were named by guessing from their short hints."
+        )
+    }
 }
 
 /// One repeater a peer reported as its neighbor, from a Peer Repeaters
@@ -994,11 +1035,12 @@ struct PeerRepeaterNeighborReport: Hashable, Sendable {
 
 /// Everything the peer sheet can do with the node it is showing.
 ///
-/// Bundled because `PeerDetailView` is presented from four places—the
-/// Peers list, a conversation's title bar, Settings' radio identity, and
-/// device setup—and passing these one parameter at a time made the same
-/// sheet offer different things depending on where it was opened. One value
-/// threaded through means one sheet with one set of capabilities.
+/// Bundled because `PeerDetailView` is opened from many places—the Peers
+/// list, a conversation's header, the map, a link, Settings' radio identity,
+/// device setup, and other peers' pages—and passing these one parameter at
+/// a time made the same page offer different things depending on where it
+/// was opened. One value threaded through means one page with one set of
+/// capabilities.
 /// Deliberately not `Sendable`: these are main-actor operations owned by the
 /// app root, handed to views that also live on the main actor.
 struct PeerActions {
@@ -1069,10 +1111,6 @@ struct PeerActions {
     var deletePeer: ((PeerSummary) async -> Bool)? = nil
     /// Delete the node and its conversation history in one transaction.
     var deletePeerAndConversation: ((PeerSummary) async -> Bool)? = nil
-    /// Store the node's public key on the companion radio's device identity.
-    var addToDeviceIdentity: ((PeerSummary) async -> DevicePeerActionOutcome)? = nil
-    /// Remove the node's public key from the radio's device identity.
-    var removeFromDeviceIdentity: ((PeerSummary) async -> DevicePeerActionOutcome)? = nil
     /// The way to read and change this node's settings, chosen per peer:
     /// the companion radio is managed over its own link, everything else
     /// across the mesh. Nil only where no backend could exist at all.
@@ -1130,19 +1168,10 @@ struct ManualPathRecord: Equatable, Sendable {
 enum PeerPingResult: Equatable, Sendable {
     case reply(PeerPingReply)
     case timedOut
+    /// A newer ping to the same node replaced this one before it was
+    /// answered.
+    case canceled
+    /// The ping never went out. `reason` is already in the reader's
+    /// language.
     case unavailable(reason: String)
-}
-
-/// Outcome of a device-identity peer mutation, shaped for inline UI copy.
-/// `deviceFull` mirrors the radio's own `NOMEM`, which stays authoritative.
-enum DevicePeerActionOutcome: Equatable, Sendable {
-    case success
-    case deviceFull
-    case radioUnavailable
-    case unsupported
-    /// The radio answered the change in a form this app does not
-    /// understand, so what it did is not something this app can read: its
-    /// firmware and this app are out of step.
-    case unrecognizedAnswer
-    case failed
 }

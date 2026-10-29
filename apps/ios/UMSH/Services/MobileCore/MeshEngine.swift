@@ -68,9 +68,8 @@ enum MeshIdentitySignatureState: Hashable, Sendable {
 
 /// The advertised capability bits, in wire order.
 ///
-/// The labels a node advertises alongside these are what the detail view
-/// prints; these are what filtering asks questions of, so a filter never has
-/// to match on rendered English.
+/// The core sends bits, never names: what each is called is this app's to
+/// say, in the reader's language (`MeshNodeCapabilities.labels`).
 struct MeshNodeCapabilities: OptionSet, Hashable, Sendable {
     let rawValue: UInt8
 
@@ -84,10 +83,8 @@ struct MeshNodeCapabilities: OptionSet, Hashable, Sendable {
 
 struct MeshNodeIdentity: Hashable, Sendable {
     let roleCode: UInt8
-    let roleLabel: String
-    let capabilities: [String]
-    /// The same capabilities the labels name, as bits. A node may set bits
-    /// this build has no label for; they survive here and match nothing.
+    /// A node may set bits this build has no name for; they survive here and
+    /// match nothing.
     let capabilityBits: MeshNodeCapabilities
     /// Whether the node says it forwards other nodes' traffic, by the rule
     /// the Rust core applies on every platform.

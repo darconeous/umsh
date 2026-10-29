@@ -1692,6 +1692,9 @@ public protocol MobileMeshSessionProtocol: AnyObject, Sendable {
      * Send one traced Echo Request to `peer`. Without a `path` it pings
      * the usual way; with one it sends the ping down exactly that path, to
      * test it without installing it.
+     *
+     * A new ping to a peer cancels the one still waiting on it, which
+     * ends with `Canceled`.
      */
     func ping(peerAddress: String, timeoutMs: UInt64, path: MobileMeshExplicitPath?) throws  -> UInt64
 
@@ -2754,6 +2757,9 @@ open func peerRoute(peerAddress: String)async throws  -> MobileMeshRouteRecord  
      * Send one traced Echo Request to `peer`. Without a `path` it pings
      * the usual way; with one it sends the ping down exactly that path, to
      * test it without installing it.
+     *
+     * A new ping to a peer cancels the one still waiting on it, which
+     * ends with `Canceled`.
      */
 open func ping(peerAddress: String, timeoutMs: UInt64, path: MobileMeshExplicitPath?)throws  -> UInt64  {
     return try  FfiConverterUInt64.lift(try rustCallWithError(FfiConverterTypeMobileMeshError_lift) {
@@ -8185,10 +8191,16 @@ public struct MobileMeshPingEventRecord: Equatable, Hashable {
      */
     public var hopCount: UInt8?
     /**
-     * Authenticated intermediate-router hints, in source-to-destination order.
-     * The two endpoints are not included.
+     * Authenticated intermediate-router hints, the repeater nearest this
+     * device first. The two endpoints are not included.
      */
     public var routeHints: [Data]
+    /**
+     * How each repeater in `route_hints` heard the node one step farther
+     * from this device, entry for entry. Empty unless the response carried
+     * a trace signal that pairs one-to-one with its trace route.
+     */
+    public var traceSignal: [MobileTraceSignalRecord]
     /**
      * Signal measurements for the final radio hop into this device.
      */
@@ -8206,9 +8218,14 @@ public struct MobileMeshPingEventRecord: Equatable, Hashable {
          * so no count is claimed.
          */hopCount: UInt8?,
         /**
-         * Authenticated intermediate-router hints, in source-to-destination order.
-         * The two endpoints are not included.
+         * Authenticated intermediate-router hints, the repeater nearest this
+         * device first. The two endpoints are not included.
          */routeHints: [Data],
+        /**
+         * How each repeater in `route_hints` heard the node one step farther
+         * from this device, entry for entry. Empty unless the response carried
+         * a trace signal that pairs one-to-one with its trace route.
+         */traceSignal: [MobileTraceSignalRecord],
         /**
          * Signal measurements for the final radio hop into this device.
          */rssiDbm: Int16?, snrCentibels: Int16?, lqi: UInt8?) {
@@ -8217,6 +8234,7 @@ public struct MobileMeshPingEventRecord: Equatable, Hashable {
         self.roundTripMilliseconds = roundTripMilliseconds
         self.hopCount = hopCount
         self.routeHints = routeHints
+        self.traceSignal = traceSignal
         self.rssiDbm = rssiDbm
         self.snrCentibels = snrCentibels
         self.lqi = lqi
@@ -8243,6 +8261,7 @@ public struct FfiConverterTypeMobileMeshPingEventRecord: FfiConverterRustBuffer 
                 roundTripMilliseconds: FfiConverterOptionUInt64.read(from: &buf),
                 hopCount: FfiConverterOptionUInt8.read(from: &buf),
                 routeHints: FfiConverterSequenceData.read(from: &buf),
+                traceSignal: FfiConverterSequenceTypeMobileTraceSignalRecord.read(from: &buf),
                 rssiDbm: FfiConverterOptionInt16.read(from: &buf),
                 snrCentibels: FfiConverterOptionInt16.read(from: &buf),
                 lqi: FfiConverterOptionUInt8.read(from: &buf)
@@ -8255,6 +8274,7 @@ public struct FfiConverterTypeMobileMeshPingEventRecord: FfiConverterRustBuffer 
         FfiConverterOptionUInt64.write(value.roundTripMilliseconds, into: &buf)
         FfiConverterOptionUInt8.write(value.hopCount, into: &buf)
         FfiConverterSequenceData.write(value.routeHints, into: &buf)
+        FfiConverterSequenceTypeMobileTraceSignalRecord.write(value.traceSignal, into: &buf)
         FfiConverterOptionInt16.write(value.rssiDbm, into: &buf)
         FfiConverterOptionInt16.write(value.snrCentibels, into: &buf)
         FfiConverterOptionUInt8.write(value.lqi, into: &buf)
@@ -9619,6 +9639,65 @@ public func FfiConverterTypeMobileRegionRecord_lower(_ value: MobileRegionRecord
 
 
 /**
+ * One repeater's reading of the hop it received a response over. Both
+ * fields are absent when the repeater received it over a point-to-point
+ * link—a bridge—and measured nothing.
+ */
+public struct MobileTraceSignalRecord: Equatable, Hashable {
+    public var rssiDbm: Int16?
+    public var snrCentibels: Int16?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(rssiDbm: Int16?, snrCentibels: Int16?) {
+        self.rssiDbm = rssiDbm
+        self.snrCentibels = snrCentibels
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileTraceSignalRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileTraceSignalRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileTraceSignalRecord {
+        return
+            try MobileTraceSignalRecord(
+                rssiDbm: FfiConverterOptionInt16.read(from: &buf),
+                snrCentibels: FfiConverterOptionInt16.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileTraceSignalRecord, into buf: inout [UInt8]) {
+        FfiConverterOptionInt16.write(value.rssiDbm, into: &buf)
+        FfiConverterOptionInt16.write(value.snrCentibels, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileTraceSignalRecord_lift(_ buf: RustBuffer) throws -> MobileTraceSignalRecord {
+    return try FfiConverterTypeMobileTraceSignalRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileTraceSignalRecord_lower(_ value: MobileTraceSignalRecord) -> RustBuffer {
+    return FfiConverterTypeMobileTraceSignalRecord.lower(value)
+}
+
+
+/**
  * Canonical rendering information for a three-byte node hint.
  */
 public struct NodeHintRecord: Equatable, Hashable {
@@ -9691,7 +9770,7 @@ public func FfiConverterTypeNodeHintRecord_lower(_ value: NodeHintRecord) -> Rus
  * The claims a node makes about itself, as an identity bundle carries them.
  *
  * The decoded counterpart is [`NodeIdentityRecord`]; this is the same
- * statement on the way in, without the derived labels and the signature
+ * statement on the way in, without the derived `forwards` and the signature
  * state, which are results of encoding rather than inputs to it.
  */
 public struct NodeIdentityProfileRecord: Equatable, Hashable {
@@ -9794,18 +9873,15 @@ public func FfiConverterTypeNodeIdentityProfileRecord_lower(_ value: NodeIdentit
  * Decoded advertised node identity (node-identity.md), UI-safe fields only.
  */
 public struct NodeIdentityRecord: Equatable, Hashable {
+    /**
+     * The advertised role, as on the wire. Labeling it is the platform's
+     * job: display text never crosses this boundary, so it can be
+     * localized where it is shown.
+     */
     public var roleCode: UInt8
     /**
-     * Canonical English role label; UI may localize by `role_code`.
-     */
-    public var roleLabel: String
-    /**
-     * Canonical capability labels in wire bit order.
-     */
-    public var capabilities: [String]
-    /**
-     * The same capabilities as the advertised bitfield, for filtering. Bits
-     * this build has no label for are still set here.
+     * The advertised capabilities bitfield, as on the wire, including bits
+     * this build has no name for.
      */
     public var capabilityBits: UInt8
     /**
@@ -9832,16 +9908,15 @@ public struct NodeIdentityRecord: Equatable, Hashable {
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(roleCode: UInt8,
+    public init(
         /**
-         * Canonical English role label; UI may localize by `role_code`.
-         */roleLabel: String,
+         * The advertised role, as on the wire. Labeling it is the platform's
+         * job: display text never crosses this boundary, so it can be
+         * localized where it is shown.
+         */roleCode: UInt8,
         /**
-         * Canonical capability labels in wire bit order.
-         */capabilities: [String],
-        /**
-         * The same capabilities as the advertised bitfield, for filtering. Bits
-         * this build has no label for are still set here.
+         * The advertised capabilities bitfield, as on the wire, including bits
+         * this build has no name for.
          */capabilityBits: UInt8,
         /**
          * Whether the node says it forwards other nodes' traffic, by the one
@@ -9857,8 +9932,6 @@ public struct NodeIdentityRecord: Equatable, Hashable {
          * Seconds since the Unix epoch (freshness marker).
          */timestamp: UInt32?, signature: IdentitySignatureState) {
         self.roleCode = roleCode
-        self.roleLabel = roleLabel
-        self.capabilities = capabilities
         self.capabilityBits = capabilityBits
         self.forwards = forwards
         self.name = name
@@ -9887,8 +9960,6 @@ public struct FfiConverterTypeNodeIdentityRecord: FfiConverterRustBuffer {
         return
             try NodeIdentityRecord(
                 roleCode: FfiConverterUInt8.read(from: &buf),
-                roleLabel: FfiConverterString.read(from: &buf),
-                capabilities: FfiConverterSequenceString.read(from: &buf),
                 capabilityBits: FfiConverterUInt8.read(from: &buf),
                 forwards: FfiConverterBool.read(from: &buf),
                 name: FfiConverterOptionString.read(from: &buf),
@@ -9903,8 +9974,6 @@ public struct FfiConverterTypeNodeIdentityRecord: FfiConverterRustBuffer {
 
     public static func write(_ value: NodeIdentityRecord, into buf: inout [UInt8]) {
         FfiConverterUInt8.write(value.roleCode, into: &buf)
-        FfiConverterString.write(value.roleLabel, into: &buf)
-        FfiConverterSequenceString.write(value.capabilities, into: &buf)
         FfiConverterUInt8.write(value.capabilityBits, into: &buf)
         FfiConverterBool.write(value.forwards, into: &buf)
         FfiConverterOptionString.write(value.name, into: &buf)
@@ -16241,6 +16310,11 @@ public enum MobileMeshPingOutcome: Equatable, Hashable {
     case reply
     case timedOut
     case failed
+    /**
+     * A newer ping to the same peer replaced this one before it was
+     * answered.
+     */
+    case canceled
 
 
 
@@ -16268,6 +16342,8 @@ public struct FfiConverterTypeMobileMeshPingOutcome: FfiConverterRustBuffer {
 
         case 3: return .failed
 
+        case 4: return .canceled
+
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
@@ -16286,6 +16362,10 @@ public struct FfiConverterTypeMobileMeshPingOutcome: FfiConverterRustBuffer {
 
         case .failed:
             writeInt(&buf, Int32(3))
+
+
+        case .canceled:
+            writeInt(&buf, Int32(4))
 
         }
     }
@@ -20230,6 +20310,31 @@ fileprivate struct FfiConverterSequenceTypeMobileRegionRecord: FfiConverterRustB
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeMobileTraceSignalRecord: FfiConverterRustBuffer {
+    typealias SwiftType = [MobileTraceSignalRecord]
+
+    public static func write(_ value: [MobileTraceSignalRecord], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeMobileTraceSignalRecord.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [MobileTraceSignalRecord] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [MobileTraceSignalRecord]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeMobileTraceSignalRecord.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeRadioPresetRecord: FfiConverterRustBuffer {
     typealias SwiftType = [RadioPresetRecord]
 
@@ -21858,7 +21963,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_peer_route() != 15956) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_ping() != 19101) {
+    if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_ping() != 40918) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_umsh_mobile_core_checksum_method_mobilemeshsession_poll_update() != 43386) {

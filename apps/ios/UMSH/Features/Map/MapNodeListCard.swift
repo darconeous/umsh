@@ -69,6 +69,12 @@ struct MapNodeListCard: View {
                 sendMessage: sendMessage,
                 messageActions: messageActions
             )
+            // Already on the map: going back to it is enough, with the node
+            // selected.
+            .environment(\.showOnMap) { peer in
+                nodePendingDetail = nil
+                selectedNodeID = .peer(peer.id)
+            }
         }
     }
 

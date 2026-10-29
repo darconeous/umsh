@@ -223,80 +223,39 @@ The filter row is horizontally adaptable and may become one filter menu at
 large text sizes. Rows never call RSSI a distance. **Map** in the persistent
 List/Map control opens the map without leaving the Peers tab.
 
-## D. Peer detail
+## D. Peer page, Ping, and Route
 
-```text
-┌─────────────────────────────────────┐
-│ ‹ Peers            [⌁ ◫]      [Share]│
-│ Peer details                        │
-│                                     │
-│              ╭────────╮             │
-│              │   Bt   │             │
-│              │   C5   │             │
-│              ╰────────╯             │
-│             Ridge Medic             │
-│      Advertised as Alex · BtC5      │
-│                                     │
-│ [Message]       [Ping]      [QR code]│
-│                                     │
-│ IDENTITY                            │
-│ Mnemonic alias      Ridge Medic [Edit]│
-│ Advertised name                 Alex │
-│ Public key                    [Copy] │
-│ BtC5HU2XmNkfXVGRHxTmN4PkLhoRQ       │
-│ MVqktxmuQWY8Jfy                     │
-│                                     │
-│ SECURITY                            │
-│ 🛡 PFS active · 24 min remaining    │
-│ [Session details]  [End PFS session]│
-│                                     │
-│ ACTIVITY                            │
-│ Last observed              12 min ago│
-│ Last ping reply        2.4 s · now  │
-└─────────────────────────────────────┘
-```
+[![Peer page mockups: the page before the redesign, a chat peer, a repeater, an unsaved node, Ping with a reply, waiting, and no reply, the Route screen viewing and editing, the address copied, and the Share sheet](mockups/peer-page.svg)](mockups/peer-page.svg)
 
-The local mnemonic alias is the primary label; the advertised name remains
-visible and unchanged. The full public key wraps visually but is not shortened.
-Show QR and Share export public identity information. Ping sends one Echo
-Request, and PFS controls operate on the direct relationship represented by
-this stable peer.
+Board 1 is the page as it was, for comparison. Boards 2 to 4 are the page:
+the name, then the verbs as tiles, then a strip of Heard, Route, and Distance,
+then a map of the reported cell. Notifications, About, and the destructive
+actions follow. The quoted name under a renamed node is the one it
+advertises.
 
-## D1. General node detail
+Tiles follow advertised capabilities, never role. **Message** is offered
+unless the capabilities leave out text messages, **Neighbors** unless they
+leave out repeating, and **Ping** and **Manage** always. A node that has
+advertised nothing leads with **Identify**. The companion radio's own
+identity offers Ping and Manage alone.
 
-```text
-┌─────────────────────────────────────┐
-│ ‹ Peers            [⌁ ◫]      [Share]│
-│             Creek Gauge             │
-│             Sensor                  │
-│                                     │
-│ [View data]      [Save Peer]        │
-│                                     │
-│ IDENTITY                            │
-│ Advertised name       Creek Gauge   │
-│ Signature             Valid         │
-│ Identity generated    Today, 08:11  │
-│ Address                             │
-│ HJC9DJaaQEn88tAzbMM7BrYb            │
-│ sepNEB69RK1gZiKEYCPp                 │
-│                                     │
-│ ACTIVITY                            │
-│ Last observed         18 min ago    │
-│ Learned from          Mesh traffic  │
-│                                     │
-│ LOCATION                            │
-│ Precision             ~10 × 5 km    │
-│ [View reported area]                │
-│                                     │
-│ [Services] [Routing] [Advanced]     │
-└─────────────────────────────────────┘
-```
+Distance is measured from the phone when location access was already
+granted, else from the radio's own fix; with neither, the cell shows a dash.
+The page never asks for location access. Tapping the map opens the Map tab on
+the node.
 
-Primary actions follow capabilities. Values the node did not provide are
-omitted. The displayed address is the exact fixed-width Base58 value; the line
-break is visual wrapping, not an abbreviation or part of the address. If only a
-three-byte hint were known, the row would instead say **Node hint HJC9** for
-this example. Its two-byte router hint would be **Router hint HJ\***.
+Boards 5 to 7 are the Ping sheet, which sends on open. A reply shows its
+round trip and hops and then its path, with each leg's reading: the leg into
+the phone is the phone's own reception, and each leg beyond is how the
+repeater at its near end heard the next node. A ping with no reply draws an X
+on the line. **Reset Route** sits under the path; **Earlier** keeps this
+visit's pings.
+
+Boards 8 and 9 are the Route screen, reached from the strip. **Edit** turns
+the same screen into the manual path editor. Board 10 is the address row:
+tapping it copies the address, without spaces, and shows **Address copied**
+for about a second. Board 11 is the Share sheet: the QR code, the link,
+**Copy Link**, and **Share…**.
 
 ## D2. Discover peers
 
@@ -329,25 +288,28 @@ separate metadata-and-scope preview before transmission; it is not automatic.
 
 [![Manual path override mockups: peer detail with a held path, the editor with repeaters and as a direct path, Add Hop, router hint entry, an ambiguous hint, and the learned-path prompt](mockups/manual-path.svg)](mockups/manual-path.svg)
 
-### D3. Peer detail: manual path held
+The Route screen (boards 8 and 9 under D) replaces boards 1 and 2 here: the
+held path shows there, and its **Edit** opens the editor in place rather than
+as a sheet.
 
-Board 1 is the Route section of Peer Detail, scrolled into view. Hop glyphs are
-the avatar shapes: a triangle for a repeater, a circle for a chat peer, a gray
-hexagon for a hop known only by its hint. The summary row at the top of Peer
-Detail carries a **Manual** badge beside the hop count. With no manual path
-held, the section shows the learned route as it does today and offers **Set
-Manual Path…** in place of the two buttons. A held direct path reads **Manual ·
-Direct**, its flood row reads **Flood**, and the hop list is only the two
-endpoints.
+### D3. Route screen: manual path held
+
+Hop glyphs are the avatar shapes: a triangle for a repeater, a circle for a
+chat peer, a gray hexagon for a hop known only by its hint. A held path reads
+**Manual** in the peer page's strip and on the Route screen's **Next send**,
+with **Then flood** and **Held until** rows and **Clear Manual Path** in place
+of **Reset Route**. A held direct path names no repeaters, and its path is
+only the two endpoints.
 
 ### D4. Manual path editor
 
-Board 2 is a modal sheet in permanent edit mode: the red control removes a hop,
+The editor is the Route screen in edit mode, with **Cancel** and **Save** in
+the bar: the red control removes a hop,
 the grip reorders it, and the endpoints are fixed. A new path starts from the
 current learned route. **Then flood** is the flood allowance past the last
 repeater, Off to 15 hops. **Ping Along Path** sends a traced ping down the
-unsaved draft. **Hold for** is a menu: 30 Minutes, 1 Hour (the default), 4
-Hours, 12 Hours, 1 Day.
+unsaved draft. **Hold for** is a menu: 30 minutes, 1 hour (the default), 4
+hours, 12 hours, 1 day.
 
 Board 3 is the same editor with every hop removed: the path is direct, the flood
 row reads **Flood**, and **Save** stays enabled.

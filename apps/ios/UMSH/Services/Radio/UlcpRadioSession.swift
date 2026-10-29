@@ -152,9 +152,10 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
         super.init()
     }
 
-    /// Long enough for a several-hop LoRa round trip, but short enough that a
-    /// silent peer does not leave the peer page waiting for half a minute.
-    static let peerPingTimeoutMilliseconds: UInt64 = 8_000
+    /// Long enough for a reply to a long flood: twelve or more hops each way,
+    /// each with its own channel-activity backoff. A ping sent again cancels
+    /// the one still waiting and waits this long itself.
+    static let peerPingTimeoutMilliseconds: UInt64 = 30_000
     static let logger = Logger(subsystem: "com.voria.umsh.ios", category: "UlcpDevice")
     static let maximumRawTransmitBusyRetries = 20
     /// Reconnects a fatal protocol fault is worth before the failure sticks.
@@ -2435,6 +2436,12 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
                                 roundTripMilliseconds: event.roundTripMilliseconds ?? 0,
                                 hopCount: event.hopCount,
                                 routeHints: event.routeHints,
+                                traceSignal: event.traceSignal.map {
+                                    MeshLegSignal(
+                                        rssiDBm: $0.rssiDbm,
+                                        signalToNoiseCentibels: $0.snrCentibels
+                                    )
+                                },
                                 rssiDBm: event.rssiDbm,
                                 signalToNoiseCentibels: event.snrCentibels,
                                 linkQuality: event.lqi
@@ -2443,6 +2450,8 @@ class UlcpRadioSession: NSObject, @unchecked Sendable {
                     )
                 case .timedOut:
                     waiter.resume(returning: .timedOut)
+                case .canceled:
+                    waiter.resume(returning: .canceled)
                 case .failed:
                     waiter.resume(throwing: RadioConnectionError.incompatibleProtocol)
                 }

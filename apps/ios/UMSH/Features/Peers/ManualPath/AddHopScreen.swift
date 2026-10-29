@@ -51,7 +51,7 @@ struct AddHopScreen: View {
                 }
                 if isFull {
                     Section {
-                        Text("The path holds \(ManualPathEditor.maximumHops) repeaters, the most it can carry.")
+                        Text("The path holds \(ManualPathDraft.maximumHops) repeaters, the most it can carry.")
                             .foregroundStyle(.secondary)
                     }
                 } else {
@@ -106,7 +106,7 @@ struct AddHopScreen: View {
 
     // MARK: - Where the path stands
 
-    private var isFull: Bool { hops.count >= ManualPathEditor.maximumHops }
+    private var isFull: Bool { hops.count >= ManualPathDraft.maximumHops }
 
     private var breadcrumb: String {
         let names = hops.map { hop in

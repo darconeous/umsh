@@ -1,0 +1,2556 @@
+{
+  "sourceLanguage" : "en",
+  "strings" : {
+    "" : {
+
+    },
+    " %@" : {
+
+    },
+    "-122.2495" : {
+
+    },
+    "“%@”" : {
+      "comment" : "Under a renamed node's name: the name it advertises for itself."
+    },
+    "%@  %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@  %2$@"
+          }
+        }
+      }
+    },
+    "%@ · “%@”" : {
+      "comment" : "Under a renamed node's name: its role, then the name it advertises for itself.",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@ · “%2$@”"
+          }
+        }
+      }
+    },
+    "%@ · %@" : {
+      "comment" : "A radio reading: signal strength, then signal-to-noise ratio.\nAn earlier ping: its round trip, then how many hops it took.",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@ · %2$@"
+          }
+        }
+      }
+    },
+    "%@ · within %@" : {
+      "comment" : "Under a peer's map: when the location was heard, then the size of the area it names.",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@ · within %2$@"
+          }
+        }
+      }
+    },
+    "%@ dB" : {
+      "comment" : "A signal-to-noise ratio, in decibels. The placeholder is a number."
+    },
+    "%@ dBm" : {
+      "comment" : "Received signal strength, in decibel-milliwatts. The placeholder is a number."
+    },
+    "%@ details" : {
+
+    },
+    "%@, %@" : {
+      "comment" : "VoiceOver: a distance, then which way it lies, such as 4.2 km, northeast.",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@, %2$@"
+          }
+        }
+      }
+    },
+    "%d dB" : {
+
+    },
+    "%d dBm" : {
+
+    },
+    "%lld" : {
+
+    },
+    "%lld bytes" : {
+      "comment" : "A location precision this app cannot size, by its encoded length. Has plural variants.",
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld byte"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld bytes"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "%lld dBm" : {
+
+    },
+    "%lld hops" : {
+      "comment" : "A route's length, counted in radio hops. Has plural variants.",
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld hop"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld hops"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "%lld of %lld" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$lld of %2$lld"
+          }
+        }
+      }
+    },
+    "%lld of %lld neighbors listed." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$lld of %2$lld neighbors listed."
+          }
+        }
+      }
+    },
+    "%lld unnamed repeaters" : {
+      "comment" : "Repeaters a ping reply counted without identifying them. Has plural variants.",
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld unnamed repeater"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld unnamed repeaters"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "%lld unread" : {
+
+    },
+    "^[%lld hop](inflect: true)" : {
+
+    },
+    "4/%u" : {
+
+    },
+    "5EBD" : {
+
+    },
+    "7Nq4" : {
+
+    },
+    "37.5119" : {
+
+    },
+    "A channel is a shared key. Join one by name if it is public, or with an invitation if it is private." : {
+
+    },
+    "A channel message carries only a short hint. Asking over the channel invites this member to send their full identity." : {
+
+    },
+    "A companion radio is what puts this phone on the mesh. Without one you can still look around, but nothing is sent or received." : {
+
+    },
+    "A conversation with this node could not be started." : {
+      "comment" : "Alert message."
+    },
+    "A different channel is already called “%@”" : {
+
+    },
+    "A live view of nodes announcing themselves, and the place to ask them to." : {
+
+    },
+    "A new random key is generated on this phone. Everyone you share the invitation with becomes a full member: they can read everything sent here and send messages that appear to come from any member." : {
+
+    },
+    "A preset sets every radio parameter below. Choose the one your local mesh uses; nodes with different PHY settings cannot hear each other." : {
+
+    },
+    "A public channel is joined by name—anyone who knows the name can join it. A private channel needs its invitation." : {
+
+    },
+    "A restart keeps everything the device has saved. A factory reset keeps nothing, the device's own identity included." : {
+
+    },
+    "A restart keeps everything the device has saved. Erasing a device is only offered while it is connected to this phone." : {
+
+    },
+    "A scan lists what the device can hear from where it is, which is not what this phone can hear." : {
+
+    },
+    "A static IPv6 address does not stop the device from also taking one the network advertises. The router may be a link-local address." : {
+
+    },
+    "About" : {
+      "comment" : "Section header on a peer page."
+    },
+    "about %@" : {
+      "comment" : "The approximate width of a location cell. The placeholder is a length, such as 611 m."
+    },
+    "Across the mesh" : {
+
+    },
+    "Add" : {
+
+    },
+    "Add %lld Missing" : {
+
+    },
+    "Add 1 Missing" : {
+
+    },
+    "Add a Node" : {
+
+    },
+    "Add a routing region to be able to tag traffic that arrives without one." : {
+
+    },
+    "Add Another Radio…" : {
+
+    },
+    "Add channel" : {
+
+    },
+    "Add Hidden Network…" : {
+
+    },
+    "Add Hop %lld" : {
+
+    },
+    "Add Hop…" : {
+      "comment" : "Button: add a repeater to a manual path."
+    },
+    "Add Network" : {
+
+    },
+    "Add peer" : {
+
+    },
+    "Add Radio…" : {
+
+    },
+    "Add Resolver" : {
+
+    },
+    "Add to Peers" : {
+      "comment" : "Button: save a node this phone has only heard of."
+    },
+    "Address" : {
+      "comment" : "Row label: a node's public address."
+    },
+    "Address copied" : {
+      "comment" : "Brief notice after the address was copied."
+    },
+    "Administrators" : {
+
+    },
+    "Advertise Identity" : {
+
+    },
+    "Advertised" : {
+      "comment" : "Row label: when the node last said who it is."
+    },
+    "Advertised identity" : {
+
+    },
+    "Advertising…" : {
+
+    },
+    "Airport code, name, or 0x1234" : {
+
+    },
+    "Alias" : {
+
+    },
+    "All nodes" : {
+
+    },
+    "Allow this saved radio in the iOS setup dialog, then the app will reconnect. Keep the radio nearby; open its pairing window if it cannot be found." : {
+
+    },
+    "Already in the path." : {
+
+    },
+    "Already joined as “%@”" : {
+
+    },
+    "Altitude" : {
+
+    },
+    "An advertisement carries the device's signed identity; a beacon carries nothing and publishes a path back to it. Either is queued at the device and goes out when its duty limit allows." : {
+
+    },
+    "An identity is already here" : {
+
+    },
+    "Announce" : {
+
+    },
+    "Announce Again" : {
+
+    },
+    "Announce My Identity" : {
+
+    },
+    "Announce on a schedule" : {
+
+    },
+    "Announce your identity?" : {
+
+    },
+    "Announced. Nearby nodes that heard it may announce themselves in reply." : {
+
+    },
+    "Announcements" : {
+
+    },
+    "Another device on this network is already using that address. Change it below, or switch to Automatic." : {
+
+    },
+    "Another phone's radio" : {
+
+    },
+    "Answers nearby nodes that ask it to identify itself." : {
+
+    },
+    "Any capability" : {
+
+    },
+    "Anyone holding this key can read the channel and send messages that appear to come from any member. Treat the invitation as a secret." : {
+
+    },
+    "Anyone who scans or receives this becomes a full member of “%@”. They can read everything sent here, send messages that appear to come from any member, and pass the invitation on." : {
+
+    },
+    "Apply" : {
+
+    },
+    "Apply and Go Back" : {
+
+    },
+    "Applying radio settings, verifying the echoed values, and saving them on the radio." : {
+
+    },
+    "Applying settings…" : {
+
+    },
+    "Ask" : {
+
+    },
+    "Ask Again" : {
+      "comment" : "VoiceOver label: ask a node for its identity again."
+    },
+    "Ask Near This Node" : {
+      "comment" : "Button: discover the nodes in range of this one."
+    },
+    "Asked %@." : {
+
+    },
+    "Asked through %@." : {
+
+    },
+    "Asking %@…" : {
+
+    },
+    "Asking the device what it is" : {
+
+    },
+    "Authorize this identity on the bridge server." : {
+
+    },
+    "Available" : {
+
+    },
+    "Available devices" : {
+
+    },
+    "Available radios" : {
+
+    },
+    "Back" : {
+
+    },
+    "Back, %lld unread elsewhere" : {
+
+    },
+    "Bandwidth" : {
+
+    },
+    "Base58 Prefix" : {
+
+    },
+    "Beacon" : {
+
+    },
+    "Beacon at startup" : {
+
+    },
+    "BLE DFU" : {
+
+    },
+    "Bluetooth transport is attached. Waiting to start radio synchronization." : {
+
+    },
+    "Bridge" : {
+      "comment" : "Node role: links the mesh to another network."
+    },
+    "Bridged" : {
+      "comment" : "A neighbor heard over a non-radio link, so it has no signal reading.\nA path leg that crossed a non-radio link, so it has no signal reading."
+    },
+    "Bridges this radio's LoRa channel with UMSH devices on this network." : {
+
+    },
+    "Broadcasts your signed identity so nearby nodes can record you. Nothing is sent until you confirm." : {
+
+    },
+    "Calls themselves" : {
+
+    },
+    "Cancel" : {
+      "comment" : "Cancels a confirmation.\nLeaves editing without saving."
+    },
+    "Cancel Reply" : {
+
+    },
+    "Capabilities" : {
+      "comment" : "Row label: what a node advertises it can do."
+    },
+    "Carried the flooded acks" : {
+
+    },
+    "Cell" : {
+
+    },
+    "Center on This Phone" : {
+
+    },
+    "Changing PHY settings can leave this device unable to reach peers on a different configuration." : {
+
+    },
+    "Channel" : {
+
+    },
+    "Channel %@" : {
+
+    },
+    "Channel %@…" : {
+
+    },
+    "Channel key" : {
+
+    },
+    "Channel keys" : {
+
+    },
+    "Channel name or invitation" : {
+
+    },
+    "Channels" : {
+
+    },
+    "Chat" : {
+      "comment" : "Node role: a person's messaging device."
+    },
+    "Chat room" : {
+      "comment" : "Node capability: hosts a shared conversation.\nNode role: hosts a shared conversation."
+    },
+    "Checking protected identity" : {
+
+    },
+    "Choose" : {
+
+    },
+    "Choose a Device" : {
+
+    },
+    "Choose a Place" : {
+
+    },
+    "Choose a Radio" : {
+
+    },
+    "Choose a Radio…" : {
+
+    },
+    "Choose on Map" : {
+
+    },
+    "Clear %lld Messages" : {
+      "comment" : "Confirms erasing a conversation. Has plural variants."
+    },
+    "Clear 1 Message" : {
+
+    },
+    "Clear All Messages" : {
+
+    },
+    "Clear all messages?" : {
+      "comment" : "Confirmation title."
+    },
+    "Clear Discovered Nodes" : {
+
+    },
+    "Clear discovered nodes?" : {
+
+    },
+    "Clear every pairing?" : {
+
+    },
+    "Clear filters" : {
+
+    },
+    "Clear Manual Path" : {
+      "comment" : "Button: drop a hand-chosen path."
+    },
+    "Clear Messages…" : {
+      "comment" : "Button: erase this node's conversation history."
+    },
+    "Clear Pairings" : {
+
+    },
+    "Clear Pairings…" : {
+
+    },
+    "Clear Position" : {
+
+    },
+    "Clock" : {
+
+    },
+    "Close" : {
+
+    },
+    "CoAP" : {
+      "comment" : "Node capability: answers CoAP requests. A protocol name; usually left untranslated."
+    },
+    "Codes differ. Nothing saved." : {
+
+    },
+    "Coding rate" : {
+
+    },
+    "Collapse" : {
+
+    },
+    "Companion radio" : {
+      "comment" : "Name of the companion radio's own identity, when it advertises none.\nUnder the name of the companion radio's own identity."
+    },
+    "Configuration" : {
+
+    },
+    "Configuration unavailable" : {
+
+    },
+    "Configure any nearby UMSH device—a repeater or a tracker—without disturbing this phone's own connection." : {
+
+    },
+    "Confirmed" : {
+      "comment" : "Row label: when this route last carried an acknowledgment."
+    },
+    "Congrats, you've successfully set up your %@!" : {
+
+    },
+    "Connect a companion radio set up for this phone to announce your identity." : {
+
+    },
+    "Connect a companion radio set up for this phone to exchange contacts." : {
+
+    },
+    "Connect a companion radio set up for this phone to hear nearby nodes." : {
+
+    },
+    "Connect a companion radio set up for this phone." : {
+      "comment" : "Alert message when no radio can send."
+    },
+    "Connect a Radio" : {
+
+    },
+    "Connecting" : {
+
+    },
+    "Connecting to %@…" : {
+
+    },
+    "Connection" : {
+
+    },
+    "Connects automatically when the radio is powered on nearby, even while the app is in the background." : {
+
+    },
+    "Continue" : {
+
+    },
+    "Conversation" : {
+
+    },
+    "Conversation unavailable" : {
+      "comment" : "Alert title."
+    },
+    "Conversations" : {
+
+    },
+    "Copies the address." : {
+      "comment" : "VoiceOver hint on the address row."
+    },
+    "Copy" : {
+
+    },
+    "Copy coordinates" : {
+
+    },
+    "Copy device identity" : {
+
+    },
+    "Copy Link" : {
+      "comment" : "Button: copy a node's identity link."
+    },
+    "Could not save it. Try again from the device's identity." : {
+
+    },
+    "Covers this place" : {
+
+    },
+    "Create Channel" : {
+
+    },
+    "Create identity" : {
+
+    },
+    "Create or unlock the phone identity before configuring this radio." : {
+
+    },
+    "Current fix" : {
+
+    },
+    "Custom / manual" : {
+
+    },
+    "Data release" : {
+
+    },
+    "Decimal degrees. A typed position is taken exactly, with no allowance for error." : {
+
+    },
+    "Default" : {
+
+    },
+    "Default DFU" : {
+
+    },
+    "Delegated acknowledgements" : {
+
+    },
+    "Delete" : {
+
+    },
+    "Delete Conversation" : {
+
+    },
+    "Delete for everyone" : {
+
+    },
+    "Delete Peer" : {
+      "comment" : "Confirms deleting a node."
+    },
+    "Delete Peer and Conversation" : {
+      "comment" : "Confirms deleting a node and its messages."
+    },
+    "Delete this conversation?" : {
+
+    },
+    "Delete this message?" : {
+
+    },
+    "Derive from what it does" : {
+
+    },
+    "Destroys the private key; this phone becomes a new node. Old messages stay but are unreachable." : {
+
+    },
+    "Details" : {
+
+    },
+    "Device identity" : {
+
+    },
+    "Device may become inaccessible" : {
+
+    },
+    "Devices" : {
+
+    },
+    "DFU entry confirmed" : {
+
+    },
+    "DFU Method" : {
+
+    },
+    "Diagnostics read" : {
+
+    },
+    "Different" : {
+
+    },
+    "Direct" : {
+      "comment" : "Route kind: in radio range, no repeaters."
+    },
+    "Direct neighbors only" : {
+
+    },
+    "Direction" : {
+
+    },
+    "Discard Changes" : {
+
+    },
+    "Disconnect" : {
+
+    },
+    "Discover" : {
+
+    },
+    "Discover peers" : {
+
+    },
+    "Discover Peers" : {
+
+    },
+    "Discoverability" : {
+
+    },
+    "Discoverable" : {
+
+    },
+    "Discovered nodes" : {
+
+    },
+    "Discovery keeps running while this list is open. Devices drop out a few seconds after they stop advertising." : {
+
+    },
+    "Discovery keeps running while this list is open. Radios that power off drop out after a few seconds." : {
+
+    },
+    "Distance" : {
+      "comment" : "Strip label: how far away the node is. Keep short."
+    },
+    "Do not delete the app—that erases the database this build is unable to read. Reinstalling the previous version, or a build that fixes the error below, restores everything." : {
+
+    },
+    "Done" : {
+      "comment" : "Closes a sheet."
+    },
+    "Dropped frames" : {
+
+    },
+    "Duty cycle and uptime are not reset." : {
+
+    },
+    "Duty-cycle limit" : {
+
+    },
+    "Earlier" : {
+      "comment" : "Section header: pings sent before the one shown."
+    },
+    "east" : {
+      "comment" : "Compass direction, read by VoiceOver after a distance."
+    },
+    "Edit" : {
+      "comment" : "Starts editing the route by hand."
+    },
+    "Edit Message" : {
+
+    },
+    "Enter Conversation" : {
+
+    },
+    "Enter DFU Mode" : {
+
+    },
+    "Enter DFU Mode…" : {
+
+    },
+    "Enter Router Hint…" : {
+
+    },
+    "Enter the server's UMSH identity to authenticate it. Wi-Fi and IP must be configured separately." : {
+
+    },
+    "Entered by hand · %@" : {
+      "comment" : "Under a repeater typed into a manual path. The placeholder is its hint in hex."
+    },
+    "Erase Everything" : {
+
+    },
+    "Erase Everything and Reboot" : {
+
+    },
+    "Erase Everything and Restart" : {
+
+    },
+    "Erase Identity" : {
+
+    },
+    "Erase Identity keeps messages; Start Over removes everything." : {
+
+    },
+    "Erase Identity…" : {
+
+    },
+    "Erase this identity?" : {
+
+    },
+    "Erased from this phone only. %@ keeps their copy." : {
+      "comment" : "Confirmation message for clearing a conversation. The placeholder is the node's name."
+    },
+    "Every channel you have joined already has a conversation." : {
+
+    },
+    "Every setting, key, and pairing is erased, including the device's own identity—it comes back as a node nobody has met, at a different address, and has to be set up from scratch." : {
+
+    },
+    "Everything else was saved. You can set the clock from Review all settings." : {
+
+    },
+    "Everything this phone knows about the node this member is speaking from." : {
+
+    },
+    "Exchange" : {
+
+    },
+    "Exchange contacts?" : {
+
+    },
+    "Expand" : {
+
+    },
+    "Factory reset failed" : {
+
+    },
+    "Factory Reset Radio…" : {
+
+    },
+    "Factory reset this device?" : {
+
+    },
+    "Factory reset this radio?" : {
+
+    },
+    "Factory Reset…" : {
+
+    },
+    "Favorite" : {
+      "comment" : "VoiceOver label for the favorite star."
+    },
+    "Favorite node, hint %@" : {
+
+    },
+    "Favorites" : {
+
+    },
+    "Filter" : {
+
+    },
+    "Find another companion radio" : {
+
+    },
+    "Find companion radio" : {
+
+    },
+    "Find This Device" : {
+
+    },
+    "Finding this phone…" : {
+
+    },
+    "Finish Here" : {
+
+    },
+    "Finish Radio Setup" : {
+
+    },
+    "Finish setup to reconnect" : {
+
+    },
+    "Flood" : {
+      "comment" : "Route kind: every repeater rebroadcasts the frame. A routing term, not water.\nStepper label: how far a manual path floods from the start."
+    },
+    "Flood regions" : {
+
+    },
+    "Floods that arrive with no region are relayed carrying this one, which scopes how much further they travel. Traffic that already carries a region keeps it." : {
+
+    },
+    "Forget" : {
+
+    },
+    "Forget Previous Radio" : {
+
+    },
+    "Forget Previous Radio…" : {
+
+    },
+    "Forget the previous radio?" : {
+
+    },
+    "Forget this companion radio?" : {
+
+    },
+    "Forget this network?" : {
+
+    },
+    "Forget This Radio" : {
+
+    },
+    "Form" : {
+
+    },
+    "Forward other nodes' traffic" : {
+
+    },
+    "Forwarding" : {
+
+    },
+    "Forwarding thresholds" : {
+
+    },
+    "Frames heard below a threshold are not relayed. Raising them keeps a repeater from amplifying signals too weak to be worth repeating; leaving them off relays everything it can decode." : {
+
+    },
+    "Frequency" : {
+
+    },
+    "GNSS receiver" : {
+
+    },
+    "Go back and connect to the device again. Nothing was changed on it." : {
+
+    },
+    "Heard" : {
+      "comment" : "Strip label: when the node was last heard. Keep short."
+    },
+    "Heard by %@" : {
+
+    },
+    "Heard over the air but not saved. Opening a conversation with one works the same way." : {
+
+    },
+    "Heard over the air but not saved. Swipe to save one, or open it for details." : {
+
+    },
+    "Heard since opened" : {
+
+    },
+    "Held until" : {
+      "comment" : "Row label: when a manual path's hold ends."
+    },
+    "Hex" : {
+
+    },
+    "Hidden" : {
+
+    },
+    "Hidden network" : {
+
+    },
+    "Hint" : {
+
+    },
+    "Hold" : {
+      "comment" : "Section header: how long a manual path stands."
+    },
+    "Hold for" : {
+      "comment" : "Picker label: how long a manual path stands."
+    },
+    "Hop" : {
+
+    },
+    "Hop count" : {
+
+    },
+    "Host identity" : {
+
+    },
+    "Host provisioning" : {
+
+    },
+    "How long since the device last restarted." : {
+
+    },
+    "How This Channel Works" : {
+
+    },
+    "Identifier" : {
+
+    },
+    "Identify" : {
+      "comment" : "Tile: ask a node to say who it is."
+    },
+    "Identity" : {
+
+    },
+    "Identity is unavailable while protected data is locked or storage cannot be accessed." : {
+
+    },
+    "Identity QR code" : {
+
+    },
+    "Identity Requested" : {
+
+    },
+    "Ignore" : {
+
+    },
+    "Ignores nearby nodes that ask it to identify itself. It still announces itself on its own schedule." : {
+
+    },
+    "Import a peer to get started, or listen for nodes announcing themselves nearby." : {
+
+    },
+    "Import peer" : {
+
+    },
+    "Imported" : {
+      "comment" : "Advertised row value: the identity came from a link or QR code, not the air."
+    },
+    "In path" : {
+
+    },
+    "In Use" : {
+
+    },
+    "In your networks" : {
+
+    },
+    "Internet Server" : {
+
+    },
+    "IPv4" : {
+
+    },
+    "IPv6" : {
+
+    },
+    "It saved its settings, but what it read back afterwards is not what it was asked for. Read the device again before relying on this configuration." : {
+
+    },
+    "Join" : {
+
+    },
+    "Join a Channel…" : {
+
+    },
+    "Join Channel" : {
+
+    },
+    "Join Channel…" : {
+
+    },
+    "Join Network" : {
+
+    },
+    "Joined" : {
+
+    },
+    "Joined By" : {
+
+    },
+    "Joined, with no conversation open yet." : {
+
+    },
+    "Jump to Latest" : {
+
+    },
+    "just now" : {
+      "comment" : "An age under a minute, such as when a node was last heard."
+    },
+    "Keep Editing" : {
+
+    },
+    "Keep it powered on and nearby. If this is the first time this phone has connected to it, iOS may ask you to pair." : {
+
+    },
+    "Keep Manual Path" : {
+
+    },
+    "Keep the radio nearby and open its pairing window. Allow access in the iOS setup dialog." : {
+
+    },
+    "Keep This Identity" : {
+
+    },
+    "Keeping it means everyone who knew this phone still recognizes it. Starting fresh destroys the key and mints a new one, so it arrives on the mesh as a node nobody has met." : {
+
+    },
+    "Known node" : {
+
+    },
+    "Known Repeaters" : {
+
+    },
+    "Last read %@." : {
+
+    },
+    "Latitude" : {
+
+    },
+    "Leave" : {
+
+    },
+    "Leave “%@” chat?" : {
+
+    },
+    "Leave “%@”?" : {
+
+    },
+    "Leave Channel" : {
+
+    },
+    "Leave Conversation" : {
+
+    },
+    "Leave either empty for no threshold." : {
+
+    },
+    "Leave the device powered on and nearby." : {
+
+    },
+    "Leave the router blank for a network with no way out of it. A static address the network does not own leaves the device unreachable." : {
+
+    },
+    "Leave untagged" : {
+
+    },
+    "Link copied" : {
+      "comment" : "Brief notice after a node's link was copied."
+    },
+    "Link quality" : {
+
+    },
+    "Load more" : {
+
+    },
+    "Load More" : {
+
+    },
+    "Loading conversations" : {
+
+    },
+    "Loading conversations…" : {
+
+    },
+    "Loading nodes" : {
+
+    },
+    "Loading nodes…" : {
+
+    },
+    "Local details" : {
+
+    },
+    "Local Details" : {
+
+    },
+    "Local Network" : {
+
+    },
+    "Local Network Settings" : {
+
+    },
+    "Location" : {
+
+    },
+    "Location access for UMSH is off in iOS Settings, so nothing is shared." : {
+
+    },
+    "Location unverified" : {
+
+    },
+    "Locations reported by observed nodes will appear here with their precision and age." : {
+
+    },
+    "Longitude" : {
+
+    },
+    "Look Up Channel" : {
+
+    },
+    "Looking for networks…" : {
+
+    },
+    "Looking up a channel does not join it or transmit anything." : {
+
+    },
+    "Looking up the regions around this phone…" : {
+
+    },
+    "Looking up this place…" : {
+
+    },
+    "Make sure the device is powered on and nearby." : {
+
+    },
+    "Make sure the radio is powered on and nearby." : {
+
+    },
+    "Manage" : {
+      "comment" : "Tile: read and change the node's settings. A verb."
+    },
+    "Manage Device" : {
+
+    },
+    "Manual" : {
+      "comment" : "Route kind: a path chosen by hand."
+    },
+    "Manual · Flood %@" : {
+      "comment" : "Route kind: a hand-chosen route that floods from the start. The placeholder is a hop count."
+    },
+    "Map" : {
+
+    },
+    "Maximum hops" : {
+
+    },
+    "Member" : {
+
+    },
+    "MeshCore" : {
+
+    },
+    "Message" : {
+      "comment" : "Tile: open a conversation with the node. A verb."
+    },
+    "Message deleted" : {
+
+    },
+    "Message Details" : {
+
+    },
+    "Message not delivered" : {
+
+    },
+    "Message not sent" : {
+
+    },
+    "Message submitted" : {
+
+    },
+    "Message unavailable" : {
+
+    },
+    "Messages" : {
+      "comment" : "Switch: notify for this node's messages."
+    },
+    "Messages and requests" : {
+
+    },
+    "Messages in this channel still arrive and still count as unread. This decides only whether they interrupt you." : {
+
+    },
+    "Messaging is unavailable." : {
+      "comment" : "Error when a message cannot be sent at all."
+    },
+    "Minimum quality" : {
+
+    },
+    "Minimum security" : {
+
+    },
+    "Minimum signal" : {
+
+    },
+    "Minimum: %@" : {
+
+    },
+    "Mobile" : {
+      "comment" : "Node capability: moves around."
+    },
+    "Modem profile" : {
+
+    },
+    "More" : {
+
+    },
+    "Name" : {
+
+    },
+    "Name (optional)" : {
+
+    },
+    "Name not saved" : {
+      "comment" : "Alert title."
+    },
+    "Name or router hint" : {
+
+    },
+    "Name, alias, address, or hint" : {
+
+    },
+    "Nearby" : {
+
+    },
+    "Nearby nodes see this name when they ask who this phone is, and it rides along with anything you say in a channel. Leave it empty to stay a bare hint. You can change it later in Settings." : {
+
+    },
+    "Nearby radios will appear here." : {
+
+    },
+    "Nearby UMSH devices will appear here." : {
+
+    },
+    "Nearby—direct" : {
+
+    },
+    "Nearness %u of 3" : {
+
+    },
+    "Neighboring Repeaters" : {
+
+    },
+    "Neighbors" : {
+      "comment" : "Tile: list the repeaters this node can hear."
+    },
+    "Network" : {
+
+    },
+    "Network name" : {
+
+    },
+    "Never" : {
+      "comment" : "Advertised row value: the node has not said who it is."
+    },
+    "Never displayed or exported. Survives deleting the app." : {
+
+    },
+    "New" : {
+
+    },
+    "New Channel Chat" : {
+
+    },
+    "New Channel Chat…" : {
+
+    },
+    "New Message…" : {
+
+    },
+    "New Private Channel" : {
+
+    },
+    "New Private Channel…" : {
+
+    },
+    "Next send" : {
+      "comment" : "Row label: how the next frame to this node is routed."
+    },
+    "Next Time Heard" : {
+      "comment" : "Switch: notify once, the next time anything is heard from this node."
+    },
+    "No ack on the last %u send%@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "No ack on the last %1$u send%2$@"
+          }
+        }
+      }
+    },
+    "No available radios. Turn on a paired radio nearby, or add a radio with its pairing window open." : {
+
+    },
+    "No Channels" : {
+
+    },
+    "No Channels to Open" : {
+
+    },
+    "No companion radio is connected." : {
+      "comment" : "Why a ping could not be sent."
+    },
+    "No conversations" : {
+
+    },
+    "No known nodes" : {
+
+    },
+    "No messages yet" : {
+
+    },
+    "No networks stored." : {
+
+    },
+    "No nodes match" : {
+
+    },
+    "No nodes match this search." : {
+
+    },
+    "No path" : {
+      "comment" : "VoiceOver label for the X on a ping that got no reply."
+    },
+    "No recent locations" : {
+
+    },
+    "No reply" : {
+      "comment" : "Ping result: nothing came back."
+    },
+    "No reported locations" : {
+
+    },
+    "No route to reset" : {
+      "comment" : "Brief notice when there was no learned route."
+    },
+    "No saved nodes. Nodes heard over the air appear in search until you save them." : {
+
+    },
+    "Node hint %@" : {
+
+    },
+    "Node Identity Preview" : {
+
+    },
+    "Nodes have reported locations, but none of them pass the current filters." : {
+
+    },
+    "Nodes that announce themselves appear here while this stays open. This is a live window, not a directory of the mesh." : {
+
+    },
+    "None" : {
+
+    },
+    "None heard" : {
+
+    },
+    "None—don't tag" : {
+
+    },
+    "None." : {
+
+    },
+    "north" : {
+      "comment" : "Compass direction, read by VoiceOver after a distance."
+    },
+    "northeast" : {
+      "comment" : "Compass direction, read by VoiceOver after a distance."
+    },
+    "northwest" : {
+      "comment" : "Compass direction, read by VoiceOver after a distance."
+    },
+    "Not exchanged. Nothing saved." : {
+
+    },
+    "Not learned yet" : {
+      "comment" : "Route kind: nothing learned, so the next send floods."
+    },
+    "Not now" : {
+
+    },
+    "Not read" : {
+
+    },
+    "Not sent" : {
+      "comment" : "Alert title: a request could not go out."
+    },
+    "Nothing heard yet." : {
+
+    },
+    "Nothing is backed up. Every message on this phone is about to be gone for good." : {
+
+    },
+    "Nothing is sent to the node." : {
+      "comment" : "Confirmation message for deleting a node."
+    },
+    "Nothing is sent yet. Either choice fills in the settings on the previous screen, which you then apply." : {
+
+    },
+    "Nothing matches this search." : {
+
+    },
+    "Nothing nearby yet." : {
+
+    },
+    "Nothing read yet. Tap Refresh to ask %@." : {
+
+    },
+    "Nothing to do—this node's regions already match this place." : {
+
+    },
+    "Notifications" : {
+      "comment" : "Section header on a peer page."
+    },
+    "Notifications off" : {
+
+    },
+    "Off" : {
+      "comment" : "Flood allowance: the frame does not flood.\nVoiceOver value of a switch-like control."
+    },
+    "OK" : {
+      "comment" : "Dismisses an alert."
+    },
+    "On" : {
+      "comment" : "VoiceOver value of a switch-like control."
+    },
+    "On radio" : {
+
+    },
+    "On the radio only" : {
+
+    },
+    "On, a GNSS fix sets the device's clock by itself." : {
+
+    },
+    "Only floods tagged with one of these regions, or carrying no region at all, are relayed. This is a routing domain, not a radio band." : {
+
+    },
+    "Only paired radios advertising nearby appear here. Radios disappear after a few seconds without an advertisement." : {
+
+    },
+    "Only paired radios advertising nearby appear here. Radios disappear after a few seconds without an advertisement. Manage this phone's companion radio from its own screen." : {
+
+    },
+    "Open" : {
+
+    },
+    "Opening…" : {
+
+    },
+    "Original Message" : {
+
+    },
+    "Pairing mode lets another phone pair without pressing anything on the device. It closes by itself after a short while, or when a phone pairs. Clearing forgets every paired phone and the pairing PIN." : {
+
+    },
+    "Password" : {
+
+    },
+    "Past-hour duty usage" : {
+
+    },
+    "Path" : {
+      "comment" : "Section header: the repeaters a route goes through."
+    },
+    "Peer" : {
+
+    },
+    "Peer identity" : {
+
+    },
+    "Peer keys" : {
+
+    },
+    "Peer not deleted" : {
+      "comment" : "Alert title."
+    },
+    "Peers" : {
+
+    },
+    "Permanently erases the radio's saved settings, its device identity, and every Bluetooth pairing, then reboots it to a blank factory state. This cannot be undone—you will need to set the radio up again from scratch." : {
+
+    },
+    "Ping" : {
+      "comment" : "Tile: check that the node answers. A verb.\nTitle of the ping sheet. A noun."
+    },
+    "Ping Again" : {
+      "comment" : "Button: send another ping."
+    },
+    "Ping Along Path" : {
+      "comment" : "Button: test a manual path before saving it."
+    },
+    "Place" : {
+
+    },
+    "Position" : {
+
+    },
+    "Position reported by a router" : {
+
+    },
+    "Positioning" : {
+
+    },
+    "Preset" : {
+
+    },
+    "Previewing does not save this peer or transmit anything." : {
+
+    },
+    "Private Channel Invitation" : {
+
+    },
+    "Private key" : {
+
+    },
+    "Protocol tier" : {
+
+    },
+    "Public Channel" : {
+
+    },
+    "Queued frames" : {
+
+    },
+    "Radio" : {
+      "comment" : "Row label: the companion radio this identity belongs to."
+    },
+    "Radio enabled" : {
+
+    },
+    "Radio ID" : {
+
+    },
+    "Radio identity" : {
+
+    },
+    "Radio profile" : {
+
+    },
+    "Radio Profile" : {
+
+    },
+    "Radio Setup" : {
+
+    },
+    "Radio state" : {
+
+    },
+    "Radio state inspection is complete and mesh traffic is enabled." : {
+
+    },
+    "Radio, identity, position, time, forwarding, and peer settings, grouped a screen at a time." : {
+
+    },
+    "Reach" : {
+
+    },
+    "Read from %@ just now." : {
+
+    },
+    "Read the Node's Position" : {
+
+    },
+    "Reading the transparent radio's PHY state. This radio does not provide host filtering or offline assistance." : {
+
+    },
+    "Receive" : {
+
+    },
+    "Receive filters" : {
+
+    },
+    "Receiver" : {
+
+    },
+    "Reception" : {
+
+    },
+    "Reconnect" : {
+
+    },
+    "Record in Peers" : {
+
+    },
+    "Refresh" : {
+
+    },
+    "Refresh to request new diagnostics." : {
+
+    },
+    "Region" : {
+
+    },
+    "Region data %@." : {
+
+    },
+    "Region database" : {
+
+    },
+    "Region name" : {
+
+    },
+    "Regions" : {
+      "comment" : "Row label: the regions a flood route was learned in."
+    },
+    "Regions for This Place" : {
+
+    },
+    "Remove" : {
+
+    },
+    "Remove %@?" : {
+      "comment" : "Confirmation title. The placeholder is the node's name."
+    },
+    "Remove Peer" : {
+      "comment" : "Confirms taking a node off the Peers list, keeping its conversation."
+    },
+    "Remove peer?" : {
+
+    },
+    "Remove Peer…" : {
+      "comment" : "Button: take this node off the Peers list or delete it."
+    },
+    "Remove Radio" : {
+
+    },
+    "Removes every node heard over the air that is not saved, has no conversation, and is not stored on the radio. Saved nodes are untouched." : {
+
+    },
+    "Removing keeps the conversation. Deleting erases it too." : {
+      "comment" : "Confirmation message for removing a node that has a conversation."
+    },
+    "Removing someone later means creating a new channel and re-inviting everyone else." : {
+
+    },
+    "Removing the peer keeps its conversation and message history, and the node stays findable through search. Deleting the peer and conversation erases the message history too." : {
+
+    },
+    "Repeated By" : {
+
+    },
+    "Repeater" : {
+      "comment" : "Node capability: forwards other nodes' traffic.\nNode role: forwards other nodes' traffic."
+    },
+    "Repeater names are matched by a two-byte hint and may not be the node shown." : {
+      "comment" : "Footer under a path whose repeaters were named by guessing from their short hints."
+    },
+    "Replace All" : {
+
+    },
+    "Replace Existing Host…" : {
+
+    },
+    "Replace Host and Clear Its Data" : {
+
+    },
+    "Replace the radio's existing host?" : {
+
+    },
+    "Reply" : {
+
+    },
+    "Reply Path" : {
+      "comment" : "Section header: the route a ping reply took."
+    },
+    "Replying to %@" : {
+
+    },
+    "Reported" : {
+
+    },
+    "Reported precision" : {
+
+    },
+    "Request Identity" : {
+
+    },
+    "Required" : {
+
+    },
+    "Resend" : {
+
+    },
+    "Resend this message?" : {
+
+    },
+    "Reset all counters?" : {
+
+    },
+    "Reset Counters" : {
+
+    },
+    "Reset Counters…" : {
+
+    },
+    "Reset Route" : {
+      "comment" : "Button: forget the learned route to this node."
+    },
+    "Resolvers the device is told to use. Leave the list empty to use only what the network offers." : {
+
+    },
+    "Restart" : {
+
+    },
+    "Restart Radio…" : {
+
+    },
+    "Restart this device?" : {
+
+    },
+    "Restart This Device…" : {
+
+    },
+    "Restart this radio?" : {
+
+    },
+    "Retry" : {
+
+    },
+    "Retry sending message?" : {
+
+    },
+    "Review all settings" : {
+
+    },
+    "Role" : {
+
+    },
+    "Role %u" : {
+      "comment" : "A node role this app has no name for, by its number."
+    },
+    "Route" : {
+      "comment" : "Strip label: how this phone reaches the node. A noun. Keep short.\nTitle of the screen showing how this phone reaches a node. A noun."
+    },
+    "Route reset" : {
+      "comment" : "Brief notice after the learned route was forgotten."
+    },
+    "Router hint" : {
+
+    },
+    "Router Hint" : {
+
+    },
+    "Router hint %@" : {
+      "comment" : "A repeater known only by the short hint a route carries. The placeholder is the hint, such as 7N*."
+    },
+    "Routing regions" : {
+
+    },
+    "Runs only while UMSH is open. Intervals are minimums, staggered at random." : {
+
+    },
+    "Same" : {
+
+    },
+    "Same code on the other screen?" : {
+
+    },
+    "Same name, different key—they are separate channels and messages will not cross between them. Give this one a different name to tell them apart." : {
+
+    },
+    "Save" : {
+      "comment" : "Saves an edit."
+    },
+    "Save Peer" : {
+
+    },
+    "Save to Peers" : {
+
+    },
+    "Saved" : {
+
+    },
+    "Saved for restart" : {
+
+    },
+    "Saved nodes" : {
+
+    },
+    "Saved on the device" : {
+
+    },
+    "Saved radio" : {
+
+    },
+    "Saved to Peers" : {
+
+    },
+    "Saving is unavailable." : {
+      "comment" : "Error when a draft cannot be stored."
+    },
+    "Saving it to Peers is how you find this %@ again from the rest of the app." : {
+
+    },
+    "Scan for Networks" : {
+
+    },
+    "Scoped only" : {
+
+    },
+    "Searching for companion radios" : {
+
+    },
+    "Searching for devices" : {
+
+    },
+    "Send" : {
+
+    },
+    "Send Advertisement" : {
+
+    },
+    "Send Beacon" : {
+
+    },
+    "Send unavailable while the radio connects" : {
+
+    },
+    "Sender" : {
+
+    },
+    "Sends the message again" : {
+
+    },
+    "Sensor" : {
+      "comment" : "Node role: reports measurements."
+    },
+    "Sent through %@" : {
+      "comment" : "Under This phone on a path. The placeholder is the companion radio's name."
+    },
+    "Serial/USB-CDC DFU" : {
+
+    },
+    "Set From iPhone" : {
+
+    },
+    "Set Up a Device" : {
+
+    },
+    "Set up a device…" : {
+
+    },
+    "Set up another device" : {
+
+    },
+    "Set Up for This Phone" : {
+
+    },
+    "Set Up Later" : {
+
+    },
+    "Setting a beacon reach larger than %lld hops is not recommended. Are you sure you want to do this?" : {
+
+    },
+    "Setting a default flood hop count larger than %lld is not recommended. Are you sure you want to do this?" : {
+
+    },
+    "Setting up a device does not change which radio this phone uses, and the device is not claimed by this phone. Its own Bluetooth pairing still applies." : {
+
+    },
+    "Setting Up…" : {
+
+    },
+    "Settings" : {
+
+    },
+    "SF%u" : {
+
+    },
+    "Share" : {
+      "comment" : "Title of the sheet that shares a node's identity link.\nVoiceOver label for the button that shares a node's link."
+    },
+    "Share Channel" : {
+
+    },
+    "Share location in identity" : {
+
+    },
+    "Share…" : {
+      "comment" : "Button: open the system share sheet for a node's link."
+    },
+    "Shared precision" : {
+
+    },
+    "Short code, name, or 0x1234" : {
+
+    },
+    "Show" : {
+
+    },
+    "Show in Maps…" : {
+
+    },
+    "Show list" : {
+
+    },
+    "Show older" : {
+
+    },
+    "Show on Map" : {
+      "comment" : "VoiceOver label for the map card on a peer page."
+    },
+    "Shows radio details" : {
+
+    },
+    "Shows the original" : {
+
+    },
+    "Signal" : {
+
+    },
+    "Signal-to-noise" : {
+
+    },
+    "SNR %@ dB" : {
+      "comment" : "A signal-to-noise ratio, in decibels. SNR is the usual abbreviation. The placeholder is a number."
+    },
+    "Some settings could not be read" : {
+
+    },
+    "Sort" : {
+
+    },
+    "Sort and filter" : {
+
+    },
+    "Source" : {
+
+    },
+    "Source route" : {
+      "comment" : "Route kind: the sender names each repeater."
+    },
+    "south" : {
+      "comment" : "Compass direction, read by VoiceOver after a distance."
+    },
+    "southeast" : {
+      "comment" : "Compass direction, read by VoiceOver after a distance."
+    },
+    "southwest" : {
+      "comment" : "Compass direction, read by VoiceOver after a distance."
+    },
+    "Spreading factor" : {
+
+    },
+    "Start a conversation with a peer, or open one in a channel you have joined." : {
+
+    },
+    "Start Fresh" : {
+
+    },
+    "Start over?" : {
+
+    },
+    "Start Over…" : {
+
+    },
+    "State" : {
+
+    },
+    "Status" : {
+
+    },
+    "Stop Locating" : {
+
+    },
+    "Stop Waiting" : {
+
+    },
+    "Storage" : {
+
+    },
+    "Storage unavailable" : {
+
+    },
+    "Stored on this device" : {
+
+    },
+    "Stored on this phone and suggested to anyone you invite. It is not part of the key, so two people can call the same channel different things." : {
+
+    },
+    "Stored only on this phone. An alias replaces the channel's name here without changing it for anyone else." : {
+
+    },
+    "Suggested Channels" : {
+
+    },
+    "Switch to the learned path?" : {
+
+    },
+    "Switching…" : {
+
+    },
+    "System-managed while this radio is saved" : {
+
+    },
+    "Tag untagged floods with" : {
+
+    },
+    "Tag untagged traffic" : {
+
+    },
+    "Telemetry" : {
+      "comment" : "Node capability: reports measurements."
+    },
+    "Temperature" : {
+
+    },
+    "Temporary session" : {
+      "comment" : "Node role: a short-lived identity."
+    },
+    "Test" : {
+      "comment" : "Section header: try a manual path before saving it."
+    },
+    "Text messages" : {
+      "comment" : "Node capability: sends and receives text messages."
+    },
+    "The app stops reconnecting to this radio and drops it from Bluetooth's standing connections. The radio keeps its own bond until you re-pair; add it again later with \"Find companion radio\"." : {
+
+    },
+    "The channel itself: who has joined it, how to invite someone, and how to leave." : {
+
+    },
+    "The channel key is deleted from this phone. Joining again requires a new invitation." : {
+
+    },
+    "The clock could not be set" : {
+
+    },
+    "The companion radio stays connected while you set up another device." : {
+
+    },
+    "The companion radio's own identity has joined this channel, but this phone does not hold its key. Join it here with its name or invitation to see it by name." : {
+
+    },
+    "The database has no regions covering this place." : {
+
+    },
+    "The device can reach these nodes without this phone in the middle." : {
+
+    },
+    "The device did not finish reporting its settings. Go back and connect to it again." : {
+
+    },
+    "The device forgets this network and its passphrase." : {
+
+    },
+    "The device holds no IPv6 addresses." : {
+
+    },
+    "The device is leaving UMSH." : {
+
+    },
+    "The device is using this network, so forgetting it disconnects the device. Its passphrase is forgotten with it." : {
+
+    },
+    "The device joins the network with a check beside it. Tap another to switch, or tap the checked one to disconnect. Swipe a network to forget it." : {
+
+    },
+    "The device name is public and may be visible in Bluetooth discovery." : {
+
+    },
+    "The device power-cycles and keeps everything it has saved. It is off the air until it comes back, and anything relaying through it is too." : {
+
+    },
+    "The device read its settings back after saving, so they survive a power cycle." : {
+
+    },
+    "The device reported %@ back differently" : {
+
+    },
+    "The device reports a battery but no readings from it." : {
+
+    },
+    "The message history on this phone is removed. The peer keeps their copy." : {
+
+    },
+    "The messages on this phone are removed. You stay in the channel, and a new message opens this conversation again." : {
+
+    },
+    "The most repeaters a transmission may cross. Channels can set their own." : {
+
+    },
+    "The name could not be stored. Try again." : {
+      "comment" : "Alert message."
+    },
+    "The name is not a password. Anyone who knows it can join and read everything sent here." : {
+
+    },
+    "The name is stored only on this phone; it is not an authenticated claim from the peer." : {
+
+    },
+    "The node could not be deleted. Try again." : {
+      "comment" : "Alert message."
+    },
+    "The node's record is deleted from this phone. Nothing is sent to the node." : {
+
+    },
+    "The password is sent to the device and kept there. It is never sent back, so this app cannot show you one you have already stored." : {
+
+    },
+    "The path holds %lld repeaters, the most it can carry." : {
+
+    },
+    "The phone identity matches this radio. Reading its authoritative provisioning state before enabling traffic." : {
+
+    },
+    "The previous host's keys, filters, and queued traffic will be erased. The radio's own identity and device settings remain unchanged." : {
+
+    },
+    "The QR code carries your public key plus your signed identity details." : {
+
+    },
+    "The QR code carries your public key. Connect the companion radio to include signed identity details." : {
+
+    },
+    "The radio could not send the ping." : {
+      "comment" : "Why a ping could not be sent."
+    },
+    "The radio power-cycles and keeps everything it has saved, including its pairing with this phone. It disconnects while it restarts and reconnects on its own." : {
+
+    },
+    "The radio's own identity has joined these. It reports identifiers, never keys, so they cannot be named or used from this phone." : {
+
+    },
+    "The signature on these details does not verify. Do not rely on them." : {
+
+    },
+    "The updater must be within Bluetooth range." : {
+
+    },
+    "Then a learned path can replace it." : {
+      "comment" : "Footer under a manual path's hold."
+    },
+    "Then flood" : {
+      "comment" : "Row label: how far a manual path floods past its last repeater.\nStepper label: how far a manual path floods past its last repeater."
+    },
+    "These details are the node's own claims about itself." : {
+
+    },
+    "These details carry no signature, so they may not have come from this node at all." : {
+
+    },
+    "This abandons its saved app connection so you can add another radio. It does not reset the radio or remove the pairing from Bluetooth Settings." : {
+
+    },
+    "This action only enters DFU; it does not install firmware." : {
+
+    },
+    "This cannot be undone." : {
+
+    },
+    "This device can communicate across the bridge but does not forward traffic for other nodes." : {
+
+    },
+    "This device can see the networks around it. It cannot join one." : {
+
+    },
+    "This device carries only its own traffic and advertises no forwarding role." : {
+
+    },
+    "This device did not report %@. Those settings are not shown here and are set to this sheet's values when you apply changes, because the device accepts its configuration whole. Everything else works normally." : {
+
+    },
+    "This device has not said what it is yet." : {
+
+    },
+    "This device is another phone's companion radio. Setting it up here changes what it does; its host keys, filters, and queued traffic are left alone." : {
+
+    },
+    "This device relays floods it hears, subject to the limits below." : {
+
+    },
+    "This device tags untagged traffic with a region it does not relay. Add %@ to the list above, or choose a different tag." : {
+
+    },
+    "This device will stop normal operation and may remain inaccessible indefinitely. Continue only if someone is ready to complete the firmware update using the selected method." : {
+
+    },
+    "This is the channel's public name. Anyone who knows it can join." : {
+
+    },
+    "This is the same key you already hold. Continuing updates its local details instead of adding a second channel." : {
+
+    },
+    "This member has not been saved as a peer. Asking invites them to send their current identity." : {
+
+    },
+    "This message was recorded before reception details were kept." : {
+
+    },
+    "This network also offers %@, which this app cannot set up." : {
+
+    },
+    "This node already forwards for exactly these regions." : {
+
+    },
+    "This phone" : {
+      "comment" : "The first node on a drawn path: the phone the user holds."
+    },
+    "This phone could not find where it is." : {
+
+    },
+    "This phone could not find where it is. Check that location access for UMSH is on in iOS Settings, or type coordinates instead." : {
+
+    },
+    "This phone now has an identity of its own—%@—and the key behind it never leaves the device." : {
+
+    },
+    "This phone's own radio is listed but cannot be set up from here—use the companion radio screen for that. Devices drop out of the list a few seconds after they stop advertising." : {
+
+    },
+    "This phone's radio" : {
+
+    },
+    "This phone's routing did not take the path. Check the radio and try again." : {
+      "comment" : "Shown when saving a manual path failed."
+    },
+    "This radio belongs to another host. Replacing it clears that host's keys, filters, and queued traffic." : {
+
+    },
+    "This radio is not set up for this phone." : {
+      "comment" : "Why a ping could not be sent."
+    },
+    "This radio's position" : {
+
+    },
+    "This removes the saved accessory and stops the app reconnecting. To add it again, open the radio's pairing window and choose Add Another Radio. It does not reset the radio or forget its other hosts." : {
+
+    },
+    "Time" : {
+
+    },
+    "Time zone" : {
+
+    },
+    "Tracker" : {
+      "comment" : "Node role: reports its position."
+    },
+    "Traffic here is unencrypted and signed, so anyone in range can read it and every message identifies its sender." : {
+
+    },
+    "Transmit" : {
+
+    },
+    "Transmit limit" : {
+
+    },
+    "Transmit power" : {
+
+    },
+    "Trust receiver time" : {
+
+    },
+    "Try again" : {
+
+    },
+    "Try Again" : {
+
+    },
+    "Trying only the saved companion radio. Other nearby radios will not be selected." : {
+
+    },
+    "Turn this off and apply to place or clear the device's position." : {
+
+    },
+    "Turning Bluetooth off disconnects this phone. The device keeps its pairings, but you will need another way to reach it to turn Bluetooth back on." : {
+
+    },
+    "Turning Bluetooth off prevents direct Bluetooth connections. The device keeps its pairings." : {
+
+    },
+    "Two hints fit" : {
+
+    },
+    "Type" : {
+
+    },
+    "Type another character, or pick one." : {
+
+    },
+    "UF2 (File-copy) DFU" : {
+
+    },
+    "UMSH could not open its local database, so your contacts and conversations cannot be shown and nothing new can be saved." : {
+
+    },
+    "UMSH found the key for **%@** on this phone, from an install that is gone. Its messages, contacts, and channels went with it and cannot be recovered." : {
+
+    },
+    "UMSH URI, Base58 address, or 32-byte hex key" : {
+
+    },
+    "Unavailable" : {
+      "comment" : "Route kind: there is no radio to ask."
+    },
+    "Unavailable for this device's identity key." : {
+
+    },
+    "Undo" : {
+
+    },
+    "Unfavorite" : {
+
+    },
+    "Unidentified" : {
+
+    },
+    "Unknown" : {
+      "comment" : "Node role: none advertised, or one this app cannot name."
+    },
+    "Unknown node hint" : {
+
+    },
+    "Until" : {
+      "comment" : "Row label: when a manual path's hold ends."
+    },
+    "Update based on location" : {
+
+    },
+    "Update Local Details" : {
+
+    },
+    "Uptime" : {
+
+    },
+    "Use Learned Path" : {
+
+    },
+    "Use This iPhone's Time Zone" : {
+
+    },
+    "Use This Phone's Position" : {
+
+    },
+    "Use This Place" : {
+
+    },
+    "Used to suggest routing regions for a device from where it is." : {
+
+    },
+    "Validate identity" : {
+
+    },
+    "View Original" : {
+
+    },
+    "Waiting for %@" : {
+
+    },
+    "Waiting for %lld missing messages" : {
+
+    },
+    "Waiting for a missing message" : {
+
+    },
+    "Waiting for a reply" : {
+      "comment" : "VoiceOver label for a request in flight."
+    },
+    "Waiting for confirmation…" : {
+
+    },
+    "Waiting for the radio to appear" : {
+
+    },
+    "Warning" : {
+
+    },
+    "Welcome to UMSH" : {
+
+    },
+    "west" : {
+      "comment" : "Compass direction, read by VoiceOver after a distance."
+    },
+    "What is this device for?" : {
+
+    },
+    "What the device is actually resolving with: the list above plus whatever the network handed it." : {
+
+    },
+    "What this creates" : {
+
+    },
+    "What to call you" : {
+
+    },
+    "What would change" : {
+
+    },
+    "Where the device is meant to be, for anything it dates locally." : {
+
+    },
+    "Where to ask" : {
+
+    },
+    "Wire ID" : {
+
+    },
+    "With no regions listed, this device forwards traffic from every region. Add regions to relay only for a named area—a short code such as SJC or WA, a region name your mesh has agreed on, or a raw code. This is a routing domain, not a radio band." : {
+
+    },
+    "With none listed, the device forwards every flood it hears." : {
+
+    },
+    "With Wi-Fi off the device keeps the networks it knows and joins none of them. Some devices cannot use Wi-Fi and the mesh radio at the same time." : {
+
+    },
+    "within %@" : {
+
+    },
+    "Within %@" : {
+      "comment" : "Under a peer's map: the size of the area the location names."
+    },
+    "You" : {
+
+    },
+    "You can join again at any time using the channel's name." : {
+
+    },
+    "You deleted a message" : {
+
+    },
+    "You have unapplied changes." : {
+
+    },
+    "Your identity" : {
+
+    },
+    "Your identity, messages, contacts, channels, and paired radio are all erased. UMSH comes back as a first launch." : {
+
+    },
+    "Your records have not been deleted." : {
+
+    }
+  },
+  "version" : "1.0"
+}

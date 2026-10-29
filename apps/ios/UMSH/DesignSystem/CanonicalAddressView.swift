@@ -1,32 +1,60 @@
 import SwiftUI
 import UIKit
 
+/// A node's public address as a list row: the label, a copy glyph, and the
+/// address beneath in groups of four. Tapping anywhere on the row copies the
+/// plain address and raises the "Address copied" notice.
+///
+/// Grouped because an address is read aloud and compared against another
+/// screen, and four characters at a time is how people do both. The copy
+/// carries no spaces.
 struct CanonicalAddressView: View {
     let address: String
-    @State private var copied = false
+    @Environment(\.showTransientNotice) private var showTransientNotice
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text("Public address")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Spacer()
-                Button {
-                    UIPasteboard.general.string = address
-                    copied = true
-                } label: {
-                    Label(copied ? "Copied" : "Copy", systemImage: copied ? "checkmark" : "doc.on.doc")
+        Button(action: copy) {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Text("Address", comment: "Row label: a node's public address.")
+                        .foregroundStyle(.primary)
+                    Spacer()
+                    Image(systemName: "doc.on.doc")
+                        .foregroundStyle(.tint)
+                        .accessibilityHidden(true)
                 }
-                .buttonStyle(.borderless)
+                // Each line holds whole groups, so a narrow screen breaks
+                // between groups rather than inside one.
+                Text(verbatim: Self.grouped(address))
+                    .font(.system(.subheadline, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
-
-            Text(address)
-                .font(.system(.body, design: .monospaced))
-                .textSelection(.enabled)
-                .fixedSize(horizontal: false, vertical: true)
-                .accessibilityLabel("Public address \(address)")
+            .contentShape(Rectangle())
         }
+        .buttonStyle(.plain)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Text("Address", comment: "Row label: a node's public address."))
+        .accessibilityValue(Text(verbatim: address))
+        .accessibilityHint(Text("Copies the address.", comment: "VoiceOver hint on the address row."))
+        .accessibilityIdentifier("canonicalAddress")
+    }
+
+    private func copy() {
+        UIPasteboard.general.string = address
+        showTransientNotice(LocalizedStringResource("Address copied", comment: "Brief notice after the address was copied."))
+    }
+
+    /// The address in groups of four separated by spaces, which wrap like
+    /// words: six groups and five on a phone held upright.
+    static func grouped(_ address: String) -> String {
+        var groups: [Substring] = []
+        var rest = address[...]
+        while !rest.isEmpty {
+            groups.append(rest.prefix(4))
+            rest = rest.dropFirst(4)
+        }
+        return groups.joined(separator: " ")
     }
 }
 

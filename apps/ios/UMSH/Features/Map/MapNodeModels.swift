@@ -132,6 +132,12 @@ enum MapRecencyFilter: String, CaseIterable, Identifiable {
         guard let heard else { return false }
         return now.timeIntervalSince(heard) <= window
     }
+
+    /// The narrowest window, no narrower than this one, that admits a node
+    /// last heard at `heard`.
+    func widened(toAdmit heard: Date?, now: Date) -> Self {
+        Self.allCases.drop { $0 != self }.first { $0.admits(heard, now: now) } ?? .any
+    }
 }
 
 /// Which tier of node the map is drawing.
@@ -164,6 +170,13 @@ enum MapTierFilter: String, CaseIterable, Identifiable {
         case .favorites: peer?.isFavorite == true
         }
     }
+
+    /// The narrowest tier, no narrower than this one, that includes `peer`.
+    func widened(toInclude peer: PeerSummary?) -> Self {
+        if includes(peer) { return self }
+        if self == .favorites, Self.saved.includes(peer) { return .saved }
+        return .all
+    }
 }
 
 /// A capability the map can filter on, paired with what to call it.
@@ -184,6 +197,18 @@ struct MapCapabilityFilterOption: Identifiable, Hashable {
         Self(capability: .chatRoom, label: "Chat room"),
         Self(capability: .coap, label: "CoAP"),
     ]
+
+    /// `wanted`, with as little added as admits a node with `capabilities`:
+    /// the first of its capabilities the menu offers, or no filter at all
+    /// when it has none of them.
+    static func widened(
+        _ wanted: MeshNodeCapabilities,
+        toAdmit capabilities: MeshNodeCapabilities
+    ) -> MeshNodeCapabilities {
+        if wanted.isEmpty || !wanted.isDisjoint(with: capabilities) { return wanted }
+        guard let option = all.first(where: { capabilities.contains($0.capability) }) else { return [] }
+        return wanted.union(option.capability)
+    }
 }
 
 /// Where the operator is, from whichever source is wired.

@@ -112,19 +112,17 @@ struct NeighborRow<Trailing: View>: View {
         )
     }
 
-    /// `−72 dBm, 6.5 dB`. Quarter-decibel steps on the wire, unlike the
+    /// `−72 dBm · SNR 6.5 dB`. Quarter-decibel steps on the wire, unlike the
     /// centibels a ping reply carries, so this is its own conversion.
     ///
     /// A neighbor with no signal at all was never heard over the air: the
     /// repeater knows it through a backhaul, and the row says so rather than
     /// leaving a gap where the figures would be.
     private static func signalText(_ neighbor: PeerRepeaterNeighbor) -> String {
-        var parts: [String] = []
-        if let rssi = neighbor.rssiDBm { parts.append("\(rssi) dBm") }
-        if let snr = neighbor.snrQuarterDB {
-            parts.append(String(format: "%.1f dB", Double(snr) / 4))
-        }
-        return parts.isEmpty ? "Bridged" : parts.joined(separator: ", ")
+        SignalPresentation.readingText(
+            rssiDBm: neighbor.rssiDBm,
+            snrDecibels: neighbor.snrQuarterDB.map { Double($0) / 4 }
+        ) ?? String(localized: "Bridged", comment: "A neighbor heard over a non-radio link, so it has no signal reading.")
     }
 
     /// When the router last heard the node, as an age on this phone's clock.

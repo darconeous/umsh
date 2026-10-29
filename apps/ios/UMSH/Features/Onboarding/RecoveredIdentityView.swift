@@ -69,6 +69,7 @@ struct RecoveredIdentityView: View {
             if isWorking { ProgressView() }
         }
         .interactiveDismissDisabled()
+        .transientNoticePresenter()
     }
 
     /// Both answers are irreversible, and both take a moment. Hold the

@@ -31,6 +31,9 @@ struct NodeMapView: View {
     /// Ask the radio where it is. Driven on a cadence by
     /// ``RadioPositionPoll``—the radio never volunteers this.
     var refreshPosition: (() async -> Void)? = nil
+    /// A node to select and fly to, by its row: set from elsewhere in the
+    /// app—a peer page's map—and cleared here once taken.
+    @Binding var focusRequest: Int64?
 
     @AppStorage("map.tier") private var tierFilter: MapTierFilter = .all
     /// The capability filter, as raw bits. `AppStorage` stores what it can
@@ -190,21 +193,28 @@ struct NodeMapView: View {
             guard let node = nodes.first(where: { $0.id == selected }) else { return }
             focus(on: node)
         }
+        .onChange(of: focusRequest, initial: true) { _, request in
+            guard let request else { return }
+            focusRequest = nil
+            // Taken as the reader's own choice: the automatic framing must
+            // not come along afterwards and pull the camera off it.
+            hasFramedNodes = true
+            selectedNodeID = .peer(request)
+            if let node = drawable.first(where: { $0.id == .peer(request) }) {
+                reveal(node, now: now)
+                focus(on: node)
+            }
+        }
     }
 
     private func map(nodes: [MapNode]) -> some View {
         Map(position: $camera, selection: $selectedNodeID) {
             ForEach(nodes) { node in
-                if shouldDrawCell(node), let cellMeters = node.cellMeters {
-                    MapCircle(center: node.coordinate, radius: cellMeters / 2)
-                        .foregroundStyle(Color.accentColor.opacity(0.12))
-                        .stroke(Color.accentColor.opacity(0.45), lineWidth: 1)
-                }
-                Annotation(node.displayName, coordinate: node.coordinate, anchor: .bottom) {
-                    MapNodeMarker(node: node, isSelected: node.id == selectedNodeID)
-                }
-                .tag(node.id)
-                .annotationTitles(.hidden)
+                MapNodeContent(
+                    node: node,
+                    isSelected: node.id == selectedNodeID,
+                    drawsCell: shouldDrawCell(node)
+                )
             }
             if let selfPosition {
                 // The nodes' rule—coarse or selected—does not transfer:
@@ -366,6 +376,17 @@ struct NodeMapView: View {
             bits.insert(capability)
         }
         capabilityFilterBits = Int(bits.rawValue)
+    }
+
+    /// Widen each filter that hides `node` just far enough to show it: the
+    /// reader asked to see this node, and a map that flies to an empty spot
+    /// answers nothing.
+    private func reveal(_ node: MapNode, now: Date) {
+        tierFilter = tierFilter.widened(toInclude: node.peer)
+        capabilityFilterBits = Int(
+            MapCapabilityFilterOption.widened(capabilityFilter, toAdmit: node.capabilities).rawValue
+        )
+        recencyFilter = recencyFilter.widened(toAdmit: node.heardAsOf, now: now)
     }
 
     private func clearFilters() {

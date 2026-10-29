@@ -97,11 +97,15 @@ struct RouterHintRow: View {
     var body: some View {
         // A named node's title is its name, so the hint moves to the detail;
         // an unnamed one is titled by the hint.
-        let lines = (named == nil ? [] : ["Router hint \(hint.text)"]) + detail
+        let hintLabel = String(
+            localized: "Router hint \(hint.text)",
+            comment: "A repeater known only by the short hint a route carries. The placeholder is the hint, such as 7N*."
+        )
+        let lines = (named == nil ? [] : [hintLabel]) + detail
         PeerRow(
             hint: named?.identity.hint ?? MeshNodeHint(bytes: hint.bytes, text: hint.text),
             shape: named?.avatarShape ?? .hexagon,
-            title: named?.displayName ?? "Router hint \(hint.text)",
+            title: named?.displayName ?? hintLabel,
             subtitle: lines.isEmpty ? nil : lines.joined(separator: " · "),
             size: .compact,
             showsFavoriteStar: named?.isFavorite == true,

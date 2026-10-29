@@ -298,6 +298,9 @@ jobs:
             -destination 'generic/platform=iOS' \
             CODE_SIGNING_ALLOWED=NO
 
+      - name: Export strings for translation
+        run: scripts/ios/export-localizations.sh
+
   esp32:
     name: firmware (ESP32) / ${{ matrix.make_target }}
     runs-on: ubuntu-latest

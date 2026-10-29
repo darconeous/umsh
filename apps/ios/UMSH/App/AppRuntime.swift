@@ -630,12 +630,6 @@ final class AppRuntime {
             demoteToTransient: demotePeerToTransient,
             deletePeer: deletePeer,
             deletePeerAndConversation: deletePeerAndConversation,
-            addToDeviceIdentity: { peer in
-                await self.mutateDeviceIdentityPeer(peer, add: true)
-            },
-            removeFromDeviceIdentity: { peer in
-                await self.mutateDeviceIdentityPeer(peer, add: false)
-            },
             manageDevice: { [companionAddress = radioSnapshot.deviceIdentity?.canonicalAddress]
                 peer in
                 // The attached companion is managed over its own link;
@@ -1691,44 +1685,6 @@ final class AppRuntime {
     private func removeMeshPeer(_ peer: PeerSummary) async {
         try? await radioConnection.removeChatPeers([peer.identity.canonicalAddress])
         await reconcileHostPeers()
-    }
-
-    /// Add or remove one peer on the radio's device identity. The device is
-    /// the authority; on success the local flag is updated as a cache so the
-    /// UI answers immediately, and the attach-edge reconcile keeps it honest.
-    private func mutateDeviceIdentityPeer(
-        _ peer: PeerSummary,
-        add: Bool
-    ) async -> DevicePeerActionOutcome {
-        guard let publicKey = try? publicIdentityBytes(
-            address: peer.identity.canonicalAddress
-        ) else { return .failed }
-        do {
-            if add {
-                try await radioConnection.addDevicePeer(publicKey)
-            } else {
-                try await radioConnection.removeDevicePeer(publicKey)
-            }
-            if let applicationStore, let localIdentity {
-                try? await applicationStore.setPeerOnDeviceIdentity(
-                    ownerIdentityID: localIdentity.id,
-                    publicAddress: peer.identity.canonicalAddress,
-                    isOnDeviceIdentity: add
-                )
-            }
-            await reloadApplicationState()
-            return .success
-        } catch let error as DevicePeerError {
-            return switch error {
-            case .radioUnavailable: .radioUnavailable
-            case .deviceFull: .deviceFull
-            case .unsupported: .unsupported
-            case .unrecognizedAnswer: .unrecognizedAnswer
-            case .failed: .failed
-            }
-        } catch {
-            return .failed
-        }
     }
 
     // MARK: - Channels
@@ -3374,10 +3330,10 @@ final class AppRuntime {
     /// installs nothing.
     private func pingPeer(_ peer: PeerSummary, along path: ManualPath?) async -> PeerPingResult {
         guard radioSnapshot.linkState == .attached || radioSnapshot.linkState == .ready else {
-            return .unavailable(reason: "Connect a configured companion radio to ping this peer.")
+            return .unavailable(reason: String(localized: "No companion radio is connected.", comment: "Why a ping could not be sent."))
         }
         guard radioSnapshot.hostState == .matchesCurrentIdentity else {
-            return .unavailable(reason: "Set up this radio for the current phone identity before pinging peers.")
+            return .unavailable(reason: String(localized: "This radio is not set up for this phone.", comment: "Why a ping could not be sent."))
         }
         do {
             switch try await radioConnection.ping(
@@ -3393,6 +3349,7 @@ final class AppRuntime {
                         roundTripMilliseconds: reply.roundTripMilliseconds,
                         hopCount: reply.hopCount,
                         routeHints: await renderRouterHints(reply.routeHints),
+                        traceSignal: reply.traceSignal,
                         rssiDBm: reply.rssiDBm,
                         signalToNoiseCentibels: reply.signalToNoiseCentibels,
                         linkQuality: reply.linkQuality
@@ -3400,9 +3357,11 @@ final class AppRuntime {
                 )
             case .timedOut:
                 return .timedOut
+            case .canceled:
+                return .canceled
             }
         } catch {
-            return .unavailable(reason: "The Rust mesh session could not send this ping.")
+            return .unavailable(reason: String(localized: "The radio could not send the ping.", comment: "Why a ping could not be sent."))
         }
     }
 

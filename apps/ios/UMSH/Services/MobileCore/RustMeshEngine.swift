@@ -241,8 +241,6 @@ actor RustMeshEngine: MeshEngine {
     private static func identity(from record: NodeIdentityRecord) -> MeshNodeIdentity {
         MeshNodeIdentity(
             roleCode: record.roleCode,
-            roleLabel: record.roleLabel,
-            capabilities: record.capabilities,
             capabilityBits: MeshNodeCapabilities(rawValue: record.capabilityBits),
             forwards: record.forwards,
             name: record.name,

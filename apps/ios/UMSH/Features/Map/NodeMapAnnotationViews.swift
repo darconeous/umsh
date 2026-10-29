@@ -1,4 +1,28 @@
+import MapKit
 import SwiftUI
+
+/// One node drawn on a map: its reported cell, when wanted, and its marker
+/// at the coordinate. Shared by the Map tab and a peer page's map, so a node
+/// looks the same on both.
+struct MapNodeContent: MapContent {
+    let node: MapNode
+    var isSelected = false
+    /// Whether to shade the cell the node's location names.
+    var drawsCell = false
+
+    var body: some MapContent {
+        if drawsCell, let cellMeters = node.cellMeters {
+            MapCircle(center: node.coordinate, radius: cellMeters / 2)
+                .foregroundStyle(Color.accentColor.opacity(0.12))
+                .stroke(Color.accentColor.opacity(0.45), lineWidth: 1)
+        }
+        Annotation(node.displayName, coordinate: node.coordinate, anchor: .bottom) {
+            MapNodeMarker(node: node, isSelected: isSelected)
+        }
+        .tag(node.id)
+        .annotationTitles(.hidden)
+    }
+}
 
 /// A node's marker: its avatar, in a ring, over a small tail that points at
 /// the coordinate.

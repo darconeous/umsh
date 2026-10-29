@@ -166,6 +166,9 @@ pub enum MobileMeshPingOutcome {
     Reply,
     TimedOut,
     Failed,
+    /// A newer ping to the same peer replaced this one before it was
+    /// answered.
+    Canceled,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
@@ -178,13 +181,35 @@ pub struct MobileMeshPingEventRecord {
     /// source-routed without a trace route—it crossed hops nobody recorded,
     /// so no count is claimed.
     pub hop_count: Option<u8>,
-    /// Authenticated intermediate-router hints, in source-to-destination order.
-    /// The two endpoints are not included.
+    /// Authenticated intermediate-router hints, the repeater nearest this
+    /// device first. The two endpoints are not included.
     pub route_hints: Vec<Vec<u8>>,
+    /// How each repeater in `route_hints` heard the node one step farther
+    /// from this device, entry for entry. Empty unless the response carried
+    /// a trace signal that pairs one-to-one with its trace route.
+    pub trace_signal: Vec<MobileTraceSignalRecord>,
     /// Signal measurements for the final radio hop into this device.
     pub rssi_dbm: Option<i16>,
     pub snr_centibels: Option<i16>,
     pub lqi: Option<u8>,
+}
+
+/// One repeater's reading of the hop it received a response over. Both
+/// fields are absent when the repeater received it over a point-to-point
+/// link—a bridge—and measured nothing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct MobileTraceSignalRecord {
+    pub rssi_dbm: Option<i16>,
+    pub snr_centibels: Option<i16>,
+}
+
+impl From<umsh_core::options::TraceSignalEntry> for MobileTraceSignalRecord {
+    fn from(entry: umsh_core::options::TraceSignalEntry) -> Self {
+        Self {
+            rssi_dbm: entry.rssi_dbm(),
+            snr_centibels: entry.snr_centibels(),
+        }
+    }
 }
 
 /// How a Node Management operation ended.
@@ -1374,6 +1399,9 @@ impl MobileMeshSession {
     /// Send one traced Echo Request to `peer`. Without a `path` it pings
     /// the usual way; with one it sends the ping down exactly that path, to
     /// test it without installing it.
+    ///
+    /// A new ping to a peer cancels the one still waiting on it, which
+    /// ends with `Canceled`.
     pub fn ping(
         &self,
         peer_address: String,
@@ -3505,6 +3533,12 @@ async fn run_worker(
                     .iter()
                     .map(|hint| hint.0.to_vec())
                     .collect(),
+                trace_signal: metadata
+                    .trace_signal
+                    .iter()
+                    .copied()
+                    .map(MobileTraceSignalRecord::from)
+                    .collect(),
                 rssi_dbm: metadata.rssi_dbm,
                 snr_centibels: metadata.snr_centibels,
                 lqi: metadata.lqi,
@@ -3521,6 +3555,7 @@ async fn run_worker(
                 round_trip_milliseconds: None,
                 hop_count: None,
                 route_hints: Vec::new(),
+                trace_signal: Vec::new(),
                 rssi_dbm: None,
                 snr_centibels: None,
                 lqi: None,
@@ -3685,9 +3720,12 @@ async fn run_worker(
                             let _ = response.send(Ok(()));
                         }
                         Some(WorkerCommand::Ping { operation_id, peer, timeout_ms, path }) => {
-                            if pending.borrow().contains_key(&peer.0) {
-                                emit_ping_failure(&events, operation_id);
-                                continue;
+                            // A new ping to a peer replaces the one still
+                            // waiting on it, as the node does: the old one's
+                            // echo and deadline will never be reported, so
+                            // its operation ends here.
+                            if let Some(replaced) = pending.borrow_mut().remove(&peer.0) {
+                                emit_ping_outcome(&events, replaced, MobileMeshPingOutcome::Canceled);
                             }
                             // Trace route for the path, trace signal for
                             // what each hop of it cost. A ping that reports
@@ -4778,12 +4816,22 @@ pub(crate) fn encode_peer_address(peer: &PublicKey) -> String {
 }
 
 fn emit_ping_failure(events: &NotifyingSender<MobileMeshPingEventRecord>, operation_id: u64) {
+    emit_ping_outcome(events, operation_id, MobileMeshPingOutcome::Failed);
+}
+
+/// End a ping operation without an answer.
+fn emit_ping_outcome(
+    events: &NotifyingSender<MobileMeshPingEventRecord>,
+    operation_id: u64,
+    outcome: MobileMeshPingOutcome,
+) {
     let _ = events.send(MobileMeshPingEventRecord {
         operation_id,
-        outcome: MobileMeshPingOutcome::Failed,
+        outcome,
         round_trip_milliseconds: None,
         hop_count: None,
         route_hints: Vec::new(),
+        trace_signal: Vec::new(),
         rssi_dbm: None,
         snr_centibels: None,
         lqi: None,
@@ -4796,6 +4844,20 @@ mod tests {
     use crate::MobileChatDeliveryState;
     use std::time::Instant;
     use umsh_crypto::NodeIdentity;
+
+    #[test]
+    fn trace_signal_records_carry_readings_and_mark_bridged_hops() {
+        let heard =
+            MobileTraceSignalRecord::from(umsh_core::options::TraceSignalEntry::new(-97, 65));
+        assert_eq!(heard.rssi_dbm, Some(-97));
+        assert_eq!(heard.snr_centibels, Some(65));
+        // A bridge measured nothing; both readings are absent rather than a
+        // plausible-looking 0 dBm.
+        let bridged =
+            MobileTraceSignalRecord::from(umsh_core::options::TraceSignalEntry::POINT_TO_POINT);
+        assert_eq!(bridged.rssi_dbm, None);
+        assert_eq!(bridged.snr_centibels, None);
+    }
 
     fn identity(seed: u8) -> Arc<MobileIdentity> {
         let identity = SoftwareIdentity::from_secret_bytes(&[seed; 32]);
@@ -6191,6 +6253,10 @@ mod tests {
             if let Some(event) = alice_update.ping_events.into_iter().next() {
                 assert_eq!(event.operation_id, operation);
                 assert_eq!(event.outcome, MobileMeshPingOutcome::Reply);
+                // Nothing forwarded it, so the only reading is alice's own.
+                assert!(event.route_hints.is_empty());
+                assert!(event.trace_signal.is_empty());
+                assert_eq!(event.rssi_dbm, Some(-42));
                 break;
             }
 
@@ -6317,7 +6383,7 @@ mod tests {
         let record = crate::decode_node_identity(address(&alice_identity), bundle.clone()).unwrap();
         assert_eq!(record.signature, crate::IdentitySignatureState::Valid);
         assert_eq!(record.name.as_deref(), Some("Alice's Phone"));
-        assert_eq!(record.role_label, "Chat");
+        assert_eq!(record.role_code, umsh_node::NodeRole::Chat.as_byte());
         let uri = crate::node_uri_with_identity(address(&alice_identity), bundle).unwrap();
         assert!(
             crate::inspect_node_uri(uri)
@@ -6600,6 +6666,46 @@ mod tests {
             assert!(Instant::now() < deadline, "advertisement never queued");
             std::thread::sleep(Duration::from_millis(5));
         }
+    }
+
+    /// A new ping to a peer cancels the one still waiting, whose operation
+    /// ends at once; the new one waits out its own deadline.
+    #[tokio::test]
+    async fn a_new_ping_cancels_the_one_still_waiting() {
+        let directory = tempfile::tempdir().unwrap();
+        let local_identity = identity(63);
+        let silent_peer = identity(64);
+        let store =
+            MobileCounterStore::new(directory.path().join("repeat").display().to_string()).unwrap();
+        let session = MobileMeshSession::new_with_virtual_time(local_identity, store)
+            .await
+            .unwrap();
+        let first = session.ping(address(&silent_peer), 30_000, None).unwrap();
+        let second = session.ping(address(&silent_peer), 30_000, None).unwrap();
+
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let mut ended = Vec::new();
+        while ended.len() < 2 {
+            let update = session.poll_update();
+            for frame in update.outbound_frames {
+                session.complete_outbound_frame(frame.id, true).unwrap();
+            }
+            ended.extend(
+                update
+                    .ping_events
+                    .into_iter()
+                    .map(|event| (event.operation_id, event.outcome)),
+            );
+            assert!(Instant::now() < deadline, "the pings never ended");
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        assert_eq!(
+            ended,
+            vec![
+                (first, MobileMeshPingOutcome::Canceled),
+                (second, MobileMeshPingOutcome::TimedOut),
+            ]
+        );
     }
 
     /// The virtual-time seam: with the worker runtime's clock paused, a

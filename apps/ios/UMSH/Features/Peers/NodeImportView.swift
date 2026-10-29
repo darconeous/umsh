@@ -101,6 +101,7 @@ struct NodeImportView: View {
                 await inspect()
             }
         }
+        .transientNoticePresenter()
     }
 
     /// The exchange screen shows once this phone asked or agreed, and stays
