@@ -698,9 +698,9 @@ static ADC2_ARBITER: Mutex<CriticalSectionRawMutex, ()> = Mutex::new(());
 static ADC2_RADIO_UP: AtomicBool = AtomicBool::new(false);
 
 /// Whether a USB host may be on the wire. Where VBUS reaches a sensor
-/// this is USB power per the PMIC's (or the Pager charger's) last word,
-/// whose IRQ pokes an immediate re-read on plug and unplug; elsewhere it
-/// is the start-of-frame stream (`usb-presence-sof`). Starts optimistic
+/// (the PMIC, or the Pager's charger) it rises with USB power and falls
+/// once the start-of-frame stream agrees ([`vbus_sensed`]); elsewhere it
+/// is the start-of-frame stream alone (`usb-presence-sof`). Starts optimistic
 /// so the wired console exists from the first instruction of a
 /// USB-powered boot; the first reading corrects a battery boot.
 #[cfg(feature = "wired-usb-serial-jtag")]
@@ -1286,11 +1286,7 @@ async fn battery_task(pmic: &'static SharedPmic) {
             Err(_) => continue,
         };
         BATTERY_MV.store(reading.voltage_mv.unwrap_or(0), Ordering::Release);
-        if USB_PRESENT.swap(reading.vbus, Ordering::AcqRel) != reading.vbus {
-            // The wired-transport supervisor keys the USB-Serial-JTAG
-            // driver's existence off this.
-            USB_PRESENT_EDGE.signal(());
-        }
+        vbus_sensed(reading.vbus);
         BATTERY_LEVEL.store(battery_level(&reading).unwrap_or(0xFF), Ordering::Release);
         BATTERY_CHARGE.store(
             match battery_charge_class(&reading) {
@@ -2621,9 +2617,9 @@ async fn wired_transport_task(
 
 /// With a host present: how often its start-of-frame stream is checked,
 /// and how many silent checks in a row mean it is gone.
-#[cfg(feature = "usb-presence-sof")]
+#[cfg(feature = "wired-usb-serial-jtag")]
 const USB_SOF_CHECK: Duration = Duration::from_millis(250);
-#[cfg(feature = "usb-presence-sof")]
+#[cfg(feature = "wired-usb-serial-jtag")]
 const USB_SOF_MISSES: u8 = 4;
 /// With no host: how long each probe holds the chip awake to listen,
 /// and how long it sleeps between probes.
@@ -2646,23 +2642,84 @@ const USB_SOF_PROBE_PERIOD: Duration = Duration::from_secs(1);
 #[cfg(feature = "usb-presence-sof")]
 #[embassy_executor::task]
 async fn usb_presence_task() {
-    use umsh_bsp_esp32::usb_sof;
     loop {
         if USB_PRESENT.load(Ordering::Acquire) {
-            let mut misses = 0;
-            while misses < USB_SOF_MISSES {
-                usb_sof::clear();
-                Timer::after(USB_SOF_CHECK).await;
-                misses = if usb_sof::seen() { 0 } else { misses + 1 };
-            }
+            while !usb_sof_silent().await {}
             USB_PRESENT.store(false, Ordering::Release);
         } else {
-            while !usb_sof::sample(USB_SOF_PROBE_WINDOW).await {
+            while !umsh_bsp_esp32::usb_sof::sample(USB_SOF_PROBE_WINDOW).await {
                 Timer::after(USB_SOF_PROBE_PERIOD).await;
             }
             USB_PRESENT.store(true, Ordering::Release);
         }
         USB_PRESENT_EDGE.signal(());
+    }
+}
+
+/// Whether the host's start-of-frame stream stays silent for
+/// [`USB_SOF_MISSES`] checks in a row. Only meaningful while the chip is
+/// awake, as the transport's wake locks keep it with a host present.
+#[cfg(feature = "wired-usb-serial-jtag")]
+async fn usb_sof_silent() -> bool {
+    use umsh_bsp_esp32::usb_sof;
+    for _ in 0..USB_SOF_MISSES {
+        usb_sof::clear();
+        Timer::after(USB_SOF_CHECK).await;
+        if usb_sof::seen() {
+            return false;
+        }
+    }
+    true
+}
+
+/// The VBUS sensor's latest reading, for [`usb_vbus_task`] to confirm.
+#[cfg(all(feature = "wired-usb-serial-jtag", not(feature = "usb-presence-sof")))]
+static VBUS_SENSED: AtomicBool = AtomicBool::new(true);
+/// The VBUS sensor reported no VBUS while [`USB_PRESENT`] was set.
+#[cfg(all(feature = "wired-usb-serial-jtag", not(feature = "usb-presence-sof")))]
+static VBUS_LOST: Signal<CriticalSectionRawMutex, ()> = Signal::new();
+
+/// Feeds a VBUS sensor's reading into [`USB_PRESENT`], and returns
+/// whether presence rose. Power arriving counts at once; power going
+/// away is only a lead for [`usb_vbus_task`] to confirm.
+#[cfg(all(feature = "wired-usb-serial-jtag", not(feature = "usb-presence-sof")))]
+fn vbus_sensed(vbus: bool) -> bool {
+    VBUS_SENSED.store(vbus, Ordering::Release);
+    if vbus {
+        let rose = !USB_PRESENT.swap(true, Ordering::AcqRel);
+        if rose {
+            USB_PRESENT_EDGE.signal(());
+        }
+        rose
+    } else {
+        if USB_PRESENT.load(Ordering::Acquire) {
+            VBUS_LOST.signal(());
+        }
+        false
+    }
+}
+
+/// Clears [`USB_PRESENT`] on a board that senses VBUS, once the USB
+/// controller agrees that the host is gone.
+///
+/// Losing presence releases the transport's wake locks, and a host link
+/// does not survive the light sleep that follows: the host gives up on
+/// the silent device until the cable is replugged. One sensor reading is
+/// too little to stake that on, so a reading of no VBUS is checked
+/// against the host's start-of-frame stream, which the transport's locks
+/// keep clocked. A host still sending frames is still there. A pulled
+/// cable silences both at once, so a real unplug costs only the checks.
+#[cfg(all(feature = "wired-usb-serial-jtag", not(feature = "usb-presence-sof")))]
+#[embassy_executor::task]
+async fn usb_vbus_task() {
+    loop {
+        VBUS_LOST.wait().await;
+        if usb_sof_silent().await
+            && !VBUS_SENSED.load(Ordering::Acquire)
+            && USB_PRESENT.swap(false, Ordering::AcqRel)
+        {
+            USB_PRESENT_EDGE.signal(());
+        }
     }
 }
 
@@ -3349,7 +3406,7 @@ async fn main(spawner: Spawner) {
         // optimistic initial value) while the battery task waits out
         // its first cadence.
         if let Ok(vbus) = pmic.vbus_present().await {
-            USB_PRESENT.store(vbus, Ordering::Release);
+            vbus_sensed(vbus);
         }
         PMIC_CELL.init(Mutex::new(pmic))
     };
@@ -3968,6 +4025,8 @@ async fn main(spawner: Spawner) {
     spawner.spawn(wired_transport_task(peripherals.USB_DEVICE, panic_report.clone()).unwrap());
     #[cfg(feature = "usb-presence-sof")]
     spawner.spawn(usb_presence_task().unwrap());
+    #[cfg(all(feature = "wired-usb-serial-jtag", not(feature = "usb-presence-sof")))]
+    spawner.spawn(usb_vbus_task().unwrap());
 
     #[cfg(feature = "vext")]
     vext.enable().await;

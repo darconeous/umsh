@@ -221,13 +221,10 @@ fn publish_battery_reading(reading: &board_battery::Reading) {
         },
         Ordering::Release,
     );
-    if USB_PRESENT.swap(reading.vbus, Ordering::AcqRel) != reading.vbus {
-        USB_PRESENT_EDGE.signal(());
-        // Power plugged in lights the screen to say so, as a phone's does.
-        if reading.vbus {
-            BATTERY_UI_CHANGED.signal(());
-            UI_WAKE.signal(());
-        }
+    // Power plugged in lights the screen to say so, as a phone's does.
+    if crate::vbus_sensed(reading.vbus) {
+        BATTERY_UI_CHANGED.signal(());
+        UI_WAKE.signal(());
     }
 }
 
