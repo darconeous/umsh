@@ -3841,6 +3841,7 @@ async fn main(spawner: Spawner) {
             network_seed,
         );
         spawner.spawn(ip::runner(runner).unwrap());
+        spawner.spawn(ip::watch(stack).unwrap());
         spawner.spawn(wifi::task(wifi_radio, stack).unwrap());
         wifi::publish(driver::PublishEvent::WifiMac(mac)).await;
         stack

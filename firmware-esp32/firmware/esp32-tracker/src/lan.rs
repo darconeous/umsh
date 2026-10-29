@@ -19,6 +19,7 @@ use core::cell::RefCell;
 use core::net::{Ipv4Addr, Ipv6Addr};
 use core::sync::atomic::{AtomicBool, Ordering};
 
+use super::ip::{Network, NetworkReceiver};
 use edge_mdns::domain::base::Ttl;
 use edge_mdns::host::{Host, Service, ServiceAnswers};
 use edge_mdns::{HostAnswersMdnsHandler, MdnsHandler, MdnsRequest, MdnsResponse};
@@ -185,29 +186,21 @@ fn now_ms() -> u64 {
 }
 
 /// The station's IPv4 address, while it has a link and one.
-fn address(stack: Stack<'_>) -> Option<Ipv4Address> {
-    if !stack.is_link_up() {
-        return None;
-    }
-    stack.config_v4().map(|config| config.address.address())
+fn address(network: &Network) -> Option<Ipv4Address> {
+    network.as_ref().map(|config| config.address.address())
 }
 
-/// Return once the station may have an address: a link with an IPv4
-/// configuration. These images carry no IPv6, so a configuration is an
-/// IPv4 one.
-async fn network_up(stack: Stack<'_>) {
-    stack.wait_link_up().await;
-    stack.wait_config_up().await;
+/// Return once the station has an address.
+async fn network_up(network: &mut NetworkReceiver) {
+    network.get_and(|now| now.is_some()).await;
 }
 
-/// Return once the address is lost, with the link or the configuration.
-///
-/// A lease renewed onto a different address without the configuration
-/// going down first is not seen until the next loss; the group
-/// membership is the interface's, so only echo suppression, which
-/// nothing depends on, keeps the old address meanwhile.
-async fn network_down(stack: Stack<'_>) {
-    select(stack.wait_link_down(), stack.wait_config_down()).await;
+/// Return once `address` is no longer the station's, with the link, the
+/// lease, or a lease renewed onto a different address.
+async fn network_down(network: &mut NetworkReceiver, address: Ipv4Address) {
+    network
+        .get_and(|now| self::address(now) != Some(address))
+        .await;
 }
 
 /// Publish `state` if it differs from what was last published.
@@ -228,6 +221,7 @@ fn stop() {
 /// node, which it reaches through [`PORT`].
 pub async fn run(stack: Stack<'static>) -> ! {
     let buffers = storage();
+    let mut network = super::ip::network();
     let mut published = None;
     // The port starts off, and every pass that switches it on ends by
     // switching it off, so the idle states below need not.
@@ -240,9 +234,9 @@ pub async fn run(stack: Stack<'static>) -> ! {
             continue;
         };
         let group = Ipv4Address::from(config.group().address);
-        let Some(address) = address(stack) else {
+        let Some(address) = network.try_get().and_then(|now| address(&now)) else {
             report(&mut published, State::NoNetwork).await;
-            select(CONFIG_CHANGED.wait(), network_up(stack)).await;
+            select(CONFIG_CHANGED.wait(), network_up(&mut network)).await;
             continue;
         };
 
@@ -267,7 +261,7 @@ pub async fn run(stack: Stack<'static>) -> ! {
             drop(socket);
             let _ = stack.leave_multicast_group(group);
             report(&mut published, State::NoNetwork).await;
-            select(CONFIG_CHANGED.wait(), network_down(stack)).await;
+            select(CONFIG_CHANGED.wait(), network_down(&mut network, address)).await;
             continue;
         }
         // The record is a courtesy to browsers; the bearer runs without it.
@@ -288,7 +282,7 @@ pub async fn run(stack: Stack<'static>) -> ! {
         let destination = IpEndpoint::new(IpAddress::Ipv4(group), config.group().port);
         select4(
             CONFIG_CHANGED.wait(),
-            network_down(stack),
+            network_down(&mut network, address),
             join(
                 receive(
                     &socket,

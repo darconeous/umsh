@@ -924,13 +924,14 @@ Sleep is gated by esp-hal wake locks and radio sleep vetoes/deadlines. The const
 | Holder | Meaning |
 | --- | --- |
 | BLE controller | Modem sleep releases the PHY between events. The BLE wake source vetoes MCU sleep while the controller is active and bounds sleep by the next radio deadline. Initialization, teardown, and the separate hardware-entropy harvest hold temporary wake locks. |
+| Wi-Fi station | Modem power save (`PowerSaveMode::Minimum`) sleeps the modem between DTIM beacons. The Wi-Fi wake source vetoes MCU sleep while the driver holds its own sleep lock and wakes the chip ahead of each beacon. |
 | USB-Serial-JTAG driver | The driver exists only while the PMU reports VBUS, so this lock **is** the never-sleep-on-USB-power policy. |
 | GNSS task | The UART holds no lock, so bytes arriving during sleep are lost. After five minutes without a complete fix, the task holds a lock until the next fix or for ten seconds, whichever comes first. |
 | GPIO waits (unarmed) | Any `wait_for_*` without wake-enable holds a lock; the firmware's long-lived waits (DIO1, PMU IRQ, BOOT button) are all wake-enabled level events instead. |
 
-With GNSS and Wi-Fi off, the panel dark, and USB disconnected, the chip can sleep between BLE events and other scheduled work while LoRa stays in RX. DIO1 traffic, the PMU IRQ (POWER key, VBUS), the BOOT button, and timer deadlines wake it. With BLE also off, the watchdog's timer wakes remain (20 s feeds under a 30 s RWDT timeout).
+With GNSS off, the panel dark, and USB disconnected, the chip can sleep between BLE events, Wi-Fi beacons, and other scheduled work while LoRa stays in RX. DIO1 traffic, the PMU IRQ (POWER key, VBUS), the BOOT button, and timer deadlines wake it. With BLE also off, the watchdog's timer wakes remain (20 s feeds under a 30 s RWDT timeout).
 
-BLE uses the main crystal as its low-power clock, so this mode does not require an external 32.768 kHz crystal. The CPU remains at 80 MHz while awake. The [ESP32 workspace](../../firmware-esp32/README.md#bluetooth-power-management) documents the pinned controller lifecycle fixes and qualification scenarios; Wi-Fi power optimization remains separate work.
+BLE uses the main crystal as its low-power clock, so this mode does not require an external 32.768 kHz crystal. The CPU remains at 80 MHz while awake. The [ESP32 workspace](../../firmware-esp32/README.md#bluetooth-power-management) documents the pinned controller lifecycle fixes, qualification scenarios, and [Wi-Fi power save](../../firmware-esp32/README.md#wifi-power-save).
 
 ### 17.2 GNSS backup
 

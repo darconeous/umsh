@@ -162,13 +162,13 @@ USB and wired-serial wake locks still prevent MCU light sleep when those
 transports are active. In particular, Heltec V3 keeps its UART0 serial receiver
 awake for the whole boot, including on battery: it can use BLE modem sleep, but
 that wake lock blocks MCU light sleep. T-Beam and Pager release their native
-USB transport on battery and can light-sleep with WiFi disabled. The XIAO
+USB transport on battery and can light-sleep, including while WiFi is
+associated (see [WiFi power save](#wifi-power-save)). The XIAO
 ESP32S3 cannot sense VBUS, so it releases its transport when the host's
 start-of-frame stream stops (unplugged, or the bus suspended), then holds
 itself awake for 20 ms once a second to look for one. GNSS does not
 block light sleep; its task wakes the MCU for at most ten seconds after five
 minutes without a fix.
-WiFi remains in `PowerSaveMode::None`; WiFi light-sleep policy and
 CPU/cache-retention optimizations are separate work.
 
 For a battery comparison, disconnect USB, disable GNSS and WiFi, put the display
@@ -183,7 +183,7 @@ Hardware qualification should cover:
 - Bonded reconnect, pairing/PIN, privacy-address rotation, and Bluetooth toggles.
 - LoRa traffic and GPIO wake while advertising and while connected.
 - Elapsed-time accuracy across idle periods, and USB/GNSS off/on transitions.
-- WiFi scans, reconnects, and traffic alongside BLE with WiFi power saving off.
+- WiFi scans, reconnects, and traffic alongside BLE with WiFi power save on.
 - First boot, normal stored-seed boot, and restart after a failed seed write.
 - An hourly harvest on reconnect, the six-hour forced harvest while idle and
   while Bluetooth is disabled, and a session established after a reseed.
@@ -288,6 +288,25 @@ The following limitations apply to the ESP32-S3 boards:
   even if the saved configuration contains an inactive manual override.
 
 These limitations leave parts of the WiFi implementation plan incomplete.
+
+#### WiFi power save
+
+The station runs `PowerSaveMode::Minimum`: the modem sleeps between DTIM
+beacons, and the WiFi wake source lets the MCU light-sleep between them.
+Downlink frames, bridge traffic included, wait at the access point for up to
+one DTIM period. While associated the WiFi task wakes only for a disconnect,
+an IP configuration change, a settings or scan change, and a 30-second RSSI
+refresh, so a GET of `PROP_WIFI_RSSI` may return a value up to 30 seconds
+old. The network stack keeps a single state waker, so one task waits on its
+link and configuration and republishes them; the WiFi task, the bridge
+client, and the LAN bearer wait on that rather than polling the stack.
+
+The Heltec V3 bridge image gets modem sleep only. Its UART0 receiver holds a
+wake lock for the whole boot, so the MCU never light-sleeps there. Parking
+that receiver needs a way to wake on serial input without losing a host's
+first frame; edge-triggered UART wake would drop the leading bytes, and the
+board gives the MCU no USB-presence signal to gate it on. Until then the
+bridge image idles at the 80 MHz WFI floor with the modem asleep.
 
 Upstream-only validation on 2026-09-12 passed the normal T-Beam build,
 Heltec V3 builds with and without WiFi, and the nRF T-Echo build. The shared

@@ -389,6 +389,15 @@ async fn report_ap(ap: &AccessPointInfo, generation: u32) {
         .await;
 }
 
+/// The station wakes for every DTIM beacon, which lets the chip light-sleep
+/// between them. Downlink traffic waits at the access point for up to one
+/// DTIM period.
+const POWER_SAVE: PowerSaveMode = PowerSaveMode::Minimum;
+
+/// How stale the cached `PROP_WIFI_RSSI` may get while associated. Each
+/// refresh is a CPU wake, so this stays well above the DTIM period.
+const RSSI_REFRESH: Duration = Duration::from_secs(30);
+
 fn controller_config() -> ControllerConfig {
     ControllerConfig::default()
         .with_country_info(*b"US")
@@ -464,6 +473,7 @@ pub async fn task(
     stack: embassy_net::Stack<'static>,
 ) {
     let mut link = Link::default();
+    let mut network = super::ip::network();
     loop {
         let Some(mut current) = settings() else {
             select(CHANGED.wait(), harvest_while_parked(&mut peripheral)).await;
@@ -486,9 +496,8 @@ pub async fn task(
                 continue;
             }
         };
-        // Wi-Fi light sleep is a separate policy change. Keep the existing
-        // no-power-save behavior even when upstream defaults change.
-        if controller.set_power_saving(PowerSaveMode::None).is_err() {
+        if controller.set_power_saving(POWER_SAVE).is_err() {
+            super::debug_log(format_args!("wifi: power save {:?} refused", POWER_SAVE));
             drop(controller);
             Timer::after_secs(5).await;
             continue;
@@ -561,6 +570,8 @@ pub async fn task(
                 link = next_link;
                 publish(PublishEvent::WifiLink(link)).await;
             }
+            // The update reads the stack itself, so only later changes count.
+            network.try_changed();
             super::ip::update(stack, &current, connected).await;
             let (scanning, generation) = scan_state();
             if scanning {
@@ -630,9 +641,20 @@ pub async fn task(
                     controller.rssi().ok().map(|r| r.clamp(-127, 0) as i8),
                 ))
                 .await;
-                match select3(CHANGED.wait(), SCAN_CHANGED.wait(), Timer::after_secs(1)).await {
-                    _ => {}
-                }
+                // A lease or a lost link reaches the IP tables through
+                // `network`. The refresh timer also covers a disconnect
+                // that lands between `is_connected` and the event
+                // subscription.
+                select3(
+                    CHANGED.wait(),
+                    SCAN_CHANGED.wait(),
+                    select3(
+                        controller.wait_for_disconnect_async(),
+                        network.changed(),
+                        Timer::after(RSSI_REFRESH),
+                    ),
+                )
+                .await;
                 continue;
             }
             if current.enabled && !current.entry.is_empty() {

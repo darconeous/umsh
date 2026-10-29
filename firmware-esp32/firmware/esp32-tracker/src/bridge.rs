@@ -1,4 +1,5 @@
 //! Autonomous, node-only bridge client. All control stays independent of ULCP attach.
+use super::ip::{Network, NetworkReceiver};
 use core::{
     cell::RefCell,
     future::poll_fn,
@@ -297,14 +298,10 @@ fn publish(state: State, reason: Reason) {
 fn settings() -> Option<Settings> {
     SETTINGS.lock(|cell| cell.borrow().clone())
 }
-fn ready(stack: Stack<'_>) -> bool {
-    stack.is_link_up() && stack.is_config_up()
-}
-async fn disconnected(stack: Stack<'_>) {
-    let config = stack.config_v4();
-    while ready(stack) && stack.config_v4() == config {
-        Timer::after_millis(100).await;
-    }
+/// Wait until the network this connection was made over is gone: the
+/// link, the lease, or the address it carried.
+async fn disconnected(network: &mut NetworkReceiver, over: &Network) {
+    network.get_and(|now| now != over).await;
 }
 
 #[embassy_executor::task]
@@ -321,6 +318,7 @@ pub async fn task(
             .public_key()
             .0
     });
+    let mut network = super::ip::network();
     let mut backoff = 1u64;
     loop {
         CHANGED.reset();
@@ -343,9 +341,10 @@ pub async fn task(
             CHANGED.wait().await;
             continue;
         }
-        if !ready(stack) {
+        let over = network.try_get().flatten();
+        if over.is_none() {
             publish(State::WaitingForNetwork, Reason::None);
-            select(CHANGED.wait(), Timer::after_millis(250)).await;
+            select(CHANGED.wait(), network.get_and(Option::is_some)).await;
             backoff = 1;
             continue;
         }
@@ -353,7 +352,7 @@ pub async fn task(
         let start = Instant::now();
         let result = select3(
             CHANGED.wait(),
-            disconnected(stack),
+            disconnected(&mut network, &over),
             connect(stack, &wanted, seed.as_ref().unwrap(), &mut rng, buffers),
         )
         .await;
@@ -375,7 +374,7 @@ pub async fn task(
             (backoff * 750 + u64::from(rng.next_u32()) % (backoff * 500 + 1)).clamp(1000, 60_000);
         select3(
             CHANGED.wait(),
-            disconnected(stack),
+            disconnected(&mut network, &over),
             Timer::after_millis(delay_ms),
         )
         .await;

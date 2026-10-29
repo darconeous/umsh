@@ -1,9 +1,12 @@
 //! IPv4 configuration and live ULCP tables. The runner is independent of
 //! station association and the USB/BLE session.
 use super::wifi::{self, Settings};
-use core::cell::RefCell;
+use core::{cell::RefCell, future::poll_fn, pin::pin, task::Poll};
 use embassy_net::{ConfigV4, Ipv4Address, Ipv4Cidr, Stack, StaticConfigV4};
-use embassy_sync::blocking_mutex::{Mutex, raw::CriticalSectionRawMutex};
+use embassy_sync::{
+    blocking_mutex::{Mutex, raw::CriticalSectionRawMutex},
+    watch::{Receiver, Watch},
+};
 use umsh_ulcp::{
     ids::prop,
     ip::{self, FamilyState, Method},
@@ -125,4 +128,63 @@ pub async fn update(stack: Stack<'static>, settings: &Settings, linked: bool) {
 #[embassy_executor::task]
 pub async fn runner(mut runner: embassy_net::Runner<'static, esp_radio::wifi::Interface>) -> ! {
     runner.run().await
+}
+
+/// The IPv4 configuration in force while the station has a link and one.
+pub type Network = Option<StaticConfigV4>;
+
+/// The Wi-Fi task, the bridge client, and the LAN bearer.
+const NETWORK_WAITERS: usize =
+    1 + cfg!(feature = "bridge-client") as usize + cfg!(feature = "lan-bearer") as usize;
+static NETWORK: Watch<CriticalSectionRawMutex, Network, NETWORK_WAITERS> = Watch::new();
+
+pub type NetworkReceiver = Receiver<'static, CriticalSectionRawMutex, Network, NETWORK_WAITERS>;
+
+/// One per waiting task, taken once for the life of the task.
+pub fn network() -> NetworkReceiver {
+    NETWORK
+        .receiver()
+        .expect("a network receiver per waiting task")
+}
+
+fn current(stack: Stack<'_>) -> Network {
+    stack
+        .config_v4()
+        .filter(|_| stack.is_link_up() && stack.is_config_up())
+}
+
+/// Republish [`Network`] whenever it changes.
+///
+/// The stack keeps a single state waker, so a second task waiting on its
+/// link or configuration would steal the registration back on every poll
+/// and the two would wake each other in a spin. This task is that one
+/// waiter; everything else waits on [`network`].
+#[embassy_executor::task]
+pub async fn watch(stack: Stack<'static>) -> ! {
+    let sender = NETWORK.sender();
+    loop {
+        let seen = current(stack);
+        sender.send(seen.clone());
+        changed(stack, &seen).await;
+    }
+}
+
+/// Return once [`current`] differs from `seen`. The stack wakes its state
+/// waiter on every link change and every configuration it applies or
+/// withdraws, a lease renewed onto a new address included.
+async fn changed(stack: Stack<'_>, seen: &Network) {
+    poll_fn(|cx| {
+        // A state wait that is pending registers this task as the waiter.
+        let woken = if stack.is_link_up() {
+            pin!(stack.wait_link_down()).poll(cx)
+        } else {
+            pin!(stack.wait_link_up()).poll(cx)
+        };
+        if woken.is_ready() || current(stack) != *seen {
+            Poll::Ready(())
+        } else {
+            Poll::Pending
+        }
+    })
+    .await
 }
